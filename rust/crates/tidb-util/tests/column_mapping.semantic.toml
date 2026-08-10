@@ -1,0 +1,10 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/column-mapping"
+source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
+rust_files = ["rust/crates/tidb-util/src/column_mapping.rs"]
+
+[[tests]]
+name = "column_mapping_package_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "column_mapping"]

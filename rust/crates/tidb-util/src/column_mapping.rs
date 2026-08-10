@@ -12,46 +12,53 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of Go `pkg/util/column-mapping` (Go package
-//! `column`, `column.go`). A DM column-mapping engine: it matches
-//! schema/table patterns via the [`crate::table_rule_selector`] trie and
-//! rewrites a target column value by adding a prefix/suffix or computing a
-//! bit-packed partition ID.
-//!
-//! Faithful Rust adaptations of Go idioms, none changing observable behavior:
-//! - Go's `[]any` column values are the [`Value`] enum. The mapping functions
-//!   only ever handle integers and strings, so those are the only variants;
-//!   Go's "unsupported type" error is thus unrepresentable by construction.
-//! - Go's package-level partition-bit variables (mutated by
-//!   [`set_partition_rule`]) are `static` atomics.
-//! - Go's `RWMutex`-guarded `Mapping` becomes `&mut self` methods — Rust's
-//!   borrow checker enforces the exclusive access the mutex provided.
-//! - `Rule`s are shared as `Rc<Rule>` (Go's `*Rule`); the `yaml/json/toml`
-//!   struct tags (config deserialization, untested) are out of scope.
+//! Schema/table column mapping with prefix, suffix, and partition-ID rules.
 
 use std::collections::HashMap;
 use std::fmt;
-use std::rc::Rc;
-use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use crate::table_rule_selector::{InsertType, Selector, TrieSelector};
+use serde::{Deserialize, Serialize};
 
-/// For partition ID; see [`partition_id`] for the bit-layout definition.
-static INSTANCE_ID_BIT_SIZE: AtomicUsize = AtomicUsize::new(4);
-static SCHEMA_ID_BIT_SIZE: AtomicUsize = AtomicUsize::new(7);
-static TABLE_ID_BIT_SIZE: AtomicUsize = AtomicUsize::new(8);
-static MAX_ORIGIN_ID: AtomicI64 = AtomicI64::new(17_592_186_044_416);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PartitionRule {
+    instance_id_bits: usize,
+    schema_id_bits: usize,
+    table_id_bits: usize,
+    max_origin_id: i64,
+}
+
+static PARTITION_RULE: RwLock<PartitionRule> = RwLock::new(PartitionRule {
+    instance_id_bits: 4,
+    schema_id_bits: 7,
+    table_id_bits: 8,
+    max_origin_id: 17_592_186_044_416,
+});
+
+fn partition_rule() -> PartitionRule {
+    *PARTITION_RULE
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 /// Sets the bit size of the instance/schema/table IDs and recomputes the
 /// maximum origin ID, mirroring Go's package-level `SetPartitionRule`.
 pub fn set_partition_rule(instance_id_size: usize, schema_id_size: usize, table_id_size: usize) {
-    INSTANCE_ID_BIT_SIZE.store(instance_id_size, Ordering::Relaxed);
-    SCHEMA_ID_BIT_SIZE.store(schema_id_size, Ordering::Relaxed);
-    TABLE_ID_BIT_SIZE.store(table_id_size, Ordering::Relaxed);
-    MAX_ORIGIN_ID.store(
-        1_i64 << (64 - instance_id_size - schema_id_size - table_id_size - 1),
-        Ordering::Relaxed,
-    );
+    let used_bits = instance_id_size
+        .checked_add(schema_id_size)
+        .and_then(|bits| bits.checked_add(table_id_size))
+        .expect("partition ID bit sizes overflow");
+    assert!(used_bits <= 63, "partition ID fields must leave a sign bit");
+
+    *PARTITION_RULE
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = PartitionRule {
+        instance_id_bits: instance_id_size,
+        schema_id_bits: schema_id_size,
+        table_id_bits: table_id_size,
+        max_origin_id: 1_i64 << (63 - used_bits),
+    };
 }
 
 /// A column value flowing through the mapping. Go uses `any`; the mapping
@@ -108,21 +115,26 @@ fn not_supported(msg: impl AsRef<str>) -> ColumnMappingError {
 }
 
 /// A rule to map a column.
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Rule {
     /// The schema pattern this rule matches.
+    #[serde(rename = "schema-pattern")]
     pub pattern_schema: String,
     /// The table pattern this rule matches.
+    #[serde(rename = "table-pattern")]
     pub pattern_table: String,
     /// The source column (modify / add-refer-column / ignore).
+    #[serde(rename = "source-column")]
     pub source_column: String,
     /// The target column (add column / modify).
+    #[serde(rename = "target-column")]
     pub target_column: String,
     /// How to handle the mapping.
     pub expression: String,
     /// Expression arguments.
     pub arguments: Vec<String>,
     /// The create-table query.
+    #[serde(rename = "create-table-query")]
     pub create_table_query: String,
 }
 
@@ -201,7 +213,7 @@ struct MappingInfo {
     ignore: bool,
     source_position: i64,
     target_position: i64,
-    rule: Option<Rc<Rule>>,
+    rule: Option<Arc<Rule>>,
     instance_id: i64,
     schema_id: i64,
     table_id: i64,
@@ -221,11 +233,15 @@ impl MappingInfo {
     }
 }
 
-/// Maps columns to something by rules.
-pub struct Mapping {
-    selector: TrieSelector<Rc<Rule>>,
-    case_sensitive: bool,
+struct MappingState {
+    selector: TrieSelector<Arc<Rule>>,
     cache: HashMap<String, MappingInfo>,
+}
+
+/// Thread-safe column mapping built from schema/table rules.
+pub struct Mapping {
+    state: Mutex<MappingState>,
+    case_sensitive: bool,
 }
 
 impl Mapping {
@@ -235,20 +251,23 @@ impl Mapping {
     ///
     /// Returns an error if any rule is invalid or conflicts on insertion.
     pub fn new(case_sensitive: bool, rules: &[Rule]) -> Result<Self, ColumnMappingError> {
-        let mut m = Mapping {
-            selector: TrieSelector::new(),
+        let mapping = Mapping {
+            state: Mutex::new(MappingState {
+                selector: TrieSelector::new(),
+                cache: HashMap::new(),
+            }),
             case_sensitive,
-            cache: HashMap::new(),
         };
         for rule in rules {
-            m.add_rule(rule.clone())
-                .map_err(|e| e.annotate(&format!("initial rule {rule:?} in mapping")))?;
+            mapping
+                .add_rule(rule.clone())
+                .map_err(|error| error.annotate(&format!("initial rule {rule:?} in mapping")))?;
         }
-        Ok(m)
+        Ok(mapping)
     }
 
     fn add_or_update_rule(
-        &mut self,
+        &self,
         mut rule: Rule,
         is_update: bool,
     ) -> Result<(), ColumnMappingError> {
@@ -258,21 +277,23 @@ impl Mapping {
         }
         rule.adjust();
 
-        self.reset_cache();
         let insert_type = if is_update {
             InsertType::Replace
         } else {
             InsertType::Insert
         };
         let (schema, table) = (rule.pattern_schema.clone(), rule.pattern_table.clone());
-        let rule_dbg = format!("{rule:?}");
-        let result = self
-            .selector
-            .insert(&schema, &table, Some(Rc::new(rule)), insert_type);
-        if let Err(e) = result {
+        let rule_debug = format!("{rule:?}");
+        let mut state = self.state();
+        state.cache.clear();
+        if let Err(error) =
+            state
+                .selector
+                .insert(&schema, &table, Some(Arc::new(rule)), insert_type)
+        {
             let method = if is_update { "update" } else { "add" };
-            let ce = ColumnMappingError::new(e.to_string());
-            return Err(ce.annotate(&format!("{method} rule {rule_dbg} into mapping")));
+            return Err(ColumnMappingError::new(error.to_string())
+                .annotate(&format!("{method} rule {rule_debug} into mapping")));
         }
         Ok(())
     }
@@ -282,7 +303,7 @@ impl Mapping {
     /// # Errors
     ///
     /// Propagates validation or insertion errors.
-    pub fn add_rule(&mut self, rule: Rule) -> Result<(), ColumnMappingError> {
+    pub fn add_rule(&self, rule: Rule) -> Result<(), ColumnMappingError> {
         self.add_or_update_rule(rule, false)
     }
 
@@ -291,7 +312,7 @@ impl Mapping {
     /// # Errors
     ///
     /// Propagates validation or insertion errors.
-    pub fn update_rule(&mut self, rule: Rule) -> Result<(), ColumnMappingError> {
+    pub fn update_rule(&self, rule: Rule) -> Result<(), ColumnMappingError> {
         self.add_or_update_rule(rule, true)
     }
 
@@ -300,75 +321,76 @@ impl Mapping {
     /// # Errors
     ///
     /// Propagates removal errors from the selector.
-    pub fn remove_rule(&mut self, mut rule: Rule) -> Result<(), ColumnMappingError> {
+    pub fn remove_rule(&self, mut rule: Rule) -> Result<(), ColumnMappingError> {
         if !self.case_sensitive {
             rule.to_lower();
         }
-        self.reset_cache();
-        self.selector
+        let mut state = self.state();
+        state.cache.clear();
+        state
+            .selector
             .remove(&rule.pattern_schema, &rule.pattern_table)
-            .map_err(|e| {
-                ColumnMappingError::new(e.to_string())
+            .map_err(|error| {
+                ColumnMappingError::new(error.to_string())
                     .annotate(&format!("remove rule {rule:?} from mapping"))
             })
     }
 
     /// Handles a row value, rewriting the target column per the matched rule.
-    /// Returns the (possibly rewritten) values and the `[source, target]`
-    /// positions (or `None` when the table is ignored / unmatched).
+    /// Returns the values and the `[source, target]` positions, or `None` when
+    /// the table is ignored or unmatched.
     ///
     /// # Errors
     ///
     /// Returns an error on ambiguous rules or an inapplicable value type.
     pub fn handle_row_value(
-        &mut self,
+        &self,
         schema: &str,
         table: &str,
         columns: &[&str],
-        mut vals: Vec<Value>,
+        mut values: Vec<Value>,
     ) -> Result<(Vec<Value>, Option<Vec<i64>>), ColumnMappingError> {
-        let (schema_l, table_l) = self.normalize(schema, table);
-
-        let info = self.query_column_info(&schema_l, &table_l, columns)?;
+        let (schema, table) = self.normalize(schema, table);
+        let info = self.query_column_info(&schema, &table, columns)?;
         if info.ignore {
-            return Ok((vals, None));
+            return Ok((values, None));
         }
 
-        let rule = info.rule.clone().expect("a non-ignored info has a rule");
-        let target = info.target_position;
+        let rule = info.rule.as_ref().expect("a matched mapping has a rule");
         match rule.expression.as_str() {
-            ADD_PREFIX => add_prefix(&rule, target, &mut vals)?,
-            ADD_SUFFIX => add_suffix(&rule, target, &mut vals)?,
-            PARTITION_ID => partition_id(&info, &mut vals)?,
-            other => return Err(not_found(format!("column mapping expression {other}"))),
+            ADD_PREFIX => add_prefix(rule, info.target_position, &mut values)?,
+            ADD_SUFFIX => add_suffix(rule, info.target_position, &mut values)?,
+            PARTITION_ID => partition_id(&info, &mut values)?,
+            expression => return Err(not_found(format!("column mapping expression {expression}"))),
         }
 
-        Ok((vals, Some(vec![info.source_position, info.target_position])))
+        Ok((
+            values,
+            Some(vec![info.source_position, info.target_position]),
+        ))
     }
 
-    /// Handles a DDL statement. Ignored/unmatched tables pass the statement
-    /// through; a matched table is a not-yet-implemented error, matching Go.
+    /// Passes unmatched DDL through and rejects matched DDL because DDL column
+    /// rewriting is not implemented by this package.
     ///
     /// # Errors
     ///
-    /// Returns an error for a matched table (DDL column mapping is unimplemented)
-    /// or an ambiguous rule.
+    /// Returns an error for a matched table or an ambiguous rule.
     pub fn handle_ddl(
-        &mut self,
+        &self,
         schema: &str,
         table: &str,
         columns: &[&str],
         statement: &str,
     ) -> Result<(String, Option<Vec<i64>>), ColumnMappingError> {
-        let (schema_l, table_l) = self.normalize(schema, table);
-
-        let info = self.query_column_info(&schema_l, &table_l, columns)?;
+        let (normalized_schema, normalized_table) = self.normalize(schema, table);
+        let info = self.query_column_info(&normalized_schema, &normalized_table, columns)?;
         if info.ignore {
             return Ok((statement.to_string(), None));
         }
 
         self.reset_cache();
-        let rule = info.rule.expect("a non-ignored info has a rule");
+        let rule = info.rule.expect("a matched mapping has a rule");
         Err(ColumnMappingError::new(format!(
             "ddl {statement} @ column mapping rule {schema}/{table}:{rule:?} not implemented"
         )))
@@ -383,27 +405,26 @@ impl Mapping {
     }
 
     fn query_column_info(
-        &mut self,
+        &self,
         schema: &str,
         table: &str,
         columns: &[&str],
     ) -> Result<MappingInfo, ColumnMappingError> {
         let key = table_name(schema, table);
-        if let Some(ci) = self.cache.get(&key) {
-            return Ok(ci.clone());
+        let mut state = self.state();
+        if let Some(info) = state.cache.get(&key) {
+            return Ok(info.clone());
         }
 
-        let rules = self.selector.match_rules(schema, table);
+        let rules = state.selector.match_rules(schema, table);
         if rules.is_empty() {
             let info = MappingInfo::ignored();
-            self.cache.insert(key, info.clone());
+            state.cache.insert(key, info.clone());
             return Ok(info);
         }
 
-        // Classify rules into schema-level and table-level; table-level rules
-        // have the highest priority.
-        let mut schema_rules: Vec<Rc<Rule>> = Vec::new();
-        let mut table_rules: Vec<Rc<Rule>> = Vec::with_capacity(1);
+        let mut schema_rules = Vec::<Arc<Rule>>::new();
+        let mut table_rules = Vec::<Arc<Rule>>::with_capacity(1);
         for rule in rules {
             if rule.pattern_table.is_empty() {
                 schema_rules.push(rule);
@@ -412,7 +433,6 @@ impl Mapping {
             }
         }
 
-        // Only one expression per table is supported for now.
         let rule = if table.is_empty() || table_rules.is_empty() {
             if schema_rules.len() != 1 {
                 return Err(not_supported(format!(
@@ -435,12 +455,11 @@ impl Mapping {
         let target_position = find_column_position(columns, &rule.target_column);
         let (source_position, target_position) =
             rule.adjust_column_position(source_position, target_position)?;
-
         let mut info = MappingInfo {
             ignore: false,
             source_position,
             target_position,
-            rule: Some(Rc::clone(&rule)),
+            rule: Some(Arc::clone(&rule)),
             instance_id: 0,
             schema_id: 0,
             table_id: 0,
@@ -453,12 +472,23 @@ impl Mapping {
             info.table_id = table_id;
         }
 
-        self.cache.insert(key, info.clone());
+        state.cache.insert(key, info.clone());
         Ok(info)
     }
 
-    fn reset_cache(&mut self) {
-        self.cache = HashMap::new();
+    fn reset_cache(&self) {
+        self.state().cache.clear();
+    }
+
+    fn state(&self) -> MutexGuard<'_, MappingState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    #[cfg(test)]
+    fn cache_len(&self) -> usize {
+        self.state().cache.len()
     }
 }
 
@@ -508,7 +538,7 @@ fn partition_id(info: &MappingInfo, vals: &mut [Value]) -> Result<(), ColumnMapp
         }
     };
 
-    let max_origin_id = MAX_ORIGIN_ID.load(Ordering::Relaxed);
+    let max_origin_id = partition_rule().max_origin_id;
     if origin_id >= max_origin_id || origin_id < 0 {
         return Err(not_valid(format!(
             "id must less than {max_origin_id}, greater than or equal to 0, but got {origin_id}, which"
@@ -529,9 +559,10 @@ fn compute_partition_id(
     table: &str,
     rule: &Rule,
 ) -> Result<(i64, i64, i64), ColumnMappingError> {
-    let instance_bits = INSTANCE_ID_BIT_SIZE.load(Ordering::Relaxed);
-    let schema_bits = SCHEMA_ID_BIT_SIZE.load(Ordering::Relaxed);
-    let table_bits = TABLE_ID_BIT_SIZE.load(Ordering::Relaxed);
+    let partition_rule = partition_rule();
+    let instance_bits = partition_rule.instance_id_bits;
+    let schema_bits = partition_rule.schema_id_bits;
+    let table_bits = partition_rule.table_id_bits;
 
     let mut shift_cnt: u32 = 63;
     let mut instance_id = 0_i64;
@@ -598,10 +629,8 @@ fn parse_uint(s: &str, bit_size: usize) -> Result<u64, ColumnMappingError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    // Serializes tests that mutate the process-global partition-bit config,
-    // which Go runs sequentially within one package.
+    // Partition sizing is process-wide, so tests that change it are serialized.
     static PARTITION_LOCK: Mutex<()> = Mutex::new(());
 
     fn rule(
@@ -624,7 +653,6 @@ mod tests {
         }
     }
 
-    // Go `TestRule`.
     #[test]
     fn rule_validity() {
         let mut r = rule("test*", "abc*", "id", "id", "Error", &[], "xxx");
@@ -647,7 +675,6 @@ mod tests {
         assert!(r.valid().is_ok());
     }
 
-    // Go `TestHandle`.
     #[test]
     fn handle() {
         let rules = [rule(
@@ -659,8 +686,8 @@ mod tests {
             &["instance_id:"],
             "xx",
         )];
-        let mut m = Mapping::new(false, &rules).unwrap();
-        assert_eq!(m.cache.len(), 0);
+        let m = Mapping::new(false, &rules).unwrap();
+        assert_eq!(m.cache_len(), 0);
 
         let (vals, poss) = m
             .handle_row_value(
@@ -708,7 +735,45 @@ mod tests {
         assert_eq!(poss, None);
     }
 
-    // Go `TestQueryColumnInfo`.
+    #[test]
+    fn rule_lifecycle_and_table_priority() {
+        let schema_rule = rule("db*", "", "", "id", ADD_PREFIX, &["schema:"], "");
+        let table_rule = rule("db*", "special", "", "id", ADD_SUFFIX, &["-table"], "");
+        let mapping = Mapping::new(false, &[schema_rule.clone(), table_rule.clone()]).unwrap();
+
+        let (values, _) = mapping
+            .handle_row_value("DB1", "special", &["id"], vec![Value::Str("7".into())])
+            .unwrap();
+        assert_eq!(values, vec![Value::Str("7-table".into())]);
+
+        let (values, _) = mapping
+            .handle_row_value("DB1", "other", &["id"], vec![Value::Str("7".into())])
+            .unwrap();
+        assert_eq!(values, vec![Value::Str("schema:7".into())]);
+
+        mapping
+            .update_rule(rule(
+                "db*",
+                "special",
+                "",
+                "id",
+                ADD_PREFIX,
+                &["table:"],
+                "",
+            ))
+            .unwrap();
+        let (values, _) = mapping
+            .handle_row_value("DB1", "special", &["id"], vec![Value::Str("7".into())])
+            .unwrap();
+        assert_eq!(values, vec![Value::Str("table:7".into())]);
+
+        mapping.remove_rule(table_rule).unwrap();
+        let (values, _) = mapping
+            .handle_row_value("DB1", "special", &["id"], vec![Value::Str("7".into())])
+            .unwrap();
+        assert_eq!(values, vec![Value::Str("schema:7".into())]);
+    }
+
     #[test]
     fn query_column_info_partition() {
         let _guard = PARTITION_LOCK.lock().unwrap();
@@ -722,7 +787,7 @@ mod tests {
             &["8", "test_", "xxx_"],
             "xx",
         )];
-        let mut m = Mapping::new(false, &rules).unwrap();
+        let m = Mapping::new(false, &rules).unwrap();
 
         let info = m
             .query_column_info("test_2", "t_1", &["id", "name"])
@@ -748,24 +813,32 @@ mod tests {
         assert_eq!(info.table_id, 1 << 60);
     }
 
-    // Go `TestSetPartitionRule`.
     #[test]
     fn set_partition_rule_updates_config() {
         let _guard = PARTITION_LOCK.lock().unwrap();
         set_partition_rule(4, 7, 8);
-        assert_eq!(INSTANCE_ID_BIT_SIZE.load(Ordering::Relaxed), 4);
-        assert_eq!(SCHEMA_ID_BIT_SIZE.load(Ordering::Relaxed), 7);
-        assert_eq!(TABLE_ID_BIT_SIZE.load(Ordering::Relaxed), 8);
-        assert_eq!(MAX_ORIGIN_ID.load(Ordering::Relaxed), 1 << 44);
+        assert_eq!(
+            partition_rule(),
+            PartitionRule {
+                instance_id_bits: 4,
+                schema_id_bits: 7,
+                table_id_bits: 8,
+                max_origin_id: 1 << 44,
+            }
+        );
 
         set_partition_rule(0, 3, 4);
-        assert_eq!(INSTANCE_ID_BIT_SIZE.load(Ordering::Relaxed), 0);
-        assert_eq!(SCHEMA_ID_BIT_SIZE.load(Ordering::Relaxed), 3);
-        assert_eq!(TABLE_ID_BIT_SIZE.load(Ordering::Relaxed), 4);
-        assert_eq!(MAX_ORIGIN_ID.load(Ordering::Relaxed), 1 << 56);
+        assert_eq!(
+            partition_rule(),
+            PartitionRule {
+                instance_id_bits: 0,
+                schema_id_bits: 3,
+                table_id_bits: 4,
+                max_origin_id: 1 << 56,
+            }
+        );
     }
 
-    // Go `TestComputePartitionID`.
     #[test]
     fn compute_partition_id_vectors() {
         let _guard = PARTITION_LOCK.lock().unwrap();
@@ -827,7 +900,6 @@ mod tests {
         assert_eq!((i, s, t), (2 << 59, 1 << 52, 0));
     }
 
-    // Go `TestPartitionID`.
     #[test]
     fn partition_id_vectors() {
         let _guard = PARTITION_LOCK.lock().unwrap();
@@ -863,7 +935,6 @@ mod tests {
         );
     }
 
-    // Go `TestCaseSensitive`.
     #[test]
     fn case_sensitive() {
         let rules = [rule(
@@ -875,8 +946,8 @@ mod tests {
             &["instance_id:"],
             "xx",
         )];
-        let mut m = Mapping::new(true, &rules).unwrap();
-        assert_eq!(m.cache.len(), 0);
+        let m = Mapping::new(true, &rules).unwrap();
+        assert_eq!(m.cache_len(), 0);
 
         let (vals, poss) = m
             .handle_row_value(
@@ -888,5 +959,79 @@ mod tests {
             .unwrap();
         assert_eq!(vals, vec![Value::Int(1), Value::Str("1".into())]);
         assert_eq!(poss, None);
+    }
+
+    #[test]
+    fn rule_uses_public_config_field_names() {
+        let rule = rule(
+            "db*",
+            "table*",
+            "source",
+            "target",
+            ADD_SUFFIX,
+            &["-archive"],
+            "create table target(id bigint)",
+        );
+        let encoded = serde_json::to_value(&rule).unwrap();
+        assert_eq!(
+            encoded,
+            serde_json::json!({
+                "schema-pattern": "db*",
+                "table-pattern": "table*",
+                "source-column": "source",
+                "target-column": "target",
+                "expression": "add suffix",
+                "arguments": ["-archive"],
+                "create-table-query": "create table target(id bigint)",
+            })
+        );
+        assert_eq!(serde_json::from_value::<Rule>(encoded).unwrap(), rule);
+    }
+
+    #[test]
+    fn mapping_supports_concurrent_callers() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Mapping>();
+
+        let mapping = Arc::new(
+            Mapping::new(
+                false,
+                &[rule(
+                    "db*",
+                    "table*",
+                    "",
+                    "id",
+                    ADD_PREFIX,
+                    &["tenant:"],
+                    "",
+                )],
+            )
+            .unwrap(),
+        );
+        let start = Arc::new(std::sync::Barrier::new(8));
+        let threads = (0..8)
+            .map(|_| {
+                let mapping = Arc::clone(&mapping);
+                let start = Arc::clone(&start);
+                std::thread::spawn(move || {
+                    start.wait();
+                    for id in 0..128 {
+                        let (values, positions) = mapping
+                            .handle_row_value(
+                                "DB1",
+                                "TABLE1",
+                                &["id"],
+                                vec![Value::Str(id.to_string())],
+                            )
+                            .unwrap();
+                        assert_eq!(values, vec![Value::Str(format!("tenant:{id}"))]);
+                        assert_eq!(positions, Some(vec![-1, 0]));
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        for thread in threads {
+            thread.join().unwrap();
+        }
     }
 }
