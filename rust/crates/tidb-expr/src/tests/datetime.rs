@@ -185,12 +185,17 @@ fn test_current_time() {
 }
 
 #[test]
-fn utc_date_time_timestamp() {
+fn test_utc_date() {
+    let clock = FixedClock(1_700_000_000, 654_321_000, 19_800);
+    assert_eq!(e_at("utc_date()", &clock), "STR:2023-11-14");
+}
+
+#[test]
+fn utc_timestamp_rounding() {
     // The RAW UTC clock, ignoring `time_zone` entirely -- with a
     // nonzero offset, `UTC_TIMESTAMP()` still reports the SAME value
     // it would at offset 0 (confirmed via `gorun`).
     let clock = FixedClock(1_700_000_000, 654_321_000, 19_800);
-    assert_eq!(e_at("utc_date()", &clock), "STR:2023-11-14");
     // UTC_TIMESTAMP() ALWAYS ROUNDS (ties away from zero), for BOTH
     // the 0-arg and explicit-arg forms alike -- unlike NOW's uniform
     // truncation, and unlike CURTIME/UTC_TIME's 0-arg/explicit-arg
@@ -212,6 +217,11 @@ fn utc_date_time_timestamp() {
     );
     // Signed precision is a parse error in Go's FuncDatetimePrecListOpt.
     assert!(tidb_parser::parse("select utc_timestamp(-2)").is_err());
+}
+
+#[test]
+fn test_utc_time() {
+    let clock = FixedClock(1_700_000_000, 654_321_000, 19_800);
     // UTC_TIME has the SAME 0-arg-truncates/explicit-arg-rounds split
     // as CURTIME.
     assert_eq!(e_at("utc_time()", &clock), "STR:22:13:20");
