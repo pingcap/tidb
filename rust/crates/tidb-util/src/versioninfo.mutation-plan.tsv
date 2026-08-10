@@ -1,7 +1,0 @@
-# pkg-versioninfo-mutation-plan-v1
-suite_id	source_owners	mutation_count	source_file	named_tests	rules
-P001-community-edition	CommunityEdition	1	rust/crates/tidb-util/src/versioninfo.rs	versioninfo::tests::source_storage_class_and_override_boundaries_are_exact	default Community edition literal
-P002-declined-variables	TiDBBuildTS,TiDBEdition,TiDBEnterpriseExtensionGitHash,TiDBGitBranch,TiDBGitHash	5	rust/crates/tidb-util/src/versioninfo.inventory.tsv	pkg-versioninfo-lockdown.py	per-variable DECLINED status, absent Rust owner, and measured evidence
-P003-source-drift	versioninfo.go	1	pkg/util/versioninfo/versioninfo.go	pkg-versioninfo-lockdown.py	Go production source hash and AST set
-P004-build-drift	BUILD.bazel	1	pkg/util/versioninfo/BUILD.bazel	pkg-versioninfo-lockdown.py	Bazel artifact hash
-P005-symbol-gate	COMMUNITY_EDITION	1	rust/crates/tidb-util/src/versioninfo.rs	versioninfo::tests::lockdown_inventory_matches_go_source_and_rust_symbols	compiled constant owner

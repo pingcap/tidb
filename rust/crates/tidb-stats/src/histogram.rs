@@ -1429,23 +1429,6 @@ mod tests {
     }
 
     #[test]
-    fn lockdown_private_histogram_symbols_compile() {
-        let _ = std::mem::size_of::<BucketForMerging>();
-        let _ = <BucketForMerging as Clone>::clone;
-        let _ = BucketForMerging::from_histogram;
-        let _ = BucketForMerging::from_topn;
-        let _ = Histogram::merge_neighbor_buckets;
-        let _ = Histogram::pop_first_bucket;
-        let _ = Histogram::update_last_bucket;
-        let _ = buckets_are_sorted;
-        let _ = merge_bucket_ndv;
-        let _ = merge_partition_buckets;
-        let _ = sort_buckets_by_upper_bound;
-        let _ = merge_bucket;
-        let _ = source_merge_bucket_ndv_matches_all_go_cases;
-    }
-
-    #[test]
     fn calc_fraction_matches_edge_cases() {
         assert_eq!(calc_fraction(0.0, 0.0, 5.0), 0.5);
         assert_eq!(calc_fraction(0.0, 10.0, -1.0), 0.0);

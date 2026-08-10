@@ -90,12 +90,6 @@ pub(crate) struct FromScope {
     pub(crate) qualified_star_is_output_only: bool,
 }
 
-#[cfg(test)]
-pub(crate) fn find_best_task_compile_anchors() -> &'static [&'static str] {
-    let _ = build_from;
-    &["driver::from::build_from"]
-}
-
 impl Default for FromScope {
     /// An empty scope in UTC -- the same zone a fresh session's
     /// `StmtContext` answers before any `SET time_zone`. Statement build

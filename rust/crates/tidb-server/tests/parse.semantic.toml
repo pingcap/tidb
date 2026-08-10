@@ -1,0 +1,30 @@
+schema = "semantic-package-gate-v3"
+claim = "package-seed"
+go_package = "pkg/server"
+source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
+accepted_go_files = [
+  "pkg/server/BUILD.bazel",
+  "pkg/server/conn_test.go",
+  "pkg/server/internal/parse/BUILD.bazel",
+  "pkg/server/internal/parse/handshake_test.go",
+  "pkg/server/internal/parse/parse.go",
+  "pkg/server/internal/parse/parse_test.go",
+]
+rust_files = [
+  "rust/crates/tidb-protocol/src/prepared_statement.rs",
+  "rust/crates/tidb-protocol/tests/prepared_statement_protocol_source.rs",
+  "rust/crates/tidb-server/src/handshake.rs",
+  "rust/crates/tidb-server/src/handshake_response.rs",
+  "rust/crates/tidb-server/src/lib.rs",
+  "rust/crates/tidb-server/tests/parse_go_source.rs",
+]
+
+[[tests]]
+name = "server_parse_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "parse_go_source"]
+
+[[tests]]
+name = "prepared_fetch_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "prepared_statement_protocol_source"]

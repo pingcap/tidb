@@ -1,5 +1,0 @@
-# pkg-texttree-semantic-divergences-v1
-id	source_contract	status	rust_boundary	evidence	mutation_policy
-S01	Indent4Child []rune conversion replaces invalid UTF-8	DECLINED	&str excludes invalid UTF-8	go-oracle:indent_true_invalid:efbfbd20efbfbde2948220	classification-evidence-gate
-S02	PrettyIdentifier []rune(indent) replaces invalid UTF-8	DECLINED	&str excludes invalid UTF-8	go-oracle:pretty_invalid_indent:efbfbde2949ce29480e6a087	classification-evidence-gate
-S03	PrettyIdentifier preserves invalid UTF-8 bytes in id	DECLINED	&str excludes invalid UTF-8	go-oracle:pretty_invalid_id_nonempty_indent:e2949ce29480ff	classification-evidence-gate

@@ -1,9 +1,0 @@
-# pkg-paging-mutation-plan-v1
-suite_id	source_owners	mutation_count	source_file	named_tests	rules
-P001-constants	MinPagingSize,maxPagingSizeShift,pagingSizeGrow,MinAllowedMaxPagingSize,pagingGrowingSum,Threshold	6	rust/crates/tidb-util/src/paging.rs	paging::tests::paging_lockdown_inventory_is_complete_and_symbols_compile	each Go constant value and compiled Rust anchor
-P002-grow-rules	GrowPagingSize	4	rust/crates/tidb-util/src/paging.rs	paging::tests::grow_paging_size_preserves_source_wrapping_and_cap_order	minimum max normalization, wrapping double, cap result, uncapped result
-P003-seek-rules	CalculateSeekCnt	5	rust/crates/tidb-util/src/paging.rs	paging::tests::calculate_seek_cnt_preserves_source_piecewise_boundaries; paging::tests::calculate_seek_cnt_preserves_source_ceil_addition_wrap	zero, excess threshold, wrapped ceiling, logarithmic region, base result
-P004-go-test-mapping	TestGrowPagingSize,TestCalculateSeekCnt	2	rust/crates/tidb-util/src/paging.inventory.tsv	pkg-paging-lockdown.py --inventory-only	original Go test and assertion evidence rows
-P005-declined-support	TestMain	5	rust/crates/tidb-util/src/paging.inventory.tsv	pkg-paging-lockdown.py --inventory-only	TestMain and each Go-only leak-exemption row retain individual decline evidence
-P006-artifact-drift	BUILD.bazel,main_test.go,paging.go,paging_test.go	4	pkg/util/paging/BUILD.bazel|pkg/util/paging/main_test.go|pkg/util/paging/paging.go|pkg/util/paging/paging_test.go	pkg-paging-lockdown.py --inventory-only	every direct package artifact hash and AST boundary
-P007-symbol-gate	MIN_PAGING_SIZE,grow_paging_size	2	rust/crates/tidb-util/src/paging.rs	paging::tests::paging_lockdown_inventory_is_complete_and_symbols_compile	compiled constant and function owners

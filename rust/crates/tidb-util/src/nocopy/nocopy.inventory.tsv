@@ -1,5 +1,0 @@
-# pkg-nocopy-obligations-v1
-obligation_id	category	source_path	ast_anchor	node_sha256	owner	status	rust_symbol	evidence	mutation_policy
-O89cc0e5c3bc2b2fc	function	pkg/util/nocopy/nocopy.go	NoCopy.Lock	68c515f82c8ec56c30833d428bae4214f78a7ada86af7f110938c9a0a6e42f91	NoCopy.Lock	PORTED	NoCopy::lock	rust-test:source_zero_value_and_no_op_methods_are_preserved	compile-owner-gate
-Od6e7e51a7cb0c1ea	function	pkg/util/nocopy/nocopy.go	NoCopy.Unlock	68c515f82c8ec56c30833d428bae4214f78a7ada86af7f110938c9a0a6e42f91	NoCopy.Unlock	PORTED	NoCopy::unlock	rust-test:source_zero_value_and_no_op_methods_are_preserved	compile-owner-gate
-O53ed46421eb99d84	declaration	pkg/util/nocopy/nocopy.go	type:NoCopy	d96dad7150a73c3382d54ab1fde2beeaebf37dfe2d6a524e34743772868319be	type:NoCopy	PORTED	NoCopy	rust-test:source_zero_value_and_no_op_methods_are_preserved	compile-owner-gate

@@ -1,0 +1,12 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/zeropool"
+source_commit = "e67e11b83b50a0a13ff59c80e6f524558585f48c"
+rust_files = [
+  "rust/crates/tidb-util/src/zeropool/mod.rs",
+]
+
+[[tests]]
+name = "zeropool_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib"]

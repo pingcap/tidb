@@ -366,7 +366,3 @@ fn deserialize_go_time<'de, D: serde::Deserializer<'de>>(
         .map(|value| value.with_timezone(&Utc))
         .map_err(serde::de::Error::custom)
 }
-
-#[cfg(test)]
-#[path = "meta_go_lockdown.rs"]
-mod meta_go_lockdown;

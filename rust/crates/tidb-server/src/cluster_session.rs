@@ -439,7 +439,7 @@ pub(crate) fn kv_index(
             (
                 column.name.lowercase().to_owned(),
                 column.name.original().to_owned(),
-                i64::from(column.length),
+                column.length,
             )
         };
         let offset = columns

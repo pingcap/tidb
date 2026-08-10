@@ -1,9 +1,0 @@
-# pkg-intset-mutation-plan-v1
-suite_id	source_owners	mutation_count	source_file	named_tests	rules
-P001-representation	NewFastIntSet,Len,Only1Zero,Insert,toLarge,Next,Remove,Clear,Has,IsEmpty,SortedArray,ForEach,Copy,CopyFrom,Equals,largeToSmall,GetSmallUInt64	5	rust/crates/tidb-util/src/intset.rs	source_bitmap_transition_contracts|source_max_int_sentinel_contract|source_copy_from_preserves_go_representation|source_range_and_error_contracts	bitmap cutoff, persistent large representation, MaxInt sentinel, copy representation, exact diagnostic
-P002-set-algebra	Difference,DifferenceWith,Union,UnionWith,Intersection,IntersectionWith,Intersects,SubsetOf	3	rust/crates/tidb-util/src/intset.rs	source_mixed_representation_set_algebra|two_set_ops	mixed representation equality, subset, union, intersection, difference
-P003-shift-overflow	Shift	3	rust/crates/tidb-util/src/intset.rs	source_shift_wraps_like_go_int|two_set_ops	positive and negative fast paths, MinInt negation, wrapping addition
-P004-range-errors	AddRange	3	rust/crates/tidb-util/src/intset.rs	source_range_and_error_contracts|source_invalid_range_panic_text|add_range	inclusive range, full bitmap, invalid range panic
-P005-string-format	String	2	rust/crates/tidb-util/src/intset.rs	source_string_pair_and_sentinel_contracts|string_format	negative singleton, pair, coalesced range, MaxInt sentinel
-P006-source-drift	package-artifact-and-AST-set	1	pkg/util/intset/fast_int_set.go	pkg-intset-lockdown.py	Go artifact hash and content-addressed AST drift
-P007-symbol-gate	FastIntSet.Shift	1	rust/crates/tidb-util/src/intset.rs	intset_lockdown_inventory_and_symbols	compiled Rust production owner disappearance

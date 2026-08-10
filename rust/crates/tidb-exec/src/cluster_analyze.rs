@@ -333,7 +333,7 @@ fn cluster_analyze_plan(table: &TableInfo) -> Result<AnalyzePlan, AnalyzeError> 
         let mut column_positions = Vec::with_capacity(index.columns.len());
         for index_column in index.columns.iter_deref() {
             let index_column = index_column.read();
-            if i64::from(index_column.length) != UNSPECIFIED_LENGTH {
+            if index_column.length != UNSPECIFIED_LENGTH {
                 return Err(AnalyzeError::unsupported(format!(
                     "this node does not analyze the prefix index `{}` on `{}`: its sampled \
                      value is each column value cut to the prefix, which it does not cut",

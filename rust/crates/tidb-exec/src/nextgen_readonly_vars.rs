@@ -12,13 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! LOCKDOWN owner for Go `pkg/sessionctx/vardef/runtime.go`.
-//!
-//! `nextgen_readonly_vars.inventory.tsv` classifies every declaration,
-//! function, and branch in that source. The read-only-variable predicate is
-//! ported here. The source's three process-global leases are explicitly
-//! declined: Rust owns the schema lease in `tidb-server::NodeConfig` and has no
-//! stats reload or plan-replayer GC worker to consume the other two leases.
+//! Native implementation of the next-generation read-only-variable predicate
+//! from Go `pkg/sessionctx/vardef/runtime.go`.
 
 /// Variable names treated as read-only by the next-generation kernel.
 pub const NEXTGEN_READ_ONLY_VARIABLES: &[&str] = &[

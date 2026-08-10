@@ -1,0 +1,17 @@
+schema = "semantic-package-gate-v3"
+claim = "package-seed"
+go_package = "pkg/sessionctx/vardef"
+source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
+accepted_go_files = [
+  "pkg/sessionctx/vardef/runtime.go",
+  "pkg/sessionctx/vardef/runtime_test.go",
+]
+rust_files = [
+  "rust/crates/tidb-exec/src/nextgen_readonly_vars.rs",
+  "rust/crates/tidb-exec/tests/nextgen_readonly_vars_source.rs",
+]
+
+[[tests]]
+name = "nextgen_readonly_variable_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-exec", "--test", "all", "nextgen_readonly_vars_source"]

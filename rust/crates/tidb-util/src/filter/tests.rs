@@ -29,7 +29,6 @@ fn rules(
         ignore_dbs: ignore_dbs.iter().map(|s| (*s).to_owned()).collect(),
         do_tables: do_tables.iter().map(|(s, n)| t(s, n)).collect(),
         ignore_tables: ignore_tables.iter().map(|(s, n)| t(s, n)).collect(),
-        ..Default::default()
     }
 }
 

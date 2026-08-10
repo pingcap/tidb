@@ -1,0 +1,12 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/texttree"
+source_commit = "b66916d368a22d24e4b6b8713372edb572915f06"
+rust_files = [
+  "rust/crates/tidb-util/src/texttree.rs",
+]
+
+[[tests]]
+name = "texttree_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib"]

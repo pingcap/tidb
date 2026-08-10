@@ -14,9 +14,8 @@
 
 //! `pkg/meta/model`: TiDB schema/table metadata types.
 //!
-//! The Go-package seed is tracked by
-//! `tests/pkg_meta_model_lockdown.{toml,receipt.json}`. Individual modules are
-//! not independent whole-package completion claims.
+//! The Go-package seed is tracked by `tests/pkg_meta_model.semantic.toml`.
+//! Individual modules are not independent whole-package completion claims.
 
 pub mod action_type;
 pub mod bdr;
@@ -32,20 +31,14 @@ pub mod history;
 pub mod index;
 pub mod job;
 pub mod job_args;
-#[cfg(test)]
-mod job_args_go_inventory;
 mod job_args_json;
 pub mod job_enums;
 mod job_json;
 pub mod masking_policy;
-#[cfg(test)]
-mod masking_policy_go_inventory;
 pub mod partition;
 pub mod placement;
 pub mod reorg;
 pub mod resource_group;
-#[cfg(test)]
-mod resource_group_go_inventory;
 pub mod schema_diff;
 pub mod schema_state;
 pub mod serde_helpers;

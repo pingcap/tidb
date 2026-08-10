@@ -1,0 +1,12 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/slice"
+source_commit = "3bc65f2096f2b888f4119f04e45034c8f16f53ab"
+rust_files = [
+  "rust/crates/tidb-util/src/slice.rs",
+]
+
+[[tests]]
+name = "slice_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib"]

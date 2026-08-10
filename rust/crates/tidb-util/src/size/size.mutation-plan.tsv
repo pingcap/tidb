@@ -1,7 +1,0 @@
-# pkg-size-mutation-plan-v1
-suite_id	source_owners	mutation_count	source_file	named_tests	rules
-P001-unit-chain	KB,MB,GB,TB,PB	5	rust/crates/tidb-util/src/size/mod.rs	size::tests::source_constant_table_is_exact_for_the_target_word_size	binary unit constants
-P002-abi-sizes	SizeOfSlice,SizeOfByte,SizeOfString,SizeOfBool,SizeOfPointer,SizeOfInterface,SizeOfFloat64,SizeOfUint64,SizeOfInt32,SizeOfInt,SizeOfUint8,SizeOfUint,SizeOfFunc,SizeOfInt64,SizeOfMap	15	rust/crates/tidb-util/src/size/mod.rs	size::tests::source_constant_table_is_exact_for_the_target_word_size	target-width Go ABI constants
-P003-inventory-drift	inventory	1	rust/crates/tidb-util/src/size/size.inventory.tsv	size::tests::lockdown_inventory_matches_go_source_and_rust_symbols	ported status and owner map
-P004-artifact-drift	package-artifacts	2	pkg/util/size/size.go|pkg/util/size/BUILD.bazel	pkg-size-lockdown.py	Go source and Bazel artifact hashes
-P005-symbol-gate	SIZE_OF_MAP	1	rust/crates/tidb-util/src/size/mod.rs	size::tests::lockdown_inventory_matches_go_source_and_rust_symbols	compiled constant owner

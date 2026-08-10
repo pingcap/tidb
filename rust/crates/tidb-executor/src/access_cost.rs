@@ -1809,18 +1809,6 @@ pub(crate) fn choose_access_path(
 }
 
 #[cfg(test)]
-pub(crate) fn find_best_task_compile_anchors() -> &'static [&'static str] {
-    let _ = choose_access_path;
-    let _ = enumerate_paths;
-    let _ = split_index_filter_conditions;
-    &[
-        "access_cost::choose_access_path",
-        "access_cost::enumerate_paths",
-        "access_cost::split_index_filter_conditions",
-    ]
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
     use crate::kv_table::KvColumn;

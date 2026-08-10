@@ -1966,22 +1966,6 @@ fn order_is_index_order(
 }
 
 #[cfg(test)]
-pub(crate) fn find_best_task_compile_anchors() -> &'static [&'static str] {
-    let _ = commit_index_range_source;
-    let _ = install_contradiction_dual;
-    let _ = negotiate_scan_filter;
-    let _ = try_batch_point_get;
-    let _ = try_point_get;
-    &[
-        "driver::access::commit_index_range_source",
-        "driver::access::install_contradiction_dual",
-        "driver::access::negotiate_scan_filter",
-        "driver::access::try_batch_point_get",
-        "driver::access::try_point_get",
-    ]
-}
-
-#[cfg(test)]
 mod find_best_task_property_tests {
     use super::*;
 

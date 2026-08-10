@@ -1,5 +1,0 @@
-# pkg-util-ranger-detacher-file-lockdown-artifacts-v1
-path	role	sha256	bytes	lines
-pkg/util/ranger/detacher.go	production-owner	9d593ac6690d99288efcecf5e25de6582f8dc090504c515c363bbe9ccdc0817f	63757	1616
-pkg/util/ranger/ranger_test.go	direct-test-and-helper-support	5be676a3ef5191a419c3a5288bcc20fd5db34637e259ac7ab7537c74e481c9ed	98056	2663
-pkg/util/ranger/bench_test.go	direct-benchmark-and-helper-support	73fa5f419a0741b6d0737cabf557490dba5988d45684821492f508002ed4e154	16114	268

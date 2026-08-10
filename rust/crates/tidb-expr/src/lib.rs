@@ -337,7 +337,8 @@ mod arg_eval_type;
 mod binary_literal;
 mod build;
 pub mod builtin_arithmetic;
-mod builtin_cast_lockdown;
+#[cfg(test)]
+mod builtin_cast_semantics;
 pub mod builtin_compare;
 mod builtin_ext;
 pub mod builtin_op;
@@ -356,8 +357,6 @@ mod field_name;
 mod func;
 mod grouping;
 pub mod infer_pushdown;
-#[cfg(test)]
-mod infer_pushdown_lockdown;
 mod like;
 mod math_fn;
 mod ops;

@@ -1,39 +1,32 @@
 # `rust/scripts`
 
-Operational tooling for the Rust workspace. Two of these are gates worth
-reaching for *before* a full build, because they answer in a second what
-`cargo test --workspace` takes tens of minutes to tell you.
+Operational tooling for the Rust workspace. The fast checks below catch common
+drift before a full workspace build.
 
 ## Fast gates
 
 | script | what it answers | cost |
 |---|---|---|
 | `check-source-size.sh` | has any source file grown past its recorded bound, or shrunk enough to retire its entry? | ~1s, no build |
-| `go-package-lockdown.py` | did a complete Go package, its verdicts, Rust symbols, semantic mutations, or receipt drift? | Go AST scan, no Rust build |
+| `semantic-package-gate.py` | are accepted Go sources pinned and do their Rust semantic tests pass? | source check plus deduplicated tests |
 | `test-coverage-inventory.py` | how many Go tests still have no Rust counterpart, per package? | seconds with `--cache` |
 | `run-doctests.sh` | do the examples in `///` comments still compile, still pass, and still exist? | ~4s warm, needs the libs built |
 
-### `go-package-lockdown.py` — semantic package gate
+### `semantic-package-gate.py` — semantic package gate
 
-Each Go package has one human-owned TOML file and one generated JSON receipt.
-Rules describe observable behavior, select the accepted Go obligations they
-cover, name the Rust files, and provide one focused test. There are no checked-in
-AST ledgers, helper proofs, probe logs, mutation histories, or symbol registries.
+Each boundary has one small TOML file naming the accepted Go source, native Rust
+files, and executable tests. The gate derives source truth from Git and writes
+nothing.
 
 ```bash
-python3 rust/scripts/go-package-lockdown.py audit --spec <package>.toml
-python3 rust/scripts/go-package-lockdown.py audit --spec <package>.toml --write
-python3 rust/scripts/go-package-lockdown.py verify --spec <package>.toml --rule <rule-id>
-python3 rust/scripts/go-package-lockdown.py check --spec <package>.toml
+python3 rust/scripts/semantic-package-gate.py <package>.semantic.toml
+python3 rust/scripts/semantic-package-gate.py --all
+python3 rust/scripts/semantic-package-gate.py --all --no-tests
 ```
 
-`audit` derives the accepted artifact and AST census directly from Git and the
-checked-in Go inventory tool. It rejects overlap and reports unmatched
-obligations. `verify` runs the rule's named test, optionally applies one semantic
-mutation, requires that same test to kill it, restores the source byte-for-byte,
-and writes only current hashes and outcomes. `whole-go-package` requires zero
-unmatched obligations and current verification for every `PORTED` rule;
-`package-seed` remains explicitly incomplete.
+`whole-go-package` checks the complete tracked package inventory.
+`package-seed` checks only its explicit Go files and makes no package-completion
+claim. Identical commands are deduplicated when multiple specifications run.
 
 ### `check-source-size.sh` — the source-size ratchet
 

@@ -1,8 +1,0 @@
-# pkg-queue-mutation-plan-v1
-suite_id	source_owners	mutation_count	source_file	named_tests	rules
-P001-construction-state	Queue,NewQueue,Len,IsEmpty,Cap	5	rust/crates/tidb-util/src/queue.rs	source_default_and_zero_capacity_constructor_are_distinct|basic_operations	nil versus allocated empty backing, reported size, empty state, capacity
-P002-fifo-growth	Queue.Push	5	rust/crates/tidb-util/src/queue.rs	source_wrapped_growth_preserves_fifo_order|circular_buffer_behavior	growth factor, wrapped copy origin, head reset, append tail, circular tail advance
-P003-pop	Queue.Pop	3	rust/crates/tidb-util/src/queue.rs	panic_on_empty_pop|source_wrapped_growth_preserves_fifo_order|basic_operations	empty panic, head advance, size decrement
-P004-clear-expand	Queue.Clear,Queue.ClearAndExpandIfNeed	6	rust/crates/tidb-util/src/queue.rs	source_clear_and_expand_contracts|source_clear_retains_slots_until_overwrite_or_expand	head tail and size reset, strict expansion condition, allocated state, retained slots
-P005-source-drift	package-artifact-and-AST-set	1	pkg/util/queue/queue.go	pkg-queue-lockdown.py	Go artifact hash and content-addressed AST drift
-P006-symbol-gate	Queue.Push	1	rust/crates/tidb-util/src/queue.rs	queue_lockdown_inventory_and_symbols	compiled Rust production owner disappearance

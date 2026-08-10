@@ -207,7 +207,8 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
     Some((name, ft))
 }
 
-pub(crate) fn builtin_cast_lockdown_result_type_anchor(
+#[cfg(test)]
+pub(crate) fn builtin_cast_result_type(
     cast_type: &tidb_ast::CastType,
 ) -> Option<(&'static str, FieldType)> {
     cast_target(cast_type)

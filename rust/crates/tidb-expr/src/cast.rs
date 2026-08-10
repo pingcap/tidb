@@ -18,7 +18,7 @@
 //! this crate has no charset domain at all).
 //!
 //! JSON targets retain their native datum domain. DATE/DATETIME keep the
-//! evaluator's established string result boundary; the lockdown receipt
+//! evaluator's established string result boundary; the semantic package gate
 //! records the native temporal integration gap explicitly. Every rule here
 //! (string-to-number prefix
 //! parsing width, rounding tie-breaking per source type, `UNSIGNED`'s

@@ -1,0 +1,12 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/versioninfo"
+source_commit = "6d99186063e6cda053d510ec59493e5956ffa04c"
+rust_files = [
+  "rust/crates/tidb-util/src/versioninfo.rs",
+]
+
+[[tests]]
+name = "versioninfo_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib"]

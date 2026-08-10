@@ -1,0 +1,14 @@
+schema = "semantic-package-gate-v3"
+claim = "package-seed"
+go_package = "pkg/util/mathutil"
+source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
+accepted_go_files = [
+  "pkg/util/mathutil/exponential_average.go",
+  "pkg/util/mathutil/exponential_average_test.go",
+]
+rust_files = ["rust/crates/tidb-util/src/mathutil/exponential_average.rs"]
+
+[[tests]]
+name = "exponential_average_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib"]

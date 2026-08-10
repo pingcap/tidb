@@ -137,38 +137,11 @@ fn none_vec<T>(n: usize) -> Vec<Option<T>> {
 
 #[cfg(test)]
 mod tests {
-    use sha2::{Digest, Sha256};
+    use super::Queue;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     };
-    use std::{
-        collections::{BTreeMap, BTreeSet},
-        fs,
-        path::PathBuf,
-    };
-
-    use super::Queue;
-
-    const ARTIFACTS: &str = include_str!("queue.artifacts.tsv");
-    const INVENTORY: &str = include_str!("queue.inventory.tsv");
-
-    fn data_rows(contents: &'static str) -> Vec<Vec<&'static str>> {
-        contents
-            .lines()
-            .filter(|line| !line.is_empty() && !line.starts_with('#'))
-            .skip(1)
-            .map(|line| line.split('\t').collect())
-            .collect()
-    }
-
-    fn repository_root() -> PathBuf {
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
-    }
-
-    fn sha256(bytes: impl AsRef<[u8]>) -> String {
-        format!("{:x}", Sha256::digest(bytes.as_ref()))
-    }
 
     struct DropProbe(Arc<AtomicUsize>);
 
@@ -178,106 +151,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn queue_lockdown_inventory_and_symbols() {
-        let artifact_rows = data_rows(ARTIFACTS);
-        assert_eq!(artifact_rows.len(), 3);
-        assert!(artifact_rows.iter().all(|row| row.len() == 3));
-        let root = repository_root();
-        for row in artifact_rows {
-            assert_eq!(
-                sha256(fs::read(root.join(row[0])).expect("read queue artifact")),
-                row[2],
-                "owned artifact drifted: {}",
-                row[0]
-            );
-        }
-
-        let rows = data_rows(INVENTORY);
-        assert_eq!(rows.len(), 50);
-        assert!(rows.iter().all(|row| row.len() == 10));
-        let allowed_symbols = [
-            "Queue",
-            "Queue::cap",
-            "Queue::clear",
-            "Queue::clear_and_expand_if_need",
-            "Queue::is_empty",
-            "Queue::len",
-            "Queue::new",
-            "Queue::pop",
-            "Queue::push",
-        ]
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-        let allowed_evidence = [
-            "basic_operations",
-            "circular_buffer_behavior",
-            "clear_operation",
-            "panic_on_empty_pop",
-            "source_clear_and_expand_contracts",
-            "source_clear_retains_slots_until_overwrite_or_expand",
-            "source_default_and_zero_capacity_constructor_are_distinct",
-            "source_wrapped_growth_preserves_fifo_order",
-        ]
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-        let mut ids = BTreeSet::new();
-        let mut categories = BTreeMap::new();
-        let mut statuses = BTreeMap::new();
-        for row in rows {
-            assert!(ids.insert(row[0]), "duplicate obligation id: {}", row[0]);
-            assert_eq!(row[6], "PORTED", "unexpected queue disposition: {row:?}");
-            assert!(
-                allowed_symbols.contains(row[7]),
-                "unanchored owner: {row:?}"
-            );
-            let evidence = row[8]
-                .strip_prefix("rust-test:")
-                .expect("queue evidence test prefix");
-            assert!(
-                allowed_evidence.contains(evidence),
-                "unanchored evidence: {row:?}"
-            );
-            assert!(!row[9].is_empty());
-            *categories.entry(row[1]).or_insert(0usize) += 1;
-            *statuses.entry(row[6]).or_insert(0usize) += 1;
-        }
-        assert_eq!(statuses, BTreeMap::from([("PORTED", 50)]));
-        assert_eq!(
-            categories,
-            BTreeMap::from([
-                ("branch", 8),
-                ("declaration", 1),
-                ("field", 4),
-                ("function", 8),
-                ("loop", 2),
-                ("test", 1),
-                ("test_assertion", 21),
-                ("test_helper_closure", 5),
-            ])
-        );
-
-        let _: fn(usize) -> Queue<i32> = Queue::new;
-        let _: fn(&mut Queue<i32>, i32) = Queue::push;
-        let _: fn(&mut Queue<i32>) -> i32 = Queue::pop;
-        let _: fn(&Queue<i32>) -> usize = Queue::len;
-        let _: fn(&Queue<i32>) -> bool = Queue::is_empty;
-        let _: fn(&mut Queue<i32>) = Queue::clear;
-        let _: fn(&mut Queue<i32>, usize) = Queue::clear_and_expand_if_need;
-        let _: fn(&Queue<i32>) -> usize = Queue::cap;
-        let _: Queue<i32> = Queue::default();
-
-        let _: fn() = basic_operations;
-        let _: fn() = circular_buffer_behavior;
-        let _: fn() = clear_operation;
-        let _: fn() = panic_on_empty_pop;
-        let _: fn() = source_clear_and_expand_contracts;
-        let _: fn() = source_clear_retains_slots_until_overwrite_or_expand;
-        let _: fn() = source_default_and_zero_capacity_constructor_are_distinct;
-        let _: fn() = source_wrapped_growth_preserves_fifo_order;
-    }
-
-    // Go `TestQueue` / "basic operations".
     #[test]
     fn basic_operations() {
         let mut q: Queue<i32> = Queue::new(2);

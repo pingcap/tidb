@@ -75,8 +75,6 @@ mod mysql_connection;
 mod mysql_tls;
 mod native_password;
 mod node_config;
-#[cfg(test)]
-mod parse_go_inventory;
 mod pipeline_session;
 mod real_tikv_multi_node;
 mod real_tikv_node;

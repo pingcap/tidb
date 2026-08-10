@@ -367,7 +367,7 @@ mod tests {
     }
 
     #[test]
-    fn lockdown_private_estimate_symbols_compile() {
+    fn private_estimate_symbols_compile() {
         let _ = calculate_estimate_ndv;
         let _ = estimate_global_singleton_in_range;
         let _ = merge_copied_fm_sketch;

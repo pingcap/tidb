@@ -584,33 +584,6 @@ pub(crate) fn skyline_pruning<T>(
     survivors
 }
 
-/// Test-only compile anchors for the source-owned `find_best_task.go` ledger.
-/// Taking each function item here proves that private symbols still exist; the
-/// central gate compares these names with the PORTED set exactly.
-#[cfg(test)]
-pub(crate) fn find_best_task_compile_anchors() -> &'static [&'static str] {
-    let _ = std::mem::size_of::<Candidate<()>>();
-    let _ = compare_bool as fn(bool, bool) -> i32;
-    let _ = compare_candidates::<()>;
-    let _ = compare_eq_or_in::<()>;
-    let _ = compare_index_back::<()>;
-    let _ = compare_pseudo;
-    let _ = compare_risk_ratio::<()>;
-    let _ = is_full_index_match::<()>;
-    let _ = skyline_pruning::<()>;
-    &[
-        "skyline::Candidate",
-        "skyline::compare_bool",
-        "skyline::compare_candidates",
-        "skyline::compare_eq_or_in",
-        "skyline::compare_index_back",
-        "skyline::compare_pseudo",
-        "skyline::compare_risk_ratio",
-        "skyline::is_full_index_match",
-        "skyline::skyline_pruning",
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

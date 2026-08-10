@@ -600,7 +600,7 @@ fn columns_rows(
             // table entirely, which is what Go answers (captured: a view
             // over a dropped column reports no COLUMNS rows at all).
             Some(TableEntry::View(view)) => {
-                let Ok(columns) = tidb_executor::view_column_list(view, &schema, catalog, &ctx)
+                let Ok(columns) = tidb_executor::view_column_list(view, &schema, catalog, ctx)
                 else {
                     continue;
                 };

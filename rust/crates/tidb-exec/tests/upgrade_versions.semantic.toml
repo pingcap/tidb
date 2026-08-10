@@ -1,0 +1,20 @@
+schema = "semantic-package-gate-v3"
+claim = "package-seed"
+go_package = "pkg/session"
+source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
+accepted_go_files = [
+  "pkg/session/bootstrap_test.go",
+  "pkg/session/session_test.go",
+  "pkg/session/upgrade_backfill_test.go",
+  "pkg/session/upgrade_def.go",
+  "pkg/session/upgrade_test.go",
+]
+rust_files = [
+  "rust/crates/tidb-exec/src/upgrade_versions.rs",
+  "rust/crates/tidb-exec/tests/upgrade_versions_source.rs",
+]
+
+[[tests]]
+name = "upgrade_versions_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-exec", "--test", "all", "upgrade_versions_source"]

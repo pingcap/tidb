@@ -971,7 +971,7 @@ pub fn codec_table_info(table: &TableInfo) -> CodecTableInfo {
                             CodecIndexColumn {
                                 offset: usize::try_from(column.offset)
                                     .expect("a column offset is not negative"),
-                                length: i64::from(column.length),
+                                length: column.length,
                                 use_changing_type: column.use_changing_type,
                             }
                         })
@@ -1122,9 +1122,11 @@ mod tests {
     #[test]
     fn codec_projection_reads_the_current_shared_changing_field_type() {
         let changing = tidb_model::GoShared::new(FieldType::new(FieldTypeCode::Varchar));
-        let mut column = ColumnInfo::default();
-        column.field_type = FieldType::new(FieldTypeCode::Long);
-        column.changing_field_type = Some(changing.clone());
+        let column = ColumnInfo {
+            field_type: FieldType::new(FieldTypeCode::Long),
+            changing_field_type: Some(changing.clone()),
+            ..Default::default()
+        };
         let table = TableInfo {
             columns: vec![column].into(),
             ..Default::default()

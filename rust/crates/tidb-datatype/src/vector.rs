@@ -13,9 +13,6 @@
 // limitations under the License.
 
 //! `pkg/types/vector.go` and `vector_functions.go` transcreation.
-//!
-//! `vector.inventory.tsv` LOCKDOWNs `vector.go`. The adjacent arithmetic
-//! source remains implemented here but is outside that inventory.
 
 use std::cmp::Ordering;
 use std::fmt;

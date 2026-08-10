@@ -1,0 +1,12 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/arena"
+source_commit = "fb8490526c5e30408fd0a444057b5b2e7072ad61"
+rust_files = [
+  "rust/crates/tidb-util/src/arena.rs",
+]
+
+[[tests]]
+name = "arena_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib"]
