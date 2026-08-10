@@ -407,6 +407,19 @@ fn an_autocommit_update_that_loses_the_race_is_retried_at_a_new_read() {
     );
 }
 
+#[test]
+fn region_unavailable_is_retryable_only_for_bounded_autocommit_replay() {
+    let (mut session, _) = open_session();
+    let unavailable =
+        SqlQueryError::new(ERR_REGION_UNAVAILABLE, *b"HY000", "Region is unavailable");
+
+    assert!(session.may_retry_autocommit_statement(&unavailable, 0));
+    assert!(!session.may_retry_autocommit_statement(&unavailable, AUTOCOMMIT_RETRY_LIMIT));
+
+    session.control_transaction("BEGIN").expect("begin");
+    assert!(!session.may_retry_autocommit_statement(&unavailable, 0));
+}
+
 /// The bound on that retry, which is the other half of the contract clients
 /// depend on.
 ///

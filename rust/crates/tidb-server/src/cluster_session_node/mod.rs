@@ -206,6 +206,9 @@ const ER_TABLEACCESS_DENIED_ERROR: u16 = 1142;
 /// Go `kv.ErrWriteConflict`, the one cause an autocommit statement is replayed
 /// for.
 const ERR_WRITE_CONFLICT: u16 = tidb_exec::pessimistic_lock_error::ERR_WRITE_CONFLICT;
+/// Go `kv.ErrRegionUnavailable`, which is safe to replay after refreshing the
+/// route to the affected region.
+const ERR_REGION_UNAVAILABLE: u16 = tidb_exec::pessimistic_lock_error::ERR_REGION_UNAVAILABLE;
 
 /// How many times an autocommit statement that lost the race is run again
 /// before the conflict reaches the client.
@@ -802,7 +805,7 @@ impl ClusterServerSession {
     /// computed from a stale read would introduce exactly the lost update this
     /// seam exists to prevent.
     fn may_retry_autocommit_statement(&self, error: &SqlQueryError, retried: u32) -> bool {
-        error.code == ERR_WRITE_CONFLICT
+        matches!(error.code, ERR_WRITE_CONFLICT | ERR_REGION_UNAVAILABLE)
             && retried < AUTOCOMMIT_RETRY_LIMIT
             && self.explicit.is_none()
             && !self.session.in_transaction()
