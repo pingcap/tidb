@@ -1,0 +1,22 @@
+schema = "semantic-package-gate-v3"
+claim = "package-seed"
+go_package = "pkg/config"
+source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
+accepted_go_files = [
+  "pkg/config/config.go",
+  "pkg/config/config_test.go",
+]
+rust_files = [
+  "rust/crates/tidb-config/src/config_tree/config.rs",
+  "rust/crates/tidb-config/tests/metering_source.rs",
+]
+
+[[tests]]
+name = "metering_classic_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-config", "--test", "metering_source"]
+
+[[tests]]
+name = "metering_nextgen_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-config", "--features", "nextgen", "--test", "metering_source"]
