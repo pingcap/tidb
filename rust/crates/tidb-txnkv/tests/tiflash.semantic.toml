@@ -1,0 +1,24 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/tiflash"
+source_commit = "cf4d252af8aa22bdae97e7d7565281f694eab464"
+rust_files = [
+  "rust/crates/tidb-txnkv/src/tiflash.rs",
+  "rust/crates/tidb-txnkv/src/lib.rs",
+  "rust/crates/tidb-txnkv/src/kv_api.rs",
+  "rust/crates/tidb-txnkv/tests/tiflash_package_source.rs",
+  "rust/crates/tidb-distsql/src/context.rs",
+  "rust/crates/tidb-distsql/src/request.rs",
+  "rust/crates/tidb-distsql/src/kv_request.rs",
+  "rust/crates/tidb-distsql/tests/tiflash_replica_read_source.rs",
+]
+
+[[tests]]
+name = "tiflash_package_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-txnkv", "--test", "all", "tiflash_package_source::"]
+
+[[tests]]
+name = "distsql_policy_projection"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-distsql", "--test", "all", "tiflash_replica_read_source::"]
