@@ -460,10 +460,15 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// They now MATCH rather than vanish: compared held at 219 and matched rose
 /// 117 -> 119, so no read stopped being examined.
 /// 100 -> 95: the integrated metadata/default ownership work compares 220
-/// catalog reads, of which 125 now match. Five previously red reads left the
-/// divergence set while the compared surface grew by one; the exact remaining
-/// set is independently pinned by [`CATALOG_DIVERGENCE_FINGERPRINT`].
-const KNOWN_CATALOG_DIVERGENCES: usize = 95;
+/// catalog reads, of which 125 match. Five previously red reads left the
+/// divergence set while the compared surface grew by one.
+///
+/// 95 -> 94: `SHOW COLUMNS` now reports generated-column `Extra` markers. The
+/// first `DESC test_gv_ddl` reads back exactly, while two later descriptions
+/// remain red because their column sets still differ. Those two carried texts
+/// also moved closer to TiDB and are pinned by
+/// [`CATALOG_DIVERGENCE_FINGERPRINT`].
+const KNOWN_CATALOG_DIVERGENCES: usize = 94;
 
 /// The floor on catalog reads that MATCH TiDB's recording exactly. See
 /// [`KNOWN_CATALOG_DIVERGENCES`] for why a divergence ceiling alone is not a
@@ -487,7 +492,10 @@ const KNOWN_CATALOG_DIVERGENCES: usize = 95;
 /// the second newly-measurable read, which does not.
 /// 114 -> 125: the same integrated metadata/default checkpoint raised the
 /// measured exact-match count to 125 while also adding one comparable read.
-const MATCHED_FLOOR: usize = 125;
+///
+/// 125 -> 126: generated-column `Extra` markers close the first
+/// `DESC test_gv_ddl` catalog read named above.
+const MATCHED_FLOOR: usize = 126;
 
 /// A fingerprint over the TEXT of every carried divergence, and the reason it
 /// exists is a hole this gate was CAUGHT having on its first day.
@@ -553,7 +561,11 @@ const MATCHED_FLOOR: usize = 125;
 /// 100 -> 95 divergence and 114 -> 125 match ratchets above. This pins the
 /// exact 95 carried texts after the integrated metadata/default ownership
 /// changes rather than treating the improved count alone as sufficient.
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 6_833_596_090_493_068_542;
+///
+/// 6_833_596_090_493_068_542 -> 2_590_747_001_060_177_515: generated-column
+/// `Extra` markers remove one `DESC test_gv_ddl` entry and improve the two
+/// still-red descriptions whose column sets differ.
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 2_590_747_001_060_177_515;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.
