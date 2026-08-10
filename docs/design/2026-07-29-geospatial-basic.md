@@ -44,6 +44,9 @@ later work (more SRIDs, the geometry-processing function tail, coprocessor pushd
 index) extends it without a new design. This replaces the earlier geospatial design
 (PR #38916).
 
+The MySQL behaviors and measurements quoted below were verified against running servers
+(8.4.6 and 9.7.2) and against the proof of concept, PR #69475.
+
 ## Terminology
 
 | Term | Meaning |
@@ -116,7 +119,7 @@ right: a 2D geometry with no SRID flag *is* plain OGC WKB, byte for byte.
 | Lossless | Exact `f64` coordinates and full geometry structure, never truncated. |
 | SRID | Carried by the SRID flag. Where the column fixes it with `SRID n` the flag may be left unset, which is still valid EWKB, so this redundancy can be removed without leaving the format. It cannot be dropped unconditionally: an unrestricted `GEOMETRY` column holds a per-row SRID, and a geometry outside any column (function result, join or sort intermediate) has no column metadata to recover it from. |
 | Byte order | Left to EWKB, which flags it per geometry and permits both. |
-| MySQL bytes | Not matched. MySQL stores `<srid u32 LE><WKB>` and is 2D only; `ST_AsBinary`, dump/reload and the wire protocol convert at the boundary, which for a 2D value is dropping the SRID flag. MySQL itself converts too, storing coordinates longitude-first internally and swapping per SRS on every WKT/WKB read and write, visible as `HEX(g)` and `ST_AsBinary(g)` returning swapped coordinates for a 4326 point (`axis-order.md`). |
+| MySQL bytes | Not matched. MySQL stores `<srid u32 LE><WKB>` and is 2D only; `ST_AsBinary`, dump/reload and the wire protocol convert at the boundary, which for a 2D value is dropping the SRID flag. MySQL itself converts too, storing coordinates longitude-first internally and swapping per SRS on every WKT/WKB read and write, visible as `HEX(g)` and `ST_AsBinary(g)` returning swapped coordinates for a 4326 point. |
 | Coordinate dimension | XY, XYZ, XYM and XYZM are all storable, which covers GeoJSON positions (XY and XYZ) as well as measured geometry. Every v1 function is 2D, as in MySQL. |
 | SRIDs outside 0 and 4326 | Stored and returned unchanged in an unrestricted `GEOMETRY` column, as in MySQL. |
 
@@ -133,11 +136,11 @@ alternatives: [Investigation & Alternatives](#investigation--alternatives).
 | --- | --- | --- |
 | Coordinate system | abstract Cartesian plane, unitless X/Y | WGS 84 geographic, latitude/longitude |
 | Bounds | none, the full finite IEEE-754 double range, as MySQL | latitude `[-90, 90]`, longitude `(-180, 180]` |
-| Rejected on ingest | Inf/NaN | out-of-range latitude/longitude, on every constructor and I/O path |
+| Rejected on ingest | Inf/NaN, MySQL `ERROR 3037` | out-of-range latitude (`ERROR 3617`) and longitude (`ERROR 3616`) |
 | Measurement | planar (Cartesian) | geodesic on the WGS 84 ellipsoid, as MySQL |
 
-Ingest errors match MySQL's codes and wording as closely as practical, on
-`ST_GeomFromText`, the constructors, `ST_GeomFromGeoJSON` and `ST_GeomFromWKB` alike.
+Those codes and their wording are matched as closely as practical, on `ST_GeomFromText`,
+the constructors, `ST_GeomFromGeoJSON` and `ST_GeomFromWKB` alike.
 
 Planar versus geodesic is decided by the **SRS class** (SRID 0 and projected are
 Cartesian, geographic is geodesic), exactly as MySQL decides it, rather than by a
@@ -151,7 +154,16 @@ different things across ecosystems: PostGIS uses one fixed easting/longitude-fir
 for every SRS, and roughly a third of the SRIDs in MySQL's catalog disagree with it,
 across both geographic and projected systems. GeoJSON (RFC 7946, always longitude-first)
 and the explicit `ST_Latitude`/`ST_Longitude` accessors are the unambiguous paths.
-Per-SRID counts and migration guidance are in `axis-order.md` and belong in user docs.
+`ST_X`/`ST_Y` are not: they return the first and second coordinate, so on 4326 `ST_X` is
+the latitude here and in MySQL (verified: `ST_X` = `ST_Latitude` = 30 for
+`POINT(30 50)`) but the longitude in PostGIS. The per-SRID breakdown belongs in the user
+docs, as migration guidance.
+
+Coordinates are **stored as parsed**, so latitude-first on 4326, which is also the order
+S2 wants and therefore costs no swap on the geodesic and index paths. MySQL stores the
+opposite order internally and swaps at every boundary
+([Types and storage](#types-and-storage)); both engines emit the same WKB, so the
+difference is invisible outside the stored bytes.
 
 **Extension path** (documented, not built here):
 
@@ -177,7 +189,9 @@ it is present in MySQL 8.0.46 / 8.4 / 9.7, whose spatial function sets are ident
 - **Accessors:** `ST_X`, `ST_Y`, `ST_Latitude`, `ST_Longitude`, `ST_SRID` (getter and the
   `ST_SRID(g, srid)` setter), `ST_GeometryType`, `ST_Dimension`, `ST_Envelope`,
   `ST_IsEmpty`, `ST_IsValid`, `ST_StartPoint`, `ST_EndPoint`, `ST_PointN`, `ST_NumPoints`,
-  `ST_ExteriorRing`, `ST_NumInteriorRings`, `ST_Centroid`.
+  `ST_ExteriorRing`, `ST_NumInteriorRings`, `ST_Centroid`. `ST_Centroid` is Cartesian-only,
+  as in MySQL, which raises `ERROR 3618` ("has not been implemented for geographic spatial
+  reference systems") for it on 4326.
 - **Measurement:** `ST_Area`, `ST_Length`, `ST_Distance`, `ST_Distance_Sphere`.
 - **Predicates (DE-9IM):** `ST_Within`, `ST_Contains`, `ST_Intersects`, `ST_Equals`,
   `ST_Disjoint`, `ST_Touches`, `ST_Crosses`, `ST_Overlaps`.
@@ -188,16 +202,17 @@ it is present in MySQL 8.0.46 / 8.4 / 9.7, whose spatial function sets are ident
 
 The geometry-processing tail (`ST_Buffer`, `ST_Union`, `ST_Intersection`, ...), the typed
 I/O aliases, the `Multi*`/`GeometryCollection` constructors, the `MBR*` family, geohash,
-the niche accessors and the GeoJSON `options`/`srid` arguments are a later milestone;
-`mysql-function-catalog.md` holds the authoritative v1-vs-tail split.
+the niche accessors and the GeoJSON `options`/`srid` arguments are a later milestone.
 
 Semantics match MySQL, with three documented v1 limitations:
 
 - On 4326, `ST_Distance`/`ST_Length` are ellipsoidal (Andoyer, matching MySQL to
   sub-metre); `ST_Distance_Sphere` is the great-circle variant.
-- `ST_Area` on 4326 is a gap (geodesic polygon area on the ellipsoid, Karney): implement
-  it, or error as MySQL's Cartesian-only functions do (Unresolved Questions). It must not
-  silently return a planar degree² or an off-by-0.45% spherical value.
+- `ST_Area` on 4326 is a gap. MySQL computes it geodesically (12308778368.75 m2 for a
+  1-degree box), so v1 either implements the same (Karney ellipsoidal area) or errors in
+  the shape MySQL uses for its own Cartesian-only functions, `ERROR 3618` (Unresolved
+  Questions). It must not silently return a planar degree2 or an off-by-0.45% spherical
+  value.
 - The predicates are OGC-correct via `simplefeatures`; on 4326 the region predicates use a
   geodesic point-in-polygon, which diverges from MySQL's planar refine near
   edges/poles/antimeridian. Polygon/polygon geodesic relations are a follow-up.
@@ -301,6 +316,10 @@ Out of scope here, each with a home:
   above.
 - **Coprocessor pushdown** of `ST_*` predicates: lands with or after the index; this layer
   evaluates predicates at the TiDB root.
+- **The axis-order controls**: MySQL's `axis-order=long-lat` option argument on
+  `ST_GeomFromText`/`ST_GeomFromWKB`/`ST_AsText`/`ST_AsBinary`, and `ST_SwapXY`, which let
+  a client read or write longitude-first against a latitude-first SRS. Both exist in MySQL
+  and ship here with the function tail.
 - **3D / measured (Z/M) geometry**: computation is 2D only, as in MySQL/MariaDB, but the
   values are stored and returned unchanged, so the functions can be added without a format
   change.
@@ -326,8 +345,9 @@ Out of scope here, each with a home:
 - I/O round-trips: `ST_GeomFromText`/`ST_AsText`, `ST_GeomFromWKB`/`ST_AsBinary`,
   `ST_GeomFromGeoJSON`/`ST_AsGeoJSON` for every subtype, byte-compared to MySQL output
   including its `ST_AsText` spacing and axis order.
-- Accessors and measurement against cross-checked MySQL values (e.g. the 1-degree geodesic
-  distances in `srid-support-reference.md`).
+- Accessors and measurement against values measured on MySQL, e.g. for a 1-degree step on
+  4326: `ST_Distance` 111319.49 m, `ST_Distance_Sphere` 111195.08 m, and `ST_Area` of a
+  1-degree box 12308778368.75 m2.
 - Predicates: the eight DE-9IM predicates plus `Covers`/`CoveredBy` on curated geometry
   pairs, matched to MySQL where semantics agree, with boundary cases explicit.
 - SRID validation: 4326 out-of-range errors on every ingest path, SRID 0 Inf/NaN
@@ -403,13 +423,15 @@ Risks:
   encode/decode and hands the body to the library. On the TiKV side the `geo` crate is
   2D-only and already hand-rolls its decoder, so it needs a header change and nothing
   more; Z/M values are not pushable regardless.
-- **A leaner layout as version 1.** Rejected for now, not forever. `storage-format.md`
-  measures EWKB's redundancy (a per-row SRID the column usually fixes, a byte-order flag
-  per (sub)geometry, WKB framing) and finds geometry decode a measurable share of both the
-  index-maintenance write path and the refine read path, but the format is the smallest of
-  the measured levers. The version byte defers the choice without a migration.
+- **A leaner layout as version 1.** Rejected for now, not forever.
+  EWKB carries redundancy (a per-row SRID the column usually fixes, a byte-order flag per
+  (sub)geometry, WKB framing), but profiling the proof of concept put the win in
+  perspective: geometry decode is ~2% of insert CPU, and on the read side WKB parsing is
+  ~27% of query CPU of which only about half is decoding the stored value, the rest being
+  a re-parse inside the predicate library that no storage format can remove. The version
+  byte defers the choice without a migration.
 - **Matching MySQL's stored bytes.** Rejected as a non-goal: I/O compatibility is a
-  boundary conversion, and MySQL does the same thing internally (`axis-order.md`).
+  boundary conversion, and MySQL does the same thing internally.
 - **cgo/libgeos (go-geos).** Rejected for v1: it gives OGC-correct geometry but needs
   `libgeos` in the Bazel/CI sandbox, which broke the build. The PoC moved to pure-Go
   `simplefeatures` and stayed MySQL byte-identical. Revisit only for the processing tail.
@@ -418,12 +440,12 @@ Risks:
 - **Geometry as a generic BLOB with application-side functions.** The status quo; loses
   MySQL compatibility, type safety, and any path to a spatial index.
 - **PostGIS axis order and always-planar `geometry` semantics.** Rejected in favor of
-  MySQL parity (`srid-support-reference.md` documents the differences).
+  MySQL parity; the differences are documented under SRID model.
 
 ## Unresolved Questions
 
 - **A leaner format version 2:** add one before GA, or ship version 1 and revisit?
-  Benchmark-gated (`storage-format.md`); the version byte means it can also land after GA.
+  Benchmark-gated; the version byte means it can also land after GA.
   `ST_AsBinary` output stays MySQL-compatible plain WKB either way.
 - **Reading a Z/M value back:** the writers reject it, so today it returns only as the raw
   column value in the stored format. Confirm that is enough, or give `ST_AsBinary` an
@@ -436,7 +458,7 @@ Risks:
   milestone.
 - **4326 refine scope for v1:** accept planar polygon/polygon refine plus the geodesic
   point-in-polygon as a documented limitation, or widen geodesic coverage before GA?
-- **Exact v1 function boundary:** confirm v1 vs tail against `mysql-function-catalog.md`
-  (e.g. `ST_Centroid`, the typed `*FromText`/`*FromWKB` aliases).
+- **Exact v1 function boundary:** confirm which accessors and aliases are v1 rather than
+  tail (e.g. `ST_Centroid`, the typed `*FromText`/`*FromWKB` aliases).
 - **Downgrade mechanics:** confirm the drop-geometry-columns-first requirement, and
   whether any metadata-only downgrade is possible.
