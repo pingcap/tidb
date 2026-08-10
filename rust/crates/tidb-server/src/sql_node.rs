@@ -36,6 +36,11 @@ use tidb_session::process::ProcessKillTarget;
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
 
+/// Go TiDB's `wait_timeout` default, in seconds. The accept-loop timeout is
+/// only the handshake/connect timeout; authenticated idle reads use this
+/// session variable instead.
+pub const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(28_800);
+
 /// Cloneable process shutdown signal for the sole production accept loop.
 #[derive(Clone, Debug, Default)]
 pub struct ShutdownHandle {
@@ -172,6 +177,21 @@ impl ConnectionClose {
         if let Some(socket) = &self.socket {
             let _ = socket.shutdown(Shutdown::Both);
         }
+    }
+
+    /// Applies the authenticated connection I/O policy to the socket this
+    /// handle owns: command reads follow `@@wait_timeout`, while writes do not
+    /// inherit the handshake/connect timeout.
+    pub(crate) fn apply_authenticated_timeouts(
+        &self,
+        read_timeout: Duration,
+    ) -> std::io::Result<()> {
+        if let Some(socket) = &self.socket {
+            let read_timeout = (!read_timeout.is_zero()).then_some(read_timeout);
+            socket.set_read_timeout(read_timeout)?;
+            socket.set_write_timeout(None)?;
+        }
+        Ok(())
     }
 
     /// Whether a `KILL` has ended this connection.
@@ -650,6 +670,18 @@ pub struct SessionContext {
     pub close: ConnectionClose,
 }
 
+/// Reads the session's `@@wait_timeout` using Go TiDB's fallback rule: malformed
+/// or missing values fall back to the registry default.
+#[must_use]
+pub(crate) fn session_wait_timeout(session: &tidb_session::Session) -> Duration {
+    session
+        .vars()
+        .get_system("wait_timeout")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .map_or(DEFAULT_WAIT_TIMEOUT, Duration::from_secs)
+}
+
 /// Query capability retained entirely inside one fixed worker thread.
 pub trait QuerySession {
     /// Starts one sequential query and returns its lazy result owner.
@@ -786,6 +818,16 @@ pub trait QuerySession {
     /// variables reports it and is unchanged.
     fn result_charset(&self) -> String {
         String::new()
+    }
+
+    /// The idle timeout for reading the next authenticated command.
+    ///
+    /// Go `clientConn.dispatch` refreshes this from `@@wait_timeout` before
+    /// every packet read; sessions without system variables keep the TiDB
+    /// default. A zero value deliberately means no socket read timeout, matching
+    /// Go's `PacketIO.SetReadTimeout(0)` behavior.
+    fn wait_timeout(&self) -> Duration {
+        DEFAULT_WAIT_TIMEOUT
     }
 
     /// Selects this session's current schema (Go `clientConn.useDB`).
@@ -1618,6 +1660,10 @@ mod tests {
         NodeConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
+            advertise_address: None,
+            status_host: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            status_port: 0,
+            report_status: false,
             pd_endpoints: vec!["127.0.0.1:2379".to_owned()],
             read_tables: vec![ConfiguredReadTable {
                 database: "test".to_owned(),

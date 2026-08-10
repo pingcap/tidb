@@ -715,6 +715,34 @@ fn exact_methods_headers_wire_key_roles_and_store_states_are_preserved_once() {
 }
 
 #[test]
+fn a_missing_scatter_operator_is_already_finished_like_client_go() {
+    // client-go tikv/split_region.go:WaitScatterRegionFinish checks the
+    // operator description and status before inspecting the response-header
+    // error. PD returns REGION_NOT_FOUND with an empty description and
+    // SUCCESS after an operator disappears, which therefore means finished.
+    let mut state = valid_state();
+    state.operator = Reply::Value(pdpb::GetOperatorResponse {
+        header: Some(pdpb::ResponseHeader {
+            cluster_id: CLUSTER_ID,
+            error: Some(pdpb::Error {
+                r#type: pdpb::ErrorType::RegionNotFound as i32,
+                message: "Not Found".to_owned(),
+            }),
+        }),
+        region_id: 101,
+        desc: Vec::new(),
+        status: pdpb::OperatorStatus::Success as i32,
+        kind: Vec::new(),
+    });
+    let server = Server::start(state);
+    let client = PdClient::connect(&server.address, Duration::from_secs(2)).unwrap();
+
+    assert!(!client
+        .is_region_scattering_with_timeout(101, Duration::from_secs(2))
+        .unwrap());
+}
+
+#[test]
 fn by_id_scan_and_batch_scan_preserve_flags_ranges_limits_and_response_order() {
     // pd-client/client.go:GetRegionByID, ScanRegions, BatchScanRegions.
     // pd-client/clients/router/client.go:handleRegionsResponse.

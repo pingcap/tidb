@@ -154,11 +154,6 @@ fn recognized_but_unowned_config_leaves_fail_closed() {
     for (name, contents, expected) in [
         ("log", "[log]\nlevel = \"debug\"\n", "log.level"),
         (
-            "status",
-            "[status]\nstatus-port = 10081\n",
-            "status.status-port",
-        ),
-        (
             "sql_ca",
             "[security]\nssl-ca = \"ca.pem\"\n",
             "security.ssl-ca",
@@ -178,6 +173,47 @@ fn recognized_but_unowned_config_leaves_fail_closed() {
             Err(NodeConfigError::UnsupportedConfigOptions(options)) if options == [expected]
         ));
     }
+}
+
+#[test]
+fn topology_and_status_identity_follow_go_cli_over_config_precedence() {
+    let file = ConfigFile::write(
+        "topology_identity",
+        r#"
+advertise-address = "10.0.0.9"
+
+[status]
+status-host = "127.0.0.1"
+status-port = 10081
+report-status = false
+"#,
+    );
+    let path = file.0.to_string_lossy().into_owned();
+    let mut args = required();
+    args.extend([
+        "--config",
+        &path,
+        "--advertise-address",
+        "10.0.0.8",
+        "--status-host",
+        "0.0.0.0",
+        "--status",
+        "10082",
+        "--report-status=true",
+    ]);
+
+    let config = NodeConfig::parse(args).expect("Go-compatible topology flags must parse");
+    assert_eq!(
+        config.advertise_address,
+        Some(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 8)))
+    );
+    assert_eq!(config.status_host, IpAddr::V4(Ipv4Addr::UNSPECIFIED));
+    assert_eq!(config.status_port, 10082);
+    assert!(config.report_status);
+    assert!(NodeConfig::help_text().contains("--advertise-address"));
+    assert!(NodeConfig::help_text().contains("--status-host"));
+    assert!(NodeConfig::help_text().contains("--status <port>"));
+    assert!(NodeConfig::help_text().contains("--report-status=<bool>"));
 }
 
 #[test]

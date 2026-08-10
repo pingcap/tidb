@@ -195,8 +195,8 @@ use crate::cluster_session::{cluster_session_catalog, SkippedTable, TableAutoIds
 use crate::cluster_sysvar_seam::ClusterSysvarWriter;
 use crate::pipeline_session::MaterializedResultSetSource;
 use crate::sql_node::{
-    ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession,
-    QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
+    session_wait_timeout, ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral,
+    QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
 };
 use crate::wire_status::WireStatus;
 
@@ -303,6 +303,7 @@ mod boot;
 mod ddl;
 mod regions;
 mod statistics;
+mod topology;
 mod transactions;
 
 pub use boot::run_cluster_session_node;
@@ -1354,6 +1355,11 @@ impl QuerySession for ClusterServerSession {
     /// `@@character_set_results`.
     fn result_charset(&self) -> String {
         self.session.result_charset()
+    }
+
+    /// Go `clientConn.getWaitTimeout`: read the live session `@@wait_timeout`.
+    fn wait_timeout(&self) -> Duration {
+        session_wait_timeout(&self.session)
     }
 
     /// Maps `BEGIN`/`COMMIT`/`ROLLBACK` onto the connection's buffer.

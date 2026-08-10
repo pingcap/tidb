@@ -36,6 +36,7 @@
 //! defaults.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, UNSPECIFIED_LENGTH};
 use tidb_exec::{convert_result_field, ResultFieldMetadata, ResultFieldTypeMetadata};
@@ -46,8 +47,8 @@ use tidb_session::{GlobalSysvars, Session, SharedCatalog, StmtKind, StmtOutput, 
 
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
-    ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral, QueryResult, QuerySession,
-    QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
+    session_wait_timeout, ConnectionKillTarget, GeneralExecuteOutcome, PreparedGeneral,
+    QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
 };
 use crate::wire_status::WireStatus;
 
@@ -235,6 +236,10 @@ impl QuerySession for PipelineServerSession {
     /// `@@character_set_results`.
     fn result_charset(&self) -> String {
         self.session.result_charset()
+    }
+
+    fn wait_timeout(&self) -> Duration {
+        session_wait_timeout(&self.session)
     }
 
     /// The handshake's initial database and `COM_INIT_DB`, which Go serves

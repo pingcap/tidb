@@ -36,6 +36,7 @@ use crate::real_tikv_node::{
 use crate::sql_node::{ConcurrentSqlNode, SqlQueryError};
 
 use super::{
+    topology::{StatusServer, TopologyPublisher},
     ClusterSessionFactory, RealClusterDdl, RealClusterRegionAdmin, RealClusterTransactions,
     CONTROL_PLANE_TIMEOUT,
 };
@@ -207,6 +208,26 @@ pub(crate) fn run_cluster_session_node_with_spill(
                 crate::real_tikv_node::emit_connections_startup_failure(&error);
                 RunConfiguredNodeError::Node(error)
             })?;
+            let status_server = config
+                .report_status
+                .then(|| {
+                    StatusServer::start(config.status_host, config.status_port, node.tracker())
+                })
+                .transpose()
+                .map_err(|error| {
+                    crate::real_tikv_node::emit_connections_startup_failure(&error);
+                    RunConfiguredNodeError::Engine(SqlQueryError::unknown(error))
+                })?;
+            let topology_publisher = status_server
+                .as_ref()
+                .map(|status| {
+                    TopologyPublisher::start(&config, address.port(), status.local_addr().port())
+                })
+                .transpose()
+                .map_err(|error| {
+                    crate::real_tikv_node::emit_connections_startup_failure(&error);
+                    RunConfiguredNodeError::Engine(SqlQueryError::unknown(error))
+                })?;
             let shutdown = node.shutdown_handle();
             ctrlc::set_handler(move || shutdown.shutdown()).map_err(|error| {
                 crate::real_tikv_node::emit_connections_startup_failure(&error);
@@ -220,6 +241,11 @@ pub(crate) fn run_cluster_session_node_with_spill(
             stats_receipt.pseudo,
         );
             let outcome = node.run().map_err(RunConfiguredNodeError::Node);
+            // Remove the TiProxy discovery lease before stopping its HTTP
+            // health endpoint, so no newly discovered backend can race a
+            // graceful SQL shutdown.
+            drop(topology_publisher);
+            drop(status_server);
             // The reload threads hold their own transaction openers; joining
             // them here releases those PD handles before the authority's
             // shutdown drain. The watch goes first: it nudges the reloader,

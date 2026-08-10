@@ -358,13 +358,21 @@ pub(super) fn is_region_scattering(
     );
     let response =
         map_rpc_result(response, PdOperation::GetOperator, endpoint, timeout)?.into_inner();
+    // client-go tikv/split_region.go:WaitScatterRegionFinish treats any
+    // response that is not a running scatter operator as completion before it
+    // inspects the response-header error. In particular, PD uses an empty
+    // operator plus REGION_NOT_FOUND after the operator has disappeared.
+    let is_scattering = response.desc.as_slice() == b"scatter-region"
+        && response.status == pdpb::OperatorStatus::Running as i32;
+    if !is_scattering {
+        return Ok(false);
+    }
     validate_response_header(
         PdOperation::GetOperator,
         response.header.as_ref(),
         cluster_id,
     )?;
-    Ok(response.desc.as_slice() == b"scatter-region"
-        && response.status == pdpb::OperatorStatus::Running as i32)
+    Ok(true)
 }
 
 pub(super) fn map_rpc_result<T>(
