@@ -84,6 +84,10 @@ func TestDDLTable(t *testing.T) {
 	require.Nil(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
+	rows := testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", tableInfo.ID).Rows()
+	require.Len(t, rows, 1)
+	oldTableID := tableInfo.ID
+	oldVersion := rows[0][0].(string)
 
 	testKit.MustExec("truncate table t1")
 	is = do.InfoSchema()
@@ -95,6 +99,38 @@ func TestDDLTable(t *testing.T) {
 	require.Nil(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
+	rows = testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", oldTableID).Rows()
+	require.Len(t, rows, 1)
+	require.NotEqual(t, oldVersion, rows[0][0].(string))
+}
+
+func TestDDLDropSchema(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("create database if not exists stats_gc")
+	testKit.MustExec("use stats_gc")
+	testKit.MustExec("create table t (c1 int)")
+
+	h := do.StatsHandle()
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("stats_gc"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+
+	rows := testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", tableInfo.ID).Rows()
+	require.Len(t, rows, 1)
+	oldVersion := rows[0][0].(string)
+
+	testKit.MustExec("drop database stats_gc")
+	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+
+	rows = testKit.MustQuery("select version from mysql.stats_meta where table_id = ?", tableInfo.ID).Rows()
+	require.Len(t, rows, 1)
+	require.NotEqual(t, oldVersion, rows[0][0].(string))
 }
 
 func TestDDLHistogram(t *testing.T) {

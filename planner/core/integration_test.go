@@ -119,6 +119,33 @@ func TestBitColErrorMessage(t *testing.T) {
 	tk.MustGetErrCode("create table bit_col_t (a bit(65))", mysql.ErrTooBigDisplaywidth)
 }
 
+func TestPartitionTableRowIDWarning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
+	tk.MustExec("drop table if exists t_partition_rowid_warn, t_plain_rowid_warn")
+	tk.MustExec(`create table t_partition_rowid_warn(a int)
+		partition by range(a) (
+			partition p0 values less than (10),
+			partition p1 values less than (20))`)
+	tk.MustExec("create table t_plain_rowid_warn(a int)")
+
+	tk.MustQuery("select _tidb_rowid from t_partition_rowid_warn").Rows()
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 `_tidb_rowid` in a partitioned table is not globally unique; combine it with the partition ID to guarantee uniqueness",
+	))
+
+	tk.MustQuery("select _tidb_rowid from t_partition_rowid_warn where _tidb_rowid >= 0").Rows()
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 `_tidb_rowid` in a partitioned table is not globally unique; combine it with the partition ID to guarantee uniqueness",
+	))
+
+	tk.MustQuery("select _tidb_rowid from t_plain_rowid_warn").Rows()
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+}
+
 func TestAggPushDownLeftJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1893,6 +1920,29 @@ func TestMaxMinEliminate(t *testing.T) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
+}
+
+func TestSemiJoinRewriteWithCTEAndMultipleExists(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (0), (1)")
+	tk.MustQuery(`with c as (select * from t)
+select max(t.a)
+from t
+where exists (
+select /*+ SEMI_JOIN_REWRITE() */ 1
+from c
+where c.a < 1
+)
+and exists (
+select 1
+from c
+where c.a < 2
+)`).Check(testkit.Rows("1"))
 }
 
 func TestINLJHintSmallTable(t *testing.T) {
@@ -8561,4 +8611,24 @@ func TestDowncastPointGetOrRangeScan(t *testing.T) {
 		tk.MustQuery("explain format='brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
 	}
+}
+
+func TestIssue54213(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table tb (
+		object_id bigint(20),
+		a bigint(20),
+		b bigint(20),
+		c bigint(20),
+		primary key (object_id),
+		key ab (a, b))`)
+	tk.MustQuery(`explain select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) x`).Check(
+		testkit.Rows("StreamAgg_11 1.00 root  funcs:count(1)->Column#6",
+			"└─Projection_12 0.10 root  1->Column#5",
+			"  └─Limit_13 0.10 root  offset:0, count:100",
+			"    └─IndexReader_17 0.10 root  index:Limit_16",
+			"      └─Limit_16 0.10 cop[tikv]  offset:0, count:100",
+			"        └─IndexRangeScan_15 0.10 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
 }

@@ -2369,9 +2369,9 @@
           "    └─CTETable(Probe) 10000.00 root  Scan on CTE_4",
           "CTE_1 1.00 root  Non-Recursive CTE",
           "└─Projection(Seed Part) 1.00 root  2->Column#8",
-          "  └─HashAgg 1.00 root  funcs:count(Column#37)->Column#35",
+          "  └─HashAgg 1.00 root  funcs:count(Column#36)->Column#34",
           "    └─TableReader 1.00 root  data:HashAgg",
-          "      └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#37",
+          "      └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#36",
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": null
@@ -2382,9 +2382,9 @@
           "CTEFullScan 1.80 root CTE:tmp data:CTE_4",
           "CTE_4 1.80 root  Recursive CTE",
           "├─Projection(Seed Part) 1.00 root  2->Column#37",
-          "│ └─HashAgg 1.00 root  funcs:count(Column#46)->Column#44",
+          "│ └─HashAgg 1.00 root  funcs:count(Column#45)->Column#43",
           "│   └─TableReader 1.00 root  data:HashAgg",
-          "│     └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#46",
+          "│     └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#45",
           "│       └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─Projection(Recursive Part) 0.80 root  cast(plus(Column#38, 1), bigint(1) BINARY)->Column#40",
           "  └─Selection 0.80 root  lt(plus(Column#38, 1), 10)",

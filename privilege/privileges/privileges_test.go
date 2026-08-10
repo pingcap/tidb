@@ -1653,8 +1653,20 @@ func TestDynamicPrivs(t *testing.T) {
 	// test SYSTEM_VARIABLES_ADMIN
 	err := tk.ExecToErr("SET GLOBAL wait_timeout = 86400")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
+	err = tk.ExecToErr("SET sql_require_primary_key = 1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
+	err = tk.ExecToErr("SET sql_require_primary_key = 0")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
+	err = tk.ExecToErr("SET GLOBAL sql_require_primary_key = 1")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
+	err = tk.ExecToErr("SET GLOBAL sql_require_primary_key = 0")
+	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation")
 	rootTk.MustExec("GRANT SYSTEM_VARIABLES_admin ON *.* TO notsuper")
 	tk.MustExec("SET GLOBAL wait_timeout = 86400")
+	tk.MustExec("SET sql_require_primary_key = 1")
+	tk.MustExec("SET sql_require_primary_key = 0")
+	tk.MustExec("SET GLOBAL sql_require_primary_key = 1")
+	tk.MustExec("SET GLOBAL sql_require_primary_key = 0")
 
 	// test ROLE_ADMIN
 	err = tk.ExecToErr("GRANT anyrolename TO otheruser")
