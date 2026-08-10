@@ -156,7 +156,9 @@ fn refine_compared_constant(
 
     // `:1585-1587`: AllowNegativeToUnsigned off, so an underflow saturates at
     // 0 instead of wrapping.
-    let flags = tidb_datatype::DEFAULT_STATEMENT_FLAGS.with_allow_negative_to_unsigned(false);
+    let flags = tidb_datatype::DEFAULT_STATEMENT_FLAGS
+        .with_allow_negative_to_unsigned(false)
+        .with_truncate_as_warning(true);
     let converted = con.value.convert_to(target, flags).ok()?;
     if matches!(converted.event, Some(ScalarConversionEvent::Overflow(_))) {
         return None;

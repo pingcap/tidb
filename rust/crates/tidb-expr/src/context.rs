@@ -25,6 +25,9 @@ use tidb_datatype::Datum;
 pub enum EvalError {
     /// The expression uses a construct outside the currently ported domain.
     Unsupported(&'static str),
+    /// Go `expression.ErrOperandColumns` (1241): the right row operand does
+    /// not contain the number of columns required by the left operand.
+    OperandColumns(usize),
     /// A binary operation reached the evaluator with an operand pair that no
     /// domain dispatch claims.
     ///

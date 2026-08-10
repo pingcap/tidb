@@ -1332,6 +1332,10 @@ fn builtin_other_row_and_in_source_vectors() {
         "INT:1"
     );
     assert_eq!(e("row(1, 2) <> row(1, 3)"), "INT:1");
+    assert_eq!(chunk_e("(1, 2) in ((1, 2), (3, 4))"), "INT:1");
+    assert_eq!(chunk_e("(1, 2) not in ((1, 2), (3, 4))"), "INT:0");
+    assert_eq!(chunk_e("(1, 2) in ((1, 3), (3, 4))"), "INT:0");
+    assert_eq!(chunk_e("(1, 2) in ((1, 2, 3))"), "OperandColumns(2)");
 
     // Integer, unsigned-boundary, float, decimal, string, and NULL rows
     // from TestInFunc all stay in the seed Datum domain.
