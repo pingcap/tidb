@@ -1,0 +1,37 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/server/internal/dump"
+source_commit = "9c3b588d6bc068bdf729307459e0b4ec935a7aa2"
+rust_files = [
+  "rust/crates/tidb-protocol/src/result.rs",
+  "rust/crates/tidb-protocol/src/prepared_statement.rs",
+  "rust/crates/tidb-protocol/src/lib.rs",
+  "rust/crates/tidb-protocol/tests/result_source.rs",
+  "rust/crates/tidb-protocol/tests/prepared_statement_protocol_source.rs",
+  "rust/crates/tidb-server/src/connection_resultset.rs",
+]
+
+[[tests]]
+name = "length_encoded_values"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "result_source::test_dump_"]
+
+[[tests]]
+name = "fixed_width_integers"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "prepared_statement_protocol_source::each_integer_cell_dumps_its_dump_binary_row_width", "--", "--exact"]
+
+[[tests]]
+name = "binary_time"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "prepared_statement_protocol_source::binary_time_matches_go_dump_binary_time_vectors", "--", "--exact"]
+
+[[tests]]
+name = "binary_datetime"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "prepared_statement_protocol_source::binary_datetime_matches_go_dump_binary_datetime_vectors", "--", "--exact"]
+
+[[tests]]
+name = "binary_row_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "connection_resultset::tests", "--lib"]

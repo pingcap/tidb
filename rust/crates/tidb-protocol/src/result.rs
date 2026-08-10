@@ -54,10 +54,10 @@ pub fn append_length_encoded_bytes(buffer: &mut Vec<u8>, value: Option<&[u8]>) {
 
 /// Encodes one text-protocol row from already formatted value bytes.
 ///
-/// Formatting typed TiDB datums (temporal values, decimals, JSON, charset
-/// conversion, and floating-point precision) remains owned by the future
-/// expression/result layer. This primitive owns only the wire framing around
-/// each value, including SQL `NULL`.
+/// Typed TiDB datum projection is owned by the server result writer, while
+/// charset conversion is owned by the result-set stream. This primitive owns
+/// only the wire framing around each already-formatted value, including SQL
+/// `NULL`.
 pub fn encode_text_row(values: &[Option<&[u8]>]) -> Vec<u8> {
     let mut encoded = Vec::new();
     for value in values {

@@ -107,16 +107,28 @@ fn test_dump_length_encoded_int() {
         (250, vec![0xfa]),
         (251, vec![0xfc, 0xfb, 0x00]),
         (513, vec![0xfc, 0x01, 0x02]),
+        (0xffff, vec![0xfc, 0xff, 0xff]),
+        (0x1_0000, vec![0xfd, 0x00, 0x00, 0x01]),
         (197_121, vec![0xfd, 0x01, 0x02, 0x03]),
+        (0xff_ffff, vec![0xfd, 0xff, 0xff, 0xff]),
+        (
+            0x0100_0000,
+            vec![0xfe, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00],
+        ),
         (
             578_437_695_752_307_201,
             vec![0xfe, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
         ),
+        (
+            u64::MAX,
+            vec![0xfe, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+        ),
     ];
     for (value, expected) in cases {
-        let mut got = Vec::new();
+        let mut got = vec![0xaa];
         append_length_encoded_int(&mut got, value);
-        assert_eq!(got, expected);
+        assert_eq!(&got[..1], &[0xaa], "the caller's prefix is preserved");
+        assert_eq!(&got[1..], expected);
     }
 }
 
@@ -130,6 +142,10 @@ fn test_dump_text_value_framing() {
     let mut got = Vec::new();
     append_length_encoded_bytes(&mut got, Some(&[0xd2, 0xbb]));
     assert_eq!(got, vec![0x02, 0xd2, 0xbb]);
+
+    let mut prefixed = vec![0xaa];
+    append_length_encoded_bytes(&mut prefixed, Some(b"abc"));
+    assert_eq!(prefixed, b"\xaa\x03abc");
 
     assert!(is_string_column_type(tidb_protocol::TYPE_VARCHAR));
     assert!(is_string_column_type(
