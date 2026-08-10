@@ -352,6 +352,23 @@ mod tests {
         assert_eq!((ft.flen(), ft.decimal()), (10, 0));
     }
 
+    // Go TestIssue46475: COALESCE(NULL, DATE, NULL) must preserve the lone
+    // typed branch as DATE instead of aggregating the NULL branches into a
+    // string result.
+    #[test]
+    fn test_issue_46475() {
+        let ft = infer_type4_control_funcs(
+            "coalesce",
+            &[
+                typed(FieldTypeCode::Null),
+                typed(FieldTypeCode::Date),
+                typed(FieldTypeCode::Null),
+            ],
+        )
+        .expect("all COALESCE branches have static types");
+        assert_eq!(ft.code(), FieldTypeCode::Date);
+    }
+
     /// The ENUM/SET rewrite's ONLY reachable path: one enum branch beside a
     /// NULL one, where `AggFieldType` never runs. Recorded witness:
     /// `tests/integrationtest/r/expression/misc.result:911` runs
