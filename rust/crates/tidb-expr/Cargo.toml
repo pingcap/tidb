@@ -18,6 +18,7 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-proto = { path = "../tidb-proto" }
+tidb-util = { path = "../tidb-util" }
 aes = { workspace = true }
 flate2 = { workspace = true }
 chrono = { workspace = true }
@@ -26,7 +27,6 @@ regex = { workspace = true }
 md-5 = { workspace = true }
 sha1 = { workspace = true }
 sha2 = { workspace = true }
-des = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]

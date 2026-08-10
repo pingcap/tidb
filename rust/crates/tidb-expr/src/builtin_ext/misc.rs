@@ -16,8 +16,7 @@
 
 use crate::coerce::coerce_str;
 use crate::{Datum, Decimal, EvalError};
-use des::cipher::{Block, BlockCipherEncrypt, KeyInit};
-use des::Des;
+use tidb_util::vitess::hash_uint64;
 
 /// Dispatches this family's builtins; `None` if `name` isn't one of them.
 pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
@@ -172,20 +171,6 @@ fn format_uuid_swapped(uuid: &[u8; 16]) -> String {
     )
 }
 
-/// Vitess' shard-key hash: DES-ECB of the big-endian key under an all-zero
-/// 64-bit key. Port of `vitess.HashUint64` (`pkg/util/vitess/vitess_hash.go`),
-/// shared by `TIDB_SHARD` (which takes it mod 256) and `VITESS_HASH` (which
-/// returns it whole). RustCrypto's audited DES is used directly; replacing this
-/// with a lookup or output-derived hash would silently change shard placement.
-fn vitess_hash_u64(shard_key: u64) -> u64 {
-    let mut block = Block::<Des>::default();
-    block.copy_from_slice(&shard_key.to_be_bytes());
-    let cipher =
-        Des::new_from_slice(&[0_u8; 8]).expect("DES accepts its fixed-width all-zero Vitess key");
-    cipher.encrypt_block(&mut block);
-    u64::from_be_bytes(block.into())
-}
-
 /// `TIDB_SHARD(value)`, ported from `builtinTidbShardSig.evalInt` in
 /// `pkg/expression/builtin_miscellaneous.go`.
 ///
@@ -200,7 +185,7 @@ fn tidb_shard(value: &Datum) -> Result<Datum, EvalError> {
     // `builtinTidbShardSig.evalInt` runs. Reuse the same integer-prefix
     // conversion used by this evaluator's SIGNED cast for scalar values.
     let shard_key = crate::cast::to_i64_signed(value) as u64;
-    Ok(Datum::UInt(vitess_hash_u64(shard_key) % 256))
+    Ok(Datum::UInt(hash_uint64(shard_key) % 256))
 }
 
 /// `VITESS_HASH(shard_key)`, ported from `builtinVitessHashSig.evalInt`. Like
@@ -212,7 +197,7 @@ fn vitess_hash(value: &Datum) -> Result<Datum, EvalError> {
         return Ok(Datum::Null);
     }
     let shard_key = crate::cast::to_i64_signed(value) as u64;
-    Ok(Datum::UInt(vitess_hash_u64(shard_key)))
+    Ok(Datum::UInt(hash_uint64(shard_key)))
 }
 
 /// `IS_UUID(value)`, ported from `builtinIsUUIDSig.evalInt` in

@@ -1,14 +1,18 @@
 schema = "semantic-package-gate-v3"
-claim = "package-seed"
+claim = "whole-go-package"
 go_package = "pkg/util/vitess"
 source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
-accepted_go_files = [
-  "pkg/util/vitess/vitess_hash.go",
-  "pkg/util/vitess/vitess_hash_test.go",
+rust_files = [
+  "rust/crates/tidb-util/src/vitess.rs",
+  "rust/crates/tidb-expr/src/builtin_ext/misc.rs",
 ]
-rust_files = ["rust/crates/tidb-util/src/vitess.rs"]
 
 [[tests]]
 name = "vitess_hash_semantics"
 cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib"]
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "vitess::tests"]
+
+[[tests]]
+name = "vitess_hash_sql_consumers"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-expr", "--lib", "vitess"]

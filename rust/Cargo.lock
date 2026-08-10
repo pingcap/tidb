@@ -1671,7 +1671,6 @@ dependencies = [
  "aes",
  "chrono",
  "chrono-tz",
- "des",
  "flate2",
  "md-5",
  "regex",
@@ -1686,6 +1685,7 @@ dependencies = [
  "tidb-mysql",
  "tidb-parser",
  "tidb-proto",
+ "tidb-util",
 ]
 
 [[package]]
