@@ -1096,8 +1096,29 @@ func TestStoreBatchTasksPreserveChildBucketsVersion(t *testing.T) {
 	}, versionByRegion)
 }
 
+func testHandleBatchCopResponseUnansweredTasks(t *testing.T) {
+	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
+	var batched, fallback atomic.Uint64
+	worker := &copIteratorWorker{
+		storeBatchedNum:         &batched,
+		storeBatchedFallbackNum: &fallback,
+	}
+
+	unansweredTask := &copTask{taskID: 1}
+	responses, remains, err := worker.handleBatchCopResponse(bo, nil, &coprocessor.Response{}, map[uint64]*batchedCopTask{
+		unansweredTask.taskID: {task: unansweredTask},
+	})
+	require.NoError(t, err)
+	require.Empty(t, responses)
+	require.Len(t, remains, 1)
+	require.Same(t, unansweredTask, remains[0])
+	require.Zero(t, batched.Load())
+	require.Equal(t, uint64(1), fallback.Load())
+}
+
 func TestHandleBatchCopResponse(t *testing.T) {
 	t.Run("resolves a child lock", testHandleBatchCopResponseResolvesChildLock)
+	t.Run("handles unanswered tasks", testHandleBatchCopResponseUnansweredTasks)
 	t.Run("updates child buckets on version mismatch", testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch)
 	t.Run("counts fallbacks after Region split", testHandleBatchCopResponseFallbackCountersAfterRegionSplit)
 }
