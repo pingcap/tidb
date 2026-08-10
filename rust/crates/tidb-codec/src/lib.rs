@@ -45,10 +45,11 @@ pub use column::{
     TypedColumnError,
 };
 pub use datum::{
-    cut_one, decode, decode_one, decode_range, encode_key, encode_key_in_timezone, encode_value,
-    encode_value_in_timezone, estimate_value_size, hash_code, peek_one_len, Encoder, BYTES_FLAG,
-    COMPACT_BYTES_FLAG, DECIMAL_FLAG, DURATION_FLAG, FLOAT_FLAG, INT_FLAG, JSON_FLAG, MAX_FLAG,
-    NIL_FLAG, UINT_FLAG, UVARINT_FLAG, VARINT_FLAG, VECTOR_FLOAT32_FLAG,
+    cut_one, decode, decode_one, decode_range, decode_range_typed, encode_key,
+    encode_key_in_timezone, encode_value, encode_value_in_timezone, estimate_value_size, hash_code,
+    peek_one_len, DecodeRangeError, Encoder, BYTES_FLAG, COMPACT_BYTES_FLAG, DECIMAL_FLAG,
+    DURATION_FLAG, FLOAT_FLAG, INT_FLAG, JSON_FLAG, MAX_FLAG, NIL_FLAG, UINT_FLAG, UVARINT_FLAG,
+    VARINT_FLAG, VECTOR_FLOAT32_FLAG,
 };
 pub use decimal::{
     decimal_encoded_len, decode_decimal, decode_decimal_with_fault, encode_decimal_fixed,

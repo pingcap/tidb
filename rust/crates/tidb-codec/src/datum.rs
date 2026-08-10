@@ -21,9 +21,10 @@ use crate::number::{
 };
 use crate::CodecError;
 use chrono::{TimeZone, Utc};
+use std::fmt;
 use tidb_datatype::{
     deserialize_vector_float32, peek_vector_float32, BinaryJSON, BinaryLiteralIntOutcome, Datum,
-    MySqlDuration, StringDatum,
+    FieldTypeCode, MySqlDuration, StringDatum, TimeType,
 };
 
 /// TiDB's SQL NULL tag.
@@ -54,6 +55,30 @@ pub const VECTOR_FLOAT32_FLAG: u8 = 20;
 pub const MAX_FLAG: u8 = 250;
 /// `PrefixNext(MAX_FLAG)`, accepted by Go `DecodeRange` as `MaxValue`.
 const PREFIX_NEXT_MAX_FLAG: u8 = MAX_FLAG + 1;
+
+/// A `DecodeRange` failure together with the values and undecoded suffix that
+/// Go returns alongside the error.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DecodeRangeError<'a> {
+    /// Values decoded before the failing value or terminal flag.
+    pub values: Vec<Datum>,
+    /// Input beginning at the value or terminal flag that could not decode.
+    pub remainder: &'a [u8],
+    /// The underlying malformed-encoding error.
+    pub error: CodecError,
+}
+
+impl fmt::Display for DecodeRangeError<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error.fmt(formatter)
+    }
+}
+
+impl std::error::Error for DecodeRangeError<'_> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
 
 /// A key encoder with an immutable collation-compatibility mode.
 ///
@@ -418,25 +443,84 @@ pub fn decode_one(input: &[u8]) -> Result<(&[u8], Datum), CodecError> {
     }
 }
 
-/// Decodes Go `codec.DecodeRange`'s schema-independent datum subset.
+/// Decodes Go `codec.DecodeRange` without index field metadata.
 ///
 /// Unlike [`decode_one`], `DecodeRange` reserves a final bare `BYTES_FLAG` as
 /// `MinNotNull` and a final `MAX_FLAG` (or its `PrefixNext` byte) as
 /// `MaxValue`. A non-final `BYTES_FLAG` still starts an ordinary encoded byte
 /// payload, so the two APIs must remain distinct.
 pub fn decode_range(
-    mut input: &[u8],
+    input: &[u8],
     expected_values: usize,
-) -> Result<(Vec<Datum>, &[u8]), CodecError> {
+) -> Result<(Vec<Datum>, &[u8]), DecodeRangeError<'_>> {
+    decode_range_with(input, expected_values, |input, _| decode_one(input))
+}
+
+/// Decodes Go `codec.DecodeRange` with the index column types that restore
+/// temporal values and MySQL `FLOAT` after their key encodings erased that
+/// schema information.
+///
+/// `field_types` describes ordinary encoded values only; a final range
+/// sentinel consumes no field type. `timezone` is observed only by non-zero
+/// timestamps, matching Go's `DecodeAsDateTime` contract.
+pub fn decode_range_typed<'a, TZ: TimeZone>(
+    input: &'a [u8],
+    expected_values: usize,
+    field_types: &[FieldTypeCode],
+    timezone: Option<&TZ>,
+) -> Result<(Vec<Datum>, &'a [u8]), DecodeRangeError<'a>> {
+    decode_range_with(input, expected_values, |input, index| {
+        let field_type = field_types.get(index).ok_or(CodecError::InvalidEncoding(
+            "invalid length of index columns",
+        ))?;
+        match field_type {
+            FieldTypeCode::Date => {
+                crate::package::decode_as_datetime(input, TimeType::Date, timezone)
+            }
+            FieldTypeCode::Datetime => {
+                crate::package::decode_as_datetime(input, TimeType::DateTime, timezone)
+            }
+            FieldTypeCode::Timestamp => {
+                crate::package::decode_as_datetime(input, TimeType::Timestamp, timezone)
+            }
+            FieldTypeCode::Float => crate::package::decode_as_float32(input),
+            _ => decode_one(input),
+        }
+    })
+}
+
+fn decode_range_with<'a, F>(
+    mut input: &'a [u8],
+    expected_values: usize,
+    mut decode_value: F,
+) -> Result<(Vec<Datum>, &'a [u8]), DecodeRangeError<'a>>
+where
+    F: FnMut(&'a [u8], usize) -> Result<(&'a [u8], Datum), CodecError>,
+{
     if input.is_empty() {
-        return Err(CodecError::InvalidEncoding("empty encoded range"));
+        return Err(DecodeRangeError {
+            values: Vec::new(),
+            remainder: input,
+            error: CodecError::InvalidEncoding("empty encoded range"),
+        });
     }
 
     let mut values = Vec::with_capacity(expected_values);
+    let mut index = 0;
     while input.len() > 1 {
-        let (remain, value) = decode_one(input)?;
+        let (remain, value) = match decode_value(input, index) {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                return Err(DecodeRangeError {
+                    values,
+                    remainder: input,
+                    error,
+                })
+            }
+        };
         values.push(value);
         input = remain;
+        index += 1;
     }
 
     if let Some(&flag) = input.first() {
@@ -444,7 +528,13 @@ pub fn decode_range(
             NIL_FLAG => Datum::Null,
             BYTES_FLAG => Datum::min_not_null(),
             MAX_FLAG | PREFIX_NEXT_MAX_FLAG => Datum::max_value(),
-            _ => return Err(CodecError::InvalidEncoding("invalid encoded range flag")),
+            _ => {
+                return Err(DecodeRangeError {
+                    values,
+                    remainder: input,
+                    error: CodecError::InvalidEncoding("invalid encoded range flag"),
+                })
+            }
         };
         values.push(value);
     }

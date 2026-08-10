@@ -419,6 +419,83 @@ fn test_decode_range() {
 }
 
 #[test]
+fn test_decode_range_restores_index_field_types() {
+    let mut date = parse_datetime("2011-11-11 00:00:00", &Utc, true, false)
+        .unwrap()
+        .time;
+    date.set_kind(TimeType::Date);
+    let datetime = parse_datetime("2011-11-11 11:11:11", &Utc, true, false)
+        .unwrap()
+        .time;
+    let mut timestamp = datetime;
+    timestamp.set_kind(TimeType::Timestamp);
+    let float = 1.234_567_890_123_f64;
+    let double = 9.876_543_210_987_f64;
+    let east_eight = FixedOffset::east_opt(8 * 60 * 60).unwrap();
+    let mut encoded = encode_key_in_timezone(
+        &east_eight,
+        &[
+            Datum::new_time(date),
+            Datum::new_time(datetime),
+            Datum::new_time(timestamp),
+            Datum::new_real(float),
+            Datum::new_real(double),
+        ],
+    )
+    .unwrap();
+    encoded.push(MAX_FLAG);
+    let field_types = [
+        FieldTypeCode::Date,
+        FieldTypeCode::Datetime,
+        FieldTypeCode::Timestamp,
+        FieldTypeCode::Float,
+        FieldTypeCode::Double,
+    ];
+
+    let (values, remain) =
+        decode_range_typed(&encoded, 6, &field_types, Some(&east_eight)).unwrap();
+    assert!(remain.is_empty());
+    assert_eq!(
+        values,
+        [
+            Datum::new_time(date),
+            Datum::new_time(datetime),
+            Datum::new_time(timestamp),
+            Datum::new_float32_from_f64(float),
+            Datum::new_real(double),
+            Datum::MaxValue,
+        ]
+    );
+
+    let error =
+        decode_range_typed(&encoded, 6, &field_types[..4], Some(&east_eight)).unwrap_err();
+    assert_eq!(
+        error.values,
+        [
+            Datum::new_time(date),
+            Datum::new_time(datetime),
+            Datum::new_time(timestamp),
+            Datum::new_float32_from_f64(float),
+        ]
+    );
+    assert_eq!(error.remainder, &encoded[4 * 9..]);
+    assert_eq!(
+        error.error,
+        CodecError::InvalidEncoding("invalid length of index columns")
+    );
+
+    let mut invalid_terminal = encode_key(&[Datum::Int(1)]).unwrap();
+    invalid_terminal.push(0x42);
+    let error = decode_range(&invalid_terminal, 2).unwrap_err();
+    assert_eq!(error.values, [Datum::Int(1)]);
+    assert_eq!(error.remainder, &[0x42]);
+    assert_eq!(
+        error.error,
+        CodecError::InvalidEncoding("invalid encoded range flag")
+    );
+}
+
+#[test]
 fn test_hash_chunk_row() {
     let integer = FieldType::new(FieldTypeCode::LongLong);
     let string = varchar(Collation::Utf8Mb4GeneralCi);
