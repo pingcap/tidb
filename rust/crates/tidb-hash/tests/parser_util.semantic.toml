@@ -1,0 +1,33 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/parser/util"
+source_commit = "8a48a672e71f42b39e90fae8c2d5eec9aef94093"
+rust_files = [
+  "rust/crates/tidb-lexer/src/escape.rs",
+  "rust/crates/tidb-lexer/tests/parser_util_package_source.rs",
+  "rust/crates/tidb-hash/src/hash64.rs",
+  "rust/crates/tidb-hash/tests/parser_util_package_source.rs",
+  "rust/crates/tidb-parser/tests/parser_util_consumer_source.rs",
+  "rust/crates/tidb-planner/src/hash_equaler.rs",
+  "rust/crates/tidb-planner/tests/parser_util_consumer_source.rs",
+]
+
+[[tests]]
+name = "parser_util_unescape_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-lexer", "--test", "all", "parser_util_package_source::"]
+
+[[tests]]
+name = "parser_util_hash_interface"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-hash", "--test", "parser_util_package_source"]
+
+[[tests]]
+name = "parser_util_parser_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-parser", "--test", "all", "parser_util_consumer_source::"]
+
+[[tests]]
+name = "parser_util_planner_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-planner", "--test", "all", "parser_util_consumer_source::"]
