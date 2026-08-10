@@ -556,7 +556,10 @@ impl DecodedChannel {
                 if *next_row_index >= chunk.num_rows() {
                     return Ok(None);
                 }
-                let row = chunk.get_row(*next_row_index).get_datum_row(field_types);
+                let row = chunk
+                    .get_row(*next_row_index)
+                    .try_get_datum_row(field_types)
+                    .map_err(|error| ResponseChannelError::RowDecode(error.to_string()))?;
                 *next_row_index += 1;
                 Ok(Some(super::channel_iter::ChannelRow::new(
                     channel_index,

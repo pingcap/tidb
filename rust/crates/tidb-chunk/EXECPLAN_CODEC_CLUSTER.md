@@ -16,6 +16,7 @@ This is one semantic cluster inside the still-incomplete `pkg/util/chunk` whole-
 - [x] (2026-08-10) Proved `NewDate` width failed before the ownership correction: Rust returned 8 while accepted `EstimateTypeWidth` returns 32.
 - [x] (2026-08-10) Moved exact field-type width estimation to `tidb-chunk` and removed the planner duplicate; the focused regression and planner/executor compile gate pass.
 - [x] (2026-08-10) Replaced eager TypeChunk transpose with one live chunk-codec state and proved suffix, JSON/vector/NULL, channel-order, truncation, offset, and null-count boundaries.
+- [x] (2026-08-10) Closed typed-payload validation at the row boundary so malformed JSON, enum/set, vector, and decimal cells return query errors instead of unwinding DistSQL.
 - [ ] Classify all 138 codec production/direct-test obligations and generate proof/mutation evidence from one declarative manifest.
 - [ ] Include the cluster in the next batched Ready validation and dual-remote `hparser-integration` push.
 
@@ -33,6 +34,9 @@ This is one semantic cluster inside the still-incomplete `pkg/util/chunk` whole-
 - Observation: adding the owning crate edge changed only `tidb-distsql`'s path dependency list in `Cargo.lock`.
   Evidence: the offline lock delta is one `"tidb-chunk"` entry under the existing `tidb-distsql` package; no registry package or version changed.
 
+- Observation: checked column framing alone did not make typed payload materialization safe. Empty JSON, short enum/set, malformed vector, and invalid decimal cells passed structural decoding and then reached panicking trusted getters.
+  Evidence: the exact DistSQL regression failed before at `row.rs` with `a JSON cell always carries its type code`; `Row::try_get_datum_row` now validates each declared type and returns `RowDecode` for the complete malformed table.
+
 ## Decision Log
 
 - Decision: keep one decoded `tidb_chunk::Chunk` plus a row index in the DistSQL channel state.
@@ -43,13 +47,17 @@ This is one semantic cluster inside the still-incomplete `pkg/util/chunk` whole-
   Rationale: accepted trusted-package calls panic on malformed byte slices, but the Rust network response boundary must convert malformed remote bytes into `ResponseChannelError`. One checked parser lets both contracts share the same wire ownership without duplicate decoders.
   Date/Author: 2026-08-10 / Codex.
 
+- Decision: put fallible typed-cell materialization on `tidb_chunk::Row`, while trusted source-shaped getters remain panicking wrappers.
+  Rationale: framing and typed validity are separate boundaries. A single row authority avoids duplicating Datum conversion in DistSQL and makes malformed network/storage input an ordinary error without weakening trusted package contracts.
+  Date/Author: 2026-08-10 / Codex.
+
 - Decision: keep exact `EstimateTypeWidth` in `tidb-chunk`, and let planner cost structures receive a precomputed width.
   Rationale: the accepted owner distinguishes `Date` from `NewDate`; the displaced planner enum collapsed them and produced a real cost error.
   Date/Author: 2026-08-10 / Codex.
 
 ## Outcomes & Retrospective
 
-The width ownership correction and DistSQL state migration are green. `NewDate` now estimates 32 instead of the old collapsed fixed width 8. The suffix fail-before regression returned `RowDecode("TypeChunk channel has 4 trailing bytes")`; it now returns the row and cleanly exhausts. The direct consumer retains one decoded chunk and materializes only the requested row, including JSON, vector, and NULL values. Checked framing errors remain normal query errors. Receipt classification, mutations, and batch Ready gates remain.
+The width ownership correction and DistSQL state migration are green. `NewDate` now estimates 32 instead of the old collapsed fixed width 8. The suffix fail-before regression returned `RowDecode("TypeChunk channel has 4 trailing bytes")`; it now returns the row and cleanly exhausts. The typed-payload fail-before regression panicked on empty JSON; malformed JSON, enum/set, vector, and decimal cells now return `RowDecode`. The direct consumer retains one decoded chunk and materializes only the requested row, including valid JSON, vector, and NULL values. Receipt classification, mutations, and batch Ready gates remain.
 
 ## Context and Orientation
 

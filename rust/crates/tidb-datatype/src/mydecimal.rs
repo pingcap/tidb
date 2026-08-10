@@ -1362,15 +1362,32 @@ impl MyDecimal {
         if bytes[3] > 1 {
             return Err("invalid MyDecimal negative flag byte");
         }
+        let digits_int = bytes[0] as i8;
+        let digits_frac = bytes[1] as i8;
+        let result_frac = bytes[2] as i8;
+        if digits_int < 0 || digits_frac < 0 || result_frac < 0 {
+            return Err("invalid negative MyDecimal digit count");
+        }
+        let used_words =
+            digits_to_words(i32::from(digits_int)) + digits_to_words(i32::from(digits_frac));
+        if used_words > MAX_WORD_BUF_LEN as i32 {
+            return Err("MyDecimal digit counts exceed the word buffer");
+        }
         let mut d = MyDecimal {
-            digits_int: bytes[0] as i8,
-            digits_frac: bytes[1] as i8,
-            result_frac: bytes[2] as i8,
+            digits_int,
+            digits_frac,
+            result_frac,
             negative: bytes[3] == 1,
             word_buf: [0; MAX_WORD_BUF_LEN],
         };
         for (w, chunk) in d.word_buf.iter_mut().zip(bytes[4..].chunks_exact(4)) {
             *w = i32::from_ne_bytes(chunk.try_into().expect("4-byte word"));
+        }
+        if d.word_buf[..used_words as usize]
+            .iter()
+            .any(|word| !(0..WORD_BASE as i32).contains(word))
+        {
+            return Err("MyDecimal word is outside base-1e9 storage");
         }
         Ok(d)
     }
@@ -1578,6 +1595,18 @@ mod tests {
         // The negative flag byte is validated.
         let mut bytes = MyDecimal::from_int(1).to_raw_bytes();
         bytes[3] = 2;
+        assert!(MyDecimal::from_raw_bytes(bytes).is_err());
+
+        // Malformed wire cells cannot publish counts outside the fixed word
+        // buffer or base-1e9 words that would panic later formatting.
+        let mut bytes = MyDecimal::from_int(1).to_raw_bytes();
+        bytes[0] = u8::MAX;
+        assert!(MyDecimal::from_raw_bytes(bytes).is_err());
+        let mut bytes = MyDecimal::from_int(1).to_raw_bytes();
+        bytes[0] = 82;
+        assert!(MyDecimal::from_raw_bytes(bytes).is_err());
+        let mut bytes = MyDecimal::from_int(1).to_raw_bytes();
+        bytes[4..8].copy_from_slice(&1_000_000_000_i32.to_ne_bytes());
         assert!(MyDecimal::from_raw_bytes(bytes).is_err());
     }
 

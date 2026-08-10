@@ -108,6 +108,30 @@ fn type_chunk(columns: &[Vec<Cell<'_>>]) -> Chunk {
     }
 }
 
+fn one_row_variable_type_chunk(cell: &[u8]) -> Chunk {
+    let mut data = Vec::new();
+    data.extend_from_slice(&1_u32.to_le_bytes());
+    data.extend_from_slice(&0_u32.to_le_bytes());
+    data.extend_from_slice(&0_i64.to_le_bytes());
+    data.extend_from_slice(&(cell.len() as i64).to_le_bytes());
+    data.extend_from_slice(cell);
+    Chunk {
+        rows_data: Some(data),
+        ..Default::default()
+    }
+}
+
+fn one_row_fixed_type_chunk(cell: &[u8]) -> Chunk {
+    let mut data = Vec::new();
+    data.extend_from_slice(&1_u32.to_le_bytes());
+    data.extend_from_slice(&0_u32.to_le_bytes());
+    data.extend_from_slice(cell);
+    Chunk {
+        rows_data: Some(data),
+        ..Default::default()
+    }
+}
+
 fn response_source(
     responses: impl IntoIterator<Item = SelectResponse>,
 ) -> ResponseChannel<Vec<u8>> {
@@ -366,6 +390,60 @@ fn type_chunk_rows_use_the_complete_chunk_datum_domain() {
         vec![Datum::Null, Datum::Null]
     );
     assert_eq!(iter.next_row().unwrap(), None);
+}
+
+#[test]
+fn malformed_typed_chunk_cells_are_query_errors_instead_of_panics() {
+    for (field_type, cell) in [
+        (FieldTypeCode::Json, Vec::new()),
+        (FieldTypeCode::Enum, vec![1]),
+        (FieldTypeCode::Set, vec![1]),
+        (FieldTypeCode::VectorFloat32, vec![0xf1, 0xfc]),
+    ] {
+        let response = SelectResponse {
+            encode_type: Some(EncodeType::TypeChunk as i32),
+            chunks: vec![one_row_variable_type_chunk(&cell)],
+            ..Default::default()
+        };
+        let mut iter = response_source([response]).into_select_iter(
+            vec![FieldType::new(field_type)],
+            Vec::new(),
+            WarningCollector::new(),
+        );
+
+        assert!(
+            matches!(iter.next_row(), Err(ResponseChannelError::RowDecode(_))),
+            "{field_type:?}"
+        );
+    }
+
+    let mut invalid_decimal = vec![0; 40];
+    invalid_decimal[3] = 2;
+    for (field_type, cell) in [
+        (
+            FieldType::new(FieldTypeCode::Duration).with_decimal(-2),
+            0_i64.to_ne_bytes().to_vec(),
+        ),
+        (
+            FieldType::new(FieldTypeCode::NewDecimal),
+            invalid_decimal,
+        ),
+    ] {
+        let response = SelectResponse {
+            encode_type: Some(EncodeType::TypeChunk as i32),
+            chunks: vec![one_row_fixed_type_chunk(&cell)],
+            ..Default::default()
+        };
+        let mut iter = response_source([response]).into_select_iter(
+            vec![field_type],
+            Vec::new(),
+            WarningCollector::new(),
+        );
+        assert!(matches!(
+            iter.next_row(),
+            Err(ResponseChannelError::RowDecode(_))
+        ));
+    }
 }
 
 #[test]
