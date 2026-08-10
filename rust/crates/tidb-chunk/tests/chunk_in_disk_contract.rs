@@ -270,6 +270,39 @@ fn truncated_chunk_read_is_rejected_before_destination_mutation() {
 }
 
 #[test]
+fn deterministic_failure_adaptation() {
+    let fields = vec![FieldType::new(FieldTypeCode::VarString)];
+
+    let write_storage = TestStorage::open("adapt-write", -1);
+    let mut write_disk =
+        DataInDiskByChunks::new(fields.clone(), "adapt-write-", write_storage.authority());
+    let displaced = write_storage.path.with_extension("leased");
+    std::fs::rename(&write_storage.path, &displaced).expect("move leased directory");
+    std::fs::write(&write_storage.path, b"block spill directory").expect("blocking file");
+    let mut row = Chunk::new_with_capacity(&fields, 1);
+    let payload = vec![0x6b; 6 * CHECKSUM_PAYLOAD_SIZE];
+    row.append_bytes(0, &payload);
+    assert!(matches!(write_disk.add(&row), Err(DiskError::Io(_))));
+    assert_eq!(write_disk.num_chunks(), 0);
+    assert_eq!(write_disk.disk_tracker().bytes_consumed(), 0);
+    drop(write_disk);
+    std::fs::remove_file(&write_storage.path).expect("remove blocking file");
+    std::fs::rename(displaced, &write_storage.path).expect("restore leased directory");
+
+    let read_storage = TestStorage::open("adapt-read", -1);
+    let mut read_disk = DataInDiskByChunks::new(fields, "adapt-read-", read_storage.authority());
+    read_disk.add(&row).expect("spill readable row");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(read_disk.file_path().expect("spill file"))
+        .expect("open spill file")
+        .set_len(0)
+        .expect("truncate spill file");
+    assert!(matches!(read_disk.get_chunk(0), Err(DiskError::Io(_))));
+    assert_eq!(read_disk.num_chunks(), 1);
+}
+
+#[test]
 fn zero_column_virtual_chunk_round_trips_and_close_releases_file() {
     let storage = TestStorage::open("virtual", -1);
     let mut source = Chunk::new(&[], 5, 7);

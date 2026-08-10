@@ -13,7 +13,7 @@ This is one artifact inside the larger incomplete `pkg/util/chunk` package. It m
 ## Progress
 
 - [x] (2026-08-10 03:55Z) Read the accepted production/test sources at `665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f`, the current Rust storage stack, all direct Rust consumers, and the 132 UNCLASSIFIED artifact obligations.
-- [x] (2026-08-10 04:25Z) Added and ran the six-case public source-shaped storage contract. It passed against the existing implementation after correcting one test-oracle mistake that mixed physical-row iteration with logical selection indexing; no production semantic gap was exposed.
+- [x] (2026-08-10 04:31Z) Added and ran the seven-case public source-shaped storage contract, including one combined deterministic replacement for the accepted random write/read failpoint. It passed against the existing implementation after correcting test-oracle setup mistakes; no production semantic gap was exposed.
 - [ ] Classify all 102 production and 30 direct-test obligations with exact rules, mutation evidence, deterministic failure adaptation, and fixed-loop proofs.
 - [ ] Run WIP and Ready gates, merge current `hparser-integration`, and push the verified checkpoint to both remotes without force.
 
@@ -29,7 +29,7 @@ This is one artifact inside the larger incomplete `pkg/util/chunk` package. It m
   Evidence: the accepted helper is called only at Add/read entry and contains only failpoint, random error, and sleep operations; Rust has no production caller or hidden random delay.
 
 - Observation: the public artifact contract passes without any production edit.
-  Evidence: `cargo test --offline --locked -j12 -p tidb-chunk --test chunk_in_disk_contract -- --nocapture` ran six tests successfully at baseline `6c93b76a71db29931e24f30507085eb8d6345453`; strict all-target Clippy also exited zero.
+  Evidence: `cargo test --offline --locked -j12 -p tidb-chunk --test chunk_in_disk_contract -- --nocapture` ran seven tests successfully, including a real create-file failure and a checksum-boundary truncated read; strict all-target Clippy also exited zero.
 
 ## Decision Log
 
@@ -122,3 +122,5 @@ No new crate dependency is required. The production interface remains:
 Revision note (2026-08-10 03:55Z): created the artifact plan after auditing accepted source, current Rust format/storage code, direct consumers, and exact ledger inventory.
 
 Revision note (2026-08-10 04:25Z): recorded the green six-case public contract and strict Clippy result. No production code changed because the contract exposed no semantic mismatch.
+
+Revision note (2026-08-10 04:31Z): added the combined deterministic write/read failure adaptation used by the measured probe; a multi-block payload is required so the read crosses the checksum writer's live cache into the truncated file.
