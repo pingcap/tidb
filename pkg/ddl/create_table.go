@@ -359,7 +359,7 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			return ver, errors.Trace(err)
 		}
 	}
-	if err = w.registerTTLTablesToExternalWorkloadWithRollback(jobCtx.ctx, job, tableInfos); err != nil {
+	if err = w.registerTTLTablesToExternalWorkload(jobCtx.ctx, job, tableInfos); err != nil {
 		return ver, err
 	}
 
