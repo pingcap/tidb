@@ -1,0 +1,1 @@
+{"mutation_id":"M_CHUNK_UTIL_SPILL_FILE","replacements":[{"expected_count":1,"new":"let _ = count;","old":"self.off_write += count as i64;"}],"rust_path":"rust/crates/tidb-chunk/src/chunk_util.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"0920975ee5156791af55df8828c2bf10f9090e28e4fed7257614870cf0243156"}

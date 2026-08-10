@@ -25,10 +25,9 @@ use std::sync::Arc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_util::{
-    copy_expected_rows_with_row_id_func, copy_rows, copy_selected_join_rows_direct,
-    copy_selected_join_rows_with_same_outer_rows, copy_selected_rows,
-    copy_selected_rows_with_row_id_func, ColumnSwapHelper, DiskFileReaderWriter,
-    MSG_ERR_SEL_NOT_NIL,
+    copy_rows, copy_selected_join_rows_direct, copy_selected_join_rows_with_same_outer_rows,
+    copy_selected_rows, copy_selected_rows_with_row_id_func, ColumnSwapHelper,
+    DiskFileReaderWriter, MSG_ERR_SEL_NOT_NIL,
 };
 use tidb_chunk::column::Column;
 use tidb_datatype::{FieldType, FieldTypeCode};
@@ -107,7 +106,7 @@ fn selected_column_copy_contract() {
     assert_eq!(fixed_selected.get_int64(2), 40);
 
     let mut fixed_inverted = Column::new_fixed_len(8, 0);
-    copy_expected_rows_with_row_id_func(
+    tidb_chunk::chunk_util::copy_expected_rows_with_row_id_func(
         &mut fixed_inverted,
         &fixed,
         &selected,
@@ -186,10 +185,12 @@ fn selected_join_copy_contract() {
     let selected = [true, false, true, false];
 
     let mut direct = Chunk::new_with_capacity(&fields, 4);
-    assert!(
-        copy_selected_join_rows_direct(&source, &selected, &mut direct)
-            .expect("physical source and destination")
-    );
+    assert!(tidb_chunk::chunk_util::copy_selected_join_rows_direct(
+        &source,
+        &selected,
+        &mut direct
+    )
+    .expect("physical source and destination"));
     assert_selected_join(&direct);
 
     let mut same_outer = Chunk::new_with_capacity(&fields, 4);
@@ -300,8 +301,7 @@ fn column_swap_identity_and_cache_contract() {
     let helper = ColumnSwapHelper::from_mapping(HashMap::from([(0, vec![0, 1]), (1, vec![2, 3])]));
     let mut input = aliased_input();
     let mut output = four_column_output();
-    helper
-        .swap_columns(&mut input, &mut output)
+    tidb_chunk::chunk_util::ColumnSwapHelper::swap_columns(&helper, &mut input, &mut output)
         .expect("physical chunks");
     for column in 0..4 {
         assert_eq!(output.get_row(0).get_int64(column), 99);
@@ -382,6 +382,8 @@ fn disk_case(encryption: SpillEncryptionMethod, case: &str) {
 
 #[test]
 fn spill_file_plaintext_and_aes_contract() {
+    let mut unopened = DiskFileReaderWriter::default();
+    assert!(tidb_chunk::chunk_util::DiskFileReaderWriter::write(&mut unopened, b"closed").is_err());
     disk_case(SpillEncryptionMethod::Plaintext, "plaintext");
     disk_case(SpillEncryptionMethod::Aes128Ctr, "aes128-ctr");
 }
