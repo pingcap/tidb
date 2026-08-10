@@ -1,0 +1,50 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/parser/test_driver"
+source_commit = "d7964ab2a6ca1eee07ff3c9e2d6f70020e75c99d"
+rust_files = [
+  "rust/crates/tidb-ast/src/expr.rs",
+  "rust/crates/tidb-ast/src/expr/restore.rs",
+  "rust/crates/tidb-ast/src/util.rs",
+  "rust/crates/tidb-parser/src/expr.rs",
+  "rust/crates/tidb-parser/src/tests/expr.rs",
+  "rust/crates/tidb-parser/src/tests/insert_binary_escape_source.rs",
+  "rust/crates/tidb-parser/src/tests/explain_binary_source.rs",
+  "rust/crates/tidb-datatype/src/binary_literal.rs",
+  "rust/crates/tidb-datatype/src/binary_literal_tests.rs",
+  "rust/crates/tidb-datatype/src/datum/mod.rs",
+  "rust/crates/tidb-datatype/src/field_type/value.rs",
+  "rust/crates/tidb-datatype/src/mydecimal.rs",
+  "rust/crates/tidb-datatype/src/decimal_tests.rs",
+  "rust/crates/tidb-datatype/tests/field_type_source.rs",
+]
+
+[[tests]]
+name = "parser_test_driver_ast_literals"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-parser", "--lib", "tests::expr::"]
+
+[[tests]]
+name = "parser_test_driver_binary_escape_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-parser", "--lib", "tests::insert_binary_escape_source::"]
+
+[[tests]]
+name = "parser_test_driver_explain_binary_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-parser", "--lib", "tests::explain_binary_source::"]
+
+[[tests]]
+name = "parser_test_driver_binary_literal_contract"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-datatype", "--lib", "binary_literal::tests::"]
+
+[[tests]]
+name = "parser_test_driver_decimal_contract"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-datatype", "--lib", "decimal_tests::test_from_string_my_decimal", "--", "--exact"]
+
+[[tests]]
+name = "parser_test_driver_default_type_contract"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-datatype", "--test", "all", "field_type_source::parser_test_driver_default_type_for_value", "--", "--exact"]
