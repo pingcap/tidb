@@ -401,12 +401,10 @@ pub fn check_and_derive_collation_from_exprs(
 /// `func_name` is this crate's rewriter spelling (`eq`, `lt`, `like`, ...),
 /// which maps 1:1 onto Go's `ast.EQ`/`ast.LT`/`ast.Like` constants.
 ///
-/// DEFERRED (documented) relative to Go's full switch: `date_format`/
-/// `time_format`, `cast` (the rewriter knows the target type and sets the
-/// result collation itself), `case` (Go's own comment marks its aggregation
-/// as incorrect), and the JSON-returning family beyond
-/// `json_pretty`/`json_quote`. Every unlisted name lands in the same default
-/// arm Go uses.
+/// DEFERRED (documented) relative to Go's full switch: `case` (Go's own
+/// comment marks its aggregation as incorrect), and the JSON-returning family
+/// beyond `json_pretty`/`json_quote`. Every unlisted name lands in the same
+/// default arm Go uses.
 #[allow(clippy::too_many_lines)]
 pub fn derive_collation(
     func_name: &str,
@@ -508,6 +506,20 @@ pub fn derive_collation(
                 check_and_derive_collation_from_exprs(func_name, EvalType::Int, &args[..2])?;
             ec.coer = Coercibility::NUMERIC;
             ec.repe = Repertoire::ASCII;
+            Ok(ec)
+        }
+        "date_format" | "time_format" if args.len() == 2 => {
+            let mut ec = check_and_derive_collation_from_exprs(func_name, ret_type, &args[1..2])?;
+            let (charset, collation) = connection_charset_info();
+            ec.charset = charset.to_owned();
+            ec.collation = collation.to_owned();
+            Ok(ec)
+        }
+        "cast" if args.len() == 1 => {
+            let mut ec = check_and_derive_collation_from_exprs(func_name, ret_type, args)?;
+            let (charset, collation) = connection_charset_info();
+            ec.charset = charset.to_owned();
+            ec.collation = collation.to_owned();
             Ok(ec)
         }
         "in" if !args.is_empty() => {
