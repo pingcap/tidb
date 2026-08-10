@@ -19,11 +19,11 @@ use prost::Message;
 use tidb_codec::{encode_int, encode_key, encode_row_key};
 use tidb_datatype::Datum;
 use tidb_distsql::{
-    build_table_ranges, index_ranges_to_kv_ranges, table_ranges_to_kv_ranges, DatumRange,
-    DistSqlContext, ExecutorKind, ExecutorShape, IsolationLevel, KvPriority, PagingConfig,
-    ReplicaReadType, RequestBuilder, RequestEnvelope, RequestKeyRange, RequestSource, RequestType,
-    StoreLabel, StoreType, TableRangeSpec, DC_LABEL_KEY, DEFAULT_DIST_SQL_CONCURRENCY,
-    GLOBAL_REPLICA_SCOPE,
+    build_table_ranges, index_ranges_to_kv_ranges, table_handles_to_kv_ranges,
+    table_ranges_to_kv_ranges, DatumRange, DistSqlContext, ExecutorKind, ExecutorShape,
+    IsolationLevel, KvPriority, KvRequestMetadata, PagingConfig, ReplicaReadType, RequestBuilder,
+    RequestEnvelope, RequestKeyRange, RequestSource, RequestType, StoreLabel, StoreType,
+    TableRangeSpec, DC_LABEL_KEY, DEFAULT_DIST_SQL_CONCURRENCY, GLOBAL_REPLICA_SCOPE,
 };
 use tidb_proto::ResourceGroupTag;
 use tidb_txnkv::{Handle, IntHandle, Key, ResourceGroupTagBuilder};
@@ -68,8 +68,8 @@ fn encoded_int(value: i64) -> Vec<u8> {
 
 #[test]
 fn table_and_index_ranges_match_source_exclusion_vectors() {
-    // TestTableRangesToKVRanges, TestIndexRangesToKVRanges, and both FBS
-    // variants use the same codec path; assert every adjusted boundary.
+    // TestTableRangesToKVRanges and TestIndexRangesToKVRanges use the same
+    // codec path; assert every adjusted boundary.
     let table = table_ranges_to_kv_ranges(13, &source_ranges()).expect("table ranges");
     let expected = [(1, 3), (3, 4), (4, 19), (20, 33), (35, 35)];
     for (range, (low, high)) in table.iter().zip(expected) {
@@ -86,73 +86,110 @@ fn table_and_index_ranges_match_source_exclusion_vectors() {
         assert!(range.start_key.ends_with(&low));
         assert!(range.end_key.ends_with(&high));
     }
+}
 
+// Go pkg/distsql/request_builder_test.go::TestTableRangesToKVRangesWithFbs.
+#[test]
+fn test_table_ranges_to_kv_ranges_with_fbs() {
     let fbs = DatumRange::inclusive(vec![Datum::Int(1)], vec![Datum::Int(4)]);
     let table = table_ranges_to_kv_ranges(0, std::slice::from_ref(&fbs)).expect("table FBS");
-    assert_eq!(table[0].start_key, encode_row_key(0, &encoded_int(1)));
-    assert_eq!(table[0].end_key, encode_row_key(0, &encoded_int(5)));
+    assert_eq!(
+        table,
+        [RequestKeyRange {
+            start_key: encode_row_key(0, &encoded_int(1)).into(),
+            end_key: encode_row_key(0, &encoded_int(5)).into(),
+        }]
+    );
+}
+
+// Go pkg/distsql/request_builder_test.go::TestIndexRangesToKVRangesWithFbs.
+#[test]
+fn test_index_ranges_to_kv_ranges_with_fbs() {
+    let fbs = DatumRange::inclusive(vec![Datum::Int(1)], vec![Datum::Int(4)]);
     let index = index_ranges_to_kv_ranges(&[0], 0, &[fbs]).expect("index FBS");
-    assert!(index[0][0]
-        .start_key
-        .ends_with(&encode_key(&[Datum::Int(1)]).expect("low")));
-    assert!(index[0][0]
-        .end_key
-        .ends_with(&encode_key(&[Datum::Int(5)]).expect("high")));
+    let low = encode_key(&[Datum::Int(1)]).expect("low");
+    let high = encode_key(&[Datum::Int(5)]).expect("high");
+    assert_eq!(index.len(), 1);
+    assert_eq!(index[0].len(), 1);
+    assert!(index[0][0].start_key.ends_with(&low));
+    assert!(index[0][0].end_key.ends_with(&high));
 }
 
+fn finish_default_dag_request(builder: &mut RequestBuilder) -> KvRequestMetadata {
+    builder
+        .set_dag_request(RequestEnvelope::new(Vec::new()), DAG_BYTES)
+        .set_desc(false)
+        .set_keep_order(false)
+        .set_from_context(&DistSqlContext::new());
+    let request = builder.build().expect("DAG request");
+    assert_eq!(request.request_type, RequestType::Dag);
+    assert_eq!(request.data.as_deref(), Some(DAG_BYTES));
+    assert!(request.cacheable);
+    assert!(!request.keep_order);
+    assert!(!request.desc);
+    assert_eq!(
+        request.concurrency,
+        isize::try_from(DEFAULT_DIST_SQL_CONCURRENCY).unwrap()
+    );
+    assert_eq!(request.read_replica_scope, GLOBAL_REPLICA_SCOPE);
+    request
+}
+
+// Go pkg/distsql/request_builder_test.go::TestRequestBuilder1.
 #[test]
-fn canonical_builder_covers_all_source_range_entry_points() {
-    // TestRequestBuilder1-4 differ only in range production. They now all
-    // converge on this one builder and one request envelope.
+fn test_request_builder_1() {
+    let expected = table_ranges_to_kv_ranges(12, &source_ranges()).unwrap();
+    let mut builder = RequestBuilder::new();
+    builder.set_table_ranges(12, &source_ranges());
+    let request = finish_default_dag_request(&mut builder);
+    assert_eq!(
+        request.key_ranges.as_ref().unwrap().partitions(),
+        [expected]
+    );
+}
+
+// Go pkg/distsql/request_builder_test.go::TestRequestBuilder2.
+#[test]
+fn test_request_builder_2() {
+    let expected = index_ranges_to_kv_ranges(&[12], 15, &source_ranges()).unwrap();
+    let mut builder = RequestBuilder::new();
+    builder.set_index_ranges(12, 15, &source_ranges());
+    let request = finish_default_dag_request(&mut builder);
+    assert_eq!(
+        request.key_ranges.as_ref().unwrap().partitions(),
+        expected
+    );
+}
+
+// Go pkg/distsql/request_builder_test.go::TestRequestBuilder3.
+#[test]
+fn test_request_builder_3() {
     let handles = [0, 2, 3, 4, 5, 10, 11, 100].map(|value| Handle::Int(IntHandle::new(value)));
-    let raw = vec![RequestKeyRange {
-        start_key: vec![1].into(),
-        end_key: vec![2].into(),
-    }];
-    let mut builders = [
-        {
-            let mut builder = RequestBuilder::new();
-            builder.set_table_ranges(12, &source_ranges());
-            builder
-        },
-        {
-            let mut builder = RequestBuilder::new();
-            builder.set_index_ranges(12, 15, &source_ranges());
-            builder
-        },
-        {
-            let mut builder = RequestBuilder::new();
-            builder.set_table_handles(15, &handles);
-            builder
-        },
-        {
-            let mut builder = RequestBuilder::new();
-            builder.set_non_partitioned_key_ranges(raw.clone());
-            builder
-        },
-    ];
-    for builder in &mut builders {
-        builder
-            .set_dag_request(RequestEnvelope::new(Vec::new()), DAG_BYTES)
-            .set_desc(false)
-            .set_keep_order(false)
-            .set_from_context(&DistSqlContext::new());
-        let request = builder.build().expect("DAG request");
-        assert_eq!(request.request_type, RequestType::Dag);
-        assert_eq!(request.data.as_deref(), Some(DAG_BYTES));
-        assert!(request.cacheable);
-        assert_eq!(
-            request.concurrency,
-            isize::try_from(DEFAULT_DIST_SQL_CONCURRENCY).unwrap()
-        );
-        assert_eq!(request.read_replica_scope, GLOBAL_REPLICA_SCOPE);
-        assert!(request.key_ranges.is_some());
-    }
+    let (expected_ranges, expected_hints) = table_handles_to_kv_ranges(15, &handles);
+    let mut builder = RequestBuilder::new();
+    builder.set_table_handles(15, &handles);
+    let request = finish_default_dag_request(&mut builder);
+    let ranges = request.key_ranges.as_ref().unwrap();
+    assert_eq!(ranges.partitions(), [expected_ranges]);
+    assert_eq!(ranges.row_count_hints(), [expected_hints]);
 }
 
+// Go pkg/distsql/request_builder_test.go::TestRequestBuilder4.
 #[test]
-fn analyze_checksum_replica_and_default_state_match_source() {
-    // TestRequestBuilder5-8.
+fn test_request_builder_4() {
+    let handles = [0, 2, 3, 4, 5, 10, 11, 100].map(|value| Handle::Int(IntHandle::new(value)));
+    let (raw, _) = table_handles_to_kv_ranges(15, &handles);
+    let mut builder = RequestBuilder::new();
+    builder.set_non_partitioned_key_ranges(raw.clone());
+    let request = finish_default_dag_request(&mut builder);
+    let ranges = request.key_ranges.as_ref().unwrap();
+    assert_eq!(ranges.partitions(), [raw]);
+    assert!(ranges.row_count_hints().is_empty());
+}
+
+// Go pkg/distsql/request_builder_test.go::TestRequestBuilder5.
+#[test]
+fn test_request_builder_5() {
     let mut analyze = RequestBuilder::new();
     analyze
         .set_analyze_request([0x08, 0, 0x18, 0, 0x20, 0], IsolationLevel::ReadCommitted)
@@ -167,7 +204,11 @@ fn analyze_checksum_replica_and_default_state_match_source() {
     assert_eq!(analyze.priority, KvPriority::Low);
     assert!(analyze.not_fill_cache);
     assert!(analyze.keep_order);
+}
 
+// Go pkg/distsql/request_builder_test.go::TestRequestBuilder6.
+#[test]
+fn test_request_builder_6() {
     let mut checksum = RequestBuilder::new();
     checksum
         .set_checksum_request([0x10, 0, 0x18, 0])
@@ -176,7 +217,11 @@ fn analyze_checksum_replica_and_default_state_match_source() {
     assert_eq!(checksum.request_type, RequestType::Checksum);
     assert!(checksum.not_fill_cache);
     assert_eq!(checksum.concurrency, 10);
+}
 
+// Go pkg/distsql/request_builder_test.go::TestRequestBuilder7.
+#[test]
+fn test_request_builder_7() {
     for replica in [
         ReplicaReadType::Leader,
         ReplicaReadType::Follower,
@@ -198,7 +243,11 @@ fn analyze_checksum_replica_and_default_state_match_source() {
             vec![vec![]]
         );
     }
+}
 
+// Go pkg/distsql/request_builder_test.go::TestRequestBuilder8.
+#[test]
+fn test_request_builder_8() {
     let mut context = DistSqlContext::new();
     context.request.resource_group_name = "test".to_owned();
     let mut builder = RequestBuilder::from_context(&context);
@@ -210,26 +259,44 @@ fn analyze_checksum_replica_and_default_state_match_source() {
     );
 }
 
+// Go pkg/distsql/request_builder_test.go::TestRequestBuilderKeepsPagingSizeBytesWhenPagingDisabled.
 #[test]
-fn paging_timeout_and_execution_time_survive_projection() {
+fn test_request_builder_keeps_paging_size_bytes_when_paging_disabled() {
     let mut context = DistSqlContext::new();
     context.request.paging = PagingConfig {
         enabled: false,
         size_bytes: 4 * 1024 * 1024,
         ..PagingConfig::source_defaults()
     };
-    context.request.tikv_client_read_timeout_ms = 100;
-    context.request.max_execution_time_ms = 101;
     let mut builder = RequestBuilder::from_context(&context);
     let request = builder.build().expect("session projection");
     assert!(!request.paging.enabled);
     assert_eq!(request.paging.size_bytes, 4 * 1024 * 1024);
-    assert_eq!(request.tikv_client_read_timeout_ms, 100);
-    assert_eq!(request.max_execution_time_ms, 101);
 }
 
+// Go pkg/distsql/request_builder_test.go::TestRequestBuilderTiKVClientReadTimeout.
 #[test]
-fn scan_limit_and_index_lookup_concurrency_match_source_tables() {
+fn test_request_builder_tikv_client_read_timeout() {
+    let mut context = DistSqlContext::new();
+    context.request.tikv_client_read_timeout_ms = 100;
+    let mut builder = RequestBuilder::from_context(&context);
+    let request = builder.build().expect("session projection");
+    assert_eq!(request.tikv_client_read_timeout_ms, 100);
+}
+
+// Go pkg/distsql/request_builder_test.go::TestRequestBuilderMaxExecutionTime.
+#[test]
+fn test_request_builder_max_execution_time() {
+    let mut context = DistSqlContext::new();
+    context.request.max_execution_time_ms = 100;
+    let mut builder = RequestBuilder::from_context(&context);
+    let request = builder.build().expect("session projection");
+    assert_eq!(request.max_execution_time_ms, 100);
+}
+
+// Go pkg/distsql/request_builder_test.go::TestScanLimitConcurrency.
+#[test]
+fn test_scan_limit_concurrency() {
     for (kind, limit, expected) in [
         (ExecutorKind::TableScan, 1, 1),
         (ExecutorKind::IndexScan, 1, 1),
@@ -248,7 +315,11 @@ fn scan_limit_and_index_lookup_concurrency_match_source_tables() {
         assert_eq!(request.concurrency, expected);
         assert_eq!(request.limit_size, limit);
     }
+}
 
+// Go pkg/distsql/request_builder_test.go::TestIndexLookUpPushDownScanConcurrency.
+#[test]
+fn test_index_look_up_push_down_scan_concurrency() {
     for (limit, expected) in [(1, 1), (1_000_000, 15)] {
         let dag = RequestEnvelope::new(vec![
             ExecutorShape::new(ExecutorKind::IndexScan),
@@ -412,36 +483,64 @@ fn complete_metadata_setters_and_read_consistency_reach_transport_snapshot() {
     );
 }
 
-#[test]
-fn full_table_ranges_cover_int_and_common_handle_partition_layouts() {
-    for common_handle in [false, true] {
-        for ids in [vec![1], vec![1, 2, 3], vec![1, 3]] {
-            let ranges = build_table_ranges(&TableRangeSpec {
-                table_id: 0,
-                partition_ids: ids.clone(),
-                common_handle,
-                indexes: Vec::new(),
-            })
-            .expect("partition ranges");
-            assert_eq!(ranges.len(), ids.len());
-            for (range, id) in ranges.iter().zip(ids) {
-                assert_eq!(&range.start_key[..9], &encode_row_key(id, &[])[..9]);
-            }
-        }
+fn assert_full_table_ranges(common_handle: bool, low: &[u8], high: &[u8]) {
+    for ids in [vec![1], vec![1, 2, 3], vec![1, 3]] {
         let ranges = build_table_ranges(&TableRangeSpec {
-            table_id: 7,
+            table_id: 0,
+            partition_ids: ids.clone(),
             common_handle,
-            ..TableRangeSpec::default()
+            indexes: Vec::new(),
         })
-        .expect("nonpartitioned ranges");
-        assert_eq!(ranges.len(), 1);
-        assert_eq!(&ranges[0].start_key[..9], &encode_row_key(7, &[])[..9]);
+        .expect("partition ranges");
+        let expected = ids
+            .into_iter()
+            .map(|id| RequestKeyRange {
+                start_key: encode_row_key(id, low).into(),
+                end_key: encode_row_key(id, high).into(),
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ranges, expected);
     }
+
+    let ranges = build_table_ranges(&TableRangeSpec {
+        table_id: 7,
+        common_handle,
+        ..TableRangeSpec::default()
+    })
+    .expect("nonpartitioned ranges");
+    assert_eq!(
+        ranges,
+        [RequestKeyRange {
+            start_key: encode_row_key(7, low).into(),
+            end_key: encode_row_key(7, high).into(),
+        }]
+    );
 }
 
+// Go pkg/distsql/request_builder_test.go::TestBuildTableRangeIntHandle.
 #[test]
-fn transport_consumer_builds_resource_tag_from_first_table_range() {
-    let handles = [Handle::Int(IntHandle::new(0))];
+fn test_build_table_range_int_handle() {
+    let low = encoded_int(i64::MIN);
+    let high = Key::from_bytes(encoded_int(i64::MAX))
+        .prefix_next()
+        .into_bytes();
+    assert_full_table_ranges(false, &low, &high);
+}
+
+// Go pkg/distsql/request_builder_test.go::TestBuildTableRangeCommonHandle.
+#[test]
+fn test_build_table_range_common_handle() {
+    let low = encode_key(&[Datum::MinNotNull]).expect("minimum common handle");
+    let high = Key::from_bytes(encode_key(&[Datum::MaxValue]).expect("maximum common handle"))
+        .prefix_next()
+        .into_bytes();
+    assert_full_table_ranges(true, &low, &high);
+}
+
+// Go pkg/distsql/request_builder_test.go::TestRequestBuilderHandle.
+#[test]
+fn test_request_builder_handle() {
+    let handles = [0, 2, 3, 4, 5, 10, 11, 100].map(|value| Handle::Int(IntHandle::new(value)));
     let mut builder = RequestBuilder::new();
     builder
         .set_table_handles(15, &handles)
