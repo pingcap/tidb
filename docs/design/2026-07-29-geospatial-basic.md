@@ -1,7 +1,7 @@
 # TiDB Design Documents
 
 - Author(s): [Mattias Jonsson](http://github.com/mjonss), [Daniël van Eeden](http://github.com/dveeden)
-- Discussion PR: https://github.com/pingcap/tidb/pull/XXXXX
+- Discussion PR: https://github.com/pingcap/tidb/pull/70420
 - Tracking Issue: https://github.com/pingcap/tidb/issues/6347
 
 ## Table of Contents
