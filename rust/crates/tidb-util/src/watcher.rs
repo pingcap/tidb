@@ -12,26 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `pkg/util/watcher`: a polling file/directory watcher.
+//! Non-recursive polling watcher for files and directories.
 //!
-//! Faithful adaptations:
-//! - Go's unbuffered `Events`/`Errors` channels become crossbeam
-//!   rendezvous channels (`bounded(0)`), so the poll thread blocks on each
-//!   send until the consumer receives -- preserving Go's back-pressure and
-//!   making delivery lossless.
-//! - Go's `close(closed)` broadcast becomes a `bounded::<()>(0)` channel
-//!   whose sender is dropped on [`Watcher::close`]; every `select!` arm
-//!   watching `closed_rx` then observes disconnection, exactly like a
-//!   received zero value on a closed Go channel.
-//! - `os.SameFile` becomes a `(dev, ino)` comparison (Unix `MetadataExt`),
-//!   used to reclassify a remove+create pair as a rename/move.
-//!
-//! Like Go, only one `Op` is reported per file per poll; the priority is
-//! Modify, Chmod, Rename/Move, Create/Remove.
+//! Event and error delivery is lossless and back-pressured. One mutex covers
+//! each complete poll cycle, so `add` and `remove` return only after pending
+//! observations are delivered. Paths and file names retain native OS bytes;
+//! rename and move detection uses Unix device/inode identity. Only one [`Op`]
+//! is reported per file per poll.
 
 use std::collections::HashMap;
+use std::ffi::{OsStr, OsString};
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -41,18 +33,20 @@ use crossbeam_channel::{bounded, select, Receiver, Sender};
 
 /// A single file operation type (Go `watcher.Op`, a bit flag).
 pub mod op {
+    use super::Op;
+
     /// A file was created.
-    pub const CREATE: u32 = 1 << 0;
+    pub const CREATE: Op = Op(1 << 0);
     /// A file was removed.
-    pub const REMOVE: u32 = 1 << 1;
+    pub const REMOVE: Op = Op(1 << 1);
     /// A file's contents changed.
-    pub const MODIFY: u32 = 1 << 2;
+    pub const MODIFY: Op = Op(1 << 2);
     /// A file was renamed within its directory.
-    pub const RENAME: u32 = 1 << 3;
+    pub const RENAME: Op = Op(1 << 3);
     /// A file's mode changed.
-    pub const CHMOD: u32 = 1 << 4;
+    pub const CHMOD: Op = Op(1 << 4);
     /// A file was moved across directories.
-    pub const MOVE: u32 = 1 << 5;
+    pub const MOVE: Op = Op(1 << 5);
 }
 
 /// A set of file operation types (Go `watcher.Op`).
@@ -62,8 +56,16 @@ pub struct Op(pub u32);
 impl Op {
     /// Whether this set contains any of `ops` (Go `Event.HasOps`).
     #[must_use]
-    pub fn has_op(self, op: u32) -> bool {
-        self.0 & op != 0
+    pub fn has_op(self, op: Op) -> bool {
+        self.0 & op.0 != 0
+    }
+}
+
+impl std::ops::BitOr for Op {
+    type Output = Self;
+
+    fn bitor(self, rhs: Self) -> Self::Output {
+        Self(self.0 | rhs.0)
     }
 }
 
@@ -79,7 +81,7 @@ impl std::fmt::Display for Op {
             (op::CHMOD, "CHMOD"),
             (op::MOVE, "MOVE"),
         ] {
-            if self.0 & bit == bit {
+            if self.0 & bit.0 == bit.0 {
                 buffer.push('|');
                 buffer.push_str(name);
             }
@@ -88,10 +90,10 @@ impl std::fmt::Display for Op {
     }
 }
 
-/// The snapshot of a path's metadata the watcher compares between polls
-/// (Go's `os.FileInfo`, reduced to the fields the poller uses).
+/// Rust-native snapshot of the Go `os.FileInfo` fields exposed by an event.
 #[derive(Clone, Debug)]
 pub struct FileMeta {
+    name: OsString,
     is_dir: bool,
     mod_time: SystemTime,
     size: u64,
@@ -101,8 +103,9 @@ pub struct FileMeta {
 }
 
 impl FileMeta {
-    fn from_metadata(m: &std::fs::Metadata) -> Self {
+    fn from_metadata(name: OsString, m: &std::fs::Metadata) -> Self {
         FileMeta {
+            name,
             is_dir: m.is_dir(),
             // ModTime falls back to UNIX_EPOCH if unavailable, matching Go's
             // zero-time comparison semantics closely enough for change checks.
@@ -114,10 +117,46 @@ impl FileMeta {
         }
     }
 
+    /// The base name of the file (Go `FileInfo.Name`).
+    #[must_use]
+    pub fn name(&self) -> &OsStr {
+        &self.name
+    }
+
     /// Whether this path is a directory (Go `FileInfo.IsDir`).
     #[must_use]
     pub fn is_dir(&self) -> bool {
         self.is_dir
+    }
+
+    /// File size in bytes (Go `FileInfo.Size`).
+    #[must_use]
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+
+    /// Last modification time (Go `FileInfo.ModTime`).
+    #[must_use]
+    pub fn modified(&self) -> SystemTime {
+        self.mod_time
+    }
+
+    /// Native Unix mode bits used by the poller (Go `FileInfo.Mode`).
+    #[must_use]
+    pub fn mode(&self) -> u32 {
+        self.mode
+    }
+
+    /// Native device identifier from Go `FileInfo.Sys` on Unix.
+    #[must_use]
+    pub fn device(&self) -> u64 {
+        self.dev
+    }
+
+    /// Native inode identifier from Go `FileInfo.Sys` on Unix.
+    #[must_use]
+    pub fn inode(&self) -> u64 {
+        self.ino
     }
 
     /// Go `os.SameFile`: same device and inode.
@@ -132,7 +171,7 @@ pub struct Event {
     /// The metadata of the file the event concerns.
     pub file_info: FileMeta,
     /// The path of the file.
-    pub path: String,
+    pub path: PathBuf,
     /// The operation.
     pub op: Op,
 }
@@ -146,7 +185,7 @@ impl Event {
 
     /// Go `Event.HasOps`: whether the event's op is any of `ops`.
     #[must_use]
-    pub fn has_ops(&self, ops: &[u32]) -> bool {
+    pub fn has_ops(&self, ops: &[Op]) -> bool {
         ops.iter().any(|&op| self.op.has_op(op))
     }
 }
@@ -193,14 +232,14 @@ impl std::error::Error for WatchError {}
 #[derive(Default)]
 struct State {
     /// The original names added for watching.
-    names: HashMap<String, ()>,
+    names: HashMap<PathBuf, ()>,
     /// The latest metadata of every watched file.
-    files: HashMap<String, FileMeta>,
+    files: HashMap<PathBuf, FileMeta>,
 }
 
 impl State {
     /// Go `doRemove`: drops `name` and, if it was a directory, its children.
-    fn do_remove(&mut self, name: &str) {
+    fn do_remove(&mut self, name: &Path) {
         self.names.remove(name);
         let Some(fi) = self.files.remove(name) else {
             return;
@@ -208,17 +247,12 @@ impl State {
         if !fi.is_dir {
             return;
         }
-        self.files
-            .retain(|fp, _| Path::new(fp).parent() != Some(Path::new(name)));
+        self.files.retain(|fp, _| fp.parent() != Some(name));
     }
 }
 
 /// Go `watcher.Watcher`: watches files/directories by polling.
 ///
-/// Divergence from Go: the watch list is guarded by a `Mutex`, but the port
-/// is not otherwise engineered for concurrent `Add`/`Remove`/`close` from
-/// many threads at once (Go relies on the same single mutex, so this matches
-/// realistic usage).
 pub struct Watcher {
     /// Receiver of file events (Go's public `Events` channel).
     pub events: Receiver<Event>,
@@ -256,19 +290,21 @@ impl Watcher {
     }
 
     /// Go `Add`: adds a file or directory (non-recursively) to the list.
-    pub fn add(&self, name: &str) -> Result<(), WatchError> {
+    pub fn add(&self, name: impl AsRef<Path>) -> Result<(), WatchError> {
+        let name = name.as_ref();
         let mut state = self.state.lock().unwrap();
         if self.is_closed() {
             return Err(WatchError::Closed);
         }
         let file_list = list_for_name(name)?;
-        state.names.insert(name.to_owned(), ());
+        state.names.insert(name.to_path_buf(), ());
         state.files.extend(file_list);
         Ok(())
     }
 
     /// Go `Remove`: removes a file or directory from the list.
-    pub fn remove(&self, name: &str) -> Result<(), WatchError> {
+    pub fn remove(&self, name: impl AsRef<Path>) -> Result<(), WatchError> {
+        let name = name.as_ref();
         let mut state = self.state.lock().unwrap();
         if self.is_closed() {
             return Err(WatchError::Closed);
@@ -368,14 +404,17 @@ fn do_watch(
                 if tick.is_err() {
                     return;
                 }
-                let Some(curr) = list_for_all(state, closed_rx, errors_tx) else {
+                // One lock covers listing, event delivery, and snapshot
+                // replacement. Add/Remove therefore cannot return between a
+                // poll's observation and its rendezvous sends.
+                let mut state = state.lock().unwrap();
+                let Some(curr) = list_for_all(&mut state, closed_rx, errors_tx) else {
                     return;
                 };
-                if poll_events(state, &curr, closed_rx, events_tx).is_break() {
+                if poll_events(&state.files, &curr, closed_rx, events_tx).is_break() {
                     return;
                 }
-                let mut s = state.lock().unwrap();
-                s.files = curr;
+                state.files = curr;
             }
         }
     }
@@ -397,24 +436,18 @@ fn send_event(
 
 /// Go `pollEvents`: diffs the last list against `curr` and emits events.
 fn poll_events(
-    state: &Arc<Mutex<State>>,
-    curr: &HashMap<String, FileMeta>,
+    prev: &HashMap<PathBuf, FileMeta>,
+    curr: &HashMap<PathBuf, FileMeta>,
     closed_rx: &Receiver<()>,
     events_tx: &Sender<Event>,
 ) -> std::ops::ControlFlow<()> {
     use std::ops::ControlFlow::{Break, Continue};
 
-    // Snapshot the previous file list under the lock, then release it: Go
-    // holds w.mu across the whole poll, but the sends here are rendezvous and
-    // would deadlock add()/remove() callers; the poll thread is the only
-    // writer of `files`, so a snapshot is equivalent.
-    let prev = state.lock().unwrap().files.clone();
-
-    let mut creates: HashMap<String, FileMeta> = HashMap::new();
-    let mut removes: HashMap<String, FileMeta> = HashMap::new();
+    let mut creates: HashMap<PathBuf, FileMeta> = HashMap::new();
+    let mut removes: HashMap<PathBuf, FileMeta> = HashMap::new();
 
     // Removals: present before, absent now.
-    for (fp, fi) in &prev {
+    for (fp, fi) in prev {
         if !curr.contains_key(fp) {
             removes.insert(fp.clone(), fi.clone());
         }
@@ -433,7 +466,7 @@ fn poll_events(
                 closed_rx,
                 Event {
                     path: fp.clone(),
-                    op: Op(op::MODIFY),
+                    op: op::MODIFY,
                     file_info: curr_fi.clone(),
                 },
             ) {
@@ -446,7 +479,7 @@ fn poll_events(
                 closed_rx,
                 Event {
                     path: fp.clone(),
-                    op: Op(op::CHMOD),
+                    op: op::CHMOD,
                     file_info: curr_fi.clone(),
                 },
             ) {
@@ -456,7 +489,7 @@ fn poll_events(
     }
 
     // Renames / moves: a remove and a create that are the same inode.
-    let remove_keys: Vec<String> = removes.keys().cloned().collect();
+    let remove_keys: Vec<PathBuf> = removes.keys().cloned().collect();
     for remove_fp in remove_keys {
         let remove_fi = removes[&remove_fp].clone();
         let matched = creates
@@ -464,7 +497,7 @@ fn poll_events(
             .find(|(_, create_fi)| remove_fi.same_file(create_fi))
             .map(|(k, _)| k.clone());
         if let Some(create_fp) = matched {
-            let same_dir = Path::new(&remove_fp).parent() == Path::new(&create_fp).parent();
+            let same_dir = remove_fp.parent() == create_fp.parent();
             let op = if same_dir { op::RENAME } else { op::MOVE };
             removes.remove(&remove_fp);
             creates.remove(&create_fp);
@@ -473,7 +506,7 @@ fn poll_events(
                 closed_rx,
                 Event {
                     path: remove_fp, // for Move, use the from-path
-                    op: Op(op),
+                    op,
                     file_info: remove_fi,
                 },
             ) {
@@ -488,7 +521,7 @@ fn poll_events(
             closed_rx,
             Event {
                 path: fp,
-                op: Op(op::CREATE),
+                op: op::CREATE,
                 file_info: fi,
             },
         ) {
@@ -501,7 +534,7 @@ fn poll_events(
             closed_rx,
             Event {
                 path: fp,
-                op: Op(op::REMOVE),
+                op: op::REMOVE,
                 file_info: fi,
             },
         ) {
@@ -514,18 +547,18 @@ fn poll_events(
 /// Go `listForAll`: lists every watched name, reporting and pruning names
 /// that have disappeared. Returns `None` if the watcher closed mid-list.
 fn list_for_all(
-    state: &Arc<Mutex<State>>,
+    state: &mut State,
     closed_rx: &Receiver<()>,
     errors_tx: &Sender<WatchError>,
-) -> Option<HashMap<String, FileMeta>> {
-    let names: Vec<String> = state.lock().unwrap().names.keys().cloned().collect();
+) -> Option<HashMap<PathBuf, FileMeta>> {
+    let names: Vec<PathBuf> = state.names.keys().cloned().collect();
     let mut file_list = HashMap::new();
     for name in names {
         match list_for_name(&name) {
             Ok(fl) => file_list.extend(fl),
             Err(e) => {
                 if is_not_found(&e) {
-                    state.lock().unwrap().do_remove(&name);
+                    state.do_remove(&name);
                 }
                 select! {
                     recv(closed_rx) -> _ => return None,
@@ -551,26 +584,30 @@ fn is_not_found(e: &WatchError) -> bool {
 /// Go `listForName`: metadata for a file, or for a directory's direct
 /// children (non-recursive). Directory entries use symlink-free metadata,
 /// matching Go's `entry.Info()`.
-fn list_for_name(name: &str) -> Result<HashMap<String, FileMeta>, WatchError> {
-    let stat = std::fs::metadata(name).map_err(|e| WatchError::io(&format!("name {name}"), &e))?;
+fn list_for_name(name: &Path) -> Result<HashMap<PathBuf, FileMeta>, WatchError> {
+    let stat = std::fs::metadata(name)
+        .map_err(|e| WatchError::io(&format!("name {}", name.display()), &e))?;
     let mut list = HashMap::new();
     let is_dir = stat.is_dir();
-    list.insert(name.to_owned(), FileMeta::from_metadata(&stat));
+    let base_name = name.file_name().unwrap_or(name.as_os_str()).to_os_string();
+    list.insert(
+        name.to_path_buf(),
+        FileMeta::from_metadata(base_name, &stat),
+    );
     if !is_dir {
         return Ok(list);
     }
-    let entries =
-        std::fs::read_dir(name).map_err(|e| WatchError::io(&format!("directory {name}"), &e))?;
+    let entries = std::fs::read_dir(name)
+        .map_err(|e| WatchError::io(&format!("directory {}", name.display()), &e))?;
     for entry in entries {
-        let entry = entry.map_err(|e| WatchError::io(&format!("directory {name}"), &e))?;
+        let entry =
+            entry.map_err(|e| WatchError::io(&format!("directory {}", name.display()), &e))?;
         let fi = entry
             .metadata()
-            .map_err(|e| WatchError::io(&format!("directory {name}"), &e))?;
-        let fp = Path::new(name)
-            .join(entry.file_name())
-            .to_string_lossy()
-            .into_owned();
-        list.insert(fp, FileMeta::from_metadata(&fi));
+            .map_err(|e| WatchError::io(&format!("directory {}", name.display()), &e))?;
+        let entry_name = entry.file_name();
+        let fp = name.join(&entry_name);
+        list.insert(fp, FileMeta::from_metadata(entry_name, &fi));
     }
     Ok(list)
 }
@@ -581,7 +618,7 @@ mod tests {
 
     use super::*;
 
-    fn assert_event(w: &Watcher, path: &str, op: u32) {
+    fn assert_event(w: &Watcher, path: &Path, op: Op) {
         loop {
             select! {
                 recv(w.events) -> ev => {
@@ -621,11 +658,11 @@ mod tests {
 
         let old_name = "mysql-bin.000001";
         let new_name = "mysql-bin.000002";
-        let old_path = dir.join(old_name).to_string_lossy().into_owned();
-        let new_path = dir.join(new_name).to_string_lossy().into_owned();
+        let old_path = dir.join(old_name);
+        let new_path = dir.join(new_name);
 
         let mut w = Watcher::new();
-        w.add(&dir.to_string_lossy()).unwrap();
+        w.add(&dir).unwrap();
         // Rendezvous: `poll()` returns only once the watch thread has taken
         // the tick, and the thread lists only after that.
         let (tick_tx, tick_rx) = bounded::<Instant>(0);
@@ -677,8 +714,8 @@ mod tests {
         let dir2 = std::env::temp_dir().join(format!("tidb_watcher_test2_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir2);
         std::fs::create_dir_all(&dir2).unwrap();
-        w.add(&dir2.to_string_lossy()).unwrap();
-        let old_path2 = dir2.join(old_name).to_string_lossy().into_owned();
+        w.add(&dir2).unwrap();
+        let old_path2 = dir2.join(old_name);
         std::fs::rename(&old_path, &old_path2).unwrap();
         poll();
         assert_event(&w, &old_path, op::MOVE);
@@ -690,8 +727,8 @@ mod tests {
 
     #[test]
     fn op_string_and_errors() {
-        assert_eq!(Op(op::CREATE).to_string(), "CREATE");
-        assert_eq!(Op(op::MODIFY | op::CHMOD).to_string(), "MODIFY|CHMOD");
+        assert_eq!(op::CREATE.to_string(), "CREATE");
+        assert_eq!((op::MODIFY | op::CHMOD).to_string(), "MODIFY|CHMOD");
         assert_eq!(Op(0).to_string(), "");
 
         let mut w = Watcher::new();
@@ -702,5 +739,80 @@ mod tests {
             Err(WatchError::AlreadyStarted)
         ));
         w.close();
+    }
+
+    #[test]
+    fn close_unblocks_pending_delivery_and_seals_the_watcher() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pending.bin");
+        let mut watcher = Watcher::new();
+        watcher.add(dir.path()).unwrap();
+        let (tick_tx, tick_rx) = bounded::<Instant>(0);
+        watcher.start_with_ticker(tick_rx).unwrap();
+
+        std::fs::write(&path, b"new").unwrap();
+        tick_tx.send(Instant::now()).unwrap();
+        watcher.close();
+
+        assert!(matches!(
+            watcher.events.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected)
+        ));
+        assert!(matches!(
+            watcher.errors.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Disconnected)
+        ));
+        assert!(matches!(watcher.add(&path), Err(WatchError::Closed)));
+        assert!(matches!(watcher.remove(&path), Err(WatchError::Closed)));
+        assert!(matches!(
+            watcher.start(Duration::from_millis(1)),
+            Err(WatchError::Closed)
+        ));
+    }
+
+    #[test]
+    fn file_meta_exposes_the_file_info_contract() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("metadata.bin");
+        std::fs::write(&path, b"abc").unwrap();
+
+        let native = std::fs::metadata(&path).unwrap();
+        let listed = list_for_name(&path).unwrap();
+        let meta = &listed[&path];
+        assert_eq!(meta.name(), path.file_name().unwrap());
+        assert_eq!(meta.size(), native.len());
+        assert_eq!(meta.modified(), native.modified().unwrap());
+        assert_eq!(meta.mode(), native.mode());
+        assert_eq!(meta.device(), native.dev());
+        assert_eq!(meta.inode(), native.ino());
+        assert!(!meta.is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_paths_round_trip_without_loss() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::{OsStrExt, OsStringExt};
+
+        let path = PathBuf::from(OsString::from_vec(b"file-\xff".to_vec()));
+        let watcher = Watcher::new();
+        watcher.remove(&path).unwrap();
+        let name = path.file_name().unwrap().to_os_string();
+
+        let event = Event {
+            file_info: FileMeta {
+                name,
+                is_dir: false,
+                mod_time: SystemTime::UNIX_EPOCH,
+                size: 0,
+                mode: 0,
+                dev: 0,
+                ino: 0,
+            },
+            path,
+            op: op::REMOVE,
+        };
+        assert_eq!(event.path.as_os_str().as_bytes(), b"file-\xff");
+        assert_eq!(event.file_info.name().as_bytes(), b"file-\xff");
     }
 }
