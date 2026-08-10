@@ -341,7 +341,10 @@ impl CorrelatedColumn {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_datatype::{FieldType, FieldTypeCode};
+    use chrono::TimeZone;
+    use tidb_datatype::{
+        core_time_from_datetime, Decimal, FieldType, FieldTypeCode, MySqlDuration, Time, TimeType,
+    };
 
     fn col(unique_id: i64) -> Column {
         Column {
@@ -547,5 +550,38 @@ mod tests {
         // HashCode matches the embedded column's.
         let mut plain = col(5);
         assert_eq!(cc.hash_code(), plain.hash_code());
+    }
+
+    /// Source: `pkg/expression/column_test.go::TestColumn`.
+    #[test]
+    fn correlated_column_eval_matches_source_datum_kinds() {
+        let datetime = Time::new(
+            core_time_from_datetime(chrono::Utc.with_ymd_and_hms(2017, 1, 18, 1, 1, 1).unwrap()),
+            TimeType::DateTime,
+            0,
+        )
+        .expect("valid source datetime");
+        let cases = [
+            (FieldTypeCode::LongLong, Datum::Int(1)),
+            (FieldTypeCode::Double, Datum::Real(1.2)),
+            (
+                FieldTypeCode::NewDecimal,
+                Datum::Decimal(Decimal::from_literal("1.2")),
+            ),
+            (FieldTypeCode::Varchar, Datum::new_string("abc")),
+            (
+                FieldTypeCode::Duration,
+                Datum::Duration(MySqlDuration::new(0, 0, 0, 0, 0).expect("valid zero duration")),
+            ),
+            (FieldTypeCode::Datetime, Datum::Time(datetime)),
+        ];
+
+        for (code, datum) in cases {
+            let correlated = CorrelatedColumn {
+                column: Column::new(1, FieldType::new(code)),
+                data: Some(datum.clone()),
+            };
+            assert_eq!(correlated.eval(), datum, "{code:?}");
+        }
     }
 }
