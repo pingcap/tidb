@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of `pkg/util/checksum`.
+//! CRC-32 block framing for positional spill-file reads.
 //!
-//! The CRC block layer, pooled positional-read buffer, original corruption
-//! tests, encrypt/checksum composition tests, build metadata, and test-process
-//! support move together. Rust's test harness creates no package-owned
-//! background workers, so Go's `goleak.VerifyTestMain` has no runtime analogue.
+//! Every physical block starts with a four-byte little-endian checksum and
+//! carries up to 1,020 payload bytes. Readers verify each complete or trailing
+//! partial block before exposing payload bytes.
 
 use crate::layered_io::{CloseWrite, ReadAt, ReadAtResult};
 use crate::zeropool::Pool;
@@ -137,7 +136,9 @@ where
             self.error = Some(StickyError::from_error(error));
             return result;
         }
-        self.flushed_user_data_count += self.payload_used as i64;
+        self.flushed_user_data_count = self
+            .flushed_user_data_count
+            .wrapping_add(self.payload_used as i64);
         self.payload_used = 0;
         Ok(())
     }
@@ -753,5 +754,15 @@ mod tests {
         assert_eq!(result.n, 1020);
         assert!(result.error.is_none());
         assert_eq!(read, data);
+    }
+
+    #[test]
+    fn flushed_offset_wraps_like_the_source_int64_counter() {
+        let file = MemoryFile::default();
+        let mut writer = Writer::new(file);
+        writer.flushed_user_data_count = i64::MAX;
+        assert_eq!(writer.write(b"x").unwrap(), 1);
+        writer.flush_buffer().unwrap();
+        assert_eq!(writer.get_cache_data_offset(), i64::MIN);
     }
 }
