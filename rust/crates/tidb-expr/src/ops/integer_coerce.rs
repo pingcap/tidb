@@ -298,3 +298,81 @@ pub(super) fn shift_right(a: u64, b: u64) -> u64 {
         a >> b
     }
 }
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+    use crate::column::Column;
+    use crate::context::NoColumns;
+    use crate::expression::Expression;
+    use tidb_datatype::{FieldTypeBuilder, FieldTypeCode, FieldTypeFlags};
+
+    fn integer_column(unsigned: bool) -> Expression {
+        let mut field_type = FieldTypeBuilder::new()
+            .with_code(FieldTypeCode::LongLong)
+            .build();
+        if unsigned {
+            field_type.add_flags(FieldTypeFlags::UNSIGNED);
+        }
+        Expression::Column(Column::new(1, field_type))
+    }
+
+    /// Exact scalar-semantic port of Go `TestBuiltinUnaryMinusIntSig` from
+    /// `builtin_op_vec_test.go`. Rust has one evaluator rather than separate
+    /// row/vector signatures, so the source's six value rows exercise that
+    /// sole path: ordinary, overflow, and NULL for both signedness flags.
+    #[test]
+    fn test_builtin_unary_minus_int_sig() {
+        let signed = integer_column(false);
+        let signed_operand = Operand::Expr(&signed);
+        assert!(!signed.static_type().unwrap().is_unsigned());
+        assert_eq!(
+            eval_unary(
+                UnaryOp::Minus,
+                Datum::Int(233_333),
+                signed_operand,
+                &NoColumns,
+            ),
+            Ok(Datum::Int(-233_333))
+        );
+        assert_eq!(
+            eval_unary(
+                UnaryOp::Minus,
+                Datum::Int(i64::MIN),
+                signed_operand,
+                &NoColumns,
+            ),
+            Err(EvalError::IntOverflow)
+        );
+        assert_eq!(
+            eval_unary(UnaryOp::Minus, Datum::Null, signed_operand, &NoColumns,),
+            Ok(Datum::Null)
+        );
+
+        let unsigned = integer_column(true);
+        let unsigned_operand = Operand::Expr(&unsigned);
+        assert!(unsigned.static_type().unwrap().is_unsigned());
+        assert_eq!(
+            eval_unary(
+                UnaryOp::Minus,
+                Datum::UInt(233_333),
+                unsigned_operand,
+                &NoColumns,
+            ),
+            Ok(Datum::Int(-233_333))
+        );
+        assert_eq!(
+            eval_unary(
+                UnaryOp::Minus,
+                Datum::UInt((1_u64 << 63) + 1),
+                unsigned_operand,
+                &NoColumns,
+            ),
+            Err(EvalError::IntOverflow)
+        );
+        assert_eq!(
+            eval_unary(UnaryOp::Minus, Datum::Null, unsigned_operand, &NoColumns,),
+            Ok(Datum::Null)
+        );
+    }
+}
