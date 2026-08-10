@@ -1,0 +1,29 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/dbterror"
+source_commit = "60996fd69eaae91e50c1460a110b4d005ae16eaf"
+excluded_go_paths = [
+  "pkg/util/dbterror/exeerrors",
+  "pkg/util/dbterror/plannererrors",
+]
+rust_files = [
+  "rust/crates/tidb-util/src/dbterror/mod.rs",
+  "rust/crates/tidb-util/src/dbterror/ddl_errors.rs",
+  "rust/crates/tidb-util/src/dbterror/dbterror_go_fixture.txt",
+  "rust/crates/tidb-util/src/timeutil/mod.rs",
+]
+
+[[tests]]
+name = "ddl_error_catalog"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "dbterror::tests::ddl_errors_match_go_fixture", "--", "--exact"]
+
+[[tests]]
+name = "error_redaction_contract"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "dbterror::tests::error_redact", "--", "--exact"]
+
+[[tests]]
+name = "error_class_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "timeutil"]
