@@ -257,7 +257,7 @@ pub(super) fn sha_crypt_b64_from_24bit(bytes: [u8; 3], n: usize, out: &mut Strin
 /// `SHAPWDHashLen`. The salt excludes NUL and `$` exactly as Go's generator
 /// does (see [`tidb_util::fastrand::buf`]).
 pub(super) fn hash_caching_sha2(password: &str) -> String {
-    let salt = tidb_util::fastrand::buf(SHA_CRYPT_SALT_LEN as isize);
+    let salt = tidb_util::fastrand::buf(SHA_CRYPT_SALT_LEN);
     sha_crypt(
         password,
         &salt,
@@ -272,7 +272,7 @@ pub(super) fn hash_caching_sha2(password: &str) -> String {
 /// SM3 instead of SHA-256 for this plugin; see
 /// `pkg/parser/auth/caching_sha2.go`'s `NewHashPassword`).
 pub(super) fn hash_tidb_sm3(password: &str) -> String {
-    let salt = tidb_util::fastrand::buf(SHA_CRYPT_SALT_LEN as isize);
+    let salt = tidb_util::fastrand::buf(SHA_CRYPT_SALT_LEN);
     sha_crypt(
         password,
         &salt,

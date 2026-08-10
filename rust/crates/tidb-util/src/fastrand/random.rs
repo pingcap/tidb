@@ -39,12 +39,8 @@ const fn wymix(a: u64, b: u64) -> u64 {
 }
 
 /// Generates source-shaped random ASCII bytes while excluding NUL and `$`.
-///
-/// The signed length preserves Go's negative-`make([]byte, size)` panic
-/// boundary instead of silently narrowing the API to `usize`.
 #[must_use]
-pub fn buf(size: isize) -> Vec<u8> {
-    let size = usize::try_from(size).expect("makeslice: len out of range");
+pub fn buf(size: usize) -> Vec<u8> {
     let mut result = vec![0; size];
     let mut random = Wyrand::new(u64::from(uint32()));
     for byte in &mut result {
@@ -80,12 +76,11 @@ pub fn uint64_n(n: u64) -> u64 {
 }
 
 #[cfg(test)]
-#[allow(non_snake_case)]
 mod tests {
     use super::{buf, uint32_n, uint64_n, wymix, Wyrand};
 
     #[test]
-    fn TestRand() {
+    fn test_rand() {
         assert!(uint32_n(1024) < 1024);
         assert!(uint64_n(1_u64 << 63) < 1_u64 << 63);
 
@@ -113,12 +108,6 @@ mod tests {
             assert!((1..=126).contains(&byte));
             assert_ne!(byte, b'$');
         }
-    }
-
-    #[test]
-    #[should_panic(expected = "makeslice: len out of range")]
-    fn negative_buf_size_preserves_go_make_panic() {
-        let _ = buf(-1);
     }
 
     #[test]

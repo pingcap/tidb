@@ -15,8 +15,6 @@
 //! Executable translations of every benchmark in
 //! `pkg/util/fastrand/random_test.go`.
 
-#![allow(non_snake_case)]
-
 use std::hint::black_box;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -54,26 +52,26 @@ fn measure_parallel(name: &str, operation: impl Fn() + Send + Sync + 'static) {
     );
 }
 
-fn BenchmarkFastRandBuf() {
+fn benchmark_fast_rand_buf() {
     measure_parallel("BenchmarkFastRandBuf", || {
         black_box(buf(20));
     });
 }
 
-fn BenchmarkFastRandUint32N() {
+fn benchmark_fast_rand_uint32_n() {
     measure_parallel("BenchmarkFastRandUint32N", || {
         black_box(uint32_n(127));
     });
 }
 
-fn BenchmarkFastRand() {
+fn benchmark_fast_rand() {
     measure_parallel("BenchmarkFastRand", || {
         black_box(uint32());
     });
     println!("{}", uint32());
 }
 
-fn BenchmarkGlobalRand() {
+fn benchmark_global_rand() {
     measure_parallel("BenchmarkGlobalRand", || {
         black_box(standard_fastrand::i64(..));
     });
@@ -81,8 +79,8 @@ fn BenchmarkGlobalRand() {
 }
 
 fn main() {
-    BenchmarkFastRandBuf();
-    BenchmarkFastRandUint32N();
-    BenchmarkFastRand();
-    BenchmarkGlobalRand();
+    benchmark_fast_rand_buf();
+    benchmark_fast_rand_uint32_n();
+    benchmark_fast_rand();
+    benchmark_global_rand();
 }
