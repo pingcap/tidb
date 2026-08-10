@@ -75,33 +75,8 @@ impl<'a> FormatFragment<'a> {
 pub trait Formatter: Write {
     /// Applies `fragments`, writes the result, and returns the written byte
     /// count.
-    fn format(&mut self, fragments: &[FormatFragment<'_>]) -> Result<usize, FormatWriteError>;
+    fn format(&mut self, fragments: &[FormatFragment<'_>]) -> io::Result<usize>;
 }
-
-/// A formatter write failure from the source-compatible single writer call.
-#[derive(Debug)]
-pub struct FormatWriteError {
-    /// Bytes reported before `error`.
-    ///
-    /// [`Write::write`] cannot return a partial count together with an error,
-    /// so this is zero for the formatter's one call. It remains explicit for
-    /// callers adapting richer writer interfaces.
-    pub written: usize,
-    /// The underlying writer error.
-    pub error: io::Error,
-}
-
-impl fmt::Display for FormatWriteError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            formatter,
-            "formatter write failed after {} bytes: {}",
-            self.written, self.error
-        )
-    }
-}
-
-impl std::error::Error for FormatWriteError {}
 
 /// Stateful formatter returned by Go's `IndentFormatter` constructor.
 pub struct IndentFormatter<W> {
@@ -127,11 +102,7 @@ impl<W: Write> IndentFormatter<W> {
         self.writer
     }
 
-    fn format_inner(
-        &mut self,
-        flat: bool,
-        fragments: &[FormatFragment<'_>],
-    ) -> Result<usize, FormatWriteError> {
+    fn format_inner(&mut self, flat: bool, fragments: &[FormatFragment<'_>]) -> io::Result<usize> {
         let mut buffer = Vec::new();
         for fragment in fragments {
             match fragment {
@@ -162,7 +133,8 @@ impl<W: Write> IndentFormatter<W> {
                 FormatFragment::Unindent => self.indent_level -= 1,
             }
         }
-        write_once(&mut self.writer, &buffer)
+        self.writer.write_all(&buffer)?;
+        Ok(buffer.len())
     }
 
     fn push_template_text(&mut self, flat: bool, text: &[u8], buffer: &mut Vec<u8>) {
@@ -205,7 +177,7 @@ impl<W: Write> Write for IndentFormatter<W> {
 }
 
 impl<W: Write> Formatter for IndentFormatter<W> {
-    fn format(&mut self, fragments: &[FormatFragment<'_>]) -> Result<usize, FormatWriteError> {
+    fn format(&mut self, fragments: &[FormatFragment<'_>]) -> io::Result<usize> {
         self.format_inner(false, fragments)
     }
 }
@@ -236,7 +208,7 @@ impl<W: Write> Write for FlatFormatter<W> {
 }
 
 impl<W: Write> Formatter for FlatFormatter<W> {
-    fn format(&mut self, fragments: &[FormatFragment<'_>]) -> Result<usize, FormatWriteError> {
+    fn format(&mut self, fragments: &[FormatFragment<'_>]) -> io::Result<usize> {
         self.0.format_inner(true, fragments)
     }
 }
@@ -256,10 +228,4 @@ pub fn output_format(input: &str) -> String {
         }
     }
     output
-}
-
-fn write_once(writer: &mut impl Write, buffer: &[u8]) -> Result<usize, FormatWriteError> {
-    writer
-        .write(buffer)
-        .map_err(|error| FormatWriteError { written: 0, error })
 }

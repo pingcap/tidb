@@ -18,9 +18,7 @@
 //! package reuses its native Rust owner. `OutputFormat` is intentionally owned
 //! here because the util package additionally doubles backslashes.
 
-pub use tidb_datatype::{
-    FlatFormatter, FormatFragment, FormatWriteError, Formatter, IndentFormatter,
-};
+pub use tidb_datatype::{FlatFormatter, FormatFragment, Formatter, IndentFormatter};
 
 /// Applies `pkg/util/format.OutputFormat` to text.
 #[must_use]

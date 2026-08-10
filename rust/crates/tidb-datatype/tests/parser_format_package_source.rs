@@ -135,20 +135,20 @@ fn formatter_uses_native_width_precision_indexing_and_radix() {
 }
 
 #[derive(Default)]
-struct BoundedWriter {
+struct ChunkedWriter {
     bytes: Vec<u8>,
-    limit: usize,
+    chunk_size: usize,
     calls: usize,
     fail: bool,
 }
 
-impl Write for BoundedWriter {
+impl Write for ChunkedWriter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         self.calls += 1;
         if self.fail {
             return Err(io::Error::other("writer failed"));
         }
-        let written = self.limit.min(buffer.len());
+        let written = self.chunk_size.min(buffer.len());
         self.bytes.extend_from_slice(&buffer[..written]);
         Ok(written)
     }
@@ -159,43 +159,30 @@ impl Write for BoundedWriter {
 }
 
 #[test]
-fn formatter_performs_one_write_and_preserves_short_write_results() {
-    let writer = BoundedWriter {
+fn formatter_writes_complete_output_and_propagates_errors() {
+    let writer = ChunkedWriter {
         bytes: Vec::new(),
-        limit: 4,
+        chunk_size: 2,
         calls: 0,
         fail: false,
     };
     let mut formatter = IndentFormatter::new(writer, "  ");
-    assert_eq!(formatter.format(&[F::text("abcdef")]).unwrap(), 4);
+    assert_eq!(formatter.format(&[F::text("abcdef")]).unwrap(), 6);
     let writer = formatter.into_inner();
-    assert_eq!(writer.calls, 1);
-    assert_eq!(writer.bytes, b"abcd");
+    assert_eq!(writer.calls, 3);
+    assert_eq!(writer.bytes, b"abcdef");
 
-    let writer = BoundedWriter {
+    let writer = ChunkedWriter {
         bytes: Vec::new(),
-        limit: 0,
-        calls: 0,
-        fail: false,
-    };
-    let mut formatter = IndentFormatter::new(writer, "  ");
-    assert_eq!(formatter.format(&[F::text("abcdef")]).unwrap(), 0);
-    let writer = formatter.into_inner();
-    assert_eq!(writer.calls, 1);
-    assert!(writer.bytes.is_empty());
-
-    let writer = BoundedWriter {
-        bytes: Vec::new(),
-        limit: usize::MAX,
+        chunk_size: usize::MAX,
         calls: 0,
         fail: true,
     };
     let mut formatter = IndentFormatter::new(writer, "  ");
     let error = formatter
         .format(&[F::text("abcdef")])
-        .expect_err("writer must return its error from the sole write call");
-    assert_eq!(error.written, 0);
-    assert_eq!(error.error.kind(), io::ErrorKind::Other);
+        .expect_err("writer errors must be returned");
+    assert_eq!(error.kind(), io::ErrorKind::Other);
     let writer = formatter.into_inner();
     assert_eq!(writer.calls, 1);
     assert!(writer.bytes.is_empty());
