@@ -12,39 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of Go `pkg/util/partialjson` (`extract.go`):
-//! extract requested top-level members from a JSON object without parsing the
-//! rest of the document.
+//! Complete transcreation of Go `pkg/util/partialjson` (`extract.go`).
 //!
-//! Go hand-rolls a `topLevelJSONTokenIter` over `encoding/json`'s
-//! `Decoder.Token()` stream and returns each member as a `[]json.Token`. That
-//! token vector is an artifact of Go's decoder API, not of the package's
-//! contract; the equal Rust library is `serde_json` (already a dependency),
-//! driven in streaming mode. Each requested member is captured as a
-//! [`RawValue`] — its exact source text, a strictly stronger representation
-//! than Go's re-tokenized stream.
-//!
-//! Observable semantics preserved (verified against the real Go package, not
-//! assumed):
-//! - **Early stop**: parsing halts as soon as every requested name has been
-//!   seen — content after that point (even invalid JSON, e.g. a truncated
-//!   tail, which is this package's reason to exist) never fails the call.
-//!   `serde_json`'s `deserialize_map` insists on consuming the closing brace
-//!   after the visitor returns, so the visitor hands its results out through a
-//!   side channel and sets a `done` flag; a parse error raised after `done`
-//!   is by definition in the never-requested tail and is ignored, exactly the
-//!   bytes Go never reads.
-//! - **First occurrence wins** for a duplicated member name.
-//! - **Empty `names` reads nothing**: Go's loop never touches the iterator, so
-//!   even garbage content succeeds with an empty result.
-//! - A missing requested name, a non-object top level, or malformed JSON
-//!   before the last requested member is an error; Go returns a nil map
-//!   alongside, which `Err` already expresses.
-//!
-//! Documented deviation: error *text* comes from `serde_json` rather than Go's
-//! `encoding/json` (e.g. Go's `invalid character 'a'` and `io.EOF`), exactly
-//! as this workspace's table-filter port carries `regex`-crate wording rather
-//! than Go `regexp` wording. Which inputs fail is unchanged.
+//! Requested top-level members are captured as [`RawValue`] source slices.
+//! Parsing stops after the last requested member, duplicate names keep their
+//! first value, and an empty name set never reads the input. Malformed input
+//! before the last requested member still fails. Error text is native
+//! `serde_json` wording; the failure boundary matches the package contract.
+//! `BUILD.bazel`'s `fastjson` and `partialjson` aliases both map to this module.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};

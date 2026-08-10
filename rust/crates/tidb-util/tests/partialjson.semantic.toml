@@ -1,0 +1,26 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/partialjson"
+source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
+rust_files = [
+  "rust/crates/tidb-util/src/partialjson.rs",
+  "rust/crates/tidb-meta/src/transaction.rs",
+  "rust/crates/tidb-meta/src/transaction_rules.rs",
+  "rust/crates/tidb-meta/tests/transaction_source.rs",
+  "rust/crates/tidb-meta/tests/job_name_go_vectors.rs",
+]
+
+[[tests]]
+name = "partialjson_package_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "partialjson"]
+
+[[tests]]
+name = "table_name_metadata_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-meta", "--test", "transaction_source", "source_range_partial_json_and_filter_boundaries", "--", "--exact"]
+
+[[tests]]
+name = "job_name_metadata_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-meta", "--test", "job_name_go_vectors", "actual_go_job_encoding_keeps_name_extraction_on_the_top_level_fields", "--", "--exact"]
