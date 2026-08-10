@@ -1777,6 +1777,7 @@ func TestTiDBEnableSharedLockUpgradeGate(t *testing.T) {
 			err := vars.SetSystemVar(vardef.TiDBEnableSharedLockUpgrade, val)
 			require.Error(t, err, val)
 			require.True(t, ErrWrongValueForVar.Equal(err), err)
+			require.Contains(t, err.Error(), "value of '"+val+"'", err)
 			require.False(t, vars.EnableSharedLockUpgrade)
 			sessionVal, err := vars.GetSessionOrGlobalSystemVar(
 				ctx, vardef.TiDBEnableSharedLockUpgrade,
@@ -1795,6 +1796,7 @@ func TestTiDBEnableSharedLockUpgradeGate(t *testing.T) {
 			)
 			require.Error(t, err, val)
 			require.True(t, ErrWrongValueForVar.Equal(err), err)
+			require.Contains(t, err.Error(), "value of '"+val+"'", err)
 			rawGlobalVal, err := mock.GetGlobalSysVar(
 				vardef.TiDBEnableSharedLockUpgrade,
 			)
