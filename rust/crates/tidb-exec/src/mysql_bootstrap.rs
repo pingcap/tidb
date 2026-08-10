@@ -197,6 +197,17 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
 
     rows::seed(&created_tables, environment, &mut mutations)?;
 
+    // Go `InitTiDBSchemaCacheSize`: publish the source default only when no
+    // persisted setting exists.
+    if read_schema_cache_size(snapshot)?.is_none() {
+        let schema_cache_size = u64::try_from(tidb_vardef::defaults::DEF_TIDB_SCHEMA_CACHE_SIZE)
+            .expect("the source schema-cache default is non-negative");
+        mutations.push(OptimisticMutation::meta_put(
+            schema_cache_size_kv_key(),
+            schema_cache_size.to_string().as_bytes(),
+        )?);
+    }
+
     // The version bump comes last, so the write set ends with the two keys that
     // make the whole schema observable at once.
     let schema_version = read_schema_version(snapshot)? + 1;
@@ -248,6 +259,27 @@ pub fn read_ddl_table_version<S: MetaSnapshot>(snapshot: &mut S) -> Result<i64, 
             .map_err(|error| BootstrapError::Encode(format!("DDLTableVersion: {error}"))),
         None => Ok(0),
     }
+}
+
+/// Reads Go `Mutator.GetSchemaCacheSize` at this snapshot.
+///
+/// `None` is Go's `isNull=true` result when a keyspace bootstrap has not yet
+/// initialized it.
+pub fn read_schema_cache_size<S: MetaSnapshot>(
+    snapshot: &mut S,
+) -> Result<Option<u64>, BootstrapError> {
+    match snapshot.get(&schema_cache_size_kv_key())? {
+        Some(stored) => std::str::from_utf8(&stored)
+            .map_err(|error| BootstrapError::Encode(format!("SchemaCacheSize: {error}")))?
+            .parse::<u64>()
+            .map(Some)
+            .map_err(|error| BootstrapError::Encode(format!("SchemaCacheSize: {error}"))),
+        None => Ok(None),
+    }
+}
+
+fn schema_cache_size_kv_key() -> Vec<u8> {
+    tidb_meta::structure::encode_string_data_key(key::SCHEMA_CACHE_SIZE)
 }
 
 /// Builds one `mysql.*` table at its reserved ID.
@@ -333,4 +365,76 @@ fn encode_error(error: impl fmt::Display) -> BootstrapError {
 /// One `Datum` for a seed row's character column.
 fn text(value: &str) -> Datum {
     Datum::Bytes(value.as_bytes().to_vec())
+}
+
+#[cfg(test)]
+mod source_tests {
+    use std::collections::BTreeMap;
+
+    use tidb_datatype::{Time, TimeType};
+
+    use super::*;
+    use crate::cluster_catalog::MetaPairs;
+
+    #[derive(Default)]
+    struct Snapshot {
+        pairs: BTreeMap<Vec<u8>, Vec<u8>>,
+    }
+
+    impl MetaSnapshot for Snapshot {
+        fn get(&mut self, raw_key: &[u8]) -> Result<Option<Vec<u8>>, ClusterCatalogError> {
+            Ok(self.pairs.get(raw_key).cloned())
+        }
+
+        fn scan_prefix(&mut self, prefix: &[u8]) -> Result<MetaPairs, ClusterCatalogError> {
+            Ok(self
+                .pairs
+                .iter()
+                .filter(|(key, _)| key.starts_with(prefix))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect())
+        }
+    }
+
+    // Go pkg/session/tidb_test.go::TestSchemaCacheSizeVar.
+    #[test]
+    fn test_schema_cache_size_var() {
+        let mut snapshot = Snapshot::default();
+        assert_eq!(read_schema_cache_size(&mut snapshot).unwrap(), None);
+
+        let environment = BootstrapEnvironment {
+            system_tz: "Asia/Shanghai".to_owned(),
+            new_collation_enabled: true,
+            cluster_id: 1,
+            current_timestamp: Time::from_date_checked(
+                2026,
+                8,
+                10,
+                0,
+                0,
+                0,
+                0,
+                TimeType::Timestamp,
+                0,
+            )
+            .unwrap(),
+            ddl_table_version: 0,
+        };
+        let write = plan_mysql_bootstrap(&mut snapshot, 1, &environment).unwrap();
+        let raw_key = schema_cache_size_kv_key();
+        let matching = write
+            .mutations
+            .iter()
+            .filter(|mutation| mutation.key() == raw_key);
+        let stored = matching
+            .map(|mutation| mutation.value().to_vec())
+            .collect::<Vec<_>>();
+        assert_eq!(stored, vec![b"536870912".to_vec()]);
+
+        snapshot.pairs.insert(raw_key, stored[0].clone());
+        assert_eq!(
+            read_schema_cache_size(&mut snapshot).unwrap(),
+            Some(536_870_912)
+        );
+    }
 }
