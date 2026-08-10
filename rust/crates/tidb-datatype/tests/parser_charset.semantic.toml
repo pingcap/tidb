@@ -1,0 +1,51 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/parser/charset"
+source_commit = "0b551706a8c32f6d5ce8da8e46f64ba32aea0be8"
+rust_files = [
+  "rust/crates/tidb-datatype/src/charset.rs",
+  "rust/crates/tidb-datatype/src/charset_data.rs",
+  "rust/crates/tidb-datatype/src/charset_data/known_charsets.rs",
+  "rust/crates/tidb-datatype/src/charset_data/collations.rs",
+  "rust/crates/tidb-datatype/src/charset_data/gb18030_by_rune.rs",
+  "rust/crates/tidb-datatype/src/charset_data/gb18030_by_bytes.rs",
+  "rust/crates/tidb-datatype/src/charset_data/gbk_cases.rs",
+  "rust/crates/tidb-datatype/src/charset_data/gb18030_cases.rs",
+  "rust/crates/tidb-datatype/src/encoding_base.rs",
+  "rust/crates/tidb-datatype/src/encoding_labels.rs",
+  "rust/crates/tidb-datatype/src/encoding_table.rs",
+  "rust/crates/tidb-datatype/src/multibyte_encoding.rs",
+  "rust/crates/tidb-datatype/tests/parser_charset_package_source.rs",
+  "rust/crates/tidb-lexer/src/charset.rs",
+  "rust/crates/tidb-lexer/src/collation.rs",
+  "rust/crates/tidb-expr/src/convert_charset.rs",
+  "rust/crates/tidb-parser/src/tests/collation_source.rs",
+  "rust/crates/tidb-protocol/src/result_encoder.rs",
+  "rust/crates/tidb-session/src/tests_charset.rs",
+]
+extra_artifacts = ["rust/scripts/generate-parser-charset.py"]
+
+[[tests]]
+name = "parser_charset_original_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-datatype", "--test", "all", "parser_charset_package_source::"]
+
+[[tests]]
+name = "parser_charset_encoding_internals"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-datatype", "--lib", "encoding"]
+
+[[tests]]
+name = "parser_charset_ddl_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-parser", "--lib", "tests::collation_source::"]
+
+[[tests]]
+name = "parser_charset_wire_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--lib", "result_encoder::tests::"]
+
+[[tests]]
+name = "parser_charset_sql_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-session", "--lib", "tests_charset::"]
