@@ -7,6 +7,78 @@
 
 use super::*;
 
+#[test]
+fn retryable_storage_errors_keep_their_transaction_identity() {
+    let retryable = || {
+        crate::kv_table::KvTableError::Storage(
+            "Retryable(\"region response no longer matches observed route\")".to_owned(),
+        )
+    };
+
+    for error in [
+        kv_read_error("row read failed", retryable()),
+        kv_write_error(retryable()),
+    ] {
+        let DriverError::Txn(TxnErrorKind::RegionUnavailable) = error else {
+            panic!("retryable storage failure lost its transaction identity")
+        };
+    }
+
+    let ordinary = kv_read_error(
+        "row read failed",
+        crate::kv_table::KvTableError::Storage("Backend(\"disk error\")".to_owned()),
+    );
+    assert!(matches!(ordinary, DriverError::Parse(_)));
+}
+
+/// go-tpc's delivery transaction deletes several `new_order` rows with one
+/// row-valued `IN` predicate. The SQL remains one DELETE and must report the
+/// number of matching composite keys exactly as Go TiDB does.
+#[test]
+fn delete_accepts_tpcc_three_column_row_in() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE new_order (\
+         no_w_id INT, no_d_id INT, no_o_id INT, \
+         PRIMARY KEY (no_w_id, no_d_id, no_o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO new_order VALUES \
+         (1, 1, 100), (1, 1, 101), (1, 2, 100), (2, 1, 100)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    assert_eq!(
+        run_delete_on(
+            "DELETE FROM new_order \
+             WHERE (no_w_id, no_d_id, no_o_id) \
+             IN ((1, 1, 100), (2, 1, 100))",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap(),
+        2,
+    );
+    assert_eq!(
+        run_select_on(
+            "SELECT no_w_id, no_d_id, no_o_id FROM new_order \
+             ORDER BY no_w_id, no_d_id, no_o_id",
+            &catalog,
+            &ctx,
+        )
+        .unwrap(),
+        vec![
+            vec![Datum::Int(1), Datum::Int(1), Datum::Int(101)],
+            vec![Datum::Int(1), Datum::Int(2), Datum::Int(100)],
+        ],
+    );
+}
+
 /// Go plans an `UPDATE`/`DELETE`'s read from the same cost chooser a `SELECT`
 /// reaches, so a `WHERE` on a secondary index reads through that index rather
 /// than scanning the whole table. `EXPLAIN` prints the `IndexRangeScan`, and

@@ -705,7 +705,7 @@ pub(crate) fn run_insert_traced(
         }
         let conflicts = target(catalog, &database, &table_name)
             .conflicting_handles(row, &ctx.session_zone())
-            .map_err(|e| DriverError::Parse(format!("conflict lookup failed: {e:?}")))?;
+            .map_err(|e| kv_read_error("conflict lookup failed", e))?;
         if !conflicts.is_empty() {
             if insert.replace {
                 // Go `InsertValues.removeRow` (`insert_common.go`): a
@@ -719,7 +719,7 @@ pub(crate) fn run_insert_traced(
                 for handle in &conflicts {
                     let existing = target(catalog, &database, &table_name)
                         .get_row_by_handle(handle, &ctx.session_zone())
-                        .map_err(|e| DriverError::Parse(format!("row read failed: {e:?}")))?;
+                        .map_err(|e| kv_read_error("row read failed", e))?;
                     if existing.as_deref() == Some(row) {
                         inserted += 1;
                         unchanged = true;
@@ -746,7 +746,7 @@ pub(crate) fn run_insert_traced(
                     // row.
                     target(catalog, &database, &table_name)
                         .delete_row(handle, &ctx.session_zone())
-                        .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
+                        .map_err(|e| kv_read_error("row delete failed", e))?;
                     inserted += 1;
                 }
                 if unchanged {
@@ -766,7 +766,7 @@ pub(crate) fn run_insert_traced(
             } else if insert.ignore {
                 let reported = target(catalog, &database, &table_name)
                     .duplicate_entry_error(row, &ctx.session_zone())
-                    .map_err(|e| DriverError::Parse(format!("conflict lookup failed: {e:?}")))?;
+                    .map_err(|e| kv_read_error("conflict lookup failed", e))?;
                 if let crate::kv_table::KvTableError::DuplicateEntry { value, key } = reported {
                     let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
                     ctx.append_warning_parts(warning.code, &warning.message);
@@ -801,6 +801,9 @@ pub(crate) fn run_insert_traced(
 /// would replace the code an application branches on.
 pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverError {
     match error {
+        crate::kv_table::KvTableError::Storage(message) if message.starts_with("Retryable(") => {
+            DriverError::Txn(crate::TxnErrorKind::RegionUnavailable)
+        }
         crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
             DriverError::DuplicateEntry { value, key }
         }
@@ -826,6 +829,17 @@ pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverErro
         // same 1467 an allocated column value would have reported.
         crate::kv_table::KvTableError::AutoIdExhausted => DriverError::AutoincReadFailed,
         other => DriverError::Parse(format!("row encode failed: {other:?}")),
+    }
+}
+
+/// Renders a table read failure while preserving the storage layer's
+/// retryable-region signal as a transaction error instead of a parse error.
+pub(crate) fn kv_read_error(operation: &str, error: crate::kv_table::KvTableError) -> DriverError {
+    match error {
+        crate::kv_table::KvTableError::Storage(message) if message.starts_with("Retryable(") => {
+            DriverError::Txn(crate::TxnErrorKind::RegionUnavailable)
+        }
+        other => DriverError::Parse(format!("{operation}: {other:?}")),
     }
 }
 
@@ -1082,7 +1096,7 @@ pub(crate) fn apply_on_duplicate(
 ) -> Result<u64, DriverError> {
     let Some(existing) = table
         .get_row_by_handle(handle, &ctx.session_zone())
-        .map_err(|e| DriverError::Parse(format!("row read failed: {e:?}")))?
+        .map_err(|e| kv_read_error("row read failed", e))?
     else {
         return Ok(0);
     };
@@ -1911,7 +1925,7 @@ pub(crate) fn run_delete_traced(
         };
         for (handle, _) in &doomed {
             kv.delete_row(handle, &zone)
-                .map_err(|e| DriverError::Parse(format!("row delete failed: {e:?}")))?;
+                .map_err(|e| kv_read_error("row delete failed", e))?;
             deleted += 1;
         }
     }

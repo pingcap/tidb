@@ -65,172 +65,46 @@ pub fn parameter_count(sql: &str, sql_mode: tidb_parser::SqlMode) -> Result<usiz
 
 /// Walks a statement's expressions, applying `visit` to every marker.
 fn walk_statement_markers(stmt: &mut Stmt, visit: &mut dyn FnMut(&mut tidb_ast::Expr)) {
-    let walk_expr = walk_expr_markers;
-    match stmt {
-        Stmt::Query(query) => walk_query_markers(query, visit),
-        Stmt::Dml(dml) => match &mut **dml {
-            tidb_ast::DmlStmt::Insert(insert) => {
-                for row in &mut insert.rows {
-                    for value in row {
-                        walk_expr(value, visit);
-                    }
-                }
-                for assignment in &mut insert.on_duplicate {
-                    walk_expr(&mut assignment.value, visit);
-                }
-                if let Some(source) = &mut insert.source {
-                    walk_query_markers(source, visit);
-                }
-            }
-            tidb_ast::DmlStmt::Update(update) => {
-                for assignment in &mut update.assignments {
-                    walk_expr(&mut assignment.value, visit);
-                }
-                if let Some(where_clause) = &mut update.where_clause {
-                    walk_expr(where_clause, visit);
-                }
-            }
-            tidb_ast::DmlStmt::Delete(delete) => {
-                if let Some(where_clause) = &mut delete.where_clause {
-                    walk_expr(where_clause, visit);
-                }
-            }
-            _ => {}
-        },
-        // `PREPARE ps FROM 'set @z = ?'` is a prepared statement like any
-        // other (captured: `EXECUTE ps USING @one` then `SELECT @z` is 1), so
-        // its assigned values carry markers too.
-        Stmt::Session(session) => {
-            if let tidb_ast::SessionStmt::SetUserVar(set) = &mut **session {
-                for assignment in &mut set.assignments {
-                    walk_expr(&mut assignment.value, visit);
-                }
-            }
-        }
-        _ => {}
+    struct MarkerVisitor<'a> {
+        visit: &'a mut dyn FnMut(&mut tidb_ast::Expr),
     }
+
+    impl tidb_ast::Visitor for MarkerVisitor<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr @ tidb_ast::Expr::ParamMarker { .. }) =
+                node.downcast_mut::<tidb_ast::Expr>()
+            else {
+                return false;
+            };
+            (self.visit)(expr);
+            true
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    tidb_ast::Visitable::accept(stmt, &mut MarkerVisitor { visit });
 }
 
-/// The markers inside one query, including its set-operation terms.
-fn walk_query_markers(query: &mut tidb_ast::QueryStmt, visit: &mut dyn FnMut(&mut tidb_ast::Expr)) {
-    match query {
-        tidb_ast::QueryStmt::Select(select) => walk_select_markers(select, visit),
-        tidb_ast::QueryStmt::SetOpr(set_opr) => walk_set_opr_markers(set_opr, visit),
-    }
-}
+#[cfg(test)]
+mod tests {
+    use super::{bind_parameters, parameter_count};
+    use tidb_datatype::Datum;
 
-/// The markers inside one set operation and, recursively, its nested terms.
-fn walk_set_opr_markers(
-    set_opr: &mut tidb_ast::SetOprStmt,
-    visit: &mut dyn FnMut(&mut tidb_ast::Expr),
-) {
-    for term in &mut set_opr.terms {
-        match &mut term.body {
-            tidb_ast::SetOprTermBody::Select(select) => walk_select_markers(select, visit),
-            tidb_ast::SetOprTermBody::Nested(nested) => walk_set_opr_markers(nested, visit),
-        }
-    }
-}
+    #[test]
+    fn markers_in_derived_tables_and_join_conditions_are_counted_and_bound() {
+        let sql = "SELECT COUNT(*) FROM (SELECT o.o_id FROM orders o \
+                   LEFT JOIN order_line ol ON ol.ol_o_id = ? \
+                   WHERE o.o_w_id = ?) AS t WHERE t.o_id > 0";
+        let mode = tidb_parser::SqlMode::default();
 
-/// The markers inside one `SELECT`.
-fn walk_select_markers(
-    select: &mut tidb_ast::SelectStmt,
-    visit: &mut dyn FnMut(&mut tidb_ast::Expr),
-) {
-    for field in select.fields.fields_mut() {
-        if let tidb_ast::SelectField::Expr { expr, .. } = field {
-            walk_expr_markers(expr, visit);
-        }
-    }
-    if let Some(where_clause) = &mut select.where_clause {
-        walk_expr_markers(where_clause, visit);
-    }
-    if let Some(having) = &mut select.having {
-        walk_expr_markers(having, visit);
-    }
-    for item in &mut select.order_by {
-        walk_expr_markers(&mut item.expr, visit);
-    }
-    for item in &mut select.group_by {
-        walk_expr_markers(&mut item.expr, visit);
-    }
-    if let Some(limit) = &mut select.limit {
-        walk_expr_markers(&mut limit.count, visit);
-        if let Some(offset) = &mut limit.offset {
-            walk_expr_markers(offset, visit);
-        }
-    }
-}
-
-/// The markers inside one expression tree.
-fn walk_expr_markers(expr: &mut tidb_ast::Expr, visit: &mut dyn FnMut(&mut tidb_ast::Expr)) {
-    use tidb_ast::Expr;
-    if matches!(expr, Expr::ParamMarker { .. }) {
-        visit(expr);
-        return;
-    }
-    match expr {
-        Expr::Paren(inner) | Expr::Unary(_, inner) => walk_expr_markers(inner, visit),
-        Expr::Binary(_, left, right) => {
-            walk_expr_markers(left, visit);
-            walk_expr_markers(right, visit);
-        }
-        Expr::Func { args, .. } => {
-            for arg in args {
-                walk_expr_markers(arg, visit);
-            }
-        }
-        Expr::In { expr, list, .. } => {
-            walk_expr_markers(expr, visit);
-            for item in list {
-                walk_expr_markers(item, visit);
-            }
-        }
-        Expr::Between {
-            expr, low, high, ..
-        } => {
-            walk_expr_markers(expr, visit);
-            walk_expr_markers(low, visit);
-            walk_expr_markers(high, visit);
-        }
-        Expr::Like { expr, pattern, .. } => {
-            walk_expr_markers(expr, visit);
-            walk_expr_markers(pattern, visit);
-        }
-        Expr::Is { expr, .. } => walk_expr_markers(expr, visit),
-        Expr::Case {
-            value,
-            when_clauses,
-            else_clause,
-        } => {
-            if let Some(value) = value {
-                walk_expr_markers(value, visit);
-            }
-            for (condition, result) in when_clauses {
-                walk_expr_markers(condition, visit);
-                walk_expr_markers(result, visit);
-            }
-            if let Some(else_clause) = else_clause {
-                walk_expr_markers(else_clause, visit);
-            }
-        }
-        Expr::Cast(cast) => walk_expr_markers(&mut cast.expr, visit),
-        // A subquery is a query, so its own clauses carry markers: captured,
-        // `select a from t where a in (select a from t where b = ?)` binds one
-        // parameter. Without these arms such a marker is simply not counted,
-        // and the count check then rejects the statement -- a silent refusal
-        // of a shape TiDB accepts.
-        Expr::Subquery(query) => walk_query_markers(query, visit),
-        Expr::Exists { subquery, .. } => walk_query_markers(subquery, visit),
-        Expr::InSubquery { expr, subquery, .. } => {
-            walk_expr_markers(expr, visit);
-            walk_query_markers(subquery, visit);
-        }
-        Expr::CompareSubquery { left, subquery, .. } => {
-            walk_expr_markers(left, visit);
-            walk_query_markers(subquery, visit);
-        }
-        _ => {}
+        assert_eq!(parameter_count(sql, mode).unwrap(), 2);
+        let bound = bind_parameters(sql, &[Datum::Int(7), Datum::Int(3)], mode).unwrap();
+        assert_eq!(parameter_count(&bound, mode).unwrap(), 0);
+        assert!(bound.contains("`ol`.`ol_o_id`=7"), "{bound}");
+        assert!(bound.contains("`o`.`o_w_id`=3"), "{bound}");
     }
 }
 

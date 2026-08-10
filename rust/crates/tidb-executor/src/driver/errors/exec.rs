@@ -43,6 +43,8 @@ const ER_DIVISION_BY_ZERO: u16 = 1365;
 const ER_TRUNCATED_WRONG_VALUE: u16 = 1292;
 /// Go `ErrWarnAllowedPacketOverflowed`.
 const ER_WARN_ALLOWED_PACKET_OVERFLOWED: u16 = 1301;
+/// Go `expression.ErrOperandColumns`.
+const ER_OPERAND_COLUMNS: u16 = tidb_error::mysql::errcode::ErrOperandColumns;
 
 /// The MySQL error an execution failure reaches the client as.
 pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
@@ -123,6 +125,10 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         // message and the SQLSTATE is derived from it like the JSON class
         // above.
         EvalError::WrongTemporalLiteral { code, message } => MysqlError::coded(code, message),
+        EvalError::OperandColumns(columns) => MysqlError::coded(
+            ER_OPERAND_COLUMNS,
+            format!("Operand should contain {columns} column(s)"),
+        ),
         // CAPTURED from TiDB: `select 9223372036854775807 + 1` is
         // `1690 / 22003 / BIGINT value is out of range in '(9223372036854775807 + 1)'`,
         // `select 1e308 * 10` the DOUBLE spelling, and a 65-digit product the
