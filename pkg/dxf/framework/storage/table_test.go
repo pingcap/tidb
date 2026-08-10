@@ -110,6 +110,19 @@ func TestTaskTable(t *testing.T) {
 	// test cancel task
 	id, err = gm.CreateTask(ctx, "key2", "test", "", 4, "", 0, proto.ExtraParams{}, []byte("test"))
 	require.NoError(t, err)
+	tasks, err := gm.GetTasksByIDs(ctx, []int64{task5.ID, id})
+	require.NoError(t, err)
+	require.Len(t, tasks, 2)
+	tasksByID := make(map[int64]*proto.Task, len(tasks))
+	for _, batchTask := range tasks {
+		tasksByID[batchTask.ID] = batchTask
+	}
+	require.Equal(t, task5, tasksByID[task5.ID])
+	require.Equal(t, []byte("test"), tasksByID[id].Meta)
+
+	tasks, err = gm.GetTasksByIDs(ctx, nil)
+	require.NoError(t, err)
+	require.Empty(t, tasks)
 
 	cancelling, err := testutil.IsTaskCancelling(ctx, gm, id)
 	require.NoError(t, err)

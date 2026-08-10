@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"testing"
@@ -26,6 +27,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
+	frameworkmock "github.com/pingcap/tidb/pkg/dxf/framework/mock"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
@@ -48,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 func TestDoneTaskKeeper(t *testing.T) {
@@ -182,6 +187,65 @@ func TestReadIndexStepExecutorInitRunsLocalDiskPrecheck(t *testing.T) {
 	err := executor.Init(context.Background())
 	require.ErrorIs(t, err, expectedErr)
 	require.True(t, precheckCalled)
+}
+
+func TestGetRunningLocalSortJobDiskUsage(t *testing.T) {
+	marshalTaskMeta := func(jobID int64, cloudStorageURI string) []byte {
+		meta, err := json.Marshal(&BackfillTaskMeta{
+			Job:             model.Job{ID: jobID},
+			CloudStorageURI: cloudStorageURI,
+		})
+		require.NoError(t, err)
+		return meta
+	}
+
+	t.Run("batch task lookup", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		taskTable := frameworkmock.NewMockTaskTable(ctrl)
+		taskTable.EXPECT().GetTasksByIDs(
+			gomock.Any(),
+			gomock.InAnyOrder([]int64{2, 3, 4, 5}),
+		).Return([]*proto.Task{
+			{
+				TaskBase: proto.TaskBase{ID: 2, Type: proto.Backfill, Step: proto.BackfillStepReadIndex},
+				Meta:     marshalTaskMeta(102, ""),
+			},
+			{
+				TaskBase: proto.TaskBase{ID: 3, Type: proto.Backfill, Step: proto.BackfillStepReadIndex},
+				Meta:     marshalTaskMeta(103, "s3://bucket/prefix"),
+			},
+			{
+				TaskBase: proto.TaskBase{ID: 4, Type: proto.Backfill, Step: proto.BackfillStepMergeSort},
+				Meta:     marshalTaskMeta(104, ""),
+			},
+			{
+				TaskBase: proto.TaskBase{ID: 5, Type: proto.TaskTypeExample, Step: proto.BackfillStepReadIndex},
+				Meta:     marshalTaskMeta(105, ""),
+			},
+		}, nil)
+
+		jobCount, runtimeSlots, usedBytes, err := getRunningLocalSortJobDiskUsage(
+			context.Background(),
+			taskTable,
+			1,
+			map[int64]int{1: 1, 2: 2, 3: 3, 4: 4, 5: 5},
+		)
+		require.NoError(t, err)
+		require.Equal(t, 1, jobCount)
+		require.Equal(t, 2, runtimeSlots)
+		require.Zero(t, usedBytes)
+	})
+
+	t.Run("missing task", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		taskTable := frameworkmock.NewMockTaskTable(ctrl)
+		taskTable.EXPECT().GetTasksByIDs(gomock.Any(), []int64{2}).Return(nil, nil)
+
+		_, _, _, err := getRunningLocalSortJobDiskUsage(
+			context.Background(), taskTable, 1, map[int64]int{1: 1, 2: 2},
+		)
+		require.ErrorIs(t, err, storage.ErrTaskNotFound)
+	})
 }
 
 func TestPickBackfillType(t *testing.T) {
