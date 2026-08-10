@@ -653,12 +653,13 @@ func (w *worker) truncateTTLTableInExternalWorkload(
 	oldTblInfo *model.TableInfo,
 	newTableID int64,
 ) error {
-	if oldTblInfo.TTLInfo != nil {
-		if err := w.deleteTTLTableFromExternalWorkload(ctx, oldTblInfo.ID); err != nil {
-			return cancelJobOnExternalTTLWorkloadError(job, err)
-		}
+	if oldTblInfo.TTLInfo == nil {
+		return nil
 	}
-	if oldTblInfo.TTLInfo != nil && oldTblInfo.TTLInfo.Enable {
+	if err := w.deleteTTLTableFromExternalWorkload(ctx, oldTblInfo.ID); err != nil {
+		return cancelJobOnExternalTTLWorkloadError(job, err)
+	}
+	if oldTblInfo.TTLInfo.Enable {
 		newTTLTableInfo := oldTblInfo.Clone()
 		newTTLTableInfo.ID = newTableID
 		if err := w.registerTTLTableToExternalWorkload(ctx, newTTLTableInfo); err != nil {
