@@ -20,9 +20,11 @@
 //! value buffer, and tags them with the type / unsigned / NULL flags. It does
 //! NOT interpret the bytes into a typed value — that is a separate downstream
 //! step (Go `expression.ExecBinaryParam`), so this port needs no temporal or
-//! decimal parser. See the HANDOFF risk register for the Unit A / Unit B split.
+//! decimal parser. Typed interpretation remains a downstream step, matching
+//! Go's `expression.ExecBinaryParam` boundary.
 
 use tidb_datatype::{find_encoding_take_utf8_as_noop, TransformOp};
+use tidb_error::tidb::errcode;
 
 use crate::{
     TYPE_BIT, TYPE_BLOB, TYPE_DATE, TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION, TYPE_ENUM,
@@ -43,8 +45,8 @@ const UNSIGNED_FLAG: u8 = 0x80;
 /// select how a later stage interprets them.
 ///
 /// This mirrors Go `param.BinaryParam`. `val` holds the raw little-endian /
-/// text bytes exactly as they arrived (after the string group's charset decode,
-/// which is the identity for the configured node's utf8mb4 input).
+/// text bytes exactly as they arrived, except that the string group is decoded
+/// from the connection's client charset to UTF-8 as Go does.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct BinaryParam {
     /// The MySQL field type declared for this parameter (a `TYPE_*` code).
@@ -72,10 +74,25 @@ pub enum BinaryParamError {
     },
 }
 
+impl BinaryParamError {
+    /// Returns the TiDB errno owned by this package error, when it has one.
+    ///
+    /// A malformed packet is a plain Go error and reaches the wire as the
+    /// generic 1105 boundary. `ErrUnknownFieldType` is a `dbterror` identity
+    /// owned by `pkg/param`, so callers must preserve its dedicated errno.
+    #[must_use]
+    pub const fn mysql_error_code(self) -> Option<u16> {
+        match self {
+            Self::MalformedPacket => None,
+            Self::UnknownFieldType { .. } => Some(errcode::ErrUnknownFieldType),
+        }
+    }
+}
+
 impl std::fmt::Display for BinaryParamError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MalformedPacket => write!(formatter, "malformed binary parameter packet"),
+            Self::MalformedPacket => formatter.write_str(tidb_error::mysql::ERR_MALFORM_PACKET),
             Self::UnknownFieldType { type_code } => {
                 write!(formatter, "stmt unknown field type {type_code}")
             }

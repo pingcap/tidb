@@ -1048,6 +1048,22 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
         execute_statement(&mut client, &mut reader, statement_id, &[2]),
         vec![vec!["2".to_owned(), "20".to_owned()]]
     );
+    // Go saves new types before splitting values, so both the first failure
+    // and a later type-reuse execute report pkg/param's errno 8051.
+    let mut unknown_type = vec![COM_STMT_EXECUTE];
+    unknown_type.extend_from_slice(&statement_id.to_le_bytes());
+    unknown_type.extend_from_slice(&[0, 1, 0, 0, 0, 0, 1, 0x9f, 0]);
+    write_packet(&mut client, 0, &unknown_type);
+    reader.set_sequence(1);
+    assert_error_packet(&reader.read_packet().unwrap(), 8051, b"HY000");
+
+    let mut reuse_unknown_type = vec![COM_STMT_EXECUTE];
+    reuse_unknown_type.extend_from_slice(&statement_id.to_le_bytes());
+    reuse_unknown_type.extend_from_slice(&[0, 1, 0, 0, 0, 0, 0]);
+    write_packet(&mut client, 0, &reuse_unknown_type);
+    reader.set_sequence(1);
+    assert_error_packet(&reader.read_packet().unwrap(), 8051, b"HY000");
+
     // The same statement runs again with a different value, which is the
     // point of preparing it.
     assert_eq!(
@@ -1121,6 +1137,43 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     assert_eq!(
         run_query(&mut client, &mut reader, "SELECT t FROM d"),
         vec![vec!["2020-03-05 06:07:08".to_owned()]]
+    );
+
+    // Binary strings use @@character_set_client, so GBK bytes are decoded
+    // before storage and read back as UTF-8 after restoring the charset.
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "SET @@character_set_client = 'gbk'"
+        ),
+        0
+    );
+    assert_eq!(
+        run_write(&mut client, &mut reader, "CREATE TABLE g (v VARCHAR(20))"),
+        0
+    );
+    let (gbk_id, gbk_params, _) =
+        prepare_statement(&mut client, &mut reader, "INSERT INTO g VALUES (?)");
+    assert_eq!(gbk_params, 1);
+    execute_statement_typed(
+        &mut client,
+        &mut reader,
+        gbk_id,
+        &[(0x0f, 0, vec![4, 0xb2, 0xe2, 0xca, 0xd4])],
+        &[false],
+    );
+    assert_eq!(
+        run_write(
+            &mut client,
+            &mut reader,
+            "SET @@character_set_client = 'utf8mb4'"
+        ),
+        0
+    );
+    assert_eq!(
+        run_query(&mut client, &mut reader, "SELECT v FROM g"),
+        vec![vec!["测试".to_owned()]]
     );
 
     // COM_STMT_RESET returns a statement to its post-prepare state and

@@ -68,15 +68,11 @@ fn prepare_and_execute_use_typed_real_session_and_binary_rows() {
     let execute_branch = connection
         .find("Command::StmtExecute(bytes) => {")
         .expect("execute dispatch branch");
-    // Matched without its argument list: the call spans several lines once the
-    // marker count became per statement, but the ordering this asserts —
-    // typed decode, then execution, then binary rows — is the actual contract.
+    // Raw package split, typed execution, then binary rows is the live order.
     let decode = connection[execute_branch..]
-        // The bound-parameter variant: the execute must read the
-        // COM_STMT_SEND_LONG_DATA buffers along with the packet's own values.
-        .find("decode_prepared_statement_execute_with_bound_params(")
+        .find("split_prepared_statement_execute(")
         .map(|offset| execute_branch + offset)
-        .expect("execute packet is typed before execution");
+        .expect("execute packet is split before execution");
     let execute = connection[execute_branch..]
         .find(".execute_prepared_point_read(&point_read, &parameters)")
         .map(|offset| execute_branch + offset)

@@ -788,6 +788,13 @@ pub trait QuerySession {
         String::new()
     }
 
+    /// Go `clientConn.initInputEncoder`: this session's
+    /// `@@character_set_client`, applied to string-family binary parameters
+    /// before they reach expression or storage semantics.
+    fn input_charset(&self) -> String {
+        "utf8mb4".to_owned()
+    }
+
     /// Selects this session's current schema (Go `clientConn.useDB`).
     ///
     /// The handshake's initial database and `COM_INIT_DB` are the same

@@ -22,11 +22,10 @@ use std::sync::Arc;
 
 use tidb_protocol::result_encoder::ResultEncoder;
 use tidb_protocol::{
-    decode_command, decode_prepared_statement_close,
-    decode_prepared_statement_execute_with_bound_params, decode_prepared_statement_fetch,
-    decode_prepared_statement_send_long_data, encode_prepared_statement_prepare_response, Command,
-    PacketError, PacketReader, PreparedParameterType, PreparedParameterTypes, PreparedValue,
-    DEFAULT_MAX_ALLOWED_PACKET,
+    decode_command, decode_prepared_statement_close, decode_prepared_statement_fetch,
+    decode_prepared_statement_send_long_data, encode_prepared_statement_prepare_response,
+    split_prepared_statement_execute, Command, PacketError, PacketReader, PreparedParameterType,
+    PreparedParameterTypes, PreparedValue, DEFAULT_MAX_ALLOWED_PACKET,
 };
 
 use crate::auth_exchange::AuthSwitchRequest;
@@ -1225,7 +1224,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         write_error(
                             &mut output,
                             1,
-                            ER_WRONG_ARGUMENTS,
+                            ER_UNKNOWN_ERROR,
                             *b"HY000",
                             message,
                             protocol_41,
@@ -1258,18 +1257,17 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 // before a replacement execution starts, and a malformed
                 // replacement cannot leave the old cursor fetchable.
                 drop(prepared.take_cursor(statement_id));
-                let execute = match decode_prepared_statement_execute_with_bound_params(
+                let execute_packet = match split_prepared_statement_execute(
                     &bytes,
                     parameter_count,
                     previous_types.as_deref(),
-                    &bound_params,
                 ) {
-                    Ok(execute) => execute,
+                    Ok(packet) => packet,
                     Err(error) => {
                         write_error(
                             &mut output,
                             1,
-                            ER_WRONG_ARGUMENTS,
+                            error.mysql_error_code().unwrap_or(ER_UNKNOWN_ERROR),
                             *b"HY000",
                             error.to_string(),
                             protocol_41,
@@ -1277,20 +1275,35 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         continue;
                     }
                 };
-                if execute.statement_id != statement_id {
+                if execute_packet.statement_id() != statement_id {
                     write_error(
                         &mut output,
                         1,
-                        ER_WRONG_ARGUMENTS,
+                        ER_UNKNOWN_ERROR,
                         *b"HY000",
                         "prepared statement ID changed during decode",
                         protocol_41,
                     )?;
                     continue;
                 }
-                if let PreparedParameterTypes::New(types) = &execute.parameter_types {
+                if let PreparedParameterTypes::New(types) = execute_packet.parameter_types() {
                     prepared.remember_parameter_types(statement_id, types);
                 }
+                let input_charset = engine.input_charset();
+                let execute = match execute_packet.decode(&bound_params, &input_charset) {
+                    Ok(execute) => execute,
+                    Err(error) => {
+                        write_error(
+                            &mut output,
+                            1,
+                            error.mysql_error_code().unwrap_or(ER_UNKNOWN_ERROR),
+                            *b"HY000",
+                            error.to_string(),
+                            protocol_41,
+                        )?;
+                        continue;
+                    }
+                };
                 let values = execute.values;
                 match prepared_statement {
                     // The same two lines the text arm runs, so the transaction

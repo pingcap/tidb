@@ -17,13 +17,10 @@
 //! and its test `pkg/server/conn_stmt_params_test.go` (`TestParseExecArgs`,
 //! `TestParseExecArgsMalformedLengthEncodedParam`, `TestParseExecArgsForDecimal`).
 //!
-//! `parseBinaryParams` is the *splitter*: it produces raw `BinaryParam` byte
-//! slices. The Go test then runs `expression.ExecBinaryParam` to interpret those
-//! bytes into typed values (int64, `types.Time`, `Decimal`, …). That
-//! interpretation is a separate downstream port (Unit B), so the success cases
-//! here assert the raw split derived from the very same Go input vectors, while
-//! the error cases — which reject before any interpretation — are ported
-//! verbatim.
+//! `parseBinaryParams` is the splitter: it produces raw `BinaryParam` byte
+//! slices before typed interpretation. These tests assert that package
+//! boundary directly; the prepared-statement tests exercise the downstream
+//! typed consumer.
 
 #![allow(missing_docs)]
 
@@ -212,9 +209,17 @@ fn malformed_packets_are_rejected() {
 fn an_unknown_field_type_is_reported() {
     // TypeDecimal (0) is TypeUnspecified, handled; a truly unmapped code such as
     // 0x9f is errUnknownFieldType. (0xff Geometry IS mapped, so pick an unused.)
+    let error = split_one(&[0x9f, 0], &[0x00]).unwrap_err();
     assert_eq!(
-        split_one(&[0x9f, 0], &[0x00]).unwrap_err(),
+        error,
         BinaryParamError::UnknownFieldType { type_code: 0x9f }
+    );
+    assert_eq!(error.to_string(), "stmt unknown field type 159");
+    assert_eq!(error.mysql_error_code(), Some(8051));
+    assert_eq!(BinaryParamError::MalformedPacket.mysql_error_code(), None);
+    assert_eq!(
+        BinaryParamError::MalformedPacket.to_string(),
+        "malform packet error"
     );
 }
 

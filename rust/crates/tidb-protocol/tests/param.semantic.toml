@@ -1,0 +1,33 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/param"
+source_commit = "c94087ca5a89ec662f1c5e070b6d42d0ea0b2cde"
+rust_files = [
+  "rust/crates/tidb-protocol/src/binary_params.rs",
+  "rust/crates/tidb-protocol/src/prepared_statement.rs",
+  "rust/crates/tidb-protocol/src/lib.rs",
+  "rust/crates/tidb-protocol/tests/binary_params_source.rs",
+  "rust/crates/tidb-protocol/tests/prepared_statement_protocol_source.rs",
+  "rust/crates/tidb-session/src/warnings.rs",
+  "rust/crates/tidb-server/src/sql_node.rs",
+  "rust/crates/tidb-server/src/pipeline_session.rs",
+  "rust/crates/tidb-server/src/cluster_session_node/mod.rs",
+  "rust/crates/tidb-server/src/mysql_connection.rs",
+  "rust/crates/tidb-server/tests/prepared_point_read_tcp_source.rs",
+  "rust/crates/tidb-server/tests/pipeline_mysql_client_source.rs",
+]
+
+[[tests]]
+name = "binary_param_package_contract"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "binary_params_source"]
+
+[[tests]]
+name = "binary_param_typed_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "prepared_statement_protocol_source::execute_"]
+
+[[tests]]
+name = "binary_param_tcp_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "pipeline_mysql_client_source::mysql_client_runs_the_pipeline_end_to_end", "--", "--exact"]

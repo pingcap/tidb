@@ -73,9 +73,10 @@ pub use prepared_statement::{
     encode_binary_signed_longlong_row, encode_binary_time,
     encode_prepared_statement_prepare_response, is_binary_datetime_result_type,
     is_binary_decimal_result_type, is_binary_duration_result_type, is_binary_float_result_type,
-    is_binary_integer_result_type, is_binary_string_result_type, BinaryDateTimeType,
-    BinaryResultCell, BinaryResultSetStream, PreparedParameterType, PreparedParameterTypes,
-    PreparedStatementError, PreparedStatementExecute, PreparedStatementSendLongData, PreparedValue,
+    is_binary_integer_result_type, is_binary_string_result_type, split_prepared_statement_execute,
+    BinaryDateTimeType, BinaryResultCell, BinaryResultSetStream, PreparedParameterType,
+    PreparedParameterTypes, PreparedStatementError, PreparedStatementExecute,
+    PreparedStatementExecutePacket, PreparedStatementSendLongData, PreparedValue,
     CURSOR_TYPE_READ_ONLY, MAX_STMT_FETCH_SIZE, MYSQL_TYPE_LONGLONG, MYSQL_UNSIGNED_FLAG,
 };
 pub use result::{

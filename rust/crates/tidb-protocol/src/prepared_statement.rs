@@ -12,23 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Bounded MySQL binary prepared-statement packet framing.
+//! MySQL binary prepared-statement packet framing.
 //!
-//! This module owns the bounded execute/result wire shapes: non-NULL signed
-//! integer parameters of any fixed width (`TYPE_TINY`/`SHORT`/`YEAR`/`INT24`/
-//! `LONG`/`LONGLONG`, each sign-extended to `i64` as Go `ExecBinaryParam` does)
-//! and the numeric/decimal/string result cells. Unsigned integers, the
-//! string/decimal/temporal parameter families, statement IDs, SQL
-//! parsing/binding, execution, and per-connection type-vector storage remain
-//! server responsibilities or later slices of the wired param path.
+//! Packet splitting uses [`crate::BinaryParam`] as the one raw parameter
+//! authority. Typed values are derived only after that split, matching Go's
+//! `parseBinaryParams` -> `expression.ExecBinaryParam` boundary.
 
 use crate::{
     append_length_encoded_bytes, append_length_encoded_int, encode_eof_packet, ColumnInfo,
     EofPacket, ResultSetOptions, TYPE_BIT, TYPE_BLOB, TYPE_DATE, TYPE_DATETIME, TYPE_DOUBLE,
-    TYPE_DURATION, TYPE_ENUM, TYPE_FLOAT, TYPE_INT24, TYPE_JSON, TYPE_LONG, TYPE_LONGLONG,
-    TYPE_LONG_BLOB, TYPE_MEDIUM_BLOB, TYPE_NEW_DECIMAL, TYPE_SET, TYPE_SHORT, TYPE_STRING,
-    TYPE_TIDB_VECTOR_FLOAT32, TYPE_TIMESTAMP, TYPE_TINY, TYPE_TINY_BLOB, TYPE_VARCHAR,
-    TYPE_VAR_STRING, TYPE_YEAR,
+    TYPE_DURATION, TYPE_ENUM, TYPE_FLOAT, TYPE_GEOMETRY, TYPE_INT24, TYPE_JSON, TYPE_LONG,
+    TYPE_LONGLONG, TYPE_LONG_BLOB, TYPE_MEDIUM_BLOB, TYPE_NEW_DECIMAL, TYPE_SET, TYPE_SHORT,
+    TYPE_STRING, TYPE_TIDB_VECTOR_FLOAT32, TYPE_TIMESTAMP, TYPE_TINY, TYPE_TINY_BLOB,
+    TYPE_UNSPECIFIED, TYPE_VARCHAR, TYPE_VAR_STRING, TYPE_YEAR,
 };
 use tidb_datatype::{Decimal, PackedTime};
 
@@ -38,63 +34,47 @@ pub const MYSQL_TYPE_LONGLONG: u8 = 0x08;
 /// MySQL binary-protocol parameter flag bit that marks an integer unsigned.
 pub const MYSQL_UNSIGNED_FLAG: u8 = 0x80;
 
-/// A signed integer parameter type admitted by the bounded prepared protocol.
+/// One remembered two-byte parameter type from `COM_STMT_EXECUTE`.
 ///
-/// The width mirrors Go `ExecBinaryParam`'s signed integer arms
-/// (`pkg/expression/util.go`): each fixed-width MySQL integer type sign-extends
-/// to `int64`. Unsigned integers and every non-integer type stay fail closed
-/// (see the HANDOFF risk register); the string/decimal/temporal families are
-/// the next slice of the wired param path.
+/// Go retains the packet's raw type vector on the prepared statement. Only
+/// the unsigned bit is observable while values are interpreted, so the Rust
+/// representation keeps the type code and that bit without inventing a
+/// parallel enum of wire families.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum PreparedParameterType {
-    /// A signed `MYSQL_TYPE_TINY` parameter (one byte, sign-extended).
-    SignedTiny,
-    /// A signed `MYSQL_TYPE_SHORT`/`YEAR` parameter (two little-endian bytes).
-    SignedShort,
-    /// A signed `MYSQL_TYPE_INT24`/`LONG` parameter (four little-endian bytes).
-    SignedLong,
-    /// A signed `MYSQL_TYPE_LONGLONG` parameter (eight little-endian bytes).
-    SignedLongLong,
-    /// A `MYSQL_TYPE_VARCHAR`/`VAR_STRING`/`STRING` parameter carried as a
-    /// length-encoded string (`ExecBinaryParam`'s string arm; utf8 for this
-    /// node).
-    String,
-    /// The unsigned counterpart of each fixed-width integer, which Go reads
-    /// into a `uint64` datum rather than sign-extending.
-    UnsignedTiny,
-    /// An unsigned `MYSQL_TYPE_SHORT`/`YEAR` parameter.
-    UnsignedShort,
-    /// An unsigned `MYSQL_TYPE_INT24`/`LONG` parameter.
-    UnsignedLong,
-    /// An unsigned `MYSQL_TYPE_LONGLONG` parameter.
-    UnsignedLongLong,
-    /// A `MYSQL_TYPE_FLOAT` parameter (four little-endian bytes).
-    Float,
-    /// A `MYSQL_TYPE_DOUBLE` parameter (eight little-endian bytes).
-    Double,
-    /// A `MYSQL_TYPE_NEWDECIMAL`/`DECIMAL` parameter, which the protocol
-    /// carries as a length-encoded string of digits.
-    Decimal,
-    /// A `MYSQL_TYPE_DATE` parameter, whose payload length picks how much of
-    /// the date/time it carries.
-    Date,
-    /// A `MYSQL_TYPE_DATETIME` parameter.
-    DateTime,
-    /// A `MYSQL_TYPE_TIMESTAMP` parameter, which is byte-identical to
-    /// `DATETIME` on the wire.
-    Timestamp,
-    /// A `MYSQL_TYPE_TIME` parameter, which carries a signed day/time span.
-    Time,
-    /// A `MYSQL_TYPE_BLOB`/`TINY_BLOB`/`MEDIUM_BLOB`/`LONG_BLOB` parameter,
-    /// carried as a length-encoded byte string. Go groups it with
-    /// `TypeNewDecimal` in `parseBinaryParams`
-    /// (`pkg/server/conn_stmt_params.go:116`) -- length-encoded like the
-    /// string family, but deliberately NOT run through the connection input
-    /// decoder, because blob bytes are binary. A client that declares a
-    /// parameter `BLOB` is exactly the client that sends its value through
-    /// `COM_STMT_SEND_LONG_DATA`, so this arm and the bound-parameter arm
-    /// below arrive together.
-    Blob,
+pub struct PreparedParameterType {
+    type_code: u8,
+    is_unsigned: bool,
+}
+
+impl PreparedParameterType {
+    /// Creates one remembered parameter type.
+    #[must_use]
+    pub const fn new(type_code: u8, is_unsigned: bool) -> Self {
+        Self {
+            type_code,
+            is_unsigned,
+        }
+    }
+
+    /// Returns the MySQL field type code supplied by the client.
+    #[must_use]
+    pub const fn type_code(self) -> u8 {
+        self.type_code
+    }
+
+    /// Returns whether the packet set MySQL's unsigned flag bit.
+    #[must_use]
+    pub const fn is_unsigned(self) -> bool {
+        self.is_unsigned
+    }
+
+    const fn wire_flags(self) -> u8 {
+        if self.is_unsigned {
+            MYSQL_UNSIGNED_FLAG
+        } else {
+            0
+        }
+    }
 }
 
 /// A decoded prepared-statement value admitted by this protocol leaf.
@@ -140,7 +120,7 @@ pub enum PreparedParameterTypes {
 pub struct PreparedStatementExecute {
     /// The per-connection statement handle selected by the client.
     pub statement_id: u32,
-    /// The only accepted cursor flag is zero.
+    /// The cursor flags after rejecting the unsupported update/scroll modes.
     pub cursor_flags: u8,
     /// Whether the packet supplied a new type vector or reused the prior one.
     pub parameter_types: PreparedParameterTypes,
@@ -169,22 +149,8 @@ pub enum PreparedStatementError {
     },
     /// A statement handle was zero, which this bounded server never allocates.
     ZeroStatementId,
-    /// This campaign owns exactly one prepared signed-BIGINT parameter.
-    UnsupportedParameterCount {
-        /// Parameter count supplied by the prepared statement registry.
-        count: usize,
-    },
     /// The packet requested a cursor, which the bounded protocol does not own.
     UnsupportedCursorFlag(u8),
-    /// The iteration count differed from the only legal value, one.
-    UnsupportedIterationCount(u32),
-    /// A parameter was marked NULL.
-    NullParameter {
-        /// Zero-based parameter index.
-        parameter: usize,
-    },
-    /// Padding bits outside the parameter null bitmap were nonzero.
-    NonzeroNullBitmapPadding,
     /// A type-reuse execute arrived before the connection had saved a vector.
     MissingPreviousTypeVector,
     /// The saved type vector did not match the prepared parameter count.
@@ -194,18 +160,8 @@ pub enum PreparedStatementError {
         /// Saved type count.
         actual: usize,
     },
-    /// A parameter type tag is outside the bounded signed-BIGINT contract.
-    UnsupportedParameterType {
-        /// Zero-based parameter index.
-        parameter: usize,
-        /// MySQL type tag supplied by the client.
-        type_code: u8,
-    },
-    /// A parameter's type flags requested unsigned integer semantics.
-    UnsignedParameter {
-        /// Zero-based parameter index.
-        parameter: usize,
-    },
+    /// The package-level raw parameter splitter rejected the value section.
+    BinaryParameter(crate::BinaryParamError),
     /// The packet contained bytes after every declared value was decoded.
     TrailingBytes {
         /// Number of unexpected bytes.
@@ -256,28 +212,11 @@ impl std::fmt::Display for PreparedStatementError {
                 write!(formatter, "invalid prepared-statement {field}: {value}")
             }
             Self::ZeroStatementId => formatter.write_str("prepared statement ID must be nonzero"),
-            Self::UnsupportedParameterCount { count } => write!(
-                formatter,
-                "unsupported prepared-statement parameter count: {count}; expected at least one"
-            ),
             Self::UnsupportedCursorFlag(flag) => {
                 write!(
                     formatter,
                     "unsupported prepared-statement cursor flag: {flag}"
                 )
-            }
-            Self::UnsupportedIterationCount(count) => write!(
-                formatter,
-                "unsupported prepared-statement iteration count: {count}"
-            ),
-            Self::NullParameter { parameter } => {
-                write!(
-                    formatter,
-                    "prepared-statement parameter {parameter} is NULL"
-                )
-            }
-            Self::NonzeroNullBitmapPadding => {
-                formatter.write_str("prepared-statement null bitmap has nonzero padding")
             }
             Self::MissingPreviousTypeVector => {
                 formatter.write_str("prepared-statement type reuse has no prior type vector")
@@ -286,17 +225,7 @@ impl std::fmt::Display for PreparedStatementError {
                 formatter,
                 "prepared-statement prior type vector has {actual} types, expected {expected}"
             ),
-            Self::UnsupportedParameterType {
-                parameter,
-                type_code,
-            } => write!(
-                formatter,
-                "unsupported prepared-statement parameter {parameter} type: {type_code}"
-            ),
-            Self::UnsignedParameter { parameter } => write!(
-                formatter,
-                "unsupported unsigned prepared-statement parameter {parameter}"
-            ),
+            Self::BinaryParameter(error) => error.fmt(formatter),
             Self::TrailingBytes { bytes } => {
                 write!(
                     formatter,
@@ -325,12 +254,152 @@ impl std::fmt::Display for PreparedStatementError {
 
 impl std::error::Error for PreparedStatementError {}
 
-/// Decodes the exact Campaign 27 `COM_STMT_EXECUTE` payload.
+impl PreparedStatementError {
+    /// Returns the dedicated TiDB errno carried by this error, when present.
+    /// Plain malformed-packet and protocol errors use the caller's generic
+    /// boundary, just as Go's `writeError` does for non-`terror` errors.
+    #[must_use]
+    pub const fn mysql_error_code(&self) -> Option<u16> {
+        match self {
+            Self::BinaryParameter(error) => error.mysql_error_code(),
+            _ => None,
+        }
+    }
+}
+
+impl From<crate::BinaryParamError> for PreparedStatementError {
+    fn from(error: crate::BinaryParamError) -> Self {
+        Self::BinaryParameter(error)
+    }
+}
+
+/// The header, bitmap, remembered types, and remaining value bytes of one
+/// `COM_STMT_EXECUTE` packet.
 ///
-/// `previous_types` is owned by the server's per-connection statement
-/// registry. It is read only when the packet has `new_params_bound_flag = 0`;
-/// the returned [`PreparedParameterTypes`] tells that registry whether to save
-/// the vector from this packet.
+/// Splitting the packet before interpreting values is load-bearing: Go saves
+/// a newly supplied type vector on the statement before `parseBinaryParams`
+/// can fail, so a later type-reuse execute observes the same vector.
+pub struct PreparedStatementExecutePacket<'a> {
+    statement_id: u32,
+    cursor_flags: u8,
+    parameter_types: PreparedParameterTypes,
+    types: Vec<PreparedParameterType>,
+    null_bitmap: Vec<u8>,
+    parameter_values: &'a [u8],
+}
+
+impl PreparedStatementExecutePacket<'_> {
+    /// Returns the statement handle carried by the packet.
+    #[must_use]
+    pub const fn statement_id(&self) -> u32 {
+        self.statement_id
+    }
+
+    /// Returns whether this packet supplied a new remembered type vector.
+    #[must_use]
+    pub const fn parameter_types(&self) -> &PreparedParameterTypes {
+        &self.parameter_types
+    }
+
+    /// Splits and interprets this packet's raw values through `BinaryParam`.
+    pub fn decode(
+        self,
+        bound_params: &[Option<Vec<u8>>],
+        input_charset: &str,
+    ) -> Result<PreparedStatementExecute, PreparedStatementError> {
+        let mut encoded_types = Vec::with_capacity(self.types.len() * 2);
+        for parameter_type in &self.types {
+            encoded_types.push(parameter_type.type_code());
+            encoded_types.push(parameter_type.wire_flags());
+        }
+        let bound_params: Vec<Option<&[u8]>> =
+            bound_params.iter().map(|bound| bound.as_deref()).collect();
+        let values = crate::parse_binary_params(
+            self.types.len(),
+            &bound_params,
+            &self.null_bitmap,
+            &encoded_types,
+            self.parameter_values,
+            input_charset,
+        )?
+        .into_iter()
+        .map(prepared_value_from_binary_param)
+        .collect::<Result<Vec<_>, _>>()?;
+        Ok(PreparedStatementExecute {
+            statement_id: self.statement_id,
+            cursor_flags: self.cursor_flags,
+            parameter_types: self.parameter_types,
+            values,
+        })
+    }
+}
+
+/// Splits the connection-owned part of one `COM_STMT_EXECUTE` packet.
+///
+/// The iteration count, unused NULL-bitmap padding, unrecognized type-flag
+/// bits, and bytes after the declared values are ignored because Go ignores
+/// them. Only the forward-only read cursor bit is observed; the two cursor
+/// modes Go explicitly rejects remain errors.
+pub fn split_prepared_statement_execute<'a>(
+    payload: &'a [u8],
+    parameter_count: usize,
+    previous_types: Option<&[PreparedParameterType]>,
+) -> Result<PreparedStatementExecutePacket<'a>, PreparedStatementError> {
+    let mut cursor = PacketCursor::new(payload);
+    let statement_id = cursor.read_u32("statement ID")?;
+    if statement_id == 0 {
+        return Err(PreparedStatementError::ZeroStatementId);
+    }
+    let cursor_flags = cursor.read_u8("cursor flags")?;
+    if cursor_flags & 0x06 != 0 {
+        return Err(PreparedStatementError::UnsupportedCursorFlag(cursor_flags));
+    }
+    let _iteration_count = cursor.read_u32("iteration count")?;
+    let null_bitmap = cursor
+        .read_exact(parameter_count.div_ceil(8), "null bitmap")?
+        .to_vec();
+
+    if parameter_count == 0 {
+        return Ok(PreparedStatementExecutePacket {
+            statement_id,
+            cursor_flags,
+            parameter_types: PreparedParameterTypes::New(Vec::new()),
+            types: Vec::new(),
+            null_bitmap,
+            parameter_values: cursor.remaining_bytes(),
+        });
+    }
+
+    let new_types = cursor.read_u8("new parameter bound flag")?;
+    let (parameter_types, types) = if new_types == 1 {
+        let encoded = cursor.read_exact(parameter_count * 2, "parameter type vector")?;
+        let types: Vec<_> = encoded
+            .chunks_exact(2)
+            .map(|bytes| PreparedParameterType::new(bytes[0], bytes[1] & MYSQL_UNSIGNED_FLAG != 0))
+            .collect();
+        (PreparedParameterTypes::New(types.clone()), types)
+    } else {
+        let types = previous_types.ok_or(PreparedStatementError::MissingPreviousTypeVector)?;
+        if types.len() != parameter_count {
+            return Err(PreparedStatementError::PreviousTypeVectorLength {
+                expected: parameter_count,
+                actual: types.len(),
+            });
+        }
+        (PreparedParameterTypes::Reuse, types.to_vec())
+    };
+
+    Ok(PreparedStatementExecutePacket {
+        statement_id,
+        cursor_flags,
+        parameter_types,
+        types,
+        null_bitmap,
+        parameter_values: cursor.remaining_bytes(),
+    })
+}
+
+/// Decodes one execute packet using the default UTF-8 client charset.
 pub fn decode_prepared_statement_execute(
     payload: &[u8],
     parameter_count: usize,
@@ -344,194 +413,84 @@ pub fn decode_prepared_statement_execute(
     )
 }
 
-/// The `COM_STMT_EXECUTE` decoder that also honors the parameter chunks a
-/// client delivered earlier through `COM_STMT_SEND_LONG_DATA`.
-///
-/// `bound_params[i]` is the accumulated buffer for parameter `i`, or `None`.
-/// A bound parameter takes its value from that buffer and consumes NOTHING
-/// from the packet's value section: Go's `parseBinaryParams` checks
-/// `boundParams[i] != nil` first and `continue`s before touching `pos`
-/// (`pkg/server/conn_stmt_params.go:48-71`). The NULL bitmap is consulted
-/// only afterwards, because -- as Go's comment records -- some clients
-/// (MariaDB) set the NULL bit even for a parameter they sent as long data
-/// (`pkg/server/conn_stmt_params.go:74-77`).
-///
-/// The declared type of a bound parameter does not change its value: Go
-/// hands the raw buffer through as `TypeBlob` and only refines the *tag* to
-/// the declared TEXT/BLOB type. Here every parameter value is already
-/// untagged bytes, so a bound parameter is always the buffer verbatim.
+/// Decodes one execute packet with `COM_STMT_SEND_LONG_DATA` buffers.
 pub fn decode_prepared_statement_execute_with_bound_params(
     payload: &[u8],
     parameter_count: usize,
     previous_types: Option<&[PreparedParameterType]>,
     bound_params: &[Option<Vec<u8>>],
 ) -> Result<PreparedStatementExecute, PreparedStatementError> {
-    // The body below is count-generic: the null bitmap, the type vector, and
-    // the value loop are all driven by `parameter_count`. A zero-marker
-    // execute simply skips all three, which is how MySQL encodes executing a
-    // statement with no `?` at all -- the general prepared path produces
-    // those routinely. (The old at-least-one rejection dated from the era
-    // when the only prepared statement was a configured point read.)
-    let mut cursor = PacketCursor::new(payload);
-    let statement_id = cursor.read_u32("statement ID")?;
-    if statement_id == 0 {
-        return Err(PreparedStatementError::ZeroStatementId);
-    }
-    let cursor_flags = cursor.read_u8("cursor flags")?;
-    // Go accepts only the forward-only read-only cursor: CursorTypeReadOnly
-    // (0x01) sets `useCursor`, and ForUpdate (0x02) / Scrollable (0x04) are
-    // rejected by name.
-    if cursor_flags & !CURSOR_TYPE_READ_ONLY != 0 {
-        return Err(PreparedStatementError::UnsupportedCursorFlag(cursor_flags));
-    }
-    let iteration_count = cursor.read_u32("iteration count")?;
-    if iteration_count != 1 {
-        return Err(PreparedStatementError::UnsupportedIterationCount(
-            iteration_count,
-        ));
-    }
+    split_prepared_statement_execute(payload, parameter_count, previous_types)?
+        .decode(bound_params, "utf8mb4")
+}
 
-    let null_bitmap_len = parameter_count.div_ceil(8);
-    let null_bitmap = cursor.read_exact(null_bitmap_len, "null bitmap")?.to_vec();
-    // A bit set in the bitmap is Go's `mysql.TypeNull` arm: the value is NULL
-    // and carries no bytes in the value section at all.
-    let is_null: Vec<bool> = (0..parameter_count)
-        .map(|parameter| null_bitmap[parameter / 8] & (1 << (parameter % 8)) != 0)
-        .collect();
-    if !parameter_count.is_multiple_of(8)
-        && null_bitmap
-            .last()
-            .is_some_and(|last| *last >> (parameter_count % 8) != 0)
-    {
-        return Err(PreparedStatementError::NonzeroNullBitmapPadding);
+fn prepared_value_from_binary_param(
+    parameter: crate::BinaryParam,
+) -> Result<PreparedValue, PreparedStatementError> {
+    if parameter.tp == crate::TYPE_NULL {
+        return Ok(PreparedValue::Null);
     }
-
-    // A zero-parameter execute ends right after the iteration count: no
-    // bitmap, no bound flag, no type vector, no values.
-    if parameter_count == 0 {
-        if cursor.remaining() != 0 {
-            return Err(PreparedStatementError::TrailingBytes {
-                bytes: cursor.remaining(),
-            });
+    if parameter.is_null {
+        // Go's blob arm constructs a bytes datum from nil, whose observable
+        // value is an empty byte string. String-like and decimal NULL markers
+        // remain SQL NULL at the typed boundary.
+        return Ok(
+            if matches!(
+                parameter.tp,
+                TYPE_BLOB | TYPE_TINY_BLOB | TYPE_MEDIUM_BLOB | TYPE_LONG_BLOB
+            ) {
+                PreparedValue::String(Vec::new())
+            } else {
+                PreparedValue::Null
+            },
+        );
+    }
+    let value = match parameter.tp {
+        TYPE_TINY if parameter.is_unsigned => {
+            PreparedValue::UnsignedLongLong(u64::from(parameter.val[0]))
         }
-        return Ok(PreparedStatementExecute {
-            statement_id,
-            cursor_flags,
-            parameter_types: PreparedParameterTypes::New(Vec::new()),
-            values: Vec::new(),
-        });
-    }
-    let new_types = cursor.read_u8("new parameter bound flag")?;
-    let (parameter_types, types): (PreparedParameterTypes, Vec<PreparedParameterType>) =
-        match new_types {
-            0 => {
-                let types =
-                    previous_types.ok_or(PreparedStatementError::MissingPreviousTypeVector)?;
-                if types.len() != parameter_count {
-                    return Err(PreparedStatementError::PreviousTypeVectorLength {
-                        expected: parameter_count,
-                        actual: types.len(),
-                    });
-                }
-                (PreparedParameterTypes::Reuse, types.to_vec())
-            }
-            1 => {
-                let encoded = cursor.read_exact(parameter_count * 2, "parameter type vector")?;
-                let mut types = Vec::with_capacity(parameter_count);
-                for (parameter, type_bytes) in encoded.chunks_exact(2).enumerate() {
-                    let parameter_type =
-                        decode_parameter_type(parameter, type_bytes[0], type_bytes[1])?;
-                    types.push(parameter_type);
-                }
-                (PreparedParameterTypes::New(types.clone()), types)
-            }
-            value => {
-                return Err(PreparedStatementError::InvalidField {
-                    field: "new parameter bound flag",
-                    value,
-                });
-            }
-        };
-
-    let mut values = Vec::with_capacity(types.len());
-    for (parameter, parameter_type) in types.iter().enumerate() {
-        // A parameter delivered by COM_STMT_SEND_LONG_DATA wins over both the
-        // NULL bitmap and the value section, and advances neither.
-        if let Some(Some(bound)) = bound_params.get(parameter) {
-            values.push(PreparedValue::String(bound.clone()));
-            continue;
+        TYPE_TINY => PreparedValue::SignedLongLong(i64::from(parameter.val[0] as i8)),
+        TYPE_SHORT | TYPE_YEAR if parameter.is_unsigned => {
+            PreparedValue::UnsignedLongLong(u64::from(u16::from_le_bytes(
+                parameter.val[..2].try_into().expect("short width"),
+            )))
         }
-        // A NULL parameter occupies no bytes in the value section.
-        if is_null.get(parameter).copied().unwrap_or(false) {
-            values.push(PreparedValue::Null);
-            continue;
+        TYPE_SHORT | TYPE_YEAR => PreparedValue::SignedLongLong(i64::from(i16::from_le_bytes(
+            parameter.val[..2].try_into().expect("short width"),
+        ))),
+        TYPE_INT24 | TYPE_LONG if parameter.is_unsigned => {
+            PreparedValue::UnsignedLongLong(u64::from(u32::from_le_bytes(
+                parameter.val[..4].try_into().expect("long width"),
+            )))
         }
-        // Each integer width sign-extends to one i64, exactly as Go
-        // `ExecBinaryParam` widens int8/int16/int32/int64 with `int64(intN(...))`;
-        // a string carries its length-encoded bytes.
-        let value = match parameter_type {
-            PreparedParameterType::SignedTiny => {
-                PreparedValue::SignedLongLong(i64::from(cursor.read_i8("signed TINYINT value")?))
-            }
-            PreparedParameterType::SignedShort => {
-                PreparedValue::SignedLongLong(i64::from(cursor.read_i16("signed SMALLINT value")?))
-            }
-            PreparedParameterType::SignedLong => {
-                PreparedValue::SignedLongLong(i64::from(cursor.read_i32("signed INT value")?))
-            }
-            PreparedParameterType::SignedLongLong => {
-                PreparedValue::SignedLongLong(cursor.read_i64("signed BIGINT value")?)
-            }
-            PreparedParameterType::String => {
-                PreparedValue::String(cursor.read_length_encoded_string("string value")?)
-            }
-            PreparedParameterType::UnsignedTiny => PreparedValue::UnsignedLongLong(u64::from(
-                cursor.read_u8("unsigned TINYINT value")?,
-            )),
-            PreparedParameterType::UnsignedShort => PreparedValue::UnsignedLongLong(u64::from(
-                cursor.read_u16("unsigned SMALLINT value")?,
-            )),
-            PreparedParameterType::UnsignedLong => {
-                PreparedValue::UnsignedLongLong(u64::from(cursor.read_u32("unsigned INT value")?))
-            }
-            PreparedParameterType::UnsignedLongLong => {
-                PreparedValue::UnsignedLongLong(cursor.read_u64("unsigned BIGINT value")?)
-            }
-            PreparedParameterType::Float => {
-                PreparedValue::Float(f32::from_bits(cursor.read_u32("FLOAT value")?))
-            }
-            PreparedParameterType::Double => {
-                PreparedValue::Double(f64::from_bits(cursor.read_u64("DOUBLE value")?))
-            }
-            PreparedParameterType::Decimal => {
-                PreparedValue::Decimal(cursor.read_length_encoded_string("DECIMAL value")?)
-            }
-            PreparedParameterType::Date
-            | PreparedParameterType::DateTime
-            | PreparedParameterType::Timestamp => {
-                PreparedValue::Temporal(read_binary_datetime(&mut cursor)?)
-            }
-            PreparedParameterType::Time => {
-                PreparedValue::Temporal(read_binary_duration(&mut cursor)?)
-            }
-            PreparedParameterType::Blob => {
-                PreparedValue::String(cursor.read_length_encoded_string("BLOB value")?)
-            }
-        };
-        values.push(value);
-    }
-    if cursor.remaining() != 0 {
-        return Err(PreparedStatementError::TrailingBytes {
-            bytes: cursor.remaining(),
-        });
-    }
-
-    Ok(PreparedStatementExecute {
-        statement_id,
-        cursor_flags,
-        parameter_types,
-        values,
-    })
+        TYPE_INT24 | TYPE_LONG => PreparedValue::SignedLongLong(i64::from(i32::from_le_bytes(
+            parameter.val[..4].try_into().expect("long width"),
+        ))),
+        TYPE_LONGLONG if parameter.is_unsigned => PreparedValue::UnsignedLongLong(
+            u64::from_le_bytes(parameter.val[..8].try_into().expect("longlong width")),
+        ),
+        TYPE_LONGLONG => PreparedValue::SignedLongLong(i64::from_le_bytes(
+            parameter.val[..8].try_into().expect("longlong width"),
+        )),
+        TYPE_FLOAT => PreparedValue::Float(f32::from_bits(u32::from_le_bytes(
+            parameter.val[..4].try_into().expect("float width"),
+        ))),
+        TYPE_DOUBLE => PreparedValue::Double(f64::from_bits(u64::from_le_bytes(
+            parameter.val[..8].try_into().expect("double width"),
+        ))),
+        TYPE_DATE | TYPE_DATETIME | TYPE_TIMESTAMP => {
+            PreparedValue::Temporal(render_binary_datetime(&parameter.val)?)
+        }
+        TYPE_DURATION => PreparedValue::Temporal(render_binary_duration(&parameter.val)?),
+        TYPE_NEW_DECIMAL => PreparedValue::Decimal(parameter.val),
+        TYPE_BLOB | TYPE_TINY_BLOB | TYPE_MEDIUM_BLOB | TYPE_LONG_BLOB | TYPE_UNSPECIFIED
+        | TYPE_VARCHAR | TYPE_VAR_STRING | TYPE_STRING | TYPE_ENUM | TYPE_SET | TYPE_GEOMETRY
+        | TYPE_BIT => PreparedValue::String(parameter.val),
+        type_code => {
+            return Err(crate::BinaryParamError::UnknownFieldType { type_code }.into());
+        }
+    };
+    Ok(value)
 }
 
 /// `CURSOR_TYPE_READ_ONLY`: the one cursor kind Go supports.
@@ -748,10 +707,6 @@ pub enum BinaryDateTimeType {
 /// body through the seconds when any of hour/minute/second is set; otherwise a
 /// 4-byte date-only body. A `DATE` emits `0` when zero and the 4-byte date-only
 /// body otherwise, ignoring every time field exactly as Go does.
-///
-/// This is the encoder alone; like [`encode_binary_time`] it is not yet wired
-/// into [`BinaryResultCell`] (no temporal result cell / `Datum` time variant
-/// exists), and that gap is tracked as partial-transcreation debt in HANDOFF.
 #[must_use]
 pub fn encode_binary_datetime(time: PackedTime, kind: BinaryDateTimeType) -> Vec<u8> {
     // Date renders date-only regardless of any time bits, so the two field-type
@@ -1138,8 +1093,8 @@ impl BinaryResultSetStream {
 /// Go `binaryDate`/`binaryDateTime`/`binaryTimestamp`/`binaryTimestampWithTZ`:
 /// the payload's own length picks how much of the date-time it carries, and
 /// the text produced here is exactly what Go parses into its `Time` datum.
-fn read_binary_datetime(cursor: &mut PacketCursor<'_>) -> Result<String, PreparedStatementError> {
-    let length = cursor.read_u8("temporal payload length")?;
+fn render_binary_datetime(payload: &[u8]) -> Result<String, PreparedStatementError> {
+    let length = payload.len();
     // Go `types.ZeroDatetimeStr` for an empty payload.
     if length == 0 {
         return Ok("0000-00-00 00:00:00".to_owned());
@@ -1147,9 +1102,10 @@ fn read_binary_datetime(cursor: &mut PacketCursor<'_>) -> Result<String, Prepare
     if !matches!(length, 4 | 7 | 11 | 13) {
         return Err(PreparedStatementError::InvalidField {
             field: "temporal payload length",
-            value: length,
+            value: u8::try_from(length).unwrap_or(u8::MAX),
         });
     }
+    let mut cursor = PacketCursor::new(payload);
     let year = cursor.read_u16("temporal year")?;
     let month = cursor.read_u8("temporal month")?;
     let day = cursor.read_u8("temporal day")?;
@@ -1177,17 +1133,18 @@ fn read_binary_datetime(cursor: &mut PacketCursor<'_>) -> Result<String, Prepare
 
 /// Go `binaryDuration`/`binaryDurationWithMS`: a signed day/time span, whose
 /// payload length says whether microseconds follow.
-fn read_binary_duration(cursor: &mut PacketCursor<'_>) -> Result<String, PreparedStatementError> {
-    let length = cursor.read_u8("duration payload length")?;
+fn render_binary_duration(payload: &[u8]) -> Result<String, PreparedStatementError> {
+    let length = payload.len();
     if length == 0 {
         return Ok("0".to_owned());
     }
     if !matches!(length, 8 | 12) {
         return Err(PreparedStatementError::InvalidField {
             field: "duration payload length",
-            value: length,
+            value: u8::try_from(length).unwrap_or(u8::MAX),
         });
     }
+    let mut cursor = PacketCursor::new(payload);
     let negative = cursor.read_u8("duration sign")?;
     if negative > 1 {
         return Err(PreparedStatementError::InvalidField {
@@ -1206,49 +1163,6 @@ fn read_binary_duration(cursor: &mut PacketCursor<'_>) -> Result<String, Prepare
         rendered.push_str(&format!(".{microseconds:06}"));
     }
     Ok(rendered)
-}
-
-fn decode_parameter_type(
-    parameter: usize,
-    type_code: u8,
-    type_flags: u8,
-) -> Result<PreparedParameterType, PreparedStatementError> {
-    // The unsigned bit is rejected first (Go reads only this flag bit); any
-    // other nonzero flag byte is an unmodelled encoding for this bounded path.
-    let unsigned = type_flags & MYSQL_UNSIGNED_FLAG != 0;
-    if type_flags & !MYSQL_UNSIGNED_FLAG != 0 {
-        return Err(PreparedStatementError::InvalidField {
-            field: "parameter type flags",
-            value: type_flags,
-        });
-    }
-    // Go `ExecBinaryParam` reads the unsigned flag per integer width and
-    // produces a uint64 datum; every other family ignores it.
-    match type_code {
-        TYPE_TINY if unsigned => Ok(PreparedParameterType::UnsignedTiny),
-        TYPE_TINY => Ok(PreparedParameterType::SignedTiny),
-        TYPE_SHORT | TYPE_YEAR if unsigned => Ok(PreparedParameterType::UnsignedShort),
-        TYPE_SHORT | TYPE_YEAR => Ok(PreparedParameterType::SignedShort),
-        TYPE_INT24 | TYPE_LONG if unsigned => Ok(PreparedParameterType::UnsignedLong),
-        TYPE_INT24 | TYPE_LONG => Ok(PreparedParameterType::SignedLong),
-        TYPE_LONGLONG if unsigned => Ok(PreparedParameterType::UnsignedLongLong),
-        TYPE_LONGLONG => Ok(PreparedParameterType::SignedLongLong),
-        TYPE_FLOAT => Ok(PreparedParameterType::Float),
-        TYPE_DOUBLE => Ok(PreparedParameterType::Double),
-        TYPE_NEW_DECIMAL => Ok(PreparedParameterType::Decimal),
-        TYPE_DATE => Ok(PreparedParameterType::Date),
-        TYPE_DATETIME => Ok(PreparedParameterType::DateTime),
-        TYPE_TIMESTAMP => Ok(PreparedParameterType::Timestamp),
-        TYPE_DURATION => Ok(PreparedParameterType::Time),
-        TYPE_VARCHAR | TYPE_VAR_STRING | TYPE_STRING => Ok(PreparedParameterType::String),
-        TYPE_BLOB | TYPE_TINY_BLOB | TYPE_MEDIUM_BLOB | TYPE_LONG_BLOB => {
-            Ok(PreparedParameterType::Blob)
-        }
-        _ => Err(PreparedStatementError::UnsupportedParameterType {
-            parameter,
-            type_code,
-        }),
-    }
 }
 
 fn prepare_ok_payload(statement_id: u32, result_count: u16, parameter_count: u16) -> Vec<u8> {
@@ -1306,10 +1220,6 @@ impl<'a> PacketCursor<'a> {
         ))
     }
 
-    fn read_i8(&mut self, field: &'static str) -> Result<i8, PreparedStatementError> {
-        Ok(self.read_exact(1, field)?[0] as i8)
-    }
-
     fn read_u16(&mut self, field: &'static str) -> Result<u16, PreparedStatementError> {
         Ok(u16::from_le_bytes(
             self.read_exact(2, field)?
@@ -1318,57 +1228,11 @@ impl<'a> PacketCursor<'a> {
         ))
     }
 
-    fn read_u64(&mut self, field: &'static str) -> Result<u64, PreparedStatementError> {
-        Ok(u64::from_le_bytes(
-            self.read_exact(8, field)?
-                .try_into()
-                .expect("eight bytes were read"),
-        ))
-    }
-
     fn read_i16(&mut self, field: &'static str) -> Result<i16, PreparedStatementError> {
         let bytes = self.read_exact(2, field)?;
         Ok(i16::from_le_bytes(
             bytes.try_into().expect("two-byte slice"),
         ))
-    }
-
-    fn read_i32(&mut self, field: &'static str) -> Result<i32, PreparedStatementError> {
-        let bytes = self.read_exact(4, field)?;
-        Ok(i32::from_le_bytes(
-            bytes.try_into().expect("four-byte slice"),
-        ))
-    }
-
-    fn read_i64(&mut self, field: &'static str) -> Result<i64, PreparedStatementError> {
-        let bytes = self.read_exact(8, field)?;
-        Ok(i64::from_le_bytes(
-            bytes.try_into().expect("eight-byte slice"),
-        ))
-    }
-
-    /// Reads a MySQL length-encoded string: a length-encoded integer header
-    /// followed by that many bytes. A NULL marker (`0xfb`) cannot occur for a
-    /// bitmap-non-null parameter, so it decodes as a zero-length string.
-    fn read_length_encoded_string(
-        &mut self,
-        field: &'static str,
-    ) -> Result<Vec<u8>, PreparedStatementError> {
-        let (length, _is_null, consumed) = crate::parse_length_encoded_int(self.remaining).ok_or(
-            PreparedStatementError::Truncated {
-                field,
-                required: 1,
-                available: self.remaining.len(),
-            },
-        )?;
-        // Advance past the length header, then take the payload bytes.
-        self.read_exact(consumed, field)?;
-        let length = usize::try_from(length).map_err(|_| PreparedStatementError::Truncated {
-            field,
-            required: usize::MAX,
-            available: self.remaining.len(),
-        })?;
-        Ok(self.read_exact(length, field)?.to_vec())
     }
 
     fn read_exact(
@@ -1390,5 +1254,9 @@ impl<'a> PacketCursor<'a> {
 
     const fn remaining(&self) -> usize {
         self.remaining.len()
+    }
+
+    const fn remaining_bytes(&self) -> &'a [u8] {
+        self.remaining
     }
 }

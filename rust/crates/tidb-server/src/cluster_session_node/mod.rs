@@ -1225,6 +1225,10 @@ impl QuerySession for ClusterServerSession {
         self.session.result_charset()
     }
 
+    fn input_charset(&self) -> String {
+        self.session.input_charset()
+    }
+
     /// Maps `BEGIN`/`COMMIT`/`ROLLBACK` onto the connection's buffer.
     ///
     /// The driver session owns the *state* (so `in_transaction` and the

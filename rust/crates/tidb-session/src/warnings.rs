@@ -245,6 +245,15 @@ impl Session {
             .unwrap_or_default()
     }
 
+    /// Go `clientConn.initInputEncoder`'s read of
+    /// `@@character_set_client` for binary protocol string parameters.
+    #[must_use]
+    pub fn input_charset(&self) -> String {
+        self.vars
+            .get_system("character_set_client")
+            .unwrap_or_else(|_| "utf8mb4".to_owned())
+    }
+
     /// The warning count the OK/EOF packet carries, which Go reads through
     /// `TiDBContext.WarningCount` in `writeOkWith` and `writeEOF`.
     ///

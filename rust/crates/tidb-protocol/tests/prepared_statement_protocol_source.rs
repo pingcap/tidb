@@ -22,8 +22,8 @@ use tidb_protocol::{
     encode_binary_signed_longlong_row, encode_binary_time,
     encode_prepared_statement_prepare_response, BinaryDateTimeType, BinaryResultCell,
     BinaryResultSetStream, ColumnInfo, PreparedParameterType, PreparedParameterTypes,
-    PreparedStatementError, PreparedStatementSendLongData, PreparedValue, ResultSetOptions,
-    TYPE_LONGLONG,
+    split_prepared_statement_execute, PreparedStatementError, PreparedStatementSendLongData,
+    PreparedValue, ResultSetOptions, TYPE_LONGLONG,
 };
 
 /// pkg/server/internal/parse/parse.go:35-48 `StmtFetchCmd`.
@@ -145,7 +145,7 @@ fn execute_decodes_each_signed_integer_width_with_sign_extension() {
             .unwrap();
     assert_eq!(
         tiny.parameter_types,
-        PreparedParameterTypes::New(vec![PreparedParameterType::SignedTiny])
+        PreparedParameterTypes::New(vec![PreparedParameterType::new(0x01, false)])
     );
 }
 
@@ -162,7 +162,7 @@ fn execute_decodes_a_string_parameter() {
     assert_eq!(decoded.values, vec![PreparedValue::String(b"abc".to_vec())]);
     assert_eq!(
         decoded.parameter_types,
-        PreparedParameterTypes::New(vec![PreparedParameterType::String])
+        PreparedParameterTypes::New(vec![PreparedParameterType::new(0x0f, false)])
     );
 }
 
@@ -170,23 +170,15 @@ fn execute_decodes_a_string_parameter() {
 /// (`pkg/server/conn_stmt_params_test.go:319`), on the decoder the SERVER
 /// actually runs.
 ///
-/// `parse_binary_params` (the direct port of Go `parseBinaryParams`) takes the
-/// connection's charset and decodes a string parameter through it -- see
-/// `binary_params_source::a_gbk_client_string_param_is_decoded_to_utf8`. This
-/// second decoder, the one `mysql_connection` calls for `COM_STMT_EXECUTE`,
-/// has no charset seam at all: a gbk client's `测试` reaches the session as the
-/// raw bytes `b2 e2 ca d4`, which are not even valid UTF-8. TiDB's answer is
-/// asserted here so the gap is tracked; closing it means giving this decoder
-/// the connection charset, which is a change to the `mysql_connection` seam.
+/// The connection charset reaches the package splitter before typed
+/// interpretation, so GBK bytes become UTF-8 at the same boundary as Go.
 #[test]
-#[ignore = "decode_prepared_statement_execute has no connection-charset seam yet (a gbk param keeps its raw bytes)"]
 fn execute_decodes_a_gbk_string_parameter_to_utf8() {
-    let decoded = decode_prepared_statement_execute(
-        &execute_payload_typed(7, 0x0f, 0, &[0x04, 0xb2, 0xe2, 0xca, 0xd4]),
-        1,
-        None,
-    )
-    .unwrap();
+    let packet = execute_payload_typed(7, 0x0f, 0, &[0x04, 0xb2, 0xe2, 0xca, 0xd4]);
+    let decoded = split_prepared_statement_execute(&packet, 1, None)
+        .unwrap()
+        .decode(&[], "gbk")
+        .unwrap();
     assert_eq!(
         decoded.values,
         vec![PreparedValue::String("测试".as_bytes().to_vec())]
@@ -200,14 +192,14 @@ fn execute_decodes_one_signed_bigint_and_retains_type_reuse_representation() {
     assert_eq!(first.cursor_flags, 0);
     assert_eq!(
         first.parameter_types,
-        PreparedParameterTypes::New(vec![PreparedParameterType::SignedLongLong])
+        PreparedParameterTypes::New(vec![PreparedParameterType::new(TYPE_LONGLONG, false)])
     );
     assert_eq!(first.values, vec![PreparedValue::SignedLongLong(-42)]);
 
     let second = decode_prepared_statement_execute(
         &execute_payload(7, false, i64::MAX),
         1,
-        Some(&[PreparedParameterType::SignedLongLong]),
+        Some(&[PreparedParameterType::new(TYPE_LONGLONG, false)]),
     )
     .unwrap();
     assert_eq!(second.parameter_types, PreparedParameterTypes::Reuse);
@@ -215,141 +207,108 @@ fn execute_decodes_one_signed_bigint_and_retains_type_reuse_representation() {
 }
 
 #[test]
-fn execute_rejects_every_unowned_packet_variant_without_fallback() {
-    let cases = [
-        (
-            "truncated fixed header",
-            vec![1, 0, 0],
-            None,
-            PreparedStatementError::Truncated {
-                field: "statement ID",
-                required: 4,
-                available: 3,
-            },
-        ),
-        (
-            // A zero-parameter execute is legal now (the general prepared
-            // path produces them routinely) and ends right after the
-            // iteration count -- so a payload that still carries bitmap,
-            // type and value bytes has trailing garbage.
-            "zero parameter count with trailing bytes",
-            execute_payload(1, true, 1),
-            None,
-            PreparedStatementError::TrailingBytes { bytes: 12 },
-        ),
-        (
-            "zero statement id",
-            execute_payload(0, true, 1),
-            None,
-            PreparedStatementError::ZeroStatementId,
-        ),
-        (
-            // CURSOR_TYPE_READ_ONLY (0x01) is accepted now; ForUpdate (0x02)
-            // and Scrollable (0x04) are what Go still rejects by name.
-            "for-update cursor",
-            {
-                let mut packet = execute_payload(1, true, 1);
-                packet[4] = 2;
-                packet
-            },
-            None,
-            PreparedStatementError::UnsupportedCursorFlag(2),
-        ),
-        (
-            "scrollable cursor",
-            {
-                let mut packet = execute_payload(1, true, 1);
-                packet[4] = 4;
-                packet
-            },
-            None,
-            PreparedStatementError::UnsupportedCursorFlag(4),
-        ),
-        (
-            "non-one iteration count",
-            {
-                let mut packet = execute_payload(1, true, 1);
-                packet[5..9].copy_from_slice(&2_u32.to_le_bytes());
-                packet
-            },
-            None,
-            PreparedStatementError::UnsupportedIterationCount(2),
-        ),
-        (
-            // A NULL parameter carries NO bytes in the value section, so a
-            // packet that both marks it NULL and sends eight value bytes is
-            // malformed. (The NULL parameter itself is now a value -- see
-            // `execute_decodes_every_parameter_family`.)
-            "null bit with value bytes",
-            {
-                let mut packet = execute_payload(1, true, 1);
-                packet[9] = 1;
-                packet
-            },
-            None,
-            PreparedStatementError::TrailingBytes { bytes: 8 },
-        ),
-        (
-            "missing type reuse",
-            execute_payload(1, false, 1),
-            None,
-            PreparedStatementError::MissingPreviousTypeVector,
-        ),
-        (
-            // Only the unsigned bit is a real flag; any other bit is an
-            // encoding this leaf does not model. (The unsigned bit itself is
-            // now admitted -- see `execute_decodes_every_parameter_family`.)
-            "unmodelled type flag",
-            {
-                let mut packet = execute_payload(1, true, 1);
-                packet[12] = 0x40;
-                packet
-            },
-            None,
-            PreparedStatementError::InvalidField {
-                field: "parameter type flags",
-                value: 0x40,
-            },
-        ),
-        (
-            // TYPE_GEOMETRY (0xff): outside every family Go's ExecBinaryParam
-            // builds a datum for, so it still fails closed. (TYPE_DOUBLE used
-            // to be this example and is admitted now.)
-            "unsupported type",
-            {
-                let mut packet = execute_payload(1, true, 1);
-                packet[11] = 0xff;
-                packet
-            },
-            None,
-            PreparedStatementError::UnsupportedParameterType {
-                parameter: 0,
-                type_code: 0xff,
-            },
-        ),
-        (
-            "truncated value",
-            execute_payload(1, true, 1)[..15].to_vec(),
-            None,
-            PreparedStatementError::Truncated {
-                field: "signed BIGINT value",
-                required: 8,
-                available: 2,
-            },
-        ),
-    ];
-    for (name, packet, types, expected) in cases {
-        // The zero-count case decodes with a DECLARED count of zero against a
-        // payload that still carries one parameter's bytes.
-        let parameter_count = if name.starts_with("zero parameter count") {
-            0
-        } else {
-            1
-        };
+fn execute_rejects_malformed_headers_cursor_modes_and_values() {
+    assert_eq!(
+        decode_prepared_statement_execute(&[1, 0, 0], 1, None),
+        Err(PreparedStatementError::Truncated {
+            field: "statement ID",
+            required: 4,
+            available: 3,
+        })
+    );
+    assert_eq!(
+        decode_prepared_statement_execute(&execute_payload(0, true, 1), 1, None),
+        Err(PreparedStatementError::ZeroStatementId)
+    );
+    for flag in [2, 4, 6] {
+        let mut packet = execute_payload(1, true, 1);
+        packet[4] = flag;
         assert_eq!(
-            decode_prepared_statement_execute(&packet, parameter_count, types),
-            Err(expected),
-            "{name}"
+            decode_prepared_statement_execute(&packet, 1, None),
+            Err(PreparedStatementError::UnsupportedCursorFlag(flag))
+        );
+    }
+    assert_eq!(
+        decode_prepared_statement_execute(&execute_payload(1, false, 1), 1, None),
+        Err(PreparedStatementError::MissingPreviousTypeVector)
+    );
+    assert_eq!(
+        decode_prepared_statement_execute(&execute_payload(1, true, 1)[..15], 1, None),
+        Err(PreparedStatementError::BinaryParameter(
+            tidb_protocol::BinaryParamError::MalformedPacket
+        ))
+    );
+    let unknown = execute_payload_typed(1, 0x9f, 0, &[]);
+    assert_eq!(
+        decode_prepared_statement_execute(&unknown, 1, None),
+        Err(PreparedStatementError::BinaryParameter(
+            tidb_protocol::BinaryParamError::UnknownFieldType { type_code: 0x9f }
+        ))
+    );
+}
+
+#[test]
+fn execute_ignores_fields_and_suffixes_that_go_does_not_observe() {
+    let mut packet = execute_payload(1, true, 7);
+    packet[4] = 0x80; // unknown cursor bits are ignored
+    packet[5..9].copy_from_slice(&9_u32.to_le_bytes()); // iteration count is skipped
+    packet[9] = 0xfe; // padding bits outside parameter zero are ignored
+    packet[12] = 0x40; // only the unsigned flag bit is observed
+    packet.extend_from_slice(b"unused suffix");
+    let decoded = decode_prepared_statement_execute(&packet, 1, None).unwrap();
+    assert_eq!(decoded.values, vec![PreparedValue::SignedLongLong(7)]);
+
+    // Go treats only an exact value of 1 as "new types follow"; every other
+    // value reuses the remembered vector.
+    let mut noncanonical_reuse = execute_payload(1, false, 8);
+    noncanonical_reuse[10] = 2;
+    let decoded = decode_prepared_statement_execute(
+        &noncanonical_reuse,
+        1,
+        Some(&[PreparedParameterType::new(TYPE_LONGLONG, false)]),
+    )
+    .unwrap();
+    assert_eq!(decoded.parameter_types, PreparedParameterTypes::Reuse);
+    assert_eq!(decoded.values, vec![PreparedValue::SignedLongLong(8)]);
+
+    // Go does not parse execute value bytes at all for a zero-marker statement.
+    assert!(decode_prepared_statement_execute(&execute_payload(1, true, 1), 0, None).is_ok());
+
+    // A bitmap NULL consumes no value bytes; any suffix remains unobserved.
+    let mut null_with_suffix = execute_payload(1, true, 1);
+    null_with_suffix[9] = 1;
+    assert_eq!(
+        decode_prepared_statement_execute(&null_with_suffix, 1, None)
+            .unwrap()
+            .values,
+        vec![PreparedValue::Null]
+    );
+
+    // TYPE_GEOMETRY belongs to Go's string-like family.
+    let geometry = execute_payload_typed(1, 0xff, 0, &[3, b'g', b'e', b'o']);
+    assert_eq!(
+        decode_prepared_statement_execute(&geometry, 1, None)
+            .unwrap()
+            .values,
+        vec![PreparedValue::String(b"geo".to_vec())]
+    );
+
+    // A length-encoded NULL has family-specific Go datum semantics: blob nil
+    // reads as empty bytes, while string and decimal nil are SQL NULL here.
+    for (type_code, expected) in [
+        (0xfc, PreparedValue::String(Vec::new())),
+        (0x0f, PreparedValue::Null),
+        (0xf6, PreparedValue::Null),
+    ] {
+        assert_eq!(
+            decode_prepared_statement_execute(
+                &execute_payload_typed(1, type_code, 0, &[0xfb]),
+                1,
+                None,
+            )
+            .unwrap()
+            .values,
+            vec![expected]
         );
     }
 }
