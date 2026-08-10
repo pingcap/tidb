@@ -14,8 +14,9 @@ This is one artifact inside the larger incomplete `pkg/util/chunk` package. It m
 
 - [x] (2026-08-10 03:55Z) Read the accepted production/test sources at `665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f`, the current Rust storage stack, all direct Rust consumers, and the 132 UNCLASSIFIED artifact obligations.
 - [x] (2026-08-10 04:31Z) Added and ran the seven-case public source-shaped storage contract, including one combined deterministic replacement for the accepted random write/read failpoint. It passed against the existing implementation after correcting test-oracle setup mistakes; no production semantic gap was exposed.
-- [ ] Classify all 102 production and 30 direct-test obligations with exact rules, mutation evidence, deterministic failure adaptation, and fixed-loop proofs.
-- [ ] Run WIP and Ready gates, merge current `hparser-integration`, and push the verified checkpoint to both remotes without force.
+- [x] (2026-08-10 05:22Z) Classified all 102 production and 30 direct-test obligations: 113 PORTED, 10 evidence-backed DECLINED Go-only failure-injection/runtime mechanics, and 9 structurally UNREACHABLE valid-input or fixed-positive-loop branches.
+- [x] (2026-08-10 05:38Z) Ran and independently verified the measured deterministic failure-adaptation probe and all six semantic mutations. Every mutation passed at baseline, failed its named public assertion, restored the exact production bytes, passed after restoration, and independently verified.
+- [ ] Run the remaining Ready gates, merge current `hparser-integration`, and push the verified checkpoint to both remotes without force.
 
 ## Surprises & Discoveries
 
@@ -30,6 +31,12 @@ This is one artifact inside the larger incomplete `pkg/util/chunk` package. It m
 
 - Observation: the public artifact contract passes without any production edit.
   Evidence: `cargo test --offline --locked -j12 -p tidb-chunk --test chunk_in_disk_contract -- --nocapture` ran seven tests successfully, including a real create-file failure and a checksum-boundary truncated read; strict all-target Clippy also exited zero.
+
+- Observation: a short spill read must be made to cross the checksum writer's flushed-file boundary; truncating a tiny image leaves all bytes in the live checksum cache and therefore does not model a truncated file read.
+  Evidence: the exact-read contract uses a multi-block payload and truncates the flushed file before `fill_chunk`, which then returns an error without mutating the destination.
+
+- Observation: the first exact-read mutant discarded the I/O error and then attempted to deserialize zero-filled bytes, aborting on a bogus huge allocation before Rust could report a named failed assertion.
+  Evidence: the operator was replaced with a safe semantic mutant that turns premature EOF into `Ok(total)`. The public exact-read assertion then fails normally, and official run/verify evidence records that named failure.
 
 ## Decision Log
 
@@ -47,7 +54,9 @@ This is one artifact inside the larger incomplete `pkg/util/chunk` package. It m
 
 ## Outcomes & Retrospective
 
-The observable artifact contract is green without a production change. The artifact is not yet closed because obligation classification, mutation/probe evidence, direct-consumer gates, and remote integration remain.
+The observable artifact contract and its receipt are closed without a production change. All 132 obligations have final verdicts (113 PORTED, 10 DECLINED, 9 UNREACHABLE), the deterministic failure adaptation is OBSERVED and independently VERIFIED, and six rules are guarded by independently KILLED mutations. The incremental checker advances to obligation `Oe3d590766a60c595` in the next unrelated artifact.
+
+The full `tidb-chunk` crate and the hash-aggregation, sort, and TopN spill consumers pass. Remote integration and the broad Ready gates remain before this checkpoint is shipped.
 
 ## Context and Orientation
 
@@ -84,6 +93,12 @@ After this artifact closes, that checker must advance past both `chunk_in_disk` 
 
 Ready validation additionally includes the full `tidb-chunk` crate, strict Clippy, exact hash-aggregation/sort/TopN spill tests, direct-dependent checks, workspace all-target compilation, and `make -j12 lint`.
 
+The exact spill-consumer tests used by this checkpoint are:
+
+    cargo test --offline --locked -j12 -p tidb-executor hash_agg_spill_tests --lib
+    cargo test --offline --locked -j12 -p tidb-executor sort::tests::test_unparallel_sort_spill_disk --lib -- --exact
+    cargo test --offline --locked -j12 -p tidb-executor topn::spill_tests::test_generate_topn_results_when_spill_only_once --lib -- --exact
+
 ## Validation and Acceptance
 
 The public contract passes only when Get and Fill reproduce all physical rows and auxiliary state, no-selection Fill preserves the accepted destination-selection rule, zero-column virtual rows round-trip, the real file exists while live and is absent after close, truncated reads return an error without mutating the destination, real create-file failure leaves counters and trackers unchanged, and quota failure remains accounted until close then releases exactly to zero.
@@ -100,6 +115,13 @@ Initial ledger counts:
 
     chunk_in_disk.go.tsv       UNCLASSIFIED 102
     chunk_in_disk_test.go.tsv  UNCLASSIFIED 30
+
+Final ledger counts:
+
+    PORTED       113
+    DECLINED      10
+    UNREACHABLE    9
+    UNCLASSIFIED   0
 
 Initial shipped base and both remote tips:
 
@@ -124,3 +146,5 @@ Revision note (2026-08-10 03:55Z): created the artifact plan after auditing acce
 Revision note (2026-08-10 04:25Z): recorded the green six-case public contract and strict Clippy result. No production code changed because the contract exposed no semantic mismatch.
 
 Revision note (2026-08-10 04:31Z): added the combined deterministic write/read failure adaptation used by the measured probe; a multi-block payload is required so the read crosses the checksum writer's live cache into the truncated file.
+
+Revision note (2026-08-10 05:38Z): closed all 132 obligations, recorded the verified measured probe and six independently killed mutations, and recorded the green full-crate and direct spill-consumer gates.

@@ -1,0 +1,19 @@
+--- stdout ---
+
+running 1 test
+test truncated_chunk_read_is_rejected_before_destination_mutation ... FAILED
+
+failures:
+
+failures:
+    truncated_chunk_read_is_rejected_before_destination_mutation
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+
+--- stderr ---
+
+thread 'truncated_chunk_read_is_rejected_before_destination_mutation' (224138129) panicked at crates/tidb-chunk/tests/chunk_in_disk_contract.rs:269:5:
+assertion failed: matches!(error, DiskError::Io(_))
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p tidb-chunk --test chunk_in_disk_contract`

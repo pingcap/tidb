@@ -1,0 +1,19 @@
+--- stdout ---
+
+running 1 test
+test empty_and_storage_failures_are_atomic ... FAILED
+
+failures:
+
+failures:
+    empty_and_storage_failures_are_atomic
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+
+--- stderr ---
+
+thread 'empty_and_storage_failures_are_atomic' (224125654) panicked at crates/tidb-chunk/tests/chunk_in_disk_contract.rs:217:10:
+empty chunks are rejected: ()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p tidb-chunk --test chunk_in_disk_contract`

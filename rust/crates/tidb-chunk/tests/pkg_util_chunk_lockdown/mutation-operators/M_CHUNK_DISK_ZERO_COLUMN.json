@@ -1,0 +1,1 @@
+{"mutation_id":"M_CHUNK_DISK_ZERO_COLUMN","replacements":[{"expected_count":1,"new":"    put_i64(buf, 0);","old":"    put_i64(buf, chk.num_virtual_rows as i64);"}],"rust_path":"rust/crates/tidb-chunk/src/chunk_in_disk.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"d83018be6ac86464e9616c7e5ecc0f4209a532da3bb489d36dfc12a768210a22"}

@@ -1,0 +1,21 @@
+--- stdout ---
+
+running 1 test
+test process_quota_error_remains_accounted_until_close ... FAILED
+
+failures:
+
+failures:
+    process_quota_error_remains_accounted_until_close
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
+
+
+--- stderr ---
+
+thread 'process_quota_error_remains_accounted_until_close' (224142984) panicked at crates/tidb-chunk/tests/chunk_in_disk_contract.rs:382:5:
+assertion `left == right` failed
+  left: 73
+ right: 0
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p tidb-chunk --test chunk_in_disk_contract`
