@@ -484,6 +484,8 @@ enum DiskWriter {
         writer: checksum::Writer<encrypt::Writer<File>>,
         cipher: encrypt::CtrCipher,
     },
+    #[cfg(test)]
+    Injected(Box<dyn Write + Send + Sync>),
 }
 
 impl DiskWriter {
@@ -491,6 +493,8 @@ impl DiskWriter {
         match self {
             Self::Plaintext(writer) => writer.write(data),
             Self::Aes128Ctr { writer, .. } => writer.write(data),
+            #[cfg(test)]
+            Self::Injected(writer) => writer.write(data),
         }
     }
 
@@ -498,6 +502,8 @@ impl DiskWriter {
         match self {
             Self::Plaintext(writer) => (writer.get_cache(), writer.get_cache_data_offset()),
             Self::Aes128Ctr { writer, .. } => (writer.get_cache(), writer.get_cache_data_offset()),
+            #[cfg(test)]
+            Self::Injected(_) => (&[], 0),
         }
     }
 
@@ -505,6 +511,8 @@ impl DiskWriter {
         match self {
             Self::Plaintext(writer) => writer.close(),
             Self::Aes128Ctr { writer, .. } => writer.close(),
+            #[cfg(test)]
+            Self::Injected(_) => Ok(()),
         }
     }
 }
@@ -596,14 +604,31 @@ impl DiskFileReaderWriter {
         matches!(self.writer, Some(DiskWriter::Aes128Ctr { .. }))
     }
 
-    /// Go `write`.
+    /// Go `write`. Rust writers report partial progress and a later error on
+    /// separate calls, so keep writing until the complete logical input has
+    /// been accepted or the latched error is returned. `off_write` advances
+    /// for every accepted prefix, including one followed by an error.
     pub fn write(&mut self, data: &[u8]) -> io::Result<usize> {
         let writer = self
             .writer
             .as_mut()
             .ok_or_else(|| io::Error::other("spill file is not open"))?;
-        let written = writer.write(data)?;
-        self.off_write += written as i64;
+        let mut written = 0;
+        while written < data.len() {
+            match writer.write(&data[written..]) {
+                Ok(0) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WriteZero,
+                        "failed to write the complete spill payload",
+                    ));
+                }
+                Ok(count) => {
+                    written += count;
+                    self.off_write += count as i64;
+                }
+                Err(error) => return Err(error),
+            }
+        }
         Ok(written)
     }
 
@@ -640,6 +665,10 @@ impl DiskFileReaderWriter {
                 );
                 crate::chunk_in_disk::read_full_at(&reader as &dyn ReadAt, destination, offset)
             }
+            #[cfg(test)]
+            DiskWriter::Injected(_) => Err(io::Error::other(
+                "the injected write-only spill has no reader",
+            )),
         }
     }
 
@@ -660,5 +689,46 @@ impl DiskFileReaderWriter {
 impl Drop for DiskFileReaderWriter {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod disk_writer_failure_tests {
+    use super::*;
+
+    struct PartialThenError {
+        first_write: bool,
+    }
+
+    impl Write for PartialThenError {
+        fn write(&mut self, source: &[u8]) -> io::Result<usize> {
+            if self.first_write {
+                self.first_write = false;
+                Ok(source.len().min(2))
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::StorageFull,
+                    "injected spill failure",
+                ))
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_partial_spill_write_is_followed_until_the_latched_error() {
+        let mut file = DiskFileReaderWriter::default();
+        file.writer = Some(DiskWriter::Injected(Box::new(PartialThenError {
+            first_write: true,
+        })));
+
+        let error = file
+            .write(b"four")
+            .expect_err("partial progress followed by failure must not be accepted");
+        assert_eq!(error.kind(), io::ErrorKind::StorageFull);
+        assert_eq!(file.off_write(), 2);
     }
 }
