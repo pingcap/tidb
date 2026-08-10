@@ -2906,7 +2906,7 @@ func (do *Domain) StartTTLJobManager() {
 		logutil.BgLogger().Info("don't run ttl job manager", fields...)
 		return
 	}
-	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.advancedSysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner, do.extWorkloadMgr)
+	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.advancedSysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner, ttlworker.WithExternalWorkloadManager(do.extWorkloadMgr))
 	do.ttlJobManager.Store(ttlJobManager)
 	ttlJobManager.Start()
 }

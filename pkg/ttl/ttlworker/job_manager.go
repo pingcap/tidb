@@ -137,15 +137,25 @@ type JobManager struct {
 	extWorkload                extworkload.Manager
 }
 
+// JobManagerOption configures a JobManager.
+type JobManagerOption func(*JobManager)
+
+// WithExternalWorkloadManager configures the external workload manager used by the JobManager.
+func WithExternalWorkloadManager(extWorkloadMgr extworkload.Manager) JobManagerOption {
+	return func(manager *JobManager) {
+		manager.extWorkload = extWorkloadMgr
+	}
+}
+
 // NewJobManager creates a new ttl job manager
-func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool, extWorkloadMgr ...extworkload.Manager) (manager *JobManager) {
+func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCli *clientv3.Client, leaderFunc func() bool, opts ...JobManagerOption) (manager *JobManager) {
 	manager = &JobManager{}
+	for _, opt := range opts {
+		opt(manager)
+	}
 	manager.id = id
 	manager.store = store
 	manager.sessPool = sessPool
-	if len(extWorkloadMgr) > 0 {
-		manager.extWorkload = extWorkloadMgr[0]
-	}
 
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "job-manager")

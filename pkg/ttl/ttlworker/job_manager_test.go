@@ -373,10 +373,16 @@ func (j *ttlJob) ID() string {
 }
 
 func TestCheckFinishedJobRecyclesExternalTTLTask(t *testing.T) {
+	t.Run("configures external workload manager", func(t *testing.T) {
+		externalMgr := &fakeExternalWorkloadManager{}
+		m := NewJobManager("test-id", nil, nil, nil, nil, WithExternalWorkloadManager(externalMgr))
+		require.Same(t, externalMgr, m.extWorkload)
+	})
+
 	t.Run("all local jobs finish", func(t *testing.T) {
 		createTime := time.Unix(1234, 0)
 		externalMgr := &fakeExternalWorkloadManager{role: config.RoleTTLTaskWorker}
-		m := NewJobManager("test-id", nil, nil, nil, nil, externalMgr)
+		m := NewJobManager("test-id", nil, nil, nil, nil, WithExternalWorkloadManager(externalMgr))
 		m.runningJobs = []*ttlJob{
 			{
 				id:         "job1",
@@ -409,7 +415,7 @@ func TestCheckFinishedJobRecyclesExternalTTLTask(t *testing.T) {
 		runningCreateTime := time.Unix(1234, 0)
 		finishedCreateTime := time.Unix(2234, 0)
 		externalMgr := &fakeExternalWorkloadManager{role: config.RoleTTLTaskWorker}
-		m := NewJobManager("test-id", nil, nil, nil, nil, externalMgr)
+		m := NewJobManager("test-id", nil, nil, nil, nil, WithExternalWorkloadManager(externalMgr))
 		m.runningJobs = []*ttlJob{
 			{
 				id:         "job-running",
@@ -471,7 +477,7 @@ func TestCheckFinishedJobRecyclesExternalTTLTask(t *testing.T) {
 
 func TestCheckFinishedJobDoesNotRecycleExternalTTLTaskFromMaster(t *testing.T) {
 	externalMgr := &fakeExternalWorkloadManager{role: config.RoleMaster}
-	m := NewJobManager("test-id", nil, nil, nil, nil, externalMgr)
+	m := NewJobManager("test-id", nil, nil, nil, nil, WithExternalWorkloadManager(externalMgr))
 	m.runningJobs = []*ttlJob{
 		{
 			id:         "job1",
