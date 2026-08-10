@@ -1,0 +1,20 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/table-rule-selector"
+source_commit = "6a85c6bbbd6cae7e0eea20a75ecd0853ac3545d6"
+rust_files = ["rust/crates/tidb-util/src/table_rule_selector.rs"]
+
+[[tests]]
+name = "table_rule_selector_package_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "table_rule_selector"]
+
+[[tests]]
+name = "column_mapping_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "column_mapping"]
+
+[[tests]]
+name = "filter_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "filter"]

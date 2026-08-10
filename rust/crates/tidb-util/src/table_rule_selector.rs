@@ -12,24 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of Go `pkg/util/table-rule-selector` (Go package
-//! `selector`, file `trie_selector.go`).
+//! Concurrent schema/table wildcard rule selector.
 //!
-//! A two-level (schema then table) wildcard trie that stores rules for fast
-//! retrieval. Patterns support `*` (zero or more, must be last), `?` (exactly
-//! one), and character ranges like `[abc]`, `[a-z]`, `[!a-c]`.
-//!
-//! Go builds this from a pointer graph: `*node`s linked through an `item`
-//! interface (`baseItem` and the range-carrying `rangeItem`), with each item
-//! owning a `child` sub-trie and, at the schema level, a `nextLevel` table
-//! sub-trie. Rust's ownership model fights that shape, so the graph is flattened
-//! into two arenas ([`Node`] and [`Item`]) indexed by [`NodeId`]/[`ItemId`];
-//! the `item` interface collapses into [`Item`]'s `kind` field. Semantics —
-//! insertion order, match order, range parsing edge cases, and cache behavior —
-//! are preserved exactly. The Go `any` rule payload becomes the generic `R`.
+//! The two-level trie supports `*`, `?`, and byte ranges such as `[a-z]` and
+//! `[!a-c]`. Nodes and items live in indexed arenas, while one internal lock
+//! owns mutation and cache coherence for concurrent callers.
 
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 // 1. asterisk (`*`) matches zero or more characters and must be the last
 //    character of a wildcard word;
@@ -77,12 +68,21 @@ impl fmt::Display for SelectorError {
 
 impl std::error::Error for SelectorError {}
 
+/// Schema patterns mapped to their rules.
+pub type SchemaRules<R> = HashMap<String, Vec<R>>;
+
+/// Schema patterns mapped to table-pattern rule maps.
+pub type TableRules<R> = HashMap<String, SchemaRules<R>>;
+
+/// Complete schema-level and table-level rule snapshots.
+pub type AllRules<R> = (SchemaRules<R>, TableRules<R>);
+
 /// Stores rules of schema/table for easy retrieval.
 pub trait Selector<R> {
     /// Inserts one rule into the trie. If `table` is empty the rule goes to the
     /// schema level, otherwise to the table level. A `None` rule is rejected.
     fn insert(
-        &mut self,
+        &self,
         schema: &str,
         table: &str,
         rule: Option<R>,
@@ -90,19 +90,13 @@ pub trait Selector<R> {
     ) -> Result<(), SelectorError>;
 
     /// Returns all matched rules.
-    fn match_rules(&mut self, schema: &str, table: &str) -> Vec<R>;
+    fn match_rules(&self, schema: &str, table: &str) -> Vec<R>;
 
     /// Removes one rule.
-    fn remove(&mut self, schema: &str, table: &str) -> Result<(), SelectorError>;
+    fn remove(&self, schema: &str, table: &str) -> Result<(), SelectorError>;
 
     /// Returns all rules: schema-level rules and table-level rules.
-    #[allow(clippy::type_complexity)]
-    fn all_rules(
-        &self,
-    ) -> (
-        HashMap<String, Vec<R>>,
-        HashMap<String, HashMap<String, Vec<R>>>,
-    );
+    fn all_rules(&self) -> AllRules<R>;
 }
 
 type NodeId = usize;
@@ -234,6 +228,10 @@ impl<R> MatchedResult<R> {
 
 /// A trie [`Selector`].
 pub struct TrieSelector<R> {
+    inner: RwLock<TrieState<R>>,
+}
+
+struct TrieState<R> {
     nodes: Vec<Node>,
     items: Vec<Item<R>>,
     root: NodeId,
@@ -250,14 +248,32 @@ impl<R: Clone> TrieSelector<R> {
     /// Returns a new trie selector.
     #[must_use]
     pub fn new() -> Self {
-        let mut s = TrieSelector {
+        Self {
+            inner: RwLock::new(TrieState::new()),
+        }
+    }
+
+    fn read(&self) -> RwLockReadGuard<'_, TrieState<R>> {
+        self.inner.read().unwrap_or_else(|error| error.into_inner())
+    }
+
+    fn write(&self) -> RwLockWriteGuard<'_, TrieState<R>> {
+        self.inner
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+}
+
+impl<R: Clone> TrieState<R> {
+    fn new() -> Self {
+        let mut state = Self {
             nodes: Vec::new(),
             items: Vec::new(),
             root: 0,
             cache: HashMap::new(),
         };
-        s.root = s.new_node();
-        s
+        state.root = state.new_node();
+        state
     }
 
     fn new_node(&mut self) -> NodeId {
@@ -645,8 +661,8 @@ impl<R: Clone> TrieSelector<R> {
     }
 }
 
-impl<R: Clone> Selector<R> for TrieSelector<R> {
-    fn insert(
+impl<R: Clone> TrieState<R> {
+    fn insert_rule(
         &mut self,
         schema: &str,
         table: &str,
@@ -666,7 +682,7 @@ impl<R: Clone> Selector<R> for TrieSelector<R> {
         }
     }
 
-    fn match_rules(&mut self, schema: &str, table: &str) -> Vec<R> {
+    fn match_rules_cached(&mut self, schema: &str, table: &str) -> Vec<R> {
         let cache_key = quote_schema_table(schema, table);
         if let Some(rules) = self.cache.get(&cache_key) {
             return rules.clone();
@@ -693,7 +709,7 @@ impl<R: Clone> Selector<R> for TrieSelector<R> {
         rules
     }
 
-    fn remove(&mut self, schema: &str, table: &str) -> Result<(), SelectorError> {
+    fn remove_rule(&mut self, schema: &str, table: &str) -> Result<(), SelectorError> {
         if schema.is_empty() {
             return Err(SelectorError::new(format!(
                 "schema/table {schema}/{table} is not valid"
@@ -744,12 +760,7 @@ impl<R: Clone> Selector<R> for TrieSelector<R> {
         Ok(())
     }
 
-    fn all_rules(
-        &self,
-    ) -> (
-        HashMap<String, Vec<R>>,
-        HashMap<String, HashMap<String, Vec<R>>>,
-    ) {
+    fn all_rules_snapshot(&self) -> AllRules<R> {
         let mut table_rules: HashMap<String, HashMap<String, Vec<R>>> = HashMap::new();
         let mut schema_nodes: HashMap<String, NodeId> = HashMap::new();
         let mut schema_rules: HashMap<String, Vec<R>> = HashMap::new();
@@ -770,6 +781,34 @@ impl<R: Clone> Selector<R> for TrieSelector<R> {
         }
 
         (schema_rules, table_rules)
+    }
+}
+
+impl<R: Clone> Selector<R> for TrieSelector<R> {
+    fn insert(
+        &self,
+        schema: &str,
+        table: &str,
+        rule: Option<R>,
+        insert_type: InsertType,
+    ) -> Result<(), SelectorError> {
+        self.write().insert_rule(schema, table, rule, insert_type)
+    }
+
+    fn match_rules(&self, schema: &str, table: &str) -> Vec<R> {
+        let cache_key = quote_schema_table(schema, table);
+        if let Some(rules) = self.read().cache.get(&cache_key) {
+            return rules.clone();
+        }
+        self.write().match_rules_cached(schema, table)
+    }
+
+    fn remove(&self, schema: &str, table: &str) -> Result<(), SelectorError> {
+        self.write().remove_rule(schema, table)
+    }
+
+    fn all_rules(&self) -> AllRules<R> {
+        self.read().all_rules_snapshot()
     }
 }
 
@@ -844,6 +883,7 @@ mod tests {
     use super::{quote_schema_table, InsertType, Selector, TrieSelector};
     use std::collections::HashMap;
     use std::rc::Rc;
+    use std::sync::{Arc, Barrier};
 
     #[derive(Debug, PartialEq, Eq)]
     struct DummyRule {
@@ -1050,7 +1090,7 @@ mod tests {
         }
 
         // compare the internal cache (sorting each entry, like the Go test).
-        let mut actual_cache = s.cache.clone();
+        let mut actual_cache = s.read().cache.clone();
         for entry in actual_cache.values_mut() {
             sort_rules(entry);
         }
@@ -1142,6 +1182,78 @@ mod tests {
             &mut s,
             &mut expected_schema_rules,
             &mut expected_table_rules,
+        );
+    }
+
+    #[test]
+    fn selector_supports_concurrent_callers() {
+        let selector = Arc::new(TrieSelector::<Arc<String>>::new());
+        selector
+            .insert(
+                "schema*",
+                "table*",
+                Some(Arc::new("stable".to_owned())),
+                InsertType::Insert,
+            )
+            .unwrap();
+
+        let start = Arc::new(Barrier::new(9));
+        let mut workers = Vec::new();
+        for _ in 0..8 {
+            let selector = Arc::clone(&selector);
+            let start = Arc::clone(&start);
+            workers.push(std::thread::spawn(move || {
+                start.wait();
+                for _ in 0..500 {
+                    let rules = selector.match_rules("schema1", "table1");
+                    assert_eq!(rules.len(), 1);
+                    assert_eq!(rules[0].as_str(), "stable");
+                }
+            }));
+        }
+        let writer = Arc::clone(&selector);
+        let writer_start = Arc::clone(&start);
+        workers.push(std::thread::spawn(move || {
+            writer_start.wait();
+            for index in 0..100 {
+                writer
+                    .insert(
+                        &format!("tenant{index}"),
+                        "",
+                        Some(Arc::new(index.to_string())),
+                        InsertType::Insert,
+                    )
+                    .unwrap();
+            }
+        }));
+
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        let (schema_rules, table_rules) = selector.all_rules();
+        assert_eq!(schema_rules.len(), 100);
+        assert_eq!(table_rules["schema*"]["table*"][0].as_str(), "stable");
+    }
+
+    #[test]
+    fn poisoned_lock_does_not_add_a_failure_mode() {
+        let selector = TrieSelector::<String>::new();
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = selector.inner.write().unwrap();
+            panic!("poison selector state");
+        }));
+
+        selector
+            .insert(
+                "schema*",
+                "table*",
+                Some("rule".to_owned()),
+                InsertType::Insert,
+            )
+            .unwrap();
+        assert_eq!(
+            selector.match_rules("schema1", "table1"),
+            vec!["rule".to_owned()]
         );
     }
 }
