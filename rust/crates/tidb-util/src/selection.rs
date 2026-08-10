@@ -12,15 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of Go `pkg/util/selection` (`selection.go`).
+//! Complete transcreation of Go `pkg/util/selection`.
 //!
-//! `introselect`: quickselect that falls back to the linear-time
-//! median-of-medians algorithm when it recurses too deeply. Go operates over
-//! `sort.Interface`; the Rust equivalent is the [`Selectable`] trait
-//! (`len`/`less`/`swap`). Go's `-1`-for-empty sentinel becomes `None`.
-//!
-//! `main_test.go` is a goroutine-leak `TestMain` with no observable behavior of
-//! its own; it has no Rust equivalent.
+//! Introselect starts with quickselect and falls back to median-of-medians when
+//! recursion becomes deep. [`Selectable`] is the Rust-native comparison and
+//! swap boundary, and an empty input returns `None`.
 
 use crate::fastrand;
 
@@ -77,24 +73,6 @@ fn introselect<T: Selectable + ?Sized>(
         introselect(data, left, pivot_index - 1, k, depth - 1)
     } else {
         introselect(data, pivot_index + 1, right, k, depth - 1)
-    }
-}
-
-/// Plain quickselect, used only for test/benchmark comparison (Go marks it
-/// `//nolint: unused`).
-#[allow(dead_code)]
-fn quickselect<T: Selectable + ?Sized>(data: &mut T, left: usize, right: usize, k: usize) -> usize {
-    if left == right {
-        return left;
-    }
-    let pivot_index = random_pivot(left, right);
-    let pivot_index = partition(data, left, right, pivot_index);
-    if k == pivot_index {
-        k
-    } else if k < pivot_index {
-        quickselect(data, left, pivot_index - 1, k)
-    } else {
-        quickselect(data, pivot_index + 1, right, k)
     }
 }
 
@@ -210,7 +188,7 @@ fn partition5<T: Selectable + ?Sized>(data: &mut T, left: usize, right: usize) -
 
 #[cfg(test)]
 mod tests {
-    use super::{quickselect, select, Selectable};
+    use super::{select, Selectable};
     use crate::fastrand;
 
     struct TestSlice(Vec<i32>);
@@ -257,6 +235,18 @@ mod tests {
         assert_eq!(data.0[index], 5);
     }
 
+    #[test]
+    fn empty_and_extreme_ranks() {
+        let mut empty = TestSlice(Vec::new());
+        assert_eq!(select(&mut empty, 1), None);
+
+        let mut data = TestSlice(vec![9, 1, 9, 3, 5]);
+        let first = select(&mut data, 1).unwrap();
+        assert_eq!(data.0[first], 1);
+        let last = select(&mut data, 5).unwrap();
+        assert_eq!(data.0[last], 9);
+    }
+
     // Go `TestSelectionWithRandomCase`.
     #[test]
     fn selection_with_random_case() {
@@ -279,17 +269,5 @@ mod tests {
         data.0.sort_unstable();
         let expected = data.0[499_999];
         assert_eq!(expected, actual);
-    }
-
-    // Exercises `quickselect` (Go covers it only via `BenchmarkSelection`),
-    // verifying its result matches a full sort.
-    #[test]
-    fn quickselect_matches_sort() {
-        let mut data = random_test_case(10_000);
-        let k = 5_000;
-        let index = quickselect(&mut data, 0, 9_999, k - 1);
-        let actual = data.0[index];
-        data.0.sort_unstable();
-        assert_eq!(data.0[k - 1], actual);
     }
 }

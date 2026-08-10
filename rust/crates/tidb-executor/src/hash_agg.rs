@@ -93,6 +93,23 @@ use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
 use tidb_util::disk;
 use tidb_util::memory::{ActionOnExceed, ArcAction, Tracker};
+use tidb_util::selection::{select, Selectable};
+
+struct DatumSelection<'a>(&'a mut [Datum]);
+
+impl Selectable for DatumSelection<'_> {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    fn less(&self, i: usize, j: usize) -> bool {
+        compare_datums(&self.0[i], &self.0[j]).unwrap_or(Ordering::Equal) == Ordering::Less
+    }
+
+    fn swap(&mut self, i: usize, j: usize) {
+        self.0.swap(i, j);
+    }
+}
 
 /// The aggregate function kinds this seed supports.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -875,12 +892,12 @@ impl Partial {
                 let Some(percent) = percent.filter(|_| !values.is_empty()) else {
                     return Ok(Datum::Null);
                 };
-                let mut sorted = values.clone();
-                sorted
-                    .sort_by(|left, right| compare_datums(left, right).unwrap_or(Ordering::Equal));
-                let rank = (sorted.len() as f64 * (percent as f64 / 100.0)).ceil() as usize;
-                let index = rank.clamp(1, sorted.len()) - 1;
-                sorted[index].clone()
+                let mut values = values.clone();
+                let rank = ((values.len() as f64 * (percent as f64 / 100.0)).ceil() as usize)
+                    .clamp(1, values.len());
+                let index = select(&mut DatumSelection(&mut values), rank)
+                    .expect("nonempty percentile input must produce a selected index");
+                values[index].clone()
             }
             // An empty group concatenates to NULL, not an empty string.
             Partial::GroupConcat { values, .. } if values.is_empty() => Datum::Null,
@@ -1838,6 +1855,27 @@ mod tests {
             StatementMemory::default(),
         );
         assert_eq!(run(agg), Vec::<Vec<Datum>>::new());
+    }
+
+    #[test]
+    fn approx_percentile_uses_ordinal_selection() {
+        let percentile = Partial::ApproxPercentile {
+            values: vec![Datum::Int(9), Datum::Int(1), Datum::Int(5), Datum::Int(3)],
+            percent: Some(50),
+        };
+        assert_eq!(percentile.finish(&[], 4).unwrap(), Datum::Int(3));
+
+        let maximum = Partial::ApproxPercentile {
+            values: vec![Datum::Int(2), Datum::Int(8), Datum::Int(4)],
+            percent: Some(100),
+        };
+        assert_eq!(maximum.finish(&[], 4).unwrap(), Datum::Int(8));
+
+        let empty = Partial::ApproxPercentile {
+            values: Vec::new(),
+            percent: Some(50),
+        };
+        assert_eq!(empty.finish(&[], 4).unwrap(), Datum::Null);
     }
 
     /// `JSON_ARRAYAGG`/`JSON_OBJECTAGG` over a BINARY-charset value: `Opaque`
