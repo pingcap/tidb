@@ -60,9 +60,13 @@ func TestMemoryRoot(t *testing.T) {
 }
 
 func TestRiskOfDiskFull(t *testing.T) {
+	require.Equal(t, uint64(10), reservedCapacityBytes(100))
+	require.Equal(t, uint64(11), reservedCapacityBytes(101))
 	require.False(t, RiskOfDiskFull(11, 100))
 	require.False(t, RiskOfDiskFull(10, 100))
 	require.True(t, RiskOfDiskFull(9, 100))
+	require.False(t, RiskOfDiskFull(11, 101))
+	require.True(t, RiskOfDiskFull(10, 101))
 
 	t.Run("check local sort free disk", func(t *testing.T) {
 		const execID = "10.0.1.8:4000"

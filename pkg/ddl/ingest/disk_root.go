@@ -215,9 +215,14 @@ func (d *diskRootImpl) StartupCheck() error {
 	return nil
 }
 
-// RiskOfDiskFull checks if the disk has less than 10% space.
+// reservedCapacityBytes returns the minimum disk capacity to keep available.
+func reservedCapacityBytes(capacity uint64) uint64 {
+	return capacity - uint64(float64(capacity)*capacityThreshold)
+}
+
+// RiskOfDiskFull checks if the disk has less than the reserved capacity available.
 func RiskOfDiskFull(available, capacity uint64) bool {
-	return float64(available) < (1-capacityThreshold)*float64(capacity)
+	return available < reservedCapacityBytes(capacity)
 }
 
 // CheckLocalSortFreeDisk performs a best-effort precheck of aggregate headroom
@@ -271,7 +276,7 @@ func checkLocalSortFreeDisk(
 	if allJobsTargetBytes > runningJobUsedBytes {
 		allJobsGapBytes = allJobsTargetBytes - runningJobUsedBytes
 	}
-	totalRequiredBytes := totalCapacityBytes/10 + allJobsGapBytes
+	totalRequiredBytes := reservedCapacityBytes(totalCapacityBytes) + allJobsGapBytes
 	if availableBytes > totalRequiredBytes {
 		logutil.DDLIngestLogger().Info("local sort free disk check passed",
 			zap.Uint64("totalRequiredBytes", totalRequiredBytes),
