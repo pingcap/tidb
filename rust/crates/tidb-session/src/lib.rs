@@ -41,6 +41,172 @@ pub use tidb_planner::txn_mode::{
     OPTIMISTIC_TXN_MODE, PESSIMISTIC_TXN_MODE,
 };
 
+/// Go `approxParseSQLTokenCnt`: estimates the token count used to reserve
+/// parser memory with the global memory arbitrator.
+///
+/// This is intentionally not the SQL lexer. It preserves Go's cheap byte
+/// scan, including its core-DML admission rule, comment skipping, ten-byte
+/// keyword buffer, and treating quoted strings/identifiers as one token.
+#[must_use]
+pub fn approx_parse_sql_token_count(sql: &str) -> i64 {
+    const CORE: u8 = 1;
+    const BYPASS: u8 = 2;
+    const SELECT: u8 = 4;
+
+    fn key_token(keyword: &[u8]) -> u8 {
+        match keyword {
+            b"select" => SELECT,
+            b"from" | b"insert" | b"update" | b"delete" | b"replace" => CORE,
+            b"explain" | b"desc" | b"analyze" => BYPASS,
+            _ => 0,
+        }
+    }
+
+    let bytes = sql.as_bytes();
+    let mut token_count = 0_i64;
+    let mut in_word = false;
+    let mut keyword = [0_u8; 10];
+    let mut keyword_len = 0_usize;
+    let mut hit_core_token = false;
+    let mut has_select = false;
+    let mut index = 0_usize;
+
+    while index < bytes.len() {
+        let original = bytes[index];
+        let folded = original.to_ascii_lowercase();
+        if folded.is_ascii_lowercase() || folded.is_ascii_digit() || folded == b'_' {
+            in_word = true;
+            if !hit_core_token && keyword_len < keyword.len() {
+                keyword[keyword_len] = folded;
+                keyword_len += 1;
+            }
+            index += 1;
+            continue;
+        }
+
+        if in_word {
+            in_word = false;
+            token_count += 1;
+            if !hit_core_token {
+                let token = key_token(&keyword[..keyword_len]);
+                if token & SELECT != 0 {
+                    has_select = true;
+                } else if token & CORE != 0 {
+                    hit_core_token = true;
+                } else if token & BYPASS == 0 && !has_select {
+                    return 0;
+                }
+                keyword_len = 0;
+            }
+        }
+
+        if original == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            index += 2;
+            while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/') {
+                index += 1;
+            }
+            index = (index + 2).min(bytes.len());
+            continue;
+        }
+        if original == b'-' && bytes.get(index + 1) == Some(&b'-') {
+            index += 2;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            index += usize::from(index < bytes.len());
+            continue;
+        }
+        if original == b'#' {
+            index += 1;
+            while index < bytes.len() && bytes[index] != b'\n' {
+                index += 1;
+            }
+            index += usize::from(index < bytes.len());
+            continue;
+        }
+        if original == b'\'' || original == b'"' {
+            let quote = original;
+            index += 1;
+            while index < bytes.len() && bytes[index] != quote {
+                if bytes[index] == b'\\' && index + 1 < bytes.len() {
+                    index += 1;
+                }
+                index += 1;
+            }
+            index += usize::from(index < bytes.len());
+            token_count += 1;
+            continue;
+        }
+        if original == b'`' {
+            index += 1;
+            while index < bytes.len() && bytes[index] != b'`' {
+                if bytes[index] == b'\\' && index + 1 < bytes.len() {
+                    index += 1;
+                }
+                index += 1;
+            }
+            index += usize::from(index < bytes.len());
+            token_count += 1;
+            continue;
+        }
+        if original == b'?' {
+            token_count += 1;
+        }
+        index += 1;
+    }
+
+    if in_word {
+        token_count += 1;
+    }
+    if hit_core_token {
+        token_count
+    } else {
+        0
+    }
+}
+
+/// Go `approxCompilePlanTokenCnt`: estimates the token count of normalized
+/// SQL used to reserve optimizer memory.
+#[must_use]
+pub fn approx_compile_plan_token_count(sql: &str, has_select: bool) -> i64 {
+    const FROM: &str = "from";
+
+    let mut token_count = 0_i64;
+    let mut token_len = 0_usize;
+    let mut has_select_from = false;
+    for (index, character) in sql.char_indices() {
+        if character.is_ascii_lowercase()
+            || character.is_ascii_digit()
+            || matches!(character, '_' | '`' | '.')
+        {
+            token_len += character.len_utf8();
+            continue;
+        }
+        if token_len > 0 {
+            token_count += 1;
+            if has_select
+                && !has_select_from
+                && token_len == FROM.len()
+                && &sql[index - token_len..index] == FROM
+            {
+                has_select_from = true;
+            }
+            token_len = 0;
+        }
+        if character == '?' {
+            token_count += 1;
+        }
+    }
+    if token_len > 0 {
+        token_count += 1;
+    }
+    if has_select && !has_select_from {
+        0
+    } else {
+        token_count
+    }
+}
+
 /// The result of running one statement.
 #[derive(Debug, PartialEq)]
 pub enum StmtResult {
@@ -623,6 +789,57 @@ impl Session {
             self.append_warning(WarningLevel::Error, reported.code, reported.message);
         }
         result.map(|output| (output, result_authority))
+    }
+}
+
+#[cfg(test)]
+mod session_source_tests {
+    use super::{approx_compile_plan_token_count, approx_parse_sql_token_count};
+
+    // Go pkg/session/session_test.go::TestMemArbitratorSession.
+    #[test]
+    fn test_mem_arbitrator_session() {
+        assert_eq!(
+            approx_parse_sql_token_count(
+                "/*select * from **/SELECT x FROM `t\\`` # abc \nwhere a = 1.23 and b = 'abc\"d\\'e' -- abc \nand c_1_2 in \"abc'd\\\"e\" # (1,2,3)\n"
+            ),
+            15
+        );
+        assert_eq!(approx_parse_sql_token_count("select @@version @a"), 0);
+        assert_eq!(approx_parse_sql_token_count("set @a=1"), 0);
+        assert_eq!(approx_parse_sql_token_count("desc analyze table t"), 0);
+        assert_eq!(approx_parse_sql_token_count("analyze table t"), 0);
+        assert_eq!(
+            approx_parse_sql_token_count("/*select * from **/explain show warnings"),
+            0
+        );
+        assert_eq!(
+            approx_parse_sql_token_count("/*select * from **/desc show columns from t"),
+            0
+        );
+        assert_eq!(approx_parse_sql_token_count("insert into t values 1"), 5);
+        assert_eq!(approx_parse_sql_token_count("update t set a=1"), 5);
+        assert_eq!(approx_parse_sql_token_count("delete from t where a=1"), 6);
+        assert_eq!(approx_parse_sql_token_count("replace into t values 1"), 5);
+        assert_eq!(
+            approx_parse_sql_token_count("prepare stmt1 from 'select * from t where a=? and b=?'"),
+            0
+        );
+        assert_eq!(
+            approx_parse_sql_token_count("execute stmt1 using @a,@b,@c"),
+            0
+        );
+        let normalized = "select * from `a_1`.`b_2` where c1 = ? and c2 = ?";
+        assert_eq!(approx_parse_sql_token_count(normalized), 10);
+        assert_eq!(approx_compile_plan_token_count(normalized, true), 9);
+        assert_eq!(
+            approx_compile_plan_token_count("select @@version @a", true),
+            0
+        );
+        assert_eq!(
+            approx_compile_plan_token_count("select @@version @a", false),
+            3
+        );
     }
 }
 
