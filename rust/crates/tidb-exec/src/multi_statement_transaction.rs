@@ -822,20 +822,26 @@ mod tests {
 
     #[test]
     fn a_successful_commit_is_the_only_outcome_that_answers_ok() {
-        for cause in [
-            TransactionCause::Region {
-                detail: "epoch not match".to_owned(),
-            },
-            TransactionCause::Transport {
-                detail: "connection reset".to_owned(),
-            },
+        for (cause, code) in [
+            (
+                TransactionCause::Region {
+                    detail: "epoch not match".to_owned(),
+                },
+                tidb_error::tidb::errcode::ErrRegionUnavailable,
+            ),
+            (
+                TransactionCause::Transport {
+                    detail: "connection reset".to_owned(),
+                },
+                1105,
+            ),
         ] {
             let error = classify_commit_outcome(&rolled_back(cause))
                 .expect_err("a non-commit never reports durable rows");
             assert_eq!(
                 error.sql_error().code,
-                1105,
-                "only a write conflict earns 9007"
+                code,
+                "region failures now carry 9005 and transport stays 1105"
             );
             assert!(!error.keeps_transaction_open());
         }
