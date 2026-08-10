@@ -50,14 +50,12 @@ use super::pseudo::{
 use super::row_count_column::RowEstimate;
 use super::uniform::{estimate_uniform_equality, UniformEqualityStats};
 use super::{apply_exponential_backoff, go_max, go_min, MAX_EXPONENTIAL_BACKOFF_COLS};
+use crate::cost_factors::TOLERANCE_FACTOR;
 
 /// Go `statistics.Version1`.
 pub const VERSION1: i64 = 1;
 /// Go `statistics.Version2`.
 pub const VERSION2: i64 = 2;
-
-/// Go `cost.ToleranceFactor`.
-pub const TOLERANCE_FACTOR: f64 = 0.00001;
 
 /// Go `staleLastBucketThreshold`.
 const STALE_LAST_BUCKET_THRESHOLD: f64 = 0.3;

@@ -30,7 +30,11 @@ pub const DISTINCT_FACTOR: f64 = 0.8;
 pub const TOLERANCE_FACTOR: f64 = 0.00001;
 
 /// Threshold at which an ordered scan avoids the descending-scan penalty.
-pub const SMALL_SCAN_THRESHOLD: u64 = 10_000;
+///
+/// Go declares this as an untyped constant, but every production consumer
+/// compares it with a floating-point expected-row count. Keeping that domain
+/// here avoids a cast at the eventual version-1 cost-model boundary.
+pub const SMALL_SCAN_THRESHOLD: f64 = 10_000.0;
 
 /// Fallback factor used by the source physical aggregation cost path.
 pub const DEFAULT_AGGREGATION_FACTOR: f64 = 1.5;
