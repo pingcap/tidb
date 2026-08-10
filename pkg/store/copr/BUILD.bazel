@@ -100,6 +100,7 @@ go_test(
     shard_count = 50,
     deps = [
         "//pkg/kv",
+        "//pkg/resourcegroup",
         "//pkg/store/driver/backoff",
         "//pkg/testkit/testsetup",
         "//pkg/util/logutil",

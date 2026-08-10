@@ -645,6 +645,20 @@ type Request struct {
 	RequestSource util.RequestSource
 	// StoreBatchSize indicates the batch size of coprocessor in the same store.
 	StoreBatchSize int
+	// AllowBatchTaskDataMerge lets requests that carry no row-count hints (e.g.
+	// full-sampling ANALYZE) use store batching, and advertises to stores that
+	// they may merge child task data into the main response. Row-count hints are
+	// how the batch builder normally bounds merged-response size, so an opting-in
+	// caller must bound response size itself; and since stores may still reply
+	// per task (older stores, failed or non-mergeable tasks), it must handle both
+	// response shapes.
+	AllowBatchTaskDataMerge bool
+	// ExecuteBatchTasksSerially asks the store to run the primary task and all
+	// batched child tasks one at a time, in no guaranteed order. Callers that
+	// bound per-store concurrency by the number of in-flight requests (e.g.
+	// batched ANALYZE) set this so folding more tasks into one request does not
+	// multiply that concurrency, accepting a longer-lived request instead.
+	ExecuteBatchTasksSerially bool
 	// ResourceGroupName is the name of the bind resource group.
 	ResourceGroupName string
 	// LimitSize indicates whether the request is scan and limit

@@ -654,7 +654,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	}
 
 	var builder taskBuilder
-	if req.StoreBatchSize > 0 && hints != nil {
+	if canUseStoreBatchBuilder(req, hints) {
 		builder = newBatchTaskBuilder(bo, req, cache, req.ReplicaRead)
 	} else {
 		builder = newLegacyTaskBuilder(len(locs))
@@ -828,8 +828,7 @@ func (b *batchStoreTaskBuilder) handle(task *copTask) (err error) {
 			b.tasks = append(b.tasks, task)
 		}
 	}()
-	// only batch small tasks for memory control.
-	if b.limit <= 0 || !isSmallTask(task) {
+	if b.limit <= 0 || !canStoreBatchTask(b.req, task) {
 		return nil
 	}
 	batchedTask, err := b.cache.BuildBatchTask(b.bo, b.req, task, b.replicaRead)
@@ -930,6 +929,22 @@ func isSmallTask(task *copTask) bool {
 	return task.RowCountHint > 0 &&
 		(len(task.batchTaskList) == 0 && task.RowCountHint <= CopSmallTaskRow) ||
 		(len(task.batchTaskList) > 0 && task.RowCountHint <= 2*CopSmallTaskRow)
+}
+
+// canStoreBatchTask reports whether a task may be folded into another task's
+// batch. Normally only tasks with small row-count hints qualify, which is what
+// keeps a combined response small; callers that set AllowBatchTaskDataMerge
+// have taken over bounding response size, so all their tasks qualify.
+func canStoreBatchTask(req *kv.Request, task *copTask) bool {
+	return req.AllowBatchTaskDataMerge || isSmallTask(task)
+}
+
+// canUseStoreBatchBuilder reports whether buildCopTasks may batch tasks by
+// store. Without per-range row-count hints the builder cannot enforce its usual
+// response-memory bound, so unhinted requests batch only when the caller has
+// accepted that responsibility via AllowBatchTaskDataMerge.
+func canUseStoreBatchBuilder(req *kv.Request, hints []int) bool {
+	return req.StoreBatchSize > 0 && (hints != nil || req.AllowBatchTaskDataMerge)
 }
 
 // smallTaskConcurrency counts the small tasks of tasks,
@@ -1754,6 +1769,11 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		Tasks:           task.ToPBBatchTasks(),
 		ConnectionId:    worker.req.ConnID,
 		ConnectionAlias: worker.req.ConnAlias,
+		// TiKV merges child data into the main response only after TiDB advertises
+		// it accepts that shape; stores may still reply per task (older stores,
+		// failed or non-mergeable tasks), so both shapes remain possible.
+		AllowBatchTaskDataMerge:   worker.req.AllowBatchTaskDataMerge,
+		ExecuteBatchTasksSerially: worker.req.ExecuteBatchTasksSerially,
 	}
 
 	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
@@ -2384,6 +2404,16 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				Data:          batchResp.Data,
 				ExecDetailsV2: batchResp.ExecDetailsV2,
 			},
+		}
+		if batchResp.GetDataMergedIntoResponse() {
+			// A merge acknowledgement has no child payload: its data is in the main
+			// response. Retain the child's execution details without emitting an empty
+			// response to the result consumer.
+			if err := worker.handleCollectExecutionInfo(bo, dummyRPCCtx, resp); err != nil {
+				return batchRespList, nil, err
+			}
+			worker.stats.append(resp.detail)
+			continue
 		}
 		task := batchedTask.task
 		failpoint.Inject("batchCopRegionError", func() {
@@ -3066,7 +3096,10 @@ func optRowHint(req *kv.Request) bool {
 }
 
 func checkStoreBatchCopr(req *kv.Request) bool {
-	if req.Tp != kv.ReqTypeDAG || req.StoreType != kv.TiKV {
+	// Historically only DAG requests on TiKV could batch. Batching other request
+	// types changes their response shape, so it needs the explicit
+	// merged-response opt-in; StoreBatchSize alone must not change the contract.
+	if (req.Tp != kv.ReqTypeDAG && !req.AllowBatchTaskDataMerge) || req.StoreType != kv.TiKV {
 		return false
 	}
 	// TODO: support keep-order batch
@@ -3078,8 +3111,10 @@ func checkStoreBatchCopr(req *kv.Request) bool {
 	if req.Paging.Enable || req.Paging.PagingSizeBytes > 0 {
 		return false
 	}
-	// Disable it for internal requests to avoid regression.
-	if req.RequestSource.RequestSourceInternal {
+	// The original rollout excluded internal requests to avoid regressions; keep
+	// that unless the caller has explicitly accepted the merged-response
+	// contract.
+	if req.RequestSource.RequestSourceInternal && !req.AllowBatchTaskDataMerge {
 		return false
 	}
 	return true
