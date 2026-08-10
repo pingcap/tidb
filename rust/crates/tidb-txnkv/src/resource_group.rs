@@ -21,7 +21,11 @@
 use prost::Message;
 use std::sync::{Arc, LazyLock, RwLock};
 use tidb_codec::{decode_table_id, get_key_kind, KeyKind};
-use tidb_proto::{ResourceGroupTag, ResourceGroupTagLabel};
+use tidb_proto::{
+    CoprocessorBatchRequest, CoprocessorRequest, KvrpcBatchGetRequest, KvrpcBatchRollbackRequest,
+    KvrpcCommitRequest, KvrpcGetRequest, KvrpcPessimisticLockRequest, KvrpcPrewriteRequest,
+    KvrpcScanRequest, ResourceGroupTag, ResourceGroupTagLabel,
+};
 
 type DecodeTableId = dyn Fn(&[u8]) -> i64 + Send + Sync;
 
@@ -35,12 +39,138 @@ pub fn set_decode_table_id(decoder: impl Fn(&[u8]) -> i64 + Send + Sync + 'stati
         .expect("table-id decoder lock poisoned") = Arc::new(decoder);
 }
 
-/// Request operations consumed by the resource-group tagger.
-pub trait ResourceGroupTaggedRequest {
-    /// Returns the first request key, if the request carries one.
-    fn first_key(&self) -> Option<&[u8]>;
+/// Returns the first key carried by a request, or an empty slice when absent.
+pub trait FirstKeyRequest {
+    /// Returns the request's first key.
+    fn first_key(&self) -> &[u8];
+}
+
+/// Request mutation consumed by the resource-group tagger.
+pub trait ResourceGroupTaggedRequest: FirstKeyRequest {
     /// Replaces the encoded resource-group tag.
     fn set_resource_group_tag(&mut self, tag: Vec<u8>);
+}
+
+/// A malformed protobuf resource-group tag.
+#[derive(Debug)]
+pub struct ResourceGroupTagDecodeError {
+    data: Vec<u8>,
+    source: prost::DecodeError,
+}
+
+impl ResourceGroupTagDecodeError {
+    /// Returns the malformed wire bytes.
+    #[must_use]
+    pub fn data(&self) -> &[u8] {
+        &self.data
+    }
+}
+
+impl std::fmt::Display for ResourceGroupTagDecodeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("invalid resource group tag data ")?;
+        for byte in &self.data {
+            write!(formatter, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ResourceGroupTagDecodeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+/// Decodes a resource-group tag and returns its SQL digest.
+///
+/// Empty input is a valid absent tag. A valid tag without a SQL digest also
+/// returns `None`, matching the source package's nil result.
+pub fn decode_resource_group_tag(
+    data: &[u8],
+) -> Result<Option<Vec<u8>>, ResourceGroupTagDecodeError> {
+    if data.is_empty() {
+        return Ok(None);
+    }
+    ResourceGroupTag::decode(data)
+        .map(|tag| tag.sql_digest)
+        .map_err(|source| ResourceGroupTagDecodeError {
+            data: data.to_vec(),
+            source,
+        })
+}
+
+/// Classifies a key for resource-group attribution.
+#[must_use]
+pub fn get_resource_group_label_by_key(key: &[u8]) -> ResourceGroupTagLabel {
+    match get_key_kind(key) {
+        KeyKind::Row => ResourceGroupTagLabel::Row,
+        KeyKind::Index => ResourceGroupTagLabel::Index,
+        KeyKind::Unknown => ResourceGroupTagLabel::Unknown,
+    }
+}
+
+/// Gets a request's first key, returning an empty slice for no request.
+#[must_use]
+pub fn get_first_key_from_request<R: FirstKeyRequest + ?Sized>(request: Option<&R>) -> &[u8] {
+    request.map_or(&[], FirstKeyRequest::first_key)
+}
+
+impl FirstKeyRequest for KvrpcGetRequest {
+    fn first_key(&self) -> &[u8] {
+        &self.key
+    }
+}
+
+impl FirstKeyRequest for KvrpcBatchGetRequest {
+    fn first_key(&self) -> &[u8] {
+        self.keys.first().map_or(&[], Vec::as_slice)
+    }
+}
+
+impl FirstKeyRequest for KvrpcScanRequest {
+    fn first_key(&self) -> &[u8] {
+        &self.start_key
+    }
+}
+
+impl FirstKeyRequest for KvrpcPrewriteRequest {
+    fn first_key(&self) -> &[u8] {
+        self.mutations.first().map_or(&[], |mutation| &mutation.key)
+    }
+}
+
+impl FirstKeyRequest for KvrpcCommitRequest {
+    fn first_key(&self) -> &[u8] {
+        self.keys.first().map_or(&[], Vec::as_slice)
+    }
+}
+
+impl FirstKeyRequest for KvrpcBatchRollbackRequest {
+    fn first_key(&self) -> &[u8] {
+        self.keys.first().map_or(&[], Vec::as_slice)
+    }
+}
+
+impl FirstKeyRequest for CoprocessorRequest {
+    fn first_key(&self) -> &[u8] {
+        self.ranges.first().map_or(&[], |range| &range.start)
+    }
+}
+
+impl FirstKeyRequest for CoprocessorBatchRequest {
+    fn first_key(&self) -> &[u8] {
+        self.regions
+            .first()
+            .and_then(|region| region.ranges.first())
+            .map_or(&[], |range| &range.start)
+    }
+}
+
+impl FirstKeyRequest for KvrpcPessimisticLockRequest {
+    fn first_key(&self) -> &[u8] {
+        self.mutations.first().map_or(&[], |mutation| &mutation.key)
+    }
 }
 
 /// Builds the wire-compatible `tipb.ResourceGroupTag` carried by a KV request.
@@ -92,11 +222,7 @@ impl ResourceGroupTagBuilder {
     /// replace the default table ID with the decoded key ID.
     #[must_use]
     pub fn encode_tag_with_key(&self, key: &[u8]) -> Vec<u8> {
-        let label = (!key.is_empty()).then(|| match get_key_kind(key) {
-            KeyKind::Row => ResourceGroupTagLabel::Row as i32,
-            KeyKind::Index => ResourceGroupTagLabel::Index as i32,
-            KeyKind::Unknown => ResourceGroupTagLabel::Unknown as i32,
-        });
+        let label = (!key.is_empty()).then(|| get_resource_group_label_by_key(key) as i32);
         let table_id = if key.is_empty() {
             self.table_id
         } else {
@@ -119,8 +245,7 @@ impl ResourceGroupTagBuilder {
         let Some(request) = request else {
             return;
         };
-        let key = request.first_key().unwrap_or_default();
-        let encoded = self.encode_tag_with_key(key);
+        let encoded = self.encode_tag_with_key(get_first_key_from_request(Some(&*request)));
         if !encoded.is_empty() {
             request.set_resource_group_tag(encoded);
         }

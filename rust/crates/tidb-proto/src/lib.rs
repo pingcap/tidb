@@ -64,10 +64,12 @@ pub mod etcdserverpb {
 }
 
 pub use coprocessor::{
-    ExecDetailsV2 as CoprocessorExecDetailsV2, KeyRange as CoprocessorKeyRange,
-    Peer as CoprocessorPeer, RegionEpoch as CoprocessorRegionEpoch, Request as CoprocessorRequest,
-    Response as CoprocessorResponse, ScanDetailV2 as CoprocessorScanDetailV2, StoreBatchTask,
-    StoreBatchTaskResponse, VersionedKeyRange as CoprocessorVersionedKeyRange,
+    BatchRequest as CoprocessorBatchRequest, ExecDetailsV2 as CoprocessorExecDetailsV2,
+    KeyRange as CoprocessorKeyRange, Peer as CoprocessorPeer,
+    RegionEpoch as CoprocessorRegionEpoch, RegionInfo as CoprocessorRegionInfo,
+    Request as CoprocessorRequest, Response as CoprocessorResponse,
+    ScanDetailV2 as CoprocessorScanDetailV2, StoreBatchTask, StoreBatchTaskResponse,
+    VersionedKeyRange as CoprocessorVersionedKeyRange,
 };
 
 pub use errorpb::Error as RegionError;
@@ -84,7 +86,7 @@ pub use kvrpcpb::prewrite_request::PessimisticAction as KvrpcPessimisticAction;
 pub use kvrpcpb::{
     Action as KvrpcTxnAction, AlreadyExist as KvrpcAlreadyExist, Assertion as KvrpcAssertion,
     AssertionFailed as KvrpcAssertionFailed, AssertionLevel as KvrpcAssertionLevel,
-    BatchRollbackRequest as KvrpcBatchRollbackRequest,
+    BatchGetRequest as KvrpcBatchGetRequest, BatchRollbackRequest as KvrpcBatchRollbackRequest,
     BatchRollbackResponse as KvrpcBatchRollbackResponse,
     CheckSecondaryLocksRequest as KvrpcCheckSecondaryLocksRequest,
     CheckSecondaryLocksResponse as KvrpcCheckSecondaryLocksResponse,

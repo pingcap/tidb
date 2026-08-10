@@ -109,6 +109,15 @@ message GetResponse {
   uint64 commit_ts = 7;
 }
 
+// Exact pinned transactional batch point read. Resource-group tagging uses
+// the first key while the transaction client owns the remaining fields.
+message BatchGetRequest {
+  Context context = 1;
+  repeated bytes keys = 2;
+  uint64 version = 3;
+  bool need_commit_ts = 4;
+}
+
 // Exact pinned transactional forward range read. The catalog loader reads the
 // `m` meta namespace, which no coprocessor DAG can describe.
 message ScanRequest {

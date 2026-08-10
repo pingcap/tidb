@@ -177,7 +177,9 @@ pub use pd_loader::PdRegionLoader;
 pub use prefix_ops::{del_key_with_prefix, scan_meta_with_prefix};
 pub use read_runtime::{SharedReadAuthority, SharedReadOpener, SharedReadRuntime};
 pub use resource_group::{
-    set_decode_table_id, ResourceGroupTagBuilder, ResourceGroupTaggedRequest,
+    decode_resource_group_tag, get_first_key_from_request, get_resource_group_label_by_key,
+    set_decode_table_id, FirstKeyRequest, ResourceGroupTagBuilder, ResourceGroupTagDecodeError,
+    ResourceGroupTaggedRequest,
 };
 pub use retry::{
     retry_backoff_upper_bound_ms, should_retry_after_failure, RETRY_BACKOFF_BASE_MS,

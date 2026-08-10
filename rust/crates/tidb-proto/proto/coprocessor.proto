@@ -77,6 +77,21 @@ message Request {
   uint64 paging_size_bytes = 17;
 }
 
+// Region projection consumed by resource-group first-key extraction. Field
+// numbers and nested wire shapes match kvproto's coprocessor.RegionInfo.
+message RegionInfo {
+  uint64 region_id = 1;
+  RegionEpoch region_epoch = 2;
+  repeated KeyRange ranges = 3;
+}
+
+// Batch request projection consumed by resource-group first-key extraction.
+// Unowned fields remain unknown protobuf fields; regions keep their exact
+// upstream field number and wire shape.
+message BatchRequest {
+  repeated RegionInfo regions = 4;
+}
+
 // Dependency-closed projections of the response fields consumed by adaptive
 // paging. Field numbers match kvproto's kvrpcpb and coprocessor contracts.
 message ScanDetailV2 {
