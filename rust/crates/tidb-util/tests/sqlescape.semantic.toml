@@ -1,0 +1,14 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/sqlescape"
+source_commit = "6a85c6bbbd6cae7e0eea20a75ecd0853ac3545d6"
+rust_files = [
+    "rust/crates/tidb-util/src/sqlescape/mod.rs",
+    "rust/crates/tidb-util/tests/sqlescape_contract.rs",
+    "rust/crates/tidb-util/benches/sqlescape.rs",
+]
+
+[[tests]]
+name = "sqlescape_package_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "sqlescape"]

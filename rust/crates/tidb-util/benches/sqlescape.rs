@@ -36,11 +36,11 @@ fn measure(name: &str, argument: SqlArg<'_>) {
 }
 
 fn BenchmarkEscapeString() {
-    measure("BenchmarkEscapeString", SqlArg::String("3"));
+    measure("BenchmarkEscapeString", SqlArg::String(b"3"));
 }
 
 fn BenchmarkUnderlyingString() {
-    measure("BenchmarkUnderlyingString", SqlArg::String("3"));
+    measure("BenchmarkUnderlyingString", SqlArg::String(b"3"));
 }
 
 fn BenchmarkEscapeInt() {

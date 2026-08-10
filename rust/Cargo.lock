@@ -1939,7 +1939,6 @@ dependencies = [
  "sha2",
  "tempfile",
  "tidb-error",
- "tidb-hack",
  "tidb-log",
  "tidb-metadef",
  "tracing",

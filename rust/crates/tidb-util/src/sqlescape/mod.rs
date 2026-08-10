@@ -19,9 +19,10 @@
 //! `tidb-util` manifest. The Go package has no `TestMain`, fixtures, generated
 //! files, build-tag variants, fuzz targets, or examples.
 //!
-//! Go strings are arbitrary bytes. Therefore [`escape_sql`] returns `Vec<u8>`
-//! rather than silently rejecting or replacing invalid UTF-8 originating in a
-//! binary argument. [`format_sql`] preserves the source's single writer call.
+//! Go strings are arbitrary bytes. SQL text, identifiers, and string arguments
+//! therefore use byte slices at the semantic boundary, while `From<&str>` keeps
+//! ordinary UTF-8 callers concise. [`format_sql`] preserves the source's single
+//! writer call.
 
 use chrono::{Datelike, NaiveDateTime, Timelike};
 use std::fmt;
@@ -48,10 +49,10 @@ pub enum SqlArg<'a> {
     RawJson(&'a [u8]),
     /// A byte slice; `None` distinguishes nil from a present empty slice.
     Bytes(Option<&'a [u8]>),
-    /// A string or named string type.
-    String(&'a str),
+    /// A string or named string type. Go strings may contain arbitrary bytes.
+    String(&'a [u8]),
     /// A comma-separated sequence of quoted strings.
-    Strings(&'a [&'a str]),
+    Strings(&'a [&'a [u8]]),
     /// A comma-separated sequence of float32 values.
     Float32s(&'a [f32]),
     /// A comma-separated sequence of float64 values.
@@ -107,6 +108,12 @@ impl From<f64> for SqlArg<'_> {
 
 impl<'a> From<&'a str> for SqlArg<'a> {
     fn from(value: &'a str) -> Self {
+        Self::String(value.as_bytes())
+    }
+}
+
+impl<'a> From<&'a [u8]> for SqlArg<'a> {
+    fn from(value: &'a [u8]) -> Self {
         Self::String(value)
     }
 }
@@ -212,18 +219,15 @@ fn escape_bytes_backslash(mut buffer: Vec<u8>, value: &[u8]) -> Vec<u8> {
     buffer
 }
 
-fn escape_string_backslash(buffer: Vec<u8>, value: &str) -> Vec<u8> {
-    escape_bytes_backslash(buffer, tidb_hack::slice(value))
+fn escape_string_backslash(buffer: Vec<u8>, value: &[u8]) -> Vec<u8> {
+    escape_bytes_backslash(buffer, value)
 }
 
-/// Escapes one string using MySQL backslash sequences.
+/// Escapes one Go string using MySQL backslash sequences.
 #[must_use]
-pub fn escape_string(value: &str) -> String {
-    String::from_utf8(escape_string_backslash(
-        Vec::with_capacity(value.len()),
-        value,
-    ))
-    .expect("escaping a UTF-8 string preserves UTF-8")
+pub fn escape_string(value: impl AsRef<[u8]>) -> Vec<u8> {
+    let value = value.as_ref();
+    escape_string_backslash(Vec::with_capacity(value.len()), value)
 }
 
 fn normalize_exponent(mantissa: &str, exponent: i32) -> String {
@@ -307,7 +311,7 @@ fn append_time(buffer: &mut Vec<u8>, value: Option<NaiveDateTime>) {
     }
 }
 
-fn append_string_argument(mut buffer: Vec<u8>, value: &str) -> Vec<u8> {
+fn append_string_argument(mut buffer: Vec<u8>, value: &[u8]) -> Vec<u8> {
     buffer.push(b'\'');
     buffer = escape_string_backslash(buffer, value);
     buffer.push(b'\'');
@@ -373,10 +377,13 @@ fn append_argument(mut buffer: Vec<u8>, argument: &SqlArg<'_>) -> Result<Vec<u8>
     Ok(buffer)
 }
 
-fn escape_sql_impl(sql: &str, arguments: &[SqlArg<'_>]) -> Result<Vec<u8>, EscapeError> {
-    let mut buffer = Vec::with_capacity(sql.len());
+fn escape_sql_impl(
+    sql: impl AsRef<[u8]>,
+    arguments: &[SqlArg<'_>],
+) -> Result<Vec<u8>, EscapeError> {
+    let bytes = sql.as_ref();
+    let mut buffer = Vec::with_capacity(bytes.len());
     let mut argument_position = 0;
-    let bytes = sql.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
         let Some(relative) = bytes[index..].iter().position(|byte| *byte == b'%') else {
@@ -400,7 +407,7 @@ fn escape_sql_impl(sql: &str, arguments: &[SqlArg<'_>]) -> Result<Vec<u8>, Escap
                     return Err(EscapeError::IdentifierType(format!("{argument:?}")));
                 };
                 buffer.push(b'`');
-                for byte in identifier.bytes() {
+                for byte in identifier.iter().copied() {
                     buffer.push(byte);
                     if byte == b'`' {
                         buffer.push(b'`');
@@ -444,7 +451,7 @@ fn escape_sql_impl(sql: &str, arguments: &[SqlArg<'_>]) -> Result<Vec<u8>, Escap
 }
 
 /// Escapes arguments into SQL using `%?`, `%n`, and `%%`.
-pub fn escape_sql(sql: &str, arguments: &[SqlArg<'_>]) -> Result<Vec<u8>, EscapeError> {
+pub fn escape_sql(sql: impl AsRef<[u8]>, arguments: &[SqlArg<'_>]) -> Result<Vec<u8>, EscapeError> {
     escape_sql_impl(sql, arguments)
 }
 
@@ -454,14 +461,14 @@ pub fn escape_sql(sql: &str, arguments: &[SqlArg<'_>]) -> Result<Vec<u8>, Escape
 ///
 /// Panics when [`escape_sql`] returns an error.
 #[must_use]
-pub fn must_escape_sql(sql: &str, arguments: &[SqlArg<'_>]) -> Vec<u8> {
+pub fn must_escape_sql(sql: impl AsRef<[u8]>, arguments: &[SqlArg<'_>]) -> Vec<u8> {
     escape_sql(sql, arguments).unwrap_or_else(|error| panic!("{error}"))
 }
 
 /// Writes one escaped SQL byte string with one call to the destination.
 pub fn format_sql(
     writer: &mut impl Write,
-    sql: &str,
+    sql: impl AsRef<[u8]>,
     arguments: &[SqlArg<'_>],
 ) -> Result<(), EscapeError> {
     let buffer = escape_sql_impl(sql, arguments)?;
@@ -474,7 +481,7 @@ pub fn format_sql(
 /// # Panics
 ///
 /// Panics when [`format_sql`] returns an error.
-pub fn must_format_sql(writer: &mut impl Write, sql: &str, arguments: &[SqlArg<'_>]) {
+pub fn must_format_sql(writer: &mut impl Write, sql: impl AsRef<[u8]>, arguments: &[SqlArg<'_>]) {
     format_sql(writer, sql, arguments).unwrap_or_else(|error| panic!("{error}"));
 }
 
@@ -519,9 +526,8 @@ mod tests {
                 *expected,
                 "{name}"
             );
-            let text = std::str::from_utf8(input).expect("source string row");
             assert_eq!(
-                escape_string_backslash(Vec::new(), text),
+                escape_string_backslash(Vec::new(), input),
                 *expected,
                 "{name}"
             );
@@ -550,7 +556,7 @@ mod tests {
             .expect("date")
             .and_hms_nano_opt(0, 0, 0, 888_888_888)
             .expect("time");
-        let strings = ["33", "44"];
+        let strings: [&[u8]; 2] = [b"33", b"44"];
         let float32s = [33.1_f32, 0.44];
         let float64s = [55.2_f64, 0.66];
         let cases = vec![
@@ -846,7 +852,7 @@ mod tests {
                 input: "select %?",
                 expected: Some(b"select '3'"),
                 error_prefix: None,
-                arguments: vec![SqlArg::String("3")],
+                arguments: vec![SqlArg::String(b"3")],
             },
         ];
 
@@ -911,7 +917,7 @@ mod tests {
             ("it's all good", "it\\'s all good"),
             ("+ -><()~*:\"\"&|", "+ -><()~*:\\\"\\\"&|"),
         ] {
-            assert_eq!(escape_string(input), expected);
+            assert_eq!(escape_string(input), expected.as_bytes());
         }
     }
 
