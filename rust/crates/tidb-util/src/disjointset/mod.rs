@@ -12,12 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Disjoint-set package transcreated from `pkg/util/disjointset`.
-//!
-//! The package has two production files, two test files, one test-process
-//! setup file, and one Bazel target. Rust's test harness has no package-owned
-//! background workers, so Go's `goleak.VerifyTestMain` needs no runtime
-//! analogue.
+//! Dense and sparse disjoint-set data structures.
 
 mod int_set;
 mod set;

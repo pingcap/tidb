@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dense integer disjoint set from `pkg/util/disjointset/int_set.go`.
+//! Dense integer disjoint set.
 
 /// Disjoint set for continuous, non-negative integer elements.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -22,13 +22,10 @@ pub struct SimpleIntSet {
 
 impl SimpleIntSet {
     /// Creates a set containing the integers in `0..size`.
-    ///
-    /// Like Go's `make([]int, size)`, a negative size is invalid.
     #[must_use]
-    pub fn new(size: isize) -> Self {
-        assert!(size >= 0, "disjoint set size must be non-negative");
+    pub fn new(size: usize) -> Self {
         Self {
-            parent: (0..size as usize).collect(),
+            parent: (0..size).collect(),
         }
     }
 
@@ -56,9 +53,7 @@ impl SimpleIntSet {
     }
 
     /// Resets the set to contain the integers in `0..size`.
-    pub fn grow_new_int_set(&mut self, size: isize) {
-        assert!(size >= 0, "disjoint set size must be non-negative");
-        let size = size as usize;
+    pub fn grow_new_int_set(&mut self, size: usize) {
         self.parent.clear();
         self.parent.reserve(size);
         self.parent.extend(0..size);
@@ -82,8 +77,7 @@ mod tests {
     use super::SimpleIntSet;
 
     #[test]
-    #[allow(non_snake_case)]
-    fn TestIntDisjointSet() {
+    fn union_and_path_compression() {
         let mut set = SimpleIntSet::new(10);
         assert_eq!(set.parent.len(), 10);
         for (index, parent) in set.parent.iter().copied().enumerate() {
@@ -123,11 +117,5 @@ mod tests {
         assert!(set.is_empty());
         set.grow_new_int_set(5);
         assert_eq!(set.parent, [0, 1, 2, 3, 4]);
-    }
-
-    #[test]
-    #[should_panic(expected = "disjoint set size must be non-negative")]
-    fn negative_size_matches_go_make_panic_boundary() {
-        let _ = SimpleIntSet::new(-1);
     }
 }

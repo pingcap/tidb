@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Sparse generic disjoint set from `pkg/util/disjointset/set.go`.
+//! Sparse generic disjoint set.
 
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -22,8 +22,7 @@ use std::hash::Hash;
 pub struct Set<T> {
     parent: Vec<usize>,
     value_to_index: HashMap<T, usize>,
-    index_to_value: HashMap<usize, T>,
-    tail_index: usize,
+    values: Vec<T>,
 }
 
 impl<T> Set<T>
@@ -32,14 +31,11 @@ where
 {
     /// Creates an empty sparse disjoint set with the requested capacity.
     #[must_use]
-    pub fn new(capacity: isize) -> Self {
-        assert!(capacity >= 0, "disjoint set capacity must be non-negative");
-        let capacity = capacity as usize;
+    pub fn new(capacity: usize) -> Self {
         Self {
             parent: Vec::with_capacity(capacity),
             value_to_index: HashMap::with_capacity(capacity),
-            index_to_value: HashMap::with_capacity(capacity),
-            tail_index: 0,
+            values: Vec::with_capacity(capacity),
         }
     }
 
@@ -48,11 +44,10 @@ where
             return self.find_root_internal(index);
         }
 
-        let index = self.tail_index;
+        let index = self.parent.len();
         self.parent.push(index);
         self.value_to_index.insert(value.clone(), index);
-        self.index_to_value.insert(index, value);
-        self.tail_index += 1;
+        self.values.push(value);
         index
     }
 
@@ -89,10 +84,10 @@ where
 
     /// Finds the original value associated with an index's current root.
     ///
-    /// An index outside the parent domain panics like the Go slice access.
+    /// Panics when `index` is outside the inserted domain.
     pub fn find_value(&mut self, index: usize) -> Option<T> {
         let root = self.find_root_internal(index);
-        self.index_to_value.get(&root).cloned()
+        self.values.get(root).cloned()
     }
 
     /// Returns the number of values inserted into the set.
@@ -113,8 +108,7 @@ mod tests {
     use super::Set;
 
     #[test]
-    #[allow(non_snake_case)]
-    fn TestDisjointSet() {
+    fn union_and_path_compression() {
         let mut set = Set::new(10);
         assert!(!set.in_same_group("a", "b"));
         assert_eq!(set.parent.len(), 2);
@@ -151,11 +145,5 @@ mod tests {
         assert_eq!(set.find_value(b), Some("b"));
         set.union("a", "b");
         assert_eq!(set.find_value(b), Some("a"));
-    }
-
-    #[test]
-    #[should_panic(expected = "disjoint set capacity must be non-negative")]
-    fn negative_capacity_matches_go_make_panic_boundary() {
-        let _ = Set::<u8>::new(-1);
     }
 }

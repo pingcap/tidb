@@ -33,6 +33,7 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::OnceLock;
+use tidb_util::disjointset::Set;
 use tidb_util::disk::{SpillEncryptionMethod, SpillStorage};
 use tidb_util::layered_io::ReadAt;
 use tidb_util::{checksum, encrypt};
@@ -243,11 +244,28 @@ impl ColumnSwapHelper {
     }
 
     fn merge_input_indexes(&self, input: &Chunk) -> HashMap<usize, Vec<usize>> {
+        let mut owners = Set::new(4);
+        let mut referenced = vec![false; input.num_cols()];
+        for input_index in 0..input.num_cols() {
+            if referenced[input_index] {
+                continue;
+            }
+            for (candidate, is_referenced) in
+                referenced.iter_mut().enumerate().skip(input_index + 1)
+            {
+                if input.columns_share_identity(input_index, input, candidate) {
+                    *is_referenced = true;
+                    owners.union(input_index, candidate);
+                }
+            }
+        }
+
         let mut merged = HashMap::<usize, Vec<usize>>::new();
         for (&input_index, output_indexes) in &self.input_idx_to_output_idxes {
-            let owner_index = (0..input.num_cols())
-                .find(|&candidate| input.columns_share_identity(candidate, input, input_index))
-                .unwrap_or(input_index);
+            let root = owners.find_root(input_index);
+            let owner_index = owners
+                .find_value(root)
+                .expect("every disjoint-set root has an input index");
             merged
                 .entry(owner_index)
                 .or_default()
