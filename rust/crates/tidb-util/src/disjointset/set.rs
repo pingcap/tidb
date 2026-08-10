@@ -107,8 +107,9 @@ where
 mod tests {
     use super::Set;
 
+    /// Go `pkg/util/disjointset/set_test.go` `TestDisjointSet`.
     #[test]
-    fn union_and_path_compression() {
+    fn test_disjoint_set() {
         let mut set = Set::new(10);
         assert!(!set.in_same_group("a", "b"));
         assert_eq!(set.parent.len(), 2);

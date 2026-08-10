@@ -76,8 +76,9 @@ impl SimpleIntSet {
 mod tests {
     use super::SimpleIntSet;
 
+    /// Go `pkg/util/disjointset/int_set_test.go` `TestIntDisjointSet`.
     #[test]
-    fn union_and_path_compression() {
+    fn test_int_disjoint_set() {
         let mut set = SimpleIntSet::new(10);
         assert_eq!(set.parent.len(), 10);
         for (index, parent) in set.parent.iter().copied().enumerate() {
