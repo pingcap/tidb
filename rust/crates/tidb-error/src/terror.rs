@@ -28,7 +28,7 @@ use std::sync::{Arc, LazyLock, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::mysql::{errcode, mysql_state, FormatArg, SqlError};
 use crate::ErrMessage;
-use serde::de::{IgnoredAny, MapAccess, Visitor};
+use serde::de::{Error as SerdeError, Unexpected};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 const FIXED_CLASSES: [(isize, &str); 27] = [
@@ -386,12 +386,12 @@ impl TerrorError {
     /// Defines a registered source error prototype, corresponding to `New` or
     /// `NewStdErr` during package initialization.
     #[must_use]
-    pub fn registered(class: TerrorClass, code: TerrorCode, message: &'static str) -> Self {
+    pub fn registered(class: TerrorClass, code: TerrorCode, message: impl Into<String>) -> Self {
         register_error_code(class, code);
         Self {
             identity: TerrorIdentity::new(class, code),
             rfc_code: Cow::Owned(TerrorIdentity::new(class, code).rfc_code()),
-            message: Cow::Borrowed(message),
+            message: Cow::Owned(message.into()),
             redact_arg_pos: &[],
             stack: None,
         }
@@ -593,92 +593,13 @@ struct CompatibleJsonRef<'a> {
     rfc_code: &'a str,
 }
 
-#[derive(Default)]
+#[derive(Deserialize)]
 struct CompatibleJsonOwned {
-    class: isize,
-    code: isize,
-    message: String,
-    rfc_code: String,
-}
-
-/// Matches Go `encoding/json`'s exact-name preference followed by
-/// `bytes.EqualFold` for an ASCII struct-field tag.
-///
-/// For an ASCII tag, Unicode simple folding adds only the long-s (`ſ`) to
-/// the `S`/`s` fold set and the Kelvin sign (`K`) to the `K`/`k` fold set.
-fn go_json_field_matches_ascii_tag(key: &str, tag: &str) -> bool {
-    if key == tag {
-        return true;
-    }
-
-    let mut key_chars = key.chars();
-    for tag_byte in tag.bytes() {
-        debug_assert!(tag_byte.is_ascii());
-        let Some(key_char) = key_chars.next() else {
-            return false;
-        };
-        let folded_tag = tag_byte.to_ascii_lowercase();
-        let matches = if key_char.is_ascii() {
-            key_char.to_ascii_lowercase() == char::from(folded_tag)
-        } else {
-            matches!(
-                (key_char, folded_tag),
-                ('\u{17f}', b's') | ('\u{212a}', b'k')
-            )
-        };
-        if !matches {
-            return false;
-        }
-    }
-    key_chars.next().is_none()
-}
-
-impl<'de> Deserialize<'de> for CompatibleJsonOwned {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct CompatibleJsonVisitor;
-
-        impl<'de> Visitor<'de> for CompatibleJsonVisitor {
-            type Value = CompatibleJsonOwned;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-                formatter.write_str("a TiDB error JSON object")
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'de>,
-            {
-                let mut value = CompatibleJsonOwned::default();
-                while let Some(key) = map.next_key::<String>()? {
-                    if go_json_field_matches_ascii_tag(&key, "class") {
-                        if let Some(class) = map.next_value::<Option<isize>>()? {
-                            value.class = class;
-                        }
-                    } else if go_json_field_matches_ascii_tag(&key, "code") {
-                        if let Some(code) = map.next_value::<Option<isize>>()? {
-                            value.code = code;
-                        }
-                    } else if go_json_field_matches_ascii_tag(&key, "message") {
-                        if let Some(message) = map.next_value::<Option<String>>()? {
-                            value.message = message;
-                        }
-                    } else if go_json_field_matches_ascii_tag(&key, "rfccode") {
-                        if let Some(rfc_code) = map.next_value::<Option<String>>()? {
-                            value.rfc_code = rfc_code;
-                        }
-                    } else {
-                        map.next_value::<IgnoredAny>()?;
-                    }
-                }
-                Ok(value)
-            }
-        }
-
-        deserializer.deserialize_map(CompatibleJsonVisitor)
-    }
+    class: Option<isize>,
+    code: Option<isize>,
+    message: Option<String>,
+    #[serde(rename = "rfccode")]
+    rfc_code: Option<String>,
 }
 
 impl Serialize for TerrorError {
@@ -701,22 +622,28 @@ impl<'de> Deserialize<'de> for TerrorError {
     where
         D: Deserializer<'de>,
     {
-        let compatible = CompatibleJsonOwned::deserialize(deserializer)?;
-        let rfc_code = if compatible.rfc_code.is_empty() && compatible.class > 0 {
-            format!(
-                "{}:{}",
-                legacy_rfc_class(compatible.class).unwrap_or_default(),
-                compatible.code
-            )
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if !value.is_object() {
+            return Err(D::Error::invalid_type(
+                Unexpected::Other("non-object JSON value"),
+                &"a TiDB error JSON object",
+            ));
+        }
+        let compatible =
+            serde_json::from_value::<CompatibleJsonOwned>(value).map_err(D::Error::custom)?;
+        let class = compatible.class.unwrap_or_default();
+        let code = compatible.code.unwrap_or_default();
+        let rfc_code = compatible.rfc_code.unwrap_or_default();
+        let rfc_code = if rfc_code.is_empty() && class > 0 {
+            format!("{}:{}", legacy_rfc_class(class).unwrap_or_default(), code)
         } else {
-            compatible.rfc_code
+            rfc_code
         };
-        let class = class_for_rfc_code(&rfc_code)
-            .unwrap_or_else(|| TerrorClass::from_value(compatible.class));
+        let class = class_for_rfc_code(&rfc_code).unwrap_or_else(|| TerrorClass::from_value(class));
         Ok(Self {
-            identity: TerrorIdentity::new(class, TerrorCode::new(compatible.code)),
+            identity: TerrorIdentity::new(class, TerrorCode::new(code)),
             rfc_code: Cow::Owned(rfc_code),
-            message: Cow::Owned(compatible.message),
+            message: Cow::Owned(compatible.message.unwrap_or_default()),
             redact_arg_pos: &[],
             stack: None,
         })
@@ -855,7 +782,7 @@ pub(crate) fn root_cause<'a>(mut error: &'a (dyn Error + 'static)) -> &'a (dyn E
 
 #[cfg(test)]
 mod registered_std_tests {
-    use super::{go_json_field_matches_ascii_tag, TerrorClass, TerrorCode, TerrorError};
+    use super::{TerrorClass, TerrorCode, TerrorError};
 
     // registered_std resolves codes from both the MySQL and TiDB catalogs,
     // unlike registered_from_catalog (MySQL only) -- Go's NewStd behavior.
@@ -871,17 +798,9 @@ mod registered_std_tests {
     }
 
     #[test]
-    fn compatible_json_matches_go_object_boundaries() {
+    fn compatible_json_accepts_defaults_and_unknown_fields() {
         let decoded: TerrorError = serde_json::from_str(
-            r#"{
-                "claſs":21,
-                "code":1,
-                "CODE":2,
-                "message":"kept",
-                "MESSAGE":null,
-                "rfccode":"",
-                "unknown":{"ignored":true}
-            }"#,
+            r#"{"class":21,"code":2,"message":"kept","rfccode":"","unknown":{"ignored":true}}"#,
         )
         .unwrap();
         assert_eq!(decoded.class(), TerrorClass::Global);
@@ -895,24 +814,13 @@ mod registered_std_tests {
         for non_object in ["[]", r#""text""#, "1", "true"] {
             assert!(serde_json::from_str::<TerrorError>(non_object).is_err());
         }
-    }
 
-    #[test]
-    fn compatible_json_matches_go_unicode_simple_fold_boundaries() {
-        assert!(go_json_field_matches_ascii_tag("class", "class"));
-        assert!(go_json_field_matches_ascii_tag("claſs", "class"));
-        assert!(go_json_field_matches_ascii_tag("start_Key", "start_key"));
-        assert!(!go_json_field_matches_ascii_tag("claßs", "class"));
-        assert!(!go_json_field_matches_ascii_tag("start_Keys", "start_key"));
-
-        // No compatible-error field contains a K, so this Kelvin-folding name
-        // remains an unknown field and must not disturb the recognized fields.
-        let decoded: TerrorError = serde_json::from_str(
-            r#"{"class":21,"code":2,"message":"kept","start_Key":{"class":7}}"#,
-        )
-        .unwrap();
-        assert_eq!(decoded.class(), TerrorClass::Global);
-        assert_eq!(decoded.code().value(), 2);
-        assert_eq!(decoded.message(), "kept");
+        let nulls: TerrorError =
+            serde_json::from_str(r#"{"class":null,"code":null,"message":null,"rfccode":null}"#)
+                .unwrap();
+        assert_eq!(nulls.class().code(), 0);
+        assert_eq!(nulls.code().value(), 0);
+        assert_eq!(nulls.message(), "");
+        assert_eq!(nulls.rfc_code(), "");
     }
 }

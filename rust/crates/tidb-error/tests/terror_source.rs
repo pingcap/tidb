@@ -123,7 +123,9 @@ fn test_dynamic_registration_duplicate_detection_and_class_lookup() {
     let class = register_error_class(dynamic_code, "test-dynamic");
     assert_eq!(class.code(), dynamic_code);
     assert_eq!(class.to_string(), "test-dynamic");
-    let error = TerrorError::registered(class, TerrorCode::new(isize::MAX), "dynamic");
+    let message = format!("dynamic-{dynamic_code}");
+    let error = TerrorError::registered(class, TerrorCode::new(isize::MAX), message.as_str());
+    assert_eq!(error.message(), message);
     assert_eq!(error.rfc_code(), format!("test-dynamic:{}", isize::MAX));
     assert_eq!(get_error_class(&error), Some(class));
     assert_eq!(error.to_sql_error().code, errcode::ErrUnknown);
@@ -326,6 +328,19 @@ fn test_json_compatibility_round_trips_pingcap_errors_shape() {
     let escaped_round_trip: TerrorError =
         serde_json::from_str(&escaped_json).expect("escaped error must deserialize");
     assert_eq!(escaped, escaped_round_trip);
+
+    for invalid in [
+        r#"{"class":"not-an-integer","code":1}"#,
+        r#"{"class":1,"code":[]}"#,
+        r#"{"message":1}"#,
+        "[]",
+        r#""scalar""#,
+    ] {
+        assert!(
+            serde_json::from_str::<TerrorError>(invalid).is_err(),
+            "invalid error envelope unexpectedly decoded: {invalid}"
+        );
+    }
 }
 
 #[test]
