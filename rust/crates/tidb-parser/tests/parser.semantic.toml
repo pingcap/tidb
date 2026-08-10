@@ -1,0 +1,62 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/parser"
+source_commit = "4f71e9c67400b9e684a2b0f3550181321309f710"
+excluded_go_paths = [
+  "pkg/parser/ast",
+  "pkg/parser/auth",
+  "pkg/parser/charset",
+  "pkg/parser/docs",
+  "pkg/parser/duration",
+  "pkg/parser/format",
+  "pkg/parser/mysql",
+  "pkg/parser/opcode",
+  "pkg/parser/terror",
+  "pkg/parser/test_driver",
+  "pkg/parser/tidb",
+  "pkg/parser/types",
+  "pkg/parser/util",
+]
+rust_files = [
+  "rust/crates/tidb-parser/Cargo.toml",
+  "rust/crates/tidb-parser/src/lib.rs",
+  "rust/crates/tidb-parser/tests/all.rs",
+  "rust/crates/tidb-parser/tests/arena_source.rs",
+  "rust/crates/tidb-parser/tests/parser_digester_source.rs",
+  "rust/crates/tidb-parser/tests/parser_hint_source.rs",
+  "rust/crates/tidb-parser/tests/parser_integration_source.rs",
+  "rust/crates/tidb-parser/tests/parser_regressions_source.rs",
+  "rust/crates/tidb-parser/tests/parser_root_source.rs",
+  "rust/crates/tidb-parser/tests/parser_run_test_builtin_source.rs",
+  "rust/crates/tidb-parser/tests/parser_run_test_ddl_source.rs",
+  "rust/crates/tidb-parser/tests/parser_run_test_helper.rs",
+  "rust/crates/tidb-parser/tests/parser_run_test_source.rs",
+  "rust/crates/tidb-parser/tests/reserved_words_mysql_source.rs",
+  "rust/crates/tidb-parser/benches/all.rs",
+  "rust/crates/tidb-parser/benches/arena_source.rs",
+  "rust/crates/tidb-parser/benches/digester_source.rs",
+  "rust/crates/tidb-parser/benches/parser_source.rs",
+  "rust/crates/tidb-lexer/src/lib.rs",
+  "rust/crates/tidb-lexer/src/tests/lexer_source.rs",
+  "rust/crates/tidb-lexer/tests/all.rs",
+  "rust/crates/tidb-lexer/tests/parser_keywords_source.rs",
+  "rust/difftests/parser-tests/Cargo.toml",
+  "rust/difftests/parser-tests/tests/all.rs",
+  "rust/difftests/parser-tests/tests/integration_parser_diff.rs",
+  "rust/difftests/parser-tests/tests/parser_diff.rs",
+]
+
+[[tests]]
+name = "parser_source_contract"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-parser", "--all-targets"]
+
+[[tests]]
+name = "parser_lexer_contract"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-lexer", "--all-targets"]
+
+[[tests]]
+name = "parser_go_oracle_contract"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "difftest-parser-tests", "--test", "all"]

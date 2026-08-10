@@ -11,268 +11,17 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! A recursive-descent SQL parser (Phase 0 subset), transliterated from the
-//! hand-written parser in `pkg/parser`.
+//! TiDB SQL parser.
 //!
-//! Statements covered: `SELECT` (`DISTINCT`/`ALL`, select list — including a
-//! bare `*` and a qualified wildcard `t.*` / `db.t.*`, distinguished from a
-//! plain `t.a` column reference by a two-phase lookahead that only commits
-//! once it has confirmed the `.` `*` shape —, a `FROM` join
-//! tree with comma/`INNER`/`LEFT`/`RIGHT`/`CROSS`/`STRAIGHT_JOIN`/`NATURAL
-//! [LEFT|RIGHT]` + `ON`/`USING` (`NATURAL` may only precede a plain/`LEFT`/
-//! `RIGHT` join, never `INNER`/`CROSS`/`STRAIGHT_JOIN`, and never combines
-//! with an explicit `ON`/`USING` — both genuine `ParseError`s, confirmed
-//! via `godump restore` — see [`tidb_ast::Join::natural`]'s own doc)
-//! and the `FROM DUAL` placeholder, each table optionally preceded by a
-//! `PARTITION (name, ...)` clause and followed by one or more `USE`/
-//! `FORCE`/`IGNORE INDEX [FOR JOIN|ORDER BY|GROUP BY] (name, ...)` hints
-//! — both also accepted by single-table `UPDATE`/`DELETE`, and
-//! `PARTITION` additionally by `INSERT`'s own target table, not just
-//! `SELECT`'s own `FROM` (see [`tidb_ast::TableRef::partitions`] and
-//! [`tidb_ast::TableRef::hints`]'s own docs for the exact grammar —
-//! `PARTITION` parses BEFORE the alias, hints AFTER it — and each
-//! construct's own deliberate execution-time scope boundary: a
-//! `PARTITION` clause is ALWAYS `Unsupported` since this crate never
-//! implements table partitioning at all, while an index hint's NAME is
-//! simply never validated against the table's own real indexes), and
-//! `WHERE`/`GROUP BY expr [ASC|DESC],
-//! ...`/`HAVING`/`ORDER BY`/`LIMIT`/a `FOR UPDATE`/`FOR SHARE`/`LOCK IN
-//! SHARE MODE` locking clause — see `crate::select`'s own doc for the
-//! flexible ordering `ORDER BY`/`LIMIT`/the locking clause share, and how
-//! that same grammar attaches across a set operation's own multiple terms;
-//! `GROUP BY`'s own per-item `ASC`/`DESC` is a separate, simpler grammar
-//! (each item independent, no shared flexible ordering with the other
-//! three) — see [`tidb_ast::GroupByItem`]'s own doc for why an explicit
-//! `ASC` still needs to be distinguished from no direction at all despite
-//! restoring identically), set operations (`UNION`/`UNION
-//! ALL`/`EXCEPT`/`INTERSECT`, with parenthesized terms and statement-level
-//! `ORDER BY`/`LIMIT`/locking clause),
-//! `INSERT [IGNORE] ... VALUES [ON DUPLICATE KEY UPDATE ...]` (an assignment's
-//! value may reference `VALUES(col)`, the row that would have been inserted),
-//! single-table `UPDATE ... SET`, single-table `DELETE FROM`, and
-//! `CREATE TABLE [IF NOT EXISTS]` (column definitions —
-//! `TINYINT`/`SMALLINT`/`MEDIUMINT`/`INT`/`BIGINT`/`FLOAT`/`DOUBLE`/
-//! `VARCHAR(n)`/`CHAR(n)`/`DECIMAL(p,s)`/`TEXT`/`DATE`/`DATETIME[(p)]`/
-//! `TIME[(p)]`/`TIMESTAMP[(p)]`/`YEAR[(p)]` (dates are plain string values
-//! to this parser/executor — no special date-literal syntax or arithmetic;
-//! only the column TYPE is recognized, so `DEFAULT '...'` reuses the
-//! existing string-literal parsing unchanged; `DEFAULT CURRENT_TIMESTAMP` is
-//! not modelled, while the narrow Go `ON UPDATE` NOW/CURDATE-family form is
-//! retained as a typed column option and executor-rejected until catalog
-//! write-time maintenance exists), each optionally
-//! `UNSIGNED`/`ZEROFILL` (a bare `ZEROFILL` implies, and restores,
-//! `UNSIGNED`, matching the Go AST), then an optional `CHARACTER SET name`/
-//! `CHARSET name` (an alias; both restore as `CHARACTER SET`, canonically
-//! uppercased) — which, per real MySQL grammar, may ONLY appear here,
-//! immediately after the type, not among the other column options below (a
-//! real `ParseError` elsewhere, confirmed via `godump restore`, not
-//! assumed; `CHARACTER SET BINARY`'s implicit type-rename,
-//! `VARCHAR`→`VARBINARY` and similar, is not modelled) — with
-//! `PRIMARY KEY`/`UNIQUE [KEY]`/`NOT NULL`/`NULL`/`AUTO_INCREMENT`/
-//! `DEFAULT <expr>`/`COMMENT '...'`/`COLLATE name` options (a column's
-//! `COMMENT` text restores as a plain quoted string, unlike `DEFAULT`'s
-//! `_UTF8MB4`-prefixed string literals — a real asymmetry, confirmed via
-//! `godump restore` rather than assumed; `COLLATE`'s name canonically
-//! lowercases, the OPPOSITE convention from `CHARACTER SET`'s uppercase,
-//! and — unlike `CHARACTER SET` — is positionally free among the other
-//! options, confirmed by probing it both before and after `NOT NULL`),
-//! plus table-level constraints ([`tidb_ast::TableConstraint`]) —
-//! `[CONSTRAINT [name]] PRIMARY KEY [name] (col1, col2, ...)`,
-//! `[CONSTRAINT [name]] UNIQUE [KEY|INDEX] [name] (col1, col2, ...)`, and
-//! `[CONSTRAINT [name]] CHECK (expr) [[NOT] ENFORCED]` (`ENFORCED` is the
-//! default when neither keyword is written; the constraint is parsed and
-//! restored but never enforced by `tidb-exec`, matching real TiDB's own
-//! out-of-the-box default — see [`tidb_ast::TableConstraint::Check`]'s own
-//! doc) — a `CONSTRAINT` name wins over an inline index name when both are
-//! given, matching the Go AST (confirmed via `godump restore`, not
-//! assumed), and **all restore in WRITTEN order relative to each other**
-//! (e.g. `UNIQUE(b), PRIMARY KEY(a)` restores in that exact order, not
-//! `PRIMARY KEY` first — confirmed via `godump restore`, not assumed; this
-//! superseded an earlier, incorrect fixed-order assumption) — then
-//! trailing table options ([`tidb_ast::TableOption`]): `ENGINE [=] name`
-//! (case preserved verbatim — MySQL/TiDB never canonicalize it),
-//! `AUTO_INCREMENT [=] n`, `[DEFAULT] {CHARACTER SET | CHARSET} [=] name`
-//! and `[DEFAULT] COLLATE [=] name` (both uppercase and gain a `DEFAULT`
-//! prefix on restore even when not written — table-level `COLLATE`
-//! uppercases, the OPPOSITE convention from a column's own `COLLATE`,
-//! which lowercases), and `COMMENT [=] '...'` (restores WITH `=`
-//! regardless of whether it was written) — an `ENGINE`/`CHARACTER SET`/
-//! `COLLATE` value may be a bare word or an equivalent quoted string, both
-//! accepted; a `,` between options is accepted and dropped; **these too
-//! all restore in WRITTEN order**, unlike most other lists in this AST,
-//! which restore in a fixed canonical order (confirmed via `godump
-//! restore` on several reorderings, not assumed), all restore-verified; a
-//! bare `KEY`/`INDEX` (a plain secondary index, not a uniqueness
-//! constraint), other constraint kinds (`CONSTRAINT ... FOREIGN KEY`), and
-//! every other table option (`ROW_FORMAT=...`, `KEY_BLOCK_SIZE=...`, ...)
-//! are parsed but discarded, not retained in the AST), and
-//! `ALTER TABLE` — `ADD [COLUMN] col ... [FIRST | AFTER col]`,
-//! `DROP [COLUMN] name`, `MODIFY [COLUMN] col ... [FIRST | AFTER col]`
-//! (changes an existing column's type/options and/or position, never its
-//! name), and `CHANGE [COLUMN] old_name col ... [FIRST | AFTER col]` (like
-//! `MODIFY`, but also renames `old_name` to `col`'s own name) — each bare
-//! keyword (`ADD`/`DROP`/`MODIFY`/`CHANGE`, no `COLUMN`) restores
-//! identically to its `COLUMN`-qualified form, matching the Go AST — and
-//! `RENAME [TO | AS] name` (renames the table; `TO`, `AS`, or neither all
-//! restore identically as `RENAME AS`), `ADD [CONSTRAINT [name]] {INDEX |
-//! KEY} [name] (cols)` (a plain secondary index — `KEY` normalizes to
-//! `INDEX` on restore, matching the Go AST), and `ADD [CONSTRAINT [name]]
-//! UNIQUE [INDEX | KEY] [name] (cols)` (a `CONSTRAINT` name wins over an
-//! inline index name when both are given, same as `CREATE TABLE`'s
-//! table-level constraints); every other action (`ADD [CONSTRAINT]
-//! FOREIGN KEY`/`CHECK`, ...) is an honest [`ParseError`]), and a
-//! standalone `RENAME TABLE old1 TO new1 [, old2 TO new2 ...]` statement —
-//! a different top-level statement kind than `ALTER TABLE ... RENAME`,
-//! though both rename a table; pairs apply in written order. `DROP TABLE
-//! [IF EXISTS] name [, name2, ...] [RESTRICT | CASCADE]`
-//! ([`tidb_ast::DropTableStmt`] — the trailing `RESTRICT`/`CASCADE`
-//! modifier is accepted but restores to nothing, confirmed via `godump
-//! restore`; `DROP TEMPORARY TABLE` is out of scope, matching `CREATE
-//! TEMPORARY TABLE` not being modelled either). Ordinary system-variable
-//! `SET` lists, charset/session-state/resource-group commands, and transaction
-//! setting sugar are source-owned by the `set` module; explicit scopes and
-//! `@@` names remain visible in [`tidb_ast::SetStmt`]. `SET @name (= | :=)
-//! value` is a genuinely separate user-variable production represented by
-//! [`tidb_ast::SetUserVarStmt`], so the top router selects it before ordinary
-//! system-variable SET. `BEGIN`/`START TRANSACTION` are synonyms when unqualified,
-//! both restoring as `START TRANSACTION`; explicit `BEGIN` modes and Go's
-//! read-only/AS OF and causal-consistency START options remain AST payload.
-//! `COMMIT` and `ROLLBACK` carry no payload. `SAVEPOINT name`,
-//! `ROLLBACK TO [SAVEPOINT] name` (the `SAVEPOINT`
-//! keyword here is optional and dropped on restore), and `RELEASE
-//! SAVEPOINT name` (unlike `ROLLBACK TO`, `SAVEPOINT` here is NOT
-//! optional — `RELEASE name` alone is a genuine `ParseError`, confirmed
-//! via `godump restore`) each carry just the savepoint name, restored
-//! VERBATIM with case preserved — no backtick-quoting, unlike a plain
-//! table/column identifier (see `tidb_exec::Database`'s own doc for the
-//! execution-time savepoint-list semantics).
+//! Parses TiDB SQL into typed [`tidb_ast`] nodes and restores canonical SQL.
+//! The public entry points preserve statement boundaries, SQL modes, byte
+//! offsets, source text, and recoverable diagnostics. Digest and optimizer-
+//! hint parsing share the same lexer and parser authorities.
 //!
-//! The expression parser is precedence-climbing with the exact precedence table
-//! from `pkg/parser/prec.go`. Expressions cover columns, user/system variables,
-//! int/decimal/float/hex/bit/string/NULL/boolean literals, unary and binary
-//! operators, parentheses, function calls, aggregates (`COUNT`/`SUM`/`AVG`/
-//! `MAX`/`MIN`/`STD*`/`VAR*`/`BIT_*`) and `GROUP_CONCAT([DISTINCT] arg [, arg
-//! ...] [SEPARATOR '...'])` (its own shape — multiple arguments and a
-//! separator, distinct from the single-argument aggregates above; `SEPARATOR`
-//! defaults to `,` and always restores explicitly, matching the Go AST; an
-//! `ORDER BY` inside the call is not modelled), date-part extraction
-//! (`YEAR`/`MONTH`/`DAY`/`QUARTER` — lexer keywords, so they need the same
-//! keyword-before-`(` dispatch as `IF`/`COALESCE`; `DAYOFMONTH` is already a
-//! plain identifier, needing no such handling), `DATE_ADD`/`DATE_SUB`
-//! (also lexer keywords, added to the same dispatch set) whose second
-//! argument is `INTERVAL value unit` — a general prefix expression
-//! ([`tidb_ast::Expr::Interval`], matching real MySQL grammar rather than
-//! being special-cased to these two function names; the unit is any
-//! keyword token, captured as text, so it parses broadly even though only
-//! `DAY` is evaluated — see `tidb_expr::date_fn`). `date_expr + INTERVAL
-//! amount unit` / `date_expr - INTERVAL amount unit` DESUGAR to
-//! `DATE_ADD`/`DATE_SUB` calls right here, at parse time — a genuine real
-//! MySQL/TiDB grammar rule (confirmed via `godump restore`, discovered by
-//! measuring this crate's own coverage against real TiDB's integration
-//! test suite, not guessed), not a `tidb-exec`-side rewrite:
-//! `Parser::fold_interval_arith` runs inside the SAME precedence-
-//! climbing loop every other binary operator does, so a chain like `a +
-//! INTERVAL 5 DAY + INTERVAL 3 DAY` builds on the ALREADY-desugared
-//! result at each step, left-associatively, exactly matching real TiDB's
-//! own nesting. `+` is commutative here (`INTERVAL ... + date_expr` also
-//! desugars, with the non-`Interval` operand always becoming `DATE_ADD`'s
-//! FIRST argument regardless of which side it was written on), but `-`
-//! is not (`INTERVAL ... - date_expr`, `INTERVAL ... + INTERVAL ...`,
-//! and a parenthesized standalone `INTERVAL` are parse errors). `EXTRACT(unit FROM
-//! expr)` ([`tidb_ast::Expr::Extract`] — its OWN grammar and AST shape,
-//! `unit FROM value`, the opposite argument order from `INTERVAL`'s own
-//! `value unit`; same broad-parse/narrower-eval split, any unit keyword
-//! parses, only a subset evaluates), the `IN` / `BETWEEN` / `LIKE`
-//! / `IS` predicates, `CASE [value] (WHEN cond THEN result)+ [ELSE
-//! result] END` (`value` present is the simple form, absent the searched
-//! form — one AST node, [`tidb_ast::Expr::Case`], covers both; at least
-//! one `WHEN` clause is required, confirmed via `godump restore`: `CASE
-//! END`/`CASE 1 END` are genuine parse errors), `CAST(expr AS type)` /
-//! `CONVERT(expr, type)` / `CONVERT(expr USING charset)` (`crate::cast`
-//! — a narrower, MySQL-specific target-type grammar than `crate::ddl`'s
-//! own column types; see [`tidb_ast::CastType`]'s own doc for the exact
-//! accepted subset and its several real, non-obvious restore
-//! normalizations), subqueries (derived
-//! tables, scalar/`IN`/`EXISTS`/`ANY`/`ALL`), and a `WITH [RECURSIVE]
-//! name [(col, ...)] AS (query) [, ...]` clause before either a plain
-//! `SELECT` ([`tidb_ast::SelectStmt::with`]) or an outer set operation
-//! ([`tidb_ast::SetOprStmt::with`]). The same query representation keeps
-//! that grammar compositional in derived/LATERAL tables and `IN`
-//! subqueries; scalar/`EXISTS`/`ANY`/`ALL` slots still intentionally hold
-//! only a plain `SelectStmt`. `RECURSIVE` parses so it doesn't silently
-//! misparse as non-recursive; execution of a CTE-prefixed set operation
-//! remains an explicit `Unsupported` boundary in `tidb-exec`, and window
-//! functions ([`tidb_ast::Expr::Window`]) — scope: the zero-argument
-//! ranking functions `ROW_NUMBER`/`RANK`/`DENSE_RANK`; the frame-based
-//! window AGGREGATES `COUNT`/`SUM`/`AVG`/`MAX`/`MIN` (sharing
-//! [`Expr::Aggregate`]'s own single-argument shape — `parse_aggregate`
-//! itself detects a trailing `OVER` and dispatches to `Expr::Window`
-//! instead); the "value function" family `FIRST_VALUE`/`LAST_VALUE`
-//! (one argument), `NTH_VALUE` (two: value, then a 1-based position), and
-//! `LAG`/`LEAD` (one to three: value, an optional offset, an optional
-//! out-of-range default); and the "distribution function" family
-//! `NTILE(n)` (one argument) and `PERCENT_RANK`/`CUME_DIST` (zero
-//! arguments) — all with an INLINE window spec (`OVER (PARTITION BY
-//! expr, ... ORDER BY expr [ASC|DESC], ... [ROWS ...])`, including an
-//! explicit `ROWS BETWEEN <bound> AND <bound>` frame clause, or its
-//! single-bound `ROWS <bound>` shorthand — normalized at parse time to
-//! the full `BETWEEN` form, matching real TiDB's own restore, confirmed
-//! via `godump`; see [`tidb_ast::WindowFrame`]'s own doc); a named window
-//! reference (`OVER w`, `OVER (w ...)`) and the `WINDOW name AS (...),
-//! ...` clause that defines it (see [`tidb_ast::WindowOver`]/
-//! [`tidb_ast::WindowDef`] — resolving a name and validating what an
-//! extension may add both happen in `tidb_exec`, not here, matching how
-//! this parser accepts any unit keyword after `INTERVAL` syntactically
-//! too); `DISTINCT` in the aggregate position (`MAX(DISTINCT x) OVER
-//! (...)`), `IGNORE NULLS`/`FROM LAST` (real ANSI SQL grammar `LAG`/
-//! `LEAD`/etc. can carry, but confirmed via `gorun` that real TiDB itself
-//! rejects both unconditionally, so not parsing them matches real scope
-//! exactly), and a `RANGE` frame clause (needs numeric-/interval-distance
-//! comparison against the `ORDER BY` key's own value, a genuinely
-//! different and larger problem than `ROWS`'s physical offsets) are all
-//! genuine `ParseError`s, not silently misparsed or dropped. Unsupported
-//! constructs return [`ParseError`] rather than guessing, so coverage
-//! can be measured honestly.
-//!
-//! A `SELECT /*+ ... */` optimizer-hint comment (only recognized
-//! directly after `SELECT`, matching `tidb_lexer`'s own
-//! `HINTED_KEYWORDS` gate) is re-lexed and parsed by a NESTED sub-
-//! `Parser` over the comment's own inner text (`crate::select::
-//! parse_hint_comment`), reusing this crate's own token-cursor
-//! primitives rather than a bespoke hint-only lexer — real TiDB's own
-//! hint grammar has its own dedicated ~1200-line mini-parser
-//! (`pkg/parser/hintparser.go`) covering roughly 30 distinct hint
-//! shapes; this models only the four shapes (join/aggregate-pushdown
-//! table-list hints, index hints, `SET_VAR`, argument-less hints)
-//! confirmed — via a stratified sample of real TiDB's own
-//! integration-test corpus — to cover the overwhelming majority of
-//! real-world hint usage; see [`tidb_ast::Hint`]'s own doc for the exact
-//! scope boundary.
-//!
-//! ## Module layout
-//!
-//! Split by concern so unrelated features can be extended without touching
-//! the same file: `binding` (SQL binding commands), `ddl`
-//! (`CREATE`/`ALTER`/`RENAME`/`DROP TABLE`), `dml` (`INSERT`/`UPDATE`/`DELETE`),
-//! `resource_group` (the complete CREATE/ALTER/DROP resource-group source
-//! domain), `privilege` (privilege `GRANT`/`REVOKE`), `show` (ordinary
-//! metadata inspection), `user` (account-owned grammar),
-//! `select` (`SELECT`/set operations/`FROM` join tree), `expr` (the
-//! precedence-climbing expression parser and predicates), and `prec` (the
-//! precedence-level constant table, already its own file before this split).
-//! Each adds one or more
-//! `impl Parser { ... }` blocks in its own file — same pattern as
-//! `tidb-exec`'s `Database` split: Rust allows a type's methods to span as
-//! many files as its crate likes, as long as the type stays visible. This
-//! file keeps the shared vocabulary (`ParseError`, `Parser`'s struct
-//! definition, the token-cursor primitives every other module's methods
-//! call — `peek`/`bump`/`is_kw`/`expect_kw`/..., name-path parsing, and
-//! `decode_string`, used by multiple domains), and the public [`parse`] /
-//! [`parse_multi`] entry points. `statement` owns the source-ordered
-//! top-level dispatch.
-//! Tests mirror these source domains under `src/tests/`, so a vertical owner
-//! does not contend on `tests/stmt.rs`.
-
+//! Grammar implementations are split by source domain. This file owns the
+//! shared parser state, token-cursor primitives, public [`parse`] and
+//! [`parse_multi`] entry points, and source-ordered statement dispatch.
+//! Tests mirror those domains under `src/tests/`.
 mod admin;
 mod analyze;
 pub mod arena;
@@ -999,13 +748,11 @@ impl Parser {
         Ok(StatsLockStmt { tables })
     }
 
-    /// Parses the source-backed `EXPLAIN` wrapper subset from
+    /// Parses the source-backed `EXPLAIN` wrapper from
     /// `pkg/parser/set_explain_parser.go`: option grammar remains here while
     /// the inner statement reuses the ordinary statement parser. A bare
     /// table target is Go's shared `ShowColumns` fallback, not an explain
-    /// wrapper, and therefore produces [`AdminStmt::DescribeTable`]. Go's other
-    /// `ExplainStmt` branches have dedicated AST payloads and deliberately
-    /// remain parse errors until they can be represented faithfully.
+    /// wrapper, and therefore produces [`AdminStmt::DescribeTable`].
     fn parse_explain(&mut self) -> PResult<Stmt> {
         self.expect_kw("EXPLAIN")?;
         self.parse_explain_tail()

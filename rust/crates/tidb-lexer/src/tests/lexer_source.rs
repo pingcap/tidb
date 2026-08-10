@@ -15,9 +15,8 @@
 //! Source-owned port of `pkg/parser/lexer_test.go`.
 //!
 //! The Go suite exposes both scanner internals and the public `Lex` contract.
-//! This module keeps the same test boundaries where the Rust scanner has an
-//! equivalent (including its byte offsets and SQL-mode switches), and records
-//! the value-conversion-only portions as PARTIAL in the coverage evidence.
+//! This module preserves the observable token, value, byte-offset, comment,
+//! charset, and SQL-mode behavior through Rust's typed lexer representation.
 
 use super::*;
 

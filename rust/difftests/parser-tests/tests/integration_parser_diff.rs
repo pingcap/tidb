@@ -14,11 +14,9 @@
 
 //! Replay the checked Go parser oracle over every mysqltest parser input.
 //!
-//! This is intentionally an evidence test, not a false all-green parity
-//! assertion: the seed Rust parser implements only a subset of TiDB grammar.
 //! It reports the complete Go/Rust outcome distribution for the checked
-//! oracle. Normal tests only replay that executable oracle; source scanning
-//! and Go capture belong to the explicit regeneration command.
+//! oracle. Normal tests replay that executable oracle; source scanning and Go
+//! capture belong to the explicit regeneration command.
 
 use difftest::parser_oracle::{shared_golden, GoOutcome};
 
@@ -35,11 +33,10 @@ struct Counts {
     rust_accepted_go_restore_failure: usize,
 }
 
-// This is a deliberately reviewed coverage snapshot, replayed against the
-// current parser dependency; it is not a claim of parser
-// parity. A Rust grammar change must update it in the same change after
-// inspecting the emitted categories; otherwise a dropped match or a changed
-// rejection direction would pass unnoticed behind a still-valid Go oracle.
+// This reviewed semantic snapshot is replayed against the current parser. A
+// grammar change must update it in the same change after inspecting the
+// emitted categories; otherwise a dropped match or changed rejection
+// direction would pass unnoticed behind a still-valid Go oracle.
 const EXPECTED_COUNTS: Counts = Counts {
     go_accepted: 51_498,
     go_rejected: 99,
