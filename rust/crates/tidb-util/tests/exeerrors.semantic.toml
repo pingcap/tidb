@@ -1,0 +1,26 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/dbterror/exeerrors"
+source_commit = "60996fd69eaae91e50c1460a110b4d005ae16eaf"
+rust_files = [
+  "rust/crates/tidb-util/src/dbterror/exeerrors.rs",
+  "rust/crates/tidb-util/src/dbterror/exeerrors_go_fixture.txt",
+  "rust/crates/tidb-util/src/dbterror/mod.rs",
+  "rust/crates/tidb-util/src/sqlkiller.rs",
+  "rust/crates/tidb-executor/src/mem_quota.rs",
+]
+
+[[tests]]
+name = "executor_error_catalog"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "dbterror::tests::exeerrors_match_go_fixture", "--", "--exact"]
+
+[[tests]]
+name = "sqlkiller_error_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "sqlkiller::tests::kill_error_mapping", "--", "--exact"]
+
+[[tests]]
+name = "memory_quota_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-executor", "--lib", "mem_quota::tests::cancel_raises_8175_once_the_operator_crosses_the_quota", "--", "--exact"]
