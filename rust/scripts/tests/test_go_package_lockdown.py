@@ -1809,6 +1809,54 @@ class GoPackageLockdownTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertNotEqual(rows[0]["verification_artifact_path"], "-")
 
+    def test_probe_execution_allows_unrelated_unclassified_obligations(self) -> None:
+        self.clear_probe_execution()
+        for ledger_path in sorted((self.root / "evidence/ledgers").glob("*.tsv")):
+            schema, header, rows = read_tsv(ledger_path)
+            row = next((item for item in rows if item["status"] == "UNREACHABLE"), None)
+            if row is None:
+                continue
+            row.update(status="UNCLASSIFIED", symbol_id="-", evidence="-", rule_id="-")
+            write_tsv(ledger_path, schema, header, rows)
+            break
+        else:
+            self.fail("synthetic package has no unrelated obligation to reopen")
+
+        lockdown = LOCKDOWN.PackageLockdown(
+            self.root, SPEC, self._spec_source_commit(self.root)
+        )
+        with self.assertRaisesRegex(LOCKDOWN.LockdownError, "no final verdict"):
+            lockdown._probe_plans_for_execution()
+        _plan_path, plan = lockdown._probe_plan_for_execution("PROBE-DECLINED")
+        marker = runtime_observation_line(self.root / str(plan["observation_path"]))
+        result = subprocess.CompletedProcess(
+            args=[], returncode=0,
+            stdout=(
+                b"=== RUN   TestClamp\n" + marker
+                + b"\n--- PASS: TestClamp (0.00s)\n"
+                + b"PASS\nok  example.com/lockdown/pkg/sample  0.01s\n"
+            ),
+            stderr=b"",
+        )
+        argv = lockdown._runner_argv(
+            "go-test", "pkg/sample", "-", "TestClamp", "incremental probe regression"
+        )
+        with mock.patch.object(
+            lockdown, "_run_fixed_test", side_effect=[(argv, result), (argv, result)]
+        ):
+            self.assertEqual(
+                lockdown.run_evidence("probe", "PROBE-DECLINED", None), "OBSERVED"
+            )
+            self.assertEqual(
+                lockdown.verify_evidence("probe", "PROBE-DECLINED", None), "VERIFIED"
+            )
+
+        _schema, _header, result_rows = read_tsv(
+            self.root / "evidence/probe-results.tsv"
+        )
+        self.assertEqual(len(result_rows), 1)
+        self.assertNotEqual(result_rows[0]["verification_artifact_path"], "-")
+
     def test_probe_run_rejects_passing_test_without_observation_marker(self) -> None:
         self.clear_probe_execution()
         lockdown = LOCKDOWN.PackageLockdown(

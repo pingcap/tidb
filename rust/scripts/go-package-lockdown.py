@@ -3301,6 +3301,58 @@ class PackageLockdown:
             raise LockdownError(f"fixture and verdict probe IDs overlap: {sorted(overlap)}")
         return {**verdict_plans, **self.fixture_probe_plans}
 
+    def _probe_plan_for_execution(
+        self, evidence_id: str
+    ) -> tuple[Path, dict[str, object]]:
+        """Validate one verdict probe without requiring unrelated final verdicts.
+
+        Package completion remains atomic in ``check`` and ``write-receipt``. Evidence
+        collection, however, is intentionally incremental: a measured probe may be run
+        as soon as every obligation it declares has a complete DECLINED verdict. This
+        keeps the executable evidence bound to the exact Go inventory while avoiding a
+        circular dependency on finishing the rest of a large package first.
+        """
+        artifact_rows = self.artifact_rows()
+        grouped = self.raw_obligations(artifact_rows)
+        ledger_rows = self._stored_ledger_rows(grouped)
+        selected: tuple[Path, dict[str, object]] | None = None
+        referenced_ids: set[str] = set()
+        declared_ids: set[str] | None = None
+        for row in ledger_rows:
+            if row["status"] != "DECLINED":
+                continue
+            identity = row["obligation_id"]
+            go_quote = (
+                f"go-quote:{row['source_path']}#{row['ast_anchor']}"
+                f"@sha256:{row['node_sha256']}"
+            )
+            artifact, _owned, declared, payload = self._validate_evidence_artifact(
+                identity, row["evidence"], go_quote, "measured-probe"
+            )
+            if payload["probe_id"] != evidence_id:
+                continue
+            current = (artifact, payload)
+            if selected is not None and selected[0] != artifact:
+                raise LockdownError(f"probe_id {evidence_id} names multiple evidence plans")
+            if declared_ids is not None and declared_ids != declared:
+                raise LockdownError(f"probe_id {evidence_id} has inconsistent obligation sets")
+            selected = current
+            declared_ids = declared
+            referenced_ids.add(identity)
+        if selected is not None:
+            if declared_ids != referenced_ids:
+                raise LockdownError(
+                    f"probe {evidence_id} obligation coverage is not exact: "
+                    f"declared={sorted(declared_ids or set())}, "
+                    f"classified={sorted(referenced_ids)}"
+                )
+            return selected
+
+        plans = self._probe_plans_for_execution()
+        if evidence_id not in plans:
+            raise LockdownError(f"unknown measured probe: {evidence_id}")
+        return plans[evidence_id]
+
     def _write_execution_artifact(
         self,
         kind: str,
@@ -3512,10 +3564,7 @@ class PackageLockdown:
         if kind == "probe":
             if attempt_id is not None:
                 raise LockdownError("probe run-evidence does not accept --attempt")
-            plans = self._probe_plans_for_execution()
-            if evidence_id not in plans:
-                raise LockdownError(f"unknown measured probe: {evidence_id}")
-            plan_path, plan = plans[evidence_id]
+            plan_path, plan = self._probe_plan_for_execution(evidence_id)
             results = read_tsv(self.probe_results_path, PROBE_RESULT_HEADER)
             if any(result["probe_id"] == evidence_id for result in results):
                 raise LockdownError(f"probe result already exists: {evidence_id}")
@@ -3681,10 +3730,7 @@ class PackageLockdown:
         if kind == "probe":
             if attempt_id is not None:
                 raise LockdownError("probe verify-evidence does not accept --attempt")
-            plans = self._probe_plans_for_execution()
-            if evidence_id not in plans:
-                raise LockdownError(f"unknown measured probe: {evidence_id}")
-            _plan_path, plan = plans[evidence_id]
+            _plan_path, plan = self._probe_plan_for_execution(evidence_id)
             results = read_tsv(self.probe_results_path, PROBE_RESULT_HEADER)
             matching = [row for row in results if row["probe_id"] == evidence_id]
             if len(matching) != 1:
