@@ -33,9 +33,11 @@
 This document proposes **basic geospatial support** for TiDB: a MySQL-compatible
 `GEOMETRY` type family, per-column [`SRID`](#terminology), versioned
 [EWKB](#terminology) storage, and the minimal `ST_*` function set that makes geometry
-storable, readable, and queryable by full table scan. It covers **SRID 0** (Cartesian
-plane) and **SRID 4326** ([WGS 84](#terminology) geographic), including the
-[DE-9IM](#terminology) predicates.
+storable, readable, and queryable. It covers **SRID 0** (Cartesian plane) and
+**SRID 4326** ([WGS 84](#terminology) geographic), including the
+[DE-9IM](#terminology) predicates. A geometry predicate has no index to use here, so it
+is evaluated row by row over whatever the access path returns; other predicates on the
+table pick their access path as usual.
 
 It is deliberately **index-free**: the spatial index is specified separately in
 `docs/design/2026-06-25-spatial-index.md` (PR #69473) and builds on this layer. The scope
@@ -289,7 +291,7 @@ meaningful.
     SELECT id, ST_Distance(loc, ST_GeomFromText('POINT(37.5 -122.2)', 4326)) AS m
     FROM stores;
 
-    -- full scan in this layer; the index accelerates it later
+    -- the geometry predicate is evaluated per row here; the index accelerates it later
     SELECT id FROM stores
     WHERE ST_Within(loc, ST_GeomFromText('POLYGON((...))', 4326));
 
@@ -314,8 +316,13 @@ Out of scope here, each with a home:
   niche accessors: a later, parallel expression-layer milestone.
 - **SRIDs beyond 0 and 4326**, the SRS catalog and `ST_Transform`: the extension path
   above.
-- **Coprocessor pushdown** of `ST_*` predicates: lands with or after the index; this layer
-  evaluates predicates at the TiDB root.
+- **Coprocessor pushdown.** The predicates and the measurement functions are ordinary
+  deterministic scalars, so they are pushdown-eligible in principle, and pushing them is
+  worthwhile *independently of the index*: it filters at the storage node instead of
+  shipping every candidate geometry to TiDB. It is out of scope here because it is
+  cross-repo work (tipb signatures plus a TiKV-side evaluator) and is specified with the
+  index design, which owns the pushdown contract. Nothing in this layer blocks it, and for
+  this design it is fine that the functions evaluate at the TiDB root.
 - **The axis-order controls**: MySQL's `axis-order=long-lat` option argument on
   `ST_GeomFromText`/`ST_GeomFromWKB`/`ST_AsText`/`ST_AsBinary`, and `ST_SwapXY`, which let
   a client read or write longitude-first against a latitude-first SRS. Both exist in MySQL
@@ -332,7 +339,7 @@ Out of scope here, each with a home:
 | Charset and collation | Not applicable; the value is binary. |
 | Parser | One-time type and `SRID` grammar change; regenerates `parser.go`, run `make bazel_prepare`. `ST_*` are generic calls. |
 | DDL | New column types and the `SRID` attribute, restricted to 0/4326, plus subtype constraints. |
-| Planner, statistics, executor | `ST_*` evaluate on the normal expression path; predicates are ordinary `Selection`s. No new operator, access path or statistics. |
+| Planner, statistics, executor | `ST_*` evaluate on the normal expression path; geometry predicates are ordinary `Selection`s with no access path of their own, so they filter whatever rows the chosen path returns. No new operator, access path or statistics. |
 | TiKV | None. Values are ordinary binary strings; pushdown is deferred. |
 | TiFlash, BR, TiCDC, Dumpling, Lightning | Regular column data. Tools need only carry the bytes and the `SRID`/type metadata; dump/reload uses MySQL's internal format or WKT, not the stored bytes. |
 | Upgrade | Additive, behind the flag. |
@@ -363,7 +370,7 @@ Out of scope here, each with a home:
 ### Scenario Tests
 
 - A points table answering proximity (`ST_Distance_Sphere ≤ r`) and geofence
-  (`ST_Within(point, polygon)`) by full scan, matching MySQL.
+  (`ST_Within(point, polygon)`), matching MySQL.
 - 4326 edge cases: a query near a pole and one across the antimeridian.
 - Application shape: lat/long ingest via WKT/GeoJSON, read back via `ST_AsGeoJSON`.
 
@@ -379,8 +386,8 @@ Out of scope here, each with a home:
 ### Benchmark Tests
 
 - Geometry ingest and read throughput vs a scalar-encoded baseline.
-- Predicate full-scan latency across selectivities, the pre-index baseline the index layer
-  will be measured against.
+- Geometry-predicate latency across selectivities with no other predicate to narrow the
+  scan, the pre-index baseline the index layer will be measured against.
 - Version 1 (EWKB payload) vs a lean payload: decode ns/op on the point and polygon paths,
   to decide whether a format version 2 is worth adding.
 
