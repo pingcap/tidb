@@ -33,10 +33,11 @@ queries by scanning the cell ranges that cover the query shape and then refining
 candidates with the exact predicate.
 
 The scope of this document is the **index only**. The `GEOMETRY` data type, its
-[EWKB](#terminology) storage, and the `ST_*` functions are treated as a prerequisite
-that lands independently (see Motivation); the index is designed against a small
-contract from that type. Supporting working documents with the full survey, decision
-logs, and a concrete first-deliverable plan live alongside this file under
+[EWKB](#terminology) storage, and the `ST_*` functions are a prerequisite designed
+separately in `docs/design/2026-07-29-geospatial-basic.md` (PR #70420); the index is
+designed against a small contract from that type. Supporting working documents with the
+full survey, decision logs, and a concrete first-deliverable plan live alongside this
+file under
 `docs/design/spatial-index/` (`research.md`, `PLAN.md`, `PLAN-points-mvp.md`,
 `CONTEXT.md`).
 
@@ -72,11 +73,13 @@ geofence queries.
 
 TiDB has no spatial support today: only the `mysql.TypeGeometry` type constant exists
 (`pkg/parser/mysql/type.go`), with no value representation and no `ST_*` functions. The
-geometry type and basic functions are expected to land independently, following the
-staged plan in the earlier geospatial design proposed in PR #38916 (closed unmerged, so
-its `docs/design/2022-10-27-geospatial.md` is not in the repo) and its parser/type work
-(PRs #66602, #60295, #38611 and tikv/tikv#13652). That earlier design explicitly deferred the spatial index,
-stating it "needs more research". This document fills that gap.
+geometry type and basic functions land independently, designed in
+`docs/design/2026-07-29-geospatial-basic.md` (PR #70420), which replaces the earlier
+geospatial design (PR #38916, closed unmerged, so its
+`docs/design/2022-10-27-geospatial.md` is not in the repo) and builds on its parser/type
+work (PRs #66602, #60295, #38611 and tikv/tikv#13652). That earlier design explicitly
+deferred the spatial index, stating it "needs more research". This document fills that
+gap.
 
 Without an index, the queries above are full table scans. The index is what turns them
 into selective lookups once point tables grow large, which is precisely where the demand
@@ -169,8 +172,8 @@ before the handle; the value is empty:
 - The value is empty in the common case. A *covering* index may optionally store the full
   geometry in the value to refine without any row fetch (a size-vs-speed choice). It should
   use whatever internal value encoding the geometry-type prerequisite settles, rather than
-  hardwiring raw EWKB: the type work should investigate a leaner, version-tagged format,
-  since there may be meaningful benefits over EWKB (see Unresolved Questions and
+  hardwiring one here. That design fixes a 1-byte format version with EWKB as version 1,
+  so a leaner layout can follow as a later version without a migration (see
   `spatial-index/storage-format.md`). A global
   index on a partitioned table (a later phase, see Partitioned tables) carries the
   `partition_id` (the `PARTITION BY` physical partition id, not the primary key) so the
@@ -568,12 +571,12 @@ A full survey is in `docs/design/spatial-index/research.md`. Summary:
   to refine without a row fetch, an optional size-vs-speed choice; the
   index-size/write-amplification budget for it.
 - Stored geometry **value** encoding (owned by the geometry-type prerequisite, flagged here
-  because the covering index embeds it and it is a pre-GA lock-in): the type work should
-  investigate a leaner, version-tagged internal format rather than committing to raw EWKB.
-  The PoC found EWKB carries redundancy (per-row SRID, per-(sub)geometry byte-order flags,
-  WKB framing) and a 1-byte format-version tag would keep the format evolvable; a flat-`f64`
-  layout could further cheapen point decode. The measured win is modest, but the lock-in is
-  real, so it is worth investigating before GA. Detail and profiling in
+  because a covering index embeds it): **resolved** there as a 1-byte format version with
+  EWKB as version 1, which removes the pre-GA lock-in this used to carry, since a leaner
+  layout is then a later version rather than a migration. What stays open for that design
+  is whether to ship the leaner version before GA: the PoC found EWKB carries redundancy
+  (per-row SRID, per-(sub)geometry byte-order flags, WKB framing) and a flat-`f64` layout
+  could cheapen point decode, but the measured win is modest. Detail and profiling in
   `spatial-index/storage-format.md`.
 - Where the bbox pre-filter runs: **resolved**, the bbox is in index columns, so the
   existing index-filter machinery pushes it to the coprocessor and runs it before the row
