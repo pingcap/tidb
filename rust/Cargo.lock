@@ -1938,6 +1938,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "tidb-datatype",
  "tidb-error",
  "tidb-log",
  "tidb-metadef",

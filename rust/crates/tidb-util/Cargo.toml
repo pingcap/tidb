@@ -34,6 +34,7 @@ rustix = { workspace = true, features = ["fs"] }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tempfile.workspace = true
+tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
 tracing = "0.1"
 

@@ -1,0 +1,24 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/timeutil"
+source_commit = "11c5a09ba04a5bda32752ca7d6277286753d6906"
+rust_files = [
+  "rust/crates/tidb-util/Cargo.toml",
+  "rust/crates/tidb-util/src/timeutil/mod.rs",
+  "rust/crates/tidb-util/src/timeutil/time_zone.rs",
+]
+
+[[tests]]
+name = "timeutil_package_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "timeutil"]
+
+[[tests]]
+name = "timestamp_storage_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-session", "--lib", "tests_timezone_storage"]
+
+[[tests]]
+name = "column_default_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-executor", "--lib", "column_default::tests"]

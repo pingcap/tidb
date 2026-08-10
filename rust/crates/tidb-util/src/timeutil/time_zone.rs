@@ -141,7 +141,7 @@ pub fn infer_system_tz() -> String {
                 Err(err) => tracing::error!(%err, "locate timezone files failed"),
             }
         }
-        Ok(tz) if !tz.is_empty() && tz != "UTC" && Tz::from_str(&tz).is_ok() => {
+        Ok(tz) if !tz.is_empty() && tz != "UTC" && (tz == "Local" || Tz::from_str(&tz).is_ok()) => {
             return tz;
         }
         _ => {} // $TZ="" or "UTC" (or an unloadable name) means UTC.
@@ -152,8 +152,10 @@ pub fn infer_system_tz() -> String {
 /// Loads a [`TimeZone`] by IANA name (Go `LoadLocation`; `"System"` is the
 /// local zone).
 pub fn load_location(name: &str) -> Result<TimeZone, TimeZoneError> {
-    if name == "System" {
-        return Ok(TimeZone::Local);
+    match name {
+        "" | "UTC" => return Ok(TimeZone::Named(Tz::UTC)),
+        "Local" | "System" => return Ok(TimeZone::Local),
+        _ => {}
     }
     Tz::from_str(name)
         .map(TimeZone::Named)
@@ -244,8 +246,8 @@ pub fn parse_time_zone(s: &str) -> Result<TimeZone, TerrorError> {
         return Ok(system_location());
     }
 
-    if let Ok(tz) = Tz::from_str(s) {
-        return Ok(TimeZone::Named(tz));
+    if let Ok(location) = load_location(s) {
+        return Ok(location);
     }
 
     if let Some(rest) = s.strip_prefix('+').or_else(|| s.strip_prefix('-')) {
@@ -278,23 +280,16 @@ fn unknown_time_zone(s: &str) -> TerrorError {
     ERR_UNKNOWN_TIME_ZONE.generate_with_stack(format!("Unknown or incorrect time zone: '{s}'"))
 }
 
-/// The `[H]H[:MM[:SS]]` subset of Go `types.ParseDuration` that timezone
-/// offsets exercise; returns total seconds.
+/// Parses the same MySQL duration grammar used by Go `ParseTimeZone` and
+/// returns whole seconds. Any warning-producing parse is an error here because
+/// the source accepts the duration only when `types.ParseDuration` returns a
+/// nil error.
 fn parse_duration_hms(s: &str) -> Option<i64> {
-    let mut parts = s.split(':');
-    let hours: i64 = parts.next()?.parse().ok()?;
-    let minutes: i64 = match parts.next() {
-        Some(m) => m.parse().ok()?,
-        None => 0,
-    };
-    let seconds: i64 = match parts.next() {
-        Some(sec) => sec.parse().ok()?,
-        None => 0,
-    };
-    if parts.next().is_some() || minutes >= 60 || seconds >= 60 || hours < 0 {
+    let parsed = tidb_datatype::parse_mysql_duration(s, 0, &Utc, false, false).ok()?;
+    if parsed.event().is_some() {
         return None;
     }
-    Some(hours * 3600 + minutes * 60 + seconds)
+    Some(parsed.nanoseconds() / 1_000_000_000)
 }
 
 #[cfg(test)]
@@ -396,6 +391,43 @@ mod tests {
         assert!(parse_time_zone("-13:00").is_err());
         assert!(parse_time_zone("+14:00").is_ok());
         assert!(parse_time_zone("-12:59").is_ok());
+    }
+
+    #[test]
+    fn go_builtin_location_names() {
+        assert!(matches!(load_location(""), Ok(TimeZone::Named(Tz::UTC))));
+        assert!(matches!(load_location("UTC"), Ok(TimeZone::Named(Tz::UTC))));
+        assert!(matches!(load_location("Local"), Ok(TimeZone::Local)));
+        assert!(matches!(parse_time_zone(""), Ok(TimeZone::Named(Tz::UTC))));
+        assert!(matches!(parse_time_zone("Local"), Ok(TimeZone::Local)));
+
+        let _guard = ENV_LOCK.lock().unwrap();
+        std::env::set_var("TZ", "Local");
+        assert_eq!(infer_system_tz(), "Local");
+        std::env::remove_var("TZ");
+    }
+
+    #[test]
+    fn timezone_offsets_use_mysql_duration_grammar() {
+        for (input, expected) in [
+            ("+2", 2),
+            ("+0200", 2 * 60),
+            ("+123045", 12 * 3600 + 30 * 60 + 45),
+            ("-123045", -(12 * 3600 + 30 * 60 + 45)),
+            ("+0 02:03:04", 2 * 3600 + 3 * 60 + 4),
+            ("+ 2 : 3 : 4", 2 * 3600 + 3 * 60 + 4),
+            ("+02:00:00.4", 2 * 3600),
+            ("+02:00:00.6", 2 * 3600 + 1),
+        ] {
+            let location =
+                parse_time_zone(input).unwrap_or_else(|error| panic!("{input}: {error}"));
+            assert_eq!(zone(&location).1, expected, "{input}");
+        }
+
+        assert!(parse_time_zone("+140000").is_ok());
+        assert!(parse_time_zone("+140001").is_err());
+        assert!(parse_time_zone("-125900").is_ok());
+        assert!(parse_time_zone("-130000").is_err());
     }
 
     // Go `TestZoneName`.

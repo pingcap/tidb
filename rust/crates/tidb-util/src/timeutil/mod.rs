@@ -23,6 +23,9 @@
 //! `time.LoadLocation`'s file I/O; `chrono-tz` resolves names from static
 //! data with no I/O, so the cache is a non-observable performance artifact
 //! with nothing to port.
+//! Time-zone offsets reuse `tidb-datatype`'s source-compatible MySQL duration
+//! parser, so compact, day-prefix, spaced, and fractional forms have one
+//! authority across SQL evaluation and `ParseTimeZone`.
 //!
 //! `time.go`'s `Sleep(ctx, d)` maps to [`sleep`] plus [`SleepContext`]. The
 //! context uses a condition variable, so cancellation wakes a sleeping thread
