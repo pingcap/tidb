@@ -12,14 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of `pkg/util/israce`.
-//!
-//! Go's mutually exclusive `race` and `!race` source files map to the
-//! `tidb-util/race` Cargo feature. The feature is explicit because stable Rust
-//! has no portable compile-time predicate for ThreadSanitizer instrumentation;
-//! sanitizer builds enable it alongside their sanitizer flags. `BUILD.bazel`
-//! maps to the Cargo manifest. The package has no tests, `TestMain`,
-//! benchmarks, fuzz targets, examples, fixtures, or generated files.
+//! Build-time race-instrumentation status.
 
 /// Whether this build uses the source-equivalent race configuration.
 pub const RACE_ENABLED: bool = cfg!(feature = "race");
@@ -28,8 +21,15 @@ pub const RACE_ENABLED: bool = cfg!(feature = "race");
 mod tests {
     use super::*;
 
+    #[cfg(not(feature = "race"))]
     #[test]
-    fn build_variant_matches_the_source_tag_contract() {
-        assert_eq!(RACE_ENABLED, cfg!(feature = "race"));
+    fn default_build_reports_race_disabled() {
+        const { assert!(!RACE_ENABLED) };
+    }
+
+    #[cfg(feature = "race")]
+    #[test]
+    fn race_build_reports_race_enabled() {
+        const { assert!(RACE_ENABLED) };
     }
 }
