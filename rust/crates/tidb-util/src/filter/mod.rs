@@ -12,25 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `pkg/util/filter`: a MySQL-replication-style table filter.
+//! MySQL-replication-style table filter.
 //!
 //! A rule whose value begins with `~` is a regular expression (compiled with
 //! the `regex` crate, matching Go's `regexp`); any other value is a glob-like
 //! pattern handled by the trie [`Selector`](crate::table_rule_selector).
-//! Regex look-around (`(?!...)`, `(?=...)`) is rejected by both engines, so
-//! such rules fail to build in Rust exactly as in Go.
-//!
-//! Divergence from Go: Go's `Filter.Match` is safe for concurrent use (its
-//! result cache is `RWMutex`-guarded, and the trie selector is internally
-//! locked). This port keeps the same single mutex-free shape using
-//! `RefCell` for the selector cache and the match cache, so `Filter` is not
-//! `Sync`; the matching decision is identical.
+//! Regex look-around (`(?!...)`, `(?=...)`) is rejected. The selector and
+//! result cache are internally synchronized for concurrent callers.
 
 mod schema;
 pub use schema::{is_system_schema, DM_HEARTBEAT_SCHEMA, INSPECTION_SCHEMA_NAME};
 
-use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use regex::Regex;
 
@@ -95,12 +89,10 @@ struct NodeEndRule {
 
 /// A table filter in the style of MySQL replication rules (Go `Filter`).
 pub struct Filter {
-    // `match_rules` mutates the trie's internal cache, so it lives behind a
-    // RefCell to keep `Match`/`Apply` on `&self`.
-    selector: RefCell<TrieSelector<NodeEndRule>>,
+    selector: TrieSelector<NodeEndRule>,
     pattern_map: HashMap<String, Regex>,
     rules: Option<Rules>,
-    cache: RefCell<HashMap<String, ActionType>>,
+    cache: RwLock<HashMap<String, ActionType>>,
     case_sensitive: bool,
 }
 
@@ -113,21 +105,26 @@ impl Filter {
                 r.to_lower();
             }
         }
-        let mut selector: TrieSelector<NodeEndRule> = TrieSelector::new();
+        let selector: TrieSelector<NodeEndRule> = TrieSelector::new();
         let mut pattern_map: HashMap<String, Regex> = HashMap::new();
-        init_rules(
-            &mut selector,
-            &mut pattern_map,
-            rules.as_ref(),
-            case_sensitive,
-        )?;
+        init_rules(&selector, &mut pattern_map, rules.as_ref(), case_sensitive)?;
         Ok(Filter {
-            selector: RefCell::new(selector),
+            selector,
             pattern_map,
             rules,
-            cache: RefCell::new(HashMap::new()),
+            cache: RwLock::new(HashMap::new()),
             case_sensitive,
         })
+    }
+
+    fn read_cache(&self) -> RwLockReadGuard<'_, HashMap<String, ActionType>> {
+        self.cache.read().unwrap_or_else(|error| error.into_inner())
+    }
+
+    fn write_cache(&self) -> RwLockWriteGuard<'_, HashMap<String, ActionType>> {
+        self.cache
+            .write()
+            .unwrap_or_else(|error| error.into_inner())
     }
 
     /// Go `ApplyOn`: returns the (case-normalised) clones of the input tables
@@ -183,11 +180,11 @@ impl Filter {
             new_tb.name = new_tb.name.to_lowercase();
         }
         let name = new_tb.to_string();
-        if let Some(&cached) = self.cache.borrow().get(&name) {
+        if let Some(&cached) = self.read_cache().get(&name) {
             return cached == DO;
         }
         let do_ = self.filter_on_schemas(&new_tb) && self.filter_on_tables(&new_tb);
-        self.cache.borrow_mut().insert(new_tb.to_string(), do_);
+        self.write_cache().insert(new_tb.to_string(), do_);
         do_ == DO
     }
 
@@ -228,7 +225,7 @@ impl Filter {
                 }
             }
         }
-        let rule_set = self.selector.borrow_mut().match_rules(a, "");
+        let rule_set = self.selector.match_rules(a, "");
         rule_set
             .iter()
             .any(|r| r.kind == RuleKind::Db && r.is_allow_list == is_allow_check)
@@ -248,14 +245,14 @@ impl Filter {
                 if !self.match_string(&ptb.schema[1..], &tb.schema) {
                     continue;
                 }
-                let rule_set = self.selector.borrow_mut().match_rules(&tb.name, "");
+                let rule_set = self.selector.match_rules(&tb.name, "");
                 if rule_set.iter().any(|r| {
                     r.kind == RuleKind::TblOnlyTblPart && r.is_allow_list == is_allow_check
                 }) {
                     return true;
                 }
             }
-            let rule_set = self.selector.borrow_mut().match_rules(&tb.schema, "");
+            let rule_set = self.selector.match_rules(&tb.schema, "");
             for r in &rule_set {
                 if r.kind == RuleKind::TblOnlyDbPart
                     && r.is_allow_list == is_allow_check
@@ -264,7 +261,7 @@ impl Filter {
                     return true;
                 }
             }
-            let rule_set = self.selector.borrow_mut().match_rules(&tb.schema, &tb.name);
+            let rule_set = self.selector.match_rules(&tb.schema, &tb.name);
             if rule_set
                 .iter()
                 .any(|r| r.kind == RuleKind::TblFull && r.is_allow_list == is_allow_check)
@@ -285,7 +282,7 @@ impl Filter {
 
 // Go `initRules`: compiles regexes and inserts trie rules.
 fn init_rules(
-    selector: &mut TrieSelector<NodeEndRule>,
+    selector: &TrieSelector<NodeEndRule>,
     pattern_map: &mut HashMap<String, Regex>,
     rules: Option<&Rules>,
     case_sensitive: bool,
@@ -355,7 +352,7 @@ fn init_one_regex(
 
 // Go `initSchemaRule`.
 fn init_schema_rule(
-    selector: &mut TrieSelector<NodeEndRule>,
+    selector: &TrieSelector<NodeEndRule>,
     pattern_map: &mut HashMap<String, Regex>,
     db_str: &str,
     is_allow_list: bool,
@@ -380,7 +377,7 @@ fn init_schema_rule(
 
 // Go `initTableRule`.
 fn init_table_rule(
-    selector: &mut TrieSelector<NodeEndRule>,
+    selector: &TrieSelector<NodeEndRule>,
     pattern_map: &mut HashMap<String, Regex>,
     db_str: &str,
     table_str: &str,

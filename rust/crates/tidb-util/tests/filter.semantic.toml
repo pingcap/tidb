@@ -1,0 +1,14 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/filter"
+source_commit = "6f2fe56cd8b1c244efcf8721affe4d33a18be354"
+rust_files = [
+    "rust/crates/tidb-util/src/filter/mod.rs",
+    "rust/crates/tidb-util/src/filter/schema.rs",
+    "rust/crates/tidb-util/src/filter/tests.rs",
+]
+
+[[tests]]
+name = "filter_package_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "filter"]

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use super::*;
+use std::sync::{Arc, Barrier};
 
 fn t(schema: &str, name: &str) -> Table {
     Table::new(schema, name)
@@ -392,4 +393,44 @@ fn system_schema() {
     assert!(is_system_schema("information_schema"));
     assert!(is_system_schema("mysql"));
     assert!(!is_system_schema("test"));
+}
+
+#[test]
+fn filter_supports_concurrent_callers() {
+    let filter = Arc::new(
+        Filter::new(
+            false,
+            Some(rules(&["tenant*"], &[], &[("tenant*", "orders*")], &[])),
+        )
+        .unwrap(),
+    );
+    let start = Arc::new(Barrier::new(8));
+    let mut workers = Vec::new();
+    for _ in 0..8 {
+        let filter = Arc::clone(&filter);
+        let start = Arc::clone(&start);
+        workers.push(std::thread::spawn(move || {
+            start.wait();
+            for _ in 0..500 {
+                assert!(filter.matches(&t("Tenant1", "Orders1")));
+                assert!(!filter.matches(&t("tenant1", "events")));
+                assert!(!filter.matches(&t("other", "orders1")));
+            }
+        }));
+    }
+    for worker in workers {
+        worker.join().unwrap();
+    }
+}
+
+#[test]
+fn poisoned_cache_does_not_add_a_failure_mode() {
+    let filter = Filter::new(false, Some(rules(&["tenant*"], &[], &[], &[]))).unwrap();
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _guard = filter.cache.write().unwrap();
+        panic!("poison filter cache");
+    }));
+
+    assert!(filter.matches(&t("tenant1", "orders1")));
+    assert!(!filter.matches(&t("other", "orders1")));
 }
