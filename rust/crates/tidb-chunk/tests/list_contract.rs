@@ -14,8 +14,6 @@
 
 //! Public contract for `pkg/util/chunk/list.go`.
 
-mod pkg_util_chunk_fixture_observation;
-
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use tidb_chunk::chunk::Chunk;
@@ -114,23 +112,4 @@ fn list_public_contract() {
         empty_rejection.add(Chunk::new_with_capacity(&fields, 1));
     }));
     assert!(panic.is_err());
-
-    let public_semantics = "row pointers, live chunks, append routing, memory accounting, reset/reuse, clear, and early walk termination match the accepted contract";
-    let excluded_mechanisms = "benchmark iteration counts, RNG setup, and elapsed timing have no independent package behavior";
-    pkg_util_chunk_fixture_observation::emit(
-        "CHUNK-LIST-RUNTIME",
-        "The Rust List preserves TiDB's observable row storage, live chunk access, memory-accounting, reuse, and walk behavior; Go benchmark machinery is intentionally not reproduced.",
-        &[
-            (
-                "public-list-semantics",
-                "list_public_contract",
-                public_semantics,
-            ),
-            (
-                "benchmark-mechanisms-excluded",
-                "Go BenchmarkListMemoryUsage, BenchmarkListAdd, and BenchmarkListGetRow wrappers",
-                excluded_mechanisms,
-            ),
-        ],
-    );
 }

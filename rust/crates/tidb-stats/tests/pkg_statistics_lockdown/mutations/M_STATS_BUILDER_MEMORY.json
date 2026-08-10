@@ -1,1 +1,0 @@
-{"mutation_id":"M_STATS_BUILDER_MEMORY","replacements":[{"expected_count":1,"new":"tracker.consume(bytes);","old":"tracker.buffered_consume(&mut self.buffered_mem_size, bytes);"}],"rust_path":"rust/crates/tidb-stats/src/builder.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"48a7ac08fdab18560fad85dbfae73e17c2418786ae807c740a1a570210a1a981"}

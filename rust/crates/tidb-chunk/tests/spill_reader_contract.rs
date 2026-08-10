@@ -14,8 +14,6 @@
 
 //! Public boundaries for exact spill reads and bounded row-container scans.
 
-mod pkg_util_chunk_fixture_observation;
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -173,32 +171,4 @@ fn row_container_reader_extent_boundary() {
     reader.close();
     assert!(reader.current().is_none());
     rows.close();
-
-    let public_semantics =
-        "empty, in-memory, spilled, and failed reads preserve the public row sequence and latched error";
-    let concurrent_semantics =
-        "all rows appear exactly once and in order while a shallow handle spills";
-    let excluded_mechanisms =
-        "no package contract depends on worker scheduling, channel capacity, finalizers, or benchmark timing";
-    pkg_util_chunk_fixture_observation::emit(
-        "ROW-CONTAINER-READER-RUNTIME",
-        "The Rust reader preserves TiDB's observable row, error, extent, close, and concurrent-spill behavior; Go goroutine, channel, finalizer, and benchmark timing machinery has no independent package contract and is intentionally not reproduced.",
-        &[
-            (
-                "public-reader-semantics",
-                "row_container_reader_extent_boundary plus focused reader unit tests",
-                public_semantics,
-            ),
-            (
-                "concurrent-spill-semantics",
-                "a_live_reader_survives_a_concurrent_spill",
-                concurrent_semantics,
-            ),
-            (
-                "runtime-mechanisms-excluded",
-                "Go worker and benchmark-only source nodes",
-                excluded_mechanisms,
-            ),
-        ],
-    );
 }

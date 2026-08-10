@@ -1,1 +1,0 @@
-{"mutation_id":"M_CHUNK_UTIL_COLUMN_SWAP","replacements":[{"expected_count":1,"new":"let _ = (first, output_index);","old":"output.make_ref(first, output_index);"}],"rust_path":"rust/crates/tidb-chunk/src/chunk_util.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"0920975ee5156791af55df8828c2bf10f9090e28e4fed7257614870cf0243156"}

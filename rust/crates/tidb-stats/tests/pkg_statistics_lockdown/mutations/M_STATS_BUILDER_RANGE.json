@@ -1,1 +1,0 @@
-{"mutation_id":"M_STATS_BUILDER_RANGE","replacements":[{"expected_count":1,"new":"ranges.sort_by_key(|(start, _)| std::cmp::Reverse(*start));","old":"ranges.sort_by_key(|(start, _)| *start);"}],"rust_path":"rust/crates/tidb-stats/src/builder.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"48a7ac08fdab18560fad85dbfae73e17c2418786ae807c740a1a570210a1a981"}

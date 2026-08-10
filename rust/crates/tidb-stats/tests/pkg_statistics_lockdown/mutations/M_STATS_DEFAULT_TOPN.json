@@ -1,1 +1,0 @@
-{"mutation_id":"M_STATS_DEFAULT_TOPN","replacements":[{"expected_count":1,"new":"pub const DEFAULT_TOP_N_VALUE: usize = 99;","old":"pub const DEFAULT_TOP_N_VALUE: usize = 100;"}],"rust_path":"rust/crates/tidb-stats/src/constants.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"7ea5d565e6262ed4a3928cafccb4a6aaebc6019c342b273b6c47d8022274cdad"}

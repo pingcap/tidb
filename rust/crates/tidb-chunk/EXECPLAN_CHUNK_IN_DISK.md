@@ -66,7 +66,9 @@ The accepted authority is `pkg/util/chunk/chunk_in_disk.go` and its direct test 
 
 The Rust implementation is `rust/crates/tidb-chunk/src/chunk_in_disk.rs`; `DiskFileReaderWriter` in `chunk_util.rs` owns the checksum/encryption stack. Live consumers are hash aggregation in `tidb-executor/src/hash_agg/spill.rs`, sorted partitions in `sort_partition.rs`, and TopN runs in `topn_spill.rs`.
 
-The package receipt lives at `rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown`. `ledgers/chunk_in_disk.go.tsv` contains 102 production obligations and `ledgers/chunk_in_disk_test.go.tsv` contains 30 direct-test obligations. Both begin this plan entirely UNCLASSIFIED.
+The current semantic package specification is
+`rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown.toml`; its generated
+receipt is the adjacent JSON file.
 
 ## Plan of Work
 
@@ -89,7 +91,7 @@ From repository root, WIP validation is:
 
 The official incremental receipt check is:
 
-    python3 rust/scripts/go-package-lockdown.py --root . check --spec rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown/package.toml --accepted-source-commit 665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f
+    python3 rust/scripts/go-package-lockdown.py check --spec rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown.toml
 
 After this artifact closes, that checker must advance past both `chunk_in_disk` ledgers and stop only at the next unrelated incomplete artifact.
 

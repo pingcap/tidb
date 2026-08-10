@@ -1,9 +1,0 @@
---- stdout ---
-
-running 1 test
-test row_text_covers_every_eval_type_and_preserves_source_bytes ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
-
-
---- stderr ---

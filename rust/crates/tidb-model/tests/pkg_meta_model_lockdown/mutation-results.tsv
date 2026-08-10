@@ -1,2 +1,0 @@
-# mutation-results-v1
-sequence	attempt_id	mutation_id	prior_history_sha256	prior_checkpoint_sha256	attempt_plan_path	attempt_plan_sha256	run_artifact_path	run_artifact_sha256	verification_artifact_path	verification_artifact_sha256	history_sha256

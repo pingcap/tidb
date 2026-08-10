@@ -1,9 +1,0 @@
---- stdout ---
-
-running 1 test
-test row_and_chunk_text_match_the_accepted_source_oracle ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 7 filtered out; finished in 0.00s
-
-
---- stderr ---

@@ -1,1 +1,0 @@
-{"mutation_id":"M_STATS_CMS_DECODE_GROUPS","replacements":[{"expected_count":1,"new":"            3 => return Err(CodecError::InvalidWireType(wire)),","old":"            3 => depth += 1,"}],"rust_path":"rust/crates/tidb-stats/src/cmsketch.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"f7a9eff86af27d66a92169beeaa4ed547ff7315bee0b610b366c6bd309840cd0"}

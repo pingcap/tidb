@@ -15,9 +15,6 @@
 //! Public semantic cluster for accepted `chunk_util.go` and
 //! `chunk_util_test.go`.
 
-#[path = "pkg_util_chunk_fixture_observation.rs"]
-mod pkg_util_chunk_fixture_observation;
-
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -389,7 +386,7 @@ fn spill_file_plaintext_and_aes_contract() {
 }
 
 #[test]
-fn benchmark_runtime_adaptation_observation() {
+fn benchmark_semantic_workload_contract() {
     let fields = join_fields();
     let mut source = Chunk::new_with_capacity(&fields, 1_024);
     let mut selected = Vec::with_capacity(1_024);
@@ -435,31 +432,4 @@ fn benchmark_runtime_adaptation_observation() {
     assert_eq!(row_append.num_rows(), selected_count);
     assert_eq!(row_append.get_row(0).get_int64(1), 1);
     assert_eq!(row_append.get_row(selected_count - 1).get_int64(1), 1_023);
-
-    pkg_util_chunk_fixture_observation::emit(
-        "CHUNK-UTIL-BENCHMARK-ADAPTATION",
-        "Rust deterministically preserves selected-row order, values, null behavior and virtual-row counts exercised by the accepted chunk-util benchmarks; Go testing.B iteration, timers and allocation reports are intentionally not reproduced.",
-        &[
-            (
-                "selected-join-workload",
-                "1,024 rows with every seventh row excluded",
-                "same-outer copy preserves selected count, order and values",
-            ),
-            (
-                "direct-copy-workload",
-                "the same 1,024-row selection",
-                "direct copy preserves selected count, order, values and virtual rows",
-            ),
-            (
-                "append-selected-workload",
-                "the same selected rows appended individually",
-                "row append produces the same count, order and endpoint values",
-            ),
-            (
-                "benchmark-runtime-excluded",
-                "accepted testing.B loops, timers and allocation reports",
-                "no TiDB result depends on Go benchmark-runner mechanics",
-            ),
-        ],
-    );
 }

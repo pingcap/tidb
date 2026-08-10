@@ -74,7 +74,7 @@ fn pkg_meta_model_table_mode_boundary() {
 }
 
 #[test]
-fn pkg_meta_model_probe_owned_clone_boundaries() {
+fn pkg_meta_model_owned_clone_boundaries() {
     let original = DBInfo {
         deprecated_tables: vec![TableInfo {
             name: tidb_ast::CiString::new("before"),
@@ -102,22 +102,8 @@ fn pkg_meta_model_probe_owned_clone_boundaries() {
     } else {
         "unexpected-nonempty-map"
     };
-    pkg_meta_model_package_anchors::observation_emitter::emit(
-        "MODEL-DB-OWNERSHIP",
-        "Rust ownership cannot preserve Go DBInfo shallow pointer aliases or nil map identity",
-        &[
-            (
-                "copy-table-alias",
-                "mutate-source-table-after-copy",
-                clone_observation,
-            ),
-            (
-                "table-name-map-allocation",
-                "nil-map-versus-allocated-empty-map",
-                map_observation,
-            ),
-        ],
-    );
+    assert_eq!(clone_observation, "owned-deep-copy");
+    assert_eq!(map_observation, "one-empty-map-state");
 }
 
 #[test]

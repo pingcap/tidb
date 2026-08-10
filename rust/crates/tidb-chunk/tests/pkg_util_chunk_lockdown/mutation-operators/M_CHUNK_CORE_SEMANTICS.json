@@ -1,1 +1,0 @@
-{"mutation_id":"M_CHUNK_CORE_SEMANTICS","replacements":[{"expected_count":1,"new":"        let capacity = capacity;","old":"        let capacity = capacity.min(max_chunk_size);"}],"rust_path":"rust/crates/tidb-chunk/src/chunk.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"53cce564d189506836b830b582cf04c2bc79fa2fedb05a3e188336ad9a2429de"}

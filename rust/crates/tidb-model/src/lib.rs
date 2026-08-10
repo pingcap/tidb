@@ -14,9 +14,9 @@
 
 //! `pkg/meta/model`: TiDB schema/table metadata types.
 //!
-//! The atomic Go-package claim is tracked by the generated receipt under
-//! `tests/pkg_meta_model_lockdown/`. Individual modules and older file-level
-//! receipts are not independent whole-package completion claims.
+//! The Go-package seed is tracked by
+//! `tests/pkg_meta_model_lockdown.{toml,receipt.json}`. Individual modules are
+//! not independent whole-package completion claims.
 
 pub mod action_type;
 pub mod bdr;

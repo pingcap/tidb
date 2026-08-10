@@ -12,11 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dedicated boundary and measured-representation anchors for the complete
-//! `pkg/meta/model` package receipt.
-
-#[path = "pkg_meta_model_observation_emitter.rs"]
-pub(crate) mod observation_emitter;
+//! Dedicated semantic boundaries for `pkg/meta/model`.
 
 use tidb_model::{
     BackfillMeta, BackfillState, ColumnInfo, DDLReorgMeta, EngineAttribute, GoAny, GoShared,
@@ -253,7 +249,7 @@ fn pkg_meta_model_resource_boundary() {
 }
 
 #[test]
-fn pkg_meta_model_probe_column_representation_boundaries() {
+fn pkg_meta_model_column_representation_boundaries() {
     let mut source = ColumnInfo::default();
     source.dependences.insert("a".to_owned());
     let clone = source.clone();
@@ -280,20 +276,10 @@ fn pkg_meta_model_probe_column_representation_boundaries() {
     } else {
         "unexpected-default-domain"
     };
-    observation_emitter::emit(
-        "MODEL-COLUMN-REPRESENTATION",
-        "Rust column ownership preserves the Go interface, shallow map identity, complete uint flag word, and nil/allocated map states",
-        &[
-            ("clone-map-alias", "mutate-source-dependences", clone_mode),
-            ("dependency-allocation", "nil-versus-empty-map", empty_mode),
-            ("flag-width", "Go-uint-flags", flag_width),
-            (
-                "arbitrary-default-value",
-                "pre-JSON-Go-interface-value",
-                default_domain,
-            ),
-        ],
-    );
+    assert_eq!(clone_mode, "shared-map-backing");
+    assert_eq!(empty_mode, "nil-and-allocated-empty");
+    assert_eq!(flag_width, "u64");
+    assert_eq!(default_domain, "open-go-interface-domain");
 }
 
 #[test]
@@ -364,7 +350,7 @@ fn pkg_meta_model_raw_json_boundary() {
 }
 
 #[test]
-fn pkg_meta_model_probe_vector_allocation_boundaries() {
+fn pkg_meta_model_vector_allocation_boundaries() {
     let index_from_null: IndexInfo = serde_json::from_str(r#"{"idx_cols":null}"#).unwrap();
     let index_from_empty: IndexInfo = serde_json::from_str(r#"{"idx_cols":[]}"#).unwrap();
     let index_mode = if serde_json::to_value(index_from_null).unwrap()
@@ -421,33 +407,15 @@ fn pkg_meta_model_probe_vector_allocation_boundaries() {
     } else {
         "unexpected-nonempty-ddl-columns"
     };
-    observation_emitter::emit(
-        "MODEL-VECTOR-ALLOCATION",
-        "Index pointer slices preserve Go nil, allocated-empty, and null elements; remaining table and partition slices are measured separately",
-        &[
-            ("index-columns", "null-versus-empty-idx_cols", index_mode),
-            ("table-columns", "null-versus-empty-cols", table_mode),
-            (
-                "pointer-element-clone",
-                "mutate-source-index-column",
-                clone_mode,
-            ),
-            (
-                "arbitrary-equality-operand",
-                "Go-any-and-typed-nil",
-                equality_mode,
-            ),
-            (
-                "partition-runtime-list",
-                "nil-versus-empty-DDLColumns",
-                partition_state,
-            ),
-        ],
-    );
+    assert_eq!(index_mode, "allocation-distinguished");
+    assert_eq!(table_mode, "allocation-distinguished");
+    assert_eq!(clone_mode, "owned-deep-elements");
+    assert_eq!(equality_mode, "typed-IndexInfo-only");
+    assert_eq!(partition_state, "one-empty-ddl-columns-state");
 }
 
 #[test]
-fn pkg_meta_model_probe_placement_callback_surface() {
+fn pkg_meta_model_placement_callback_surface() {
     let empty = PlacementSettings::default().to_string();
     let empty_mode = if empty.is_empty() {
         "empty-render"
@@ -459,22 +427,8 @@ fn pkg_meta_model_probe_placement_callback_surface() {
         ..Default::default()
     }
     .to_string();
-    observation_emitter::emit(
-        "MODEL-PLACEMENT-CALLBACK-SURFACE",
-        "Rust ports every owning call-site rendering but has no arbitrary variadic side-effecting separator callback API",
-        &[
-            (
-                "default-call-site",
-                "zero-settings-default-separator",
-                empty_mode,
-            ),
-            (
-                "single-setting-call-site",
-                "primary-region-default-separator",
-                &one,
-            ),
-        ],
-    );
+    assert_eq!(empty_mode, "empty-render");
+    assert_eq!(one, "PRIMARY_REGION=\"r1\"");
 }
 
 #[test]
@@ -499,7 +453,7 @@ fn pkg_meta_model_schema_diff_affected_options_boundary() {
 }
 
 #[test]
-fn pkg_meta_model_probe_job_runtime_representation() {
+fn pkg_meta_model_job_runtime_representation() {
     let multi = MultiSchemaInfo::default();
     let runtime_lists = if !multi.add_columns.is_allocated()
         && !multi.add_indexes.is_allocated()
@@ -525,27 +479,13 @@ fn pkg_meta_model_probe_job_runtime_representation() {
     } else {
         "unexpected-wrapper-ownership"
     };
-    observation_emitter::emit(
-        "MODEL-JOB-RUNTIME-REPRESENTATION",
-        "Rust job ownership exposes Go interface values, shared job identity, and distinct nil/allocated-empty slice headers",
-        &[
-            (
-                "multi-schema-runtime-lists",
-                "nil-versus-empty-runtime-slices",
-                runtime_lists,
-            ),
-            (
-                "typed-job-args",
-                "arbitrary-JobArgs-implementation",
-                argument_domain,
-            ),
-            ("job-wrapper-bytes", "nil-versus-empty-bytes", byte_mode),
-        ],
-    );
+    assert_eq!(runtime_lists, "nil-runtime-slice-state");
+    assert_eq!(argument_domain, "go-interface-nil-state");
+    assert_eq!(byte_mode, "shared-job-and-allocated-empty-bytes");
 }
 
 #[test]
-fn pkg_meta_model_probe_process_hooks() {
+fn pkg_meta_model_process_hooks() {
     let index_default = if tidb_model::index::get_global_index_v1_supported() {
         "false-to-true-runtime-toggle"
     } else {
@@ -560,19 +500,13 @@ fn pkg_meta_model_probe_process_hooks() {
         .get_job_interval()
         .map(|nanoseconds| nanoseconds.to_string())
         .unwrap_or_else(|_| "parse-error".to_owned());
-    observation_emitter::emit(
-        "MODEL-PROCESS-HOOKS",
-        "Rust exposes explicit defaults but not Go kerneltype startup selection or the TTL test failpoint",
-        &[
-            ("global-index-startup", "classic-process-default", index_default),
-            ("job-version-startup", "classic-process-default", job_default),
-            ("ttl-failpoint", "ordinary-empty-job-interval", &ttl),
-        ],
-    );
+    assert_eq!(index_default, "classic-false-default");
+    assert_eq!(job_default, "classic-v1");
+    assert_eq!(ttl, "3600000000000");
 }
 
 #[test]
-fn pkg_meta_model_probe_reorg_identity() {
+fn pkg_meta_model_reorg_identity() {
     let mut source = DDLReorgMeta::default();
     let warning_counts =
         tidb_model::go_runtime::GoShared::new(std::collections::BTreeMap::from([("w".into(), 1)]));
@@ -593,26 +527,12 @@ fn pkg_meta_model_probe_reorg_identity() {
     } else {
         "unexpected-shared-atomic"
     };
-    observation_emitter::emit(
-        "MODEL-REORG-IDENTITY",
-        "Rust reorg structural clones preserve Go shared map pointers and independent outer atomic cells",
-        &[
-            (
-                "warning-map-alias",
-                "mutate-source-warning-count",
-                warning_mode,
-            ),
-            (
-                "runtime-object-identity",
-                "independent-outer-atomics",
-                object_mode,
-            ),
-        ],
-    );
+    assert_eq!(warning_mode, "shared-map-backing");
+    assert_eq!(object_mode, "independent-outer-atomics");
 }
 
 #[test]
-fn pkg_meta_model_probe_native_abi_boundaries() {
+fn pkg_meta_model_native_abi_boundaries() {
     let column = if std::mem::size_of::<ColumnInfo>() > 0 {
         "native-rust-layout"
     } else {
@@ -628,17 +548,7 @@ fn pkg_meta_model_probe_native_abi_boundaries() {
     } else {
         "unexpected-zero-layout"
     };
-    observation_emitter::emit(
-        "MODEL-NATIVE-ABI",
-        "Rust native layouts are not Go unsafe.Sizeof ABI values and safe references have no nil receiver",
-        &[
-            ("column-size", "Go-unsafe-ColumnInfo", column),
-            ("job-size", "Go-unsafe-Job-and-SubJob", job),
-            (
-                "partition-size-and-nil-receiver",
-                "Go-unsafe-PartitionDefinition",
-                partition,
-            ),
-        ],
-    );
+    assert_eq!(column, "native-rust-layout");
+    assert_eq!(job, "native-rust-layout");
+    assert_eq!(partition, "native-rust-layout");
 }

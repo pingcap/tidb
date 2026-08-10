@@ -62,7 +62,9 @@ The production/API and exact `chunk.go`/`row.go` receipt milestones are complete
 
 The accepted authority is `pkg/util/chunk/chunk.go` and `row.go` at commit `665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f`. Rust production code is `rust/crates/tidb-chunk/src/chunk.rs` and `row.rs`. `Chunk` owns column slots and explicit nil-versus-initialized-empty state. `Row<'a>` is a borrowed physical row cursor. `GoString` is the repository's arbitrary-byte Go string representation.
 
-The package receipt is under `rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown`. `ledgers/chunk.go.tsv` contains 222 obligations and `ledgers/row.go.tsv` contains 74; both are currently entirely `UNCLASSIFIED`. A `PORTED` rule needs a registered Rust symbol, a public or focused boundary anchor, and current mutation evidence. Runtime or representation mechanics that are deliberately not copied need immutable evidence for `DECLINED` or `UNREACHABLE` verdicts.
+The current semantic package specification is
+`rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown.toml`; its generated
+receipt is the adjacent JSON file.
 
 ## Plan of Work
 
@@ -98,7 +100,7 @@ After the public APIs exist, run:
 
 Run the official receipt checker from repository root:
 
-    python3 rust/scripts/go-package-lockdown.py --root . check --spec rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown/package.toml --accepted-source-commit 665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f
+    python3 rust/scripts/go-package-lockdown.py check --spec rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown.toml
 
 The intermediate expected result is a failure in the next unrelated unclassified ledger, not `chunk.go` or `row.go`.
 

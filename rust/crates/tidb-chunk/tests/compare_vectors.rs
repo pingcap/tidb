@@ -25,8 +25,6 @@
 //! drives the REAL Go package; the recipes below rebuild the same cells and
 //! datums from the same names.
 
-mod pkg_util_chunk_fixture_observation;
-
 use std::cmp::Ordering;
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{
@@ -618,22 +616,5 @@ fn compare_public_contract() {
     assert_eq!(
         tidb_chunk::chunk::Chunk::upper_bound(&bounds, 0, &Datum::Int(3)),
         3,
-    );
-
-    pkg_util_chunk_fixture_observation::emit(
-        "CHUNK-COMPARE-TYPED-DATUM",
-        "Rust preserves every typed comparison contract; Go's opaque KindInterface is intentionally excluded rather than adding an untyped GoAny box.",
-        &[
-            (
-                "raw-default-equal",
-                "Datum::Raw([0]) against a nonmatching chunk cell",
-                "Ordering::Equal matches Go Compare's default arm",
-            ),
-            (
-                "opaque-interface-excluded",
-                "Go types.KindInterface",
-                "the Rust Datum enum has no opaque interface variant; SQL comparison callers remain typed",
-            ),
-        ],
     );
 }

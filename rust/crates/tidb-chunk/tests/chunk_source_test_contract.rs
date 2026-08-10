@@ -14,8 +14,6 @@
 
 //! Public semantic boundary for accepted `pkg/util/chunk/chunk_test.go`.
 
-mod pkg_util_chunk_fixture_observation;
-
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{BinaryJSON, Datum, FieldType, FieldTypeCode, MyDecimal};
 
@@ -245,7 +243,7 @@ fn source_copy_decimal_memory_and_identity_contract() {
 }
 
 #[test]
-fn benchmark_runtime_adaptation_observation() {
+fn benchmark_semantic_workload_contract() {
     let fields = [
         FieldType::new(FieldTypeCode::LongLong),
         FieldType::new(FieldTypeCode::VarString),
@@ -269,26 +267,4 @@ fn benchmark_runtime_adaptation_observation() {
     chunk.grow_and_reset(1_024);
     assert_eq!(chunk.num_rows(), 0);
     assert!(chunk.memory_usage() >= initial_memory);
-
-    pkg_util_chunk_fixture_observation::emit(
-        "CHUNK-TEST-BENCHMARK-ADAPTATION",
-        "Rust deterministically preserves the append, access, batch, grow/reset and memory results exercised by the accepted benchmarks; Go testing.B iteration, allocation reporting, timers, sub-benchmark names and anti-optimization output are intentionally not reproduced.",
-        &[
-            (
-                "semantic-workload-results",
-                "1,000 fixed and variable cells plus one 1,000-row batch append",
-                "row count, last values, and batch order are exact",
-            ),
-            (
-                "growth-and-memory-results",
-                "memory measurement followed by grow/reset",
-                "storage remains accounted and rows reset to zero",
-            ),
-            (
-                "benchmark-runtime-excluded",
-                "accepted testing.B loops, timers, allocation reports, case names, and accumulator print",
-                "no TiDB result depends on these Go test-runner mechanisms",
-            ),
-        ],
-    );
 }

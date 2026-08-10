@@ -1,1 +1,0 @@
-{"mutation_id":"M_STATS_ESTIMATE_CALCULATE","replacements":[{"expected_count":1,"new":"(row_count, scale_ratio)","old":"(row_count, 1)"}],"rust_path":"rust/crates/tidb-stats/src/estimate.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"fa3812441a1008f786c844f755fea18b8d65009de97904e34964aa91d799b5c7"}

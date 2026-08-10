@@ -194,8 +194,4 @@ fn benchmark_workloads_keep_codec_semantics_live() {
     assert_eq!(decoded_rows, 64 * 1_024);
     assert_eq!(encoded_bytes, 64 * image.len());
     assert_eq!(source.get_row(0).get_datum(0, &fields[0]), Datum::Int(0));
-    println!(
-        "{}",
-        r#"LOCKDOWN_OBSERVATION {"boundary_observations":[{"input":"1,024 fixed and variable rows encoded and decoded for 64 deterministic repetitions","name":"codec-workload-results","observed":"every decode returns 1,024 rows and every encode returns the accepted byte length"},{"input":"accepted unsafe slice reinterpretation and all-not-null static initialization","name":"runtime-storage-adaptation","observed":"Rust emits the same native-endian offsets and all-one bitmap bytes through safe typed storage"},{"input":"accepted testing.B loops, timer reset and allocation behavior","name":"benchmark-runtime-excluded","observed":"no TiDB result depends on Go benchmark-runner mechanics"}],"conclusion":"Rust preserves the deterministic encode, decode, DecodeToChunk, fixed/variable and null-bitmap results exercised by the accepted codec benchmarks; unsafe slice reinterpretation, static initialization mechanics and testing.B timing are intentionally not reproduced.","probe_id":"CHUNK-CODEC-RUNTIME-ADAPTATION","schema":"go-package-lockdown-runtime-observation-v1","source_commit":"665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f"}"#
-    );
 }

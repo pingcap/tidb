@@ -1,1 +1,0 @@
-{"mutation_id":"M_STATS_ESTIMATE_GLOBAL_CLAMP","replacements":[{"expected_count":1,"new":"ndv_union.wrapping_sub(ndv_other)","old":"0_i64.max(ndv_union.wrapping_sub(ndv_other))"}],"rust_path":"rust/crates/tidb-stats/src/estimate.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"fa3812441a1008f786c844f755fea18b8d65009de97904e34964aa91d799b5c7"}

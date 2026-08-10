@@ -1,1 +1,0 @@
-{"mutation_id":"M_STATS_ANALYZE_RESULT_DESTROY","replacements":[{"expected_count":1,"new":"self.fm_sketches.truncate(self.fm_sketches.len());","old":"self.fm_sketches.clear();"}],"rust_path":"rust/crates/tidb-stats/src/analyze_results.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"98bd3ecf74bd36a32cb0b0e1d43f1876034d981f78aed1c44c2f2aabc818c07b"}

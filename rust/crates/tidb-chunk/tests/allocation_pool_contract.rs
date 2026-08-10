@@ -14,8 +14,6 @@
 
 //! Public contract for `pkg/util/chunk/alloc.go` and `pool.go`.
 
-mod pkg_util_chunk_fixture_observation;
-
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -202,28 +200,6 @@ fn allocation_pool_public_contract() {
     let created_by_put = new_chunk_from_pool_with_capacity(&one_longlong, 29);
     assert_eq!(created_by_put.capacity(), 29);
     assert_eq!(created_by_put.num_rows(), 0);
-
-    pkg_util_chunk_fixture_observation::emit(
-        "CHUNK-ALLOCATION-POOL-RUNTIME",
-        "Rust preserves TiDB's bounded allocator and physical-width pool behavior through ownership-safe leases; Go pointer invalidation, sync.Pool GC eviction, and benchmark timing are intentionally not reproduced.",
-        &[
-            (
-                "allocator-and-wrapper-semantics",
-                "configuration;allocate;drop;reset;hook;sync;empty",
-                "capacity, required rows, reuse admission, hook-once, and synchronized calls match",
-            ),
-            (
-                "pool-width-and-alias-semantics",
-                "reachable var;4;8;40 widths;capacity buckets;aliased owners",
-                "reachable physical widths stay isolated, returned columns reset, and duplicate aliases publish one owner",
-            ),
-            (
-                "runtime-mechanisms-excluded",
-                "Go raw pointers; sync.Pool GC; benchmark iteration and timing",
-                "Rust ownership and synchronization preserve observable behavior without reproducing runtime machinery",
-            ),
-        ],
-    );
 }
 
 #[test]

@@ -1,9 +1,0 @@
---- stdout ---
-
-running 1 test
-test whole_chunk_spill_get_and_fill_preserve_source_state ... ok
-
-test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 6 filtered out; finished in 0.00s
-
-
---- stderr ---
