@@ -88,26 +88,6 @@ fn walk_statement_markers(stmt: &mut Stmt, visit: &mut dyn FnMut(&mut tidb_ast::
     tidb_ast::Visitable::accept(stmt, &mut MarkerVisitor { visit });
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{bind_parameters, parameter_count};
-    use tidb_datatype::Datum;
-
-    #[test]
-    fn markers_in_derived_tables_and_join_conditions_are_counted_and_bound() {
-        let sql = "SELECT COUNT(*) FROM (SELECT o.o_id FROM orders o \
-                   LEFT JOIN order_line ol ON ol.ol_o_id = ? \
-                   WHERE o.o_w_id = ?) AS t WHERE t.o_id > 0";
-        let mode = tidb_parser::SqlMode::default();
-
-        assert_eq!(parameter_count(sql, mode).unwrap(), 2);
-        let bound = bind_parameters(sql, &[Datum::Int(7), Datum::Int(3)], mode).unwrap();
-        assert_eq!(parameter_count(&bound, mode).unwrap(), 0);
-        assert!(bound.contains("`ol`.`ol_o_id`=7"), "{bound}");
-        assert!(bound.contains("`o`.`o_w_id`=3"), "{bound}");
-    }
-}
-
 /// Replaces each marker with its value, in the parser's own left-to-right
 /// marker order.
 fn bind_statement_markers(
@@ -141,4 +121,24 @@ fn bind_statement_markers(
 /// Counts the markers without changing them.
 fn count_statement_markers(stmt: &mut Stmt, counted: &mut usize) {
     walk_statement_markers(stmt, &mut |_| *counted += 1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bind_parameters, parameter_count};
+    use tidb_datatype::Datum;
+
+    #[test]
+    fn markers_in_derived_tables_and_join_conditions_are_counted_and_bound() {
+        let sql = "SELECT COUNT(*) FROM (SELECT o.o_id FROM orders o \
+                   LEFT JOIN order_line ol ON ol.ol_o_id = ? \
+                   WHERE o.o_w_id = ?) AS t WHERE t.o_id > 0";
+        let mode = tidb_parser::SqlMode::default();
+
+        assert_eq!(parameter_count(sql, mode).unwrap(), 2);
+        let bound = bind_parameters(sql, &[Datum::Int(7), Datum::Int(3)], mode).unwrap();
+        assert_eq!(parameter_count(&bound, mode).unwrap(), 0);
+        assert!(bound.contains("`ol`.`ol_o_id`=7"), "{bound}");
+        assert!(bound.contains("`o`.`o_w_id`=3"), "{bound}");
+    }
 }
