@@ -218,7 +218,7 @@ pub struct StmtContext {
     /// advances, shared across every statement of one session. `None` is a
     /// context with no session behind it (a test, a DEFAULT expression
     /// folded at DDL time), where `RAND()` is unsupported rather than wrong.
-    rand_session: Option<Rc<RefCell<MysqlRng>>>,
+    rand_session: Option<Rc<MysqlRng>>,
     /// Go `SessionVars.userVars`: the session's user variables, keyed
     /// lowercased. The SESSION owns the map and lends it here, because `@x :=
     /// expr` writes it MID-STATEMENT, once per row, and a later select-list
@@ -935,7 +935,7 @@ impl StmtContext {
     /// lifetime (shared across statements, unlike constant `RAND(N)`'s
     /// per-statement generators).
     #[must_use]
-    pub fn with_rand_session(mut self, rand_session: Rc<RefCell<MysqlRng>>) -> Self {
+    pub fn with_rand_session(mut self, rand_session: Rc<MysqlRng>) -> Self {
         self.rand_session = Some(rand_session);
         self
     }
@@ -1401,7 +1401,7 @@ impl Columns for StmtContext {
     }
 
     fn rand_next(&self) -> Option<f64> {
-        self.rand_session.as_ref().map(|rng| rng.borrow_mut().gen())
+        self.rand_session.as_ref().map(|rng| rng.gen())
     }
 
     fn rand_seeded_next(&self, key: usize, seed: i64) -> Option<f64> {
@@ -1631,10 +1631,10 @@ mod tests {
 
     #[test]
     fn rand_next_advances_the_attached_session_generator() {
-        let rng = Rc::new(RefCell::new(MysqlRng::new_with_seed(1)));
+        let rng = Rc::new(MysqlRng::new_with_seed(1));
         let ctx = StmtContext::for_query().with_rand_session(Rc::clone(&rng));
         // Matches `MysqlRng::new_with_seed(1)`'s own pinned sequence
-        // (`rng.rs`'s `source_seed_vectors_match`), read through the
+        // (`tidb-util::mathutil`'s source seed vectors), read through the
         // `Columns` seam instead of the generator directly.
         assert_eq!(ctx.rand_next(), Some(0.40540353712197724));
         assert_eq!(ctx.rand_next(), Some(0.8716141803857071));

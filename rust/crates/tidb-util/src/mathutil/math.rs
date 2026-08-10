@@ -139,12 +139,11 @@ where
 }
 
 #[cfg(test)]
-#[allow(non_snake_case)]
 mod tests {
     use super::*;
 
     #[test]
-    fn TestStrLenOfUint64Fast() {
+    fn test_str_len_of_uint64_fast() {
         let mut value = 0x9e37_79b9_7f4a_7c15_u64;
         for _ in 0..1_000_000 {
             value ^= value << 13;
@@ -183,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn TestClamp() {
+    fn test_clamp() {
         assert_eq!(clamp(100, 1, 3), 3);
         assert_eq!(clamp(2.0_f64, 1.0, 3.0), 2.0);
         assert_eq!(clamp(0.0_f32, 1.0, 3.0), 1.0);
@@ -195,7 +194,7 @@ mod tests {
     }
 
     #[test]
-    fn TestNextPowerOfTwo() {
+    fn test_next_power_of_two() {
         assert_eq!(next_power_of_two(1), 1);
         assert_eq!(next_power_of_two(3), 4);
         assert_eq!(next_power_of_two(255), 256);
@@ -204,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn TestDivide2Batches() {
+    fn test_divide_2_batches() {
         assert_eq!(divide_2_batches(0_i32, 1), Vec::<i32>::new());
         assert_eq!(divide_2_batches(1, 1), vec![1]);
         assert_eq!(divide_2_batches(1, 3), vec![1]);

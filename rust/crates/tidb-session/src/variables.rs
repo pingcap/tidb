@@ -614,13 +614,11 @@ impl Session {
             .map_err(var_error)?
             .parse::<u32>()
             .unwrap_or(0);
-        let mut rand = self.rand.borrow_mut();
         if first {
-            rand.set_seed1(seed);
+            self.rand.set_seed1(seed);
         } else {
-            rand.set_seed2(seed);
+            self.rand.set_seed2(seed);
         }
-        drop(rand);
         self.vars.reset_system(name).map_err(var_error)
     }
 

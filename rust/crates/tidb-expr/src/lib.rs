@@ -364,7 +364,6 @@ pub mod pb_predicate;
 pub mod pushdown_catalog;
 mod regexp;
 pub mod rewriter;
-mod rng;
 mod row;
 pub mod scalar_function;
 pub mod schema;
@@ -384,9 +383,9 @@ pub use context::{
 };
 pub use grouping::{GroupingFunction, GroupingMetadata, GroupingMetadataError, GroupingMode};
 pub use like::{ilike_match, like_match_with_collation};
-pub use rng::MysqlRng;
 pub use row::{compare_datums, compare_datums_with_collation};
 pub(crate) use tidb_datatype::{Datum, Decimal};
+pub use tidb_util::mathutil::MysqlRng;
 
 use tidb_ast::{CastStyle, Expr, GetFormatSelector, IsTarget};
 

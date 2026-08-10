@@ -15,8 +15,8 @@
 //! Complete transcreation of `pkg/util/mathutil`.
 //!
 //! `math.go`, `rand.go`, and `exponential_average.go` map one-for-one to the
-//! sibling Rust modules. Their three source test files are kept beside the
-//! owning implementations with every original test name and table.
+//! sibling Rust modules. Their three source test files are represented beside
+//! the owning implementations with the same semantic cases and tables.
 //! `main_test.go` only installs TiDB's shared Go test setup and leak verifier;
 //! Rust's scoped tests create no background worker and need no process-global
 //! setup or leak-ignore list. `BUILD.bazel` maps to `tidb-util`'s Cargo

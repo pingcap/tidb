@@ -87,14 +87,14 @@ impl MysqlRng {
 }
 
 #[cfg(test)]
-#[allow(non_snake_case)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use std::thread;
     use std::time::Duration;
 
     #[test]
-    fn TestRandWithTime() {
+    fn test_rand_with_time() {
         let rng1 = MysqlRng::new_with_time();
         thread::sleep(Duration::from_millis(1));
         let rng2 = MysqlRng::new_with_time();
@@ -108,7 +108,7 @@ mod tests {
     }
 
     #[test]
-    fn TestRandWithSeed() {
+    fn test_rand_with_seed() {
         let tests = [
             (0, 0.155_220_427_694_935_74, 0.620_881_741_513_388),
             (1, 0.405_403_537_121_977_24, 0.871_614_180_385_707_1),
@@ -123,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn TestRandWithSeed1AndSeed2() {
+    fn test_rand_with_seed_1_and_seed_2() {
         let rng = MysqlRng::new_with_time();
         rng.set_seed1(10_000_000);
         rng.set_seed2(1_000_000);
@@ -133,5 +133,33 @@ mod tests {
         assert_eq!(rng.gen(), 0.495_463_794_558_740_96);
         assert_eq!(rng.get_seed1(), 532_000_198);
         assert_eq!(rng.get_seed2(), 689_000_330);
+    }
+
+    #[test]
+    fn concurrent_generation_is_one_serialized_sequence() {
+        const THREADS: usize = 8;
+        const VALUES_PER_THREAD: usize = 1_000;
+
+        let shared = Arc::new(MysqlRng::new_with_seed(1));
+        let workers: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let shared = Arc::clone(&shared);
+                thread::spawn(move || {
+                    for _ in 0..VALUES_PER_THREAD {
+                        shared.gen();
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().expect("RNG worker must not panic");
+        }
+
+        let sequential = MysqlRng::new_with_seed(1);
+        for _ in 0..THREADS * VALUES_PER_THREAD {
+            sequential.gen();
+        }
+        assert_eq!(shared.get_seed1(), sequential.get_seed1());
+        assert_eq!(shared.get_seed2(), sequential.get_seed2());
     }
 }

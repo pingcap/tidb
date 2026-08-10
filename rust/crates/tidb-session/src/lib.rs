@@ -455,7 +455,7 @@ pub struct Session {
     /// Go `SessionVars.Rng`: the generator unseeded `RAND()` advances, shared
     /// across every statement of this session (unlike constant `RAND(N)`,
     /// which owns a fresh per-statement generator -- see `StmtContext`).
-    rand: Rc<RefCell<MysqlRng>>,
+    rand: Rc<MysqlRng>,
     /// Go `SessionVars.PreparedStmtNameToID` / `PreparedStmts`: the SQL-level
     /// prepared statements this session holds. Per-session and not shared: a
     /// peer over the same catalog holds its own.
@@ -526,12 +526,8 @@ impl Default for Session {
 /// Go `mathutil.NewWithTime()`: seeds a session's unseeded-`RAND()` generator
 /// from the wall clock, which is what makes two sessions' `RAND()` sequences
 /// differ without either being told to.
-fn new_time_seeded_rand() -> Rc<RefCell<MysqlRng>> {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as i64)
-        .unwrap_or(0);
-    Rc::new(RefCell::new(MysqlRng::new_with_seed(nanos)))
+fn new_time_seeded_rand() -> Rc<MysqlRng> {
+    Rc::new(MysqlRng::new_with_time())
 }
 
 pub use tidb_executor::TxnErrorKind;

@@ -63,7 +63,6 @@ impl ExponentialMovingAverage {
 }
 
 #[cfg(test)]
-#[allow(non_snake_case)]
 mod tests {
     use super::*;
     use std::panic::catch_unwind;
@@ -82,7 +81,7 @@ mod tests {
     ];
 
     #[test]
-    fn TestExponential() {
+    fn test_exponential() {
         let mut window = ExponentialMovingAverage::new(0.8, 2);
         for sample in SAMPLES {
             window.add(sample);

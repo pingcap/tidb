@@ -355,7 +355,6 @@ fn named_and_nested_defaults_use_the_referenced_column() {
 /// anything; treating DEFAULT as omission interleaves the two sequences.
 #[test]
 fn explicit_values_defaults_are_lowered_before_runtime_expressions() {
-    use std::cell::RefCell;
     use std::rc::Rc;
 
     let mut catalog = Catalog::default();
@@ -364,7 +363,7 @@ fn explicit_values_defaults_are_lowered_before_runtime_expressions() {
         &mut catalog,
     )
     .unwrap();
-    let actual_rng = Rc::new(RefCell::new(tidb_expr::MysqlRng::new_with_seed(1)));
+    let actual_rng = Rc::new(tidb_expr::MysqlRng::new_with_seed(1));
     let ctx =
         crate::StmtContext::for_dml(false, true, false).with_rand_session(Rc::clone(&actual_rng));
     run_insert_on(
@@ -374,7 +373,7 @@ fn explicit_values_defaults_are_lowered_before_runtime_expressions() {
     )
     .unwrap();
 
-    let mut expected_rng = tidb_expr::MysqlRng::new_with_seed(1);
+    let expected_rng = tidb_expr::MysqlRng::new_with_seed(1);
     let first_default = expected_rng.gen();
     let second_default = expected_rng.gen();
     let first_runtime = expected_rng.gen();

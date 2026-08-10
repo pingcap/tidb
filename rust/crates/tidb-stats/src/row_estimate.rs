@@ -18,6 +18,8 @@
 //! contexts, and statistics handles.  Callers own the estimates' source and
 //! decide which SQL/cardinality operation each arithmetic method represents.
 
+use tidb_util::mathutil::clamp;
+
 /// The minimum, default, and maximum estimate for a row-count operation.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RowEstimate {
@@ -94,24 +96,11 @@ impl RowEstimate {
 
     /// Clamps all fields and preserves the source min/default/max ordering.
     pub fn clamp(&mut self, lower: f64, upper: f64) {
-        self.est = source_clamp(self.est, lower, upper);
+        self.est = clamp(self.est, lower, upper);
         self.min_est = source_min(self.min_est, self.est);
-        self.min_est = source_clamp(self.min_est, lower, upper);
+        self.min_est = clamp(self.min_est, lower, upper);
         self.max_est = source_max(self.max_est, self.est);
-        self.max_est = source_clamp(self.max_est, lower, upper);
-    }
-}
-
-// Go's mathutil.Clamp uses ordered comparisons, so NaN passes through rather
-// than being replaced by an endpoint.  The explicit form keeps that behavior
-// instead of adopting Rust's f64::clamp NaN policy.
-fn source_clamp(value: f64, lower: f64, upper: f64) -> f64 {
-    if value >= upper {
-        upper
-    } else if value <= lower {
-        lower
-    } else {
-        value
+        self.max_est = clamp(self.max_est, lower, upper);
     }
 }
 
