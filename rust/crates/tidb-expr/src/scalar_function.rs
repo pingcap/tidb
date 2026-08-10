@@ -1017,6 +1017,87 @@ mod tests {
         FieldType::new(FieldTypeCode::Double)
     }
 
+    #[derive(Default)]
+    struct InfoColumns {
+        current_user: Option<String>,
+        current_role: Option<String>,
+        connection_id: Option<u64>,
+    }
+
+    impl Columns for InfoColumns {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn current_user(&self) -> Option<String> {
+            self.current_user.clone()
+        }
+
+        fn current_role(&self) -> Option<String> {
+            self.current_role.clone()
+        }
+
+        fn connection_id(&self) -> Option<u64> {
+            self.connection_id
+        }
+    }
+
+    fn eval_info(name: &str, result_type: FieldType, ctx: &InfoColumns) -> Datum {
+        ScalarFunction::new(CiString::new(name), result_type, vec![])
+            .eval(ctx, tidb_chunk::row::Row::empty())
+            .expect("session information builtin must evaluate")
+    }
+
+    // Go TestCurrentUser.
+    #[test]
+    fn test_current_user() {
+        let ctx = InfoColumns {
+            current_user: Some("root@localhost".to_owned()),
+            ..InfoColumns::default()
+        };
+        assert_eq!(
+            eval_info("current_user", text_ft(), &ctx),
+            Datum::Bytes(b"root@localhost".to_vec())
+        );
+        assert_eq!(
+            eval_info("current_user", text_ft(), &InfoColumns::default()),
+            Datum::Null
+        );
+    }
+
+    // Go TestCurrentRole.
+    #[test]
+    fn test_current_role() {
+        for (roles, expected) in [
+            ("NONE", "NONE"),
+            ("`r_1`@`%`,`r_2`@`localhost`", "`r_1`@`%`,`r_2`@`localhost`"),
+        ] {
+            let ctx = InfoColumns {
+                current_role: Some(roles.to_owned()),
+                ..InfoColumns::default()
+            };
+            assert_eq!(
+                eval_info("current_role", text_ft(), &ctx),
+                Datum::Bytes(expected.as_bytes().to_vec())
+            );
+        }
+    }
+
+    // Go TestConnectionID.
+    #[test]
+    fn test_connection_id() {
+        let ctx = InfoColumns {
+            connection_id: Some(1),
+            ..InfoColumns::default()
+        };
+        let mut result_type = FieldType::new(FieldTypeCode::LongLong);
+        result_type.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+        assert_eq!(
+            eval_info("connection_id", result_type, &ctx),
+            Datum::UInt(1)
+        );
+    }
+
     fn plus(args: Vec<Expression>) -> ScalarFunction {
         ScalarFunction::new(CiString::new("plus"), ft(), args)
     }
