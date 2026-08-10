@@ -434,7 +434,20 @@ pub(crate) fn eval_func_values(
         // The parser renames `INSERT(...)` to `INSERT_FUNC` to avoid the
         // reserved statement keyword (the same desugar `CHAR`→`CHAR_FUNC`
         // uses).
-        "INSERT_FUNC" if vals.len() == 4 => str_insert(vals),
+        "INSERT_FUNC" if vals.len() == 4 => str_insert(vals).and_then(|result| {
+            let result_len = match &result {
+                Datum::String(value) => value.bytes().len(),
+                Datum::Bytes(value) => value.len(),
+                Datum::Null => return Ok(Datum::Null),
+                _ => return Err(EvalError::Unsupported("INSERT result type")),
+            };
+            if result_len as u64 > ctx.max_allowed_packet() {
+                ctx.handle_allowed_packet_overflowed("insert")?;
+                Ok(Datum::Null)
+            } else {
+                Ok(result)
+            }
+        }),
         "MAKE_SET" if !vals.is_empty() => make_set(vals),
         "DATE_FORMAT" if vals.len() == 2 => date_format(&vals[0], &vals[1]),
         "ORD" if vals.len() == 1 => ord(vals),
@@ -672,5 +685,86 @@ pub(crate) fn negate_if(v: Datum, neg: bool) -> Datum {
         (true, Datum::Int(i)) => bool_int(i == 0),
         (true, Datum::UInt(i)) => bool_int(i == 0),
         (_, v) => v,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+
+    #[derive(Default)]
+    struct PacketLimit {
+        warnings: RefCell<Vec<(u16, String)>>,
+    }
+
+    impl Columns for PacketLimit {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn max_allowed_packet(&self) -> u64 {
+            3
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.warnings.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    /// Go `TestInsertBinarySig`: all seven source rows, including the one
+    /// result that crosses the signature's three-byte packet limit.
+    #[test]
+    fn test_insert_binary_sig() {
+        let ctx = PacketLimit::default();
+        let binary = |value: &str| Datum::new_bytes(value.as_bytes().to_vec());
+        let rows = [
+            (
+                [binary("abc"), Datum::Int(3), Datum::Int(-1), binary("d")],
+                binary("abd"),
+            ),
+            (
+                [binary("abc"), Datum::Int(3), Datum::Int(-1), binary("de")],
+                Datum::Null,
+            ),
+            (
+                [binary("abc"), Datum::Int(0), Datum::Int(-1), binary("d")],
+                binary("abc"),
+            ),
+            (
+                [Datum::Null, Datum::Int(3), Datum::Int(-1), binary("d")],
+                Datum::Null,
+            ),
+            (
+                [binary("abc"), Datum::Null, Datum::Int(-1), binary("d")],
+                Datum::Null,
+            ),
+            (
+                [binary("abc"), Datum::Int(3), Datum::Null, binary("d")],
+                Datum::Null,
+            ),
+            (
+                [binary("abc"), Datum::Int(3), Datum::Int(-1), Datum::Null],
+                Datum::Null,
+            ),
+        ];
+
+        for (args, expected) in rows {
+            assert_eq!(
+                eval_func_values("INSERT_FUNC", &args, &ctx)
+                    .expect("INSERT must be dispatched")
+                    .expect("source rows must evaluate"),
+                expected
+            );
+        }
+
+        assert_eq!(
+            *ctx.warnings.borrow(),
+            vec![(
+                1301,
+                "Result of insert() was larger than max_allowed_packet (3) - truncated".to_owned(),
+            )]
+        );
     }
 }
