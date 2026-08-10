@@ -1125,10 +1125,11 @@ mod tests {
         assert_eq!(call("IS_IPV4_COMPAT", &[Datum::Null]), Datum::Null);
     }
 
-    /// `builtin*IsNullSig.evalInt` in `builtin_op.go` has the same result
-    /// for every represented eval type.
+    /// Go `TestIsNullFunc`; `builtin*IsNullSig.evalInt` in `builtin_op.go`
+    /// has the same result for every represented eval type, so retain the
+    /// source's integer/NULL rows and cover the other Rust datum families too.
     #[test]
-    fn isnull_values() {
+    fn test_is_null_func() {
         for value in [
             Datum::Int(0),
             s(""),
