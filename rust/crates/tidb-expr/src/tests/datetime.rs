@@ -146,13 +146,22 @@ fn now_current_timestamp() {
 }
 
 #[test]
-fn curdate_curtime() {
-    // A nonzero `time_zone` offset (+05:30, matching the epoch/offset
-    // probed via `gorun`) shifts CURDATE/CURTIME's local rendering.
+fn test_current_date() {
+    // A nonzero `time_zone` offset (+05:30, matching the epoch/offset probed
+    // via `gorun`) shifts CURRENT_DATE's local rendering.
     let clock = FixedClock(1_700_000_000, 654_321_000, 19_800);
     assert_eq!(e_at("curdate()", &clock), "STR:2023-11-15");
     assert_eq!(e_at("current_date", &clock), "STR:2023-11-15");
     assert_eq!(e_at("current_date()", &clock), "STR:2023-11-15");
+    // CURDATE takes no argument at all -- confirmed via `godump restore`:
+    // `CURDATE(1)` is a parse error, not an out-of-range runtime value.
+    assert!(tidb_parser::parse("select curdate(1)").is_err());
+}
+
+#[test]
+fn test_current_time() {
+    // The same nonzero `time_zone` offset shifts CURRENT_TIME.
+    let clock = FixedClock(1_700_000_000, 654_321_000, 19_800);
     assert_eq!(e_at("curtime()", &clock), "STR:03:43:20");
     assert_eq!(e_at("current_time", &clock), "STR:03:43:20");
     // TestCurrentTime's explicit precision table.
@@ -165,10 +174,6 @@ fn curdate_curtime() {
         "Unsupported(\"bad fractional-seconds-precision argument\")"
     );
     assert_eq!(e_at("curtime(3)", &clock), "STR:03:43:20.654");
-    // CURDATE takes no argument at all -- confirmed via `godump
-    // restore`: `CURDATE(1)` is a real parse error, not just an
-    // out-of-range value.
-    assert!(tidb_parser::parse("select curdate(1)").is_err());
 
     // A genuine SPLIT rule, confirmed via `gorun`: the 0-arg form
     // TRUNCATES, but an EXPLICIT argument (even literally `0`)
