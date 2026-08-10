@@ -15,7 +15,7 @@ This remains one cluster inside the incomplete `pkg/util/chunk` whole-package cl
 - [x] (2026-08-10) Read all 410 production lines, all 271 direct-test lines, and all 235 ledger obligations at source commit `665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f`.
 - [x] (2026-08-10) Mapped the Rust production owner, direct `tidb-expr`/`tidb-executor` swap consumers, spill callers, existing tests, and receipt state.
 - [x] (2026-08-10) Added a deterministic partial-write regression: baseline accepted 2 of 4 bytes as success; the root fix returns the subsequent storage error while retaining the accepted two-byte logical offset.
-- [ ] Add one public cluster contract for column copies, join copies, alias-aware swaps, and plaintext/AES spill-file behavior.
+- [x] (2026-08-10) Added one public cluster contract for column copies, join copies, alias-aware swaps, plaintext/AES spill-file behavior, and the deterministic benchmark workload observation.
 - [ ] Classify all 235 obligations and direct helper contracts, execute any new mutations/probes, and advance the incremental checker.
 - [ ] Include the cluster in the next batched Ready validation and authorized dual-remote push.
 

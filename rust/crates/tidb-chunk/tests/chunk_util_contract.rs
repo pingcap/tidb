@@ -15,6 +15,9 @@
 //! Public semantic cluster for accepted `chunk_util.go` and
 //! `chunk_util_test.go`.
 
+#[path = "pkg_util_chunk_fixture_observation.rs"]
+mod pkg_util_chunk_fixture_observation;
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -381,4 +384,80 @@ fn disk_case(encryption: SpillEncryptionMethod, case: &str) {
 fn spill_file_plaintext_and_aes_contract() {
     disk_case(SpillEncryptionMethod::Plaintext, "plaintext");
     disk_case(SpillEncryptionMethod::Aes128Ctr, "aes128-ctr");
+}
+
+#[test]
+fn benchmark_runtime_adaptation_observation() {
+    let fields = join_fields();
+    let mut source = Chunk::new_with_capacity(&fields, 1_024);
+    let mut selected = Vec::with_capacity(1_024);
+    for row in 0..1_024_i64 {
+        source.append_string(0, format!("row-{row}"));
+        source.append_int64(1, row);
+        source.append_int64(2, 7);
+        selected.push(row % 7 != 0);
+    }
+    let selected_count = selected.iter().filter(|selected| **selected).count();
+
+    let mut direct = Chunk::new_with_capacity(&fields, 1_024);
+    assert!(
+        copy_selected_join_rows_direct(&source, &selected, &mut direct)
+            .expect("direct benchmark workload")
+    );
+    assert_eq!(direct.num_rows(), selected_count);
+    assert_eq!(direct.num_virtual_rows(), selected_count);
+    assert_eq!(direct.get_row(0).get_int64(1), 1);
+    assert_eq!(direct.get_row(selected_count - 1).get_int64(1), 1_023);
+
+    let mut same_outer = Chunk::new_with_capacity(&fields, 1_024);
+    assert!(copy_selected_join_rows_with_same_outer_rows(
+        &source,
+        0,
+        2,
+        2,
+        1,
+        &selected,
+        &mut same_outer,
+    )
+    .expect("same-outer benchmark workload"));
+    assert_eq!(same_outer.num_rows(), selected_count);
+    assert_eq!(same_outer.get_row(0).get_int64(1), 1);
+    assert_eq!(same_outer.get_row(selected_count - 1).get_int64(1), 1_023);
+
+    let mut row_append = Chunk::new_with_capacity(&fields, 1_024);
+    for (row, is_selected) in selected.iter().copied().enumerate() {
+        if is_selected {
+            row_append.append_row(source.get_row(row));
+        }
+    }
+    assert_eq!(row_append.num_rows(), selected_count);
+    assert_eq!(row_append.get_row(0).get_int64(1), 1);
+    assert_eq!(row_append.get_row(selected_count - 1).get_int64(1), 1_023);
+
+    pkg_util_chunk_fixture_observation::emit(
+        "CHUNK-UTIL-BENCHMARK-ADAPTATION",
+        "Rust deterministically preserves selected-row order, values, null behavior and virtual-row counts exercised by the accepted chunk-util benchmarks; Go testing.B iteration, timers and allocation reports are intentionally not reproduced.",
+        &[
+            (
+                "selected-join-workload",
+                "1,024 rows with every seventh row excluded",
+                "same-outer copy preserves selected count, order and values",
+            ),
+            (
+                "direct-copy-workload",
+                "the same 1,024-row selection",
+                "direct copy preserves selected count, order, values and virtual rows",
+            ),
+            (
+                "append-selected-workload",
+                "the same selected rows appended individually",
+                "row append produces the same count, order and endpoint values",
+            ),
+            (
+                "benchmark-runtime-excluded",
+                "accepted testing.B loops, timers and allocation reports",
+                "no TiDB result depends on Go benchmark-runner mechanics",
+            ),
+        ],
+    );
 }
