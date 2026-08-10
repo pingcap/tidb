@@ -38,8 +38,6 @@ import (
 	"golang.org/x/sync/semaphore"
 )
 
-const maxReadersPerCore = 16
-
 var maxConcurrency = 32
 
 // assignReaderMemory charges each file whole buffers of its own byte range. The
@@ -128,7 +126,6 @@ func readAllData(
 
 	concurrency = max(concurrency, 1)
 	memoryLimit := readerMemoryQuotaPerCore * int64(concurrency)
-	maxReaders := maxReadersPerCore * concurrency
 
 	readerMemory := semaphore.NewWeighted(memoryLimit)
 	rangeSizes := make([]uint64, len(dataFiles))
@@ -152,7 +149,8 @@ func readAllData(
 		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	readConn := min(maxReaders, len(dataFiles))
+	readConn := 1000
+	readConn = min(readConn, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
 	for readIdx := range readConn {
