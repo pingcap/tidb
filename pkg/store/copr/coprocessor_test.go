@@ -1166,10 +1166,27 @@ func TestHandleBatchCopResponse(t *testing.T) {
 	t.Run("resolves a child lock", testHandleBatchCopResponseResolvesChildLock)
 	t.Run("updates child buckets on version mismatch", testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch)
 	t.Run("counts fallbacks after Region split", testHandleBatchCopResponseFallbackCountersAfterRegionSplit)
-	t.Run("flattens a store batch after a Region cache miss", testHandleStoreBatchRegionCacheMiss)
+	t.Run("rebuilds a store batch after a Region cache miss", testHandleStoreBatchRegionCacheMiss)
 }
 
 func testHandleStoreBatchRegionCacheMiss(t *testing.T) {
+	// A false positive would replay ranges whose child result may already be in
+	// the response, so every uncertain response shape must use flat reconciliation.
+	worker := &copIteratorWorker{req: &kv.Request{}}
+	task := &copTask{batchTaskList: map[uint64]*batchedCopTask{1: {}}}
+	resp := &coprocessor.Response{RegionError: &errorpb.Error{EpochNotMatch: &errorpb.EpochNotMatch{}}}
+	require.False(t, worker.canRebuildWholeStoreBatch(nil, resp, task))
+	worker.req.AllowBatchTaskDataMerge = true
+	require.False(t, worker.canRebuildWholeStoreBatch(&tikv.RPCContext{}, resp, task))
+	resp.BatchResponses = []*coprocessor.StoreBatchTaskResponse{{TaskId: 1}}
+	require.False(t, worker.canRebuildWholeStoreBatch(nil, resp, task))
+	resp.BatchResponses = nil
+	resp.Data = []byte{1}
+	require.False(t, worker.canRebuildWholeStoreBatch(nil, resp, task))
+	resp.Data = nil
+	resp.RegionError = &errorpb.Error{ServerIsBusy: &errorpb.ServerIsBusy{}}
+	require.False(t, worker.canRebuildWholeStoreBatch(nil, resp, task))
+
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	_, regionIDs, _ := testutils.BootstrapWithMultiRegions(cluster, []byte("g"), []byte("n"), []byte("t"))
@@ -1214,10 +1231,9 @@ func testHandleStoreBatchRegionCacheMiss(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Zero(t, req.StoreBatchSize)
-	require.Len(t, result.remains, 5)
-	for _, task := range result.remains {
-		require.Empty(t, task.batchTaskList)
-	}
+	require.Len(t, result.remains, 2)
+	require.Len(t, result.remains[0].batchTaskList, 3)
+	require.Empty(t, result.remains[1].batchTaskList)
 }
 
 func testHandleBatchCopResponseResolvesChildLock(t *testing.T) {
