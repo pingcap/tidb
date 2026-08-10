@@ -29,7 +29,6 @@ mod pkg_util_chunk_fixture_observation;
 
 use std::cmp::Ordering;
 use tidb_chunk::chunk::Chunk;
-use tidb_chunk::compare::get_compare_func;
 use tidb_datatype::{
     BinaryJSON, BinaryJSONValue, BinaryLiteral, Collation, CoreTime, Datum, Decimal, FieldType,
     FieldTypeCode, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType, VectorFloat32,
@@ -324,7 +323,8 @@ fn go_compare_func_answers_replay() {
         let mut chk = Chunk::new_with_capacity(std::slice::from_ref(&field_type), NUM_ROWS);
         fill(&mut chk, 0);
         assert_eq!(chk.num_rows(), NUM_ROWS, "{name} must fill all rows");
-        let cmp_func = get_compare_func(&field_type).expect("a comparator for {name}");
+        let cmp_func =
+            tidb_chunk::compare::get_compare_func(&field_type).expect("a comparator for {name}");
         assert_eq!(
             cmp_func(chk.get_row(i), 0, chk.get_row(j), 0),
             want,
@@ -335,41 +335,53 @@ fn go_compare_func_answers_replay() {
     assert_eq!(checked, 15 * NUM_ROWS * NUM_ROWS, "the fixture's cmp rows");
 }
 
-/// Every `LowerBound`/`UpperBound` answer Go produced, including the `match`
-/// flag -- which is a property of the bisection's probe sequence, not just of
-/// the returned index.
+/// Every `LowerBound` answer Go produced, including the `match` flag -- which
+/// is a property of the bisection's probe sequence, not just of the returned
+/// index.
 #[test]
-fn go_bound_search_answers_replay() {
+fn go_lower_bound_answers_replay() {
     let mut checked = 0;
-    for line in FIXTURE
-        .lines()
-        .filter(|l| l.starts_with("lb\t") || l.starts_with("ub\t"))
-    {
+    for line in FIXTURE.lines().filter(|l| l.starts_with("lb\t")) {
         let f: Vec<&str> = line.split('\t').collect();
-        let (kind, name, probe) = (f[0], f[1], f[2]);
+        let (name, probe) = (f[1], f[2]);
         let (field_type, fill) = build_bound_column(name);
         let mut chk = Chunk::new_with_capacity(std::slice::from_ref(&field_type), NUM_ROWS);
         fill(&mut chk);
         assert_eq!(chk.num_rows(), NUM_ROWS, "{name} must fill all rows");
         let datum = probe_datum(probe);
-        if kind == "lb" {
-            let want = (f[3].parse::<usize>().expect("index"), f[4] == "1");
-            assert_eq!(
-                chk.lower_bound(0, &datum),
-                want,
-                "lower_bound {name}/{probe}"
-            );
-        } else {
-            let want = f[3].parse::<usize>().expect("index");
-            assert_eq!(
-                chk.upper_bound(0, &datum),
-                want,
-                "upper_bound {name}/{probe}"
-            );
-        }
+        let want = (f[3].parse::<usize>().expect("index"), f[4] == "1");
+        assert_eq!(
+            tidb_chunk::chunk::Chunk::lower_bound(&chk, 0, &datum),
+            want,
+            "lower_bound {name}/{probe}"
+        );
         checked += 1;
     }
-    assert_eq!(checked, (10 + 10 + 7) * 2, "the fixture's lb/ub rows");
+    assert_eq!(checked, 10 + 10 + 7, "the fixture's lower-bound rows");
+}
+
+/// Every `UpperBound` answer Go produced across integer, nullable, and
+/// collated string columns.
+#[test]
+fn go_upper_bound_answers_replay() {
+    let mut checked = 0;
+    for line in FIXTURE.lines().filter(|l| l.starts_with("ub\t")) {
+        let f: Vec<&str> = line.split('\t').collect();
+        let (name, probe) = (f[1], f[2]);
+        let (field_type, fill) = build_bound_column(name);
+        let mut chk = Chunk::new_with_capacity(std::slice::from_ref(&field_type), NUM_ROWS);
+        fill(&mut chk);
+        assert_eq!(chk.num_rows(), NUM_ROWS, "{name} must fill all rows");
+        let datum = probe_datum(probe);
+        let want = f[3].parse::<usize>().expect("index");
+        assert_eq!(
+            tidb_chunk::chunk::Chunk::upper_bound(&chk, 0, &datum),
+            want,
+            "upper_bound {name}/{probe}"
+        );
+        checked += 1;
+    }
+    assert_eq!(checked, 10 + 10 + 7, "the fixture's upper-bound rows");
 }
 
 /// Go `Compare` reads a `KindFloat32` datum through `Datum.GetFloat32`, so the
@@ -392,7 +404,8 @@ fn float32_datum_is_normalized_before_compare() {
 #[test]
 fn compare_public_contract() {
     go_compare_func_answers_replay();
-    go_bound_search_answers_replay();
+    go_lower_bound_answers_replay();
+    go_upper_bound_answers_replay();
 
     let null_field = FieldType::new(FieldTypeCode::Null);
     let mut null_chunk = Chunk::new_with_capacity(std::slice::from_ref(&null_field), 1);
