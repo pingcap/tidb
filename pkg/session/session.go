@@ -416,7 +416,9 @@ func (s *session) SetCollation(coID int) error {
 
 func (s *session) GetSessionPlanCache() sessionctx.SessionPlanCache {
 	// use the prepared plan cache
-	if !s.GetSessionVars().EnablePreparedPlanCache && !s.GetSessionVars().EnableNonPreparedPlanCache {
+	if !s.GetSessionVars().EnablePreparedPlanCache &&
+		!s.GetSessionVars().EnableNonPreparedPlanCache &&
+		!s.GetSessionVars().EnableNonPreparedPlanCacheForDML {
 		return nil
 	}
 	if s.sessionPlanCache == nil { // lazy construction

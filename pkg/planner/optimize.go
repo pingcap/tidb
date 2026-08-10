@@ -69,7 +69,7 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Context, stmt ast.StmtNode, is infoschema.InfoSchema) (p base.Plan, ns types.NameSlice, ok bool, err error) {
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	_, isExplain := stmt.(*ast.ExplainStmt)
-	if !sctx.GetSessionVars().EnableNonPreparedPlanCache || // disabled
+	if !core.NonPreparedPlanCacheEnabledForStmt(sctx.GetSessionVars(), stmt) || // disabled
 		stmtCtx.InPreparedPlanBuilding || // already in cached plan rebuilding phase
 		stmtCtx.EnableOptimizerCETrace || stmtCtx.EnableOptimizeTrace || // in trace
 		stmtCtx.InRestrictedSQL || // is internal SQL
@@ -276,8 +276,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node *resolve.NodeW,
 	}
 
 	// try to get Plan from the NonPrepared Plan Cache
-	if sessVars.EnableNonPreparedPlanCache &&
-		isStmtNode &&
+	if isStmtNode &&
+		core.NonPreparedPlanCacheEnabledForStmt(sessVars, stmtNode) &&
 		!useBinding { // TODO: support binding
 		cachedPlan, names, ok, err := getPlanFromNonPreparedPlanCache(ctx, sctx, stmtNode, is)
 		if err != nil {

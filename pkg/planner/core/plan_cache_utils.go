@@ -67,6 +67,26 @@ var (
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 )
 
+// NonPreparedPlanCacheEnabledForStmt reports whether the non-prepared plan
+// cache path is enabled for the current statement. The DML switch can enable
+// DML statements independently from the SELECT-oriented global switch.
+func NonPreparedPlanCacheEnabledForStmt(vars *variable.SessionVars, stmt ast.StmtNode) bool {
+	if vars == nil {
+		return false
+	}
+	switch x := stmt.(type) {
+	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+		return vars.EnableNonPreparedPlanCacheForDML
+	case *ast.SelectStmt:
+		if x.LockInfo != nil {
+			return vars.EnableNonPreparedPlanCacheForDML
+		}
+		return vars.EnableNonPreparedPlanCache
+	default:
+		return vars.EnableNonPreparedPlanCache
+	}
+}
+
 type paramMarkerExtractor struct {
 	markers []ast.ParamMarkerExpr
 }
@@ -140,7 +160,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		reason    string
 	)
 	if (isPrepStmt && !vars.EnablePreparedPlanCache) || // prepared statement
-		(!isPrepStmt && !vars.EnableNonPreparedPlanCache) { // non-prepared statement
+		(!isPrepStmt && !NonPreparedPlanCacheEnabledForStmt(vars, paramStmt)) { // non-prepared statement
 		cacheable = false
 		reason = "plan cache is disabled"
 	} else {
