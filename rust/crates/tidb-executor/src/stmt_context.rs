@@ -352,6 +352,8 @@ pub struct StmtContext {
     /// The all-false default is TiDB's default `sql_mode` for these flags, so
     /// a context with no session behind it lexes exactly as before.
     sql_mode: tidb_parser::SqlMode,
+    /// The validated statement snapshot of `@@block_encryption_mode`.
+    block_encryption_mode: tidb_expr::BlockEncryptionMode,
     /// `@@max_allowed_packet`, which the result-sizing string builtins read.
     max_allowed_packet: u64,
     /// `@@group_concat_max_len`, the BYTE budget `GROUP_CONCAT` truncates its
@@ -501,6 +503,7 @@ impl StmtContext {
             sequences: Rc::default(),
             memory: StatementMemory::default(),
             sql_mode: tidb_parser::SqlMode::default(),
+            block_encryption_mode: tidb_expr::BlockEncryptionMode::default(),
             // Go `vardef.DefMaxAllowedPacket`, the value a default server runs
             // with and the one the `Columns` trait default already used.
             max_allowed_packet: 64 << 20,
@@ -652,6 +655,13 @@ impl StmtContext {
     #[must_use]
     pub fn with_sql_mode(mut self, sql_mode: tidb_parser::SqlMode) -> Self {
         self.sql_mode = sql_mode;
+        self
+    }
+
+    /// Attaches the AES mode selected by this session for the statement.
+    #[must_use]
+    pub fn with_block_encryption_mode(mut self, mode: tidb_expr::BlockEncryptionMode) -> Self {
+        self.block_encryption_mode = mode;
         self
     }
 
@@ -1383,6 +1393,10 @@ impl Columns for StmtContext {
 
     fn connection_id(&self) -> Option<u64> {
         self.connection_id
+    }
+
+    fn block_encryption_mode(&self) -> tidb_expr::BlockEncryptionMode {
+        self.block_encryption_mode
     }
 
     /// Go `SessionVars.GetUserVarVal`: names are case-insensitive, and an

@@ -861,6 +861,14 @@ impl ScalarFunction {
                 _ => {}
             }
         }
+        if let Some(result) = crate::builtin_ext::eval_aes_lazy(
+            name,
+            self.args.len(),
+            |index| self.args[index].eval(ctx, row),
+            ctx,
+        ) {
+            return result;
+        }
         // Values-only builtins (ABS/CONCAT/COALESCE/...): evaluate every
         // argument, then reuse the single Datum-level implementation shared
         // with the AST evaluator (`crate::func::eval_func_values`). Lazy

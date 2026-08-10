@@ -114,6 +114,14 @@ pub(crate) fn eval_func(
             return built.eval(&value);
         }
     }
+    if let Some(result) = crate::builtin_ext::eval_aes_lazy(
+        name.as_str(),
+        args.len(),
+        |index| eval_in(&args[index], cols),
+        cols,
+    ) {
+        return result;
+    }
     // `IF` is a lazy control function in Go: `builtinIf*Sig` evaluates the
     // condition through its wrapped `EvalInt`, then evaluates exactly one
     // result branch.  Handle it before the ordinary eager argument material-

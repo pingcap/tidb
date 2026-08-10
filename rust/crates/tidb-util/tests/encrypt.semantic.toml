@@ -1,0 +1,55 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/util/encrypt"
+source_commit = "d9e197f3bee2ad884cb38c62dfe7c335c6680141"
+rust_files = [
+  "rust/crates/tidb-util/src/encrypt/mod.rs",
+  "rust/crates/tidb-util/src/encrypt/aes.rs",
+  "rust/crates/tidb-util/src/encrypt/aes_layer.rs",
+  "rust/crates/tidb-util/src/encrypt/crypt.rs",
+  "rust/crates/tidb-util/benches/encrypt.rs",
+  "rust/crates/tidb-expr/src/context.rs",
+  "rust/crates/tidb-expr/src/builtin_ext/crypto.rs",
+  "rust/crates/tidb-expr/src/builtin_ext/mod.rs",
+  "rust/crates/tidb-expr/src/func.rs",
+  "rust/crates/tidb-expr/src/scalar_function.rs",
+  "rust/crates/tidb-expr/src/rewriter.rs",
+  "rust/crates/tidb-expr/src/rewriter/result_type.rs",
+  "rust/crates/tidb-executor/src/stmt_context.rs",
+  "rust/crates/tidb-executor/src/driver/errors/exec.rs",
+  "rust/crates/tidb-session/src/stmt_ctx.rs",
+  "rust/crates/tidb-session/src/sysvar/catalog/mysql_compat_inert.rs",
+  "rust/crates/tidb-session/src/sysvar/catalog/types_and_expressions.rs",
+  "rust/crates/tidb-session/src/tests_core/builtins.rs",
+  "rust/crates/tidb-chunk/tests/chunk_util_contract.rs",
+]
+
+[[tests]]
+name = "encrypt_package_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "encrypt"]
+
+[[tests]]
+name = "live_sql_aes_modes"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-session", "--lib", "tests_core::builtins::aes_modes_reach_live_sql", "--", "--exact"]
+
+[[tests]]
+name = "live_sql_legacy_codec"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-session", "--lib", "tests_core::builtins::misc_and_encryption_builtins_reach_live_sql", "--", "--exact"]
+
+[[tests]]
+name = "aes_result_metadata"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-expr", "--lib", "rewriter::tests::builtin_result_flens_match_go_getfunction", "--", "--exact"]
+
+[[tests]]
+name = "spill_encryption_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-chunk", "--test", "chunk_util_contract", "spill_file_plaintext_and_aes_contract", "--", "--exact"]
+
+[[tests]]
+name = "encrypt_benchmark_build"
+cwd = "rust"
+argv = ["cargo", "check", "--offline", "--locked", "-j12", "-p", "tidb-util", "--bench", "encrypt"]

@@ -1376,12 +1376,14 @@ mod tests {
             assert_eq!(flen(&expr), expected, "{why}");
         }
 
-        // `AES_ENCRYPT`/`AES_DECRYPT` stay REFUSED on purpose: the ported body
-        // is `aes-128-ecb` only, while Go picks the cipher from the
-        // `block_encryption_mode` session variable, which this gate cannot
-        // see. A refusal beats a silently wrong ciphertext.
-        assert!(rewrite_expr(&call("AES_ENCRYPT", vec![str_arg("a"), str_arg("k")])).is_err());
-        assert!(rewrite_expr(&call("AES_DECRYPT", vec![str_arg("a"), str_arg("k")])).is_err());
+        for name in ["AES_ENCRYPT", "AES_DECRYPT"] {
+            let built = rewrite_expr(&call(name, vec![str_arg("a"), str_arg("k")])).unwrap();
+            assert_eq!(
+                built.static_type().unwrap().charset_name(),
+                "binary",
+                "{name}"
+            );
+        }
     }
 
     /// `IS NULL` / `IS TRUE` / `IS FALSE` (and their `IS NOT` forms) return

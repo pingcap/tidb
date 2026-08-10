@@ -129,6 +129,11 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
             ER_OPERAND_COLUMNS,
             format!("Operand should contain {columns} column(s)"),
         ),
+        EvalError::WrongParameterCount(function) => MysqlError::coded(
+            1582,
+            format!("Incorrect parameter count in the call to native function '{function}'"),
+        ),
+        EvalError::IncorrectArguments(message) => MysqlError::coded(1210, message),
         // CAPTURED from TiDB: `select 9223372036854775807 + 1` is
         // `1690 / 22003 / BIGINT value is out of range in '(9223372036854775807 + 1)'`,
         // `select 1e308 * 10` the DOUBLE spelling, and a 65-digit product the
@@ -207,6 +212,8 @@ mod tests {
             EvalError::IllegalMixCollationGeneric("mixed".to_owned()),
             EvalError::TruncatedWrongValue("truncated".to_owned()),
             EvalError::AllowedPacketOverflowed("overflowed".to_owned()),
+            EvalError::WrongParameterCount("aes_encrypt"),
+            EvalError::IncorrectArguments("bad AES initialization vector".to_owned()),
         ];
         for error in coded {
             let mysql = rendered(ExecError::Eval(error.clone()));
@@ -223,6 +230,26 @@ mod tests {
         assert_eq!(
             rendered(ExecError::Eval(EvalError::DivisionByZero)),
             MysqlError::new(1365, *b"22012", "Division by 0")
+        );
+        assert_eq!(
+            rendered(ExecError::Eval(EvalError::WrongParameterCount(
+                "aes_encrypt"
+            ))),
+            MysqlError::new(
+                1582,
+                *b"42000",
+                "Incorrect parameter count in the call to native function 'aes_encrypt'"
+            )
+        );
+        assert_eq!(
+            rendered(ExecError::Eval(EvalError::IncorrectArguments(
+                "The initialization vector supplied to aes_encrypt is too short".to_owned()
+            ))),
+            MysqlError::new(
+                1210,
+                *b"HY000",
+                "The initialization vector supplied to aes_encrypt is too short"
+            )
         );
     }
 

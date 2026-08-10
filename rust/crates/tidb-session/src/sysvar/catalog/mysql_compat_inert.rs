@@ -14,7 +14,7 @@
 
 //! Variables TiDB accepts for MySQL compatibility and does not act on -- `have_*` capability probes, `performance_schema_*`, the MyISAM and NDB engine knobs.
 //!
-//! `avoid_temporal_upgrade` .. `updatable_views_with_limit` -- 115 entries, name-ordered.
+//! `avoid_temporal_upgrade` .. `updatable_views_with_limit` -- 114 entries, name-ordered.
 //!
 //! Captured from Go `pkg/sessionctx/variable/sysvar.go`'s `sysVars`. The
 //! registry is one flat name-ordered slice because lookup binary-searches
@@ -23,7 +23,7 @@
 
 use super::super::{SysVarDef, VarType};
 
-pub(super) static ENTRIES: [SysVarDef; 115] = [
+pub(super) static ENTRIES: [SysVarDef; 114] = [
     SysVarDef {
         name: "avoid_temporal_upgrade",
         scope: 1,
@@ -46,31 +46,6 @@ pub(super) static ENTRIES: [SysVarDef; 115] = [
         min_value: 0,
         max_value: 0,
         possible_values: &[],
-        auto_convert_negative_bool: false,
-    },
-    SysVarDef {
-        name: "block_encryption_mode",
-        scope: 3,
-        value: "aes-128-ecb",
-        var_type: VarType::Enum,
-        read_only: false,
-        allow_auto_value: false,
-        min_value: 0,
-        max_value: 0,
-        possible_values: &[
-            "aes-128-ecb",
-            "aes-192-ecb",
-            "aes-256-ecb",
-            "aes-128-cbc",
-            "aes-192-cbc",
-            "aes-256-cbc",
-            "aes-128-ofb",
-            "aes-192-ofb",
-            "aes-256-ofb",
-            "aes-128-cfb",
-            "aes-192-cfb",
-            "aes-256-cfb",
-        ],
         auto_convert_negative_bool: false,
     },
     SysVarDef {

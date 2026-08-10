@@ -342,6 +342,12 @@ impl Session {
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(1024);
+        let block_encryption_mode = self
+            .vars
+            .get_system("block_encryption_mode")
+            .ok()
+            .and_then(|value| tidb_executor::BlockEncryptionMode::parse(&value))
+            .unwrap_or_default();
         // `@@tidb_enable_tmp_storage_on_oom` (Go `vardef.EnableTmpStorageOnOOM`,
         // shipped default ON). GLOBAL scope only, exactly like
         // `tidb_mem_oom_action` above -- captured: a session `SET` is refused
@@ -399,6 +405,7 @@ impl Session {
                 .with_week_and_division_scale(week_format, div_scale)
                 .with_max_allowed_packet(max_allowed_packet)
                 .with_group_concat_max_len(group_concat_max_len)
+                .with_block_encryption_mode(block_encryption_mode)
                 .with_sequences(self.sequence_snapshot())
                 .with_sql_mode(scanner_sql_mode_of(&mode))
                 .with_clock(clock, zone);
@@ -426,6 +433,7 @@ impl Session {
         .with_week_and_division_scale(week_format, div_scale)
         .with_max_allowed_packet(max_allowed_packet)
         .with_group_concat_max_len(group_concat_max_len)
+        .with_block_encryption_mode(block_encryption_mode)
         .with_sequences(self.sequence_snapshot())
         .with_clock(clock, zone)
         .with_sql_mode(scanner_sql_mode_of(&mode))

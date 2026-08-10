@@ -106,16 +106,17 @@ pub fn go_result_type_code(name: &str) -> Option<FieldTypeCode> {
 }
 
 pub(super) fn returns_binary_string(name: &str) -> bool {
-    // `weight_string` is the fourth: `weightStringFunctionClass.getFunction`
-    // calls `types.SetBinChsClnFlag(bf.tp)` on a result whose bytes are a
-    // collation SORT KEY, which is not text in any charset.
-    // `uuid_to_bin` (`builtin_miscellaneous.go:1822`) and `uncompress`
-    // (`builtin_encryption.go:912`) are the fifth and sixth: both end their
-    // `getFunction` with `types.SetBinChsClnFlag(bf.tp)` over a result that is
-    // raw bytes -- sixteen address bytes and an inflated payload.
+    // Every result here is a raw byte string with binary charset/collation.
     matches!(
         name,
-        "unhex" | "from_base64" | "inet6_aton" | "weight_string" | "uuid_to_bin" | "uncompress"
+        "unhex"
+            | "from_base64"
+            | "inet6_aton"
+            | "weight_string"
+            | "uuid_to_bin"
+            | "uncompress"
+            | "aes_encrypt"
+            | "aes_decrypt"
     )
 }
 
@@ -187,14 +188,6 @@ pub(super) fn binary_literal_type(byte_len: usize, unsigned: bool) -> FieldType 
 /// `GROUP_CONCAT` is an aggregate; `DATE_ADD`-family take an `Expr::Interval`
 /// argument that is not an expression at all.
 ///
-/// `AES_ENCRYPT`/`AES_DECRYPT` are refused ON PURPOSE even though their
-/// two-argument bodies are ported: the ported body implements `aes-128-ecb`
-/// ONLY, while Go picks the cipher from the `block_encryption_mode` session
-/// variable (`builtin_encryption.go`'s `aesModeAttr` lookup). This function
-/// takes no session context, so it cannot see that variable -- typing the two
-/// names here would turn today's clean refusal into a SILENTLY WRONG ciphertext
-/// under any non-default mode. They stay refused until either this gate gains
-/// session context or the remaining modes are ported.
 pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
     let mut ft = builtin_return_type_before_ret_tp(name, args)?;
     promote_wide_string_result(&mut ft);
@@ -865,8 +858,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             ft.set_flen(41);
             ft
         }
-        // Go `encodeFunctionClass`/`decodeFunctionClass`
-        // (`builtin_encryption.go:439,389`): the RC4-style stream cipher is
+        // Go `encodeFunctionClass`/`decodeFunctionClass`: the stream cipher is
         // length-preserving, so both report argument 0's own flen and NEITHER
         // sets the binary charset -- Go leaves them in the connection charset
         // even though `ENCODE`'s output is arbitrary bytes.
@@ -875,6 +867,19 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             if let Some(arg) = args[0].static_type() {
                 ft.set_flen(arg.flen());
             }
+            ft
+        }
+        "aes_encrypt" => {
+            let mut ft = text();
+            let input = raw_arg_flen(args, 0);
+            ft.set_flen(16 * (input / 16 + 1));
+            set_binary_charset(&mut ft);
+            ft
+        }
+        "aes_decrypt" => {
+            let mut ft = text();
+            ft.set_flen(raw_arg_flen(args, 0));
+            set_binary_charset(&mut ft);
             ft
         }
         // Go `uncompressFunctionClass` (`builtin_encryption.go:911`): flen

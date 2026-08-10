@@ -28,6 +28,11 @@ pub enum EvalError {
     /// Go `expression.ErrOperandColumns` (1241): the right row operand does
     /// not contain the number of columns required by the left operand.
     OperandColumns(usize),
+    /// Go `ErrWrongParamcountToNativeFct` (1582).
+    WrongParameterCount(&'static str),
+    /// Go `ErrWrongArguments` (1210), with the source-formatted argument
+    /// description.
+    IncorrectArguments(String),
     /// A binary operation reached the evaluator with an operand pair that no
     /// domain dispatch claims.
     ///
@@ -282,6 +287,80 @@ pub enum ErrorLevel {
 /// `sessionctx`; see [`tidb_datatype::SessionTimeZone`].
 pub use tidb_datatype::SessionTimeZone;
 
+/// The supported values of MySQL's `block_encryption_mode` session variable.
+///
+/// Go selects an immutable AES signature from this value while building the
+/// expression. Rust carries the same validated statement snapshot through
+/// [`Columns`], so every row of one statement uses one mode without reaching
+/// back into mutable session state.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum BlockEncryptionMode {
+    /// AES-128 ECB, TiDB's shipped default.
+    #[default]
+    Aes128Ecb,
+    /// AES-192 ECB.
+    Aes192Ecb,
+    /// AES-256 ECB.
+    Aes256Ecb,
+    /// AES-128 CBC.
+    Aes128Cbc,
+    /// AES-192 CBC.
+    Aes192Cbc,
+    /// AES-256 CBC.
+    Aes256Cbc,
+    /// AES-128 OFB.
+    Aes128Ofb,
+    /// AES-192 OFB.
+    Aes192Ofb,
+    /// AES-256 OFB.
+    Aes256Ofb,
+    /// AES-128 CFB.
+    Aes128Cfb,
+    /// AES-192 CFB.
+    Aes192Cfb,
+    /// AES-256 CFB.
+    Aes256Cfb,
+}
+
+impl BlockEncryptionMode {
+    /// Parses one value already admitted by the system-variable catalog.
+    #[must_use]
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value.to_ascii_lowercase().as_str() {
+            "aes-128-ecb" => Self::Aes128Ecb,
+            "aes-192-ecb" => Self::Aes192Ecb,
+            "aes-256-ecb" => Self::Aes256Ecb,
+            "aes-128-cbc" => Self::Aes128Cbc,
+            "aes-192-cbc" => Self::Aes192Cbc,
+            "aes-256-cbc" => Self::Aes256Cbc,
+            "aes-128-ofb" => Self::Aes128Ofb,
+            "aes-192-ofb" => Self::Aes192Ofb,
+            "aes-256-ofb" => Self::Aes256Ofb,
+            "aes-128-cfb" => Self::Aes128Cfb,
+            "aes-192-cfb" => Self::Aes192Cfb,
+            "aes-256-cfb" => Self::Aes256Cfb,
+            _ => return None,
+        })
+    }
+
+    /// MySQL's XOR-folded key width for this mode, in bytes.
+    #[must_use]
+    pub const fn key_size(self) -> usize {
+        match self {
+            Self::Aes128Ecb | Self::Aes128Cbc | Self::Aes128Ofb | Self::Aes128Cfb => 16,
+            Self::Aes192Ecb | Self::Aes192Cbc | Self::Aes192Ofb | Self::Aes192Cfb => 24,
+            Self::Aes256Ecb | Self::Aes256Cbc | Self::Aes256Ofb | Self::Aes256Cfb => 32,
+        }
+    }
+
+    /// Whether the selected mode requires a third initialization-vector
+    /// argument.
+    #[must_use]
+    pub const fn iv_required(self) -> bool {
+        !matches!(self, Self::Aes128Ecb | Self::Aes192Ecb | Self::Aes256Ecb)
+    }
+}
+
 /// Resolves column and session state during evaluation.
 pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
@@ -332,6 +411,11 @@ pub trait Columns {
     fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
         let _ = (scope, name);
         None
+    }
+
+    /// The statement snapshot of `@@block_encryption_mode`.
+    fn block_encryption_mode(&self) -> BlockEncryptionMode {
+        BlockEncryptionMode::default()
     }
 
     /// Go `errctx.ErrGroupDividedByZero`'s level for the running statement.

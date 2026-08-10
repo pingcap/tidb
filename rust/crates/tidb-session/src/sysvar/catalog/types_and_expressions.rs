@@ -14,7 +14,7 @@
 
 //! Type and expression behavior: character sets, collations, time zones, date/time formats, strict type checks, window functions.
 //!
-//! `character_set_client` .. `windowing_use_high_precision` -- 38 entries, name-ordered.
+//! `block_encryption_mode` .. `windowing_use_high_precision` -- 39 entries, name-ordered.
 //!
 //! Captured from Go `pkg/sessionctx/variable/sysvar.go`'s `sysVars`. The
 //! registry is one flat name-ordered slice because lookup binary-searches
@@ -23,7 +23,32 @@
 
 use super::super::{SysVarDef, VarType};
 
-pub(super) static ENTRIES: [SysVarDef; 38] = [
+pub(super) static ENTRIES: [SysVarDef; 39] = [
+    SysVarDef {
+        name: "block_encryption_mode",
+        scope: 3,
+        value: "aes-128-ecb",
+        var_type: VarType::Enum,
+        read_only: false,
+        allow_auto_value: false,
+        min_value: 0,
+        max_value: 0,
+        possible_values: &[
+            "aes-128-ecb",
+            "aes-192-ecb",
+            "aes-256-ecb",
+            "aes-128-cbc",
+            "aes-192-cbc",
+            "aes-256-cbc",
+            "aes-128-ofb",
+            "aes-192-ofb",
+            "aes-256-ofb",
+            "aes-128-cfb",
+            "aes-192-cfb",
+            "aes-256-cfb",
+        ],
+        auto_convert_negative_bool: false,
+    },
     SysVarDef {
         name: "character_set_client",
         scope: 3,

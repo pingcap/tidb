@@ -19,7 +19,6 @@ tidb-error = { path = "../tidb-error" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-util = { path = "../tidb-util" }
-aes = { workspace = true }
 flate2 = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }

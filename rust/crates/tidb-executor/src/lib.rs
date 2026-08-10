@@ -154,8 +154,8 @@ pub use table_dual::TableDualExec;
 /// without depending on `tidb-distsql` directly.
 pub use tidb_distsql::WarningLevel as WarnLevel;
 pub use tidb_expr::{
-    eval_in, like_match_with_collation, truthy_of, Columns, EvalError, JsonError, MysqlRng,
-    SessionTimeZone,
+    eval_in, like_match_with_collation, truthy_of, BlockEncryptionMode, Columns, EvalError,
+    JsonError, MysqlRng, SessionTimeZone,
 };
 pub use topn::TopNExec;
 pub use view::{run_create_view_in, run_drop_view_in, view_column_list};

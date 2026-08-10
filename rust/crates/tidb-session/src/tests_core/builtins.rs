@@ -1393,11 +1393,198 @@ fn misc_and_encryption_builtins_reach_live_sql() {
         "aaaaaaaa"
     );
 
-    // AES_ENCRYPT/AES_DECRYPT stay REFUSED on purpose: the ported body is
-    // `aes-128-ecb` only, while Go picks the cipher from
-    // `block_encryption_mode`, which this gate cannot see. A refusal beats a
-    // silently wrong ciphertext -- see `builtin_return_type`'s own doc.
-    assert!(session.run("SELECT AES_ENCRYPT('a', 'k')").is_err());
+    assert_eq!(
+        row_text(session.run("SELECT HEX(AES_ENCRYPT('pingcap', '1234567890123456'))"))[0][0],
+        "697BFE9B3F8C2F289DD82C88C7BC95C4"
+    );
+}
+
+/// `AES_ENCRYPT` and `AES_DECRYPT` select their signature from the live
+/// `block_encryption_mode` session variable. These are the accepted Go test
+/// vectors for every supported mode/key-size pair, exercised through SQL so
+/// the session variable, rewriter, evaluator, and binary result all move
+/// together.
+#[test]
+fn aes_modes_reach_live_sql() {
+    let mut session = Session::new();
+    for (mode, expected) in [
+        ("aes-128-ecb", "697BFE9B3F8C2F289DD82C88C7BC95C4"),
+        ("aes-192-ecb", "9B139FD002E6496EA2D5C73A2265E661"),
+        ("aes-256-ecb", "F80DCDEDDBE5663BDB68F74AEDDB8EE3"),
+        ("aes-128-cbc", "2ECA0077C5EA5768A0485AA522774792"),
+        ("aes-192-cbc", "516391DB38E908ECA93AAB22870EC787"),
+        ("aes-256-cbc", "5D0E22C1E77523AEF5C3E10B65653C8F"),
+        ("aes-128-ofb", "0515A36BBF3DE0"),
+        ("aes-192-ofb", "FE09DCCF14D458"),
+        ("aes-256-ofb", "2E70FCAC0C0834"),
+        ("aes-128-cfb", "0515A36BBF3DE0"),
+        ("aes-192-cfb", "FE09DCCF14D458"),
+        ("aes-256-cfb", "2E70FCAC0C0834"),
+    ] {
+        session
+            .run(&format!("SET block_encryption_mode = '{mode}'"))
+            .unwrap();
+        let args = if mode.ends_with("-ecb") {
+            "'pingcap', '1234567890123456'"
+        } else {
+            "'pingcap', '1234567890123456', '1234567890123456'"
+        };
+        assert_eq!(
+            row_text(session.run(&format!("SELECT HEX(AES_ENCRYPT({args}))")))[0][0],
+            expected,
+            "{mode}"
+        );
+        let decrypt_args = if mode.ends_with("-ecb") {
+            format!("UNHEX('{expected}'), '1234567890123456'")
+        } else {
+            format!("UNHEX('{expected}'), '1234567890123456', '1234567890123456'")
+        };
+        assert_eq!(
+            row_text(session.run(&format!("SELECT AES_DECRYPT({decrypt_args})")))[0][0],
+            "pingcap",
+            "{mode}"
+        );
+    }
+
+    for (mode, plain, key, iv, ciphertext, plaintext_hex) in [
+        (
+            "aes-128-ecb",
+            "CONVERT('你好' USING gbk)",
+            "'123'",
+            None,
+            "6AFA9D7BA2C1AED1603E804F75BB0127",
+            "C4E3BAC3",
+        ),
+        (
+            "aes-128-ecb",
+            "'123'",
+            "CONVERT('你好' USING gbk)",
+            None,
+            "31A2D26529F0E6A38D406379ABD26FA5",
+            "313233",
+        ),
+        (
+            "aes-128-ecb",
+            "CONVERT('你好' USING gbk)",
+            "CONVERT('你好' USING gbk)",
+            None,
+            "84982910338160D037615D283AD413DE",
+            "C4E3BAC3",
+        ),
+        (
+            "aes-128-cbc",
+            "CONVERT('你好' USING gbk)",
+            "'123'",
+            Some("'1234567890123456'"),
+            "D4322D091B5DDE0DEB35B1749DA2483C",
+            "C4E3BAC3",
+        ),
+        (
+            "aes-128-cbc",
+            "'123'",
+            "CONVERT('你好' USING gbk)",
+            Some("'1234567890123456'"),
+            "5A2F8F2C1841CC4E1D1640F1EA2A1A23",
+            "313233",
+        ),
+        (
+            "aes-128-cbc",
+            "CONVERT('你好' USING gbk)",
+            "CONVERT('你好' USING gbk)",
+            Some("'1234567890123456'"),
+            "61E13E9B00F2E757F4E925D3268227A0",
+            "C4E3BAC3",
+        ),
+    ] {
+        session
+            .run(&format!("SET block_encryption_mode = '{mode}'"))
+            .unwrap();
+        let iv_arg = iv.map_or(String::new(), |iv| format!(", {iv}"));
+        assert_eq!(
+            row_text(session.run(&format!("SELECT HEX(AES_ENCRYPT({plain}, {key}{iv_arg}))")))[0]
+                [0],
+            ciphertext,
+            "{mode}: {plain}, {key}"
+        );
+        assert_eq!(
+            row_text(session.run(&format!(
+                "SELECT HEX(AES_DECRYPT(UNHEX('{ciphertext}'), {key}{iv_arg}))"
+            )))[0][0],
+            plaintext_hex,
+            "{mode}: {plain}, {key}"
+        );
+    }
+
+    session
+        .run("SET block_encryption_mode = 'aes-128-ecb'")
+        .unwrap();
+    for sql in [
+        "SELECT AES_ENCRYPT()",
+        "SELECT AES_ENCRYPT('pingcap')",
+        "SELECT AES_ENCRYPT('pingcap', '123', 'iv', 'extra')",
+        "SELECT AES_DECRYPT()",
+        "SELECT AES_DECRYPT('cipher')",
+        "SELECT AES_DECRYPT('cipher', '123', 'iv', 'extra')",
+    ] {
+        assert_eq!(
+            session.run(sql).unwrap_err().to_mysql_error().code,
+            1582,
+            "{sql}"
+        );
+    }
+    assert_eq!(
+        row_text(session.run("SELECT HEX(AES_ENCRYPT('pingcap', '123', 1 / 0))"))[0][0],
+        "996E0CA8688D7AD20819B90B273E01C6"
+    );
+    assert_eq!(session.warnings().len(), 1);
+    assert_eq!(session.warnings()[0].code, 1618);
+    assert_eq!(session.warnings()[0].message, "<IV> option ignored");
+
+    for sql in [
+        "SELECT AES_ENCRYPT(NULL, 1 / 0)",
+        "SELECT AES_DECRYPT(NULL, 1 / 0)",
+    ] {
+        assert_eq!(row_text(session.run(sql)), [["NULL"]], "{sql}");
+        assert!(session.warnings().is_empty(), "{sql}");
+    }
+
+    session
+        .run("SET block_encryption_mode = 'aes-128-cbc'")
+        .unwrap();
+    for sql in [
+        "SELECT AES_ENCRYPT(NULL, 1 / 0, 1 / 0)",
+        "SELECT AES_ENCRYPT('pingcap', NULL, 1 / 0)",
+        "SELECT AES_DECRYPT(NULL, 1 / 0, 1 / 0)",
+        "SELECT AES_DECRYPT('cipher', NULL, 1 / 0)",
+    ] {
+        assert_eq!(row_text(session.run(sql)), [["NULL"]], "{sql}");
+        assert!(session.warnings().is_empty(), "{sql}");
+    }
+    let short_iv = session
+        .run("SELECT AES_ENCRYPT('pingcap', '123', 'short')")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(short_iv.code, 1210);
+    assert_eq!(
+        short_iv.message,
+        "The initialization vector supplied to aes_encrypt is too short. Must be at least 16 bytes long"
+    );
+    assert_eq!(
+        session
+            .run("SELECT AES_ENCRYPT('pingcap', '123')")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1582
+    );
+    assert_eq!(
+        session
+            .run("SELECT AES_DECRYPT('cipher', '123', '1234567890123456', 'extra')")
+            .unwrap_err()
+            .to_mysql_error()
+            .code,
+        1582
+    );
 }
 
 /// A string operand of an arithmetic, bitwise or unary operator, end to end

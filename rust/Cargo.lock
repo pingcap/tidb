@@ -1668,7 +1668,6 @@ dependencies = [
 name = "tidb-expr"
 version = "0.0.0"
 dependencies = [
- "aes",
  "chrono",
  "chrono-tz",
  "flate2",

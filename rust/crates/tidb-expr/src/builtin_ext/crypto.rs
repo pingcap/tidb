@@ -15,15 +15,13 @@
 //! `pkg/expression/builtin_encryption.go`; test vectors come from
 //! `pkg/expression/builtin_encryption_test.go`.
 //!
+//! Session-dependent functions receive their statement snapshot through
+//! [`crate::Columns`]. `AES_ENCRYPT`/`AES_DECRYPT` therefore use the live
+//! `block_encryption_mode`, including all accepted key sizes and ECB/CBC/OFB/
+//! CFB modes, IV validation, NULL propagation, and the ignored-IV warning.
+//!
 //! Deliberately not yet ported from `builtin_encryption.go` because their
 //! required session or binary-value contracts are not present:
-//! - `AES_ENCRYPT`/`AES_DECRYPT` (`builtinAesEncrypt*`/`builtinAesDecrypt*`):
-//!   the default `block_encryption_mode` (`aes-128-ecb`, no IV) two-argument
-//!   form is ported below; it is session-independent. The other modes in the
-//!   `aesModes` table (192/256 key sizes and the CBC/OFB/CFB modes that need an
-//!   IV argument) are selected by the `block_encryption_mode` session variable
-//!   and remain a session boundary, as does the ignored-IV warning for a third
-//!   argument in a no-IV mode.
 //! - `UNCOMPRESS`/`UNCOMPRESSED_LENGTH` (`builtinUncompressSig`/
 //!   `builtinUncompressedLengthSig`): ported below. Both decode the zlib
 //!   framing (a 4-byte little-endian original-length prefix + a zlib stream),
@@ -56,19 +54,21 @@
 
 use std::io::Read;
 
-use aes::cipher::{Block, BlockCipherDecrypt, BlockCipherEncrypt, KeyInit};
-use aes::Aes128;
 use flate2::read::ZlibDecoder;
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha224, Sha256, Sha384, Sha512};
 
-use crate::{Datum, EvalError};
+use crate::{BlockEncryptionMode, Columns, Datum, EvalError};
 
 /// Dispatches this family's builtins; `None` if `name` isn't one of them.
 /// `SHA` is a true alias of `SHA1`: `builtin.go`'s `funcs` map registers
 /// both `ast.SHA` and `ast.SHA1` to the same `sha1FunctionClass`.
-pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
+pub(crate) fn dispatch(
+    name: &str,
+    vals: &[Datum],
+    ctx: &dyn Columns,
+) -> Option<Result<Datum, EvalError>> {
     match (name, vals.len()) {
         ("MD5", 1) => Some(hash_unary::<Md5>(&vals[0])),
         ("SHA" | "SHA1", 1) => Some(hash_unary::<Sha1>(&vals[0])),
@@ -76,8 +76,9 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
         ("PASSWORD", 1) => Some(password_hash(&vals[0])),
         ("ENCODE", 2) => Some(sql_encode(&vals[0], &vals[1])),
         ("DECODE", 2) => Some(sql_decode(&vals[0], &vals[1])),
-        ("AES_ENCRYPT", 2) => Some(aes_encrypt(&vals[0], &vals[1])),
-        ("AES_DECRYPT", 2) => Some(aes_decrypt(&vals[0], &vals[1])),
+        ("AES_ENCRYPT" | "AES_DECRYPT", _) => {
+            eval_aes_lazy(name, vals.len(), |i| Ok(vals[i].clone()), ctx)
+        }
         ("UNCOMPRESS", 1) => Some(uncompress(&vals[0])),
         ("UNCOMPRESSED_LENGTH", 1) => Some(uncompressed_length(&vals[0])),
         _ => None,
@@ -140,101 +141,131 @@ fn uncompressed_length(arg: &Datum) -> Result<Datum, EvalError> {
     Ok(Datum::Int(i64::from(length)))
 }
 
-/// AES block size (bytes) and, for the default `aes-128-ecb`, the derived key
-/// length.
 const AES_BLOCK_SIZE: usize = 16;
 
-/// Derives the encryption key from a password using MySQL's algorithm: fold the
-/// key bytes into `AES_BLOCK_SIZE` bytes by XOR, wrapping. Port of
-/// `encrypt.DeriveKeyMySQL` with `blockSize == 16` (the default `aes-128-ecb`).
-fn derive_key_mysql(key: &[u8]) -> [u8; AES_BLOCK_SIZE] {
-    let mut rkey = [0u8; AES_BLOCK_SIZE];
-    for (i, &k) in key.iter().enumerate() {
-        rkey[i % AES_BLOCK_SIZE] ^= k;
-    }
-    rkey
-}
-
-/// PKCS7-pads `data` in place to a multiple of `AES_BLOCK_SIZE`. Port of
-/// `encrypt.PKCS7Pad`: a full-block input still gains a whole padding block.
-fn pkcs7_pad(data: &mut Vec<u8>) {
-    let pad_len = AES_BLOCK_SIZE - (data.len() % AES_BLOCK_SIZE);
-    data.extend(std::iter::repeat_n(pad_len as u8, pad_len));
-}
-
-/// PKCS7-unpads `data`, returning `None` on invalid padding. Port of
-/// `encrypt.PKCS7Unpad`.
-fn pkcs7_unpad(data: &[u8]) -> Option<&[u8]> {
-    let length = data.len();
-    if length == 0 || !length.is_multiple_of(AES_BLOCK_SIZE) {
+/// Evaluates AES arguments in Go's signature order. ECB deliberately ignores
+/// a third argument without evaluating it and emits warning 1618; IV modes
+/// require and evaluate exactly three arguments. Keeping the evaluator as a
+/// closure lets both AST and chunk paths share this ordering without copying
+/// their row-access machinery.
+pub(crate) fn eval_aes_lazy<F>(
+    name: &str,
+    arg_count: usize,
+    mut eval: F,
+    ctx: &dyn Columns,
+) -> Option<Result<Datum, EvalError>>
+where
+    F: FnMut(usize) -> Result<Datum, EvalError>,
+{
+    let function = if name.eq_ignore_ascii_case("aes_encrypt") {
+        "aes_encrypt"
+    } else if name.eq_ignore_ascii_case("aes_decrypt") {
+        "aes_decrypt"
+    } else {
         return None;
-    }
-    let pad = data[length - 1];
-    let pad_len = pad as usize;
-    if pad_len > AES_BLOCK_SIZE || pad_len == 0 {
-        return None;
-    }
-    for &v in &data[length - pad_len..length - 1] {
-        if v != pad {
-            return None;
+    };
+    let mode = ctx.block_encryption_mode();
+    if mode.iv_required() {
+        if arg_count != 3 {
+            return Some(Err(EvalError::WrongParameterCount(function)));
         }
+    } else if !(2..=3).contains(&arg_count) {
+        return Some(Err(EvalError::WrongParameterCount(function)));
     }
-    Some(&data[..length - pad_len])
+
+    let input = match eval(0).and_then(|value| sql_string_bytes(&value)) {
+        Ok(Some(value)) => value,
+        Ok(None) => return Some(Ok(Datum::Null)),
+        Err(error) => return Some(Err(error)),
+    };
+    let password = match eval(1).and_then(|value| sql_string_bytes(&value)) {
+        Ok(Some(value)) => value,
+        Ok(None) => return Some(Ok(Datum::Null)),
+        Err(error) => return Some(Err(error)),
+    };
+    let iv = if mode.iv_required() {
+        match eval(2).and_then(|value| sql_string_bytes(&value)) {
+            Ok(Some(value)) => Some(value),
+            Ok(None) => return Some(Ok(Datum::Null)),
+            Err(error) => return Some(Err(error)),
+        }
+    } else if arg_count == 3 {
+        ctx.append_warning(1618, "<IV> option ignored");
+        None
+    } else {
+        None
+    };
+    Some(eval_aes_bytes(
+        function,
+        &input,
+        &password,
+        iv.as_deref(),
+        mode,
+    ))
 }
 
-/// `AES_ENCRYPT(str, key_str)` in the default `aes-128-ecb` mode. Port of
-/// `builtinAesEncryptSig.evalString` + `encrypt.AESEncryptWithECB`. Either
-/// argument being NULL yields NULL.
-fn aes_encrypt(str_arg: &Datum, key_arg: &Datum) -> Result<Datum, EvalError> {
-    let Some(plain) = sql_string_bytes(str_arg)? else {
-        return Ok(Datum::Null);
+fn eval_aes_bytes(
+    function: &'static str,
+    input: &[u8],
+    password: &[u8],
+    iv: Option<&[u8]>,
+    mode: BlockEncryptionMode,
+) -> Result<Datum, EvalError> {
+    let iv = if mode.iv_required() {
+        let iv = iv.expect("an IV mode evaluates its third argument");
+        if iv.len() < AES_BLOCK_SIZE {
+            return Err(EvalError::IncorrectArguments(format!(
+                "The initialization vector supplied to {function} is too short. Must be at least {AES_BLOCK_SIZE} bytes long"
+            )));
+        }
+        Some(&iv[..AES_BLOCK_SIZE])
+    } else {
+        None
     };
-    let Some(key) = sql_string_bytes(key_arg)? else {
-        return Ok(Datum::Null);
+    let key = tidb_util::encrypt::derive_key_mysql(password, mode.key_size());
+    let encrypted = function == "aes_encrypt";
+    let result = match mode {
+        BlockEncryptionMode::Aes128Ecb
+        | BlockEncryptionMode::Aes192Ecb
+        | BlockEncryptionMode::Aes256Ecb => {
+            if encrypted {
+                tidb_util::encrypt::aes_encrypt_with_ecb(input, &key)
+            } else {
+                tidb_util::encrypt::aes_decrypt_with_ecb(input, &key)
+            }
+        }
+        BlockEncryptionMode::Aes128Cbc
+        | BlockEncryptionMode::Aes192Cbc
+        | BlockEncryptionMode::Aes256Cbc => {
+            let iv = iv.expect("CBC mode requires an IV");
+            if encrypted {
+                tidb_util::encrypt::aes_encrypt_with_cbc(input, &key, iv)
+            } else {
+                tidb_util::encrypt::aes_decrypt_with_cbc(input, &key, iv)
+            }
+        }
+        BlockEncryptionMode::Aes128Ofb
+        | BlockEncryptionMode::Aes192Ofb
+        | BlockEncryptionMode::Aes256Ofb => {
+            let iv = iv.expect("OFB mode requires an IV");
+            if encrypted {
+                tidb_util::encrypt::aes_encrypt_with_ofb(input, &key, iv)
+            } else {
+                tidb_util::encrypt::aes_decrypt_with_ofb(input, &key, iv)
+            }
+        }
+        BlockEncryptionMode::Aes128Cfb
+        | BlockEncryptionMode::Aes192Cfb
+        | BlockEncryptionMode::Aes256Cfb => {
+            let iv = iv.expect("CFB mode requires an IV");
+            if encrypted {
+                tidb_util::encrypt::aes_encrypt_with_cfb(input, &key, iv)
+            } else {
+                tidb_util::encrypt::aes_decrypt_with_cfb(input, &key, iv)
+            }
+        }
     };
-    let cipher = Aes128::new_from_slice(&derive_key_mysql(&key))
-        .expect("derived AES-128 key is exactly 16 bytes");
-
-    let mut data = plain;
-    pkcs7_pad(&mut data);
-    for chunk in data.chunks_exact_mut(AES_BLOCK_SIZE) {
-        let mut block = Block::<Aes128>::default();
-        block.copy_from_slice(chunk);
-        cipher.encrypt_block(&mut block);
-        chunk.copy_from_slice(&block);
-    }
-    Ok(Datum::new_string(data))
-}
-
-/// `AES_DECRYPT(crypt_str, key_str)` in the default `aes-128-ecb` mode. Port of
-/// `builtinAesDecryptSig.evalString` + `encrypt.AESDecryptWithECB`. Either
-/// argument being NULL yields NULL, and any decryption error (a length that is
-/// not a whole number of blocks, or invalid PKCS7 padding) also yields NULL, as
-/// the Go evaluator maps such errors to NULL.
-fn aes_decrypt(crypt_arg: &Datum, key_arg: &Datum) -> Result<Datum, EvalError> {
-    let Some(crypt) = sql_string_bytes(crypt_arg)? else {
-        return Ok(Datum::Null);
-    };
-    let Some(key) = sql_string_bytes(key_arg)? else {
-        return Ok(Datum::Null);
-    };
-    if !crypt.len().is_multiple_of(AES_BLOCK_SIZE) {
-        return Ok(Datum::Null);
-    }
-    let cipher = Aes128::new_from_slice(&derive_key_mysql(&key))
-        .expect("derived AES-128 key is exactly 16 bytes");
-
-    let mut data = crypt;
-    for chunk in data.chunks_exact_mut(AES_BLOCK_SIZE) {
-        let mut block = Block::<Aes128>::default();
-        block.copy_from_slice(chunk);
-        cipher.decrypt_block(&mut block);
-        chunk.copy_from_slice(&block);
-    }
-    match pkcs7_unpad(&data) {
-        Some(plain) => Ok(Datum::new_string(plain.to_vec())),
-        None => Ok(Datum::Null),
-    }
+    Ok(result.map_or(Datum::Null, Datum::new_string))
 }
 
 /// Lowercase hex of `bytes` — the same "0123456789abcdef" alphabet Go's
@@ -286,35 +317,31 @@ fn password_hash(value: &Datum) -> Result<Datum, EvalError> {
 }
 
 /// The deterministic MySQL 3.21 stream cipher used by TiDB's deprecated
-/// `ENCODE(str, password)`/`DECODE(str, password)` functions.  This is a
-/// direct port of `pkg/util/encrypt/crypt.go` (`randStruct`, `sqlCrypt`,
-/// `SQLEncode`, and `SQLDecode`), including Go's uint32 wrapping arithmetic,
-/// password whitespace skipping, 256-byte substitution-table shuffle, and
-/// one-byte rolling shift.  The value-only Rust datum domain preserves the
-/// arbitrary output bytes inside `Datum::String`; charset conversion and
-/// deprecation warnings require session state and are deliberately outside
-/// this leaf.
+/// `ENCODE(str, password)` function. The byte algorithm is owned once by
+/// `tidb_util::encrypt`, the direct transcreation of `pkg/util/encrypt`.
 fn sql_encode(data: &Datum, password: &Datum) -> Result<Datum, EvalError> {
-    let Some(mut data) = sql_string_bytes(data)? else {
+    let Some(data) = sql_string_bytes(data)? else {
         return Ok(Datum::Null);
     };
     let Some(password) = sql_string_bytes(password)? else {
         return Ok(Datum::Null);
     };
-    SqlCrypt::new(&password).encode(&mut data);
-    Ok(Datum::new_string(data))
+    Ok(Datum::new_string(tidb_util::encrypt::sql_encode(
+        &data, &password,
+    )))
 }
 
 /// `DECODE(str, password)`, the inverse stream operation of [`sql_encode`].
 fn sql_decode(data: &Datum, password: &Datum) -> Result<Datum, EvalError> {
-    let Some(mut data) = sql_string_bytes(data)? else {
+    let Some(data) = sql_string_bytes(data)? else {
         return Ok(Datum::Null);
     };
     let Some(password) = sql_string_bytes(password)? else {
         return Ok(Datum::Null);
     };
-    SqlCrypt::new(&password).decode(&mut data);
-    Ok(Datum::new_string(data))
+    Ok(Datum::new_string(tidb_util::encrypt::sql_decode(
+        &data, &password,
+    )))
 }
 
 /// The Go `EvalString` byte boundary used by ENCODE/DECODE.  Unlike
@@ -339,97 +366,6 @@ fn sql_string_bytes(value: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
                 .map_err(|_| EvalError::Unsupported("datum string argument"))?,
         ),
     })
-}
-
-#[derive(Clone)]
-struct SqlCrypt {
-    rand: SqlRand,
-    decode: [u8; 256],
-    encode: [u8; 256],
-    shift: u32,
-}
-
-#[derive(Clone, Copy)]
-struct SqlRand {
-    seed1: u32,
-    seed2: u32,
-    max_value: u32,
-    max_value_dbl: f64,
-}
-
-impl SqlRand {
-    fn new(password: &[u8]) -> Self {
-        let mut nr = 1_345_345_333u32;
-        let mut add = 7u32;
-        let mut nr2 = 0x1234_5671u32;
-        for &password_byte in password {
-            if password_byte == b' ' || password_byte == b'\t' {
-                continue;
-            }
-            let byte = u32::from(password_byte);
-            nr ^= ((nr & 63).wrapping_add(add))
-                .wrapping_mul(byte)
-                .wrapping_add(nr << 8);
-            nr2 = nr2.wrapping_add((nr2 << 8) ^ nr);
-            add = add.wrapping_add(byte);
-        }
-        let max_value = 0x3fff_ffff;
-        Self {
-            seed1: (nr & 0x7fff_ffff) % max_value,
-            seed2: (nr2 & 0x7fff_ffff) % max_value,
-            max_value,
-            max_value_dbl: f64::from(max_value),
-        }
-    }
-
-    fn next(&mut self) -> f64 {
-        self.seed1 = (self.seed1.wrapping_mul(3).wrapping_add(self.seed2)) % self.max_value;
-        self.seed2 = (self.seed1.wrapping_add(self.seed2).wrapping_add(33)) % self.max_value;
-        f64::from(self.seed1) / self.max_value_dbl
-    }
-}
-
-impl SqlCrypt {
-    fn new(password: &[u8]) -> Self {
-        let mut rand = SqlRand::new(password);
-        let mut decode = [0u8; 256];
-        for (index, value) in decode.iter_mut().enumerate() {
-            *value = index as u8;
-        }
-        for i in 0..256 {
-            let index = (rand.next() * 255.0) as usize;
-            decode.swap(index, i);
-        }
-        let mut encode = [0u8; 256];
-        for (i, &value) in decode.iter().enumerate() {
-            encode[value as usize] = i as u8;
-        }
-        Self {
-            rand,
-            decode,
-            encode,
-            shift: 0,
-        }
-    }
-
-    fn encode(&mut self, data: &mut [u8]) {
-        for byte in data {
-            self.shift ^= (self.rand.next() * 255.0) as u32;
-            let index_byte = *byte;
-            let index = usize::from(index_byte);
-            *byte = self.encode[index] ^ self.shift as u8;
-            self.shift ^= u32::from(index_byte);
-        }
-    }
-
-    fn decode(&mut self, data: &mut [u8]) {
-        for byte in data {
-            self.shift ^= (self.rand.next() * 255.0) as u32;
-            let index = usize::from(*byte ^ self.shift as u8);
-            *byte = self.decode[index];
-            self.shift ^= u32::from(*byte);
-        }
-    }
 }
 
 /// `MD5(str)` / `SHA(str)` / `SHA1(str)`: the digest of the argument's
@@ -588,7 +524,7 @@ mod tests {
     use crate::Decimal;
 
     fn call(name: &str, vals: &[Datum]) -> Datum {
-        dispatch(name, vals)
+        dispatch(name, vals, &crate::NoColumns)
             .expect("name/arity should dispatch to the crypto family")
             .expect("evaluation should succeed")
     }
@@ -611,8 +547,8 @@ mod tests {
 
     /// Vectors from `TestAESEncrypt`/`TestAESDecrypt` (default `aes-128-ecb`;
     /// the Go test's tuple is `{mode, str, key_args, expected_hex}`, so the
-    /// second field is the plaintext and the key is `args[0]`). GBK/other-mode
-    /// cases need session state and are out of this domain.
+    /// second field is the plaintext and the key is `args[0]`). The live SQL
+    /// test covers the other statement-selected modes.
     #[test]
     fn aes_ecb_go_vectors() {
         let cases: &[(Datum, Datum, &str)] = &[
@@ -1077,22 +1013,22 @@ mod tests {
     /// claimed-but-wrong answer.
     #[test]
     fn dispatch_declines_foreign_names_and_arities() {
-        assert!(dispatch("MD5X", &[s("a")]).is_none());
-        assert!(dispatch("MD5", &[s("a"), s("b")]).is_none());
-        assert!(dispatch("SHA1", &[]).is_none());
-        assert!(dispatch("SHA2", &[s("a")]).is_none());
-        assert!(dispatch("PASSWORD", &[]).is_none());
-        assert!(dispatch("PASSWORD", &[s("a"), s("b")]).is_none());
-        assert!(dispatch("ENCODE", &[s("a")]).is_none());
-        assert!(dispatch("DECODE", &[s("a")]).is_none());
-        // The 2-arg default `aes-128-ecb` form is handled; the 3-arg IV form and
-        // other arities remain a session boundary and decline.
-        assert!(dispatch("AES_ENCRYPT", &[s("a")]).is_none());
-        assert!(dispatch("AES_ENCRYPT", &[s("a"), s("k"), s("iv")]).is_none());
-        assert!(dispatch("AES_DECRYPT", &[s("a"), s("k"), s("iv")]).is_none());
+        let ctx = crate::NoColumns;
+        assert!(dispatch("MD5X", &[s("a")], &ctx).is_none());
+        assert!(dispatch("MD5", &[s("a"), s("b")], &ctx).is_none());
+        assert!(dispatch("SHA1", &[], &ctx).is_none());
+        assert!(dispatch("SHA2", &[s("a")], &ctx).is_none());
+        assert!(dispatch("PASSWORD", &[], &ctx).is_none());
+        assert!(dispatch("PASSWORD", &[s("a"), s("b")], &ctx).is_none());
+        assert!(dispatch("ENCODE", &[s("a")], &ctx).is_none());
+        assert!(dispatch("DECODE", &[s("a")], &ctx).is_none());
+        assert!(matches!(
+            dispatch("AES_ENCRYPT", &[s("a")], &ctx),
+            Some(Err(crate::EvalError::WrongParameterCount("aes_encrypt")))
+        ));
         // COMPRESS is deferred (Go DEFLATE-encoder bytes are not reproducible).
-        assert!(dispatch("COMPRESS", &[s("a")]).is_none());
-        assert!(dispatch("UNCOMPRESS", &[]).is_none());
-        assert!(dispatch("UNCOMPRESSED_LENGTH", &[s("a"), s("b")]).is_none());
+        assert!(dispatch("COMPRESS", &[s("a")], &ctx).is_none());
+        assert!(dispatch("UNCOMPRESS", &[], &ctx).is_none());
+        assert!(dispatch("UNCOMPRESSED_LENGTH", &[s("a"), s("b")], &ctx).is_none());
     }
 }
