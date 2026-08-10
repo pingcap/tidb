@@ -16,7 +16,10 @@
 
 use tidb_datatype::Datum;
 use tidb_protocol::resultset_stream::ResultSetStream;
-use tidb_protocol::{PacketWriter, ResultSetOptions};
+use tidb_protocol::{
+    format_text_value, PacketWriter, ResultSetOptions, TextColumn, TextFormatError, TextScalar,
+    TYPE_FLOAT, TYPE_LONGLONG, UNSIGNED_FLAG,
+};
 
 use crate::resultset_source::ResultSetSource;
 
@@ -152,6 +155,15 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
     let columns = source
         .columns()
         .map_err(|message| tracked_after_pull(message, sink, false))?;
+    let text_columns = columns
+        .iter()
+        .map(|column| TextColumn {
+            type_code: column.type_code,
+            flag: column.flag,
+            decimal: column.decimal,
+            table_is_empty: column.table.is_empty(),
+        })
+        .collect::<Vec<_>>();
     let mut stream = ResultSetStream::new(columns, options);
     for payload in stream
         .metadata_packets()
@@ -165,8 +177,8 @@ pub(crate) fn write_result_set_tracked<S: ResultSetSource, W: ResultSetSink>(
             break;
         }
         for row in batch {
-            let row =
-                format_row(row).map_err(|message| tracked_after_pull(message, sink, false))?;
+            let row = format_row(row, &text_columns, stream.row_count())
+                .map_err(|message| tracked_after_pull(message, sink, false))?;
             let payload = stream
                 .row_packet(&row)
                 .map_err(|error| tracked_after_pull(error.to_string(), sink, false))?;
@@ -206,20 +218,95 @@ fn tracked_after_pull<W: ResultSetSink>(
     tracked(failed_after_pull(message, sink), finish_attempted)
 }
 
-fn format_row(row: Vec<Datum>) -> Result<Vec<Option<Vec<u8>>>, String> {
-    row.into_iter().map(format_datum).collect()
+fn format_row(
+    row: Vec<Datum>,
+    columns: &[TextColumn],
+    row_index: usize,
+) -> Result<Vec<Option<Vec<u8>>>, String> {
+    if row.len() != columns.len() {
+        return Err(format!(
+            "result row {row_index} has {} values, expected {}",
+            row.len(),
+            columns.len()
+        ));
+    }
+    row.into_iter()
+        .zip(columns.iter().copied())
+        .map(|(datum, column)| format_datum(column, datum))
+        .collect()
 }
 
-fn format_datum(datum: Datum) -> Result<Option<Vec<u8>>, String> {
+fn format_datum(column: TextColumn, datum: Datum) -> Result<Option<Vec<u8>>, String> {
     match datum {
         Datum::Null => Ok(None),
         Datum::MinNotNull => Err("cannot render MinNotNull as a SQL row".to_owned()),
         Datum::MaxValue => Err("cannot render MaxValue as a SQL row".to_owned()),
-        value => value
-            .to_bytes()
-            .map(Some)
-            .map_err(|error| error.to_string()),
+        Datum::Int(value) => format_scalar(column, TextScalar::Signed(value)),
+        Datum::UInt(value)
+            if column.type_code == TYPE_LONGLONG && column.flag & UNSIGNED_FLAG != 0 =>
+        {
+            format_scalar(column, TextScalar::Unsigned(value))
+        }
+        Datum::UInt(value) => format_scalar(column, TextScalar::Signed(value as i64)),
+        Datum::Real(value) => format_scalar(
+            column,
+            TextScalar::Float {
+                value,
+                bit_size: if column.type_code == TYPE_FLOAT {
+                    32
+                } else {
+                    64
+                },
+            },
+        ),
+        Datum::Float32(value) => format_scalar(
+            column,
+            TextScalar::Float {
+                value,
+                bit_size: 32,
+            },
+        ),
+        Datum::Decimal(value) => {
+            let value = value.to_string();
+            format_scalar(column, TextScalar::Decimal(value.as_bytes()))
+        }
+        Datum::String(value) => format_scalar(column, TextScalar::Bytes(value.bytes())),
+        Datum::Bytes(value) => format_scalar(column, TextScalar::Bytes(&value)),
+        Datum::BinaryLiteral(value) | Datum::Bit(value) => {
+            format_scalar(column, TextScalar::Bytes(value.as_bytes()))
+        }
+        Datum::Duration(value) => {
+            let value = tidb_datatype::MySqlDuration::from_nanoseconds(
+                value.nanoseconds(),
+                i64::from(column.decimal),
+            )
+            .map_err(|error| error.to_string())?
+            .to_string();
+            format_scalar(column, TextScalar::Temporal(value.as_bytes()))
+        }
+        Datum::Enum(value, _) => format_scalar(column, TextScalar::Bytes(value.name_bytes())),
+        Datum::Set(value, _) => format_scalar(column, TextScalar::Bytes(value.name_bytes())),
+        Datum::Time(value) => {
+            let value = value.to_string();
+            format_scalar(column, TextScalar::Temporal(value.as_bytes()))
+        }
+        Datum::Json(value) => {
+            let value = value.to_string();
+            format_scalar(column, TextScalar::Bytes(value.as_bytes()))
+        }
+        Datum::VectorFloat32(value) => {
+            let value = value.to_string();
+            format_scalar(column, TextScalar::Bytes(value.as_bytes()))
+        }
+        Datum::Raw(_) => Err("cannot render Raw as a SQL row".to_owned()),
     }
+}
+
+fn format_scalar(column: TextColumn, value: TextScalar<'_>) -> Result<Option<Vec<u8>>, String> {
+    format_text_value(column, value).map_err(|error| match error {
+        TextFormatError::UnsupportedType(type_code) => format!("invalid type {type_code}"),
+        TextFormatError::ScalarTypeMismatch(_) => error.to_string(),
+    })
 }
 
 fn write_payload<W: ResultSetSink>(

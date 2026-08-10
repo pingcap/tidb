@@ -145,8 +145,8 @@ func main() {
 				ftOf(tp, 0), types.NewBytesDatum(raw))
 		}
 	}
-	// The branches this crate has not connected: Go renders each of them,
-	// so the fixture carries what a client would see.
+	// Temporal and named/string-shaped types carry the rendered bytes a client
+	// sees after the result encoder applies its column/session charset policy.
 	for _, spec := range []struct {
 		tp   byte
 		text string

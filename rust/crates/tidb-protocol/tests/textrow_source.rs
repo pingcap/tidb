@@ -17,7 +17,8 @@
 use tidb_protocol::{
     append_format_float, format_text_value, TextColumn, TextFormatError, TextScalar, TYPE_DATE,
     TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION, TYPE_ENUM, TYPE_FLOAT, TYPE_GEOMETRY, TYPE_JSON,
-    TYPE_LONGLONG, TYPE_NEW_DECIMAL, TYPE_SET, TYPE_TIMESTAMP, TYPE_YEAR, UNSIGNED_FLAG,
+    TYPE_LONGLONG, TYPE_NEW_DECIMAL, TYPE_SET, TYPE_TIDB_VECTOR_FLOAT32, TYPE_TIMESTAMP, TYPE_YEAR,
+    UNSIGNED_FLAG,
 };
 
 #[test]
@@ -142,7 +143,7 @@ fn source_scalar_formatter_keeps_numeric_and_byte_boundaries() {
 }
 
 #[test]
-fn source_scalar_formatter_rejects_mismatched_and_unported_branches() {
+fn source_scalar_formatter_rejects_mismatched_and_invalid_branches() {
     assert_eq!(
         format_text_value(TextColumn::new(TYPE_NEW_DECIMAL), TextScalar::Signed(1)).unwrap_err(),
         TextFormatError::ScalarTypeMismatch(TYPE_NEW_DECIMAL)
@@ -176,15 +177,14 @@ fn source_scalar_formatter_rejects_mismatched_and_unported_branches() {
         );
     }
 
-    // ENUM/SET/JSON stay unported: all three run `enc.EncodeData`, and they
-    // disagree on the encoding to use, so this leaf must not pretend a byte
-    // payload is already correct.
-    for type_code in [TYPE_ENUM, TYPE_SET, TYPE_JSON] {
+    // The result-set stream owns charset conversion. The scalar formatter
+    // therefore preserves the raw rendered bytes for all four string-shaped
+    // branches and lets the stream apply the column/session policy once.
+    for type_code in [TYPE_ENUM, TYPE_SET, TYPE_JSON, TYPE_TIDB_VECTOR_FLOAT32] {
         assert_eq!(
-            format_text_value(TextColumn::new(type_code), TextScalar::Bytes(b"not-ported"))
-                .unwrap_err(),
-            TextFormatError::UnsupportedType(type_code),
-            "unported type={type_code}"
+            format_text_value(TextColumn::new(type_code), TextScalar::Bytes(b"value")).unwrap(),
+            Some(b"value".to_vec()),
+            "string-shaped type={type_code}"
         );
     }
 }

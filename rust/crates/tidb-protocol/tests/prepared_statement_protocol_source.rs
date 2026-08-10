@@ -676,9 +676,9 @@ fn the_stream_admits_every_type_go_dump_binary_row_has_an_arm_for() {
 
 /// Byte-level oracle: every row here was produced by running the production Go
 /// `column.DumpBinaryRow` over a real `chunk.Row`
-/// (`rust/difftests/gobinaryrow/main.go`, run inside `pkg/server/internal/` so
-/// it can reach that internal package). Nothing is round-tripped through this
-/// encoder to produce the expectation.
+/// at the accepted source boundary. Nothing is round-tripped through this
+/// encoder to produce the expectation; the reviewed bytes are retained as the
+/// package's protocol fixture.
 #[test]
 fn binary_rows_match_go_dump_binary_row_bytes() {
     let fixture = include_str!("../../../difftests/gobinaryrow/go_binary_rows.txt");

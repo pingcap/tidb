@@ -14,18 +14,17 @@
 
 //! Source-shaped scalar formatting for the MySQL text protocol.
 //!
-//! This module ports the dependency-closed numeric, decimal, and raw-byte
-//! branches of `pkg/format/textrow/textrow.go`. Charset conversion and TiDB
-//! `Datum` formatting stay outside this protocol leaf: callers pass
-//! already-owned bytes (including `Decimal::Display` output), and unsupported
-//! branches remain explicit until their owning datatype/session crates are
-//! connected.
+//! This module owns the scalar formatting rules from
+//! `pkg/format/textrow/textrow.go`. Charset conversion and TiDB `Datum`
+//! projection stay at their existing owners: callers pass rendered bytes and
+//! [`crate::resultset_stream::ResultSetStream`] applies the column/session
+//! charset policy exactly once.
 
 use std::fmt;
 
 use crate::column::{
     TYPE_BIT, TYPE_BLOB, TYPE_ENUM, TYPE_JSON, TYPE_LONG_BLOB, TYPE_MEDIUM_BLOB, TYPE_SET,
-    TYPE_STRING, TYPE_TINY_BLOB, TYPE_VARCHAR, TYPE_VAR_STRING,
+    TYPE_STRING, TYPE_TIDB_VECTOR_FLOAT32, TYPE_TINY_BLOB, TYPE_VARCHAR, TYPE_VAR_STRING,
 };
 
 // MySQL field-type codes consumed by the source `FormatValueText` switch.
@@ -70,7 +69,7 @@ pub const TYPE_DATETIME: u8 = 12;
 /// MySQL's `TIME` type code.
 pub const TYPE_DURATION: u8 = 11;
 
-/// A minimum source-shaped subset of values accepted by `FormatValueText`.
+/// Source-shaped scalar values accepted by `FormatValueText`.
 ///
 /// `Bytes` deliberately carries bytes rather than a Rust string. Go TiDB
 /// permits arbitrary bytes in a string datum, and charset conversion belongs
@@ -114,8 +113,7 @@ pub enum TextScalar<'a> {
     Temporal(&'a [u8]),
 }
 
-/// The column attributes needed by the dependency-closed subset of
-/// `FormatValueText`.
+/// The column attributes needed by `FormatValueText`.
 ///
 /// `table_is_empty` is the source-level `ColumnInfo.Table == ""` test. It is
 /// kept as a boolean so this leaf does not invent table-name or identifier
@@ -144,10 +142,10 @@ impl TextColumn {
     }
 }
 
-/// Errors returned when a scalar cannot be represented by this bounded leaf.
+/// Errors returned when a scalar cannot be represented by the source format.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TextFormatError {
-    /// The Go formatter's type branch has not yet been ported to this owner.
+    /// The Go formatter rejects this field type.
     UnsupportedType(u8),
     /// The supplied scalar does not match the source type branch.
     ScalarTypeMismatch(u8),
@@ -283,15 +281,13 @@ pub fn format_text_value(
             TextScalar::Temporal(value) => formatted.extend_from_slice(value),
             _ => return Err(TextFormatError::ScalarTypeMismatch(column.type_code)),
         },
-        // These three source branches are the ones that route through
-        // `enc.UpdateDataEncoding` + `enc.EncodeData`, and they do NOT agree
-        // on which encoding: enum and set take `col.Charset`, while JSON
-        // forces `mysql.DefaultCollationID` regardless of the column. This
-        // leaf owns no charset state, so accepting bytes here would make it
-        // look complete while leaving that rule unwritten for its caller.
-        TYPE_ENUM | TYPE_SET | TYPE_JSON => {
-            return Err(TextFormatError::UnsupportedType(column.type_code));
-        }
+        // Charset conversion is applied by `ResultSetStream`, which owns the
+        // column charset and the session result encoder. Enum and set use the
+        // column charset there; JSON and VECTOR force utf8mb4.
+        TYPE_ENUM | TYPE_SET | TYPE_JSON | TYPE_TIDB_VECTOR_FLOAT32 => match value {
+            TextScalar::Bytes(value) => formatted.extend_from_slice(value),
+            _ => return Err(TextFormatError::ScalarTypeMismatch(column.type_code)),
+        },
         type_code => return Err(TextFormatError::UnsupportedType(type_code)),
     }
     Ok(Some(formatted))

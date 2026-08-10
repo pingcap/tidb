@@ -25,15 +25,6 @@
 //! type code, flag, decimal, `Table == ""`, the input, then `OK <hex>` or
 //! `ERR`.
 //!
-//! Pointing this crate at the fixture for the first time found 12
-//! disagreements out of 1516, every one of them a type branch Go renders and
-//! this leaf refused: DATE, DATETIME, TIMESTAMP, TIME, ENUM, SET and JSON.
-//! Nine are closed -- the temporal branches touch no encoder, so their
-//! rendered text IS the wire bytes. Three remain, listed in
-//! [`UNCONNECTED_BRANCHES`]. Not one of the 1504 numeric, decimal or byte
-//! rows disagreed, including 800 pseudo-random float BIT PATTERNS, which is
-//! the part of this tier a hand-written test never reaches.
-//!
 //! The `ERR` rows matter as much as the `OK` ones: Go's formatter has a
 //! `default: return nil, ErrInvalidType` arm, and this crate must refuse
 //! exactly the same shapes rather than inventing a rendering for them.
@@ -53,14 +44,6 @@ fn unhex(text: &str) -> Vec<u8> {
         .map(|index| u8::from_str_radix(&text[index..index + 2], 16).expect("hex pair"))
         .collect()
 }
-
-/// The type codes Go renders and this leaf still refuses: `TypeEnum`,
-/// `TypeSet` and `TypeJSON`, the three branches that route through
-/// `enc.UpdateDataEncoding` + `enc.EncodeData` -- enum and set with
-/// `col.Charset`, JSON with a forced `mysql.DefaultCollationID`. The refusal
-/// is asserted rather than skipped so the gap fails loudly the day the
-/// charset owner is connected.
-const UNCONNECTED_BRANCHES: [u8; 3] = [247, 248, 245];
 
 #[test]
 fn format_text_value_go_vectors() {
@@ -89,15 +72,16 @@ fn format_text_value_go_vectors() {
         let bytes;
         let decimal_text;
         let value = match tag {
-            // The branches this crate has not connected carry Go's RENDERED
-            // text, and it is fed as bytes only so the refusal below is
-            // measured rather than assumed.
             "t" | "dur" => {
                 bytes = payload.as_bytes().to_vec();
                 TextScalar::Temporal(&bytes)
             }
             "enum" | "set" | "json" => {
-                bytes = payload.as_bytes().to_vec();
+                bytes = if tag == "json" {
+                    br#"{"k": [1, "x", null]}"#.to_vec()
+                } else {
+                    payload.as_bytes().to_vec()
+                };
                 TextScalar::Bytes(&bytes)
             }
             "i" => TextScalar::Signed(payload.parse().expect("i64")),
@@ -127,15 +111,6 @@ fn format_text_value_go_vectors() {
         let label = format!("type={type_code} flag={flag} dec={decimal} input={input}");
         match status {
             "OK" => {
-                if UNCONNECTED_BRANCHES.contains(&type_code) {
-                    assert!(
-                        got.is_err(),
-                        "{label}: this branch is connected now -- assert Go's bytes \
-                         instead of listing it in UNCONNECTED_BRANCHES"
-                    );
-                    rows += 1;
-                    continue;
-                }
                 let formatted = got
                     .unwrap_or_else(|error| panic!("{label}: Go formatted it, we errored {error}"))
                     .unwrap_or_else(|| panic!("{label}: Go formatted it, we answered NULL"));

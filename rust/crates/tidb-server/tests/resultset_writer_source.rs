@@ -16,8 +16,16 @@
 
 use std::collections::VecDeque;
 
-use tidb_datatype::Datum;
-use tidb_protocol::{ColumnInfo, ResultSetOptions, TYPE_LONG};
+use tidb_datatype::{
+    BinaryJSON, BinaryLiteral, Collation, CoreTime, Datum, Decimal, MySqlDuration, MysqlEnum,
+    MysqlSet, Time, TimeType, VectorFloat32,
+};
+use tidb_protocol::{
+    append_length_encoded_bytes, ColumnInfo, ResultSetOptions, TYPE_BIT, TYPE_DATETIME,
+    TYPE_DOUBLE, TYPE_DURATION, TYPE_ENUM, TYPE_FLOAT, TYPE_GEOMETRY, TYPE_JSON, TYPE_LONG,
+    TYPE_LONGLONG, TYPE_NEW_DECIMAL, TYPE_SET, TYPE_TIDB_VECTOR_FLOAT32, TYPE_VAR_STRING,
+    TYPE_YEAR, UNSIGNED_FLAG,
+};
 use tidb_server::connection_resultset::write_connection_result_set_to_sink;
 use tidb_server::resultset_source::ResultSetSource;
 use tidb_server::resultset_writer::{write_result_set, ResultSetSink, SinkWriteError};
@@ -26,6 +34,7 @@ use tidb_server::resultset_writer::{write_result_set, ResultSetSink, SinkWriteEr
 struct Source {
     events: VecDeque<Result<Vec<Vec<Datum>>, String>>,
     log: Vec<&'static str>,
+    columns: Option<Vec<ColumnInfo>>,
     columns_calls: usize,
     finish_error: Option<String>,
     close_calls: usize,
@@ -40,7 +49,7 @@ impl ResultSetSource for Source {
     fn columns(&mut self) -> Result<Vec<ColumnInfo>, String> {
         self.log.push("columns");
         self.columns_calls += 1;
-        Ok(vec![column()])
+        Ok(self.columns.clone().unwrap_or_else(|| vec![column()]))
     }
 
     fn finish(&mut self) -> Result<(), String> {
@@ -107,6 +116,14 @@ fn column() -> ColumnInfo {
         decimal: 0,
         type_code: TYPE_LONG,
         default_value: None,
+    }
+}
+
+fn typed_column(type_code: u8, decimal: u8) -> ColumnInfo {
+    ColumnInfo {
+        type_code,
+        decimal,
+        ..column()
     }
 }
 
@@ -268,10 +285,11 @@ fn finish_error_suppresses_terminal_eof_and_write_failure_is_nonretryable() {
 #[test]
 fn a_null_cell_is_the_text_protocol_0xfb_sentinel() {
     let mut source = Source {
+        columns: Some(vec![typed_column(TYPE_VAR_STRING, 0)]),
         events: [Ok(vec![
             vec![Datum::Null],
             vec![Datum::new_bytes(Vec::new())],
-            vec![Datum::new_int(7)],
+            vec![Datum::new_string("7")],
         ])]
         .into(),
         ..Source::default()
@@ -286,4 +304,116 @@ fn a_null_cell_is_the_text_protocol_0xfb_sentinel() {
     assert_eq!(rows[0], vec![0xfb], "NULL is the bare 0xfb sentinel");
     assert_eq!(rows[1], vec![0x00], "an empty string is a zero-length string");
     assert_eq!(rows[2], vec![0x01, b'7']);
+}
+
+#[test]
+fn text_rows_use_column_type_and_precision_metadata() {
+    let duration = MySqlDuration::from_nanoseconds(
+        (11 * 60 * 60 + 30 * 60 + 45) * 1_000_000_000 + 123_456_000,
+        6,
+    )
+    .unwrap();
+    let mut source = Source {
+        columns: Some(vec![
+            typed_column(TYPE_DOUBLE, 2),
+            typed_column(TYPE_YEAR, 0),
+            typed_column(TYPE_DURATION, 0),
+        ]),
+        events: [
+            Ok(vec![vec![
+                Datum::new_real(2.2),
+                Datum::new_int(0),
+                Datum::new_duration(duration),
+            ]]),
+            Ok(Vec::new()),
+        ]
+        .into(),
+        ..Source::default()
+    };
+    let mut sink = Sink::default();
+    write_result_set(&mut source, &mut sink, ResultSetOptions::default(), 8).unwrap();
+
+    let row = &sink.payloads[sink.payloads.len() - 2];
+    assert_eq!(row, b"\x042.20\x040000\x0811:30:45");
+}
+
+#[test]
+fn unsupported_column_type_fails_before_a_row_packet_is_written() {
+    let mut source = Source {
+        columns: Some(vec![typed_column(TYPE_GEOMETRY, 0)]),
+        events: [Ok(vec![vec![Datum::new_bytes(b"point".to_vec())]])].into(),
+        ..Source::default()
+    };
+    let mut sink = Sink::default();
+    let error =
+        write_result_set(&mut source, &mut sink, ResultSetOptions::default(), 8).unwrap_err();
+
+    assert_eq!(error.message, "invalid type 255");
+    assert!(!error.retryable);
+    assert!(error.bytes_escaped, "metadata was already written");
+    assert_eq!(sink.payloads.len(), 3, "no row packet or terminal EOF");
+}
+
+#[test]
+fn text_rows_connect_every_supported_datum_family_to_the_wire_formatter() {
+    let mut unsigned = typed_column(TYPE_LONGLONG, 0);
+    unsigned.flag = UNSIGNED_FLAG;
+    let columns = vec![
+        typed_column(TYPE_LONG, 0),
+        unsigned,
+        typed_column(TYPE_FLOAT, 2),
+        typed_column(TYPE_NEW_DECIMAL, 0),
+        typed_column(TYPE_VAR_STRING, 0),
+        typed_column(TYPE_BIT, 0),
+        typed_column(TYPE_DATETIME, 0),
+        typed_column(TYPE_ENUM, 0),
+        typed_column(TYPE_SET, 0),
+        typed_column(TYPE_JSON, 0),
+        typed_column(TYPE_TIDB_VECTOR_FLOAT32, 0),
+    ];
+    let row = vec![
+        Datum::new_int(-10),
+        Datum::new_uint(u64::MAX),
+        Datum::new_float32_from_f64(1.2),
+        Datum::new_decimal(Decimal::from_literal("1.2300")),
+        Datum::new_string(b"bar".to_vec()),
+        Datum::new_mysql_bit(BinaryLiteral::from(vec![1, 2])),
+        Datum::new_time(
+            Time::new(
+                CoreTime::from_date(2017, 1, 6, 3, 4, 5, 0),
+                TimeType::DateTime,
+                0,
+            )
+            .unwrap(),
+        ),
+        Datum::new_enum(MysqlEnum::new("ename", 1), Collation::DEFAULT),
+        Datum::new_set(MysqlSet::new("sname", 1), Collation::DEFAULT),
+        Datum::new_json(BinaryJSON::parse(r#"{"a": 1}"#).unwrap()),
+        Datum::new_vector_float32(VectorFloat32::parse("[1,2]").unwrap()),
+    ];
+    let mut source = Source {
+        columns: Some(columns),
+        events: [Ok(vec![row]), Ok(Vec::new())].into(),
+        ..Source::default()
+    };
+    let mut sink = Sink::default();
+    write_result_set(&mut source, &mut sink, ResultSetOptions::default(), 8).unwrap();
+
+    let mut expected = Vec::new();
+    for value in [
+        b"-10".as_slice(),
+        b"18446744073709551615",
+        b"1.20",
+        b"1.2300",
+        b"bar",
+        &[1, 2],
+        b"2017-01-06 03:04:05",
+        b"ename",
+        b"sname",
+        br#"{"a": 1}"#,
+        b"[1,2]",
+    ] {
+        append_length_encoded_bytes(&mut expected, Some(value));
+    }
+    assert_eq!(sink.payloads[sink.payloads.len() - 2], expected);
 }

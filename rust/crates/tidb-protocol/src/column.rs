@@ -172,15 +172,7 @@ impl ColumnInfo {
     }
 
     fn truncate_name<'a>(&self, name: &'a [u8]) -> &'a [u8] {
-        let mut end = name.len().min(MAX_COLUMN_NAME_SIZE);
-        // Go slices the UTF-8 bytes before passing them through its metadata
-        // encoder.  Rust's `String` must stay valid UTF-8, so retain the
-        // largest valid prefix instead of panicking when the byte limit lands
-        // inside a multi-byte code point.
-        while end > 0 && std::str::from_utf8(&name[..end]).is_err() {
-            end -= 1;
-        }
-        &name[..end]
+        &name[..name.len().min(MAX_COLUMN_NAME_SIZE)]
     }
 
     fn dump_charset(&self) -> u16 {

@@ -110,11 +110,12 @@ fn metadata_limits_only_display_and_original_column_names() {
 }
 
 #[test]
-fn metadata_name_limit_never_splits_utf8_or_panics() {
+fn metadata_name_limit_is_the_exact_source_byte_prefix() {
     let mut column = source_column();
-    // 86 Euro signs occupy 258 bytes.  The source's 256-byte alias limit
-    // lands inside the final code point; the Rust String boundary keeps the
-    // largest valid prefix instead of slicing through UTF-8.
+    // 86 Euro signs occupy 258 bytes. Go truncates the underlying string
+    // bytes at exactly 256, even though that cuts through the final code
+    // point. The protocol field is byte-oriented and must preserve that
+    // exact prefix.
     column.name = "€".repeat(86);
 
     let mut packet = Vec::new();
@@ -124,9 +125,9 @@ fn metadata_name_limit_never_splits_utf8_or_panics() {
         read_lenenc(&packet, &mut offset);
     }
     let name = read_lenenc(&packet, &mut offset);
-    assert_eq!(name, "€".repeat(85).as_bytes());
-    assert_eq!(name.len(), 255);
-    assert!(std::str::from_utf8(name).is_ok());
+    assert_eq!(name, &column.name.as_bytes()[..256]);
+    assert_eq!(name.len(), 256);
+    assert!(std::str::from_utf8(name).is_err());
 }
 
 #[test]

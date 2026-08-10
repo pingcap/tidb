@@ -302,10 +302,10 @@ fn default_field_length(code: FieldTypeCode) -> u32 {
         FieldTypeCode::Blob => 65_535,
         FieldTypeCode::MediumBlob => 16_777_215,
         FieldTypeCode::LongBlob | FieldTypeCode::Json => u32::MAX,
+        FieldTypeCode::Null => 0,
         // The Go lookup returns -1 for these entries and ConvertColumnInfo
         // casts that value to uint32.
         FieldTypeCode::Unspecified
-        | FieldTypeCode::Null
         | FieldTypeCode::NewDate
         | FieldTypeCode::Enum
         | FieldTypeCode::Set

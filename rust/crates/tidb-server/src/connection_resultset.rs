@@ -38,13 +38,16 @@ pub(crate) fn datum_to_binary_cell(datum: Datum, type_code: u8) -> Option<Binary
         // little-endian widths by bit reinterpretation.
         Datum::UInt(value) => integer_cell(value as i64, type_code),
         // TypeFloat dumps Float32bits(GetFloat32); TypeDouble dumps
-        // Float64bits(GetFloat64). The real datum is f64; a float column
-        // narrows to f32 exactly as `GetFloat32` does.
+        // Float64bits(GetFloat64). A generic real narrows for a FLOAT column,
+        // while the source-distinct Float32 datum is already that width.
         Datum::Real(value) => match type_code {
             TYPE_FLOAT => Some(BinaryResultCell::Float(value as f32)),
             TYPE_DOUBLE => Some(BinaryResultCell::Double(value)),
             _ => None,
         },
+        Datum::Float32(value) if type_code == TYPE_FLOAT => {
+            Some(BinaryResultCell::Float(value as f32))
+        }
         // TypeNewDecimal dumps LengthEncodedString(GetMyDecimal(i).String()); the
         // encoder stringifies the decimal, so the cell carries the value itself.
         Datum::Decimal(value) if is_binary_decimal_result_type(type_code) => {
@@ -306,14 +309,15 @@ mod tests {
     use super::datum_to_binary_cell;
     use tidb_datatype::{
         BinaryJSON, CoreTime, Datum, MySqlDuration, MysqlEnum, MysqlSet, Time, TimeType,
+        VectorFloat32,
     };
     use tidb_protocol::encode_binary_result_row;
 
-    /// The Go side of this fixture is `rust/difftests/gobinaryrow/main.go`,
-    /// which runs the production `column.DumpBinaryRow` over real chunk rows.
-    /// This asserts the whole `Datum -> cell -> bytes` wiring, not just the
-    /// encoder, so a column type that reaches the writer as the wrong cell is
-    /// caught here rather than on the wire.
+    /// The fixture was captured from production `column.DumpBinaryRow` over
+    /// real chunk rows at the accepted source boundary. This asserts the
+    /// whole `Datum -> cell -> bytes` wiring, not just the encoder, so a column
+    /// type that reaches the writer as the wrong cell is caught here rather
+    /// than on the wire.
     fn go_row(name: &str) -> Vec<u8> {
         let fixture = include_str!("../../../difftests/gobinaryrow/go_binary_rows.txt");
         for line in fixture.lines() {
@@ -472,6 +476,27 @@ mod tests {
                 tidb_protocol::TYPE_JSON
             ),
             go_row("json")
+        );
+    }
+
+    #[test]
+    fn float32_and_vector_datums_reach_their_dump_binary_row_bodies() {
+        let float = 1.5_f32;
+        let mut expected_float = vec![0, 0];
+        expected_float.extend_from_slice(&float.to_bits().to_le_bytes());
+        assert_eq!(
+            row(
+                Datum::new_float32_from_f64(f64::from(float)),
+                tidb_protocol::TYPE_FLOAT
+            ),
+            expected_float
+        );
+        assert_eq!(
+            row(
+                Datum::new_vector_float32(VectorFloat32::parse("[1,2]").unwrap()),
+                tidb_protocol::TYPE_TIDB_VECTOR_FLOAT32
+            ),
+            b"\0\0\x05[1,2]"
         );
     }
 }
