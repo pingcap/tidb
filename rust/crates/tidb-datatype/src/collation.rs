@@ -1063,7 +1063,7 @@ fn weighted_key(value: &[u8], weight: fn(u32) -> (u64, u64)) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::{collections::HashSet, path::Path, process::Command};
 
     use sha2::{Digest, Sha256};
 
@@ -1074,6 +1074,25 @@ mod tests {
 
     fn digest(bytes: &[u8]) -> String {
         format!("{:x}", Sha256::digest(bytes))
+    }
+
+    /// `pkg/util/collate/ucadata/unicode_ci_data_test.go::TestUnicode0400IsTheSame`.
+    #[test]
+    fn test_unicode_0400_is_the_same() {
+        let script =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/generate_collation_data.py");
+        let output = Command::new("python3")
+            .arg(script)
+            .arg("--check")
+            .output()
+            .expect("run collation data source check");
+
+        assert!(
+            output.status.success(),
+            "collation source check failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
