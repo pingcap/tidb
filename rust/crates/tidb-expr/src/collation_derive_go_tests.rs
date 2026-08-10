@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Row-for-row translation of `pkg/expression/collation_test.go`'s
-//! `TestDeriveCollation` table, including the helper constructors it builds
-//! its arguments with.
+//! Row-for-row translations of `pkg/expression/collation_test.go`'s
+//! `TestDeriveCollation` and `TestInferCollation` tables, including the
+//! helper constructors they build their arguments with.
 
 use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
 
-use super::derive_collation;
+use super::{derive_collation, infer_collation};
 use crate::{
     column::Column,
     constant::Constant,
@@ -71,6 +71,23 @@ fn new_const_string(
         } else {
             Repertoire::ASCII
         });
+    Expression::Constant(constant)
+}
+
+/// Go `newExpression`: a constant with an explicitly chosen repertoire.
+fn new_expression(
+    value: &str,
+    coercibility: Coercibility,
+    repertoire: Repertoire,
+    charset: &str,
+    collation: &str,
+) -> Expression {
+    let mut constant = Constant::new(
+        Datum::new_string(value),
+        string_field_type(charset, collation),
+    );
+    constant.collation.set_coercibility(coercibility);
+    constant.collation.set_repertoire(repertoire);
     Expression::Constant(constant)
 }
 
@@ -135,6 +152,11 @@ struct Row {
     functions: &'static [&'static str],
     args: Vec<Expression>,
     ret_type: EvalType,
+    expected: Option<ExprCollation>,
+}
+
+struct InferRow {
+    exprs: Vec<Expression>,
     expected: Option<ExprCollation>,
 }
 
@@ -473,6 +495,565 @@ fn go_test_derive_collation_deferred_functions() {
     for (index, row) in go_table().into_iter().enumerate() {
         if is_deferred_row(row.functions) {
             assert_row(index, &row);
+        }
+    }
+}
+
+/// `pkg/expression/collation_test.go::TestInferCollation`.
+#[test]
+fn go_test_infer_collation() {
+    let tests = vec![
+        // same charset.
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_general_ci",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::EXPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_unicode_ci",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::EXPLICIT,
+                Repertoire::UNICODE,
+                "utf8mb4",
+                "utf8mb4_unicode_ci",
+            )),
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::EXPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_unicode_ci",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::EXPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_unicode_ci",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::EXPLICIT,
+                Repertoire::UNICODE,
+                "utf8mb4",
+                "utf8mb4_unicode_ci",
+            )),
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::EXPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_general_ci",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::EXPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_unicode_ci",
+                ),
+            ],
+            expected: None,
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_general_ci",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_unicode_ci",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::NONE,
+                Repertoire::UNICODE,
+                "utf8mb4",
+                "utf8mb4_bin",
+            )),
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_general_ci",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_bin",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::IMPLICIT,
+                Repertoire::UNICODE,
+                "utf8mb4",
+                "utf8mb4_bin",
+            )),
+        },
+        // Regression test: utf8mb4_0900_bin is a binary collation and should win
+        // over non-bin collations at the same coercibility (same as utf8mb4_bin).
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_0900_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_unicode_ci",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::IMPLICIT,
+                Repertoire::UNICODE,
+                "utf8mb4",
+                "utf8mb4_0900_bin",
+            )),
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_unicode_ci",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_0900_bin",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::IMPLICIT,
+                Repertoire::UNICODE,
+                "utf8mb4",
+                "utf8mb4_0900_bin",
+            )),
+        },
+        // binary charset with non-binary charset.
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::NUMERIC,
+                    Repertoire::UNICODE,
+                    "binary",
+                    "binary",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::COERCIBLE,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_bin",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::COERCIBLE,
+                Repertoire::UNICODE,
+                "utf8mb4",
+                "utf8mb4_bin",
+            )),
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::COERCIBLE,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::NUMERIC,
+                    Repertoire::UNICODE,
+                    "binary",
+                    "binary",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::COERCIBLE,
+                Repertoire::UNICODE,
+                "utf8mb4",
+                "utf8mb4_bin",
+            )),
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::EXPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::EXPLICIT,
+                    Repertoire::UNICODE,
+                    "binary",
+                    "binary",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::EXPLICIT,
+                Repertoire::UNICODE,
+                "binary",
+                "binary",
+            )),
+        },
+        // different charset, one of them is utf8mb4
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "gbk",
+                    "gbk_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_unicode_ci",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::IMPLICIT,
+                Repertoire::UNICODE,
+                "utf8mb4",
+                "utf8mb4_unicode_ci",
+            )),
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::EXPLICIT,
+                    Repertoire::UNICODE,
+                    "gbk",
+                    "gbk_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::EXPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_unicode_ci",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::EXPLICIT,
+                Repertoire::UNICODE,
+                "utf8mb4",
+                "utf8mb4_unicode_ci",
+            )),
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::EXPLICIT,
+                    Repertoire::UNICODE,
+                    "gbk",
+                    "gbk_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_unicode_ci",
+                ),
+            ],
+            expected: None,
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "gbk",
+                    "gbk_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "latin1",
+                    "latin1",
+                ),
+            ],
+            expected: None,
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::EXPLICIT,
+                    Repertoire::UNICODE,
+                    "gbk",
+                    "gbk_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::EXPLICIT,
+                    Repertoire::UNICODE,
+                    "latin1",
+                    "latin1",
+                ),
+            ],
+            expected: None,
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::EXPLICIT,
+                    Repertoire::UNICODE,
+                    "gbk",
+                    "gbk_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "latin1",
+                    "latin1",
+                ),
+            ],
+            expected: None,
+        },
+        // different charset, one of them is CoercibilityCoercible
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "gbk",
+                    "gbk_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::COERCIBLE,
+                    Repertoire::UNICODE,
+                    "latin1",
+                    "latin1",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::IMPLICIT,
+                Repertoire::UNICODE,
+                "gbk",
+                "gbk_bin",
+            )),
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::COERCIBLE,
+                    Repertoire::UNICODE,
+                    "gbk",
+                    "gbk_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "latin1",
+                    "latin1",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::IMPLICIT,
+                Repertoire::UNICODE,
+                "latin1",
+                "latin1",
+            )),
+        },
+        // different charset, one of them is ASCII
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::ASCII,
+                    "gbk",
+                    "gbk_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "latin1",
+                    "latin1",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::IMPLICIT,
+                Repertoire::UNICODE,
+                "latin1",
+                "latin1",
+            )),
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "gbk",
+                    "gbk_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::ASCII,
+                    "latin1",
+                    "latin1",
+                ),
+            ],
+            expected: Some(collation(
+                Coercibility::IMPLICIT,
+                Repertoire::UNICODE,
+                "gbk",
+                "gbk_bin",
+            )),
+        },
+        // 3 expressions.
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "gbk",
+                    "gbk_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "latin1",
+                    "latin1",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "binary",
+                    "binary",
+                ),
+            ],
+            expected: None,
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "gbk",
+                    "gbk_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "latin1",
+                    "latin1",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_bin",
+                ),
+            ],
+            expected: None,
+        },
+        InferRow {
+            exprs: vec![
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "gbk",
+                    "gbk_bin",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::EXPLICIT,
+                    Repertoire::UNICODE,
+                    "latin1",
+                    "latin1",
+                ),
+                new_expression(
+                    "a",
+                    Coercibility::IMPLICIT,
+                    Repertoire::UNICODE,
+                    "utf8mb4",
+                    "utf8mb4_bin",
+                ),
+            ],
+            expected: None,
+        },
+    ];
+
+    for (index, test) in tests.into_iter().enumerate() {
+        let derived = infer_collation(&test.exprs);
+        match test.expected {
+            Some(expected) => assert_eq!(derived.as_ref(), Some(&expected), "Number: {index}"),
+            None => assert!(
+                derived.is_none(),
+                "Number: {index}: expected an error, got {derived:?}"
+            ),
         }
     }
 }
