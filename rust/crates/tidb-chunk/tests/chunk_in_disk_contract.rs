@@ -15,6 +15,8 @@
 //! Public contract for accepted `pkg/util/chunk/chunk_in_disk.go` and its
 //! direct `chunk_in_disk_test.go` surface.
 
+mod pkg_util_chunk_fixture_observation;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -303,6 +305,28 @@ fn deterministic_failure_adaptation() {
         .expect("truncate spill file");
     assert!(matches!(read_disk.get_chunk(0), Err(DiskError::Io(_))));
     assert_eq!(read_disk.num_chunks(), 1);
+
+    pkg_util_chunk_fixture_observation::emit(
+        "CHUNK-IN-DISK-FAILURE-ADAPTATION",
+        "Rust preserves the observable Add and read failure contracts through deterministic filesystem and checksum-boundary errors; Go failpoint callback, RNG thresholds, and sleep timing are intentionally not reproduced.",
+        &[
+            (
+                "write-failure-atomicity",
+                "leased spill directory replaced by a regular file before the first Add",
+                "the first write-side filesystem error is returned before any chunk, byte, row, file-path, or tracker state is published",
+            ),
+            (
+                "read-failure-propagation",
+                "successfully spilled multi-block variable cell followed by underlying-file truncation",
+                "an exact multi-block read from a truncated checksum-backed spill file returns an I/O error instead of deserializing partial or cache-filled data",
+            ),
+            (
+                "runtime-mechanisms-excluded",
+                "accepted failpoint callback, random error threshold, random sleep threshold, and Add/read injection sites",
+                "Rust uses deterministic real filesystem failures and has no hidden random error or delay in production",
+            ),
+        ],
+    );
 }
 
 #[test]
