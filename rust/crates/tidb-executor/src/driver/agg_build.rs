@@ -28,6 +28,133 @@
 //! read the markers [`substitute_aggregates`] leaves behind.
 
 use super::*;
+
+const DEFAULT_DIV_PRECISION_INCREMENT: i64 = 4;
+
+/// Go `types.SetBinChsClnFlag`: aggregate numeric results use the binary
+/// pseudo-charset/collation and carry the binary flag.
+fn set_binary_type_metadata(field_type: &mut FieldType) {
+    field_type.set_charset_name("binary");
+    field_type.set_collation_name("binary");
+    field_type.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+}
+
+/// Go `baseFuncDesc.typeInfer4Sum`.
+fn infer_sum_type(arg: &Expression) -> FieldType {
+    let arg_type = arg
+        .static_type()
+        .cloned()
+        .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+    let mut result = match arg_type.code() {
+        FieldTypeCode::Tiny
+        | FieldTypeCode::Short
+        | FieldTypeCode::Int24
+        | FieldTypeCode::Long
+        | FieldTypeCode::LongLong
+        | FieldTypeCode::Year => {
+            let mut result = FieldType::new(FieldTypeCode::NewDecimal);
+            if arg_type.flen() < 0 {
+                result.set_flen(MAX_DECIMAL_WIDTH);
+            } else {
+                result.set_flen_under_limit(arg_type.flen() + 21);
+            }
+            result.set_decimal(0);
+            result
+        }
+        FieldTypeCode::NewDecimal => {
+            let mut result = FieldType::new(FieldTypeCode::NewDecimal);
+            result.update_flen_and_decimal_under_limit(&arg_type, 0, 22);
+            result
+        }
+        FieldTypeCode::Double | FieldTypeCode::Float => {
+            let mut result = FieldType::new(FieldTypeCode::Double);
+            result.set_flen(23); // mysql.MaxRealWidth
+            result.set_decimal(arg_type.decimal());
+            result
+        }
+        _ => {
+            let mut result = FieldType::new(FieldTypeCode::Double);
+            result.set_flen(23); // mysql.MaxRealWidth
+            result.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            result
+        }
+    };
+    set_binary_type_metadata(&mut result);
+    result
+}
+
+/// Go `baseFuncDesc.typeInfer4Avg`.
+fn infer_avg_type(arg: &Expression, div_precision_increment: i64) -> FieldType {
+    let arg_type = arg
+        .static_type()
+        .cloned()
+        .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+    let mut result = match arg_type.code() {
+        FieldTypeCode::Tiny
+        | FieldTypeCode::Short
+        | FieldTypeCode::Int24
+        | FieldTypeCode::Long
+        | FieldTypeCode::LongLong => {
+            let mut result = FieldType::new(FieldTypeCode::NewDecimal);
+            result.set_decimal_under_limit(div_precision_increment);
+            let (default_flen, _) = arg_type.default_length_and_decimal();
+            result.set_flen_under_limit(default_flen + div_precision_increment);
+            result
+        }
+        FieldTypeCode::Year | FieldTypeCode::NewDecimal => {
+            let mut result = FieldType::new(FieldTypeCode::NewDecimal);
+            result.update_flen_and_decimal_under_limit(
+                &arg_type,
+                div_precision_increment,
+                div_precision_increment,
+            );
+            result
+        }
+        FieldTypeCode::Double | FieldTypeCode::Float => {
+            let mut result = FieldType::new(FieldTypeCode::Double);
+            result.set_flen(23); // mysql.MaxRealWidth
+            result.set_decimal(arg_type.decimal());
+            result
+        }
+        FieldTypeCode::Date
+        | FieldTypeCode::Duration
+        | FieldTypeCode::Datetime
+        | FieldTypeCode::Timestamp => {
+            let mut result = FieldType::new(FieldTypeCode::Double);
+            result.set_flen(23); // mysql.MaxRealWidth
+            result.set_decimal(4);
+            result
+        }
+        _ => {
+            let mut result = FieldType::new(FieldTypeCode::Double);
+            result.set_flen(23); // mysql.MaxRealWidth
+            result.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            result
+        }
+    };
+    set_binary_type_metadata(&mut result);
+    result
+}
+
+/// Go `baseFuncDesc.TypeInfer4AvgSum`: a partial SUM over a bare column gets
+/// SUM's normal metadata, while a complex expression preserves AVG's raised
+/// scale and extends only its precision.
+// The current driver only constructs Go CompleteMode aggregations; keep this
+// descriptor operation ready for the partial/final pipeline without pretending
+// that pipeline is already wired (the separate TestAvgFinalMode gap tracks it).
+#[allow(dead_code)]
+pub(crate) fn infer_avg_partial_sum_type(arg: &Expression, avg_ret_type: &FieldType) -> FieldType {
+    if matches!(arg, Expression::Column(_)) {
+        return infer_sum_type(arg);
+    }
+
+    let mut result = avg_ret_type.clone();
+    if result.code() == FieldTypeCode::NewDecimal {
+        result.set_flen((result.flen() + 22).min(MAX_DECIMAL_WIDTH));
+    }
+    result
+}
+
 /// Go `aggregation.NewAggFuncDesc` + `baseFuncDesc.TypeInfer`: the aggregate
 /// kind and the result type inferred for its argument.
 pub(crate) fn agg_kind_and_type(
@@ -53,20 +180,9 @@ pub(crate) fn agg_kind_and_type(
             );
             (AggKind::Count, t)
         }
-        // Go `typeInfer4Sum`: DOUBLE for a real argument, DECIMAL for every
-        // other numeric one -- `SUM` over a BIGINT column is a DECIMAL in
-        // MySQL, not a BIGINT (captured: `sum(a)` reports type 246).
-        "SUM" => {
-            let real = arg
-                .static_type()
-                .is_some_and(|t| t.eval_type() == tidb_datatype::EvalType::Real);
-            let t = if real {
-                FieldType::new(FieldTypeCode::Double)
-            } else {
-                FieldType::new(FieldTypeCode::NewDecimal)
-            };
-            (AggKind::Sum, t)
-        }
+        // Go `typeInfer4Sum`: `SUM` over an integer or DECIMAL returns a
+        // widened DECIMAL; real inputs return DOUBLE with the source scale.
+        "SUM" => (AggKind::Sum, infer_sum_type(arg)),
         // Go `typeInfer4MaxMin`: the result carries the argument's
         // own type (with NOT NULL dropped, which this seed does not
         // track on result columns).
@@ -88,19 +204,12 @@ pub(crate) fn agg_kind_and_type(
             };
             (kind, t)
         }
-        // Go `typeInfer4Avg`: DOUBLE for real arguments, otherwise
-        // DECIMAL. The decimal scale Go derives from
-        // div_precision_increment is display metadata this seed
-        // does not set on result columns (documented deferral).
-        "AVG" => {
-            let code = arg
-                .static_type()
-                .map_or(FieldTypeCode::NewDecimal, |t| match t.code() {
-                    FieldTypeCode::Float | FieldTypeCode::Double => FieldTypeCode::Double,
-                    _ => FieldTypeCode::NewDecimal,
-                });
-            (AggKind::Avg, FieldType::new(code))
-        }
+        // Go `typeInfer4Avg`, using the source default
+        // `div_precision_increment` of 4.
+        "AVG" => (
+            AggKind::Avg,
+            infer_avg_type(arg, DEFAULT_DIV_PRECISION_INCREMENT),
+        ),
         // Go `typeInfer4BitFuncs`: a binary `BIGINT(21) UNSIGNED` that never
         // returns NULL -- an empty (or all-NULL) input folds to the
         // operator's identity, not NULL. The UNSIGNED flag is what makes an
@@ -867,5 +976,42 @@ mod source_tests {
             group_concat_result_type(std::slice::from_ref(&non_binary), &empty_separator).unwrap();
         assert_eq!(result.charset_name(), "utf8mb4");
         assert_eq!(result.collation_name(), "utf8mb4_0900_ai_ci");
+    }
+
+    // Go pkg/expression/aggregation/base_func_test.go::
+    // TestTypeInfer4AvgSum.
+    #[test]
+    fn test_type_infer_4_avg_sum() {
+        let mut column_type = FieldType::new(FieldTypeCode::NewDecimal);
+        column_type.set_flen(15);
+        column_type.set_decimal(2);
+        let column_argument = column(0, column_type);
+
+        let avg_type = infer_avg_type(&column_argument, DEFAULT_DIV_PRECISION_INCREMENT);
+        let partial_sum_type = infer_avg_partial_sum_type(&column_argument, &avg_type);
+        assert_eq!(partial_sum_type.flen(), 15 + 22);
+        assert_eq!(partial_sum_type.decimal(), 2);
+
+        let mut dividend_type = FieldType::new(FieldTypeCode::NewDecimal);
+        dividend_type.set_flen(20);
+        dividend_type.set_decimal(0);
+        let mut divisor_type = FieldType::new(FieldTypeCode::NewDecimal);
+        divisor_type.set_flen(5);
+        divisor_type.set_decimal(0);
+        let mut division_type = FieldType::new(FieldTypeCode::NewDecimal);
+        division_type.set_flen(25);
+        division_type.set_decimal(4);
+        let division = Expression::ScalarFunction(tidb_expr::scalar_function::ScalarFunction::new(
+            tidb_ast::CiString::new("div"),
+            division_type,
+            vec![column(0, dividend_type), column(0, divisor_type)],
+        ));
+
+        let avg_type = infer_avg_type(&division, DEFAULT_DIV_PRECISION_INCREMENT);
+        assert_eq!(avg_type.flen(), 29);
+        assert_eq!(avg_type.decimal(), 8);
+        let partial_sum_type = infer_avg_partial_sum_type(&division, &avg_type);
+        assert_eq!(partial_sum_type.flen(), 51);
+        assert_eq!(partial_sum_type.decimal(), 8);
     }
 }
