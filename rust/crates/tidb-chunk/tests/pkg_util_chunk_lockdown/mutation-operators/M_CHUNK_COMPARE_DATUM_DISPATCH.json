@@ -1,0 +1,1 @@
+{"mutation_id":"M_CHUNK_COMPARE_DATUM_DISPATCH","replacements":[{"expected_count":1,"new":"            *value,","old":"            f64::from(*value as f32),"}],"rust_path":"rust/crates/tidb-chunk/src/compare.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"baa09d1611530e9524bd9a4db5328bb600fbecf932c72bb3cfd1c6b45250d068"}
