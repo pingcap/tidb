@@ -27,7 +27,9 @@
 use crate::chunk_util::MSG_ERR_SEL_NOT_NIL;
 use crate::column::Column;
 use crate::column_slot::{ColumnHandle, ColumnRead, ColumnSlot, ColumnWrite};
+use crate::compare::{compare, sort_search};
 use crate::row::Row;
+use std::cmp::Ordering;
 use tidb_datatype::{
     Datum, FieldType, GoStringSource, MyDecimal, MySqlDuration, Time, VectorFloat32,
 };
@@ -358,6 +360,37 @@ impl Chunk {
             None => idx,
         };
         Row::new(self, physical)
+    }
+
+    /// Go `LowerBound`: on the non-decreasing column `col_idx`, the smallest
+    /// index whose value is not less than `d`, plus whether a probed row was
+    /// equal to `d`.
+    ///
+    /// Go reads the last row before searching, so this panics on an empty
+    /// chunk exactly as Go does.
+    #[must_use]
+    pub fn lower_bound(&self, col_idx: usize, d: &Datum) -> (usize, bool) {
+        if compare(self.get_row(self.num_rows() - 1), col_idx, d) == Ordering::Less {
+            return (self.num_rows(), false);
+        }
+        let mut matched = false;
+        let index = sort_search(self.num_rows(), |i| {
+            let ordering = compare(self.get_row(i), col_idx, d);
+            if ordering == Ordering::Equal {
+                matched = true;
+            }
+            ordering != Ordering::Less
+        });
+        (index, matched)
+    }
+
+    /// Go `UpperBound`: on the non-decreasing column `col_idx`, the smallest
+    /// index whose value is larger than `d`.
+    #[must_use]
+    pub fn upper_bound(&self, col_idx: usize, d: &Datum) -> usize {
+        sort_search(self.num_rows(), |i| {
+            compare(self.get_row(i), col_idx, d) == Ordering::Greater
+        })
     }
 
     /// Go `SetSel`: install (or, with `None`, drop) the selection vector.

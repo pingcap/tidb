@@ -21,8 +21,8 @@
 //! * [`compare`] -- Go `Compare`, a cell against a [`Datum`], which is the
 //!   ranger/index-bound direction and follows the DATUM's kind, not a field
 //!   type.
-//! * [`Chunk::lower_bound`]/[`Chunk::upper_bound`] -- Go's binary searches over
-//!   a non-decreasing column.
+//! * [`crate::chunk::Chunk::lower_bound`]/[`crate::chunk::Chunk::upper_bound`]
+//!   -- Go's binary searches over a non-decreasing column.
 //!
 //! Two behaviours worth stating, because both are easy to guess wrong:
 //!
@@ -39,7 +39,6 @@
 //! `TiDBVectorFloat32` uses the datatype layer's source-compatible
 //! lexicographic vector comparison over serialized variable-length cells.
 
-use crate::chunk::Chunk;
 use crate::row::Row;
 use std::cmp::Ordering;
 use tidb_datatype::{
@@ -319,15 +318,16 @@ pub fn compare(row: Row<'_>, col_idx: usize, ad: &Datum) -> Ordering {
 /// Go's `sort.Search`: the smallest `i` in `0..n` for which `pred(i)` holds, or
 /// `n` when none does. This is Go's loop, literally.
 ///
-/// [`Chunk::lower_bound`]'s `match` flag looks like it depends on WHICH rows
-/// this bisection happens to probe, but it does not, and a mutation probe
-/// confirmed it: replacing this loop with a linear scan leaves every fixture
-/// answer, `match` included, unchanged. The reason is that the loop only ever
-/// lowers `j` to an `h` whose `pred(h)` was true, so a returned index below `n`
-/// was necessarily probed -- and for a monotone predicate over a sorted column
-/// that index is equal to the probe exactly when the value is present. So
-/// `match` means "the value is in the column", for any correct search.
-fn sort_search(n: usize, mut pred: impl FnMut(usize) -> bool) -> usize {
+/// [`crate::chunk::Chunk::lower_bound`]'s `match` flag looks like it depends on
+/// WHICH rows this bisection happens to probe, but it does not, and a mutation
+/// probe confirmed it: replacing this loop with a linear scan leaves every
+/// fixture answer, `match` included, unchanged. The reason is that the loop
+/// only ever lowers `j` to an `h` whose `pred(h)` was true, so a returned index
+/// below `n` was necessarily probed -- and for a monotone predicate over a
+/// sorted column that index is equal to the probe exactly when the value is
+/// present. So `match` means "the value is in the column", for any correct
+/// search.
+pub(crate) fn sort_search(n: usize, mut pred: impl FnMut(usize) -> bool) -> usize {
     let (mut i, mut j) = (0usize, n);
     while i < j {
         let h = (i + j) / 2;
@@ -340,42 +340,10 @@ fn sort_search(n: usize, mut pred: impl FnMut(usize) -> bool) -> usize {
     i
 }
 
-impl Chunk {
-    /// Go `LowerBound`: on the non-decreasing column `col_idx`, the smallest
-    /// index whose value is not less than `d`, plus whether a PROBED row was
-    /// equal to `d`.
-    ///
-    /// Go reads the last row before searching, so this panics on an empty
-    /// chunk exactly as Go does.
-    #[must_use]
-    pub fn lower_bound(&self, col_idx: usize, d: &Datum) -> (usize, bool) {
-        if compare(self.get_row(self.num_rows() - 1), col_idx, d) == Ordering::Less {
-            return (self.num_rows(), false);
-        }
-        let mut matched = false;
-        let index = sort_search(self.num_rows(), |i| {
-            let ordering = compare(self.get_row(i), col_idx, d);
-            if ordering == Ordering::Equal {
-                matched = true;
-            }
-            ordering != Ordering::Less
-        });
-        (index, matched)
-    }
-
-    /// Go `UpperBound`: on the non-decreasing column `col_idx`, the smallest
-    /// index whose value is larger than `d`.
-    #[must_use]
-    pub fn upper_bound(&self, col_idx: usize, d: &Datum) -> usize {
-        sort_search(self.num_rows(), |i| {
-            compare(self.get_row(i), col_idx, d) == Ordering::Greater
-        })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chunk::Chunk;
     use tidb_datatype::{
         time_from_days, BinaryJSON, BinaryJSONValue, MyDecimal, MySqlDuration, MysqlEnum, MysqlSet,
     };
