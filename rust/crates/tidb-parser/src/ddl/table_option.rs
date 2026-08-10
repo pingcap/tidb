@@ -337,9 +337,11 @@ impl Parser {
                 self.bump();
                 self.accept_optional_equals();
                 let value = self.parse_table_option_string("TTL_JOB_INTERVAL")?;
-                if !valid_ttl_job_interval(&value) {
-                    return Err(self.err_here("invalid TTL_JOB_INTERVAL"));
-                }
+                crate::parse_config_duration(&value).map_err(|error| {
+                    self.err_here(&format!(
+                        "The TTL_JOB_INTERVAL option is not a valid duration: {error}"
+                    ))
+                })?;
                 Some(TableOption::TtlJobInterval(value))
             }
             // Direct Go `parseTableOption` transition: `AFFINITY` takes an
@@ -398,41 +400,4 @@ impl Parser {
             _ => Err(self.err_here("expected a table option value")),
         }
     }
-}
-
-/// Validates a `TTL_JOB_INTERVAL` duration string, ported from
-/// `pkg/parser/ddl_table_option_parser.go`'s
-/// `parseTableOptionTTLJobInterval`: a leading `@` is rejected; the value
-/// splits into a leading number (digits and `.`) plus a trimmed unit that
-/// must be empty or one of the accepted set (case-insensitive); and the
-/// number part may hold at most one `.`.
-fn valid_ttl_job_interval(value: &str) -> bool {
-    let val = value.trim();
-    if val.starts_with('@') {
-        return false;
-    }
-    let num_len = val
-        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
-        .unwrap_or(val.len());
-    let unit = val[num_len..].trim();
-    const UNITS: [&str; 14] = [
-        "YEAR",
-        "MONTH",
-        "DAY",
-        "HOUR",
-        "MINUTE",
-        "SECOND",
-        "MICROSECOND",
-        "d",
-        "h",
-        "m",
-        "s",
-        "ms",
-        "us",
-        "ns",
-    ];
-    if !unit.is_empty() && !UNITS.iter().any(|u| u.eq_ignore_ascii_case(unit)) {
-        return false;
-    }
-    val[..num_len].matches('.').count() <= 1
 }

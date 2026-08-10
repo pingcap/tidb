@@ -283,6 +283,7 @@ mod cast;
 mod ddl;
 mod digest;
 mod dml;
+pub mod duration;
 mod expr;
 mod flush;
 mod load_data;
@@ -313,6 +314,7 @@ pub use digest::{
     digest_hash, digest_normalized, normalize, normalize_digest, normalize_digest_for_binding,
     normalize_for_binding, normalize_keep_hint, Digest, RedactMode,
 };
+pub use duration::{parse_config_duration, ConfigDurationError};
 pub use select::{parse_hint, HintDiagnostic, HintParseResult};
 
 /// One parsed statement plus recoverable diagnostics emitted while parsing it.

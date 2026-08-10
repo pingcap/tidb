@@ -27,8 +27,9 @@ use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 use tidb_ast::{
     CiString, ColumnChoice, TableLockType, ViewAlgorithm, ViewCheckOption, ViewSecurity,
 };
-use tidb_datatype::{ConfigDurationError, FieldType};
+use tidb_datatype::FieldType;
 use tidb_parser::auth::UserIdentity;
+use tidb_parser::ConfigDurationError;
 
 use crate::column::ColumnInfo;
 use crate::go_runtime::{GoShared, GoSharedPointerSlice, GoSharedSlice, GoSliceElementLayout};
@@ -936,7 +937,7 @@ impl TTLInfo {
         } else {
             &self.job_interval
         };
-        tidb_datatype::parse_config_duration(source)
+        tidb_parser::parse_config_duration(source)
     }
 }
 
