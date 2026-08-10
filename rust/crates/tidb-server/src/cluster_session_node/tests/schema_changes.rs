@@ -68,7 +68,7 @@ fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
 /// the full cluster session turns DDL admission into its client-facing error.
 #[test]
 fn cluster_create_default_errors_cross_the_schema_route_unchanged() {
-    let (session, node) = open_session();
+    let (mut session, node) = open_session();
     for (sql, code, state, message) in [
         (
             "CREATE TABLE bad_function (a INT DEFAULT (ABS(1)))",

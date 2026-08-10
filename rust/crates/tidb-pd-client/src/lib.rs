@@ -15,8 +15,8 @@ mod tso;
 
 pub use client::{
     is_unimplemented, PdClient, BATCH_SCAN_REGIONS_PATH, GET_GC_STATE_PATH, GET_MEMBERS_PATH,
-    GET_PREV_REGION_PATH, GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH,
-    SCAN_REGIONS_PATH, TSO_PATH,
+    GET_OPERATOR_PATH, GET_PREV_REGION_PATH, GET_REGION_BY_ID_PATH, GET_REGION_PATH,
+    GET_STORE_PATH, SCAN_REGIONS_PATH, SPLIT_AND_SCATTER_REGIONS_PATH, TSO_PATH,
 };
 pub use error::{PdClientError, PdClientShutdownError, PdOperation};
 pub use etcd::{
@@ -26,6 +26,6 @@ pub use etcd::{
 };
 pub use model::{
     PdBucketStats, PdBuckets, PdGcState, PdKeyRange, PdMemberSet, PdNodeState, PdPeer, PdRegion,
-    PdRegionEpoch, PdStore, PdStoreState,
+    PdRegionEpoch, PdSplitAndScatterRegions, PdStore, PdStoreState,
 };
 pub use security::{secure_endpoint, ClusterSecurity, TlsConfigError};

@@ -27,7 +27,7 @@ use std::time::Duration;
 use tidb_proto::pdpb;
 use tokio::sync::watch;
 
-use crate::{PdClientError, PdGcState, PdOperation, PdRegion, PdStore};
+use crate::{PdClientError, PdGcState, PdOperation, PdRegion, PdSplitAndScatterRegions, PdStore};
 
 use super::failover::{tonic_client, PdChannelCache};
 use super::topology::{
@@ -292,6 +292,79 @@ pub(super) fn get_gc_state(
         txn_safe_point: state.txn_safe_point,
         gc_safe_point: state.gc_safe_point,
     })
+}
+
+pub(super) fn split_and_scatter_regions(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    endpoint: &str,
+    timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
+    cluster_id: u64,
+    split_keys: &[Vec<u8>],
+    group: &str,
+) -> Result<PdSplitAndScatterRegions, PdClientError> {
+    let client = tonic_client(runtime, clients, endpoint)?;
+    let response = block_on_rpc(
+        runtime,
+        timeout,
+        shutdown,
+        client.split_and_scatter_regions(pdpb::SplitAndScatterRegionsRequest {
+            header: Some(request_header(cluster_id)),
+            split_keys: split_keys.to_vec(),
+            group: group.to_owned(),
+            // Go pd/client's RegionsOp has a zero default, which delegates
+            // the retry policy to PD.
+            retry_limit: 0,
+        }),
+    );
+    let response = map_rpc_result(
+        response,
+        PdOperation::SplitAndScatterRegions,
+        endpoint,
+        timeout,
+    )?
+    .into_inner();
+    validate_response_header(
+        PdOperation::SplitAndScatterRegions,
+        response.header.as_ref(),
+        cluster_id,
+    )?;
+    Ok(PdSplitAndScatterRegions {
+        split_finished_percentage: response.split_finished_percentage,
+        scatter_finished_percentage: response.scatter_finished_percentage,
+        region_ids: response.regions_id,
+    })
+}
+
+pub(super) fn is_region_scattering(
+    runtime: &tokio::runtime::Runtime,
+    clients: &mut PdChannelCache,
+    endpoint: &str,
+    timeout: Duration,
+    shutdown: &watch::Receiver<bool>,
+    cluster_id: u64,
+    region_id: u64,
+) -> Result<bool, PdClientError> {
+    let client = tonic_client(runtime, clients, endpoint)?;
+    let response = block_on_rpc(
+        runtime,
+        timeout,
+        shutdown,
+        client.get_operator(pdpb::GetOperatorRequest {
+            header: Some(request_header(cluster_id)),
+            region_id,
+        }),
+    );
+    let response =
+        map_rpc_result(response, PdOperation::GetOperator, endpoint, timeout)?.into_inner();
+    validate_response_header(
+        PdOperation::GetOperator,
+        response.header.as_ref(),
+        cluster_id,
+    )?;
+    Ok(response.desc.as_slice() == b"scatter-region"
+        && response.status == pdpb::OperatorStatus::Running as i32)
 }
 
 pub(super) fn map_rpc_result<T>(

@@ -659,12 +659,17 @@ fn partial_aggregate_to_pb(
             )],
             false,
         ),
-        PushdownPartialAggregate::GroupedStream {
+        PushdownPartialAggregate::Grouped {
             group_offsets,
             functions,
+            streamed,
             ..
         } => (
-            ExecType::TypeStreamAgg,
+            if *streamed {
+                ExecType::TypeStreamAgg
+            } else {
+                ExecType::TypeAggregation
+            },
             group_offsets
                 .iter()
                 .map(|offset| input_expr(*offset))
@@ -685,7 +690,7 @@ fn partial_aggregate_to_pb(
                     aggregate_expr(tp, input, &function.output_type)
                 })
                 .collect(),
-            true,
+            *streamed,
         ),
     };
     Executor {
@@ -1065,7 +1070,7 @@ mod tests {
         let output = FieldType::new(FieldTypeCode::LongLong);
         let group_type = FieldType::new(FieldTypeCode::Long);
         let executor = partial_aggregate_to_pb(
-            &PushdownPartialAggregate::GroupedStream {
+            &PushdownPartialAggregate::Grouped {
                 group_offsets: vec![1],
                 group_types: vec![group_type],
                 functions: vec![
@@ -1085,6 +1090,7 @@ mod tests {
                         output_type: output,
                     },
                 ],
+                streamed: true,
             },
             &[integer_column(), integer_column()],
         );
@@ -1099,6 +1105,35 @@ mod tests {
         assert_eq!(
             aggregate.agg_func[2].children[0].tp,
             Some(ExprType::Int64 as i32)
+        );
+    }
+
+    #[test]
+    fn grouped_hash_aggregate_lowers_as_non_streamed_aggregation() {
+        let output = FieldType::new(FieldTypeCode::NewDecimal);
+        let group_type = FieldType::new(FieldTypeCode::Long);
+        let executor = partial_aggregate_to_pb(
+            &PushdownPartialAggregate::Grouped {
+                group_offsets: vec![0, 1],
+                group_types: vec![group_type.clone(), group_type],
+                functions: vec![tidb_executor::remote_scan::PushdownAggregateFunction {
+                    kind: PushdownAggregateKind::Sum,
+                    input_offset: Some(2),
+                    output_type: output,
+                }],
+                streamed: false,
+            },
+            &[integer_column(), integer_column(), integer_column()],
+        );
+        assert_eq!(executor.tp, Some(ExecType::TypeAggregation as i32));
+        let aggregate = executor.aggregation.expect("aggregation field 5");
+        assert_eq!(aggregate.streamed, Some(false));
+        assert_eq!(aggregate.group_by.len(), 2);
+        assert_eq!(aggregate.agg_func.len(), 1);
+        assert_eq!(aggregate.agg_func[0].tp, Some(ExprType::Sum as i32));
+        assert_eq!(
+            aggregate.agg_func[0].children[0].val,
+            Some(encode_column_offset(2))
         );
     }
 

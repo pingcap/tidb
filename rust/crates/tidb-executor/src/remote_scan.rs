@@ -149,15 +149,17 @@ pub enum PushdownPartialAggregate {
         /// The group-key column returned by TiKV.
         group_type: FieldType,
     },
-    /// A grouped partial StreamAgg. TiKV returns aggregate results first and
-    /// group keys last, matching its aggregation-schema contract.
-    GroupedStream {
+    /// A grouped partial aggregation. TiKV returns aggregate results first
+    /// and group keys last, matching its aggregation-schema contract.
+    Grouped {
         /// Group-key offsets in [`PushdownScanRequest::columns`].
         group_offsets: Vec<usize>,
         /// Group-key result types, index-parallel with `group_offsets`.
         group_types: Vec<FieldType>,
         /// Aggregate functions, in physical output order.
         functions: Vec<PushdownAggregateFunction>,
+        /// `true` for StreamAgg over ordered input, `false` for HashAgg.
+        streamed: bool,
     },
 }
 
@@ -170,7 +172,7 @@ impl PushdownPartialAggregate {
             | Self::Sum { input_offset, .. }
             | Self::GroupBy { input_offset, .. } => *input_offset,
             Self::GroupBySum { group_offset, .. } => *group_offset,
-            Self::GroupedStream {
+            Self::Grouped {
                 group_offsets,
                 functions,
                 ..
@@ -195,7 +197,7 @@ impl PushdownPartialAggregate {
                 group_type,
                 ..
             } => vec![sum_type.clone(), group_type.clone()],
-            Self::GroupedStream {
+            Self::Grouped {
                 group_types,
                 functions,
                 ..
@@ -219,7 +221,7 @@ impl PushdownPartialAggregate {
                 sum_offset,
                 ..
             } => vec![*group_offset, *sum_offset],
-            Self::GroupedStream {
+            Self::Grouped {
                 group_offsets,
                 functions,
                 ..

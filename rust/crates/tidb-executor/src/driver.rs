@@ -297,7 +297,9 @@ mod agg_build;
 mod agg_select;
 mod catalog;
 mod clause_resolve;
+mod correlated_agg_decorrelate;
 mod derived_agg_pruning;
+pub(crate) use derived_agg_pruning::has_pruned_row_count;
 mod derived_projection_pushdown;
 mod dml;
 mod errors;
@@ -658,10 +660,6 @@ pub(super) fn run_select_traced_with_delivery(
     if let Some(delivered) = output_delivered.as_deref_mut() {
         delivered.clear();
     }
-    // The statement as written, which the plan text is rendered from: the
-    // rewrites below (CTE materialization, subquery folding, window
-    // hoisting) change what is EXECUTED, not what the user asked for.
-    let traced_select = select;
     // A WITH clause's CTEs are materialized first, then the query runs against
     // a catalog that contains them.
     let with_catalog;
@@ -672,6 +670,26 @@ pub(super) fn run_select_traced_with_delivery(
         }
         None => catalog,
     };
+    // Go's DecorrelateSolver turns equality-correlated scalar aggregations
+    // into ordinary joins and aggregations. This executor has no retained
+    // logical-plan tree, so the proof-shaped equivalent rewrites the AST
+    // before every later optimizer rule and before plan tracing.
+    let decorrelated;
+    let decorrelated_aggregate;
+    let select = match correlated_agg_decorrelate::rewrite(select, catalog, current_db, ctx) {
+        Some(rewritten) => {
+            decorrelated = rewritten;
+            decorrelated_aggregate = true;
+            &decorrelated
+        }
+        None => {
+            decorrelated_aggregate = false;
+            select
+        }
+    };
+    // The plan text follows optimizer-visible rewrites. Runtime-only rewrites
+    // below (subquery folding and window hoisting) still remain invisible.
+    let traced_select = select;
     // Uncorrelated subqueries are evaluated now and folded into literals, so
     // everything below plans against ordinary expressions (Go's
     // handleScalarSubquery for the non-Apply case).
@@ -683,16 +701,41 @@ pub(super) fn run_select_traced_with_delivery(
     } else {
         select
     };
-    // Go's `tidb_opt_join_reorder_through_proj`: a derived table whose
-    // projection sits directly on a join dissolves into the statement, so the
-    // relations under it become leaves of THIS join group and the reorder can
-    // move them. Both of Go's gates and this tier's own are in
-    // `driver::through_proj`; every default session gets `None` here.
+    // Go expands a derived table's wildcard while constructing its logical
+    // Projection. Projection elimination then sees the expanded expressions,
+    // so a `SELECT * FROM (a JOIN b)` identity projection can disappear
+    // before join reorder even when through-projection reordering is OFF.
+    let expanded_derived_wildcards;
+    let select =
+        match derived_projection_pushdown::expand_derived_wildcards(select, catalog, current_db) {
+            Some(rewritten) => {
+                expanded_derived_wildcards = rewritten;
+                &expanded_derived_wildcards
+            }
+            None => select,
+        };
+    // Go's projection elimination removes bare-column projections before join
+    // reorder. Projections that still compute expressions dissolve only when
+    // `tidb_opt_join_reorder_through_proj` is enabled; both cases share the
+    // same name-preserving AST splice.
     let inlined;
     let select = match through_proj::inline(select, catalog, current_db, ctx) {
         Some(rewritten) => {
             inlined = rewritten;
             &inlined
+        }
+        None => select,
+    };
+    // Move leaf-local predicates through those derived projections before
+    // pruning their now-unread outputs. Join equalities and multi-relation
+    // predicates remain at the join that executes them.
+    let derived_predicates_pushed;
+    let select = match derived_projection_pushdown::push_local_predicates_into_derived(
+        select, catalog, current_db, ctx,
+    ) {
+        Some(rewritten) => {
+            derived_predicates_pushed = rewritten;
+            &derived_predicates_pushed
         }
         None => select,
     };
@@ -738,6 +781,12 @@ pub(super) fn run_select_traced_with_delivery(
         }
         None => select,
     };
+    // Derived-table fusion can pull a decorrelated scalar-SUM shape into a
+    // caller after this recursive call's initial rewrite returned `None`.
+    // Recognize the resulting invariant shape here so physical plan details
+    // keep using catalog table/column names throughout the pulled plan.
+    let physical_source_names =
+        decorrelated_aggregate || correlated_agg_decorrelate::is_pulled_scalar_sum(select);
 
     // Go's `buildSelect` pushes this block's `/*+ ... */` hints and its
     // deferred `popTableHints` reports the ones no `DataSource` of the block
@@ -789,14 +838,10 @@ pub(super) fn run_select_traced_with_delivery(
             // source no longer owes a group-key order; asking for it here
             // would make the eventual scan claim `keep order:true` for work
             // the executable plan does not require.
-            aggregation_order =
-                (!agg_select::aggregation_can_be_eliminated(select, catalog, current_db))
-                    .then(|| {
-                        merge_decision::aggregation_order(
-                            select, join, catalog, current_db, &offered,
-                        )
-                    })
-                    .flatten();
+            aggregation_order = (!physical_source_names
+                && !agg_select::aggregation_can_be_eliminated(select, catalog, current_db))
+            .then(|| merge_decision::aggregation_order(select, join, catalog, current_db, &offered))
+            .flatten();
             // Go's `rule_column_pruning`: what every `DataSource` below still
             // has to produce, which is the input its access-path costing
             // needs (`isCoveringIndex`). A `FROM` of ONE base table is
@@ -846,6 +891,7 @@ pub(super) fn run_select_traced_with_delivery(
                 columns: wanted.as_ref(),
                 rows: row_source.as_ref(),
                 join_hints: (!join_hints.is_empty()).then_some(&join_hints),
+                physical_source_names,
             };
             // Go's `join_reorder` rule, which runs on the logical plan
             // between predicate pushdown and physical planning. It only ever
@@ -965,9 +1011,10 @@ pub(super) fn run_select_traced_with_delivery(
         .as_ref()
         .is_some_and(|order| order.is_delivered_by(&from_delivered, &scope));
     if grouped_stream_ordered {
-        if let (Some(delivered), Some(order)) =
-            (output_delivered, grouped_select_output_order(traced_select))
-        {
+        if let (Some(delivered), Some(order)) = (
+            output_delivered.as_deref_mut(),
+            grouped_select_output_order(traced_select),
+        ) {
             delivered.push(order);
         }
     }
@@ -1133,7 +1180,7 @@ pub(super) fn run_select_traced_with_delivery(
             grouped_stream_ordered,
             grouped_stream_physical_order,
             derived_output,
-            grouped_derived_output_pruned,
+            grouped_derived_output_pruned || physical_source_names,
             trace,
         );
     }
@@ -1360,7 +1407,7 @@ pub(super) fn run_select_traced_with_delivery(
         let mut pred = rewrite_expr_resolved(&predicate, &predicate_resolver)
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
         refine_comparisons(&mut pred, ctx);
-        let physical_trace_predicate = grouped_derived_output_pruned.then(|| pred.clone());
+        let physical_trace_predicate = physical_source_names.then(|| pred.clone());
         source = Box::new(SelectionExec::new(
             ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
             vec![pred],
@@ -1628,6 +1675,50 @@ pub(super) fn run_select_traced_with_delivery(
         }
     }
 
+    // A plain projection preserves each input order through its bare-column
+    // outputs. Report that ACTUAL mapping to a parent join so its merge-plan
+    // verification reads the executor just built rather than a catalog
+    // promise. Clauses with their own physical ordering semantics stay
+    // fail-closed here, matching `merge_decision::order_preserving_source`.
+    let projection_sources = exprs
+        .iter()
+        .map(|expr| {
+            expr.as_column()
+                .and_then(|column| usize::try_from(column.index).ok())
+        })
+        .collect::<Vec<_>>();
+    if !select.distinct
+        && select.group_by.is_empty()
+        && select.having.is_none()
+        && select.order_by.is_empty()
+        && select.limit.is_none()
+        && select.windows.is_empty()
+    {
+        if let Some(delivered) = output_delivered.as_deref_mut() {
+            delivered.extend(crate::driver::merge_decision::project_delivered_orders(
+                &from_delivered,
+                &projection_sources,
+            ));
+        }
+    }
+    // Go folds an increasing bare-column subset into the child join's pruned
+    // output schema. ProjectionExec remains this executor's implementation of
+    // that pruning, but it is not a separate physical Projection in Go's
+    // plan tree.
+    let derived_column_prune = derived_output
+        && !select.distinct
+        && select.group_by.is_empty()
+        && select.having.is_none()
+        && select.order_by.is_empty()
+        && select.limit.is_none()
+        && select.windows.is_empty()
+        && projection_sources.iter().all(Option::is_some)
+        && projection_sources.windows(2).all(|pair| {
+            pair[0]
+                .zip(pair[1])
+                .is_some_and(|(left, right)| left < right)
+        });
+
     // Output schema: one column per field, typed by the expression's static type.
     let out_columns: Vec<Column> = exprs
         .iter()
@@ -1878,9 +1969,11 @@ pub(super) fn run_select_traced_with_delivery(
     // Only EXPLAIN needs a second view of the executable expression tree.
     // Ordinary execution moves the sole copy into ProjectionExec, so the
     // TPCC hot path pays no clone for physical-expression rendering.
-    let projection_trace_exprs =
-        (trace.is_some() && direct_distinct_input.is_none() && !projection_elided)
-            .then(|| exprs.clone());
+    let projection_trace_exprs = (trace.is_some()
+        && direct_distinct_input.is_none()
+        && !projection_elided
+        && !derived_column_prune)
+        .then(|| exprs.clone());
     let projection_trace_columns = projection_trace_exprs.as_ref().map(|_| {
         (0..current_scope.width())
             .map(|offset| {
@@ -1947,7 +2040,7 @@ pub(super) fn run_select_traced_with_delivery(
             ctx.clone(),
         ))
     };
-    if direct_distinct_input.is_none() && !projection_elided {
+    if direct_distinct_input.is_none() && !projection_elided && !derived_column_prune {
         if let Some(trace) = trace.as_deref_mut() {
             let physical = projection_trace_exprs
                 .as_deref()

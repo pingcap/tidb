@@ -114,6 +114,9 @@ pub(crate) struct FromDemand<'a> {
     /// site reads it before it decides a merge join; see
     /// [`crate::driver::join_method_hints`].
     pub(crate) join_hints: Option<&'a crate::driver::join_method_hints::JoinMethodHints>,
+    /// Render optimizer-created joins with the base-column identities Go
+    /// preserves after projection elimination, rather than with AST aliases.
+    pub(crate) physical_source_names: bool,
 }
 
 impl FromDemand<'_> {
@@ -124,6 +127,7 @@ impl FromDemand<'_> {
             columns: None,
             rows: None,
             join_hints: None,
+            physical_source_names: false,
         }
     }
 }

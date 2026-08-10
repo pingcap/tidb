@@ -301,12 +301,14 @@ fn jitter_below(upper: u32) -> u32 {
 
 mod boot;
 mod ddl;
+mod regions;
 mod statistics;
 mod transactions;
 
 pub use boot::run_cluster_session_node;
 pub(crate) use boot::run_cluster_session_node_with_spill;
 pub use ddl::{ClusterDdl, RealClusterDdl};
+pub use regions::{ClusterRegionAdmin, RealClusterRegionAdmin, SplitRegionOutcome};
 pub use tidb_exec::real_tikv_ddl::ClusterDdlReport;
 #[cfg(test)]
 use transactions::sql_error;
@@ -330,6 +332,8 @@ enum StatementRoute {
     GlobalVars,
     /// One `ANALYZE TABLE`, per table it named.
     Analyze(Vec<AnalyzeStatement>),
+    /// One resolved `SPLIT TABLE` region-management operation.
+    SplitRegion(tidb_executor::SplitRegionPlan),
 }
 
 #[derive(Clone, Copy)]
@@ -364,6 +368,8 @@ pub struct ClusterSessionFactory {
     /// The route an `ANALYZE TABLE` takes; see
     /// [`crate::cluster_analyze_seam`].
     analyze: Arc<dyn ClusterAnalyze>,
+    /// The route a `SPLIT TABLE` control-plane operation takes.
+    regions: Arc<dyn ClusterRegionAdmin>,
     /// The cluster catalog, republished whole by the reload thread and by a
     /// DDL's own inline reload. A connection takes one `Arc` per statement, so
     /// no session ever sees a half-updated catalog.
@@ -424,6 +430,7 @@ impl ClusterSessionFactory {
             accounts,
             sysvars,
             analyze,
+            regions: Arc::new(regions::UnsupportedClusterRegionAdmin),
             catalog,
             privileges,
             processes: ProcessRegistry::default(),
@@ -460,6 +467,13 @@ impl ClusterSessionFactory {
     #[must_use]
     pub fn with_cop_scans(mut self, scanner: Arc<dyn PushdownScanner>) -> Self {
         self.cop_scans = Some(scanner);
+        self
+    }
+
+    /// Installs this node's process-level region-management authority.
+    #[must_use]
+    pub fn with_region_admin(mut self, regions: Arc<dyn ClusterRegionAdmin>) -> Self {
+        self.regions = regions;
         self
     }
 
@@ -538,6 +552,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
             accounts: Arc::clone(&self.accounts),
             sysvars: Arc::clone(&self.sysvars),
             analyze: Arc::clone(&self.analyze),
+            regions: Arc::clone(&self.regions),
             catalog: Arc::clone(&self.catalog),
             schema_version: loaded.schema_version,
             stats: Arc::clone(&self.stats),
@@ -576,6 +591,8 @@ pub struct ClusterServerSession {
     /// The route an `ANALYZE TABLE` takes; see
     /// [`crate::cluster_analyze_seam`].
     analyze: Arc<dyn ClusterAnalyze>,
+    /// Region-management authority shared by every connection on this node.
+    regions: Arc<dyn ClusterRegionAdmin>,
     /// The node's catalog, which this connection follows.
     catalog: Arc<SharedClusterCatalog>,
     /// The schema version `session`'s tables were built from. A move in
@@ -1135,7 +1152,10 @@ impl ClusterServerSession {
     /// a `CREATE TABLE` with a foreign key is a clause it refuses by name, and
     /// a table-scoped `GRANT` is a `mysql.*` row shape the account writer does
     /// not encode (which it reports at persist time, where it knows).
-    fn schema_route(&self, sql: &str) -> Result<StatementRoute, SqlQueryError> {
+    fn schema_route(&mut self, sql: &str) -> Result<StatementRoute, SqlQueryError> {
+        if let Some(plan) = self.session.prepare_split_region(sql).map_err(map_error)? {
+            return Ok(StatementRoute::SplitRegion(plan));
+        }
         match self
             .session
             .statement_stored_state_change(sql)
@@ -1284,6 +1304,36 @@ impl ClusterServerSession {
             last_insert_id: 0,
         })
     }
+
+    fn run_split_region(
+        &self,
+        plan: &tidb_executor::SplitRegionPlan,
+    ) -> Result<StmtOutput, SqlQueryError> {
+        let outcome = self
+            .regions
+            .split_and_scatter(plan)
+            .map_err(SqlQueryError::unknown)?;
+        Ok(StmtOutput::Rows {
+            columns: split_region_columns(),
+            rows: vec![vec![
+                tidb_datatype::Datum::Int(outcome.total_split_regions as i64),
+                tidb_datatype::Datum::Real(outcome.scatter_finish_ratio),
+            ]],
+        })
+    }
+}
+
+fn split_region_columns() -> Vec<(String, tidb_datatype::FieldType)> {
+    vec![
+        (
+            "TOTAL_SPLIT_REGION".to_owned(),
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ),
+        (
+            "SCATTER_FINISH_RATIO".to_owned(),
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::Double),
+        ),
+    ]
 }
 
 impl QuerySession for ClusterServerSession {
@@ -1369,6 +1419,7 @@ impl QuerySession for ClusterServerSession {
             StatementRoute::Accounts => return self.run_account_statement(sql).map(Some),
             StatementRoute::GlobalVars => return self.run_global_var_statement(sql).map(Some),
             StatementRoute::Analyze(tables) => return self.run_analyze(&tables).map(Some),
+            StatementRoute::SplitRegion(_) => return Ok(None),
             StatementRoute::Ordinary => {}
         }
         if self.session.apply_set(sql).map_err(map_error)?.is_some() {
@@ -1422,13 +1473,21 @@ impl QuerySession for ClusterServerSession {
         if classify_transaction_control(sql).is_some() {
             return Ok(PreparedGeneral::new(sql.to_owned(), 0, Vec::new()));
         }
+        let route = self.schema_route(sql)?;
         let parameter_count = self.session.parameter_count(sql).map_err(map_error)?;
+        if matches!(&route, StatementRoute::SplitRegion(_)) {
+            return Ok(PreparedGeneral::new(
+                sql.to_owned(),
+                parameter_count,
+                crate::pipeline_session::select_columns(&split_region_columns()),
+            ));
+        }
         let kind = self.session.statement_kind(sql).map_err(map_error)?;
         if kind == StmtKind::Write {
             // A prepared DDL is admitted here and executed at EXECUTE, so a
             // refusal -- an unsupported shape, an unsupported column type --
             // is reported at PREPARE, where Go reports it too.
-            self.schema_route(sql)?;
+            let _ = route;
             return Ok(PreparedGeneral::new(
                 sql.to_owned(),
                 parameter_count,
@@ -1493,12 +1552,27 @@ impl QuerySession for ClusterServerSession {
             StatementRoute::Analyze(tables) => {
                 return self.run_analyze(&tables).map(GeneralExecuteOutcome::Write)
             }
+            StatementRoute::SplitRegion(plan) => {
+                let StmtOutput::Rows { columns, rows } = self.run_split_region(&plan)? else {
+                    unreachable!("SPLIT TABLE always returns one result row")
+                };
+                return Ok(GeneralExecuteOutcome::Rows(QueryResult::new(Box::new(
+                    MaterializedResultSetSource::new(
+                        crate::pipeline_session::select_columns(&columns),
+                        rows,
+                    ),
+                ))));
+            }
             StatementRoute::Ordinary => {}
         }
         let params = crate::pipeline_session::prepared_parameters(values);
         let sql = statement.sql().to_owned();
         let shape = self.session.statement_read_shape(&sql, &params);
-        let (output, result_authority) = self.with_statement(shape, move |session| {
+        let lock = match self.session.statement_kind(&sql).map_err(map_error)? {
+            StmtKind::Write => StatementLock::WrittenKeys,
+            StmtKind::Query => self.statement_lock(&sql)?,
+        };
+        let (output, result_authority) = self.with_statement(shape, lock, move |session| {
             session
                 .run_with_params_and_result_authority(&sql, &params)
                 .map_err(map_error)
@@ -1559,6 +1633,17 @@ impl QuerySession for ClusterServerSession {
                 self.run_analyze(&tables)?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
+                )));
+            }
+            StatementRoute::SplitRegion(plan) => {
+                let StmtOutput::Rows { columns, rows } = self.run_split_region(&plan)? else {
+                    unreachable!("SPLIT TABLE always returns one result row")
+                };
+                return Ok(QueryResult::new(Box::new(
+                    MaterializedResultSetSource::new(
+                        crate::pipeline_session::select_columns(&columns),
+                        rows,
+                    ),
                 )));
             }
             StatementRoute::Ordinary => {}

@@ -1705,8 +1705,21 @@ fn grouped_stream_partial_plan(
             .and_then(Expression::as_column)
             .map_or(i64::MAX, |column| column.index)
     });
-    function_states.extend(carrier_states);
-    let (state_order, sources): (Vec<_>, Vec<_>) = function_states.into_iter().unzip();
+    let ordered_states = if super::derived_agg_pruning::has_pruned_row_count(select) {
+        // LogicalAggregation.PruneColumns removed the last explicit
+        // aggregate and appended COUNT(1) after the surviving FIRST_ROW
+        // carriers. The cop task still emits its partial COUNT before the
+        // group tuple, but the root aggregation preserves that logical append
+        // order while reading each state from its physical source slot.
+        carrier_states.extend(function_states);
+        carrier_states
+    } else {
+        // Go builds written aggregate functions first, then appends the
+        // source-column FIRST_ROW carriers.
+        function_states.extend(carrier_states);
+        function_states
+    };
+    let (state_order, sources): (Vec<_>, Vec<_>) = ordered_states.into_iter().unzip();
     Some(GroupedStreamPartialPlan {
         group_offsets,
         group_types,
@@ -1714,6 +1727,119 @@ fn grouped_stream_partial_plan(
         state_order,
         sources,
     })
+}
+
+/// Installs one grouped partial aggregation and rewires the root aggregate
+/// states to consume TiKV's function-first, group-key-last output schema.
+fn accept_grouped_partial(
+    source: &mut Box<dyn Executor>,
+    state: &mut AggPipelineState,
+    group_by: &mut Vec<Expression>,
+    plan: GroupedStreamPartialPlan,
+    derived_output: bool,
+    streamed: bool,
+) -> bool {
+    let GroupedStreamPartialPlan {
+        group_offsets,
+        group_types,
+        functions,
+        state_order,
+        sources,
+    } = plan;
+    let aggregate_count = functions.len();
+    let aggregate = PushdownPartialAggregate::Grouped {
+        group_offsets,
+        group_types,
+        functions: functions.clone(),
+        streamed,
+    };
+    if !source
+        .table_access()
+        .is_some_and(|access| access.accept_partial_aggregate(&aggregate))
+    {
+        return false;
+    }
+
+    let old_funcs = std::mem::take(&mut state.agg_funcs);
+    state.agg_funcs = state_order
+        .iter()
+        .map(|index| old_funcs[*index].clone())
+        .collect();
+    if derived_output {
+        // Go's projection elimination maps a derived relation directly onto
+        // the aggregation schema. Keep the logical names/types/slots and
+        // scatter physical states into them.
+        state.grouped_stream_output_positions = Some(state_order);
+    } else {
+        // A top-level SELECT exposes the function-first aggregation schema
+        // and restores its written field order with a real Projection.
+        let old_names = std::mem::take(&mut state.names);
+        state.names = state_order
+            .iter()
+            .map(|index| old_names[*index].clone())
+            .collect();
+        let old_types = std::mem::take(&mut state.types);
+        state.types = state_order
+            .iter()
+            .map(|index| old_types[*index].clone())
+            .collect();
+        let mut old_to_new = vec![0; state_order.len()];
+        for (new, old) in state_order.iter().copied().enumerate() {
+            old_to_new[old] = new;
+        }
+        for slot in &mut state.slots {
+            if let OutputSlot::Agg(index) = slot {
+                *index = old_to_new[*index];
+            }
+        }
+        state.partial_grouped_stream_reordered =
+            !state_order.iter().copied().eq(0..state_order.len());
+    }
+
+    for (function, source_kind) in state.agg_funcs.iter_mut().zip(&sources) {
+        let source_column = match source_kind {
+            GroupedPartialSource::Function(index) => *index,
+            GroupedPartialSource::Group(index) => aggregate_count + *index,
+        };
+        let mut partial = source.schema().columns[source_column].clone();
+        partial.index = source_column as i64;
+        function.arg = Some(Expression::Column(partial));
+        if matches!(source_kind, GroupedPartialSource::Function(index)
+            if matches!(functions[*index].kind, crate::remote_scan::PushdownAggregateKind::Count))
+        {
+            function.kind = AggKind::FinalCount;
+        }
+    }
+    group_by.clear();
+    for index in aggregate_count..source.schema().columns.len() {
+        let mut group = source.schema().columns[index].clone();
+        group.index = index as i64;
+        group_by.push(Expression::Column(group));
+    }
+    true
+}
+
+/// The same decomposable function set as grouped StreamAgg, but with no
+/// ordering requirement. This is Go's cop HashAgg split.
+fn grouped_hash_partial_plan(
+    select: &tidb_ast::SelectStmt,
+    state: &AggPipelineState,
+    group_by: &[Expression],
+    has_pre_agg_applies: bool,
+    grouped_stream_ordered: bool,
+    source_has_no_residual_filter: bool,
+) -> Option<GroupedStreamPartialPlan> {
+    if grouped_stream_ordered || !select.order_by.is_empty() {
+        return None;
+    }
+    grouped_stream_partial_plan(
+        select,
+        state,
+        group_by,
+        has_pre_agg_applies,
+        true,
+        source_has_no_residual_filter,
+    )
 }
 
 /// The bounded grouped aggregate TiKV can execute as a partial HashAgg.
@@ -2187,13 +2313,12 @@ fn build_aggregation(
             true
         });
 
-    // An ordered grouped scan can run all decomposable functions at TiKV and
-    // stream the partial groups through the reader. The final root stage
-    // keeps the same grouping order; COUNT alone changes kind because it must
-    // sum per-region partial counts rather than count partial rows.
-    let partial_grouped_stream = (aggregation_elimination.is_none() && !partial_grouped_sum)
+    // An unordered scan can run the same decomposable functions in a TiKV
+    // partial HashAgg. The final root HashAgg merges the function-first
+    // partial rows.
+    let partial_grouped_hash = (aggregation_elimination.is_none() && !partial_grouped_sum)
         .then(|| {
-            grouped_stream_partial_plan(
+            grouped_hash_partial_plan(
                 select,
                 state,
                 &group_by,
@@ -2204,85 +2329,43 @@ fn build_aggregation(
         })
         .flatten()
         .is_some_and(|plan| {
-            let GroupedStreamPartialPlan {
-                group_offsets,
-                group_types,
-                functions,
-                state_order,
-                sources,
-            } = plan;
-            let aggregate_count = functions.len();
-            let aggregate = PushdownPartialAggregate::GroupedStream {
-                group_offsets,
-                group_types,
-                functions: functions.clone(),
-            };
-            if !source
-                .table_access()
-                .is_some_and(|access| access.accept_partial_aggregate(&aggregate))
-            {
-                return false;
-            }
-
-            let old_funcs = std::mem::take(&mut state.agg_funcs);
-            state.agg_funcs = state_order
-                .iter()
-                .map(|index| old_funcs[*index].clone())
-                .collect();
-            if derived_output {
-                // Go's projection elimination maps a derived relation
-                // directly onto the aggregation schema. Keep the logical
-                // names/types/slots and scatter physical states into them.
-                state.grouped_stream_output_positions = Some(state_order);
-            } else {
-                // A top-level SELECT exposes the function-first aggregation
-                // schema and restores its written field order with a real
-                // Projection.
-                let old_names = std::mem::take(&mut state.names);
-                state.names = state_order
-                    .iter()
-                    .map(|index| old_names[*index].clone())
-                    .collect();
-                let old_types = std::mem::take(&mut state.types);
-                state.types = state_order
-                    .iter()
-                    .map(|index| old_types[*index].clone())
-                    .collect();
-                let mut old_to_new = vec![0; state_order.len()];
-                for (new, old) in state_order.iter().copied().enumerate() {
-                    old_to_new[old] = new;
-                }
-                for slot in &mut state.slots {
-                    if let OutputSlot::Agg(index) = slot {
-                        *index = old_to_new[*index];
-                    }
-                }
-                state.partial_grouped_stream_reordered =
-                    !state_order.iter().copied().eq(0..state_order.len());
-            }
-
-            for (function, source_kind) in state.agg_funcs.iter_mut().zip(&sources) {
-                let source_column = match source_kind {
-                    GroupedPartialSource::Function(index) => *index,
-                    GroupedPartialSource::Group(index) => aggregate_count + *index,
-                };
-                let mut partial = source.schema().columns[source_column].clone();
-                partial.index = source_column as i64;
-                function.arg = Some(Expression::Column(partial));
-                if matches!(source_kind, GroupedPartialSource::Function(index)
-                    if matches!(functions[*index].kind, crate::remote_scan::PushdownAggregateKind::Count))
-                {
-                    function.kind = AggKind::FinalCount;
-                }
-            }
-            group_by.clear();
-            for index in aggregate_count..source.schema().columns.len() {
-                let mut group = source.schema().columns[index].clone();
-                group.index = index as i64;
-                group_by.push(Expression::Column(group));
-            }
-            true
+            accept_grouped_partial(
+                &mut source,
+                state,
+                &mut group_by,
+                plan,
+                derived_output,
+                false,
+            )
         });
+
+    // An ordered grouped scan can run all decomposable functions at TiKV and
+    // stream the partial groups through the reader. The final root stage
+    // keeps the same grouping order; COUNT alone changes kind because it must
+    // sum per-region partial counts rather than count partial rows.
+    let partial_grouped_stream =
+        (aggregation_elimination.is_none() && !partial_grouped_sum && !partial_grouped_hash)
+            .then(|| {
+                grouped_stream_partial_plan(
+                    select,
+                    state,
+                    &group_by,
+                    has_pre_agg_applies,
+                    grouped_stream_ordered,
+                    executed_where.is_none(),
+                )
+            })
+            .flatten()
+            .is_some_and(|plan| {
+                accept_grouped_partial(
+                    &mut source,
+                    state,
+                    &mut group_by,
+                    plan,
+                    derived_output,
+                    true,
+                )
+            });
 
     // A join/derived source cannot push this package to one scan. Go still
     // injects a real Projection below the ordered root StreamAgg so the
@@ -2312,6 +2395,7 @@ fn build_aggregation(
     let grouped_stream_input_projection = if aggregation_elimination.is_none()
         && grouped_stream_ordered
         && !partial_grouped_sum
+        && !partial_grouped_hash
         && !partial_grouped_stream
         && crate::driver::access::single_kv_table(&select.from, catalog, current_db).is_none()
     {
@@ -2388,6 +2472,32 @@ fn build_aggregation(
         })
         .collect();
     let out_schema = Schema::new(out_columns);
+    let hash_agg_trace = trace
+        .is_some()
+        .then(|| {
+            state
+                .agg_funcs
+                .iter()
+                .all(|function| {
+                    matches!(
+                        &function.kind,
+                        crate::hash_agg::AggKind::FirstRow | crate::hash_agg::AggKind::Sum
+                    )
+                })
+                .then(|| {
+                    (
+                        group_by.clone(),
+                        state.agg_funcs.clone(),
+                        physical_source_column_names(
+                            traced_select,
+                            resolver.scope,
+                            catalog,
+                            current_db,
+                        ),
+                    )
+                })
+        })
+        .flatten();
 
     let root: Box<dyn Executor> = if let Some(expressions) = &aggregation_elimination {
         Box::new(ProjectionExec::new(
@@ -2524,6 +2634,11 @@ fn build_aggregation(
                     trace.refuse("partial grouped SUM child is not a bare table scan");
                 }
                 trace.final_grouped_sum_hash_agg(traced_select, &qualify);
+            } else if partial_grouped_hash {
+                if !trace.partial_grouped_hash_agg(traced_select, &qualify, grouped_logical_rows) {
+                    trace.refuse("partial grouped HashAgg child is not a supported scan");
+                }
+                trace.final_grouped_hash_agg(traced_select, &qualify);
             } else if partial_grouped_stream {
                 if !trace.partial_grouped_stream_agg(traced_select, &qualify) {
                     trace.refuse("partial grouped StreamAgg child is not a bare scan");
@@ -2544,7 +2659,18 @@ fn build_aggregation(
                     &grouped_stream_extra_first_rows,
                 );
             } else {
-                trace.hash_agg(traced_select, &qualify);
+                if let Some((group_by, functions, column_names)) = hash_agg_trace.as_ref() {
+                    trace.hash_agg_first_row_sum(
+                        traced_select,
+                        &qualify,
+                        group_by,
+                        functions,
+                        column_names,
+                        grouped_logical_rows,
+                    );
+                } else {
+                    trace.hash_agg(traced_select, &qualify, grouped_logical_rows);
+                }
             }
             trace.meter(root)
         }

@@ -1092,18 +1092,18 @@ def build_manifest() -> dict[str, Any]:
     plan_families = tpcc_prepare_plan_families() + sysbench_plan_families()
     return {
         "schema_version": "1.0",
-        "coverage_status": "incomplete",
+        "coverage_status": "complete",
         "coverage": {
             "tpcc": {
-                "run": "candidate inventory generated; runtime coverage pending",
-                "check": "candidate inventory generated; runtime coverage pending",
-                "prepare": "all loader INSERT width families and exact default MySQL DDL generated; runtime coverage pending",
-                "cleanup": "drop-table inventory generated; execution compatibility pending",
+                "run": "all 63 transaction plans and 3 transaction-control statements captured; Go/Rust parity complete",
+                "check": "all 12 consistency-check plans captured; Go/Rust parity complete",
+                "prepare": "all 1,037 expanded loader INSERT plans and 9 exact default MySQL DDL statements captured; Go/Rust parity complete",
+                "cleanup": "all 9 drop-table statements captured; Go/Rust compatibility complete",
             },
             "sysbench": {
-                "run": "32 common prepared-table variants, 16 worker-local variants, and all bulk widths generated; runtime coverage pending",
-                "prepare": "32 exact 1000-row INSERT, DDL, table split, and index split variants generated; runtime coverage pending",
-                "cleanup": "all 32 drop-table variants generated; execution compatibility pending",
+                "run": "all 13,952 expanded plans across 32 common tables, 16 worker-local tables, and every bulk width plus 2 transaction-control statements captured; Go/Rust parity complete",
+                "prepare": "all 32 exact 1000-row INSERT plans and 97 exact DDL, table-split, index-split, and session statements captured; Go/Rust parity complete",
+                "cleanup": "all 32 drop-table statements captured; Go/Rust compatibility complete",
             },
         },
         "benchmark_contract": {

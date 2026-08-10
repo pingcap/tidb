@@ -193,7 +193,7 @@ impl SideProperties {
     }
 
     /// The relation-qualified name of the column at `offset`.
-    fn column_at(&self, offset: usize) -> Option<RelColumn> {
+    pub(crate) fn column_at(&self, offset: usize) -> Option<RelColumn> {
         for relation in &self.relations {
             if offset >= relation.offset && offset - relation.offset < relation.columns.len() {
                 return Some(RelColumn {
@@ -851,19 +851,63 @@ pub(crate) fn physical_column_trace_name(
     catalog: &Catalog,
     current_db: &str,
 ) -> Option<String> {
+    let origin = physical_column_origin(node, column, catalog, current_db, true)?;
+    Some(format!(
+        "{}.{}.{}",
+        origin.database, origin.table, origin.column
+    ))
+}
+
+/// Whether the base column behind a projection-only output may be NULL.
+/// Aggregate/computed outputs have no single base origin and return `None`.
+pub(crate) fn physical_column_is_nullable(
+    node: &JoinNode,
+    column: &RelColumn,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<bool> {
+    physical_column_origin(node, column, catalog, current_db, false).map(|origin| origin.nullable)
+}
+
+struct PhysicalColumnOrigin {
+    database: String,
+    table: String,
+    column: String,
+    nullable: bool,
+}
+
+fn physical_column_origin(
+    node: &JoinNode,
+    column: &RelColumn,
+    catalog: &Catalog,
+    current_db: &str,
+    cross_aggregation: bool,
+) -> Option<PhysicalColumnOrigin> {
     if let JoinNode::Table(table_ref) = node {
         let (database, name) = split_table_path(&table_ref.name, current_db).ok()?;
         let visible = table_ref.alias.as_deref().unwrap_or(name);
-        return visible
-            .eq_ignore_ascii_case(&column.relation)
-            .then(|| format!("{database}.{name}.{}", column.column));
+        if !visible.eq_ignore_ascii_case(&column.relation) {
+            return None;
+        }
+        let entry = catalog.get_in(database, name)?;
+        let (physical_name, field_type) = entry
+            .column_list()
+            .into_iter()
+            .find(|(candidate, _)| candidate.eq_ignore_ascii_case(&column.column))?;
+        return Some(PhysicalColumnOrigin {
+            database: database.to_owned(),
+            table: name.to_owned(),
+            column: physical_name,
+            nullable: !field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL),
+        });
     }
     if let JoinNode::Join(join) = node {
-        return physical_column_trace_name(&join.left, column, catalog, current_db).or_else(|| {
-            join.right
-                .as_ref()
-                .and_then(|right| physical_column_trace_name(right, column, catalog, current_db))
-        });
+        return physical_column_origin(&join.left, column, catalog, current_db, cross_aggregation)
+            .or_else(|| {
+                join.right.as_ref().and_then(|right| {
+                    physical_column_origin(right, column, catalog, current_db, cross_aggregation)
+                })
+            });
     }
     let JoinNode::Derived {
         subquery,
@@ -880,6 +924,9 @@ pub(crate) fn physical_column_trace_name(
     let QueryStmt::Select(select) = &**subquery else {
         return None;
     };
+    if !cross_aggregation && !select.group_by.is_empty() {
+        return None;
+    }
     let mut output_names = super::from::derived_field_names(select)?;
     if !column_names.is_empty() {
         if column_names.len() != output_names.len() {
@@ -906,11 +953,13 @@ pub(crate) fn physical_column_trace_name(
         Phase::Promise,
     )?;
     let origin = source.column_at(source.offset_of(path)?)?;
-    let database = match path.as_slice() {
-        [database, _, _] => database.as_str(),
-        _ => current_db,
-    };
-    Some(format!("{database}.{}.{}", origin.relation, origin.column))
+    physical_column_origin(&from.left, &origin, catalog, current_db, cross_aggregation).or_else(
+        || {
+            from.right.as_ref().and_then(|right| {
+                physical_column_origin(right, &origin, catalog, current_db, cross_aggregation)
+            })
+        },
+    )
 }
 
 /// Each of `orders` rewritten through a projection, where `sources[i]` is the
@@ -950,6 +999,16 @@ fn project_orders(orders: &[Vec<usize>], sources: &[Option<usize>]) -> Vec<Vec<u
             (!projected.is_empty()).then_some(projected)
         })
         .collect()
+}
+
+/// Maps orders the built input actually delivered through a projection's
+/// output-to-input column mapping. This is the physical verification sibling
+/// of [`project_orders`]'s logical-property use in [`derived_properties`].
+pub(crate) fn project_delivered_orders(
+    orders: &[Vec<usize>],
+    sources: &[Option<usize>],
+) -> Vec<Vec<usize>> {
+    project_orders(orders, sources)
 }
 
 /// The `FROM` of a `SELECT` that carries its source's row order through

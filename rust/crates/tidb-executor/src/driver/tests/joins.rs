@@ -669,6 +669,12 @@ fn tpcc_stock_level_bounds_both_join_leaves() {
         plan.iter().any(|line| line.contains("IndexJoin")),
         "TIDB_INLJ must force the viable clustered-handle lookup, got {plan:?}"
     );
+    assert!(
+        plan.iter().any(|line| {
+            line.contains("TableReader") && line.contains("(Probe)") && line.contains(r"\t0.42\t")
+        }),
+        "the unique stock probe must apply its residual quantity selectivity, got {plan:?}"
+    );
 
     for table in ["order_line", "stock"] {
         assert!(

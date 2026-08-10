@@ -48,8 +48,9 @@ use crate::{PdClientError, PdMemberSet};
 use super::failover::{
     batch_scan_regions_with_failover, endpoint_attempt_order, foreground_leader_only,
     get_gc_state_with_failover, get_prev_region_with_failover, get_region_by_id_with_failover,
-    get_region_with_failover, get_store_with_failover, refresh_membership, retain_member_clients,
-    scan_regions_with_failover, tonic_client, PdChannelCache,
+    get_region_with_failover, get_store_with_failover, is_region_scattering_with_failover,
+    refresh_membership, retain_member_clients, scan_regions_with_failover,
+    split_and_scatter_regions_with_failover, tonic_client, PdChannelCache,
 };
 use super::requests::{get_members, get_prev_region, get_region, get_region_by_id, scan_regions};
 use super::topology::invalid_topology;
@@ -102,6 +103,12 @@ pub(super) fn run_worker(
                     let _ = reply.send(Err(PdClientError::Closed));
                 }
                 WorkerCommand::GetGcState { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
+                WorkerCommand::GetOperator { reply, .. } => {
+                    let _ = reply.send(Err(PdClientError::Closed));
+                }
+                WorkerCommand::SplitAndScatterRegions { reply, .. } => {
                     let _ = reply.send(Err(PdClientError::Closed));
                 }
                 WorkerCommand::Close { reply } => {
@@ -348,6 +355,38 @@ pub(super) fn run_worker(
                     &state,
                     &shutdown,
                     keyspace_id,
+                );
+                let _ = reply.send(result);
+            }
+            WorkerCommand::GetOperator {
+                region_id,
+                timeout: operation_timeout,
+                reply,
+            } => {
+                let result = is_region_scattering_with_failover(
+                    &runtime,
+                    &mut clients,
+                    operation_timeout,
+                    &state,
+                    &shutdown,
+                    region_id,
+                );
+                let _ = reply.send(result);
+            }
+            WorkerCommand::SplitAndScatterRegions {
+                split_keys,
+                group,
+                timeout: operation_timeout,
+                reply,
+            } => {
+                let result = split_and_scatter_regions_with_failover(
+                    &runtime,
+                    &mut clients,
+                    operation_timeout,
+                    &state,
+                    &shutdown,
+                    &split_keys,
+                    &group,
                 );
                 let _ = reply.send(result);
             }

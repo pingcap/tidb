@@ -1514,6 +1514,17 @@ pub(crate) fn selectivity_of_conjuncts(
         let Some(column) = table.columns.get(offset) else {
             continue;
         };
+        // `conditionChecker` correctly refuses `IS NOT NULL` as an INDEX
+        // access condition because `(NULL,+inf]` does not narrow the scan.
+        // `cardinality.Selectivity` uses a different ranger entry point: the
+        // same interval is still a COLUMN statistics node and removes the
+        // NULL bucket. Recover that mask here instead of treating the
+        // condition as the generic 0.8 fallback.
+        let not_null_mask = conjuncts
+            .iter()
+            .enumerate()
+            .filter(|(_, conjunct)| is_not_null_on_column(conjunct, offset, resolver))
+            .fold(0_i64, |mask, (index, _)| mask | (1_i64 << index));
         // Go `getMaskAndRanges` down the `ranger.ColumnRangeType` arm: a range
         // over the COLUMN itself, so no index prefix length is in play.
         let built = crate::index_range::detach_conds_for_column(
@@ -1522,20 +1533,30 @@ pub(crate) fn selectivity_of_conjuncts(
             &resolver.time_zone(),
         );
         // `BuildColumnRange` with no access condition returns the full range
-        // and an empty mask, which the greedy cover can never select.
-        if built.access_count == 0 {
+        // and an empty mask, which the greedy cover can never select. `IS NOT
+        // NULL` is the one full range the statistics path still consumes.
+        if built.access_count == 0 && not_null_mask == 0 {
             continue;
         }
-        let ranges: Vec<ColumnRange> = built
-            .ranges
-            .iter()
-            .map(|range| ColumnRange {
-                low: range.low.first().cloned().unwrap_or(Datum::MinNotNull),
-                high: range.high.first().cloned().unwrap_or(Datum::MaxValue),
-                low_exclude: range.low_exclusive,
-                high_exclude: range.high_exclusive,
-            })
-            .collect();
+        let ranges: Vec<ColumnRange> = if built.access_count == 0 {
+            vec![ColumnRange {
+                low: Datum::MinNotNull,
+                high: Datum::MaxValue,
+                low_exclude: false,
+                high_exclude: false,
+            }]
+        } else {
+            built
+                .ranges
+                .iter()
+                .map(|range| ColumnRange {
+                    low: range.low.first().cloned().unwrap_or(Datum::MinNotNull),
+                    high: range.high.first().cloned().unwrap_or(Datum::MaxValue),
+                    low_exclude: range.low_exclusive,
+                    high_exclude: range.high_exclusive,
+                })
+                .collect()
+        };
         let is_handle = table.pk_handle_offset() == Some(offset);
         let row_count = match loaded {
             Some(stats) => {
@@ -1580,7 +1601,7 @@ pub(crate) fn selectivity_of_conjuncts(
                     StatsNodeType::Column
                 },
                 column.id,
-                covered_mask(&conjuncts, &built.residual),
+                covered_mask(&conjuncts, &built.residual) | not_null_mask,
                 1,
             )
         });
@@ -1597,6 +1618,28 @@ pub(crate) fn selectivity_of_conjuncts(
         realtime as i64,
         SelectivityDefaults::default(),
     )
+}
+
+/// Whether one statistics condition is `column IS NOT NULL` for `offset`.
+fn is_not_null_on_column(
+    conjunct: &tidb_ast::Expr,
+    offset: usize,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+) -> bool {
+    let tidb_ast::Expr::Is {
+        expr,
+        target: tidb_ast::IsTarget::Null,
+        not: true,
+    } = strip_parens(conjunct)
+    else {
+        return false;
+    };
+    let tidb_ast::Expr::Column(path) = strip_parens(expr) else {
+        return false;
+    };
+    resolver
+        .resolve(path)
+        .is_some_and(|(resolved, _, _)| resolved == offset)
 }
 
 /// Go's `expression.ExtractColumnsMapFromExpressions` over the whole condition
@@ -2134,6 +2177,40 @@ mod tests {
             None,
         );
         assert!((actual - 99.0 / 10_000.0).abs() < 1e-12, "{actual}");
+    }
+
+    /// `cardinality.Selectivity` treats `IS NOT NULL` as the pseudo column
+    /// range `(NULL,+inf]`. It is not an index access condition, but it still
+    /// owns a statistics node and therefore removes one pseudo NULL bucket.
+    #[test]
+    fn pseudo_not_null_is_a_column_statistics_range() {
+        let table = KvTable::with_storage(
+            82,
+            vec![long_column("a", 1), long_column("b", 2)],
+            Box::new(MemTableStorage::new()),
+        );
+        let predicate = tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::LogicAnd,
+            Box::new(tidb_ast::Expr::Binary(
+                tidb_ast::BinaryOp::Eq,
+                Box::new(tidb_ast::Expr::Column(vec!["a".to_owned()])),
+                Box::new(tidb_ast::Expr::Int("1".to_owned())),
+            )),
+            Box::new(tidb_ast::Expr::Is {
+                expr: Box::new(tidb_ast::Expr::Column(vec!["b".to_owned()])),
+                target: tidb_ast::IsTarget::Null,
+                not: true,
+            }),
+        );
+
+        let actual = selectivity(
+            &predicate,
+            &table,
+            &NamedColumnResolver { table: &table },
+            None,
+        );
+        let expected = 1.0 / 1_000.0 * (1.0 - 1.0 / 1_000.0);
+        assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
     }
 
     /// `t(a, b, c)` with a non-unique index on `b`, the shape

@@ -59,32 +59,30 @@ from CSE branch `codex/table-group-m1`; the baseline is not rerun.
 - [x] (2026-08-09 02:51Z) Ran 87 candidate plan cases with zero collection
   errors in TPCC run and Sysbench run: TPCC run matched 14/63, TPCC checks
   matched 0/12 with two compatibility errors, and Sysbench run matched 2/12.
-- [ ] (2026-08-09 03:32Z) Complete TPCC prepare/cleanup and Sysbench
-  prepare/cleanup/bulk-batching inventory (completed: exact default TPCC DDL,
-  32-table Sysbench DDL/split/cleanup, 32 common prepared-table variants,
-  16 worker-local variants, and every 1..851 bulk width; remaining: runtime
-  coverage receipts and execution compatibility for non-plan statements).
-- [x] (2026-08-09 03:34Z) Expanded the fail-closed manifest from 92 candidate
+- [x] (2026-08-10) Completed TPCC prepare/run/check/cleanup and Sysbench
+  prepare/run/cleanup inventory, including exact default TPCC DDL, 32-table
+  Sysbench DDL/split/cleanup, 32 common prepared-table variants, 16
+  worker-local variants, every reachable bulk width, and source/runtime
+  coverage receipts for every non-plan statement.
+- [x] (2026-08-10) Expanded the fail-closed manifest from 92 candidate
   statements to 563 static cases plus 57 dynamic families, or 15,248 expanded
-  SQL shapes, while retaining `coverage_status=incomplete`.
+  SQL shapes, and promoted it to `coverage_status=complete` only after source,
+  reachability, and execution-compatibility coverage all passed.
 - [x] (2026-08-09 03:38Z) Created all 32 empty Sysbench diagnostic tables
   through a temporary localhost-only Go DDL owner, verified both Go and Rust
   see 32 tables, stopped the owner, and verified port 4200 is closed.
 - [x] (2026-08-09 03:42Z) Established a four-second deterministic point-get
   differential loop: Go emits one `Point_Get`; Rust emits
   `Projection -> Selection -> Point_Get` for the same prepared statement.
-- [x] (2026-08-09) Isolated the upstream rebase in
+- [x] (2026-08-10) Isolated the upstream rebase in
   `/mnt/nvme/src/tidb-hparser-integration-rebased` on branch
   `codex/hparser-integration-parity`, based on upstream commit
-  `8b28739bf921a34f3c3dc98035aa9dab46641d02`. The latest 27 upstream commits
-  rebased without conflict; the earlier six conflict resolutions already gave
-  upstream ownership and APIs precedence. The original dirty detached
-  worktree remains untouched.
-- [x] (2026-08-09) Restored exact parity for all 63 TPCC transaction plans and
-  all 13,984 expanded Sysbench run-plan cases. Receipts are
-  `tpcc-run-63-after-index-join.json` and
-  `sysbench-static-after-post-filter.json` under the plan-parity evidence
-  directory.
+  `951ccad0c76ce12b558662a18ee9c1613108aa11`. Upstream implementation and
+  APIs won every conflict. The original dirty detached worktree remains
+  untouched.
+- [x] (2026-08-10) Restored exact parity for all 63 TPCC transaction plans,
+  all 12 TPCC consistency-check plans, all 1,037 TPCC prepare plans, all 32
+  Sysbench prepare plans, and all 13,952 expanded Sysbench run plans.
 - [x] (2026-08-09) Matched TPCC consistency conditions 05 and 07 exactly.
   Condition 07 now proves the result set, common-handle range access on both
   leaves, MergeJoin ordering, and the cross-leaf `other cond`; the complete
@@ -104,13 +102,16 @@ from CSE branch `codex/table-group-m1`; the baseline is not rerun.
   The complete check receipt is `tpcc-check-after-condition02-full.json`;
   candidate SHA-256 is
   `e2856b07a5b06b36775050a42c92386bc98e8976c93ee23d0b4113b5834079e1`.
-- [ ] (2026-08-09) Match the remaining TPCC consistency plans (completed:
-  6/12 exact and 0 protocol errors; remaining: conditions 06 and 08-12).
-- [ ] Promote the generated manifest from `incomplete` to `complete` only after
-  source and runtime coverage both prove no unknown or unreachable SQL shapes.
-- [ ] Implement Go-faithful coprocessor `IndexLookUp` execution and plan text
-  for the first mismatch; keep staged-write and transaction semantics exact.
-- [ ] Iterate plan families until the complete TPCC/Sysbench manifest passes.
+- [x] (2026-08-10) Matched the remaining TPCC consistency plans: 12/12 exact,
+  zero protocol errors.
+- [x] (2026-08-10) Promoted the generated manifest to `complete` after source
+  and runtime coverage proved no unknown or unreachable SQL shapes.
+- [x] (2026-08-10) Implemented Go-faithful coprocessor `IndexLookUp` execution
+  and plan text while preserving staged-write and transaction semantics.
+- [x] (2026-08-10) Passed the formal complete-manifest physical-plan gate:
+  15,096/15,096 exact, zero mismatches and zero errors. Passed the non-plan
+  gate: 152/152 exact after excluding only endpoint identity, disposable test
+  database name, and wall-clock duration.
 - [ ] Bootstrap clean formal TPCC and Sysbench datasets and run correctness,
   prepare-time, throughput, latency, health, and CPU-profile measurements.
 - [ ] Update the branch README, run the Ready validation profile, self-review,
@@ -217,6 +218,21 @@ from CSE branch `codex/table-group-m1`; the baseline is not rerun.
   to grouped/derived aggregation property selection or the join/access path
   above such an aggregation; prepared execution itself is no longer the
   source of the former condition 10/12 timeout.
+- Observation: sending raw TiDB table/index split keys to PD's aggregate
+  `SplitAndScatterRegions` RPC creates undecodable region boundaries. Go TiDB
+  then rejects those boundaries with an invalid memcomparable marker and Rust
+  eventually reports `Region is unavailable`.
+  Evidence: the original PD/TiKV roots are preserved as
+  `*.corrupt-unencoded-split-20260810T0329Z`; no damaged data was reused.
+- Observation: PD's split RPC expects memcomparable-encoded region keys, just
+  like `GetRegion`. Encoding, sorting, and deduplicating every key before the
+  RPC, then polling the exact PD scatter operator to completion, made both
+  table and index split results match Go (`8`, `1`) and kept a newly booted Go
+  TiDB able to create, read, and drop data on the same cluster.
+- Observation: reloading a clustered composite primary key can expose both the
+  clustered handle and a mirrored PRIMARY `IndexInfo`. Rust `SHOW CREATE TABLE`
+  printed both definitions until the mirrored entry was suppressed. The fixed
+  TPCC and Sysbench schema SHA-256 values now exactly match Go.
 
 ## Decision Log
 
@@ -286,33 +302,32 @@ from CSE branch `codex/table-group-m1`; the baseline is not rerun.
 
 ## Outcomes & Retrospective
 
-No final outcome yet. The cluster is operational. The differential gate now
-expands to 15,248 SQL shapes and remains explicitly incomplete pending runtime
-coverage. All 63 TPCC transaction plans and 13,984 expanded Sysbench run plans
-match; TPCC checks are at 6/12 with no protocol errors. Formal datasets and
-benchmark results remain blocked on complete plan parity.
+The compatibility gate is complete but the performance outcome is not final.
+The manifest accounts for 15,248 SQL shapes: 15,096 physical plans and 152
+non-plan statements. Formal reports against Go TiDB commit
+`951ccad0c76ce12b558662a18ee9c1613108aa11` show 15,096/15,096 exact plans,
+zero mismatches, and zero errors. Fresh-cluster non-plan reports show 152/152
+exact execution results and identical TPCC/Sysbench schema hashes. Formal
+dataset preparation, correctness runs, benchmark measurements, profiles, and
+the Draft PR remain pending.
 
 ## Context and Orientation
 
 The active source worktree is
 `/mnt/nvme/src/tidb-hparser-integration-rebased` on `i4i-test-4`, branch
 `codex/hparser-integration-parity`, based on upstream commit
-`8b28739bf921a34f3c3dc98035aa9dab46641d02`. The original detached worktree at
+`951ccad0c76ce12b558662a18ee9c1613108aa11`. The original detached worktree at
 `/mnt/nvme/src/tidb-hparser-integration` and its pre-existing local changes are
 preserved untouched. The Rust workspace is `rust/`.
 
-`rust/crates/tidb-executor/src/access_path.rs` owns the current
-`IndexRangeSourceExec`. It batches handles for ordering but calls
-`KvTable::get_row_by_handle` once per row. `rust/crates/tidb-exec/src/cop_scan.rs`
-already lowers a table scan, pushed Selection, and Limit into a TiKV DAG and
-streams rows through `tidb-distsql`. `rust/crates/tidb-exec/src/dag_request.rs`
-and `rust/crates/tidb-planner/src/physical_index_scan.rs` already support
-schema-resolved `PhysicalIndexScan` DAG encoding, but that path is not wired
-into `IndexRangeSourceExec`. `rust/crates/tidb-executor/src/plan_trace.rs` owns
-the EXPLAIN tree and currently collapses the double read into one root
-`IndexRangeScan` node.
+`rust/crates/tidb-executor/src/access_path.rs` owns `IndexRangeSourceExec`.
+The initial implementation issued one `KvTable::get_row_by_handle` per index
+row. The completed path now uses the TiPB DAG and `tidb-distsql` transport in
+`rust/crates/tidb-exec`, preserves the required order and transaction fallback,
+and emits Go-faithful Build/Probe plan text through
+`rust/crates/tidb-executor/src/plan_trace.rs`.
 
-The first mismatch is:
+The first mismatch used to be:
 
     SELECT SUM(h_amount)
     FROM history
@@ -326,7 +341,7 @@ Go TiDB answers in about 0.03 seconds with:
         Selection Probe cop[tikv]
           TableRowIDScan cop[tikv]
 
-Rust currently times out after 5 seconds with:
+Before the fix, Rust timed out after 5 seconds with:
 
     HashAgg root
       Selection root
@@ -398,10 +413,10 @@ only with the frozen nightly `3 TiDB + 3 TiKV` baseline from
 
 ## Concrete Steps
 
-Run all commands from EC2. The coding-loop validation profile is WIP:
+Run all commands from EC2. The coding-loop validation profile is:
 
     ssh i4i-test-4
-    cd /mnt/nvme/src/tidb-hparser-integration/rust
+    cd /mnt/nvme/src/tidb-hparser-integration-rebased/rust
     cargo test --offline --locked -j12 -p tidb-executor --lib the_double_read
     cargo test --offline --locked -j12 -p tidb-exec --test all tikv_scan_dag
 
@@ -421,8 +436,8 @@ Regenerate and check the workload manifest from the repository root:
     python3 rust/scripts/generate-plan-manifest.py --check
     python3 rust/scripts/test-plan-parity.py
 
-Formal plan collection deliberately fails while coverage is incomplete. WIP
-collection requires `--allow-incomplete-manifest`; current receipts are under
+Formal plan collection now requires `coverage_status=complete`; the WIP
+override is not used for accepted evidence. Current receipts are under
 `/mnt/nvme/hparser-bench/evidence/plan-parity/`.
 
 At completion use the Ready profile from the repository skill. Run Rust format,
@@ -477,18 +492,25 @@ under new data roots; debug schemas are never reused for accepted results.
 
 ## Artifacts and Notes
 
-Current diagnostic evidence is under
-`/mnt/nvme/hparser-bench/evidence/pinned-go-tpc-smoke-t16-20260809T0126Z`.
-The first full candidate receipts are
-`/mnt/nvme/hparser-bench/evidence/plan-parity/wip-tpcc-run-candidate.json`,
-`wip-tpcc-check-candidate.json`, and `wip-sysbench-run-candidate.json`.
-Dynamic-shape and access-object boundary receipts are
-`wip-expanded-dimensions-boundaries.json`,
-`wip-sysbench-table-dimension-boundaries.json`, and
-`repro-point-select-table32-run{1,2}.json`.
-The latest three-node Rust binary is SHA-256 `2b793e...e5126fe`. The frozen
-nightly TPCC baseline is 41,011.5 tpmC at 32 threads; it is historical context,
-not a thread-matched ratio for the new required 16-thread candidate run.
+Current accepted plan evidence is under
+`/mnt/nvme/hparser-bench/evidence/plan-parity/`:
+
+    formal-951ccad0-335edb4-tpcc-run-v1.json          63/63
+    formal-951ccad0-335edb4-tpcc-check-v1.json        12/12
+    formal-951ccad0-335edb4-tpcc-prepare-v1.json      1,037/1,037
+    formal-951ccad0-335edb4-sysbench-prepare-v1.json  32/32
+    formal-951ccad0-335edb4-sysbench-run-v1.json      13,952/13,952
+
+The matching complete-manifest non-plan receipts are
+`formal-951ccad0-335edb4-rust-non-plan-v1.json` and
+`formal-951ccad0-go-non-plan-v1.json`, covering 152/152 statements exactly.
+The candidate Rust binary SHA-256 is
+`335edb4dfaf476ed54addcc6727878039e781dbf58433d2de189f6f80236feac`.
+The Go oracle binary SHA-256 is
+`59fbf8fc40f9d37e8737ea02ba428144cbf284b61d8e8d46811e26bb36c211b9`.
+The frozen nightly TPCC baseline is 41,011.5 tpmC at 32 threads; it is
+historical context, not a thread-matched ratio for the required 16-thread
+candidate run.
 
 ## Interfaces and Dependencies
 
@@ -507,3 +529,8 @@ the regression-test comment and commit message.
 Plan revision note (2026-08-09): promoted exact workload-wide plan parity to a
 fail-closed gate, documented binary prepared EXPLAIN acquisition, and recorded
 the first 87-case Go/Rust differential receipts and remaining inventory gaps.
+
+Plan revision note (2026-08-10): rebased onto upstream `951ccad0`, completed
+the 15,248-shape workload inventory, passed all 15,096 physical-plan and 152
+non-plan compatibility cases, recorded the PD split-key encoding incident and
+fresh-cluster recovery proof, and unblocked formal benchmarking.

@@ -776,6 +776,220 @@ fn tpcc_condition_nine_rebuilds_grouped_history_over_index_lookup() {
     );
 }
 
+/// TPCC condition 11 pushes its outer predicates through two levels of
+/// pass-through derived projections. Go pins all three grouped leaves to the
+/// requested warehouse, places the aggregate comparison on the inner join,
+/// and preserves the grouped index orders through two merge joins.
+#[test]
+fn tpcc_condition_eleven_pushes_filters_through_nested_derived_joins() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE customer (c_id INT NOT NULL, c_d_id INT NOT NULL, c_w_id INT NOT NULL, \
+         c_first VARCHAR(16), c_middle CHAR(2), c_last VARCHAR(16), \
+         c_street_1 VARCHAR(20), c_street_2 VARCHAR(20), c_city VARCHAR(20), c_state CHAR(2), \
+         c_zip CHAR(9), c_phone CHAR(16), c_since DATETIME, c_credit CHAR(2), \
+         c_credit_lim DECIMAL(12,2), c_discount DECIMAL(4,4), c_balance DECIMAL(12,2), \
+         c_ytd_payment DECIMAL(12,2), c_payment_cnt INT, c_delivery_cnt INT, \
+         c_data VARCHAR(500), \
+         PRIMARY KEY(c_w_id,c_d_id,c_id), \
+         KEY idx_customer(c_w_id,c_d_id,c_last,c_first))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE orders (o_id INT NOT NULL, o_d_id INT NOT NULL, o_w_id INT NOT NULL, \
+         o_c_id INT, o_entry_d DATETIME, o_carrier_id INT, o_ol_cnt INT, o_all_local INT, \
+         PRIMARY KEY(o_w_id,o_d_id,o_id), \
+         KEY idx_order(o_w_id,o_d_id,o_c_id,o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE new_order (no_o_id INT NOT NULL, no_d_id INT NOT NULL, \
+         no_w_id INT NOT NULL, PRIMARY KEY(no_w_id,no_d_id,no_o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+
+    for (table_name, indexes) in [
+        (
+            "customer",
+            vec![
+                ("PRIMARY", true, vec![2, 1, 0]),
+                ("idx_customer", false, vec![2, 1, 5, 3]),
+            ],
+        ),
+        (
+            "orders",
+            vec![
+                ("PRIMARY", true, vec![2, 1, 0]),
+                ("idx_order", false, vec![2, 1, 3, 0]),
+            ],
+        ),
+        ("new_order", vec![("PRIMARY", true, vec![2, 1, 0])]),
+    ] {
+        let TableEntry::Kv(table) = catalog.get_mut_in("test", table_name).unwrap() else {
+            panic!("{table_name} is not a KV table");
+        };
+        for (position, (name, unique, column_offsets)) in indexes.into_iter().enumerate() {
+            table.add_index(crate::kv_table::KvIndex {
+                id: (position + 1) as i64,
+                name: name.to_owned(),
+                unique,
+                prefix_lengths: vec![
+                    crate::ddl::index_prefix::UNSPECIFIED_LENGTH;
+                    column_offsets.len()
+                ],
+                column_offsets,
+                visible: true,
+                global: false,
+            });
+        }
+    }
+
+    // Keep one matching group and one filtered warehouse so predicate
+    // placement is observable in both the answer and the physical plan.
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO customer(c_id,c_d_id,c_w_id,c_first,c_last) VALUES \
+         (1,1,1,'A','A'),(2,1,1,'B','B'),(1,1,2,'C','C')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO orders(o_id,o_d_id,o_w_id,o_c_id) VALUES \
+         (1,1,1,1),(2,1,1,2),(1,1,2,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO new_order VALUES (1,1,1),(1,1,2)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT count(*) FROM \
+        (SELECT * FROM \
+          (SELECT o_w_id, o_d_id, count(*) order_count FROM orders \
+           GROUP BY o_w_id, o_d_id) orders \
+          JOIN \
+          (SELECT no_w_id, no_d_id, count(*) new_order_count FROM new_order \
+           GROUP BY no_w_id, no_d_id) new_order \
+          ON orders.o_w_id = new_order.no_w_id \
+             AND orders.o_d_id = new_order.no_d_id) order_new_order \
+        JOIN \
+        (SELECT c_w_id, c_d_id, count(*) customer_count FROM customer \
+         GROUP BY c_w_id, c_d_id) customer \
+        ON order_new_order.no_w_id = customer.c_w_id \
+           AND order_new_order.no_d_id = customer.c_d_id \
+        WHERE c_w_id = 1 AND order_count - 2100 != new_order_count";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]]
+    );
+
+    let statement = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, plan) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: &[Datum], column: usize| match &row[column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    let operators = plan.iter().map(|row| cell(row, 0)).collect::<Vec<_>>();
+    let details = plan.iter().map(|row| cell(row, 4)).collect::<Vec<_>>();
+    let access = plan.iter().map(|row| cell(row, 3)).collect::<Vec<_>>();
+
+    assert_eq!(
+        operators
+            .iter()
+            .filter(|operator| operator.contains("MergeJoin"))
+            .count(),
+        2,
+        "{operators:#?}\n{details:#?}\n{access:#?}"
+    );
+    let merge_details = operators
+        .iter()
+        .zip(&details)
+        .filter_map(|(operator, detail)| operator.contains("MergeJoin").then_some(detail))
+        .collect::<Vec<_>>();
+    assert_eq!(merge_details.len(), 2, "{operators:#?}\n{details:#?}");
+    assert!(
+        merge_details[0].contains("left key:test.new_order.no_w_id, test.new_order.no_d_id")
+            && merge_details[0]
+                .contains("right key:test.customer.c_w_id, test.customer.c_d_id"),
+        "top join must keep Go TiDB's order_new_order-to-customer orientation:\n{operators:#?}\n{details:#?}"
+    );
+    assert!(
+        merge_details[1].contains("left key:test.orders.o_w_id, test.orders.o_d_id")
+            && merge_details[1]
+                .contains("right key:test.new_order.no_w_id, test.new_order.no_d_id"),
+        "nested join must keep Go TiDB's orders-to-new_order orientation:\n{operators:#?}\n{details:#?}"
+    );
+    assert!(
+        operators.iter().all(|operator| {
+            !operator.contains("HashJoin")
+                && !operator.contains("Selection")
+                && !operator.contains("Projection")
+                && !operator.contains("FullScan")
+        }),
+        "{operators:#?}\n{details:#?}\n{access:#?}"
+    );
+    assert_eq!(
+        operators
+            .iter()
+            .filter(|operator| operator.contains("RangeScan"))
+            .count(),
+        3,
+        "{operators:#?}\n{details:#?}\n{access:#?}"
+    );
+    assert!(
+        details.iter().any(|detail| {
+            detail.contains("other cond:ne(minus(") && detail.contains(", 2100)")
+        }),
+        "{operators:#?}\n{details:#?}\n{access:#?}"
+    );
+    assert!(
+        access
+            .iter()
+            .any(|object| object.contains("customer") && object.contains("idx_customer")),
+        "{operators:#?}\n{details:#?}\n{access:#?}"
+    );
+    assert!(
+        access
+            .iter()
+            .any(|object| object.contains("orders") && object.contains("idx_order")),
+        "{operators:#?}\n{details:#?}\n{access:#?}"
+    );
+    let customer_aggregation = details
+        .iter()
+        .find(|detail| detail.starts_with("group by:test.customer.c_d_id"))
+        .expect("customer grouped StreamAgg");
+    let customer_district = customer_aggregation
+        .find("funcs:firstrow(test.customer.c_d_id)->test.customer.c_d_id")
+        .expect("customer district carrier");
+    let customer_warehouse = customer_aggregation
+        .find("funcs:firstrow(test.customer.c_w_id)->test.customer.c_w_id")
+        .expect("customer warehouse carrier");
+    let synthetic_count = customer_aggregation
+        .find("funcs:count(Column#")
+        .expect("synthetic customer row count");
+    assert!(
+        customer_district < customer_warehouse && customer_warehouse < synthetic_count,
+        "Go appends the synthetic COUNT after surviving FIRST_ROW carriers: {customer_aggregation}"
+    );
+}
+
 #[test]
 fn tpcc_condition_two_orders_group_uses_the_covering_index_range() {
     use crate::explain::{explain_select_stmt, ExplainFormat};

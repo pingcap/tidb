@@ -36,7 +36,8 @@ use crate::real_tikv_node::{
 use crate::sql_node::{ConcurrentSqlNode, SqlQueryError};
 
 use super::{
-    ClusterSessionFactory, RealClusterDdl, RealClusterTransactions, CONTROL_PLANE_TIMEOUT,
+    ClusterSessionFactory, RealClusterDdl, RealClusterRegionAdmin, RealClusterTransactions,
+    CONTROL_PLANE_TIMEOUT,
 };
 
 /// Starts the convergence node: wide SQL over cluster storage and cluster
@@ -169,6 +170,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
             )),
         )
         .with_cop_scans(cop_scans)
+        .with_region_admin(Arc::new(RealClusterRegionAdmin::new(authority.pd_client())))
         .with_spill_storage(spill_storage),
     );
     let skipped = render_skipped(factory.boot_skipped_tables());

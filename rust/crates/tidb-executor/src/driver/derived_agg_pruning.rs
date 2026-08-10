@@ -59,9 +59,6 @@
 //!
 //! Refusals, each keeping the statement exactly as written:
 //!
-//! * a `FROM` that is anything but the one derived table (a join needs the
-//!   per-relation parent-column set, which the statement text does not
-//!   carry);
 //! * a derived subquery that is not a plain `SELECT`, or is `LATERAL`, or
 //!   carries an alias column list;
 //! * a subquery that is not an UNGROUPED aggregation: a `GROUP BY`,
@@ -113,6 +110,30 @@ use tidb_datatype::{FieldType, FieldTypeCode};
 
 use super::leaf_demand::LeafDemand;
 
+/// Marks the row-count aggregate Go appends after column pruning removes the
+/// last non-FIRST_ROW aggregate from a grouped derived relation. This alias
+/// exists only on the optimizer's private AST; the parent proved it does not
+/// read the replaced output column before the marker is installed.
+const PRUNED_ROW_COUNT_ALIAS: &str = "__tidb_pruned_row_count";
+
+/// Whether this grouped SELECT carries the synthetic row-count aggregate
+/// installed by [`prune_unread_grouped_outputs`]. Physical aggregation keeps
+/// this state after its FIRST_ROW carriers, matching Go's
+/// `LogicalAggregation.PruneColumns` append order.
+pub(crate) fn has_pruned_row_count(select: &SelectStmt) -> bool {
+    select.fields.fields().iter().any(|field| {
+        matches!(
+            field,
+            SelectField::Expr {
+                expr: Expr::Aggregate { name, distinct: false, args },
+                alias: Some(alias),
+            } if alias == PRUNED_ROW_COUNT_ALIAS
+                && name.eq_ignore_ascii_case("count")
+                && matches!(args.as_slice(), [Expr::Int(value)] if value == "1")
+        )
+    })
+}
+
 /// Whether this statement's sole relation is a grouped derived SELECT. Used
 /// by the caller to render the post-pruning physical expressions that no
 /// longer have source-column names.
@@ -133,77 +154,141 @@ pub(crate) fn is_single_grouped_derived(select: &SelectStmt) -> bool {
 /// The statement with unread derived-aggregation outputs removed, or `None`
 /// when no reduction is provable.
 pub(crate) fn prune(select: &SelectStmt) -> Option<SelectStmt> {
-    let from = select.from.as_ref()?;
-    if from.right.is_some() {
-        return None;
-    }
-    let JoinNode::Derived {
-        subquery,
-        alias: Some(alias),
-        lateral: false,
-        column_names,
-    } = &from.left
-    else {
-        return None;
-    };
-    if !column_names.is_empty() {
-        return None;
-    }
-    let QueryStmt::Select(inner) = &**subquery else {
-        return None;
-    };
-    // Only the clauses ABOVE the derived relation decide which of its output
-    // columns survive. Walking into the subquery would charge its own source
-    // references to identically named output columns (condition 04's
-    // `o_d_id`) and incorrectly keep the FIRST_ROW carrier Go prunes.
-    let mut outer = select.clone();
-    outer.from = None;
-
-    // Only the output NAMES matter to `LeafDemand::needed`, so the type is a
-    // placeholder.
-    let names = super::from::derived_field_names(inner)?;
-    let columns: Vec<(String, FieldType)> = names
-        .into_iter()
-        .map(|name| (name, FieldType::new(FieldTypeCode::LongLong)))
-        .collect();
-    let needed = LeafDemand::of_select(&outer).needed(alias, &columns);
-
-    let pruned_inner = if is_prunable_ungrouped_aggregation(inner) {
-        if !needed.is_empty() {
-            return None;
-        }
-        let mut inner = inner.clone();
-        inner.fields = vec![SelectField::Expr {
-            expr: count_one(),
-            alias: None,
-        }]
-        .into();
-        inner
-    } else {
-        Box::new(prune_unread_group_carriers(inner, &needed)?)
-    };
     let mut rewritten = select.clone();
-    rewritten.from = Some(tidb_ast::Join {
-        left: JoinNode::Derived {
-            subquery: tidb_ast::NodeBox::new(QueryStmt::Select(pruned_inner)),
-            alias: Some(alias.clone()),
-            lateral: false,
-            column_names: Vec::new(),
-        },
-        ..from.clone()
-    });
-    Some(rewritten)
+    prune_select(&mut rewritten).then_some(rewritten)
 }
 
-/// Drops selected group-key columns the outer query does not read. The group
-/// item itself remains, so row cardinality and ordering are unchanged; only
-/// the `FIRST_ROW` aggregate Go synthesized to expose that key disappears.
+/// Prunes one query block top-down. Its own output has already been reduced
+/// by its caller, so references in the surviving projection and join
+/// predicates are the exact demand to propagate into the block's derived
+/// children.
+fn prune_select(select: &mut SelectStmt) -> bool {
+    let demand = LeafDemand::of_select(&without_derived_inputs(select));
+    select
+        .from
+        .as_mut()
+        .is_some_and(|from| prune_join(from, &demand))
+}
+
+fn prune_join(join: &mut tidb_ast::Join, demand: &LeafDemand) -> bool {
+    let mut changed = prune_node(&mut join.left, demand);
+    if let Some(right) = &mut join.right {
+        changed |= prune_node(right, demand);
+    }
+    changed
+}
+
+fn prune_node(node: &mut JoinNode, demand: &LeafDemand) -> bool {
+    match node {
+        JoinNode::Join(join) => prune_join(join, demand),
+        JoinNode::Table(_) => false,
+        JoinNode::Derived {
+            subquery,
+            alias,
+            lateral,
+            column_names,
+        } => {
+            let QueryStmt::Select(inner) = &mut **subquery else {
+                return false;
+            };
+            let mut changed = false;
+            if let (Some(alias), false, true) =
+                (alias.as_deref(), *lateral, column_names.is_empty())
+            {
+                if let Some(names) = super::from::derived_field_names(inner) {
+                    // Only output names matter to `LeafDemand::needed`; the
+                    // type is a placeholder until the child is built.
+                    let columns = names
+                        .into_iter()
+                        .map(|name| (name, FieldType::new(FieldTypeCode::LongLong)))
+                        .collect::<Vec<_>>();
+                    let needed = demand.needed(alias, &columns);
+                    let pruned = if is_prunable_ungrouped_aggregation(inner) {
+                        needed.is_empty().then(|| {
+                            let mut pruned = (**inner).clone();
+                            pruned.fields = vec![SelectField::Expr {
+                                expr: count_one(),
+                                alias: None,
+                            }]
+                            .into();
+                            pruned
+                        })
+                    } else {
+                        prune_unread_grouped_outputs(inner, &needed)
+                            .or_else(|| prune_unread_pass_through_columns(inner, &needed))
+                    };
+                    if let Some(pruned) = pruned {
+                        **inner = pruned;
+                        changed = true;
+                    }
+                }
+            }
+            changed | prune_select(inner)
+        }
+    }
+}
+
+/// Computes one query block's parent demand without descending into the
+/// derived inputs whose output is being pruned. Join `ON`/`USING` clauses
+/// remain, as do correlated subqueries written in this block's expressions.
+fn without_derived_inputs(select: &SelectStmt) -> SelectStmt {
+    fn strip_join(join: &mut tidb_ast::Join) {
+        strip_node(&mut join.left);
+        if let Some(right) = &mut join.right {
+            strip_node(right);
+        }
+    }
+
+    fn strip_node(node: &mut JoinNode) {
+        match node {
+            JoinNode::Join(join) => strip_join(join),
+            JoinNode::Table(_) => {}
+            JoinNode::Derived { subquery, .. } => {
+                let QueryStmt::Select(inner) = &mut **subquery else {
+                    return;
+                };
+                inner.with = None;
+                inner.fields = vec![SelectField::Expr {
+                    expr: count_one(),
+                    alias: None,
+                }]
+                .into();
+                inner.values.clear();
+                inner.from = None;
+                inner.where_clause = None;
+                inner.group_by.clear();
+                inner.rollup = false;
+                inner.having = None;
+                inner.windows.clear();
+                inner.order_by.clear();
+                inner.limit = None;
+            }
+        }
+    }
+
+    let mut outer = select.clone();
+    if let Some(from) = &mut outer.from {
+        strip_join(from);
+    }
+    outer
+}
+
+/// Drops grouped outputs the outer query does not read. The group items remain,
+/// so row cardinality and ordering are unchanged; only their exposed
+/// `FIRST_ROW` carriers and side-effect-free aggregate outputs disappear.
 ///
-/// This is deliberately narrower than Go's general column-pruning rule. It
-/// refuses DISTINCT and output-order-sensitive clauses and keeps every
-/// aggregate output, even an unread one. The TPCC condition-04 shape needs
-/// only the safe plain-column group carrier case.
-fn prune_unread_group_carriers(select: &SelectStmt, needed: &[usize]) -> Option<SelectStmt> {
+/// Go builds explicit aggregate functions before the source-column
+/// `FIRST_ROW` carriers. If pruning removes the last explicit aggregate while
+/// carriers remain, `LogicalAggregation.PruneColumns` appends `COUNT(1)` to
+/// preserve the empty-input row-count distinction. TPCC condition 11 reaches
+/// exactly that state for `customer_count`, so retaining the written COUNT or
+/// moving the replacement before the carriers describes a different physical
+/// aggregation.
+///
+/// This remains narrower than Go's general rule: scalar select expressions
+/// and aggregate arguments with possible side effects are retained, and
+/// DISTINCT/output-order-sensitive shapes are refused.
+fn prune_unread_grouped_outputs(select: &SelectStmt, needed: &[usize]) -> Option<SelectStmt> {
     if select.group_by.is_empty()
         || select.distinct
         || select.rollup
@@ -214,6 +299,8 @@ fn prune_unread_group_carriers(select: &SelectStmt, needed: &[usize]) -> Option<
     }
 
     let mut changed = false;
+    let mut saw_non_first_row = false;
+    let mut kept_non_first_row = false;
     let mut fields = Vec::with_capacity(select.fields.fields().len());
     for (index, field) in select.fields.fields().iter().enumerate() {
         let is_group_carrier = match field {
@@ -223,13 +310,85 @@ fn prune_unread_group_carriers(select: &SelectStmt, needed: &[usize]) -> Option<
             } => select.group_by.iter().any(|item| &item.expr == expr),
             _ => false,
         };
-        if is_group_carrier && !needed.contains(&index) {
+        let aggregate = match field {
+            SelectField::Expr {
+                expr:
+                    Expr::Aggregate {
+                        name,
+                        distinct: _,
+                        args,
+                    },
+                ..
+            } => Some((name, args)),
+            _ => None,
+        };
+        let is_first_row =
+            aggregate.is_some_and(|(name, _)| name.eq_ignore_ascii_case("first_row"));
+        if aggregate.is_some() && !is_first_row {
+            saw_non_first_row = true;
+        }
+        let removable_aggregate =
+            aggregate.is_some_and(|(_, args)| args.iter().all(is_side_effect_free_argument));
+
+        if !needed.contains(&index) && (is_group_carrier || removable_aggregate) {
             changed = true;
         } else {
+            kept_non_first_row |= aggregate.is_some() && !is_first_row;
             fields.push(field.clone());
         }
     }
+    if saw_non_first_row && !kept_non_first_row {
+        fields.push(SelectField::Expr {
+            expr: count_one(),
+            alias: Some(PRUNED_ROW_COUNT_ALIAS.to_owned()),
+        });
+        changed = true;
+    }
     if !changed || fields.is_empty() {
+        return None;
+    }
+
+    let mut pruned = select.clone();
+    pruned.fields = fields.into();
+    Some(pruned)
+}
+
+/// Drops unread columns from a projection-only derived relation. The join
+/// and filter below it still read every column they require; only values no
+/// parent consumes stop crossing the derived-table boundary.
+fn prune_unread_pass_through_columns(select: &SelectStmt, needed: &[usize]) -> Option<SelectStmt> {
+    if select.from.is_none()
+        || select.with.is_some()
+        || !select.values.is_empty()
+        || select.distinct
+        || select.rollup
+        || !select.group_by.is_empty()
+        || select.having.is_some()
+        || !select.windows.is_empty()
+        || !select.order_by.is_empty()
+        || select.limit.is_some()
+        || !select.fields.fields().iter().all(|field| {
+            matches!(
+                field,
+                SelectField::Expr {
+                    expr: Expr::Column(_),
+                    ..
+                }
+            )
+        })
+    {
+        return None;
+    }
+
+    let fields = select
+        .fields
+        .fields()
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| needed.contains(index))
+        .map(|(_, field)| field.clone())
+        .collect::<Vec<_>>();
+    if fields.is_empty() || fields.len() == select.fields.fields().len() {
         return None;
     }
 
@@ -297,4 +456,63 @@ fn is_side_effect_free_argument(expr: &Expr) -> bool {
             | Expr::Null
             | Expr::Bool(_)
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn demand_crosses_pass_through_join_before_pruning_group_carrier() {
+        let statement = tidb_parser::parse(
+            r#"SELECT t.c1,t.sm,t.smh FROM (
+                 SELECT o.c_id,o.c_d_id,o.c_w_id,o.c1,o.sm,h.smh FROM (
+                   SELECT c.c_id,c.c_d_id,c.c_w_id,c.c_balance AS c1,
+                          SUM(ol.amount) AS sm
+                   FROM customer c LEFT JOIN ol
+                     ON c.c_id=ol.c_id AND c.c_d_id=ol.c_d_id
+                   GROUP BY c.c_d_id,c.c_id,c.c_w_id
+                 ) o LEFT JOIN (
+                   SELECT SUM(h.amount) AS smh,h.c_d_id,h.c_id FROM history h
+                   GROUP BY h.c_d_id,h.c_id
+                 ) h ON o.c_d_id=h.c_d_id AND o.c_id=h.c_id
+               ) t"#,
+        )
+        .unwrap();
+        let tidb_ast::Stmt::Query(query) = statement else {
+            panic!("not a query");
+        };
+        let QueryStmt::Select(select) = &*query else {
+            panic!("not a SELECT");
+        };
+
+        let pruned = prune(select).expect("the pass-through projection is reducible");
+        let JoinNode::Derived { subquery: top, .. } =
+            &pruned.from.as_ref().expect("outer FROM").left
+        else {
+            panic!("outer source is not derived");
+        };
+        let QueryStmt::Select(pass_through) = &**top else {
+            panic!("outer derived query is not a SELECT");
+        };
+        assert_eq!(
+            super::super::from::derived_field_names(pass_through).unwrap(),
+            ["c1", "sm", "smh"]
+        );
+
+        let JoinNode::Derived {
+            subquery: grouped, ..
+        } = &pass_through.from.as_ref().expect("pass-through FROM").left
+        else {
+            panic!("grouped outer source is not derived");
+        };
+        let QueryStmt::Select(grouped) = &**grouped else {
+            panic!("grouped query is not a SELECT");
+        };
+        assert_eq!(
+            super::super::from::derived_field_names(grouped).unwrap(),
+            ["c_id", "c_d_id", "c1", "sm"]
+        );
+        assert_eq!(grouped.group_by.len(), 3);
+    }
 }

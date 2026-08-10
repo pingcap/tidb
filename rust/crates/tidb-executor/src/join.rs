@@ -161,7 +161,7 @@ use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::list::RowPtr;
 use tidb_chunk::row_container::RowContainer;
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, Decimal, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;

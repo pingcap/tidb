@@ -1217,12 +1217,12 @@ pub(crate) fn build_lateral_join(
         tidb_ast::JoinType::Left => {
             return Err(DriverError::InvalidLateralJoin(
                 "LEFT JOIN is not supported with LATERAL",
-            ))
+            ));
         }
         tidb_ast::JoinType::Right => {
             return Err(DriverError::InvalidLateralJoin(
                 "RIGHT JOIN is not supported with LATERAL",
-            ))
+            ));
         }
         // Comma syntax (which the parser spells `CrossJoin`) and an explicit
         // INNER JOIN are the shapes Go plans.
@@ -1775,6 +1775,22 @@ pub(crate) fn build_join(
         demand,
         &right_required,
     )?;
+    // Predicate pushdown has now received an acceptance receipt from each
+    // concrete leaf source. Remove a leaf-local ON conjunct from the physical
+    // join only when that source accepted the exact predicate; equalities and
+    // outer-join preserved-side conditions remain untouched.
+    let pushed_join;
+    let join = match demand.rows {
+        Some(rows) => {
+            pushed_join = {
+                let mut join = join.clone();
+                join.on = rows.residual_on(join.on.as_ref());
+                join
+            };
+            &pushed_join
+        }
+        None => join,
+    };
 
     // VERIFY -- the second half of the promise/verify contract (see
     // `merge_decision`'s module doc). `merge` was formed from the PROMISE:
@@ -2004,8 +2020,9 @@ pub(crate) fn build_join(
                 )
             })
             .collect::<Vec<_>>();
-        (flattened.len() == split.equal_mask.len() && columns.iter().any(Option::is_none))
-            .then_some((flattened, columns))
+        (flattened.len() == split.equal_mask.len()
+            && (demand.physical_source_names || columns.iter().any(Option::is_none)))
+        .then_some((flattened, columns))
     };
     // Go's stats-less build side: the inner (non-preserved) child, which is
     // the left one only for a RIGHT join. See `join.rs`'s module doc.
@@ -2037,6 +2054,14 @@ pub(crate) fn build_join(
         ctx.clone(),
         ctx.statement_memory(),
     );
+    // When every stable WHERE conjunct belongs to this inner join, the join
+    // executor now evaluates the complete predicate (equal keys and `other
+    // cond` alike). Report that receipt so the equivalent Selection above it
+    // is removed. A partial push remains fail-closed and keeps the Selection.
+    let pushed_consumes_where = !demand.offered.is_empty()
+        && pushed.len() == demand.offered.len()
+        && join.tp == tidb_ast::JoinType::Cross;
+    join_exec.set_consumes_where(pushed_consumes_where);
     // The key offsets the decision computed are pre-pruning; the scope is
     // post-pruning. Re-resolving the key NAMES against it is what keeps the
     // executor's merge keys and the columns it actually holds one answer.
@@ -2360,6 +2385,17 @@ pub(crate) fn build_join(
                 };
                 (Some(outer), Some(probe_rows_one))
             });
+        // A unique lookup reads at most one pre-filter row for each outer
+        // key. Go prices the dynamic range at the outer row count and the
+        // cop Selection above it at that count times the residual filter
+        // selectivity. The full logical join estimator cannot recover this
+        // access-path fact: scaling the inner table's rows and join-key NDV
+        // together cancels the residual filter from its equality estimate.
+        let estimated_lookup_rows = if unique {
+            estimated_outer_rows.map(|rows| rows * decision.filter_selectivity)
+        } else {
+            estimated_join_rows.map(|rows| rows.joined)
+        };
         let (outer_not_null, inner_not_null) = comparison_not_null.iter().copied().fold(
             (Vec::new(), Vec::new()),
             |mut offsets, offset| {
@@ -2385,7 +2421,7 @@ pub(crate) fn build_join(
             outer_not_null: outer_not_null.clone(),
             inner_not_null: inner_not_null.clone(),
         });
-        join_exec.set_consumes_where(decision.consumes_where);
+        join_exec.set_consumes_where(pushed_consumes_where || decision.consumes_where);
         (
             crate::plan_trace::IndexJoinText {
                 reader: if decision.aggregation.is_some() && !inner_not_null.is_empty() {
@@ -2432,6 +2468,7 @@ pub(crate) fn build_join(
             decision.range_info.clone(),
             index,
             index_lookup,
+            estimated_lookup_rows,
             outer_not_null,
             inner_not_null,
         )
@@ -2449,6 +2486,7 @@ pub(crate) fn build_join(
                 range_info,
                 index,
                 index_lookup,
+                estimated_lookup_rows,
                 outer_not_null,
                 inner_not_null,
             )),
@@ -2475,7 +2513,8 @@ pub(crate) fn build_join(
                         index,
                         index_lookup,
                         visible: &decision.visible,
-                        estimated_rows: estimated_join_rows.map(|rows| rows.joined),
+                        estimated_rows: estimated_lookup_rows,
+                        unique: text.unique,
                         grouped_derived: decision.aggregation.is_some(),
                         aggregation_info: decision.aggregation_info.as_deref(),
                         outer_not_null: &outer_not_null,
@@ -2496,6 +2535,19 @@ pub(crate) fn build_join(
         (None, _) => None,
     };
     let exec: Box<dyn Executor> = Box::new(join_exec);
+    let build_is_left = if merged.is_none() && index_join.is_none() {
+        estimated_join_rows.map_or(build_is_left, |rows| {
+            if rows.left < rows.right {
+                true
+            } else if rows.right < rows.left {
+                false
+            } else {
+                build_is_left
+            }
+        })
+    } else {
+        build_is_left
+    };
     let strategy = crate::plan_trace::JoinStrategy {
         equal_mask: split.equal_mask.clone(),
         build_is_left: index_join
@@ -2503,6 +2555,7 @@ pub(crate) fn build_join(
             .map_or(build_is_left, |decision| !decision.lookup_is_left),
         index_lookup: index_text,
         physical_conditions,
+        estimated_join_rows: estimated_join_rows.map(|rows| rows.joined),
         merge_keys: merged.as_ref().map(|plan| {
             plan.keys
                 .iter()
@@ -2598,7 +2651,7 @@ pub(crate) fn build_join(
             // has none -- its equalities are synthesized here.
             trace.refuse("NATURAL and USING joins are not printed yet");
         } else {
-            if merged.is_some() {
+            if index_join.is_none() {
                 trace.join_scan_readers();
             }
             if trace

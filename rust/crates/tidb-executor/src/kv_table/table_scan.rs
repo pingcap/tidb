@@ -1455,7 +1455,7 @@ impl TableScanExec {
                         _ => {
                             return Err(ExecError::unsupported(
                                 "partial SUM requires an integer or decimal input",
-                            ))
+                            ));
                         }
                     };
                     sum = Some(match sum.take() {
@@ -1522,7 +1522,7 @@ impl TableScanExec {
                         _ => {
                             return Err(ExecError::unsupported(
                                 "partial SUM requires an integer or decimal input",
-                            ))
+                            ));
                         }
                     };
                     let key = crate::hash_agg::group_key_part(&group_type.collation(), &group);
@@ -1539,14 +1539,15 @@ impl TableScanExec {
                     .map(|(group, sum)| vec![sum.map_or(Datum::Null, Datum::Decimal), group])
                     .collect())
             }
-            PushdownPartialAggregate::GroupedStream {
+            PushdownPartialAggregate::Grouped {
                 group_offsets,
                 group_types,
                 functions,
+                streamed,
             } => {
                 if group_offsets.len() != group_types.len() || group_offsets.is_empty() {
                     return Err(ExecError::unsupported(
-                        "partial grouped StreamAgg requires typed group keys",
+                        "partial grouped aggregation requires typed group keys",
                     ));
                 }
 
@@ -1584,16 +1585,7 @@ impl TableScanExec {
                         .chain(groups)
                         .collect::<Vec<_>>()
                 };
-
-                let mut rows = Vec::new();
-                let mut current: Option<(Vec<u8>, Vec<Datum>, Vec<PartialValue>)> = None;
-                while let Some(row) = self.next_source_row()? {
-                    self.scanned.set(self.scanned.get() + 1);
-                    if let Some(filter) = self.filter.as_mut() {
-                        if !filter.admits(&row)? {
-                            continue;
-                        }
-                    }
+                let group = |row: &[Datum]| -> Result<(Vec<u8>, Vec<Datum>), ExecError> {
                     let groups = group_offsets
                         .iter()
                         .map(|offset| {
@@ -1612,15 +1604,11 @@ impl TableScanExec {
                         ));
                         key.push(0xff);
                     }
-                    if current
-                        .as_ref()
-                        .is_some_and(|(current_key, _, _)| current_key != &key)
-                    {
-                        let (_, previous_groups, previous_values) =
-                            current.take().expect("current group exists");
-                        rows.push(finish(previous_groups, previous_values));
-                    }
-                    let (_, _, values) = current.get_or_insert_with(|| (key, groups, new_values()));
+                    Ok((key, groups))
+                };
+                let update = |values: &mut [PartialValue],
+                              row: &[Datum]|
+                 -> Result<(), ExecError> {
                     for (function, value) in functions.iter().zip(values.iter_mut()) {
                         let input = function
                             .input_offset
@@ -1634,9 +1622,7 @@ impl TableScanExec {
                             .transpose()?;
                         match (value, input) {
                             (PartialValue::Count(count), None) => *count += 1,
-                            (PartialValue::Count(count), Some(Datum::Null)) => {
-                                let _ = count;
-                            }
+                            (PartialValue::Count(_), Some(Datum::Null)) => {}
                             (PartialValue::Count(count), Some(_)) => *count += 1,
                             (PartialValue::Sum(_), None) | (PartialValue::Extreme { .. }, None) => {
                                 return Err(ExecError::unsupported(
@@ -1653,7 +1639,7 @@ impl TableScanExec {
                                     _ => {
                                         return Err(ExecError::unsupported(
                                             "partial SUM requires an integer or decimal input",
-                                        ))
+                                        ));
                                     }
                                 };
                                 *sum = Some(match sum.take() {
@@ -1679,6 +1665,49 @@ impl TableScanExec {
                             }
                         }
                     }
+                    Ok(())
+                };
+
+                if !streamed {
+                    let mut grouped = BTreeMap::<Vec<u8>, (Vec<Datum>, Vec<PartialValue>)>::new();
+                    while let Some(row) = self.next_source_row()? {
+                        self.scanned.set(self.scanned.get() + 1);
+                        if let Some(filter) = self.filter.as_mut() {
+                            if !filter.admits(&row)? {
+                                continue;
+                            }
+                        }
+                        let (key, groups) = group(&row)?;
+                        let (_, values) =
+                            grouped.entry(key).or_insert_with(|| (groups, new_values()));
+                        update(values, &row)?;
+                    }
+                    return Ok(grouped
+                        .into_values()
+                        .map(|(groups, values)| finish(groups, values))
+                        .collect());
+                }
+
+                let mut rows = Vec::new();
+                let mut current: Option<(Vec<u8>, Vec<Datum>, Vec<PartialValue>)> = None;
+                while let Some(row) = self.next_source_row()? {
+                    self.scanned.set(self.scanned.get() + 1);
+                    if let Some(filter) = self.filter.as_mut() {
+                        if !filter.admits(&row)? {
+                            continue;
+                        }
+                    }
+                    let (key, groups) = group(&row)?;
+                    if current
+                        .as_ref()
+                        .is_some_and(|(current_key, _, _)| current_key != &key)
+                    {
+                        let (_, previous_groups, previous_values) =
+                            current.take().expect("current group exists");
+                        rows.push(finish(previous_groups, previous_values));
+                    }
+                    let (_, _, values) = current.get_or_insert_with(|| (key, groups, new_values()));
+                    update(values, &row)?;
                 }
                 if let Some((_, groups, values)) = current {
                     rows.push(finish(groups, values));

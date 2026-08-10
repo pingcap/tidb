@@ -238,6 +238,15 @@ pub enum StmtOutput {
     Done(bool),
 }
 
+/// Whether query dispatch opens the executor or only resolves its result
+/// metadata. Prepared-statement PREPARE uses the latter so reporting columns
+/// cannot read rows or perform work before COM_STMT_EXECUTE.
+#[derive(Clone, Copy)]
+pub(crate) enum StatementMode {
+    Execute,
+    PlanOnly,
+}
+
 /// The statement-owned policy a server needs to retain an eager result set.
 ///
 /// It is captured before `SET_VAR` overlays are restored, so a prepared
@@ -560,6 +569,7 @@ pub mod privilege;
 pub mod process;
 mod process_arm;
 mod show;
+mod split_region_arm;
 pub mod sysvar;
 pub mod vars;
 pub use vars::{GlobalSysvars, SessionVars, VarError};
@@ -719,6 +729,39 @@ impl Session {
         self.run_with_columns(&bound)
     }
 
+    /// Plans a query with prepared-statement parameters bound and returns its
+    /// wire result columns without opening or draining the executor pipeline.
+    pub fn plan_query_with_params(
+        &mut self,
+        sql: &str,
+        params: &[Datum],
+    ) -> Result<Vec<(String, FieldType)>, DriverError> {
+        if self.statement_kind(sql)? != StmtKind::Query {
+            return Err(DriverError::unsupported(
+                "only queries have result metadata to plan",
+            ));
+        }
+        let bound = if params.is_empty() && self.parameter_count(sql)? == 0 {
+            None
+        } else {
+            Some(tidb_executor::bind_parameters(
+                sql,
+                params,
+                self.scanner_sql_mode(),
+            )?)
+        };
+        let sql = bound.as_deref().unwrap_or(sql);
+        match self
+            .run_with_columns_internal(sql, false, StatementMode::PlanOnly)?
+            .0
+        {
+            StmtOutput::Rows { columns, .. } => Ok(columns),
+            StmtOutput::Affected(_) | StmtOutput::Done(_) => Err(DriverError::unsupported(
+                "planned query did not produce result metadata",
+            )),
+        }
+    }
+
     /// Runs one parameterized statement and returns the exact policy needed
     /// to retain a row result after the statement completes.
     ///
@@ -731,10 +774,10 @@ impl Session {
         params: &[Datum],
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
         if params.is_empty() && self.parameter_count(sql)? == 0 {
-            return self.run_with_columns_internal(sql, true);
+            return self.run_with_columns_internal(sql, true, StatementMode::Execute);
         }
         let bound = tidb_executor::bind_parameters(sql, params, self.scanner_sql_mode())?;
-        self.run_with_columns_internal(&bound, true)
+        self.run_with_columns_internal(&bound, true, StatementMode::Execute)
     }
 
     /// Runs one SQL statement (Go `session.ExecuteStmt`): parses, dispatches by
@@ -754,7 +797,7 @@ impl Session {
     /// warning buffer as an `Error`-level row, so `SHOW WARNINGS` right after
     /// a failure reports it.
     pub fn run_with_columns(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
-        self.run_with_columns_internal(sql, false)
+        self.run_with_columns_internal(sql, false, StatementMode::Execute)
             .map(|(output, _)| output)
     }
 
@@ -762,6 +805,7 @@ impl Session {
         &mut self,
         sql: &str,
         capture_result_authority: bool,
+        mode: StatementMode,
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
         self.check_sandbox_mode(sql)?;
         // A statement is visible to a peer's SHOW PROCESSLIST for exactly as
@@ -787,7 +831,7 @@ impl Session {
         // `select @@last_plan_from_binding` reports the statement BEFORE it
         // rather than itself (that SELECT matches no binding of its own).
         self.prev_found_in_binding = std::mem::take(&mut self.found_in_binding);
-        let result = self.execute_statement(sql);
+        let result = self.execute_statement_with_mode(sql, mode);
         let result_authority =
             if capture_result_authority && matches!(&result, Ok(StmtOutput::Rows { .. })) {
                 let init_chunk_size = self

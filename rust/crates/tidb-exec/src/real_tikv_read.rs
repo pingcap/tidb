@@ -776,6 +776,18 @@ impl ProductionReadProcessAuthority {
         self.opener_ref().cluster_id()
     }
 
+    /// Cloneable request handle for control-plane operations that must share
+    /// this process authority's PD worker and shutdown order.
+    #[must_use]
+    pub fn pd_client(&self) -> PdClient {
+        match &self.lifecycle.pd {
+            ProductionPdLifecycle::Running(pd) => pd.clone(),
+            ProductionPdLifecycle::Closed => {
+                panic!("production read/write authority is closed")
+            }
+        }
+    }
+
     /// Stable executor process-authority identity.
     #[must_use]
     pub const fn authority_id(&self) -> u64 {

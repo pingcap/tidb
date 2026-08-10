@@ -53,6 +53,7 @@
 //! with one it reports the truncation, as Go's does.
 
 use std::cell::Cell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use tidb_chunk::chunk::Chunk;
@@ -739,14 +740,15 @@ impl IndexRangeSourceExec {
                 }
                 Ok(vec![vec![Datum::Int(count)]])
             }
-            PushdownPartialAggregate::GroupedStream {
+            PushdownPartialAggregate::Grouped {
                 group_offsets,
                 group_types,
                 functions,
+                streamed,
             } => {
                 if group_offsets.len() != group_types.len() || group_offsets.is_empty() {
                     return Err(ExecError::unsupported(
-                        "index partial grouped StreamAgg requires typed group keys",
+                        "index partial grouped aggregation requires typed group keys",
                     ));
                 }
 
@@ -783,10 +785,7 @@ impl IndexRangeSourceExec {
                         .chain(groups)
                         .collect::<Vec<_>>()
                 };
-
-                let mut rows = Vec::new();
-                let mut current: Option<(Vec<u8>, Vec<Datum>, Vec<PartialValue>)> = None;
-                while let Some(row) = self.next_partial_input_row()? {
+                let group = |row: &[Datum]| -> Result<(Vec<u8>, Vec<Datum>), ExecError> {
                     let groups = group_offsets
                         .iter()
                         .map(|offset| {
@@ -805,15 +804,11 @@ impl IndexRangeSourceExec {
                         ));
                         key.push(0xff);
                     }
-                    if current
-                        .as_ref()
-                        .is_some_and(|(current_key, _, _)| current_key != &key)
-                    {
-                        let (_, previous_groups, previous_values) =
-                            current.take().expect("current group exists");
-                        rows.push(finish(previous_groups, previous_values));
-                    }
-                    let (_, _, values) = current.get_or_insert_with(|| (key, groups, new_values()));
+                    Ok((key, groups))
+                };
+                let update = |values: &mut [PartialValue],
+                              row: &[Datum]|
+                 -> Result<(), ExecError> {
                     for (function, value) in functions.iter().zip(values.iter_mut()) {
                         let input = function
                             .input_offset
@@ -870,6 +865,37 @@ impl IndexRangeSourceExec {
                             }
                         }
                     }
+                    Ok(())
+                };
+
+                if !streamed {
+                    let mut grouped = BTreeMap::<Vec<u8>, (Vec<Datum>, Vec<PartialValue>)>::new();
+                    while let Some(row) = self.next_partial_input_row()? {
+                        let (key, groups) = group(&row)?;
+                        let (_, values) =
+                            grouped.entry(key).or_insert_with(|| (groups, new_values()));
+                        update(values, &row)?;
+                    }
+                    return Ok(grouped
+                        .into_values()
+                        .map(|(groups, values)| finish(groups, values))
+                        .collect());
+                }
+
+                let mut rows = Vec::new();
+                let mut current: Option<(Vec<u8>, Vec<Datum>, Vec<PartialValue>)> = None;
+                while let Some(row) = self.next_partial_input_row()? {
+                    let (key, groups) = group(&row)?;
+                    if current
+                        .as_ref()
+                        .is_some_and(|(current_key, _, _)| current_key != &key)
+                    {
+                        let (_, previous_groups, previous_values) =
+                            current.take().expect("current group exists");
+                        rows.push(finish(previous_groups, previous_values));
+                    }
+                    let (_, _, values) = current.get_or_insert_with(|| (key, groups, new_values()));
+                    update(values, &row)?;
                 }
                 if let Some((_, groups, values)) = current {
                     rows.push(finish(groups, values));
@@ -1025,8 +1051,17 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
 
     fn accept_partial_aggregate(&mut self, aggregate: &PushdownPartialAggregate) -> bool {
         let supported = matches!(aggregate, PushdownPartialAggregate::Count { .. })
-            || (matches!(aggregate, PushdownPartialAggregate::GroupedStream { .. })
-                && !self.can_reorder_handles);
+            || matches!(
+                aggregate,
+                PushdownPartialAggregate::Grouped {
+                    streamed: false,
+                    ..
+                }
+            )
+            || (matches!(
+                aggregate,
+                PushdownPartialAggregate::Grouped { streamed: true, .. }
+            ) && !self.can_reorder_handles);
         if self.estimated_rows.is_none_or(|rows| rows <= 1.0)
             || !supported
             || self.partial_aggregate.is_some()

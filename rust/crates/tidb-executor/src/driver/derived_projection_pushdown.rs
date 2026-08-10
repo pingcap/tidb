@@ -36,7 +36,293 @@ use tidb_ast::{
     SelectStmt, StatementPriority,
 };
 
-use super::catalog::Catalog;
+use super::catalog::{split_table_path, Catalog};
+
+/// Expands wildcards inside derived SELECTs against their already-known FROM
+/// schema. Go performs this while building the derived projection, before
+/// predicate pushdown and column pruning inspect that projection's outputs.
+///
+/// The top-level SELECT is deliberately left alone. Only nested SELECTs are
+/// rewritten, and a wildcard is expanded only when every source column can be
+/// identified without executing the query. NATURAL/USING joins and set
+/// operations therefore remain in their original form.
+pub(crate) fn expand_derived_wildcards(
+    select: &SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<SelectStmt> {
+    let mut rewritten = select.clone();
+    let changed = rewritten
+        .from
+        .as_mut()
+        .is_some_and(|from| expand_join_derived_wildcards(from, catalog, current_db));
+    changed.then_some(rewritten)
+}
+
+/// Pushes leaf-local WHERE predicates into derived SELECTs before column
+/// pruning. This is the logical half of the same RowSource inventory the
+/// physical builder later uses: constants are propagated across inner join
+/// equalities, predicates are substituted through projections, and only the
+/// predicates proven installed in a derived child are removed from the
+/// parent WHERE. Join equalities and `other cond` predicates stay at their
+/// join so the physical builder can install them there.
+pub(crate) fn push_local_predicates_into_derived(
+    select: &SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Option<SelectStmt> {
+    let mut rewritten = select.clone();
+    push_select_predicates(&mut rewritten, catalog, current_db, ctx).then_some(rewritten)
+}
+
+fn expand_join_derived_wildcards(join: &mut Join, catalog: &Catalog, current_db: &str) -> bool {
+    let mut changed = expand_node_derived_wildcards(&mut join.left, catalog, current_db);
+    if let Some(right) = &mut join.right {
+        changed |= expand_node_derived_wildcards(right, catalog, current_db);
+    }
+    changed
+}
+
+fn expand_node_derived_wildcards(node: &mut JoinNode, catalog: &Catalog, current_db: &str) -> bool {
+    match node {
+        JoinNode::Table(_) => false,
+        JoinNode::Join(join) => expand_join_derived_wildcards(join, catalog, current_db),
+        JoinNode::Derived { subquery, .. } => {
+            let QueryStmt::Select(select) = &mut **subquery else {
+                return false;
+            };
+            let mut changed = select
+                .from
+                .as_mut()
+                .is_some_and(|from| expand_join_derived_wildcards(from, catalog, current_db));
+            if select
+                .fields
+                .fields()
+                .iter()
+                .any(|field| matches!(field, SelectField::Wildcard(_)))
+            {
+                if let Some(fields) = expanded_fields(select, catalog, current_db) {
+                    select.fields = fields.into();
+                    changed = true;
+                }
+            }
+            changed
+        }
+    }
+}
+
+fn expanded_fields(
+    select: &SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<Vec<SelectField>> {
+    let columns = join_output_columns(select.from.as_ref()?, catalog, current_db)?;
+    let mut expanded = Vec::new();
+    for field in select.fields.fields() {
+        let SelectField::Wildcard(path) = field else {
+            expanded.push(field.clone());
+            continue;
+        };
+        let qualifier = path.last();
+        let mut matched = false;
+        for (relation, column) in &columns {
+            if qualifier.is_some_and(|wanted| !relation.eq_ignore_ascii_case(wanted)) {
+                continue;
+            }
+            matched = true;
+            expanded.push(SelectField::Expr {
+                expr: Expr::Column(vec![relation.clone(), column.clone()]),
+                alias: None,
+            });
+        }
+        if !matched {
+            return None;
+        }
+    }
+    Some(expanded)
+}
+
+fn join_output_columns(
+    join: &Join,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<Vec<(String, String)>> {
+    if join.natural || !join.using.is_empty() {
+        return None;
+    }
+    let mut columns = node_output_columns(&join.left, catalog, current_db)?;
+    if let Some(right) = &join.right {
+        columns.extend(node_output_columns(right, catalog, current_db)?);
+    }
+    Some(columns)
+}
+
+fn node_output_columns(
+    node: &JoinNode,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<Vec<(String, String)>> {
+    match node {
+        JoinNode::Table(table) => {
+            let (database, name) = split_table_path(&table.name, current_db).ok()?;
+            let visible = table.alias.as_deref().unwrap_or(name).to_owned();
+            Some(
+                catalog
+                    .get_in(database, name)?
+                    .column_list()
+                    .into_iter()
+                    .map(|(column, _)| (visible.clone(), column))
+                    .collect(),
+            )
+        }
+        JoinNode::Join(join) => join_output_columns(join, catalog, current_db),
+        JoinNode::Derived {
+            subquery,
+            alias: Some(alias),
+            lateral: false,
+            column_names,
+        } => {
+            let QueryStmt::Select(select) = &**subquery else {
+                return None;
+            };
+            let mut names = super::from::derived_field_names(select)?;
+            if !column_names.is_empty() {
+                if column_names.len() != names.len() {
+                    return None;
+                }
+                names.clone_from(column_names);
+            }
+            Some(
+                names
+                    .into_iter()
+                    .map(|column| (alias.clone(), column))
+                    .collect(),
+            )
+        }
+        JoinNode::Derived { .. } => None,
+    }
+}
+
+fn push_select_predicates(
+    select: &mut SelectStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> bool {
+    let rows = select.from.as_ref().and_then(|from| {
+        super::join_reorder::row_source(
+            from,
+            select.where_clause.as_ref(),
+            catalog,
+            current_db,
+            ctx,
+        )
+    });
+    let mut changed = false;
+    if let (Some(from), Some(rows)) = (&mut select.from, rows.as_ref()) {
+        let predicates_pushed = push_join_predicates(from, rows, catalog, current_db, ctx);
+        if predicates_pushed {
+            select.where_clause = rows.residual_where_after_logical_leaf_pushdown();
+            changed = true;
+        }
+    }
+    if let Some(from) = &mut select.from {
+        changed |= recurse_join_predicates(from, catalog, current_db, ctx);
+    }
+    changed
+}
+
+fn push_join_predicates(
+    join: &mut Join,
+    rows: &super::join_reorder::RowSource,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> bool {
+    let mut changed = push_node_predicates(&mut join.left, rows, catalog, current_db, ctx);
+    if let Some(right) = &mut join.right {
+        changed |= push_node_predicates(right, rows, catalog, current_db, ctx);
+    }
+    changed
+}
+
+fn push_node_predicates(
+    node: &mut JoinNode,
+    rows: &super::join_reorder::RowSource,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> bool {
+    match node {
+        JoinNode::Table(_) => false,
+        JoinNode::Join(join) => push_join_predicates(join, rows, catalog, current_db, ctx),
+        JoinNode::Derived {
+            subquery,
+            alias: Some(alias),
+            column_names,
+            lateral: false,
+        } => {
+            let QueryStmt::Select(select) = &**subquery else {
+                return false;
+            };
+            if !pass_through_select(select) {
+                // Direct grouped relations already receive their local
+                // filters from the physical RowSource walk. The early pass is
+                // needed only to cross an intervening projection before
+                // column pruning decides which projection outputs survive.
+                return false;
+            }
+            let predicate = rows.filters_for(alias).and_then(|filters| {
+                filters.iter().cloned().reduce(|left, right| {
+                    Expr::Binary(
+                        tidb_ast::BinaryOp::LogicAnd,
+                        Box::new(left),
+                        Box::new(right),
+                    )
+                })
+            });
+            let Some(rewritten) = predicate.as_ref().and_then(|predicate| {
+                push_filters_into_derived(subquery, alias, column_names, predicate)
+            }) else {
+                return false;
+            };
+            **subquery = rewritten;
+            rows.mark_leaf_filters_consumed(alias);
+            true
+        }
+        JoinNode::Derived { .. } => false,
+    }
+}
+
+fn recurse_join_predicates(
+    join: &mut Join,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> bool {
+    let mut changed = recurse_node_predicates(&mut join.left, catalog, current_db, ctx);
+    if let Some(right) = &mut join.right {
+        changed |= recurse_node_predicates(right, catalog, current_db, ctx);
+    }
+    changed
+}
+
+fn recurse_node_predicates(
+    node: &mut JoinNode,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> bool {
+    match node {
+        JoinNode::Table(_) => false,
+        JoinNode::Join(join) => recurse_join_predicates(join, catalog, current_db, ctx),
+        JoinNode::Derived { subquery, .. } => match &mut **subquery {
+            QueryStmt::Select(select) => push_select_predicates(select, catalog, current_db, ctx),
+            QueryStmt::SetOpr(_) => false,
+        },
+    }
+}
 
 /// Fuses a global COUNT over a pass-through derived SELECT, then applies Go's
 /// NULL-rejecting outer-join simplification and derived not-null predicate.
@@ -109,10 +395,17 @@ pub(crate) fn push_filters_into_derived(
     {
         return None;
     }
-    let definitions = group_key_definitions(select)?;
+    let definitions = if select.group_by.is_empty() {
+        if !pass_through_select(select) {
+            return None;
+        }
+        pass_through_definitions(select)?
+    } else {
+        group_key_definitions(select)?
+    };
     let pushed = substitute_outputs(predicate, alias, &definitions)?;
     let mut rewritten = select.clone();
-    rewritten.where_clause = and(rewritten.where_clause.take(), Some(pushed));
+    rewritten.where_clause = and_unique(rewritten.where_clause.take(), pushed);
     Some(QueryStmt::Select(rewritten))
 }
 
@@ -402,6 +695,19 @@ fn inject_left_not_null_filters(
         {
             continue;
         }
+        let Some(column) = left.column_at(offset) else {
+            continue;
+        };
+        if super::merge_decision::physical_column_is_nullable(
+            &join.left, &column, catalog, current_db,
+        ) != Some(true)
+        {
+            // Go derives this leaf predicate only for a nullable base
+            // column. NOT NULL columns are already proven, while aggregate
+            // and computed outputs cannot be pushed through as a base-table
+            // null test.
+            continue;
+        }
         let predicate = Expr::Is {
             expr: Box::new(Expr::Column(path)),
             target: IsTarget::Null,
@@ -463,4 +769,26 @@ fn and(left: Option<Expr>, right: Option<Expr>) -> Option<Expr> {
         (Some(expr), None) | (None, Some(expr)) => Some(expr),
         (None, None) => None,
     }
+}
+
+fn and_unique(left: Option<Expr>, right: Expr) -> Option<Expr> {
+    let mut conjuncts = Vec::new();
+    if let Some(left) = &left {
+        crate::plan_trace::collect_and(left, &mut conjuncts);
+    }
+    let mut offered = Vec::new();
+    crate::plan_trace::collect_and(&right, &mut offered);
+    let mut combined = conjuncts.into_iter().cloned().collect::<Vec<_>>();
+    for conjunct in offered {
+        if !combined.contains(conjunct) {
+            combined.push(conjunct.clone());
+        }
+    }
+    combined.into_iter().reduce(|left, right| {
+        Expr::Binary(
+            tidb_ast::BinaryOp::LogicAnd,
+            Box::new(left),
+            Box::new(right),
+        )
+    })
 }

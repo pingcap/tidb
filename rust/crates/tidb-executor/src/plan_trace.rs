@@ -1124,6 +1124,82 @@ impl PlanTrace {
         true
     }
 
+    /// Moves an unordered grouped partial HashAgg below its reader. A
+    /// non-covering index keeps the index build scan beside a HashAgg over
+    /// the table probe, exactly where TiKV evaluates the accepted remote
+    /// aggregation request.
+    pub(crate) fn partial_grouped_hash_agg(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        grouped_rows: Option<f64>,
+    ) -> bool {
+        let Some(mut source) = self.stack.pop() else {
+            return false;
+        };
+        let estimate =
+            grouped_rows.or_else(|| Est::ScaleFloorOne(DISTINCT_FACTOR).apply(source.est_rows));
+        let info = grouped_aggregate_info(select, qualify, false, false);
+
+        if source.name == "IndexLookUp" && source.children.len() == 2 {
+            let table_scan = &mut source.children[1];
+            if table_scan.name != "TableRowIDScan" || !table_scan.children.is_empty() {
+                self.stack.push(source);
+                return false;
+            }
+            let label = table_scan.label;
+            table_scan.label = "";
+            table_scan.task = "cop[tikv]";
+            let act_rows = table_scan.act_rows.clone();
+            let mut partial = PlanNode::new("HashAgg", estimate, String::new(), info);
+            partial.task = "cop[tikv]";
+            partial.label = label;
+            partial.act_rows = act_rows;
+            partial.key_ndv_ratio = Some(1.0);
+            partial.children.push(std::mem::replace(
+                table_scan,
+                PlanNode::new("TableDual", Some(0.0), String::new(), String::new()),
+            ));
+            *table_scan = partial;
+            source.est_rows = estimate;
+            source.key_ndv_ratio = Some(1.0);
+            self.stack.push(source);
+            return true;
+        }
+
+        let reader = match source.name {
+            "TableFullScan" | "TableRangeScan" => "TableReader",
+            "IndexFullScan" | "IndexRangeScan" => "IndexReader",
+            _ => {
+                self.stack.push(source);
+                return false;
+            }
+        };
+        source.task = "cop[tikv]";
+        let act_rows = source.act_rows.clone();
+        let mut partial = PlanNode::new("HashAgg", estimate, String::new(), info);
+        partial.task = "cop[tikv]";
+        partial.act_rows = act_rows.clone();
+        partial.key_ndv_ratio = Some(1.0);
+        partial.children.push(source);
+
+        let mut reader_node = PlanNode::new(
+            reader,
+            estimate,
+            String::new(),
+            if reader == "TableReader" {
+                "data:HashAgg".to_owned()
+            } else {
+                "index:HashAgg".to_owned()
+            },
+        );
+        reader_node.act_rows = act_rows;
+        reader_node.key_ndv_ratio = Some(1.0);
+        reader_node.children.push(partial);
+        self.stack.push(reader_node);
+        true
+    }
+
     /// Root merger for [`Self::partial_grouped_stream_agg`]. Go keeps the
     /// original function names in EXPLAIN even though final-mode COUNT adds
     /// the partial count columns internally.
@@ -1134,6 +1210,21 @@ impl PlanTrace {
     ) {
         self.wrap(
             "StreamAgg",
+            Est::Inherit,
+            grouped_aggregate_info(select, qualify, true, true),
+        );
+    }
+
+    /// Root merger for [`Self::partial_grouped_hash_agg`]. Aggregate
+    /// functions read TiKV's partial result columns, while group-key
+    /// FIRST_ROW carriers retain their physical catalog names.
+    pub(crate) fn final_grouped_hash_agg(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+    ) {
+        self.wrap(
+            "HashAgg",
             Est::Inherit,
             grouped_aggregate_info(select, qualify, true, true),
         );
@@ -1202,6 +1293,7 @@ impl PlanTrace {
             index_lookup,
             visible,
             estimated_rows,
+            unique,
             grouped_derived,
             aggregation_info,
             outer_not_null,
@@ -1214,6 +1306,13 @@ impl PlanTrace {
         let at = if lookup_is_left { depth - 2 } else { depth - 1 };
         let outer_at = if lookup_is_left { depth - 1 } else { depth - 2 };
         let outer_rows = self.stack[outer_at].est_rows;
+        let estimated_rows = if unique {
+            outer_rows
+                .map(|rows| rows * filter_selectivity.clamp(0.0, 1.0))
+                .or(estimated_rows)
+        } else {
+            estimated_rows
+        };
         fn is_scan(node: &PlanNode) -> bool {
             matches!(
                 node.name,
@@ -1336,7 +1435,23 @@ impl PlanTrace {
                 ));
                 *scan_holder = selection;
             }
-            lookup.children[1].est_rows = estimated_rows.or(lookup.children[1].est_rows);
+            // The child was first planned as an independent derived table,
+            // where a non-covering index scan may accept a cop partial
+            // HashAgg. An index join does not execute that source: it replaces
+            // it with a re-seeded lookup and rebuilds this grouped aggregation
+            // above the lookup for every outer batch. Drop the superseded
+            // partial stage so the trace describes that executable tree.
+            let table_read = &mut lookup.children[1];
+            if table_read.name == "HashAgg"
+                && table_read.children.len() == 1
+                && table_read.children[0].name == "TableRowIDScan"
+            {
+                let label = table_read.label;
+                let mut scan = table_read.children.pop().expect("one table lookup child");
+                scan.label = label;
+                *table_read = scan;
+            }
+            table_read.est_rows = estimated_rows.or(table_read.est_rows);
             if !inner_not_null.is_empty() {
                 let mut selection = PlanNode::new(
                     "Selection",
@@ -1658,7 +1773,12 @@ impl PlanTrace {
 
     /// The one-phase aggregate this tier builds for `GROUP BY` / an
     /// aggregate select field.
-    pub(crate) fn hash_agg(&mut self, select: &tidb_ast::SelectStmt, qualify: &Qualifier<'_>) {
+    pub(crate) fn hash_agg(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        logical_rows: Option<f64>,
+    ) {
         let mut info = String::new();
         if !select.group_by.is_empty() {
             info.push_str("group by:");
@@ -1685,10 +1805,66 @@ impl PlanTrace {
         let est = if select.group_by.is_empty() {
             // A whole-table aggregate collapses to one row.
             Est::Fixed(1.0)
+        } else if let Some(rows) = logical_rows {
+            Est::Fixed(rows)
         } else {
             Est::Scale(DISTINCT_FACTOR)
         };
         self.wrap("HashAgg", est, info);
+    }
+
+    /// A grouped hash aggregate whose executor states are the decorrelator's
+    /// `FIRST_ROW` carriers and scalar `SUM`s. Rendering the physical states
+    /// preserves Go's base-column identities after projection elimination.
+    pub(crate) fn hash_agg_first_row_sum(
+        &mut self,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+        group_by: &[Expression],
+        functions: &[crate::hash_agg::AggFunc],
+        column_names: &[Option<String>],
+        logical_rows: Option<f64>,
+    ) {
+        let groups = group_by
+            .iter()
+            .map(|expression| physical_expression_text_with_columns(expression, column_names))
+            .collect::<Option<Vec<_>>>();
+        let rendered = functions
+            .iter()
+            .enumerate()
+            .map(|(index, function)| {
+                let argument =
+                    physical_expression_text_with_columns(function.arg.as_ref()?, column_names)?;
+                match &function.kind {
+                    crate::hash_agg::AggKind::FirstRow => {
+                        Some(format!("funcs:firstrow({argument})->{argument}"))
+                    }
+                    crate::hash_agg::AggKind::Sum => {
+                        Some(format!("funcs:sum({argument})->Column#{index}"))
+                    }
+                    _ => None,
+                }
+            })
+            .collect::<Option<Vec<_>>>();
+        let (Some(groups), Some(rendered)) = (groups, rendered) else {
+            self.hash_agg(select, qualify, logical_rows);
+            return;
+        };
+        let info = format!("group by:{}, {}", groups.join(", "), rendered.join(", "));
+        self.wrap(
+            "HashAgg",
+            logical_rows.map_or(Est::Scale(DISTINCT_FACTOR), Est::Fixed),
+            info,
+        );
+        if let Some(aggregate) = self.stack.last_mut() {
+            // This decorrelator is admitted only when GROUP BY contains the
+            // outer table's complete non-null unique key. Later scalar SUMs
+            // join on that key (with any omitted member equality-fixed by a
+            // leaf predicate), so the grouped output has one row per join
+            // key. Publish the same unique-key NDV Go derives for the parent
+            // join instead of losing it at the fixed-cardinality boundary.
+            aggregate.key_ndv_ratio = Some(1.0);
+        }
     }
 
     /// A one-phase grouped StreamAgg whose child already delivers the written
@@ -2291,6 +2467,7 @@ impl PlanTrace {
             merge_keys,
             index_lookup,
             physical_conditions,
+            estimated_join_rows,
         } = strategy;
         let build_is_left = *build_is_left;
         let qualify = Qualifier {
@@ -2321,16 +2498,12 @@ impl PlanTrace {
         let mut equal = Vec::new();
         let mut other = Vec::new();
         for (index, (conjunct, is_equal)) in conjuncts.iter().zip(equal_mask.iter()).enumerate() {
-            let rendered = if *is_equal {
-                qualify.expr(conjunct)
-            } else {
-                physical_conditions
-                    .as_ref()
-                    .and_then(|(conditions, columns)| {
-                        physical_expression_text_with_columns(conditions.get(index)?, columns)
-                    })
-                    .unwrap_or_else(|| qualify.expr(conjunct))
-            };
+            let rendered = physical_conditions
+                .as_ref()
+                .and_then(|(conditions, columns)| {
+                    physical_expression_text_with_columns(conditions.get(index)?, columns)
+                })
+                .unwrap_or_else(|| qualify.expr(conjunct));
             if *is_equal {
                 equal.push(rendered);
             } else {
@@ -2433,6 +2606,7 @@ impl PlanTrace {
                     }
                 })
             })
+            .or(*estimated_join_rows)
             .or_else(|| full_join_row_count(&left, &right, equal.len(), merge_keys.as_deref()));
         let named_key_ndvs = merge_keys.as_deref().map_or_else(Vec::new, |keys| {
             keys.iter()
@@ -2677,7 +2851,7 @@ fn grouped_aggregate_info(
         .iter()
         .map(|item| qualify.expr(&item.expr))
         .collect::<Vec<_>>();
-    let mut functions = Vec::new();
+    let mut aggregate_functions = Vec::new();
     let mut aggregate_index = 0;
     for field in select.fields.fields() {
         let tidb_ast::SelectField::Expr { expr, .. } = field else {
@@ -2699,13 +2873,14 @@ fn grouped_aggregate_info(
                     .map_or_else(|| "1".to_owned(), |arg| qualify.expr(arg))
             };
             let name = name.to_ascii_lowercase();
-            functions.push(format!(
+            aggregate_functions.push(format!(
                 "funcs:{name}({}{input})->Column#{aggregate_index}",
                 if distinct { "distinct " } else { "" },
             ));
             aggregate_index += 1;
         }
     }
+    let mut first_row_functions = Vec::new();
     if include_first_row {
         for field in select.fields.fields() {
             let tidb_ast::SelectField::Expr { expr, .. } = field else {
@@ -2716,11 +2891,22 @@ fn grouped_aggregate_info(
                 if select.group_by.iter().any(
                     |item| matches!(&item.expr, tidb_ast::Expr::Column(group) if group == path),
                 ) {
-                    functions.push(format!("funcs:firstrow({text})->{text}"));
+                    first_row_functions.push(format!("funcs:firstrow({text})->{text}"));
                 }
             }
         }
     }
+    let functions = if include_first_row && crate::driver::has_pruned_row_count(select) {
+        // Go appended this COUNT(1) only after column pruning removed the
+        // last written aggregate. It therefore follows the surviving
+        // FIRST_ROW carriers instead of taking the ordinary aggregate-first
+        // position.
+        first_row_functions.extend(aggregate_functions);
+        first_row_functions
+    } else {
+        aggregate_functions.extend(first_row_functions);
+        aggregate_functions
+    };
     format!("group by:{}, {}", groups.join(", "), functions.join(", "))
 }
 
@@ -3144,6 +3330,9 @@ pub(crate) struct JoinStrategy {
     /// no source-column name, so non-equality conditions print the internal
     /// `Column#N` the executor evaluates instead of inventing an alias name.
     pub(crate) physical_conditions: Option<(Vec<Expression>, Vec<Option<String>>)>,
+    /// The statement-owned `LogicalJoin.DeriveStats` result. Outer joins use
+    /// it to retain the preserved-side floor that a flat trace cannot infer.
+    pub(crate) estimated_join_rows: Option<f64>,
 }
 
 /// What an index join's plan row says beyond its join kind.
@@ -3202,6 +3391,10 @@ pub(crate) struct IndexJoinInnerPathText<'a> {
     pub(crate) visible: &'a str,
     /// The statement-owned post-filter inner estimate for a one-row driver.
     pub(crate) estimated_rows: Option<f64>,
+    /// Whether every dynamic key probes at most one source row. In that case
+    /// the physical outer task, not the whole-table join model, owns the
+    /// dynamic range's cardinality.
+    pub(crate) unique: bool,
     /// Whether the lookup reader remains below a grouped derived table.
     pub(crate) grouped_derived: bool,
     /// Go's physical HashAgg payload for a retained grouped derived table.
@@ -3391,19 +3584,61 @@ impl Qualifier<'_> {
     /// `db.table.column`, resolving an unqualified name against the scope --
     /// the qualification Go's explain always prints in full.
     fn column(&self, path: &[String]) -> String {
+        fn physical_column<'a>(table: &'a FromTable, name: &str) -> Option<&'a str> {
+            table
+                .columns
+                .iter()
+                .find(|(column, _)| column.eq_ignore_ascii_case(name))
+                .map(|(column, _)| column.as_str())
+        }
         match path {
             [name] => {
                 let owner = self
                     .scope
                     .tables
                     .iter()
-                    .find(|t| t.columns.iter().any(|(c, _)| c.eq_ignore_ascii_case(name)));
+                    .find(|table| physical_column(table, name).is_some());
                 match owner {
-                    Some(table) => format!("{}.{}.{}", self.db, table.name, name),
+                    Some(table) => format!(
+                        "{}.{}.{}",
+                        self.db,
+                        table.name,
+                        physical_column(table, name).expect("owner has the column")
+                    ),
                     None => name.clone(),
                 }
             }
-            [table, name] => format!("{}.{table}.{name}", self.db),
+            [table_name, name] => self
+                .scope
+                .tables
+                .iter()
+                .find(|table| table.name.eq_ignore_ascii_case(table_name))
+                .and_then(|table| {
+                    physical_column(table, name)
+                        .map(|column| format!("{}.{}.{column}", self.db, table.name))
+                })
+                .unwrap_or_else(|| format!("{}.{table_name}.{name}", self.db)),
+            [database, table_name, name] => self
+                .scope
+                .tables
+                .iter()
+                .find(|table| {
+                    table.name.eq_ignore_ascii_case(table_name)
+                        && table
+                            .database
+                            .as_ref()
+                            .is_some_and(|physical| physical.eq_ignore_ascii_case(database))
+                })
+                .and_then(|table| {
+                    physical_column(table, name).map(|column| {
+                        format!(
+                            "{}.{}.{column}",
+                            table.database.as_deref().expect("matched database"),
+                            table.name
+                        )
+                    })
+                })
+                .unwrap_or_else(|| path.join(".")),
             _ => path.join("."),
         }
     }
@@ -3433,6 +3668,42 @@ fn binary_func_name(op: tidb_ast::BinaryOp) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn qualifier_prints_catalog_identifier_spelling() {
+        let scope = PlanTrace::single_table_scope(
+            "history",
+            Some("tpcc".to_owned()),
+            vec![(
+                "h_c_id".to_owned(),
+                FieldType::new(tidb_datatype::FieldTypeCode::Long),
+            )],
+        );
+        let qualify = Qualifier {
+            db: "tpcc",
+            scope: &scope,
+        };
+
+        assert_eq!(
+            qualify.expr(&tidb_ast::Expr::Column(vec!["H_C_ID".to_owned()])),
+            "tpcc.history.h_c_id"
+        );
+        assert_eq!(
+            qualify.expr(&tidb_ast::Expr::Column(vec![
+                "HISTORY".to_owned(),
+                "H_C_ID".to_owned(),
+            ])),
+            "tpcc.history.h_c_id"
+        );
+        assert_eq!(
+            qualify.expr(&tidb_ast::Expr::Column(vec![
+                "TPCC".to_owned(),
+                "HISTORY".to_owned(),
+                "H_C_ID".to_owned(),
+            ])),
+            "tpcc.history.h_c_id"
+        );
+    }
 
     #[test]
     fn complementary_null_predicates_are_a_tautology() {

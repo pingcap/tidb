@@ -92,6 +92,7 @@ pub mod sequence;
 mod skyline;
 pub mod sort;
 pub mod sort_partition;
+pub mod split_region;
 pub mod statement_pushdown;
 mod stmt_context;
 pub mod storage;
@@ -144,6 +145,7 @@ pub use predicate_pushdown::{PushedScanFilter, ScanComparison, ScanComparisonOp,
 pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
+pub use split_region::SplitRegionPlan;
 pub use stmt_context::{
     RetryAutoIds, SequenceSnapshot, StatementClass, StmtContext, MAX_WARNING_COUNT,
 };
