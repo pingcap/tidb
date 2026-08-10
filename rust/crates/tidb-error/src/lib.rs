@@ -24,6 +24,7 @@
 pub mod errctx;
 pub mod mysql;
 pub mod plannererrors;
+pub mod server_errors;
 pub mod terror;
 pub mod tidb;
 
