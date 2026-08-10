@@ -1,0 +1,13 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/config/configtypes"
+source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
+rust_files = [
+  "rust/crates/tidb-config/src/configtypes.rs",
+  "rust/crates/tidb-config/tests/configtypes_source.rs",
+]
+
+[[tests]]
+name = "configtypes_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-config", "--test", "configtypes_source"]
