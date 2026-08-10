@@ -493,6 +493,33 @@ mod tests {
         assert!(!col1.equals(&col2));
     }
 
+    /// Source: `pkg/expression/column_test.go::TestColumnHashEuqals4VirtualExpr`.
+    #[test]
+    fn column_virtual_expression_hash_equals_matches_source() {
+        let zero = || Box::new(Expression::Constant(crate::constant::Constant::new_zero()));
+        let mut col1 = Column {
+            unique_id: 1,
+            virtual_expr: Some(zero()),
+            ..Default::default()
+        };
+        let mut col2 = Column {
+            unique_id: 1,
+            ..Default::default()
+        };
+
+        assert_ne!(col1.hash64(), col2.hash64());
+        assert!(!col1.equals(&col2));
+
+        col2.virtual_expr = Some(zero());
+        assert_eq!(col1.hash64(), col2.hash64());
+        assert!(col1.equals(&col2));
+
+        col1.virtual_expr = None;
+        col2.virtual_expr = None;
+        assert_eq!(col1.hash64(), col2.hash64());
+        assert!(col1.equals(&col2));
+    }
+
     #[test]
     fn plain_column_is_not_correlated_or_const() {
         let c = col(1);
