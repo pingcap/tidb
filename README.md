@@ -18,6 +18,7 @@
 TiDB (/’taɪdiːbi:/, "Ti" stands for Titanium) is an open-source, cloud-native, distributed SQL database designed for high availability, horizontal and vertical scalability, strong consistency, and high performance.
 
 - [Key Features](#key-features)
+- [Rust SQL Runtime Validation (Draft)](#rust-sql-runtime-validation-draft)
 - [Quick Start](#quick-start)
 - [Need Help?](#need-help)
 - [Architecture](#architecture)
@@ -25,6 +26,89 @@ TiDB (/’taɪdiːbi:/, "Ti" stands for Titanium) is an open-source, cloud-nativ
 - [License](#license)
 - [See Also](#see-also)
 - [Acknowledgments](#acknowledgments)
+
+## Rust SQL Runtime Validation (Draft)
+
+This branch tracks the Rust SQL runtime parity effort that keeps PD, TiProxy,
+and TiKV on nightly builds and treats Go TiDB as the planner and executor
+oracle. The hard gate is plan parity first, then benchmark acceptance. Current
+evidence is split accordingly:
+
+| Evidence | Matched | Mismatched | Errors | Coverage |
+| --- | ---: | ---: | ---: | --- |
+| TPCC prepare plans | 1,037 | 0 | 0 | complete |
+| TPCC run plans | 63 | 0 | 0 | complete |
+| TPCC check plans | 12 | 0 | 0 | complete |
+| Sysbench prepare plans | 32 | 0 | 0 | complete |
+| Sysbench run plans | 13,952 | 0 | 0 | complete |
+
+The plan gate and its SQL inventory are documented in
+[`rust/TPCC_SYSBENCH_PLAN_PARITY_EXEC_PLAN.md`](rust/TPCC_SYSBENCH_PLAN_PARITY_EXEC_PLAN.md).
+Reproduce the gate from the repository root with:
+
+```bash
+python3 -m py_compile rust/scripts/plan-parity.py \
+  rust/scripts/generate-plan-manifest.py \
+  rust/scripts/test-plan-parity.py
+python3 rust/scripts/generate-plan-manifest.py --check
+python3 rust/scripts/test-plan-parity.py
+```
+
+### TPCC status versus the frozen baseline
+
+The only accepted throughput evidence currently retained for this branch was
+captured before the latest rebase onto `hparser-integration`. It used one
+nightly PD, one nightly TiProxy, three nightly TiKV stores, three Rust SQL
+runtime instances, three replicas, 100 warehouses, and 16 clients. The frozen
+three-store nightly TPCC baseline used 32 clients, so the comparison below is
+directional only and is not a formal acceptance result.
+
+| Metric | Current retained evidence | Frozen baseline | Relative to baseline |
+| --- | ---: | ---: | ---: |
+| Topology | 3 Rust SQL + 3 TiKV + PD + TiProxy | 3 Go TiDB + 3 TiKV + PD + TiProxy | same process layout |
+| Clients | 16 | 32 | thread mismatch |
+| Measurement tpmC | 5,766.0 | 41,011.5 | 0.141x |
+| Delivery P99 | 335.5 ms | 121.6 ms | 2.759x higher |
+| New Order P99 | 159.4 ms | 37.7 ms | 4.228x higher |
+| Payment P99 | 58.7 ms | 30.4 ms | 1.931x higher |
+| Order Status P99 | 65.0 ms | 19.9 ms | 3.266x higher |
+| Stock Level P99 | 159.4 ms | 23.1 ms | 6.900x higher |
+
+A longer 180-second stability rerun on the same pre-rebase binary sustained
+5,886.6 tpmC with zero workload error lines in the retained log. This branch
+therefore has execution-plan parity, but it does not yet have benchmark parity
+with the frozen baseline.
+
+### Sysbench status versus the frozen baseline
+
+The frozen Sysbench baseline remains the nightly `3 TiDB + 3 TiKV` topology on
+32 tables with 10,000,000 rows per table, a 300-second warm-up, and a
+600-second measurement. The current branch has complete plan parity for both
+prepare and run SQL, but it does not yet have a fresh post-rebase throughput
+matrix to compare against these baseline numbers:
+
+| Workload | Baseline TPS at 16 threads | Baseline P99 | Current branch status |
+| --- | ---: | ---: | --- |
+| `oltp_read_write.lua` | 764.82 | 28.67 ms | plan parity complete; throughput not rerun after rebase |
+| `oltp_read_only.lua` | 1,205.83 | 18.61 ms | plan parity complete; throughput not rerun after rebase |
+| `oltp_write_only.lua` | 2,394.87 | 10.84 ms | plan parity complete; throughput not rerun after rebase |
+| `oltp_point_select.lua` | 22,532.20 | 0.94 ms | plan parity complete; throughput not rerun after rebase |
+| `select_random_points.lua` | 9,353.30 | 3.13 ms | plan parity complete; throughput not rerun after rebase |
+| `select_random_ranges.lua` | 10,095.54 | 2.30 ms | plan parity complete; throughput not rerun after rebase |
+| `oltp_insert.lua` | 5,909.70 | 4.25 ms | plan parity complete; throughput not rerun after rebase |
+| `oltp_update_index.lua` | 4,897.50 | 5.09 ms | plan parity complete; throughput not rerun after rebase |
+| `oltp_update_non_index.lua` | 7,366.31 | 3.02 ms | plan parity complete; throughput not rerun after rebase |
+| `bulk_insert.lua` | 105,491.26 | 0.00 ms | plan parity complete; throughput not rerun after rebase |
+
+For the 32-table, 10-million-row prepare path, the frozen nightly baseline
+completed in 3,296.03 seconds. The rebased Rust branch has plan parity for the
+prepare SQL, but no fresh post-rebase prepare timing is checked in yet.
+
+The latest rebased source head is `e8acf3a34732976a3d882cf42c34f8a19191e044`.
+Its rebased tree has passed the plan gate and formatting checks, but the
+throughput evidence above still belongs to the pre-rebase binary retained in
+the benchmark archive. A fresh TPCC and Sysbench benchmark cycle is still
+required before claiming performance alignment with the nightly baseline.
 
 ## Key Features
 
