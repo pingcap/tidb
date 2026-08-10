@@ -1098,6 +1098,41 @@ fn week_source_vectors() {
     );
 }
 
+/// Go `TestWeekWithoutModeSig`: the zero-mode arity reads the session's
+/// `default_week_format` for every evaluation, including a value changed
+/// after the function was built. An empty sysvar is normalized to mode zero
+/// by the session before it reaches this interface.
+#[test]
+fn test_week_without_mode_sig() {
+    struct Mode(i64);
+
+    impl Columns for Mode {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn default_week_format(&self) -> i64 {
+            self.0
+        }
+    }
+
+    for (date, mode, expected) in [
+        ("2008-02-20", 0, 7),
+        ("2000-12-31", 0, 53),
+        ("2000-12-31", 6, 1),
+        ("2005-12-3", 6, 48),
+        ("2008-02-20", 0, 7),
+    ] {
+        assert_eq!(
+            dispatch("WEEK", &[string_datum(date)], &Mode(mode))
+                .expect("WEEK must dispatch")
+                .expect("source row must evaluate"),
+            Datum::Int(expected),
+            "WEEK({date}) with default_week_format={mode}"
+        );
+    }
+}
+
 /// Normal string/numeric rows from `TestLastDay` at line 3371.  The
 /// source's day-zero result changes with SQLMode and therefore stays
 /// outside this value-only test; malformed time-of-day input is still
