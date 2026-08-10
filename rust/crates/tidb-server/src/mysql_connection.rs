@@ -634,6 +634,29 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     let mut reader = PacketReader::with_max_allowed_packet(socket.clone(), max_allowed_packet);
     reader.set_sequence(1);
     let mut auth_payload = reader.read_packet()?;
+    // Go rejects a pre-4.1 client from the two-byte capability prefix before
+    // attempting to parse Response41. Keeping this boundary ahead of TLS and
+    // body parsing also preserves the source error when the remaining bytes
+    // are not a valid Response41 packet.
+    if auth_payload.len() >= 2 {
+        let capability = u16::from_le_bytes([auth_payload[0], auth_payload[1]]);
+        if u32::from(capability) & CLIENT_PROTOCOL_41 == 0 {
+            write_error(
+                &mut output,
+                2,
+                tidb_error::mysql::errcode::ErrNotSupportedAuthMode,
+                *b"08004",
+                tidb_error::mysql::errname::ErrNotSupportedAuthMode.raw,
+                false,
+            )?;
+            return Ok(ConnectionReport {
+                connection_id,
+                queries: 0,
+                commands: *commands,
+                exit: ConnectionExit::AuthenticationRejected,
+            });
+        }
+    }
     // Go's `clientConn.handshake`: the common header is parsed first, and a
     // response that set CLIENT_SSL while the server holds a TLS config is a
     // *truncated* SSLRequest -- the socket is upgraded and the client repeats a
@@ -654,16 +677,17 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     }
     let response = match parse_response(&auth_payload) {
         Ok(response) => response,
-        Err(_error) => {
-            // The handshake response never parsed, so Go's own `cc.user`
-            // would still be its zero value: an empty username, exactly
-            // like this.
+        Err(error) => {
+            // Go writes parser failures through the ordinary error boundary:
+            // malformed packets are 1105/`malform packet error`, while the
+            // connection-attribute hard limit retains its explicit text.
+            let message = error.client_error_message();
             write_error(
                 &mut output,
                 reply_sequence,
-                ER_ACCESS_DENIED_ERROR,
-                *b"28000",
-                access_denied_message("", &peer_addr.ip().to_string(), &[]),
+                ER_UNKNOWN_ERROR,
+                *b"HY000",
+                message.as_bytes(),
                 true,
             )?;
             return Ok(ConnectionReport {
@@ -1675,13 +1699,13 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 commands.stmt_fetch_commands += 1;
                 let (statement_id, fetch_size) = match decode_prepared_statement_fetch(&bytes) {
                     Ok(decoded) => decoded,
-                    Err(error) => {
+                    Err(_error) => {
                         write_error(
                             &mut output,
                             1,
-                            ER_WRONG_ARGUMENTS,
+                            ER_UNKNOWN_ERROR,
                             *b"HY000",
-                            error.to_string(),
+                            tidb_error::mysql::ERR_MALFORM_PACKET,
                             protocol_41,
                         )?;
                         continue;

@@ -1,22 +1,17 @@
 schema = "semantic-package-gate-v3"
-claim = "package-seed"
-go_package = "pkg/server"
-source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
-accepted_go_files = [
-  "pkg/server/BUILD.bazel",
-  "pkg/server/conn_test.go",
-  "pkg/server/internal/parse/BUILD.bazel",
-  "pkg/server/internal/parse/handshake_test.go",
-  "pkg/server/internal/parse/parse.go",
-  "pkg/server/internal/parse/parse_test.go",
-]
+claim = "whole-go-package"
+go_package = "pkg/server/internal/parse"
+source_commit = "44896ff9850d86c5905235b7bbfe267843f0374a"
 rust_files = [
+  "rust/crates/tidb-server/Cargo.toml",
   "rust/crates/tidb-protocol/src/prepared_statement.rs",
   "rust/crates/tidb-protocol/tests/prepared_statement_protocol_source.rs",
   "rust/crates/tidb-server/src/handshake.rs",
   "rust/crates/tidb-server/src/handshake_response.rs",
+  "rust/crates/tidb-server/src/mysql_connection.rs",
   "rust/crates/tidb-server/src/lib.rs",
   "rust/crates/tidb-server/tests/parse_go_source.rs",
+  "rust/crates/tidb-server/tests/mysql_client_lifecycle_source.rs",
 ]
 
 [[tests]]
@@ -27,4 +22,19 @@ argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "
 [[tests]]
 name = "prepared_fetch_semantics"
 cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "prepared_statement_protocol_source"]
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "prepared_statement_protocol_source::stmt_fetch_"]
+
+[[tests]]
+name = "malformed_handshake_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "mysql_client_lifecycle_source::malformed_handshake_response_uses_the_generic_protocol_error", "--", "--exact"]
+
+[[tests]]
+name = "protocol_41_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "mysql_client_lifecycle_source::handshake_without_protocol_41_uses_the_source_auth_mode_error", "--", "--exact"]
+
+[[tests]]
+name = "malformed_fetch_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "mysql_client_lifecycle_source::real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup", "--", "--exact"]

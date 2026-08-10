@@ -1842,6 +1842,7 @@ dependencies = [
  "tidb-config",
  "tidb-datatype",
  "tidb-distsql",
+ "tidb-error",
  "tidb-exec",
  "tidb-executor",
  "tidb-model",

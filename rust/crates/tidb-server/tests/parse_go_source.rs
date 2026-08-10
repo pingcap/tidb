@@ -364,7 +364,10 @@ fn null_attribute_frame_preserves_existing_map_and_outer_errors_remain_errors() 
     let mut over_hard_limit = header(capability);
     over_hard_limit.extend_from_slice(b"root\0\0");
     over_hard_limit.extend_from_slice(&[0xfd, 1, 0, 16]);
-    assert!(parse_response(&over_hard_limit).is_err());
+    assert_eq!(
+        parse_response(&over_hard_limit).unwrap_err().to_string(),
+        "connection refused: session connection attributes exceed the 1 MiB hard limit"
+    );
 
     let mut exact_hard_limit = vec![0];
     exact_hard_limit.extend_from_slice(&lenenc((1 << 20) - 5));

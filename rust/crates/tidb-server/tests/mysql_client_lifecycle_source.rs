@@ -1017,6 +1017,15 @@ fn real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup() {
     reader.set_sequence(2);
     assert_eq!(reader.read_packet().unwrap()[0], 0);
 
+    // pkg/server/internal/parse.StmtFetchCmd returns the plain
+    // mysql.ErrMalformPacket for every non-eight-byte payload. Go's writeError
+    // therefore reports the generic 1105 boundary, not ErrWrongArguments.
+    write_packet(&mut client, 0, &[COM_STMT_FETCH]);
+    reader.set_sequence(1);
+    let malformed_fetch = reader.read_packet().unwrap();
+    assert_mysql_error(&malformed_fetch, 1105, b"HY000");
+    assert!(malformed_fetch.ends_with(b"malform packet error"));
+
     write_packet(&mut client, 0, &[COM_INIT_DB, b'x']);
     reader.set_sequence(1);
     assert_eq!(reader.read_packet().unwrap()[0], 0xff);
@@ -1060,6 +1069,107 @@ fn real_tcp_connection_runs_handshake_query_ping_quit_and_exact_cleanup() {
     assert_eq!(tracker.completed(), 1);
     assert_eq!(tracker.active(), 0);
     assert_eq!(tracker.failed(), 0);
+}
+
+#[test]
+fn malformed_handshake_response_uses_the_generic_protocol_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let queries = Arc::new(Mutex::new(Vec::new()));
+    let lifecycle = Arc::new(Mutex::new(Lifecycle::default()));
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &Factory { queries, lifecycle },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    reader.set_sequence(0);
+    let _initial = reader.read_packet().unwrap();
+
+    let mut malformed = CLIENT_PROTOCOL_41.to_le_bytes().to_vec();
+    malformed.extend_from_slice(&(DEFAULT_MAX_ALLOWED_PACKET as u32).to_le_bytes());
+    malformed.push(46);
+    malformed.extend_from_slice(&[0; 23]);
+    malformed.extend_from_slice(b"unterminated-user");
+    write_packet(&mut client, 1, &malformed);
+    reader.set_sequence(2);
+    let error = reader.read_packet().unwrap();
+    assert_mysql_error(&error, 1105, b"HY000");
+    assert!(error.ends_with(b"malform packet error"), "{error:?}");
+
+    drop(client);
+    let report = worker.join().unwrap();
+    assert_eq!(report.exit, ConnectionExit::AuthenticationRejected);
+    assert_eq!(tracker.accepted(), 1);
+    assert_eq!(tracker.completed(), 1);
+    assert_eq!(tracker.active(), 0);
+}
+
+#[test]
+fn handshake_without_protocol_41_uses_the_source_auth_mode_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let queries = Arc::new(Mutex::new(Vec::new()));
+    let lifecycle = Arc::new(Mutex::new(Lifecycle::default()));
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &Factory { queries, lifecycle },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    reader.set_sequence(0);
+    let _initial = reader.read_packet().unwrap();
+
+    // Go rejects this from the two-byte capability prefix before parsing the
+    // Response41 body. Since the client did not negotiate protocol 4.1, the
+    // error packet uses the legacy shape without a SQLSTATE marker.
+    let mut unsupported = 0_u32.to_le_bytes().to_vec();
+    unsupported.extend_from_slice(&(DEFAULT_MAX_ALLOWED_PACKET as u32).to_le_bytes());
+    unsupported.push(46);
+    unsupported.extend_from_slice(&[0; 23]);
+    unsupported.push(0);
+    write_packet(&mut client, 1, &unsupported);
+    reader.set_sequence(2);
+    let error = reader.read_packet().unwrap();
+    assert_eq!(error[0], 0xff);
+    assert_eq!(u16::from_le_bytes(error[1..3].try_into().unwrap()), 1251);
+    assert_eq!(
+        &error[3..],
+        b"Client does not support authentication protocol requested by server; consider upgrading MySQL client"
+    );
+
+    drop(client);
+    let report = worker.join().unwrap();
+    assert_eq!(report.exit, ConnectionExit::AuthenticationRejected);
+    assert_eq!(tracker.accepted(), 1);
+    assert_eq!(tracker.completed(), 1);
+    assert_eq!(tracker.active(), 0);
 }
 
 #[test]

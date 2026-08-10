@@ -20,6 +20,7 @@
 //! a parsed auth response is not an authenticated session.
 
 use std::{
+    borrow::Cow,
     collections::HashMap,
     fmt,
     sync::atomic::{AtomicI64, Ordering},
@@ -572,9 +573,7 @@ pub fn parse_response_body_into_with_attrs_state(
                 HandshakeError::Malformed("connection attributes length overflows usize".to_owned())
             })?;
             if attrs_len > MAX_CONNECT_ATTRS_SIZE {
-                return Err(HandshakeError::Malformed(
-                    "connection attributes exceed the 1 MiB hard limit".to_owned(),
-                ));
+                return Err(HandshakeError::ConnectionAttrsTooLarge);
             }
             let end = checked_end(offset, attrs_len, data.len(), "connection attributes")?;
             match parse_attrs(&data[offset..end], attrs_state) {
@@ -841,6 +840,8 @@ fn lossy(bytes: &[u8]) -> String {
 pub enum HandshakeError {
     /// A packet is structurally malformed or truncated.
     Malformed(String),
+    /// The outer connection-attribute frame exceeds TiDB's hard 1 MiB limit.
+    ConnectionAttrsTooLarge,
     /// The auth salt is outside the one-byte protocol length range.
     InvalidSaltLength(usize),
     /// A NUL byte would terminate an initial-handshake string early.
@@ -853,10 +854,28 @@ pub enum HandshakeError {
     Packet(PacketError),
 }
 
+impl HandshakeError {
+    /// Returns the error text Go exposes through `clientConn.writeError`.
+    ///
+    /// Parser bounds failures all collapse to the plain
+    /// `mysql.ErrMalformPacket`; the connection-attribute hard limit is its
+    /// own plain error and keeps the source message.
+    #[must_use]
+    pub(crate) fn client_error_message(&self) -> Cow<'_, str> {
+        match self {
+            Self::Malformed(_) => Cow::Borrowed(tidb_error::mysql::ERR_MALFORM_PACKET),
+            _ => Cow::Owned(self.to_string()),
+        }
+    }
+}
+
 impl fmt::Display for HandshakeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Malformed(message) => formatter.write_str(message),
+            Self::ConnectionAttrsTooLarge => formatter.write_str(
+                "connection refused: session connection attributes exceed the 1 MiB hard limit",
+            ),
             Self::InvalidSaltLength(length) => {
                 write!(
                     formatter,
@@ -881,6 +900,7 @@ impl std::error::Error for HandshakeError {
         match self {
             Self::Packet(error) => Some(error),
             Self::Malformed(_)
+            | Self::ConnectionAttrsTooLarge
             | Self::InvalidSaltLength(_)
             | Self::EmbeddedNul(_)
             | Self::MissingCapability(_)

@@ -28,6 +28,7 @@ tidb-distsql = { path = "../tidb-distsql" }
 tidb-exec = { path = "../tidb-exec" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-executor = { path = "../tidb-executor" }
+tidb-error = { path = "../tidb-error" }
 tidb-model = { path = "../tidb-model" }
 tidb-pd-client = { path = "../tidb-pd-client" }
 tidb-parser = { path = "../tidb-parser" }
