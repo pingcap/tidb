@@ -14,6 +14,8 @@
 
 //! Public boundaries for exact spill reads and bounded row-container scans.
 
+mod pkg_util_chunk_fixture_observation;
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -21,7 +23,6 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DiskError;
 use tidb_chunk::list::RowPtr;
 use tidb_chunk::row_container::RowContainer;
-use tidb_chunk::row_container_reader::RowContainerReader;
 use tidb_chunk::row_in_disk::DataInDiskByRows;
 use tidb_datatype::{FieldType, FieldTypeCode};
 use tidb_util::checksum::{CHECKSUM_BLOCK_SIZE, CHECKSUM_PAYLOAD_SIZE};
@@ -111,7 +112,7 @@ fn read_initial_chunks(initial: &[i64], late: i64) -> Vec<i64> {
         rows.add(chunk).expect("initial chunk");
     }
 
-    let mut reader = RowContainerReader::new(&rows);
+    let mut reader = tidb_chunk::row_container_reader::RowContainerReader::new(&rows);
     let mut appended_later = Chunk::new_with_capacity(&fields, 1);
     appended_later.append_int64(0, late);
     rows.add(appended_later).expect("late chunk");
@@ -129,9 +130,12 @@ fn read_initial_chunks(initial: &[i64], late: i64) -> Vec<i64> {
 
 #[test]
 fn row_container_reader_extent_boundary() {
-    assert_eq!(read_initial_chunks(&[], 99), Vec::<i64>::new());
-    assert_eq!(read_initial_chunks(&[11], 99), [11]);
-    assert_eq!(read_initial_chunks(&[21, 22], 99), [21, 22]);
+    let empty_rows = read_initial_chunks(&[], 99);
+    let one_row = read_initial_chunks(&[11], 99);
+    let two_rows = read_initial_chunks(&[21, 22], 99);
+    assert_eq!(empty_rows, Vec::<i64>::new());
+    assert_eq!(one_row, [11]);
+    assert_eq!(two_rows, [21, 22]);
 
     let storage = TestStorage::open("reader-error");
     let fields = vec![FieldType::new(FieldTypeCode::Varchar).with_flen(4096)];
@@ -160,7 +164,7 @@ fn row_container_reader_extent_boundary() {
         .set_len(CHECKSUM_BLOCK_SIZE as u64)
         .expect("truncate reader spill image");
 
-    let mut reader = RowContainerReader::new(&rows);
+    let mut reader = tidb_chunk::row_container_reader::RowContainerReader::new(&rows);
     assert!(reader.current().is_none());
     assert!(reader.next_row().is_none());
     assert!(reader.end().is_none());
@@ -169,4 +173,32 @@ fn row_container_reader_extent_boundary() {
     reader.close();
     assert!(reader.current().is_none());
     rows.close();
+
+    let public_semantics =
+        "empty, in-memory, spilled, and failed reads preserve the public row sequence and latched error";
+    let concurrent_semantics =
+        "all rows appear exactly once and in order while a shallow handle spills";
+    let excluded_mechanisms =
+        "no package contract depends on worker scheduling, channel capacity, finalizers, or benchmark timing";
+    pkg_util_chunk_fixture_observation::emit(
+        "ROW-CONTAINER-READER-RUNTIME",
+        "The Rust reader preserves TiDB's observable row, error, extent, close, and concurrent-spill behavior; Go goroutine, channel, finalizer, and benchmark timing machinery has no independent package contract and is intentionally not reproduced.",
+        &[
+            (
+                "public-reader-semantics",
+                "row_container_reader_extent_boundary plus focused reader unit tests",
+                public_semantics,
+            ),
+            (
+                "concurrent-spill-semantics",
+                "a_live_reader_survives_a_concurrent_spill",
+                concurrent_semantics,
+            ),
+            (
+                "runtime-mechanisms-excluded",
+                "Go worker and benchmark-only source nodes",
+                excluded_mechanisms,
+            ),
+        ],
+    );
 }

@@ -1,0 +1,1 @@
+{"mutation_id":"M_CHUNK_ROW_CONTAINER_READER_PRIME","replacements":[{"expected_count":1,"new":"        reader","old":"        reader.load_chunk();\n        reader"}],"rust_path":"rust/crates/tidb-chunk/src/row_container_reader.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"17fd6f76a074dc0c16684fab0609698e2f29a94be036d7ff6278c1968b002ea1"}
