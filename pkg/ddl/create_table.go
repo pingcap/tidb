@@ -369,7 +369,7 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 	return ver, errors.Trace(err)
 }
 
-func (w *worker) registerTTLTablesToExternalWorkloadWithRollback(
+func (w *worker) registerTTLTablesToExternalWorkload(
 	ctx context.Context,
 	job *model.Job,
 	tableInfos []*model.TableInfo,
