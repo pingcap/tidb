@@ -84,8 +84,9 @@ pub fn check_with_max_len(name: &str, max_len: usize) -> Result<(), NamingError>
 mod tests {
     use super::*;
 
+    /// Go `pkg/util/naming/naming_test.go` `TestScope`.
     #[test]
-    fn scope() {
+    fn test_scope() {
         assert!(check("789z-_").is_ok());
         assert!(check("789z-_)").is_err());
         assert!(check(
