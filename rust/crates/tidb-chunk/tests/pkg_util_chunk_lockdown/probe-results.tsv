@@ -1,2 +1,3 @@
 # probe-results-v1
 probe_id	run_artifact_path	run_artifact_sha256	verification_artifact_path	verification_artifact_sha256
+CHUNK-ALLOCATION-POOL-RUNTIME	rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown/execution/probe/CHUNK-ALLOCATION-POOL-RUNTIME.run.json	6de0ea54c4442d612bf9714bfbbe1900be59b96daa6b69eb0a1c1accc33bb1c3	rust/crates/tidb-chunk/tests/pkg_util_chunk_lockdown/execution/probe/CHUNK-ALLOCATION-POOL-RUNTIME.verify.json	04a965994b6a4783e8d272d67332a77f90220494bf9a02786176122033bd8c3d

@@ -1,0 +1,39 @@
+--- stdout ---
+
+running 1 test
+test allocator_configuration_compile_anchor ... FAILED
+
+failures:
+
+failures:
+    allocator_configuration_compile_anchor
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+
+--- stderr ---
+warning: unused variable: `max_free_chunks`
+  --> crates/tidb-chunk/src/alloc.rs:47:30
+   |
+47 | pub fn init_chunk_alloc_size(max_free_chunks: u32, max_free_columns: u32) {
+   |                              ^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_max_free_chunks`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `max_free_columns`
+  --> crates/tidb-chunk/src/alloc.rs:47:52
+   |
+47 | pub fn init_chunk_alloc_size(max_free_chunks: u32, max_free_columns: u32) {
+   |                                                    ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_max_free_columns`
+
+warning: unused variable: `clamp`
+  --> crates/tidb-chunk/src/alloc.rs:48:9
+   |
+48 |     let clamp = |value: u32| usize::try_from(value.min(i32::MAX as u32)).expect("u32 fits usize");
+   |         ^^^^^ help: if this is intentional, prefix it with an underscore: `_clamp`
+
+
+thread 'allocator_configuration_compile_anchor' (223783666) panicked at crates/tidb-chunk/tests/allocation_pool_contract.rs:236:5:
+assertion failed: new_allocator().check_reuse_alloc_size()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p tidb-chunk --test allocation_pool_contract`

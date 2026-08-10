@@ -17,9 +17,12 @@ After this plan, creating an allocator is allocation-light regardless of the con
 - [x] (2026-08-10 17:15Z) Identified eager `Vec::with_capacity(free_chunk_limit)` construction as an observable configuration/memory defect.
 - [x] (2026-08-10 17:32Z) Added `allocator_configuration_does_not_eagerly_reserve_cache_limit`; baseline failed with capacity `4096`, then `Vec::new()` passed while both configuration clamp branches remained exact.
 - [x] (2026-08-10 17:40Z) Added `allocation_pool_contract`, covering public configuration, allocator/default/empty/hook/sync wrappers, empty and nonempty paths, reachable widths, global capacity buckets, and aliased-owner return.
-- [ ] Add runtime/proof evidence for intentionally excluded Go pointer, GC, benchmark, and impossible-width mechanics.
-- [ ] Classify all 372 obligations in the allocation/pool cluster and add symbols, rules, and mutation operators.
-- [ ] Run mutations, package checker, WIP gates, Ready gates, and push a race-safe checkpoint to both `hparser-integration` remotes.
+- [x] (2026-08-10 18:05Z) Added content-addressed runtime/proof evidence for intentionally excluded Go pointer, GC, benchmark, fixed-loop, and impossible-width mechanics.
+- [x] (2026-08-10 18:15Z) Classified all 372 obligations in the allocation/pool cluster: 329 `PORTED`, 12 `DECLINED`, 31 `UNREACHABLE`, and zero `UNCLASSIFIED`.
+- [x] (2026-08-10 18:32Z) Added five exact symbols/rules and five current mutation operators; every current mutation was independently run and verified `KILLED` with the production source restored byte-for-byte.
+- [x] (2026-08-10 18:38Z) Removed the evidence-runner circular dependency on unrelated final verdicts while preserving atomic `check`/`write-receipt`; the focused Python regression and the real allocator/pool probe both pass.
+- [x] (2026-08-10 18:50Z) WIP gates passed: all 58 checker tests, the five-test public contract, all 184 `tidb-chunk` unit tests, strict `tidb-chunk` Clippy, direct-dependent all-target checks, and workspace all-target check.
+- [ ] Run remaining WIP gates, Ready gates, and push a race-safe checkpoint to both `hparser-integration` remotes.
 
 ## Surprises & Discoveries
 
@@ -35,6 +38,12 @@ After this plan, creating an allocator is allocation-light regardless of the con
 - Observation: the accepted pool declares a fixed-16 bucket, but accepted `getFixedLen` returns only variable, 4, 8, or 40 for every valid `FieldType`; `Time` is eight bytes.
   Evidence: the first public-contract draft expected timestamps to use 16 and failed with the observed widths `[-1, -1, 4, 40, 8, 8, 8, 8]`. The corrected contract covers every reachable width and the fixed-16 switch route will be structurally `UNREACHABLE`.
 
+- Observation: `run-evidence --kind probe` previously called the full package verdict validator and therefore refused to collect a finished probe while any unrelated obligation was still `UNCLASSIFIED`.
+  Evidence: the real allocator/pool probe initially stopped at `chunk.go` obligation `O5b3fd4fe6f45c425`, although all 12 obligations declared by the probe were already final. `_probe_plan_for_execution` now validates the selected plan, exact accepted-source ledger identities, exact DECLINED references, and declared obligation set; full `check` and `write-receipt` remain unchanged and still reject every non-final package.
+
+- Observation: the first pool mutation draft named both the local pool-width rule and the global capacity-bucket rule.
+  Evidence: the immutable checker requires each current mutation to alter exactly one semantic rule and bind that rule's registered production definition plus exact boundary anchor. The final receipt has separate `M_CHUNK_POOL_ROUTING` and `M_CHUNK_GLOBAL_POOL_CAPACITY` operators and both are verified `KILLED`.
+
 ## Decision Log
 
 - Decision: remove eager vector reservation instead of capping the configuration with another special case.
@@ -49,9 +58,13 @@ After this plan, creating an allocator is allocation-light regardless of the con
   Rationale: those are Go runtime/testing mechanisms. Synchronized physical-width reuse, row values, chunk shape, and alias safety are the package behaviors to preserve. The absence of a current Rust production consumer is recorded rather than hidden.
   Date/Author: 2026-08-10 / Codex
 
+- Decision: permit incremental execution of a selected measured probe, but do not weaken package completion validation.
+  Rationale: executable evidence should be collected when its exact obligations and plan are complete; requiring thousands of unrelated verdicts first creates a circular workflow and slows falsification. Atomic completion still belongs exclusively to `check`/`write-receipt`, which continue to require every obligation and helper contract to be final.
+  Date/Author: 2026-08-10 / Codex
+
 ## Outcomes & Retrospective
 
-The allocator constructor is now allocation-light regardless of the configured cache ceiling. Fail-before observed `pending_chunks.capacity() == 4096`; pass-after observes zero for both pending/free vectors and separately proves `u32::MAX` clamps to `i32::MAX`. The public target and all 184 crate unit tests pass. The repository source-size ratchet currently stops on the pre-existing `tidb-executor/src/kv_table.rs` 2785-line baseline, outside this tranche. Final receipt counts and the next whole-package checker frontier remain to be recorded after mutation verification.
+The allocator constructor is now allocation-light regardless of the configured cache ceiling. Fail-before observed `pending_chunks.capacity() == 4096`; pass-after observes zero for both pending/free vectors and separately proves `u32::MAX` clamps to `i32::MAX`. The four accepted files now contain 329 `PORTED`, 12 evidence-backed `DECLINED`, 31 structurally `UNREACHABLE`, and zero `UNCLASSIFIED` obligations. The measured runtime probe has matching run/verify observations. The five current mutations for configuration, lifecycle, wrappers, local width routing, and global capacity routing all passed before mutation, failed under mutation, restored exact source hashes `8eced314...` / `c8bb7669...`, and passed after restoration. The official whole-package checker now advances to unrelated `chunk.go` obligation `O5b3fd4fe6f45c425`; this is an explicit partial-package checkpoint, not a completed `pkg/util/chunk` claim. WIP validation is green across all 58 checker tests, the five public contract tests, all 184 `tidb-chunk` unit tests, strict Clippy, all direct dependents, and workspace all-target compilation. The source-size ratchet still reports the pre-existing `tidb-executor/src/kv_table.rs` 2,785-line file; final Ready validation remains after remote integration.
 
 ## Context and Orientation
 

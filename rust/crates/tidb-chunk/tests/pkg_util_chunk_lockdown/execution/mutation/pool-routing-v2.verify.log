@@ -1,0 +1,37 @@
+--- stdout ---
+
+running 1 test
+test pool_compile_anchor ... FAILED
+
+failures:
+
+failures:
+    pool_compile_anchor
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s
+
+
+--- stderr ---
+warning: unused import: `get_fixed_len`
+  --> crates/tidb-chunk/src/pool.rs:24:21
+   |
+24 | use crate::column::{get_fixed_len, Column, VAR_ELEM_LEN};
+   |                     ^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `field`
+   --> crates/tidb-chunk/src/pool.rs:108:19
+    |
+108 |             .map(|field| {
+    |                   ^^^^^ help: if this is intentional, prefix it with an underscore: `_field`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+
+thread 'pool_compile_anchor' (223795172) panicked at crates/tidb-chunk/tests/allocation_pool_contract.rs:256:5:
+assertion `left == right` failed
+  left: 8
+ right: -1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `-p tidb-chunk --test allocation_pool_contract`

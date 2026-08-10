@@ -1,0 +1,1 @@
+{"mutation_id":"M_CHUNK_GLOBAL_POOL_CAPACITY","replacements":[{"expected_count":1,"new":"pool_for(0).get_chunk(fields)","old":"pool_for(init_capacity).get_chunk(fields)"}],"rust_path":"rust/crates/tidb-chunk/src/pool.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"c8bb766900c5020f051267d8f6f6bc33867f5d481341f079960856a1471c25a2"}

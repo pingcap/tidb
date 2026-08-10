@@ -1,0 +1,1 @@
+{"mutation_id":"M_CHUNK_ALLOCATOR_WRAPPERS","replacements":[{"expected_count":1,"new":"if false {","old":"if self.allocator.check_reuse_alloc_size() {"}],"rust_path":"rust/crates/tidb-chunk/src/alloc.rs","schema":"go-package-lockdown-mutation-operator-v1","source_sha256":"8eced3145ae2c168e05c087660b69ac0cf272b86a2db97563239584bed62cccd"}

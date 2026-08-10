@@ -17,7 +17,7 @@
 mod pkg_util_chunk_fixture_observation;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError};
 
 use tidb_chunk::alloc::{
     init_chunk_alloc_size, new_allocator, new_empty_allocator, new_reuse_hook_allocator,
@@ -28,6 +28,8 @@ use tidb_chunk::pool::{new_chunk_from_pool_with_capacity, Pool};
 use tidb_datatype::{FieldType, FieldTypeCode};
 
 struct AllocatorConfigReset;
+
+static ALLOCATION_CONTRACT_LOCK: Mutex<()> = Mutex::new(());
 
 impl Drop for AllocatorConfigReset {
     fn drop(&mut self) {
@@ -51,11 +53,14 @@ fn all_pool_widths() -> Vec<FieldType> {
 
 #[test]
 fn allocation_pool_public_contract() {
+    let _guard = ALLOCATION_CONTRACT_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     let _reset = AllocatorConfigReset;
     let fields = all_pool_widths();
 
     init_chunk_alloc_size(4096, 4096);
-    let allocator = new_allocator();
+    let allocator = tidb_chunk::alloc::new_allocator();
     assert!(allocator.check_reuse_alloc_size());
     let mut first = allocator.alloc(&fields, 5, 100);
     assert_eq!(first.capacity(), 5);
@@ -219,4 +224,41 @@ fn allocation_pool_public_contract() {
             ),
         ],
     );
+}
+
+#[test]
+fn allocator_configuration_compile_anchor() {
+    let _guard = ALLOCATION_CONTRACT_LOCK
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    let _reset = AllocatorConfigReset;
+    tidb_chunk::alloc::init_chunk_alloc_size(1, 1);
+    assert!(new_allocator().check_reuse_alloc_size());
+}
+
+#[test]
+fn allocator_wrappers_compile_anchor() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let hook_calls = Arc::clone(&calls);
+    let wrapped = tidb_chunk::alloc::new_reuse_hook_allocator(new_empty_allocator(), move || {
+        hook_calls.fetch_add(1, Ordering::SeqCst);
+    });
+    drop(wrapped.alloc(&[], 1, 1));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn pool_compile_anchor() {
+    let fields = vec![FieldType::new(FieldTypeCode::Varchar)];
+    let pool = tidb_chunk::pool::Pool::new(2);
+    let chunk = pool.get_chunk(&fields);
+    assert_eq!(chunk.capacity(), 2);
+    assert_eq!(chunk.column(0).type_size(), VAR_ELEM_LEN);
+}
+
+#[test]
+fn global_pool_compile_anchor() {
+    let fields = vec![FieldType::new(FieldTypeCode::LongLong)];
+    let chunk = tidb_chunk::pool::new_chunk_from_pool_with_capacity(&fields, 37);
+    assert_eq!(chunk.capacity(), 37);
 }
