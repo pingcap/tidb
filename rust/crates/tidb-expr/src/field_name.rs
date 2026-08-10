@@ -92,3 +92,106 @@ pub fn find_field_name_index_by_column(names: &[FieldName], column: &str) -> Opt
         .iter()
         .position(|name| name.names.column.lower == column)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_datatype::{FieldNameMetadata, IdentifierMetadata};
+
+    fn field_name(db: &str, table: &str, column: &str) -> FieldName {
+        FieldName::new(FieldNameMetadata {
+            database: IdentifierMetadata::new(db),
+            table: IdentifierMetadata::new(table),
+            column: IdentifierMetadata::new(column),
+            ..Default::default()
+        })
+    }
+
+    fn qualified_column(db: &str, table: &str, column: &str) -> QualifiedColumnName {
+        QualifiedColumnName::new(db, table, column)
+    }
+
+    #[test]
+    fn find_field_name_matches_simple_rewriter_source_cases() {
+        let matching_column = qualified_column("db", "tbl", "col");
+
+        let names = [field_name("db", "tbl", "col")];
+        assert_eq!(find_field_name(&names, &matching_column).unwrap(), Some(0));
+
+        let column = qualified_column("", "", "col");
+        assert_eq!(find_field_name(&names, &column).unwrap(), Some(0));
+
+        let column = qualified_column("", "tbl", "col");
+        assert_eq!(find_field_name(&names, &column).unwrap(), Some(0));
+
+        let column = qualified_column("db", "", "col");
+        assert_eq!(find_field_name(&names, &column).unwrap(), Some(0));
+
+        let column = qualified_column("db", "tbl", "col2");
+        assert_eq!(find_field_name(&names, &column).unwrap(), None);
+
+        let redundant_first = {
+            let mut name = field_name("db", "tbl", "col");
+            name.redundant = true;
+            name
+        };
+        let redundant_second = {
+            let mut name = field_name("db", "tbl", "col");
+            name.redundant = true;
+            name
+        };
+        let non_redundant = field_name("db", "tbl", "col");
+        let names = [redundant_first, redundant_second, non_redundant];
+        assert_eq!(find_field_name(&names, &matching_column).unwrap(), Some(2));
+
+        let names = [
+            field_name("db", "tbl", "col"),
+            field_name("db", "tbl", "col"),
+        ];
+        let err = find_field_name(&names, &matching_column).unwrap_err();
+        assert_eq!(err.sql_error.code, errcode::ErrNonUniq);
+        assert_eq!(err.sql_error.state, "23000");
+        assert_eq!(
+            err.sql_error.message,
+            "Column 'db.tbl.col' in field list is ambiguous"
+        );
+
+        let redundant_first = {
+            let mut name = field_name("db", "tbl", "col");
+            name.redundant = true;
+            name
+        };
+        let non_redundant = field_name("db", "tbl", "col");
+        let names = [redundant_first, non_redundant];
+        assert_eq!(find_field_name(&names, &matching_column).unwrap(), Some(1));
+
+        let redundant_first = {
+            let mut name = field_name("db", "tbl", "col");
+            name.redundant = true;
+            name
+        };
+        let redundant_second = {
+            let mut name = field_name("db", "tbl", "col");
+            name.redundant = true;
+            name
+        };
+        let redundant_third = {
+            let mut name = field_name("db", "tbl", "col");
+            name.redundant = true;
+            name
+        };
+        let names = [redundant_first, redundant_second, redundant_third];
+        assert_eq!(find_field_name(&names, &matching_column).unwrap(), Some(0));
+    }
+
+    #[test]
+    fn find_field_name_index_by_column_matches_first_normalized_name() {
+        let names = [
+            field_name("db", "tbl", "cola"),
+            field_name("db", "tbl", "colb"),
+            field_name("db", "tbl", "cola"),
+        ];
+        assert_eq!(find_field_name_index_by_column(&names, "cola"), Some(0));
+        assert_eq!(find_field_name_index_by_column(&names, "missing"), None);
+    }
+}
