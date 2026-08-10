@@ -12,19 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of Go `pkg/util/ppcpuusage` (`cpuusages.go`):
-//! per-SQL TiDB/TiKV CPU-time accounting.
+//! Complete transcreation of Go `pkg/util/ppcpuusage` (`cpuusages.go`).
 //!
-//! Go embeds a `sync.Mutex` in `SQLCPUUsages` and guards every method; the
-//! Rust equal is a [`Mutex`] around the mutable state, keeping every method
-//! `&self` exactly as Go's pointer receivers are shared. `time.Duration`
-//! maps to [`Duration`]. Go's `sqlID++` on a `uint64` wraps on overflow
-//! ("will restart from 0 when exceeds uint64 max limit"), so the Rust
-//! counter uses `wrapping_add`.
-//!
-//! The Go package ships no test; the tests below pin its observable
-//! contract (sql-ID-gated TiDB merge, ungated TiKV merge, reset, and the
-//! wrap-around) rather than leaving the port unverified.
+//! A [`Mutex`] serializes the per-SQL state, TiDB time is accepted only for
+//! the current SQL ID, and TiKV time is always accumulated. The SQL ID wraps
+//! to zero. The Go package has no source test, so this module pins those
+//! observable contracts directly.
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -105,6 +98,8 @@ impl SqlCpuUsages {
 #[cfg(test)]
 mod tests {
     use super::{CpuUsages, SqlCpuUsages};
+    use std::sync::Arc;
+    use std::thread;
     use std::time::Duration;
 
     #[test]
@@ -153,5 +148,36 @@ mod tests {
         // Go: `c.sqlID++` on uint64 — "will restart from 0" past the limit.
         assert_eq!(c.alloc_new_sql_id(), 0);
         assert_eq!(c.alloc_new_sql_id(), 1);
+    }
+
+    #[test]
+    fn concurrent_merges_are_not_lost() {
+        const THREADS: usize = 8;
+        const MERGES_PER_THREAD: usize = 1_000;
+
+        let usages = Arc::new(SqlCpuUsages::default());
+        let sql_id = usages.alloc_new_sql_id();
+        let workers: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let usages = Arc::clone(&usages);
+                thread::spawn(move || {
+                    for _ in 0..MERGES_PER_THREAD {
+                        usages.merge_tidb_cpu_time(sql_id, Duration::from_nanos(1));
+                        usages.merge_tikv_cpu_time(Duration::from_nanos(2));
+                    }
+                })
+            })
+            .collect();
+        for worker in workers {
+            worker.join().expect("CPU usage worker must not panic");
+        }
+
+        assert_eq!(
+            usages.get_cpu_usages(),
+            CpuUsages {
+                tidb_cpu_time: Duration::from_nanos((THREADS * MERGES_PER_THREAD) as u64),
+                tikv_cpu_time: Duration::from_nanos((THREADS * MERGES_PER_THREAD * 2) as u64),
+            }
+        );
     }
 }
