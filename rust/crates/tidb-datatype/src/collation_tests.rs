@@ -222,8 +222,9 @@ fn key_executes_all_original_columns() {
     }
 }
 
+/// Go `pkg/util/collate/collate_test.go` `TestGetCollator`.
 #[test]
-fn registry_and_mode_execute_all_original_get_collator_rows() {
+fn test_get_collator() {
     let _mode = NewCollationModeGuard::set(true);
     let rows = [
         ("binary", Collation::Binary),
