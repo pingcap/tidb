@@ -147,29 +147,7 @@ fn unary_op_for_name(name: &str) -> Option<UnaryOp> {
 /// operator.
 #[must_use]
 pub fn binary_op_name(op: BinaryOp) -> &'static str {
-    match op {
-        BinaryOp::Plus => "plus",
-        BinaryOp::Minus => "minus",
-        BinaryOp::Mul => "mul",
-        BinaryOp::Div => "div",
-        BinaryOp::IntDiv => "intdiv",
-        BinaryOp::Mod => "mod",
-        BinaryOp::BitAnd => "bitand",
-        BinaryOp::BitOr => "bitor",
-        BinaryOp::BitXor => "bitxor",
-        BinaryOp::LeftShift => "leftshift",
-        BinaryOp::RightShift => "rightshift",
-        BinaryOp::Eq => "eq",
-        BinaryOp::NullEq => "nulleq",
-        BinaryOp::Ne => "ne",
-        BinaryOp::Lt => "lt",
-        BinaryOp::Le => "le",
-        BinaryOp::Gt => "gt",
-        BinaryOp::Ge => "ge",
-        BinaryOp::LogicAnd => "and",
-        BinaryOp::LogicOr => "or",
-        BinaryOp::LogicXor => "xor",
-    }
+    op.opcode().name()
 }
 
 /// The Go scalar-function name for a unary operator (inverse of
@@ -1023,6 +1001,35 @@ mod tests {
 
     fn real_ft() -> FieldType {
         FieldType::new(FieldTypeCode::Double)
+    }
+
+    #[test]
+    fn binary_operator_names_delegate_to_the_opcode_authority() {
+        for operator in [
+            BinaryOp::Plus,
+            BinaryOp::Minus,
+            BinaryOp::Mul,
+            BinaryOp::Div,
+            BinaryOp::IntDiv,
+            BinaryOp::Mod,
+            BinaryOp::BitAnd,
+            BinaryOp::BitOr,
+            BinaryOp::BitXor,
+            BinaryOp::LeftShift,
+            BinaryOp::RightShift,
+            BinaryOp::Eq,
+            BinaryOp::NullEq,
+            BinaryOp::Ne,
+            BinaryOp::Lt,
+            BinaryOp::Le,
+            BinaryOp::Gt,
+            BinaryOp::Ge,
+            BinaryOp::LogicAnd,
+            BinaryOp::LogicOr,
+            BinaryOp::LogicXor,
+        ] {
+            assert_eq!(binary_op_name(operator), operator.opcode().name());
+        }
     }
 
     #[derive(Default)]

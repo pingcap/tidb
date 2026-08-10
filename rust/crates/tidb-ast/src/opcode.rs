@@ -13,11 +13,6 @@
 // limitations under the License.
 
 //! SQL operator identity and restore metadata from `pkg/parser/opcode`.
-//!
-//! [`Op`] deliberately keeps the source integer representation instead of
-//! using a Rust enum. Go's zero value is observable: `Op(0).String()` and
-//! `Op(0).Format(...)` both produce an empty string. Values outside the
-//! source table panic when inspected, just like indexing Go's `ops` array.
 
 use std::{fmt, io};
 
@@ -30,275 +25,150 @@ struct OpInfo {
     is_keyword: bool,
 }
 
-const EMPTY: OpInfo = OpInfo {
-    name: "",
-    literal: "",
-    is_keyword: false,
-};
+const fn info(name: &'static str, literal: &'static str, is_keyword: bool) -> OpInfo {
+    OpInfo {
+        name,
+        literal,
+        is_keyword,
+    }
+}
 
 const OPS: [OpInfo; 33] = [
-    EMPTY,
-    OpInfo {
-        name: "and",
-        literal: "AND",
-        is_keyword: true,
-    },
-    OpInfo {
-        name: "leftshift",
-        literal: "<<",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "rightshift",
-        literal: ">>",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "or",
-        literal: "OR",
-        is_keyword: true,
-    },
-    OpInfo {
-        name: "ge",
-        literal: ">=",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "le",
-        literal: "<=",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "eq",
-        literal: "=",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "ne",
-        literal: "!=",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "lt",
-        literal: "<",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "gt",
-        literal: ">",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "plus",
-        literal: "+",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "minus",
-        literal: "-",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "bitand",
-        literal: "&",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "bitor",
-        literal: "|",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "mod",
-        literal: "%",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "bitxor",
-        literal: "^",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "div",
-        literal: "/",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "mul",
-        literal: "*",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "not",
-        literal: "not ",
-        is_keyword: true,
-    },
-    OpInfo {
-        name: "!",
-        literal: "!",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "bitneg",
-        literal: "~",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "intdiv",
-        literal: "DIV",
-        is_keyword: true,
-    },
-    OpInfo {
-        name: "xor",
-        literal: "XOR",
-        is_keyword: true,
-    },
-    OpInfo {
-        name: "nulleq",
-        literal: "<=>",
-        is_keyword: false,
-    },
-    OpInfo {
-        name: "in",
-        literal: "IN",
-        is_keyword: true,
-    },
-    OpInfo {
-        name: "like",
-        literal: "LIKE",
-        is_keyword: true,
-    },
-    OpInfo {
-        name: "case",
-        literal: "CASE",
-        is_keyword: true,
-    },
-    OpInfo {
-        name: "regexp",
-        literal: "REGEXP",
-        is_keyword: true,
-    },
-    OpInfo {
-        name: "isnull",
-        literal: "IS NULL",
-        is_keyword: true,
-    },
-    OpInfo {
-        name: "istrue",
-        literal: "IS TRUE",
-        is_keyword: true,
-    },
-    OpInfo {
-        name: "isfalse",
-        literal: "IS FALSE",
-        is_keyword: true,
-    },
-    OpInfo {
-        name: "binary",
-        literal: "BINARY",
-        is_keyword: true,
-    },
+    info("", "", false),
+    info("and", "AND", true),
+    info("leftshift", "<<", false),
+    info("rightshift", ">>", false),
+    info("or", "OR", true),
+    info("ge", ">=", false),
+    info("le", "<=", false),
+    info("eq", "=", false),
+    info("ne", "!=", false),
+    info("lt", "<", false),
+    info("gt", ">", false),
+    info("plus", "+", false),
+    info("minus", "-", false),
+    info("bitand", "&", false),
+    info("bitor", "|", false),
+    info("mod", "%", false),
+    info("bitxor", "^", false),
+    info("div", "/", false),
+    info("mul", "*", false),
+    info("not", "not ", true),
+    info("!", "!", false),
+    info("bitneg", "~", false),
+    info("intdiv", "DIV", true),
+    info("xor", "XOR", true),
+    info("nulleq", "<=>", false),
+    info("in", "IN", true),
+    info("like", "LIKE", true),
+    info("case", "CASE", true),
+    info("regexp", "REGEXP", true),
+    info("isnull", "IS NULL", true),
+    info("istrue", "IS TRUE", true),
+    info("isfalse", "IS FALSE", true),
+    info("binary", "BINARY", true),
 ];
 
-/// Source-faithful SQL opcode value.
+/// One valid source SQL opcode.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Op(isize);
-
-#[allow(non_upper_case_globals)]
-impl Op {
-    /// Zero-value sentinel. Its name and literal are empty.
-    pub const INVALID: Self = Self(0);
+#[repr(u8)]
+pub enum Op {
+    /// Go's zero-value sentinel.
+    #[default]
+    Invalid = 0,
     /// Logical `AND`.
-    pub const LogicAnd: Self = Self(1);
+    LogicAnd,
     /// Bitwise left shift.
-    pub const LeftShift: Self = Self(2);
+    LeftShift,
     /// Bitwise right shift.
-    pub const RightShift: Self = Self(3);
+    RightShift,
     /// Logical `OR`.
-    pub const LogicOr: Self = Self(4);
+    LogicOr,
     /// Greater than or equal.
-    pub const GE: Self = Self(5);
+    Ge,
     /// Less than or equal.
-    pub const LE: Self = Self(6);
+    Le,
     /// Equal.
-    pub const EQ: Self = Self(7);
+    Eq,
     /// Not equal.
-    pub const NE: Self = Self(8);
+    Ne,
     /// Less than.
-    pub const LT: Self = Self(9);
+    Lt,
     /// Greater than.
-    pub const GT: Self = Self(10);
+    Gt,
     /// Addition or unary plus.
-    pub const Plus: Self = Self(11);
+    Plus,
     /// Subtraction or unary minus.
-    pub const Minus: Self = Self(12);
+    Minus,
     /// Bitwise AND.
-    pub const And: Self = Self(13);
+    BitAnd,
     /// Bitwise OR.
-    pub const Or: Self = Self(14);
+    BitOr,
     /// Modulo.
-    pub const Mod: Self = Self(15);
+    Mod,
     /// Bitwise XOR.
-    pub const Xor: Self = Self(16);
+    BitXor,
     /// Division.
-    pub const Div: Self = Self(17);
+    Div,
     /// Multiplication.
-    pub const Mul: Self = Self(18);
-    /// Keyword logical NOT, whose literal includes one trailing space.
-    pub const Not: Self = Self(19);
+    Mul,
+    /// Keyword logical NOT.
+    NotKeyword,
     /// Symbolic logical NOT (`!`).
-    pub const Not2: Self = Self(20);
+    NotSymbol,
     /// Bitwise negation.
-    pub const BitNeg: Self = Self(21);
+    BitNeg,
     /// Integer division.
-    pub const IntDiv: Self = Self(22);
+    IntDiv,
     /// Logical XOR.
-    pub const LogicXor: Self = Self(23);
+    LogicXor,
     /// NULL-safe equality.
-    pub const NullEQ: Self = Self(24);
+    NullEq,
     /// Membership predicate.
-    pub const In: Self = Self(25);
+    In,
     /// Pattern-match predicate.
-    pub const Like: Self = Self(26);
+    Like,
     /// CASE expression marker.
-    pub const Case: Self = Self(27);
+    Case,
     /// Regular-expression predicate.
-    pub const Regexp: Self = Self(28);
+    Regexp,
     /// `IS NULL` predicate.
-    pub const IsNull: Self = Self(29);
+    IsNull,
     /// `IS TRUE` predicate.
-    pub const IsTruth: Self = Self(30);
+    IsTruth,
     /// `IS FALSE` predicate.
-    pub const IsFalsity: Self = Self(31);
+    IsFalsity,
     /// Unary `BINARY` cast marker.
-    pub const Binary: Self = Self(32);
+    Binary,
+}
 
-    /// Every declared source opcode, in exact numeric order.
+impl Op {
+    /// Every declared source opcode, in numeric order.
     pub const ALL: [Self; 32] = [
         Self::LogicAnd,
         Self::LeftShift,
         Self::RightShift,
         Self::LogicOr,
-        Self::GE,
-        Self::LE,
-        Self::EQ,
-        Self::NE,
-        Self::LT,
-        Self::GT,
+        Self::Ge,
+        Self::Le,
+        Self::Eq,
+        Self::Ne,
+        Self::Lt,
+        Self::Gt,
         Self::Plus,
         Self::Minus,
-        Self::And,
-        Self::Or,
+        Self::BitAnd,
+        Self::BitOr,
         Self::Mod,
-        Self::Xor,
+        Self::BitXor,
         Self::Div,
         Self::Mul,
-        Self::Not,
-        Self::Not2,
+        Self::NotKeyword,
+        Self::NotSymbol,
         Self::BitNeg,
         Self::IntDiv,
         Self::LogicXor,
-        Self::NullEQ,
+        Self::NullEq,
         Self::In,
         Self::Like,
         Self::Case,
@@ -309,53 +179,45 @@ impl Op {
         Self::Binary,
     ];
 
-    /// Constructs an opcode from the source integer representation.
-    ///
-    /// Zero preserves Go's empty zero value. Inspecting a value outside
-    /// `0..=32` panics with the same fail-fast behavior as Go's table index.
-    pub const fn from_value(value: isize) -> Self {
-        Self(value)
-    }
-
-    /// Returns the exact source integer representation.
-    pub const fn value(self) -> isize {
-        self.0
+    /// Returns the source numeric value.
+    #[must_use]
+    pub const fn value(self) -> u8 {
+        self as u8
     }
 
     fn info(self) -> &'static OpInfo {
-        &OPS[self.0 as usize]
+        &OPS[usize::from(self.value())]
     }
 
-    /// Returns the source operator name used by `Op.String()`.
+    /// Returns the scalar-function name used by `Op.String()`.
+    #[must_use]
     pub fn name(self) -> &'static str {
         self.info().name
     }
 
     /// Returns the literal emitted by source `Op.Format()`.
+    #[must_use]
     pub fn literal(self) -> &'static str {
         self.info().literal
     }
 
-    /// Writes the source literal without transforming keyword case.
-    ///
-    /// Exactly one byte write is attempted. Its count and error are
-    /// deliberately ignored, matching Go's discarded `io.WriteString` result
-    /// for an ordinary `io.Writer`, including short writes.
-    pub fn format<W: io::Write + ?Sized>(self, writer: &mut W) {
-        let _ = writer.write(self.literal().as_bytes());
+    /// Writes the operator literal.
+    pub fn format<W: io::Write + ?Sized>(self, writer: &mut W) -> io::Result<()> {
+        writer.write_all(self.literal().as_bytes())
     }
 
     /// Returns whether restore treats this operator as a keyword.
+    #[must_use]
     pub fn is_keyword(self) -> bool {
         self.info().is_keyword
     }
 
-    /// Restores this operator through the shared source restore context.
-    pub fn restore<W: RestoreWriter>(self, ctx: &mut RestoreCtx<W>) {
+    /// Restores this operator through the shared restore context.
+    pub fn restore<W: RestoreWriter>(self, context: &mut RestoreCtx<W>) {
         if self.is_keyword() {
-            ctx.write_keyword(self.literal());
+            context.write_keyword(self.literal());
         } else {
-            ctx.write_plain(self.literal());
+            context.write_plain(self.literal());
         }
     }
 }
@@ -366,33 +228,11 @@ impl fmt::Display for Op {
     }
 }
 
-// BEGIN GENERATED AST VISITOR IMPLEMENTATIONS
-
-impl crate::Visitable for OpInfo {
-    fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
-        if visitor.enter(self) {
-            return visitor.leave(self);
-        }
-        let Self {
-            name,
-            literal,
-            is_keyword,
-        } = self;
-        let _ = name;
-        let _ = literal;
-        let _ = is_keyword;
-        visitor.leave(self)
-    }
-}
-
 impl crate::Visitable for Op {
     fn accept<V: crate::Visitor>(&mut self, visitor: &mut V) -> bool {
         if visitor.enter(self) {
             return visitor.leave(self);
         }
-        let Self(field_0) = self;
-        let _ = field_0;
         visitor.leave(self)
     }
 }
-// END GENERATED AST VISITOR IMPLEMENTATIONS

@@ -23,26 +23,26 @@ const SOURCE_ROWS: [(Op, &str, &str, bool); 32] = [
     (Op::LeftShift, "leftshift", "<<", false),
     (Op::RightShift, "rightshift", ">>", false),
     (Op::LogicOr, "or", "OR", true),
-    (Op::GE, "ge", ">=", false),
-    (Op::LE, "le", "<=", false),
-    (Op::EQ, "eq", "=", false),
-    (Op::NE, "ne", "!=", false),
-    (Op::LT, "lt", "<", false),
-    (Op::GT, "gt", ">", false),
+    (Op::Ge, "ge", ">=", false),
+    (Op::Le, "le", "<=", false),
+    (Op::Eq, "eq", "=", false),
+    (Op::Ne, "ne", "!=", false),
+    (Op::Lt, "lt", "<", false),
+    (Op::Gt, "gt", ">", false),
     (Op::Plus, "plus", "+", false),
     (Op::Minus, "minus", "-", false),
-    (Op::And, "bitand", "&", false),
-    (Op::Or, "bitor", "|", false),
+    (Op::BitAnd, "bitand", "&", false),
+    (Op::BitOr, "bitor", "|", false),
     (Op::Mod, "mod", "%", false),
-    (Op::Xor, "bitxor", "^", false),
+    (Op::BitXor, "bitxor", "^", false),
     (Op::Div, "div", "/", false),
     (Op::Mul, "mul", "*", false),
-    (Op::Not, "not", "not ", true),
-    (Op::Not2, "!", "!", false),
+    (Op::NotKeyword, "not", "not ", true),
+    (Op::NotSymbol, "!", "!", false),
     (Op::BitNeg, "bitneg", "~", false),
     (Op::IntDiv, "intdiv", "DIV", true),
     (Op::LogicXor, "xor", "XOR", true),
-    (Op::NullEQ, "nulleq", "<=>", false),
+    (Op::NullEq, "nulleq", "<=>", false),
     (Op::In, "in", "IN", true),
     (Op::Like, "like", "LIKE", true),
     (Op::Case, "case", "CASE", true),
@@ -58,12 +58,11 @@ fn every_source_value_name_literal_and_keyword_bit_is_exact() {
     assert_eq!(Op::ALL, SOURCE_ROWS.map(|row| row.0));
 
     for (index, (op, name, literal, is_keyword)) in SOURCE_ROWS.into_iter().enumerate() {
-        assert_eq!(op.value(), isize::try_from(index).unwrap() + 1);
+        assert_eq!(usize::from(op.value()), index + 1);
         assert_eq!(op.name(), name);
         assert_eq!(op.to_string(), name);
         assert_eq!(op.literal(), literal);
         assert_eq!(op.is_keyword(), is_keyword);
-        assert_eq!(Op::from_value(op.value()), op);
     }
 }
 
@@ -71,40 +70,18 @@ fn every_source_value_name_literal_and_keyword_bit_is_exact() {
 fn format_matches_every_source_table_entry_including_zero_value() {
     for (op, _, literal, _) in SOURCE_ROWS {
         let mut formatted = Vec::new();
-        op.format(&mut formatted);
+        op.format(&mut formatted).unwrap();
         assert_eq!(formatted, literal.as_bytes());
     }
 
     let mut zero = Vec::new();
-    Op::default().format(&mut zero);
-    assert_eq!(Op::default(), Op::INVALID);
+    Op::default().format(&mut zero).unwrap();
+    assert_eq!(Op::default(), Op::Invalid);
     assert_eq!(Op::default().value(), 0);
     assert_eq!(Op::default().name(), "");
     assert_eq!(Op::default().to_string(), "");
     assert_eq!(zero, b"");
     assert!(!Op::default().is_keyword());
-}
-
-#[derive(Default)]
-struct OneByteWriter {
-    bytes: Vec<u8>,
-    writes: usize,
-}
-
-impl io::Write for OneByteWriter {
-    fn write(&mut self, input: &[u8]) -> io::Result<usize> {
-        self.writes += 1;
-        if let Some(byte) = input.first() {
-            self.bytes.push(*byte);
-            Ok(1)
-        } else {
-            Ok(0)
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
 }
 
 struct ErrorWriter;
@@ -120,13 +97,14 @@ impl io::Write for ErrorWriter {
 }
 
 #[test]
-fn format_attempts_one_byte_write_and_discards_its_result() {
-    let mut short = OneByteWriter::default();
-    Op::LogicAnd.format(&mut short);
-    assert_eq!(short.writes, 1);
-    assert_eq!(short.bytes, b"A");
-
-    Op::LogicAnd.format(&mut ErrorWriter);
+fn format_reports_writer_errors() {
+    assert_eq!(
+        Op::LogicAnd
+            .format(&mut ErrorWriter)
+            .unwrap_err()
+            .kind(),
+        io::ErrorKind::Other
+    );
 }
 
 #[test]
@@ -174,24 +152,8 @@ fn restore_transforms_only_keywords_through_the_shared_context() {
     }
 
     let mut zero = RestoreCtx::new(RestoreFlags::DEFAULT, String::new());
-    Op::INVALID.restore(&mut zero);
+    Op::Invalid.restore(&mut zero);
     assert_eq!(zero.into_inner(), "");
-}
-
-#[test]
-fn values_outside_the_source_table_fail_fast_when_inspected() {
-    for value in [isize::MIN, -1, 33, isize::MAX] {
-        assert!(std::panic::catch_unwind(|| Op::from_value(value).name()).is_err());
-        assert!(std::panic::catch_unwind(|| Op::from_value(value).literal()).is_err());
-        assert!(std::panic::catch_unwind(|| Op::from_value(value).is_keyword()).is_err());
-    }
-
-    #[cfg(target_pointer_width = "64")]
-    {
-        let wider_than_i32 = i32::MAX as isize + 1;
-        assert_eq!(Op::from_value(wider_than_i32).value(), wider_than_i32);
-        assert!(std::panic::catch_unwind(|| Op::from_value(wider_than_i32).name()).is_err());
-    }
 }
 
 #[test]
@@ -199,8 +161,8 @@ fn expression_operator_adapters_delegate_to_the_opcode_authority() {
     assert_eq!(UnaryOp::Plus.opcode(), Op::Plus);
     assert_eq!(UnaryOp::Minus.opcode(), Op::Minus);
     assert_eq!(UnaryOp::BitNeg.opcode(), Op::BitNeg);
-    assert_eq!(UnaryOp::Not.opcode(), Op::Not2);
-    assert_eq!(UnaryOp::NotKeyword.opcode(), Op::Not);
+    assert_eq!(UnaryOp::Not.opcode(), Op::NotSymbol);
+    assert_eq!(UnaryOp::NotKeyword.opcode(), Op::NotKeyword);
 
     let binary = [
         (BinaryOp::Plus, Op::Plus),
@@ -209,18 +171,18 @@ fn expression_operator_adapters_delegate_to_the_opcode_authority() {
         (BinaryOp::Div, Op::Div),
         (BinaryOp::Mod, Op::Mod),
         (BinaryOp::IntDiv, Op::IntDiv),
-        (BinaryOp::BitOr, Op::Or),
-        (BinaryOp::BitAnd, Op::And),
-        (BinaryOp::BitXor, Op::Xor),
+        (BinaryOp::BitOr, Op::BitOr),
+        (BinaryOp::BitAnd, Op::BitAnd),
+        (BinaryOp::BitXor, Op::BitXor),
         (BinaryOp::LeftShift, Op::LeftShift),
         (BinaryOp::RightShift, Op::RightShift),
-        (BinaryOp::Eq, Op::EQ),
-        (BinaryOp::NullEq, Op::NullEQ),
-        (BinaryOp::Ge, Op::GE),
-        (BinaryOp::Gt, Op::GT),
-        (BinaryOp::Le, Op::LE),
-        (BinaryOp::Lt, Op::LT),
-        (BinaryOp::Ne, Op::NE),
+        (BinaryOp::Eq, Op::Eq),
+        (BinaryOp::NullEq, Op::NullEq),
+        (BinaryOp::Ge, Op::Ge),
+        (BinaryOp::Gt, Op::Gt),
+        (BinaryOp::Le, Op::Le),
+        (BinaryOp::Lt, Op::Lt),
+        (BinaryOp::Ne, Op::Ne),
         (BinaryOp::LogicAnd, Op::LogicAnd),
         (BinaryOp::LogicOr, Op::LogicOr),
         (BinaryOp::LogicXor, Op::LogicXor),

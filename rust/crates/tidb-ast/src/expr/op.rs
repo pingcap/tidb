@@ -74,15 +74,15 @@ impl UnaryOp {
             UnaryOp::Plus => Op::Plus,
             UnaryOp::Minus => Op::Minus,
             UnaryOp::BitNeg => Op::BitNeg,
-            UnaryOp::Not => Op::Not2,
-            UnaryOp::NotKeyword => Op::Not,
+            UnaryOp::Not => Op::NotSymbol,
+            UnaryOp::NotKeyword => Op::NotKeyword,
         }
     }
 
     /// Returns the canonical AST restore spelling for this unary adapter.
     pub fn canonical_literal(self) -> &'static str {
         match self.opcode() {
-            Op::Not => "NOT ",
+            Op::NotKeyword => "NOT ",
             op => op.literal(),
         }
     }
@@ -149,18 +149,18 @@ impl BinaryOp {
             BinaryOp::Div => Op::Div,
             BinaryOp::Mod => Op::Mod,
             BinaryOp::IntDiv => Op::IntDiv,
-            BinaryOp::BitOr => Op::Or,
-            BinaryOp::BitAnd => Op::And,
-            BinaryOp::BitXor => Op::Xor,
+            BinaryOp::BitOr => Op::BitOr,
+            BinaryOp::BitAnd => Op::BitAnd,
+            BinaryOp::BitXor => Op::BitXor,
             BinaryOp::LeftShift => Op::LeftShift,
             BinaryOp::RightShift => Op::RightShift,
-            BinaryOp::Eq => Op::EQ,
-            BinaryOp::NullEq => Op::NullEQ,
-            BinaryOp::Ge => Op::GE,
-            BinaryOp::Gt => Op::GT,
-            BinaryOp::Le => Op::LE,
-            BinaryOp::Lt => Op::LT,
-            BinaryOp::Ne => Op::NE,
+            BinaryOp::Eq => Op::Eq,
+            BinaryOp::NullEq => Op::NullEq,
+            BinaryOp::Ge => Op::Ge,
+            BinaryOp::Gt => Op::Gt,
+            BinaryOp::Le => Op::Le,
+            BinaryOp::Lt => Op::Lt,
+            BinaryOp::Ne => Op::Ne,
             BinaryOp::LogicAnd => Op::LogicAnd,
             BinaryOp::LogicOr => Op::LogicOr,
             BinaryOp::LogicXor => Op::LogicXor,
