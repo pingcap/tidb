@@ -44,7 +44,7 @@ import (
 
 // readerMemoryQuotaPerCore is reserved before applying the write-step memory
 // share model. It bounds temporary buffers used to read data files.
-const readerMemoryQuotaPerCore int64 = 128 * units.MiB
+const readerMemoryQuotaPerCore int64 = 256 * units.MiB
 
 // writeStepMemShareCount defines the number of shares of the remaining memory
 // per job worker after reserving readerMemoryQuotaPerCore.
