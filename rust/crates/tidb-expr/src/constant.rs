@@ -26,7 +26,7 @@ use crate::context::EvalError;
 use crate::expr_collation::CollationInfo;
 use crate::expression::{ConstLevel, Expression, CONSTANT_FLAG, PARAMETER_FLAG};
 use tidb_codec::{encode_int, hash_code};
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 /// Go `ParamMarker`: a reference to a placeholder parameter in a prepared
 /// statement, by its position in `sessionVars.PreparedParams`.
@@ -72,6 +72,26 @@ impl Constant {
             ret_type: Some(ret_type),
             ..Default::default()
         }
+    }
+
+    /// Go `NewOne`: the unsigned `TINYINT(1)` constant used by boolean
+    /// rewrites without triggering integral promotion.
+    #[must_use]
+    pub fn new_one() -> Self {
+        Self::new(Datum::Int(1), specific_tiny_int_type(true))
+    }
+
+    /// Go `NewZero`: the unsigned `TINYINT(0)` constant used by boolean
+    /// rewrites without triggering integral promotion.
+    #[must_use]
+    pub fn new_zero() -> Self {
+        Self::new(Datum::Int(0), specific_tiny_int_type(true))
+    }
+
+    /// Go `NewNull`: a NULL constant declared as signed `TINYINT(1)`.
+    #[must_use]
+    pub fn new_null() -> Self {
+        Self::new(Datum::Null, specific_tiny_int_type(false))
     }
 
     /// Go `GetStaticType`: the declared result type (`None` for a nil pointer).
@@ -134,10 +154,17 @@ impl Constant {
     }
 }
 
+fn specific_tiny_int_type(unsigned: bool) -> FieldType {
+    FieldType::new(FieldTypeCode::Tiny)
+        .with_unsigned(unsigned)
+        .with_flen(1)
+        .with_decimal(0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    use tidb_datatype::{Datum, FieldType};
 
     fn ft() -> FieldType {
         FieldType::new(FieldTypeCode::Long)
@@ -187,5 +214,24 @@ mod tests {
         let d = c.clone();
         assert_eq!(d.value, Datum::Int(9));
         assert_eq!(d.subquery_ref_id, 7);
+    }
+
+    /// Source: `pkg/expression/constant_test.go::TestSpecificConstant`.
+    #[test]
+    fn specific_constant_matches_source() {
+        let cases = [
+            (Constant::new_one(), Datum::Int(1), true),
+            (Constant::new_zero(), Datum::Int(0), true),
+            (Constant::new_null(), Datum::Null, false),
+        ];
+
+        for (constant, expected_value, expected_unsigned) in cases {
+            assert_eq!(constant.value, expected_value);
+            let ret_type = constant.ret_type.expect("specific constants have a type");
+            assert_eq!(ret_type.code(), FieldTypeCode::Tiny);
+            assert_eq!(ret_type.flen(), 1);
+            assert_eq!(ret_type.decimal(), 0);
+            assert_eq!(ret_type.is_unsigned(), expected_unsigned);
+        }
     }
 }
