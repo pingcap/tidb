@@ -74,7 +74,6 @@ const MAX_DXF_RESOURCE_LIMIT: i64 = 100;
 const DEF_PORT: u32 = 4000;
 const DEF_HOST: &str = "0.0.0.0";
 const DEF_TEMP_DIR: &str = "/tmp/tidb";
-const MAX_KEYSPACE_NAME_LENGTH: usize = 20;
 
 /// Go `encodeDefTempStorageDir`: isolate the default spill directory by the
 /// current OS user and both TiDB listen endpoints.
@@ -90,13 +89,6 @@ fn encode_def_temp_storage_dir(
         .join(format!("{}_tidb", rustix::process::getuid().as_raw()))
         .join(URL_SAFE.encode(endpoint))
         .join("tmp-storage")
-}
-
-fn valid_keyspace_name(name: &str) -> bool {
-    name.len() <= MAX_KEYSPACE_NAME_LENGTH
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 /// Azure credentials parsed from a metering storage URI.
@@ -620,12 +612,8 @@ impl Config {
 
     /// Go `Config.Valid`.
     pub fn valid(&mut self) -> Result<(), String> {
-        if !valid_keyspace_name(&self.keyspace_name) {
-            return Err(format!(
-                "invalid keyspace name: the value '{}' is invalid. It must be {} characters or fewer and consist only of letters (a-z, A-Z), numbers (0-9), hyphens (-), and underscores (_)",
-                self.keyspace_name, MAX_KEYSPACE_NAME_LENGTH
-            ));
-        }
+        tidb_naming::check_keyspace_name(&self.keyspace_name)
+            .map_err(|error| format!("invalid keyspace name: {error}"))?;
         if self.log.enable_error_stack == self.log.disable_error_stack
             && self.log.enable_error_stack != crate::config_tree::NB_UNSET
         {

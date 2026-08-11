@@ -12,16 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Complete transcreation of `pkg/util/naming`.
-//!
-//! Names are bounded ASCII identifiers containing letters, digits, hyphens,
-//! and underscores. Empty names are valid, matching TiDB configuration rules.
+//! Validation for TiDB keyspace, service-scope, and importer names.
 
 use std::fmt;
 
 const MAX_KEYSPACE_NAME_LENGTH: usize = 20;
 
-/// The source validation failure with its exact valid-UTF-8 message.
+/// A rejected TiDB name.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NamingError {
     name: String,
@@ -37,7 +34,7 @@ impl NamingError {
 
     /// Returns the configured maximum length.
     #[must_use]
-    pub fn max_len(&self) -> usize {
+    pub const fn max_len(&self) -> usize {
         self.max_len
     }
 }
@@ -84,9 +81,8 @@ pub fn check_with_max_len(name: &str, max_len: usize) -> Result<(), NamingError>
 mod tests {
     use super::*;
 
-    /// Go `pkg/util/naming/naming_test.go` `TestScope`.
     #[test]
-    fn test_scope() {
+    fn upstream_scope_cases() {
         assert!(check("789z-_").is_ok());
         assert!(check("789z-_)").is_err());
         assert!(check(
@@ -99,7 +95,7 @@ mod tests {
     }
 
     #[test]
-    fn keyspace_length_ascii_and_error_contracts() {
+    fn length_ascii_and_error_boundaries() {
         assert!(check_keyspace_name("12345678901234567890").is_ok());
         assert!(check_keyspace_name("123456789012345678901").is_err());
         assert!(check(&"a".repeat(64)).is_ok());

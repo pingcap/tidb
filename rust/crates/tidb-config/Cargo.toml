@@ -15,6 +15,7 @@ base64 = { workspace = true }
 serde = { workspace = true }
 regex = { workspace = true }
 rustix = { workspace = true }
+tidb-naming = { path = "../tidb-naming" }
 serde_ignored = "0.1"
 serde_json = { workspace = true }
 toml = "0.8"

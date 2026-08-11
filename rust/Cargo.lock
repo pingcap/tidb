@@ -1582,6 +1582,7 @@ dependencies = [
  "serde",
  "serde_ignored",
  "serde_json",
+ "tidb-naming",
  "toml",
 ]
 
@@ -1784,6 +1785,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-naming"
+version = "0.0.0"
+
+[[package]]
 name = "tidb-parser"
 version = "0.0.0"
 dependencies = [
@@ -1888,6 +1893,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-executor",
  "tidb-mysql",
+ "tidb-naming",
  "tidb-parser",
  "tidb-planner",
  "tidb-tablecodec",
@@ -1963,6 +1969,7 @@ dependencies = [
  "tidb-log",
  "tidb-metadef",
  "tidb-mysql",
+ "tidb-naming",
  "tracing",
 ]
 

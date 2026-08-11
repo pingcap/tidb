@@ -44,7 +44,7 @@ pub mod logutil;
 pub mod mathutil;
 pub mod memory;
 pub mod mvmap;
-pub mod naming;
+pub use tidb_naming as naming;
 pub mod nocopy;
 pub mod paging;
 pub mod partialjson;

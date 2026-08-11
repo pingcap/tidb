@@ -409,6 +409,16 @@ impl SysVarDef {
                 )));
             }
         }
+        // Go validates the original `tidb_service_scope` spelling through
+        // `pkg/util/naming.Check`, then its SetGlobal hook stores lowercase.
+        if self.name == "tidb_service_scope" {
+            tidb_naming::check(original)
+                .map_err(|error| ValidationError::Refused(error.to_string()))?;
+            return Ok(Validated {
+                value: validated.value.to_ascii_lowercase(),
+                truncated: validated.truncated,
+            });
+        }
         // Go's `tidb_session_alias` validation: the alias is cut to 64 RUNES
         // (not bytes -- a 65-character Chinese alias loses exactly its last
         // character), and then, since it labels log lines as an identifier,

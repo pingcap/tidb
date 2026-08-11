@@ -312,6 +312,50 @@ fn set_global_on_an_instance_variable_succeeds_and_reads_back() {
     );
 }
 
+/// `tidb_service_scope` is a node-wide identifier. Go validates the original
+/// spelling through `pkg/util/naming.Check`, stores its ASCII-lowercase form,
+/// and leaves the previous value untouched when validation fails.
+#[test]
+fn service_scope_uses_the_shared_naming_contract() {
+    let (mut first, mut second, _globals) = two_sessions_sharing_globals();
+
+    first
+        .run("SET GLOBAL tidb_service_scope = 'Scope_1-A'")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut first, "SELECT @@tidb_service_scope"),
+        Some("scope_1-a".to_owned())
+    );
+    assert_eq!(
+        scalar_text(&mut second, "SELECT @@global.tidb_service_scope"),
+        Some("scope_1-a".to_owned())
+    );
+
+    let invalid = "bad scope";
+    let error = first
+        .run(&format!("SET GLOBAL tidb_service_scope = '{invalid}'"))
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1105, "{error:?}");
+    assert_eq!(
+        error.message,
+        "the value 'bad scope' is invalid. It must be 64 characters or fewer and consist only of letters (a-z, A-Z), numbers (0-9), hyphens (-), and underscores (_)"
+    );
+    assert_eq!(
+        scalar_text(&mut first, "SELECT @@tidb_service_scope"),
+        Some("scope_1-a".to_owned()),
+        "a rejected assignment must not mutate the node-wide value"
+    );
+
+    let too_long = "a".repeat(65);
+    let error = first
+        .run(&format!("SET GLOBAL tidb_service_scope = '{too_long}'"))
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1105, "{error:?}");
+    assert!(error.message.contains("64 characters or fewer"));
+}
+
 /// `SELECT @@global.max_connections` -- some drivers ask at connect. Go's
 /// read path does not run `validateScope`, so an instance-scoped variable
 /// answers it.

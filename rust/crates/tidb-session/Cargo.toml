@@ -14,6 +14,7 @@ chrono-tz = { workspace = true }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-mysql = { path = "../tidb-mysql" }
+tidb-naming = { path = "../tidb-naming" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-util = { path = "../tidb-util" }
