@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::de::DeserializeSeed;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use tidb_ast::{CiString, Expr, IndexType, IsTarget, QueryStmt, SelectField, Stmt};
+use tidb_ast::{CiString, Expr, IndexType, IsTarget};
 use tidb_datatype::{FieldType, FieldTypeCode};
 
 use crate::cascades_hash::HashInt64;
@@ -731,21 +731,7 @@ impl IndexInfo {
     /// Go `ConditionExpr`: parses the stored predicate as the sole field in a
     /// synthetic SELECT and returns that field expression.
     pub fn condition_expr(&self) -> Result<Expr, tidb_parser::ParseError> {
-        let sql = format!("select {}", self.condition_expr_string);
-        let mut statements = tidb_parser::parse_multi(&sql)?;
-        let statement = statements.remove(0);
-        if let Stmt::Query(query) = statement {
-            if let QueryStmt::Select(select) = &*query {
-                if let Some(SelectField::Expr { expr, .. }) = select.fields.fields().first() {
-                    return Ok(expr.clone());
-                }
-            }
-        }
-        Err(tidb_parser::ParseError {
-            message: "partial-index condition did not produce one SELECT expression".to_owned(),
-            offset: sql.len(),
-            near_offset: sql.len(),
-        })
+        crate::generated_expr::parse_expression(&self.condition_expr_string)
     }
 }
 

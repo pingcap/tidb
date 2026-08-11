@@ -307,19 +307,10 @@ impl SubstitutionMap {
 /// not parse keeps its raw form rather than being guessed at -- the effect is
 /// a candidate that matches nothing, never one that matches wrongly.
 fn canonical_key(expr_text: &str) -> String {
-    let Ok(tidb_ast::Stmt::Query(query)) = tidb_parser::parse(&format!("select {expr_text}"))
-    else {
+    let Ok(expression) = tidb_model::generated_expr::parse_expression(expr_text) else {
         return expr_text.to_owned();
     };
-    let tidb_ast::QueryStmt::Select(select) = &*query else {
-        return expr_text.to_owned();
-    };
-    match select.fields.fields().first() {
-        Some(tidb_ast::SelectField::Expr { expr, .. }) => {
-            peel(expr).restore_with_flags(generated_restore_flags())
-        }
-        _ => expr_text.to_owned(),
-    }
+    peel(&expression).restore_with_flags(generated_restore_flags())
 }
 
 /// An expression with its parentheses removed, which Go's expression builder

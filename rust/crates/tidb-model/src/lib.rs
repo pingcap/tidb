@@ -24,6 +24,7 @@ pub mod column;
 pub mod db;
 pub mod engine_attribute;
 pub mod flags;
+pub mod generated_expr;
 pub mod go_any;
 pub mod go_duration;
 pub mod go_runtime;

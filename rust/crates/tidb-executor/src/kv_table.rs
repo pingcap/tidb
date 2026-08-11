@@ -124,6 +124,8 @@ pub fn extract_columns_from_index_condition(
         return Ok(Vec::new());
     }
     let expression = index.condition_expr().map_err(|error| error.message)?;
+    let expression = tidb_model::generated_expr::simple_resolve_name(expression, table)
+        .map_err(|error| error.to_string())?;
     extract_columns_from_expression(expression, table, include_virtual_generated_dependencies)
 }
 
@@ -150,13 +152,11 @@ fn extract_columns_from_expression(
             .ok_or_else(|| format!("unknown column '{name}' in partial-index condition"))?;
         let column = column.read();
         if include_virtual_generated_dependencies && column.is_virtual_generated() {
-            let generated_index = tidb_model::IndexInfo {
-                condition_expr_string: column.generated_expr_string.clone(),
-                ..Default::default()
-            };
-            let generated = generated_index
-                .condition_expr()
-                .map_err(|error| error.message)?;
+            let generated =
+                tidb_model::generated_expr::parse_expression(&column.generated_expr_string)
+                    .map_err(|error| error.message)?;
+            let generated = tidb_model::generated_expr::simple_resolve_name(generated, table)
+                .map_err(|error| error.to_string())?;
             columns.extend(extract_columns_from_expression(
                 generated,
                 table,
