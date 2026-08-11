@@ -139,38 +139,35 @@ alternatives: [Investigation & Alternatives](#investigation--alternatives).
 | Rejected on ingest | Inf/NaN, `ERROR 3037` | out-of-range latitude (`ERROR 3617`) and longitude (`ERROR 3616`) |
 | Measurement | planar (Cartesian) | geodesic on the WGS 84 ellipsoid, as MySQL |
 
-Codes and wording are matched as closely as possible on every ingest path
-(`ST_GeomFromText`, the constructors, `ST_GeomFromGeoJSON`, `ST_GeomFromWKB`), as are
-`ERROR 3618` (function not implemented on a geographic SRS) and `ERROR 3643` (SRID does not
-match the column). An unmatched message is a gap to close, not grounds for a different code.
+Codes and wording are matched as closely as possible on every ingest path:
+`ST_GeomFromText`, `ST_GeomFromWKB`, `ST_GeomFromGeoJSON`, and the constructors `Point`,
+`LineString`, `Polygon`, `MultiPoint`, `MultiLineString`, `MultiPolygon` and
+`GeometryCollection`. The same goes for `ERROR 3618` (function not implemented on a
+geographic SRS) and `ERROR 3643` (SRID does not match the column). An unmatched message is
+a gap to close, not grounds for a different code.
 
 Planar versus geodesic follows the **SRS class** (SRID 0 and projected are Cartesian,
 geographic is geodesic), as in MySQL. Adding SRIDs later therefore adds catalog rows and
 per-class parameters, not code paths.
 
-**Catalog.** `information_schema.st_spatial_reference_systems` ships with MySQL's shape
-(`SRS_NAME`, `SRS_ID`, `ORGANIZATION`, `ORGANIZATION_COORDSYS_ID`, `DEFINITION`,
-`DESCRIPTION`) and two hard-coded rows: SRID 0 with an empty name and definition and no
-organization, and 4326 as `WGS 84` / `EPSG` / 4326 with the `GEOGCS["WGS 84",DATUM[...]]`
-definition string. No dataset is imported: SRID 0 is not an EPSG record, and 4326 is one
-stable record taken from the [EPSG dataset](https://epsg.org/) rather than from a MySQL
-install. The table is read-only, so `CREATE SPATIAL REFERENCE SYSTEM` is rejected, which is a
-MySQL-parity gap on the extension path rather than a PostGIS extra. DDL validates
-`SRID n` against the table rather than against a hardcoded pair. Without the table,
-asking which SRIDs a server supports is an unknown-table error.
+**Catalog.** `information_schema.st_spatial_reference_systems` must be queryable and
+return exactly two rows, with MySQL's columns (`SRS_NAME`, `SRS_ID`, `ORGANIZATION`,
+`ORGANIZATION_COORDSYS_ID`, `DEFINITION`, `DESCRIPTION`): SRID 0 with an empty name and
+definition and no organization, and 4326 as `WGS 84` / `EPSG` / 4326 with the
+`GEOGCS["WGS 84",DATUM[...]]` definition string. Whether that is a view over an internal
+table or a synthesized one is an implementation choice; MySQL uses a view over a data
+dictionary table that is itself unreadable, even by `root` (`ERROR 3554`). Both rows are
+what MySQL returns for those two SRIDs, column for column; no dataset is imported. The
+catalog is read-only, so `CREATE SPATIAL REFERENCE SYSTEM` is rejected, and supporting it
+is on the extension path. DDL validates `SRID n` against the catalog rather than against a
+hardcoded pair. Without it, asking which SRIDs a server supports is an unknown-table
+error.
 
-**EPSG attribution.** The 4326 row is an EPSG record, so the dataset's terms of use apply:
-
-| Obligation | Discharged by |
-| --- | --- |
-| Acknowledge IOGP ownership "in any publication or transmission (by whatever means) thereof" | a comment on the constant, a line in the user docs, and a `LICENSES/EPSG-TERMS-OF-USE` entry beside the existing `QL-LICENSE` and `Unicode-DFS-2016-LICENSE` |
-| "Inform anyone to whom you provide the EPSG Facilities of these Terms of Use" | that entry carries the terms text, not a link to it |
-| Modified data must not be attributed to EPSG | the record is reproduced verbatim |
-| No value ascribed to the data, and no distribution for profit | nothing to do here; it constrains anyone repackaging TiDB |
-
-Acknowledgment text: *the EPSG Geodetic Parameter Dataset is owned by IOGP and used under
-its terms of use; TiDB reproduces the EPSG:4326 record unmodified.* The obligations are the
-same when the full dataset is imported later.
+**EPSG attribution.** Filling the catalog from the
+[EPSG dataset](https://epsg.org/) later brings its terms of use with it: IOGP's ownership
+has to be acknowledged wherever the data is published, and anyone given the data has to
+be told those terms, so that work carries a `LICENSES/EPSG-TERMS-OF-USE` entry beside
+the existing `QL-LICENSE` and `Unicode-DFS-2016-LICENSE`.
 
 **Axis order.** EPSG:4326 defines (latitude, longitude), so the first coordinate is the
 latitude, and v1 follows MySQL so that `ST_Latitude`/`ST_Longitude`, distances and WKT
