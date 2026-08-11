@@ -898,6 +898,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             ft.set_flen(10);
             ft
         }
+        "validate_password_strength" if args.len() == 1 => ft_with_flen(int(), 21),
         // Go `uuidVersionFunctionClass`: an int with flen 10, NOT the boolean
         // shape above -- it reports the version nibble, not a yes/no.
         "uuid_version" if args.len() == 1 => {

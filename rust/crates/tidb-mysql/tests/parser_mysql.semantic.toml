@@ -3,6 +3,7 @@ source_commit = "516a2f291b42bf00ecb5cec9019ec344b9e865a0"
 evidence_files = [
   "rust/crates/tidb-mysql/src/lib.rs",
   "rust/crates/tidb-mysql/src/charset.rs",
+  "rust/crates/tidb-mysql/src/unicode_category.rs",
   "rust/crates/tidb-mysql/src/consts.rs",
   "rust/crates/tidb-mysql/src/locale.rs",
   "rust/crates/tidb-mysql/src/privilege.rs",

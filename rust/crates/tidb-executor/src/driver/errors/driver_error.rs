@@ -937,6 +937,12 @@ pub enum DriverError {
     /// `AS` form is refused outright (Go's `encodedPassword` has no case for
     /// it, so it falls to the same `default: return "", false`).
     PasswordFormat,
+    /// Go `variable.ErrNotValidPassword` (1819): the supplied plaintext
+    /// password violated one of the active `validate_password.*` rules.
+    NotValidPassword {
+        /// The policy-specific reason inserted into Go's error template.
+        reason: String,
+    },
     /// Go's plain `errors.Errorf("Unknown user: %s", user)` (`REVOKE` on an
     /// account that does not exist), unquoted `user@host`.
     RevokeUnknownUser {

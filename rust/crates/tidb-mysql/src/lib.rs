@@ -24,6 +24,7 @@ pub mod locale;
 pub mod privilege;
 mod simple_case;
 pub mod types;
+mod unicode_category;
 pub mod util;
 
 pub use charset::*;
@@ -32,4 +33,5 @@ pub use locale::*;
 pub use privilege::*;
 pub use simple_case::{to_lowercase, to_uppercase, GO_UNICODE_VERSION};
 pub use types::*;
+pub use unicode_category::{is_unicode_lowercase_letter, is_unicode_uppercase_letter};
 pub use util::*;

@@ -22,6 +22,31 @@
 
 use crate::show::string_column_output;
 use crate::*;
+use tidb_util::password_validation::{self, GlobalVarAccessor, PasswordUser, PwdError};
+
+struct SessionPasswordGlobals<'a>(&'a SessionVars);
+
+impl GlobalVarAccessor for SessionPasswordGlobals<'_> {
+    type Error = VarError;
+
+    fn get_global_sys_var(&self, name: &str) -> Result<String, Self::Error> {
+        self.0.get_global(name)
+    }
+}
+
+fn password_validation_error(error: PwdError<VarError>) -> DriverError {
+    match error {
+        PwdError::Accessor(error) => crate::variables::var_error(error),
+        PwdError::ParseInt(error) => DriverError::Exec(tidb_executor::ExecError::internal(
+            format!("invalid validate_password numeric setting: {error}"),
+        )),
+        PwdError::NotValid(reason) => DriverError::NotValidPassword { reason },
+    }
+}
+
+fn identity_username(identity: &str) -> &str {
+    identity.rsplit_once('@').map_or(identity, |(user, _)| user)
+}
 
 /// Which non-global `GRANT`/`REVOKE` scope a privilege list is being
 /// validated against -- selects between Go's `mysql.AllDBPrivs` and
@@ -223,6 +248,23 @@ fn ssl_type_of(
 }
 
 impl Session {
+    fn validate_password_if_enabled(&self, password: &str) -> Result<(), DriverError> {
+        let globals = SessionPasswordGlobals(&self.vars);
+        if !password_validation::validation_enabled(&globals).map_err(password_validation_error)? {
+            return Ok(());
+        }
+        let user = self.current_user.as_deref().map(|current| PasswordUser {
+            auth_username: identity_username(current),
+            username: self
+                .login_user
+                .as_deref()
+                .map(identity_username)
+                .unwrap_or_else(|| identity_username(current)),
+        });
+        password_validation::validate_password(password, user, &globals)
+            .map_err(password_validation_error)
+    }
+
     /// `CREATE USER [IF NOT EXISTS] <account> [IDENTIFIED BY '<password>']`.
     /// Go `simple.go`'s `executeCreateUser`, minus resource limits and
     /// account annotations, which this tier has no storage for and therefore
@@ -433,8 +475,16 @@ impl Session {
                 "CREATE USER requires a server front end with a privilege registry",
             ));
         };
+        let default_plugin = self
+            .vars
+            .get_global("default_authentication_plugin")
+            .map_err(crate::variables::var_error)?;
+        if !privilege::is_create_user_plugin(&default_plugin) {
+            return Err(DriverError::PluginIsNotLoaded {
+                plugin: default_plugin,
+            });
+        }
         for spec in users {
-            let (auth_string, plugin) = Self::resolve_auth_string_and_plugin(spec.auth.as_ref())?;
             if spec.dual_password.is_some() {
                 return Err(DriverError::unsupported(
                     "CREATE USER ... RETAIN CURRENT PASSWORD is not supported yet",
@@ -442,6 +492,34 @@ impl Session {
             }
             let user = spec.user.user.as_str();
             let host = spec.user.host.as_str();
+            if registry.user_exists(user, host) {
+                if !if_not_exists {
+                    return Err(DriverError::CreateUserAlreadyExists {
+                        user: user.to_owned(),
+                        host: host.to_owned(),
+                    });
+                }
+                continue;
+            }
+            let (validation_plugin, validation_text) = match spec.auth.as_ref() {
+                None => (default_plugin.as_str(), ""),
+                Some(tidb_ast::CreateUserAuth::By(password)) => {
+                    (default_plugin.as_str(), password.as_str())
+                }
+                Some(tidb_ast::CreateUserAuth::With { plugin, credential }) => (
+                    plugin.as_str(),
+                    match credential {
+                        None => "",
+                        Some(tidb_ast::CreateUserCredential::By(password))
+                        | Some(tidb_ast::CreateUserCredential::As(password)) => password.as_str(),
+                    },
+                ),
+            };
+            if tidb_mysql::is_auth_plugin_clear_text(validation_plugin) {
+                self.validate_password_if_enabled(validation_text)?;
+            }
+            let (auth_string, plugin) =
+                Self::resolve_auth_string_and_plugin(spec.auth.as_ref(), &default_plugin)?;
             // Go processes each account in source order and fails on the
             // FIRST duplicate rather than batching, unlike DROP USER below.
             if registry.create_user_with_plugin(user, host, &auth_string, &plugin) {
@@ -745,18 +823,20 @@ impl Session {
     /// unrecognized plugin name is Go's `ErrPluginIsNotLoaded` (1524): this
     /// tier registers no extension auth plugins, so any name outside
     /// [`privilege::CREATE_USER_PLUGINS`] can never be loaded. A missing
-    /// `IDENTIFIED` clause defaults to `mysql_native_password`, empty
-    /// (passwordless) -- Go's default when `CREATE USER` writes neither
-    /// `BY` nor `WITH`.
+    /// `IDENTIFIED` clause uses the live `default_authentication_plugin` and
+    /// an empty authentication string, as Go's account executor does.
     fn resolve_auth_string_and_plugin(
         auth: Option<&tidb_ast::CreateUserAuth>,
+        default_plugin: &str,
     ) -> Result<(String, String), DriverError> {
-        const DEFAULT_PLUGIN: &str = tidb_mysql::consts::AuthNativePassword;
         match auth {
-            None => Ok((String::new(), DEFAULT_PLUGIN.to_owned())),
+            None => Ok((String::new(), default_plugin.to_owned())),
             Some(tidb_ast::CreateUserAuth::By(password)) => Ok((
-                privilege::encode_password(password),
-                DEFAULT_PLUGIN.to_owned(),
+                privilege::encode_password_for_plugin(
+                    default_plugin,
+                    &privilege::PluginCredential::By(password),
+                )?,
+                default_plugin.to_owned(),
             )),
             Some(tidb_ast::CreateUserAuth::With { plugin, credential }) => {
                 if !privilege::is_create_user_plugin(plugin) {
@@ -829,23 +909,49 @@ impl Session {
             if !bare_self_password_change {
                 self.require_alter_user_privilege(&user, &host)?;
             }
+            if !registry.user_exists(&user, &host) {
+                if alter.if_exists {
+                    continue;
+                }
+                return Err(DriverError::AlterUserMissing { user, host });
+            }
             if let Some(auth) = spec.auth.as_ref() {
                 // A bare `IDENTIFIED BY` (no `WITH <plugin>`) keeps the
                 // account's CURRENT plugin (Go backfills
                 // `spec.AuthOpt.AuthPlugin` from `currentAuthPlugin` rather
                 // than resetting it to `mysql_native_password`); only an
                 // explicit `IDENTIFIED WITH` changes it.
-                let (auth_string, plugin) = match auth {
+                let (auth_string, plugin, plaintext) = match auth {
                     tidb_ast::CreateUserAuth::By(password) => {
                         let current_plugin = registry
                             .plugin(&user, &host)
                             .unwrap_or_else(|| tidb_mysql::consts::AuthNativePassword.to_owned());
-                        (privilege::encode_password(password), current_plugin)
+                        (
+                            privilege::encode_password_for_plugin(
+                                &current_plugin,
+                                &privilege::PluginCredential::By(password),
+                            )?,
+                            current_plugin,
+                            Some(password.as_str()),
+                        )
                     }
-                    tidb_ast::CreateUserAuth::With { .. } => {
-                        Self::resolve_auth_string_and_plugin(Some(auth))?
+                    tidb_ast::CreateUserAuth::With { credential, .. } => {
+                        let (auth_string, plugin) = Self::resolve_auth_string_and_plugin(
+                            Some(auth),
+                            tidb_mysql::consts::AuthNativePassword,
+                        )?;
+                        let plaintext = match credential {
+                            Some(tidb_ast::CreateUserCredential::By(password)) => {
+                                Some(password.as_str())
+                            }
+                            None | Some(tidb_ast::CreateUserCredential::As(_)) => None,
+                        };
+                        (auth_string, plugin, plaintext)
                     }
                 };
+                if plaintext.is_some_and(|_| tidb_mysql::is_auth_plugin_clear_text(&plugin)) {
+                    self.validate_password_if_enabled(plaintext.expect("checked above"))?;
+                }
                 if registry.set_auth_string_and_plugin(&user, &host, &auth_string, &plugin) {
                     // Go writes `password_expired='N'` and a fresh
                     // `Password_last_changed` in the same UPDATE as the new
@@ -1050,7 +1156,14 @@ impl Session {
                 database: tidb_mysql::consts::SystemDB.to_owned(),
             });
         }
-        let auth_string = privilege::encode_password(&set_password.password);
+        let Some(plugin) = registry.plugin(&user, &host) else {
+            return Err(DriverError::SetPasswordNoMatchingRow);
+        };
+        self.validate_password_if_enabled(&set_password.password)?;
+        let auth_string = privilege::encode_password_for_plugin(
+            &plugin,
+            &privilege::PluginCredential::By(&set_password.password),
+        )?;
         if !registry.set_auth_string(&user, &host, &auth_string) {
             return Err(DriverError::SetPasswordNoMatchingRow);
         }

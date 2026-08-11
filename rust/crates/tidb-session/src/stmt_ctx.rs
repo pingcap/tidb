@@ -348,6 +348,15 @@ impl Session {
             .ok()
             .and_then(|value| tidb_executor::BlockEncryptionMode::parse(&value))
             .unwrap_or_default();
+        let password_validation_globals = tidb_util::password_validation::VALIDATE_PASSWORD_SYSVARS
+            .into_iter()
+            .map(|name| {
+                (
+                    name.to_owned(),
+                    self.vars.get_global(name).unwrap_or_default(),
+                )
+            })
+            .collect::<HashMap<_, _>>();
         // `@@tidb_enable_tmp_storage_on_oom` (Go `vardef.EnableTmpStorageOnOOM`,
         // shipped default ON). GLOBAL scope only, exactly like
         // `tidb_mem_oom_action` above -- captured: a session `SET` is refused
@@ -393,6 +402,7 @@ impl Session {
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
                 .with_session_state(current_db, version)
                 .with_user(self.current_user.clone(), self.login_user.clone())
+                .with_global_sysvars(password_validation_globals.clone())
                 .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
                 .with_connection_id(self.connection_id)
                 .with_mem_quota(mem_quota, oom_action)
@@ -421,6 +431,7 @@ impl Session {
         .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
         .with_session_state(current_db, version)
         .with_user(self.current_user.clone(), self.login_user.clone())
+        .with_global_sysvars(password_validation_globals)
         .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
         .with_connection_id(self.connection_id)
         .with_mem_quota(mem_quota, oom_action)

@@ -945,6 +945,14 @@ impl DriverError {
              password algorithm is being used with the PASSWORD() function."
                 .to_owned(),
         ),
+        // Go `variable.ErrNotValidPassword` (1819).
+        DriverError::NotValidPassword { reason } => MysqlError::new(
+            1819,
+            *b"HY000",
+            format!(
+                "Your password does not satisfy the current policy requirements ({reason})"
+            ),
+        ),
         // Go: `errors.Errorf("Unknown user: %s", user)` in `RevokeExec.Next`.
         DriverError::RevokeUnknownUser { user, host } => {
             MysqlError::unknown(format!("Unknown user: {user}@{host}"))

@@ -1205,6 +1205,8 @@ pub fn is_range_graph(character: char) -> bool {
     contains_codepoint(RANGE_GRAPH_CODEPOINTS, character)
 }
 
-pub(crate) fn is_unicode_decimal_digit(character: char) -> bool {
+/// Mirrors Go `unicode.IsDigit` for password and locale classification.
+#[must_use]
+pub fn is_unicode_decimal_digit(character: char) -> bool {
     contains_codepoint(UNICODE_DECIMAL_DIGITS, character)
 }

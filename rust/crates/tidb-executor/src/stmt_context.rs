@@ -200,6 +200,9 @@ pub struct StmtContext {
     version: Option<String>,
     current_user: Option<String>,
     login_user: Option<String>,
+    /// The small set of GLOBAL system-variable values expression builtins
+    /// read during this statement.
+    global_sysvars: Rc<HashMap<String, String>>,
     /// The already-rendered `CURRENT_ROLE()` text; see `Columns::current_role`.
     current_role: Option<String>,
     connection_id: Option<u64>,
@@ -465,6 +468,7 @@ impl StmtContext {
             current_user: None,
             current_role: None,
             login_user: None,
+            global_sysvars: Rc::default(),
             connection_id: None,
             now: None,
             time_zone: None,
@@ -914,6 +918,14 @@ impl StmtContext {
     pub fn with_user(mut self, current_user: Option<String>, login_user: Option<String>) -> Self {
         self.current_user = current_user;
         self.login_user = login_user;
+        self
+    }
+
+    /// Attaches a statement snapshot of the GLOBAL variables used by
+    /// expression builtins.
+    #[must_use]
+    pub fn with_global_sysvars(mut self, values: HashMap<String, String>) -> Self {
+        self.global_sysvars = Rc::new(values);
         self
     }
 
@@ -1430,7 +1442,7 @@ impl Columns for StmtContext {
         self.max_allowed_packet
     }
 
-    fn sysvar(&self, _scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
+    fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
         // Only the variables a builtin reads are answered here; the session
         // resolves every other `@@var` before the driver sees the statement.
         if name.eq_ignore_ascii_case("version") {
@@ -1444,6 +1456,12 @@ impl Columns for StmtContext {
         // trait already has a general variable channel.
         if name.eq_ignore_ascii_case("group_concat_max_len") {
             return Some(Datum::UInt(self.group_concat_max_len));
+        }
+        if matches!(scope, Some(tidb_ast::SysVarScope::Global)) {
+            return self
+                .global_sysvars
+                .get(&name.to_ascii_lowercase())
+                .map(|value| Datum::Bytes(value.as_bytes().to_vec()));
         }
         None
     }

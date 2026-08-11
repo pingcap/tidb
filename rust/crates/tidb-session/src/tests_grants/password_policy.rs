@@ -5,6 +5,126 @@
 use crate::tests_support::*;
 use crate::*;
 
+#[test]
+fn validate_password_enforces_account_writes_and_scores_sql_values() {
+    let mut session = session_with_privileges();
+    let registry = session.privileges.clone().unwrap();
+    session
+        .run("SET GLOBAL validate_password.enable = ON")
+        .unwrap();
+    session
+        .run("SET GLOBAL validate_password.dictionary = '1234'")
+        .unwrap();
+
+    let error = session
+        .run("CREATE USER 'weak'@'%' IDENTIFIED BY '1234'")
+        .unwrap_err();
+    assert!(matches!(&error, DriverError::NotValidPassword { .. }));
+    let wire = error.to_mysql_error();
+    assert_eq!(wire.code, 1819);
+    assert_eq!(wire.state, *b"HY000");
+    assert!(!registry.user_exists("weak", "%"));
+
+    // Go resolves account existence and the configured default plugin before
+    // password validation. A missing account still reports 1133, and a
+    // non-cleartext default plugin bypasses the cleartext policy entirely.
+    assert!(matches!(
+        session.run("SET PASSWORD FOR 'missing'@'%' = '1'"),
+        Err(DriverError::SetPasswordNoMatchingRow)
+    ));
+    assert!(matches!(
+        session.run("ALTER USER 'missing'@'%' IDENTIFIED BY '1'"),
+        Err(DriverError::AlterUserMissing { .. })
+    ));
+    session
+        .run("ALTER USER IF EXISTS 'missing'@'%' IDENTIFIED BY '1'")
+        .unwrap();
+    session
+        .run("SET GLOBAL default_authentication_plugin = 'authentication_ldap_simple'")
+        .unwrap();
+    session.run("CREATE USER 'ldap-default'@'%'").unwrap();
+    assert_eq!(
+        registry.plugin("ldap-default", "%").as_deref(),
+        Some(tidb_mysql::consts::AuthLDAPSimple)
+    );
+    session
+        .run("SET GLOBAL default_authentication_plugin = 'mysql_native_password'")
+        .unwrap();
+
+    session
+        .run(
+            "CREATE USER 'sha2-policy'@'%' IDENTIFIED WITH 'caching_sha2_password' BY '!Abc87654321'",
+        )
+        .unwrap();
+    let sha2_before = registry.auth_string("sha2-policy", "%").unwrap();
+    assert!(matches!(
+        session.run("ALTER USER 'sha2-policy'@'%' IDENTIFIED BY '1234'"),
+        Err(DriverError::NotValidPassword { .. })
+    ));
+    assert_eq!(
+        registry.auth_string("sha2-policy", "%").as_deref(),
+        Some(sha2_before.as_str())
+    );
+    session
+        .run("ALTER USER 'sha2-policy'@'%' IDENTIFIED BY '!Def87654321'")
+        .unwrap();
+    assert_eq!(
+        registry.plugin("sha2-policy", "%").as_deref(),
+        Some(tidb_mysql::consts::AuthCachingSha2Password)
+    );
+    assert!(registry
+        .auth_string("sha2-policy", "%")
+        .is_some_and(|value| value.starts_with("$A$005$")));
+
+    session
+        .run("CREATE USER 'operator'@'%' IDENTIFIED BY '!Abc87654321'")
+        .unwrap();
+    let original = registry.auth_string("operator", "%").unwrap();
+    session.set_user("operator@%".to_owned(), "operator@127.0.0.1".to_owned());
+
+    assert!(matches!(
+        session.run("ALTER USER CURRENT_USER() IDENTIFIED BY '1234'"),
+        Err(DriverError::NotValidPassword { .. })
+    ));
+    assert_eq!(
+        registry.auth_string("operator", "%").as_deref(),
+        Some(original.as_str())
+    );
+    assert!(matches!(
+        session.run("SET PASSWORD = '1234'"),
+        Err(DriverError::NotValidPassword { .. })
+    ));
+    assert_eq!(
+        registry.auth_string("operator", "%").as_deref(),
+        Some(original.as_str())
+    );
+
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT VALIDATE_PASSWORD_STRENGTH('operator123')"
+        )
+        .as_deref(),
+        Some("0")
+    );
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT VALIDATE_PASSWORD_STRENGTH('!Abc12345678')"
+        )
+        .as_deref(),
+        Some("75")
+    );
+    assert_eq!(
+        scalar_text(
+            &mut session,
+            "SELECT VALIDATE_PASSWORD_STRENGTH('!Abc87654321')"
+        )
+        .as_deref(),
+        Some("100")
+    );
+}
+
 /// `FAILED_LOGIN_ATTEMPTS` / `PASSWORD_LOCK_TIME` storage, exactly as Go's
 /// `mysql.user.user_attributes -> '$.Password_locking'` holds it.
 ///

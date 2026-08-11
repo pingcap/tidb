@@ -396,6 +396,12 @@ fn range_graph_matches_unicode_is_one_of_union() {
             .count(),
         3
     );
+    assert!(is_unicode_uppercase_letter('A'));
+    assert!(!is_unicode_uppercase_letter('Ⅳ'));
+    assert!(is_unicode_lowercase_letter('a'));
+    assert!(!is_unicode_lowercase_letter('ⓐ'));
+    assert!(is_unicode_decimal_digit('١'));
+    assert!(!is_unicode_decimal_digit('²'));
 }
 
 #[test]

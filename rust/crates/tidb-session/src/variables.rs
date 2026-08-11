@@ -76,7 +76,7 @@ fn uservar_read_expr(name: &str, value: Option<&Datum>) -> tidb_ast::Expr {
 }
 
 /// Maps a variable error onto the driver error the wire layer renders.
-fn var_error(error: VarError) -> DriverError {
+pub(crate) fn var_error(error: VarError) -> DriverError {
     DriverError::Var(match error {
         VarError::UnknownSystemVariable(name) => {
             tidb_executor::VarErrorKind::UnknownSystemVariable(name)

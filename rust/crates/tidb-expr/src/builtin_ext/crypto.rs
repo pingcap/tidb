@@ -40,9 +40,8 @@
 //!   its deprecation warning remains a statement-context boundary because
 //!   this value-only family dispatch has no warning channel.
 //! - `VALIDATE_PASSWORD_STRENGTH` (`builtinValidatePasswordStrengthSig`):
-//!   reads the current user and `validate_password.*` global system
-//!   variables via the session validation plugin — session state out of
-//!   the dispatch domain.
+//!   ported below through the statement's current-user and GLOBAL sysvar
+//!   snapshot.
 //! - `ENCODE`/`DECODE` (`builtinEncodeSig`/`builtinDecodeSig`): deprecated
 //!   password-keyed stream crypt (`encrypt.SQLEncode`/`SQLDecode`) now has
 //!   its UTF-8/default-charset scalar value contract below; connection
@@ -74,6 +73,7 @@ pub(crate) fn dispatch(
         ("SHA" | "SHA1", 1) => Some(hash_unary::<Sha1>(&vals[0])),
         ("SHA2", 2) => Some(sha2_hash(&vals[0], &vals[1])),
         ("PASSWORD", 1) => Some(password_hash(&vals[0])),
+        ("VALIDATE_PASSWORD_STRENGTH", 1) => Some(validate_password_strength(&vals[0], ctx)),
         ("ENCODE", 2) => Some(sql_encode(&vals[0], &vals[1])),
         ("DECODE", 2) => Some(sql_decode(&vals[0], &vals[1])),
         ("AES_ENCRYPT" | "AES_DECRYPT", _) => {
@@ -351,6 +351,99 @@ fn sql_string_bytes(value: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
     })
 }
 
+struct EvalGlobalVars<'a>(&'a dyn Columns);
+
+impl tidb_util::password_validation::GlobalVarAccessor for EvalGlobalVars<'_> {
+    type Error = EvalError;
+
+    fn get_global_sys_var(&self, name: &str) -> Result<String, Self::Error> {
+        let value = self
+            .0
+            .sysvar(Some(tidb_ast::SysVarScope::Global), name)
+            .ok_or(EvalError::Unsupported(
+                "validate_password globals require a session",
+            ))?;
+        match value {
+            Datum::Bytes(value) => String::from_utf8(value).map_err(|_| {
+                EvalError::IncorrectArguments(format!(
+                    "invalid UTF-8 value for global system variable {name}"
+                ))
+            }),
+            Datum::String(value) => value.as_utf8().map(str::to_owned).map_err(|_| {
+                EvalError::IncorrectArguments(format!(
+                    "invalid UTF-8 value for global system variable {name}"
+                ))
+            }),
+            _ => Err(EvalError::IncorrectArguments(format!(
+                "non-string value for global system variable {name}"
+            ))),
+        }
+    }
+}
+
+fn password_eval_error(error: tidb_util::password_validation::PwdError<EvalError>) -> EvalError {
+    use tidb_util::password_validation::PwdError;
+    match error {
+        PwdError::Accessor(error) => error,
+        PwdError::ParseInt(error) => EvalError::IncorrectArguments(format!(
+            "invalid validate_password numeric setting: {error}"
+        )),
+        PwdError::NotValid(reason) => EvalError::IncorrectArguments(reason),
+    }
+}
+
+fn identity_username(identity: &str) -> &str {
+    identity.rsplit_once('@').map_or(identity, |(user, _)| user)
+}
+
+/// `VALIDATE_PASSWORD_STRENGTH(str)`.
+fn validate_password_strength(value: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    use tidb_util::password_validation::{self, PasswordUser};
+
+    let Some(password) = sql_string_bytes(value)? else {
+        return Ok(Datum::Null);
+    };
+    let password = tidb_datatype::GoString::from_bytes(password).to_utf8_lossy_go();
+    if password.chars().count() < 4 {
+        return Ok(Datum::Int(0));
+    }
+
+    let globals = EvalGlobalVars(ctx);
+    if !password_validation::validation_enabled(&globals).map_err(password_eval_error)? {
+        return Ok(Datum::Int(0));
+    }
+    let current_user = ctx.current_user();
+    let login_user = ctx.login_user();
+    let user = current_user.as_deref().map(|current| PasswordUser {
+        auth_username: identity_username(current),
+        username: login_user
+            .as_deref()
+            .map(identity_username)
+            .unwrap_or_else(|| identity_username(current)),
+    });
+    let warning = password_validation::validate_user_name_in_password(&password, user, &globals)
+        .map_err(password_eval_error)?;
+    if !warning.is_empty() {
+        return Ok(Datum::Int(0));
+    }
+    let warning = password_validation::validate_password_low_policy(&password, &globals)
+        .map_err(password_eval_error)?;
+    if !warning.is_empty() {
+        return Ok(Datum::Int(25));
+    }
+    let warning = password_validation::validate_password_medium_policy(&password, &globals)
+        .map_err(password_eval_error)?;
+    if !warning.is_empty() {
+        return Ok(Datum::Int(50));
+    }
+    if !password_validation::validate_dictionary_password(&password, &globals)
+        .map_err(password_eval_error)?
+    {
+        return Ok(Datum::Int(75));
+    }
+    Ok(Datum::Int(100))
+}
+
 /// `MD5(str)` / `SHA(str)` / `SHA1(str)`: the digest of the argument's
 /// string bytes as lowercase hex (32 chars for MD5, 40 for SHA-1); `NULL`
 /// argument propagates to `NULL`. Port of `builtinMD5Sig.evalString` and
@@ -502,14 +595,100 @@ fn parse_string_i64_saturating(value: &str) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::dispatch;
-    use crate::Datum;
-    use crate::Decimal;
+    use crate::{Columns, Datum, Decimal};
 
     fn call(name: &str, vals: &[Datum]) -> Datum {
         dispatch(name, vals, &crate::NoColumns)
             .expect("name/arity should dispatch to the crypto family")
             .expect("evaluation should succeed")
+    }
+
+    #[derive(Default)]
+    struct PasswordContext {
+        globals: HashMap<String, String>,
+        current_user: Option<String>,
+        login_user: Option<String>,
+    }
+
+    impl Columns for PasswordContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn current_user(&self) -> Option<String> {
+            self.current_user.clone()
+        }
+
+        fn login_user(&self) -> Option<String> {
+            self.login_user.clone()
+        }
+
+        fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
+            matches!(scope, Some(tidb_ast::SysVarScope::Global))
+                .then(|| self.globals.get(name).cloned())
+                .flatten()
+                .map(|value| Datum::Bytes(value.into_bytes()))
+        }
+    }
+
+    fn password_context(enabled: bool) -> PasswordContext {
+        let mut globals = HashMap::from([
+            ("validate_password.enable".to_owned(), "OFF".to_owned()),
+            ("validate_password.policy".to_owned(), "MEDIUM".to_owned()),
+            (
+                "validate_password.check_user_name".to_owned(),
+                "ON".to_owned(),
+            ),
+            ("validate_password.length".to_owned(), "8".to_owned()),
+            (
+                "validate_password.mixed_case_count".to_owned(),
+                "1".to_owned(),
+            ),
+            ("validate_password.number_count".to_owned(), "1".to_owned()),
+            (
+                "validate_password.special_char_count".to_owned(),
+                "1".to_owned(),
+            ),
+            ("validate_password.dictionary".to_owned(), "1234".to_owned()),
+        ]);
+        if enabled {
+            globals.insert("validate_password.enable".to_owned(), "ON".to_owned());
+        }
+        PasswordContext {
+            globals,
+            current_user: Some("testuser@%".to_owned()),
+            login_user: Some("testuser@127.0.0.1".to_owned()),
+        }
+    }
+
+    fn password_call(value: Datum, context: &PasswordContext) -> Datum {
+        dispatch("VALIDATE_PASSWORD_STRENGTH", &[value], context)
+            .expect("password strength should dispatch")
+            .expect("password strength should evaluate")
+    }
+
+    #[test]
+    fn validate_password_strength_go_vectors() {
+        let disabled = password_context(false);
+        assert_eq!(password_call(s("!Abc87654321"), &disabled), Datum::Int(0));
+
+        let enabled = password_context(true);
+        for (input, expected) in [
+            (Datum::Null, Datum::Null),
+            (s("123"), Datum::Int(0)),
+            (Datum::Bytes(vec![b'a', 0xf0, 0x9f, 0x92]), Datum::Int(25)),
+            (s("testuser123"), Datum::Int(0)),
+            (s("resutset123"), Datum::Int(0)),
+            (s("12345"), Datum::Int(25)),
+            (s("12345678"), Datum::Int(50)),
+            (s("!Abc12345678"), Datum::Int(75)),
+            (s("!Abc87654321"), Datum::Int(100)),
+        ] {
+            assert_eq!(password_call(input, &enabled), expected);
+        }
     }
 
     fn s(text: &str) -> Datum {

@@ -46,6 +46,7 @@ pub mod naming;
 pub mod nocopy;
 pub mod paging;
 pub mod partialjson;
+pub mod password_validation;
 pub mod ppcpuusage;
 pub mod prefetch;
 pub mod queue;
