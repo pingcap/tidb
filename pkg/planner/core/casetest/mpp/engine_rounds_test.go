@@ -94,6 +94,41 @@ func createEngineRoundTables(t *testing.T, tk *testkit.TestKit) {
 const engineRoundPointSQL = "select sum(alt_engine_flash.b) from alt_engine_flash join alt_engine_kv" +
 	" on alt_engine_flash.a = alt_engine_kv.b where alt_engine_kv.a = 5 group by alt_engine_flash.c"
 
+// requireMixedEngineRound1Plan asserts that sql's default plan - the one round
+// 1 produces - reads from both TiKV and TiFlash. The engine-restricted rounds
+// arm on exactly that shape, so the failpoint assertions in the gate test only
+// mean something while it holds. Checking it explicitly turns a fixture that
+// stops producing a mixed plan into a readable failure instead of a confusing
+// "an error is expected but got nil" from the round assertion itself.
+func requireMixedEngineRound1Plan(t *testing.T, tk *testkit.TestKit, sql string) {
+	t.Helper()
+	// The alternative rounds would rewrite the plan, so read round 1's plan with
+	// the feature off and restore the caller's setting afterwards.
+	enabled := tk.MustQuery("select @@tidb_opt_enable_alternative_logical_plans").Rows()[0][0]
+	tk.MustExec("set @@tidb_opt_enable_alternative_logical_plans=off")
+	defer tk.MustExec(fmt.Sprintf("set @@tidb_opt_enable_alternative_logical_plans='%v'", enabled))
+	plan := strings.Join(testdata.ConvertRowsToStrings(
+		tk.MustQuery("explain format = 'plan_tree' "+sql).Rows()), "\n")
+	require.True(t, strings.Contains(plan, "Point_Get") || strings.Contains(plan, "cop[tikv]"),
+		"round 1 plan must read from TiKV:\n%s", plan)
+	require.Contains(t, plan, "[tiflash]", "round 1 plan must read from TiFlash:\n%s", plan)
+}
+
+// execToErrDrained runs sql and returns its error, draining the result set
+// before closing it. testkit.ExecToErr closes without draining, which is fine
+// only while planning fails as expected: if an assertion's premise ever breaks
+// the query executes instead, and an undrained MPP result set leaves the mock
+// TiFlash exchange sender blocked on a channel send, which in turn spins
+// unistore's shutdown forever and hangs the whole package until the test
+// binary's timeout.
+func execToErrDrained(tk *testkit.TestKit, sql string) error {
+	res, err := tk.Exec(sql)
+	if res != nil {
+		tk.ResultSetToResult(res, sql)
+	}
+	return err
+}
+
 // TestAlternativeEngineRestrictedRounds compares plan shapes with the
 // tikv-only / tiflash-only alternative rounds off and on: the mixed-engine
 // round-1 plan must be replaced by the cheaper fully-TiFlash plan when the
@@ -181,8 +216,9 @@ func TestAlternativeEngineRestrictedRoundGates(t *testing.T) {
 
 	// Round 1's plan mixes engines (Point_Get on TiKV, TiFlash read for
 	// alt_engine_flash), so the tikv-only round must be armed.
+	requireMixedEngineRound1Plan(t, tk, engineRoundPointSQL)
 	require.NoError(t, failpoint.Enable(engineRoundFailpoint, fmt.Sprintf("return(%q)", "tikv-only:"+engineRoundPointSQL)))
-	require.ErrorContains(t, tk.ExecToErr(engineRoundPointSQL), "unexpected alternative logical plan round")
+	require.ErrorContains(t, execToErrDrained(tk, engineRoundPointSQL), "unexpected alternative logical plan round")
 	require.NoError(t, failpoint.Disable(engineRoundFailpoint))
 
 	// The tiflash-only round must stay disarmed: alt_engine_kv has no TiFlash
@@ -221,7 +257,8 @@ func TestAlternativeEngineRestrictedRoundGates(t *testing.T) {
 	// the primary key keeps alt_engine_kv on TiKV in round 1, so the plan
 	// still mixes engines.
 	setRealTiFlashReplica(t, tk, "alt_engine_kv")
+	requireMixedEngineRound1Plan(t, tk, engineRoundPointSQL)
 	require.NoError(t, failpoint.Enable(engineRoundFailpoint, fmt.Sprintf("return(%q)", "tiflash-only:"+engineRoundPointSQL)))
-	require.ErrorContains(t, tk.ExecToErr(engineRoundPointSQL), "unexpected alternative logical plan round")
+	require.ErrorContains(t, execToErrDrained(tk, engineRoundPointSQL), "unexpected alternative logical plan round")
 	require.NoError(t, failpoint.Disable(engineRoundFailpoint))
 }
