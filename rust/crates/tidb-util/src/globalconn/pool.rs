@@ -139,13 +139,17 @@ pub struct LockFreeCircularPool {
 }
 
 impl LockFreeCircularPool {
+    fn ring_mask(&self) -> u32 {
+        self.cap.wrapping_sub(1)
+    }
+
     /// Initializes with `fill_count` pre-filled IDs `[1, min(fill_count,
     /// cap-1)]`; pass `u32::MAX` to fill the pool (Go `InitExt`).
     pub fn init_ext(&mut self, size: u32, fill_count: u32) {
         self.cap = size;
         self.slots = Vec::with_capacity(size as usize);
 
-        let fill_count = fill_count.min(self.cap - 1);
+        let fill_count = fill_count.min(self.ring_mask());
         for i in 0..fill_count {
             self.slots.push(LockFreePoolItem {
                 value: AtomicU32::new(i + 1),
@@ -166,7 +170,7 @@ impl LockFreeCircularPool {
     /// Re-bases the ring at `head` to unit-test head/tail overflow (Go
     /// `InitForTest`).
     pub fn init_for_test(&mut self, head: u32, fill_count: u32) {
-        let fill_count = fill_count.min(self.cap - 1);
+        let fill_count = fill_count.min(self.ring_mask());
         for i in 0..fill_count {
             let slot = &self.slots[i as usize];
             slot.value.store(i + 1, SeqCst);
@@ -198,7 +202,7 @@ impl IdPool for LockFreeCircularPool {
     }
 
     fn cap(&self) -> i64 {
-        i64::from(self.cap - 1)
+        i64::from(self.ring_mask())
     }
 
     fn put(&self, val: u64) -> bool {
@@ -207,7 +211,7 @@ impl IdPool for LockFreeCircularPool {
             let tail = self.tail.0.load(SeqCst);
             let head = self.head.0.load(SeqCst);
 
-            if tail.wrapping_sub(head) == self.cap - 1 {
+            if tail.wrapping_sub(head) == self.ring_mask() {
                 return false; // full
             }
 
@@ -220,7 +224,7 @@ impl IdPool for LockFreeCircularPool {
                 continue;
             }
 
-            let slot = &self.slots[(tail & (self.cap - 1)) as usize];
+            let slot = &self.slots[(tail & self.ring_mask()) as usize];
             loop {
                 let seq = slot.seq.load(SeqCst);
                 if seq == tail {
@@ -251,7 +255,7 @@ impl IdPool for LockFreeCircularPool {
                 continue;
             }
 
-            let slot = &self.slots[(head & (self.cap - 1)) as usize];
+            let slot = &self.slots[(head & self.ring_mask()) as usize];
             loop {
                 let seq = slot.seq.load(SeqCst);
                 if seq == head.wrapping_add(1) {
@@ -272,8 +276,8 @@ impl fmt::Display for LockFreeCircularPool {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let head = self.head.0.load(SeqCst);
         let tail = self.tail.0.load(SeqCst);
-        let head_slot = &self.slots[(head & (self.cap - 1)) as usize];
-        let tail_slot = &self.slots[(tail & (self.cap - 1)) as usize];
+        let head_slot = &self.slots[(head & self.ring_mask()) as usize];
+        let tail_slot = &self.slots[(tail & self.ring_mask()) as usize];
         let length = tail.wrapping_sub(head);
         write!(
             f,

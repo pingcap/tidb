@@ -1,0 +1,19 @@
+go_package = "pkg/util/globalconn"
+source_commit = "665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f"
+evidence_files = [
+  "rust/crates/tidb-util/src/globalconn/mod.rs",
+  "rust/crates/tidb-util/src/globalconn/pool.rs",
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/tests/globalconn_contract.rs",
+  "rust/crates/tidb-server/src/sql_node.rs",
+  "rust/crates/tidb-server/tests/all.rs",
+  "rust/crates/tidb-server/tests/concurrent_mysql_sessions_source.rs",
+  "rust/crates/tidb-server/tests/pipeline_mysql_client_source.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "globalconn::"],
+  ["test", "-p", "tidb-util", "--test", "globalconn_contract"],
+  ["test", "-p", "tidb-server", "--test", "all", "concurrent_mysql_sessions_source::fixed_workers_hold_three_authenticated_sessions_concurrently_and_drain_all", "--", "--exact"],
+  ["test", "-p", "tidb-server", "--test", "all", "pipeline_mysql_client_source::mysql_client_reads_the_process_list_and_kills_by_id", "--", "--exact"],
+  ["check", "-p", "tidb-server", "--all-targets"],
+]
