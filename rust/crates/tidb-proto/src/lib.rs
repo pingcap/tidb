@@ -63,6 +63,17 @@ pub mod etcdserverpb {
     include!(concat!(env!("OUT_DIR"), "/etcdserverpb.rs"));
 }
 
+/// The generated dependency-closed BR stream-backup task package.
+pub mod backup {
+    include!(concat!(env!("OUT_DIR"), "/backup.rs"));
+}
+
+/// The generated dependency-closed encryption package used by BR task
+/// security configuration.
+pub mod encryptionpb {
+    include!(concat!(env!("OUT_DIR"), "/encryptionpb.rs"));
+}
+
 pub use coprocessor::{
     BatchRequest as CoprocessorBatchRequest, ExecDetailsV2 as CoprocessorExecDetailsV2,
     KeyRange as CoprocessorKeyRange, Peer as CoprocessorPeer,
@@ -398,6 +409,75 @@ mod tests {
         assert_eq!(
             Error::decode(present.encode_to_vec().as_slice()).unwrap(),
             present
+        );
+    }
+
+    #[test]
+    fn br_stream_backup_task_projection_preserves_wire_contract() {
+        use crate::{
+            backup::{
+                storage_backend, stream_backup_task_security_config, AzureBlobStorage, CipherInfo,
+                CloudDynamic, CompressionType, Gcs, Hdfs, Local, Noop, StorageBackend,
+                StreamBackupTaskInfo, StreamBackupTaskSecurityConfig, S3,
+            },
+            encryptionpb::EncryptionMethod,
+        };
+
+        let backends = [
+            (storage_backend::Backend::Noop(Noop {}), 0x0a),
+            (storage_backend::Backend::Local(Local::default()), 0x12),
+            (storage_backend::Backend::S3(S3::default()), 0x1a),
+            (storage_backend::Backend::Gcs(Gcs::default()), 0x22),
+            (
+                storage_backend::Backend::CloudDynamic(CloudDynamic::default()),
+                0x2a,
+            ),
+            (storage_backend::Backend::Hdfs(Hdfs::default()), 0x32),
+            (
+                storage_backend::Backend::AzureBlobStorage(AzureBlobStorage::default()),
+                0x3a,
+            ),
+        ];
+        for (backend, expected_tag) in backends {
+            let storage = StorageBackend {
+                backend: Some(backend),
+            };
+            let encoded = storage.encode_to_vec();
+            assert_eq!(encoded[0], expected_tag);
+            assert_eq!(StorageBackend::decode(encoded.as_slice()).unwrap(), storage);
+        }
+
+        let task = StreamBackupTaskInfo {
+            storage: Some(StorageBackend {
+                backend: Some(storage_backend::Backend::S3(S3 {
+                    bucket: "b".to_owned(),
+                    ..Default::default()
+                })),
+            }),
+            start_ts: 1,
+            end_ts: 2,
+            name: "n".to_owned(),
+            table_filter: vec!["*.*".to_owned()],
+            compression_type: CompressionType::Zstd as i32,
+            security_config: Some(StreamBackupTaskSecurityConfig {
+                encryption: Some(
+                    stream_backup_task_security_config::Encryption::PlaintextDataKey(CipherInfo {
+                        cipher_type: EncryptionMethod::Aes256Ctr as i32,
+                        cipher_key: vec![0xaa],
+                    }),
+                ),
+            }),
+        };
+        let encoded = task.encode_to_vec();
+        for field_tag in [0x0a, 0x10, 0x18, 0x22, 0x2a, 0x30, 0x3a] {
+            assert!(
+                encoded.contains(&field_tag),
+                "missing task field tag {field_tag:#x}"
+            );
+        }
+        assert_eq!(
+            StreamBackupTaskInfo::decode(encoded.as_slice()).unwrap(),
+            task
         );
     }
 }

@@ -1,0 +1,18 @@
+go_package = "pkg/util/redact"
+source_commit = "ae70341a13841576092042b0f2e87dfdf6b675db"
+evidence_files = [
+  "rust/Cargo.lock",
+  "rust/crates/tidb-proto/Cargo.toml",
+  "rust/crates/tidb-proto/build.rs",
+  "rust/crates/tidb-proto/proto/brpb.proto",
+  "rust/crates/tidb-proto/proto/encryptionpb.proto",
+  "rust/crates/tidb-proto/src/lib.rs",
+  "rust/crates/tidb-util/Cargo.toml",
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/src/redact.rs",
+  "rust/crates/tidb-util/src/redact/compact_text.rs",
+]
+commands = [
+  ["test", "-p", "tidb-proto", "--lib", "tests::br_stream_backup_task_projection_preserves_wire_contract", "--", "--exact"],
+  ["test", "-p", "tidb-util", "--lib", "redact::tests"],
+]

@@ -1,0 +1,59 @@
+// Dependency-closed projection of kvproto encryptionpb.proto at
+// v0.0.0-20260622063236-b41e86365ce0. Field numbers, cardinalities, enum
+// values, and oneof branches are unchanged.
+syntax = "proto3";
+package encryptionpb;
+
+enum EncryptionMethod {
+  UNKNOWN = 0;
+  PLAINTEXT = 1;
+  AES128_CTR = 2;
+  AES192_CTR = 3;
+  AES256_CTR = 4;
+  SM4_CTR = 5;
+}
+
+message MasterKey {
+  oneof backend {
+    MasterKeyPlaintext plaintext = 1;
+    MasterKeyFile file = 2;
+    MasterKeyKms kms = 3;
+  }
+}
+
+message MasterKeyPlaintext {}
+
+message MasterKeyFile {
+  string path = 1;
+}
+
+message MasterKeyKms {
+  string vendor = 1;
+  string key_id = 2;
+  string region = 3;
+  string endpoint = 4;
+  AzureKms azure_kms = 5;
+  GcpKms gcp_kms = 6;
+  AwsKms aws_kms = 7;
+}
+
+message AzureKms {
+  string tenant_id = 1;
+  string client_id = 2;
+  string client_secret = 3;
+  string key_vault_url = 4;
+  string hsm_name = 5;
+  string hsm_url = 6;
+  string client_certificate = 7;
+  string client_certificate_path = 8;
+  string client_certificate_password = 9;
+}
+
+message GcpKms {
+  string credential = 1;
+}
+
+message AwsKms {
+  string access_key = 1;
+  string secret_access_key = 2;
+}

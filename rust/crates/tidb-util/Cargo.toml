@@ -25,6 +25,7 @@ tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-naming = { path = "../tidb-naming" }
+tidb-proto = { path = "../tidb-proto" }
 tidb-tikvutil = { path = "../tidb-tikvutil" }
 aes.workspace = true
 chrono.workspace = true
