@@ -80,8 +80,8 @@ func TestDialEtcdWithCfgUsesMetaServiceGroup(t *testing.T) {
 	defer metaCluster.Terminate(t)
 
 	keyspaceMeta := &keyspacepb.KeyspaceMeta{
-		Id:   43,
-		Name: "ks2",
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 43},
+		Name:     "ks2",
 		Config: map[string]string{
 			"gc_management_type":      "keyspace_level",
 			metaservice.GroupIDKey:    "group2",
@@ -140,8 +140,8 @@ func TestNewEtcdClientForLocalBackendUsesMetaServiceGroup(t *testing.T) {
 	defer metaCluster.Terminate(t)
 
 	keyspaceMeta := &keyspacepb.KeyspaceMeta{
-		Id:   44,
-		Name: "ks3",
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 44},
+		Name:     "ks3",
 		Config: map[string]string{
 			"gc_management_type":      "keyspace_level",
 			metaservice.GroupIDKey:    "group3",
@@ -182,9 +182,9 @@ func TestNewEtcdClientForLocalBackendUsesMetaServiceGroup(t *testing.T) {
 	require.Contains(t, string(resp.Kvs[0].Key), "checksum-key")
 
 	globalKeyspaceMeta := &keyspacepb.KeyspaceMeta{
-		Id:     45,
-		Name:   "ks-global",
-		Config: map[string]string{"gc_management_type": "keyspace_level"},
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 45},
+		Name:     "ks-global",
+		Config:   map[string]string{"gc_management_type": "keyspace_level"},
 	}
 	globalCodec, err := tikv.NewCodecV2(tikv.ModeTxn, globalKeyspaceMeta)
 	require.NoError(t, err)

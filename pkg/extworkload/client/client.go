@@ -135,7 +135,7 @@ func (c *grpcClient) Close() error { return c.conn.Close() }
 
 func (c *grpcClient) header() *pb.RequestHeader {
 	return &pb.RequestHeader{
-		KeyspaceId:   c.opt.KeyspaceID,
+		Keyspace:     &pb.RequestHeader_KeyspaceId{KeyspaceId: c.opt.KeyspaceID},
 		KeyspaceName: c.opt.KeyspaceName,
 		TidbPool:     c.opt.TiDBPool,
 	}
