@@ -3295,13 +3295,7 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(vardef.IgnoreInlistPlanDigest.Load()), nil
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBTTLJobEnable, Value: BoolToOnOff(vardef.DefTiDBTTLJobEnable), Type: vardef.TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-		enable := TiDBOptOn(s)
-		if UpdateExternalWorkloadTTLJobEnable != nil {
-			if err := UpdateExternalWorkloadTTLJobEnable(ctx, enable); err != nil {
-				return err
-			}
-		}
-		vardef.EnableTTLJob.Store(enable)
+		vardef.EnableTTLJob.Store(TiDBOptOn(s))
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableTTLJob.Load()), nil

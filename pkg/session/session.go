@@ -1451,6 +1451,13 @@ func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string
 	if value, err = sv.Validate(s.sessionVars, value, vardef.ScopeGlobal); err != nil {
 		return err
 	}
+	// SysVar.SetGlobal is also called while rebuilding the sysvar cache. Keep
+	// the external notification on the explicit global update path.
+	if sv.Name == vardef.TiDBTTLJobEnable && variable.UpdateExternalWorkloadTTLJobEnable != nil {
+		if err = variable.UpdateExternalWorkloadTTLJobEnable(ctx, variable.TiDBOptOn(value)); err != nil {
+			return err
+		}
+	}
 	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, false); err != nil {
 		return err
 	}
