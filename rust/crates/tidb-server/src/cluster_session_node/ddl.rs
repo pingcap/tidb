@@ -34,6 +34,7 @@ use tidb_executor::StmtContext;
 use tidb_pd_client::EtcdClient;
 
 use crate::cluster_session::{cluster_table, kv_index, AutoIdSource};
+use crate::sql_node::{cluster_ddl_error, SqlQueryError};
 
 /// This node's one route to the cluster's stored schema.
 ///
@@ -49,7 +50,7 @@ pub trait ClusterDdl: Send + Sync {
     /// The two halves are one method because a caller that published without
     /// refreshing would answer the next statement from a catalog it knows to
     /// be stale.
-    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, String>;
+    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError>;
 }
 
 /// The production catalog writer: the optimistic 2PC over the node's one
@@ -112,7 +113,7 @@ impl RealClusterDdl {
 }
 
 impl ClusterDdl for RealClusterDdl {
-    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, String> {
+    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError> {
         let notifier = self
             .notifier
             .as_ref()
@@ -124,7 +125,7 @@ impl ClusterDdl for RealClusterDdl {
             notifier,
             &KvTableIndexBackfiller,
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(cluster_ddl_error)?;
         self.refresh_catalog();
         Ok(report)
     }

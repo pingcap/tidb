@@ -13,6 +13,10 @@
 // limitations under the License.
 
 //! Direct storage-driver error-conversion obligations from TiDB's Go tests.
+//!
+//! Go's `ToTiDBErr(nil) == nil` branch is represented structurally in Rust:
+//! callers invoke this converter only for the `Err` arm of a `Result`, so the
+//! `Ok` arm constructs no `StorageDriverError` and needs no sentinel value.
 
 use tidb_error::terror::{TerrorClass, CODE_RESULT_UNDETERMINED};
 use tidb_error::tidb;
@@ -119,6 +123,30 @@ fn unrecognized_errors_preserve_outer_context() {
         to_tidb_driver_error(&source).to_string(),
         "outer: client detail"
     );
+}
+
+#[test]
+fn explicit_region_unavailable_is_distinct_from_an_untyped_region_diagnostic() {
+    let ConvertedDriverError::Terror(explicit) =
+        to_tidb_driver_error(&StorageDriverError::RegionUnavailable)
+    else {
+        panic!("the explicit client-go identity must map to TiDB error 9005")
+    };
+    assert_eq!(
+        explicit.code().value(),
+        isize::try_from(tidb::errcode::ErrRegionUnavailable)
+            .expect("test error code must fit the source int domain")
+    );
+
+    let generic = StorageDriverError::Other("epoch not match".to_owned())
+        .context("region cache rejected response");
+    assert_eq!(
+        to_tidb_driver_error(&generic),
+        ConvertedDriverError::Passthrough(generic.clone())
+    );
+    assert!(to_tidb_driver_error(&generic)
+        .to_string()
+        .contains("epoch not match"));
 }
 
 #[test]

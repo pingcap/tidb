@@ -12,8 +12,12 @@ use super::super::*;
 use super::mock_cluster::*;
 use super::mock_seams::*;
 use crate::configured_user_store::ConfiguredUserStore;
+use crate::connection_writers::{write_query_error, ConnectionPacketOutput};
+use crate::mysql_connection::MysqlConnectionError;
 use crate::resultset_source::ResultSetSource;
-use crate::sql_node::{ConnectionCancellation, ConnectionClose};
+use crate::sql_node::{
+    cluster_commit_error, ConnectionCancellation, ConnectionClose, SqlQueryError,
+};
 use sha1::{Digest, Sha1};
 use std::net::SocketAddr;
 use tidb_ast::CiString;
@@ -23,6 +27,10 @@ use tidb_model::column::ColumnInfo as ModelColumnInfo;
 use tidb_model::db::DBInfo;
 use tidb_model::index::{IndexColumn, IndexInfo};
 use tidb_model::{SchemaState, TableInfo};
+use tidb_txnkv::transaction::{
+    OptimisticCommitOutcome, OptimisticTransactionReceipt, TransactionCause,
+    UndeterminedTransaction,
+};
 
 pub(super) const ABC_HASH: &str = "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E";
 pub(super) const SALT: [u8; 20] = [7; 20];
@@ -30,6 +38,42 @@ pub(super) const SALT: [u8; 20] = [7; 20];
 pub(super) const PRI_KEY_FLAG: u32 = 1 << 1;
 /// Go `mysql.AutoIncrementFlag`.
 pub(super) const AUTO_INCREMENT_FLAG: u32 = 1 << 9;
+
+#[derive(Default)]
+struct RecordingPacketOutput(Vec<Vec<u8>>);
+
+impl ConnectionPacketOutput for RecordingPacketOutput {
+    fn write_packet(&mut self, sequence: u8, payload: &[u8]) -> Result<u8, MysqlConnectionError> {
+        self.0.push(payload.to_vec());
+        Ok(sequence.wrapping_add(1))
+    }
+}
+
+pub(super) fn assert_undetermined_closes_without_packet(query_error: &SqlQueryError) {
+    let mut output = RecordingPacketOutput::default();
+    let write_error = write_query_error(&mut output, query_error, true)
+        .expect_err("an unknown commit verdict must close the connection");
+    assert!(matches!(
+        write_error,
+        MysqlConnectionError::ResultUndetermined(message)
+            if message == tidb_error::terror::ERR_RESULT_UNDETERMINED.message()
+    ));
+    assert!(
+        output.0.is_empty(),
+        "an unknown commit verdict must not write an ERR packet or any bytes"
+    );
+}
+
+pub(super) fn undetermined_cluster_commit_error(subject: &str) -> SqlQueryError {
+    let outcome = OptimisticCommitOutcome::Undetermined(UndeterminedTransaction {
+        receipt: OptimisticTransactionReceipt::new(1, 2, b"key".to_vec(), 1),
+        cause: TransactionCause::Transport {
+            detail: "commit response lost".to_owned(),
+        },
+    });
+    cluster_commit_error(&outcome, subject)
+        .expect("an unknown commit verdict must produce a connection-fatal error")
+}
 
 /// A `BIGINT AUTO_INCREMENT PRIMARY KEY` column: the one shape whose written
 /// value the server, not the client, decides.
@@ -259,13 +303,83 @@ pub(super) fn open_session() -> (ClusterServerSession, MockNode) {
 /// writer -- or a peer that must notice a DDL -- expressible in SQL rather
 /// than in raw keys.
 pub(super) fn open_session_on(node: &MockNode) -> ClusterServerSession {
-    let cluster = Arc::clone(&node.cluster);
-    let factory = ClusterSessionFactory::new(
-        Arc::new(MockTransactions(cluster)),
+    open_session_on_with_seams(
+        node,
         Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+    )
+}
+
+/// Opens a connection with an injected catalog writer, so error-path tests can
+/// drive the same DDL route without constructing a real TiKV authority.
+pub(super) fn open_session_on_with_ddl(
+    node: &MockNode,
+    ddl: Arc<dyn ClusterDdl>,
+) -> ClusterServerSession {
+    open_session_on_with_seams(
+        node,
+        ddl,
+        Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
+        Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+    )
+}
+
+pub(super) fn open_session_on_with_accounts(
+    node: &MockNode,
+    accounts: Arc<dyn ClusterAccountWriter>,
+) -> ClusterServerSession {
+    open_session_on_with_seams(
+        node,
+        Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
+        accounts,
+        Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
+        Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+    )
+}
+
+pub(super) fn open_session_on_with_sysvars(
+    node: &MockNode,
+    sysvars: Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
+) -> ClusterServerSession {
+    open_session_on_with_seams(
+        node,
+        Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
+        Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
+        sysvars,
+        Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+    )
+}
+
+pub(super) fn open_session_on_with_analyze(
+    node: &MockNode,
+    analyze: Arc<dyn ClusterAnalyze>,
+) -> ClusterServerSession {
+    open_session_on_with_seams(
+        node,
+        Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
+        Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
+        analyze,
+    )
+}
+
+fn open_session_on_with_seams(
+    node: &MockNode,
+    ddl: Arc<dyn ClusterDdl>,
+    accounts: Arc<dyn ClusterAccountWriter>,
+    sysvars: Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
+    analyze: Arc<dyn ClusterAnalyze>,
+) -> ClusterServerSession {
+    let cluster = Arc::clone(&node.cluster);
+    let factory = ClusterSessionFactory::new(
+        Arc::new(MockTransactions(cluster)),
+        ddl,
+        accounts,
+        sysvars,
+        analyze,
         Arc::clone(&node.catalog),
         node.accounts.live.clone(),
         node.sysvars.live.clone(),

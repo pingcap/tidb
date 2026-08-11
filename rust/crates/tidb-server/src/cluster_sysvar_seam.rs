@@ -54,9 +54,11 @@ use tidb_pd_client::EtcdClient;
 use tidb_session::vars::GlobalSysvars;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, ProductionOptimisticTransaction, RealOptimisticTransactionOpener,
-    MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    ProductionOptimisticTransaction, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_MUTATIONS,
+    MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
+
+use crate::sql_node::{cluster_commit_error, SqlQueryError};
 
 /// This node's one route to the cluster's stored `SET GLOBAL` overrides.
 ///
@@ -87,7 +89,7 @@ pub trait PendingSysvarChange {
     /// empty answer means the statement stored the value the cluster already
     /// had (or reset a variable with no stored row), and nothing was written
     /// or announced.
-    fn commit(self: Box<Self>) -> Result<Vec<String>, String>;
+    fn commit(self: Box<Self>) -> Result<Vec<String>, SqlQueryError>;
 }
 
 /// The production sysvar writer: one real transaction per statement, the
@@ -162,11 +164,11 @@ impl PendingSysvarChange for RealPendingSysvarChange {
         self.scratch.clone()
     }
 
-    fn commit(mut self: Box<Self>) -> Result<Vec<String>, String> {
+    fn commit(mut self: Box<Self>) -> Result<Vec<String>, SqlQueryError> {
         let mut transaction = self
             .transaction
             .take()
-            .ok_or_else(|| "the sysvar change was already committed".to_owned())?;
+            .ok_or_else(|| SqlQueryError::unknown("the sysvar change was already committed"))?;
         // The scratch table's current overrides ARE the desired image: it was
         // seeded from this same snapshot's own stored rows and then the
         // statement ran against it, so a name the statement reset to DEFAULT
@@ -177,27 +179,21 @@ impl PendingSysvarChange for RealPendingSysvarChange {
         let plan = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
             plan_sysvar_write(&mut snapshot, &self.catalog, &desired, utc_now_timestamp())
-                .map_err(|error| error.to_string())?
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?
         };
         if plan.is_empty() {
             transaction
                 .finish_without_writes()
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
             return Ok(Vec::new());
         }
         let changed = plan.changed;
         let call = UnaryCallContext::with_timeout(self.timeout);
-        match transaction
+        let outcome = transaction
             .commit(plan.mutations, &call)
-            .map_err(|error| error.to_string())?
-        {
-            OptimisticCommitOutcome::Committed(_) => {}
-            other => {
-                return Err(format!(
-                    "the sysvar change was not committed: {:?}",
-                    other.state()
-                ))
-            }
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        if let Some(error) = cluster_commit_error(&outcome, "sysvar change") {
+            return Err(error);
         }
         // Published only now: every clone of the live table sees the change
         // the instant it is durable in the cluster, and never before.

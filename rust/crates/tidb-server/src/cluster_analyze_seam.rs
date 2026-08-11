@@ -64,6 +64,8 @@ use tidb_exec::real_tikv_stats::load_stats_snapshot_from_cluster;
 use tidb_exec::stats_watch::SharedStats;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
+use crate::sql_node::{cluster_analyze_error, SqlQueryError};
+
 /// One table's physical ID paired with the declared types its stored
 /// histogram bounds decode against -- the shape
 /// [`load_stats_snapshot_from_cluster`] takes.
@@ -76,7 +78,7 @@ type StatsTarget = (i64, BTreeMap<i64, tidb_datatype::FieldType>);
 /// cluster. The production implementation is [`RealClusterAnalyze`].
 pub trait ClusterAnalyze: Send + Sync {
     /// Analyzes one table and stores its statistics.
-    fn execute(&self, statement: &AnalyzeStatement) -> Result<ClusterAnalyzeReport, String>;
+    fn execute(&self, statement: &AnalyzeStatement) -> Result<ClusterAnalyzeReport, SqlQueryError>;
 }
 
 /// The production analyzer: one real transaction per table, the optimistic
@@ -155,8 +157,9 @@ impl RealClusterAnalyze {
 }
 
 impl ClusterAnalyze for RealClusterAnalyze {
-    fn execute(&self, statement: &AnalyzeStatement) -> Result<ClusterAnalyzeReport, String> {
-        let report = commit_cluster_analyze(&self.opener, statement, self.timeout)?;
+    fn execute(&self, statement: &AnalyzeStatement) -> Result<ClusterAnalyzeReport, SqlQueryError> {
+        let report = commit_cluster_analyze(&self.opener, statement, self.timeout)
+            .map_err(cluster_analyze_error)?;
         self.refresh_stats();
         Ok(report)
     }

@@ -27,6 +27,7 @@
 //! makes a Go TiDB's concurrent `ANALYZE` a plain write conflict at prewrite:
 //! both write the same keys, and exactly one of them commits.
 
+use std::fmt;
 use std::time::Duration;
 
 use tidb_txnkv::rpc::UnaryCallContext;
@@ -106,6 +107,28 @@ pub struct ClusterAnalyzeReport {
     pub topn_count: usize,
 }
 
+/// Why an `ANALYZE TABLE` transaction did not produce a committed report.
+#[derive(Debug)]
+pub enum ClusterAnalyzeError {
+    /// The commit may have landed, so the server must not report failure.
+    Undetermined(String),
+    /// A determinate failure with its existing diagnostic.
+    Other(String),
+}
+
+impl fmt::Display for ClusterAnalyzeError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Undetermined(detail) => {
+                write!(formatter, "execution result undetermined: {detail}")
+            }
+            Self::Other(detail) => formatter.write_str(detail),
+        }
+    }
+}
+
+impl std::error::Error for ClusterAnalyzeError {}
+
 /// `mysql.stats_meta.count` as the sample-rate rule reads it.
 ///
 /// Go's `RealtimeCount` is an `int64`, so a stored count past `i64::MAX` is
@@ -124,15 +147,16 @@ pub fn commit_cluster_analyze(
     opener: &RealOptimisticTransactionOpener,
     statement: &AnalyzeStatement,
     timeout: Duration,
-) -> Result<ClusterAnalyzeReport, String> {
+) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {
     let call = UnaryCallContext::with_timeout(timeout);
     let mut transaction = opener
         .begin(ANALYZE_MAX_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
     let start_ts = transaction.start_ts();
     let planned = {
         let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
-        let catalog = load_cluster_catalog(&mut snapshot).map_err(|error| error.to_string())?;
+        let catalog = load_cluster_catalog(&mut snapshot)
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         let table = catalog
             .databases
             .iter()
@@ -145,10 +169,12 @@ pub fn commit_cluster_analyze(
                 })
             })
             .ok_or_else(|| {
-                SystemTableError::Missing {
-                    name: format!("{}.{}", statement.schema, statement.table),
-                }
-                .to_string()
+                ClusterAnalyzeError::Other(
+                    SystemTableError::Missing {
+                        name: format!("{}.{}", statement.schema, statement.table),
+                    }
+                    .to_string(),
+                )
             })?
             .clone();
         // The sample rate Go derives from `RealtimeCount`: what the table's
@@ -173,9 +199,9 @@ pub fn commit_cluster_analyze(
             realtime_count,
             start_ts,
         )
-        .map_err(|error: AnalyzeError| error.to_string())?;
+        .map_err(|error: AnalyzeError| ClusterAnalyzeError::Other(error.to_string()))?;
         let write = plan_stats_write(&mut snapshot, &catalog, &report.stats, utc_now_timestamp())
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
         (report, write)
     };
     let (report, write) = planned;
@@ -183,8 +209,10 @@ pub fn commit_cluster_analyze(
     if write.is_empty() {
         transaction
             .finish_without_writes()
-            .map_err(|error| error.to_string())?;
-        return Err("this ANALYZE produced no statistics to store".to_owned());
+            .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+        return Err(ClusterAnalyzeError::Other(
+            "this ANALYZE produced no statistics to store".to_owned(),
+        ));
     }
     let receipt = ClusterAnalyzeReport {
         table_id: report.stats.table_id,
@@ -198,13 +226,16 @@ pub fn commit_cluster_analyze(
     };
     match transaction
         .commit(write.mutations, &call)
-        .map_err(|error| error.to_string())?
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
     {
         OptimisticCommitOutcome::Committed(_) => Ok(receipt),
-        other => Err(format!(
+        OptimisticCommitOutcome::Undetermined(undetermined) => Err(
+            ClusterAnalyzeError::Undetermined(format!("{:?}", undetermined.cause)),
+        ),
+        other => Err(ClusterAnalyzeError::Other(format!(
             "the statistics were not committed: {:?}",
             other.state()
-        )),
+        ))),
     }
 }
 

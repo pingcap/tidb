@@ -5,8 +5,43 @@
 
 use super::super::*;
 use super::node_fixture::*;
+use crate::sql_node::{cluster_ddl_error, SqlQueryError};
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
+use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
+use tidb_exec::real_tikv_ddl::classify_session_ddl_commit_error;
+use tidb_txnkv::transaction::{
+    OptimisticCommitOutcome, OptimisticTransactionReceipt, TransactionCause,
+    UndeterminedTransaction,
+};
+
+struct UndeterminedDdl(SqlQueryError);
+
+impl ClusterDdl for UndeterminedDdl {
+    fn execute(&self, _: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError> {
+        Err(self.0.clone())
+    }
+}
+
+#[test]
+fn full_cluster_ddl_keeps_an_undetermined_verdict_connection_fatal() {
+    let outcome = OptimisticCommitOutcome::Undetermined(UndeterminedTransaction {
+        receipt: OptimisticTransactionReceipt::new(1, 2, b"key".to_vec(), 1),
+        cause: TransactionCause::Transport {
+            detail: "commit response lost".to_owned(),
+        },
+    });
+    let lock_error = commit_outcome_to_sql_error(&outcome)
+        .expect_err("an unknown commit verdict must not answer success");
+    let ddl_error = classify_session_ddl_commit_error(61, lock_error);
+    let query_error = cluster_ddl_error(ddl_error);
+    let node = MockNode::start();
+    let mut session = open_session_on_with_ddl(&node, Arc::new(UndeterminedDdl(query_error)));
+    let query_error = session
+        .execute_write("CREATE DATABASE uncertain")
+        .expect_err("the DDL cannot answer success when its commit response was lost");
+    assert_undetermined_closes_without_packet(&query_error);
+}
 
 /// A stored-schema change the cluster DDL path cannot express keeps a
 /// precise refusal -- and it names its own reason rather than a generic

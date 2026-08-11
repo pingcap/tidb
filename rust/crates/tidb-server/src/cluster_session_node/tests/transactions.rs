@@ -13,7 +13,30 @@ use super::super::*;
 use super::node_fixture::*;
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
-use tidb_exec::pessimistic_lock_error::ERR_WRITE_CONFLICT;
+use tidb_exec::pessimistic_lock_error::{commit_outcome_to_sql_error, ERR_WRITE_CONFLICT};
+use tidb_txnkv::transaction::{
+    OptimisticCommitOutcome, OptimisticTransactionReceipt, TransactionCause,
+    UndeterminedTransaction,
+};
+
+/// Go `pkg/store/driver/error.ToTiDBErr` preserves the result-undetermined
+/// identity all the way to `pkg/server`, where the connection closes without
+/// sending an ERR packet. The cluster transaction path used to replace that
+/// identity with an ordinary 1105, inviting the client to retry a commit that
+/// may already have landed.
+#[test]
+fn an_undetermined_cluster_commit_reaches_the_connection_fatal_identity() {
+    let outcome = OptimisticCommitOutcome::Undetermined(UndeterminedTransaction {
+        receipt: OptimisticTransactionReceipt::new(1, 2, b"k".to_vec(), 1),
+        cause: TransactionCause::Transport {
+            detail: "commit response lost".to_owned(),
+        },
+    });
+    let lock_error = commit_outcome_to_sql_error(&outcome)
+        .expect_err("an ambiguous commit cannot answer success");
+    let query_error = super::super::sql_error(lock_error);
+    assert_undetermined_closes_without_packet(&query_error);
+}
 
 /// Autocommit: each statement publishes its own writes, and each statement
 /// reads at its own snapshot. The snapshot count is the proof that the

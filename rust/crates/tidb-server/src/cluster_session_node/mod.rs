@@ -1124,7 +1124,7 @@ impl ClusterServerSession {
             self.session.swap_privileges(live);
         }
         applied?;
-        let changed = pending.commit().map_err(SqlQueryError::unknown)?;
+        let changed = pending.commit()?;
         if !changed.is_empty() {
             eprintln!(
                 "{{\"event\":\"cluster_accounts_changed\",\"users\":{}}}",
@@ -1165,7 +1165,7 @@ impl ClusterServerSession {
         // land on the connection's own live-seeded copies.
         self.session.swap_globals(live);
         applied?;
-        let changed = pending.commit().map_err(SqlQueryError::unknown)?;
+        let changed = pending.commit()?;
         if !changed.is_empty() {
             eprintln!(
                 "{{\"event\":\"cluster_sysvars_changed\",\"variables\":{}}}",
@@ -1193,9 +1193,7 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
-        self.ddl
-            .execute(statement)
-            .map_err(SqlQueryError::unknown)?;
+        self.ddl.execute(statement)?;
         // Go answers a DDL with an OK packet carrying no rows and no insert
         // id, whether it changed anything or was an IF [NOT] EXISTS no-op.
         Ok(WriteOutcome {

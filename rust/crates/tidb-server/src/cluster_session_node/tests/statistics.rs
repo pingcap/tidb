@@ -15,6 +15,32 @@ use crate::sql_node::{ConnectionCancellation, ConnectionClose};
 use std::net::SocketAddr;
 use tidb_session::privilege::GlobalPriv;
 
+struct UndeterminedAnalyze;
+
+impl ClusterAnalyze for UndeterminedAnalyze {
+    fn execute(
+        &self,
+        _: &tidb_exec::cluster_analyze::AnalyzeStatement,
+    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::sql_node::SqlQueryError>
+    {
+        Err(crate::sql_node::cluster_analyze_error(
+            tidb_exec::real_tikv_analyze::ClusterAnalyzeError::Undetermined(
+                "commit response lost".to_owned(),
+            ),
+        ))
+    }
+}
+
+#[test]
+fn analyze_commit_keeps_an_undetermined_verdict_connection_fatal() {
+    let node = MockNode::start();
+    let mut session = open_session_on_with_analyze(&node, Arc::new(UndeterminedAnalyze));
+    let query_error = session
+        .execute_write("ANALYZE TABLE t")
+        .expect_err("ANALYZE cannot answer success after losing its commit response");
+    assert_undetermined_closes_without_packet(&query_error);
+}
+
 /// `ANALYZE TABLE` reaches the statistics seam rather than the ordinary
 /// statement path.
 ///

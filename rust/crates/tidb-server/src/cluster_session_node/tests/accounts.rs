@@ -7,7 +7,40 @@
 
 use super::super::*;
 use super::node_fixture::*;
+use crate::cluster_account_seam::{ClusterAccountWriter, PendingAccountChange};
 use std::sync::atomic::Ordering;
+use tidb_session::privilege::PrivilegeRegistry;
+
+struct UndeterminedAccountWriter(PrivilegeRegistry);
+
+impl ClusterAccountWriter for UndeterminedAccountWriter {
+    fn begin(&self) -> Result<Box<dyn PendingAccountChange>, String> {
+        Ok(Box::new(UndeterminedAccountChange(self.0.clone())))
+    }
+}
+
+struct UndeterminedAccountChange(PrivilegeRegistry);
+
+impl PendingAccountChange for UndeterminedAccountChange {
+    fn registry(&self) -> PrivilegeRegistry {
+        self.0.clone()
+    }
+
+    fn commit(self: Box<Self>) -> Result<Vec<String>, crate::sql_node::SqlQueryError> {
+        Err(undetermined_cluster_commit_error("account change"))
+    }
+}
+
+#[test]
+fn account_commit_keeps_an_undetermined_verdict_connection_fatal() {
+    let node = MockNode::start();
+    let writer = Arc::new(UndeterminedAccountWriter(node.accounts.stored.clone()));
+    let mut session = open_session_on_with_accounts(&node, writer);
+    let query_error = session
+        .execute_write("CREATE USER 'uncertain'@'%'")
+        .expect_err("the account change cannot answer success after losing its commit response");
+    assert_undetermined_closes_without_packet(&query_error);
+}
 
 /// An account statement reaches the account seam -- not the catalog
 /// writer, and not the session's own in-memory table alone -- and what it

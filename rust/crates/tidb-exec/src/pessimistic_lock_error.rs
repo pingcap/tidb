@@ -28,6 +28,7 @@
 //! after `innodb_lock_wait_timeout`, raises `[tikv:1205]Lock wait timeout
 //! exceeded; try restarting transaction`.
 
+use tidb_error::terror::ERR_RESULT_UNDETERMINED;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, PessimisticLockFailure, TransactionCause};
 
 /// Go `errno.ErrLockWaitTimeout`.
@@ -58,6 +59,15 @@ pub struct LockSqlError {
     pub state: [u8; 5],
     /// The message Go renders, including its `[class:code]` prefix.
     pub message: String,
+}
+
+impl LockSqlError {
+    /// Whether this error carries Go's result-undetermined identity.
+    #[must_use]
+    pub(crate) fn is_result_undetermined(&self) -> bool {
+        self.code == tidb_error::mysql::errcode::ErrUnknown
+            && self.message == ERR_RESULT_UNDETERMINED.message()
+    }
 }
 
 /// Maps a lock failure to the error TiDB reports for it.
@@ -124,9 +134,7 @@ pub fn commit_outcome_to_sql_error(outcome: &OptimisticCommitOutcome) -> Result<
         OptimisticCommitOutcome::Undetermined(_) => Err(LockSqlError {
             code: 1105,
             state: DEFAULT_SQL_STATE,
-            message: "[kv:8005]transaction result is undetermined; the commit was published but \
-                      its outcome is unknown"
-                .to_owned(),
+            message: ERR_RESULT_UNDETERMINED.message().to_owned(),
         }),
     }
 }
@@ -206,6 +214,7 @@ mod tests {
         ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET, ERR_LOCK_DEADLOCK, ERR_LOCK_WAIT_TIMEOUT,
         ERR_REGION_UNAVAILABLE, ERR_WRITE_CONFLICT,
     };
+    use tidb_error::terror::ERR_RESULT_UNDETERMINED;
     use tidb_txnkv::transaction::{
         CommittedTransaction, DeadlockDetail, OptimisticCommitOutcome,
         OptimisticTransactionReceipt, PessimisticLockFailure, RolledBackTransaction,
@@ -251,12 +260,11 @@ mod tests {
                 detail: "connection reset".to_owned(),
             },
         });
-        assert_eq!(
-            commit_outcome_to_sql_error(&undetermined)
-                .expect_err("an undetermined commit is not a durable one")
-                .code,
-            1105
-        );
+        let error = commit_outcome_to_sql_error(&undetermined)
+            .expect_err("an undetermined commit is not a durable one");
+        assert_eq!(error.code, 1105);
+        assert_eq!(error.message, ERR_RESULT_UNDETERMINED.message());
+        assert!(error.is_result_undetermined());
     }
 
     #[test]

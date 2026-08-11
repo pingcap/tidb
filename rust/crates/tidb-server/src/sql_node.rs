@@ -21,9 +21,12 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
+use tidb_exec::real_tikv_ddl::ClusterDdlError;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
+use tidb_txnkv::transaction::OptimisticCommitOutcome;
 use tidb_util::globalconn::{Allocator, GlobalAllocator};
 
 use crate::configured_user_store::{AuthenticatedIdentity, ConfiguredUserStore};
@@ -298,6 +301,38 @@ impl SqlQueryError {
 /// Go `pkg/parser/terror/terror.go:268`: `mysql.Message("execution result
 /// undetermined", nil)`.
 pub const RESULT_UNDETERMINED_MESSAGE: &str = "execution result undetermined";
+
+/// Preserves the one DDL outcome that is not a failure verdict while mapping
+/// every determinate catalog error to its ordinary client diagnostic.
+pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
+    match error {
+        ClusterDdlError::Undetermined(_) => SqlQueryError::result_undetermined(),
+        other => SqlQueryError::unknown(other.to_string()),
+    }
+}
+
+pub(crate) fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError {
+    match error {
+        ClusterAnalyzeError::Undetermined(_) => SqlQueryError::result_undetermined(),
+        ClusterAnalyzeError::Other(detail) => SqlQueryError::unknown(detail),
+    }
+}
+
+/// Returns the client error for a cluster state change that did not commit,
+/// preserving the ambiguous outcome instead of reporting a false failure.
+pub(crate) fn cluster_commit_error(
+    outcome: &OptimisticCommitOutcome,
+    subject: &str,
+) -> Option<SqlQueryError> {
+    match outcome {
+        OptimisticCommitOutcome::Committed(_) => None,
+        OptimisticCommitOutcome::Undetermined(_) => Some(SqlQueryError::result_undetermined()),
+        other => Some(SqlQueryError::unknown(format!(
+            "the {subject} was not committed: {:?}",
+            other.state()
+        ))),
+    }
+}
 
 /// A lazy query result owned by one worker-local session.
 pub struct QueryResult<'a> {

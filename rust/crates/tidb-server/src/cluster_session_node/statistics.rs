@@ -52,10 +52,7 @@ impl ClusterServerSession {
             let mut statement = statement.clone();
             statement.options.memory_quota = memory_quota;
             let statement = &statement;
-            let report = self
-                .analyze
-                .execute(statement)
-                .map_err(SqlQueryError::unknown)?;
+            let report = self.analyze.execute(statement)?;
             eprintln!(
                 "{{\"event\":\"cluster_table_analyzed\",\"schema\":{},\"table\":{},\
                  \"table_id\":{},\"version\":{},\"scanned_rows\":{},\"sampled_rows\":{},\

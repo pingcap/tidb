@@ -12,6 +12,7 @@
 use super::super::*;
 use super::node_fixture::*;
 use crate::cluster_account_seam::PendingAccountChange;
+use crate::sql_node::SqlQueryError;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use tidb_ast::CiString;
 use tidb_exec::cluster_catalog::{ClusterCatalog, LoadedDatabase};
@@ -49,7 +50,7 @@ impl MockDdl {
 }
 
 impl ClusterDdl for MockDdl {
-    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, String> {
+    fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError> {
         let current = self.catalog.load();
         let mut next = ClusterCatalog {
             schema_version: current.schema_version + 1,
@@ -73,7 +74,9 @@ impl ClusterDdl for MockDdl {
                             detail: format!("database `{name}` already exists"),
                         });
                     }
-                    return Err(format!("Can't create database '{name}'; database exists"));
+                    return Err(SqlQueryError::unknown(format!(
+                        "Can't create database '{name}'; database exists"
+                    )));
                 }
                 let id = self.allocate();
                 created_id = Some(id);
@@ -96,7 +99,9 @@ impl ClusterDdl for MockDdl {
                             detail: format!("database `{name}` does not exist"),
                         })
                     }
-                    None => return Err(format!("Unknown database '{name}'")),
+                    None => {
+                        return Err(SqlQueryError::unknown(format!("Unknown database '{name}'")))
+                    }
                 }
             }
             DdlStatement::CreateTable {
@@ -105,8 +110,9 @@ impl ClusterDdl for MockDdl {
                 if_not_exists,
                 template,
             } => {
-                let at = find(&mut next.databases, schema)
-                    .ok_or_else(|| format!("Unknown database '{schema}'"))?;
+                let at = find(&mut next.databases, schema).ok_or_else(|| {
+                    SqlQueryError::unknown(format!("Unknown database '{schema}'"))
+                })?;
                 let lowered = table.to_lowercase();
                 if next.databases[at]
                     .tables
@@ -118,7 +124,9 @@ impl ClusterDdl for MockDdl {
                             detail: format!("table `{schema}`.`{table}` already exists"),
                         });
                     }
-                    return Err(format!("Table '{schema}.{table}' already exists"));
+                    return Err(SqlQueryError::unknown(format!(
+                        "Table '{schema}.{table}' already exists"
+                    )));
                 }
                 let id = self.allocate();
                 created_id = Some(id);
@@ -131,8 +139,9 @@ impl ClusterDdl for MockDdl {
                 table,
                 if_exists,
             } => {
-                let at = find(&mut next.databases, schema)
-                    .ok_or_else(|| format!("Unknown database '{schema}'"))?;
+                let at = find(&mut next.databases, schema).ok_or_else(|| {
+                    SqlQueryError::unknown(format!("Unknown database '{schema}'"))
+                })?;
                 let lowered = table.to_lowercase();
                 let found = next.databases[at]
                     .tables
@@ -147,7 +156,11 @@ impl ClusterDdl for MockDdl {
                             detail: format!("table `{schema}`.`{table}` does not exist"),
                         })
                     }
-                    None => return Err(format!("Unknown table '{schema}.{table}'")),
+                    None => {
+                        return Err(SqlQueryError::unknown(format!(
+                            "Unknown table '{schema}.{table}'"
+                        )))
+                    }
                 }
             }
             // An index change is the one catalog change whose correctness is
@@ -159,11 +172,11 @@ impl ClusterDdl for MockDdl {
             // the write set, and `run-sysbench-ladder.sh`'s `ADMIN CHECK
             // TABLE` against a Go server for the entries.
             DdlStatement::CreateIndex { .. } | DdlStatement::DropIndex { .. } => {
-                return Err(
+                return Err(SqlQueryError::unknown(
                     "the mock catalog writer holds no rows, so it cannot model an index \
                      change's backfill"
                         .to_owned(),
-                )
+                ))
             }
         }
         let schema_version = next.schema_version;
@@ -233,9 +246,9 @@ impl PendingAccountChange for MockPendingChange {
         self.scratch.clone()
     }
 
-    fn commit(self: Box<Self>) -> Result<Vec<String>, String> {
+    fn commit(self: Box<Self>) -> Result<Vec<String>, SqlQueryError> {
         if !self.persists.load(Ordering::Acquire) {
-            return Err("the persist was rejected".to_owned());
+            return Err(SqlQueryError::unknown("the persist was rejected"));
         }
         let changed: Vec<String> = self
             .scratch
@@ -292,9 +305,9 @@ impl crate::cluster_sysvar_seam::PendingSysvarChange for MockPendingSysvarChange
         self.scratch.clone()
     }
 
-    fn commit(self: Box<Self>) -> Result<Vec<String>, String> {
+    fn commit(self: Box<Self>) -> Result<Vec<String>, SqlQueryError> {
         if !self.persists.load(Ordering::Acquire) {
-            return Err("the persist was rejected".to_owned());
+            return Err(SqlQueryError::unknown("the persist was rejected"));
         }
         let before = self.stored.overrides();
         let after = self.scratch.overrides();
@@ -328,10 +341,10 @@ impl ClusterAnalyze for MockAnalyze {
     fn execute(
         &self,
         statement: &AnalyzeStatement,
-    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, String> {
-        Err(format!(
+    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, SqlQueryError> {
+        Err(SqlQueryError::unknown(format!(
             "the mock node stores no statistics for `{}`.`{}`",
             statement.schema, statement.table
-        ))
+        )))
     }
 }

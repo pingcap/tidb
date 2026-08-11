@@ -80,9 +80,9 @@ use crate::resultset_source::ResultSetSource;
 use crate::session_transaction::SessionTransaction;
 use crate::sorting_result_set::SortingResultSetSource;
 use crate::sql_node::{
-    ActiveQueryCancellation, ConcurrentSqlNode, PreparedPointRead, PreparedWrite,
-    QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory, SessionContext,
-    SqlNodeError, SqlQueryError, WriteOutcome,
+    cluster_ddl_error, ActiveQueryCancellation, ConcurrentSqlNode, PreparedPointRead,
+    PreparedWrite, QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory,
+    SessionContext, SqlNodeError, SqlQueryError, WriteOutcome,
 };
 use crate::transaction_overlay_result_set::{OverlayHandleSource, TransactionOverlayResultSet};
 use crate::wire_status::WireStatus;
@@ -881,7 +881,7 @@ pub(crate) fn execute_cluster_ddl(
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
         notifier,
     )
-    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+    .map_err(cluster_ddl_error)?;
     match report {
         ClusterDdlReport::Applied {
             schema_version,
@@ -1700,8 +1700,44 @@ fn configured_write_error(error: &ConfiguredWriteError) -> SqlQueryError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::connection_writers::{write_query_error, ConnectionPacketOutput};
+    use crate::mysql_connection::MysqlConnectionError;
     use std::cell::Cell;
     use std::sync::Mutex;
+    use tidb_exec::real_tikv_ddl::ClusterDdlError;
+
+    #[derive(Default)]
+    struct RecordingPacketOutput(Vec<Vec<u8>>);
+
+    impl ConnectionPacketOutput for RecordingPacketOutput {
+        fn write_packet(
+            &mut self,
+            sequence: u8,
+            payload: &[u8],
+        ) -> Result<u8, MysqlConnectionError> {
+            self.0.push(payload.to_vec());
+            Ok(sequence.wrapping_add(1))
+        }
+    }
+
+    #[test]
+    fn an_undetermined_cluster_ddl_is_connection_fatal_without_an_error_packet() {
+        let query_error = cluster_ddl_error(ClusterDdlError::Undetermined(
+            "commit response lost".to_owned(),
+        ));
+        let mut output = RecordingPacketOutput::default();
+        let write_error = write_query_error(&mut output, &query_error, true)
+            .expect_err("an unknown DDL verdict must close the connection");
+        assert!(matches!(
+            write_error,
+            MysqlConnectionError::ResultUndetermined(message)
+                if message == tidb_error::terror::ERR_RESULT_UNDETERMINED.message()
+        ));
+        assert!(
+            output.0.is_empty(),
+            "an unknown DDL verdict must not write an ERR packet or any bytes"
+        );
+    }
 
     #[test]
     fn prepared_point_read_fields_keep_storage_flags_and_aggregate_shape() {

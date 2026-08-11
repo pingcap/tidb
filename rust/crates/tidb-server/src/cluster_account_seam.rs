@@ -67,11 +67,12 @@ use tidb_pd_client::EtcdClient;
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, ProductionOptimisticTransaction, RealOptimisticTransactionOpener,
-    MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
+    ProductionOptimisticTransaction, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_MUTATIONS,
+    MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 
 use crate::cluster_privileges::{cluster_image_from_registry, registry_from_cluster};
+use crate::sql_node::{cluster_commit_error, SqlQueryError};
 
 /// This node's one route to the cluster's stored accounts.
 ///
@@ -101,7 +102,7 @@ pub trait PendingAccountChange {
     /// The `'user'@'host'` identities whose rows changed are answered for the
     /// log; an empty answer means the statement was a no-op the cluster
     /// already satisfied, and nothing was written or announced.
-    fn commit(self: Box<Self>) -> Result<Vec<String>, String>;
+    fn commit(self: Box<Self>) -> Result<Vec<String>, SqlQueryError>;
 }
 
 /// The production account writer: one real transaction per statement, the
@@ -194,16 +195,16 @@ impl PendingAccountChange for RealPendingAccountChange {
         self.scratch.clone()
     }
 
-    fn commit(mut self: Box<Self>) -> Result<Vec<String>, String> {
+    fn commit(mut self: Box<Self>) -> Result<Vec<String>, SqlQueryError> {
         let mut transaction = self
             .transaction
             .take()
-            .ok_or_else(|| "the account change was already committed".to_owned())?;
+            .ok_or_else(|| SqlQueryError::unknown("the account change was already committed"))?;
         let desired = cluster_image_from_registry(&self.scratch);
         let plan = {
             let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, self.timeout);
             plan_account_write(&mut snapshot, &self.catalog, &desired, utc_now_timestamp())
-                .map_err(|error| error.to_string())?
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?
         };
         if plan.is_empty() {
             // A statement the cluster already satisfies -- `CREATE USER IF NOT
@@ -212,22 +213,16 @@ impl PendingAccountChange for RealPendingAccountChange {
             // as an `IF EXISTS` DDL no-op does.
             transaction
                 .finish_without_writes()
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
             return Ok(Vec::new());
         }
         let changed = plan.changed_users;
         let call = UnaryCallContext::with_timeout(self.timeout);
-        match transaction
+        let outcome = transaction
             .commit(plan.mutations, &call)
-            .map_err(|error| error.to_string())?
-        {
-            OptimisticCommitOutcome::Committed(_) => {}
-            other => {
-                return Err(format!(
-                    "the account change was not committed: {:?}",
-                    other.state()
-                ))
-            }
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        if let Some(error) = cluster_commit_error(&outcome, "account change") {
+            return Err(error);
         }
         // Published only now: every clone of the live table -- every open
         // session, the login path -- sees the change the instant it is durable

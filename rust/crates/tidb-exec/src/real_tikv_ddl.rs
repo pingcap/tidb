@@ -44,6 +44,7 @@ use crate::cluster_ddl::{
     IndexBackfill,
 };
 use crate::cluster_table_storage::SessionTransaction;
+use crate::pessimistic_lock_error::LockSqlError;
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use crate::table_info_build::default_ddl_statement_context;
 
@@ -395,21 +396,37 @@ pub fn commit_cluster_ddl_with_backfill(
                 created_id: write.created_id,
             })
         }
-        // Every catalog change writes `SchemaVersionKey` from a value it read,
-        // so TiKV's 9007 here means the same thing it means on the meta-only
-        // path: something else committed over this transaction's snapshot.
-        Err(error) if error.code == WRITE_CONFLICT_CODE => {
-            Err(ClusterDdlError::ConcurrentSchemaChange {
-                planned_version,
-                detail: error.message,
-            })
-        }
-        Err(error) => Err(ClusterDdlError::NotCommitted(error.message)),
+        Err(error) => Err(classify_session_ddl_commit_error(planned_version, error)),
     }
 }
 
 /// Go `errno.ErrWriteConflict`, which a lost optimistic prewrite reports.
 const WRITE_CONFLICT_CODE: u16 = 9007;
+
+/// Restores the DDL-domain identity after [`SessionTransaction`] has rendered
+/// a terminal commit outcome as a SQL error.
+#[must_use]
+pub fn classify_session_ddl_commit_error(
+    planned_version: i64,
+    error: LockSqlError,
+) -> ClusterDdlError {
+    if error.is_result_undetermined() {
+        return ClusterDdlError::Undetermined(
+            "the session transaction returned no commit verdict".to_owned(),
+        );
+    }
+    // Every catalog change writes `SchemaVersionKey` from a value it read, so
+    // TiKV's 9007 here means the same thing it means on the meta-only path:
+    // something else committed over this transaction's snapshot.
+    if error.code == WRITE_CONFLICT_CODE {
+        ClusterDdlError::ConcurrentSchemaChange {
+            planned_version,
+            detail: error.message,
+        }
+    } else {
+        ClusterDdlError::NotCommitted(error.message)
+    }
+}
 
 /// Publishes a committed version, downgrading every failure to a warning.
 ///
@@ -451,6 +468,7 @@ fn classify(planned_version: i64, cause: &TransactionCause) -> ClusterDdlError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidb_txnkv::transaction::{OptimisticTransactionReceipt, UndeterminedTransaction};
 
     #[test]
     fn a_write_conflict_on_a_catalog_change_is_named_a_concurrent_ddl() {
@@ -472,6 +490,49 @@ mod tests {
         assert!(error
             .to_string()
             .contains("refuses to interleave: optimistic write conflict"));
+    }
+
+    #[test]
+    fn a_session_ddl_commit_keeps_an_undetermined_verdict_distinct() {
+        let outcome = OptimisticCommitOutcome::Undetermined(UndeterminedTransaction {
+            receipt: OptimisticTransactionReceipt::new(1, 2, b"key".to_vec(), 1),
+            cause: TransactionCause::Transport {
+                detail: "commit response lost".to_owned(),
+            },
+        });
+        let error = crate::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
+            .expect_err("an unknown commit verdict must not answer success");
+        assert!(matches!(
+            classify_session_ddl_commit_error(61, error),
+            ClusterDdlError::Undetermined(_)
+        ));
+    }
+
+    #[test]
+    fn session_ddl_commit_classification_preserves_determinate_errors() {
+        let conflict = LockSqlError {
+            code: WRITE_CONFLICT_CODE,
+            state: *b"HY000",
+            message: "write conflict at schema version key".to_owned(),
+        };
+        assert!(matches!(
+            classify_session_ddl_commit_error(61, conflict),
+            ClusterDdlError::ConcurrentSchemaChange {
+                planned_version: 61,
+                ..
+            }
+        ));
+
+        let ordinary = LockSqlError {
+            code: 1105,
+            state: *b"HY000",
+            message: "prewrite transport failed definitively".to_owned(),
+        };
+        assert!(matches!(
+            classify_session_ddl_commit_error(61, ordinary),
+            ClusterDdlError::NotCommitted(detail)
+                if detail == "prewrite transport failed definitively"
+        ));
     }
 
     #[test]
