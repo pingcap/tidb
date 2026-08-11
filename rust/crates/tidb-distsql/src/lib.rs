@@ -34,7 +34,6 @@ mod distsql_runtime;
 mod envelope;
 mod execution;
 mod kv_request;
-mod paging;
 pub mod query_runtime;
 mod read_bytes_ema;
 mod region_location;
@@ -89,10 +88,6 @@ pub use kv_request::{
     KvRequestMetadata, PartitionIdAndRanges, RequestKeyRange, RequestKeyRanges, DC_LABEL_KEY,
     GLOBAL_REPLICA_SCOPE,
 };
-pub use paging::{
-    calculate_seek_count, grow_paging_size, MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE,
-    PAGING_THRESHOLD,
-};
 pub use query_runtime::{
     InjectedQueryRuntime, QueryDispatch, QueryOperation, QueryResponseError, QueryResultContext,
     QueryRuntimeError, QueryTransport,
@@ -127,6 +122,10 @@ pub use tidb_txnkv::{
     IsolationLevel, Priority as KvPriority, ReplicaReadType, RequestSource, RequestType,
     StoreLabel, StoreType, TiFlashReplicaRead, UnaryCallContext, ALL_REPLICAS, CLOSEST_ADAPTIVE,
     CLOSEST_REPLICAS, MAX_REMOTE_READ_COUNT_PER_NODE_FOR_CLOSEST_REPLICAS,
+};
+pub use tidb_util::paging::{
+    calculate_seek_cnt as calculate_seek_count, grow_paging_size, MIN_ALLOWED_MAX_PAGING_SIZE,
+    MIN_PAGING_SIZE, THRESHOLD as PAGING_THRESHOLD,
 };
 pub use transport::{
     TransportBinding, TransportRequest, TransportRequestError, TransportRequestState,

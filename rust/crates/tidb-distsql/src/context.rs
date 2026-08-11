@@ -14,9 +14,9 @@
 
 //! Source-shaped request and DistSQL context fields.
 
-use crate::paging::{MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE};
 use crate::{ExecutionState, TiFlashReplicaRead, Warning, WarningCollector};
 use tidb_txnkv::ReplicaReadType;
+use tidb_util::paging::{MIN_ALLOWED_MAX_PAGING_SIZE, MIN_PAGING_SIZE};
 
 /// TiDB's default `tidb_distsql_scan_concurrency` used by the Go test helper.
 pub const DEFAULT_DIST_SQL_CONCURRENCY: u64 = 15;

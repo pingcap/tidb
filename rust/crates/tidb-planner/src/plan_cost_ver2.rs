@@ -58,6 +58,7 @@ use crate::cost_usage::{
 };
 use crate::physical_table_reader::StoreType;
 use crate::task_type::TaskType;
+pub use tidb_util::paging::THRESHOLD as PAGING_THRESHOLD;
 
 /// Minimum row count used to avoid underestimation (`MinNumRows`).
 pub const MIN_NUM_ROWS: f64 = 1.0;
@@ -67,9 +68,6 @@ pub const MIN_ROW_SIZE: f64 = 2.0;
 pub const TIFLASH_STARTUP_ROW_PENALTY: f64 = 10000.0;
 /// Row count added as a penalty to a high-risk full table scan.
 pub const MAX_PENALTY_ROW_COUNT: f64 = 1000.0;
-/// The paging threshold from `pkg/util/paging`, read by `IndexLookUpReader`.
-pub const PAGING_THRESHOLD: u64 = 960;
-
 /// Go's `getAvgRowSize` from `pkg/planner/core/task.go` -- the ONE row-size
 /// entry point cost model ver2 uses for a plan's own schema.
 ///

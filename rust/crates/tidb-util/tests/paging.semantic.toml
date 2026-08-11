@@ -1,8 +1,0 @@
-go_package = "pkg/util/paging"
-source_commit = "589ea5ec8a20687604cc20a4ebe82fb56137b8b5"
-evidence_files = [
-  "rust/crates/tidb-util/src/paging.rs",
-]
-commands = [
-  ["test", "-p", "tidb-util", "--lib"],
-]

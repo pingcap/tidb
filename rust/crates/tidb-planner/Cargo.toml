@@ -19,6 +19,7 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-hash = { path = "../tidb-hash" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-stats = { path = "../tidb-stats" }
+tidb-util = { path = "../tidb-util" }
 
 [[test]]
 name = "all"

@@ -1818,6 +1818,7 @@ dependencies = [
  "tidb-hash",
  "tidb-parser",
  "tidb-stats",
+ "tidb-util",
 ]
 
 [[package]]
