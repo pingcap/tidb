@@ -193,7 +193,8 @@ at every boundary; both engines emit the same WKB.
 | Fill the catalog from the full EPSG dataset, taken from EPSG or PROJ's `proj.db`, with the dataset version pinned in the docs and IOGP attribution carried. The set drifts: MySQL shipped 5,152 rows in 8.0.46 and 5,238 in 8.4 and 9.7 | moderate, and a prerequisite for the rest |
 | All projected SRSs (e.g. 3857 Web Mercator) | low: planar X/Y, so the same Cartesian functions apply and only the bounds are per-SRS |
 | Geographic SRSs beyond 4326 | moderate: exact geodesic refine per ellipsoid |
-| PostGIS level (`CREATE SPATIAL REFERENCE SYSTEM`, `ST_Transform`) | bigger: on-the-fly reprojection needs a PROJ-like library; out of scope |
+| `ST_Transform`, which MySQL has had since 8.0.13 and which reprojects between two SRSs | moderate, and pointless before the catalog: with only 0 and 4326 there is nothing to transform to, since 4326 to 4326 is a no-op and MySQL itself rejects a transform to 0 with `ERROR 3742` |
+| PostGIS level (`CREATE SPATIAL REFERENCE SYSTEM`, user-defined SRSs) | bigger: needs a PROJ-like library for arbitrary reprojection; out of scope |
 
 DDL restricts the `SRID n` attribute to 0 or 4326. An unrestricted `GEOMETRY` column may
 still hold values of any SRID (see [Types and storage](#types-and-storage)).
@@ -379,7 +380,8 @@ Out of scope here, each with a home:
 - The **geometry-processing function tail**, typed I/O aliases, `MBR*` family, geohash and
   niche accessors: a later, parallel expression-layer milestone.
 - **SRIDs beyond 0 and 4326**, the full SRS catalog and `ST_Transform`: the extension path
-  above.
+  above. `ST_Transform` is MySQL functionality rather than a PostGIS extra, but it has
+  nothing to do until more SRSs exist, so it is out of scope for v1.
 - **Coprocessor pushdown.** The predicates and measurement functions are deterministic
   scalars and pushdown-eligible; pushing them filters at the storage node instead of
   shipping every candidate geometry to TiDB, with or without an index. It is cross-repo work
@@ -427,7 +429,8 @@ Out of scope here, each with a home:
 - Predicates: the eight DE-9IM predicates plus `Covers`/`CoveredBy` on curated geometry
   pairs, matched to MySQL where semantics agree, with boundary cases explicit.
 - SRID validation: 4326 out-of-range errors on every ingest path, SRID 0 Inf/NaN rejection,
-  mixed-SRID predicate errors.
+  and mixed-SRID arguments to a binary geometry function giving `ERROR 3033`, while the
+  SQL comparison operators keep comparing the stored bytes without erroring.
 - The catalog: `st_spatial_reference_systems` returns the two rows with the same column
   values MySQL gives for SRID 0 and 4326, and `CREATE SPATIAL REFERENCE SYSTEM` errors.
 - Extended data: Z/M values entered as WKB, and SRIDs outside 0 and 4326, store and read
