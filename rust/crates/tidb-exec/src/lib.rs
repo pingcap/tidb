@@ -55,7 +55,6 @@ pub mod advisory_lock_state;
 pub mod aggregate;
 pub mod alternative_plan_signals;
 pub mod analyze_panic_error;
-pub mod apply_cache;
 pub mod bit_agg;
 pub mod broadcast_query_error;
 pub mod catalog_reload;

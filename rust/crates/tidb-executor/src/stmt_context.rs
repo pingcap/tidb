@@ -356,6 +356,9 @@ pub struct StmtContext {
     /// `@@group_concat_max_len`, the BYTE budget `GROUP_CONCAT` truncates its
     /// joined buffer to (Go `baseGroupConcat4String.maxLen`).
     group_concat_max_len: u64,
+    /// `@@tidb_mem_quota_apply_cache`, captured once for this statement so
+    /// every Apply operator uses the same session-visible cache budget.
+    apply_cache_capacity: i64,
     /// Which `ResetContextOfStmt` arm built this context; see
     /// [`StatementClass`]. It is an INPUT to [`StmtContext::push_down_flags`],
     /// which is why it rides the context rather than being re-derived at the
@@ -506,6 +509,7 @@ impl StmtContext {
             // with and the one the `Columns` trait default already used.
             max_allowed_packet: 64 << 20,
             group_concat_max_len: 1024,
+            apply_cache_capacity: tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE,
             statement_class: StatementClass::Other,
             cop_warnings: WarningCollector::new(),
         }
@@ -729,6 +733,13 @@ impl StmtContext {
     #[must_use]
     pub fn with_group_concat_max_len(mut self, group_concat_max_len: u64) -> Self {
         self.group_concat_max_len = group_concat_max_len;
+        self
+    }
+
+    /// Sets the statement snapshot of `@@tidb_mem_quota_apply_cache`.
+    #[must_use]
+    pub fn with_apply_cache_capacity(mut self, capacity: i64) -> Self {
+        self.apply_cache_capacity = capacity;
         self
     }
 
@@ -1054,6 +1065,12 @@ impl StmtContext {
     #[must_use]
     pub fn session_zone(&self) -> tidb_expr::SessionTimeZone {
         <Self as tidb_expr::Columns>::time_zone(self)
+    }
+
+    /// Returns the statement's Apply-cache byte budget.
+    #[must_use]
+    pub fn apply_cache_capacity(&self) -> i64 {
+        self.apply_cache_capacity
     }
 
     /// Attaches `NO_ZERO_DATE`, `NO_ZERO_IN_DATE` and `ALLOW_INVALID_DATES`.

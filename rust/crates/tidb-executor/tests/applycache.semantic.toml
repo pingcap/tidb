@@ -1,0 +1,25 @@
+go_package = "pkg/executor/internal/applycache"
+source_commit = "665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f"
+evidence_files = [
+  "rust/crates/tidb-executor/src/apply.rs",
+  "rust/crates/tidb-executor/src/apply_cache.rs",
+  "rust/crates/tidb-executor/src/driver.rs",
+  "rust/crates/tidb-executor/src/driver/agg_select.rs",
+  "rust/crates/tidb-executor/src/driver/from.rs",
+  "rust/crates/tidb-executor/src/driver/having.rs",
+  "rust/crates/tidb-executor/src/driver/subquery.rs",
+  "rust/crates/tidb-executor/src/stmt_context.rs",
+  "rust/crates/tidb-executor/tests/apply_cache_source.rs",
+  "rust/crates/tidb-session/src/stmt_ctx.rs",
+  "rust/crates/tidb-session/src/tests_core/lifecycle.rs",
+  "rust/crates/tidb-session/src/tests_subquery.rs",
+  "rust/crates/tidb-session/src/tests_views.rs",
+]
+commands = [
+  ["test", "-p", "tidb-executor", "--test", "apply_cache_source"],
+  ["test", "-p", "tidb-executor", "--lib", "apply::tests"],
+  ["test", "-p", "tidb-session", "--lib", "tests_core::lifecycle::apply_cache_quota_reaches_query_and_dml_statement_contexts", "--", "--exact"],
+  ["test", "-p", "tidb-session", "--lib", "tests_subquery::correlated_subquery_in_select_list", "--", "--exact"],
+  ["test", "-p", "tidb-session", "--lib", "tests_views::lateral_derived_table_varies_per_outer_row", "--", "--exact"],
+  ["check", "-p", "tidb-executor", "-p", "tidb-session", "--all-targets"],
+]

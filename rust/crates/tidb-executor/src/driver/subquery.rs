@@ -390,6 +390,48 @@ pub(crate) fn bind_subquery_columns_query(
     })
 }
 
+/// Resolves the outer-row indexes represented by correlated column paths.
+pub(crate) fn correlated_path_indices(
+    paths: &[Vec<String>],
+    outer_scope: &FromScope,
+) -> Result<Vec<usize>, DriverError> {
+    paths
+        .iter()
+        .map(|path| {
+            let resolver = ScopeResolver { scope: outer_scope };
+            let (index, _, _) = resolver
+                .resolve(path)
+                .ok_or(DriverError::unsupported("unresolved correlated column"))?;
+            Ok(index)
+        })
+        .collect()
+}
+
+/// Resolves the cache-key columns for a correlated subquery.
+pub(crate) fn correlated_column_indices(
+    correlated: &CorrelatedSubquery,
+    outer_scope: &FromScope,
+) -> Result<Vec<usize>, DriverError> {
+    correlated
+        .columns
+        .iter()
+        .map(|path| {
+            let resolver = ScopeResolver { scope: outer_scope };
+            // Aggregation output is one flat row with no table qualifiers,
+            // so a qualified correlated reference falls back to its final
+            // name there. Plain source scopes resolve the qualified path.
+            let (index, _, _) = resolver
+                .resolve(path)
+                .or_else(|| {
+                    let name = path.last()?;
+                    resolver.resolve(std::slice::from_ref(name))
+                })
+                .ok_or(DriverError::unsupported("unresolved correlated column"))?;
+            Ok(index)
+        })
+        .collect()
+}
+
 /// Binds every correlated column in `select` and runs it for one outer row.
 pub(crate) fn run_correlated_subquery(
     correlated: &CorrelatedSubquery,
@@ -399,22 +441,9 @@ pub(crate) fn run_correlated_subquery(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Datum, DriverError> {
+    let indices = correlated_column_indices(correlated, outer_scope)?;
     let mut bindings = Vec::with_capacity(correlated.columns.len());
-    for path in &correlated.columns {
-        let resolver = ScopeResolver { scope: outer_scope };
-        // The aggregation's output row has no table qualifiers of its own
-        // (Go's post-aggregation schema is one flat row), so a qualified
-        // correlated reference (`t.g`) falls back to a bare-name lookup
-        // (`g`) when the qualified one does not resolve. The plain WHERE/
-        // SELECT Apply paths bind against the real `FromScope`, where the
-        // qualified lookup already succeeds and this fallback never fires.
-        let (index, _, _) = resolver
-            .resolve(path)
-            .or_else(|| {
-                let name = path.last()?;
-                resolver.resolve(std::slice::from_ref(name))
-            })
-            .ok_or(DriverError::unsupported("unresolved correlated column"))?;
+    for (path, index) in correlated.columns.iter().zip(indices) {
         let value = outer_values
             .get(index)
             .cloned()

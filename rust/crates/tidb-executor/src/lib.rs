@@ -47,6 +47,7 @@ pub mod admin_check;
 pub mod agg_spill;
 pub mod analyze;
 pub mod apply;
+pub mod apply_cache;
 mod approx_count_distinct;
 pub(crate) mod bad_null;
 pub mod cluster_storage;

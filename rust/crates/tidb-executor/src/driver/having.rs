@@ -109,6 +109,7 @@ pub(crate) fn build_plain_having(
             })
             .collect();
         let apply_schema = Schema::new(columns);
+        let cache_columns = correlated_column_indices(&correlated, &inner_scope)?;
         // The callback outlives this borrow of the catalog, so it owns a
         // snapshot (see ApplyExec::new); the context is a handle, so the
         // inner query's warnings reach the statement's one buffer.
@@ -132,15 +133,23 @@ pub(crate) fn build_plain_having(
                 other => ExecError::unsupported(driver_error_text(&other)),
             })
         });
-        source = Box::new(crate::apply::ApplyExec::new(
-            ExecutorMeta::new(apply_schema, 7, INIT_CAP, MAX_CHUNK_SIZE),
-            source,
-            runner,
-            ctx.statement_memory(),
-            // The outer side is the statement's SOURCE, never an aggregation,
-            // so Go's deselected-default-row case cannot arise.
-            None,
-        ));
+        source = Box::new(
+            crate::apply::ApplyExec::new(
+                ExecutorMeta::new(apply_schema, 7, INIT_CAP, MAX_CHUNK_SIZE),
+                source,
+                runner,
+                ctx.statement_memory(),
+                // The outer side is the statement's SOURCE, never an
+                // aggregation, so Go's deselected-default-row case cannot
+                // arise.
+                None,
+            )
+            .with_cache(
+                ctx.apply_cache_capacity(),
+                cache_columns,
+                ctx.session_zone(),
+            ),
+        );
     }
     let resolver = ScopeResolver {
         scope: current_scope,

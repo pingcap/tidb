@@ -1051,8 +1051,9 @@ pub(crate) fn build_lateral_join(
 
     let inner_width = columns.len();
     let subquery = subquery.clone();
+    let correlated_indices = correlated_path_indices(&correlated, &left_scope)?;
+    let cache_columns = correlated_indices.clone();
     let correlated_paths = correlated;
-    let outer_scope = left_scope;
     // The callback outlives this borrow of the catalog, so it owns a snapshot
     // (see ApplyExec::new).
     let inner_catalog = catalog.clone();
@@ -1060,15 +1061,9 @@ pub(crate) fn build_lateral_join(
     let inner_ctx = ctx.clone();
     let runner: crate::apply::LateralRunner = Box::new(move |values: &[Datum]| {
         let mut bindings = Vec::with_capacity(correlated_paths.len());
-        let resolver = ScopeResolver {
-            scope: &outer_scope,
-        };
-        for path in &correlated_paths {
-            let (index, _, _) = resolver
-                .resolve(path)
-                .ok_or(ExecError::unsupported("unresolved correlated column"))?;
+        for (path, index) in correlated_paths.iter().zip(&correlated_indices) {
             let value = values
-                .get(index)
+                .get(*index)
                 .cloned()
                 .ok_or(ExecError::unsupported("correlated column out of range"))?;
             bindings.push((path.clone(), value));
@@ -1095,12 +1090,19 @@ pub(crate) fn build_lateral_join(
         .collect();
     debug_assert_eq!(schema_columns.len(), left_width + inner_width);
     let schema = Schema::new(schema_columns);
-    let mut exec: Box<dyn Executor> = Box::new(crate::apply::LateralApplyExec::new(
-        ExecutorMeta::new(schema.clone(), 6, INIT_CAP, MAX_CHUNK_SIZE),
-        left_exec,
-        runner,
-        ctx.statement_memory(),
-    ));
+    let mut exec: Box<dyn Executor> = Box::new(
+        crate::apply::LateralApplyExec::new(
+            ExecutorMeta::new(schema.clone(), 6, INIT_CAP, MAX_CHUNK_SIZE),
+            left_exec,
+            runner,
+            ctx.statement_memory(),
+        )
+        .with_cache(
+            ctx.apply_cache_capacity(),
+            cache_columns,
+            ctx.session_zone(),
+        ),
+    );
     // `JOIN LATERAL (...) x ON <cond>`: the inner join is already produced by
     // the Apply, so the ON condition is simply a filter over its rows.
     if let Some(on) = &join.on {

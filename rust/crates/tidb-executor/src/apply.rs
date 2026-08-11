@@ -42,21 +42,69 @@
 //! is not charged: the caller drains `req` between calls, so nothing
 //! accumulates -- the same line `crate::join` draws for its hash path.
 //!
-//! NOT MODELLED (documented): Go's apply cache (`applycache`), which skips
-//! re-running the inner plan when consecutive outer rows share correlated
-//! values, its parallel variant, and the decorrelation rewrites the optimizer
-//! applies before falling back to Apply. Those change cost, not results. The
-//! cache would want to live beside the other memory-bounded containers rather
-//! than here; it is left where it is because moving it needs a home for the
-//! LRU that neither `crate::mem_quota` nor `tidb-planner` currently has.
+//! Repeated correlated values use [`ApplyCache`], keyed by TiDB's
+//! timezone-aware datum encoding and bounded by
+//! `@@tidb_mem_quota_apply_cache`. The sequential executor needs no worker
+//! choreography; the cache itself remains thread-safe.
 
+use crate::apply_cache::ApplyCache;
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::mem_quota::StatementMemory;
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_expr::schema::Schema;
 use tidb_util::memory::Tracker;
+
+#[derive(Clone)]
+struct ApplyCacheConfig {
+    capacity: i64,
+    key_columns: Vec<usize>,
+    time_zone: SessionTimeZone,
+}
+
+struct ApplyCacheRuntime<V> {
+    config: ApplyCacheConfig,
+    values: ApplyCache<V>,
+}
+
+impl<V> ApplyCacheRuntime<V> {
+    fn new(config: ApplyCacheConfig) -> Self {
+        Self {
+            values: ApplyCache::new(config.capacity),
+            config,
+        }
+    }
+
+    fn key(&self, outer: &[Datum]) -> Result<Vec<u8>, ExecError> {
+        let mut values = Vec::with_capacity(self.config.key_columns.len());
+        for &column in &self.config.key_columns {
+            let value = outer.get(column).ok_or_else(|| {
+                ExecError::internal(format!(
+                    "correlated cache column {column} is outside an outer row of width {}",
+                    outer.len()
+                ))
+            })?;
+            values.push(value.clone());
+        }
+        tidb_codec::encode_key_in_timezone(&self.config.time_zone, &values)
+            .map_err(|error| ExecError::internal(format!("cannot encode apply-cache key: {error}")))
+    }
+
+    fn get(&self, key: &[u8]) -> Option<Arc<V>> {
+        self.values.get(key)
+    }
+
+    fn set(&self, key: Vec<u8>, value: Arc<V>, memory: i64) -> i64 {
+        let before = self.values.memory_consumed();
+        self.values.set_shared(key, value, memory);
+        self.values.memory_consumed() - before
+    }
+
+    fn memory_consumed(&self) -> i64 {
+        self.values.memory_consumed()
+    }
+}
 
 /// The outer side's position, shared by both apply operators.
 ///
@@ -147,6 +195,12 @@ pub type InnerRunner = Box<dyn FnMut(&[Datum]) -> Result<Datum, ExecError>>;
 /// row. Each returned row must have the inner relation's fixed width.
 pub type LateralRunner = Box<dyn FnMut(&[Datum]) -> Result<Vec<Vec<Datum>>, ExecError>>;
 
+struct LateralPending {
+    outer: Vec<Datum>,
+    inner: Arc<Vec<Vec<Datum>>>,
+    position: usize,
+}
+
 /// Go `LogicalApply` with `InnerJoin` -- what `buildLateralJoin`
 /// (`pkg/planner/core/logical_plan_builder.go`) builds for a `LATERAL`
 /// derived table.
@@ -164,9 +218,11 @@ pub struct LateralApplyExec {
     /// The current outer row and the inner relation it produced, held across
     /// `Next` calls because one outer row's relation can outrun a chunk.
     /// This is Go's `outerRow` + `innerIter`.
-    pending: Option<(Vec<Datum>, Vec<Vec<Datum>>, usize)>,
+    pending: Option<LateralPending>,
     memory: StatementMemory,
     tracker: Arc<Tracker>,
+    cache_config: Option<ApplyCacheConfig>,
+    cache: Option<ApplyCacheRuntime<Vec<Vec<Datum>>>>,
 }
 
 impl LateralApplyExec {
@@ -188,15 +244,51 @@ impl LateralApplyExec {
             pending: None,
             memory,
             tracker,
+            cache_config: None,
+            cache: None,
+        }
+    }
+
+    /// Configures the source apply-cache quota and correlated key columns.
+    #[must_use]
+    pub fn with_cache(
+        mut self,
+        capacity: i64,
+        key_columns: Vec<usize>,
+        time_zone: SessionTimeZone,
+    ) -> Self {
+        self.cache_config = (capacity > 0).then_some(ApplyCacheConfig {
+            capacity,
+            key_columns,
+            time_zone,
+        });
+        self
+    }
+
+    fn release_cache(&mut self) {
+        if let Some(cache) = self.cache.take() {
+            self.tracker.consume(-cache.memory_consumed());
+        }
+    }
+
+    fn release_pending(&mut self) {
+        if let Some(pending) = self.pending.take() {
+            self.tracker
+                .consume(-inner_relation_bytes(pending.inner.as_ref()));
         }
     }
 }
 
 impl Executor for LateralApplyExec {
     fn open(&mut self) -> Result<(), ExecError> {
+        self.release_pending();
+        self.release_cache();
         self.outer.open()?;
         self.position.reset();
-        self.pending = None;
+        self.cache = self
+            .cache_config
+            .clone()
+            .map(ApplyCacheRuntime::<Vec<Vec<Datum>>>::new);
         Ok(())
     }
 
@@ -210,28 +302,59 @@ impl Executor for LateralApplyExec {
                 else {
                     break;
                 };
-                let inner = (self.run_inner)(&values)?;
+                let cache_key = self
+                    .cache
+                    .as_ref()
+                    .map(|cache| cache.key(&values))
+                    .transpose()?;
+                let cached = cache_key
+                    .as_deref()
+                    .and_then(|key| self.cache.as_ref().and_then(|cache| cache.get(key)));
+                let inner = if let Some(inner) = cached {
+                    inner
+                } else {
+                    let inner = Arc::new((self.run_inner)(&values)?);
+                    if let (Some(key), Some(cache)) = (cache_key, self.cache.as_ref()) {
+                        let delta = cache.set(
+                            key,
+                            Arc::clone(&inner),
+                            inner_relation_bytes(inner.as_ref()),
+                        );
+                        self.tracker.consume(delta);
+                        self.memory.check()?;
+                    }
+                    inner
+                };
                 // Go attaches the `InnerList`'s own tracker to the apply's
                 // (`hash_join_v1.go:1225`), so one outer row's whole inner
                 // relation is what the statement quota sees.
-                self.tracker.consume(inner_relation_bytes(&inner));
-                self.memory.check()?;
-                self.pending = Some((values, inner, 0));
+                let inner_memory = inner_relation_bytes(inner.as_ref());
+                self.tracker.consume(inner_memory);
+                if let Err(error) = self.memory.check() {
+                    self.tracker.consume(-inner_memory);
+                    return Err(error);
+                }
+                self.pending = Some(LateralPending {
+                    outer: values,
+                    inner,
+                    position: 0,
+                });
             }
-            let Some((values, inner, at)) = self.pending.as_mut() else {
+            let Some(pending) = self.pending.as_mut() else {
                 break;
             };
-            while *at < inner.len() && req.num_rows() < max_rows {
-                for (c, value) in values.iter().enumerate() {
+            while pending.position < pending.inner.len() && req.num_rows() < max_rows {
+                for (c, value) in pending.outer.iter().enumerate() {
                     req.append_datum(c, value);
                 }
-                for (c, value) in inner[*at].iter().enumerate() {
-                    req.append_datum(values.len() + c, value);
+                for (c, value) in pending.inner[pending.position].iter().enumerate() {
+                    req.append_datum(pending.outer.len() + c, value);
                 }
-                *at += 1;
+                pending.position += 1;
             }
-            if *at >= inner.len() {
-                self.tracker.consume(-inner_relation_bytes(inner));
+            if pending.position >= pending.inner.len() {
+                self.tracker
+                    .consume(-inner_relation_bytes(pending.inner.as_ref()));
                 self.pending = None;
             }
         }
@@ -239,6 +362,8 @@ impl Executor for LateralApplyExec {
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
+        self.release_pending();
+        self.release_cache();
         self.outer.close()
     }
 
@@ -276,6 +401,8 @@ pub struct ApplyExec {
     /// as NOT selected -- its `Joiner.OnMissMatch` value -- or `None` when
     /// this apply has no such row to answer for. See [`ApplyExec::new`].
     miss_match: Option<Datum>,
+    cache_config: Option<ApplyCacheConfig>,
+    cache: Option<ApplyCacheRuntime<Datum>>,
 }
 
 impl ApplyExec {
@@ -323,14 +450,43 @@ impl ApplyExec {
             memory,
             tracker,
             miss_match,
+            cache_config: None,
+            cache: None,
+        }
+    }
+
+    /// Configures the source apply-cache quota and correlated key columns.
+    #[must_use]
+    pub fn with_cache(
+        mut self,
+        capacity: i64,
+        key_columns: Vec<usize>,
+        time_zone: SessionTimeZone,
+    ) -> Self {
+        self.cache_config = (capacity > 0).then_some(ApplyCacheConfig {
+            capacity,
+            key_columns,
+            time_zone,
+        });
+        self
+    }
+
+    fn release_cache(&mut self) {
+        if let Some(cache) = self.cache.take() {
+            self.tracker.consume(-cache.memory_consumed());
         }
     }
 }
 
 impl Executor for ApplyExec {
     fn open(&mut self) -> Result<(), ExecError> {
+        self.release_cache();
         self.outer.open()?;
         self.position.reset();
+        self.cache = self
+            .cache_config
+            .clone()
+            .map(ApplyCacheRuntime::<Datum>::new);
         Ok(())
     }
 
@@ -357,23 +513,45 @@ impl Executor for ApplyExec {
                 req.append_datum(values.len(), pad);
                 continue;
             }
-            // One inner run per outer row, as Go's apply loop does.
-            let inner = (self.run_inner)(&values)?;
+            let cache_key = self
+                .cache
+                .as_ref()
+                .map(|cache| cache.key(&values))
+                .transpose()?;
+            let cached = cache_key
+                .as_deref()
+                .and_then(|key| self.cache.as_ref().and_then(|cache| cache.get(key)));
+            let inner = if let Some(inner) = cached {
+                inner
+            } else {
+                let inner = Arc::new((self.run_inner)(&values)?);
+                if let (Some(key), Some(cache)) = (cache_key, self.cache.as_ref()) {
+                    let delta = cache.set(key, Arc::clone(&inner), datum_bytes(inner.as_ref()));
+                    self.tracker.consume(delta);
+                    self.memory.check()?;
+                }
+                inner
+            };
             // Go's apply tracker sees the inner result for the row it is
             // holding; a scalar apply holds one value at a time, so this is
             // the whole of what it can accumulate.
-            self.tracker.consume(datum_bytes(&inner));
-            self.memory.check()?;
+            let inner_memory = datum_bytes(inner.as_ref());
+            self.tracker.consume(inner_memory);
+            if let Err(error) = self.memory.check() {
+                self.tracker.consume(-inner_memory);
+                return Err(error);
+            }
             for (c, value) in values.iter().enumerate() {
                 req.append_datum(c, value);
             }
-            req.append_datum(values.len(), &inner);
-            self.tracker.consume(-datum_bytes(&inner));
+            req.append_datum(values.len(), inner.as_ref());
+            self.tracker.consume(-inner_memory);
         }
         Ok(())
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
+        self.release_cache();
         self.outer.close()
     }
 
@@ -413,6 +591,8 @@ fn datum_bytes(value: &Datum) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
     use tidb_datatype::FieldTypeCode;
     use tidb_expr::column::Column;
 
@@ -439,6 +619,164 @@ mod tests {
         remaining: usize,
         batch: usize,
         next_value: i64,
+    }
+
+    struct Rows {
+        meta: ExecutorMeta,
+        rows: Vec<Vec<Datum>>,
+        cursor: usize,
+    }
+
+    impl Rows {
+        fn new(rows: Vec<Vec<Datum>>) -> Self {
+            let width = rows.first().map_or(1, Vec::len);
+            assert!(rows.iter().all(|row| row.len() == width));
+            Self {
+                meta: ExecutorMeta::new(schema_of(width), 0, 8, 8),
+                rows,
+                cursor: 0,
+            }
+        }
+
+        fn ints(values: Vec<i64>) -> Self {
+            Self::new(
+                values
+                    .into_iter()
+                    .map(|value| vec![Datum::Int(value)])
+                    .collect(),
+            )
+        }
+    }
+
+    impl Executor for Rows {
+        fn open(&mut self) -> Result<(), ExecError> {
+            self.cursor = 0;
+            Ok(())
+        }
+
+        fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+            req.reset();
+            while self.cursor < self.rows.len() && req.num_rows() < self.meta.max_chunk_size() {
+                for (column, value) in self.rows[self.cursor].iter().enumerate() {
+                    req.append_datum(column, value);
+                }
+                self.cursor += 1;
+            }
+            Ok(())
+        }
+
+        fn close(&mut self) -> Result<(), ExecError> {
+            Ok(())
+        }
+
+        fn schema(&self) -> &Schema {
+            self.meta.schema()
+        }
+
+        fn ret_field_types(&self) -> &[FieldType] {
+            self.meta.ret_field_types()
+        }
+
+        fn init_cap(&self) -> usize {
+            self.meta.init_cap()
+        }
+
+        fn max_chunk_size(&self) -> usize {
+            self.meta.max_chunk_size()
+        }
+
+        fn new_chunk(&self) -> Chunk {
+            self.meta.new_chunk()
+        }
+    }
+
+    #[test]
+    fn repeated_correlated_values_reuse_the_inner_result() {
+        let calls = Rc::new(Cell::new(0));
+        let runner_calls = Rc::clone(&calls);
+        let mut apply = ApplyExec::new(
+            ExecutorMeta::new(schema_of(2), 1, 8, 8),
+            Box::new(Rows::ints(vec![7, 7])),
+            Box::new(move |values| {
+                runner_calls.set(runner_calls.get() + 1);
+                Ok(values[0].clone())
+            }),
+            StatementMemory::default(),
+            None,
+        )
+        .with_cache(
+            tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE,
+            vec![0],
+            SessionTimeZone::default(),
+        );
+
+        apply.open().unwrap();
+        let mut output = apply.new_chunk();
+        apply.next(&mut output).unwrap();
+        assert_eq!(output.num_rows(), 2);
+        assert_eq!(
+            calls.get(),
+            1,
+            "the duplicate correlated key must hit the apply cache"
+        );
+        apply.close().unwrap();
+    }
+
+    #[test]
+    fn zero_apply_cache_quota_runs_every_inner_lookup() {
+        let calls = Rc::new(Cell::new(0));
+        let runner_calls = Rc::clone(&calls);
+        let mut apply = ApplyExec::new(
+            ExecutorMeta::new(schema_of(2), 1, 8, 8),
+            Box::new(Rows::ints(vec![7, 7])),
+            Box::new(move |values| {
+                runner_calls.set(runner_calls.get() + 1);
+                Ok(values[0].clone())
+            }),
+            StatementMemory::default(),
+            None,
+        )
+        .with_cache(0, vec![0], SessionTimeZone::default());
+
+        apply.open().unwrap();
+        let mut output = apply.new_chunk();
+        apply.next(&mut output).unwrap();
+        assert_eq!(output.num_rows(), 2);
+        assert_eq!(calls.get(), 2);
+        apply.close().unwrap();
+    }
+
+    #[test]
+    fn apply_cache_key_contains_only_correlated_columns() {
+        let calls = Rc::new(Cell::new(0));
+        let runner_calls = Rc::clone(&calls);
+        let mut apply = ApplyExec::new(
+            ExecutorMeta::new(schema_of(3), 1, 8, 8),
+            Box::new(Rows::new(vec![
+                vec![Datum::Int(7), Datum::Int(10)],
+                vec![Datum::Int(7), Datum::Int(20)],
+            ])),
+            Box::new(move |values| {
+                runner_calls.set(runner_calls.get() + 1);
+                Ok(values[0].clone())
+            }),
+            StatementMemory::default(),
+            None,
+        )
+        .with_cache(
+            tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE,
+            vec![0],
+            SessionTimeZone::default(),
+        );
+
+        apply.open().unwrap();
+        let mut output = apply.new_chunk();
+        apply.next(&mut output).unwrap();
+        assert_eq!(output.num_rows(), 2);
+        assert_eq!(calls.get(), 1);
+        assert_eq!(output.get_row(0).get_int64(1), 10);
+        assert_eq!(output.get_row(1).get_int64(1), 20);
+        apply.close().unwrap();
     }
 
     impl Counter {
@@ -578,6 +916,70 @@ mod tests {
             .flat_map(|outer| (0..6).map(move |k| (outer, outer * 10 + k)))
             .collect();
         assert_eq!(seen, want);
+    }
+
+    #[test]
+    fn repeated_lateral_keys_reuse_the_inner_relation_without_reordering_rows() {
+        let calls = Rc::new(Cell::new(0));
+        let runner_calls = Rc::clone(&calls);
+        let mut apply = LateralApplyExec::new(
+            ExecutorMeta::new(schema_of(2), 1, 8, 8),
+            Box::new(Rows::ints(vec![7, 7])),
+            Box::new(move |values| {
+                runner_calls.set(runner_calls.get() + 1);
+                let Datum::Int(value) = values[0] else {
+                    unreachable!("the source only produces Int")
+                };
+                Ok(vec![
+                    vec![Datum::Int(value * 10)],
+                    vec![Datum::Int(value * 10 + 1)],
+                ])
+            }),
+            StatementMemory::default(),
+        )
+        .with_cache(
+            tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE,
+            vec![0],
+            SessionTimeZone::default(),
+        );
+
+        apply.open().unwrap();
+        let mut output = apply.new_chunk();
+        apply.next(&mut output).unwrap();
+        assert_eq!(calls.get(), 1);
+        let rows: Vec<(i64, i64)> = (0..output.num_rows())
+            .map(|index| {
+                let row = output.get_row(index);
+                (row.get_int64(0), row.get_int64(1))
+            })
+            .collect();
+        assert_eq!(rows, vec![(7, 70), (7, 71), (7, 70), (7, 71)]);
+        apply.close().unwrap();
+    }
+
+    #[test]
+    fn closing_lateral_apply_releases_pending_and_cached_memory() {
+        let memory = StatementMemory::default();
+        let observed = memory.clone();
+        let mut apply = LateralApplyExec::new(
+            ExecutorMeta::new(schema_of(2), 1, 1, 1),
+            Box::new(Rows::ints(vec![7])),
+            Box::new(|_| Ok(vec![vec![Datum::Int(70)], vec![Datum::Int(71)]])),
+            memory,
+        )
+        .with_cache(
+            tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE,
+            vec![0],
+            SessionTimeZone::default(),
+        );
+
+        apply.open().unwrap();
+        let mut output = apply.new_chunk();
+        apply.next(&mut output).unwrap();
+        assert_eq!(output.num_rows(), 1);
+        assert!(observed.bytes_consumed() > 0);
+        apply.close().unwrap();
+        assert_eq!(observed.bytes_consumed(), 0);
     }
 
     /// The inner relation is charged against the statement's budget and

@@ -342,6 +342,12 @@ impl Session {
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
             .unwrap_or(1024);
+        let apply_cache_capacity = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_MEM_QUOTA_APPLY_CACHE)
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE);
         let block_encryption_mode = self
             .vars
             .get_system("block_encryption_mode")
@@ -415,6 +421,7 @@ impl Session {
                 .with_week_and_division_scale(week_format, div_scale)
                 .with_max_allowed_packet(max_allowed_packet)
                 .with_group_concat_max_len(group_concat_max_len)
+                .with_apply_cache_capacity(apply_cache_capacity)
                 .with_block_encryption_mode(block_encryption_mode)
                 .with_sequences(self.sequence_snapshot())
                 .with_sql_mode(scanner_sql_mode_of(&mode))
@@ -444,6 +451,7 @@ impl Session {
         .with_week_and_division_scale(week_format, div_scale)
         .with_max_allowed_packet(max_allowed_packet)
         .with_group_concat_max_len(group_concat_max_len)
+        .with_apply_cache_capacity(apply_cache_capacity)
         .with_block_encryption_mode(block_encryption_mode)
         .with_sequences(self.sequence_snapshot())
         .with_clock(clock, zone)

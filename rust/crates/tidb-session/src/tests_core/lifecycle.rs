@@ -39,6 +39,27 @@ fn server_spill_authority_reaches_every_statement_context() {
     std::fs::remove_dir_all(path).unwrap();
 }
 
+#[test]
+fn apply_cache_quota_reaches_query_and_dml_statement_contexts() {
+    let mut session = Session::new();
+    assert_eq!(
+        session.statement_context(false).apply_cache_capacity(),
+        tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE
+    );
+
+    session
+        .run("SET @@tidb_mem_quota_apply_cache = 12345")
+        .unwrap();
+    assert_eq!(
+        session.statement_context(false).apply_cache_capacity(),
+        12345
+    );
+    assert_eq!(
+        session.statement_context(true).apply_cache_capacity(),
+        12345
+    );
+}
+
 /// A whole session lifecycle from SQL strings alone: DDL, writes, reads.
 #[test]
 fn session_runs_a_sql_lifecycle() {
