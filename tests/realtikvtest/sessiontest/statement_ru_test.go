@@ -27,17 +27,12 @@ import (
 )
 
 const (
-	statementRUEnableCalibrationFailpoint = "github.com/pingcap/tidb/pkg/executor/enableStatementRUCalibrationPublisherForTest"
-	statementRUCalibrationUnitsFailpoint  = "github.com/pingcap/tidb/pkg/executor/observeStatementRUCalibrationUnitsForTest"
-	statementRUFreezeFailpoint            = "github.com/pingcap/tidb/pkg/executor/observeStatementRUFreezeForTest"
-	statementRUResultFailpoint            = "github.com/pingcap/tidb/pkg/executor/observeStatementRUResultForTest"
+	statementRUCalibrationUnitsFailpoint = "github.com/pingcap/tidb/pkg/executor/observeStatementRUCalibrationUnitsForTest"
+	statementRUResultFailpoint           = "github.com/pingcap/tidb/pkg/executor/observeStatementRUResultForTest"
 )
 
 type statementRURealTiKVObservation struct {
 	sync.Mutex
-	ownerInstallations int
-	calibrationAttach  bool
-	freezeAttempts     int
 	resultPublications int
 	calibrationUnits   int
 	totalRU            float64
@@ -62,21 +57,6 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 
 	connectionID := tk.Session().GetSessionVars().ConnectionID
 	observation := &statementRURealTiKVObservation{}
-	testfailpoint.EnableCall(t, statementRUEnableCalibrationFailpoint, func(
-		observedConnectionID uint64,
-		enable func() bool,
-	) {
-		if observedConnectionID != connectionID {
-			return
-		}
-		observation.Lock()
-		observation.ownerInstallations++
-		observation.Unlock()
-		attached := enable()
-		observation.Lock()
-		observation.calibrationAttach = attached
-		observation.Unlock()
-	})
 	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 		observedConnectionID uint64,
 		state uint8,
@@ -102,15 +82,6 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 		observation.resultPublications++
 		observation.totalRU = totalRU
 	})
-	testfailpoint.EnableCall(t, statementRUFreezeFailpoint, func(observedConnectionID uint64) {
-		if observedConnectionID != connectionID {
-			return
-		}
-		observation.Lock()
-		defer observation.Unlock()
-		observation.freezeAttempts++
-	})
-
 	const query = "select * from t"
 	rs, err := tk.ExecWithContext(context.Background(), query)
 	require.NoError(t, err)
@@ -126,9 +97,6 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 	require.NoError(t, finisher.Finish())
 	require.NoError(t, finisher.Finish())
 	observation.Lock()
-	require.Equal(t, 1, observation.ownerInstallations)
-	require.True(t, observation.calibrationAttach)
-	require.Zero(t, observation.freezeAttempts)
 	require.Zero(t, observation.resultPublications)
 	require.Zero(t, observation.calibrationUnits)
 	observation.Unlock()
@@ -137,10 +105,9 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 	require.NoError(t, rs.Close())
 	observation.Lock()
 	defer observation.Unlock()
-	t.Logf("statement RU observation: freezes=%d results=%d calibration=%d state=%d scan=%v net=%v frontend=%v",
-		observation.freezeAttempts, observation.resultPublications, observation.calibrationUnits,
+	t.Logf("statement RU observation: results=%d calibration=%d state=%d scan=%v net=%v frontend=%v",
+		observation.resultPublications, observation.calibrationUnits,
 		observation.state, observation.scanBytes, observation.netBytes, observation.frontendBytes)
-	require.Equal(t, 1, observation.freezeAttempts)
 	require.Equal(t, 1, observation.calibrationUnits)
 	require.Equal(t, uint8(1), observation.state)
 	require.Positive(t, observation.scanBytes)

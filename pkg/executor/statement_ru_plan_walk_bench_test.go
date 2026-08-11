@@ -22,31 +22,21 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
-	"go.uber.org/zap"
 )
 
 var (
 	statementRUExecStmtSink    *ExecStmt
 	statementRUFlatPlanSink    *plannercore.FlatPhysicalPlan
-	statementRUPublicationSink statementRUSimpleSelectPublication
+	statementRUCalculatorSink  statementRUCalculator
+	statementRUFinalizedSink   statementRUFinalizedSnapshot
 	statementRUResultSink      statementRUResultOnly
-	statementRUCalibrationSink statementRUCalibrationSnapshot
-	statementRUAccumulatorSink statementRUSimpleSelectAccumulator
+	statementRUExecDetailsSink execdetails.ExecDetails
+	statementRUScanBytesSink   float64
+	statementRUStateSink       statementRUCalibrationState
 	statementRUVisitSink       int
 )
-
-func consumeStatementRUResultForBenchmark(_ *zap.Logger, _ uint64, result statementRUResultOnly) {
-	statementRUResultSink = result
-}
-
-func discardStatementRUResultForBenchmark(*zap.Logger, uint64, statementRUResultOnly) {}
-
-func consumeStatementRUCalibrationForBenchmark(snapshot statementRUCalibrationSnapshot) {
-	statementRUCalibrationSink = snapshot
-}
-
-func discardStatementRUCalibrationForBenchmark(statementRUCalibrationSnapshot) {}
 
 func buildStatementRUPlanChainForBenchmark(operatorCount int) (*ExecStmt, base.Plan) {
 	ctx := mock.NewContext()
@@ -80,10 +70,10 @@ func BenchmarkStatementRUNilHooks(b *testing.B) {
 		}
 	})
 
-	b.Run("finish-plan-walk", func(b *testing.B) {
+	b.Run("finish", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			stmt.finishStatementRUPlanWalk(nil)
+			stmt.finishStatementRU(nil, execdetails.ExecDetails{})
 		}
 	})
 }
@@ -94,8 +84,18 @@ func BenchmarkStatementRUPlanWalk(b *testing.B) {
 			stmt, plan := buildStatementRUPlanChainForBenchmark(operatorCount)
 			stmtCtx := stmt.Ctx.GetSessionVars().StmtCtx
 			flat := plannercore.FlattenPhysicalPlan(plan, false)
-			visit := func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator) {
+			observe := func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator) {
 				statementRUVisitSink++
+			}
+			visit := func(
+				treeKind statementRUPlanTreeKind,
+				treeIndex int,
+				operatorIndex int,
+				operator *plannercore.FlatOperator,
+				scanBytes float64,
+			) float64 {
+				observe(treeKind, treeIndex, operatorIndex, operator)
+				return scanBytes
 			}
 
 			b.Run("flatten-physical-plan", func(b *testing.B) {
@@ -129,16 +129,16 @@ func BenchmarkStatementRUPlanWalk(b *testing.B) {
 				}
 			})
 
-			// These paths include per-statement owner setup, successful outcome
-			// publication, flat-plan lookup, and the synchronous occurrence walk.
+			// These paths include owner setup, outcome publication, flat lookup,
+			// and the synchronous occurrence walk, but not SQL compilation/execution.
 			b.Run("successful-plan-walk/cache-hit", func(b *testing.B) {
 				stmtCtx.SetFlatPlan(flat)
 				b.ReportAllocs()
 				b.ResetTimer()
 				for b.Loop() {
-					stmt.statementRUPlanWalkOwner = newStatementRUPlanWalkVisitorOwner(stmt, visit)
+					stmt.statementRUOwner = newStatementRUPlanWalkVisitorOwnerForTest(stmt, observe)
 					stmt.RecordStatementRUFinalOutcome(true)
-					stmt.finishStatementRUPlanWalk(nil)
+					stmt.finishStatementRU(nil, execdetails.ExecDetails{})
 				}
 			})
 
@@ -146,124 +146,119 @@ func BenchmarkStatementRUPlanWalk(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
 					stmtCtx.SetFlatPlan(nil)
-					stmt.statementRUPlanWalkOwner = newStatementRUPlanWalkVisitorOwner(stmt, visit)
+					stmt.statementRUOwner = newStatementRUPlanWalkVisitorOwnerForTest(stmt, observe)
 					stmt.RecordStatementRUFinalOutcome(true)
-					stmt.finishStatementRUPlanWalk(nil)
+					stmt.finishStatementRU(nil, execdetails.ExecDetails{})
 				}
 			})
 		})
 	}
 }
 
-func BenchmarkStatementRUSimpleSelectComponents(b *testing.B) {
+func BenchmarkStatementRUComponents(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b, true, true)
-	stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
-	flat := stmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
-	execDetails := stmtCtx.GetExecDetails()
-	execView := statementRUTerminalExecDetailsView{execDetails: execDetails}
+	flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+	setup := fixture.owner.calculationSetup
 
-	b.Run("occurrence-calculation", func(b *testing.B) {
+	b.Run("calculator-setup", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			accumulator := statementRUSimpleSelectAccumulator{}
-			accumulator.start(flat)
-			binding, owned := bindStatementRUSimpleSelectPlan(fixture.stmt.Plan)
-			if !owned {
-				b.Fatal("simple SELECT fixture lost its reader-owned scan")
-			}
-			walkStatementRUFlatPlan(flat, func(
-				treeKind statementRUPlanTreeKind,
-				_ int,
-				_ int,
-				operator *plannercore.FlatOperator,
-			) {
-				accumulator.observe(binding, treeKind, operator)
-			})
-			accumulator.finish()
-			statementRUAccumulatorSink = accumulator
+			statementRUCalculatorSink = newStatementRUCalculator(setup)
 		}
 	})
 
-	for _, calibration := range []bool{false, true} {
-		name := "canonical-freeze/result-only"
-		if calibration {
-			name = "canonical-freeze/result-and-calibration"
+	b.Run("walk-only", func(b *testing.B) {
+		visit := func(
+			_ statementRUPlanTreeKind,
+			_ int,
+			_ int,
+			_ *plannercore.FlatOperator,
+			scanBytes float64,
+		) float64 {
+			statementRUVisitSink++
+			return scanBytes
 		}
-		b.Run(name, func(b *testing.B) {
-			b.ReportAllocs()
-			for b.Loop() {
-				run := *fixture.run
-				run.resultPublisher = discardStatementRUResultForBenchmark
-				if calibration {
-					run.calibrationPublisher = discardStatementRUCalibrationForBenchmark
-				} else {
-					run.calibrationPublisher = nil
-				}
-				statementRUPublicationSink = run.freeze(fixture.stmt, fixture.owner, flat, &execView)
-			}
-		})
-	}
-
-	b.Run("result-projection-and-publication", func(b *testing.B) {
-		units := statementRURawUnits{ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15}
-		weights := statementRUPlaceholderWeightSnapshot()
 		b.ReportAllocs()
 		for b.Loop() {
-			total, ok := weights.total(units)
-			if !ok {
-				b.Fatal("valid fixture became invalid")
-			}
-			publication := statementRUSimpleSelectPublication{
-				resultPublisher: consumeStatementRUResultForBenchmark,
-				result:          statementRUResultOnly{TotalRU: total},
-				hasResult:       true,
-			}
-			publication.publish()
+			walkStatementRUFlatPlan(flat, visit)
 		}
 	})
 
-	b.Run("default-result-publication/debug-disabled-nop-logger", func(b *testing.B) {
-		publication := fixture.run.freeze(fixture.stmt, fixture.owner, flat, &execView)
-		if !publication.hasResult {
-			b.Fatal("complete fixture did not produce a ResultOnly publication")
-		}
-		publication.resultLogger = zap.NewNop()
+	b.Run("statement-scan-evidence", func(b *testing.B) {
+		stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
+		// The adapter already performs this read for existing terminal accounting
+		// and passes the value to statement RU. Keep it as a component reference,
+		// not as stack-2 incremental cost.
 		b.ReportAllocs()
 		for b.Loop() {
-			publication.publish()
+			statementRUExecDetailsSink = stmtCtx.GetExecDetails()
 		}
 	})
 
-	b.Run("calibration-snapshot-and-publication", func(b *testing.B) {
+	b.Run("scan-unit", func(b *testing.B) {
+		detail := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetExecDetails().ScanDetail
+		b.ReportAllocs()
+		for b.Loop() {
+			statementRUScanBytesSink, statementRUStateSink = statementRUScanBytes(
+				detail.TotalKeys,
+				detail.ProcessedKeys,
+				detail.ProcessedKeysSize,
+			)
+		}
+	})
+
+	b.Run("finalize", func(b *testing.B) {
+		calculator := statementRUCalculator{units: statementRURawUnits{
+			ScanBytes:            10,
+			NetBytes:             20,
+			FrontendCompileBytes: setup.frontendCompileBytes,
+		}}
+		b.ReportAllocs()
+		for b.Loop() {
+			statementRUFinalizedSink = calculator.finalize(true)
+		}
+	})
+
+	b.Run("result-construction", func(b *testing.B) {
 		units := statementRURawUnits{ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15}
 		b.ReportAllocs()
 		for b.Loop() {
-			snapshot := statementRUCalibrationSnapshot{
+			statementRUResultSink = calculateStatementRUResultOnly(units)
+		}
+	})
+
+	b.Run("result-publication/current-logger", func(b *testing.B) {
+		result := statementRUResultOnly{TotalRU: 45}
+		b.ReportAllocs()
+		for b.Loop() {
+			publishStatementRUResultSafely(fixture.stmt, result)
+		}
+	})
+
+	b.Run("calibration-publication/dormant-consumer", func(b *testing.B) {
+		units := statementRURawUnits{ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15}
+		b.ReportAllocs()
+		for b.Loop() {
+			publishStatementRUCalibrationSafely(fixture.stmt, statementRUCalibrationSnapshot{
 				State: statementRUCalibrationComplete,
 				Units: units,
-			}
-			publication := statementRUSimpleSelectPublication{
-				calibrationPublisher: consumeStatementRUCalibrationForBenchmark,
-				calibration:          snapshot,
-				hasCalibration:       true,
-			}
-			publication.publish()
+			})
 		}
 	})
 }
 
-func BenchmarkStatementRUSimpleSelectSetupAndTerminal(b *testing.B) {
+func BenchmarkStatementRUSyntheticFinalization(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b, true, true)
 	stmt := fixture.stmt
 	stmtCtx := stmt.Ctx.GetSessionVars().StmtCtx
 	flat := stmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
-	execDetails := stmtCtx.GetExecDetails()
-	execView := statementRUTerminalExecDetailsView{execDetails: execDetails}
+	execDetail := stmtCtx.GetExecDetails()
 
-	// A fresh statement must have no flat cache when the owner is installed.
-	// The cache-hit case models another statement-lifecycle consumer populating
-	// that same-generation cache before terminal, as observed by the real SELECT
-	// probe. The cache-miss case includes stack 1's terminal flatten fallback.
+	// This timer starts before the production owner installer and ends after
+	// ResultOnly and the dormant calibration boundary. It manually invokes
+	// lifecycle hooks against one reused synthetic ExecStmt; it excludes compile,
+	// executor Next/Close, session completion, and RUv2/network finalization, so it
+	// must not be reported as end-to-end SELECT latency.
 	for _, cacheMode := range []struct {
 		name               string
 		populateAtTerminal bool
@@ -271,42 +266,34 @@ func BenchmarkStatementRUSimpleSelectSetupAndTerminal(b *testing.B) {
 		{name: "cache-hit", populateAtTerminal: true},
 		{name: "cache-miss"},
 	} {
-		for _, calibration := range []bool{false, true} {
-			name := "result-only/" + cacheMode.name
-			if calibration {
-				name = "result-and-calibration/" + cacheMode.name
-			}
-			b.Run(name, func(b *testing.B) {
-				b.ReportAllocs()
-				for b.Loop() {
-					stmtCtx.SetFlatPlan(nil)
-					installStatementRUSimpleSelectOwner(stmt)
-					if cacheMode.populateAtTerminal {
-						stmtCtx.SetFlatPlan(flat)
-					}
-					stmt.recordStatementRURootEOF()
-					stmt.sealStatementRUResultTermination()
-					if calibration {
-						stmt.statementRUPlanWalkOwner.simpleSelectRun.calibrationPublisher =
-							discardStatementRUCalibrationForBenchmark
-					}
-					stmt.RecordStatementRUFinalOutcome(true)
-					stmt.finishStatementRUPlanWalkWithExecDetails(nil, &execView)
+		b.Run(cacheMode.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				stmtCtx.SetFlatPlan(nil)
+				installStatementRUOwner(stmt)
+				if cacheMode.populateAtTerminal {
+					stmtCtx.SetFlatPlan(flat)
 				}
-			})
-		}
+				stmt.recordStatementRURootEOF()
+				stmt.RecordStatementRUFinalOutcome(true)
+				stmt.finishStatementRU(nil, execDetail)
+			}
+		})
 	}
 }
 
-func BenchmarkStatementRUSimpleSelectOwnerSetup(b *testing.B) {
+func BenchmarkStatementRUOwnerSetup(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b, true, true)
 	stmt := fixture.stmt
 	stmtCtx := stmt.Ctx.GetSessionVars().StmtCtx
 
+	// This includes clearing the flat cache required by installer eligibility.
+	// Every eligible read statement pays this setup cost; it is not the allocation
+	// cost of newStatementRUOwner in isolation.
 	b.ReportAllocs()
 	for b.Loop() {
 		stmtCtx.SetFlatPlan(nil)
-		installStatementRUSimpleSelectOwner(stmt)
+		installStatementRUOwner(stmt)
 		statementRUExecStmtSink = stmt
 	}
 }

@@ -170,13 +170,13 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		}
 		err = util2.GetRecoverError(r)
 		if a.stmt != nil {
-			a.stmt.abortStatementRUPlanWalk()
+			a.stmt.abortStatementRU()
 		}
 		logutil.Logger(ctx).Warn("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 	if a.stmt != nil {
 		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-			a.stmt.abortStatementRUPlanWalk()
+			a.stmt.abortStatementRU()
 			return err
 		}
 	}
@@ -262,9 +262,6 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 func (a *recordSet) Finish() error {
 	var err error
 	a.once.Do(func() {
-		if a.stmt != nil {
-			a.stmt.sealStatementRUResultTermination()
-		}
 		if a.executor != nil {
 			err = exec.Close(a.executor)
 			a.executor = nil
@@ -368,10 +365,10 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan base.Plan
-	// statementRUPlanWalkOwner is nil unless the narrow simple-SELECT statement
-	// RU path or a test hook installs it. It must be installed before the ExecStmt
+	// statementRUOwner is nil unless the current statement RU calculation policy
+	// or a test hook installs it. It must be installed before the ExecStmt
 	// is published and must not be replaced after execution begins.
-	statementRUPlanWalkOwner *statementRUPlanWalkOwner
+	statementRUOwner *statementRUOwner
 
 	StmtNode ast.StmtNode
 
@@ -1715,7 +1712,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 
 	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
-	a.finishStatementRUPlanWalkWithExecDetails(err, &statementRUTerminalExecDetailsView{execDetails: execDetail})
+	a.finishStatementRU(err, execDetail)
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)

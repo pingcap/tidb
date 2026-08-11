@@ -20,6 +20,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
 type statementRUFinalOutcome uint32
@@ -38,17 +40,10 @@ const (
 	statementRUPlanTreeScalarSubQuery
 )
 
-type statementRUResultTermination uint32
-
-const (
-	statementRUResultTerminationUnknown statementRUResultTermination = iota
-	statementRUResultTerminationEOF
-	statementRUResultTerminationEarlyClose
-)
-
-// statementRUPlanVisitFunc is synchronous. Its FlatOperator and Origin are
-// borrowed from the getFlatPlan result and must not be retained after the call.
-// That cached result is not yet bound to the current ExecStmt plan generation.
+// statementRUPlanVisitFunc is synchronous. OperatorIndex is only a coordinate
+// for decoding ChildrenIdx edges in this borrowed tree; it is not operator
+// identity. Operator and Origin must not be retained after the callback. The
+// cached flat plan is not yet bound to the current ExecStmt generation.
 type statementRUPlanVisitFunc func(
 	treeKind statementRUPlanTreeKind,
 	treeIndex int,
@@ -56,25 +51,23 @@ type statementRUPlanVisitFunc func(
 	operator *plannercore.FlatOperator,
 )
 
-// statementRUPlanWalkOwner owns the first-record-wins outcome and the first
-// abort/terminal consumption for one ExecStmt. Its synchronous visitor or
-// production run is released when the shared finishOnce is consumed.
-type statementRUPlanWalkOwner struct {
-	finishOnce        sync.Once
-	finalOutcome      atomic.Uint32
-	rootEOF           atomic.Bool
-	resultTermination atomic.Uint32
+// statementRUOwner owns the first-record-wins outcome and the first terminal
+// finalization for one ExecStmt. Its optional plan observer and calculation
+// setup are released when the shared finishOnce is consumed.
+type statementRUOwner struct {
+	finishOnce   sync.Once
+	finalOutcome atomic.Uint32
+	rootEOF      atomic.Bool
 	// Install-time snapshots reject transient restricted/cursor classifications
 	// that may be restored before a delayed result-set terminal.
 	restrictedSQLAtInstall bool
 	cursorAtInstall        bool
 	visit                  statementRUPlanVisitFunc
-	hasSimpleSelectRun     bool
-	simpleSelectRun        statementRUSimpleSelectRun
+	calculationSetup       statementRUCalculationSetup
 }
 
-func newStatementRUPlanWalkOwner(stmt *ExecStmt) *statementRUPlanWalkOwner {
-	owner := &statementRUPlanWalkOwner{}
+func newStatementRUOwner(stmt *ExecStmt, visit statementRUPlanVisitFunc) *statementRUOwner {
+	owner := &statementRUOwner{visit: visit}
 	if stmt == nil || stmt.Ctx == nil {
 		return owner
 	}
@@ -87,32 +80,13 @@ func newStatementRUPlanWalkOwner(stmt *ExecStmt) *statementRUPlanWalkOwner {
 	return owner
 }
 
-func newStatementRUPlanWalkVisitorOwner(
-	stmt *ExecStmt,
-	visit statementRUPlanVisitFunc,
-) *statementRUPlanWalkOwner {
-	owner := newStatementRUPlanWalkOwner(stmt)
-	owner.visit = visit
-	return owner
-}
-
-func newStatementRUSimpleSelectPlanWalkOwner(
-	stmt *ExecStmt,
-	run statementRUSimpleSelectRun,
-) *statementRUPlanWalkOwner {
-	owner := newStatementRUPlanWalkOwner(stmt)
-	owner.hasSimpleSelectRun = true
-	owner.simpleSelectRun = run
-	return owner
-}
-
 // RecordStatementRUFinalOutcome publishes the final session outcome for the
-// statement-local RU plan walk. It remains a nil-owner no-op outside the narrow
-// production simple-SELECT slice and tests. The first record wins and a
-// recorded failure consumes the owner immediately; success must be recorded
-// before the existing executor terminal can walk the plan.
+// statement-local RU finalization. It remains a nil-owner no-op outside the
+// current calculation policy and tests. The first record wins and a recorded
+// failure consumes the owner immediately; success must be recorded before the
+// existing executor terminal can finalize RU.
 func (a *ExecStmt) RecordStatementRUFinalOutcome(success bool) {
-	owner := a.statementRUPlanWalkOwner
+	owner := a.statementRUOwner
 	if owner == nil {
 		return
 	}
@@ -126,91 +100,59 @@ func (a *ExecStmt) RecordStatementRUFinalOutcome(success bool) {
 		uint32(outcome),
 	)
 	if recorded && !success {
-		a.abortStatementRUPlanWalk()
+		a.abortStatementRU()
 	}
 }
 
-// abortStatementRUPlanWalk consumes the owner without invoking its visitor.
+// abortStatementRU consumes the owner without invoking its visitor.
 // RU-only failure paths use it instead of mutating legacy lastErrs or running
 // a full executor terminal solely for this RU layer.
-func (a *ExecStmt) abortStatementRUPlanWalk() {
-	owner := a.statementRUPlanWalkOwner
+func (a *ExecStmt) abortStatementRU() {
+	owner := a.statementRUOwner
 	if owner == nil {
 		return
 	}
 	owner.finishOnce.Do(func() {
 		owner.visit = nil
-		owner.hasSimpleSelectRun = false
-		owner.simpleSelectRun = statementRUSimpleSelectRun{}
+		owner.calculationSetup = statementRUCalculationSetup{}
 	})
 }
 
-// recordStatementRURootEOF records the sufficient EOF signal exposed by the
-// exact supported root TableReader. The terminal calculator still requires the
-// complete two-occurrence shape and single-response evidence before using it.
+// recordStatementRURootEOF records that the root executor returned an empty
+// chunk. A successful statement does not imply this: a caller can
+// close a RecordSet cleanly before consuming all rows, for example when writing
+// rows to the client fails. Publishing that partial work as the statement's RU
+// would undercount, so the narrow ResultOnly path requires this independent bit.
 func (a *ExecStmt) recordStatementRURootEOF() {
-	owner := a.statementRUPlanWalkOwner
+	owner := a.statementRUOwner
 	if owner == nil {
 		return
 	}
 	owner.rootEOF.Store(true)
 }
 
-// sealStatementRUResultTermination records whether the public result was
-// drained to an empty root chunk before recordSet.Finish closed its executor.
-// A successful executor/session completion alone is insufficient: the caller
-// may close a clean RecordSet before observing EOF, for example after a client
-// connection fails while rows are being written. This is only a completeness
-// signal for the new statement-RU pipeline; it does not change existing
-// RUv1/RUv2 finalization or reporting.
-func (a *ExecStmt) sealStatementRUResultTermination() {
-	owner := a.statementRUPlanWalkOwner
-	if owner == nil {
-		return
-	}
-	termination := statementRUResultTerminationEarlyClose
-	if owner.rootEOF.Load() {
-		termination = statementRUResultTerminationEOF
-	}
-	owner.resultTermination.CompareAndSwap(
-		uint32(statementRUResultTerminationUnknown),
-		uint32(termination),
-	)
-}
-
-func (a *ExecStmt) finishStatementRUPlanWalk(terminalErr error) {
-	a.finishStatementRUPlanWalkWithExecDetails(terminalErr, nil)
-}
-
-func (a *ExecStmt) finishStatementRUPlanWalkWithExecDetails(
-	terminalErr error,
-	execDetails *statementRUTerminalExecDetailsView,
-) {
-	owner := a.statementRUPlanWalkOwner
+// TODO: when the statement-RU failure metric lands, count the bounded failure
+// reasons at these fail-closed exits and publisher recoveries. Until then there
+// is deliberately no recorder-shaped no-op API.
+func (a *ExecStmt) finishStatementRU(terminalErr error, execDetail execdetails.ExecDetails) {
+	owner := a.statementRUOwner
 	if owner == nil {
 		return
 	}
 
-	won := false
-	var publication statementRUSimpleSelectPublication
+	var finalized statementRUFinalizedSnapshot
+	publishFinalized := false
 	owner.finishOnce.Do(func() {
-		won = true
 		visit := owner.visit
-		var run *statementRUSimpleSelectRun
-		if owner.hasSimpleSelectRun {
-			run = &owner.simpleSelectRun
-		}
+		calculationSetup := owner.calculationSetup
 		owner.visit = nil
+		owner.calculationSetup = statementRUCalculationSetup{}
 
 		// The entire hook is fail-closed. A panic in eligibility, flat-plan
 		// lookup/generation, framework traversal, or the visitor must neither make the
 		// owner retryable nor interrupt existing terminal bookkeeping.
 		defer func() {
-			if recover() != nil {
-				publication = statementRUSimpleSelectPublicationAfterPanic(run)
-			}
-			owner.hasSimpleSelectRun = false
-			owner.simpleSelectRun = statementRUSimpleSelectRun{}
+			_ = recover()
 		}()
 
 		if statementRUFinalOutcome(owner.finalOutcome.Load()) != statementRUFinalOutcomeSuccess || terminalErr != nil {
@@ -218,7 +160,7 @@ func (a *ExecStmt) finishStatementRUPlanWalkWithExecDetails(
 		}
 		// a.Plan remains the statement eligibility guard even though the flat-plan
 		// view below comes from StatementContext.
-		if a.Ctx == nil || a.Plan == nil || (visit == nil && run == nil) {
+		if a.Ctx == nil || a.Plan == nil {
 			return
 		}
 
@@ -229,66 +171,139 @@ func (a *ExecStmt) finishStatementRUPlanWalkWithExecDetails(
 			sessVars.InRestrictedSQL || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) {
 			return
 		}
-		if visit != nil && run != nil {
-			return
-		}
-		if run != nil && (a.PsStmt != nil || a.isPreparedStmt || a.isSelectForUpdate || a.retryCount != 0) {
-			return
-		}
-
-		// FinishExecuteStmt has just stored a.Plan in StmtCtx, but getFlatPlan may
-		// return a cached flat plan from another plan generation because StmtCtx.plan
-		// and StmtCtx.flatPlan are not bound or invalidated together. The production
-		// installer therefore accepts only a fresh StmtCtx with no preloaded flat
-		// cache, and the calculator requires the Main root Origin to equal a.Plan.
-		// This proves only the minimal fresh simple-SELECT case; it does not solve
-		// general plan-generation ownership.
-		//
-		// ScalarSubQueries have a second unresolved ownership boundary. On a cache
-		// miss FlattenPhysicalPlan reads them from the mutable SessionVars.MapScalarSubQ
-		// registry instead of a.Plan; on a cache hit it reuses the scalar trees captured
-		// when that cache was built. Neither path proves statement/plan-generation
-		// ownership. A later RU stack must fix both contracts before expanding the
-		// eligibility boundary.
 		flat := getFlatPlan(sessVars.StmtCtx)
-		if run != nil {
-			publication = run.freeze(a, owner, flat, execDetails)
-			return
-		}
 		if flat == nil {
 			return
 		}
-		walkStatementRUFlatPlan(flat, visit)
+
+		calculator := newStatementRUCalculator(calculationSetup)
+		// Transport bytes are statement evidence in both the current producer and
+		// the demo model. Read them once; do not attribute the same aggregate to
+		// every TableReader occurrence.
+		evidenceComplete := owner.rootEOF.Load()
+		if metrics := sessVars.RUV2Metrics; metrics != nil && !metrics.Bypass() {
+			netBytes := metrics.TiKVCoprocessorResponseBytes()
+			if netBytes < 0 {
+				calculator.invalidEvidence = true
+			} else if netBytes == 0 {
+				evidenceComplete = false
+			} else {
+				calculator.units.NetBytes = float64(netBytes)
+			}
+		} else {
+			evidenceComplete = false
+		}
+		// The fresh-session slice must use a flat plan rooted at this ExecStmt.
+		// General flat-plan generation identity remains outside this layer.
+		currentPlan := len(flat.Main) != 0 && flat.Main[0] != nil && flat.Main[0].Origin == a.Plan
+		walkStatementRUFlatPlan(flat, func(
+			treeKind statementRUPlanTreeKind,
+			treeIndex int,
+			operatorIndex int,
+			operator *plannercore.FlatOperator,
+			scanBytes float64,
+		) float64 {
+			if visit != nil {
+				visit(treeKind, treeIndex, operatorIndex, operator)
+			}
+			if !currentPlan {
+				return scanBytes
+			}
+			if treeKind != statementRUPlanTreeMain {
+				// CTE and scalar-subquery ownership are intentionally outside this
+				// layer. The recursive framework still visits their occurrences.
+				evidenceComplete = false
+				return scanBytes
+			}
+
+			switch operator.Origin.(type) {
+			case *physicalop.PhysicalTableReader:
+				// Calculate the Reader's statement scan aggregate here, then pass only
+				// the scalar result to its one TablePlan child.
+				detail := execDetail.ScanDetail
+				if detail == nil {
+					evidenceComplete = false
+					return 0
+				}
+				scanBytes, state := statementRUScanBytes(
+					atomic.LoadInt64(&detail.TotalKeys),
+					atomic.LoadInt64(&detail.ProcessedKeys),
+					atomic.LoadInt64(&detail.ProcessedKeysSize),
+				)
+				if state == statementRUCalibrationUnknown {
+					calculator.invalidEvidence = true
+					return 0
+				}
+				if state != statementRUCalibrationComplete {
+					evidenceComplete = false
+				}
+				return scanBytes
+			case *physicalop.PhysicalTableScan:
+				if scanBytes <= 0 {
+					evidenceComplete = false
+					return scanBytes
+				}
+				calculator.units.ScanBytes += scanBytes
+				return scanBytes
+			default:
+				// The current model defines units only for TableReader and
+				// TableScan. Later operators extend this switch without changing
+				// the traversal or calculator lifecycle.
+				evidenceComplete = false
+				return scanBytes
+			}
+		})
+		if !currentPlan {
+			return
+		}
+		finalized = calculator.finalize(evidenceComplete && calculator.units.ScanBytes > 0)
+		publishFinalized = true
 	})
-	if won {
-		publication.publish()
+	if publishFinalized {
+		publishStatementRUFinalizedSnapshot(a, finalized)
 	}
 }
 
-func walkStatementRUFlatPlan(flat *plannercore.FlatPhysicalPlan, visit statementRUPlanVisitFunc) {
+// walkStatementRUFlatPlan follows the canonical ChildrenIdx edges in depth-first
+// order. A visitor can calculate scan bytes at a Reader and pass that scalar to
+// its descendants; no traversal state is retained after the synchronous walk.
+func walkStatementRUFlatPlan(
+	flat *plannercore.FlatPhysicalPlan,
+	visit func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator, float64) float64,
+) {
 	if flat == nil || visit == nil {
 		return
 	}
+	walkTree := func(tree plannercore.FlatPlanTree, treeKind statementRUPlanTreeKind, treeIndex int) {
+		if len(tree) == 0 {
+			return
+		}
+		walkStatementRUFlatPlanNode(tree, treeKind, treeIndex, 0, 0, visit)
+	}
 
-	walkStatementRUFlatPlanTree(flat.Main, statementRUPlanTreeMain, 0, visit)
+	walkTree(flat.Main, statementRUPlanTreeMain, 0)
 	for treeIndex, tree := range flat.CTEs {
-		walkStatementRUFlatPlanTree(tree, statementRUPlanTreeCTE, treeIndex, visit)
+		walkTree(tree, statementRUPlanTreeCTE, treeIndex)
 	}
 	for treeIndex, tree := range flat.ScalarSubQueries {
-		walkStatementRUFlatPlanTree(tree, statementRUPlanTreeScalarSubQuery, treeIndex, visit)
+		walkTree(tree, statementRUPlanTreeScalarSubQuery, treeIndex)
 	}
 }
 
-func walkStatementRUFlatPlanTree(
+func walkStatementRUFlatPlanNode(
 	tree plannercore.FlatPlanTree,
 	treeKind statementRUPlanTreeKind,
 	treeIndex int,
-	visit statementRUPlanVisitFunc,
+	operatorIndex int,
+	scanBytes float64,
+	visit func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator, float64) float64,
 ) {
-	for operatorIndex, operator := range tree {
-		if operator == nil || operator.Origin == nil {
-			continue
-		}
-		visit(treeKind, treeIndex, operatorIndex, operator)
+	operator := tree[operatorIndex]
+	if operator == nil || operator.Origin == nil {
+		return
+	}
+	scanBytes = visit(treeKind, treeIndex, operatorIndex, operator, scanBytes)
+	for _, childIndex := range operator.ChildrenIdx {
+		walkStatementRUFlatPlanNode(tree, treeKind, treeIndex, childIndex, scanBytes, visit)
 	}
 }

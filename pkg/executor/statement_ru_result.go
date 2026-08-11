@@ -17,75 +17,51 @@ package executor
 import (
 	"context"
 	"math"
-	"sync/atomic"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-const statementRUSimpleSelectExpectedMainOccurrences = uint32(2)
+// These deliberately uncalibrated weights keep the first ResultOnly path
+// executable. They are internal placeholders, not billing values. Update them
+// only together with the external model documentation until a later PR adds a
+// configured model.
+const (
+	statementRUScanByteWeight            = 1.0
+	statementRUNetByteWeight             = 1.0
+	statementRUFrontendCompileByteWeight = 1.0
+)
 
 type statementRURawUnits struct {
-	// ScanBytes estimates physical bytes scanned by the single TiKV table-scan
-	// response from its ScanDetailV2 key counts and processed-key bytes.
+	// ScanBytes is the sum of physical-byte estimates consumed by supported
+	// TiKV table-scan occurrences during the statement-local plan traversal.
 	ScanBytes float64
-	// NetBytes is the TiKV coprocessor response-body byte count finalized in the
-	// statement-local RUv2 metrics.
+	// NetBytes is statement transport evidence, not operator attribution. It is
+	// the TiKV coprocessor response-body byte count finalized in statement-local
+	// RUv2 metrics.
 	NetBytes float64
 	// FrontendCompileBytes is the UTF-8 byte length of the source SQL text seen
-	// by the compiler. A Complete calibration snapshot makes every field in this
-	// value authoritative; consumers must reject the entire snapshot otherwise.
+	// by the compiler.
 	FrontendCompileBytes float64
-}
-
-// statementRUTerminalExecDetailsView carries the shallow ExecDetails value
-// already read by FinishExecuteStmt. It is borrowed only until that synchronous
-// terminal call returns. Statement RU may read RequestCount and atomically load
-// the three ScanDetail scalars; it must not retain aliases or add publisher use.
-type statementRUTerminalExecDetailsView struct {
-	execDetails execdetails.ExecDetails
-}
-
-type statementRUWeights struct {
-	ScanBytes            float64
-	NetBytes             float64
-	FrontendCompileBytes float64
-}
-
-// statementRUPlaceholderWeightSnapshot returns deliberately uncalibrated
-// internal-debug placeholders. Their total is not billing data, is not
-// externally enabled, and is not promised to be comparable across commits.
-func statementRUPlaceholderWeightSnapshot() statementRUWeights {
-	return statementRUWeights{
-		ScanBytes:            1,
-		NetBytes:             1,
-		FrontendCompileBytes: 1,
-	}
 }
 
 type statementRUResultOnly struct {
 	TotalRU float64
 }
 
-// statementRUCalibrationState is the complete publication contract for raw
-// units. Complete means every field in Units is authoritative for this slice;
-// a calibration consumer must reject the whole snapshot for every other state.
+// Complete means the supported traversal consumed every unit required by the
+// current model after the result reached EOF. Incomplete snapshots are still
+// passed through the dormant calibration publication boundary so a future
+// consumer can reject them explicitly.
 type statementRUCalibrationState uint8
 
 const (
+	// Unknown is an internal zero value and must never be published.
 	statementRUCalibrationUnknown statementRUCalibrationState = iota
 	statementRUCalibrationComplete
 	statementRUCalibrationIncomplete
-	statementRUCalibrationUnsupported
-	statementRUCalibrationInvalid
 )
 
 type statementRUCalibrationSnapshot struct {
@@ -93,147 +69,51 @@ type statementRUCalibrationSnapshot struct {
 	Units statementRURawUnits
 }
 
-// statementRUFailureReason is a bounded diagnostic dimension for the future
-// failure counter. It neither authorizes calibration consumers to use Units
-// nor says whether ResultOnly was published: for example, missing frontend
-// text publishes ResultOnly with zero but still records IncompleteEvidence.
-// This slice keeps one primary reason; calculator/evidence failures take
-// precedence, and a publisher panic only fills an otherwise-unknown reason.
-type statementRUFailureReason uint8
-
-const (
-	statementRUFailureUnknown statementRUFailureReason = iota
-	statementRUFailureFlatPlanUnavailable
-	statementRUFailureUnsupportedPlan
-	statementRUFailureIncompleteEvidence
-	statementRUFailureInvalidEvidence
-	statementRUFailureCalculatorPanic
-	statementRUFailureResultPublisherPanic
-	statementRUFailureCalibrationPublisherPanic
-)
-
-type statementRUResultPublisher func(*zap.Logger, uint64, statementRUResultOnly)
-type statementRUCalibrationPublisher func(statementRUCalibrationSnapshot)
-type statementRUFailureRecorder func(statementRUFailureReason)
-
-type statementRUSimpleSelectAccumulator struct {
-	// These topology facts are transient calculator gates. They prove that the
-	// current narrow formula applies, but are discarded at freeze and are never
-	// retained in ResultOnly or a calibration snapshot.
-	observedMain uint32
-	unsupported  bool
-	rootSeen     bool
-	scanSeen     bool
+// statementRUCalculationSetup is installed once for an eligible read statement
+// and cleared by the first terminal attempt. It contains no plan pointer,
+// topology state, publication mode, or consumer.
+type statementRUCalculationSetup struct {
+	frontendCompileBytes float64
 }
 
-// statementRUSimpleSelectPlanBinding is a freeze-local borrowed view of the
-// reader and scan owned by the current ExecStmt.Plan. It is used only during
-// the synchronous occurrence walk and never retained in the run, owner, or a
-// publication. Plan ID is exposed only after this pointer binding succeeds and
-// only as the runtime-stat lookup key.
-type statementRUSimpleSelectPlanBinding struct {
-	reader *physicalop.PhysicalTableReader
-	scan   *physicalop.PhysicalTableScan
+// statementRUFinalizedSnapshot contains only values. It cannot retain an ExecStmt,
+// FlatOperator, Origin, flat plan, calculator, or ExecDetails pointer.
+type statementRUFinalizedSnapshot struct {
+	units            statementRURawUnits
+	result           statementRUResultOnly
+	calibrationState statementRUCalibrationState
+	hasResult        bool
 }
 
-type statementRUSimpleSelectRun struct {
-	frontendCompileBytes   float64
-	frontendCompilePresent bool
-	resultPublisher        statementRUResultPublisher
-	calibrationPublisher   statementRUCalibrationPublisher
-	// failureRecorder remains nil in production until the metrics PR connects
-	// this fixed-reason seam to a bounded aggregate counter.
-	failureRecorder statementRUFailureRecorder
-}
-
-type statementRUSimpleSelectPublication struct {
-	resultPublisher      statementRUResultPublisher
-	resultLogger         *zap.Logger
-	connectionID         uint64
-	result               statementRUResultOnly
-	hasResult            bool
-	calibrationPublisher statementRUCalibrationPublisher
-	calibration          statementRUCalibrationSnapshot
-	hasCalibration       bool
-	failureRecorder      statementRUFailureRecorder
-	failureReason        statementRUFailureReason
-}
-
-func installStatementRUSimpleSelectOwner(stmt *ExecStmt) {
-	run, ok := newStatementRUSimpleSelectRun(stmt)
+func installStatementRUOwner(stmt *ExecStmt) {
+	setup, ok := newStatementRUCalculationSetup(stmt)
 	if !ok {
 		return
 	}
-	owner := newStatementRUSimpleSelectPlanWalkOwner(stmt, run)
-	stmt.statementRUPlanWalkOwner = owner
-
-	connectionID := stmt.Ctx.GetSessionVars().ConnectionID
-	failpoint.InjectCall(
-		"enableStatementRUCalibrationPublisherForTest",
-		connectionID,
-		func() bool {
-			if owner.simpleSelectRun.calibrationPublisher != nil {
-				return false
-			}
-			owner.simpleSelectRun.calibrationPublisher = newStatementRUCalibrationTestPublisher(connectionID)
-			return true
-		},
-	)
+	owner := newStatementRUOwner(stmt, nil)
+	owner.calculationSetup = setup
+	stmt.statementRUOwner = owner
 }
 
-func newStatementRUCalibrationTestPublisher(connectionID uint64) statementRUCalibrationPublisher {
-	return func(snapshot statementRUCalibrationSnapshot) {
-		failpoint.InjectCall(
-			"observeStatementRUCalibrationUnitsForTest",
-			connectionID,
-			uint8(snapshot.State),
-			snapshot.Units.ScanBytes,
-			snapshot.Units.NetBytes,
-			snapshot.Units.FrontendCompileBytes,
-		)
-	}
-}
-
-func newStatementRUSimpleSelectRun(stmt *ExecStmt) (statementRUSimpleSelectRun, bool) {
-	if stmt == nil || stmt.Ctx == nil || stmt.Plan == nil || stmt.PsStmt != nil {
-		return statementRUSimpleSelectRun{}, false
-	}
-	selectStmt, ok := stmt.StmtNode.(*ast.SelectStmt)
-	if !ok || selectStmt.Kind != ast.SelectStmtKindSelect || selectStmt.With != nil ||
-		selectStmt.LockInfo != nil || selectStmt.SelectIntoOpt != nil || selectStmt.AfterSetOperator != nil {
-		return statementRUSimpleSelectRun{}, false
-	}
-	if _, ok := stmt.Plan.(*physicalop.PhysicalTableReader); !ok {
-		return statementRUSimpleSelectRun{}, false
+func newStatementRUCalculationSetup(stmt *ExecStmt) (statementRUCalculationSetup, bool) {
+	if stmt == nil || stmt.Ctx == nil || stmt.Plan == nil {
+		return statementRUCalculationSetup{}, false
 	}
 	sessVars := stmt.Ctx.GetSessionVars()
-	if sessVars == nil || sessVars.StmtCtx == nil || !plannercore.IsAutoCommitTxn(sessVars) ||
-		sessVars.InRestrictedSQL || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) || sessVars.FoundInPlanCache ||
-		sessVars.StmtCtx.UseCache() || sessVars.StmtCtx.GetFlatPlan() != nil {
-		return statementRUSimpleSelectRun{}, false
+	if sessVars == nil || sessVars.StmtCtx == nil || !sessVars.StmtCtx.IsReadOnly ||
+		sessVars.InRestrictedSQL || sessVars.HasStatusFlag(mysql.ServerStatusCursorExists) ||
+		sessVars.StmtCtx.GetFlatPlan() != nil {
+		return statementRUCalculationSetup{}, false
 	}
 
-	frontendBytes, frontendPresent := statementRUFrontendCompileBytes(stmt)
-	return statementRUSimpleSelectRun{
-		frontendCompileBytes:   frontendBytes,
-		frontendCompilePresent: frontendPresent,
-		resultPublisher:        publishStatementRUDebugResult,
+	return statementRUCalculationSetup{
+		frontendCompileBytes: statementRUFrontendCompileBytes(stmt),
 	}, true
 }
 
-func publishStatementRUDebugResult(logger *zap.Logger, connectionID uint64, result statementRUResultOnly) {
-	if logger != nil {
-		if checkedEntry := logger.Check(zap.DebugLevel, "uncalibrated statement RU result"); checkedEntry != nil {
-			checkedEntry.Write(zap.Float64("total_ru", result.TotalRU))
-		}
-	}
-	// Test observation is independent of the configured log level.
-	failpoint.InjectCall("observeStatementRUResultForTest", connectionID, result.TotalRU)
-}
-
-func statementRUFrontendCompileBytes(stmt *ExecStmt) (float64, bool) {
+func statementRUFrontendCompileBytes(stmt *ExecStmt) float64 {
 	if stmt == nil || stmt.StmtNode == nil {
-		return 0, false
+		return 0
 	}
 	sql := stmt.StmtNode.OriginalText()
 	if sql == "" && stmt.Ctx != nil && stmt.Ctx.GetSessionVars() != nil && stmt.Ctx.GetSessionVars().StmtCtx != nil {
@@ -243,375 +123,145 @@ func statementRUFrontendCompileBytes(stmt *ExecStmt) (float64, bool) {
 		sql = stmt.StmtNode.Text()
 	}
 	if sql == "" {
-		return 0, false
+		return 0
 	}
-	return float64(len(sql)), true
+	return float64(len(sql))
 }
 
-func (run *statementRUSimpleSelectRun) freeze(
+// statementRUCalculator is terminal-local. It accumulates only typed scalar
+// units and invalid evidence; no plan or execution-detail pointer survives an
+// occurrence callback.
+type statementRUCalculator struct {
+	units           statementRURawUnits
+	invalidEvidence bool
+}
+
+func newStatementRUCalculator(setup statementRUCalculationSetup) statementRUCalculator {
+	return statementRUCalculator{units: statementRURawUnits{
+		FrontendCompileBytes: setup.frontendCompileBytes,
+	}}
+}
+
+// statementRUScanBytes converts a value copy of terminal scan evidence into one
+// traversal contribution. It does not retain ExecDetails or ScanDetail.
+func statementRUScanBytes(totalKeys, processedKeys, processedBytes int64) (float64, statementRUCalibrationState) {
+	if totalKeys < 0 || processedKeys < 0 || processedBytes < 0 {
+		return 0, statementRUCalibrationUnknown
+	}
+	if processedKeys == 0 && (totalKeys != 0 || processedBytes != 0) {
+		return 0, statementRUCalibrationUnknown
+	}
+	if totalKeys == 0 || processedKeys == 0 || processedBytes == 0 {
+		if totalKeys != 0 || processedKeys != 0 || processedBytes != 0 {
+			return 0, statementRUCalibrationIncomplete
+		}
+		return 0, statementRUCalibrationIncomplete
+	}
+
+	scanBytes := float64(processedBytes) / float64(processedKeys) * float64(totalKeys)
+	if scanBytes > math.MaxFloat64 {
+		return 0, statementRUCalibrationUnknown
+	}
+	return scanBytes, statementRUCalibrationComplete
+}
+
+func (calculator statementRUCalculator) finalize(evidenceComplete bool) statementRUFinalizedSnapshot {
+	finalized := statementRUFinalizedSnapshot{
+		units:            calculator.units,
+		calibrationState: statementRUCalibrationComplete,
+	}
+	if calculator.invalidEvidence {
+		finalized.calibrationState = statementRUCalibrationUnknown
+		return finalized
+	}
+	if !evidenceComplete {
+		// A successful statement may still be closed before the client consumes
+		// the result to EOF (for example, after a connection write failure). In
+		// that case the recorded aggregates describe only the work observed before
+		// close. Traversal also fails closed when it cannot associate the existing
+		// statement evidence with a supported operator occurrence.
+		finalized.calibrationState = statementRUCalibrationIncomplete
+		return finalized
+	}
+
+	if finalized.units.FrontendCompileBytes == 0 {
+		// Frontend text is optional for ResultOnly in this first slice, where its
+		// contribution is explicitly projected as zero. Calibration still marks
+		// the same finalized evidence incomplete rather than learning from that zero.
+		finalized.calibrationState = statementRUCalibrationIncomplete
+	}
+	finalized.result = calculateStatementRUResultOnly(finalized.units)
+	if finalized.result.TotalRU < 0 || math.IsNaN(finalized.result.TotalRU) || math.IsInf(finalized.result.TotalRU, 0) {
+		finalized.calibrationState = statementRUCalibrationUnknown
+		return finalized
+	}
+	finalized.hasResult = true
+	return finalized
+}
+
+func calculateStatementRUResultOnly(units statementRURawUnits) statementRUResultOnly {
+	return statementRUResultOnly{TotalRU: statementRUScanByteWeight*units.ScanBytes +
+		statementRUNetByteWeight*units.NetBytes +
+		statementRUFrontendCompileByteWeight*units.FrontendCompileBytes}
+}
+
+func publishStatementRUFinalizedSnapshot(
 	stmt *ExecStmt,
-	owner *statementRUPlanWalkOwner,
-	flat *plannercore.FlatPhysicalPlan,
-	execView *statementRUTerminalExecDetailsView,
-) statementRUSimpleSelectPublication {
+	finalized statementRUFinalizedSnapshot,
+) {
+	if finalized.hasResult {
+		publishStatementRUResultSafely(stmt, finalized.result)
+	}
+	if finalized.calibrationState != statementRUCalibrationUnknown {
+		publishStatementRUCalibrationSafely(stmt, statementRUCalibrationSnapshot{
+			State: finalized.calibrationState,
+			Units: finalized.units,
+		})
+	}
+}
+
+func publishStatementRUResultSafely(stmt *ExecStmt, result statementRUResultOnly) {
+	defer func() {
+		_ = recover()
+	}()
 	connectionID := uint64(0)
 	loggerContext := context.Background()
 	if stmt != nil {
 		if stmt.GoCtx != nil {
 			loggerContext = stmt.GoCtx
 		}
-		if stmt.Ctx != nil {
-			if sessVars := stmt.Ctx.GetSessionVars(); sessVars != nil {
-				connectionID = sessVars.ConnectionID
-			}
+		if stmt.Ctx != nil && stmt.Ctx.GetSessionVars() != nil {
+			connectionID = stmt.Ctx.GetSessionVars().ConnectionID
 		}
 	}
-	failpoint.InjectCall("observeStatementRUFreezeForTest", connectionID)
-	publication := statementRUSimpleSelectPublication{
-		resultPublisher:      run.resultPublisher,
-		resultLogger:         logutil.Logger(loggerContext),
-		connectionID:         connectionID,
-		calibrationPublisher: run.calibrationPublisher,
-		failureRecorder:      run.failureRecorder,
+	logger := logutil.Logger(loggerContext)
+	if checkedEntry := logger.Check(zap.DebugLevel, "uncalibrated statement RU result"); checkedEntry != nil {
+		checkedEntry.Write(zap.Float64("total_ru", result.TotalRU))
 	}
-	if flat == nil {
-		return projectStatementRUFreeze(
-			statementRURawUnits{},
-			statementRUCalibrationUnsupported,
-			statementRUFailureFlatPlanUnavailable,
-			publication,
-		)
-	}
-
-	accumulator := statementRUSimpleSelectAccumulator{}
-	accumulator.start(flat)
-	binding, owned := bindStatementRUSimpleSelectPlan(stmt.Plan)
-	if !owned {
-		accumulator.unsupported = true
-	}
-	walkStatementRUFlatPlan(flat, func(
-		treeKind statementRUPlanTreeKind,
-		_ int,
-		_ int,
-		operator *plannercore.FlatOperator,
-	) {
-		accumulator.observe(binding, treeKind, operator)
-	})
-	accumulator.finish()
-
-	units := statementRURawUnits{}
-	if run.frontendCompilePresent {
-		units.FrontendCompileBytes = run.frontendCompileBytes
-	}
-
-	if accumulator.unsupported {
-		return projectStatementRUFreeze(
-			units,
-			statementRUCalibrationUnsupported,
-			statementRUFailureUnsupportedPlan,
-			publication,
-		)
-	}
-
-	executionComplete, invalid := captureStatementRUExecutionEvidence(stmt, binding.runtimeStatsPlanID(), execView, &units)
-	weights := statementRUPlaceholderWeightSnapshot()
-	if invalid || !validStatementRUWeights(weights) {
-		return projectStatementRUFreeze(
-			units,
-			statementRUCalibrationInvalid,
-			statementRUFailureInvalidEvidence,
-			publication,
-		)
-	}
-
-	termination := statementRUResultTermination(owner.resultTermination.Load())
-	coreComplete := termination == statementRUResultTerminationEOF && executionComplete
-	if !coreComplete {
-		// An early close or another evidence gap is a missing ResultOnly sample,
-		// never a zero-RU result. Suppress ResultOnly and, when calibration is
-		// attached, publish one Incomplete snapshot for downstream rejection.
-		// Future aggregate reporting must count this failure separately; if it
-		// needs actual consumed RU for early-closed statements, it must establish
-		// a producer-coverage contract rather than treating missing as zero.
-		return projectStatementRUFreeze(
-			units,
-			statementRUCalibrationIncomplete,
-			statementRUFailureIncompleteEvidence,
-			publication,
-		)
-	}
-
-	frontendForResult := units.FrontendCompileBytes
-	if !run.frontendCompilePresent {
-		frontendForResult = 0
-	}
-	total, ok := weights.total(statementRURawUnits{
-		ScanBytes:            units.ScanBytes,
-		NetBytes:             units.NetBytes,
-		FrontendCompileBytes: frontendForResult,
-	})
-	if !ok {
-		return projectStatementRUFreeze(
-			units,
-			statementRUCalibrationInvalid,
-			statementRUFailureInvalidEvidence,
-			publication,
-		)
-	}
-	publication.result = statementRUResultOnly{TotalRU: total}
-	publication.hasResult = true
-	state := statementRUCalibrationComplete
-	reason := statementRUFailureUnknown
-	if !run.frontendCompilePresent {
-		state = statementRUCalibrationIncomplete
-		reason = statementRUFailureIncompleteEvidence
-	}
-	return projectStatementRUFreeze(units, state, reason, publication)
+	// Test observation is independent of the configured log level.
+	failpoint.InjectCall("observeStatementRUResultForTest", connectionID, result.TotalRU)
 }
 
-func projectStatementRUFreeze(
-	units statementRURawUnits,
-	state statementRUCalibrationState,
-	reason statementRUFailureReason,
-	publication statementRUSimpleSelectPublication,
-) statementRUSimpleSelectPublication {
-	publication.failureReason = reason
-	if publication.calibrationPublisher != nil {
-		publication.calibration = statementRUCalibrationSnapshot{
-			State: state,
-			Units: units,
-		}
-		publication.hasCalibration = true
-	}
-	return publication
-}
-
-func captureStatementRUExecutionEvidence(
+func publishStatementRUCalibrationSafely(
 	stmt *ExecStmt,
-	scanPlanID int,
-	execView *statementRUTerminalExecDetailsView,
-	units *statementRURawUnits,
-) (complete bool, invalid bool) {
-	// Counts and presence checks below are local proof inputs for this exact
-	// one-response SELECT. Only their aggregate decision survives the freeze as
-	// calibration State (and, separately, a FailureReason for future metrics).
-	// Publishing the proof details would expose an accidental topology contract
-	// without making a non-Complete sample usable.
-	if stmt == nil || stmt.Ctx == nil || units == nil {
-		return false, true
-	}
-	sessVars := stmt.Ctx.GetSessionVars()
-	if sessVars == nil || sessVars.StmtCtx == nil {
-		return false, true
-	}
-	var execDetails execdetails.ExecDetails
-	if execView == nil {
-		execDetails = sessVars.StmtCtx.GetExecDetails()
-	} else {
-		execDetails = execView.execDetails
-	}
-	if execDetails.RequestCount < 0 {
-		return false, true
-	}
-	acceptedResponses := uint64(execDetails.RequestCount)
-	observedScanTasks := uint64(0)
-	if sessVars.StmtCtx.RuntimeStatsColl != nil {
-		tasks, _ := sessVars.StmtCtx.RuntimeStatsColl.GetCopCountAndRows(scanPlanID)
-		if tasks < 0 {
-			return false, true
-		}
-		observedScanTasks = uint64(tasks)
-	}
-	scanBytesPresent := false
-	if execDetails.ScanDetail != nil {
-		totalKeys := atomic.LoadInt64(&execDetails.ScanDetail.TotalKeys)
-		processedKeys := atomic.LoadInt64(&execDetails.ScanDetail.ProcessedKeys)
-		processedBytes := atomic.LoadInt64(&execDetails.ScanDetail.ProcessedKeysSize)
-		if totalKeys < 0 || processedKeys < 0 || processedBytes < 0 {
-			return false, true
-		}
-		if totalKeys > 0 && processedKeys > 0 && processedBytes > 0 {
-			scanBytes := float64(processedBytes) / float64(processedKeys) * float64(totalKeys)
-			if !finitePositiveStatementRUValue(scanBytes) {
-				return false, true
-			}
-			units.ScanBytes = scanBytes
-			scanBytesPresent = true
-		}
-	}
-
-	readerRequests := uint64(0)
-	netBytesPresent := false
-	metrics := sessVars.RUV2Metrics
-	if metrics != nil && !metrics.Bypass() {
-		readRequests := metrics.ResourceManagerReadCnt()
-		netBytes := metrics.TiKVCoprocessorResponseBytes()
-		if readRequests < 0 || netBytes < 0 {
-			return false, true
-		}
-		readerRequests = uint64(readRequests)
-		if netBytes > 0 {
-			units.NetBytes = float64(netBytes)
-			netBytesPresent = true
-		}
-	}
-	return acceptedResponses == 1 && observedScanTasks == 1 && readerRequests == 1 &&
-		scanBytesPresent && netBytesPresent, false
-}
-
-func (accumulator *statementRUSimpleSelectAccumulator) start(flat *plannercore.FlatPhysicalPlan) {
-	if flat == nil || len(flat.Main) != int(statementRUSimpleSelectExpectedMainOccurrences) ||
-		len(flat.CTEs) != 0 || len(flat.ScalarSubQueries) != 0 || flat.InExecute || flat.InExplain {
-		accumulator.unsupported = true
-	}
-}
-
-func bindStatementRUSimpleSelectPlan(
-	currentPlan base.Plan,
-) (statementRUSimpleSelectPlanBinding, bool) {
-	reader, ok := currentPlan.(*physicalop.PhysicalTableReader)
-	if !ok || reader.StoreType != kv.TiKV || reader.ReadReqType != physicalop.Cop ||
-		len(reader.TablePlans) != 1 || reader.TablePlan == nil {
-		return statementRUSimpleSelectPlanBinding{}, false
-	}
-	scan, ok := reader.TablePlan.(*physicalop.PhysicalTableScan)
-	if !ok || reader.TablePlans[0] != scan || scan.Table == nil || scan.Table.GetPartitionInfo() != nil ||
-		scan.IsMPPOrBatchCop || scan.StoreType != kv.TiKV {
-		return statementRUSimpleSelectPlanBinding{}, false
-	}
-	return statementRUSimpleSelectPlanBinding{reader: reader, scan: scan}, true
-}
-
-func (binding statementRUSimpleSelectPlanBinding) runtimeStatsPlanID() int {
-	return binding.scan.ID()
-}
-
-func (accumulator *statementRUSimpleSelectAccumulator) observe(
-	binding statementRUSimpleSelectPlanBinding,
-	treeKind statementRUPlanTreeKind,
-	operator *plannercore.FlatOperator,
-) {
-	if treeKind != statementRUPlanTreeMain || operator == nil {
-		accumulator.unsupported = true
-		return
-	}
-	accumulator.observedMain++
-	switch origin := operator.Origin.(type) {
-	case *physicalop.PhysicalTableReader:
-		if binding.reader == nil || origin != binding.reader || accumulator.rootSeen || !operator.IsPhysicalPlan || !operator.IsRoot ||
-			operator.Depth != 0 || operator.StoreType != kv.TiDB {
-			accumulator.unsupported = true
-			return
-		}
-		accumulator.rootSeen = true
-	case *physicalop.PhysicalTableScan:
-		if binding.scan == nil || origin != binding.scan || accumulator.scanSeen || !operator.IsPhysicalPlan || operator.IsRoot ||
-			operator.Depth != 1 || operator.StoreType != kv.TiKV || operator.ReqType != physicalop.Cop {
-			accumulator.unsupported = true
-			return
-		}
-		accumulator.scanSeen = true
-	default:
-		accumulator.unsupported = true
-	}
-}
-
-func (accumulator *statementRUSimpleSelectAccumulator) finish() {
-	if accumulator.observedMain != statementRUSimpleSelectExpectedMainOccurrences ||
-		!accumulator.rootSeen || !accumulator.scanSeen {
-		accumulator.unsupported = true
-	}
-}
-
-func (weights statementRUWeights) total(units statementRURawUnits) (float64, bool) {
-	total := weights.ScanBytes*units.ScanBytes +
-		weights.NetBytes*units.NetBytes +
-		weights.FrontendCompileBytes*units.FrontendCompileBytes
-	return total, finiteNonNegativeStatementRUValue(total)
-}
-
-func validStatementRUWeights(weights statementRUWeights) bool {
-	return finiteNonNegativeStatementRUValue(weights.ScanBytes) &&
-		finiteNonNegativeStatementRUValue(weights.NetBytes) &&
-		finiteNonNegativeStatementRUValue(weights.FrontendCompileBytes)
-}
-
-func finitePositiveStatementRUValue(value float64) bool {
-	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
-}
-
-func finiteNonNegativeStatementRUValue(value float64) bool {
-	return value >= 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
-}
-
-func statementRUSimpleSelectPublicationAfterPanic(run *statementRUSimpleSelectRun) statementRUSimpleSelectPublication {
-	if run == nil {
-		return statementRUSimpleSelectPublication{}
-	}
-	return statementRUSimpleSelectPublication{
-		failureRecorder: run.failureRecorder,
-		failureReason:   statementRUFailureCalculatorPanic,
-	}
-}
-
-func (publication statementRUSimpleSelectPublication) publish() {
-	// Calculator/evidence failure is the primary statement reason. A publisher
-	// panic fills an otherwise-unknown reason only; the later metrics integration
-	// must use independent dimensions if it needs to count both failures.
-	reason := publication.failureReason
-	if publication.hasResult && publication.resultPublisher != nil {
-		if !publishStatementRUResult(
-			publication.resultPublisher,
-			publication.resultLogger,
-			publication.connectionID,
-			publication.result,
-		) && reason == statementRUFailureUnknown {
-			reason = statementRUFailureResultPublisherPanic
-		}
-	}
-	if publication.hasCalibration && publication.calibrationPublisher != nil {
-		if !publishStatementRUCalibration(publication.calibrationPublisher, publication.calibration) && reason == statementRUFailureUnknown {
-			reason = statementRUFailureCalibrationPublisherPanic
-		}
-	}
-	if reason != statementRUFailureUnknown && publication.failureRecorder != nil {
-		recordStatementRUFailure(publication.failureRecorder, reason)
-	}
-}
-
-func publishStatementRUResult(
-	publisher statementRUResultPublisher,
-	logger *zap.Logger,
-	connectionID uint64,
-	result statementRUResultOnly,
-) (ok bool) {
-	ok = true
-	defer func() {
-		if recover() != nil {
-			ok = false
-		}
-	}()
-	publisher(logger, connectionID, result)
-	return ok
-}
-
-func publishStatementRUCalibration(
-	publisher statementRUCalibrationPublisher,
 	snapshot statementRUCalibrationSnapshot,
-) (ok bool) {
-	ok = true
-	defer func() {
-		if recover() != nil {
-			ok = false
-		}
-	}()
-	publisher(snapshot)
-	return ok
-}
-
-func recordStatementRUFailure(recorder statementRUFailureRecorder, reason statementRUFailureReason) {
+) {
 	defer func() {
 		_ = recover()
 	}()
-	recorder(reason)
+	// The typed calibration boundary is intentionally dormant until a later PR
+	// installs the real consumer. This failpoint only observes the same production
+	// call; it does not select a test-only calculation or publication mode.
+	connectionID := uint64(0)
+	if stmt != nil && stmt.Ctx != nil && stmt.Ctx.GetSessionVars() != nil {
+		connectionID = stmt.Ctx.GetSessionVars().ConnectionID
+	}
+	failpoint.InjectCall(
+		"observeStatementRUCalibrationUnitsForTest",
+		connectionID,
+		uint8(snapshot.State),
+		snapshot.Units.ScanBytes,
+		snapshot.Units.NetBytes,
+		snapshot.Units.FrontendCompileBytes,
+	)
 }

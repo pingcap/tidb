@@ -26,6 +26,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
@@ -41,13 +42,20 @@ func newStatementRUPlanForTest() (*ExecStmt, *atomic.Int64) {
 		GoCtx: context.Background(),
 		Plan:  plan,
 	}
-	stmt.statementRUPlanWalkOwner = newStatementRUPlanWalkVisitorOwner(
+	stmt.statementRUOwner = newStatementRUPlanWalkVisitorOwnerForTest(
 		stmt,
 		func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator) {
 			visits.Add(1)
 		},
 	)
 	return stmt, visits
+}
+
+func newStatementRUPlanWalkVisitorOwnerForTest(
+	stmt *ExecStmt,
+	visit statementRUPlanVisitFunc,
+) *statementRUOwner {
+	return newStatementRUOwner(stmt, visit)
 }
 
 func statementRUPlanTreeKindForTest(kind statementRUPlanTreeKind) string {
@@ -81,10 +89,15 @@ func InstallStatementRUPlanWalkOwnerForTest(
 	stmt *ExecStmt,
 	visit func(treeKind string, treeIndex int, operatorIndex int, operator *plannercore.FlatOperator),
 ) {
-	stmt.statementRUPlanWalkOwner = newStatementRUPlanWalkVisitorOwner(
+	stmt.statementRUOwner = newStatementRUPlanWalkVisitorOwnerForTest(
 		stmt,
-		func(kind statementRUPlanTreeKind, treeIndex, operatorIndex int, operator *plannercore.FlatOperator) {
-			visit(statementRUPlanTreeKindForTest(kind), treeIndex, operatorIndex, operator)
+		func(treeKind statementRUPlanTreeKind, treeIndex, operatorIndex int, operator *plannercore.FlatOperator) {
+			visit(
+				statementRUPlanTreeKindForTest(treeKind),
+				treeIndex,
+				operatorIndex,
+				operator,
+			)
 		},
 	)
 }
@@ -100,10 +113,8 @@ func TestStatementRUPlanWalkOccurrences(t *testing.T) {
 
 	flat := &plannercore.FlatPhysicalPlan{
 		Main: plannercore.FlatPlanTree{
-			{Origin: dml},
-			nil,
-			{},
-			{Origin: duplicate},
+			{Origin: dml, ChildrenIdx: []int{1}, ChildrenEndIdx: 1},
+			{Origin: duplicate, ChildrenEndIdx: 1},
 		},
 		CTEs: []plannercore.FlatPlanTree{
 			{{Origin: cte}},
@@ -111,29 +122,89 @@ func TestStatementRUPlanWalkOccurrences(t *testing.T) {
 		},
 		ScalarSubQueries: []plannercore.FlatPlanTree{
 			{{Origin: scalar}},
-			{nil, {Origin: duplicate}},
+			{{Origin: duplicate}},
 		},
 	}
 
 	occurrences := make([]string, 0, 6)
-	walkStatementRUFlatPlan(flat, func(kind statementRUPlanTreeKind, treeIndex, operatorIndex int, operator *plannercore.FlatOperator) {
+	walkStatementRUFlatPlan(flat, func(
+		treeKind statementRUPlanTreeKind,
+		treeIndex int,
+		operatorIndex int,
+		operator *plannercore.FlatOperator,
+		scanBytes float64,
+	) float64 {
 		occurrences = append(occurrences, fmt.Sprintf(
 			"%s/%d/%d/%T",
-			statementRUPlanTreeKindForTest(kind),
+			statementRUPlanTreeKindForTest(treeKind),
 			treeIndex,
 			operatorIndex,
 			operator.Origin,
 		))
+		return scanBytes
 	})
 
-	require.ElementsMatch(t, []string{
+	require.Equal(t, []string{
 		"main/0/0/*physicalop.Insert",
-		"main/0/3/*physicalop.PhysicalTableDual",
+		"main/0/1/*physicalop.PhysicalTableDual",
 		"cte/0/0/*physicalop.PhysicalTableDual",
 		"cte/1/0/*physicalop.PhysicalTableDual",
 		"scalar/0/0/*core.ScalarSubqueryEvalCtx",
-		"scalar/1/1/*physicalop.PhysicalTableDual",
+		"scalar/1/0/*physicalop.PhysicalTableDual",
 	}, occurrences)
+}
+
+func TestStatementRUCalculationTraversal(t *testing.T) {
+	t.Run("supported operator units are collected during the plan walk", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t, true, true)
+		var resultCount atomic.Int64
+		var snapshot statementRUCalibrationSnapshot
+		testfailpoint.EnableCall(t, statementRUResultFailpointForTest, func(uint64, float64) {
+			resultCount.Add(1)
+		})
+		observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
+			snapshot = published
+		})
+		fixture.stmt.RecordStatementRUFinalOutcome(true)
+		fixture.stmt.finishStatementRUForTest(nil)
+		require.Equal(t, int64(1), resultCount.Load())
+		require.Equal(t, statementRURawUnits{
+			ScanBytes:            10,
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		}, snapshot.Units)
+	})
+
+	t.Run("reader contribution reaches scan through the tree", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t, true, true)
+		planCtx := fixture.stmt.Ctx.(*mock.Context)
+		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+		scan := reader.TablePlan.(*physicalop.PhysicalTableScan)
+		selection := physicalop.PhysicalSelection{}.Init(planCtx, &property.StatsInfo{RowCount: 1}, 0)
+		selection.SetChildren(scan)
+		reader.TablePlan = selection
+		reader.TablePlans = physicalop.FlattenListPushDownPlan(selection)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(reader, false))
+
+		var resultCount, calibrationCount atomic.Int64
+		var snapshot statementRUCalibrationSnapshot
+		testfailpoint.EnableCall(t, statementRUResultFailpointForTest, func(uint64, float64) {
+			resultCount.Add(1)
+		})
+		observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
+			calibrationCount.Add(1)
+			snapshot = published
+		})
+		fixture.stmt.RecordStatementRUFinalOutcome(true)
+		fixture.stmt.finishStatementRUForTest(nil)
+		fixture.stmt.finishStatementRUForTest(nil)
+		require.Zero(t, resultCount.Load())
+		require.Equal(t, int64(1), calibrationCount.Load())
+		require.Equal(t, float64(10), snapshot.Units.ScanBytes)
+		require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
+		require.Zero(t, fixture.owner.calculationSetup)
+	})
+
 }
 
 func TestStatementRUFinalOutcomeFirstRecordWins(t *testing.T) {
@@ -141,15 +212,15 @@ func TestStatementRUFinalOutcomeFirstRecordWins(t *testing.T) {
 		stmt := &ExecStmt{}
 		require.NotPanics(t, func() {
 			stmt.RecordStatementRUFinalOutcome(true)
-			stmt.finishStatementRUPlanWalk(nil)
+			stmt.finishStatementRUForTest(nil)
 		})
 	})
 
 	t.Run("unknown terminal consumes once", func(t *testing.T) {
 		stmt, visits := newStatementRUPlanForTest()
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		stmt.RecordStatementRUFinalOutcome(true)
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		require.Zero(t, visits.Load())
 	})
 
@@ -158,8 +229,8 @@ func TestStatementRUFinalOutcomeFirstRecordWins(t *testing.T) {
 		stmt.RecordStatementRUFinalOutcome(false)
 		// Force the atomic state to success so this assertion specifically proves
 		// failure consumed finishOnce, rather than only proving CAS first-wins.
-		stmt.statementRUPlanWalkOwner.finalOutcome.Store(uint32(statementRUFinalOutcomeSuccess))
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.statementRUOwner.finalOutcome.Store(uint32(statementRUFinalOutcomeSuccess))
+		stmt.finishStatementRUForTest(nil)
 		require.Zero(t, visits.Load())
 	})
 
@@ -178,7 +249,7 @@ func TestStatementRUFinalOutcomeFirstRecordWins(t *testing.T) {
 			stmt, visits := newStatementRUPlanForTest()
 			stmt.RecordStatementRUFinalOutcome(tc.firstSuccess)
 			stmt.RecordStatementRUFinalOutcome(tc.second)
-			stmt.finishStatementRUPlanWalk(nil)
+			stmt.finishStatementRUForTest(nil)
 			require.Equal(t, tc.wantVisits, visits.Load())
 		})
 	}
@@ -194,7 +265,7 @@ func TestStatementRUPlanWalkTerminalFirstCallWins(t *testing.T) {
 
 		require.Error(t, rs.Next(context.Background(), nil))
 		require.Empty(t, rs.lastErrs, "the RU-only abort must not change legacy terminal errors")
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		require.Zero(t, visits.Load())
 	})
 
@@ -206,23 +277,23 @@ func TestStatementRUPlanWalkTerminalFirstCallWins(t *testing.T) {
 
 		require.Error(t, rs.Next(ctx, nil))
 		require.Empty(t, rs.lastErrs, "the RU-only abort must not change legacy terminal errors")
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		require.Zero(t, visits.Load())
 	})
 
 	t.Run("terminal error then success", func(t *testing.T) {
 		stmt, visits := newStatementRUPlanForTest()
 		stmt.RecordStatementRUFinalOutcome(true)
-		stmt.finishStatementRUPlanWalk(errors.New("terminal error"))
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(errors.New("terminal error"))
+		stmt.finishStatementRUForTest(nil)
 		require.Zero(t, visits.Load())
 	})
 
 	t.Run("deadline then success", func(t *testing.T) {
 		stmt, visits := newStatementRUPlanForTest()
 		stmt.RecordStatementRUFinalOutcome(true)
-		stmt.finishStatementRUPlanWalk(context.DeadlineExceeded)
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(context.DeadlineExceeded)
+		stmt.finishStatementRUForTest(nil)
 		require.Zero(t, visits.Load())
 	})
 
@@ -230,9 +301,9 @@ func TestStatementRUPlanWalkTerminalFirstCallWins(t *testing.T) {
 		stmt, visits := newStatementRUPlanForTest()
 		stmt.RecordStatementRUFinalOutcome(true)
 		stmt.Ctx.GetSessionVars().InRestrictedSQL = true
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		stmt.Ctx.GetSessionVars().InRestrictedSQL = false
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		require.Zero(t, visits.Load())
 	})
 
@@ -240,9 +311,9 @@ func TestStatementRUPlanWalkTerminalFirstCallWins(t *testing.T) {
 		stmt, visits := newStatementRUPlanForTest()
 		stmt.RecordStatementRUFinalOutcome(true)
 		stmt.Ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		stmt.Ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		require.Zero(t, visits.Load())
 	})
 
@@ -251,9 +322,9 @@ func TestStatementRUPlanWalkTerminalFirstCallWins(t *testing.T) {
 		plan := stmt.Plan
 		stmt.Plan = nil
 		stmt.RecordStatementRUFinalOutcome(true)
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		stmt.Plan = plan
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		require.Zero(t, visits.Load())
 	})
 
@@ -264,32 +335,32 @@ func TestStatementRUPlanWalkTerminalFirstCallWins(t *testing.T) {
 		stmt.Ctx.GetSessionVars().StmtCtx.SetPlan(stmt.Plan)
 		stmt.Ctx.GetSessionVars().StmtCtx.SetFlatPlan(nil)
 		stmt.RecordStatementRUFinalOutcome(true)
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		stmt.Plan = plan
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		require.Zero(t, visits.Load())
 	})
 
 	t.Run("panic then retry", func(t *testing.T) {
 		stmt, visits := newStatementRUPlanForTest()
 		stmt.RecordStatementRUFinalOutcome(true)
-		stmt.statementRUPlanWalkOwner.visit = func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator) {
+		stmt.statementRUOwner.visit = func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator) {
 			visits.Add(1)
 			panic("statement RU visit panic")
 		}
-		require.NotPanics(t, func() { stmt.finishStatementRUPlanWalk(nil) })
-		stmt.statementRUPlanWalkOwner.visit = func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator) {
+		require.NotPanics(t, func() { stmt.finishStatementRUForTest(nil) })
+		stmt.statementRUOwner.visit = func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator) {
 			visits.Add(1)
 		}
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		require.Equal(t, int64(1), visits.Load())
 	})
 
 	t.Run("success then terminal error", func(t *testing.T) {
 		stmt, visits := newStatementRUPlanForTest()
 		stmt.RecordStatementRUFinalOutcome(true)
-		stmt.finishStatementRUPlanWalk(nil)
-		stmt.finishStatementRUPlanWalk(errors.New("late terminal error"))
+		stmt.finishStatementRUForTest(nil)
+		stmt.finishStatementRUForTest(errors.New("late terminal error"))
 		require.Equal(t, int64(1), visits.Load())
 	})
 }
@@ -310,7 +381,7 @@ func TestStatementRUPlanWalkUsesStmtCtxFlatPlanCache(t *testing.T) {
 		Ctx:  ctx,
 		Plan: currentPlan,
 	}
-	stmt.statementRUPlanWalkOwner = newStatementRUPlanWalkVisitorOwner(
+	stmt.statementRUOwner = newStatementRUPlanWalkVisitorOwnerForTest(
 		stmt,
 		func(_ statementRUPlanTreeKind, _, _ int, operator *plannercore.FlatOperator) {
 			sawCurrent = sawCurrent || operator.Origin == currentPlan
@@ -318,7 +389,7 @@ func TestStatementRUPlanWalkUsesStmtCtxFlatPlanCache(t *testing.T) {
 		},
 	)
 	stmt.RecordStatementRUFinalOutcome(true)
-	stmt.finishStatementRUPlanWalk(nil)
+	stmt.finishStatementRUForTest(nil)
 	// This intentionally characterizes the current getFlatPlan contract. It does
 	// not prove that the cached Origin belongs to the current ExecStmt generation.
 	require.False(t, sawCurrent)
@@ -335,7 +406,7 @@ func TestStatementRUPlanWalkConcurrentOwnerTerminal(t *testing.T) {
 	for range callers {
 		go func() {
 			defer wg.Done()
-			stmt.finishStatementRUPlanWalk(nil)
+			stmt.finishStatementRUForTest(nil)
 		}()
 	}
 	wg.Wait()
