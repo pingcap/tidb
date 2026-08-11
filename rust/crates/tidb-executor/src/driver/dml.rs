@@ -1453,7 +1453,7 @@ pub(crate) fn run_update_traced(
             &update.order_by,
             update.limit.as_ref(),
         ),
-        &ctx.session_zone(),
+        ctx,
     )?;
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
@@ -1816,7 +1816,7 @@ pub(crate) fn run_delete_traced(
             &delete.order_by,
             delete.limit.as_ref(),
         ),
-        &ctx.session_zone(),
+        ctx,
     )?;
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(

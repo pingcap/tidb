@@ -21,7 +21,9 @@
 //! read side); both read the one [`crate::SessionVars`] this session owns, so
 //! both live here.
 
-use tidb_ast::{SessionStmt, Stmt, Visitable, Visitor};
+use std::collections::HashSet;
+
+use tidb_ast::{DmlStmt, Hint, SessionStmt, Stmt, Visitable, Visitor};
 use tidb_datatype::Datum;
 use tidb_executor::DriverError;
 
@@ -279,9 +281,13 @@ impl Session {
             // Go restores a variable to its registry default by clearing the
             // session (or global) override.
             tidb_ast::SetVariableValue::Default => {
-                if is_node_wide {
+                if is_global {
                     self.vars
                         .reset_global(&assignment.name)
+                        .map_err(var_error)?;
+                } else if is_instance {
+                    self.vars
+                        .reset_instance(&assignment.name)
                         .map_err(var_error)?;
                 } else {
                     self.vars
@@ -315,6 +321,7 @@ impl Session {
             if truncated {
                 self.warn_truncated_var(&assignment.name, &value);
             }
+            self.append_fix_control_parse_warnings(&assignment.name, &value);
             return Ok(());
         }
         let was_autocommit = self.is_autocommit();
@@ -325,6 +332,7 @@ impl Session {
         if truncated {
             self.warn_truncated_var(&assignment.name, &value);
         }
+        self.append_fix_control_parse_warnings(&assignment.name, &value);
         self.seed_rand_from_sysvar(&assignment.name)?;
         // Go `sysvar.go`'s `AutoCommit.SetSession`: turning autocommit back
         // ON ends the ongoing transaction ("Implicitly commit the possible
@@ -340,6 +348,20 @@ impl Session {
             self.commit()?;
         }
         Ok(())
+    }
+
+    /// Publishes duplicate-key diagnostics after the scope-aware writer has
+    /// validated and atomically stored the value. A wrong scope or malformed
+    /// value therefore cannot leak a fix-control warning ahead of its error.
+    fn append_fix_control_parse_warnings(&mut self, name: &str, value: &str) {
+        if !name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL) {
+            return;
+        }
+        let (_, warnings) = tidb_planner::fix_control::OptimizerFixControl::parse(value)
+            .expect("the system/global writer validated fix-control before publication");
+        for warning in warnings {
+            self.append_warning(crate::warnings::WarningLevel::Warning, 1105, warning);
+        }
     }
 
     /// Go `checkIsolationLevel` (`pkg/sessionctx/variable/varsutil.go:116`),
@@ -869,35 +891,70 @@ impl Session {
     /// registry rejects is skipped, which is the outcome Go reaches for an
     /// unknown name.
     pub(crate) fn apply_set_var_hints(&mut self, stmt: &Stmt) {
-        let Stmt::Query(query) = stmt else { return };
-        // Go attaches a statement's hints to its first SELECT, so a set
-        // operation's hints are the first term's.
-        let hints = match &**query {
-            tidb_ast::QueryStmt::Select(select) => &select.hints,
-            tidb_ast::QueryStmt::SetOpr(set_opr) => match set_opr.terms.first() {
-                Some(term) => match &term.body {
-                    tidb_ast::SetOprTermBody::Select(select) => &select.hints,
-                    _ => return,
-                },
-                None => return,
-            },
+        let Some(hints) = statement_hints(stmt) else {
+            return;
         };
+        let mut seen = HashSet::new();
+        let mut first = Vec::new();
+        // Go parses the complete hint list before it applies any SetVars
+        // entry. Collect first occurrences now so a duplicate warning is
+        // emitted before validation of an invalid first value below.
         for hint in hints {
             let tidb_ast::HintKind::SetVar { var_name, value } = &hint.kind else {
                 continue;
             };
             let name = var_name.to_ascii_lowercase();
-            // The first hint for a name wins; a later one is ignored.
-            if self
-                .set_var_hint_restore
-                .iter()
-                .any(|(restored, _)| *restored == name)
-            {
+            // Go's setVarHintChecker rejects an unknown name before the
+            // duplicate map is consulted. This tier defers the dedicated
+            // unknown-hint warning, so the matching behavior is to skip it
+            // without manufacturing a 3126 conflict either.
+            if sysvar::get_sys_var(&name).is_none() {
                 continue;
             }
+            // Go puts the first value in `StmtHints.SetVars` before it asks
+            // the sysvar hook to validate it. Therefore an INVALID first hint
+            // still occupies the name and a later valid one cannot take over.
+            if !seen.insert(name.clone()) {
+                self.append_warning(
+                    crate::warnings::WarningLevel::Warning,
+                    3126,
+                    format!(
+                        "Hint {}({name}={value}) is ignored as conflicting/duplicated.",
+                        hint.name
+                    ),
+                );
+                continue;
+            }
+            first.push((name, value.clone()));
+        }
+        for (name, value) in first {
+            let is_fix_control = name == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL;
+            if is_fix_control {
+                match tidb_planner::fix_control::OptimizerFixControl::parse(&value) {
+                    Ok((_parsed, warnings)) => {
+                        for warning in warnings {
+                            self.append_warning(
+                                crate::warnings::WarningLevel::Warning,
+                                1105,
+                                warning,
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        self.append_warning(
+                            crate::warnings::WarningLevel::Warning,
+                            1105,
+                            error.to_string(),
+                        );
+                        continue;
+                    }
+                }
+            }
             let snapshot = self.vars.snapshot_system(&name);
-            if self.vars.set_system(&name, value.clone()).is_ok() {
+            if self.vars.set_system(&name, value).is_ok() {
                 self.set_var_hint_restore.extend(snapshot);
+            } else if is_fix_control {
+                unreachable!("the source-shaped fix-control pre-validation just succeeded");
             }
         }
     }
@@ -939,5 +996,83 @@ impl Session {
                 }
             }
         }
+    }
+}
+
+/// The AST-owned statement hints Go applies before planning.
+///
+/// SQL bindings may replace a statement's hints later in optimization; that
+/// producer belongs to `pkg/bindinfo` and is deliberately not folded into
+/// this direct-AST helper.
+pub(crate) fn statement_hints(stmt: &Stmt) -> Option<&[Hint]> {
+    match stmt {
+        Stmt::Query(query) => match &**query {
+            tidb_ast::QueryStmt::Select(select) => Some(&select.hints),
+            tidb_ast::QueryStmt::SetOpr(set_opr) => set_opr.terms.first().and_then(|term| {
+                if let tidb_ast::SetOprTermBody::Select(select) = &term.body {
+                    Some(select.hints.as_slice())
+                } else {
+                    None
+                }
+            }),
+        },
+        Stmt::Dml(dml) => dml_hints(dml),
+        Stmt::Admin(admin) => {
+            if let tidb_ast::AdminStmt::Explain(explain) = &**admin {
+                explain.statement().and_then(statement_hints)
+            } else {
+                None
+            }
+        }
+        Stmt::Ddl(_) | Stmt::Session(_) => None,
+    }
+}
+
+/// Fix 52592 as it will be seen by this statement's planner, computed before
+/// the statement-local overlay is installed.
+///
+/// The first direct-AST SET_VAR for this name owns the slot even when its
+/// value is invalid; in that case execution keeps the persistent value, so
+/// classification must do the same. Binding-injected hints are deliberately
+/// outside this helper and belong to `pkg/bindinfo`.
+pub(crate) fn effective_fix_52592(
+    stmt: &Stmt,
+    persistent: &tidb_planner::fix_control::OptimizerFixControl,
+) -> bool {
+    let persistent = persistent.get_bool_with_default(tidb_planner::fix_control::FIX_52592, false);
+    let Some(hints) = statement_hints(stmt) else {
+        return persistent;
+    };
+    for hint in hints {
+        let tidb_ast::HintKind::SetVar { var_name, value } = &hint.kind else {
+            continue;
+        };
+        if !var_name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL) {
+            continue;
+        }
+        return tidb_planner::fix_control::OptimizerFixControl::parse(value)
+            .map(|(overlay, _warnings)| {
+                overlay.get_bool_with_default(tidb_planner::fix_control::FIX_52592, false)
+            })
+            .unwrap_or(persistent);
+    }
+    persistent
+}
+
+fn dml_hints(dml: &DmlStmt) -> Option<&[Hint]> {
+    match dml {
+        DmlStmt::With { statement, .. } => dml_hints(statement),
+        DmlStmt::Insert(insert) => Some(&insert.hints),
+        DmlStmt::Update(update) => Some(&update.hints),
+        DmlStmt::Delete(delete) => Some(&delete.hints),
+        DmlStmt::Batch(batch) => match &batch.dml {
+            tidb_ast::BatchDml::Insert(insert) => Some(&insert.hints),
+            tidb_ast::BatchDml::Update(update) => Some(&update.hints),
+            tidb_ast::BatchDml::Delete(delete) => Some(&delete.hints),
+        },
+        DmlStmt::ImportInto(_)
+        | DmlStmt::LoadData(_)
+        | DmlStmt::DistributeTable(_)
+        | DmlStmt::Call(_) => None,
     }
 }

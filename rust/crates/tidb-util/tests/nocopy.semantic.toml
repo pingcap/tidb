@@ -1,0 +1,10 @@
+go_package = "pkg/util/nocopy"
+source_commit = "318e82bbb791bfc2c74ecbb4f89666e072e9803b"
+evidence_files = [
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/src/nocopy/mod.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "nocopy::tests"],
+  ["test", "-p", "tidb-util", "--doc", "nocopy::NoCopy"],
+]

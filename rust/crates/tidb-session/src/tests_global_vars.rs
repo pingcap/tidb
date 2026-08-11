@@ -21,12 +21,12 @@ fn two_sessions_sharing_globals() -> (Session, Session, vars::GlobalSysvars) {
     let mut first = Session::with_catalog(catalog.clone());
     first.set_user("root@%".to_owned(), "root@%".to_owned());
     first.attach_privileges(registry.clone());
-    first.attach_globals(globals.clone());
+    first.attach_globals(globals.clone()).unwrap();
 
     let mut second = Session::with_catalog(catalog);
     second.set_user("root@%".to_owned(), "root@%".to_owned());
     second.attach_privileges(registry);
-    second.attach_globals(globals.clone());
+    second.attach_globals(globals.clone()).unwrap();
 
     (first, second, globals)
 }
@@ -64,7 +64,7 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form() {
     // session default -- the same snapshot-at-connect step
     // `PipelineSessionFactory::open_session` performs via `attach_globals`.
     let mut fresh = Session::new();
-    fresh.attach_globals(globals);
+    fresh.attach_globals(globals).unwrap();
     assert_eq!(
         fresh.run("SELECT @@autocommit").unwrap(),
         StmtResult::Rows(vec![vec![Datum::Int(0)]])
@@ -79,7 +79,7 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form() {
 fn show_global_and_session_variables_diverge() {
     let mut session = Session::new();
     session.attach_privileges(privilege::PrivilegeRegistry::default());
-    session.attach_globals(vars::GlobalSysvars::new());
+    session.attach_globals(vars::GlobalSysvars::new()).unwrap();
 
     session.run("SET autocommit = OFF").unwrap();
     assert_eq!(
@@ -103,7 +103,7 @@ fn show_global_and_session_variables_diverge() {
 #[test]
 fn set_global_on_a_session_only_variable_is_rejected() {
     let mut session = session_with_privileges();
-    session.attach_globals(vars::GlobalSysvars::new());
+    session.attach_globals(vars::GlobalSysvars::new()).unwrap();
     let error = session.run("SET GLOBAL debug_sync = 'x'").unwrap_err();
     let mysql = error.to_mysql_error();
     assert_eq!(mysql.code, 1228, "{mysql:?}");
@@ -114,7 +114,7 @@ fn set_global_on_a_session_only_variable_is_rejected() {
 #[test]
 fn set_session_on_a_global_only_variable_is_rejected() {
     let mut session = session_with_privileges();
-    session.attach_globals(vars::GlobalSysvars::new());
+    session.attach_globals(vars::GlobalSysvars::new()).unwrap();
     let error = session
         .run("SET default_password_lifetime = 5")
         .unwrap_err();
@@ -127,7 +127,7 @@ fn set_session_on_a_global_only_variable_is_rejected() {
 #[test]
 fn reading_at_global_scope_on_a_session_only_variable_is_rejected() {
     let mut session = session_with_privileges();
-    session.attach_globals(vars::GlobalSysvars::new());
+    session.attach_globals(vars::GlobalSysvars::new()).unwrap();
     let error = session.run("SELECT @@global.debug_sync").unwrap_err();
     let mysql = error.to_mysql_error();
     assert_eq!(mysql.code, 1238, "{mysql:?}");
@@ -145,7 +145,7 @@ fn set_global_requires_super_or_system_variables_admin() {
     root.run("CREATE USER 'plain'@'%'").unwrap();
 
     let mut plain = session_as(&registry, catalog, "plain", "%");
-    plain.attach_globals(vars::GlobalSysvars::new());
+    plain.attach_globals(vars::GlobalSysvars::new()).unwrap();
     let error = plain.run("SET GLOBAL autocommit = OFF").unwrap_err();
     let mysql = error.to_mysql_error();
     assert_eq!(mysql.code, 1227, "{mysql:?}");
@@ -156,7 +156,7 @@ fn set_global_requires_super_or_system_variables_admin() {
     // this connection's identity resolves to (matches how every other
     // privilege check in this tier is exercised after a GRANT).
     let mut plain = session_as(&registry, root.shared_catalog(), "plain", "%");
-    plain.attach_globals(vars::GlobalSysvars::new());
+    plain.attach_globals(vars::GlobalSysvars::new()).unwrap();
     plain.run("SET GLOBAL autocommit = OFF").unwrap();
 }
 

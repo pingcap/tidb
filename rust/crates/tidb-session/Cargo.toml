@@ -25,6 +25,8 @@ tidb-vardef = { path = "../tidb-vardef" }
 # `tests_dml_lock_keys` classifies the raw keys a DML statement leaves behind
 # as record or index keys, which is `tablecodec`'s judgement to make.
 tidb-tablecodec = { path = "../tidb-tablecodec" }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

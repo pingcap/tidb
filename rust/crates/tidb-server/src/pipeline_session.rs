@@ -210,7 +210,10 @@ impl QuerySessionFactory for PipelineSessionFactory {
         // copied from the global tier once, at connect (see
         // `tidb_session::vars` for why a live session's `@@x` does not move
         // when a later `SET GLOBAL` runs on another connection).
-        session.session.attach_globals(self.global_vars.clone());
+        session
+            .session
+            .attach_globals(self.global_vars.clone())
+            .map_err(map_error)?;
         Ok(session)
     }
 }
@@ -583,7 +586,7 @@ mod tests {
         open_on(&PipelineSessionFactory::default(), 1)
     }
 
-    fn open_on(factory: &PipelineSessionFactory, connection_id: u64) -> PipelineServerSession {
+    fn session_context(connection_id: u64) -> SessionContext {
         let users =
             ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
                 .expect("configured user store");
@@ -591,15 +594,59 @@ mod tests {
             .authenticate_native("root", "127.0.0.1", &SALT, &scramble(b"abc", &SALT))
             .expect("authenticated identity");
         let peer_addr: SocketAddr = "127.0.0.1:4000".parse().expect("peer address");
+        SessionContext {
+            connection_id,
+            peer_addr,
+            identity,
+            cancellation: ConnectionCancellation::default(),
+            close: crate::sql_node::ConnectionClose::default(),
+        }
+    }
+
+    fn open_on(factory: &PipelineSessionFactory, connection_id: u64) -> PipelineServerSession {
         factory
-            .open_session(SessionContext {
-                connection_id,
-                peer_addr,
-                identity,
-                cancellation: ConnectionCancellation::default(),
-                close: crate::sql_node::ConnectionClose::default(),
-            })
+            .open_session(session_context(connection_id))
             .expect("pipeline session opens without process authorities")
+    }
+
+    #[test]
+    fn factory_rejects_invalid_persisted_fix_control_without_process_leak() {
+        let invalid_globals = GlobalSysvars::from_cluster_rows([(
+            "tidb_opt_fix_control".to_owned(),
+            "invalid".to_owned(),
+        )]);
+        let invalid_factory = PipelineSessionFactory::with_accounts_and_globals(
+            PrivilegeRegistry::default(),
+            invalid_globals,
+        );
+        let Err(error) = invalid_factory.open_session(session_context(41)) else {
+            panic!("an invalid persisted fix-control row must refuse the session");
+        };
+        assert_eq!(error.code, 1105);
+        assert_eq!(error.state, *b"HY000");
+        assert_eq!(
+            error.message,
+            "invalid fix control: expected colon not found"
+        );
+        assert!(
+            invalid_factory.processes().snapshot().is_empty(),
+            "a rejected session must release its process registration"
+        );
+
+        let valid_globals = GlobalSysvars::from_cluster_rows([(
+            "tidb_opt_fix_control".to_owned(),
+            "52592:ON".to_owned(),
+        )]);
+        let valid_factory = PipelineSessionFactory::with_accounts_and_globals(
+            PrivilegeRegistry::default(),
+            valid_globals,
+        );
+        let session = valid_factory
+            .open_session(session_context(42))
+            .expect("a valid persisted fix-control row opens normally");
+        assert_eq!(valid_factory.processes().snapshot().len(), 1);
+        drop(session);
+        assert!(valid_factory.processes().snapshot().is_empty());
     }
 
     /// Go's sessions read the instance-wide schema state, so a table created

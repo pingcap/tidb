@@ -408,6 +408,16 @@ fn open_session_on_with_seams(
         )),
         Arc::new(crate::cluster_session::LocalTableAutoIds::default()),
     );
+    let mut session = factory
+        .open_session(session_context(1))
+        .expect("the cluster session opens");
+    // The catalog is loaded, not created here: `USE` is how a connection
+    // reaches it, exactly as it does over the wire.
+    session.execute_write("USE app").expect("USE app");
+    session
+}
+
+pub(super) fn session_context(connection_id: u64) -> SessionContext {
     let users =
         ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
             .expect("configured user store");
@@ -415,19 +425,13 @@ fn open_session_on_with_seams(
         .authenticate_native("root", "127.0.0.1", &SALT, &scramble(b"abc", &SALT))
         .expect("authenticated identity");
     let peer_addr: SocketAddr = "127.0.0.1:4000".parse().expect("peer address");
-    let mut session = factory
-        .open_session(SessionContext {
-            connection_id: 1,
-            peer_addr,
-            identity,
-            cancellation: ConnectionCancellation::default(),
-            close: ConnectionClose::default(),
-        })
-        .expect("the cluster session opens");
-    // The catalog is loaded, not created here: `USE` is how a connection
-    // reaches it, exactly as it does over the wire.
-    session.execute_write("USE app").expect("USE app");
-    session
+    SessionContext {
+        connection_id,
+        peer_addr,
+        identity,
+        cancellation: ConnectionCancellation::default(),
+        close: ConnectionClose::default(),
+    }
 }
 
 pub(super) fn rows(session: &mut ClusterServerSession, sql: &str) -> Vec<Vec<Datum>> {

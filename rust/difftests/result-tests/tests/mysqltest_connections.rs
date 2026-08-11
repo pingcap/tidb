@@ -219,7 +219,9 @@ impl Connections {
         session.set_user(identity.clone(), identity);
         session.set_connection_id(self.next_connection_id);
         self.next_connection_id += 1;
-        session.attach_globals(self.globals.clone());
+        session
+            .attach_globals(self.globals.clone())
+            .map_err(|error| error.to_string())?;
         // A mysqltest `connect (..., db)` puts `db` in the initial handshake;
         // it is not a SQL `USE db`. The recording proves the distinction in
         // `ddl/sequence`: an account with no visible privilege on the schema

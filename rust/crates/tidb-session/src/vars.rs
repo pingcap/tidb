@@ -45,6 +45,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use tidb_planner::fix_control::OptimizerFixControl;
+
 use crate::sysvar::{
     alias_of, get_sys_var, SysVarDef, ValidationError, SCOPE_GLOBAL, SCOPE_INSTANCE, SCOPE_SESSION,
 };
@@ -184,6 +186,10 @@ impl GlobalSysvars {
             .validate_in_scope(&value, scope)
             .map_err(|error| validation_var_error(name, &value, error))?;
         let key = name.to_ascii_lowercase();
+        if key == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL {
+            OptimizerFixControl::parse(&validated.value)
+                .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
+        }
         {
             let mut values = self.store(def).lock().expect("global sysvar lock poisoned");
             if let Some(other) = alias_of(&key) {
@@ -204,6 +210,9 @@ impl GlobalSysvars {
         if def.is_read_only() {
             return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
         }
+        if !def.has_global_scope() && !def.has_instance_scope() {
+            return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
+        }
         self.store(def)
             .lock()
             .expect("global sysvar lock poisoned")
@@ -211,6 +220,24 @@ impl GlobalSysvars {
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY) {
             self.publish_committer_concurrency();
         }
+        Ok(())
+    }
+
+    /// Restores an INSTANCE-scoped value to its registry default, after the
+    /// same scope validation as [`Self::set_instance`].
+    pub fn reset_instance(&self, name: &str) -> Result<(), VarError> {
+        let def = get_sys_var(name)
+            .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        if def.is_read_only() {
+            return Err(VarError::ReadOnlyVariable(name.to_ascii_lowercase()));
+        }
+        if !def.has_instance_scope() {
+            return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
+        }
+        self.store(def)
+            .lock()
+            .expect("global sysvar lock poisoned")
+            .remove(&name.to_ascii_lowercase());
         Ok(())
     }
 
@@ -337,6 +364,8 @@ pub enum VarError {
 #[derive(Clone, Debug, Default)]
 pub struct SessionVars {
     systems: HashMap<String, String>,
+    /// Parsed authority kept in lockstep with the raw system-variable text.
+    optimizer_fix_control: OptimizerFixControl,
     /// The shared GLOBAL-scope table this session's factory holds. Cloning a
     /// [`GlobalSysvars`] is cheap (one `Arc` bump), so every session shares
     /// the same underlying map.
@@ -358,17 +387,34 @@ impl SessionVars {
     /// A `SET GLOBAL` another session runs AFTER this call is invisible to
     /// this session's plain `@@x` (only to `@@global.x`), exactly as MySQL
     /// documents.
-    pub fn seed_from_globals(&mut self, globals: GlobalSysvars) {
+    pub fn seed_from_globals(&mut self, globals: GlobalSysvars) -> Result<(), VarError> {
+        let mut systems = self.systems.clone();
         for (name, value) in globals.overrides() {
             // Only a variable this session can actually hold a session copy
             // of inherits the global value; Go's `NewSessionVars` walks the
             // same `HasSessionScope` guard when copying `GlobalVarsAccessor`
             // into a fresh session.
             if get_sys_var(&name).is_some_and(|def| def.has_session_scope()) {
-                self.systems.insert(name, value);
+                systems.insert(name, value);
             }
         }
+        let raw = systems
+            .get(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL)
+            .cloned()
+            .unwrap_or_else(|| {
+                get_sys_var(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL)
+                    .map_or_else(String::new, |def| def.value.to_owned())
+            });
+        let optimizer_fix_control = OptimizerFixControl::parse(&raw)
+            .map_err(|error| VarError::ValidationRefused(error.to_string()))?
+            .0;
+        // Commit all three authorities only after the inherited fix-control
+        // row has been accepted. A stale/foreign cluster row can therefore
+        // refuse the connection without partially reseeding this session.
+        self.systems = systems;
         self.globals = globals;
+        self.optimizer_fix_control = optimizer_fix_control;
+        Ok(())
     }
 
     /// Reads a system variable the way `SELECT @@name` does.
@@ -427,6 +473,7 @@ impl SessionVars {
                 None => self.systems.remove(&key),
             };
         }
+        self.refresh_optimizer_fix_control();
     }
 
     /// Reads `@@global.name`: always the shared table's live value, never
@@ -470,6 +517,15 @@ impl SessionVars {
             .validate_in_scope(&value, SCOPE_SESSION)
             .map_err(|error| validation_var_error(name, &value, error))?;
         let key = name.to_ascii_lowercase();
+        let parsed_fix_control = if key == tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL {
+            Some(
+                OptimizerFixControl::parse(&validated.value)
+                    .map_err(|error| VarError::ValidationRefused(error.to_string()))?
+                    .0,
+            )
+        } else {
+            None
+        };
         // Go `SetSessionFromHook`: the alias takes the SAME stored value, with
         // its own validation skipped -- `tx_isolation` and
         // `transaction_isolation` are one value under two spellings.
@@ -478,6 +534,9 @@ impl SessionVars {
                 .insert(other.to_owned(), validated.value.clone());
         }
         self.systems.insert(key, validated.value);
+        if let Some(parsed) = parsed_fix_control {
+            self.optimizer_fix_control = parsed;
+        }
         Ok(validated.truncated)
     }
 
@@ -507,6 +566,11 @@ impl SessionVars {
     /// `SET GLOBAL name = DEFAULT`.
     pub fn reset_global(&mut self, name: &str) -> Result<(), VarError> {
         self.globals.reset(name)
+    }
+
+    /// `SET INSTANCE name = DEFAULT`.
+    pub fn reset_instance(&mut self, name: &str) -> Result<(), VarError> {
+        self.globals.reset_instance(name)
     }
 
     /// Go's `SET x = DEFAULT`.
@@ -556,6 +620,23 @@ impl SessionVars {
             self.set_system("collation_connection", collation.to_owned())?;
         }
         Ok(())
+    }
+
+    /// The parsed `tidb_opt_fix_control` map used by planner consumers.
+    #[must_use]
+    pub fn optimizer_fix_control(&self) -> &OptimizerFixControl {
+        &self.optimizer_fix_control
+    }
+
+    fn refresh_optimizer_fix_control(&mut self) {
+        let raw = self
+            .get_system(tidb_vardef::tidb_vars::TIDB_OPT_FIX_CONTROL)
+            .unwrap_or_default();
+        self.optimizer_fix_control = OptimizerFixControl::parse(&raw)
+            .map(|(parsed, _warnings)| parsed)
+            .expect(
+                "tidb_opt_fix_control session state comes only from validated writes or trusted global rows",
+            );
     }
 }
 
@@ -735,7 +816,7 @@ mod tests {
         // value -- MySQL's rule that the session copy is made once, at
         // connect.
         let mut live = SessionVars::new();
-        live.seed_from_globals(globals.clone());
+        live.seed_from_globals(globals.clone()).unwrap();
         globals.set("autocommit", "OFF".to_owned()).unwrap();
         assert_eq!(live.get_system("autocommit").unwrap(), "ON");
 
@@ -743,7 +824,7 @@ mod tests {
         // the value that was live at ITS connect time.
         globals.set("autocommit", "OFF".to_owned()).unwrap();
         let mut fresh = SessionVars::new();
-        fresh.seed_from_globals(globals);
+        fresh.seed_from_globals(globals).unwrap();
         assert_eq!(fresh.get_system("autocommit").unwrap(), "OFF");
 
         // Neither session's inherited copy is the live table: further
