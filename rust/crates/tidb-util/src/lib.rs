@@ -64,6 +64,7 @@ pub mod table_rule_selector;
 pub mod texttree;
 pub mod tikvutil;
 pub mod timeutil;
+pub mod tls;
 pub mod versioninfo;
 pub mod vitess;
 pub mod watcher;

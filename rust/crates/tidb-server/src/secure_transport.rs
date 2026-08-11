@@ -25,9 +25,9 @@
 //! The transport owner that does perform the handshake is
 //! [`crate::mysql_tls`], whose `ClientStream::upgrade_to_tls` is what a
 //! [`TransportKind::DirectTls`] assertion would be reporting. This policy is
-//! not yet consulted by the connection path: `require_secure_transport` has no
-//! wiring into `mysql_connection.rs`, so a plaintext TCP connection is still
-//! admitted regardless of the setting.
+//! consulted by `ConfiguredUserStore::authenticate`, which reads the shared
+//! GLOBAL `require_secure_transport` value for every login before matching an
+//! account.
 
 use std::fmt;
 
