@@ -21,6 +21,7 @@ tidb-parser = { path = "../tidb-parser" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-util = { path = "../tidb-util" }
 flate2 = { workspace = true }
+getrandom = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
 regex = { workspace = true }

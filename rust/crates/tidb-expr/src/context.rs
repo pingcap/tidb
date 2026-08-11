@@ -33,6 +33,13 @@ pub enum EvalError {
     /// Go `ErrWrongArguments` (1210), with the source-formatted argument
     /// description.
     IncorrectArguments(String),
+    /// Go `types.ErrOverflow` / MySQL 1690 for a builtin-owned range check.
+    DataOutOfRange {
+        /// The value class printed before "value is out of range".
+        value: &'static str,
+        /// The expression/function printed inside quotes.
+        expression: &'static str,
+    },
     /// A binary operation reached the evaluator with an operand pair that no
     /// domain dispatch claims.
     ///

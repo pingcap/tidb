@@ -134,6 +134,11 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
             format!("Incorrect parameter count in the call to native function '{function}'"),
         ),
         EvalError::IncorrectArguments(message) => MysqlError::coded(1210, message),
+        EvalError::DataOutOfRange { value, expression } => MysqlError::new(
+            ER_DATA_OUT_OF_RANGE,
+            *b"22003",
+            format!("{value} value is out of range in '{expression}'"),
+        ),
         // CAPTURED from TiDB: `select 9223372036854775807 + 1` is
         // `1690 / 22003 / BIGINT value is out of range in '(9223372036854775807 + 1)'`,
         // `select 1e308 * 10` the DOUBLE spelling, and a 65-digit product the
@@ -214,6 +219,10 @@ mod tests {
             EvalError::AllowedPacketOverflowed("overflowed".to_owned()),
             EvalError::WrongParameterCount("aes_encrypt"),
             EvalError::IncorrectArguments("bad AES initialization vector".to_owned()),
+            EvalError::DataOutOfRange {
+                value: "length",
+                expression: "random_bytes",
+            },
         ];
         for error in coded {
             let mysql = rendered(ExecError::Eval(error.clone()));
@@ -249,6 +258,17 @@ mod tests {
                 1210,
                 *b"HY000",
                 "The initialization vector supplied to aes_encrypt is too short"
+            )
+        );
+        assert_eq!(
+            rendered(ExecError::Eval(EvalError::DataOutOfRange {
+                value: "length",
+                expression: "random_bytes",
+            })),
+            MysqlError::new(
+                1690,
+                *b"22003",
+                "length value is out of range in 'random_bytes'"
             )
         );
     }

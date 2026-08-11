@@ -30,8 +30,6 @@
 //!
 //! Deliberately not yet ported from `builtin_encryption.go` because their
 //! required session or binary-value contracts are not present:
-//! - `RANDOM_BYTES` (`builtinRandomBytesSig`): non-deterministic
-//!   (`crypto/rand`) — unverifiable against a static golden file.
 //! - `PASSWORD` (`builtinPasswordSig`): the value contract is ported below;
 //!   its deprecation warning remains a statement-context boundary because
 //!   this value-only family dispatch has no warning channel.
@@ -68,6 +66,8 @@ pub(crate) fn dispatch(
         ("SHA" | "SHA1", 1) => Some(hash_unary::<Sha1>(&vals[0])),
         ("SHA2", 2) => Some(sha2_hash(&vals[0], &vals[1])),
         ("SM3", 1) => Some(sm3_hash(&vals[0])),
+        ("RANDOM_BYTES", 1) => Some(random_bytes(&vals[0])),
+        ("RANDOM_BYTES", _) => Some(Err(EvalError::WrongParameterCount("random_bytes"))),
         ("PASSWORD", 1) => Some(password_hash(&vals[0])),
         ("VALIDATE_PASSWORD_STRENGTH", 1) => Some(validate_password_strength(&vals[0], ctx)),
         ("ENCODE", 2) => Some(sql_encode(&vals[0], &vals[1])),
@@ -503,6 +503,26 @@ fn sm3_hash(value: &Datum) -> Result<Datum, EvalError> {
     }
 }
 
+/// `RANDOM_BYTES(len)`: one fresh OS-random binary string per evaluation.
+/// The bytes themselves are unspecified; the stable SQL contract is the
+/// requested length, NULL propagation, and inclusive 1..=1024 range gate.
+fn random_bytes(length: &Datum) -> Result<Datum, EvalError> {
+    let Some(length) = encryption_int_argument(length)? else {
+        return Ok(Datum::Null);
+    };
+    if !(1..=1024).contains(&length) {
+        return Err(EvalError::DataOutOfRange {
+            value: "length",
+            expression: "random_bytes",
+        });
+    }
+
+    let mut bytes = vec![0; length as usize];
+    getrandom::fill(&mut bytes)
+        .map_err(|_| EvalError::Unsupported("fail to generate random bytes"))?;
+    Ok(Datum::new_string(bytes))
+}
+
 /// Returns the exact bytes consumed by Go's `EvalString` at the hash
 /// boundary. String and binary datums are already byte payloads (a TiDB Go
 /// string is not required to be UTF-8), while scalar numerics use their
@@ -535,13 +555,13 @@ fn hash_input(value: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
 /// `SHA0`(0) and `SHA256`(256) to SHA-256, `SHA224`/`SHA384`/`SHA512` to
 /// their hashes, and leaves the hasher nil for EVERY other value — which
 /// the Go code returns as `NULL` (not an error). Its function class declares
-/// the second argument `ETInt`, so [`sha2_length`] ports that implicit cast
+/// the second argument `ETInt`, so [`encryption_int_argument`] ports that implicit cast
 /// before applying the switch.
 fn sha2_hash(arg: &Datum, len: &Datum) -> Result<Datum, EvalError> {
     let Some(bytes) = hash_input(arg)? else {
         return Ok(Datum::Null);
     };
-    let Some(n) = sha2_length(len)? else {
+    let Some(n) = encryption_int_argument(len)? else {
         return Ok(Datum::Null);
     };
     let hex = match n {
@@ -554,7 +574,7 @@ fn sha2_hash(arg: &Datum, len: &Datum) -> Result<Datum, EvalError> {
     Ok(Datum::new_string(hex))
 }
 
-/// Ports the `ETInt` coercion requested by `sha2FunctionClass.getFunction`.
+/// Ports the `ETInt` coercion requested by the encryption function classes.
 /// Decimal inputs round half away from zero (`builtinCastDecimalAsIntSig`),
 /// while floats round ties to even (`builtinCastRealAsIntSig` through
 /// `types.ConvertFloatToInt`). String inputs follow `StrToInt`'s leading
@@ -562,7 +582,7 @@ fn sha2_hash(arg: &Datum, len: &Datum) -> Result<Datum, EvalError> {
 /// evaluator has no statement-context warning channel. An out-of-range input
 /// becomes an invalid hash length, hence `SHA2` returns `NULL` just as Go
 /// does after its saturating integer conversion.
-fn sha2_length(value: &Datum) -> Result<Option<i64>, EvalError> {
+fn encryption_int_argument(value: &Datum) -> Result<Option<i64>, EvalError> {
     Ok(match value {
         Datum::Int(n) => Some(*n),
         Datum::UInt(n) => Some(*n as i64),
@@ -642,7 +662,7 @@ mod tests {
     use std::collections::HashMap;
 
     use super::{dispatch, frame_compressed};
-    use crate::{Columns, Datum, Decimal};
+    use crate::{Columns, Datum, Decimal, EvalError};
 
     fn call(name: &str, vals: &[Datum]) -> Datum {
         dispatch(name, vals, &crate::NoColumns)
@@ -759,6 +779,33 @@ mod tests {
             output.push(ALPHABET[usize::from(byte & 0x0f)] as char);
         }
         output
+    }
+
+    #[test]
+    fn random_bytes_go_contract() {
+        for length in [1, 32, 1024] {
+            assert_eq!(
+                bytes_of(&call("RANDOM_BYTES", &[Datum::Int(length)])).len(),
+                length as usize
+            );
+        }
+        assert_eq!(call("RANDOM_BYTES", &[Datum::Null]), Datum::Null);
+
+        for length in [Datum::Int(0), Datum::Int(-32), Datum::Int(1025)] {
+            assert_eq!(
+                dispatch("RANDOM_BYTES", &[length], &crate::NoColumns).unwrap(),
+                Err(EvalError::DataOutOfRange {
+                    value: "length",
+                    expression: "random_bytes",
+                })
+            );
+        }
+        for args in [&[][..], &[Datum::Int(1), Datum::Int(2)][..]] {
+            assert_eq!(
+                dispatch("RANDOM_BYTES", args, &crate::NoColumns).unwrap(),
+                Err(EvalError::WrongParameterCount("random_bytes"))
+            );
+        }
     }
 
     /// Vectors from `TestAESEncrypt`/`TestAESDecrypt` (default `aes-128-ecb`;

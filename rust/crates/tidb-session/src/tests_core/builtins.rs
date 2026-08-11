@@ -1434,6 +1434,78 @@ fn sm3_hash_reaches_live_sql() {
     );
 }
 
+/// `RANDOM_BYTES` is non-deterministic only in value: its length, NULL,
+/// binary-string, and range-error contracts are stable SQL behavior.
+#[test]
+fn random_bytes_reaches_live_sql_with_source_bounds() {
+    let mut session = Session::new();
+    let StmtOutput::Rows { columns, rows } =
+        session.run_with_columns("SELECT RANDOM_BYTES(5)").unwrap()
+    else {
+        panic!("RANDOM_BYTES must produce a row set")
+    };
+    assert_eq!(rows[0][0].to_bytes().unwrap().len(), 5);
+    let field_type = &columns[0].1;
+    assert_eq!(field_type.code(), tidb_datatype::FieldTypeCode::VarString);
+    assert_eq!(field_type.flen(), 1024);
+    assert_eq!(field_type.charset_name(), "binary");
+    assert_eq!(field_type.collation_name(), "binary");
+    assert!(field_type.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
+    assert!(field_type.has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL));
+
+    assert_eq!(
+        row_text(session.run(
+            "SELECT LENGTH(RANDOM_BYTES(1)),\
+                    LENGTH(RANDOM_BYTES(32)),\
+                    LENGTH(RANDOM_BYTES(1024)),\
+                    CHAR_LENGTH(RANDOM_BYTES(32)),\
+                    RANDOM_BYTES(NULL) IS NULL",
+        )),
+        [["1", "32", "1024", "32", "1"]]
+    );
+
+    session
+        .run("CREATE TABLE random_byte_lengths (n BIGINT)")
+        .unwrap();
+    session
+        .run("INSERT INTO random_byte_lengths VALUES (1), (2), (32)")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT LENGTH(RANDOM_BYTES(n)) FROM random_byte_lengths ORDER BY n")),
+        [["1"], ["2"], ["32"]]
+    );
+
+    session
+        .run("PREPARE random_bytes_stmt FROM 'SELECT LENGTH(RANDOM_BYTES(3))'")
+        .unwrap();
+    assert_eq!(row_text(session.run("EXECUTE random_bytes_stmt")), [["3"]]);
+    assert_eq!(row_text(session.run("EXECUTE random_bytes_stmt")), [["3"]]);
+
+    for sql in [
+        "SELECT RANDOM_BYTES(0)",
+        "SELECT RANDOM_BYTES(-1)",
+        "SELECT RANDOM_BYTES(1025)",
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1690, "{sql}");
+        assert_eq!(&error.state, b"22003", "{sql}");
+        assert_eq!(
+            error.message, "length value is out of range in 'random_bytes'",
+            "{sql}"
+        );
+    }
+
+    for sql in ["SELECT RANDOM_BYTES()", "SELECT RANDOM_BYTES(1, 2)"] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 1582, "{sql}");
+        assert_eq!(
+            error.message,
+            "Incorrect parameter count in the call to native function 'random_bytes'",
+            "{sql}"
+        );
+    }
+}
+
 /// `AES_ENCRYPT` and `AES_DECRYPT` select their signature from the live
 /// `block_encryption_mode` session variable. These are the accepted Go test
 /// vectors for every supported mode/key-size pair, exercised through SQL so

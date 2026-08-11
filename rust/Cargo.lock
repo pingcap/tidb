@@ -1748,6 +1748,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "flate2",
+ "getrandom 0.3.4",
  "md-5",
  "regex",
  "serde_json",

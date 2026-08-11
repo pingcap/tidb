@@ -859,6 +859,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             }
             ft
         }
+        "random_bytes" => crypto::random_bytes_return_type(text()),
         "compress" if args.len() == 1 => {
             crypto::compress_return_type(str_arg_flen(args, 0), text())
         }
