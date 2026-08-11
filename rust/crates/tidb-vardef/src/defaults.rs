@@ -856,7 +856,8 @@ mod tests {
     fn spot_check_defaults() {
         // literal forms
         assert_eq!(DEF_HOSTNAME, "localhost");
-        assert!(!DEF_SKIP_UTF8_CHECK);
+        let skip_utf8_check = DEF_SKIP_UTF8_CHECK;
+        assert!(!skip_utf8_check);
         assert_eq!(DEF_AUTO_ANALYZE_RATIO, 0.5);
         assert_eq!(DEF_INDEX_JOIN_BATCH_SIZE, 25000);
         // resolved references

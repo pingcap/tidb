@@ -14,7 +14,12 @@
 
 //! Source tests for `pkg/sessionctx/vardef/tidb_vars_test.go`.
 
-use tidb_vardef::{is_mdl_enabled, set_enable_mdl};
+use tidb_vardef::{
+    is_mdl_enabled, is_read_only_var_in_next_gen, set_enable_mdl, tidb_vars::TIDB_DDL_DISK_QUOTA,
+    tidb_vars::TIDB_DDL_ENABLE_FAST_REORG, tidb_vars::TIDB_DDL_REORG_MAX_WRITE_SPEED,
+    tidb_vars::TIDB_ENABLE_DIST_TASK, tidb_vars::TIDB_ENABLE_MDL,
+    tidb_vars::TIDB_MAX_DIST_TASK_NODES,
+};
 
 struct RestoreMdl(bool);
 
@@ -34,4 +39,17 @@ fn mdl_is_always_enabled_in_nextgen_source() {
     assert!(is_mdl_enabled(true));
     set_enable_mdl(true);
     assert!(is_mdl_enabled(true));
+}
+
+/// Source: `pkg/sessionctx/vardef/runtime_test.go::TestIsReadOnlyVarInNextGen`.
+#[test]
+fn read_only_vars_are_detected_in_nextgen_source() {
+    assert!(!is_read_only_var_in_next_gen("abc"));
+    assert!(is_read_only_var_in_next_gen(TIDB_ENABLE_MDL));
+    assert!(is_read_only_var_in_next_gen("TIDB_ENABLE_METADATA_LOCK"));
+    assert!(is_read_only_var_in_next_gen(TIDB_MAX_DIST_TASK_NODES));
+    assert!(is_read_only_var_in_next_gen(TIDB_DDL_REORG_MAX_WRITE_SPEED));
+    assert!(is_read_only_var_in_next_gen(TIDB_DDL_DISK_QUOTA));
+    assert!(is_read_only_var_in_next_gen(TIDB_ENABLE_DIST_TASK));
+    assert!(is_read_only_var_in_next_gen(TIDB_DDL_ENABLE_FAST_REORG));
 }

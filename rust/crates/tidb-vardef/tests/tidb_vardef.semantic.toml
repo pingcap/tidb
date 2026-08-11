@@ -1,0 +1,13 @@
+go_package = "pkg/sessionctx/vardef"
+source_commit = "9d88dd4f05ce9dd60d7a4e89e1bc784421b337be"
+evidence_files = [
+  "rust/crates/tidb-vardef/src/defaults.rs",
+  "rust/crates/tidb-vardef/src/global_sysvar_initial.rs",
+  "rust/crates/tidb-vardef/src/lib.rs",
+  "rust/crates/tidb-vardef/src/modes.rs",
+  "rust/crates/tidb-vardef/src/tidb_vars.rs",
+  "rust/crates/tidb-vardef/tests/tidb_vars_source.rs",
+]
+commands = [
+  ["test", "-p", "tidb-vardef"],
+]

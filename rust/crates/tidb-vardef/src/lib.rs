@@ -54,6 +54,21 @@ pub fn set_enable_mdl(enabled: bool) {
     ENABLE_MDL.store(enabled, Ordering::SeqCst);
 }
 
+/// Go `IsReadOnlyVarInNextGen`: checks whether a system variable name is
+/// read-only in the next-generation kernel.
+#[must_use]
+pub fn is_read_only_var_in_next_gen(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        tidb_vars::TIDB_ENABLE_MDL
+            | tidb_vars::TIDB_MAX_DIST_TASK_NODES
+            | tidb_vars::TIDB_DDL_REORG_MAX_WRITE_SPEED
+            | tidb_vars::TIDB_DDL_DISK_QUOTA
+            | tidb_vars::TIDB_ENABLE_DIST_TASK
+            | tidb_vars::TIDB_DDL_ENABLE_FAST_REORG
+    )
+}
+
 pub mod defaults;
 /// One function from `sessionctx/variable/sysvar.go` rather than from
 /// `vardef`: `GlobalSystemVariableInitialValue`, which decides the value a
