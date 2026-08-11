@@ -1,0 +1,9 @@
+go_package = "pkg/util/size"
+source_commit = "51e1e13494f5e547be10601a302d6cb9cf88ae64"
+evidence_files = [
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/src/size/mod.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "size::tests"],
+]
