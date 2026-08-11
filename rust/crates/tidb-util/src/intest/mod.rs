@@ -18,8 +18,9 @@
 //! features. Unit tests also behave like the repository's canonical
 //! `-tags=intest,deadlock` invocation. Exported mutable booleans become atomic
 //! booleans so callers retain the source toggles without introducing a Rust
-//! data race. The package's init-time failpoint is represented by the same
-//! `GO_FAILPOINTS=/enableInternalCheck=return(true)` environment contract.
+//! data race. Lazily initialized atomics give the first public observation the
+//! package's init-time failpoint value from the startup environment, using the
+//! same `GO_FAILPOINTS=/enableInternalCheck=return(true)` contract.
 //!
 //! Go's variadic `fmt.Sprintf` arguments become preformatted Rust strings:
 //! callers use `format!(...)` before the `_with_message` variants. This removes
@@ -27,45 +28,38 @@
 
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Once;
+use std::sync::LazyLock;
 
 /// Whether this build is running with TiDB's `intest` behavior.
 pub const IN_TEST: bool = cfg!(any(feature = "intest", test));
 
+static ENVIRONMENT_FAILPOINT_ENABLED: LazyLock<bool> = LazyLock::new(|| {
+    std::env::var_os("GO_FAILPOINTS").is_some_and(|value| {
+        let value = value.to_string_lossy();
+        value.split(';').map(str::trim).any(|entry| {
+            entry == "/enableInternalCheck=return(true)"
+                || entry == "enableInternalCheck=return(true)"
+        })
+    })
+});
+
 /// Whether ordinary assertions are enabled.
-pub static ENABLE_ASSERT: AtomicBool = AtomicBool::new(cfg!(any(
-    feature = "intest",
-    feature = "enableassert",
-    test
-)));
+pub static ENABLE_ASSERT: LazyLock<AtomicBool> = LazyLock::new(|| {
+    AtomicBool::new(
+        cfg!(any(feature = "intest", feature = "enableassert", test))
+            || *ENVIRONMENT_FAILPOINT_ENABLED,
+    )
+});
 
 /// General runtime switch for internal checks.
-pub static ENABLE_INTERNAL_CHECK: AtomicBool = AtomicBool::new(cfg!(any(
-    feature = "intest",
-    feature = "enableassert",
-    test
-)));
-
-static ENVIRONMENT_INIT: Once = Once::new();
-
-fn initialize_environment_failpoint() {
-    ENVIRONMENT_INIT.call_once(|| {
-        let enabled = std::env::var_os("GO_FAILPOINTS").is_some_and(|value| {
-            let value = value.to_string_lossy();
-            value.split(';').map(str::trim).any(|entry| {
-                entry == "/enableInternalCheck=return(true)"
-                    || entry == "enableInternalCheck=return(true)"
-            })
-        });
-        if enabled {
-            ENABLE_INTERNAL_CHECK.store(true, Ordering::Relaxed);
-            ENABLE_ASSERT.store(true, Ordering::Relaxed);
-        }
-    });
-}
+pub static ENABLE_INTERNAL_CHECK: LazyLock<AtomicBool> = LazyLock::new(|| {
+    AtomicBool::new(
+        cfg!(any(feature = "intest", feature = "enableassert", test))
+            || *ENVIRONMENT_FAILPOINT_ENABLED,
+    )
+});
 
 fn assertions_enabled() -> bool {
-    initialize_environment_failpoint();
     ENABLE_ASSERT.load(Ordering::Relaxed) || ENABLE_INTERNAL_CHECK.load(Ordering::Relaxed)
 }
 
