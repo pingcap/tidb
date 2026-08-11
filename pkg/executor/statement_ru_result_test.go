@@ -94,7 +94,14 @@ func newStatementRUSimpleSelectFixture(t testing.TB, frontendPresent, scanPresen
 		scanDetail.ProcessedKeysSize = 10
 	}
 	if scanDetail != nil {
-		ctx.GetSessionVars().StmtCtx.MergeCopExecDetails(&execdetails.CopExecDetails{ScanDetail: scanDetail}, 0)
+		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordCopStats(
+			reader.TablePlan.ID(),
+			kv.TiKV,
+			scanDetail,
+			util.TimeDetail{},
+			nil,
+			nil,
+		)
 	}
 	metrics := execdetails.NewRUV2Metrics()
 	metrics.AddTiKVCoprocessorResponseBytes(20)
@@ -107,23 +114,47 @@ func (fixture statementRUSimpleSelectFixture) mergeStatementScanDetail(detail *u
 	fixture.stmt.Ctx.GetSessionVars().StmtCtx.MergeCopExecDetails(&execdetails.CopExecDetails{ScanDetail: detail}, 0)
 }
 
-func (fixture statementRUSimpleSelectFixture) calculator() statementRUCalculator {
-	return newStatementRUCalculator(fixture.owner.calculationSetup)
+func (fixture statementRUSimpleSelectFixture) recordReaderScanDetail(
+	reader *physicalop.PhysicalTableReader,
+	totalKeys, processedKeys, processedKeysSize int64,
+) {
+	fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordCopStats(
+		reader.TablePlan.ID(),
+		reader.StoreType,
+		&util.ScanDetail{
+			TotalKeys:         totalKeys,
+			ProcessedKeys:     processedKeys,
+			ProcessedKeysSize: processedKeysSize,
+		},
+		util.TimeDetail{},
+		nil,
+		nil,
+	)
+}
+
+func (fixture statementRUSimpleSelectFixture) calculator(evidenceComplete bool) statementRUCalculator {
+	return newStatementRUCalculator(fixture.owner.calculationSetup, evidenceComplete)
 }
 
 func (fixture statementRUSimpleSelectFixture) finalize(evidenceComplete bool) statementRUFinalizedSnapshot {
-	calculator := fixture.calculator()
-	if detail := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetExecDetails().ScanDetail; detail != nil {
-		calculator.units.ScanBytes, _ = statementRUScanBytes(
-			detail.TotalKeys,
-			detail.ProcessedKeys,
-			detail.ProcessedKeysSize,
-		)
+	calculator := fixture.calculator(evidenceComplete)
+	runtimeStatsColl := fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+	visit := func(
+		walk statementRUFlatPlanWalk,
+		_ int,
+		operator *plannercore.FlatOperator,
+		scanBytes float64,
+	) statementRUCalculationVisitResult {
+		return calculator.visitOperator(walk, operator, runtimeStatsColl, scanBytes)
+	}
+	flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+	if !walkStatementRUFlatPlan(flat, visit) {
+		calculator.markEvidenceIncomplete()
 	}
 	if metrics := fixture.stmt.Ctx.GetSessionVars().RUV2Metrics; metrics != nil && !metrics.Bypass() {
 		calculator.units.NetBytes = float64(metrics.TiKVCoprocessorResponseBytes())
 	}
-	return calculator.finalize(evidenceComplete)
+	return calculator.finalize()
 }
 
 func observeStatementRUCalibrationForTest(
@@ -186,7 +217,7 @@ func TestStatementRUResultFinalizationAndPublication(t *testing.T) {
 	require.Zero(t, fixture.owner.calculationSetup)
 	require.Nil(t, fixture.owner.visit)
 
-	fixture.mergeStatementScanDetail(&util.ScanDetail{ProcessedKeysSize: 990})
+	fixture.recordReaderScanDetail(fixture.stmt.Plan.(*physicalop.PhysicalTableReader), 0, 0, 990)
 	fixture.stmt.Ctx.GetSessionVars().RUV2Metrics.AddTiKVCoprocessorResponseBytes(1000)
 	fixture.stmt.finishStatementRUForTest(nil)
 	require.Equal(t, int64(1), resultCount.Load())
@@ -250,7 +281,7 @@ func TestStatementRUResultProjectionCompleteness(t *testing.T) {
 
 	t.Run("invalid evidence suppresses both publications", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t, true, true)
-		fixture.mergeStatementScanDetail(&util.ScanDetail{ProcessedKeysSize: -11})
+		fixture.recordReaderScanDetail(fixture.stmt.Plan.(*physicalop.PhysicalTableReader), 0, 0, -11)
 		var resultCount, calibrationCount atomic.Int64
 		testfailpoint.EnableCall(t, statementRUResultFailpointForTest, func(uint64, float64) {
 			resultCount.Add(1)
@@ -324,12 +355,15 @@ func TestStatementRUPublisherIsolation(t *testing.T) {
 
 func TestStatementRUResultValueContracts(t *testing.T) {
 	t.Run("calculator finalizes typed units without plan input", func(t *testing.T) {
-		calculator := statementRUCalculator{units: statementRURawUnits{
-			ScanBytes:            10,
-			NetBytes:             20,
-			FrontendCompileBytes: 15,
-		}}
-		finalized := calculator.finalize(true)
+		calculator := statementRUCalculator{
+			units: statementRURawUnits{
+				ScanBytes:            10,
+				NetBytes:             20,
+				FrontendCompileBytes: 15,
+			},
+			evidenceComplete: true,
+		}
+		finalized := calculator.finalize()
 		require.True(t, finalized.hasResult)
 		require.Equal(t, statementRUResultOnly{TotalRU: 45}, finalized.result)
 	})
@@ -355,7 +389,7 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 		calculatorType := reflect.TypeOf(statementRUCalculator{})
 		require.Equal(t, []string{
 			"units",
-			"invalidEvidence",
+			"evidenceComplete",
 		}, statementRUFieldNames(calculatorType))
 		unitsType := reflect.TypeOf(statementRURawUnits{})
 		require.Equal(t, []string{"ScanBytes", "NetBytes", "FrontendCompileBytes"}, statementRUFieldNames(unitsType))

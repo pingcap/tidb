@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func newStatementRUPlanForTest() (*ExecStmt, *atomic.Int64) {
@@ -127,23 +128,23 @@ func TestStatementRUPlanWalkOccurrences(t *testing.T) {
 	}
 
 	occurrences := make([]string, 0, 6)
-	walkStatementRUFlatPlan(flat, func(
-		treeKind statementRUPlanTreeKind,
-		treeIndex int,
+	walkOK := walkStatementRUFlatPlan(flat, func(
+		walk statementRUFlatPlanWalk,
 		operatorIndex int,
 		operator *plannercore.FlatOperator,
 		scanBytes float64,
-	) float64 {
+	) statementRUCalculationVisitResult {
 		occurrences = append(occurrences, fmt.Sprintf(
 			"%s/%d/%d/%T",
-			statementRUPlanTreeKindForTest(treeKind),
-			treeIndex,
+			statementRUPlanTreeKindForTest(walk.treeKind),
+			walk.treeIndex,
 			operatorIndex,
 			operator.Origin,
 		))
-		return scanBytes
+		return statementRUCalculationVisitResult{scanBytes: scanBytes, ok: true}
 	})
 
+	require.True(t, walkOK)
 	require.Equal(t, []string{
 		"main/0/0/*physicalop.Insert",
 		"main/0/1/*physicalop.PhysicalTableDual",
@@ -152,11 +153,109 @@ func TestStatementRUPlanWalkOccurrences(t *testing.T) {
 		"scalar/0/0/*core.ScalarSubqueryEvalCtx",
 		"scalar/1/0/*physicalop.PhysicalTableDual",
 	}, occurrences)
+
+	occurrences = occurrences[:0]
+	walkOK = walkStatementRUFlatPlan(flat, func(
+		walk statementRUFlatPlanWalk,
+		operatorIndex int,
+		operator *plannercore.FlatOperator,
+		scanBytes float64,
+	) statementRUCalculationVisitResult {
+		occurrences = append(occurrences, fmt.Sprintf(
+			"%s/%d/%d/%T",
+			statementRUPlanTreeKindForTest(walk.treeKind),
+			walk.treeIndex,
+			operatorIndex,
+			operator.Origin,
+		))
+		return statementRUCalculationVisitResult{scanBytes: scanBytes, ok: operatorIndex == 0}
+	})
+	require.False(t, walkOK)
+	require.Equal(t, []string{
+		"main/0/0/*physicalop.Insert",
+		"main/0/1/*physicalop.PhysicalTableDual",
+		"cte/0/0/*physicalop.PhysicalTableDual",
+		"cte/1/0/*physicalop.PhysicalTableDual",
+		"scalar/0/0/*core.ScalarSubqueryEvalCtx",
+		"scalar/1/0/*physicalop.PhysicalTableDual",
+	}, occurrences)
+
+	t.Run("visitor-owned child recursion skips generic recursion", func(t *testing.T) {
+		branchFlat := &plannercore.FlatPhysicalPlan{Main: plannercore.FlatPlanTree{
+			{Origin: dml, ChildrenIdx: []int{1, 2}, ChildrenEndIdx: 2},
+			{Origin: duplicate, ChildrenEndIdx: 1},
+			{Origin: duplicate, ChildrenEndIdx: 2},
+		}}
+		inputs := make([]float64, 0, 3)
+		visit := func(
+			walk statementRUFlatPlanWalk,
+			operatorIndex int,
+			operator *plannercore.FlatOperator,
+			scanBytes float64,
+		) statementRUCalculationVisitResult {
+			inputs = append(inputs, scanBytes)
+			if operatorIndex != 0 {
+				return statementRUCalculationVisitResult{scanBytes: scanBytes, ok: true}
+			}
+			childScanBytes := [...]float64{10, 20}
+			childrenOK := true
+			for childOffset, childIndex := range operator.ChildrenIdx {
+				childOK := walkStatementRUFlatPlanNode(walk, childIndex, childScanBytes[childOffset])
+				childrenOK = childOK && childrenOK
+			}
+			return statementRUCalculationVisitResult{
+				ok:           childrenOK,
+				skipChildren: true,
+			}
+		}
+		walkOK := walkStatementRUFlatPlan(branchFlat, visit)
+		require.True(t, walkOK)
+		require.Equal(t, []float64{0, 10, 20}, inputs)
+	})
+
+	t.Run("unsupported visitor-owned child still visits its siblings", func(t *testing.T) {
+		branchFlat := &plannercore.FlatPhysicalPlan{Main: plannercore.FlatPlanTree{
+			{Origin: dml, ChildrenIdx: []int{1, 2}, ChildrenEndIdx: 2},
+			{Origin: duplicate, ChildrenEndIdx: 1},
+			{Origin: duplicate, ChildrenEndIdx: 2},
+		}}
+		visited := make([]int, 0, 3)
+		visit := func(
+			walk statementRUFlatPlanWalk,
+			operatorIndex int,
+			operator *plannercore.FlatOperator,
+			scanBytes float64,
+		) statementRUCalculationVisitResult {
+			visited = append(visited, operatorIndex)
+			if operatorIndex != 0 {
+				return statementRUCalculationVisitResult{
+					scanBytes: scanBytes,
+					ok:        operatorIndex == 2,
+				}
+			}
+			childrenOK := true
+			for _, childIndex := range operator.ChildrenIdx {
+				childOK := walkStatementRUFlatPlanNode(walk, childIndex, scanBytes)
+				childrenOK = childOK && childrenOK
+			}
+			return statementRUCalculationVisitResult{ok: childrenOK, skipChildren: true}
+		}
+		walkOK := walkStatementRUFlatPlan(branchFlat, visit)
+		require.False(t, walkOK)
+		require.Equal(t, []int{0, 1, 2}, visited)
+	})
 }
 
 func TestStatementRUCalculationTraversal(t *testing.T) {
 	t.Run("supported operator units are collected during the plan walk", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t, true, true)
+		// Statement-level ExecDetails is deliberately unrelated to the Reader's
+		// own cop runtime stats and must not affect this calculation.
+		fixture.mergeStatementScanDetail(&util.ScanDetail{
+			TotalKeys:         100,
+			ProcessedKeys:     100,
+			ProcessedKeysSize: 10000,
+		})
 		var resultCount atomic.Int64
 		var snapshot statementRUCalibrationSnapshot
 		testfailpoint.EnableCall(t, statementRUResultFailpointForTest, func(uint64, float64) {
@@ -175,7 +274,41 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		}, snapshot.Units)
 	})
 
-	t.Run("reader contribution reaches scan through the tree", func(t *testing.T) {
+	t.Run("each Reader contributes its own cop scan aggregate", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t, true, true)
+		planCtx := fixture.stmt.Ctx.(*mock.Context)
+		firstReader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+		secondScan := physicalop.PhysicalTableScan{}.Init(planCtx, 0)
+		secondReader := &physicalop.PhysicalTableReader{
+			TablePlan: secondScan,
+			StoreType: firstReader.StoreType,
+		}
+		fixture.recordReaderScanDetail(secondReader, 3, 1, 10)
+		runtimeStatsColl := fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl
+		calculator := statementRUCalculator{
+			evidenceComplete: true,
+		}
+
+		for _, reader := range []*physicalop.PhysicalTableReader{firstReader, secondReader} {
+			flat := &plannercore.FlatPhysicalPlan{Main: plannercore.FlatPlanTree{
+				{Origin: reader, ChildrenIdx: []int{1}, ChildrenEndIdx: 1},
+				{Origin: reader.TablePlan, ChildrenEndIdx: 1},
+			}}
+			visit := func(
+				walk statementRUFlatPlanWalk,
+				_ int,
+				operator *plannercore.FlatOperator,
+				scanBytes float64,
+			) statementRUCalculationVisitResult {
+				return calculator.visitOperator(walk, operator, runtimeStatsColl, scanBytes)
+			}
+			require.True(t, walkStatementRUFlatPlan(flat, visit))
+		}
+
+		require.Equal(t, float64(40), calculator.units.ScanBytes)
+	})
+
+	t.Run("unsupported intermediate operator fails calculation", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t, true, true)
 		planCtx := fixture.stmt.Ctx.(*mock.Context)
 		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
@@ -184,24 +317,21 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		selection.SetChildren(scan)
 		reader.TablePlan = selection
 		reader.TablePlans = physicalop.FlattenListPushDownPlan(selection)
+		fixture.recordReaderScanDetail(reader, 1, 1, 10)
 		fixture.stmt.Ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(reader, false))
 
 		var resultCount, calibrationCount atomic.Int64
-		var snapshot statementRUCalibrationSnapshot
 		testfailpoint.EnableCall(t, statementRUResultFailpointForTest, func(uint64, float64) {
 			resultCount.Add(1)
 		})
-		observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
+		observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) {
 			calibrationCount.Add(1)
-			snapshot = published
 		})
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
 		fixture.stmt.finishStatementRUForTest(nil)
 		require.Zero(t, resultCount.Load())
-		require.Equal(t, int64(1), calibrationCount.Load())
-		require.Equal(t, float64(10), snapshot.Units.ScanBytes)
-		require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
+		require.Zero(t, calibrationCount.Load())
 		require.Zero(t, fixture.owner.calculationSetup)
 	})
 

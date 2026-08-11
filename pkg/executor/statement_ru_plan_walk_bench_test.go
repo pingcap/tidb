@@ -27,15 +27,14 @@ import (
 )
 
 var (
-	statementRUExecStmtSink    *ExecStmt
-	statementRUFlatPlanSink    *plannercore.FlatPhysicalPlan
-	statementRUCalculatorSink  statementRUCalculator
-	statementRUFinalizedSink   statementRUFinalizedSnapshot
-	statementRUResultSink      statementRUResultOnly
-	statementRUExecDetailsSink execdetails.ExecDetails
-	statementRUScanBytesSink   float64
-	statementRUStateSink       statementRUCalibrationState
-	statementRUVisitSink       int
+	statementRUExecStmtSink   *ExecStmt
+	statementRUFlatPlanSink   *plannercore.FlatPhysicalPlan
+	statementRUCalculatorSink statementRUCalculator
+	statementRUFinalizedSink  statementRUFinalizedSnapshot
+	statementRUResultSink     statementRUResultOnly
+	statementRUScanBytesSink  float64
+	statementRUStateSink      statementRUCalibrationState
+	statementRUVisitSink      int
 )
 
 func buildStatementRUPlanChainForBenchmark(operatorCount int) (*ExecStmt, base.Plan) {
@@ -88,14 +87,13 @@ func BenchmarkStatementRUPlanWalk(b *testing.B) {
 				statementRUVisitSink++
 			}
 			visit := func(
-				treeKind statementRUPlanTreeKind,
-				treeIndex int,
+				walk statementRUFlatPlanWalk,
 				operatorIndex int,
 				operator *plannercore.FlatOperator,
 				scanBytes float64,
-			) float64 {
-				observe(treeKind, treeIndex, operatorIndex, operator)
-				return scanBytes
+			) statementRUCalculationVisitResult {
+				observe(walk.treeKind, walk.treeIndex, operatorIndex, operator)
+				return statementRUCalculationVisitResult{scanBytes: scanBytes, ok: true}
 			}
 
 			b.Run("flatten-physical-plan", func(b *testing.B) {
@@ -163,20 +161,19 @@ func BenchmarkStatementRUComponents(b *testing.B) {
 	b.Run("calculator-setup", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			statementRUCalculatorSink = newStatementRUCalculator(setup)
+			statementRUCalculatorSink = newStatementRUCalculator(setup, true)
 		}
 	})
 
 	b.Run("walk-only", func(b *testing.B) {
 		visit := func(
-			_ statementRUPlanTreeKind,
-			_ int,
+			_ statementRUFlatPlanWalk,
 			_ int,
 			_ *plannercore.FlatOperator,
 			scanBytes float64,
-		) float64 {
+		) statementRUCalculationVisitResult {
 			statementRUVisitSink++
-			return scanBytes
+			return statementRUCalculationVisitResult{scanBytes: scanBytes, ok: true}
 		}
 		b.ReportAllocs()
 		for b.Loop() {
@@ -184,19 +181,19 @@ func BenchmarkStatementRUComponents(b *testing.B) {
 		}
 	})
 
-	b.Run("statement-scan-evidence", func(b *testing.B) {
+	b.Run("reader-scan-evidence", func(b *testing.B) {
 		stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
-		// The adapter already performs this read for existing terminal accounting
-		// and passes the value to statement RU. Keep it as a component reference,
-		// not as stack-2 incremental cost.
+		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
 		b.ReportAllocs()
 		for b.Loop() {
-			statementRUExecDetailsSink = stmtCtx.GetExecDetails()
+			detail, _ := stmtCtx.RuntimeStatsColl.GetCopScanDetail(reader.TablePlan.ID())
+			statementRUScanBytesSink = float64(detail.ProcessedKeysSize)
 		}
 	})
 
 	b.Run("scan-unit", func(b *testing.B) {
-		detail := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetExecDetails().ScanDetail
+		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+		detail, _ := fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopScanDetail(reader.TablePlan.ID())
 		b.ReportAllocs()
 		for b.Loop() {
 			statementRUScanBytesSink, statementRUStateSink = statementRUScanBytes(
@@ -208,14 +205,17 @@ func BenchmarkStatementRUComponents(b *testing.B) {
 	})
 
 	b.Run("finalize", func(b *testing.B) {
-		calculator := statementRUCalculator{units: statementRURawUnits{
-			ScanBytes:            10,
-			NetBytes:             20,
-			FrontendCompileBytes: setup.frontendCompileBytes,
-		}}
+		calculator := statementRUCalculator{
+			units: statementRURawUnits{
+				ScanBytes:            10,
+				NetBytes:             20,
+				FrontendCompileBytes: setup.frontendCompileBytes,
+			},
+			evidenceComplete: true,
+		}
 		b.ReportAllocs()
 		for b.Loop() {
-			statementRUFinalizedSink = calculator.finalize(true)
+			statementRUFinalizedSink = calculator.finalize()
 		}
 	})
 

@@ -51,6 +51,35 @@ type statementRUPlanVisitFunc func(
 	operator *plannercore.FlatOperator,
 )
 
+// statementRUCalculationVisitResult controls the generic recursion after one
+// operator is visited. scanBytes is inherited by every child when skipChildren
+// is false. A Reader sets skipChildren only after it has recursively visited all
+// of its own children with Reader-specific evidence. ok reports support without
+// controlling whether the remaining plan is traversed.
+type statementRUCalculationVisitResult struct {
+	scanBytes    float64
+	ok           bool
+	skipChildren bool
+}
+
+type statementRUCalculationVisitFunc func(
+	walk statementRUFlatPlanWalk,
+	operatorIndex int,
+	operator *plannercore.FlatOperator,
+	scanBytes float64,
+) statementRUCalculationVisitResult
+
+// statementRUFlatPlanWalk is the synchronous state for one FlatPlanTree. It is
+// exposed to the calculation visitor so a Reader can own recursion into its
+// branches while reusing the same occurrence visitor and traversal invariants.
+// It and the borrowed flat-plan nodes must not be retained after the walk.
+type statementRUFlatPlanWalk struct {
+	tree      plannercore.FlatPlanTree
+	treeKind  statementRUPlanTreeKind
+	treeIndex int
+	visit     statementRUCalculationVisitFunc
+}
+
 // statementRUOwner owns the first-record-wins outcome and the first terminal
 // finalization for one ExecStmt. Its optional plan observer and calculation
 // setup are released when the shared finishOnce is consumed.
@@ -134,7 +163,7 @@ func (a *ExecStmt) recordStatementRURootEOF() {
 // TODO: when the statement-RU failure metric lands, count the bounded failure
 // reasons at these fail-closed exits and publisher recoveries. Until then there
 // is deliberately no recorder-shaped no-op API.
-func (a *ExecStmt) finishStatementRU(terminalErr error, execDetail execdetails.ExecDetails) {
+func (a *ExecStmt) finishStatementRU(terminalErr error, _ execdetails.ExecDetails) {
 	owner := a.statementRUOwner
 	if owner == nil {
 		return
@@ -176,87 +205,56 @@ func (a *ExecStmt) finishStatementRU(terminalErr error, execDetail execdetails.E
 			return
 		}
 
-		calculator := newStatementRUCalculator(calculationSetup)
+		currentPlan := len(flat.Main) != 0 && flat.Main[0] != nil && flat.Main[0].Origin == a.Plan
+		calculator := newStatementRUCalculator(calculationSetup, owner.rootEOF.Load())
+		evidenceValid := true
 		// Transport bytes are statement evidence in both the current producer and
 		// the demo model. Read them once; do not attribute the same aggregate to
 		// every TableReader occurrence.
-		evidenceComplete := owner.rootEOF.Load()
-		if metrics := sessVars.RUV2Metrics; metrics != nil && !metrics.Bypass() {
-			netBytes := metrics.TiKVCoprocessorResponseBytes()
-			if netBytes < 0 {
-				calculator.invalidEvidence = true
-			} else if netBytes == 0 {
-				evidenceComplete = false
+		if currentPlan {
+			if metrics := sessVars.RUV2Metrics; metrics != nil && !metrics.Bypass() {
+				netBytes := metrics.TiKVCoprocessorResponseBytes()
+				if netBytes < 0 {
+					evidenceValid = false
+				} else if netBytes == 0 {
+					calculator.markEvidenceIncomplete()
+				} else {
+					calculator.units.NetBytes = float64(netBytes)
+				}
 			} else {
-				calculator.units.NetBytes = float64(netBytes)
+				calculator.markEvidenceIncomplete()
 			}
-		} else {
-			evidenceComplete = false
 		}
+
 		// The fresh-session slice must use a flat plan rooted at this ExecStmt.
 		// General flat-plan generation identity remains outside this layer.
-		currentPlan := len(flat.Main) != 0 && flat.Main[0] != nil && flat.Main[0].Origin == a.Plan
-		walkStatementRUFlatPlan(flat, func(
-			treeKind statementRUPlanTreeKind,
-			treeIndex int,
+		calculationVisit := func(
+			walk statementRUFlatPlanWalk,
 			operatorIndex int,
 			operator *plannercore.FlatOperator,
 			scanBytes float64,
-		) float64 {
+		) statementRUCalculationVisitResult {
 			if visit != nil {
-				visit(treeKind, treeIndex, operatorIndex, operator)
+				visit(walk.treeKind, walk.treeIndex, operatorIndex, operator)
 			}
 			if !currentPlan {
-				return scanBytes
+				return statementRUCalculationVisitResult{scanBytes: scanBytes, ok: true}
 			}
-			if treeKind != statementRUPlanTreeMain {
-				// CTE and scalar-subquery ownership are intentionally outside this
-				// layer. The recursive framework still visits their occurrences.
-				evidenceComplete = false
-				return scanBytes
+			if !evidenceValid {
+				return statementRUCalculationVisitResult{scanBytes: scanBytes}
 			}
-
-			switch operator.Origin.(type) {
-			case *physicalop.PhysicalTableReader:
-				// Calculate the Reader's statement scan aggregate here, then pass only
-				// the scalar result to its one TablePlan child.
-				detail := execDetail.ScanDetail
-				if detail == nil {
-					evidenceComplete = false
-					return 0
-				}
-				scanBytes, state := statementRUScanBytes(
-					atomic.LoadInt64(&detail.TotalKeys),
-					atomic.LoadInt64(&detail.ProcessedKeys),
-					atomic.LoadInt64(&detail.ProcessedKeysSize),
-				)
-				if state == statementRUCalibrationUnknown {
-					calculator.invalidEvidence = true
-					return 0
-				}
-				if state != statementRUCalibrationComplete {
-					evidenceComplete = false
-				}
-				return scanBytes
-			case *physicalop.PhysicalTableScan:
-				if scanBytes <= 0 {
-					evidenceComplete = false
-					return scanBytes
-				}
-				calculator.units.ScanBytes += scanBytes
-				return scanBytes
-			default:
-				// The current model defines units only for TableReader and
-				// TableScan. Later operators extend this switch without changing
-				// the traversal or calculator lifecycle.
-				evidenceComplete = false
-				return scanBytes
-			}
-		})
-		if !currentPlan {
+			return calculator.visitOperator(
+				walk,
+				operator,
+				sessVars.StmtCtx.RuntimeStatsColl,
+				scanBytes,
+			)
+		}
+		walkOK := walkStatementRUFlatPlan(flat, calculationVisit)
+		if !currentPlan || !evidenceValid || !walkOK {
 			return
 		}
-		finalized = calculator.finalize(evidenceComplete && calculator.units.ScanBytes > 0)
+		finalized = calculator.finalize()
 		publishFinalized = true
 	})
 	if publishFinalized {
@@ -264,46 +262,138 @@ func (a *ExecStmt) finishStatementRU(terminalErr error, execDetail execdetails.E
 	}
 }
 
-// walkStatementRUFlatPlan follows the canonical ChildrenIdx edges in depth-first
-// order. A visitor can calculate scan bytes at a Reader and pass that scalar to
-// its descendants; no traversal state is retained after the synchronous walk.
-func walkStatementRUFlatPlan(
-	flat *plannercore.FlatPhysicalPlan,
-	visit func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator, float64) float64,
-) {
-	if flat == nil || visit == nil {
-		return
-	}
-	walkTree := func(tree plannercore.FlatPlanTree, treeKind statementRUPlanTreeKind, treeIndex int) {
-		if len(tree) == 0 {
-			return
-		}
-		walkStatementRUFlatPlanNode(tree, treeKind, treeIndex, 0, 0, visit)
+func (calculator *statementRUCalculator) visitOperator(
+	walk statementRUFlatPlanWalk,
+	operator *plannercore.FlatOperator,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	scanBytes float64,
+) statementRUCalculationVisitResult {
+	if walk.treeKind != statementRUPlanTreeMain {
+		return statementRUCalculationVisitResult{scanBytes: scanBytes}
 	}
 
-	walkTree(flat.Main, statementRUPlanTreeMain, 0)
-	for treeIndex, tree := range flat.CTEs {
-		walkTree(tree, statementRUPlanTreeCTE, treeIndex)
-	}
-	for treeIndex, tree := range flat.ScalarSubQueries {
-		walkTree(tree, statementRUPlanTreeScalarSubQuery, treeIndex)
+	switch origin := operator.Origin.(type) {
+	case *physicalop.PhysicalTableReader:
+		return calculator.visitTableReader(walk, operator, origin, runtimeStatsColl)
+	case *physicalop.PhysicalTableScan:
+		if scanBytes <= 0 {
+			calculator.markEvidenceIncomplete()
+			return statementRUCalculationVisitResult{scanBytes: scanBytes, ok: true}
+		}
+		calculator.units.ScanBytes += scanBytes
+		return statementRUCalculationVisitResult{scanBytes: scanBytes, ok: true}
+	default:
+		// The current model defines units only for TableReader and TableScan.
+		// Any other operator makes the whole statement RU calculation unsupported.
+		return statementRUCalculationVisitResult{scanBytes: scanBytes}
 	}
 }
 
+func (calculator *statementRUCalculator) visitTableReader(
+	walk statementRUFlatPlanWalk,
+	operator *plannercore.FlatOperator,
+	reader *physicalop.PhysicalTableReader,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+) statementRUCalculationVisitResult {
+	// DistSQL records a Reader's aggregate scan detail against the root of its
+	// pushed-down TablePlan. It is the TableScan only for the direct topology.
+	// Calculate the Reader-scoped scalar here, then recurse here as well so each
+	// Reader type can eventually route distinct evidence to each of its branches.
+	scanBytes := float64(0)
+	readerOK := true
+	switch {
+	case reader.TablePlan == nil:
+		readerOK = false
+	case runtimeStatsColl == nil:
+		calculator.markEvidenceIncomplete()
+	default:
+		detail, found := runtimeStatsColl.GetCopScanDetail(reader.TablePlan.ID())
+		if !found {
+			calculator.markEvidenceIncomplete()
+			break
+		}
+		state := statementRUCalibrationUnknown
+		scanBytes, state = statementRUScanBytes(
+			detail.TotalKeys,
+			detail.ProcessedKeys,
+			detail.ProcessedKeysSize,
+		)
+		if state == statementRUCalibrationUnknown {
+			readerOK = false
+		} else if state != statementRUCalibrationComplete {
+			calculator.markEvidenceIncomplete()
+		}
+	}
+
+	childrenOK := true
+	for _, childIndex := range operator.ChildrenIdx {
+		childOK := walkStatementRUFlatPlanNode(walk, childIndex, scanBytes)
+		childrenOK = childOK && childrenOK
+	}
+	return statementRUCalculationVisitResult{
+		ok:           readerOK && childrenOK,
+		skipChildren: true,
+	}
+}
+
+// walkStatementRUFlatPlan follows the canonical ChildrenIdx edges in depth-first
+// order. A visitor can pass scan bytes from a Reader to its descendants. A
+// false result makes the whole walk unsuccessful without
+// suppressing observation of the remaining occurrences; no traversal state is
+// retained after the synchronous walk.
+func walkStatementRUFlatPlan(
+	flat *plannercore.FlatPhysicalPlan,
+	visit statementRUCalculationVisitFunc,
+) bool {
+	if flat == nil || visit == nil {
+		return false
+	}
+	walkTree := func(tree plannercore.FlatPlanTree, treeKind statementRUPlanTreeKind, treeIndex int) bool {
+		if len(tree) == 0 {
+			return true
+		}
+		walk := statementRUFlatPlanWalk{
+			tree:      tree,
+			treeKind:  treeKind,
+			treeIndex: treeIndex,
+			visit:     visit,
+		}
+		return walkStatementRUFlatPlanNode(walk, 0, 0)
+	}
+
+	walkOK := walkTree(flat.Main, statementRUPlanTreeMain, 0)
+	for treeIndex, tree := range flat.CTEs {
+		treeOK := walkTree(tree, statementRUPlanTreeCTE, treeIndex)
+		walkOK = treeOK && walkOK
+	}
+	for treeIndex, tree := range flat.ScalarSubQueries {
+		treeOK := walkTree(tree, statementRUPlanTreeScalarSubQuery, treeIndex)
+		walkOK = treeOK && walkOK
+	}
+	return walkOK
+}
+
+// walkStatementRUFlatPlanNode visits one operator occurrence and normally
+// follows its canonical ChildrenIdx edges with the returned scanBytes. A
+// visitor may set skipChildren only after recursively visiting all children
+// itself. Unsupported occurrences make the result false without short-circuiting
+// the remaining siblings.
 func walkStatementRUFlatPlanNode(
-	tree plannercore.FlatPlanTree,
-	treeKind statementRUPlanTreeKind,
-	treeIndex int,
+	walk statementRUFlatPlanWalk,
 	operatorIndex int,
 	scanBytes float64,
-	visit func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator, float64) float64,
-) {
-	operator := tree[operatorIndex]
+) bool {
+	operator := walk.tree[operatorIndex]
 	if operator == nil || operator.Origin == nil {
-		return
+		return false
 	}
-	scanBytes = visit(treeKind, treeIndex, operatorIndex, operator, scanBytes)
+	result := walk.visit(walk, operatorIndex, operator, scanBytes)
+	if result.skipChildren {
+		return result.ok
+	}
 	for _, childIndex := range operator.ChildrenIdx {
-		walkStatementRUFlatPlanNode(tree, treeKind, treeIndex, childIndex, scanBytes, visit)
+		childOK := walkStatementRUFlatPlanNode(walk, childIndex, result.scanBytes)
+		result.ok = childOK && result.ok
 	}
+	return result.ok
 }
