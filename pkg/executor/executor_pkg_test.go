@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -140,6 +141,7 @@ func TestIndexReaderPartitionRangesUseMemoryTracker(t *testing.T) {
 	rangeMemTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	e := &IndexReaderExecutor{
 		indexReaderExecutorContext: newIndexReaderExecutorContext(sctx),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 0),
 		index:                      &model.IndexInfo{ID: 1},
 		partitions:                 []table.PhysicalTable{partition0.(table.PhysicalTable), partition1.(table.PhysicalTable)},
 		ranges:                     []*ranger.Range{generateIndexRange(1, 1)},
@@ -159,6 +161,7 @@ func TestIndexLookUpPartitionRangesUseMemoryTracker(t *testing.T) {
 	rangeMemTracker := memory.NewTracker(memory.LabelForIndexWorker, -1)
 	e := &IndexLookUpExecutor{
 		indexLookUpExecutorContext: newIndexLookUpExecutorContext(sctx),
+		BaseExecutorV2:             exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 0),
 		index:                      &model.IndexInfo{ID: 1},
 		prunedPartitions:           []table.PhysicalTable{partition0.(table.PhysicalTable), partition1.(table.PhysicalTable)},
 		partitionTableMode:         true,
