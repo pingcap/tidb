@@ -35,6 +35,52 @@ impl ClusterAnalyze for UndeterminedAnalyze {
     }
 }
 
+struct PanickingAnalyze(&'static str);
+
+impl ClusterAnalyze for PanickingAnalyze {
+    fn execute(
+        &self,
+        _: &tidb_exec::cluster_analyze::AnalyzeStatement,
+    ) -> Result<tidb_exec::real_tikv_analyze::ClusterAnalyzeReport, crate::sql_node::SqlQueryError>
+    {
+        panic!("{}", self.0)
+    }
+}
+
+/// Go runs ANALYZE work and result handling in separate goroutines, so
+/// `pkg/executor/test/analyzetest/panictest` has one failpoint test for each
+/// recovery site. This node runs both phases synchronously behind the single
+/// `ClusterAnalyze::execute` production seam; both source panics therefore
+/// collapse to one recovery boundary, but remain separate cases here so the
+/// integration decision cannot silently drop either source test.
+#[test]
+fn analyze_internal_panics_become_query_errors_and_leave_the_session_usable() {
+    for source_test in [
+        "TestPanicInHandleResultErrorWithSingleGoroutine",
+        "TestPanicInHandleAnalyzeWorkerPanic",
+    ] {
+        let node = MockNode::start();
+        let mut session =
+            open_session_on_with_analyze(&node, Arc::new(PanickingAnalyze(source_test)));
+
+        let query_error = session
+            .execute_write("ANALYZE TABLE t")
+            .expect_err("an internal ANALYZE panic must become a statement error");
+        assert_eq!(query_error.code, 1105, "source test: {source_test}");
+        assert_eq!(query_error.state, *b"HY000", "source test: {source_test}");
+        assert_eq!(
+            query_error.message, "analyze worker panic",
+            "source test: {source_test}"
+        );
+        assert_query_error_packet(&query_error, 1105, "analyze worker panic");
+
+        assert!(
+            rows(&mut session, "SELECT * FROM t").is_empty(),
+            "recovering the statement must keep the session catalog usable: {source_test}"
+        );
+    }
+}
+
 #[test]
 fn analyze_commit_keeps_an_undetermined_verdict_connection_fatal() {
     let node = MockNode::start();

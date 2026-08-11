@@ -50,6 +50,7 @@
 //! that are visibly labelled `stats:pseudo`.
 
 pub mod kv;
+pub mod panic_recovery;
 
 use tidb_codec::{encode_key, encode_value};
 use tidb_datatype::{Collation, Datum, EvalType, FieldType, FieldTypeCode};

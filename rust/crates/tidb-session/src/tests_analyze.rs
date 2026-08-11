@@ -10,6 +10,7 @@
 //! so the assertions are on the ESTIMATES Go produced, not merely on
 //! `stats:pseudo` disappearing.
 
+use crate::analyze_arm::AnalyzePanicPhase;
 use crate::tests_support::*;
 use crate::*;
 
@@ -124,6 +125,56 @@ fn analyze_publishes_the_row_count_and_the_distribution() {
         row_text(session.run("SELECT count(*) FROM t WHERE a > 2")),
         vec![vec!["7"]]
     );
+}
+
+/// The in-process session is the second production consumer of the shared
+/// analyze engine. Go's two failpoints live in separate goroutines; this tier
+/// is synchronous, so both enter through one panic boundary but remain two
+/// cases here to preserve the complete source-test disposition.
+#[test]
+fn analyze_internal_panics_become_errors_and_leave_the_in_process_session_usable() {
+    for (source_test, phase) in [
+        (
+            "TestPanicInHandleResultErrorWithSingleGoroutine",
+            AnalyzePanicPhase::Result,
+        ),
+        (
+            "TestPanicInHandleAnalyzeWorkerPanic",
+            AnalyzePanicPhase::Worker,
+        ),
+    ] {
+        let mut session = Session::new();
+        session.run("CREATE TABLE t (a INT)").unwrap();
+        session.run("INSERT INTO t VALUES (1)").unwrap();
+        crate::analyze_arm::panic_next_analyze_for_test(phase, source_test);
+
+        let error = session
+            .run("ANALYZE TABLE t")
+            .expect_err("an internal ANALYZE panic must become a statement error");
+        assert!(
+            matches!(&error, DriverError::Unsupported(message) if message == "analyze worker panic"),
+            "source test {source_test} mapped to {error:?}"
+        );
+        let wire_error = error.to_mysql_error();
+        assert_eq!(wire_error.code, 1105, "source test: {source_test}");
+        assert_eq!(wire_error.state, *b"HY000", "source test: {source_test}");
+        assert_eq!(
+            wire_error.message, "analyze worker panic",
+            "source test: {source_test}"
+        );
+
+        assert_eq!(
+            row_text(session.run("SELECT * FROM t")),
+            vec![vec!["1"]],
+            "recovering the statement must keep the session catalog usable: {source_test}"
+        );
+        assert!(
+            scan_row(&mut session, "EXPLAIN SELECT * FROM t")
+                .1
+                .contains("stats:pseudo"),
+            "a failed result phase must not publish statistics: {source_test}"
+        );
+    }
 }
 
 /// An ANALYZED EMPTY table stays pseudo.
