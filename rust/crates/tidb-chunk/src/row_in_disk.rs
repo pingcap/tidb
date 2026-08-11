@@ -506,7 +506,41 @@ impl<R: ReadAt> ReadAt for ReaderWithCache<R> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io;
     use tidb_datatype::{BinaryJSON, FieldTypeCode as C};
+    use tidb_util::layered_io::{ReadAtError, ReadAtResult};
+
+    struct SliceReadAt {
+        bytes: Vec<u8>,
+        fail_at: Option<i64>,
+    }
+
+    impl ReadAt for SliceReadAt {
+        fn read_at(&self, destination: &mut [u8], offset: i64) -> ReadAtResult {
+            if self.fail_at == Some(offset) {
+                return ReadAtResult::io(
+                    0,
+                    io::Error::new(io::ErrorKind::Other, "injected read failure"),
+                );
+            }
+            let Ok(offset) = usize::try_from(offset) else {
+                return ReadAtResult::io(
+                    0,
+                    io::Error::new(io::ErrorKind::InvalidInput, "negative offset"),
+                );
+            };
+            let available = self.bytes.len().saturating_sub(offset);
+            let count = available.min(destination.len());
+            if count > 0 {
+                destination[..count].copy_from_slice(&self.bytes[offset..offset + count]);
+            }
+            if count < destination.len() {
+                ReadAtResult::eof(count)
+            } else {
+                ReadAtResult::ok(count)
+            }
+        }
+    }
 
     /// The bytes GO WROTE: produced by
     /// `rust/difftests/chunk-tests/fixtures/generate_row_in_disk_vectors.go`,
@@ -764,6 +798,110 @@ mod tests {
     fn many_checksum_blocks_spill_to_gos_bytes() {
         let (fields, chunks) = many_blocks_case();
         run_case("many_blocks", fields, chunks);
+    }
+
+    /// Go's four `ReaderWithCache` tests, expressed as one offset/EOF table.
+    #[test]
+    fn reader_with_cache_matches_the_source_boundary_table() {
+        let reader = ReaderWithCache::new(
+            SliceReadAt {
+                bytes: b"abcdefgh".to_vec(),
+                fail_at: Some(99),
+            },
+            b"ijkl",
+            8,
+        );
+
+        for (offset, size, expected, eof) in [
+            (1, 3, &b"bcd"[..], false),
+            (6, 6, &b"ghijkl"[..], false),
+            (6, 8, &b"ghijkl"[..], true),
+            (9, 2, &b"jk"[..], false),
+            (10, 4, &b"kl"[..], true),
+            (12, 4, &b""[..], true),
+        ] {
+            let mut destination = vec![0; size];
+            let result = reader.read_at(&mut destination, offset);
+            assert_eq!(result.n, expected.len(), "offset {offset}, size {size}");
+            assert_eq!(&destination[..result.n], expected);
+            assert_eq!(
+                result.error.as_ref().is_some_and(ReadAtError::is_eof),
+                eof,
+                "offset {offset}, size {size}"
+            );
+        }
+
+        let mut destination = [0; 1];
+        let failure = reader.read_at(&mut destination, 99);
+        assert_eq!(failure.n, 0);
+        assert!(matches!(failure.error, Some(ReadAtError::Io(_))));
+
+        let cache_only = ReaderWithCache::new(
+            SliceReadAt {
+                bytes: Vec::new(),
+                fail_at: None,
+            },
+            b"cache",
+            0,
+        );
+        let mut destination = [0; 5];
+        let result = cache_only.read_at(&mut destination, 0);
+        assert_eq!(result.n, 5);
+        assert!(result.error.is_none());
+        assert_eq!(&destination, b"cache");
+    }
+
+    /// Go `TestDataInDiskByRowsWithChecksum{1,2,8}` and the matching
+    /// `AndEncrypt` cases: completed spill files support concurrent positional
+    /// reads without sharing cursor state or corrupting the live writer cache.
+    #[test]
+    fn plaintext_and_encrypted_rows_support_the_source_concurrency_matrix() {
+        for encryption in [
+            SpillEncryptionMethod::Plaintext,
+            SpillEncryptionMethod::Aes128Ctr,
+        ] {
+            for concurrency in [1usize, 2, 8] {
+                let storage = isolated_storage(
+                    &format!("concurrent-{encryption:?}-{concurrency}"),
+                    encryption,
+                );
+                let dir = storage.path().to_path_buf();
+                let (fields, chunks) = mixed_case();
+                let container = spill(&fields, &chunks, Arc::clone(&storage));
+
+                std::thread::scope(|scope| {
+                    for _ in 0..concurrency {
+                        scope.spawn(|| {
+                            for (chunk_index, expected_chunk) in chunks.iter().enumerate() {
+                                for row_index in 0..expected_chunk.num_rows() {
+                                    let (actual_chunk, actual_index) = container
+                                        .get_row(RowPtr::new(chunk_index as u32, row_index as u32))
+                                        .expect("concurrent row read");
+                                    let actual = actual_chunk.get_row(actual_index);
+                                    let expected = expected_chunk.get_row(row_index);
+                                    for column_index in 0..fields.len() {
+                                        assert_eq!(
+                                            actual.is_null(column_index),
+                                            expected.is_null(column_index)
+                                        );
+                                        if !actual.is_null(column_index) {
+                                            assert_eq!(
+                                                actual.get_raw(column_index),
+                                                expected.get_raw(column_index)
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        });
+                    }
+                });
+
+                drop(container);
+                drop(storage);
+                let _ = std::fs::remove_dir_all(dir);
+            }
+        }
     }
 
     #[test]
