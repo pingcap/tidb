@@ -55,7 +55,8 @@ fn plan_tree_renderer_leaf() {
     let mut build = ExplainOperator::new("IndexRangeScan", 2)
         .with_task(task.clone())
         .with_access_object("table:t, index:idx(a)")
-        .with_operator_info("range:[5,5], keep order:false, stats:pseudo");
+        .with_operator_info("range:[5,5], keep order:false, stats:pseudo")
+        .with_children([ExplainOperator::new("IndexScan", 4)]);
     build.label = "(Build)".to_owned();
     let mut probe = ExplainOperator::new("TableRowIDScan", 3)
         .with_task(task)
@@ -71,7 +72,8 @@ fn plan_tree_renderer_leaf() {
     assert!(rows.iter().all(|row| row.len() == 4));
     assert_eq!(rows[0][0], "IndexLookUp");
     assert_eq!(rows[1][0], "├─IndexRangeScan(Build)");
-    assert_eq!(rows[2][0], "└─TableRowIDScan(Probe)");
+    assert_eq!(rows[2][0], "│ └─IndexScan");
+    assert_eq!(rows[3][0], "└─TableRowIDScan(Probe)");
     assert_eq!(rows[1][1], "cop[tikv]");
     assert_eq!(rows[1][2], "table:t, index:idx(a)");
     assert_eq!(rows[1][3], "range:[5,5], keep order:false, stats:pseudo");

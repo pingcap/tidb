@@ -14,6 +14,7 @@
 use std::fmt;
 
 use tidb_ast::{LoadDataFields, LoadDataLines};
+use tidb_util::texttree::{indent_4_child, pretty_identifier};
 
 /// `LineFieldsInfo` defaults and overrides shared by LOAD DATA/SELECT INTO.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -419,14 +420,7 @@ impl Explain {
             return Err(ExplainError::RendererUnavailable(self.format));
         }
         self.rows.clear();
-        let mut ancestors_have_more = Vec::new();
-        render_operator(
-            &self.target,
-            self.format,
-            true,
-            &mut ancestors_have_more,
-            &mut self.rows,
-        );
+        render_operator(&self.target, self.format, "", true, &mut self.rows);
         Ok(&self.rows)
     }
 }
@@ -434,22 +428,12 @@ impl Explain {
 fn render_operator(
     operator: &ExplainOperator,
     format: ExplainFormat,
+    indent: &str,
     is_last: bool,
-    ancestors_have_more: &mut Vec<bool>,
     rows: &mut Vec<Vec<String>>,
 ) {
     let brief = matches!(format, ExplainFormat::Brief | ExplainFormat::PlanTree);
-    let mut id = String::new();
-    if !ancestors_have_more.is_empty() {
-        for has_more in ancestors_have_more
-            .iter()
-            .take(ancestors_have_more.len() - 1)
-        {
-            id.push_str(if *has_more { "│ " } else { "  " });
-        }
-        id.push_str(if is_last { "└─" } else { "├─" });
-    }
-    id.push_str(&operator.explain_id(brief));
+    let id = pretty_identifier(&operator.explain_id(brief), indent, is_last);
 
     let mut row = vec![id];
     if format != ExplainFormat::PlanTree {
@@ -466,11 +450,10 @@ fn render_operator(
     rows.push(row);
 
     let child_count = operator.children.len();
+    let child_indent = indent_4_child(indent, is_last);
     for (index, child) in operator.children.iter().enumerate() {
         let child_is_last = index + 1 == child_count;
-        ancestors_have_more.push(!child_is_last);
-        render_operator(child, format, child_is_last, ancestors_have_more, rows);
-        ancestors_have_more.pop();
+        render_operator(child, format, &child_indent, child_is_last, rows);
     }
 }
 

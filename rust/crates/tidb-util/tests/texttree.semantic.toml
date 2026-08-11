@@ -1,8 +1,0 @@
-go_package = "pkg/util/texttree"
-source_commit = "b66916d368a22d24e4b6b8713372edb572915f06"
-evidence_files = [
-  "rust/crates/tidb-util/src/texttree.rs",
-]
-commands = [
-  ["test", "-p", "tidb-util", "--lib"],
-]
