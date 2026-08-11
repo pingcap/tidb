@@ -8,9 +8,14 @@ description = "Transcreation of the pinned pingcap/log module (unified log forma
 
 [dependencies]
 chrono = { workspace = true }
+flate2 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tidb-config = { path = "../tidb-config" }
+
+[[bench]]
+name = "zap_benchmark"
+harness = false
 
 [lints]
 workspace = true

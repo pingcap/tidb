@@ -25,7 +25,22 @@
 #![warn(missing_docs)]
 
 pub mod config;
+mod global;
+mod log;
 pub mod text_encoder;
+mod zap_text_core;
 
-pub use config::{Config, FileLogConfig, DEFAULT_LOG_MAX_SIZE};
-pub use text_encoder::{Entry, Field, Level, TextEncoder, Value};
+pub use config::{Config, FileLogConfig, SamplingConfig, DEFAULT_LOG_MAX_SIZE};
+pub use global::{
+    debug, error, fatal, get_level, info, l, panic, replace_globals, s, set_level, sync, warn,
+    with, GlobalRestore,
+};
+pub use log::{
+    init_logger, init_logger_with_write_syncer, init_test_logger, lock_with_timeout, Logger,
+    LoggerOptions, MemorySink, SugaredLogger, ZapProperties, ZAP_ENCODING_NAME,
+};
+pub use text_encoder::{
+    caller_string, default_time_encoder, format_time, short_caller_encoder, Entry, Field, Level,
+    TextEncoder, Value,
+};
+pub use zap_text_core::{AtomicLevel, TextIoCore, WriteSyncer};

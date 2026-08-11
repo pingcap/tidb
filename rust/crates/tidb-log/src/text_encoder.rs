@@ -31,7 +31,7 @@ use std::fmt::Write as _;
 use chrono::{DateTime, FixedOffset, Timelike};
 
 /// Log level (zap levels the encoder renders).
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum Level {
     /// DEBUG.
     Debug,
@@ -62,6 +62,20 @@ impl Level {
             Level::Fatal => "FATAL",
         }
     }
+
+    /// Parses zap's lowercase level spelling.
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "debug" => Ok(Self::Debug),
+            "info" => Ok(Self::Info),
+            "warn" => Ok(Self::Warn),
+            "error" => Ok(Self::Error),
+            "dpanic" => Ok(Self::DPanic),
+            "panic" => Ok(Self::Panic),
+            "fatal" => Ok(Self::Fatal),
+            _ => Err(format!("unrecognized level: {value}")),
+        }
+    }
 }
 
 /// A field value (the zap field types `addFields` encodes).
@@ -77,6 +91,13 @@ pub enum Value {
     F64(f64),
     /// A bool.
     Bool(bool),
+    /// A complex number (zap renders `real+imagi`, always retaining `+`).
+    Complex {
+        /// Real component.
+        real: f64,
+        /// Imaginary component.
+        imag: f64,
+    },
     /// A duration in nanoseconds (zap `StringDurationEncoder` renders Go
     /// `Duration.String()`).
     Duration(i64),
@@ -135,13 +156,22 @@ pub struct Entry {
     pub stack: String,
 }
 
-/// The unified-format text encoder (Go `textEncoder`). `with` fields
-/// (logger context) are encoded once and prepended before entry fields,
-/// matching zap's `Clone()`+buffer semantics.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum OutputFormat {
+    #[default]
+    Text,
+    Json,
+}
+
+/// The unified-format encoder returned by Go `NewTextEncoder`. `with` fields
+/// (logger context) are retained and emitted before entry fields, matching
+/// zap's `Clone()`+buffer semantics for both text and JSON output.
 #[derive(Default, Clone)]
 pub struct TextEncoder {
-    /// Encoded context fields (Go: the encoder's own `buf`).
-    context: String,
+    /// Output selected by Go `Config.Format`.
+    format: OutputFormat,
+    /// Context fields stored by `logger.With` (Go: the encoder's own buffer).
+    context: Vec<Field>,
     /// Go `disableErrorVerbose`.
     pub disable_error_verbose: bool,
     /// Go `cfg.DisableTimestamp` (drops the time section).
@@ -165,9 +195,17 @@ pub fn format_time(t: &DateTime<FixedOffset>) -> String {
     )
 }
 
+/// Go `DefaultTimeEncoder` alias.
+pub fn default_time_encoder(t: &DateTime<FixedOffset>) -> String {
+    format_time(t)
+}
+
 /// Go `getCallerString`: strip the directory, keep only
 /// `[A-Za-z0-9._-]` bytes of the file name, append `:line`.
 pub fn caller_string(file: &str, line: u32) -> String {
+    if file.is_empty() && line == 0 {
+        return "<unknown>".to_owned();
+    }
     let base = match file.rfind('/') {
         Some(i) => &file[i + 1..],
         None => file,
@@ -180,6 +218,11 @@ pub fn caller_string(file: &str, line: u32) -> String {
     }
     let _ = write!(s, ":{line}");
     s
+}
+
+/// Go `ShortCallerEncoder` alias.
+pub fn short_caller_encoder(file: &str, line: u32) -> String {
+    caller_string(file, line)
 }
 
 // Go `needDoubleQuotes`.
@@ -216,14 +259,20 @@ fn safe_add_bytes(out: &mut String, s: &[u8]) {
         }
         match std::str::from_utf8(&s[i..]) {
             Ok(rest) => {
-                out.push_str(rest);
-                break;
+                let character = rest.chars().next().expect("non-empty UTF-8 tail");
+                out.push(character);
+                i += character.len_utf8();
             }
             Err(e) => {
                 let valid = e.valid_up_to();
                 if valid > 0 {
-                    out.push_str(std::str::from_utf8(&s[i..i + valid]).unwrap());
-                    i += valid;
+                    let character = std::str::from_utf8(&s[i..i + valid])
+                        .expect("validated UTF-8 prefix")
+                        .chars()
+                        .next()
+                        .expect("non-empty UTF-8 prefix");
+                    out.push(character);
+                    i += character.len_utf8();
                 } else {
                     out.push_str("\\ufffd");
                     i += 1;
@@ -282,6 +331,10 @@ fn append_value(out: &mut String, v: &Value) {
         Value::Bool(b) => {
             add_element_separator(out);
             let _ = write!(out, "{b}");
+        }
+        Value::Complex { real, imag } => {
+            add_element_separator(out);
+            let _ = write!(out, "{real}+{imag}i");
         }
         Value::Duration(ns) => {
             add_element_separator(out);
@@ -402,32 +455,53 @@ fn base64_std(input: &[u8]) -> String {
 }
 
 impl TextEncoder {
-    /// Creates an encoder from a [`crate::Config`] (text format only; the
-    /// json format rides zap's JSON encoder in the source and is not part
-    /// of this contract).
+    /// Creates an encoder from a [`crate::Config`].
     pub fn new(cfg: &crate::Config) -> Result<TextEncoder, String> {
-        match cfg.format.as_str() {
-            "text" | "" => Ok(TextEncoder {
-                context: String::new(),
-                disable_error_verbose: cfg.disable_error_verbose,
-                disable_timestamp: cfg.disable_timestamp,
-            }),
-            other => Err(format!("unsupport log format: {other}")),
-        }
+        let format = match cfg.format.as_str() {
+            "text" | "" => OutputFormat::Text,
+            "json" => OutputFormat::Json,
+            other => return Err(format!("unsupport log format: {other}")),
+        };
+        Ok(TextEncoder {
+            format,
+            context: Vec::new(),
+            disable_error_verbose: cfg.disable_error_verbose,
+            disable_timestamp: cfg.disable_timestamp,
+        })
     }
 
     /// Returns an encoder with the given context fields appended (zap
     /// `logger.With`).
     pub fn with_fields(&self, fields: &[Field]) -> TextEncoder {
         let mut clone = self.clone();
-        for f in fields {
-            add_field(&mut clone.context, f, clone.disable_error_verbose);
-        }
+        clone.context.extend_from_slice(fields);
         clone
     }
 
     /// Go `EncodeEntry`: renders one line including the trailing newline.
+    ///
+    /// This compatibility wrapper panics only when a pre-serialized reflected
+    /// value is invalid for JSON. Logger plumbing uses [`Self::try_encode_entry`]
+    /// and reports that error through its error sink.
     pub fn encode_entry(&self, ent: &Entry, fields: &[Field]) -> String {
+        self.try_encode_entry(ent, fields)
+            .expect("failed to encode log entry")
+    }
+
+    /// Fallible Go `EncodeEntry` equivalent.
+    pub fn try_encode_entry(&self, ent: &Entry, fields: &[Field]) -> Result<String, String> {
+        match self.format {
+            OutputFormat::Text => Ok(self.encode_text_entry(ent, fields)),
+            OutputFormat::Json => {
+                for field in self.context.iter().chain(fields) {
+                    validate_json_field(field)?;
+                }
+                Ok(self.encode_json_entry(ent, fields))
+            }
+        }
+    }
+
+    fn encode_text_entry(&self, ent: &Entry, fields: &[Field]) -> String {
         let mut out = String::new();
         if !self.disable_timestamp {
             begin_quote_field(&mut out);
@@ -459,9 +533,8 @@ impl TextEncoder {
             append_string_with_quote(&mut out, ent.message.as_bytes());
             end_quote_field(&mut out);
         }
-        if !self.context.is_empty() {
-            out.push(' ');
-            out.push_str(&self.context);
+        for field in &self.context {
+            add_field(&mut out, field, self.disable_error_verbose);
         }
         for f in fields {
             add_field(&mut out, f, self.disable_error_verbose);
@@ -475,6 +548,166 @@ impl TextEncoder {
         }
         out.push('\n');
         out
+    }
+
+    fn encode_json_entry(&self, ent: &Entry, fields: &[Field]) -> String {
+        let mut out = String::from("{");
+        let mut first = true;
+        add_json_field(
+            &mut out,
+            &mut first,
+            "level",
+            &Value::Str(ent.level.capital().to_owned()),
+        );
+        if !self.disable_timestamp {
+            add_json_field(
+                &mut out,
+                &mut first,
+                "time",
+                &Value::Str(format_time(&ent.time)),
+            );
+        }
+        if !ent.logger_name.is_empty() {
+            add_json_field(
+                &mut out,
+                &mut first,
+                "name",
+                &Value::Str(ent.logger_name.clone()),
+            );
+        }
+        if let Some((file, line)) = &ent.caller {
+            add_json_field(
+                &mut out,
+                &mut first,
+                "caller",
+                &Value::Str(caller_string(file, *line)),
+            );
+        }
+        if !ent.message.is_empty() {
+            add_json_field(
+                &mut out,
+                &mut first,
+                "message",
+                &Value::Str(ent.message.clone()),
+            );
+        }
+        for field in self.context.iter().chain(fields) {
+            add_json_log_field(&mut out, &mut first, field);
+        }
+        if !ent.stack.is_empty() {
+            add_json_field(
+                &mut out,
+                &mut first,
+                "stack",
+                &Value::Str(ent.stack.clone()),
+            );
+        }
+        out.push_str("}\n");
+        out
+    }
+}
+
+fn add_json_log_field(out: &mut String, first: &mut bool, field: &Field) {
+    if let Value::Error { basic, verbose } = &field.value {
+        add_json_field(out, first, &field.key, &Value::Str(basic.clone()));
+        if let Some(verbose) = verbose {
+            if verbose != basic {
+                add_json_field(
+                    out,
+                    first,
+                    &format!("{}Verbose", field.key),
+                    &Value::Str(verbose.clone()),
+                );
+            }
+        }
+        return;
+    }
+    add_json_field(out, first, &field.key, &field.value);
+}
+
+fn add_json_field(out: &mut String, first: &mut bool, key: &str, value: &Value) {
+    if !*first {
+        out.push(',');
+    }
+    *first = false;
+    append_json_string(out, key.as_bytes());
+    out.push(':');
+    append_json_value(out, value);
+}
+
+fn append_json_string(out: &mut String, value: &[u8]) {
+    out.push('"');
+    safe_add_bytes(out, value);
+    out.push('"');
+}
+
+fn append_json_value(out: &mut String, value: &Value) {
+    match value {
+        Value::Str(value) => append_json_string(out, value.as_bytes()),
+        Value::I64(value) => {
+            let _ = write!(out, "{value}");
+        }
+        Value::U64(value) => {
+            let _ = write!(out, "{value}");
+        }
+        Value::F64(value) if value.is_nan() => out.push_str("\"NaN\""),
+        Value::F64(value) if value.is_infinite() => {
+            out.push_str(if value.is_sign_positive() {
+                "\"+Inf\""
+            } else {
+                "\"-Inf\""
+            });
+        }
+        Value::F64(value) => {
+            let _ = write!(out, "{value}");
+        }
+        Value::Bool(value) => {
+            let _ = write!(out, "{value}");
+        }
+        Value::Complex { real, imag } => {
+            append_json_string(out, format!("{real}+{imag}i").as_bytes());
+        }
+        Value::Duration(value) => append_json_string(
+            out,
+            tidb_config::configtypes::format_go_duration(*value).as_bytes(),
+        ),
+        Value::Binary(value) => append_json_string(out, base64_std(value).as_bytes()),
+        Value::ByteString(value) => append_json_string(out, value),
+        Value::Reflect(value) => out.push_str(value),
+        Value::Array(values) => {
+            out.push('[');
+            for (index, value) in values.iter().enumerate() {
+                if index != 0 {
+                    out.push(',');
+                }
+                append_json_value(out, value);
+            }
+            out.push(']');
+        }
+        Value::Object(fields) => {
+            out.push('{');
+            let mut first = true;
+            for field in fields {
+                add_json_log_field(out, &mut first, field);
+            }
+            out.push('}');
+        }
+        Value::Error { basic, .. } => append_json_string(out, basic.as_bytes()),
+    }
+}
+
+fn validate_json_field(field: &Field) -> Result<(), String> {
+    validate_json_value(&field.value).map_err(|error| format!("{}: {error}", field.key))
+}
+
+fn validate_json_value(value: &Value) -> Result<(), String> {
+    match value {
+        Value::Reflect(json) => serde_json::from_str::<serde_json::Value>(json)
+            .map(|_| ())
+            .map_err(|error| format!("cannot encode reflected value: {error}")),
+        Value::Array(values) => values.iter().try_for_each(validate_json_value),
+        Value::Object(fields) => fields.iter().try_for_each(validate_json_field),
+        _ => Ok(()),
     }
 }
 
@@ -648,6 +881,29 @@ mod tests {
                     Value::Bool(false),
                 ]),
             ),
+            Field::new(
+                "complex128",
+                Value::Complex {
+                    real: 1.0,
+                    imag: 2.0,
+                },
+            ),
+            Field::new(
+                "test",
+                Value::Array(vec![
+                    Value::Str("💖".into()),
+                    Value::Str("�".into()),
+                    Value::Str("☺☻☹".into()),
+                    Value::Str("日a本b語ç日ð本Ê語þ日¥本¼語i日©".into()),
+                    Value::Str(
+                        "日a本b語ç日ð本Ê語þ日¥本¼語i日©日a本b語ç日ð本Ê語þ日¥本¼語i日©日a本b語ç日ð本Ê語þ日¥本¼語i日©"
+                            .into(),
+                    ),
+                    Value::ByteString(vec![0x80, 0x80, 0x80, 0x80]),
+                    Value::Str("<car><mirror>XML</mirror></car>".into()),
+                ]),
+            ),
+            Field::new("duration", Value::Duration(10_000_000_000)),
         ];
         let out = encode_no_time(
             &entry(Level::Info, "zap_log_test.go", 72, "Testing typs"),
@@ -655,7 +911,7 @@ mod tests {
         );
         assert_eq!(
             out,
-            r#"[INFO] [zap_log_test.go:72] ["Testing typs"] [filed1=noquote] [filed2="in quote"] [urls="[http://mock1.com:2347,http://mock2.com:2432]"] [urls-peer="[t1,\"t2 fine\"]"] ["store ids"="[1,4,5]"] [object="{username=user1}"] [object2="{username=\"user 2\"}"] [binary="YWIxMjM="] ["is processed"=true] [bytestring=noquote] [bytestring="in quote"] [int8=1] [ptr=10] [reflect="[1,2]"] [stringer=127.0.0.1] ["array bools"="[true]"] ["array bools"="[true,true,false]"]"#
+            r#"[INFO] [zap_log_test.go:72] ["Testing typs"] [filed1=noquote] [filed2="in quote"] [urls="[http://mock1.com:2347,http://mock2.com:2432]"] [urls-peer="[t1,\"t2 fine\"]"] ["store ids"="[1,4,5]"] [object="{username=user1}"] [object2="{username=\"user 2\"}"] [binary="YWIxMjM="] ["is processed"=true] [bytestring=noquote] [bytestring="in quote"] [int8=1] [ptr=10] [reflect="[1,2]"] [stringer=127.0.0.1] ["array bools"="[true]"] ["array bools"="[true,true,false]"] [complex128=1+2i] [test="[💖,�,☺☻☹,日a本b語ç日ð本Ê語þ日¥本¼語i日©,日a本b語ç日ð本Ê語þ日¥本¼語i日©日a本b語ç日ð本Ê語þ日¥本¼語i日©日a本b語ç日ð本Ê語þ日¥本¼語i日©,\\ufffd\\ufffd\\ufffd\\ufffd,<car><mirror>XML</mirror></car>]"] [duration=10s]"#
         );
 
         // Invalid-UTF-8 bytes render as literal \ufffd escapes, one per
@@ -667,7 +923,7 @@ mod tests {
 
     // Go TestTimeEncoder goldens.
     #[test]
-    fn time_encoder() {
+    fn test_time_encoder() {
         let t = FixedOffset::east_opt(8 * 3600)
             .unwrap()
             .timestamp_opt(1547192741, 165_279_177)
@@ -679,7 +935,7 @@ mod tests {
 
     // Go TestZapCaller goldens.
     #[test]
-    fn caller() {
+    fn test_zap_caller() {
         assert_eq!(caller_string("server.go", 132), "server.go:132");
         assert_eq!(
             caller_string("server/coordinator.go", 20),
@@ -689,6 +945,80 @@ mod tests {
             caller_string(r"z\test_coordinator1.go", 20),
             "ztest_coordinator1.go:20"
         );
+        assert_eq!(caller_string("", 0), "<unknown>");
+    }
+
+    /// Exact output rows from pinned `zap_log_test.go::TestLogJSON`.
+    #[test]
+    fn test_log_json() {
+        let encoder = TextEncoder::new(&crate::Config {
+            format: "json".to_owned(),
+            disable_timestamp: true,
+            ..crate::Config::default()
+        })
+        .expect("the pinned Go NewTextEncoder accepts JSON format");
+
+        let first = encoder.encode_entry(
+            &entry(Level::Info, "zap_log_test.go", 314, "failed to fetch URL"),
+            &[
+                Field::new("url", Value::Str("http://example.com".into())),
+                Field::new("attempt", Value::I64(3)),
+                Field::new("backoff", Value::Duration(1_000_000_000)),
+            ],
+        );
+        assert_eq!(
+            first.trim_end_matches('\n'),
+            r#"{"level":"INFO","caller":"zap_log_test.go:314","message":"failed to fetch URL","url":"http://example.com","attempt":3,"backoff":"1s"}"#
+        );
+
+        let with_connection = encoder.with_fields(&[
+            Field::new("connID", Value::Str("1".into())),
+            Field::new("traceID", Value::Str("dse1121".into())),
+        ]);
+        let second = with_connection.encode_entry(
+            &entry(Level::Info, "zap_log_test.go", 319, "new connection"),
+            &[],
+        );
+        assert_eq!(
+            second.trim_end_matches('\n'),
+            r#"{"level":"INFO","caller":"zap_log_test.go:319","message":"new connection","connID":"1","traceID":"dse1121"}"#
+        );
+    }
+
+    // Go `NewTextEncoder` delegates JSON output to zap's JSON encoder. The
+    // zap encoder writes level before time and does not apply the text-only
+    // `DisableErrorVerbose` setting.
+    #[test]
+    fn json_encoder_semantics() {
+        let encoder = TextEncoder::new(&crate::Config {
+            format: "json".to_owned(),
+            disable_error_verbose: true,
+            ..crate::Config::default()
+        })
+        .unwrap();
+        let output = encoder.encode_entry(
+            &entry(Level::Error, "zap_log_test.go", 1, "failed"),
+            &[Field::new(
+                "error",
+                Value::Error {
+                    basic: "boom".into(),
+                    verbose: Some("boom\nstack".into()),
+                },
+            )],
+        );
+
+        assert_eq!(
+            output.trim_end_matches('\n'),
+            r#"{"level":"ERROR","time":"2019/01/11 15:45:41.165 +08:00","caller":"zap_log_test.go:1","message":"failed","error":"boom","errorVerbose":"boom\nstack"}"#
+        );
+
+        let error = encoder
+            .try_encode_entry(
+                &entry(Level::Info, "zap_log_test.go", 1, "reflected"),
+                &[Field::new("reflect", Value::Reflect("{".into()))],
+            )
+            .unwrap_err();
+        assert!(error.contains("cannot encode reflected value"));
     }
 
     // Go `encodeError` pair rendering.

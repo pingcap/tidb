@@ -1713,6 +1713,7 @@ name = "tidb-log"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "flate2",
  "serde",
  "serde_json",
  "tidb-config",
