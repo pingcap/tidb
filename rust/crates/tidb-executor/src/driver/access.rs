@@ -726,11 +726,10 @@ pub(crate) fn choose_index_range_path(
 /// same `ranger` machinery it builds index ranges with, and a second range
 /// implementation here would be a second answer to disagree with.
 ///
-/// Pruning is declined -- reading everything -- in three cases, each a
+/// Pruning is declined -- reading everything -- in two cases, each a
 /// SUPERSET and so never a wrong answer:
 ///
-/// * a table with no partitioning, or a HASH one (see
-///   [`crate::partition_pruning`]);
+/// * a table with no partitioning;
 /// * a partition expression that is not a bare COLUMN. Go prunes `year(a)`
 ///   through `MakePartitionByFnCol`'s monotonicity analysis, which this tier
 ///   does not port; a monotonicity claim that is wrong drops a partition

@@ -619,6 +619,40 @@ fn range_pruning_reads_only_the_partitions_that_can_match() {
     }
 }
 
+/// HASH pruning must narrow the physical scan, not merely leave the WHERE to
+/// discard rows after all partitions were read. Each partition holds three
+/// rows, so the source `actRows` makes the distinction observable.
+#[test]
+fn hash_pruning_reads_only_the_partitions_that_can_match() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE h (a int, b int) PARTITION BY HASH(a) PARTITIONS 4")
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO h VALUES (0,0),(1,1),(2,2),(3,3),(4,4),(5,5),\
+             (6,6),(7,7),(8,8),(9,9),(10,10),(11,11)",
+        )
+        .unwrap();
+
+    for (predicate, read, returned) in [
+        ("a = 5", "3", "1"),
+        ("a IN (1, 5)", "3", "2"),
+        ("a BETWEEN 5 AND 6", "6", "2"),
+        ("a > 0", "12", "11"),
+    ] {
+        let rows = tests_support::row_text(session.run(&format!(
+            "EXPLAIN ANALYZE SELECT b FROM h WHERE {predicate}"
+        )));
+        let scan = rows.last().expect("a plan has a source row");
+        assert_eq!(scan[2], read, "records read changed for `{predicate}`");
+        assert_eq!(
+            rows[0][2], returned,
+            "rows returned changed for `{predicate}`"
+        );
+    }
+}
+
 /// An UPDATE that moves a row across a RANGE boundary moves its storage too,
 /// and leaves no copy behind.
 #[test]

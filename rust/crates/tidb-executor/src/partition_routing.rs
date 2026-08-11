@@ -320,7 +320,7 @@ fn range_bound_exceeds(bound: RangeBound, value: i64, unsigned: bool) -> bool {
 /// [`RoutingError::ValueOverflowsBigint`] when the conversion has no exact
 /// signed reading, which is Go returning `ConvertTo`'s error from
 /// `locateHashPartition` and failing the write.
-fn hash_partition_index(value: &Datum, num: u64) -> Result<usize, RoutingError> {
+pub(crate) fn hash_partition_index(value: &Datum, num: u64) -> Result<usize, RoutingError> {
     let bits = match value {
         Datum::Int(value) => *value,
         Datum::UInt(value) => *value as i64,

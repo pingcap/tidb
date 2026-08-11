@@ -41,14 +41,6 @@
 //! that could be in the lowest partition, a bound this tier cannot compare.
 //! Reading a superset costs time; reading a subset costs correctness.
 //!
-//! # NOT pruned here
-//!
-//! HASH. Go prunes a hash-partitioned table for an EQUALITY on the partition
-//! expression (`getUsedHashPartitions`), which this tier does not do: it
-//! scans every hash partition and lets the `WHERE` above filter. That is a
-//! performance gap, never a wrong answer, and it is stated rather than
-//! hidden.
-
 use crate::kv_table::IndexRange;
 use crate::partition_routing::{PartitionKind, PartitionSpec, RangeBound};
 use tidb_datatype::Datum;
@@ -86,9 +78,10 @@ pub fn ids_for_selected_partitions(
         .collect())
 }
 
-/// Go `PruneRangePartition`: the physical ids a scan restricted by `ranges`
-/// over the partition expression must read, or `None` when nothing can be
-/// pruned.
+/// The physical ids a scan restricted by `ranges` over the partition
+/// expression must read, or `None` when nothing can be pruned. RANGE maps
+/// intervals onto definition bounds; HASH maps point and short integer
+/// intervals through the same router used by writes.
 ///
 /// `ranges` are the [`IndexRange`] intervals the RANGER built for the
 /// partition expression's OWN value -- the same intervals a single-column
@@ -114,13 +107,21 @@ pub fn ids_for_selected_partitions(
 /// below asks.
 #[must_use]
 pub fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64>> {
-    let PartitionKind::Range {
-        less_than,
-        unsigned,
-    } = &spec.kind
-    else {
-        return None;
-    };
+    match &spec.kind {
+        PartitionKind::Hash => prune_hash_ids(spec, ranges),
+        PartitionKind::Range {
+            less_than,
+            unsigned,
+        } => Some(prune_range_ids(spec, ranges, less_than, *unsigned)),
+    }
+}
+
+fn prune_range_ids(
+    spec: &PartitionSpec,
+    ranges: &[IndexRange],
+    less_than: &[RangeBound],
+    unsigned: bool,
+) -> Vec<i64> {
     let mut kept = Vec::with_capacity(spec.definitions.len());
     for (index, definition) in spec.definitions.iter().enumerate() {
         let low = if index == 0 {
@@ -140,12 +141,102 @@ pub fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64
         };
         if ranges
             .iter()
-            .any(|range| range_meets_partition(range, low, high, *unsigned))
+            .any(|range| range_meets_partition(range, low, high, unsigned))
         {
             kept.push(definition.id);
         }
     }
-    Some(kept)
+    kept
+}
+
+/// Go `getUsedHashPartitions` for the admitted bare-integer partition
+/// expression. Points use the table router's conversion and modulus rule.
+/// A finite integer interval is enumerated only when its width is smaller
+/// than the partition count; wider or non-integer intervals conservatively
+/// keep the full scan.
+fn prune_hash_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64>> {
+    let mut used = vec![false; spec.definitions.len()];
+    for range in ranges {
+        if range.is_point(true) {
+            let value = range.high.first()?;
+            let index = crate::partition_routing::hash_partition_index(value, spec.num()).ok()?;
+            used[index] = true;
+            continue;
+        }
+        if !mark_short_hash_range(range, spec.num(), &mut used) {
+            return None;
+        }
+    }
+    Some(
+        spec.definitions
+            .iter()
+            .zip(used)
+            .filter_map(|(definition, used)| used.then_some(definition.id))
+            .collect(),
+    )
+}
+
+fn mark_short_hash_range(range: &IndexRange, partitions: u64, used: &mut [bool]) -> bool {
+    let (Some(low), Some(high)) = (range.low.first(), range.high.first()) else {
+        return false;
+    };
+    match (low, high) {
+        (Datum::Int(low), Datum::Int(high)) => {
+            let low = if range.low_exclusive {
+                low.wrapping_add(1)
+            } else {
+                *low
+            };
+            let high = if range.high_exclusive {
+                high.wrapping_sub(1)
+            } else {
+                *high
+            };
+            let width = if high < low {
+                0
+            } else {
+                high.wrapping_sub(low) as u64
+            };
+            if width >= partitions {
+                return false;
+            }
+            for offset in 0..=width {
+                let value = Datum::Int(low.wrapping_add(offset as i64));
+                let Ok(index) = crate::partition_routing::hash_partition_index(&value, partitions)
+                else {
+                    return false;
+                };
+                used[index] = true;
+            }
+            true
+        }
+        (Datum::UInt(low), Datum::UInt(high)) => {
+            let low = if range.low_exclusive {
+                low.wrapping_add(1)
+            } else {
+                *low
+            };
+            let high = if range.high_exclusive {
+                high.wrapping_sub(1)
+            } else {
+                *high
+            };
+            let width = high.saturating_sub(low);
+            if width >= partitions {
+                return false;
+            }
+            for offset in 0..=width {
+                let value = Datum::UInt(low.wrapping_add(offset));
+                let Ok(index) = crate::partition_routing::hash_partition_index(&value, partitions)
+                else {
+                    return false;
+                };
+                used[index] = true;
+            }
+            true
+        }
+        _ => false,
+    }
 }
 
 /// Whether one `index_range` interval can hold a value this partition
@@ -352,16 +443,75 @@ mod tests {
         );
     }
 
-    /// A HASH table is never pruned by this module, and says so by answering
-    /// `None` rather than by returning every id.
+    /// A HASH table narrows point and short integer ranges to the partitions
+    /// those values route into. A wider range stays a full scan.
     #[test]
-    fn a_hash_table_is_not_pruned_here() {
+    fn hash_pruning_keeps_only_the_partitions_the_values_route_into() {
         let mut spec = range_table();
         spec.kind = PartitionKind::Hash;
         assert_eq!(
             pruned_ids(
                 &spec,
                 &[interval(Datum::Int(1), false, Datum::Int(1), false)]
+            ),
+            Some(vec![102])
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[
+                    interval(Datum::Int(1), false, Datum::Int(1), false),
+                    interval(Datum::Int(-2), false, Datum::Int(-2), false),
+                ]
+            ),
+            Some(vec![102, 103])
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(3), false, Datum::Int(4), false)]
+            ),
+            Some(vec![101, 102])
+        );
+        assert_eq!(
+            pruned_ids(&spec, &[interval(Datum::Int(0), true, Datum::Int(2), true)]),
+            Some(vec![102])
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(0), false, Datum::Int(2), false)]
+            ),
+            Some(vec![101, 102, 103])
+        );
+        assert_eq!(
+            pruned_ids(&spec, &[interval(Datum::Null, false, Datum::Null, false)]),
+            Some(vec![101])
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(
+                    Datum::UInt(u64::MAX),
+                    false,
+                    Datum::UInt(u64::MAX),
+                    false,
+                )]
+            ),
+            Some(vec![102])
+        );
+        assert_eq!(pruned_ids(&spec, &[]), Some(Vec::new()));
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(0), false, Datum::Int(3), false)]
+            ),
+            None
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::MinNotNull, false, Datum::MaxValue, false,)]
             ),
             None
         );
