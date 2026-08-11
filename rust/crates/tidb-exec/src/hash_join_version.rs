@@ -21,11 +21,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-/// Legacy hash-join version (v1).
-pub const HASH_JOIN_VERSION_LEGACY: &str = "legacy";
-
-/// Optimized hash-join version (v2).
-pub const HASH_JOIN_VERSION_OPTIMIZED: &str = "optimized";
+pub use tidb_vardef::defaults::{HASH_JOIN_VERSION_LEGACY, HASH_JOIN_VERSION_OPTIMIZED};
 
 /// TiFlash's default hash-join version.
 pub const TIFLASH_HASH_JOIN_VERSION_DEFAULT: &str = HASH_JOIN_VERSION_LEGACY;

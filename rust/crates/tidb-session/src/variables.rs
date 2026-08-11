@@ -92,7 +92,7 @@ pub(crate) fn var_error(error: VarError) -> DriverError {
         VarError::GlobalOnlyVariable(name) => tidb_executor::VarErrorKind::GlobalOnlyVariable(name),
         VarError::NoGlobalCopy(name) => tidb_executor::VarErrorKind::NoGlobalCopy(name),
         VarError::ValidationRefused(message) => {
-            tidb_executor::VarErrorKind::ValidationRefused(message.to_owned())
+            tidb_executor::VarErrorKind::ValidationRefused(message)
         }
     })
 }

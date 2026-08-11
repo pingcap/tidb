@@ -272,7 +272,7 @@ pub enum VarError {
     NoGlobalCopy(String),
     /// A `SysVar.Validation` closure's own `errors.Errorf`, whose wording is
     /// the whole error (Go gives it no code, so it reports as 1105).
-    ValidationRefused(&'static str),
+    ValidationRefused(String),
 }
 
 /// A session's system-variable state: the variables it has overridden (Go's

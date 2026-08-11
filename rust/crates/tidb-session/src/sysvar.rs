@@ -264,7 +264,7 @@ pub enum ValidationError {
     /// A `Validation` closure that refuses the value with a bare
     /// `errors.Errorf`, whose wording IS the error (Go gives it no code, so it
     /// reports as 1105).
-    Refused(&'static str),
+    Refused(String),
 }
 
 /// The outcome of validating a value: Go returns the (possibly normalized)
@@ -384,8 +384,30 @@ impl SysVarDef {
         // off`, and the variable stays `ON`.
         if self.name == "tidb_enable_list_partition" && validated.value != "ON" {
             return Err(ValidationError::Refused(
-                "tidb_enable_list_partition is now always on, and cannot be turned off",
+                "tidb_enable_list_partition is now always on, and cannot be turned off".into(),
             ));
+        }
+        // Go's TiDB/TiFlash hash-join-version validation closures accept the
+        // two source values case-insensitively, retain the user's spelling,
+        // and raise a bare error (1105) for every other value.
+        if matches!(
+            self.name,
+            "tidb_hash_join_version" | "tiflash_hash_join_version"
+        ) {
+            use tidb_vardef::defaults::{HASH_JOIN_VERSION_LEGACY, HASH_JOIN_VERSION_OPTIMIZED};
+
+            let is_valid = validated
+                .value
+                .eq_ignore_ascii_case(HASH_JOIN_VERSION_LEGACY)
+                || validated
+                    .value
+                    .eq_ignore_ascii_case(HASH_JOIN_VERSION_OPTIMIZED);
+            if !is_valid {
+                return Err(ValidationError::Refused(format!(
+                    "incorrect value: `{original}`. {} options: {HASH_JOIN_VERSION_LEGACY}, {HASH_JOIN_VERSION_OPTIMIZED}",
+                    self.name
+                )));
+            }
         }
         // Go's `tidb_session_alias` validation: the alias is cut to 64 RUNES
         // (not bytes -- a 65-character Chinese alias loses exactly its last

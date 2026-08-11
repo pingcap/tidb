@@ -74,6 +74,52 @@ fn session_variables() {
     assert_eq!(session.apply_set("SELECT 1").unwrap(), None);
 }
 
+/// Hash-join versions are source string variables with a closed value domain:
+/// casing is accepted and retained, while every other spelling is refused by
+/// the variable-specific validation closure.
+#[test]
+fn hash_join_versions_accept_only_legacy_or_optimized() {
+    let mut session = Session::new();
+
+    for (name, default) in [
+        ("tidb_hash_join_version", "optimized"),
+        ("tiflash_hash_join_version", "legacy"),
+    ] {
+        assert_eq!(
+            scalar_text(&mut session, &format!("SELECT @@{name}")),
+            Some(default.to_owned())
+        );
+
+        for value in ["Legacy", "OptimiZed"] {
+            session
+                .apply_set(&format!("SET {name} = '{value}'"))
+                .unwrap();
+            assert_eq!(
+                scalar_text(&mut session, &format!("SELECT @@{name}")),
+                Some(value.to_owned())
+            );
+        }
+
+        for value in ["invalid", "v2", "optimized "] {
+            let error = session
+                .apply_set(&format!("SET {name} = '{value}'"))
+                .unwrap_err()
+                .to_mysql_error();
+            assert_eq!(error.code, 1105);
+            assert_eq!(error.state, *b"HY000");
+            assert_eq!(
+                error.message,
+                format!("incorrect value: `{value}`. {name} options: legacy, optimized")
+            );
+            assert_eq!(
+                scalar_text(&mut session, &format!("SELECT @@{name}")),
+                Some("OptimiZed".to_owned()),
+                "a refused SET must leave the previous value intact"
+            );
+        }
+    }
+}
+
 /// `sql_mode` is normalized at SET time, so every reader afterwards sees the
 /// expanded, canonical set rather than the shorthand the user typed.
 ///

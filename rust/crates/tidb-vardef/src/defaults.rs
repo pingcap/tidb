@@ -265,9 +265,13 @@ pub const DEF_TIFLASH_MAX_BYTES_BEFORE_EXTERNAL_SORT: i64 = -1;
 pub const DEF_TIFLASH_MEM_QUOTA_QUERY_PER_NODE: i64 = 0;
 /// Go `DefTiFlashQuerySpillRatio` (= `0.7`).
 pub const DEF_TIFLASH_QUERY_SPILL_RATIO: f64 = 0.7;
+/// Go `joinversion.HashJoinVersionLegacy`.
+pub const HASH_JOIN_VERSION_LEGACY: &str = "legacy";
+/// Go `joinversion.HashJoinVersionOptimized`.
+pub const HASH_JOIN_VERSION_OPTIMIZED: &str = "optimized";
 /// Go `DefTiFlashHashJoinVersion` (= `joinversion.TiFlashHashJoinVersionDefVal`).
 /// Resolved from joinversion.TiFlashHashJoinVersionDefVal.
-pub const DEF_TIFLASH_HASH_JOIN_VERSION: &str = "legacy";
+pub const DEF_TIFLASH_HASH_JOIN_VERSION: &str = HASH_JOIN_VERSION_LEGACY;
 /// Go `DefTiDBEnableTiFlashPipelineMode` (= `true`).
 pub const DEF_TIDB_ENABLE_TIFLASH_PIPELINE_MODE: bool = true;
 /// Go `DefTiDBMPPStoreFailTTL` (= `"0s"`).
@@ -785,7 +789,7 @@ pub const DEF_TIDB_SKIP_MISSING_PARTITION_STATS: bool = true;
 pub const DEF_TIDB_OPT_ENABLE_HASH_JOIN: bool = true;
 /// Go `DefTiDBHashJoinVersion` (= `joinversion.HashJoinVersionOptimized`).
 /// Resolved from joinversion.HashJoinVersionOptimized.
-pub const DEF_TIDB_HASH_JOIN_VERSION: &str = "optimized";
+pub const DEF_TIDB_HASH_JOIN_VERSION: &str = HASH_JOIN_VERSION_OPTIMIZED;
 /// Go `DefTiDBOptIndexJoinBuild` (= `true`).
 pub const DEF_TIDB_OPT_INDEX_JOIN_BUILD: bool = true;
 /// Go `DefTiDBOptObjective` (= `OptObjectiveModerate`).
