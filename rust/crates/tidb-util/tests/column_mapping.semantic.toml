@@ -1,0 +1,11 @@
+go_package = "pkg/util/column-mapping"
+source_commit = "51e1e13494f5e547be10601a302d6cb9cf88ae64"
+evidence_files = [
+  "rust/crates/tidb-util/src/column_mapping.rs",
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/src/table_rule_selector.rs",
+  "rust/crates/tidb-mysql/src/simple_case.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "column_mapping::tests"],
+]

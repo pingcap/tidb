@@ -20,6 +20,7 @@ use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 
 use crate::table_rule_selector::{InsertType, Selector, TrieSelector};
 use serde::{Deserialize, Serialize};
+use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct PartitionRule {
@@ -116,6 +117,7 @@ fn not_supported(msg: impl AsRef<str>) -> ColumnMappingError {
 
 /// A rule to map a column.
 #[derive(Clone, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Rule {
     /// The schema pattern this rule matches.
     #[serde(rename = "schema-pattern")]
@@ -141,8 +143,8 @@ pub struct Rule {
 impl Rule {
     /// Converts the schema/table patterns to lowercase.
     pub fn to_lower(&mut self) {
-        self.pattern_schema = self.pattern_schema.to_lowercase();
-        self.pattern_table = self.pattern_table.to_lowercase();
+        self.pattern_schema = go_simple_lowercase(&self.pattern_schema);
+        self.pattern_table = go_simple_lowercase(&self.pattern_table);
     }
 
     /// Checks the validity of the rule.
@@ -400,7 +402,7 @@ impl Mapping {
         if self.case_sensitive {
             (schema.to_string(), table.to_string())
         } else {
-            (schema.to_lowercase(), table.to_lowercase())
+            (go_simple_lowercase(schema), go_simple_lowercase(table))
         }
     }
 
@@ -962,6 +964,25 @@ mod tests {
     }
 
     #[test]
+    fn case_insensitive_mapping_uses_source_simple_lowercase() {
+        let mut source_rule = rule("İDB", "TABLE", "", "id", ADD_PREFIX, &["tenant:"], "");
+        source_rule.to_lower();
+        assert_eq!(source_rule.pattern_schema, "idb");
+        assert_eq!(source_rule.pattern_table, "table");
+
+        let mapping = Mapping::new(
+            false,
+            &[rule("idb", "table", "", "id", ADD_PREFIX, &["tenant:"], "")],
+        )
+        .unwrap();
+        let (values, positions) = mapping
+            .handle_row_value("İDB", "TABLE", &["id"], vec![Value::Str("7".into())])
+            .unwrap();
+        assert_eq!(values, vec![Value::Str("tenant:7".into())]);
+        assert_eq!(positions, Some(vec![-1, 0]));
+    }
+
+    #[test]
     fn rule_uses_public_config_field_names() {
         let rule = rule(
             "db*",
@@ -986,6 +1007,18 @@ mod tests {
             })
         );
         assert_eq!(serde_json::from_value::<Rule>(encoded).unwrap(), rule);
+
+        let partial = serde_json::from_value::<Rule>(serde_json::json!({
+            "schema-pattern": "db*",
+            "table-pattern": "table*",
+            "target-column": "id",
+            "expression": "add prefix",
+            "arguments": ["tenant:"],
+        }))
+        .expect("Go fills omitted Rule fields with zero values");
+        assert_eq!(partial.source_column, "");
+        assert_eq!(partial.create_table_query, "");
+        partial.valid().unwrap();
     }
 
     #[test]
