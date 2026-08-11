@@ -64,6 +64,8 @@ use tidb_txnkv::{
     },
 };
 
+use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
+
 /// Why a bound configured write cannot produce mutations.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConfiguredWriteError {
@@ -106,12 +108,11 @@ pub enum ConfiguredWriteError {
     Plan(PreparedWritePlanError),
     /// The prepared statement text did not parse.
     Parse(String),
-    /// Publication finished in a terminal state that is not a commit, so no
-    /// affected-row count may be reported.
-    NotCommitted(String),
+    /// A determinate commit failure with its driver error code and SQLSTATE.
+    Commit(LockSqlError),
     /// The transaction was published and then lost its answer, so whether it
-    /// committed is unknown. This is deliberately NOT `NotCommitted`: that name
-    /// asserts the very thing nobody knows. Go answers this with
+    /// committed is unknown. This is deliberately distinct from a determinate
+    /// [`Self::Commit`] failure. Go answers this with
     /// `terror.ErrResultUndetermined`, whose whole point is that no SQL error
     /// code can express "unknown" and a client receiving an ordinary error is
     /// entitled to retry — which double-applies if the commit did land
@@ -220,9 +221,7 @@ impl fmt::Display for ConfiguredWriteError {
             Self::Transaction(error) => write!(formatter, "configured write transaction: {error}"),
             Self::Plan(error) => write!(formatter, "{error}"),
             Self::Parse(message) => write!(formatter, "SQL parse error: {message}"),
-            Self::NotCommitted(state) => {
-                write!(formatter, "configured write did not commit: {state}")
-            }
+            Self::Commit(error) => formatter.write_str(&error.message),
             // Go `pkg/parser/terror/terror.go:265-269`:
             // `mysql.Message("execution result undetermined", nil)`.
             Self::Undetermined(detail) => {
@@ -294,7 +293,6 @@ impl std::error::Error for ConfiguredWriteError {
             | Self::ValueOutOfRange { .. }
             | Self::DuplicateHandle(_)
             | Self::Parse(_)
-            | Self::NotCommitted(_)
             | Self::Undetermined(_)
             | Self::ColumnTypeMismatch { .. }
             | Self::UnsupportedIndex { .. }
@@ -303,6 +301,7 @@ impl std::error::Error for ConfiguredWriteError {
             | Self::DecimalOutOfRange { .. }
             | Self::InvalidTemporal { .. }
             | Self::NullNotAllowed { .. } => None,
+            Self::Commit(_) => None,
         }
     }
 }
@@ -1382,22 +1381,55 @@ pub fn commit_configured_write(
         ConfiguredWriteOutcome::Published {
             outcome,
             affected_rows,
-        } => match *outcome {
-            OptimisticCommitOutcome::Committed { .. } => Ok(ConfiguredWriteReport {
+        } => {
+            classify_configured_write_commit_outcome(&outcome)?;
+            Ok(ConfiguredWriteReport {
                 affected_rows,
                 no_write: None,
-            }),
-            // A published transaction that lost its answer is undetermined,
-            // not "not committed" — see `ConfiguredWriteError::Undetermined`.
-            OptimisticCommitOutcome::Undetermined(undetermined) => Err(
-                ConfiguredWriteError::Undetermined(format!("{:?}", undetermined.cause)),
-            ),
-            other => Err(ConfiguredWriteError::NotCommitted(format!("{other:?}"))),
-        },
+            })
+        }
         ConfiguredWriteOutcome::NoPublication { reason, .. } => Ok(ConfiguredWriteReport {
             affected_rows: 0,
             no_write: Some(reason),
         }),
+    }
+}
+
+fn classify_configured_write_commit_outcome(
+    outcome: &OptimisticCommitOutcome,
+) -> Result<(), ConfiguredWriteError> {
+    match commit_outcome_to_sql_error(outcome) {
+        Ok(()) => Ok(()),
+        Err(error) if error.is_result_undetermined() => Err(ConfiguredWriteError::Undetermined(
+            "the configured write returned no commit verdict".to_owned(),
+        )),
+        Err(error) => Err(ConfiguredWriteError::Commit(error)),
+    }
+}
+
+#[cfg(test)]
+mod commit_error_tests {
+    use super::{classify_configured_write_commit_outcome, ConfiguredWriteError};
+    use tidb_txnkv::region::RegionBackoffKind;
+    use tidb_txnkv::transaction::{
+        OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,
+        TransactionCause,
+    };
+
+    #[test]
+    fn configured_write_backoff_exhaustion_keeps_its_driver_error_identity() {
+        let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+            receipt: OptimisticTransactionReceipt::new(1, 2, b"k".to_vec(), 1),
+            cause: TransactionCause::BackoffExhausted {
+                kind: RegionBackoffKind::MaxTimestampNotSynced,
+                detail: "maxTimestampNotSynced backoffer exhausted".to_owned(),
+            },
+        });
+        assert!(matches!(
+            classify_configured_write_commit_outcome(&outcome),
+            Err(ConfiguredWriteError::Commit(error))
+                if error.code == tidb_error::tidb::errcode::ErrTiKVMaxTimestampNotSynced
+        ));
     }
 }
 

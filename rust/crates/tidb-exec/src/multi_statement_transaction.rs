@@ -827,7 +827,7 @@ mod tests {
                 TransactionCause::Region {
                     detail: "epoch not match".to_owned(),
                 },
-                tidb_error::tidb::errcode::ErrRegionUnavailable,
+                1105,
             ),
             (
                 TransactionCause::Transport {
@@ -841,7 +841,7 @@ mod tests {
             assert_eq!(
                 error.sql_error().code,
                 code,
-                "region failures now carry 9005 and transport stays 1105"
+                "untyped region and transport failures stay generic"
             );
             assert!(!error.keeps_transaction_open());
         }

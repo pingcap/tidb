@@ -57,12 +57,11 @@ use crate::real_tikv_node::{
 };
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
-    ActiveQueryCancellation, ConcurrentSqlNode, PreparedPointRead, PreparedWrite, QueryResult,
-    QuerySession, QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
+    configured_write_error, ActiveQueryCancellation, ConcurrentSqlNode, PreparedPointRead,
+    PreparedWrite, QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
+    WriteOutcome,
 };
-use tidb_exec::real_tikv_dml::{
-    commit_configured_write, prepare_configured_write, ConfiguredWriteError,
-};
+use tidb_exec::real_tikv_dml::{commit_configured_write, prepare_configured_write};
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
 
 const CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -1092,20 +1091,6 @@ pub(crate) fn run_bound_multi_node(
         crate::real_tikv_node::emit_privilege_reload_stats(privilege_reloader.as_ref());
         result
     })
-}
-
-/// Maps a configured-write failure to its client answer, keeping the one
-/// failure whose answer is "nobody knows" distinguishable from every failure
-/// that definitely did not commit.
-///
-/// Go's chain: `2pc.go:2062-2069` -> `tikverr.ErrResultUndetermined` ->
-/// `pkg/store/driver/error/error.go:203` -> `terror.ErrResultUndetermined` ->
-/// `pkg/server/conn.go:1288-1291`, which closes the connection.
-fn configured_write_error(error: &ConfiguredWriteError) -> SqlQueryError {
-    match error {
-        ConfiguredWriteError::Undetermined(_) => SqlQueryError::result_undetermined(),
-        other => SqlQueryError::unknown(other.to_string()),
-    }
 }
 
 #[cfg(test)]

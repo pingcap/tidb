@@ -830,6 +830,26 @@ fn backoff_arithmetic_preserves_strict_exponential_equal_jitter_and_busy_exclusi
 }
 
 #[test]
+fn excluded_busy_cap_prefers_a_prior_effective_backoff_identity() {
+    let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 7);
+    assert_eq!(
+        budget.next_delay(RegionBackoffKind::RegionMiss).unwrap(),
+        Duration::from_millis(2)
+    );
+    let exhausted = loop {
+        match budget.next_delay(RegionBackoffKind::TikvServerBusy) {
+            Ok(_) => continue,
+            Err(exhausted) => break exhausted,
+        }
+    };
+    assert_eq!(
+        exhausted.kind,
+        RegionBackoffKind::RegionMiss,
+        "client-go excludes Busy from longestSleepCfg and returns the prior effective kind"
+    );
+}
+
+#[test]
 fn tikv_rpc_backoff_uses_equal_jitter_and_the_shared_effective_budget() {
     let mut budget = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 7);
     let first = budget.next_delay(RegionBackoffKind::TikvRpc).unwrap();

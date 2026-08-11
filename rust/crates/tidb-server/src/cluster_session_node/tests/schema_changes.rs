@@ -10,8 +10,9 @@ use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
 use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_exec::real_tikv_ddl::classify_session_ddl_commit_error;
+use tidb_txnkv::region::RegionBackoffKind;
 use tidb_txnkv::transaction::{
-    OptimisticCommitOutcome, OptimisticTransactionReceipt, TransactionCause,
+    OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,
     UndeterminedTransaction,
 };
 
@@ -41,6 +42,29 @@ fn full_cluster_ddl_keeps_an_undetermined_verdict_connection_fatal() {
         .execute_write("CREATE DATABASE uncertain")
         .expect_err("the DDL cannot answer success when its commit response was lost");
     assert_undetermined_closes_without_packet(&query_error);
+}
+
+#[test]
+fn full_cluster_ddl_keeps_a_region_backoff_error_coded_on_the_wire() {
+    let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+        receipt: OptimisticTransactionReceipt::new(1, 2, b"key".to_vec(), 1),
+        cause: TransactionCause::BackoffExhausted {
+            kind: RegionBackoffKind::RegionScheduling,
+            detail: "regionScheduling backoffer exhausted".to_owned(),
+        },
+    });
+    let lock_error = commit_outcome_to_sql_error(&outcome)
+        .expect_err("an exhausted region backoff cannot answer success");
+    let query_error = cluster_ddl_error(classify_session_ddl_commit_error(61, lock_error));
+    assert_eq!(
+        query_error.code,
+        tidb_error::tidb::errcode::ErrRegionUnavailable
+    );
+    assert_query_error_packet(
+        &query_error,
+        tidb_error::tidb::errcode::ErrRegionUnavailable,
+        "Region is unavailable",
+    );
 }
 
 /// A stored-schema change the cluster DDL path cannot express keeps a

@@ -38,6 +38,7 @@ use tidb_exec::cluster_catalog::configure_loaded_table;
 use tidb_exec::mysql_bootstrap::{
     bootstrap_mysql_schema, read_ddl_table_version, utc_now_timestamp, BootstrapEnvironment,
 };
+use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_exec::real_tikv_catalog::{load_catalog_from_cluster, TransactionMetaSnapshot};
 use tidb_exec::real_tikv_ddl::{notify_schema_version, SchemaVersionNotifier};
 use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
@@ -79,13 +80,14 @@ fn run() -> Result<(), String> {
     let mut authority =
         ProductionReadProcessAuthority::connect_with_catalog([pd], TIMEOUT, |opener| {
             let (outcome, schema_version) = publish_bootstrap(opener)?;
-            println!("bootstrap committed: {outcome:?}");
-            notify_schema_version(
+            let schema_version = notify_committed_bootstrap(
+                &outcome,
+                schema_version,
                 notifier
                     .as_ref()
                     .map(|client| client as &dyn SchemaVersionNotifier),
-                schema_version,
-            );
+            )?;
+            println!("bootstrap committed at schema version {schema_version}: {outcome:?}");
             let catalog =
                 load_catalog_from_cluster(opener, TIMEOUT).map_err(|error| error.to_string())?;
             println!("schema version {}", catalog.schema_version);
@@ -164,4 +166,76 @@ fn publish_bootstrap(
         .commit(write.mutations, &call)
         .map_err(|error| error.to_string())?;
     Ok((outcome, schema_version))
+}
+
+fn notify_committed_bootstrap(
+    outcome: &OptimisticCommitOutcome,
+    schema_version: i64,
+    notifier: Option<&dyn SchemaVersionNotifier>,
+) -> Result<i64, String> {
+    commit_outcome_to_sql_error(outcome).map_err(|error| error.message)?;
+    notify_schema_version(notifier, schema_version);
+    Ok(schema_version)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{notify_committed_bootstrap, SchemaVersionNotifier};
+    use std::cell::Cell;
+    use tidb_txnkv::region::RegionBackoffKind;
+    use tidb_txnkv::transaction::{
+        CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt,
+        RolledBackTransaction, TransactionCause, UndeterminedTransaction,
+    };
+
+    struct RecordingNotifier(Cell<usize>);
+
+    impl SchemaVersionNotifier for RecordingNotifier {
+        fn notify(&self, _: i64) -> Result<(), String> {
+            self.0.set(self.0.get() + 1);
+            Ok(())
+        }
+    }
+
+    fn receipt() -> OptimisticTransactionReceipt {
+        OptimisticTransactionReceipt::new(1, 2, b"bootstrap".to_vec(), 1)
+    }
+
+    #[test]
+    fn bootstrap_side_effects_require_a_committed_outcome() {
+        let notifier = RecordingNotifier(Cell::new(0));
+        let rolled_back = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+            receipt: receipt(),
+            cause: TransactionCause::BackoffExhausted {
+                kind: RegionBackoffKind::RegionMiss,
+                detail: "regionMiss backoffer exhausted".to_owned(),
+            },
+        });
+        let error = notify_committed_bootstrap(&rolled_back, 61, Some(&notifier))
+            .expect_err("a rolled-back bootstrap must not be announced");
+        assert!(error.contains("Region is unavailable"), "{error}");
+        assert_eq!(notifier.0.get(), 0);
+
+        let undetermined = OptimisticCommitOutcome::Undetermined(UndeterminedTransaction {
+            receipt: receipt(),
+            cause: TransactionCause::Transport {
+                detail: "commit response lost".to_owned(),
+            },
+        });
+        let error = notify_committed_bootstrap(&undetermined, 61, Some(&notifier))
+            .expect_err("an undetermined bootstrap must not be announced");
+        assert_eq!(error, "execution result undetermined");
+        assert_eq!(notifier.0.get(), 0);
+
+        let committed = OptimisticCommitOutcome::Committed(CommittedTransaction {
+            receipt: receipt(),
+            secondary_failures: Vec::new(),
+        });
+        assert_eq!(
+            notify_committed_bootstrap(&committed, 61, Some(&notifier))
+                .expect("only a confirmed commit is announced"),
+            61
+        );
+        assert_eq!(notifier.0.get(), 1);
+    }
 }

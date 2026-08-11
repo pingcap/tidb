@@ -324,11 +324,17 @@ pub enum LockRecoveryError {
     NonAsyncCommitLock,
     /// An async-commit recovery observed a self-contradictory commit timestamp.
     AsyncCommitConflict(String),
-    /// The TxnNotFound retry loop spent its whole backoff budget.
+    /// The resolver's local TxnNotFound retry loop spent its whole budget.
     ///
-    /// Go `bo.Backoff(BoTxnNotFound, err)` returns the backoffer's exhaustion
-    /// error from inside `getTxnStatusFromLock`'s loop; this is that boundary.
+    /// Go's public `GetTxnStatus` owns the same 20-second local bound, but
+    /// prewrite passes a shared 40-second backoffer. Callers must therefore not
+    /// infer `BoTxnNotFound`'s SQL identity from this local boundary alone.
     StatusBackoffExhausted,
+    /// The next TxnNotFound delay would outlive this RPC caller's deadline.
+    ///
+    /// This is not Go's `BoTxnNotFound` max-sleep exhaustion and therefore
+    /// must not acquire its registered resolve-lock-timeout identity.
+    StatusRetryDeadlineExceeded,
 }
 
 impl fmt::Display for LockRecoveryError {
@@ -362,6 +368,9 @@ impl fmt::Display for LockRecoveryError {
             Self::StatusBackoffExhausted => formatter.write_str(
                 "CheckTxnStatus kept reporting TxnNotFound until the backoff budget ran out",
             ),
+            Self::StatusRetryDeadlineExceeded => {
+                formatter.write_str("CheckTxnStatus retry delay would outlive the caller deadline")
+            }
         }
     }
 }
@@ -724,11 +733,26 @@ fn wait_status_backoff(
     backoff: &mut RegionBackoffBudget,
     call: &UnaryCallContext,
 ) -> Result<(), LockRecoveryError> {
-    let delay = backoff
-        .next_delay(RegionBackoffKind::TxnNotFound)
-        .map_err(|_| LockRecoveryError::StatusBackoffExhausted)?;
+    check_cancelled(call)?;
+    if call.timeout().is_zero() {
+        return Err(LockRecoveryError::StatusRetryDeadlineExceeded);
+    }
+    let delay = match backoff.next_delay(RegionBackoffKind::TxnNotFound) {
+        Ok(delay) => delay,
+        Err(_) => {
+            // client-go checks `ctx.Done()` before selecting the backoff
+            // config's max-sleep error. Repeat the caller check at the error
+            // boundary so an already expired/cancelled call cannot acquire
+            // BoTxnNotFound's registered resolve-lock-timeout identity.
+            check_cancelled(call)?;
+            if call.timeout().is_zero() {
+                return Err(LockRecoveryError::StatusRetryDeadlineExceeded);
+            }
+            return Err(LockRecoveryError::StatusBackoffExhausted);
+        }
+    };
     if delay > call.timeout() {
-        return Err(LockRecoveryError::StatusBackoffExhausted);
+        return Err(LockRecoveryError::StatusRetryDeadlineExceeded);
     }
     if call.cancellation().wait_timeout(delay) {
         return Err(LockRecoveryError::CallerCancelled);
@@ -1046,4 +1070,59 @@ where
     context.stale_read = false;
     context.cluster_id = runtime.cluster_id();
     Ok((selected.attempt.address, context))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::{wait_status_backoff, LockRecoveryError};
+    use crate::region::RegionBackoffBudget;
+    use crate::{UnaryCallContext, UnaryCancellation};
+
+    #[test]
+    fn txn_not_found_wait_distinguishes_budget_exhaustion_from_call_deadline() {
+        let mut exhausted = RegionBackoffBudget::with_jitter_seed(Duration::from_millis(1), 1);
+        let live_call = UnaryCallContext::with_timeout(Duration::from_secs(1));
+        assert_eq!(wait_status_backoff(&mut exhausted, &live_call), Ok(()));
+        assert_eq!(
+            wait_status_backoff(&mut exhausted, &live_call),
+            Err(LockRecoveryError::StatusBackoffExhausted)
+        );
+
+        let mut available = RegionBackoffBudget::with_jitter_seed(Duration::from_secs(20), 1);
+        let expired_call = UnaryCallContext::with_timeout(Duration::ZERO);
+        assert_eq!(
+            wait_status_backoff(&mut available, &expired_call),
+            Err(LockRecoveryError::StatusRetryDeadlineExceeded)
+        );
+
+        let mut exhausted_at_deadline =
+            RegionBackoffBudget::with_jitter_seed(Duration::from_millis(1), 2);
+        let live_call = UnaryCallContext::with_timeout(Duration::from_secs(1));
+        assert_eq!(
+            wait_status_backoff(&mut exhausted_at_deadline, &live_call),
+            Ok(())
+        );
+        let expired_call = UnaryCallContext::with_timeout(Duration::ZERO);
+        assert_eq!(
+            wait_status_backoff(&mut exhausted_at_deadline, &expired_call),
+            Err(LockRecoveryError::StatusRetryDeadlineExceeded)
+        );
+
+        let mut exhausted_at_cancellation =
+            RegionBackoffBudget::with_jitter_seed(Duration::from_millis(1), 3);
+        let live_call = UnaryCallContext::with_timeout(Duration::from_secs(1));
+        assert_eq!(
+            wait_status_backoff(&mut exhausted_at_cancellation, &live_call),
+            Ok(())
+        );
+        let cancellation = UnaryCancellation::new();
+        cancellation.cancel();
+        let cancelled_call = UnaryCallContext::new(Duration::from_secs(1), cancellation);
+        assert_eq!(
+            wait_status_backoff(&mut exhausted_at_cancellation, &cancelled_call),
+            Err(LockRecoveryError::CallerCancelled)
+        );
+    }
 }

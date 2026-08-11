@@ -47,7 +47,7 @@ use tidb_exec::real_tikv_ddl::{
     commit_cluster_ddl, prepare_cluster_ddl_with_context, ClusterDdlReport, SchemaVersionNotifier,
 };
 use tidb_exec::real_tikv_dml::{
-    commit_configured_write, prepare_configured_write, prepare_text_write, ConfiguredWriteError,
+    commit_configured_write, prepare_configured_write, prepare_text_write,
 };
 use tidb_exec::real_tikv_read::{
     prepare_configured_point_read, PdTimestampSource, ProductionReadProcessAuthority,
@@ -80,9 +80,9 @@ use crate::resultset_source::ResultSetSource;
 use crate::session_transaction::SessionTransaction;
 use crate::sorting_result_set::SortingResultSetSource;
 use crate::sql_node::{
-    cluster_ddl_error, ActiveQueryCancellation, ConcurrentSqlNode, PreparedPointRead,
-    PreparedWrite, QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory,
-    SessionContext, SqlNodeError, SqlQueryError, WriteOutcome,
+    cluster_ddl_error, configured_write_error, ActiveQueryCancellation, ConcurrentSqlNode,
+    PreparedPointRead, PreparedWrite, QueryCancellationLease, QueryResult, QuerySession,
+    QuerySessionFactory, SessionContext, SqlNodeError, SqlQueryError, WriteOutcome,
 };
 use crate::transaction_overlay_result_set::{OverlayHandleSource, TransactionOverlayResultSet};
 use crate::wire_status::WireStatus;
@@ -1683,20 +1683,6 @@ impl std::error::Error for RunConfiguredNodeError {
     }
 }
 
-/// Maps a configured-write failure to its client answer, keeping the one
-/// failure whose answer is "nobody knows" distinguishable from every failure
-/// that definitely did not commit.
-///
-/// Go's chain: `2pc.go:2062-2069` -> `tikverr.ErrResultUndetermined` ->
-/// `pkg/store/driver/error/error.go:203` -> `terror.ErrResultUndetermined` ->
-/// `pkg/server/conn.go:1288-1291`, which closes the connection.
-fn configured_write_error(error: &ConfiguredWriteError) -> SqlQueryError {
-    match error {
-        ConfiguredWriteError::Undetermined(_) => SqlQueryError::result_undetermined(),
-        other => SqlQueryError::unknown(other.to_string()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1705,6 +1691,9 @@ mod tests {
     use std::cell::Cell;
     use std::sync::Mutex;
     use tidb_exec::real_tikv_ddl::ClusterDdlError;
+    use tidb_exec::real_tikv_dml::ConfiguredWriteError;
+    use tidb_txnkv::region::RegionBackoffKind;
+    use tidb_txnkv::transaction::TransactionCause;
 
     #[derive(Default)]
     struct RecordingPacketOutput(Vec<Vec<u8>>);
@@ -1737,6 +1726,28 @@ mod tests {
             output.0.is_empty(),
             "an unknown DDL verdict must not write an ERR packet or any bytes"
         );
+    }
+
+    #[test]
+    fn configured_write_backoff_error_is_coded_on_the_wire() {
+        let driver_error = tidb_exec::pessimistic_lock_error::transaction_cause_to_sql_error(
+            &TransactionCause::BackoffExhausted {
+                kind: RegionBackoffKind::StaleCommand,
+                detail: "staleCommand backoffer exhausted".to_owned(),
+            },
+        );
+        let query_error = configured_write_error(&ConfiguredWriteError::Commit(driver_error));
+        let mut output = RecordingPacketOutput::default();
+        write_query_error(&mut output, &query_error, true)
+            .expect("a determinate stale-command error writes an ERR packet");
+        assert_eq!(output.0.len(), 1);
+        let packet = &output.0[0];
+        assert_eq!(packet[0], 0xff);
+        assert_eq!(
+            u16::from_le_bytes([packet[1], packet[2]]),
+            tidb_error::tidb::errcode::ErrTiKVStaleCommand
+        );
+        assert!(String::from_utf8_lossy(&packet[9..]).contains("TiKV server reports stale command"));
     }
 
     #[test]

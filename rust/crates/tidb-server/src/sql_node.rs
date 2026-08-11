@@ -21,8 +21,10 @@ use std::sync::{mpsc, Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+use tidb_exec::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
 use tidb_exec::real_tikv_analyze::ClusterAnalyzeError;
 use tidb_exec::real_tikv_ddl::ClusterDdlError;
+use tidb_exec::real_tikv_dml::ConfiguredWriteError;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
@@ -302,11 +304,19 @@ impl SqlQueryError {
 /// undetermined", nil)`.
 pub const RESULT_UNDETERMINED_MESSAGE: &str = "execution result undetermined";
 
+/// Preserves a transaction driver's client-visible error triple at the SQL
+/// boundary. Domain-specific commit errors delegate here instead of
+/// reclassifying an already typed failure from its display text.
+pub(crate) fn lock_sql_error(error: &LockSqlError) -> SqlQueryError {
+    SqlQueryError::new(error.code, error.state, error.message.clone())
+}
+
 /// Preserves the one DDL outcome that is not a failure verdict while mapping
 /// every determinate catalog error to its ordinary client diagnostic.
 pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
     match error {
         ClusterDdlError::Undetermined(_) => SqlQueryError::result_undetermined(),
+        ClusterDdlError::Commit(error) => lock_sql_error(&error),
         other => SqlQueryError::unknown(other.to_string()),
     }
 }
@@ -314,7 +324,16 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
 pub(crate) fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError {
     match error {
         ClusterAnalyzeError::Undetermined(_) => SqlQueryError::result_undetermined(),
+        ClusterAnalyzeError::Commit(error) => lock_sql_error(&error),
         ClusterAnalyzeError::Other(detail) => SqlQueryError::unknown(detail),
+    }
+}
+
+pub(crate) fn configured_write_error(error: &ConfiguredWriteError) -> SqlQueryError {
+    match error {
+        ConfiguredWriteError::Undetermined(_) => SqlQueryError::result_undetermined(),
+        ConfiguredWriteError::Commit(error) => lock_sql_error(error),
+        other => SqlQueryError::unknown(other.to_string()),
     }
 }
 
@@ -322,16 +341,11 @@ pub(crate) fn cluster_analyze_error(error: ClusterAnalyzeError) -> SqlQueryError
 /// preserving the ambiguous outcome instead of reporting a false failure.
 pub(crate) fn cluster_commit_error(
     outcome: &OptimisticCommitOutcome,
-    subject: &str,
+    _subject: &str,
 ) -> Option<SqlQueryError> {
-    match outcome {
-        OptimisticCommitOutcome::Committed(_) => None,
-        OptimisticCommitOutcome::Undetermined(_) => Some(SqlQueryError::result_undetermined()),
-        other => Some(SqlQueryError::unknown(format!(
-            "the {subject} was not committed: {:?}",
-            other.state()
-        ))),
-    }
+    commit_outcome_to_sql_error(outcome)
+        .err()
+        .map(|error| lock_sql_error(&error))
 }
 
 /// A lazy query result owned by one worker-local session.

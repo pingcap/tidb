@@ -198,6 +198,9 @@ enum CommandOutcome {
     Ok,
     /// Invalidates the region and yields a retryable rebuild disposition.
     RecoveryInProgress,
+    /// Source terminal region response which is not the client-go
+    /// `ErrRegionUnavailable` sentinel.
+    FlashbackInProgress,
     /// Definitive key error that ends the prewrite phase.
     AlreadyExists,
 }
@@ -245,6 +248,13 @@ fn region_error(outcome: CommandOutcome) -> Option<errorpb::Error> {
     match outcome {
         CommandOutcome::RecoveryInProgress => Some(errorpb::Error {
             recovery_in_progress: Some(errorpb::RecoveryInProgress { region_id: 0 }),
+            ..errorpb::Error::default()
+        }),
+        CommandOutcome::FlashbackInProgress => Some(errorpb::Error {
+            flashback_in_progress: Some(errorpb::FlashbackInProgress {
+                region_id: LOW_REGION,
+                flashback_start_ts: 88,
+            }),
             ..errorpb::Error::default()
         }),
         CommandOutcome::Ok | CommandOutcome::AlreadyExists => None,
@@ -329,7 +339,9 @@ impl ScriptedTikv {
                             .unwrap_or_default()
                             .as_slice(),
                     )],
-                    CommandOutcome::Ok | CommandOutcome::RecoveryInProgress => Vec::new(),
+                    CommandOutcome::Ok
+                    | CommandOutcome::RecoveryInProgress
+                    | CommandOutcome::FlashbackInProgress => Vec::new(),
                 };
                 self.recorded.lock().unwrap().prewrites.push(request);
                 Ok(ResponseCmd::Prewrite(
@@ -474,9 +486,48 @@ fn two_region_mutations() -> Vec<OptimisticMutation> {
     ]
 }
 
+fn primary_mutation() -> Vec<OptimisticMutation> {
+    vec![OptimisticMutation::insert(
+        PRIMARY_KEY.to_vec(),
+        b"primary-value".to_vec(),
+    )
+    .unwrap()]
+}
+
 // -----------------------------------------------------------------------------
 // Regressions
 // -----------------------------------------------------------------------------
+
+/// A real BatchCommands terminal region response retains its structural
+/// diagnostic. Flashback is not client-go's explicit region-unavailable
+/// sentinel, so the SQL boundary must not manufacture 9005 from this cause.
+#[test]
+fn flashback_prewrite_is_a_generic_region_cause_with_its_detail() {
+    let service = ScriptedTikv::new(
+        vec![CommandOutcome::FlashbackInProgress],
+        Vec::new(),
+        Vec::new(),
+    );
+    let server = TestServer::start(service);
+    let topology = SplitTopology::new_always_routable(server.store_address());
+    let transaction = transaction(&server, topology);
+
+    let outcome = transaction
+        .commit(
+            primary_mutation(),
+            &UnaryCallContext::with_timeout(CALL_TIMEOUT),
+        )
+        .expect("a determinate terminal response returns a rolled-back outcome");
+    let OptimisticCommitOutcome::RolledBack(rolled_back) = outcome else {
+        panic!("flashback prewrite must roll the transaction back");
+    };
+    assert!(matches!(
+        rolled_back.cause,
+        TransactionCause::Region { detail }
+            if detail.contains("FlashbackInProgress")
+                && detail.contains(&LOW_REGION.to_string())
+    ));
+}
 
 /// A confirmed primary commit stays committed when the secondary batch cannot
 /// be regrouped after its region error.

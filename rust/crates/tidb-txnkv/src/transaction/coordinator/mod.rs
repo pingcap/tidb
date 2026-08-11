@@ -44,7 +44,9 @@ use tidb_proto::{KvrpcContext, KvrpcKeyError};
 
 use crate::gc_state::{GcStateCache, VisibilityError};
 use crate::lock::{LockRecoveryClient, TimestampSource};
-use crate::region::{RegionBackoffBudget, RegionErrorDisposition, RegionRecoveryLoader};
+use crate::region::{
+    RegionBackoffBudget, RegionErrorDisposition, RegionRecoveryLoader, RegionTerminalError,
+};
 use crate::rpc::{TonicCoprocessorClient, TransactionBatchPublication, UnaryCallContext};
 use crate::{PdRegionLoader, SharedReadRuntime};
 
@@ -464,12 +466,31 @@ where
                 });
             }
             RegionErrorDisposition::Terminal(terminal) => {
-                return Err(TransactionCause::Region {
-                    detail: format!("TiKV returned terminal region error: {terminal:?}"),
-                });
+                return Err(terminal_region_cause(terminal));
             }
         };
         wait_with_call(call, delay)
+    }
+}
+
+fn terminal_region_cause(terminal: RegionTerminalError) -> TransactionCause {
+    match terminal {
+        RegionTerminalError::BackoffExhausted { kind, max_sleep } => {
+            TransactionCause::BackoffExhausted {
+                kind,
+                detail: if kind == crate::region::RegionBackoffKind::TikvServerBusy {
+                    // client-go excludes Busy sleep from longestSleepCfg. If
+                    // the excluded-only cap fires, Backoff returns the current
+                    // ordinary error rather than BoTiKVServerBusy's sentinel.
+                    "server is busy".to_owned()
+                } else {
+                    format!("TiKV region backoff exhausted: kind={kind:?}, max_sleep={max_sleep:?}")
+                },
+            }
+        }
+        terminal => TransactionCause::Region {
+            detail: format!("TiKV returned terminal region error: {terminal:?}"),
+        },
     }
 }
 
@@ -598,6 +619,7 @@ fn record_attempt(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::region::{RegionBackoffKind, RegionTerminalError};
     use tidb_proto::{
         KvrpcAlreadyExist, KvrpcAssertion, KvrpcAssertionFailed, KvrpcLockInfo, KvrpcWriteConflict,
     };
@@ -681,6 +703,41 @@ mod tests {
         assert!(matches!(
             wait_with_call(&cancelled, Duration::ZERO),
             Err(TransactionCause::Transport { .. })
+        ));
+    }
+
+    #[test]
+    fn terminal_backoff_retains_its_kind_without_typing_structural_region_errors() {
+        let unavailable = terminal_region_cause(RegionTerminalError::BackoffExhausted {
+            kind: RegionBackoffKind::RegionScheduling,
+            max_sleep: Duration::from_secs(20),
+        });
+        assert!(matches!(
+            unavailable,
+            TransactionCause::BackoffExhausted {
+                kind: RegionBackoffKind::RegionScheduling,
+                ..
+            }
+        ));
+
+        let busy = terminal_region_cause(RegionTerminalError::BackoffExhausted {
+            kind: RegionBackoffKind::TikvServerBusy,
+            max_sleep: Duration::from_secs(20),
+        });
+        assert!(matches!(
+            busy,
+            TransactionCause::BackoffExhausted { kind: RegionBackoffKind::TikvServerBusy, detail }
+                if detail == "server is busy"
+        ));
+
+        let flashback = terminal_region_cause(RegionTerminalError::FlashbackInProgress {
+            region_id: 42,
+            flashback_start_ts: 99,
+        });
+        assert!(matches!(
+            flashback,
+            TransactionCause::Region { detail }
+                if detail.contains("FlashbackInProgress") && detail.contains("42")
         ));
     }
 }

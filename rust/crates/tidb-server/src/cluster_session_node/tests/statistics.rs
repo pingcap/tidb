@@ -14,6 +14,10 @@ use crate::configured_user_store::ConfiguredUserStore;
 use crate::sql_node::{ConnectionCancellation, ConnectionClose};
 use std::net::SocketAddr;
 use tidb_session::privilege::GlobalPriv;
+use tidb_txnkv::region::RegionBackoffKind;
+use tidb_txnkv::transaction::{
+    OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,
+};
 
 struct UndeterminedAnalyze;
 
@@ -39,6 +43,31 @@ fn analyze_commit_keeps_an_undetermined_verdict_connection_fatal() {
         .execute_write("ANALYZE TABLE t")
         .expect_err("ANALYZE cannot answer success after losing its commit response");
     assert_undetermined_closes_without_packet(&query_error);
+}
+
+#[test]
+fn analyze_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
+    let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+        receipt: OptimisticTransactionReceipt::new(1, 2, b"key".to_vec(), 1),
+        cause: TransactionCause::BackoffExhausted {
+            kind: RegionBackoffKind::StaleCommand,
+            detail: "staleCommand backoffer exhausted".to_owned(),
+        },
+    });
+    let lock_error = tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error(&outcome)
+        .expect_err("an exhausted busy backoff cannot answer success");
+    let query_error = crate::sql_node::cluster_analyze_error(
+        tidb_exec::real_tikv_analyze::ClusterAnalyzeError::Commit(lock_error),
+    );
+    assert_eq!(
+        query_error.code,
+        tidb_error::tidb::errcode::ErrTiKVStaleCommand
+    );
+    assert_query_error_packet(
+        &query_error,
+        tidb_error::tidb::errcode::ErrTiKVStaleCommand,
+        "TiKV server reports stale command",
+    );
 }
 
 /// `ANALYZE TABLE` reaches the statistics seam rather than the ordinary

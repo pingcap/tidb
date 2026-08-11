@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::region::RegionVerId;
+use crate::region::{RegionBackoffKind, RegionVerId};
 use crate::rpc::TransactionBatchPublication;
 
 /// Typed error identity used by executor/server mapping and receipts.
@@ -49,6 +49,15 @@ pub enum TransactionCause {
         /// Region recovery diagnostic.
         detail: String,
     },
+    /// A client-go-compatible backoff budget returned its effective
+    /// longest-sleep category, or reached the excluded-only cap.
+    BackoffExhausted {
+        /// Exact backoff category whose source error must reach SQL mapping.
+        kind: RegionBackoffKind,
+        /// Operator/backoff diagnostic retained on the cause. SQL conversion
+        /// selects the pinned client-go source sentinel from `kind`.
+        detail: String,
+    },
     /// Physical transport or local completion failed.
     Transport {
         /// Physical transport diagnostic.
@@ -74,6 +83,7 @@ impl std::fmt::Display for TransactionCause {
             | Self::WriteConflict { detail }
             | Self::Lock { detail, .. }
             | Self::Region { detail }
+            | Self::BackoffExhausted { detail, .. }
             | Self::Transport { detail }
             | Self::Timestamp { detail }
             | Self::InvalidResponse { detail } => formatter.write_str(detail),

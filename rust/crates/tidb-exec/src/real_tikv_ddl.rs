@@ -44,7 +44,7 @@ use crate::cluster_ddl::{
     IndexBackfill,
 };
 use crate::cluster_table_storage::SessionTransaction;
-use crate::pessimistic_lock_error::LockSqlError;
+use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, LockSqlError};
 use crate::real_tikv_catalog::{SnapshotMetaSnapshot, TransactionMetaSnapshot};
 use crate::table_info_build::default_ddl_statement_context;
 
@@ -101,6 +101,9 @@ pub enum ClusterDdlError {
         /// TiKV's own conflict diagnostic.
         detail: String,
     },
+    /// A determinate commit failure with the exact driver error identity Go
+    /// exposes through `ToTiDBErr`.
+    Commit(LockSqlError),
     /// Publication reached a terminal state that is not a commit, so the
     /// catalog change cannot be reported as done.
     NotCommitted(String),
@@ -141,6 +144,7 @@ impl fmt::Display for ClusterDdlError {
             Self::Undetermined(detail) => {
                 write!(formatter, "execution result undetermined: {detail}")
             }
+            Self::Commit(error) => formatter.write_str(&error.message),
             Self::NotCommitted(state) => {
                 write!(formatter, "catalog change did not commit: {state}")
             }
@@ -164,6 +168,7 @@ impl std::error::Error for ClusterDdlError {
             Self::Plan(error) => Some(error),
             Self::Transaction(error) => Some(error),
             Self::ConcurrentSchemaChange { .. }
+            | Self::Commit(_)
             | Self::NotCommitted(_)
             | Self::Undetermined(_)
             | Self::Backfill(_)
@@ -424,7 +429,7 @@ pub fn classify_session_ddl_commit_error(
             detail: error.message,
         }
     } else {
-        ClusterDdlError::NotCommitted(error.message)
+        ClusterDdlError::Commit(error)
     }
 }
 
@@ -461,7 +466,7 @@ fn classify(planned_version: i64, cause: &TransactionCause) -> ClusterDdlError {
             planned_version,
             detail: detail.clone(),
         },
-        other => ClusterDdlError::NotCommitted(format!("{other:?}")),
+        other => ClusterDdlError::Commit(transaction_cause_to_sql_error(other)),
     }
 }
 
@@ -530,8 +535,10 @@ mod tests {
         };
         assert!(matches!(
             classify_session_ddl_commit_error(61, ordinary),
-            ClusterDdlError::NotCommitted(detail)
-                if detail == "prewrite transport failed definitively"
+            ClusterDdlError::Commit(error)
+                if error.code == 1105
+                    && error.state == *b"HY000"
+                    && error.message == "prewrite transport failed definitively"
         ));
     }
 
@@ -574,7 +581,27 @@ mod tests {
                 detail: "not leader".to_owned(),
             },
         );
-        assert!(matches!(error, ClusterDdlError::NotCommitted(_)));
+        assert!(matches!(
+            &error,
+            ClusterDdlError::Commit(driver_error)
+                if driver_error.code == 1105 && driver_error.message.contains("not leader")
+        ));
         assert!(!error.to_string().contains("another DDL"));
+    }
+
+    #[test]
+    fn backoff_exhaustion_keeps_its_driver_error_identity() {
+        let error = classify(
+            61,
+            &TransactionCause::BackoffExhausted {
+                kind: tidb_txnkv::region::RegionBackoffKind::TikvRpc,
+                detail: "tikvRPC backoffer exhausted".to_owned(),
+            },
+        );
+        assert!(matches!(
+            error,
+            ClusterDdlError::Commit(error)
+                if error.code == tidb_error::tidb::errcode::ErrTiKVServerTimeout
+        ));
     }
 }

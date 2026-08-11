@@ -64,6 +64,26 @@ pub(super) fn assert_undetermined_closes_without_packet(query_error: &SqlQueryEr
     );
 }
 
+pub(super) fn assert_query_error_packet(
+    query_error: &SqlQueryError,
+    expected_code: u16,
+    expected_message: &str,
+) {
+    let mut output = RecordingPacketOutput::default();
+    write_query_error(&mut output, query_error, true).expect("a determinate error writes ERR");
+    assert_eq!(output.0.len(), 1, "one determinate error writes one packet");
+    let packet = &output.0[0];
+    assert!(packet.len() >= 9, "protocol-41 ERR packet is complete");
+    assert_eq!(packet[0], 0xff);
+    assert_eq!(u16::from_le_bytes([packet[1], packet[2]]), expected_code);
+    assert_eq!(&packet[3..9], b"#HY000");
+    assert!(
+        String::from_utf8_lossy(&packet[9..]).contains(expected_message),
+        "packet message {:?} did not contain {expected_message:?}",
+        String::from_utf8_lossy(&packet[9..])
+    );
+}
+
 pub(super) fn undetermined_cluster_commit_error(subject: &str) -> SqlQueryError {
     let outcome = OptimisticCommitOutcome::Undetermined(UndeterminedTransaction {
         receipt: OptimisticTransactionReceipt::new(1, 2, b"key".to_vec(), 1),

@@ -41,6 +41,7 @@ use crate::cluster_stats_load::ClusterStatsLoader;
 use crate::cluster_stats_write::plan_stats_write;
 use crate::mysql_bootstrap::utc_now_timestamp;
 use crate::mysql_system_tables::SystemTableError;
+use crate::pessimistic_lock_error::{commit_outcome_to_sql_error, LockSqlError};
 use crate::real_tikv_catalog::TransactionMetaSnapshot;
 
 /// The mutation-count budget one `ANALYZE TABLE` declares.
@@ -112,6 +113,8 @@ pub struct ClusterAnalyzeReport {
 pub enum ClusterAnalyzeError {
     /// The commit may have landed, so the server must not report failure.
     Undetermined(String),
+    /// A determinate commit failure with its driver error code and SQLSTATE.
+    Commit(LockSqlError),
     /// A determinate failure with its existing diagnostic.
     Other(String),
 }
@@ -122,6 +125,7 @@ impl fmt::Display for ClusterAnalyzeError {
             Self::Undetermined(detail) => {
                 write!(formatter, "execution result undetermined: {detail}")
             }
+            Self::Commit(error) => formatter.write_str(&error.message),
             Self::Other(detail) => formatter.write_str(detail),
         }
     }
@@ -224,25 +228,32 @@ pub fn commit_cluster_analyze(
         bucket_count: write.bucket_count,
         topn_count: write.topn_count,
     };
-    match transaction
+    let outcome = transaction
         .commit(write.mutations, &call)
-        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?
-    {
-        OptimisticCommitOutcome::Committed(_) => Ok(receipt),
-        OptimisticCommitOutcome::Undetermined(undetermined) => Err(
-            ClusterAnalyzeError::Undetermined(format!("{:?}", undetermined.cause)),
-        ),
-        other => Err(ClusterAnalyzeError::Other(format!(
-            "the statistics were not committed: {:?}",
-            other.state()
-        ))),
+        .map_err(|error| ClusterAnalyzeError::Other(error.to_string()))?;
+    classify_commit_outcome(&outcome)?;
+    Ok(receipt)
+}
+
+fn classify_commit_outcome(outcome: &OptimisticCommitOutcome) -> Result<(), ClusterAnalyzeError> {
+    match commit_outcome_to_sql_error(outcome) {
+        Ok(()) => Ok(()),
+        Err(error) if error.is_result_undetermined() => Err(ClusterAnalyzeError::Undetermined(
+            "the ANALYZE transaction returned no commit verdict".to_owned(),
+        )),
+        Err(error) => Err(ClusterAnalyzeError::Commit(error)),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::realtime_count_of;
+    use super::{classify_commit_outcome, realtime_count_of, ClusterAnalyzeError};
     use tidb_stats::row_sample_collector::adjusted_sample_rate;
+    use tidb_txnkv::region::RegionBackoffKind;
+    use tidb_txnkv::transaction::{
+        OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,
+        TransactionCause,
+    };
 
     #[test]
     fn an_unbelievable_stored_row_count_reads_every_row_rather_than_none() {
@@ -259,5 +270,21 @@ mod tests {
             (adjusted_sample_rate(Some(realtime_count_of(u64::MAX)), None) - 1.0).abs()
                 < f64::EPSILON
         );
+    }
+
+    #[test]
+    fn analyze_backoff_exhaustion_keeps_its_driver_error_identity() {
+        let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+            receipt: OptimisticTransactionReceipt::new(1, 2, b"k".to_vec(), 1),
+            cause: TransactionCause::BackoffExhausted {
+                kind: RegionBackoffKind::StaleCommand,
+                detail: "staleCommand backoffer exhausted".to_owned(),
+            },
+        });
+        assert!(matches!(
+            classify_commit_outcome(&outcome),
+            Err(ClusterAnalyzeError::Commit(error))
+                if error.code == tidb_error::tidb::errcode::ErrTiKVStaleCommand
+        ));
     }
 }

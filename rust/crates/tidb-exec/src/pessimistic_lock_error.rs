@@ -29,7 +29,9 @@
 //! exceeded; try restarting transaction`.
 
 use tidb_error::terror::ERR_RESULT_UNDETERMINED;
+use tidb_txnkv::region::RegionBackoffKind;
 use tidb_txnkv::transaction::{OptimisticCommitOutcome, PessimisticLockFailure, TransactionCause};
+use tidb_txnkv::{to_tidb_driver_error, ConvertedDriverError, StorageDriverError};
 
 /// Go `errno.ErrLockWaitTimeout`.
 pub const ERR_LOCK_WAIT_TIMEOUT: u16 = 1205;
@@ -57,7 +59,9 @@ pub struct LockSqlError {
     pub code: u16,
     /// Five-byte SQLSTATE.
     pub state: [u8; 5],
-    /// The message Go renders, including its `[class:code]` prefix.
+    /// The message Go renders: registered errors include their `[class:code]`
+    /// prefix, while unregistered passthrough errors keep their raw source
+    /// text.
     pub message: String,
 }
 
@@ -103,6 +107,9 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
             state: DEFAULT_SQL_STATE,
             message: format!("[kv:9007]Write conflict, {detail} [try again later]"),
         },
+        PessimisticLockFailure::Transaction(cause @ TransactionCause::BackoffExhausted { .. }) => {
+            transaction_cause_to_sql_error(cause)
+        }
         PessimisticLockFailure::Transaction(cause) => LockSqlError {
             code: 1105,
             state: DEFAULT_SQL_STATE,
@@ -117,7 +124,8 @@ pub fn lock_failure_to_sql_error(failure: &PessimisticLockFailure) -> LockSqlErr
 /// means the writes are not durable, and the coordinator reports those as an
 /// `Ok` value carrying the cause rather than as an `Err` -- so a caller that
 /// only checks for `Err` tells the client its transaction committed when TiKV
-/// rolled it back. Every commit path goes through here for that reason.
+/// rolled it back. SQL-facing commit consumers use this authority for that
+/// reason; domain-specific retry loops must apply their own typed policy.
 ///
 /// # Errors
 ///
@@ -141,10 +149,11 @@ pub fn commit_outcome_to_sql_error(outcome: &OptimisticCommitOutcome) -> Result<
 
 /// Renders a transaction-ending cause as the error TiDB reports for it.
 ///
-/// Write conflicts keep Go's retryable 9007 identity. Determinate region
-/// failures retain their current 9005 diagnostic, which `pkg/kv` deliberately
-/// excludes from automatic replay. Everything else keeps its exact diagnostic
-/// under the generic 1105.
+/// Write conflicts keep Go's retryable 9007 identity. A terminal effective
+/// backoff keeps the concrete client-go sentinel selected by its longest-sleep
+/// category; only `BoRegionMiss`/`BoRegionScheduling` become 9005. The excluded
+/// ServerBusy cap returns its current ordinary error, while structural region
+/// failures have no such identity and keep their exact diagnostic under 1105.
 #[must_use]
 pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError {
     match cause {
@@ -153,16 +162,53 @@ pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError 
             state: DEFAULT_SQL_STATE,
             message: format!("[kv:9007]Write conflict, {detail} [try again later]"),
         },
-        TransactionCause::Region { .. } => LockSqlError {
-            code: ERR_REGION_UNAVAILABLE,
-            state: DEFAULT_SQL_STATE,
-            message: "[tikv:9005]Region is unavailable".to_owned(),
-        },
+        TransactionCause::BackoffExhausted { kind, detail } => {
+            backoff_exhausted_to_sql_error(*kind, detail)
+        }
         other => LockSqlError {
             code: 1105,
             state: DEFAULT_SQL_STATE,
             message: format!("[kv:1105]transaction failed: {other}"),
         },
+    }
+}
+
+fn backoff_exhausted_to_sql_error(kind: RegionBackoffKind, detail: &str) -> LockSqlError {
+    let source = match kind {
+        RegionBackoffKind::TikvRpc => StorageDriverError::TiKvServerTimeout,
+        RegionBackoffKind::RegionMiss | RegionBackoffKind::RegionScheduling => {
+            StorageDriverError::RegionUnavailable
+        }
+        RegionBackoffKind::TikvServerBusy => StorageDriverError::Other(detail.to_owned()),
+        RegionBackoffKind::StaleCommand => StorageDriverError::TiKvStaleCommand,
+        RegionBackoffKind::MaxTimestampNotSynced => StorageDriverError::TiKvMaxTimestampNotSynced,
+        RegionBackoffKind::TxnLock
+        | RegionBackoffKind::TxnLockFast
+        | RegionBackoffKind::TxnNotFound => StorageDriverError::ResolveLockTimeout,
+        RegionBackoffKind::TikvDiskFull => StorageDriverError::Other("tikv disk full".to_owned()),
+        RegionBackoffKind::RegionRecoveryInProgress => {
+            StorageDriverError::Other("region is being online unsafe recovered".to_owned())
+        }
+        RegionBackoffKind::RegionNotInitialized => {
+            StorageDriverError::Other("region not Initialized".to_owned())
+        }
+        RegionBackoffKind::IsWitness => StorageDriverError::Other("peer is witness".to_owned()),
+    };
+    match to_tidb_driver_error(&source) {
+        ConvertedDriverError::Terror(converted) => LockSqlError {
+            code: u16::try_from(converted.code().value())
+                .expect("registered TiDB error code fits the MySQL protocol"),
+            state: DEFAULT_SQL_STATE,
+            message: converted.to_string(),
+        },
+        ConvertedDriverError::Passthrough(source) => LockSqlError {
+            code: 1105,
+            state: DEFAULT_SQL_STATE,
+            message: source.to_string(),
+        },
+        ConvertedDriverError::Kv(_) | ConvertedDriverError::Transaction(_) => {
+            unreachable!("backoff source table has no kv or transaction conversion rows")
+        }
     }
 }
 
@@ -216,6 +262,7 @@ mod tests {
         ERR_REGION_UNAVAILABLE, ERR_WRITE_CONFLICT,
     };
     use tidb_error::terror::ERR_RESULT_UNDETERMINED;
+    use tidb_txnkv::region::RegionBackoffKind;
     use tidb_txnkv::transaction::{
         CommittedTransaction, DeadlockDetail, OptimisticCommitOutcome,
         OptimisticTransactionReceipt, PessimisticLockFailure, RolledBackTransaction,
@@ -269,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn transaction_causes_keep_their_current_tidb_codes() {
+    fn transaction_causes_keep_only_source_typed_tidb_codes() {
         assert_eq!(
             transaction_cause_to_sql_error(&TransactionCause::WriteConflict {
                 detail: "d".to_owned()
@@ -280,8 +327,126 @@ mod tests {
         let region = transaction_cause_to_sql_error(&TransactionCause::Region {
             detail: "epoch not match".to_owned(),
         });
-        assert_eq!(region.code, ERR_REGION_UNAVAILABLE);
-        assert_eq!(region.message, "[tikv:9005]Region is unavailable");
+        assert_eq!(region.code, 1105);
+        assert!(region.message.contains("epoch not match"));
+
+        let lock_path = lock_failure_to_sql_error(&PessimisticLockFailure::Transaction(
+            TransactionCause::BackoffExhausted {
+                kind: RegionBackoffKind::RegionScheduling,
+                detail: "region scheduling exhausted".to_owned(),
+            },
+        ));
+        assert_eq!(lock_path.code, ERR_REGION_UNAVAILABLE);
+    }
+
+    #[test]
+    fn exhausted_backoff_uses_client_go_config_error_identity() {
+        use tidb_error::tidb::errcode;
+
+        let cases = [
+            (
+                RegionBackoffKind::TikvRpc,
+                Some(errcode::ErrTiKVServerTimeout),
+                None,
+            ),
+            (
+                RegionBackoffKind::RegionMiss,
+                Some(ERR_REGION_UNAVAILABLE),
+                None,
+            ),
+            (
+                RegionBackoffKind::RegionScheduling,
+                Some(ERR_REGION_UNAVAILABLE),
+                None,
+            ),
+            (
+                RegionBackoffKind::TikvServerBusy,
+                None,
+                Some("TikvServerBusy backoffer exhausted"),
+            ),
+            (
+                RegionBackoffKind::TikvDiskFull,
+                None,
+                Some("tikv disk full"),
+            ),
+            (
+                RegionBackoffKind::RegionRecoveryInProgress,
+                None,
+                Some("region is being online unsafe recovered"),
+            ),
+            (
+                RegionBackoffKind::StaleCommand,
+                Some(errcode::ErrTiKVStaleCommand),
+                None,
+            ),
+            (
+                RegionBackoffKind::MaxTimestampNotSynced,
+                Some(errcode::ErrTiKVMaxTimestampNotSynced),
+                None,
+            ),
+            (
+                RegionBackoffKind::RegionNotInitialized,
+                None,
+                Some("region not Initialized"),
+            ),
+            (RegionBackoffKind::IsWitness, None, Some("peer is witness")),
+            (
+                RegionBackoffKind::TxnLock,
+                Some(errcode::ErrResolveLockTimeout),
+                None,
+            ),
+            (
+                RegionBackoffKind::TxnLockFast,
+                Some(errcode::ErrResolveLockTimeout),
+                None,
+            ),
+            (
+                RegionBackoffKind::TxnNotFound,
+                Some(errcode::ErrResolveLockTimeout),
+                None,
+            ),
+        ];
+
+        for (kind, expected_code, expected_passthrough) in cases {
+            let detail = format!("{kind:?} backoffer exhausted");
+            let error = transaction_cause_to_sql_error(&TransactionCause::BackoffExhausted {
+                kind,
+                detail: detail.clone(),
+            });
+            match expected_code {
+                Some(code) => assert_eq!(error.code, code, "{kind:?}: {}", error.message),
+                None => {
+                    assert_eq!(error.code, 1105, "{kind:?}: {}", error.message);
+                    assert_eq!(
+                        error.message,
+                        expected_passthrough.expect("passthrough source text"),
+                        "{kind:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn excluded_busy_cap_keeps_the_current_error_generic() {
+        let mut budget = tidb_txnkv::region::RegionBackoffBudget::with_jitter_seed(
+            std::time::Duration::from_secs(20),
+            7,
+        );
+        let exhausted = loop {
+            match budget.next_delay(RegionBackoffKind::TikvServerBusy) {
+                Ok(_) => continue,
+                Err(exhausted) => break exhausted,
+            }
+        };
+        assert_eq!(exhausted.kind, RegionBackoffKind::TikvServerBusy);
+
+        let error = transaction_cause_to_sql_error(&TransactionCause::BackoffExhausted {
+            kind: exhausted.kind,
+            detail: "server is busy".to_owned(),
+        });
+        assert_eq!(error.code, 1105);
+        assert_eq!(error.message, "server is busy");
     }
 
     #[test]

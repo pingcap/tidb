@@ -268,10 +268,11 @@ where
     }
 }
 
-/// Keeps a region route failure visible as a retryable transaction error. A
-/// lock resolver can fail because the route for its recovery RPC is stale;
-/// collapsing that into `TransactionCause::Lock` makes the SQL layer report
-/// 1105 and prevents the autocommit replay from refreshing the route.
+/// Keeps the lock resolver's source identity at the transaction boundary.
+/// Structural route failures remain generic region diagnostics. The resolver's
+/// local 20-second status budget is not Go prewrite's shared 40-second
+/// backoffer, so its exhaustion must also remain a generic lock diagnostic
+/// instead of acquiring `BoTxnNotFound`'s resolve-lock-timeout identity.
 fn prewrite_lock_recovery_cause(key: &[u8], error: LockRecoveryError) -> TransactionCause {
     match error {
         LockRecoveryError::RegionError(detail) => TransactionCause::Region {
@@ -404,5 +405,26 @@ mod tests {
         assert!(
             matches!(cause, TransactionCause::Lock { key, detail } if key == b"k" && detail.contains("primary mismatch"))
         );
+    }
+
+    #[test]
+    fn local_status_backoff_does_not_invent_a_prewrite_resolve_lock_timeout() {
+        let cause = prewrite_lock_recovery_cause(b"k", LockRecoveryError::StatusBackoffExhausted);
+        assert!(matches!(
+            cause,
+            TransactionCause::Lock { key, detail }
+                if key == b"k" && detail.contains("backoff budget ran out")
+        ));
+    }
+
+    #[test]
+    fn caller_deadline_does_not_invent_a_resolve_lock_timeout_identity() {
+        let cause =
+            prewrite_lock_recovery_cause(b"k", LockRecoveryError::StatusRetryDeadlineExceeded);
+        assert!(matches!(
+            cause,
+            TransactionCause::Lock { key, detail }
+                if key == b"k" && detail.contains("deadline")
+        ));
     }
 }

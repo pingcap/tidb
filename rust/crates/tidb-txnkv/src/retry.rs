@@ -164,12 +164,12 @@ impl RegionBackoffBudget {
             && self.excluded_sleep_ms >= 600_000
             && self.excluded_sleep_ms >= self.max_sleep_ms;
         if self.max_sleep_ms > 0 && (effective_exhausted || excluded_exhausted) {
+            // client-go calls longestSleepCfg for both caps. Busy is excluded
+            // from that search, so a mixed budget returns the prior effective
+            // kind; a pure-Busy budget falls back to the current ordinary
+            // error.
             return Err(RegionBackoffExhausted {
-                kind: if effective_exhausted {
-                    self.longest_effective_kind().unwrap_or(kind)
-                } else {
-                    kind
-                },
+                kind: self.longest_effective_kind().unwrap_or(kind),
                 max_sleep: Duration::from_millis(self.max_sleep_ms),
             });
         }

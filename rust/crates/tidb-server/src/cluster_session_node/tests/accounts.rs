@@ -10,6 +10,10 @@ use super::node_fixture::*;
 use crate::cluster_account_seam::{ClusterAccountWriter, PendingAccountChange};
 use std::sync::atomic::Ordering;
 use tidb_session::privilege::PrivilegeRegistry;
+use tidb_txnkv::region::RegionBackoffKind;
+use tidb_txnkv::transaction::{
+    OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,
+};
 
 struct UndeterminedAccountWriter(PrivilegeRegistry);
 
@@ -31,6 +35,38 @@ impl PendingAccountChange for UndeterminedAccountChange {
     }
 }
 
+struct BackoffAccountWriter(PrivilegeRegistry);
+
+impl ClusterAccountWriter for BackoffAccountWriter {
+    fn begin(&self) -> Result<Box<dyn PendingAccountChange>, String> {
+        let scratch = PrivilegeRegistry::default();
+        scratch.replace_from(&clone_registry(&self.0));
+        Ok(Box::new(BackoffAccountChange(scratch)))
+    }
+}
+
+struct BackoffAccountChange(PrivilegeRegistry);
+
+impl PendingAccountChange for BackoffAccountChange {
+    fn registry(&self) -> PrivilegeRegistry {
+        self.0.clone()
+    }
+
+    fn commit(self: Box<Self>) -> Result<Vec<String>, crate::sql_node::SqlQueryError> {
+        let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+            receipt: OptimisticTransactionReceipt::new(1, 2, b"key".to_vec(), 1),
+            cause: TransactionCause::BackoffExhausted {
+                kind: RegionBackoffKind::RegionMiss,
+                detail: "regionMiss backoffer exhausted".to_owned(),
+            },
+        });
+        Err(
+            crate::sql_node::cluster_commit_error(&outcome, "account change")
+                .expect("an exhausted region backoff cannot answer success"),
+        )
+    }
+}
+
 #[test]
 fn account_commit_keeps_an_undetermined_verdict_connection_fatal() {
     let node = MockNode::start();
@@ -40,6 +76,27 @@ fn account_commit_keeps_an_undetermined_verdict_connection_fatal() {
         .execute_write("CREATE USER 'uncertain'@'%'")
         .expect_err("the account change cannot answer success after losing its commit response");
     assert_undetermined_closes_without_packet(&query_error);
+}
+
+#[test]
+fn account_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
+    let node = MockNode::start();
+    let writer = Arc::new(BackoffAccountWriter(node.accounts.stored.clone()));
+    let mut session = open_session_on_with_accounts(&node, writer);
+    let query_error = session
+        .execute_write("CREATE USER 'busy'@'%'")
+        .expect_err("the account change cannot answer success after a rolled-back commit");
+    assert_eq!(
+        query_error.code,
+        tidb_error::tidb::errcode::ErrRegionUnavailable
+    );
+    assert_query_error_packet(
+        &query_error,
+        tidb_error::tidb::errcode::ErrRegionUnavailable,
+        "Region is unavailable",
+    );
+    assert!(!node.accounts.stored.user_exists("busy", "%"));
+    assert!(!node.accounts.live.user_exists("busy", "%"));
 }
 
 /// An account statement reaches the account seam -- not the catalog

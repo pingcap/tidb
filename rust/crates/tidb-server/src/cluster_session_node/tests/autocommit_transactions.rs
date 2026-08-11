@@ -460,6 +460,46 @@ fn a_region_unavailable_commit_is_reported_without_replaying_the_statement() {
     );
 }
 
+/// A structural region failure is not client-go's explicit
+/// `ErrRegionUnavailable` sentinel. It must keep the diagnostic that tells an
+/// operator what TiKV actually rejected, and it must not be replayed as a
+/// statement-scoped write conflict.
+#[test]
+fn a_generic_region_commit_keeps_its_detail_and_is_not_replayed() {
+    let (mut session, cluster) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+    let opened_before = cluster.opened.load(Ordering::Acquire);
+    let publications_before = cluster.publications.load(Ordering::Acquire);
+
+    cluster
+        .fail_next_generic_region_commit
+        .store(true, Ordering::Release);
+    let error = session
+        .execute_write("UPDATE t SET v = v + 5 WHERE id = 1")
+        .expect_err("the terminal region diagnostic must reach the client");
+
+    assert_eq!(error.code, 1105, "{}", error.message);
+    assert!(error.message.contains("FlashbackInProgress"));
+    assert_query_error_packet(&error, 1105, "FlashbackInProgress");
+    assert_eq!(
+        cluster.opened.load(Ordering::Acquire),
+        opened_before + 1,
+        "the failed statement opened exactly one attempt"
+    );
+    assert_eq!(
+        cluster.publications.load(Ordering::Acquire),
+        publications_before,
+        "the failed statement published nothing"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM t WHERE id = 1"),
+        vec![vec![Datum::Int(10)]],
+        "the rejected statement left the row unchanged"
+    );
+}
+
 /// The bound on that retry, which is the other half of the contract clients
 /// depend on.
 ///

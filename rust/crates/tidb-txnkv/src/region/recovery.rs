@@ -150,7 +150,8 @@ pub enum RegionTerminalError {
         /// Original region-error message.
         message: String,
     },
-    /// The failed region's shared effective recovery budget was exhausted.
+    /// The failed region's shared effective or excluded-only recovery budget
+    /// was exhausted.
     BackoffExhausted {
         /// Category that attempted the next reservation.
         kind: RegionBackoffKind,
