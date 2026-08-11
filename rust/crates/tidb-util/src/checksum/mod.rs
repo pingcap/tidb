@@ -254,7 +254,8 @@ where
             );
         }
         let mut offset_in_payload = offset % CHECKSUM_PAYLOAD_SIZE as i64;
-        let mut cursor = offset / CHECKSUM_PAYLOAD_SIZE as i64 * CHECKSUM_BLOCK_SIZE as i64;
+        let mut cursor =
+            (offset / CHECKSUM_PAYLOAD_SIZE as i64).wrapping_mul(CHECKSUM_BLOCK_SIZE as i64);
         let mut pooled = PooledReadBuffer::get();
         let buffer = pooled.bytes_mut();
         let mut total = 0;
@@ -272,7 +273,7 @@ where
             if result.n < CHECKSUM_SIZE {
                 return checksum_failure(total);
             }
-            cursor += result.n as i64;
+            cursor = cursor.wrapping_add(result.n as i64);
             let original_checksum =
                 u32::from_le_bytes(buffer[..CHECKSUM_SIZE].try_into().expect("CRC field"));
             let checksum = crc32fast::hash(&buffer[CHECKSUM_SIZE..result.n]);
@@ -344,6 +345,25 @@ mod tests {
             } else {
                 ReadAtResult::ok(copied)
             }
+        }
+    }
+
+    #[derive(Clone)]
+    struct RecordingReader {
+        block: Arc<Vec<u8>>,
+        offsets: Arc<Mutex<Vec<i64>>>,
+    }
+
+    impl ReadAt for RecordingReader {
+        fn read_at(&self, destination: &mut [u8], offset: i64) -> ReadAtResult {
+            let mut offsets = self.offsets.lock().expect("recorded offsets");
+            offsets.push(offset);
+            if offsets.len() > 1 {
+                return ReadAtResult::io(0, io::Error::other("stop after one block"));
+            }
+            drop(offsets);
+            destination.copy_from_slice(&self.block);
+            ReadAtResult::ok(destination.len())
         }
     }
 
@@ -452,6 +472,7 @@ mod tests {
     {
         for encrypted in [false, true] {
             let (file, cipher) = write_with_mutation(encrypted, mutator.clone());
+            let mut reached_eof = false;
             for index in 0..32 {
                 let mut destination = [0_u8; 10];
                 let result = read_layered(
@@ -461,10 +482,12 @@ mod tests {
                     (index * 1000) as i64,
                 );
                 if is_eof(&result) {
+                    reached_eof = true;
                     break;
                 }
                 assertion(index, &result);
             }
+            assert!(reached_eof, "corruption scan must terminate at source EOF");
         }
     }
 
@@ -764,5 +787,30 @@ mod tests {
         assert_eq!(writer.write(b"x").unwrap(), 1);
         writer.flush_buffer().unwrap();
         assert_eq!(writer.get_cache_data_offset(), i64::MIN);
+    }
+
+    #[test]
+    fn read_cursor_wraps_like_source_int64_arithmetic() {
+        let mut block = vec![0; CHECKSUM_BLOCK_SIZE];
+        let checksum = crc32fast::hash(&block[CHECKSUM_SIZE..]);
+        block[..CHECKSUM_SIZE].copy_from_slice(&checksum.to_le_bytes());
+        let offsets = Arc::new(Mutex::new(Vec::new()));
+        let reader = Reader::new(RecordingReader {
+            block: Arc::new(block),
+            offsets: Arc::clone(&offsets),
+        });
+        let mut destination = vec![0; 1021];
+
+        let result = reader.read_at(&mut destination, i64::MAX);
+
+        assert_eq!(result.n, 893);
+        assert_eq!(
+            result.error.expect("injected read error").to_string(),
+            "stop after one block"
+        );
+        assert_eq!(
+            *offsets.lock().expect("recorded offsets"),
+            vec![-9_187_201_950_435_737_600, -9_187_201_950_435_736_576]
+        );
     }
 }
