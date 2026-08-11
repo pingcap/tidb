@@ -26,6 +26,14 @@ const SEGMENT_WIDTH: usize = 32;
 const SEGMENT_WIDTH_POWER: u32 = 5;
 const BIT_MASK: u32 = 0x8000_0000;
 
+fn segment_len(bit_len: usize) -> usize {
+    let rounded_bit_len = bit_len
+        .checked_add(SEGMENT_WIDTH - 1)
+        .filter(|rounded| *rounded <= isize::MAX as usize)
+        .expect("bitmap bit length exceeds the source int domain");
+    rounded_bit_len >> SEGMENT_WIDTH_POWER
+}
+
 /// A static-length bitmap which is thread-safe on setting.
 ///
 /// It is implemented using CAS, as atomic bitwise operation is not supported by
@@ -41,7 +49,7 @@ impl ConcurrentBitmap {
     /// Initializes a `ConcurrentBitmap` which can store `bit_len` of bits.
     #[must_use]
     pub fn new(bit_len: usize) -> Self {
-        let segment_len = (bit_len + SEGMENT_WIDTH - 1) >> SEGMENT_WIDTH_POWER;
+        let segment_len = segment_len(bit_len);
         let mut segments = Vec::with_capacity(segment_len);
         for _ in 0..segment_len {
             segments.push(AtomicU32::new(0));
@@ -51,7 +59,7 @@ impl ConcurrentBitmap {
 
     /// Cleans the bitmap if the length is suitable, otherwise renewing one.
     pub fn reset(&mut self, bit_len: usize) {
-        let segment_len = (bit_len + SEGMENT_WIDTH - 1) >> SEGMENT_WIDTH_POWER;
+        let segment_len = segment_len(bit_len);
         if segment_len <= self.segments.len() {
             for seg in &self.segments {
                 seg.store(0, Ordering::Relaxed);
@@ -120,17 +128,17 @@ impl ConcurrentBitmap {
 
     /// Returns whether the bit on `bit_index` is set (`bit_index` starts from 0).
     ///
-    /// A `bit_index` bigger than the initialized bit length returns false. This
-    /// method is not thread-safe as it does not use an atomic load.
+    /// A `bit_index` bigger than the initialized bit length returns false. The
+    /// exclusive receiver enforces the source method's non-concurrent access
+    /// contract.
     #[must_use]
-    pub fn unsafe_is_set(&self, bit_index: i64) -> bool {
+    pub fn unsafe_is_set(&mut self, bit_index: i64) -> bool {
         if bit_index < 0 || bit_index >= self.bit_len as i64 {
             return false;
         }
 
         let mask = BIT_MASK >> (bit_index % (SEGMENT_WIDTH as i64)) as u32;
-        self.segments[(bit_index >> SEGMENT_WIDTH_POWER) as usize].load(Ordering::Relaxed) & mask
-            != 0
+        *self.segments[(bit_index >> SEGMENT_WIDTH_POWER) as usize].get_mut() & mask != 0
     }
 }
 
@@ -148,8 +156,9 @@ impl Clone for ConcurrentBitmap {
 #[cfg(test)]
 mod tests {
     use super::ConcurrentBitmap;
+    use crossbeam_channel::bounded;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::{Arc, Barrier};
+    use std::sync::Arc;
     use std::thread;
 
     // Go `TestConcurrentBitmapSet`.
@@ -173,6 +182,9 @@ mod tests {
             h.join().unwrap();
         }
 
+        let mut bm = Arc::try_unwrap(bm)
+            .ok()
+            .expect("all bitmap worker references should be dropped");
         for i in 0..LOOP_COUNT {
             if i % INTERVAL == 0 {
                 assert!(bm.unsafe_is_set(i as i64));
@@ -187,12 +199,10 @@ mod tests {
     //
     // Go spawns `competitorsPerSet` goroutines per iteration (500k total), all
     // racing `Set(31)`, while the main goroutine interleaves CAS-clears of the
-    // bit. Reproducing 500k goroutines with OS threads is impractical, so a
-    // fixed pool of `competitorsPerSet` worker threads is driven through a
-    // per-iteration barrier: the same CAS contention on `set(31)`, without the
-    // spawn storm. The main thread clears the bit between rounds; the two source
-    // assertions (`clear_counter < loop_count` and
-    // `setter_counter == clear_counter + 1`) hold.
+    // bit. Reproducing 500k goroutines with OS threads is impractical, so 50
+    // persistent workers consume the same 500k progressively submitted calls.
+    // The bounded queue lets the producer advance and clear while older setters
+    // remain unfinished, preserving the source race and both counter invariants.
     #[test]
     fn concurrent_bitmap_unique_setter() {
         const LOOP_COUNT: usize = 10000;
@@ -200,26 +210,23 @@ mod tests {
 
         let bm = Arc::new(ConcurrentBitmap::new(32));
         let setter_counter = Arc::new(AtomicU64::new(0));
-        let clear_counter = Arc::new(AtomicU64::new(0));
-        let start = Arc::new(Barrier::new(COMPETITORS_PER_SET + 1));
-        let done = Arc::new(Barrier::new(COMPETITORS_PER_SET + 1));
+        let clear_counter = AtomicU64::new(0);
+        let (work_tx, work_rx) = bounded::<()>(COMPETITORS_PER_SET);
 
         let mut handles = Vec::with_capacity(COMPETITORS_PER_SET);
         for _ in 0..COMPETITORS_PER_SET {
             let bm = Arc::clone(&bm);
             let setter_counter = Arc::clone(&setter_counter);
-            let start = Arc::clone(&start);
-            let done = Arc::clone(&done);
+            let work_rx = work_rx.clone();
             handles.push(thread::spawn(move || {
-                for _ in 0..LOOP_COUNT {
-                    start.wait();
+                for () in work_rx {
                     if bm.set(31) {
                         setter_counter.fetch_add(1, Ordering::SeqCst);
                     }
-                    done.wait();
                 }
             }));
         }
+        drop(work_rx);
 
         for _ in 0..LOOP_COUNT {
             // Clear bitmap to zero.
@@ -229,10 +236,11 @@ mod tests {
             {
                 clear_counter.fetch_add(1, Ordering::SeqCst);
             }
-            // Release the workers to set, then wait for the round to finish.
-            start.wait();
-            done.wait();
+            for _ in 0..COMPETITORS_PER_SET {
+                work_tx.send(()).unwrap();
+            }
         }
+        drop(work_tx);
         for h in handles {
             h.join().unwrap();
         }
@@ -288,7 +296,7 @@ mod tests {
         let mut bm = ConcurrentBitmap::new(64);
         bm.unsafe_set(0);
         bm.unsafe_set(63);
-        let clone = bm.clone();
+        let mut clone = bm.clone();
 
         bm.unsafe_set(31);
         assert!(clone.unsafe_is_set(0));
@@ -302,5 +310,15 @@ mod tests {
         bm.reset(65);
         assert_eq!(bm.segments.len(), 3);
         assert!(!bm.unsafe_is_set(64));
+    }
+
+    #[test]
+    fn oversized_length_is_rejected_without_release_wraparound() {
+        assert!(std::panic::catch_unwind(|| ConcurrentBitmap::new(usize::MAX)).is_err());
+        assert!(std::panic::catch_unwind(|| {
+            let mut bm = ConcurrentBitmap::new(1);
+            bm.reset(usize::MAX);
+        })
+        .is_err());
     }
 }

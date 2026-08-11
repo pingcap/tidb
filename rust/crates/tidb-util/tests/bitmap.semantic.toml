@@ -1,0 +1,9 @@
+go_package = "pkg/util/bitmap"
+source_commit = "6a85c6bbbd6cae7e0eea20a75ecd0853ac3545d6"
+evidence_files = [
+  "rust/crates/tidb-util/src/bitmap.rs",
+  "rust/crates/tidb-util/src/lib.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "bitmap::tests"],
+]
