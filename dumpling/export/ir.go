@@ -104,9 +104,9 @@ func setTableMetaFromRows(serverType version.ServerType, rows *sql.Rows) (TableM
 		nms[i] = wrapBackTicks(nms[i])
 	}
 	return &tableMeta{
-		colTypes:      tps,
-		selectedField: strings.Join(nms, ","),
-		selectedLen:   len(nms),
-		specCmts:      getSpecialComments(serverType),
+		colTypes:       tps,
+		sourceColTypes: tps,
+		selectedField:  strings.Join(nms, ","),
+		specCmts:       getSpecialComments(serverType),
 	}, nil
 }

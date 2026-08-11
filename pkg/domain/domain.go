@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/inference"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/isvalidator"
@@ -228,6 +229,7 @@ type Domain struct {
 	minJobIDRefresher *systable.MinJobIDRefresher
 
 	instancePlanCache sessionctx.InstancePlanCache // the instance level plan cache
+	embedFn           atomic.Pointer[inference.EmbedFn]
 
 	statsOwner owner.Manager
 
@@ -500,6 +502,7 @@ func (do *Domain) Close() {
 	if do.brOwnerMgr != nil {
 		do.brOwnerMgr.Close()
 	}
+	do.closeInferenceProviders()
 
 	do.runawayManager.Stop()
 
@@ -866,6 +869,7 @@ func (do *Domain) Start(startMode ddl.StartMode) error {
 			do.crossKSSessMgr.RunSystemKSGCLoop(do.ctx)
 		}, "crossKSSessMgrGCLoop")
 	}
+	do.initInferenceProviders()
 
 	return nil
 }
@@ -1867,7 +1871,7 @@ func (do *Domain) DumpFileGcCheckerLoop() {
 			case <-do.exit:
 				return
 			case <-gcTicker.C:
-				do.dumpFileGcChecker.GCDumpFiles(do.ctx, time.Hour, time.Hour*24*7)
+				do.dumpFileGcChecker.GCDumpFiles(do.ctx, vardef.GetPlanReplayerFileRetentionTime(), time.Hour*24*7)
 			}
 		}
 	}, "dumpFileGcChecker")

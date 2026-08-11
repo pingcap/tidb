@@ -18,6 +18,7 @@ go_library(
         "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/dxf/operator",
         "//pkg/ingestor/engineapi",
+        "//pkg/ingestor/errdef",
         "//pkg/ingestor/simplesst",
         "//pkg/kv",
         "//pkg/lightning/common",
@@ -67,6 +68,7 @@ go_test(
     deps = [
         "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/ingestor/engineapi",
+        "//pkg/ingestor/errdef",
         "//pkg/ingestor/simplesst",
         "//pkg/ingestor/testutils",
         "//pkg/kv",

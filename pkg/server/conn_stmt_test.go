@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -651,6 +653,57 @@ func TestStmtSendLongDataMaxAllowedPacket(t *testing.T) {
 	require.Nil(t, stmt.BoundParams()[0])
 	require.Nil(t, stmt.BoundParams()[1])
 	require.NoError(t, stmt.CheckLongDataSize())
+}
+
+func TestStmtSendLongDataMemQuotaQuery(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := CreateMockServer(t, store)
+	srv.SetDomain(dom)
+	defer srv.Close()
+
+	c := CreateMockConn(t, srv).(*mockConn)
+	c.capability = mysql.ClientProtocol41
+
+	tk := testkit.NewTestKitWithSession(t, store, c.Context().Session)
+	tk.MustExec("use test")
+
+	stmt, _, _, err := c.Context().Prepare("select ?")
+	require.NoError(t, err)
+
+	vars := c.Context().GetSessionVars()
+	vars.MaxAllowedPacket = 64 << 20
+	require.NoError(t, vars.SetSystemVar("tidb_mem_quota_query", "1024"))
+	require.Equal(t, int64(1024), vars.MemQuotaQuery)
+	require.Equal(t, int64(1024), vars.MemTracker.GetBytesLimit())
+
+	base := vars.MemTracker.BytesConsumed()
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, bytes.Repeat([]byte{'a'}, 600)))
+	require.Equal(t, base+600, vars.MemTracker.BytesConsumed())
+	require.Equal(t, int64(1024), vars.MemTracker.GetBytesLimit())
+	require.NoError(t, stmt.CheckLongDataSize())
+
+	// Further long-data that would reach/exceed tidb_mem_quota_query is refused.
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, bytes.Repeat([]byte{'b'}, 500)))
+	require.Equal(t, int64(1024), vars.MemTracker.GetBytesLimit())
+	require.Len(t, stmt.BoundParams()[0], 600)
+	require.Equal(t, base+600, vars.MemTracker.BytesConsumed())
+
+	err = c.Dispatch(context.Background(), append(
+		binary.LittleEndian.AppendUint32([]byte{mysql.ComStmtExecute}, uint32(stmt.ID())),
+		0x0, 0x1, 0x0, 0x0, 0x0,
+		0x0, 0x0,
+	))
+	require.Error(t, err)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err) ||
+		exeerrors.ErrMemoryExceedForQuery.Equal(errors.Cause(err)))
+	require.Equal(t, base, vars.MemTracker.BytesConsumed())
+
+	// After release, the session can accept long-data again within the quota.
+	require.NoError(t, dispatchSendLongData(c, stmt.ID(), 0, bytes.Repeat([]byte{'c'}, 1023)))
+	require.Len(t, stmt.BoundParams()[0], 1023)
+	require.Equal(t, base+1023, vars.MemTracker.BytesConsumed())
+	require.NoError(t, stmt.Close())
+	require.Equal(t, base, vars.MemTracker.BytesConsumed())
 }
 
 func TestCursorFetchSendLongData(t *testing.T) {
