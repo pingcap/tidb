@@ -17,7 +17,6 @@
 use std::fmt;
 use std::sync::Mutex;
 
-use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use tidb_error::terror::TerrorError;
 
@@ -27,6 +26,8 @@ pub const WARN_LEVEL_ERROR: &str = "Error";
 pub const WARN_LEVEL_WARNING: &str = "Warning";
 /// Level "Note" for `SHOW WARNINGS`.
 pub const WARN_LEVEL_NOTE: &str = "Note";
+/// Maximum number of warnings retained by one statement warning handler.
+pub const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 
 /// The warning payload: Go's open `error` value, which the JSON form already
 /// splits into a typed terror or a bare message. `errors.Cause` unwrapping has
@@ -78,6 +79,7 @@ pub struct SqlWarn {
 /// Go `jsonSQLWarn`: the wire shape of a serialized warning.
 #[derive(Serialize, Deserialize)]
 struct JsonSqlWarn {
+    #[serde(default)]
     level: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     err: Option<TerrorError>,
@@ -107,9 +109,6 @@ impl Serialize for SqlWarn {
 impl<'de> Deserialize<'de> for SqlWarn {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let wire = JsonSqlWarn::deserialize(deserializer)?;
-        if wire.level.is_empty() {
-            return Err(D::Error::custom("SQL warning requires a level"));
-        }
         Ok(SqlWarn {
             level: wire.level,
             err: match wire.err {
@@ -191,7 +190,7 @@ impl StaticWarnHandler {
 
     fn append_with_level(&self, level: &str, err: WarnErr) {
         let mut warnings = self.warnings.lock().unwrap();
-        if warnings.len() < usize::from(u16::MAX) {
+        if warnings.len() < MAX_WARNING_COUNT {
             warnings.push(SqlWarn {
                 level: level.to_string(),
                 err,
@@ -231,7 +230,7 @@ impl WarnHandler for StaticWarnHandler {
 impl WarnHandlerExt for StaticWarnHandler {
     fn append_warnings(&self, warns: Vec<SqlWarn>) {
         let mut warnings = self.warnings.lock().unwrap();
-        if warnings.len() < usize::from(u16::MAX) {
+        if warnings.len() < MAX_WARNING_COUNT {
             warnings.extend(warns);
         }
     }

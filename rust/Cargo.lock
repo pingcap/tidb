@@ -1598,6 +1598,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-proto",
  "tidb-txnkv",
+ "tidb-util",
 ]
 
 [[package]]
@@ -1636,6 +1637,7 @@ dependencies = [
  "tidb-stats",
  "tidb-tablecodec",
  "tidb-txnkv",
+ "tidb-util",
  "tidb-vardef",
 ]
 

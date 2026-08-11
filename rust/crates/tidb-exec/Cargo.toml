@@ -32,6 +32,7 @@ tidb-protocol = { path = "../tidb-protocol" }
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-vardef = { path = "../tidb-vardef" }
+tidb-util = { path = "../tidb-util" }
 chrono.workspace = true
 prost.workspace = true
 serde_json = { workspace = true }

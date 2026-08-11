@@ -21,6 +21,7 @@ use std::rc::Rc;
 use tidb_datatype::Datum;
 use tidb_distsql::{WarningCollector, WarningLevel};
 use tidb_expr::{Columns, ErrorLevel, MysqlRng};
+pub use tidb_util::context::MAX_WARNING_COUNT;
 
 use crate::error_context::{ErrGroup, Level, LevelMap};
 use crate::mem_quota::{OomAction, StatementMemory};
@@ -51,13 +52,6 @@ pub enum StatementClass {
     /// `*ast.LoadDataStmt`.
     LoadData,
 }
-
-/// How many warnings one statement retains. Go's `StaticWarnHandler` stops
-/// appending at `math.MaxUint16` (`pkg/util/context/warn.go`), because the
-/// count it publishes is a `uint16` and a statement that produced more could
-/// not report them anyway. Without the limit a non-strict bulk write grows the
-/// buffer once per converted value, unbounded.
-pub const MAX_WARNING_COUNT: usize = u16::MAX as usize;
 
 /// Go `variable.RetryInfo`'s `autoIncrementIDs`
 /// (`pkg/sessionctx/variable/session.go:110-117`): the AUTO_INCREMENT ids a

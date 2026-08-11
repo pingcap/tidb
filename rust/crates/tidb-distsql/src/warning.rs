@@ -16,6 +16,8 @@
 
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use tidb_util::context::MAX_WARNING_COUNT;
+
 /// The three warning levels exposed by TiDB's `WarnAppender` contract.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WarningLevel {
@@ -129,7 +131,7 @@ impl WarningCollector {
     }
 
     fn append(&self, level: WarningLevel, message: impl Into<String>) {
-        self.lock().push(Warning {
+        self.append_owned_warning(Warning {
             level,
             class: WarningClass::Statement,
             code: None,
@@ -139,7 +141,7 @@ impl WarningCollector {
 
     /// Appends a warning synthesized from a TiKV response error.
     pub fn append_tikv_warning(&self, code: i32, message: impl Into<String>) {
-        self.lock().push(Warning {
+        self.append_owned_warning(Warning {
             level: WarningLevel::Warning,
             class: WarningClass::TiKv,
             code: Some(code),
@@ -149,12 +151,34 @@ impl WarningCollector {
 
     /// Appends an already-classified warning without losing its code namespace.
     pub fn append_owned_warning(&self, warning: Warning) {
-        self.lock().push(warning);
+        let mut warnings = self.lock();
+        if warnings.len() < MAX_WARNING_COUNT {
+            warnings.push(warning);
+        }
     }
 
     fn lock(&self) -> MutexGuard<'_, Vec<Warning>> {
         self.warnings
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collector_stops_at_the_statement_warning_limit() {
+        let collector = WarningCollector::new();
+        for index in 0..=MAX_WARNING_COUNT {
+            collector.append_warning(format!("warning {index}"));
+        }
+
+        assert_eq!(collector.len(), MAX_WARNING_COUNT);
+        assert_eq!(
+            collector.warnings().last().unwrap().message,
+            "warning 65534"
+        );
     }
 }
