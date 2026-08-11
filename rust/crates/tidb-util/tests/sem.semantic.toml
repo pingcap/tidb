@@ -1,0 +1,17 @@
+go_package = "pkg/util/sem"
+source_commit = "69f71e4ab14ab9ff9099fc5cf332734fde22ba6a"
+evidence_files = [
+  "rust/Cargo.lock",
+  "rust/Cargo.toml",
+  "rust/crates/tidb-session/src/show.rs",
+  "rust/crates/tidb-session/src/sysvar.rs",
+  "rust/crates/tidb-session/src/variables.rs",
+  "rust/crates/tidb-session/src/vars.rs",
+  "rust/crates/tidb-util/Cargo.toml",
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/src/sem.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "sem::tests"],
+  ["test", "-p", "tidb-session", "--lib", "vars::tests::sem_enable_and_disable_change_new_session_defaults", "--", "--exact"],
+]

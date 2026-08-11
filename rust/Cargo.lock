@@ -2038,8 +2038,10 @@ dependencies = [
  "tidb-metadef",
  "tidb-mysql",
  "tidb-naming",
+ "tidb-proto",
  "tidb-tikvutil",
  "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

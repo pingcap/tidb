@@ -113,3 +113,28 @@ fn global_sysvar_commit_keeps_a_backoff_driver_error_coded_on_the_wire() {
     );
     assert_eq!(node.sysvars.live.get("autocommit").unwrap(), live_before);
 }
+
+#[test]
+fn prepared_system_variable_scope_errors_survive_cluster_metadata_probe() {
+    let (mut session, _node) = open_session();
+    for (sql, code, message) in [
+        (
+            "SELECT @@session.ddl_slow_threshold",
+            1238,
+            "Variable 'ddl_slow_threshold' is a GLOBAL variable",
+        ),
+        (
+            "SELECT @@session.tidb_redact_log",
+            1193,
+            "Unknown system variable 'tidb_redact_log'",
+        ),
+    ] {
+        let Err(query_error) = session.prepare_general(sql) else {
+            panic!("{sql} must fail during PREPARE");
+        };
+        assert_eq!(query_error.code, code, "{sql}");
+        assert_eq!(query_error.state, *b"HY000", "{sql}");
+        assert_eq!(query_error.message, message, "{sql}");
+        assert_query_error_packet(&query_error, code, message);
+    }
+}

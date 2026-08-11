@@ -20,16 +20,14 @@
 //! and this port inlines the identical string values (verified against
 //! `pkg/sessionctx/vardef` and `pkg/parser/mysql`).
 //!
-//! PACKAGE IN PROGRESS: Go's `Enable`/`Disable` additionally write the
-//! `tidb_enable_enhanced_security` and `hostname` system variables through
-//! `variable.SetSysVar` (the process-wide sysvar registry) and log a notice.
-//! That registry is the mutable global singleton the rewrite deliberately
-//! replaces with explicit wiring, so here `enable`/`disable` flip only the
-//! SEM mode flag; the sysvar-registry sync and log belong to session-layer
-//! integration. Every predicate (the package's entire tested surface) is
-//! ported with its upstream tests.
+//! `Enable` and `Disable` also own the two process-default values Go changes
+//! through `variable.SetSysVar`. The session crate consumes
+//! [`effective_sysvar_default`] whenever it would otherwise read a captured
+//! registry default, preserving one-way crate ownership without a shadow
+//! registry or a dependency cycle.
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{OnceLock, RwLock};
 
 // SEM's restricted system-table names (Go's package-local constants).
 const EXPR_PUSHDOWN_BLACKLIST: &str = "expr_pushdown_blacklist";
@@ -67,6 +65,13 @@ const TIDB_GC_LEADER_DESC: &str = "tidb_gc_leader_desc";
 const RESTRICTED_PRIV: &str = "RESTRICTED_";
 // A sysvar installed by a plugin.
 const TIDB_AUDIT_REDACT_LOG: &str = "tidb_audit_redact_log";
+
+// The two process-wide registry entries Go Enable/Disable mutate.
+const HOSTNAME_SYS_VAR: &str = "hostname";
+const ENHANCED_SECURITY_SYS_VAR: &str = "tidb_enable_enhanced_security";
+const DEF_HOSTNAME: &str = "localhost";
+const ON: &str = "ON";
+const OFF: &str = "OFF";
 
 // Database names (mysql.SystemDB and metadef's CIStr `.L` lower forms).
 const SYSTEM_DB: &str = "mysql";
@@ -113,17 +118,106 @@ const INVISIBLE_SYS_VARS: &[&str] = &[
 /// The process-wide SEM flag (Go's `semEnabled int32`).
 static SEM_ENABLED: AtomicBool = AtomicBool::new(false);
 
-/// Go `Enable`: turns SEM on.
-///
-/// Only the mode flag is set here; see the module-level note on the deferred
-/// sysvar-registry sync and log notice.
-pub fn enable() {
-    SEM_ENABLED.store(true, Ordering::SeqCst);
+/// The mutable Go `SysVar.Value` for `hostname`. Enhanced security is the
+/// same boolean as `SEM_ENABLED`, so storing another copy could let the two
+/// observables diverge.
+static HOSTNAME_DEFAULT: OnceLock<RwLock<String>> = OnceLock::new();
+
+fn hostname_default() -> &'static RwLock<String> {
+    HOSTNAME_DEFAULT.get_or_init(|| RwLock::new(DEF_HOSTNAME.to_owned()))
 }
 
-/// Go `Disable`: turns SEM off (see the note on `enable`).
+fn set_hostname_default(value: String) {
+    *hostname_default()
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = value;
+}
+
+#[cfg(unix)]
+fn operating_system_hostname() -> Option<String> {
+    let system = rustix::system::uname();
+    let hostname = system.nodename().to_string_lossy();
+    (!hostname.is_empty()).then(|| hostname.into_owned())
+}
+
+#[cfg(windows)]
+fn operating_system_hostname() -> Option<String> {
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_MORE_DATA};
+    use windows_sys::Win32::System::SystemInformation::{
+        ComputerNamePhysicalDnsHostname, GetComputerNameExW,
+    };
+
+    let mut size = 64_u32;
+    loop {
+        let mut buffer = vec![0_u16; size as usize];
+        let mut written = size;
+        // SAFETY: `buffer` has `written` writable UTF-16 elements and remains
+        // alive for the call; Windows updates `written` with the used/needed
+        // element count exactly as Go's os.Hostname implementation expects.
+        let succeeded = unsafe {
+            GetComputerNameExW(
+                ComputerNamePhysicalDnsHostname,
+                buffer.as_mut_ptr(),
+                &mut written,
+            )
+        };
+        if succeeded != 0 {
+            buffer.truncate(written as usize);
+            return Some(String::from_utf16_lossy(&buffer));
+        }
+        // SAFETY: GetLastError has no preconditions and is read immediately
+        // after the failed Win32 call.
+        let error = unsafe { GetLastError() };
+        if error != ERROR_MORE_DATA || written <= size {
+            return None;
+        }
+        size = written;
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn operating_system_hostname() -> Option<String> {
+    None
+}
+
+/// Returns the current Go `SysVar.Value` for the two defaults SEM owns.
+///
+/// This narrow integration surface is intentionally owned here: callers
+/// should fall back to their captured registry value when it returns `None`.
+#[doc(hidden)]
+#[must_use]
+pub fn effective_sysvar_default(name: &str) -> Option<String> {
+    if name.eq_ignore_ascii_case(ENHANCED_SECURITY_SYS_VAR) {
+        return Some(if is_enabled() { ON } else { OFF }.to_owned());
+    }
+    if name.eq_ignore_ascii_case(HOSTNAME_SYS_VAR) {
+        return Some(
+            hostname_default()
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone(),
+        );
+    }
+    None
+}
+
+/// Go `Enable`: turns SEM on.
+pub fn enable() {
+    SEM_ENABLED.store(true, Ordering::SeqCst);
+    set_hostname_default(DEF_HOSTNAME.to_owned());
+    crate::logutil::bg_logger().info(
+        "tidb-server is operating with security enhanced mode (SEM) enabled",
+        &[],
+    );
+}
+
+/// Go `Disable`: turns SEM off and restores the host name when the operating
+/// system reports one. A failed lookup leaves the previous value unchanged.
 pub fn disable() {
     SEM_ENABLED.store(false, Ordering::SeqCst);
+    if let Some(hostname) = operating_system_hostname() {
+        set_hostname_default(hostname);
+    }
 }
 
 /// Go `IsEnabled`: whether SEM is currently on.
@@ -132,10 +226,31 @@ pub fn is_enabled() -> bool {
     SEM_ENABLED.load(Ordering::SeqCst)
 }
 
+fn go_equal_fold_ascii(input: &str, expected: &str) -> bool {
+    let mut input = input.chars();
+    for expected in expected.bytes() {
+        let Some(input) = input.next() else {
+            return false;
+        };
+        // Go unicode.SimpleFold has exactly two non-ASCII classes that can
+        // equal an ASCII rune: long-s with S/s and Kelvin sign with K/k.
+        let input = match input {
+            'a'..='z' => input.to_ascii_uppercase(),
+            '\u{017f}' => 'S',
+            '\u{212a}' => 'K',
+            other => other,
+        };
+        if input != char::from(expected).to_ascii_uppercase() {
+            return false;
+        }
+    }
+    input.next().is_none()
+}
+
 /// Go `IsInvisibleSchema`: whether `db_name` is hidden under SEM.
 #[must_use]
 pub fn is_invisible_schema(db_name: &str) -> bool {
-    db_name.eq_ignore_ascii_case(METRIC_SCHEMA_L)
+    go_equal_fold_ascii(db_name, METRIC_SCHEMA_L)
 }
 
 /// Go `IsInvisibleTable`: whether the lower-cased schema/table is hidden.
@@ -204,9 +319,9 @@ pub fn is_invisible_sys_var(var_name_in_lower: &str) -> bool {
 /// satisfied by `SUPER` (i.e. it is a `RESTRICTED_*` privilege).
 #[must_use]
 pub fn is_restricted_privilege(priv_name_in_upper: &str) -> bool {
-    debug_assert!(
+    crate::intest::assert_with_message(
         priv_name_in_upper == priv_name_in_upper.to_uppercase(),
-        "privilege name must be uppercase"
+        "privilege name must be uppercase",
     );
     // Go requires len >= 12 (a bare "RESTRICTED_" of length 11 is not one).
     priv_name_in_upper.len() >= 12 && priv_name_in_upper.starts_with(RESTRICTED_PRIV)
@@ -221,6 +336,7 @@ mod tests {
     fn invisible_schema() {
         assert!(is_invisible_schema(METRIC_SCHEMA_L));
         assert!(is_invisible_schema("METRICS_ScHEma"));
+        assert!(is_invisible_schema("metricſ_schema"));
         assert!(!is_invisible_schema("mysql"));
         assert!(!is_invisible_schema(INFORMATION_SCHEMA_L));
         assert!(!is_invisible_schema("Bogusname"));
@@ -289,6 +405,7 @@ mod tests {
         assert!(!is_restricted_privilege("CONNECTION_ADMIN"));
         assert!(!is_restricted_privilege("BACKUP_ADMIN"));
         assert!(!is_restricted_privilege("AA"));
+        assert!(std::panic::catch_unwind(|| is_restricted_privilege("aa")).is_err());
     }
 
     // Go TestIsInvisibleStatusVar.
@@ -314,15 +431,32 @@ mod tests {
         }
     }
 
-    // The mode flag round-trips (Go's IsEnabled after Enable/Disable). Only
-    // this test touches the global flag; it restores it afterward.
+    // Go's complete Enable/Disable state transition. Only this test touches
+    // the global defaults in this test binary; it restores them afterward.
     #[test]
     fn enabled_flag() {
         let prev = is_enabled();
+        let previous_hostname = effective_sysvar_default(HOSTNAME_SYS_VAR).unwrap();
         enable();
         assert!(is_enabled());
+        assert_eq!(
+            effective_sysvar_default(ENHANCED_SECURITY_SYS_VAR).as_deref(),
+            Some(ON)
+        );
+        assert_eq!(
+            effective_sysvar_default(HOSTNAME_SYS_VAR).as_deref(),
+            Some(DEF_HOSTNAME)
+        );
         disable();
         assert!(!is_enabled());
+        assert_eq!(
+            effective_sysvar_default(ENHANCED_SECURITY_SYS_VAR).as_deref(),
+            Some(OFF)
+        );
+        if let Some(hostname) = operating_system_hostname() {
+            assert_eq!(effective_sysvar_default(HOSTNAME_SYS_VAR), Some(hostname));
+        }
         SEM_ENABLED.store(prev, Ordering::SeqCst);
+        set_hostname_default(previous_hostname);
     }
 }

@@ -1670,7 +1670,26 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // into the ordinary reference table instead of refusing the read. The
     // other thirteen topics carry 9 to 173 divergences and stay off the gate.
     //
-    const KNOWN_DIVERGENCES: usize = 78;
+    // `session/vars` moves the ratchet 78 -> 76: explicit
+    // `@@session.max_connections` and `@@local.max_connections` now raise
+    // TiDB's 1238 instead of returning the node-wide value, moving both of
+    // those statements out of `diverged` and into `BothRejected`. The same
+    // read-scope repair admits a ScopeNone property at any explicit scope, so
+    // `@@global.performance_schema_max_mutex_classes` moves from a skip to a
+    // matching row (`200`). The topic therefore moves from 116 matched / 5
+    // diverged / 6 skipped to 117 / 3 / 7.
+    //
+    // The complete generated variable visitor also makes three previously
+    // skipped `executor/stale_txn` statements comparable: both SETs whose
+    // values contain `CAST(@last_commit_ts AS UNSIGNED)` match, while the
+    // following `@@tidb_current_ts` equality returns NULL for TiDB's 1. That
+    // is the existing transaction-publication gap -- this tier does not yet
+    // put its last commit TSO in `@@tidb_last_txn_info` -- rather than a
+    // variable-rewriter difference. `executor/stale_txn` moves from 24
+    // matched / 0 diverged / 19 skipped to 26 / 1 / 16, so the honest global
+    // net is 78 -> 77.
+    //
+    const KNOWN_DIVERGENCES: usize = 77;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

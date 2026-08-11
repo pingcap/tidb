@@ -11,6 +11,7 @@
 //! below).
 
 use tidb_exec::cluster_analyze::{AnalyzeStatement, SampleMemoryQuota, MEM_QUOTA_ANALYZE_VARIABLE};
+use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_session::privilege::GlobalPriv;
 
 use crate::sql_node::{QuerySession, SqlQueryError, WriteOutcome};
@@ -52,7 +53,8 @@ impl ClusterServerSession {
             let mut statement = statement.clone();
             statement.options.memory_quota = memory_quota;
             let statement = &statement;
-            let report = self.analyze.execute(statement)?;
+            let report = recover_analyze_panic(|| self.analyze.execute(statement))
+                .map_err(|error| SqlQueryError::unknown(error.rendered_message()))??;
             eprintln!(
                 "{{\"event\":\"cluster_table_analyzed\",\"schema\":{},\"table\":{},\
                  \"table_id\":{},\"version\":{},\"scanned_rows\":{},\"sampled_rows\":{},\

@@ -1,0 +1,128 @@
+// Dependency-closed projection of kvproto brpb.proto at
+// v0.0.0-20260622063236-b41e86365ce0 for StreamBackupTaskInfo. Field
+// numbers, cardinalities, enum values, map fields, and oneof branches are
+// unchanged.
+syntax = "proto3";
+package backup;
+
+import "encryptionpb.proto";
+
+enum CompressionType {
+  UNKNOWN = 0;
+  LZ4 = 1;
+  SNAPPY = 2;
+  ZSTD = 3;
+}
+
+message StreamBackupTaskSecurityConfig {
+  oneof encryption {
+    CipherInfo plaintext_data_key = 1;
+    MasterKeyConfig master_key_config = 2;
+  }
+}
+
+message CipherInfo {
+  encryptionpb.EncryptionMethod cipher_type = 1;
+  bytes cipher_key = 2;
+}
+
+message MasterKeyConfig {
+  encryptionpb.EncryptionMethod encryption_type = 1;
+  repeated encryptionpb.MasterKey master_keys = 2;
+}
+
+message StreamBackupTaskInfo {
+  StorageBackend storage = 1;
+  uint64 start_ts = 2;
+  uint64 end_ts = 3;
+  string name = 4;
+  repeated string table_filter = 5;
+  CompressionType compression_type = 6;
+  StreamBackupTaskSecurityConfig security_config = 7;
+
+  reserved "last_update_ts";
+  reserved "ranges";
+  reserved "status";
+}
+
+message StorageBackend {
+  oneof backend {
+    Noop noop = 1;
+    Local local = 2;
+    S3 s3 = 3;
+    GCS gcs = 4;
+    CloudDynamic cloud_dynamic = 5;
+    HDFS hdfs = 6;
+    AzureBlobStorage azure_blob_storage = 7;
+  }
+}
+
+message Noop {}
+
+message Local {
+  string path = 1;
+}
+
+message S3 {
+  string endpoint = 1;
+  string region = 2;
+  string bucket = 3;
+  string prefix = 4;
+  string storage_class = 5;
+  string sse = 6;
+  string acl = 7;
+  string access_key = 8;
+  string secret_access_key = 9;
+  bool force_path_style = 10;
+  string sse_kms_key_id = 11;
+  string role_arn = 12;
+  string external_id = 13;
+  bool object_lock_enabled = 14;
+  string session_token = 15;
+  string provider = 16;
+  string profile = 17;
+}
+
+message GCS {
+  string endpoint = 1;
+  string bucket = 2;
+  string prefix = 3;
+  string storage_class = 4;
+  string predefined_acl = 5;
+  string credentials_blob = 6;
+}
+
+message AzureCustomerKey {
+  string encryption_key = 1;
+  string encryption_key_sha256 = 2;
+}
+
+message AzureBlobStorage {
+  string endpoint = 1;
+  string bucket = 2;
+  string prefix = 3;
+  string storage_class = 4;
+  string account_name = 5;
+  string shared_key = 6;
+  string access_sig = 8;
+  string encryption_scope = 9;
+  AzureCustomerKey encryption_key = 10;
+}
+
+message Bucket {
+  string endpoint = 1;
+  string region = 3;
+  string bucket = 4;
+  string prefix = 5;
+  string storage_class = 6;
+}
+
+message CloudDynamic {
+  Bucket bucket = 1;
+  string provider_name = 2;
+  map<string, string> attrs = 3;
+}
+
+message HDFS {
+  string remote = 1;
+}

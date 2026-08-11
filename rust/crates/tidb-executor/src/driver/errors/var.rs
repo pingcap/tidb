@@ -32,6 +32,10 @@ pub enum VarErrorKind {
     /// Go `ErrIncorrectGlobalLocalVar` (1238), read side: `SELECT
     /// @@global.x` named a SESSION-only variable.
     NoGlobalCopy(String),
+    /// Go `ErrIncorrectGlobalLocalVar` (1238), read side: an explicit scope
+    /// does not belong to the variable. The second field is the scope text Go
+    /// puts in the diagnostic.
+    IncorrectScope(String, String),
     /// Go `ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or
     /// SYSTEM_VARIABLES_ADMIN")` (1227): `SET GLOBAL` without SUPER or the
     /// dynamic `SYSTEM_VARIABLES_ADMIN` privilege.

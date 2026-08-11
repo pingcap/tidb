@@ -354,8 +354,11 @@ pub const TOPICS: &[(&str, &str)] = &[
     ),
     (
         "executor/stale_txn",
-        "24 of 43 at zero divergences: `AS OF TIMESTAMP` and the stale-read session \
-     variables, accepted and refused exactly where TiDB does",
+        "26 of 43 with 1 ROW divergence: complete variable traversal moves three \
+     `CAST(@last_commit_ts AS UNSIGNED)` statements into comparison. The two \
+     SET side effects match; the `@@tidb_current_ts` equality reads NULL where \
+     TiDB reads 1 because this tier does not yet publish the last commit TSO \
+     through `@@tidb_last_txn_info`",
     ),
     (
         "expression/uuid",
@@ -636,14 +639,15 @@ pub const TOPICS: &[(&str, &str)] = &[
     ),
     (
         "session/vars",
-        "116 of 127 with 5 divergences in FOUR causes, all of them about a \
+        "117 of 127 with 3 divergences in THREE causes, all of them about a \
      variable's own value rather than about a query: `@@time_zone` reads \
      `SYSTEM` where the recording session reads `Asia/Shanghai`; a \
      `SET_VAR(sql_auto_is_null=1)` hint takes effect here and is ignored by \
-     TiDB; `@@warning_count` reads 0 where TiDB counts 1; and reading a \
-     GLOBAL-only variable through `@@session.` / `@@local.` is accepted here \
-     where TiDB raises 1238 (2 statements). It is the densest variable-behavior \
-     topic in the suite, and 96 of its matches are ROW results",
+     TiDB; and `@@warning_count` reads 0 where TiDB counts 1. Explicit \
+     SESSION/LOCAL reads of a GLOBAL-only variable now join TiDB at 1238, \
+     while the ScopeNone `@@global.performance_schema_max_mutex_classes` \
+     read joins TiDB at 200. It is the densest variable-behavior topic in the \
+     suite, and 97 of its matches are ROW results",
     ),
     (
         "planner/core/integration_partition",

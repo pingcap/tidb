@@ -51,6 +51,7 @@
 use std::sync::Arc;
 
 use tidb_executor::analyze::kv::analyze_kv_table;
+use tidb_executor::analyze::panic_recovery::recover_analyze_panic;
 use tidb_executor::analyze::{
     lower_analyze_admin, AnalyzeOptions, AnalyzeStatement, SampleMemoryQuota,
     MEM_QUOTA_ANALYZE_VARIABLE,
@@ -58,6 +59,46 @@ use tidb_executor::analyze::{
 use tidb_executor::{DriverError, SchemaErrorKind, TableEntry};
 
 use crate::{Session, StmtOutput};
+
+/// The source goroutine boundary at which a test injects its one-shot panic.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AnalyzePanicPhase {
+    /// Go's analyze worker, before it computes statistics.
+    Worker,
+    /// Go's result handler, after statistics are computed but before publish.
+    Result,
+}
+
+#[cfg(test)]
+std::thread_local! {
+    /// A one-shot, thread-local equivalent of the two Go failpoints in
+    /// `pkg/executor/test/analyzetest/panictest`.
+    ///
+    /// Keeping the injection local to the test thread makes the real
+    /// `Session::run` path deterministic while other session tests execute in
+    /// parallel.
+    static ANALYZE_PANIC_FOR_TEST: std::cell::Cell<Option<(AnalyzePanicPhase, &'static str)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Arms the in-process analyze path's one-shot source-shaped panic injection.
+#[cfg(test)]
+pub(crate) fn panic_next_analyze_for_test(phase: AnalyzePanicPhase, message: &'static str) {
+    ANALYZE_PANIC_FOR_TEST.with(|pending| pending.set(Some((phase, message))));
+}
+
+#[cfg(test)]
+fn inject_analyze_panic_for_test(phase: AnalyzePanicPhase) {
+    ANALYZE_PANIC_FOR_TEST.with(|pending| {
+        if let Some((pending_phase, message)) = pending.get() {
+            if pending_phase == phase {
+                pending.set(None);
+                panic!("{message}");
+            }
+        }
+    });
+}
 
 impl Session {
     /// Runs `ANALYZE TABLE t [, u ...]`, one table at a time.
@@ -116,15 +157,22 @@ impl Session {
             let realtime_count = catalog
                 .table_statistics(table_id)
                 .map(|statistics| statistics.row_count);
-            let Some(TableEntry::Kv(table)) = catalog.table_mut_in(&schema, &name) else {
-                // The lookup two lines up already resolved it; a catalog that
-                // changed in between is not reachable from one statement.
-                return Err(DriverError::CatalogPoisoned);
-            };
-            let statistics = analyze_kv_table(table, options, realtime_count, &ctx)
-                .map_err(|error| DriverError::unsupported(error.to_string()))?;
-            catalog.set_table_statistics(table_id, Arc::new(statistics));
-            Ok(())
+            recover_analyze_panic(|| {
+                let Some(TableEntry::Kv(table)) = catalog.table_mut_in(&schema, &name) else {
+                    // The lookup above already resolved it; a catalog that
+                    // changed in between is not reachable from one statement.
+                    return Err(DriverError::CatalogPoisoned);
+                };
+                #[cfg(test)]
+                inject_analyze_panic_for_test(AnalyzePanicPhase::Worker);
+                let statistics = analyze_kv_table(table, options, realtime_count, &ctx)
+                    .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                #[cfg(test)]
+                inject_analyze_panic_for_test(AnalyzePanicPhase::Result);
+                catalog.set_table_statistics(table_id, Arc::new(statistics));
+                Ok(())
+            })
+            .map_err(|error| DriverError::unsupported(error.rendered_message().to_owned()))?
         })
     }
 

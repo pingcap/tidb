@@ -21,7 +21,7 @@
 //! read side); both read the one [`crate::SessionVars`] this session owns, so
 //! both live here.
 
-use tidb_ast::{SessionStmt, Stmt};
+use tidb_ast::{SessionStmt, Stmt, Visitable, Visitor};
 use tidb_datatype::Datum;
 use tidb_executor::DriverError;
 
@@ -75,6 +75,43 @@ fn uservar_read_expr(name: &str, value: Option<&Datum>) -> tidb_ast::Expr {
     }
 }
 
+/// One complete mutable AST pass for variable substitution.
+///
+/// The AST owns the child graph, including functions, CASE, casts, windows,
+/// subqueries and set-operation terms. Keeping that traversal generated in
+/// `tidb-ast` prevents a new expression variant from silently bypassing the
+/// session's scope and visibility checks.
+struct VariableBinder<'a> {
+    session: &'a Session,
+    error: Option<DriverError>,
+}
+
+impl Visitor for VariableBinder<'_> {
+    fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+        if self.error.is_some() {
+            return true;
+        }
+        let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
+            return false;
+        };
+        if !matches!(
+            expr,
+            tidb_ast::Expr::SysVar { .. } | tidb_ast::Expr::UserVar(_)
+        ) {
+            return false;
+        }
+        match self.session.bind_variable_atom(expr) {
+            Ok(bound) => *expr = bound,
+            Err(error) => self.error = Some(error),
+        }
+        true
+    }
+
+    fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+        self.error.is_none()
+    }
+}
+
 /// Maps a variable error onto the driver error the wire layer renders.
 pub(crate) fn var_error(error: VarError) -> DriverError {
     DriverError::Var(match error {
@@ -91,6 +128,9 @@ pub(crate) fn var_error(error: VarError) -> DriverError {
         }
         VarError::GlobalOnlyVariable(name) => tidb_executor::VarErrorKind::GlobalOnlyVariable(name),
         VarError::NoGlobalCopy(name) => tidb_executor::VarErrorKind::NoGlobalCopy(name),
+        VarError::IncorrectScope(name, allowed) => {
+            tidb_executor::VarErrorKind::IncorrectScope(name, allowed.to_owned())
+        }
         VarError::ValidationRefused(message) => {
             tidb_executor::VarErrorKind::ValidationRefused(message)
         }
@@ -683,34 +723,57 @@ impl Session {
         let Stmt::Query(query) = stmt else {
             return Ok(());
         };
-        let tidb_ast::QueryStmt::Select(select) = &mut **query else {
-            return Ok(());
+        let mut binder = VariableBinder {
+            session: self,
+            error: None,
         };
-        for field in select.fields.fields_mut() {
-            if let tidb_ast::SelectField::Expr { expr, .. } = field {
-                *expr = self.bind_variables_in(expr)?;
-            }
-        }
-        if let Some(where_clause) = &select.where_clause {
-            select.where_clause = Some(self.bind_variables_in(where_clause)?);
-        }
-        if let Some(having) = &select.having {
-            select.having = Some(self.bind_variables_in(having)?);
-        }
-        for item in &mut select.order_by {
-            item.expr = self.bind_variables_in(&item.expr)?;
-        }
-        for item in &mut select.group_by {
-            item.expr = self.bind_variables_in(&item.expr)?;
+        if !query.accept(&mut binder) {
+            return Err(binder
+                .error
+                .expect("variable traversal stops only after recording an error"));
         }
         Ok(())
     }
 
-    /// Substitutes variable references inside one expression.
-    fn bind_variables_in(&self, expr: &tidb_ast::Expr) -> Result<tidb_ast::Expr, DriverError> {
+    /// Substitutes one variable atom. The complete child walk belongs to
+    /// [`VariableBinder`], so scope validation cannot depend on expression
+    /// shape.
+    fn bind_variable_atom(&self, expr: &tidb_ast::Expr) -> Result<tidb_ast::Expr, DriverError> {
         use tidb_ast::Expr;
         Ok(match expr {
             Expr::SysVar { scope, name } => {
+                let def = sysvar::get_sys_var(name).ok_or_else(|| {
+                    var_error(VarError::UnknownSystemVariable(name.to_ascii_lowercase()))
+                })?;
+                if def.scope != sysvar::SCOPE_NONE {
+                    let incorrect_scope = match scope {
+                        Some(tidb_ast::SysVarScope::Global)
+                            if !(def.has_global_scope() || def.has_instance_scope()) =>
+                        {
+                            Some("SESSION")
+                        }
+                        Some(tidb_ast::SysVarScope::Instance) if !def.has_instance_scope() => {
+                            Some("SESSION or GLOBAL")
+                        }
+                        Some(tidb_ast::SysVarScope::Session) if !def.has_session_scope() => {
+                            Some("GLOBAL")
+                        }
+                        _ => None,
+                    };
+                    if let Some(allowed) = incorrect_scope {
+                        return Err(var_error(VarError::IncorrectScope(
+                            name.to_ascii_lowercase(),
+                            allowed,
+                        )));
+                    }
+                    if *scope == Some(tidb_ast::SysVarScope::Session)
+                        && def.is_internal_session_variable()
+                    {
+                        return Err(var_error(VarError::UnknownSystemVariable(
+                            name.to_ascii_lowercase(),
+                        )));
+                    }
+                }
                 // `@@last_insert_id` and its `@@identity` alias are the SAME
                 // value `LAST_INSERT_ID()` reports -- Go's
                 // `StmtCtx.PrevLastInsertID` -- not an entry in the variable
@@ -744,13 +807,15 @@ impl Session {
                         i32::from(self.last_plan_from_binding()).to_string(),
                     ));
                 }
-                // `@@global.x` reads the shared table live; every other
-                // scope (unqualified, `@@session.x`, `@@instance.x`) reads
-                // this session's own copy.
-                let result = if *scope == Some(tidb_ast::SysVarScope::Global) {
-                    self.vars.get_global(name)
-                } else {
-                    self.vars.get_system(name)
+                // A no-scope server property always reads its registry value.
+                // GLOBAL and INSTANCE both read the node-wide table; only an
+                // unqualified or explicit SESSION read uses the session copy.
+                let result = match scope {
+                    _ if def.scope == sysvar::SCOPE_NONE => Ok(sysvar::effective_default(def)),
+                    Some(tidb_ast::SysVarScope::Global | tidb_ast::SysVarScope::Instance) => {
+                        self.vars.get_global(name)
+                    }
+                    _ => self.vars.get_system(name),
                 };
                 match result {
                     Ok(value) => sysvar_native_expr(name, value),
@@ -768,35 +833,24 @@ impl Session {
                 name,
                 self.user_vars.borrow().get(&name.to_ascii_lowercase()),
             ),
-            // The assignment expression keeps its own shape (the rewriter
-            // types it from the value), but its value may itself read
-            // variables.
-            Expr::Assign { name, value } => Expr::Assign {
-                name: name.clone(),
-                value: Box::new(self.bind_variables_in(value)?),
-            },
-            Expr::Paren(inner) => Expr::Paren(Box::new(self.bind_variables_in(inner)?)),
-            Expr::Unary(op, inner) => Expr::Unary(*op, Box::new(self.bind_variables_in(inner)?)),
-            Expr::Binary(op, lhs, rhs) => Expr::Binary(
-                *op,
-                Box::new(self.bind_variables_in(lhs)?),
-                Box::new(self.bind_variables_in(rhs)?),
-            ),
-            Expr::Is { expr, target, not } => Expr::Is {
-                expr: Box::new(self.bind_variables_in(expr)?),
-                target: *target,
-                not: *not,
-            },
-            Expr::In { expr, list, not } => Expr::In {
-                expr: Box::new(self.bind_variables_in(expr)?),
-                list: list
-                    .iter()
-                    .map(|item| self.bind_variables_in(item))
-                    .collect::<Result<_, _>>()?,
-                not: *not,
-            },
-            other => other.clone(),
+            _ => unreachable!("VariableBinder only sends variable atoms to this helper"),
         })
+    }
+
+    /// Substitutes variables in a standalone expression, such as a `SET`
+    /// value, through the same complete visitor a query uses.
+    fn bind_variables_in(&self, expr: &tidb_ast::Expr) -> Result<tidb_ast::Expr, DriverError> {
+        let mut bound = expr.clone();
+        let mut binder = VariableBinder {
+            session: self,
+            error: None,
+        };
+        if !bound.accept(&mut binder) {
+            return Err(binder
+                .error
+                .expect("variable traversal stops only after recording an error"));
+        }
+        Ok(bound)
     }
 
     /// Go `hint.go`'s `set_var` arm plus `optimize.go`'s application of

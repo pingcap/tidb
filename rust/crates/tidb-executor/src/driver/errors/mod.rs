@@ -1124,6 +1124,12 @@ impl DriverError {
             *b"HY000",
             format!("Variable '{name}' is a SESSION variable"),
         ),
+        // Go `ErrIncorrectScope`: "Variable '%-.192s' is a %s variable".
+        DriverError::Var(crate::VarErrorKind::IncorrectScope(name, allowed)) => MysqlError::new(
+            ER_INCORRECT_GLOBAL_LOCAL_VAR,
+            *b"HY000",
+            format!("Variable '{name}' is a {allowed} variable"),
+        ),
         // Go `ErrSpecificAccessDenied` (1227): `SET GLOBAL` without SUPER or
         // SYSTEM_VARIABLES_ADMIN.
         DriverError::Var(crate::VarErrorKind::SetGlobalAccessDenied) => MysqlError::new(

@@ -25,6 +25,7 @@ tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-naming = { path = "../tidb-naming" }
+tidb-proto = { path = "../tidb-proto" }
 tidb-tikvutil = { path = "../tidb-tikvutil" }
 aes.workspace = true
 chrono.workspace = true
@@ -35,7 +36,7 @@ getrandom.workspace = true
 num-traits.workspace = true
 prometheus = { version = "0.14", default-features = false }
 regex.workspace = true
-rustix = { workspace = true, features = ["fs"] }
+rustix = { workspace = true, features = ["fs", "system"] }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tempfile.workspace = true
@@ -45,6 +46,10 @@ tracing = "0.1"
 
 [target.'cfg(windows)'.dependencies]
 fs4 = { version = "=1.1.0", default-features = false }
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_SystemInformation",
+] }
 
 [dev-dependencies]
 sha2.workspace = true

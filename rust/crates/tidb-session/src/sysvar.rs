@@ -36,10 +36,12 @@
 //! than those [`SysVarDef::run_validation`] names, and the `SetSession` and
 //! `GetSession` closures Go attaches to many entries (charset name checks,
 //! isolation-level checks, autocommit's implicit commit, and every variable
-//! whose read is computed rather than stored); `ScopeInstance` behaving
-//! differently from global; and the global tier's persistence. The table's
-//! declarative part -- names, scopes, defaults, types, bounds, enums,
-//! read-only -- is complete.
+//! whose read is computed rather than stored); instance-specific mutation
+//! hooks beyond the explicit read-tier routing; and the global tier's
+//! persistence. The table's declarative part -- names, scopes, defaults,
+//! types, bounds, enums, read-only -- is complete. The one registry flag the
+//! capture does not expose, `InternalSessionVariable`, is retained by
+//! [`SysVarDef::is_internal_session_variable`].
 
 /// Go `vardef.ScopeNone`: a read-only server property.
 pub const SCOPE_NONE: u8 = 0;
@@ -137,6 +139,16 @@ impl SysVarDef {
     pub fn is_read_only(&self) -> bool {
         self.read_only || self.scope == SCOPE_NONE
     }
+
+    /// Go `InternalSessionVariable`: an explicit `@@session.x` must hide the
+    /// variable even though an unqualified internal read remains available.
+    ///
+    /// The source registry has exactly one such entry. Keep it here rather
+    /// than adding a generated field to all 948 entries for one true value.
+    #[must_use]
+    pub fn is_internal_session_variable(&self) -> bool {
+        self.name == "tidb_redact_log"
+    }
 }
 
 mod catalog;
@@ -152,6 +164,17 @@ pub fn get_sys_var(name: &str) -> Option<&'static SysVarDef> {
         .binary_search_by(|candidate| candidate.name.cmp(lowered.as_str()))
         .ok()
         .map(|index| &SYS_VARS[index])
+}
+
+/// The process-effective default for one registry entry.
+///
+/// Most defaults are immutable captured source values. `pkg/util/sem` owns
+/// the two exceptions Go mutates through `variable.SetSysVar` when SEM is
+/// enabled or disabled.
+#[must_use]
+pub fn effective_default(definition: &SysVarDef) -> String {
+    tidb_util::sem::effective_sysvar_default(definition.name)
+        .unwrap_or_else(|| definition.value.to_owned())
 }
 
 /// Go `SysVar.AllowEmpty`: the empty string means "read the value from the

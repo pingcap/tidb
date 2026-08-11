@@ -1358,17 +1358,18 @@ impl QuerySession for ClusterServerSession {
         let result_columns = self.probe_statement(StatementReadShape::Unknown, move |session| {
             let probe: Vec<tidb_datatype::Datum> =
                 std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
-            Ok(match session.run_with_params(&owned, &probe) {
+            match session.run_with_params(&owned, &probe) {
                 Ok(StmtOutput::Rows { columns, .. }) => {
-                    crate::pipeline_session::select_columns(&columns)
+                    Ok(crate::pipeline_session::select_columns(&columns))
                 }
+                Err(error @ tidb_executor::DriverError::Var(_)) => Err(map_error(error)),
                 // A query whose metadata cannot be resolved without real
                 // values reports none at prepare time -- which a client
                 // frames its EXECUTE against, so it is the shape that
                 // answers `2014 Commands out of sync` rather than a harmless
                 // omission. See `crate::pipeline_session::prepare_general`.
-                _ => Vec::new(),
-            })
+                _ => Ok(Vec::new()),
+            }
         })?;
         Ok(PreparedGeneral::new(
             sql.to_owned(),

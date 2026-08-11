@@ -12,10 +12,13 @@ fn main() {
     println!("cargo:rerun-if-changed=proto/mpp.proto");
     println!("cargo:rerun-if-changed=proto/mvccpb.proto");
     println!("cargo:rerun-if-changed=proto/etcdserverpb.proto");
+    println!("cargo:rerun-if-changed=proto/brpb.proto");
+    println!("cargo:rerun-if-changed=proto/encryptionpb.proto");
 
     tonic_prost_build::configure()
         .build_client(true)
         .build_server(true)
+        .boxed(".encryptionpb.MasterKey.backend.kms")
         .compile_protos(
             &[
                 "proto/resourcetag.proto",
@@ -29,8 +32,10 @@ fn main() {
                 "proto/mpp.proto",
                 "proto/mvccpb.proto",
                 "proto/etcdserverpb.proto",
+                "proto/brpb.proto",
+                "proto/encryptionpb.proto",
             ],
             &["proto"],
         )
-        .expect("compile checked-in tipb resource-tag and select response protos");
+        .expect("compile checked-in dependency-closed TiDB protocol inputs");
 }

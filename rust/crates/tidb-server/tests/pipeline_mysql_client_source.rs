@@ -25,8 +25,8 @@ use sha1::{Digest, Sha1};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 use tidb_protocol::{
-    PacketReader, PacketWriter, COM_QUERY, COM_STMT_CLOSE, COM_STMT_EXECUTE, COM_STMT_FETCH,
-    COM_STMT_PREPARE, COM_STMT_RESET, DEFAULT_MAX_ALLOWED_PACKET,
+    PacketReader, PacketWriter, COM_PING, COM_QUERY, COM_STMT_CLOSE, COM_STMT_EXECUTE,
+    COM_STMT_FETCH, COM_STMT_PREPARE, COM_STMT_RESET, DEFAULT_MAX_ALLOWED_PACKET,
 };
 use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
@@ -73,6 +73,11 @@ fn assert_error_packet(packet: &[u8], code: u16, state: &[u8; 5]) {
     );
     assert_eq!(&packet[3..4], b"#", "SQLSTATE marker: {packet:?}");
     assert_eq!(&packet[4..9], state, "SQLSTATE: {packet:?}");
+}
+
+fn assert_error_packet_exact(packet: &[u8], code: u16, state: &[u8; 5], message: &str) {
+    assert_error_packet(packet, code, state);
+    assert_eq!(&packet[9..], message.as_bytes(), "ERR message: {packet:?}");
 }
 
 fn handshake_salt(initial: &[u8]) -> [u8; 20] {
@@ -1484,6 +1489,79 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     write_packet(&mut client, 0, &[0x01]);
     drop(client);
     worker.join().unwrap();
+}
+
+/// Source: `pkg/planner/core/tests/rewriter.TestVariableRewritter`.
+///
+/// Go's expression rewriter rejects an explicitly invalid system-variable
+/// scope while planning both a text query and a prepared statement. The typed
+/// 1238/1193 must survive the session adapter and the connection error writer;
+/// a failed PREPARE must not install a statement or count as a success.
+#[test]
+fn system_variable_scope_errors_reach_text_and_prepare_wire() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        let store = users();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &store,
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read_side = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read_side);
+    authenticate(&mut client, &mut reader);
+
+    let cases = [
+        (
+            "SELECT @@session.ddl_slow_threshold",
+            1238,
+            "Variable 'ddl_slow_threshold' is a GLOBAL variable",
+        ),
+        (
+            "SELECT @@session.tidb_redact_log",
+            1193,
+            "Unknown system variable 'tidb_redact_log'",
+        ),
+    ];
+    for command_code in [COM_QUERY, COM_STMT_PREPARE] {
+        for (sql, code, message) in cases {
+            let mut command = vec![command_code];
+            command.extend_from_slice(sql.as_bytes());
+            write_packet(&mut client, 0, &command);
+            reader.set_sequence(1);
+            assert_error_packet_exact(
+                &reader.read_packet().unwrap(),
+                code,
+                b"HY000",
+                message,
+            );
+        }
+    }
+
+    // A semantic query error is command-local: the event loop remains usable.
+    write_packet(&mut client, 0, &[COM_PING]);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0x00, "COM_PING OK");
+
+    write_packet(&mut client, 0, &[0x01]);
+    drop(client);
+    let report = worker.join().unwrap();
+    assert_eq!(report.commands.text_query_commands, 2);
+    assert_eq!(report.commands.stmt_prepare_commands, 2);
+    assert_eq!(report.commands.stmt_prepare_successes, 0);
+    assert_eq!(report.exit, ConnectionExit::Quit);
 }
 
 /// Cursor materialization is part of the executing statement's memory

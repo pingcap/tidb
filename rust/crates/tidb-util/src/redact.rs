@@ -22,13 +22,15 @@
 //!   (marker `‹`/`›` with doubled delimiters escaped), including its error
 //!   on a truncated escape.
 //!
-//! PACKAGE IN PROGRESS: Go's `TaskInfoRedacted` (a `backup.StreamBackup
-//! TaskInfo` wrapper that scrubs S3/GCS/Azure credentials) is not ported --
-//! it depends on the `kvproto` BR backup protobufs, which are not in this
-//! workspace's proto set. It has no upstream test. Everything else in the
-//! package is ported with its full test suite.
+//! - [`TaskInfoRedacted`] clones a BR stream-backup task, scrubs exactly the
+//!   S3/GCS/Azure credential fields changed by Go, and preserves gogo's
+//!   compact protobuf text without mutating the source task.
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, Ordering};
+
+use tidb_proto::backup;
+
+mod compact_text;
 
 /// `errors.RedactLogEnable`: redaction on, values replaced.
 pub const REDACT_LOG_ENABLE: &str = "ON";
@@ -39,7 +41,10 @@ pub const REDACT_LOG_MARKER: &str = "MARKER";
 
 /// The process-wide redact-log flag (`errors.RedactLogEnabled`). Its zero
 /// value is the empty string, meaning "not initialized" (no redaction).
-static REDACT_LOG_ENABLED: Mutex<String> = Mutex::new(String::new());
+const REDACT_STATE_UNINITIALIZED: u8 = 0;
+const REDACT_STATE_DISABLED: u8 = 1;
+const REDACT_STATE_ENABLED: u8 = 2;
+static REDACT_LOG_ENABLED: AtomicU8 = AtomicU8::new(REDACT_STATE_UNINITIALIZED);
 
 /// Go `redact.String`: redacts `input` according to `mode`.
 ///
@@ -66,7 +71,7 @@ pub fn string(mode: &str, input: &str) -> String {
         "OFF" => input.to_owned(),
         "ON" => String::new(),
         _ => {
-            debug_assert!(false, "invalid redact mode");
+            crate::intest::assert_with_message(false, "invalid redact mode");
             String::new()
         }
     }
@@ -113,31 +118,67 @@ impl std::error::Error for DeRedactError {}
 /// collapse to one), `›` closes it. An unterminated `‹` is emitted verbatim
 /// at end of line (Go writes back the buffered content).
 pub fn de_redact(remove: bool, input: &str, sep: &str) -> Result<String, DeRedactError> {
+    de_redact_bytes(remove, input.as_bytes(), sep)
+}
+
+fn de_redact_bytes(remove: bool, input: &[u8], sep: &str) -> Result<String, DeRedactError> {
     let mut out = String::new();
     for line in scan_lines(input) {
-        de_redact_line(remove, &line, &mut out)?;
+        de_redact_line(remove, &decode_go_utf8(line), &mut out)?;
         out.push_str(sep);
     }
     Ok(out)
 }
 
 /// Splits like Go's default `bufio.ScanLines`: on `\n`, dropping a single
-/// trailing `\r`, and yielding a final unterminated line if non-empty. An
-/// empty input yields no lines.
-fn scan_lines(input: &str) -> Vec<String> {
-    if input.is_empty() {
-        return Vec::new();
-    }
-    let mut lines: Vec<String> = input
-        .split('\n')
-        .map(|raw| raw.strip_suffix('\r').unwrap_or(raw).to_owned())
-        .collect();
-    // split('\n') on "a\n" yields ["a", ""]; that trailing "" is the absence
-    // of a final line, not an empty final line, so drop it.
-    if input.ends_with('\n') {
-        lines.pop();
+/// trailing `\r`, yielding a final unterminated line if non-empty, and
+/// silently stopping when a token reaches `bufio.MaxScanTokenSize`. Go's
+/// `DeRedact` deliberately does not inspect `Scanner.Err()`.
+fn scan_lines(input: &[u8]) -> Vec<&[u8]> {
+    const MAX_SCAN_TOKEN_SIZE: usize = 64 * 1024;
+
+    let mut lines = Vec::new();
+    let mut start = 0usize;
+    while start < input.len() {
+        let newline = input[start..]
+            .iter()
+            .position(|byte| *byte == b'\n')
+            .map(|offset| start + offset);
+        let end = newline.unwrap_or(input.len());
+        let raw = &input[start..end];
+        if raw.len() >= MAX_SCAN_TOKEN_SIZE {
+            break;
+        }
+        lines.push(raw.strip_suffix(b"\r").unwrap_or(raw));
+        let Some(newline) = newline else {
+            break;
+        };
+        start = newline + 1;
     }
     lines
+}
+
+/// Go's `bufio.Reader.ReadRune` consumes one byte for each malformed UTF-8
+/// rune. `String::from_utf8_lossy` may collapse a longer malformed sequence,
+/// so decode explicitly to keep Go's byte advancement.
+fn decode_go_utf8(input: &[u8]) -> String {
+    let mut decoded = String::new();
+    let mut rest = input;
+    while !rest.is_empty() {
+        match std::str::from_utf8(rest) {
+            Ok(valid) => {
+                decoded.push_str(valid);
+                break;
+            }
+            Err(error) => {
+                let valid = error.valid_up_to();
+                decoded.push_str(std::str::from_utf8(&rest[..valid]).unwrap_or_default());
+                decoded.push('\u{fffd}');
+                rest = &rest[valid + 1..];
+            }
+        }
+    }
+    decoded
 }
 
 /// The per-line core of [`de_redact`], appending to `out`.
@@ -209,15 +250,27 @@ fn de_redact_line(remove: bool, line: &str, out: &mut String) -> Result<(), DeRe
 /// Go `redact.DeRedactFile`: de-redacts `input` into `output` (a path, or
 /// `"-"` for standard output), line by line with `\n` separators.
 pub fn de_redact_file(remove: bool, input: &str, output: &str) -> std::io::Result<()> {
-    let content = std::fs::read_to_string(input)?;
-    let result = de_redact(remove, &content, "\n")
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    if output == "-" {
-        use std::io::Write;
-        std::io::stdout().write_all(result.as_bytes())
+    use std::io::{Read, Write};
+
+    let mut input_file = std::fs::File::open(input)?;
+    let mut output_file: Box<dyn Write> = if output == "-" {
+        Box::new(std::io::stdout())
     } else {
-        std::fs::write(output, result)
-    }
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o644);
+        }
+        Box::new(options.open(output)?)
+    };
+
+    let mut content = Vec::new();
+    input_file.read_to_end(&mut content)?;
+    let result = de_redact_bytes(remove, &content, "\n")
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    output_file.write_all(result.as_bytes())
 }
 
 /// Go `redact.InitRedact`: sets the process-wide flag to `ON`/`OFF`.
@@ -227,15 +280,19 @@ pub fn init_redact(redact_log: bool) {
     } else {
         REDACT_LOG_DISABLE
     };
-    *REDACT_LOG_ENABLED.lock().unwrap() = mode.to_owned();
+    let state = if mode == REDACT_LOG_ENABLE {
+        REDACT_STATE_ENABLED
+    } else {
+        REDACT_STATE_DISABLED
+    };
+    REDACT_LOG_ENABLED.store(state, Ordering::SeqCst);
 }
 
 /// Go `redact.NeedRedact`: whether redaction is currently enabled (the flag
 /// is neither `OFF` nor its uninitialized empty value).
 #[must_use]
 pub fn need_redact() -> bool {
-    let mode = REDACT_LOG_ENABLED.lock().unwrap();
-    *mode != REDACT_LOG_DISABLE && !mode.is_empty()
+    REDACT_LOG_ENABLED.load(Ordering::SeqCst) == REDACT_STATE_ENABLED
 }
 
 /// Go `redact.Value`: `?` when redaction is enabled, else `arg` unchanged.
@@ -275,6 +332,49 @@ pub fn write_redact(build: &mut String, v: &str, redact: &str) {
         build.push('?');
     } else {
         build.push_str(v);
+    }
+}
+
+/// Go `redact.TaskInfoRedacted`: a display wrapper for a BR stream-backup
+/// task whose storage credentials are scrubbed without mutating the task.
+#[derive(Debug, Clone, Copy)]
+pub struct TaskInfoRedacted<'a> {
+    /// The task to render. `None` is Go's nil `Info` pointer.
+    pub info: Option<&'a backup::StreamBackupTaskInfo>,
+}
+
+impl std::fmt::Display for TaskInfoRedacted<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let Some(info) = self.info else {
+            return f.write_str("nil");
+        };
+
+        let mut redacted = info.clone();
+        if let Some(storage) = &mut redacted.storage {
+            use backup::storage_backend::Backend;
+
+            match &mut storage.backend {
+                Some(Backend::S3(s3)) => {
+                    s3.access_key = "[REDACTED]".to_owned();
+                    s3.secret_access_key = "[REDACTED]".to_owned();
+                    s3.sse_kms_key_id = "[REDACTED]".to_owned();
+                }
+                Some(Backend::Gcs(gcs)) => {
+                    gcs.credentials_blob = "[REDACTED]".to_owned();
+                }
+                Some(Backend::AzureBlobStorage(azure)) => {
+                    azure.shared_key = "[REDACTED]".to_owned();
+                    azure.access_sig = "[REDACTED]".to_owned();
+                    azure.encryption_key = Some(backup::AzureCustomerKey {
+                        encryption_key: "[REDACTED]".to_owned(),
+                        ..Default::default()
+                    });
+                }
+                _ => {}
+            }
+        }
+
+        f.write_str(&compact_text::stream_backup_task_info(&redacted))
     }
 }
 
@@ -322,6 +422,46 @@ mod tests {
         }
     }
 
+    #[test]
+    fn de_redact_keeps_go_scanner_and_invalid_utf8_behavior() {
+        let accepted = format!("{}\nTAIL", "x".repeat(65_535));
+        let output = de_redact(false, &accepted, "|").unwrap();
+        assert_eq!(output.len(), 65_541);
+        assert!(output.ends_with("xx|TAIL|"));
+
+        let rejected = format!("{}\nTAIL", "x".repeat(65_536));
+        assert_eq!(de_redact(false, &rejected, "|").unwrap(), "");
+
+        assert_eq!(
+            de_redact_bytes(false, &[b'a', 0xff, 0xfe, b'b'], "").unwrap(),
+            "a\u{fffd}\u{fffd}b"
+        );
+    }
+
+    #[test]
+    fn de_redact_file_accepts_go_style_invalid_utf8() {
+        let directory = tempfile::tempdir().unwrap();
+        let input = directory.path().join("input.log");
+        let output = directory.path().join("output.log");
+        std::fs::write(&input, [b'a', 0xff, 0xfe, b'b']).unwrap();
+
+        de_redact_file(false, input.to_str().unwrap(), output.to_str().unwrap()).unwrap();
+        assert_eq!(
+            std::fs::read(output).unwrap(),
+            "a\u{fffd}\u{fffd}b\n".as_bytes()
+        );
+    }
+
+    #[test]
+    fn de_redact_file_keeps_go_same_path_open_order() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("same.log");
+        std::fs::write(&path, "‹secret›").unwrap();
+
+        de_redact_file(false, path.to_str().unwrap(), path.to_str().unwrap()).unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), b"");
+    }
+
     // Go TestRedactInitAndValueAndKey. This is the only test touching the
     // process-wide flag; keep it in its own #[test] so it does not race with
     // other redact tests (none of which read the flag).
@@ -334,6 +474,7 @@ mod tests {
         // "secret" hex has no a-f nibbles, so lower == upper here (Go's test
         // compares against lower-case EncodeToString and still passes).
         assert_eq!(key(secret.as_bytes()), "736563726574");
+        assert_eq!(key(&[0xab, 0xcd, 0xef]), "ABCDEF");
 
         init_redact(true);
         assert_eq!(value(secret), "?");
@@ -355,5 +496,379 @@ mod tests {
         let mut b = String::new();
         write_redact(&mut b, "v", REDACT_LOG_DISABLE);
         assert_eq!(b, "v");
+    }
+
+    // BR TestRedactBackend: exact compact protobuf text plus the source
+    // object's non-mutation contract for every credential-bearing backend.
+    #[test]
+    fn task_info_redacts_backends_without_mutating_source() {
+        use tidb_proto::backup::{
+            storage_backend, AzureBlobStorage, AzureCustomerKey, Gcs, StorageBackend,
+            StreamBackupTaskInfo, S3,
+        };
+
+        let mut info = StreamBackupTaskInfo {
+            name: "test".to_owned(),
+            storage: Some(StorageBackend {
+                backend: Some(storage_backend::Backend::S3(S3 {
+                    endpoint: "http://".to_owned(),
+                    bucket: "test".to_owned(),
+                    prefix: "test".to_owned(),
+                    access_key: "12abCD!@#[]{}?/\\".to_owned(),
+                    secret_access_key: "12abCD!@#[]{}?/\\".to_owned(),
+                    ..Default::default()
+                })),
+            }),
+            ..Default::default()
+        };
+
+        let original = info.clone();
+        assert_eq!(
+            TaskInfoRedacted { info: Some(&info) }.to_string(),
+            "storage:<s3:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" access_key:\"[REDACTED]\" secret_access_key:\"[REDACTED]\" sse_kms_key_id:\"[REDACTED]\" > > name:\"test\" "
+        );
+        assert_eq!(info, original);
+
+        info.storage = Some(StorageBackend {
+            backend: Some(storage_backend::Backend::Gcs(Gcs {
+                endpoint: "http://".to_owned(),
+                bucket: "test".to_owned(),
+                prefix: "test".to_owned(),
+                credentials_blob: "12abCD!@#[]{}?/\\".to_owned(),
+                ..Default::default()
+            })),
+        });
+        let original = info.clone();
+        assert_eq!(
+            TaskInfoRedacted { info: Some(&info) }.to_string(),
+            "storage:<gcs:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" credentials_blob:\"[REDACTED]\" > > name:\"test\" "
+        );
+        assert_eq!(info, original);
+
+        info.storage = Some(StorageBackend {
+            backend: Some(storage_backend::Backend::AzureBlobStorage(
+                AzureBlobStorage {
+                    endpoint: "http://".to_owned(),
+                    bucket: "test".to_owned(),
+                    prefix: "test".to_owned(),
+                    shared_key: "12abCD!@#[]{}?/\\".to_owned(),
+                    access_sig: "12abCD!@#[]{}?/\\".to_owned(),
+                    encryption_key: Some(AzureCustomerKey {
+                        encryption_key: "12abCD!@#[]{}?/\\".to_owned(),
+                        encryption_key_sha256: "12abCD!@#[]{}?/\\".to_owned(),
+                    }),
+                    ..Default::default()
+                },
+            )),
+        });
+        let original = info.clone();
+        assert_eq!(
+            TaskInfoRedacted { info: Some(&info) }.to_string(),
+            "storage:<azure_blob_storage:<endpoint:\"http://\" bucket:\"test\" prefix:\"test\" shared_key:\"[REDACTED]\" access_sig:\"[REDACTED]\" encryption_key:<encryption_key:\"[REDACTED]\" > > > name:\"test\" "
+        );
+        assert_eq!(info, original);
+    }
+
+    #[test]
+    fn task_info_preserves_noncredential_backends_and_compact_text_rules() {
+        use std::collections::HashMap;
+
+        use tidb_proto::backup::{
+            storage_backend, Bucket, CloudDynamic, Hdfs, Local, Noop, StorageBackend,
+            StreamBackupTaskInfo,
+        };
+
+        assert_eq!(TaskInfoRedacted { info: None }.to_string(), "nil");
+
+        let cases = [
+            (
+                storage_backend::Backend::Noop(Noop {}),
+                r#"storage:<noop:<> > "#,
+            ),
+            (
+                storage_backend::Backend::Local(Local {
+                    path: "a\n\"\\\x01".to_owned(),
+                }),
+                r#"storage:<local:<path:"a\n\"\\\001" > > "#,
+            ),
+            (
+                storage_backend::Backend::CloudDynamic(CloudDynamic {
+                    bucket: Some(Bucket {
+                        endpoint: "e".to_owned(),
+                        ..Default::default()
+                    }),
+                    provider_name: "p".to_owned(),
+                    attrs: HashMap::from([
+                        ("z".to_owned(), "2".to_owned()),
+                        ("a".to_owned(), "1".to_owned()),
+                    ]),
+                }),
+                r#"storage:<cloud_dynamic:<bucket:<endpoint:"e" > provider_name:"p" attrs:<key:"a" value:"1" > attrs:<key:"z" value:"2" > > > "#,
+            ),
+            (
+                storage_backend::Backend::Hdfs(Hdfs {
+                    remote: "hdfs:///x".to_owned(),
+                }),
+                r#"storage:<hdfs:<remote:"hdfs:///x" > > "#,
+            ),
+        ];
+
+        for (backend, expected) in cases {
+            let info = StreamBackupTaskInfo {
+                storage: Some(StorageBackend {
+                    backend: Some(backend),
+                }),
+                ..Default::default()
+            };
+            let original = info.clone();
+            assert_eq!(TaskInfoRedacted { info: Some(&info) }.to_string(), expected);
+            assert_eq!(info, original);
+        }
+    }
+
+    #[test]
+    fn task_info_preserves_dependency_closed_security_config() {
+        use tidb_proto::{
+            backup::{
+                stream_backup_task_security_config, CipherInfo, CompressionType, MasterKeyConfig,
+                StreamBackupTaskInfo, StreamBackupTaskSecurityConfig,
+            },
+            encryptionpb::{
+                master_key, AwsKms, AzureKms, EncryptionMethod, GcpKms, MasterKey, MasterKeyFile,
+                MasterKeyKms, MasterKeyPlaintext,
+            },
+        };
+
+        let plain = StreamBackupTaskInfo {
+            start_ts: 1,
+            end_ts: 2,
+            name: "n".to_owned(),
+            table_filter: vec!["a".to_owned(), "b".to_owned()],
+            compression_type: CompressionType::Zstd as i32,
+            security_config: Some(StreamBackupTaskSecurityConfig {
+                encryption: Some(
+                    stream_backup_task_security_config::Encryption::PlaintextDataKey(CipherInfo {
+                        cipher_type: EncryptionMethod::Aes256Ctr as i32,
+                        cipher_key: vec![0, b'\n', b'\\', b'"', 0xff],
+                    }),
+                ),
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            TaskInfoRedacted { info: Some(&plain) }.to_string(),
+            r#"start_ts:1 end_ts:2 name:"n" table_filter:"a" table_filter:"b" compression_type:ZSTDZSTD security_config:<plaintext_data_key:<cipher_type:AES256_CTRAES256_CTR cipher_key:"\000\n\\\"\377" > > "#
+        );
+
+        let master = StreamBackupTaskInfo {
+            security_config: Some(StreamBackupTaskSecurityConfig {
+                encryption: Some(
+                    stream_backup_task_security_config::Encryption::MasterKeyConfig(
+                        MasterKeyConfig {
+                            encryption_type: EncryptionMethod::Aes128Ctr as i32,
+                            master_keys: vec![
+                                MasterKey {
+                                    backend: Some(master_key::Backend::Plaintext(
+                                        MasterKeyPlaintext {},
+                                    )),
+                                },
+                                MasterKey {
+                                    backend: Some(master_key::Backend::File(MasterKeyFile {
+                                        path: "/k".to_owned(),
+                                    })),
+                                },
+                                MasterKey {
+                                    backend: Some(master_key::Backend::Kms(Box::new(
+                                        MasterKeyKms {
+                                            vendor: "v".to_owned(),
+                                            key_id: "id".to_owned(),
+                                            azure_kms: Some(AzureKms {
+                                                tenant_id: "t".to_owned(),
+                                                ..Default::default()
+                                            }),
+                                            gcp_kms: Some(GcpKms {
+                                                credential: "c".to_owned(),
+                                            }),
+                                            aws_kms: Some(AwsKms {
+                                                access_key: "a".to_owned(),
+                                                secret_access_key: "s".to_owned(),
+                                            }),
+                                            ..Default::default()
+                                        },
+                                    ))),
+                                },
+                            ],
+                        },
+                    ),
+                ),
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            TaskInfoRedacted {
+                info: Some(&master)
+            }
+            .to_string(),
+            r#"security_config:<master_key_config:<encryption_type:AES128_CTRAES128_CTR master_keys:<plaintext:<> > master_keys:<file:<path:"/k" > > master_keys:<kms:<vendor:"v" key_id:"id" azure_kms:<tenant_id:"t" > gcp_kms:<credential:"c" > aws_kms:<access_key:"a" secret_access_key:"s" > > > > > "#
+        );
+    }
+
+    #[test]
+    fn task_info_matches_go_all_fields_goldens() {
+        use std::collections::HashMap;
+
+        use tidb_proto::{
+            backup::{
+                storage_backend, stream_backup_task_security_config, AzureBlobStorage,
+                AzureCustomerKey, Bucket, CloudDynamic, Gcs, MasterKeyConfig, StorageBackend,
+                StreamBackupTaskInfo, StreamBackupTaskSecurityConfig, S3,
+            },
+            encryptionpb::{
+                master_key, AwsKms, AzureKms, EncryptionMethod, GcpKms, MasterKey, MasterKeyKms,
+            },
+        };
+
+        fn check(info: &StreamBackupTaskInfo, expected: &str) {
+            let original = info.clone();
+            assert_eq!(TaskInfoRedacted { info: Some(info) }.to_string(), expected);
+            assert_eq!(*info, original);
+        }
+
+        let s3 = StreamBackupTaskInfo {
+            storage: Some(StorageBackend {
+                backend: Some(storage_backend::Backend::S3(S3 {
+                    endpoint: "1".to_owned(),
+                    region: "2".to_owned(),
+                    bucket: "3".to_owned(),
+                    prefix: "4".to_owned(),
+                    storage_class: "5".to_owned(),
+                    sse: "6".to_owned(),
+                    acl: "7".to_owned(),
+                    access_key: "8".to_owned(),
+                    secret_access_key: "9".to_owned(),
+                    force_path_style: true,
+                    sse_kms_key_id: "11".to_owned(),
+                    role_arn: "12".to_owned(),
+                    external_id: "13".to_owned(),
+                    object_lock_enabled: true,
+                    session_token: "15".to_owned(),
+                    provider: "16".to_owned(),
+                    profile: "17".to_owned(),
+                })),
+            }),
+            ..Default::default()
+        };
+        check(
+            &s3,
+            r#"storage:<s3:<endpoint:"1" region:"2" bucket:"3" prefix:"4" storage_class:"5" sse:"6" acl:"7" access_key:"[REDACTED]" secret_access_key:"[REDACTED]" force_path_style:true sse_kms_key_id:"[REDACTED]" role_arn:"12" external_id:"13" object_lock_enabled:true session_token:"15" provider:"16" profile:"17" > > "#,
+        );
+
+        let gcs = StreamBackupTaskInfo {
+            storage: Some(StorageBackend {
+                backend: Some(storage_backend::Backend::Gcs(Gcs {
+                    endpoint: "1".to_owned(),
+                    bucket: "2".to_owned(),
+                    prefix: "3".to_owned(),
+                    storage_class: "4".to_owned(),
+                    predefined_acl: "5".to_owned(),
+                    credentials_blob: "6".to_owned(),
+                })),
+            }),
+            ..Default::default()
+        };
+        check(
+            &gcs,
+            r#"storage:<gcs:<endpoint:"1" bucket:"2" prefix:"3" storage_class:"4" predefined_acl:"5" credentials_blob:"[REDACTED]" > > "#,
+        );
+
+        let azure = StreamBackupTaskInfo {
+            storage: Some(StorageBackend {
+                backend: Some(storage_backend::Backend::AzureBlobStorage(
+                    AzureBlobStorage {
+                        endpoint: "1".to_owned(),
+                        bucket: "2".to_owned(),
+                        prefix: "3".to_owned(),
+                        storage_class: "4".to_owned(),
+                        account_name: "5".to_owned(),
+                        shared_key: "6".to_owned(),
+                        access_sig: "8".to_owned(),
+                        encryption_scope: "9".to_owned(),
+                        encryption_key: Some(AzureCustomerKey {
+                            encryption_key: "10a".to_owned(),
+                            encryption_key_sha256: "10b".to_owned(),
+                        }),
+                    },
+                )),
+            }),
+            ..Default::default()
+        };
+        check(
+            &azure,
+            r#"storage:<azure_blob_storage:<endpoint:"1" bucket:"2" prefix:"3" storage_class:"4" account_name:"5" shared_key:"[REDACTED]" access_sig:"[REDACTED]" encryption_scope:"9" encryption_key:<encryption_key:"[REDACTED]" > > > "#,
+        );
+
+        let cloud = StreamBackupTaskInfo {
+            storage: Some(StorageBackend {
+                backend: Some(storage_backend::Backend::CloudDynamic(CloudDynamic {
+                    bucket: Some(Bucket {
+                        endpoint: "1".to_owned(),
+                        region: "3".to_owned(),
+                        bucket: "4".to_owned(),
+                        prefix: "5".to_owned(),
+                        storage_class: "6".to_owned(),
+                    }),
+                    provider_name: "2".to_owned(),
+                    attrs: HashMap::from([("k".to_owned(), "v".to_owned())]),
+                })),
+            }),
+            ..Default::default()
+        };
+        check(
+            &cloud,
+            r#"storage:<cloud_dynamic:<bucket:<endpoint:"1" region:"3" bucket:"4" prefix:"5" storage_class:"6" > provider_name:"2" attrs:<key:"k" value:"v" > > > "#,
+        );
+
+        let kms = StreamBackupTaskInfo {
+            security_config: Some(StreamBackupTaskSecurityConfig {
+                encryption: Some(
+                    stream_backup_task_security_config::Encryption::MasterKeyConfig(
+                        MasterKeyConfig {
+                            encryption_type: EncryptionMethod::Sm4Ctr as i32,
+                            master_keys: vec![MasterKey {
+                                backend: Some(master_key::Backend::Kms(Box::new(MasterKeyKms {
+                                    vendor: "1".to_owned(),
+                                    key_id: "2".to_owned(),
+                                    region: "3".to_owned(),
+                                    endpoint: "4".to_owned(),
+                                    azure_kms: Some(AzureKms {
+                                        tenant_id: "1".to_owned(),
+                                        client_id: "2".to_owned(),
+                                        client_secret: "3".to_owned(),
+                                        key_vault_url: "4".to_owned(),
+                                        hsm_name: "5".to_owned(),
+                                        hsm_url: "6".to_owned(),
+                                        client_certificate: "7".to_owned(),
+                                        client_certificate_path: "8".to_owned(),
+                                        client_certificate_password: "9".to_owned(),
+                                    }),
+                                    gcp_kms: Some(GcpKms {
+                                        credential: "6".to_owned(),
+                                    }),
+                                    aws_kms: Some(AwsKms {
+                                        access_key: "7".to_owned(),
+                                        secret_access_key: "8".to_owned(),
+                                    }),
+                                }))),
+                            }],
+                        },
+                    ),
+                ),
+            }),
+            ..Default::default()
+        };
+        check(
+            &kms,
+            r#"security_config:<master_key_config:<encryption_type:SM4_CTRSM4_CTR master_keys:<kms:<vendor:"1" key_id:"2" region:"3" endpoint:"4" azure_kms:<tenant_id:"1" client_id:"2" client_secret:"3" key_vault_url:"4" hsm_name:"5" hsm_url:"6" client_certificate:"7" client_certificate_path:"8" client_certificate_password:"9" > gcp_kms:<credential:"6" > aws_kms:<access_key:"7" secret_access_key:"8" > > > > > "#,
+        );
     }
 }
