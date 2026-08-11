@@ -1,0 +1,31 @@
+go_package = "pkg/util/kvcache"
+source_commit = "6a85c6bbbd6cae7e0eea20a75ecd0853ac3545d6"
+evidence_files = [
+  "rust/Cargo.lock",
+  "rust/Cargo.toml",
+  "rust/crates/tidb-kvcache/Cargo.toml",
+  "rust/crates/tidb-kvcache/src/lib.rs",
+  "rust/crates/tidb-kvcache/tests/kvcache_source.rs",
+  "rust/crates/tidb-datatype/Cargo.toml",
+  "rust/crates/tidb-datatype/src/json_path.rs",
+  "rust/crates/tidb-util/Cargo.toml",
+  "rust/crates/tidb-util/src/kvcache.rs",
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/src/memory/mod.rs",
+  "rust/crates/tidb-util/src/memory/tracker.rs",
+  "rust/crates/tidb-executor/Cargo.toml",
+  "rust/crates/tidb-executor/src/apply_cache.rs",
+  "rust/crates/tidb-executor/tests/apply_cache_source.rs",
+  "rust/crates/tidb-session/Cargo.toml",
+  "rust/crates/tidb-session/src/non_prepared_plan_cache.rs",
+  "rust/crates/tidb-session/src/tests_non_prepared_plan_cache.rs",
+]
+commands = [
+  ["test", "-p", "tidb-kvcache"],
+  ["test", "-p", "tidb-util", "kvcache"],
+  ["test", "-p", "tidb-datatype", "json_path::tests"],
+  ["test", "-p", "tidb-executor", "--test", "apply_cache_source"],
+  ["test", "-p", "tidb-executor", "--lib", "apply::tests"],
+  ["test", "-p", "tidb-session", "--lib", "tests_non_prepared_plan_cache::the_cache_is_bounded_by_its_size_variable", "--", "--exact"],
+  ["check", "-p", "tidb-kvcache", "-p", "tidb-util", "-p", "tidb-datatype", "-p", "tidb-executor", "-p", "tidb-session", "--all-targets"],
+]
