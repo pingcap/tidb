@@ -81,11 +81,18 @@ its feature flag removed before index work merges on top.
 
 ## Detailed Design
 
-**MySQL-compatible, extensible where the extension is free.** Every v1 function behaves as
-MySQL does, and errors where MySQL cannot express a value. The storage layer is wider: WKB
-input accepts Z/M coordinates and any SRID, which are stored losslessly and read back
-intact, though no v1 function computes on them and the MySQL-shaped writers (`ST_AsBinary`,
-`ST_AsText`, `ST_AsGeoJSON`) reject them. Widening the functions later is out of scope here.
+**MySQL-compatible, extensible where the extension is free.** The two directions are
+deliberately asymmetric:
+
+- **`ST_GeomFrom*` accepts a superset of MySQL.** Z/M coordinates, SRIDs outside 0 and
+  4326, and option values MySQL rejects are all accepted, and the storage layer keeps them
+  losslessly. Accepting more cannot break a query that works on MySQL.
+- **`ST_As*` emits what MySQL emits.** It errors where MySQL cannot express a value,
+  because changing the bytes a client receives is where compatibility actually breaks.
+  Emitting Z/M is a later extension, and then only behind an explicit option.
+
+So a stored value can exist that no `ST_As*` can express. It reads back as the raw column
+value, and no v1 function computes on it.
 
 ### Types and storage
 
@@ -197,15 +204,32 @@ present in MySQL 8.0.46 / 8.4 / 9.7, whose spatial function sets are identical. 
 an **allowlist**: only these are registered, and anything else spatial is an unknown
 function until a later milestone adds it.
 
-- **I/O readers:** `ST_GeomFromText`, `ST_GeomFromWKB`, `ST_GeomFromGeoJSON`.
-- **I/O writers:** `ST_AsText` (`ST_AsWKT`), `ST_AsBinary` (`ST_AsWKB`), `ST_AsGeoJSON`.
-- **Option arguments.** `axis-order` on the WKT and WKB readers and writers, taking
+- **`ST_GeomFrom*`**, a geometry from an external format: `ST_GeomFromText`,
+  `ST_GeomFromWKB`, `ST_GeomFromGeoJSON`.
+- **`ST_As*`**, an external format from a geometry: `ST_AsText` (`ST_AsWKT`),
+  `ST_AsBinary` (`ST_AsWKB`), `ST_AsGeoJSON`.
+- **Option arguments.** `axis-order` on the WKT and WKB members of both groups, taking
   `lat-long`, `long-lat` or `srid-defined` (the default), rejecting anything else with
   `ERROR 3559` and having no effect at SRID 0. It is the explicit way to read or write
   longitude-first data against a latitude-first SRS, so a client need not pre-swap.
-  `ST_GeomFromGeoJSON` takes its own `options` and `srid` arguments: `options` 1 rejects
-  coordinate dimensions above 2 and is the default, while 2, 3 and 4 accept and strip
-  them, so a GeoJSON Z position is dropped rather than stored.
+  `ST_GeomFromGeoJSON` takes its own `options` and `srid` arguments. MySQL defines
+  `options` 1 to 4, where 1 rejects coordinate dimensions above 2 and is the default and
+  2, 3 and 4 strip them. TiDB extends the range with two values MySQL rejects:
+
+  | `options` | Coordinates | Anything else |
+  | --- | --- | --- |
+  | 5 | keep whatever the stored format holds, so a third element becomes Z | error |
+  | 6 | the same | ignore |
+
+  Both ignore what MySQL ignores. The difference is a position with more than three
+  elements, which RFC 7946 leaves undefined: 5 errors on it, 6 drops it.
+
+  `ST_AsGeoJSON(g [, digits [, flags]])` takes MySQL's two: `digits` rounds the
+  coordinates, defaulting to full precision and rejecting a negative value, and `flags` is
+  a bitmask from 0 to 7 where bit 0 adds `bbox`, bit 1 a short CRS URN (`EPSG:4326`) and
+  bit 2 a long one (`urn:ogc:def:crs:EPSG::4326`), long overriding short. Anything above 7
+  is an error. The `bbox` is emitted in output axis order, so it is longitude-first on
+  4326 like the coordinates beside it.
 - **Constructors:** the full set of MySQL's
   [functions that create geometry values](https://dev.mysql.com/doc/refman/8.0/en/gis-mysql-specific-functions.html):
   `Point`, `LineString`, `Polygon`, `MultiPoint`, `MultiLineString`, `MultiPolygon`,
@@ -229,9 +253,25 @@ function until a later milestone adds it.
   covering-cell prefilter has no false negatives). Other PostGIS-only functions are added
   later only if index-supported or by demand.
 
+**SRID handling** differs by direction, and a round-trip hides it:
+
+| Conversion | SRID from | Axis order | SRID in the result |
+| --- | --- | --- | --- |
+| `ST_GeomFromText(wkt [, srid [, opt]])` | the argument, else 0 | that SRID's SRS order, overridable by `axis-order` | yes |
+| `ST_GeomFromWKB(wkb [, srid [, opt]])` | the argument, else 0 | that SRID's SRS order, overridable by `axis-order` | yes |
+| `ST_GeomFromGeoJSON(json [, opt [, srid]])` | the `srid` argument, else the `crs` member, else 4326 | always longitude-first (RFC 7946) | yes |
+| constructors (`Point`, `LineString`, ...) | nothing, always 0 | none applied | 0; stamp it with `ST_SRID` |
+| `ST_AsText(g [, opt])`, `ST_AsBinary(g [, opt])` | the geometry | its SRS order, overridable by `axis-order` | **no**, plain WKT/WKB |
+| `ST_AsGeoJSON(g [, digits [, flags]])` | the geometry | always longitude-first | **no** by default; `flags` 2 and 4 add a CRS URN |
+
+The two **no** cells are why a WKT or WKB round-trip loses the SRID and has to be given it
+again on the way back in. The constructor row is why `ST_SRID(Point(30, 50), 4326)` and
+`ST_GeomFromText('POINT(30 50)', 4326)` are different points: the SRS is applied where the
+coordinates are parsed, and `ST_SRID` only writes metadata.
+
 A later milestone covers the geometry-processing tail (`ST_Buffer`, `ST_Union`,
 `ST_Intersection`, ...), the typed I/O aliases, the `MBR*` family, geohash, the niche
-accessors and `ST_AsGeoJSON`'s bbox and CRS-URN flags.
+accessors.
 
 Semantics match MySQL, with three v1 limitations:
 
@@ -253,9 +293,11 @@ follow MySQL, verified on 8.4.6 and 9.7.2:
 | `Feature` | its bare geometry, so a Feature holding a point yields `POINT` |
 | `FeatureCollection` | `GEOMETRYCOLLECTION` of the features' geometries, `GEOMETRYCOLLECTION EMPTY` if there are none |
 | `"geometry": null` | SQL `NULL` |
-| `properties`, `id`, `bbox`, foreign members | ignored |
+| `properties`, `id`, `bbox`, foreign members | ignored, and not validated: MySQL accepts a `bbox` that is the wrong arity, contradicts the geometry, or is not even an array |
 | named `crs` URN | sets the SRID (`urn:ogc:def:crs:OGC:1.3:CRS84` is 4326, link-object CRSs are not accepted, and a nested `crs` naming a different SRID errors); absent, the SRID is 4326 |
-| position with more than two coordinates | rejected, `ERROR 3073` |
+| position with a third coordinate | rejected under the default `options` 1 with `ERROR 3073`, stripped under 2, 3 and 4, kept as Z under TiDB's 5 and 6 |
+| position with more than three coordinates | as above, except TiDB's 5 errors and 6 drops the extras |
+| unknown `type`, or a required member missing | `ERROR 3072`, and `ERROR 3070` naming the member |
 
 The `options` argument accepts such positions and strips the extra coordinates.
 `ST_AsGeoJSON`'s bbox and CRS-URN flags ship with the tail. Round-trips are not
@@ -397,8 +439,9 @@ Out of scope here, each with a home:
 - Extended data: Z/M values entered as WKB, and SRIDs outside 0 and 4326, store and read
   back byte-identical, while `ST_AsBinary`/`ST_AsText`/`ST_AsGeoJSON` and every function
   that interprets coordinates error clearly on them.
-- GeoJSON: the table above, each row matched against MySQL 8.4 and 9.7, plus the `options`
-  argument rejecting a Z position at 1 and stripping it at 2, 3 and 4.
+- GeoJSON: the table above, each row matched against MySQL 8.4 and 9.7, plus `options` 5
+  and 6 keeping a Z position and differing on a fourth element, and `ST_AsGeoJSON`'s
+  `digits` rounding and each `flags` bit, byte-compared to MySQL.
 - `axis-order`: `long-lat` swaps on read and on write at 4326, `lat-long` and
   `srid-defined` agree there, the option is inert at SRID 0, and a bad value gives
   `ERROR 3559`.
