@@ -1145,6 +1145,16 @@ func TestParquetVariousTypes(t *testing.T) {
 				Scale:     2,
 				Gen:       repeatedFixedLenByteArray([]byte{0x00, 0x00, 0x30, 0x39}), // 12345
 			},
+			{
+				// maximumDecimalBytes or longer, so this one takes the string
+				// fallback path, which consumes its input in place as well.
+				Name:      "oversized",
+				Type:      parquet.Types.ByteArray,
+				Converted: schema.ConvertedTypes.Decimal,
+				Precision: 75,
+				Scale:     2,
+				Gen:       repeatedByteArray(append([]byte{0x00, 0x01}, make([]byte, 31)...)), // 2^248
+			},
 		}
 
 		dir := t.TempDir()
@@ -1153,7 +1163,9 @@ func TestParquetVariousTypes(t *testing.T) {
 
 		rdr, err := file.OpenParquetFile(filepath.Join(dir, fileName), false)
 		require.NoError(t, err)
-		defer rdr.Close()
+		t.Cleanup(func() {
+			require.NoError(t, rdr.Close())
+		})
 		for i := range pc {
 			cc, err := rdr.MetaData().RowGroup(0).ColumnChunk(i)
 			require.NoError(t, err)
@@ -1162,7 +1174,10 @@ func TestParquetVariousTypes(t *testing.T) {
 
 		reader := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{})
 
-		expectedValues := []string{"123.45", "-123.45", "123.45"}
+		expectedValues := []string{
+			"123.45", "-123.45", "123.45",
+			"4523128485832663883733241601901871400518358776001584532791311875309106626.56",
+		}
 		for range rows {
 			require.NoError(t, reader.ReadRow())
 			require.Len(t, reader.lastRow.Row, len(expectedValues))
