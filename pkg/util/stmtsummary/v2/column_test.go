@@ -159,6 +159,7 @@ func TestColumn(t *testing.T) {
 
 func TestIAAvgColumns(t *testing.T) {
 	columns := []*model.ColumnInfo{
+		{Name: ast.NewCIStr(IARemoteExecCountStr)},
 		{Name: ast.NewCIStr(AvgIARemoteReadSegmentCountStr)},
 		{Name: ast.NewCIStr(MaxIARemoteReadSegmentCountStr)},
 		{Name: ast.NewCIStr(AvgIARemoteReadSegmentSizeStr)},
@@ -174,24 +175,23 @@ func TestIAAvgColumns(t *testing.T) {
 	info1.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 5 * time.Millisecond
 
 	info2 := GenerateStmtExecInfo4Test("digest")
-	info2.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 5
-	info2.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 8192
-	info2.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 9 * time.Millisecond
 
 	record := NewStmtRecord(info1)
 	record.Add(info1)
 	record.Add(info2)
 
-	require.Equal(t, 4.0, factories[0](mockColumnInfo{}, record))
-	require.Equal(t, uint64(5), factories[1](mockColumnInfo{}, record))
-	require.Equal(t, 6144.0, factories[2](mockColumnInfo{}, record))
-	require.Equal(t, uint64(8192), factories[3](mockColumnInfo{}, record))
-	require.Equal(t, int64(7*time.Millisecond), factories[4](mockColumnInfo{}, record))
-	require.Equal(t, int64(9*time.Millisecond), factories[5](mockColumnInfo{}, record))
+	require.Equal(t, int64(1), factories[0](mockColumnInfo{}, record))
+	require.Equal(t, 1.5, factories[1](mockColumnInfo{}, record))
+	require.Equal(t, uint64(3), factories[2](mockColumnInfo{}, record))
+	require.Equal(t, 2048.0, factories[3](mockColumnInfo{}, record))
+	require.Equal(t, uint64(4096), factories[4](mockColumnInfo{}, record))
+	require.Equal(t, int64(2500*time.Microsecond), factories[5](mockColumnInfo{}, record))
+	require.Equal(t, int64(5*time.Millisecond), factories[6](mockColumnInfo{}, record))
 }
 
 func TestIAAvgColumnsChunkRoundTrip(t *testing.T) {
 	columns := []*model.ColumnInfo{
+		{Name: ast.NewCIStr(IARemoteExecCountStr)},
 		{Name: ast.NewCIStr(AvgIARemoteReadSegmentCountStr)},
 		{Name: ast.NewCIStr(MaxIARemoteReadSegmentCountStr)},
 		{Name: ast.NewCIStr(AvgIARemoteReadSegmentSizeStr)},
@@ -207,9 +207,6 @@ func TestIAAvgColumnsChunkRoundTrip(t *testing.T) {
 	info1.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 5 * time.Millisecond
 
 	info2 := GenerateStmtExecInfo4Test("digest")
-	info2.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 5
-	info2.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 8192
-	info2.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 9 * time.Millisecond
 
 	record := NewStmtRecord(info1)
 	record.Add(info1)
@@ -223,6 +220,7 @@ func TestIAAvgColumnsChunkRoundTrip(t *testing.T) {
 	maxUnsignedType := types.NewFieldType(mysql.TypeLonglong)
 	maxUnsignedType.SetFlag(mysql.UnsignedFlag)
 	retTypes := []*types.FieldType{
+		maxUnsignedType.Clone(),
 		types.NewFieldType(mysql.TypeDouble),
 		maxUnsignedType,
 		types.NewFieldType(mysql.TypeDouble),
@@ -234,12 +232,13 @@ func TestIAAvgColumnsChunkRoundTrip(t *testing.T) {
 	mutRow.SetDatums(rowDatums...)
 	row := mutRow.ToRow()
 
-	require.Equal(t, 4.0, row.GetFloat64(0))
-	require.Equal(t, uint64(5), row.GetUint64(1))
-	require.Equal(t, 6144.0, row.GetFloat64(2))
-	require.Equal(t, uint64(8192), row.GetUint64(3))
-	require.Equal(t, int64(7*time.Millisecond), row.GetInt64(4))
-	require.Equal(t, int64(9*time.Millisecond), row.GetInt64(5))
+	require.Equal(t, uint64(1), row.GetUint64(0))
+	require.Equal(t, 1.5, row.GetFloat64(1))
+	require.Equal(t, uint64(3), row.GetUint64(2))
+	require.Equal(t, 2048.0, row.GetFloat64(3))
+	require.Equal(t, uint64(4096), row.GetUint64(4))
+	require.Equal(t, int64(2500*time.Microsecond), row.GetInt64(5))
+	require.Equal(t, int64(5*time.Millisecond), row.GetInt64(6))
 }
 
 type mockColumnInfo struct{}

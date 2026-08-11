@@ -1153,14 +1153,12 @@ func TestToDatumIAColumns(t *testing.T) {
 	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 5 * time.Millisecond
 
 	stmtExecInfo2 := generateAnyExecInfo()
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 5
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 8192
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 9 * time.Millisecond
 
 	ssMap.AddStatement(stmtExecInfo1)
 	ssMap.AddStatement(stmtExecInfo2)
 	reader := newStmtSummaryReaderWithColumnNamesForTest(
 		ssMap,
+		IARemoteExecCountStr,
 		AvgIARemoteReadSegmentCountStr,
 		MaxIARemoteReadSegmentCountStr,
 		AvgIARemoteReadSegmentSizeStr,
@@ -1171,12 +1169,17 @@ func TestToDatumIAColumns(t *testing.T) {
 
 	rows := reader.GetStmtSummaryCurrentRows()
 	require.Len(t, rows, 1)
-	require.Equal(t, 4.0, rows[0][0].GetFloat64())
-	require.Equal(t, uint64(5), rows[0][1].GetUint64())
-	require.Equal(t, 6144.0, rows[0][2].GetFloat64())
-	require.Equal(t, uint64(8192), rows[0][3].GetUint64())
-	require.Equal(t, int64(7*time.Millisecond), rows[0][4].GetInt64())
-	require.Equal(t, int64(9*time.Millisecond), rows[0][5].GetInt64())
+	require.Equal(t, int64(1), rows[0][0].GetInt64())
+	require.Equal(t, 1.5, rows[0][1].GetFloat64())
+	require.Equal(t, uint64(3), rows[0][2].GetUint64())
+	require.Equal(t, 2048.0, rows[0][3].GetFloat64())
+	require.Equal(t, uint64(4096), rows[0][4].GetUint64())
+	require.Equal(t, int64(2500*time.Microsecond), rows[0][5].GetInt64())
+	require.Equal(t, int64(5*time.Millisecond), rows[0][6].GetInt64())
+
+	historyRows := reader.GetStmtSummaryHistoryRows()
+	require.Len(t, historyRows, 1)
+	require.Equal(t, int64(1), historyRows[0][0].GetInt64())
 }
 
 func TestToDatumIAColumnsChunkRoundTrip(t *testing.T) {
@@ -1190,15 +1193,13 @@ func TestToDatumIAColumnsChunkRoundTrip(t *testing.T) {
 	stmtExecInfo1.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 5 * time.Millisecond
 
 	stmtExecInfo2 := generateAnyExecInfo()
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentCount = 5
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentBytes = 8192
-	stmtExecInfo2.ExecDetail.ScanDetail.IaRemoteReadSegmentDuration = 9 * time.Millisecond
 
 	ssMap.AddStatement(stmtExecInfo1)
 	ssMap.AddStatement(stmtExecInfo2)
 
 	reader := newStmtSummaryReaderWithColumnNamesForTest(
 		ssMap,
+		IARemoteExecCountStr,
 		AvgIARemoteReadSegmentCountStr,
 		MaxIARemoteReadSegmentCountStr,
 		AvgIARemoteReadSegmentSizeStr,
@@ -1213,6 +1214,7 @@ func TestToDatumIAColumnsChunkRoundTrip(t *testing.T) {
 	maxUnsignedType := types.NewFieldType(mysql.TypeLonglong)
 	maxUnsignedType.SetFlag(mysql.UnsignedFlag)
 	retTypes := []*types.FieldType{
+		maxUnsignedType.Clone(),
 		types.NewFieldType(mysql.TypeDouble),
 		maxUnsignedType,
 		types.NewFieldType(mysql.TypeDouble),
@@ -1224,12 +1226,13 @@ func TestToDatumIAColumnsChunkRoundTrip(t *testing.T) {
 	mutRow.SetDatums(rows[0]...)
 	row := mutRow.ToRow()
 
-	require.Equal(t, 4.0, row.GetFloat64(0))
-	require.Equal(t, uint64(5), row.GetUint64(1))
-	require.Equal(t, 6144.0, row.GetFloat64(2))
-	require.Equal(t, uint64(8192), row.GetUint64(3))
-	require.Equal(t, int64(7*time.Millisecond), row.GetInt64(4))
-	require.Equal(t, int64(9*time.Millisecond), row.GetInt64(5))
+	require.Equal(t, uint64(1), row.GetUint64(0))
+	require.Equal(t, 1.5, row.GetFloat64(1))
+	require.Equal(t, uint64(3), row.GetUint64(2))
+	require.Equal(t, 2048.0, row.GetFloat64(3))
+	require.Equal(t, uint64(4096), row.GetUint64(4))
+	require.Equal(t, int64(2500*time.Microsecond), row.GetInt64(5))
+	require.Equal(t, int64(5*time.Millisecond), row.GetInt64(6))
 }
 
 // Regression test for issue #69913.

@@ -230,6 +230,7 @@ func TestMemReader(t *testing.T) {
 	columns := []*model.ColumnInfo{
 		{Name: ast.NewCIStr(DigestStr)},
 		{Name: ast.NewCIStr(ExecCountStr)},
+		{Name: ast.NewCIStr(IARemoteExecCountStr)},
 	}
 
 	ss := NewStmtSummary4Test(3)
@@ -249,6 +250,9 @@ func TestMemReader(t *testing.T) {
 	rows := reader.Rows()
 	require.Len(t, rows, 4) // 3 rows + 1 other
 	require.Equal(t, len(reader.columnFactories), len(rows[0]))
+	for _, row := range rows {
+		require.Zero(t, row[2].GetInt64())
+	}
 	evicted := ss.Evicted()
 	require.Len(t, evicted, 3) // begin, end, count
 }
@@ -262,7 +266,7 @@ func TestHistoryReader(t *testing.T) {
 	defer func() {
 		require.NoError(t, os.Remove(filename1))
 	}()
-	_, err = file.WriteString("{\"begin\":1672128520,\"end\":1672128530,\"digest\":\"digest1\",\"exec_count\":10}\n")
+	_, err = file.WriteString("{\"begin\":1672128520,\"end\":1672128530,\"digest\":\"digest1\",\"exec_count\":10,\"ia_remote_exec_count\":3}\n")
 	require.NoError(t, err)
 	_, err = file.WriteString("{\"begin\":1672129270,\"end\":1672129280,\"digest\":\"digest2\",\"exec_count\":20}\n")
 	require.NoError(t, err)
@@ -286,6 +290,7 @@ func TestHistoryReader(t *testing.T) {
 	columns := []*model.ColumnInfo{
 		{Name: ast.NewCIStr(DigestStr)},
 		{Name: ast.NewCIStr(ExecCountStr)},
+		{Name: ast.NewCIStr(IARemoteExecCountStr)},
 	}
 
 	func() {
@@ -296,6 +301,11 @@ func TestHistoryReader(t *testing.T) {
 		require.Len(t, rows, 4)
 		for _, row := range rows {
 			require.Equal(t, len(columns), len(row))
+			if row[0].GetString() == "digest1" {
+				require.Equal(t, int64(3), row[2].GetInt64())
+			} else {
+				require.Zero(t, row[2].GetInt64())
+			}
 		}
 	}()
 
