@@ -1,0 +1,12 @@
+go_package = "pkg/util/checksum"
+source_commit = "62d4284bee67e64f23b0a7b7f89488b26667c0eb"
+evidence_files = [
+  "rust/crates/tidb-util/src/checksum/mod.rs",
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/src/layered_io.rs",
+  "rust/crates/tidb-chunk/src/chunk_util.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "checksum::tests"],
+  ["test", "-p", "tidb-chunk"],
+]
