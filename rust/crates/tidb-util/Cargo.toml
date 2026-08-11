@@ -40,6 +40,9 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
 tracing = "0.1"
 
+[target.'cfg(windows)'.dependencies]
+fs4 = { version = "=1.1.0", default-features = false }
+
 [dev-dependencies]
 sha2.workspace = true
 standard-fastrand = { package = "fastrand", version = "2" }

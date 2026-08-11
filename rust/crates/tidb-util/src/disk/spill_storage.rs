@@ -28,7 +28,10 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::memory::{Tracker, LABEL_FOR_GLOBAL_STORAGE};
+use crate::{
+    memory::{Tracker, LABEL_FOR_GLOBAL_STORAGE},
+    sys::storage::get_target_directory_capacity,
+};
 
 const LOCK_FILE: &str = "_dir.lock";
 const RECORD_DIR: &str = "record";
@@ -244,7 +247,7 @@ impl SpillStorage {
         })?;
 
         if spec.quota_bytes >= 0 {
-            let available_bytes = available_bytes(&spec.path).map_err(|source| {
+            let available_bytes = get_target_directory_capacity(&spec.path).map_err(|source| {
                 SpillStorageOpenError::io("read temporary storage capacity", &spec.path, source)
             })?;
             if u64::try_from(spec.quota_bytes).is_ok_and(|quota| quota > available_bytes) {
@@ -475,27 +478,6 @@ fn sweep_stale_entries(path: &Path) -> io::Result<()> {
         }
     }
     Ok(())
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn available_bytes(path: &Path) -> io::Result<u64> {
-    let stat = rustix::fs::statvfs(path).map_err(io::Error::from)?;
-    stat.f_bavail
-        .checked_mul(stat.f_bsize)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "filesystem capacity overflow"))
-}
-
-#[cfg(windows)]
-fn available_bytes(_path: &Path) -> io::Result<u64> {
-    Err(io::Error::new(
-        io::ErrorKind::Unsupported,
-        "temporary-storage capacity is unsupported on Windows",
-    ))
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
-fn available_bytes(_path: &Path) -> io::Result<u64> {
-    Ok(u64::MAX)
 }
 
 #[cfg(test)]
