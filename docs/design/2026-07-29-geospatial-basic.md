@@ -154,8 +154,9 @@ per-class parameters, not code paths.
 organization, and 4326 as `WGS 84` / `EPSG` / 4326 with the `GEOGCS["WGS 84",DATUM[...]]`
 definition string. No dataset is imported: SRID 0 is not an EPSG record, and 4326 is one
 stable record taken from the [EPSG dataset](https://epsg.org/) rather than from a MySQL
-install. The table is read-only, so `CREATE SPATIAL REFERENCE SYSTEM` is rejected, and DDL
-validates `SRID n` against it rather than against a hardcoded pair. Without the table,
+install. The table is read-only, so `CREATE SPATIAL REFERENCE SYSTEM` is rejected, which is a
+MySQL-parity gap on the extension path rather than a PostGIS extra. DDL validates
+`SRID n` against the table rather than against a hardcoded pair. Without the table,
 asking which SRIDs a server supports is an unknown-table error.
 
 **EPSG attribution.** The 4326 row is an EPSG record, so the dataset's terms of use apply:
@@ -194,7 +195,7 @@ at every boundary; both engines emit the same WKB.
 | All projected SRSs (e.g. 3857 Web Mercator) | low: planar X/Y, so the same Cartesian functions apply and only the bounds are per-SRS |
 | Geographic SRSs beyond 4326 | moderate: exact geodesic refine per ellipsoid |
 | `ST_Transform`, which MySQL has had since 8.0.13 and which reprojects between two SRSs | moderate, and pointless before the catalog: with only 0 and 4326 there is nothing to transform to, since 4326 to 4326 is a no-op and MySQL itself rejects a transform to 0 with `ERROR 3742` |
-| PostGIS level (`CREATE SPATIAL REFERENCE SYSTEM`, user-defined SRSs) | bigger: needs a PROJ-like library for arbitrary reprojection; out of scope |
+| User-defined SRSs through `CREATE [OR REPLACE] SPATIAL REFERENCE SYSTEM` and `DROP SPATIAL REFERENCE SYSTEM`, which MySQL also has (there is no `ALTER`; modification is `CREATE OR REPLACE`) | bigger: a writable catalog, a WKT SRS parser, and catalog changes that have to replicate |
 
 DDL restricts the `SRID n` attribute to 0 or 4326. An unrestricted `GEOMETRY` column may
 still hold values of any SRID (see [Types and storage](#types-and-storage)).
