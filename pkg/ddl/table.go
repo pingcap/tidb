@@ -1162,6 +1162,21 @@ func (w *worker) onSetTableFlashReplica(jobCtx *jobContext, job *model.Job) (ver
 		return ver, errors.Trace(err)
 	}
 
+	// Columnar storage gate: reject adding replicas when columnar storage is not
+	// enabled for the keyspace. Internal repair jobs (e.g. placement rule repair in
+	// classic/both mode) bypass the check.
+	if !args.Internal && replicaInfo.Count > 0 {
+		failpoint.Inject("mockSetTiFlashReplicaJobColumnarGate", func(val failpoint.Value) {
+			if v, ok := val.(bool); ok && v {
+				failpoint.Return(dbterror.ErrTiFlashColumnarStorageNotEnabled.GenWithStackByArgs(jobCtx.store.GetKeyspace()))
+			}
+		})
+		if err := checkColumnarStorageEnabled(jobCtx.store); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
 	// We should check this first, in order to avoid creating redundant DDL jobs.
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		logutil.DDLLogger().Info("Set TiFlash replica pd rule for partitioned table", zap.Int64("tableID", tblInfo.ID))

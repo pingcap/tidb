@@ -535,6 +535,11 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if tiflashReplica.Count > 0 {
+		if err := checkColumnarStorageEnabled(sctx.GetStore()); err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	var originVersion int64
 	var pendingCount uint32
@@ -3833,6 +3838,11 @@ func (e *executor) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast
 	if checkTiFlash {
 		err = checkTiFlashReplicaCount(ctx, replicaInfo.Count)
 		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if replicaInfo.Count > 0 {
+		if err := checkColumnarStorageEnabled(ctx.GetStore()); err != nil {
 			return errors.Trace(err)
 		}
 	}

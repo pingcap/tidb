@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/util"
@@ -573,4 +574,64 @@ func TestTruncateTable2(t *testing.T) {
 	require.Equal(t, t1.Meta().TiFlashReplica.LocationLabels, t2.Meta().TiFlashReplica.LocationLabels)
 	require.False(t, t2.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[1].ID}, t2.Meta().TiFlashReplica.AvailablePartitionIDs)
+}
+
+func TestSetTiFlashReplicaColumnarStorageGate(t *testing.T) {
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "columnar"
+	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "tiflash"
+	})
+
+	newStore := func(flagVal string) kv.Storage {
+		meta := &keyspacepb.KeyspaceMeta{
+			Id:    1,
+			Name:  "testks",
+			State: keyspacepb.KeyspaceState_ENABLED,
+		}
+		if flagVal != "" {
+			meta.Config = map[string]string{infosync.KeyspaceConfigColumnarStorageEnabled: flagVal}
+		}
+		return testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease, mockstore.WithCurrentKeyspaceMeta(meta))
+	}
+
+	// flag=false: adding replicas is rejected with a clear error, removing is allowed.
+	store := newStore("false")
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_flash(a int, b int)")
+	tk.MustContainErrMsg("alter table t_flash set tiflash replica 1",
+		"Columnar Storage is not enabled")
+	tbl := external.GetTableByName(t, tk, "test", "t_flash")
+	require.Nil(t, tbl.Meta().TiFlashReplica)
+	tk.MustExec("alter table t_flash set tiflash replica 0")
+
+	// flag=true: adding replicas succeeds.
+	storeOn := newStore("true")
+	tkOn := testkit.NewTestKit(t, storeOn)
+	tkOn.MustExec("use test")
+	tkOn.MustExec("create table t_flash(a int, b int)")
+	tkOn.MustExec("alter table t_flash set tiflash replica 1")
+	tblOn := external.GetTableByName(t, tkOn, "test", "t_flash")
+	require.Equal(t, uint64(1), tblOn.Meta().TiFlashReplica.Count)
+
+	// flag missing: defaults to enabled (backward compatible).
+	storeMissing := newStore("")
+	tkMissing := testkit.NewTestKit(t, storeMissing)
+	tkMissing.MustExec("use test")
+	tkMissing.MustExec("create table t_flash(a int, b int)")
+	tkMissing.MustExec("alter table t_flash set tiflash replica 1")
+
+	// fail-closed: keyspace meta load failure rejects count>0.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockColumnarStorageEnabledResult", `return("check-failed")`)
+	tkOn.MustContainErrMsg("alter table t_flash set tiflash replica 2", "cannot be verified")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockColumnarStorageEnabledResult"))
+
+	// job-side gate: even if the submit path passes, the job must reject when the
+	// gate fires, and the existing replica metadata must stay unchanged.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockSetTiFlashReplicaJobColumnarGate", "return(true)")
+	tkOn.MustContainErrMsg("alter table t_flash set tiflash replica 2", "Columnar Storage is not enabled")
+	tblOn = external.GetTableByName(t, tkOn, "test", "t_flash")
+	require.Equal(t, uint64(1), tblOn.Meta().TiFlashReplica.Count)
 }
