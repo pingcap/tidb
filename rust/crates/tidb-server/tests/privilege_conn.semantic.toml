@@ -1,0 +1,13 @@
+go_package = "pkg/privilege/conn"
+source_commit = "665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f"
+evidence_files = [
+  "rust/crates/tidb-server/src/auth_exchange.rs",
+  "rust/crates/tidb-server/src/mysql_connection.rs",
+  "rust/crates/tidb-server/tests/auth_exchange_source.rs",
+  "rust/crates/tidb-server/tests/mysql_native_auth_lifecycle_source.rs",
+]
+commands = [
+  ["test", "-p", "tidb-server", "--test", "all", "auth_exchange_source"],
+  ["test", "-p", "tidb-server", "--test", "all", "mysql_native_auth_lifecycle_source::nonnative_client_plugin_runs_real_auth_switch_packet_sequence"],
+  ["check", "-p", "tidb-server", "--all-targets"],
+]
