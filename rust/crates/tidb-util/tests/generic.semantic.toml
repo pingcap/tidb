@@ -1,0 +1,17 @@
+go_package = "pkg/util/generic"
+source_commit = "59dfa4d3b214ded26f957249efbda21f95149bb5"
+evidence_files = [
+  "rust/crates/tidb-util/src/generic/mod.rs",
+  "rust/crates/tidb-util/src/generic/bounded_min_heap.rs",
+  "rust/crates/tidb-util/src/generic/sync_map.rs",
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/tests/generic_contract.rs",
+  "rust/crates/tidb-stats/src/builder.rs",
+  "rust/crates/tidb-stats/tests/all.rs",
+  "rust/crates/tidb-stats/tests/builder_source.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "generic::"],
+  ["test", "-p", "tidb-util", "--test", "generic_contract"],
+  ["test", "-p", "tidb-stats", "--test", "all", "builder_source::"],
+]
