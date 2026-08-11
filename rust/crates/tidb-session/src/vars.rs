@@ -141,7 +141,7 @@ impl GlobalSysvars {
             .expect("global sysvar lock poisoned")
             .get(&name.to_ascii_lowercase())
             .cloned()
-            .unwrap_or_else(|| def.value.to_owned()))
+            .unwrap_or_else(|| crate::sysvar::effective_default(def)))
     }
 
     /// Validates and writes a global value, visible to every session that
@@ -395,7 +395,7 @@ impl SessionVars {
             .systems
             .get(&name.to_ascii_lowercase())
             .cloned()
-            .unwrap_or_else(|| def.value.to_owned()))
+            .unwrap_or_else(|| crate::sysvar::effective_default(def)))
     }
 
     /// A snapshot of the session overrides `name` (and its alias) currently
@@ -529,9 +529,10 @@ impl SessionVars {
     pub fn reset_system(&mut self, name: &str) -> Result<(), VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        let default = crate::sysvar::effective_default(def);
         let value = tidb_vardef::global_sysvar_initial::global_system_variable_initial_value(
             &name.to_ascii_lowercase(),
-            def.value,
+            &default,
             tidb_vardef::global_sysvar_initial::GlobalSysvarEnvironment {
                 store_is_tikv: false,
                 in_test: false,
@@ -574,6 +575,37 @@ mod tests {
         assert_eq!(vars.get_system("max_allowed_packet").unwrap(), "67108864");
         // The lookup is case-insensitive, as Go's is after lowercasing.
         assert_eq!(vars.get_system("AUTOCOMMIT").unwrap(), "ON");
+    }
+
+    #[test]
+    fn sem_enable_and_disable_change_new_session_defaults() {
+        struct DisableSemOnDrop;
+
+        impl Drop for DisableSemOnDrop {
+            fn drop(&mut self) {
+                tidb_util::sem::disable();
+            }
+        }
+
+        tidb_util::sem::disable();
+        let _reset = DisableSemOnDrop;
+
+        tidb_util::sem::enable();
+        let enabled = SessionVars::new();
+        assert_eq!(
+            enabled.get_system("tidb_enable_enhanced_security").unwrap(),
+            "ON"
+        );
+        assert_eq!(enabled.get_system("hostname").unwrap(), "localhost");
+
+        tidb_util::sem::disable();
+        let disabled = SessionVars::new();
+        assert_eq!(
+            disabled
+                .get_system("tidb_enable_enhanced_security")
+                .unwrap(),
+            "OFF"
+        );
     }
 
     #[test]

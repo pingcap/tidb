@@ -166,6 +166,17 @@ pub fn get_sys_var(name: &str) -> Option<&'static SysVarDef> {
         .map(|index| &SYS_VARS[index])
 }
 
+/// The process-effective default for one registry entry.
+///
+/// Most defaults are immutable captured source values. `pkg/util/sem` owns
+/// the two exceptions Go mutates through `variable.SetSysVar` when SEM is
+/// enabled or disabled.
+#[must_use]
+pub fn effective_default(definition: &SysVarDef) -> String {
+    tidb_util::sem::effective_sysvar_default(definition.name)
+        .unwrap_or_else(|| definition.value.to_owned())
+}
+
 /// Go `SysVar.AllowEmpty`: the empty string means "read the value from the
 /// config file", and is accepted only for `SET SESSION`.
 ///

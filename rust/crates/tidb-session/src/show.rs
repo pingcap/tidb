@@ -1298,11 +1298,11 @@ impl Session {
                     let value = if show.global {
                         self.vars
                             .get_global(definition.name)
-                            .unwrap_or_else(|_| definition.value.to_owned())
+                            .unwrap_or_else(|_| sysvar::effective_default(definition))
                     } else {
                         self.vars
                             .get_system(definition.name)
-                            .unwrap_or_else(|_| definition.value.to_owned())
+                            .unwrap_or_else(|_| sysvar::effective_default(definition))
                     };
                     let row = vec![
                         Datum::Bytes(definition.name.as_bytes().to_vec()),

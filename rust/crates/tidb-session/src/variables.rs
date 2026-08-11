@@ -811,7 +811,7 @@ impl Session {
                 // GLOBAL and INSTANCE both read the node-wide table; only an
                 // unqualified or explicit SESSION read uses the session copy.
                 let result = match scope {
-                    _ if def.scope == sysvar::SCOPE_NONE => Ok(def.value.to_owned()),
+                    _ if def.scope == sysvar::SCOPE_NONE => Ok(sysvar::effective_default(def)),
                     Some(tidb_ast::SysVarScope::Global | tidb_ast::SysVarScope::Instance) => {
                         self.vars.get_global(name)
                     }
