@@ -256,12 +256,12 @@ pub(crate) fn write_error<O: ConnectionPacketOutput + ?Sized>(
     message: impl AsRef<[u8]>,
     protocol_41: bool,
 ) -> Result<(), MysqlConnectionError> {
-    let payload = encode_error_packet(&ErrorPacket::new(
-        code,
-        state,
-        message.as_ref(),
-        protocol_41,
-    ));
+    let message = message.as_ref();
+    let extended = std::str::from_utf8(message)
+        .ok()
+        .and_then(tidb_config::config_tree::extended_error_message);
+    let message = extended.as_deref().map(str::as_bytes).unwrap_or(message);
+    let payload = encode_error_packet(&ErrorPacket::new(code, state, message, protocol_41));
     write_payload(output, sequence, &payload)
 }
 
@@ -332,5 +332,63 @@ impl<O: ConnectionPacketOutput + ?Sized> ResultSetSink for TcpResultSetSink<'_, 
 
     fn packets_written(&self) -> usize {
         self.packets
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{write_error, ConnectionPacketOutput};
+    use crate::mysql_connection::MysqlConnectionError;
+    use tidb_config::config_tree::config::{get_global_config, store_global_config};
+    use tidb_config::config_tree::{Config, ErrorMessageExtension};
+
+    #[derive(Default)]
+    struct CapturingOutput {
+        payload: Vec<u8>,
+    }
+
+    impl ConnectionPacketOutput for CapturingOutput {
+        fn write_packet(
+            &mut self,
+            sequence: u8,
+            payload: &[u8],
+        ) -> Result<u8, MysqlConnectionError> {
+            self.payload = payload.to_vec();
+            Ok(sequence.wrapping_add(1))
+        }
+    }
+
+    struct ConfigRestore(Option<Config>);
+
+    impl Drop for ConfigRestore {
+        fn drop(&mut self) {
+            if let Some(config) = self.0.take() {
+                store_global_config(config);
+            }
+        }
+    }
+
+    #[test]
+    fn error_packets_apply_configured_suffixes_and_preserve_raw_bytes() {
+        let _restore = ConfigRestore(Some(get_global_config()));
+        let mut config = get_global_config();
+        config.error_message_extensions = vec![ErrorMessageExtension {
+            pattern: "^Access denied$".to_owned(),
+            suffix: "see the operator guide.".to_owned(),
+        }];
+        store_global_config(config);
+
+        let mut output = CapturingOutput::default();
+        write_error(&mut output, 1, 1045, *b"28000", "Access denied.", true).unwrap();
+        assert_eq!(&output.payload[9..], b"Access denied.");
+
+        write_error(&mut output, 1, 1045, *b"28000", "Access denied", true).unwrap();
+        assert_eq!(
+            &output.payload[9..],
+            b"Access denied, see the operator guide."
+        );
+
+        write_error(&mut output, 1, 1105, *b"HY000", [0xff, 0xfe], true).unwrap();
+        assert_eq!(&output.payload[9..], &[0xff, 0xfe]);
     }
 }

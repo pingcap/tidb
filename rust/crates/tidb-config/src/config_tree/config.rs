@@ -488,16 +488,10 @@ pub fn new_config() -> Config {
 }
 
 static GLOBAL_CONFIG: OnceLock<RwLock<Config>> = OnceLock::new();
-static PREPARED_ERROR_MESSAGE_EXTENSIONS: OnceLock<RwLock<Vec<ErrorMessageExtension>>> =
-    OnceLock::new();
 static CHECK_TABLE_BEFORE_DROP: StdAtomicBool = StdAtomicBool::new(false);
 
 fn global_config() -> &'static RwLock<Config> {
     GLOBAL_CONFIG.get_or_init(|| RwLock::new(new_config()))
-}
-
-fn prepared_error_message_extensions() -> &'static RwLock<Vec<ErrorMessageExtension>> {
-    PREPARED_ERROR_MESSAGE_EXTENSIONS.get_or_init(|| RwLock::new(Vec::new()))
 }
 
 /// Go `GetGlobalConfig`. Rust returns an owned snapshot so readers never
@@ -511,10 +505,7 @@ pub fn get_global_config() -> Config {
 
 /// Go `GetErrorMessageExtensions`.
 pub fn get_error_message_extensions() -> Vec<ErrorMessageExtension> {
-    prepared_error_message_extensions()
-        .read()
-        .expect("prepared error message extensions lock poisoned")
-        .clone()
+    super::errmsg::configured_extensions()
 }
 
 /// Go `StoreGlobalConfig`.
@@ -524,11 +515,8 @@ pub fn store_global_config(config: Config) {
     let mut global = global_config()
         .write()
         .expect("global config lock poisoned");
-    let mut prepared = prepared_error_message_extensions()
-        .write()
-        .expect("prepared error message extensions lock poisoned");
     *global = config;
-    *prepared = extensions;
+    super::errmsg::replace_prepared_extensions(&extensions);
 }
 
 /// Go `CheckTableBeforeDrop`.
@@ -552,9 +540,7 @@ pub fn update_global(update: impl FnOnce(&mut Config)) {
     update(&mut config);
     let (extensions, _) = prepare_error_message_extensions(&config.error_message_extensions, true)
         .expect("ignore-invalid preparation cannot fail");
-    *prepared_error_message_extensions()
-        .write()
-        .expect("prepared error message extensions lock poisoned") = extensions;
+    super::errmsg::replace_prepared_extensions(&extensions);
 }
 
 /// Go `GetGlobalKeyspaceName`.
