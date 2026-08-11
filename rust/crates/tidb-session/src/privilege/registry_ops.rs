@@ -923,22 +923,20 @@ impl PrivilegeRegistry {
     /// The rule is: an explicit `global_grants` row satisfies it, and
     /// FAILING THAT, SUPER does. Go keeps that fallback deliberately ("the
     /// SUPER privilege also has all DYNAMIC privileges granted to it ...
-    /// otherwise tasks such as BACKUP and ROLE_ADMIN will start to fail"),
-    /// so a SUPER account passes every dynamic check without holding a
-    /// single dynamic row.
-    ///
-    /// The ONLY no-fallback case in Go is SEM (Security Enhanced Mode): when
-    /// SEM is on, `sem.IsRestrictedPrivilege` -- true for exactly the names
-    /// prefixed `RESTRICTED_` -- blocks the SUPER fallback. This tier has no
-    /// SEM, so no name is exempt here; wiring SEM on later means adding that
-    /// one branch and nothing else.
+    /// otherwise tasks such as BACKUP and ROLE_ADMIN will start to fail").
+    /// SEM is the one exception: a `RESTRICTED_*` privilege must then be an
+    /// explicit row and cannot fall through to SUPER.
     ///
     /// `with_grant` mirrors Go: the explicit row must itself be grantable,
     /// and the SUPER fallback additionally requires `GRANT OPTION`.
     #[must_use]
     pub fn has_dynamic_priv(&self, user: &str, host: &str, name: &str, with_grant: bool) -> bool {
-        if self.has_explicit_dynamic_priv(user, host, name, with_grant) {
+        let name = name.to_ascii_uppercase();
+        if self.has_explicit_dynamic_priv(user, host, &name, with_grant) {
             return true;
+        }
+        if tidb_util::sem::is_enabled() && tidb_util::sem::is_restricted_privilege(&name) {
+            return false;
         }
         if with_grant && !self.has_global_priv(user, host, GlobalPriv::GrantOption) {
             return false;
@@ -1219,6 +1217,18 @@ impl PrivilegeRegistry {
         active_roles: &[Account],
         database: &str,
     ) -> bool {
+        if tidb_util::sem::is_enabled()
+            && tidb_util::sem::is_invisible_schema(database)
+            && !self.has_dynamic_priv_with_roles(
+                user,
+                host,
+                active_roles,
+                "RESTRICTED_TABLES_ADMIN",
+                false,
+            )
+        {
+            return false;
+        }
         self.identities_for_check(user, host, active_roles)
             .into_iter()
             .any(|(role_user, role_host)| self.db_is_visible(&role_user, &role_host, database))

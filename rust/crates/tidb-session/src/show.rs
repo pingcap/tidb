@@ -1283,6 +1283,9 @@ impl Session {
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
                 let mut rows = Vec::new();
                 for definition in sysvar::SYS_VARS {
+                    if self.sem_hides_sysvar(definition.name) {
+                        continue;
+                    }
                     let matches = match &pattern {
                         Some(pattern) => tidb_executor::like_match_with_collation(
                             definition.name,
@@ -1357,6 +1360,9 @@ impl Session {
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
                 let mut rows = Vec::new();
                 for &(name, value, session_only) in SHOW_STATUS_VARS {
+                    if self.sem_hides_status_var(name) {
+                        continue;
+                    }
                     if show.global && session_only {
                         continue;
                     }

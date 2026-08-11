@@ -78,6 +78,47 @@ fn is_mem_db(database: &str) -> bool {
         || database.eq_ignore_ascii_case("metrics_schema")
 }
 
+fn is_mem_or_sys_db(database: &str) -> bool {
+    database.eq_ignore_ascii_case("mysql") || is_mem_db(database)
+}
+
+/// SEM's hard table rule, evaluated before stored grants and before the
+/// ordinary virtual-schema rule below. `None` means SEM has no opinion and
+/// the normal privilege path decides.
+pub(crate) fn sem_verdict_mask(
+    database: &str,
+    table: &str,
+    mask: u64,
+    has_restricted_tables_admin: bool,
+) -> Option<bool> {
+    if !tidb_util::sem::is_enabled() || has_restricted_tables_admin {
+        return None;
+    }
+    let database_lower = database.to_ascii_lowercase();
+    let table_lower = table.to_ascii_lowercase();
+    if tidb_util::sem::is_invisible_table(&database_lower, &table_lower) {
+        return Some(false);
+    }
+    const SEM_REFUSED_WRITES: &[GlobalPriv] = &[
+        GlobalPriv::Create,
+        GlobalPriv::Alter,
+        GlobalPriv::Drop,
+        GlobalPriv::Index,
+        GlobalPriv::CreateView,
+        GlobalPriv::Insert,
+        GlobalPriv::Update,
+        GlobalPriv::Delete,
+    ];
+    if is_mem_or_sys_db(&database_lower)
+        && SEM_REFUSED_WRITES
+            .iter()
+            .any(|privilege| privilege.bit() == mask)
+    {
+        return Some(false);
+    }
+    None
+}
+
 /// The fixed answer `RequestVerification` gives for a virtual schema before
 /// it consults a single grant, or `None` when the stored grants decide.
 ///
@@ -119,11 +160,6 @@ pub(crate) fn mem_db_verdict_mask(database: &str, mask: u64) -> Option<bool> {
     database
         .eq_ignore_ascii_case("information_schema")
         .then_some(true)
-}
-
-/// [`mem_db_verdict_mask`] for a single privilege.
-pub(crate) fn mem_db_verdict(database: &str, privilege: GlobalPriv) -> Option<bool> {
-    mem_db_verdict_mask(database, privilege.bit())
 }
 
 /// Splits a written name path into `(schema, table)`, defaulting the schema

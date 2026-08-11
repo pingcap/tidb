@@ -182,6 +182,9 @@ pub struct NodeConfig {
     /// gate that restricts a sandboxed session to `SET PASSWORD`/`ALTER
     /// USER` -- reachable at all.
     pub disconnect_on_expired_password: bool,
+    /// TiDB's `[security] enable-sem`: install the process-wide Security
+    /// Enhanced Mode policy before any startup resource is admitted.
+    pub sem_enabled: bool,
     /// Generate a self-signed certificate when no `--ssl-cert`/`--ssl-key` is
     /// configured, as TiDB's `[security] auto-tls` does.
     ///
@@ -287,6 +290,7 @@ const SUPPORTED_CONFIG_LEAVES: &[&str] = &[
     "security.cluster-ssl-cert",
     "security.cluster-ssl-key",
     "security.disconnect-on-expired-password",
+    "security.enable-sem",
     "security.spilled-file-encryption-method",
     "security.ssl-cert",
     "security.ssl-key",
@@ -563,6 +567,7 @@ impl NodeConfig {
         let mut spill_encryption = SpillEncryptionMethod::Plaintext;
         let mut file_auto_tls = None;
         let mut file_disconnect_on_expired_password = None;
+        let mut sem_enabled = false;
         if let Some(loaded) = source.as_ref() {
             let config = &loaded.config;
             if host.is_none() && loaded.is_defined("host") {
@@ -607,6 +612,9 @@ impl NodeConfig {
             if loaded.is_defined("security.disconnect-on-expired-password") {
                 file_disconnect_on_expired_password =
                     Some(config.security.disconnect_on_expired_password);
+            }
+            if loaded.is_defined("security.enable-sem") {
+                sem_enabled = config.security.enable_sem;
             }
             if loaded.is_defined("tmp-storage-path") {
                 temp_storage_base = Some(config.temp_storage_path.clone());
@@ -734,6 +742,7 @@ impl NodeConfig {
             config.security.ssl_key = ssl_key.clone().unwrap_or_default();
             config.security.auto_tls = auto_tls;
             config.security.disconnect_on_expired_password = disconnect_on_expired_password;
+            config.security.enable_sem = sem_enabled;
             config.security.cluster_ssl_ca = cluster_ssl_ca.clone().unwrap_or_default();
             config.security.cluster_ssl_cert = cluster_ssl_cert.clone().unwrap_or_default();
             config.security.cluster_ssl_key = cluster_ssl_key.clone().unwrap_or_default();
@@ -773,6 +782,7 @@ impl NodeConfig {
             ssl_key: ssl_key.map(PathBuf::from),
             auto_tls,
             disconnect_on_expired_password,
+            sem_enabled,
             cluster_security,
             spill_storage,
             version_info,

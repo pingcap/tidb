@@ -261,6 +261,11 @@ fn start_system_time_monitor() -> tidb_util::systimemon::SystemTimeMonitor {
 fn open_spill_storage(
     config: &NodeConfig,
 ) -> Result<Arc<tidb_util::disk::SpillStorage>, RunConfiguredNodeError> {
+    if config.sem_enabled {
+        tidb_util::sem::enable();
+    } else {
+        tidb_util::sem::disable();
+    }
     tidb_util::disk::SpillStorage::open(config.spill_storage.clone())
         .map(Arc::new)
         .map_err(RunConfiguredNodeError::Spill)

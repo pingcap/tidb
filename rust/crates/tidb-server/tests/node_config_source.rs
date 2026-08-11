@@ -118,6 +118,47 @@ spilled-file-encryption-method = "AeS128-CtR"
 }
 
 #[test]
+fn configured_sem_is_installed_before_startup_resource_admission() {
+    struct DisableSemOnDrop;
+
+    impl Drop for DisableSemOnDrop {
+        fn drop(&mut self) {
+            tidb_util::sem::disable();
+        }
+    }
+
+    tidb_util::sem::disable();
+    let _reset = DisableSemOnDrop;
+    let base = std::env::temp_dir().join(format!(
+        "tidb-server-sem-startup-{}",
+        std::process::id()
+    ));
+    let file = ConfigFile::write(
+        "sem_startup",
+        &format!(
+            "tmp-storage-path = {:?}\ntmp-storage-quota = {}\n\n[security]\nenable-sem = true\n",
+            base,
+            i64::MAX
+        ),
+    );
+    let path = file.0.to_string_lossy().into_owned();
+    let mut args = required();
+    args.extend(["--config", &path]);
+
+    let config = NodeConfig::parse(args).expect("security.enable-sem is an owned startup option");
+    let error = run_configured_node(config).unwrap_err();
+    assert!(matches!(
+        error,
+        RunConfiguredNodeError::Spill(SpillStorageOpenError::QuotaExceedsAvailable { .. })
+    ));
+    assert!(
+        tidb_util::sem::is_enabled(),
+        "SEM must be installed before spill/listener/cluster startup"
+    );
+    let _ = std::fs::remove_dir_all(base);
+}
+
+#[test]
 fn configured_tidb_edition_is_an_owned_server_identity() {
     let file = ConfigFile::write(
         "tidb_edition",

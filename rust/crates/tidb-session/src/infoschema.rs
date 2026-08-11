@@ -131,6 +131,21 @@ impl SchemaVisibility {
             PrivMask::Any => crate::privilege::any_priv_mask(),
             PrivMask::Column => crate::privilege::column_privs_mask(),
         };
+        let has_restricted_tables_admin = context.registry.has_dynamic_priv_with_roles(
+            &context.user,
+            &context.host,
+            &context.active_roles,
+            "RESTRICTED_TABLES_ADMIN",
+            false,
+        );
+        if let Some(verdict) = crate::table_privilege::sem_verdict_mask(
+            database,
+            table,
+            mask,
+            has_restricted_tables_admin,
+        ) {
+            return verdict;
+        }
         if let Some(verdict) = crate::table_privilege::mem_db_verdict_mask(database, mask) {
             return verdict;
         }

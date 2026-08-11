@@ -263,6 +263,7 @@ impl Session {
         if is_global {
             self.require_set_global_privilege()?;
         }
+        self.require_sem_visible_sysvar(&assignment.name)?;
         // An explicit `SET INSTANCE` is Go's `v.IsInstance`; anything else
         // unqualified/SESSION reaches the tier only through the legacy
         // rewrite, which warns.
@@ -796,6 +797,7 @@ impl Session {
                         )));
                     }
                 }
+                self.require_sem_visible_sysvar(def.name)?;
                 // `@@last_insert_id` and its `@@identity` alias are the SAME
                 // value `LAST_INSERT_ID()` reports -- Go's
                 // `StmtCtx.PrevLastInsertID` -- not an entry in the variable

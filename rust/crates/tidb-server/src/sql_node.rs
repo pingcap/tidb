@@ -1738,6 +1738,7 @@ mod tests {
             // they take the plaintext port rather than pay for key generation.
             auto_tls: false,
             disconnect_on_expired_password: true,
+            sem_enabled: false,
             max_connections: 2,
             connection_timeout: Duration::from_secs(5),
             max_topn_rows: 1_024,

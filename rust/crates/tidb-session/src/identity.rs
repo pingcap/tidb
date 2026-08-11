@@ -88,6 +88,16 @@ impl Session {
         let Some((registry, user, host)) = self.privilege_context() else {
             return true;
         };
+        if let Some(verdict) =
+            self.sem_table_verdict(registry, user, host, database, table, global_priv.mask())
+        {
+            return verdict;
+        }
+        if let Some(verdict) =
+            crate::table_privilege::mem_db_verdict_mask(database, global_priv.mask())
+        {
+            return verdict;
+        }
         registry.has_table_priv_with_roles(
             user,
             host,
@@ -121,6 +131,9 @@ impl Session {
         let Some((registry, user, host)) = self.privilege_context() else {
             return true;
         };
+        if let Some(verdict) = self.sem_table_verdict(registry, user, host, database, table, mask) {
+            return verdict;
+        }
         if let Some(verdict) = crate::table_privilege::mem_db_verdict_mask(database, mask) {
             return verdict;
         }
@@ -187,6 +200,55 @@ impl Session {
         registry.has_dynamic_priv_with_roles(user, host, self.active_roles(), name, with_grant)
     }
 
+    fn sem_table_verdict(
+        &self,
+        registry: &privilege::PrivilegeRegistry,
+        user: &str,
+        host: &str,
+        database: &str,
+        table: &str,
+        mask: u64,
+    ) -> Option<bool> {
+        if !tidb_util::sem::is_enabled() {
+            return None;
+        }
+        let has_restricted_tables_admin = registry.has_dynamic_priv_with_roles(
+            user,
+            host,
+            self.active_roles(),
+            "RESTRICTED_TABLES_ADMIN",
+            false,
+        );
+        crate::table_privilege::sem_verdict_mask(database, table, mask, has_restricted_tables_admin)
+    }
+
+    pub(crate) fn sem_hides_sysvar(&self, name: &str) -> bool {
+        let name = name.to_ascii_lowercase();
+        tidb_util::sem::is_enabled()
+            && tidb_util::sem::is_invisible_sys_var(&name)
+            && self
+                .privilege_context()
+                .is_some_and(|_| !self.has_dynamic_privilege("RESTRICTED_VARIABLES_ADMIN", false))
+    }
+
+    pub(crate) fn require_sem_visible_sysvar(&self, name: &str) -> Result<(), DriverError> {
+        if self.sem_hides_sysvar(name) {
+            Err(DriverError::SpecificAccessDenied(
+                "RESTRICTED_VARIABLES_ADMIN".to_owned(),
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn sem_hides_status_var(&self, name: &str) -> bool {
+        tidb_util::sem::is_enabled()
+            && tidb_util::sem::is_invisible_status_var(name)
+            && self
+                .privilege_context()
+                .is_none_or(|_| !self.has_dynamic_privilege("RESTRICTED_STATUS_ADMIN", false))
+    }
+
     /// Go `RequestDynamicVerificationWithUser` (`privileges.go` around line
     /// 118): whether the NAMED account holds a dynamic privilege, evaluated
     /// over that account's own DEFAULT roles rather than the caller's active
@@ -223,15 +285,8 @@ impl Session {
             // Go answers a virtual schema from fixed rules before it reads a
             // single grant, so `SELECT ... FROM information_schema.*` needs
             // nothing and a write there is refused whatever is granted.
-            let granted = match crate::table_privilege::mem_db_verdict(
-                &request.database,
-                request.privilege,
-            ) {
-                Some(verdict) => verdict,
-                None => {
-                    self.has_scoped_privilege(&request.database, &request.table, request.privilege)
-                }
-            };
+            let granted =
+                self.has_scoped_privilege(&request.database, &request.table, request.privilege);
             if granted {
                 continue;
             }
