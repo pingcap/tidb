@@ -303,6 +303,7 @@ impl<F: Fn(&str, WarnErr)> WarnAppender for FuncWarnAppender<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidb_error::mysql::FormatArg;
     use tidb_error::terror::ERR_RESULT_UNDETERMINED;
 
     fn warn(level: &str, err: WarnErr) -> SqlWarn {
@@ -317,15 +318,28 @@ mod tests {
     // Rust counterpart (Cause-unwrapping is structural there, absent here).
     #[test]
     fn sql_warn_json_round_trip() {
-        let terror = ERR_RESULT_UNDETERMINED
-            .generate_with_stack(format!("{} unknown", ERR_RESULT_UNDETERMINED.message()));
+        let terror = ERR_RESULT_UNDETERMINED.fast_generate(
+            ERR_RESULT_UNDETERMINED.message(),
+            &[FormatArg::from("unknown")],
+        );
         let warns = vec![
             warn(WARN_LEVEL_ERROR, WarnErr::from("any error")),
+            warn(WARN_LEVEL_ERROR, WarnErr::from("any error")),
+            warn(WARN_LEVEL_WARNING, WarnErr::Terror(terror.clone())),
             warn(WARN_LEVEL_WARNING, WarnErr::Terror(terror)),
             warn(WARN_LEVEL_NOTE, WarnErr::from("EOF")),
         ];
 
         let data = serde_json::to_string(&warns).unwrap();
+        assert_eq!(
+            data,
+            concat!(
+                r#"[{"level":"Error","msg":"any error"},{"level":"Error","msg":"any error"},"#,
+                r#"{"level":"Warning","err":{"class":21,"code":2,"message":"execution result undetermined%!(EXTRA string=unknown)","rfccode":"global:2"}},"#,
+                r#"{"level":"Warning","err":{"class":21,"code":2,"message":"execution result undetermined%!(EXTRA string=unknown)","rfccode":"global:2"}},"#,
+                r#"{"level":"Note","msg":"EOF"}]"#,
+            )
+        );
         let round: Vec<SqlWarn> = serde_json::from_str(&data).unwrap();
 
         assert_eq!(round.len(), warns.len());

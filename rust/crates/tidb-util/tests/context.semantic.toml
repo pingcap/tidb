@@ -1,0 +1,25 @@
+go_package = "pkg/util/context"
+source_commit = "59dfa4d3b214ded26f957249efbda21f95149bb5"
+evidence_files = [
+  "rust/crates/tidb-util/src/context/mod.rs",
+  "rust/crates/tidb-util/src/context/plancache.rs",
+  "rust/crates/tidb-util/src/context/warn.rs",
+  "rust/crates/tidb-util/tests/context_contract.rs",
+  "rust/crates/tidb-distsql/src/warning.rs",
+  "rust/crates/tidb-executor/src/stmt_context.rs",
+  "rust/crates/tidb-session/src/warnings.rs",
+  "rust/crates/tidb-session/src/tests_core/session_state.rs",
+  "rust/crates/tidb-session/src/non_prepared_plan_cache.rs",
+  "rust/crates/tidb-session/src/tests_non_prepared_plan_cache.rs",
+  "rust/crates/tidb-exec/src/warning_publication.rs",
+  "rust/crates/tidb-exec/tests/warning_publication_source.rs",
+  "rust/crates/tidb-exec/tests/all.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "context::"],
+  ["test", "-p", "tidb-util", "--test", "context_contract"],
+  ["test", "-p", "tidb-distsql", "--lib", "warning::tests::collector_stops_at_the_statement_warning_limit", "--", "--exact"],
+  ["test", "-p", "tidb-session", "--lib", "tests_core::session_state::the_session_warning_buffer_stops_at_the_source_retention_limit", "--", "--exact"],
+  ["test", "-p", "tidb-session", "--lib", "tests_non_prepared_plan_cache::two_statements_differing_only_in_a_literal_share_an_entry_and_keep_their_own_rows", "--", "--exact"],
+  ["test", "-p", "tidb-exec", "--test", "all", "warning_publication_source::"],
+]

@@ -18,6 +18,7 @@ use std::any::Any;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use tidb_error::mysql::FormatArg;
 use tidb_error::terror::ERR_RESULT_UNDETERMINED;
 use tidb_util::context::{
     gen_context_id, FuncWarnAppender, IgnoreWarn, PlanCacheTracker, PlanCacheType,
@@ -130,8 +131,10 @@ fn context_ids_are_nonzero_and_unique_across_threads() {
 
 #[test]
 fn warning_json_and_handlers_preserve_the_public_contract() {
-    let terror = ERR_RESULT_UNDETERMINED
-        .generate_with_stack(format!("{} unknown", ERR_RESULT_UNDETERMINED.message()));
+    let terror = ERR_RESULT_UNDETERMINED.fast_generate(
+        ERR_RESULT_UNDETERMINED.message(),
+        &[FormatArg::from("unknown")],
+    );
     let original = vec![
         warning(WARN_LEVEL_ERROR, "plain"),
         SqlWarn {

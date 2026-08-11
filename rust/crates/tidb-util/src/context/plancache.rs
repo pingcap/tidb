@@ -14,7 +14,8 @@
 
 //! Transcreation of Go `pkg/util/context/plancache.go`.
 
-use std::sync::{Arc, Mutex, Once};
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
+use std::sync::{Arc, Mutex, MutexGuard, Once};
 
 use super::warn::WarnAppender;
 use super::WarnErr;
@@ -63,7 +64,7 @@ impl PlanCacheTracker {
 
     /// Outputs the reason why this query can't hit the plan cache.
     pub fn warn_skip_plan_cache(&self, reason: &str) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state();
         if state.cache_type == PlanCacheType::DefaultNoCache {
             return;
         }
@@ -72,7 +73,7 @@ impl PlanCacheTracker {
 
     /// Sets to skip the plan cache.
     pub fn set_skip_plan_cache(&self, reason: &str) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state();
         if !state.use_cache {
             return;
         }
@@ -115,28 +116,28 @@ impl PlanCacheTracker {
     /// Sets whether to always warn when skipping the plan cache; by default
     /// `SessionNonPrepared` skips silently.
     pub fn set_always_warn_skip_cache(&self, always: bool) {
-        self.state.lock().unwrap().always_warn_skip_cache = always;
+        self.state().always_warn_skip_cache = always;
     }
 
     /// Sets the cache type.
     pub fn set_cache_type(&self, cache_type: PlanCacheType) {
-        self.state.lock().unwrap().cache_type = cache_type;
+        self.state().cache_type = cache_type;
     }
 
     /// Sets whether to force plan cache despite risky optimizations.
     pub fn set_force_plan_cache(&self, force: bool) {
-        self.state.lock().unwrap().force_plan_cache = force;
+        self.state().force_plan_cache = force;
     }
 
     /// Sets to use the plan cache.
     pub fn enable_plan_cache(&self) {
-        self.state.lock().unwrap().use_cache = true;
+        self.state().use_cache = true;
     }
 
     /// Captures the mutable planning-time state (Go `Save`'s five values).
     #[must_use]
     pub fn save(&self) -> (bool, PlanCacheType, String, bool, bool) {
-        let state = self.state.lock().unwrap();
+        let state = self.state();
         (
             state.use_cache,
             state.cache_type,
@@ -155,7 +156,7 @@ impl PlanCacheTracker {
         force_plan_cache: bool,
         always_warn_skip_cache: bool,
     ) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state();
         state.use_cache = use_cache;
         state.cache_type = cache_type;
         state.plan_cache_unqualified = plan_cache_unqualified;
@@ -166,13 +167,19 @@ impl PlanCacheTracker {
     /// Returns whether to use the plan cache.
     #[must_use]
     pub fn use_cache(&self) -> bool {
-        self.state.lock().unwrap().use_cache
+        self.state().use_cache
     }
 
     /// Returns the reason why the plan cache is unqualified.
     #[must_use]
     pub fn plan_cache_unqualified(&self) -> String {
-        self.state.lock().unwrap().plan_cache_unqualified.clone()
+        self.state().plan_cache_unqualified.clone()
+    }
+
+    fn state(&self) -> MutexGuard<'_, TrackerState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -202,18 +209,29 @@ impl RangeFallbackHandler {
     pub fn record_range_fallback(&self, range_max_size: i64) {
         self.plan_cache_tracker
             .set_skip_plan_cache("in-list is too long");
+
+        // Go sync.Once is done after f panics. Let Rust's Once finish normally,
+        // then resume the original panic without poisoning it.
+        let mut panic_payload = None;
         self.report_range_fallback_warning.call_once(|| {
-            self.warn_handler.append_warning(WarnErr::Message(format!(
-                "Memory capacity of {range_max_size} bytes for 'tidb_opt_range_max_size' \
-                 exceeded when building ranges. Less accurate ranges such as full range are chosen"
-            )));
+            panic_payload = catch_unwind(AssertUnwindSafe(|| {
+                self.warn_handler.append_warning(WarnErr::Message(format!(
+                    "Memory capacity of {range_max_size} bytes for 'tidb_opt_range_max_size' \
+                     exceeded when building ranges. Less accurate ranges such as full range are chosen"
+                )));
+            }))
+            .err();
         });
+        if let Some(payload) = panic_payload {
+            resume_unwind(payload);
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
     // Go ships no plancache test; these pin the observable warning/state
@@ -235,6 +253,23 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(("Note".into(), err.to_string()));
+        }
+    }
+
+    #[derive(Default)]
+    struct PanickingCollector {
+        calls: AtomicUsize,
+    }
+
+    impl WarnAppender for PanickingCollector {
+        fn append_warning(&self, _err: WarnErr) {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            panic!("warning callback panic");
+        }
+
+        fn append_note(&self, _err: WarnErr) {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            panic!("note callback panic");
         }
     }
 
@@ -321,5 +356,43 @@ mod tests {
         assert!(fallback[0].1.contains("1024 bytes"));
         assert!(!tracker.use_cache());
         assert_eq!(tracker.plan_cache_unqualified(), "in-list is too long");
+    }
+
+    #[test]
+    fn tracker_remains_usable_after_warning_callback_panic() {
+        let collector = Arc::new(PanickingCollector::default());
+        let tracker = PlanCacheTracker::new(collector.clone());
+        tracker.set_cache_type(PlanCacheType::SessionPrepared);
+        tracker.enable_plan_cache();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tracker.set_skip_plan_cache("risky callback");
+        }));
+
+        assert!(result.is_err());
+        assert_eq!(collector.calls.load(Ordering::SeqCst), 1);
+        assert!(!tracker.use_cache());
+        assert_eq!(tracker.plan_cache_unqualified(), "risky callback");
+        tracker.enable_plan_cache();
+        assert!(tracker.use_cache());
+    }
+
+    #[test]
+    fn range_fallback_once_is_done_after_warning_callback_panic() {
+        let tracker_collector = Arc::new(Collector::default());
+        let tracker = Arc::new(PlanCacheTracker::new(tracker_collector));
+        let collector = Arc::new(PanickingCollector::default());
+        let handler = RangeFallbackHandler::new(tracker, collector.clone());
+
+        let first = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            handler.record_range_fallback(1024);
+        }));
+        let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            handler.record_range_fallback(1024);
+        }));
+
+        assert!(first.is_err());
+        assert!(second.is_ok(), "Go sync.Once is done after a panic");
+        assert_eq!(collector.calls.load(Ordering::SeqCst), 1);
     }
 }
