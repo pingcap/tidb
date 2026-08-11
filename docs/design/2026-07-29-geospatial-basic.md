@@ -121,7 +121,7 @@ and because a 2D geometry with no SRID flag is plain OGC WKB byte for byte.
 | Lossless | Exact `f64` coordinates and full geometry structure, never truncated. |
 | SRID | Carried by the SRID flag, which may be left unset where the column fixes it with `SRID n`, since that is still valid EWKB. It cannot be dropped unconditionally: an unrestricted `GEOMETRY` column holds a per-row SRID, and a geometry outside any column (function result, join or sort intermediate) has no column metadata to recover it from. |
 | Byte order | Left to EWKB, which flags it per geometry and permits both. |
-| MySQL bytes | Not matched. MySQL stores `<srid u32 LE><WKB>` and is 2D only; `ST_AsBinary`, dump/reload and the wire protocol convert at the boundary, which for a 2D value is dropping the SRID flag. MySQL converts too, storing coordinates longitude-first internally, visible as `HEX(g)` and `ST_AsBinary(g)` returning swapped coordinates for a 4326 point. |
+| MySQL bytes | Not matched. MySQL stores `<srid u32 LE><WKB>` and is 2D only; `ST_AsBinary`, dump/reload and the wire protocol convert at the boundary, which for a 2D value is dropping the SRID flag. |
 | Coordinate dimension | XY, XYZ, XYM and XYZM are storable, covering GeoJSON positions (XY and XYZ) and measured geometry. Every v1 function is 2D, as in MySQL. |
 | SRIDs outside 0 and 4326 | Stored and returned unchanged in an unrestricted `GEOMETRY` column, as in MySQL. |
 
@@ -185,7 +185,8 @@ belongs in the user docs as migration guidance.
 
 Coordinates are **stored as parsed**, so latitude-first on 4326, which is the order S2 wants
 and costs no swap on the geodesic and index paths. MySQL stores the opposite order and swaps
-at every boundary; both engines emit the same WKB.
+at every boundary, visible as `HEX(g)` and `ST_AsBinary(g)` returning swapped coordinates
+for the same 4326 point; both engines emit the same WKB.
 
 **Extension path** (documented, not built here):
 
