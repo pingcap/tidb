@@ -6,6 +6,7 @@
 
 use crate::tests_support::*;
 use crate::*;
+use std::sync::Arc;
 
 /// The one column of every row, as text.
 fn column(result: Result<StmtResult, DriverError>) -> Vec<String> {
@@ -20,6 +21,50 @@ fn wire_error(session: &mut Session, sql: &str) -> (u16, String) {
     let error = session.run(sql).expect_err("statement must fail");
     let rendered = error.to_mysql_error();
     (rendered.code, rendered.message)
+}
+
+/// The CTE producer is a real spill-backed operator: with temporary storage
+/// enabled the quota spills and the query completes; with the same quota and
+/// temporary storage disabled it is TiDB's 8175. Both paths release their
+/// statement resources before the next command.
+#[test]
+fn cte_storage_obeys_the_session_spill_policy_and_quota() {
+    let path =
+        std::env::temp_dir().join(format!("tidb-session-cte-storage-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&path);
+    let storage = Arc::new(
+        tidb_util::disk::SpillStorage::open(tidb_util::disk::SpillStorageSpec {
+            path: path.clone(),
+            quota_bytes: -1,
+            encryption: tidb_util::disk::SpillEncryptionMethod::Plaintext,
+        })
+        .unwrap(),
+    );
+    let mut session = Session::new();
+    session.set_spill_storage(Arc::clone(&storage));
+    session.run("SET @@tidb_mem_quota_query = 65536").unwrap();
+    session
+        .run("SET @@global.tidb_enable_tmp_storage_on_oom = 1")
+        .unwrap();
+
+    let sql = "WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM t WHERE n<128) \
+               SELECT COUNT(*) FROM t";
+    assert_eq!(column(session.run(sql)), vec!["128"]);
+    assert!(storage.global_tracker().max_consumed() > 0);
+    assert_eq!(storage.global_tracker().bytes_consumed(), 0);
+
+    session
+        .run("SET @@global.tidb_enable_tmp_storage_on_oom = 0")
+        .unwrap();
+    assert_eq!(wire_error(&mut session, sql).0, 8175);
+    assert_eq!(storage.global_tracker().bytes_consumed(), 0);
+
+    session
+        .run("SET @@global.tidb_enable_tmp_storage_on_oom = 1")
+        .unwrap();
+    drop(session);
+    drop(storage);
+    std::fs::remove_dir_all(path).unwrap();
 }
 
 /// The classic counter, and the delta rule that makes it come out right: each

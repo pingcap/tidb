@@ -40,6 +40,8 @@ pub const LABEL_FOR_SESSION: i64 = -27;
 pub const LABEL_FOR_MEM_DB: i64 = -28;
 /// `LabelForCursorFetch`: rows retained by an eager prepared cursor.
 pub const LABEL_FOR_CURSOR_FETCH: i64 = -29;
+/// `LabelForCTEStorage`: rows retained by a common-table-expression producer.
+pub const LABEL_FOR_CTE_STORAGE: i64 = -19;
 /// `LabelForGlobalAnalyzeMemory`.
 pub const LABEL_FOR_GLOBAL_ANALYZE_MEMORY: i64 = -25;
 /// `LabelForChunkList`: an in-memory `chunk.List`.

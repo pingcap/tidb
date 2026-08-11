@@ -363,6 +363,12 @@ fn scan_base_table(
             .into_iter()
             .map(|(handle, row)| (vec![Some(RowId::Kv(handle))], row))
             .collect(),
+        TableEntry::Cte(cte) => cte
+            .to_rows()
+            .map_err(DriverError::from)?
+            .into_iter()
+            .map(|row| (vec![None], row))
+            .collect(),
         // A view is not a row source a write can identify rows in, whether
         // or not it is one of the targets.
         TableEntry::View(_) => {

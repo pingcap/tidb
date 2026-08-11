@@ -53,6 +53,7 @@ pub(crate) mod bad_null;
 pub mod cluster_storage;
 pub mod column_default;
 pub(crate) mod column_prune;
+pub mod cte_storage;
 pub mod ddl;
 pub mod ddl_sequence;
 pub mod driver;
@@ -109,6 +110,7 @@ mod window;
 pub mod zero_date;
 
 pub use apply::ApplyExec;
+pub use cte_storage::{CteStorage, CteTable};
 pub use ddl::{
     added_check_constraint_actions, check_constraint_count, discarded_check_constraint_actions,
     linear_partitioning_warning, run_alter_table_in, run_create_index_in, run_create_table_in,

@@ -127,6 +127,9 @@ fn resolve_insert_target(
     if table.is_sequence() {
         return Err(DriverError::InsertIntoSequenceUnsupported(table_name));
     }
+    if matches!(table, TableEntry::Cte(_)) {
+        return Err(DriverError::unsupported("a CTE is not an INSERT target"));
+    }
     let column_list = table.column_list();
     let named_columns: Vec<String> = if insert.set_syntax {
         insert
@@ -160,8 +163,8 @@ fn resolve_insert_target(
             .map(|column| column.generated.is_some())
             .collect(),
         TableEntry::Mem(_) => vec![false; column_list.len()],
-        TableEntry::View(_) | TableEntry::Sequence(_) => {
-            unreachable!("view and sequence targets were refused above")
+        TableEntry::Cte(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
+            unreachable!("read-only targets were refused above")
         }
     };
     let column_meta = column_metadata(table);
@@ -271,8 +274,8 @@ pub(crate) fn run_insert_traced(
     let auto_increment_offset = match table {
         TableEntry::Kv(kv) => kv.auto_increment_offset(),
         TableEntry::Mem(_) => None,
-        TableEntry::View(_) | TableEntry::Sequence(_) => {
-            unreachable!("INSERT through a view or sequence is refused above")
+        TableEntry::Cte(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
+            unreachable!("INSERT through a read-only relation is refused above")
         }
     };
     // REFUSED for the same reason: under `NO_AUTO_VALUE_ON_ZERO` Go STORES an
@@ -1483,7 +1486,9 @@ pub(crate) fn run_update_traced(
     let mut rewrites: Vec<(crate::kv_table::TableHandle, Vec<Datum>, Vec<Datum>)> = Vec::new();
     match entry {
         // Go's planner rejects an UPDATE whose target is a view.
-        TableEntry::View(_) => return Err(DriverError::TableNotUpdatable(name.clone())),
+        TableEntry::Cte(_) | TableEntry::View(_) => {
+            return Err(DriverError::TableNotUpdatable(name.clone()))
+        }
         // A sequence has no columns, so Go's planner never gets as far as an
         // updatability check: it fails resolving the assignment's column name
         // (captured: `update s1 set a = 1` is
@@ -1840,7 +1845,9 @@ pub(crate) fn run_delete_traced(
     let mut deleted = 0u64;
     let mut doomed: Vec<(crate::kv_table::TableHandle, Vec<Datum>)> = Vec::new();
     match entry {
-        TableEntry::View(_) => return Err(DriverError::DeleteViewUnsupported(name.clone())),
+        TableEntry::Cte(_) | TableEntry::View(_) => {
+            return Err(DriverError::DeleteViewUnsupported(name.clone()))
+        }
         TableEntry::Sequence(_) => {
             return Err(DriverError::DeleteSequenceUnsupported(name.clone()))
         }

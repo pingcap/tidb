@@ -432,7 +432,7 @@ fn materialize_ctes(
     for cte in &with.ctes {
         // Each CTE sees the ones already materialized, which is what lets a
         // later one reference an earlier one.
-        let (columns, rows) = recursive_cte::materialize_cte_body(
+        let table = recursive_cte::materialize_cte_body(
             &cte.name,
             &cte.columns,
             &cte.query,
@@ -441,7 +441,7 @@ fn materialize_ctes(
             ctx,
             with.recursive,
         )?;
-        scratch.register_mem_in(current_db, &cte.name, MemTable { columns, rows });
+        scratch.register_cte_in(current_db, &cte.name, table);
     }
     Ok(scratch)
 }

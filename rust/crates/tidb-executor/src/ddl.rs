@@ -1139,9 +1139,9 @@ fn create_like_source<'a>(
         // A matrix-backed fixture table has no stored structure to copy. It
         // only exists in this crate's own tests, so this is unreachable from
         // SQL, but it must not be mistaken for "does not exist".
-        Some(crate::TableEntry::Mem(_)) => Err(DriverError::unsupported(
-            "CREATE TABLE LIKE needs a stored table",
-        )),
+        Some(crate::TableEntry::Mem(_) | crate::TableEntry::Cte(_)) => Err(
+            DriverError::unsupported("CREATE TABLE LIKE needs a stored table"),
+        ),
         None => Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
             format!("{database}.{name}"),
         ))),

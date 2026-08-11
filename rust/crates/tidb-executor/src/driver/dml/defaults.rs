@@ -93,6 +93,19 @@ pub(crate) fn column_metadata(table: &TableEntry) -> Vec<ColumnDefaultMeta> {
                 generated: false,
             })
             .collect(),
+        TableEntry::Cte(cte) => cte
+            .columns()
+            .iter()
+            .map(|(name, field_type)| ColumnDefaultMeta {
+                default_value: None,
+                not_null: false,
+                no_default_value: false,
+                name: name.clone(),
+                field_type: field_type.clone(),
+                column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                generated: false,
+            })
+            .collect(),
         // Writes through either object are refused before row evaluation.
         TableEntry::View(view) => view
             .columns

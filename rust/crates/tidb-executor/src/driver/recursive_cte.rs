@@ -68,12 +68,13 @@
 //! accumulate-and-dedup fold is not something a capture pins down, and
 //! guessing wrong is a silently over- or under-deduplicated answer.
 
+use std::sync::Arc;
 use tidb_ast::{Expr, Join, JoinNode, QueryStmt, SelectStmt, SetOp, SetOprStmt, SetOprTermBody};
 
 use super::{
-    eval_limit_bound, run_select_stmt, run_set_opr_stmt, Catalog, DriverError, MemTable, SelectMeta,
+    eval_limit_bound, run_select_stmt, run_set_opr_stmt, Catalog, DriverError, MAX_CHUNK_SIZE,
 };
-use crate::StmtContext;
+use crate::{CteStorage, CteTable, StmtContext};
 
 /// Materializes one CTE's body into its columns and rows. `recursive_clause`
 /// is the `WITH RECURSIVE` keyword, which only ever PERMITS recursion -- the
@@ -86,7 +87,7 @@ pub(super) fn materialize_cte_body(
     current_db: &str,
     ctx: &StmtContext,
     recursive_clause: bool,
-) -> Result<SelectMeta, DriverError> {
+) -> Result<CteTable, DriverError> {
     match query {
         QueryStmt::Select(select) => {
             // A bare `SELECT` body that names itself has no seed to start
@@ -95,7 +96,7 @@ pub(super) fn materialize_cte_body(
                 return Err(DriverError::CteRecursiveRequiresUnion(name.to_owned()));
             }
             let (columns, rows) = run_select_stmt(select, catalog, current_db, ctx)?;
-            Ok((apply_column_list(columns, column_names)?, rows))
+            store_rows(apply_column_list(columns, column_names)?, rows, ctx)
         }
         QueryStmt::SetOpr(set_opr) => {
             let self_refs: usize = set_opr
@@ -108,7 +109,7 @@ pub(super) fn materialize_cte_body(
                 // not the clause said RECURSIVE -- and the definition's own
                 // ORDER BY / LIMIT and mixed operators come with it.
                 let (columns, rows) = run_set_opr_stmt(set_opr, catalog, current_db, ctx)?;
-                return Ok((apply_column_list(columns, column_names)?, rows));
+                return store_rows(apply_column_list(columns, column_names)?, rows, ctx);
             }
             if !recursive_clause {
                 // Without RECURSIVE the self-reference names no table at all.
@@ -130,7 +131,7 @@ fn run_fixpoint(
     catalog: &Catalog,
     current_db: &str,
     ctx: &StmtContext,
-) -> Result<SelectMeta, DriverError> {
+) -> Result<CteTable, DriverError> {
     if !set_opr.order_by.is_empty() {
         return Err(DriverError::NotSupportedYet(
             "ORDER BY over UNION in recursive Common Table Expression",
@@ -152,7 +153,7 @@ fn run_fixpoint(
         ..set_opr.clone()
     };
     seed.terms[0].op = None;
-    let (columns, mut accumulated) = run_set_opr_stmt(&seed, catalog, current_db, ctx)?;
+    let (columns, mut seed_rows) = run_set_opr_stmt(&seed, catalog, current_db, ctx)?;
     // The rename applies to the SEED's columns, before any round runs: a
     // recursive block reads the CTE by its RENAMED column names.
     let columns = apply_column_list(columns, column_names)?;
@@ -173,41 +174,47 @@ fn run_fixpoint(
     let distinct = matches!(split.op, SetOp::Union { all: false });
     let mut seen: std::collections::HashSet<Vec<u8>> = std::collections::HashSet::new();
     if distinct {
-        let mut unique = Vec::with_capacity(accumulated.len());
-        for row in accumulated {
+        let mut unique = Vec::with_capacity(seed_rows.len());
+        for row in seed_rows {
             if seen.insert(super::row_key(&row)?) {
                 unique.push(row);
             }
         }
-        accumulated = unique;
+        seed_rows = unique;
     }
 
     // Reaching the target before any round runs (`LIMIT 0`, or a seed that
     // already fills it) is the same check the loop makes, not a special case:
     // it just empties the delta, so no round ever runs.
     if let Some(t) = target {
-        if accumulated.len() >= t {
-            accumulated.truncate(t);
-            return Ok((columns, apply_definition_limit(accumulated, set_opr)?));
+        if seed_rows.len() >= t {
+            seed_rows.truncate(t);
+            let storage = storage_from_rows(&columns, seed_rows, ctx)?;
+            return definition_table(columns, storage, set_opr);
         }
     }
-    let mut delta = accumulated.clone();
+
+    let delta_rows = seed_rows.clone();
+    let mut accumulated = CteStorage::new(
+        field_types(&columns),
+        MAX_CHUNK_SIZE,
+        ctx.statement_memory(),
+    );
+    accumulated.add_rows(seed_rows).map_err(DriverError::from)?;
+    let mut delta = storage_from_rows(&columns, delta_rows, ctx)?;
     let mut round: u64 = 0;
     let depth = ctx.cte_max_recursion_depth();
     let mut scratch = catalog.clone();
-    while !delta.is_empty() {
+    while delta.num_rows() > 0 {
         round += 1;
         if round > depth {
             return Err(DriverError::CteMaxRecursionDepth(round));
         }
         // The recursive blocks see the previous round's new rows only.
-        scratch.register_mem_in(
+        scratch.register_cte_in(
             current_db,
             name,
-            MemTable {
-                columns: columns.clone(),
-                rows: delta,
-            },
+            CteTable::new(columns.clone(), Arc::clone(&delta)),
         );
         let mut produced = Vec::new();
         for term in &set_opr.terms[split.recursive_from..] {
@@ -217,24 +224,73 @@ fn run_fixpoint(
             let (_, rows) = run_select_stmt(select, &scratch, current_db, ctx)?;
             produced.extend(cast_to_seed_schema(rows, &columns, ctx));
         }
-        // The accumulated rows are an unchanged prefix under both UNION kinds,
-        // so the rows admitted this round ARE the next delta.
-        let start = accumulated.len();
+        let mut admitted = Vec::new();
+        let remaining = target
+            .map(|target| target.saturating_sub(accumulated.num_rows()))
+            .unwrap_or(usize::MAX);
         for row in produced {
+            if admitted.len() == remaining {
+                break;
+            }
             if distinct && !seen.insert(super::row_key(&row)?) {
                 continue;
             }
-            accumulated.push(row);
+            admitted.push(row);
         }
-        delta = accumulated[start..].to_vec();
-        if let Some(t) = target {
-            if accumulated.len() >= t {
-                accumulated.truncate(t);
-                break;
-            }
+        accumulated
+            .add_rows(admitted.iter().cloned())
+            .map_err(DriverError::from)?;
+        delta = storage_from_rows(&columns, admitted, ctx)?;
+        accumulated.set_iter(round as usize);
+        if target.is_some_and(|target| accumulated.num_rows() >= target) {
+            break;
         }
     }
-    Ok((columns, apply_definition_limit(accumulated, set_opr)?))
+    accumulated.set_done();
+    definition_table(columns, Arc::new(accumulated), set_opr)
+}
+
+fn field_types(columns: &[(String, tidb_datatype::FieldType)]) -> Vec<tidb_datatype::FieldType> {
+    columns
+        .iter()
+        .map(|(_, field_type)| field_type.clone())
+        .collect()
+}
+
+fn storage_from_rows(
+    columns: &[(String, tidb_datatype::FieldType)],
+    rows: Vec<Vec<tidb_datatype::Datum>>,
+    ctx: &StmtContext,
+) -> Result<Arc<CteStorage>, DriverError> {
+    let mut storage = CteStorage::new(field_types(columns), MAX_CHUNK_SIZE, ctx.statement_memory());
+    storage.add_rows(rows).map_err(DriverError::from)?;
+    storage.set_done();
+    Ok(Arc::new(storage))
+}
+
+fn store_rows(
+    columns: Vec<(String, tidb_datatype::FieldType)>,
+    rows: Vec<Vec<tidb_datatype::Datum>>,
+    ctx: &StmtContext,
+) -> Result<CteTable, DriverError> {
+    let storage = storage_from_rows(&columns, rows, ctx)?;
+    Ok(CteTable::new(columns, storage))
+}
+
+fn definition_table(
+    columns: Vec<(String, tidb_datatype::FieldType)>,
+    storage: Arc<CteStorage>,
+    set_opr: &SetOprStmt,
+) -> Result<CteTable, DriverError> {
+    let Some(limit) = &set_opr.limit else {
+        return Ok(CteTable::new(columns, storage));
+    };
+    let count = eval_limit_bound(&limit.count)? as usize;
+    let offset = match &limit.offset {
+        Some(expr) => eval_limit_bound(expr)? as usize,
+        None => 0,
+    };
+    Ok(CteTable::window(columns, storage, offset, count))
 }
 
 /// Go `buildProjection4CTEUnion`: the CTE's schema is the SEED's, and every
@@ -417,23 +473,6 @@ fn limit_target(set_opr: &SetOprStmt) -> Result<Option<usize>, DriverError> {
         None => 0,
     };
     Ok(Some(offset.saturating_add(count)))
-}
-
-/// The definition's own `LIMIT` windowing, applied once at the end exactly as
-/// an ordinary `LIMIT` is.
-fn apply_definition_limit(
-    rows: Vec<Vec<tidb_datatype::Datum>>,
-    set_opr: &SetOprStmt,
-) -> Result<Vec<Vec<tidb_datatype::Datum>>, DriverError> {
-    let Some(limit) = &set_opr.limit else {
-        return Ok(rows);
-    };
-    let count = eval_limit_bound(&limit.count)? as usize;
-    let offset = match &limit.offset {
-        Some(expr) => eval_limit_bound(expr)? as usize,
-        None => 0,
-    };
-    Ok(rows.into_iter().skip(offset).take(count).collect())
 }
 
 /// How many times `name` is a plain `FROM` table reference in one set-operation

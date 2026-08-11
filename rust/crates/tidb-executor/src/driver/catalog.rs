@@ -238,6 +238,8 @@ pub struct ViewDef {
 pub enum TableEntry {
     /// A plain value matrix (the original mock backing).
     Mem(MemTable),
+    /// A spill-backed common table expression, scoped to one query catalog.
+    Cte(crate::CteTable),
     /// Rows stored as real TiKV-format bytes (see [`crate::kv_table`]).
     Kv(KvTable),
     /// A view: a stored `SELECT` rather than stored rows.
@@ -274,6 +276,7 @@ impl TableEntry {
     pub(crate) fn column_list(&self) -> Vec<(String, FieldType)> {
         match self {
             TableEntry::Mem(mem) => mem.columns.clone(),
+            TableEntry::Cte(cte) => cte.columns().to_vec(),
             TableEntry::Kv(kv) => kv
                 .visible_columns()
                 .iter()
@@ -633,6 +636,18 @@ impl Catalog {
         });
         self.register_in(database, name, TableEntry::Mem(table))
             .expect("the schema was just created when it was missing");
+    }
+
+    /// Registers a query-scoped spill-backed CTE in `database`, creating the
+    /// scratch schema when it does not exist.
+    pub(crate) fn register_cte_in(&mut self, database: &str, name: &str, table: crate::CteTable) {
+        let key = database.to_lowercase();
+        self.databases.entry(key).or_insert_with(|| Database {
+            name: database.to_owned(),
+            tables: HashMap::new(),
+        });
+        self.register_in(database, name, TableEntry::Cte(table))
+            .expect("the scratch schema was just created when it was missing");
     }
 
     /// Registers a TiKV-format-byte-backed table in `database`, or reports

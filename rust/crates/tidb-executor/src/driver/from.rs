@@ -20,6 +20,7 @@
 //! plus the [`FromScope`] that names its output columns for the rewriter.
 
 use super::*;
+use crate::cte_storage::CteTableSourceExec;
 
 /// The joined `FROM` scope: every table's columns concatenated left to right,
 /// which is the row layout [`JoinExec`] produces.
@@ -561,6 +562,10 @@ pub(crate) fn build_from(
                 TableEntry::Mem(mem) => Box::new(MemTableSourceExec::new(
                     ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
                     mem.rows.clone(),
+                )),
+                TableEntry::Cte(cte) => Box::new(CteTableSourceExec::new(
+                    ExecutorMeta::new(schema, 0, INIT_CAP, MAX_CHUNK_SIZE),
+                    cte.clone(),
                 )),
                 // Go's `findBestTask` costs an access path for EVERY
                 // `DataSource` of the tree, this leaf included, and answers
