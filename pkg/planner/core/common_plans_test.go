@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tipb/go-tipb"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
@@ -326,11 +328,17 @@ func readBillingDemoResolveWeights(site, opClass, version string) (legacyReadBil
 }
 
 type readBillingDemoRPCStatsForTest struct {
-	counts             map[tikvrpc.CmdType]int64
-	detail             tikvutil.ScanDetail
-	detailRecords      uint64
-	completedResponses uint64
-	tp                 int
+	counts              map[tikvrpc.CmdType]int64
+	detail              tikvutil.ScanDetail
+	detailRecords       uint64
+	completedResponses  uint64
+	payloadBytes        uint64
+	payloadRecords      uint64
+	payloadCoverageSet  bool
+	payloadCompleted    uint64
+	payloadCompletedSet bool
+	payloadInvalid      bool
+	tp                  int
 }
 
 func (*readBillingDemoRPCStatsForTest) String() string {
@@ -348,15 +356,31 @@ func (s *readBillingDemoRPCStatsForTest) Merge(other execdetails.RuntimeStats) {
 	s.detail.Merge(&otherStats.detail)
 	s.detailRecords += otherStats.detailRecords
 	s.completedResponses += otherStats.completedResponses
+	s.payloadBytes += otherStats.payloadBytes
+	if otherStats.payloadCoverageSet {
+		s.payloadRecords += otherStats.payloadRecords
+		s.payloadCoverageSet = true
+	}
+	if otherStats.payloadCompletedSet {
+		s.payloadCompleted += otherStats.payloadCompleted
+		s.payloadCompletedSet = true
+	}
+	s.payloadInvalid = s.payloadInvalid || otherStats.payloadInvalid
 }
 
 func (s *readBillingDemoRPCStatsForTest) Clone() execdetails.RuntimeStats {
 	cloned := &readBillingDemoRPCStatsForTest{
-		counts:             make(map[tikvrpc.CmdType]int64, len(s.counts)),
-		detail:             s.detail,
-		detailRecords:      s.detailRecords,
-		completedResponses: s.completedResponses,
-		tp:                 s.tp,
+		counts:              make(map[tikvrpc.CmdType]int64, len(s.counts)),
+		detail:              s.detail,
+		detailRecords:       s.detailRecords,
+		completedResponses:  s.completedResponses,
+		payloadBytes:        s.payloadBytes,
+		payloadRecords:      s.payloadRecords,
+		payloadCoverageSet:  s.payloadCoverageSet,
+		payloadCompleted:    s.payloadCompleted,
+		payloadCompletedSet: s.payloadCompletedSet,
+		payloadInvalid:      s.payloadInvalid,
+		tp:                  s.tp,
 	}
 	for cmd, count := range s.counts {
 		cloned.counts[cmd] = count
@@ -377,6 +401,18 @@ func (s *readBillingDemoRPCStatsForTest) GetCmdRPCCount(cmd tikvrpc.CmdType) int
 
 func (s *readBillingDemoRPCStatsForTest) GetScanDetailAndCoverage() (tikvutil.ScanDetail, uint64, uint64) {
 	return s.detail, s.detailRecords, s.completedResponses
+}
+
+func (s *readBillingDemoRPCStatsForTest) GetPointResponsePayloadAndCoverage() (uint64, uint64, uint64, bool) {
+	payloadRecords := s.completedResponses
+	if s.payloadCoverageSet {
+		payloadRecords = s.payloadRecords
+	}
+	payloadCompleted := s.completedResponses
+	if s.payloadCompletedSet {
+		payloadCompleted = s.payloadCompleted
+	}
+	return s.payloadBytes, payloadRecords, payloadCompleted, !s.payloadInvalid
 }
 
 type readBillingDemoNilEmbeddedPointStatsForTest struct {
@@ -595,7 +631,7 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 	require.Contains(t, rows[0].note, readBillingDemoReasonUncalibratedWeights)
 	stats := buildReadBillingDemoStatementStats(result)
 	require.Equal(t, "v6", stats.ModelVersion)
-	require.Equal(t, "v6-frontend-compile-work-uncalibrated", stats.WeightVersion)
+	require.Equal(t, "v6-point-payload-work-uncalibrated", stats.WeightVersion)
 	require.Equal(t, stmtsummary.ReadBillingDemoBaseUnitSummary{}, stats.Totals)
 
 	t.Run("reader transport is emitted once and fails closed", func(t *testing.T) {
@@ -649,11 +685,11 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 		pointLookupRuntimeStats := execdetails.NewRuntimeStatsColl(nil)
 		pointLookupRuntimeStats.RegisterStats(point.ID(), &readBillingDemoRPCStatsForTest{
 			detail:        tikvutil.ScanDetail{TotalKeys: 2, ProcessedKeys: 1, ProcessedKeysSize: 37},
-			detailRecords: 2, completedResponses: 2,
+			detailRecords: 2, completedResponses: 2, payloadBytes: 17,
 		})
 		pointLookupRuntimeStats.RegisterStats(batch.ID(), &readBillingDemoRPCStatsForTest{
 			detail:        tikvutil.ScanDetail{TotalKeys: 5, ProcessedKeys: 3, ProcessedKeysSize: 111},
-			detailRecords: 5, completedResponses: 5,
+			detailRecords: 5, completedResponses: 5, payloadBytes: 23,
 		})
 
 		testCases := []struct {
@@ -689,9 +725,10 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 				require.Equal(t, readBillingDemoSiteTiKV, op.site)
 				require.Equal(t, readBillingDemoOpClassPointLookup, op.opClass)
 				require.Equal(t, tc.kind, op.operatorKind)
-				require.Len(t, op.units, 7)
-				require.Equal(t, []float64{2, 5, 7}[i], readBillingDemoUnitValue(op.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
-				require.Equal(t, []float64{37, 111, 148}[i], readBillingDemoUnitValue(op.units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
+				require.Len(t, op.units, 8)
+				require.Equal(t, -1.0, readBillingDemoUnitValue(op.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+				require.Equal(t, []float64{74, 185, 259}[i], readBillingDemoUnitValue(op.units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
+				require.Equal(t, []float64{17, 23, 40}[i], readBillingDemoUnitValue(op.units, readBillingDemoUnitNetBytes, readBillingDemoInputSideAll))
 				require.Equal(t, []float64{1, 3, 4}[i], readBillingDemoUnitValue(op.units, readBillingDemoUnitProcessedKeys, readBillingDemoInputSideAll))
 				require.Equal(t, readBillingDemoInputSourceSnapshotRuntimeStats, op.units[0].source)
 				require.True(t, readBillingDemoOperatorBillable(op))
@@ -700,9 +737,9 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 					status: readBillingDemoStatusSuccess, reason: readBillingDemoReasonNone,
 					operators: []readBillingDemoOperatorResult{op},
 				}, explainRUComponentSnapshotOK)
-				require.Len(t, rendered, 8)
+				require.Len(t, rendered, 9)
 				require.False(t, rendered[0].hasPreviewRU)
-				require.Contains(t, rendered[0].note, "model_version=v6,weight_version=v6-frontend-compile-work-uncalibrated")
+				require.Contains(t, rendered[0].note, "model_version=v6,weight_version=v6-point-payload-work-uncalibrated")
 				renderedUnits := make(map[string]float64, len(op.units))
 				for _, row := range rendered[1:] {
 					require.Equal(t, explainRUSectionPlan, row.section)
@@ -710,6 +747,9 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 					require.Equal(t, tc.kind, row.component)
 					require.Equal(t, readBillingDemoInputSourceSnapshotRuntimeStats, row.source)
 					require.Contains(t, row.note, "input_side=all")
+					if row.unit == readBillingDemoUnitPayloadRecords {
+						require.Contains(t, row.note, "diagnostic_only=true")
+					}
 					require.False(t, row.hasPreviewRU)
 					switch {
 					case row.hasCount:
@@ -722,19 +762,62 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 						require.Failf(t, "point unit has no rendered value", "unit=%s", row.unit)
 					}
 				}
-				require.Len(t, renderedUnits, 7)
-				require.Equal(t, []float64{2, 5, 7}[i], renderedUnits[readBillingDemoUnitCPUWork])
-				require.Equal(t, []float64{37, 111, 148}[i], renderedUnits[readBillingDemoUnitScanBytes])
+				require.Len(t, renderedUnits, 8)
+				require.NotContains(t, renderedUnits, readBillingDemoUnitCPUWork)
+				require.Equal(t, []float64{74, 185, 259}[i], renderedUnits[readBillingDemoUnitScanBytes])
+				require.Equal(t, []float64{17, 23, 40}[i], renderedUnits[readBillingDemoUnitNetBytes])
 				require.Equal(t, []float64{1, 3, 4}[i], renderedUnits[readBillingDemoUnitProcessedKeys])
 			})
 		}
+
+		pointOp, present := readBillingDemoPointLookupTransport(testCases[0].flat, pointLookupRuntimeStats, false)
+		require.True(t, present)
+		pointResult := readBillingDemoResult{
+			status: readBillingDemoStatusSuccess, reason: readBillingDemoReasonNone,
+			operators: []readBillingDemoOperatorResult{pointOp},
+		}
+		statementStats := buildReadBillingDemoStatementStats(pointResult)
+		statementUnits := make(map[string]float64, len(statementStats.BaseUnits))
+		for _, sample := range statementStats.BaseUnits {
+			require.Equal(t, readBillingDemoSiteTiKV, sample.Site)
+			require.Equal(t, readBillingDemoOpClassPointLookup, sample.OpClass)
+			statementUnits[sample.Unit] = sample.Value
+		}
+		require.NotContains(t, statementUnits, readBillingDemoUnitCPUWork)
+		require.Equal(t, 74.0, statementUnits[readBillingDemoUnitScanBytes])
+		require.Equal(t, 17.0, statementUnits[readBillingDemoUnitNetBytes])
+		require.Equal(t, 2.0, statementUnits[readBillingDemoUnitPayloadRecords])
+
+		metrics.InitExplainRUMetrics()
+		scanCounter := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues(
+			readBillingDemoSiteTiKV, readBillingDemoOpClassPointLookup, "point_get", readBillingDemoUnitScanBytes,
+			readBillingDemoInputSourceSnapshotRuntimeStats, readBillingDemoInputSideAll,
+			readBillingDemoModelVersion, readBillingDemoWeightVersion,
+		)
+		netCounter := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues(
+			readBillingDemoSiteTiKV, readBillingDemoOpClassPointLookup, "point_get", readBillingDemoUnitNetBytes,
+			readBillingDemoInputSourceSnapshotRuntimeStats, readBillingDemoInputSideAll,
+			readBillingDemoModelVersion, readBillingDemoWeightVersion,
+		)
+		cpuCounter := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues(
+			readBillingDemoSiteTiKV, readBillingDemoOpClassPointLookup, "point_get", readBillingDemoUnitCPUWork,
+			readBillingDemoInputSourceSnapshotRuntimeStats, readBillingDemoInputSideAll,
+			readBillingDemoModelVersion, readBillingDemoWeightVersion,
+		)
+		beforeScan := testutil.ToFloat64(scanCounter)
+		beforeNet := testutil.ToFloat64(netCounter)
+		beforeCPU := testutil.ToFloat64(cpuCounter)
+		recordReadBillingDemoResult(pointResult)
+		require.Equal(t, beforeScan+74, testutil.ToFloat64(scanCounter))
+		require.Equal(t, beforeNet+17, testutil.ToFloat64(netCounter))
+		require.Equal(t, beforeCPU, testutil.ToFloat64(cpuCounter))
 
 		zeroRuntimeStats := execdetails.NewRuntimeStatsColl(nil)
 		zeroRuntimeStats.RegisterStats(point.ID(), &readBillingDemoRPCStatsForTest{})
 		zeroOp, present := readBillingDemoPointLookupTransport(testCases[0].flat, zeroRuntimeStats, false)
 		require.True(t, present)
 		require.Equal(t, readBillingDemoStatusOperatorOK, zeroOp.status)
-		require.Zero(t, readBillingDemoUnitValue(zeroOp.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+		require.Equal(t, -1.0, readBillingDemoUnitValue(zeroOp.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
 		require.Zero(t, readBillingDemoUnitValue(zeroOp.units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
 
 		for i := range 2 {
@@ -746,7 +829,7 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 			localOp, present := readBillingDemoPointLookupTransport(testCases[i].flat, localShortCircuitStats, false)
 			require.True(t, present)
 			require.Equal(t, readBillingDemoStatusOperatorOK, localOp.status)
-			require.Zero(t, readBillingDemoUnitValue(localOp.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+			require.Equal(t, -1.0, readBillingDemoUnitValue(localOp.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
 			require.Zero(t, readBillingDemoUnitValue(localOp.units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
 			require.Zero(t, readBillingDemoUnitValue(localOp.units, readBillingDemoUnitCompletedResponses, readBillingDemoInputSideAll))
 		}
@@ -773,6 +856,58 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 		incompleteRuntimeStats.RegisterStats(point.ID(), &readBillingDemoRPCStatsForTest{completedResponses: 1})
 		incompleteOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, incompleteRuntimeStats, false)
 		require.Equal(t, readBillingDemoReasonIncompletePointScanDetail, incompleteOp.reason)
+
+		for _, tc := range []struct {
+			name   string
+			stats  *readBillingDemoRPCStatsForTest
+			reason string
+		}{
+			{
+				name: "incomplete payload records",
+				stats: &readBillingDemoRPCStatsForTest{
+					detail:        tikvutil.ScanDetail{TotalKeys: 1, ProcessedKeys: 1, ProcessedKeysSize: 37},
+					detailRecords: 1, completedResponses: 1, payloadCoverageSet: true,
+				},
+				reason: readBillingDemoReasonIncompletePointPayload,
+			},
+			{
+				name: "mismatched completed responses",
+				stats: &readBillingDemoRPCStatsForTest{
+					detail:        tikvutil.ScanDetail{TotalKeys: 1, ProcessedKeys: 1, ProcessedKeysSize: 37},
+					detailRecords: 1, completedResponses: 1, payloadCompletedSet: true,
+				},
+				reason: readBillingDemoReasonIncompletePointPayload,
+			},
+			{
+				name: "invalid payload sentinel",
+				stats: &readBillingDemoRPCStatsForTest{
+					detail:        tikvutil.ScanDetail{TotalKeys: 1, ProcessedKeys: 1, ProcessedKeysSize: 37},
+					detailRecords: 1, completedResponses: 1, payloadInvalid: true,
+				},
+				reason: readBillingDemoReasonInvalidPointPayload,
+			},
+			{
+				name:   "zero responses with payload",
+				stats:  &readBillingDemoRPCStatsForTest{payloadBytes: 1},
+				reason: readBillingDemoReasonInvalidPointPayload,
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				stats := execdetails.NewRuntimeStatsColl(nil)
+				stats.RegisterStats(point.ID(), tc.stats)
+				op, _ := readBillingDemoPointLookupTransport(testCases[0].flat, stats, false)
+				require.Equal(t, readBillingDemoStatusUnknownInput, op.status)
+				require.Equal(t, tc.reason, op.reason)
+				require.Empty(t, op.units)
+			})
+		}
+
+		invalidWidthRuntimeStats := execdetails.NewRuntimeStatsColl(nil)
+		invalidWidthRuntimeStats.RegisterStats(point.ID(), &readBillingDemoRPCStatsForTest{
+			detail: tikvutil.ScanDetail{TotalKeys: 1, ProcessedKeysSize: 1}, detailRecords: 1, completedResponses: 1,
+		})
+		invalidWidthOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, invalidWidthRuntimeStats, false)
+		require.Equal(t, readBillingDemoReasonInvalidPointScanDetail, invalidWidthOp.reason)
 
 		invalidRuntimeStats := execdetails.NewRuntimeStatsColl(nil)
 		invalidRuntimeStats.RegisterStats(point.ID(), &readBillingDemoRPCStatsForTest{
@@ -809,11 +944,12 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 			detail:        tikvutil.ScanDetail{TotalKeys: 3, ProcessedKeys: 2, ProcessedKeysSize: 74},
 			detailRecords: 3, completedResponses: 3,
 		})
-		for i, expectedWork := range []int64{3, 3, 6} {
+		for i, expectedScanBytes := range []float64{111, 111, 222} {
 			dmlOp, present := readBillingDemoPointLookupTransport(testCases[i].flat, dmlRuntimeStats, true)
 			require.True(t, present)
 			require.Equal(t, readBillingDemoStatusOperatorOK, dmlOp.status)
-			require.Equal(t, float64(expectedWork), readBillingDemoUnitValue(dmlOp.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+			require.Equal(t, -1.0, readBillingDemoUnitValue(dmlOp.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+			require.Equal(t, expectedScanBytes, readBillingDemoUnitValue(dmlOp.units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
 			require.Equal(t, readBillingDemoInputSourceSnapshotRuntimeStats, dmlOp.units[0].source)
 		}
 		missingDMLStatsOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, nil, true)
@@ -822,10 +958,12 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 		point.Lock = true
 		lockOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, pointLookupRuntimeStats, false)
 		require.Equal(t, readBillingDemoStatusOperatorOK, lockOp.status)
-		require.Equal(t, 2.0, readBillingDemoUnitValue(lockOp.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+		require.Equal(t, -1.0, readBillingDemoUnitValue(lockOp.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+		require.Equal(t, 74.0, readBillingDemoUnitValue(lockOp.units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
 		dmlLockOp, _ := readBillingDemoPointLookupTransport(testCases[0].flat, dmlRuntimeStats, true)
 		require.Equal(t, readBillingDemoStatusOperatorOK, dmlLockOp.status)
-		require.Equal(t, 3.0, readBillingDemoUnitValue(dmlLockOp.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+		require.Equal(t, -1.0, readBillingDemoUnitValue(dmlLockOp.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+		require.Equal(t, 111.0, readBillingDemoUnitValue(dmlLockOp.units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
 		point.Lock = false
 		reader := physicalop.PhysicalTableReader{StoreType: kv.TiKV}.Init(ctx, 0)
 		mixedReaderFlat := &FlatPhysicalPlan{
@@ -836,7 +974,8 @@ func TestReadBillingDemoV6FormulaContract(t *testing.T) {
 		require.Equal(t, readBillingDemoStatusOperatorOK, mixedReaderOp.status)
 		mixedReaderDMLOp, _ := readBillingDemoPointLookupTransport(mixedReaderFlat, dmlRuntimeStats, true)
 		require.Equal(t, readBillingDemoStatusOperatorOK, mixedReaderDMLOp.status)
-		require.Equal(t, 3.0, readBillingDemoUnitValue(mixedReaderDMLOp.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+		require.Equal(t, -1.0, readBillingDemoUnitValue(mixedReaderDMLOp.units, readBillingDemoUnitCPUWork, readBillingDemoInputSideAll))
+		require.Equal(t, 111.0, readBillingDemoUnitValue(mixedReaderDMLOp.units, readBillingDemoUnitScanBytes, readBillingDemoInputSideAll))
 
 		physicalOp, supported, reason := readBillingDemoClassifyOperator(testCases[0].flat.Main[0])
 		physicalOp.id = point.ExplainID().String()
@@ -3010,7 +3149,7 @@ func TestReadBillingDemoV6WriteCoverage(t *testing.T) {
 
 func TestExplainRUPlanFormulaAndOperatorClasses(t *testing.T) {
 	t.Skip("v3 opclass-weight expectations are superseded by TestReadBillingDemoV6FormulaContract")
-	require.Equal(t, "v6-frontend-compile-work-uncalibrated", readBillingDemoWeightVersion)
+	require.Equal(t, "v6-point-payload-work-uncalibrated", readBillingDemoWeightVersion)
 	tidbWeights, ok := readBillingDemoResolveWeights(readBillingDemoSiteTiDB, readBillingDemoOpClassProjection, readBillingDemoWeightVersion)
 	require.True(t, ok)
 	tikvWeights, ok := readBillingDemoResolveWeights(readBillingDemoSiteTiKV, readBillingDemoOpClassProjection, readBillingDemoWeightVersion)
@@ -3239,7 +3378,7 @@ func TestExplainRUPlanFormulaAndOperatorClasses(t *testing.T) {
 				require.Equal(t, 1, orderRows)
 
 				stats := buildReadBillingDemoStatementStats(result)
-				require.Equal(t, "v6-frontend-compile-work-uncalibrated", stats.WeightVersion)
+				require.Equal(t, "v6-point-payload-work-uncalibrated", stats.WeightVersion)
 				var orderSamples int
 				for _, sample := range stats.BaseUnits {
 					if sample.Unit == readBillingDemoUnitOrderWork {

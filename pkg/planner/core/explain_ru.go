@@ -61,7 +61,7 @@ const (
 	explainRUWidthSourceScanDetailProcessedEstimate   = "scan_detail_processed_key_avg_estimate"
 	explainRUWidthSourceNotApplicable                 = "not_applicable"
 	readBillingDemoModelVersion                       = "v6"
-	readBillingDemoWeightVersion                      = "v6-frontend-compile-work-uncalibrated"
+	readBillingDemoWeightVersion                      = "v6-point-payload-work-uncalibrated"
 	readBillingDemoStatusSuccess                      = "success"
 	readBillingDemoStatusUnsupported                  = "unsupported"
 	readBillingDemoStatusUnknownInput                 = "unknown_input"
@@ -112,6 +112,8 @@ const (
 	readBillingDemoReasonMissingPointScanStats        = "missing_point_scan_stats"
 	readBillingDemoReasonIncompletePointScanDetail    = "incomplete_point_scan_detail"
 	readBillingDemoReasonInvalidPointScanDetail       = "invalid_point_scan_detail"
+	readBillingDemoReasonIncompletePointPayload       = "incomplete_point_response_payload"
+	readBillingDemoReasonInvalidPointPayload          = "invalid_point_response_payload"
 	readBillingDemoReasonMissingTiKVWriteCoverage     = "missing_tikv_write_coverage"
 	readBillingDemoReasonPipelinedWriteUnmodeled      = "pipelined_tikv_write_work_unmodeled"
 	readBillingDemoReasonPipelinedCommitUnmodeled     = "pipelined_tikv_commit_work_unmodeled"
@@ -179,6 +181,7 @@ const (
 	readBillingDemoUnitProcessedKeys                  = "processed_keys"
 	readBillingDemoUnitProcessedKeysSize              = "processed_keys_size"
 	readBillingDemoUnitDetailRecords                  = "detail_records"
+	readBillingDemoUnitPayloadRecords                 = "payload_records"
 	readBillingDemoUnitCompletedResponses             = "completed_responses"
 	readBillingDemoInputSourceRuntimeChunkBytes       = "runtime_chunk_bytes"
 	readBillingDemoInputSourceScanDetail              = "scan_detail"
@@ -2014,6 +2017,7 @@ type readBillingDemoRPCStats interface {
 
 type readBillingDemoPointScanStats interface {
 	GetScanDetailAndCoverage() (tikvutil.ScanDetail, uint64, uint64)
+	GetPointResponsePayloadAndCoverage() (uint64, uint64, uint64, bool)
 }
 
 func readBillingDemoCopRPCCount(
@@ -2108,33 +2112,42 @@ func readBillingDemoPointLookupTransport(
 			op.operatorKind = kind
 		}
 	}
-	detail, detailRecords, completedResponses, failureReason := readBillingDemoPointLookupScanDetails(runtimeStats, pointLookupPlans)
+	detail, detailRecords, completedResponses, payloadBytes, payloadRecords, failureReason := readBillingDemoPointLookupScanDetails(runtimeStats, pointLookupPlans)
 	if failureReason != "" {
 		op.status = readBillingDemoStatusUnknownInput
 		op.reason = failureReason
 		return op, true
 	}
+	scanInputRows, scanInputBytes, ok := readBillingDemoRangeScanInput(detail.TotalKeys, detail.ProcessedKeys, detail.ProcessedKeysSize)
+	if !ok {
+		op.status = readBillingDemoStatusUnknownInput
+		op.reason = readBillingDemoReasonInvalidPointScanDetail
+		return op, true
+	}
 	op.status = readBillingDemoStatusOperatorOK
 	op.reason = readBillingDemoReasonNone
 	op.units = []readBillingDemoUnit{
-		{unit: readBillingDemoUnitCPUWork, source: readBillingDemoInputSourceSnapshotRuntimeStats, side: readBillingDemoInputSideAll, value: float64(detail.TotalKeys), widthSource: explainRUWidthSourceNotApplicable},
-		{unit: readBillingDemoUnitScanBytes, source: readBillingDemoInputSourceSnapshotRuntimeStats, side: readBillingDemoInputSideAll, value: float64(detail.ProcessedKeysSize), widthSource: explainRUWidthSourceNotApplicable},
+		{unit: readBillingDemoUnitScanBytes, source: readBillingDemoInputSourceSnapshotRuntimeStats, side: readBillingDemoInputSideAll, value: scanInputBytes, rowWidth: readBillingDemoAverageRowWidth(scanInputRows, scanInputBytes), widthSource: explainRUWidthSourceScanDetailProcessedEstimate},
+		{unit: readBillingDemoUnitNetBytes, source: readBillingDemoInputSourceSnapshotRuntimeStats, side: readBillingDemoInputSideAll, value: float64(payloadBytes), widthSource: explainRUWidthSourceNotApplicable},
 		{unit: readBillingDemoUnitTotalKeys, source: readBillingDemoInputSourceSnapshotRuntimeStats, side: readBillingDemoInputSideAll, value: float64(detail.TotalKeys), widthSource: explainRUWidthSourceNotApplicable},
 		{unit: readBillingDemoUnitProcessedKeys, source: readBillingDemoInputSourceSnapshotRuntimeStats, side: readBillingDemoInputSideAll, value: float64(detail.ProcessedKeys), widthSource: explainRUWidthSourceNotApplicable},
 		{unit: readBillingDemoUnitProcessedKeysSize, source: readBillingDemoInputSourceSnapshotRuntimeStats, side: readBillingDemoInputSideAll, value: float64(detail.ProcessedKeysSize), widthSource: explainRUWidthSourceNotApplicable},
 		{unit: readBillingDemoUnitDetailRecords, source: readBillingDemoInputSourceSnapshotRuntimeStats, side: readBillingDemoInputSideAll, value: float64(detailRecords), widthSource: explainRUWidthSourceNotApplicable},
+		{unit: readBillingDemoUnitPayloadRecords, source: readBillingDemoInputSourceSnapshotRuntimeStats, side: readBillingDemoInputSideAll, value: float64(payloadRecords), widthSource: explainRUWidthSourceNotApplicable},
 		{unit: readBillingDemoUnitCompletedResponses, source: readBillingDemoInputSourceSnapshotRuntimeStats, side: readBillingDemoInputSideAll, value: float64(completedResponses), widthSource: explainRUWidthSourceNotApplicable},
 	}
 	return op, true
 }
 
-func readBillingDemoPointLookupScanDetails(runtimeStats *execdetails.RuntimeStatsColl, plans map[int]struct{}) (tikvutil.ScanDetail, uint64, uint64, string) {
+func readBillingDemoPointLookupScanDetails(runtimeStats *execdetails.RuntimeStatsColl, plans map[int]struct{}) (tikvutil.ScanDetail, uint64, uint64, uint64, uint64, string) {
 	if runtimeStats == nil {
-		return tikvutil.ScanDetail{}, 0, 0, readBillingDemoReasonMissingPointScanStats
+		return tikvutil.ScanDetail{}, 0, 0, 0, 0, readBillingDemoReasonMissingPointScanStats
 	}
 	var total tikvutil.ScanDetail
 	var totalDetailRecords uint64
 	var totalCompletedResponses uint64
+	var totalPayloadBytes uint64
+	var totalPayloadRecords uint64
 	for planID := range plans {
 		found := false
 		if runtimeStats.ExistsRootStats(planID) {
@@ -2147,27 +2160,36 @@ func readBillingDemoPointLookupScanDetails(runtimeStats *execdetails.RuntimeStat
 				found = true
 				detail, detailRecords, completedResponses := pointStats.GetScanDetailAndCoverage()
 				if failureReason := readBillingDemoPointScanDetailFailure(detail, detailRecords, completedResponses); failureReason != "" {
-					return tikvutil.ScanDetail{}, 0, 0, failureReason
+					return tikvutil.ScanDetail{}, 0, 0, 0, 0, failureReason
+				}
+				payloadBytes, payloadRecords, payloadCompletedResponses, payloadValid := pointStats.GetPointResponsePayloadAndCoverage()
+				if failureReason := readBillingDemoPointPayloadFailure(payloadBytes, payloadRecords, payloadCompletedResponses, payloadValid, completedResponses); failureReason != "" {
+					return tikvutil.ScanDetail{}, 0, 0, 0, 0, failureReason
 				}
 				if detailRecords > math.MaxUint64-totalDetailRecords ||
 					completedResponses > math.MaxUint64-totalCompletedResponses ||
 					detail.TotalKeys > math.MaxInt64-total.TotalKeys ||
 					detail.ProcessedKeys > math.MaxInt64-total.ProcessedKeys ||
 					detail.ProcessedKeysSize > math.MaxInt64-total.ProcessedKeysSize {
-					return tikvutil.ScanDetail{}, 0, 0, readBillingDemoReasonInvalidPointScanDetail
+					return tikvutil.ScanDetail{}, 0, 0, 0, 0, readBillingDemoReasonInvalidPointScanDetail
+				}
+				if payloadBytes > math.MaxUint64-totalPayloadBytes || payloadRecords > math.MaxUint64-totalPayloadRecords {
+					return tikvutil.ScanDetail{}, 0, 0, 0, 0, readBillingDemoReasonInvalidPointPayload
 				}
 				total.TotalKeys += detail.TotalKeys
 				total.ProcessedKeys += detail.ProcessedKeys
 				total.ProcessedKeysSize += detail.ProcessedKeysSize
 				totalDetailRecords += detailRecords
 				totalCompletedResponses += completedResponses
+				totalPayloadBytes += payloadBytes
+				totalPayloadRecords += payloadRecords
 			}
 		}
 		if !found && !readBillingDemoPointLookupLocallyShortCircuited(runtimeStats, planID) {
-			return tikvutil.ScanDetail{}, 0, 0, readBillingDemoReasonMissingPointScanStats
+			return tikvutil.ScanDetail{}, 0, 0, 0, 0, readBillingDemoReasonMissingPointScanStats
 		}
 	}
-	return total, totalDetailRecords, totalCompletedResponses, ""
+	return total, totalDetailRecords, totalCompletedResponses, totalPayloadBytes, totalPayloadRecords, ""
 }
 
 // A partition-pruned PointGet can be replaced by TableDualExec after the
@@ -2179,7 +2201,7 @@ func readBillingDemoPointLookupLocallyShortCircuited(runtimeStats *execdetails.R
 		return false
 	}
 	basic := runtimeStats.GetBasicRuntimeStats(planID, false)
-	return basic != nil && basic.GetActRows() == 0 && (basic.HasRuntimeRows() || basic.HasBytes())
+	return basic != nil && basic.GetActRows() == 0 && basic.HasBytes()
 }
 
 func readBillingDemoPointScanDetailFailure(detail tikvutil.ScanDetail, detailRecords, completedResponses uint64) string {
@@ -2194,6 +2216,25 @@ func readBillingDemoPointScanDetailFailure(detail tikvutil.ScanDetail, detailRec
 	}
 	if detailRecords != completedResponses {
 		return readBillingDemoReasonIncompletePointScanDetail
+	}
+	return ""
+}
+
+func readBillingDemoPointPayloadFailure(payloadBytes, payloadRecords, payloadCompletedResponses uint64, valid bool, scanCompletedResponses uint64) string {
+	if !valid {
+		return readBillingDemoReasonInvalidPointPayload
+	}
+	if payloadCompletedResponses != scanCompletedResponses {
+		return readBillingDemoReasonIncompletePointPayload
+	}
+	if payloadCompletedResponses == 0 {
+		if payloadBytes == 0 && payloadRecords == 0 {
+			return ""
+		}
+		return readBillingDemoReasonInvalidPointPayload
+	}
+	if payloadRecords != payloadCompletedResponses {
+		return readBillingDemoReasonIncompletePointPayload
 	}
 	return ""
 }
@@ -4193,7 +4234,7 @@ func explainRUReadBillingUnitRow(op readBillingDemoOperatorResult, unit readBill
 		row.hasWorkBytes = true
 	case readBillingDemoUnitExpressionCount, readBillingDemoUnitHashStateRows, readBillingDemoUnitJoinOutputRows,
 		readBillingDemoUnitTotalKeys, readBillingDemoUnitProcessedKeys, readBillingDemoUnitDetailRecords,
-		readBillingDemoUnitCompletedResponses:
+		readBillingDemoUnitPayloadRecords, readBillingDemoUnitCompletedResponses:
 		row.count = int64(unit.value)
 		row.hasCount = true
 	case readBillingDemoUnitEncodedMutationCount, readBillingDemoUnitSetCount, readBillingDemoUnitDeleteCount,
@@ -4216,7 +4257,7 @@ func readBillingDemoUnitDiagnosticOnly(unit string) bool {
 		readBillingDemoUnitValueBytes, readBillingDemoUnitPrewriteRegionNum, readBillingDemoUnitTiKVWriteRPCCount,
 		readBillingDemoUnitOutputRows, readBillingDemoUnitOutputBytes,
 		readBillingDemoUnitTotalKeys, readBillingDemoUnitProcessedKeys, readBillingDemoUnitProcessedKeysSize,
-		readBillingDemoUnitDetailRecords, readBillingDemoUnitCompletedResponses:
+		readBillingDemoUnitDetailRecords, readBillingDemoUnitPayloadRecords, readBillingDemoUnitCompletedResponses:
 		return true
 	default:
 		return false

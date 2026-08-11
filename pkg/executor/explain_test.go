@@ -688,8 +688,9 @@ func TestExplainAnalyzeFormatRUOutput(t *testing.T) {
 	shortRows, shortErr := queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' select * from explain_ru_point_dual where a = 99")
 	require.NoError(t, shortErr)
 	requireExplainRUOperatorClass(t, shortRows, "tikv/kv_point_lookup")
-	require.Zero(t, explainRUCountUnitValue(t, shortRows, "tikv/kv_point_lookup", "cpu_work"), shortRows)
+	requireExplainRUOperatorUnitAbsent(t, shortRows, "tikv/kv_point_lookup", "cpu_work")
 	require.Zero(t, explainRUCountUnitValue(t, shortRows, "tikv/kv_point_lookup", "scan_bytes"), shortRows)
+	require.Zero(t, explainRUCountUnitValue(t, shortRows, "tikv/kv_point_lookup", "net_bytes"), shortRows)
 
 	_, err = queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' select * from explain_ru_t where a > 0")
 	require.Error(t, err)
@@ -951,7 +952,7 @@ func requireExplainRUPlanRow(t *testing.T, rows [][]any) {
 		require.Empty(t, row[13])
 		require.Empty(t, row[14])
 		require.NotEmpty(t, row[15])
-		require.Contains(t, fmt.Sprint(row[16]), "model_version=v6,weight_version=v6-frontend-compile-work-uncalibrated")
+		require.Contains(t, fmt.Sprint(row[16]), "model_version=v6,weight_version=v6-point-payload-work-uncalibrated")
 		return
 	}
 	require.Fail(t, "missing FORMAT='RU' plan row")
@@ -977,7 +978,7 @@ func requireExplainRUWeightedOperatorClass(t *testing.T, rows [][]any, operatorC
 		require.True(t, row[9] != "" || row[10] != "" || row[12] != "", "missing semantic unit value for %s row %v", operatorClass, row)
 		require.Empty(t, row[13], "uncalibrated v6 must not publish a weight for %s row %v", operatorClass, row)
 		require.Empty(t, row[14], "uncalibrated v6 must not publish preview RU for %s row %v", operatorClass, row)
-		require.Contains(t, fmt.Sprint(row[16]), "model_version=v6,weight_version=v6-frontend-compile-work-uncalibrated")
+		require.Contains(t, fmt.Sprint(row[16]), "model_version=v6,weight_version=v6-point-payload-work-uncalibrated")
 		return
 	}
 	require.Failf(t, "missing weighted FORMAT='RU' operator class", "operatorClass=%s rows=%v", operatorClass, rows)
@@ -1164,7 +1165,7 @@ func TestExplainAnalyzeFormatRUWriteDML(t *testing.T) {
 	require.NotEmpty(t, rows)
 	require.Equal(t, "summary", rows[0][0])
 	require.Empty(t, rows[0][14], rows)
-	require.Contains(t, fmt.Sprint(rows[0][16]), "model_version=v6,weight_version=v6-frontend-compile-work-uncalibrated")
+	require.Contains(t, fmt.Sprint(rows[0][16]), "model_version=v6,weight_version=v6-point-payload-work-uncalibrated")
 	require.Contains(t, fmt.Sprint(rows[0][16]), "uncalibrated_weights")
 	require.Positive(t, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "encoded_mutation_count"), rows)
 	require.Positive(t, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "encoded_mutation_bytes"), rows)
@@ -1192,8 +1193,9 @@ func TestExplainAnalyzeFormatRUWriteDML(t *testing.T) {
 	rows, err = queryExplainRURowsOrErrWithContext(explicitCtx, t, tk, "explain analyze format='ru' update explain_ru_write_v6 set b = 'two' where a = 1")
 	require.NoError(t, err)
 	requireExplainRUOperatorClass(t, rows, "tikv/kv_point_lookup")
-	require.Zero(t, explainRUCountUnitValue(t, rows, "tikv/kv_point_lookup", "cpu_work"), rows)
+	requireExplainRUOperatorUnitAbsent(t, rows, "tikv/kv_point_lookup", "cpu_work")
 	require.Zero(t, explainRUCountUnitValue(t, rows, "tikv/kv_point_lookup", "scan_bytes"), rows)
+	require.Zero(t, explainRUCountUnitValue(t, rows, "tikv/kv_point_lookup", "net_bytes"), rows)
 	require.Positive(t, explainRUCountUnitValue(t, rows, "tidb/kv_mutation", "encoded_mutation_count"), rows)
 	requireExplainRUOperatorUnitAbsent(t, rows, "tidb/kv_mutation", "cpu_work")
 	requireNoExplainRUOperatorClass(t, rows, "tikv/kv_write")
@@ -1439,8 +1441,9 @@ func TestExplainAnalyzeFormatRUUnsupportedTargetsBeforeExecution(t *testing.T) {
 	lockingRows, lockingErr := queryExplainRURowsOrErr(t, tk, "explain analyze format='ru' select * from explain_ru_dml where a = 1 for update")
 	require.NoError(t, lockingErr)
 	requireExplainRUOperatorClass(t, lockingRows, "tikv/kv_point_lookup")
-	require.Zero(t, explainRUCountUnitValue(t, lockingRows, "tikv/kv_point_lookup", "cpu_work"), lockingRows)
+	requireExplainRUOperatorUnitAbsent(t, lockingRows, "tikv/kv_point_lookup", "cpu_work")
 	require.Zero(t, explainRUCountUnitValue(t, lockingRows, "tikv/kv_point_lookup", "scan_bytes"), lockingRows)
+	require.Zero(t, explainRUCountUnitValue(t, lockingRows, "tikv/kv_point_lookup", "net_bytes"), lockingRows)
 	tk.MustExec("rollback")
 
 	err = tk.ExecToErr("explain analyze format='ru' select get_lock('explain_ru', 0)")
@@ -1462,16 +1465,16 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	tk.MustExec("set global tidb_enable_stmt_summary = 0")
 	tk.MustExec("set global tidb_enable_stmt_summary = 1")
 
-	success := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("success", "v6", "v6-frontend-compile-work-uncalibrated")
-	cpuWork := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "projection_eval", "projection", "cpu_work", "runtime_child_act_rows", "all", "v6", "v6-frontend-compile-work-uncalibrated")
-	frontendCompileBytes := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "sql_frontend", "parser_optimizer", "frontend_compile_bytes", "statement_original_sql", "all", "v6", "v6-frontend-compile-work-uncalibrated")
-	pointGetCPUWork := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_point_lookup", "point_get", "cpu_work", "snapshot_runtime_stats", "all", "v6", "v6-frontend-compile-work-uncalibrated")
-	batchPointGetCPUWork := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_point_lookup", "batch_point_get", "cpu_work", "snapshot_runtime_stats", "all", "v6", "v6-frontend-compile-work-uncalibrated")
-	mutationCPUWork := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "kv_mutation", "memdb_mutation", "cpu_work", "stmt_memdb_mutation_calls", "all", "v6", "v6-frontend-compile-work-uncalibrated")
-	mutationCount := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "kv_mutation", "memdb_mutation", "encoded_mutation_count", "stmt_memdb_mutation_calls", "all", "v6", "v6-frontend-compile-work-uncalibrated")
-	shuffleCPUWork := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "shuffle", "hash_shuffle", "cpu_work", "shuffle_data_source_act_rows", "all", "v6", "v6-frontend-compile-work-uncalibrated")
-	writeKeys := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_write", "txn_write", "write_keys", "commit_detail", "all", "v6", "v6-frontend-compile-work-uncalibrated")
-	writeBytes := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_write", "txn_write", "write_bytes", "commit_detail", "all", "v6", "v6-frontend-compile-work-uncalibrated")
+	success := metrics.ReadBillingDemoStatementsCounter.WithLabelValues("success", "v6", "v6-point-payload-work-uncalibrated")
+	cpuWork := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "projection_eval", "projection", "cpu_work", "runtime_child_act_rows", "all", "v6", "v6-point-payload-work-uncalibrated")
+	frontendCompileBytes := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "sql_frontend", "parser_optimizer", "frontend_compile_bytes", "statement_original_sql", "all", "v6", "v6-point-payload-work-uncalibrated")
+	pointGetCPUWork := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_point_lookup", "point_get", "cpu_work", "snapshot_runtime_stats", "all", "v6", "v6-point-payload-work-uncalibrated")
+	batchPointGetCPUWork := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_point_lookup", "batch_point_get", "cpu_work", "snapshot_runtime_stats", "all", "v6", "v6-point-payload-work-uncalibrated")
+	mutationCPUWork := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "kv_mutation", "memdb_mutation", "cpu_work", "stmt_memdb_mutation_calls", "all", "v6", "v6-point-payload-work-uncalibrated")
+	mutationCount := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "kv_mutation", "memdb_mutation", "encoded_mutation_count", "stmt_memdb_mutation_calls", "all", "v6", "v6-point-payload-work-uncalibrated")
+	shuffleCPUWork := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tidb", "shuffle", "hash_shuffle", "cpu_work", "shuffle_data_source_act_rows", "all", "v6", "v6-point-payload-work-uncalibrated")
+	writeKeys := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_write", "txn_write", "write_keys", "commit_detail", "all", "v6", "v6-point-payload-work-uncalibrated")
+	writeBytes := metrics.ReadBillingDemoBaseUnitsCounter.WithLabelValues("tikv", "kv_write", "txn_write", "write_bytes", "commit_detail", "all", "v6", "v6-point-payload-work-uncalibrated")
 
 	tk.MustExec("set tidb_enable_read_billing_demo=off")
 	tk.MustQuery("select 1 + 1").Check(testkit.Rows("2"))
@@ -1484,8 +1487,8 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	require.Greater(t, readExecutorCounterValue(t, cpuWork), 0.0)
 	require.Equal(t, beforeFrontendCompileBytes+float64(len("select 1 + 1")), readExecutorCounterValue(t, frontendCompileBytes))
 	tk.MustQuery(`select exec_count, sum_read_billing_demo_fixed_events, sum_read_billing_demo_input_rows, sum_read_billing_demo_input_bytes from information_schema.statements_summary where digest_text = 'select ? + ?'`).Check(testkit.Rows("2 0 0 0"))
-	tk.MustQuery(`select site, op_class, operator_kind, unit, input_source, input_side, model_version, weight_version, sample_count, value > 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select ? + ?' and unit = 'cpu_work'`).Check(testkit.Rows("tidb projection_eval projection cpu_work runtime_child_act_rows all v6 v6-frontend-compile-work-uncalibrated 1 1"))
-	tk.MustQuery(`select site, op_class, operator_kind, unit, input_source, input_side, model_version, weight_version, sample_count, value from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select ? + ?' and unit = 'frontend_compile_bytes'`).Check(testkit.Rows(fmt.Sprintf("tidb sql_frontend parser_optimizer frontend_compile_bytes statement_original_sql all v6 v6-frontend-compile-work-uncalibrated 1 %d", len("select 1 + 1"))))
+	tk.MustQuery(`select site, op_class, operator_kind, unit, input_source, input_side, model_version, weight_version, sample_count, value > 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select ? + ?' and unit = 'cpu_work'`).Check(testkit.Rows("tidb projection_eval projection cpu_work runtime_child_act_rows all v6 v6-point-payload-work-uncalibrated 1 1"))
+	tk.MustQuery(`select site, op_class, operator_kind, unit, input_source, input_side, model_version, weight_version, sample_count, value from information_schema.statements_summary_read_billing_demo_base_units where digest_text = 'select ? + ?' and unit = 'frontend_compile_bytes'`).Check(testkit.Rows(fmt.Sprintf("tidb sql_frontend parser_optimizer frontend_compile_bytes statement_original_sql all v6 v6-point-payload-work-uncalibrated 1 %d", len("select 1 + 1"))))
 	tk.MustQuery(`select site, op_class, operator_kind, status, reason, count from information_schema.statements_summary_read_billing_demo_status where digest_text = 'select ? + ?' and site = 'statement'`).Check(testkit.Rows("statement statement statement success none 1"))
 
 	tk.MustExec("set @@tidb_streamagg_concurrency = 2")
@@ -1528,16 +1531,16 @@ func TestReadBillingDemoMetricsHook(t *testing.T) {
 	require.Greater(t, readExecutorCounterValue(t, writeKeys), beforeWriteKeys)
 	require.Greater(t, readExecutorCounterValue(t, writeBytes), beforeWriteBytes)
 	tk.MustQuery("select site, op_class, operator_kind, dml_kind, unit, input_source, input_side, model_version, weight_version, value > 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text like 'insert into `read_billing_demo_v5`%' and unit in ('encoded_mutation_bytes', 'encoded_mutation_count', 'set_count', 'delete_count', 'key_bytes', 'value_bytes') order by unit").Check(testkit.Rows(
-		"tidb kv_mutation memdb_mutation insert delete_count stmt_memdb_mutation_calls all v6 v6-frontend-compile-work-uncalibrated 0",
-		"tidb kv_mutation memdb_mutation insert encoded_mutation_bytes stmt_memdb_mutation_calls all v6 v6-frontend-compile-work-uncalibrated 1",
-		"tidb kv_mutation memdb_mutation insert encoded_mutation_count stmt_memdb_mutation_calls all v6 v6-frontend-compile-work-uncalibrated 1",
-		"tidb kv_mutation memdb_mutation insert key_bytes stmt_memdb_mutation_calls all v6 v6-frontend-compile-work-uncalibrated 1",
-		"tidb kv_mutation memdb_mutation insert set_count stmt_memdb_mutation_calls all v6 v6-frontend-compile-work-uncalibrated 1",
-		"tidb kv_mutation memdb_mutation insert value_bytes stmt_memdb_mutation_calls all v6 v6-frontend-compile-work-uncalibrated 1",
+		"tidb kv_mutation memdb_mutation insert delete_count stmt_memdb_mutation_calls all v6 v6-point-payload-work-uncalibrated 0",
+		"tidb kv_mutation memdb_mutation insert encoded_mutation_bytes stmt_memdb_mutation_calls all v6 v6-point-payload-work-uncalibrated 1",
+		"tidb kv_mutation memdb_mutation insert encoded_mutation_count stmt_memdb_mutation_calls all v6 v6-point-payload-work-uncalibrated 1",
+		"tidb kv_mutation memdb_mutation insert key_bytes stmt_memdb_mutation_calls all v6 v6-point-payload-work-uncalibrated 1",
+		"tidb kv_mutation memdb_mutation insert set_count stmt_memdb_mutation_calls all v6 v6-point-payload-work-uncalibrated 1",
+		"tidb kv_mutation memdb_mutation insert value_bytes stmt_memdb_mutation_calls all v6 v6-point-payload-work-uncalibrated 1",
 	))
 	tk.MustQuery("select site, op_class, operator_kind, dml_kind, unit, input_source, input_side, model_version, weight_version, value > 0 from information_schema.statements_summary_read_billing_demo_base_units where digest_text like 'insert into `read_billing_demo_v5`%' and site = 'tikv' order by unit").Check(testkit.Rows(
-		"tikv kv_write txn_write insert write_bytes commit_detail all v6 v6-frontend-compile-work-uncalibrated 1",
-		"tikv kv_write txn_write insert write_keys commit_detail all v6 v6-frontend-compile-work-uncalibrated 1",
+		"tikv kv_write txn_write insert write_bytes commit_detail all v6 v6-point-payload-work-uncalibrated 1",
+		"tikv kv_write txn_write insert write_keys commit_detail all v6 v6-point-payload-work-uncalibrated 1",
 	))
 
 	tk.MustExec("create table read_billing_demo_explicit_v6(a int primary key)")

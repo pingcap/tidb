@@ -528,7 +528,7 @@
 ### Tests
 - `pkg/util/stmtsummary/evicted_test.go` - util/stmtsummary: Tests map to evicted count datum.
 - `pkg/util/stmtsummary/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/util/stmtsummary/read_billing_test.go` - util/stmtsummary: Tests preview RU dimension aggregation, caps, v6 point storage-work/raw-diagnostic retention, network-only reader transport, DML-kind separation for mutation `cpu_work` and raw units, committed write-key/byte provenance, and v6 detail retention with zero legacy convenience totals.
+- `pkg/util/stmtsummary/read_billing_test.go` - util/stmtsummary: Tests preview RU dimension aggregation, caps, v6 point Scan-equivalent `scan_bytes`, successful response-payload `net_bytes`, raw-diagnostic retention, network-only reader transport, DML-kind separation for mutation `cpu_work` and raw units, committed write-key/byte provenance, and v6 detail retention with zero legacy convenience totals.
 - `pkg/util/stmtsummary/statement_summary_test.go` - util/stmtsummary: Tests set up.
 
 ## pkg/util/stmtsummary/v2

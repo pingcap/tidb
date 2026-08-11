@@ -140,12 +140,13 @@ func TestReadBillingDemoGeneralLogUnits(t *testing.T) {
 			{Site: "tidb", OpClass: "kv_mutation", OperatorKind: "memdb_mutation", DMLKind: "insert", Unit: "value_bytes", InputSource: "stmt_memdb_mutation_calls", InputSide: "all", Value: 10},
 			{Site: "tidb", OpClass: "reader_transport", OperatorKind: "mixed_reader", Unit: "net_bytes", InputSource: "ruv2_metrics", InputSide: "all", Value: 4},
 			{Site: "tidb", OpClass: "sql_frontend", OperatorKind: "parser_optimizer", Unit: "frontend_compile_bytes", InputSource: "statement_original_sql", InputSide: "all", Value: 29},
-			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "cpu_work", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 2},
-			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "scan_bytes", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 37},
+			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "scan_bytes", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 74},
+			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "net_bytes", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 17},
 			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "total_keys", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 2},
 			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "processed_keys", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 1},
 			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "processed_keys_size", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 37},
 			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "detail_records", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 1},
+			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "payload_records", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 1},
 			{Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get", Unit: "completed_responses", InputSource: "snapshot_runtime_stats", InputSide: "all", Value: 1},
 			{Site: "tikv", OpClass: "kv_write", OperatorKind: "txn_write", DMLKind: "insert", Unit: "write_keys", InputSource: "commit_detail", InputSide: "all", Value: 3},
 			{Site: "tikv", OpClass: "kv_write", OperatorKind: "txn_write", DMLKind: "insert", Unit: "write_bytes", InputSource: "commit_detail", InputSide: "all", Value: 66},
@@ -188,7 +189,7 @@ func TestReadBillingDemoGeneralLogUnits(t *testing.T) {
 	require.NotContains(t, fields, "sql")
 	rawUnits, ok := fields["units"].([]any)
 	require.True(t, ok)
-	require.Len(t, rawUnits, 22)
+	require.Len(t, rawUnits, 23)
 
 	units := make([]map[string]any, 0, len(rawUnits))
 	for _, rawUnit := range rawUnits {
@@ -232,10 +233,10 @@ func TestReadBillingDemoGeneralLogUnits(t *testing.T) {
 		"site": "tikv", "op_class": "join_hash", "operator_kind": "hashjoin", "dml_kind": "update", "unit": "input_rows", "input_source": "runtime", "input_side": "right", "value": float64(3),
 	}, units[12])
 	expectedPointValues := map[string]float64{
-		"completed_responses": 1, "cpu_work": 2, "detail_records": 1, "processed_keys": 1,
-		"processed_keys_size": 37, "scan_bytes": 37, "total_keys": 2,
+		"completed_responses": 1, "detail_records": 1, "net_bytes": 17, "payload_records": 1,
+		"processed_keys": 1, "processed_keys_size": 37, "scan_bytes": 74, "total_keys": 2,
 	}
-	for i, unitName := range []string{"completed_responses", "cpu_work", "detail_records", "processed_keys", "processed_keys_size", "scan_bytes", "total_keys"} {
+	for i, unitName := range []string{"completed_responses", "detail_records", "net_bytes", "payload_records", "processed_keys", "processed_keys_size", "scan_bytes", "total_keys"} {
 		require.Equal(t, map[string]any{
 			"site": "tikv", "op_class": "kv_point_lookup", "operator_kind": "point_get", "dml_kind": "",
 			"unit": unitName, "input_source": "snapshot_runtime_stats", "input_side": "all", "value": expectedPointValues[unitName],
@@ -244,11 +245,11 @@ func TestReadBillingDemoGeneralLogUnits(t *testing.T) {
 	require.Equal(t, map[string]any{
 		"site": "tikv", "op_class": "kv_write", "operator_kind": "txn_write", "dml_kind": "insert",
 		"unit": "write_bytes", "input_source": "commit_detail", "input_side": "all", "value": float64(66),
-	}, units[20])
+	}, units[21])
 	require.Equal(t, map[string]any{
 		"site": "tikv", "op_class": "kv_write", "operator_kind": "txn_write", "dml_kind": "insert",
 		"unit": "write_keys", "input_source": "commit_detail", "input_side": "all", "value": float64(3),
-	}, units[21])
+	}, units[22])
 
 	// A valid completed snapshot with no unit samples stays structured and does
 	// not invent one statement status from the snapshot's multi-status model.

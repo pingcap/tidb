@@ -919,8 +919,8 @@ github.com/vbauerster/mpb/v7 v7.5.3 h1:BkGfmb6nMrrBQDFECR/Q7RkKCw7ylMetCb4079CGs
 github.com/vbauerster/mpb/v7 v7.5.3/go.mod h1:i+h4QY6lmLvBNK2ah1fSreiw3ajskRlBp9AhY/PnuOE=
 github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f h1:9DDCDwOyEy/gId+IEMrFHLuQ5R/WV0KNxWLler8X2OY=
 github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f/go.mod h1:8sdOQnirw1PrcnTJYkmW1iOHtUmblMmGdUOHyWYycLI=
-github.com/winoros/client-go/v2 v2.0.0-20260802190030-ae98d71ed578 h1:KcSarBGLwXsJ0JokkhcQ1Aw76wuimM4aJ6BmS37lISk=
-github.com/winoros/client-go/v2 v2.0.0-20260802190030-ae98d71ed578/go.mod h1:ifrCFaHJeZDcz6kded2eVwn+t3Auvqve8hI9vLIoVBg=
+github.com/winoros/client-go/v2 v2.0.0-20260811093833-3d7111ec1927 h1:YoCy2WNTKW3/GXa33dyOM5d+xGxcFW7Y/Uhu9suLHzU=
+github.com/winoros/client-go/v2 v2.0.0-20260811093833-3d7111ec1927/go.mod h1:ifrCFaHJeZDcz6kded2eVwn+t3Auvqve8hI9vLIoVBg=
 github.com/xiang90/probing v0.0.0-20221125231312-a49e3df8f510 h1:S2dVYn90KE98chqDkyE9Z4N61UnQd+KOfgp5Iu53llk=
 github.com/xiang90/probing v0.0.0-20221125231312-a49e3df8f510/go.mod h1:UETIi67q53MR2AWcXfiuqkDkRtnGDLqkBTpCHuJHxtU=
 github.com/xordataexchange/crypt v0.0.3-0.20170626215501-b2862e3d0a77/go.mod h1:aYKd//L2LvnjZzWKhF00oedf4jCCReLcmhLdhm1A27Q=

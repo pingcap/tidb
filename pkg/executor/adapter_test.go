@@ -877,7 +877,7 @@ func TestFinishExecuteStmtSyncsTiDBRUV2FromRUDetails(t *testing.T) {
 
 		commonMetricLabels := map[string]string{
 			"model_version":  "v6",
-			"weight_version": "v6-frontend-compile-work-uncalibrated",
+			"weight_version": "v6-point-payload-work-uncalibrated",
 		}
 		metricLabels := func(labels map[string]string) map[string]string {
 			result := make(map[string]string, len(commonMetricLabels)+len(labels))

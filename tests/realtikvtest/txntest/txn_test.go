@@ -100,6 +100,101 @@ func TestInTxnPSProtoPointGet(t *testing.T) {
 	tk.MustExec("commit")
 }
 
+func TestPreviewRUPointStorageAndPayload(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_read_billing_demo = on")
+	tk.MustExec("set tidb_isolation_read_engines = 'tikv'")
+	tk.MustExec("create table preview_ru_point_payload(id bigint primary key, uk bigint unique, v varchar(32))")
+	tk.MustExec("insert into preview_ru_point_payload values (1, 10, 'one'), (2, 20, 'two')")
+
+	pointUnits := func(sql string) map[string]float64 {
+		rows := tk.MustQuery("explain analyze format='ru' " + sql).Rows()
+		units := make(map[string]float64)
+		for _, row := range rows {
+			if len(row) != 17 || fmt.Sprint(row[0]) != "plan" || fmt.Sprint(row[3]) != "tikv/kv_point_lookup" {
+				continue
+			}
+			unit := fmt.Sprint(row[11])
+			valueColumn := 12
+			if unit == "scan_bytes" || unit == "net_bytes" || unit == "processed_keys_size" {
+				valueColumn = 10
+			}
+			value, err := strconv.ParseFloat(fmt.Sprint(row[valueColumn]), 64)
+			require.NoError(t, err, "sql=%s row=%v", sql, row)
+			units[unit] = value
+		}
+		require.Equal(t, map[string]bool{
+			"scan_bytes": true, "net_bytes": true, "total_keys": true, "processed_keys": true,
+			"processed_keys_size": true, "detail_records": true, "payload_records": true,
+			"completed_responses": true,
+		}, func() map[string]bool {
+			seen := make(map[string]bool, len(units))
+			for unit := range units {
+				seen[unit] = true
+			}
+			return seen
+		}(), "sql=%s rows=%v", sql, rows)
+		require.NotContains(t, units, "cpu_work", "sql=%s rows=%v", sql, rows)
+		require.Equal(t, units["completed_responses"], units["detail_records"], "sql=%s", sql)
+		require.Equal(t, units["completed_responses"], units["payload_records"], "sql=%s", sql)
+		return units
+	}
+
+	primaryHit := pointUnits("select v from preview_ru_point_payload where id = 1")
+	require.Equal(t, 1.0, primaryHit["completed_responses"])
+	require.Equal(t, 1.0, primaryHit["total_keys"])
+	require.Positive(t, primaryHit["scan_bytes"])
+	require.Positive(t, primaryHit["net_bytes"])
+
+	primaryMiss := pointUnits("select v from preview_ru_point_payload where id = 99")
+	require.Equal(t, 1.0, primaryMiss["completed_responses"])
+	require.Equal(t, 1.0, primaryMiss["total_keys"])
+	require.Zero(t, primaryMiss["scan_bytes"])
+	require.Zero(t, primaryMiss["net_bytes"])
+
+	batchHit := pointUnits("select v from preview_ru_point_payload where id in (1, 2)")
+	require.Equal(t, 2.0, batchHit["total_keys"])
+	require.Positive(t, batchHit["scan_bytes"])
+	require.Positive(t, batchHit["net_bytes"])
+
+	batchPartial := pointUnits("select v from preview_ru_point_payload where id in (1, 99)")
+	require.Equal(t, 2.0, batchPartial["total_keys"])
+	require.Positive(t, batchPartial["scan_bytes"])
+	require.Positive(t, batchPartial["net_bytes"])
+
+	batchMiss := pointUnits("select v from preview_ru_point_payload where id in (98, 99)")
+	require.Equal(t, 2.0, batchMiss["total_keys"])
+	require.Zero(t, batchMiss["scan_bytes"])
+	require.Zero(t, batchMiss["net_bytes"])
+
+	// A unique-index PointGet performs an index-key Get followed by a row-key
+	// Get. Both responses must be aggregated under the one physical plan ID.
+	uniqueHit := pointUnits("select v from preview_ru_point_payload where uk = 10")
+	require.Equal(t, 2.0, uniqueHit["completed_responses"])
+	require.Equal(t, 2.0, uniqueHit["total_keys"])
+	require.Positive(t, uniqueHit["scan_bytes"])
+	require.Positive(t, uniqueHit["net_bytes"])
+
+	uniqueMiss := pointUnits("select v from preview_ru_point_payload where uk = 99")
+	require.Equal(t, 1.0, uniqueMiss["completed_responses"])
+	require.Equal(t, 1.0, uniqueMiss["total_keys"])
+	require.Zero(t, uniqueMiss["scan_bytes"])
+	require.Zero(t, uniqueMiss["net_bytes"])
+
+	tk.MustExec("begin pessimistic")
+	lockingHit := pointUnits("select v from preview_ru_point_payload where id = 1 for update")
+	// The pessimistic-lock response can populate the lock cache before the
+	// PointGet reads it. Lock RPCs are outside the point response contract, so
+	// this local path must remain modeled as zero instead of failing closed or
+	// inventing Get/BatchGet payload.
+	require.Zero(t, lockingHit["completed_responses"])
+	require.Zero(t, lockingHit["scan_bytes"])
+	require.Zero(t, lockingHit["net_bytes"])
+	tk.MustExec("rollback")
+}
+
 func TestTxnGoString(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 

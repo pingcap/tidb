@@ -132,10 +132,6 @@ func TestReadBillingDemoDMLKindAggregation(t *testing.T) {
 			Unit: "frontend_compile_bytes", InputSource: "statement_original_sql", InputSide: "all", RowWidthSource: "not_applicable", Value: 29,
 		},
 		ReadBillingDemoBaseUnitSample{
-			ModelVersion: "v6", WeightVersion: "test-v6-calibrated", Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get",
-			Unit: "cpu_work", InputSource: "snapshot_runtime_stats", InputSide: "all", RowWidthSource: "not_applicable", Value: 2,
-		},
-		ReadBillingDemoBaseUnitSample{
 			ModelVersion: "v6", WeightVersion: "test-v6-calibrated", Site: "tikv", OpClass: "kv_write", OperatorKind: "txn_write", DMLKind: "insert",
 			Unit: "write_keys", InputSource: "commit_detail", InputSide: "all", RowWidthSource: "not_applicable", Value: 3,
 		},
@@ -145,8 +141,8 @@ func TestReadBillingDemoDMLKindAggregation(t *testing.T) {
 		},
 	)
 	for unit, value := range map[string]float64{
-		"scan_bytes": 37, "total_keys": 2, "processed_keys": 1, "processed_keys_size": 37,
-		"detail_records": 1, "completed_responses": 1,
+		"scan_bytes": 74, "net_bytes": 17, "total_keys": 2, "processed_keys": 1, "processed_keys_size": 37,
+		"detail_records": 1, "payload_records": 1, "completed_responses": 1,
 	} {
 		stats.BaseUnits = append(stats.BaseUnits, ReadBillingDemoBaseUnitSample{
 			ModelVersion: "v6", WeightVersion: "test-v6-calibrated", Site: "tikv", OpClass: "kv_point_lookup", OperatorKind: "point_get",
@@ -155,7 +151,7 @@ func TestReadBillingDemoDMLKindAggregation(t *testing.T) {
 	}
 
 	aggs, _, _ := AddReadBillingDemoStatementStatsToMaps(nil, nil, &stats)
-	require.Len(t, aggs, 15)
+	require.Len(t, aggs, 16)
 	entries := ReadBillingDemoBaseUnitEntriesFromMap(aggs)
 	seenUnits := make(map[string]int)
 	for _, entry := range entries {
@@ -167,22 +163,24 @@ func TestReadBillingDemoDMLKindAggregation(t *testing.T) {
 			require.Equal(t, "stmt_memdb_mutation_calls", entry.InputSource)
 			require.Contains(t, []string{"insert", "update"}, entry.DMLKind)
 		case "net_bytes":
-			require.Equal(t, "reader_transport", entry.OpClass)
-			require.Equal(t, "mixed_reader", entry.OperatorKind)
-			require.Equal(t, "ruv2_metrics", entry.InputSource)
+			if entry.OpClass == "reader_transport" {
+				require.Equal(t, "mixed_reader", entry.OperatorKind)
+				require.Equal(t, "ruv2_metrics", entry.InputSource)
+				break
+			}
+			require.Equal(t, "kv_point_lookup", entry.OpClass)
+			require.Equal(t, "point_get", entry.OperatorKind)
+			require.Equal(t, "snapshot_runtime_stats", entry.InputSource)
 		case "frontend_compile_bytes":
 			require.Equal(t, "sql_frontend", entry.OpClass)
 			require.Equal(t, "parser_optimizer", entry.OperatorKind)
 			require.Equal(t, "statement_original_sql", entry.InputSource)
 		case "cpu_work":
-			if entry.OpClass == "kv_mutation" {
-				require.Equal(t, "memdb_mutation", entry.OperatorKind)
-				require.Equal(t, "stmt_memdb_mutation_calls", entry.InputSource)
-				require.Contains(t, []string{"insert", "update"}, entry.DMLKind)
-				break
-			}
-			fallthrough
-		case "scan_bytes", "total_keys", "processed_keys", "processed_keys_size", "detail_records", "completed_responses":
+			require.Equal(t, "kv_mutation", entry.OpClass)
+			require.Equal(t, "memdb_mutation", entry.OperatorKind)
+			require.Equal(t, "stmt_memdb_mutation_calls", entry.InputSource)
+			require.Contains(t, []string{"insert", "update"}, entry.DMLKind)
+		case "scan_bytes", "total_keys", "processed_keys", "processed_keys_size", "detail_records", "payload_records", "completed_responses":
 			require.Equal(t, "kv_point_lookup", entry.OpClass)
 			require.Equal(t, "point_get", entry.OperatorKind)
 			require.Equal(t, "snapshot_runtime_stats", entry.InputSource)
@@ -197,9 +195,9 @@ func TestReadBillingDemoDMLKindAggregation(t *testing.T) {
 		seenUnits[entry.Unit]++
 	}
 	require.Equal(t, map[string]int{
-		"cpu_work": 3, "encoded_mutation_count": 2, "net_bytes": 1, "frontend_compile_bytes": 1, "scan_bytes": 1,
+		"cpu_work": 2, "encoded_mutation_count": 2, "net_bytes": 2, "frontend_compile_bytes": 1, "scan_bytes": 1,
 		"total_keys": 1, "processed_keys": 1, "processed_keys_size": 1,
-		"detail_records": 1, "completed_responses": 1, "write_keys": 1, "write_bytes": 1,
+		"detail_records": 1, "payload_records": 1, "completed_responses": 1, "write_keys": 1, "write_bytes": 1,
 	}, seenUnits)
 }
 
