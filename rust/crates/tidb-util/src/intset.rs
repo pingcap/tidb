@@ -391,6 +391,9 @@ impl FastIntSet {
 
     /// Go `Shift`.
     pub fn shift(&self, delta: i64) -> FastIntSet {
+        if self.is_empty() {
+            return FastIntSet::default();
+        }
         if self.large.is_none() {
             if delta > 0 {
                 if (self.small.leading_zeros() as i64) - (64 - SMALL_CUT_OFF) >= delta {
@@ -833,6 +836,19 @@ mod tests {
             FastIntSet::new(&[MAX_INT - 1]).shift(2).sorted_array(),
             vec![MIN_INT]
         );
+    }
+
+    #[test]
+    fn shifting_an_empty_set_is_always_empty() {
+        let small_empty = FastIntSet::default();
+        let mut large_empty = FastIntSet::new(&[64]);
+        large_empty.clear();
+
+        for set in [&small_empty, &large_empty] {
+            for delta in [MIN_INT, -65, -64, -1, 0, 1, 64, 65, MAX_INT] {
+                assert!(set.shift(delta).is_empty(), "delta {delta}");
+            }
+        }
     }
 
     #[test]
