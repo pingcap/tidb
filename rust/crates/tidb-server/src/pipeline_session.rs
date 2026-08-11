@@ -321,6 +321,9 @@ impl QuerySession for PipelineServerSession {
                     std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
                 match self.session.run_with_params(sql, &probe) {
                     Ok(StmtOutput::Rows { columns, .. }) => select_columns(&columns),
+                    Err(error @ tidb_executor::DriverError::Var(_)) => {
+                        return Err(map_error(error));
+                    }
                     // A query whose metadata this tier cannot resolve without
                     // real values reports no columns at prepare time. That is
                     // a LAST resort and not a free one: a MySQL client frames

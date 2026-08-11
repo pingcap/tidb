@@ -318,6 +318,10 @@ pub enum VarError {
     /// @@global.x` named a SESSION-only variable (there is no GLOBAL copy to
     /// read).
     NoGlobalCopy(String),
+    /// Go `ErrIncorrectScope` (1238), the expression rewriter's explicit read
+    /// scope validation. The second field is Go's allowed-scope text, such as
+    /// `GLOBAL` or `SESSION or GLOBAL`.
+    IncorrectScope(String, &'static str),
     /// A `SysVar.Validation` closure's own `errors.Errorf`, whose wording is
     /// the whole error (Go gives it no code, so it reports as 1105).
     ValidationRefused(String),

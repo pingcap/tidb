@@ -36,10 +36,12 @@
 //! than those [`SysVarDef::run_validation`] names, and the `SetSession` and
 //! `GetSession` closures Go attaches to many entries (charset name checks,
 //! isolation-level checks, autocommit's implicit commit, and every variable
-//! whose read is computed rather than stored); `ScopeInstance` behaving
-//! differently from global; and the global tier's persistence. The table's
-//! declarative part -- names, scopes, defaults, types, bounds, enums,
-//! read-only -- is complete.
+//! whose read is computed rather than stored); instance-specific mutation
+//! hooks beyond the explicit read-tier routing; and the global tier's
+//! persistence. The table's declarative part -- names, scopes, defaults,
+//! types, bounds, enums, read-only -- is complete. The one registry flag the
+//! capture does not expose, `InternalSessionVariable`, is retained by
+//! [`SysVarDef::is_internal_session_variable`].
 
 /// Go `vardef.ScopeNone`: a read-only server property.
 pub const SCOPE_NONE: u8 = 0;
@@ -136,6 +138,16 @@ impl SysVarDef {
     #[must_use]
     pub fn is_read_only(&self) -> bool {
         self.read_only || self.scope == SCOPE_NONE
+    }
+
+    /// Go `InternalSessionVariable`: an explicit `@@session.x` must hide the
+    /// variable even though an unqualified internal read remains available.
+    ///
+    /// The source registry has exactly one such entry. Keep it here rather
+    /// than adding a generated field to all 948 entries for one true value.
+    #[must_use]
+    pub fn is_internal_session_variable(&self) -> bool {
+        self.name == "tidb_redact_log"
     }
 }
 
