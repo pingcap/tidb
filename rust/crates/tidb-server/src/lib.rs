@@ -147,7 +147,9 @@ pub use node_config::{
 pub use pipeline_session::{
     MaterializedResultSetSource, PipelineServerSession, PipelineSessionFactory,
 };
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use real_tikv_multi_node::{run_bound_multi_node, run_configured_multi_node_with_spill};
 pub use real_tikv_multi_node::{
@@ -195,6 +197,7 @@ pub use wire_status::{
 /// serves the cluster's whole loaded catalog through the wide-SQL session
 /// driver ([`cluster_session_node`]), so it is routed first.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
+    let _system_time_monitor = start_system_time_monitor();
     let spill_storage = open_spill_storage(&config)?;
     if config.cluster_session {
         return run_cluster_session_node_with_spill(config, spill_storage);
@@ -244,6 +247,15 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
             format!("configured SQL node requires one or two tables, got {count}"),
         ))),
     }
+}
+
+static SYSTEM_TIME_JUMP_BACKWARD_COUNT: AtomicU64 = AtomicU64::new(0);
+
+fn start_system_time_monitor() -> tidb_util::systimemon::SystemTimeMonitor {
+    tidb_util::systimemon::SystemTimeMonitor::start(SystemTime::now, || {
+        SYSTEM_TIME_JUMP_BACKWARD_COUNT.fetch_add(1, Ordering::Relaxed);
+        eprintln!("system time jumped backward");
+    })
 }
 
 fn open_spill_storage(

@@ -58,6 +58,7 @@ pub mod size;
 pub mod slice;
 pub mod sqlescape;
 pub mod sqlkiller;
+pub mod systimemon;
 pub mod table_filter;
 pub mod table_rule_selector;
 pub mod texttree;

@@ -1,0 +1,12 @@
+go_package = "pkg/util/systimemon"
+source_commit = "665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f"
+evidence_files = [
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/src/systimemon.rs",
+  "rust/crates/tidb-util/tests/systimemon_source.rs",
+  "rust/crates/tidb-server/src/lib.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "--test", "systimemon_source"],
+  ["check", "-p", "tidb-server", "--all-targets"],
+]
