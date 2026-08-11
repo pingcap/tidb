@@ -106,3 +106,32 @@ fn tidb_catalog_preserves_reserved_range_and_extended_metadata() {
         "Access denied for user '%-.48s'@'%-.255s' to database '%-.192s'"
     );
 }
+
+#[test]
+fn tidb_catalog_includes_the_dual_password_errors() {
+    let cases = [
+        (
+            tidb::errcode::ErrSecondPasswordCannotBeEmpty,
+            3878,
+            "Empty password can not be retained as second password for user '%-.64s'@'%-.64s'.",
+        ),
+        (
+            tidb::errcode::ErrPasswordCannotBeRetainedOnPluginChange,
+            3894,
+            "Current password can not be retained for user '%-.64s'@'%-.64s' because authentication plugin is being changed.",
+        ),
+        (
+            tidb::errcode::ErrCurrentPasswordCannotBeRetained,
+            3895,
+            "Current password can not be retained for user '%-.64s'@'%-.64s' because new password is empty.",
+        ),
+    ];
+
+    for (code, expected_code, expected_message) in cases {
+        assert_eq!(code, expected_code);
+        assert_eq!(
+            tidb::message_by_code(code).map(|message| message.raw),
+            Some(expected_message)
+        );
+    }
+}
