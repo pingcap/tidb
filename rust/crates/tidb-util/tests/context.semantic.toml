@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/context"
 source_commit = "d59e531fe61ba944b93aae61ea9967ab9c6a43d6"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-util/src/context/mod.rs",
   "rust/crates/tidb-util/src/context/warn.rs",
   "rust/crates/tidb-util/src/context/plancache.rs",
@@ -15,23 +13,9 @@ rust_files = [
   "rust/crates/tidb-session/src/non_prepared_plan_cache.rs",
   "rust/crates/tidb-session/src/tests_non_prepared_plan_cache.rs",
 ]
-
-[[tests]]
-name = "context_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--test", "context_contract"]
-
-[[tests]]
-name = "distsql_warning_retention_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-distsql", "--lib", "warning::tests::collector_stops_at_the_statement_warning_limit", "--", "--exact"]
-
-[[tests]]
-name = "session_warning_retention_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-session", "--lib", "tests_core::session_state::the_session_warning_buffer_stops_at_the_source_retention_limit", "--", "--exact"]
-
-[[tests]]
-name = "session_plan_cache_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-session", "--lib", "tests_non_prepared_plan_cache::two_statements_differing_only_in_a_literal_share_an_entry_and_keep_their_own_rows", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-util", "--test", "context_contract"],
+  ["test", "-p", "tidb-distsql", "--lib", "warning::tests::collector_stops_at_the_statement_warning_limit", "--", "--exact"],
+  ["test", "-p", "tidb-session", "--lib", "tests_core::session_state::the_session_warning_buffer_stops_at_the_source_retention_limit", "--", "--exact"],
+  ["test", "-p", "tidb-session", "--lib", "tests_non_prepared_plan_cache::two_statements_differing_only_in_a_literal_share_an_entry_and_keep_their_own_rows", "--", "--exact"],
+]

@@ -1,10 +1,8 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/watcher"
 source_commit = "62d4284bee67e64f23b0a7b7f89488b26667c0eb"
-rust_files = ["rust/crates/tidb-util/src/watcher.rs"]
-
-[[tests]]
-name = "watcher_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "watcher"]
+evidence_files = [
+  "rust/crates/tidb-util/src/watcher.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "watcher"],
+]

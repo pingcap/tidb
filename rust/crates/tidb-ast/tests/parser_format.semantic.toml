@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/parser/format"
 source_commit = "9e99c96ee3546dddaaa3a54a0d715113f4492be1"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-datatype/src/format.rs",
   "rust/crates/tidb-datatype/tests/parser_format_package_source.rs",
   "rust/crates/tidb-ast/src/format.rs",
@@ -11,28 +9,12 @@ rust_files = [
   "rust/crates/tidb-parser/src/tests/restore_context.rs",
   "rust/crates/tidb-util/src/format.rs",
   "rust/crates/tidb-util/tests/format_contract.rs",
-]
-extra_artifacts = [
   "rust/crates/tidb-ast/tests/data/parser_format_simple_case.tsv",
   "rust/scripts/generate-go-simple-case.py",
 ]
-
-[[tests]]
-name = "parser_format_formatter_and_output"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-datatype", "--test", "all", "parser_format_package_source::"]
-
-[[tests]]
-name = "parser_format_restore_context"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-ast", "--test", "all", "parser_format_package_source::"]
-
-[[tests]]
-name = "parser_format_parser_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-parser", "--lib", "tests::restore_context::"]
-
-[[tests]]
-name = "shared_formatter_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--test", "format_contract"]
+commands = [
+  ["test", "-p", "tidb-datatype", "--test", "all", "parser_format_package_source::"],
+  ["test", "-p", "tidb-ast", "--test", "all", "parser_format_package_source::"],
+  ["test", "-p", "tidb-parser", "--lib", "tests::restore_context::"],
+  ["test", "-p", "tidb-util", "--test", "format_contract"],
+]

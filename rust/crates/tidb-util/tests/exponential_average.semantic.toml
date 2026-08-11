@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/mathutil"
 source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-util/src/mathutil/mod.rs",
   "rust/crates/tidb-util/src/mathutil/math.rs",
   "rust/crates/tidb-util/src/mathutil/rand.rs",
@@ -18,33 +16,11 @@ rust_files = [
   "rust/crates/tidb-stats/src/row_estimate.rs",
   "rust/crates/tidb-stats/tests/row_estimate_source.rs",
 ]
-
-[[tests]]
-name = "mathutil_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "mathutil"]
-
-[[tests]]
-name = "rand_expression_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-expr", "--lib", "math_fn::tests::rand"]
-
-[[tests]]
-name = "rand_statement_context_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-executor", "--lib", "rand_"]
-
-[[tests]]
-name = "rand_default_expression_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-executor", "--lib", "explicit_values_defaults_are_lowered_before_runtime_expressions"]
-
-[[tests]]
-name = "rand_session_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-session", "--lib", "tests_core::numeric_domain::rand_"]
-
-[[tests]]
-name = "clamp_statistics_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-stats", "--test", "all", "row_estimate_source"]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "mathutil"],
+  ["test", "-p", "tidb-expr", "--lib", "math_fn::tests::rand"],
+  ["test", "-p", "tidb-executor", "--lib", "rand_"],
+  ["test", "-p", "tidb-executor", "--lib", "explicit_values_defaults_are_lowered_before_runtime_expressions"],
+  ["test", "-p", "tidb-session", "--lib", "tests_core::numeric_domain::rand_"],
+  ["test", "-p", "tidb-stats", "--test", "all", "row_estimate_source"],
+]

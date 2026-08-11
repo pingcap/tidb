@@ -1,12 +1,8 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/paging"
 source_commit = "589ea5ec8a20687604cc20a4ebe82fb56137b8b5"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-util/src/paging.rs",
 ]
-
-[[tests]]
-name = "paging_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib"]
+commands = [
+  ["test", "-p", "tidb-util", "--lib"],
+]

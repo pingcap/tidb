@@ -1,12 +1,8 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/nocopy"
 source_commit = "04cbb8663ce71b4bec4a1d01f657be157dea871b"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-util/src/nocopy/mod.rs",
 ]
-
-[[tests]]
-name = "nocopy_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib"]
+commands = [
+  ["test", "-p", "tidb-util", "--lib"],
+]

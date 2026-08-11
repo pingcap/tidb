@@ -1,21 +1,13 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/store/driver/options"
 source_commit = "318e82bbb791bfc2c74ecbb4f89666e072e9803b"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-txnkv/src/client.rs",
   "rust/crates/tidb-txnkv/src/lib.rs",
   "rust/crates/tidb-txnkv/tests/tikv_client_contract_source.rs",
   "rust/crates/tidb-distsql/src/cop_paging/tikv_rpc_contract.rs",
   "rust/crates/tidb-distsql/tests/direct_unary_dispatch_contract.rs",
 ]
-
-[[tests]]
-name = "replica_read_mapping_contract"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-txnkv", "--test", "all", "tikv_client_contract_source::replica_and_endpoint_mappings_match_tidb_and_client_go_discriminants", "--", "--exact"]
-
-[[tests]]
-name = "distsql_replica_read_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-distsql", "--test", "all", "direct_unary_dispatch_contract::production_metadata_drives_supported_replica_policies_and_exact_request_flags", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-txnkv", "--test", "all", "tikv_client_contract_source::replica_and_endpoint_mappings_match_tidb_and_client_go_discriminants", "--", "--exact"],
+  ["test", "-p", "tidb-distsql", "--test", "all", "direct_unary_dispatch_contract::production_metadata_drives_supported_replica_policies_and_exact_request_flags", "--", "--exact"],
+]

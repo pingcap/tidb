@@ -1,20 +1,12 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/tablecodec/rowindexcodec"
 source_commit = "ab1e19714d607a9f591cd6d9d5381c11d7c4d64b"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-codec/src/lib.rs",
   "rust/crates/tidb-codec/src/row_index.rs",
   "rust/crates/tidb-codec/tests/row_index_source.rs",
   "rust/crates/tidb-txnkv/src/resource_group.rs",
 ]
-
-[[tests]]
-name = "rowindexcodec_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-codec", "--test", "all", "row_index_source"]
-
-[[tests]]
-name = "resource_group_label_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-txnkv", "--lib", "resource_group::tests::resource_group_tag_labels_preserve_row_index_and_unknown_prefixes", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-codec", "--test", "all", "row_index_source"],
+  ["test", "-p", "tidb-txnkv", "--lib", "resource_group::tests::resource_group_tag_labels_preserve_row_index_and_unknown_prefixes", "--", "--exact"],
+]

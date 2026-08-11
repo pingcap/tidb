@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/parser/terror"
 source_commit = "3da335ee616f8533f90282a2ab02c916a4c94f1d"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-error/src/terror.rs",
   "rust/crates/tidb-error/tests/terror_source.rs",
   "rust/crates/tidb-datatype/src/conversion_context/mod.rs",
@@ -11,28 +9,10 @@ rust_files = [
   "rust/crates/tidb-txnkv/tests/driver_error_source.rs",
   "rust/crates/tidb-model/src/reorg.rs",
 ]
-
-[[tests]]
-name = "parser_terror_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-error", "--test", "terror_source"]
-
-[[tests]]
-name = "parser_terror_serde_boundaries"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-error", "--lib", "terror::registered_std_tests::"]
-
-[[tests]]
-name = "datatype_error_identity_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-datatype", "--test", "all", "conversion_context_source::"]
-
-[[tests]]
-name = "transaction_error_identity_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-txnkv", "--test", "all", "driver_error_source::"]
-
-[[tests]]
-name = "model_error_json_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-model", "--lib", "reorg::tests::backfill_decode_matches_go_object_stream_boundaries", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-error", "--test", "terror_source"],
+  ["test", "-p", "tidb-error", "--lib", "terror::registered_std_tests::"],
+  ["test", "-p", "tidb-datatype", "--test", "all", "conversion_context_source::"],
+  ["test", "-p", "tidb-txnkv", "--test", "all", "driver_error_source::"],
+  ["test", "-p", "tidb-model", "--lib", "reorg::tests::backfill_decode_matches_go_object_stream_boundaries", "--", "--exact"],
+]

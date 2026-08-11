@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/resourcegrouptag"
 source_commit = "ab1e19714d607a9f591cd6d9d5381c11d7c4d64b"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-proto/proto/coprocessor.proto",
   "rust/crates/tidb-proto/proto/kvrpcpb.proto",
   "rust/crates/tidb-proto/src/lib.rs",
@@ -13,13 +11,7 @@ rust_files = [
   "rust/crates/tidb-distsql/src/transport.rs",
   "rust/crates/tidb-distsql/tests/request_builder_source.rs",
 ]
-
-[[tests]]
-name = "resource_group_tag_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-txnkv", "--test", "all", "resource_group_tag_source"]
-
-[[tests]]
-name = "distsql_request_tag_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-distsql", "--test", "all", "request_builder_source::test_request_builder_handle", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-txnkv", "--test", "all", "resource_group_tag_source"],
+  ["test", "-p", "tidb-distsql", "--test", "all", "request_builder_source::test_request_builder_handle", "--", "--exact"],
+]

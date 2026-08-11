@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/errctx"
 source_commit = "91beef4bb1455b94bbbb9390a0a48ba5797aef85"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-error/src/errctx.rs",
   "rust/crates/tidb-error/tests/errctx_source.rs",
   "rust/crates/tidb-executor/src/error_context.rs",
@@ -12,23 +10,9 @@ rust_files = [
   "rust/crates/tidb-exec/tests/statement_pushdown_source.rs",
   "rust/crates/tidb-session/src/tests_generated_columns.rs",
 ]
-
-[[tests]]
-name = "errctx_package_contract"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-error", "--test", "errctx_source"]
-
-[[tests]]
-name = "executor_error_policy_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-exec", "--test", "all", "error_context_source"]
-
-[[tests]]
-name = "tikv_pushdown_flag_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-exec", "--test", "all", "statement_pushdown_source"]
-
-[[tests]]
-name = "session_division_policy_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-session", "--lib", "tests_generated_columns::a_zero_divisor_in_a_generated_column_fails_the_write_under_the_default_mode", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-error", "--test", "errctx_source"],
+  ["test", "-p", "tidb-exec", "--test", "all", "error_context_source"],
+  ["test", "-p", "tidb-exec", "--test", "all", "statement_pushdown_source"],
+  ["test", "-p", "tidb-session", "--lib", "tests_generated_columns::a_zero_divisor_in_a_generated_column_fails_the_write_under_the_default_mode", "--", "--exact"],
+]

@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/errno"
 source_commit = "60996fd69eaae91e50c1460a110b4d005ae16eaf"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-error/Cargo.toml",
   "rust/crates/tidb-error/src/lib.rs",
   "rust/crates/tidb-error/src/tidb/mod.rs",
@@ -28,28 +26,10 @@ rust_files = [
   "rust/crates/tidb-txnkv/tests/driver_error_source.rs",
   "rust/crates/tidb-util/src/dbterror/mod.rs",
 ]
-
-[[tests]]
-name = "errno_catalog_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-error", "--test", "error_catalog_source"]
-
-[[tests]]
-name = "errno_statistics_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-error", "--test", "infoschema_source"]
-
-[[tests]]
-name = "protocol_error_code_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "binary_params_source::an_unknown_field_type_is_reported", "--", "--exact"]
-
-[[tests]]
-name = "transaction_error_catalog_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-txnkv", "--test", "all", "driver_error_source::"]
-
-[[tests]]
-name = "error_redaction_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "dbterror::tests::error_redact", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-error", "--test", "error_catalog_source"],
+  ["test", "-p", "tidb-error", "--test", "infoschema_source"],
+  ["test", "-p", "tidb-protocol", "--test", "all", "binary_params_source::an_unknown_field_type_is_reported", "--", "--exact"],
+  ["test", "-p", "tidb-txnkv", "--test", "all", "driver_error_source::"],
+  ["test", "-p", "tidb-util", "--lib", "dbterror::tests::error_redact", "--", "--exact"],
+]

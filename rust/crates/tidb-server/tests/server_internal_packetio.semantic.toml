@@ -1,18 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/server/internal"
 source_commit = "1b401081776390f4986efff1087c24b515e03dc0"
-excluded_go_paths = [
-  "pkg/server/internal/column",
-  "pkg/server/internal/dump",
-  "pkg/server/internal/handshake",
-  "pkg/server/internal/parse",
-  "pkg/server/internal/resultset",
-  "pkg/server/internal/testserverclient",
-  "pkg/server/internal/testutil",
-  "pkg/server/internal/util",
-]
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-protocol/src/compression.rs",
   "rust/crates/tidb-protocol/src/packet.rs",
   "rust/crates/tidb-protocol/tests/packetio_source.rs",
@@ -28,13 +16,7 @@ rust_files = [
   "rust/crates/tidb-server/tests/server_internal_packetio_source.rs",
   "rust/crates/tidb-session/src/lib.rs",
 ]
-
-[[tests]]
-name = "packet_codec_contract"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "packetio_source"]
-
-[[tests]]
-name = "live_packet_transport_contract"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "server_internal_packetio_source"]
+commands = [
+  ["test", "-p", "tidb-protocol", "--test", "all", "packetio_source"],
+  ["test", "-p", "tidb-server", "--test", "all", "server_internal_packetio_source"],
+]

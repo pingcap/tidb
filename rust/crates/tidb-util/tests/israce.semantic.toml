@@ -1,18 +1,10 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/israce"
 source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-util/Cargo.toml",
   "rust/crates/tidb-util/src/israce/mod.rs",
 ]
-
-[[tests]]
-name = "race_disabled_build"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "israce::tests::default_build_reports_race_disabled", "--", "--exact"]
-
-[[tests]]
-name = "race_enabled_build"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--features", "race", "--lib", "israce::tests::race_build_reports_race_enabled", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "israce::tests::default_build_reports_race_disabled", "--", "--exact"],
+  ["test", "-p", "tidb-util", "--features", "race", "--lib", "israce::tests::race_build_reports_race_enabled", "--", "--exact"],
+]

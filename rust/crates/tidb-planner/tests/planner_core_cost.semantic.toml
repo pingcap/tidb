@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/planner/core/cost"
 source_commit = "b212b931528a74f5fa1a36cd1edc196a7c8aa6ed"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-planner/src/cost_factors.rs",
   "rust/crates/tidb-planner/src/cardinality/derive_stats.rs",
   "rust/crates/tidb-planner/src/cardinality/row_count_estimator.rs",
@@ -10,18 +8,8 @@ rust_files = [
   "rust/crates/tidb-planner/tests/selectivity_pseudo_source.rs",
   "rust/crates/tidb-planner/tests/row_count_estimator_source.rs",
 ]
-
-[[tests]]
-name = "cost_factor_package_contract"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-planner", "--test", "all", "cost_factors_source"]
-
-[[tests]]
-name = "selection_factor_planner_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-planner", "--test", "all", "selectivity_pseudo_source::unanalyzed_opaque_expression_takes_the_selection_factor", "--", "--exact"]
-
-[[tests]]
-name = "tolerance_factor_cardinality_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-planner", "--test", "all", "row_count_estimator_source"]
+commands = [
+  ["test", "-p", "tidb-planner", "--test", "all", "cost_factors_source"],
+  ["test", "-p", "tidb-planner", "--test", "all", "selectivity_pseudo_source::unanalyzed_opaque_expression_takes_the_selection_factor", "--", "--exact"],
+  ["test", "-p", "tidb-planner", "--test", "all", "row_count_estimator_source"],
+]

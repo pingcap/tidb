@@ -1,20 +1,12 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/disjointset"
 source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-util/src/disjointset/mod.rs",
   "rust/crates/tidb-util/src/disjointset/int_set.rs",
   "rust/crates/tidb-util/src/disjointset/set.rs",
   "rust/crates/tidb-chunk/src/chunk_util.rs",
 ]
-
-[[tests]]
-name = "disjointset_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "disjointset"]
-
-[[tests]]
-name = "column_swap_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-chunk", "--test", "chunk_util_contract", "column_swap_identity_and_cache_contract", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "disjointset"],
+  ["test", "-p", "tidb-chunk", "--test", "chunk_util_contract", "column_swap_identity_and_cache_contract", "--", "--exact"],
+]

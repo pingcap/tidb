@@ -1,12 +1,8 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/queue"
 source_commit = "b931f16351cbd7b76bceff8477b7afc7e1ba6632"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-util/src/queue.rs",
 ]
-
-[[tests]]
-name = "queue_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib"]
+commands = [
+  ["test", "-p", "tidb-util", "--lib"],
+]

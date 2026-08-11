@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/parser/duration"
 source_commit = "b81a9dfb0fb0b5a7f714a9c7c3917822b6ecba68"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-parser/src/duration.rs",
   "rust/crates/tidb-parser/src/lib.rs",
   "rust/crates/tidb-parser/src/ddl/table_option.rs",
@@ -10,13 +8,7 @@ rust_files = [
   "rust/crates/tidb-parser/tests/parser_duration_package_source.rs",
   "rust/crates/tidb-model/src/table.rs",
 ]
-
-[[tests]]
-name = "parser_duration_package_and_sql_consumers"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-parser", "--test", "all", "parser_duration_package_source::"]
-
-[[tests]]
-name = "ttl_model_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-model", "--lib", "table::tests::ttl_interval_and_affinity_boundaries", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-parser", "--test", "all", "parser_duration_package_source::"],
+  ["test", "-p", "tidb-model", "--lib", "table::tests::ttl_interval_and_affinity_boundaries", "--", "--exact"],
+]

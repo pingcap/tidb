@@ -1,21 +1,13 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/parser"
 source_commit = "52b9a887b3b05eed0280ee084ecc2750b0d2c17d"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-parser/src/util_parser.rs",
   "rust/crates/tidb-parser/tests/util_parser_package_source.rs",
   "rust/crates/tidb-session/src/binding.rs",
   "rust/crates/tidb-session/src/binding_arm.rs",
   "rust/crates/tidb-session/src/tests_binding.rs",
 ]
-
-[[tests]]
-name = "util_parser_package_contract"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-parser", "--test", "all", "util_parser_package_source"]
-
-[[tests]]
-name = "session_binding_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-session", "--lib", "tests_binding::an_index_hint_binding_matches_the_query_whatever_index_hint_the_query_wrote", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-parser", "--test", "all", "util_parser_package_source"],
+  ["test", "-p", "tidb-session", "--lib", "tests_binding::an_index_hint_binding_matches_the_query_whatever_index_hint_the_query_wrote", "--", "--exact"],
+]

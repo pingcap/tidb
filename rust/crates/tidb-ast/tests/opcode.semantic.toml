@@ -1,21 +1,13 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/parser/opcode"
 source_commit = "c8cf3706c7904a2940f8897de87c55e650279e90"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-ast/src/opcode.rs",
   "rust/crates/tidb-ast/src/expr/op.rs",
   "rust/crates/tidb-ast/src/expr/restore.rs",
   "rust/crates/tidb-ast/tests/parser_opcode_package_source.rs",
   "rust/crates/tidb-expr/src/scalar_function.rs",
 ]
-
-[[tests]]
-name = "parser_opcode_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-ast", "--test", "all", "parser_opcode_package_source::"]
-
-[[tests]]
-name = "expression_operator_name_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-expr", "--lib", "scalar_function::tests::binary_operator_names_delegate_to_the_opcode_authority", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-ast", "--test", "all", "parser_opcode_package_source::"],
+  ["test", "-p", "tidb-expr", "--lib", "scalar_function::tests::binary_operator_names_delegate_to_the_opcode_authority", "--", "--exact"],
+]

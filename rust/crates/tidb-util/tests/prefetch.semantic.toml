@@ -1,10 +1,8 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/prefetch"
 source_commit = "0f5ba8fbaabdfcc78f1fec7d80c94104dd96bdc3"
-rust_files = ["rust/crates/tidb-util/src/prefetch.rs"]
-
-[[tests]]
-name = "prefetch_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "prefetch"]
+evidence_files = [
+  "rust/crates/tidb-util/src/prefetch.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "prefetch"],
+]

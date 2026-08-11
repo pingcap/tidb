@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/server/err"
 source_commit = "a9734aee884794e33d5a857b3dfd17e8b4022e53"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-error/src/server_errors.rs",
   "rust/crates/tidb-error/src/terror.rs",
   "rust/crates/tidb-error/src/tidb/errcode/mod.rs",
@@ -25,23 +23,9 @@ rust_files = [
   "rust/crates/tidb-server/tests/mysql_client_lifecycle_source.rs",
   "rust/crates/tidb-server/tests/require_ssl_login_source.rs",
 ]
-
-[[tests]]
-name = "server_error_identity_contract"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-error", "--test", "server_err_source"]
-
-[[tests]]
-name = "packet_error_consumers"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "packetio_source::packet_limit_is_checked_after_header_sequence_and_before_payload_read", "--", "--exact"]
-
-[[tests]]
-name = "auth_mode_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "mysql_client_lifecycle_source::handshake_without_protocol_41_uses_the_source_auth_mode_error", "--", "--exact"]
-
-[[tests]]
-name = "secure_transport_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "require_ssl_login_source::require_secure_transport_refuses_every_plaintext_login", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-error", "--test", "server_err_source"],
+  ["test", "-p", "tidb-protocol", "--test", "all", "packetio_source::packet_limit_is_checked_after_header_sequence_and_before_payload_read", "--", "--exact"],
+  ["test", "-p", "tidb-server", "--test", "all", "mysql_client_lifecycle_source::handshake_without_protocol_41_uses_the_source_auth_mode_error", "--", "--exact"],
+  ["test", "-p", "tidb-server", "--test", "all", "require_ssl_login_source::require_secure_transport_refuses_every_plaintext_login", "--", "--exact"],
+]

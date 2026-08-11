@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/meta/metadef"
 source_commit = "eed7a6f7442195cb7b87aee6d7034949922db45c"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-metadef/Cargo.toml",
   "rust/crates/tidb-metadef/src/lib.rs",
   "rust/crates/tidb-metadef/src/db.rs",
@@ -19,28 +17,10 @@ rust_files = [
   "rust/crates/tidb-util/src/filter/schema.rs",
   "rust/crates/tidb-util/src/filter/tests.rs",
 ]
-
-[[tests]]
-name = "metadef_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-metadef"]
-
-[[tests]]
-name = "mysql_bootstrap_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-exec", "--test", "all", "mysql_bootstrap_source::"]
-
-[[tests]]
-name = "mysql_bootstrap_tableinfo_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-exec", "--test", "all", "mysql_bootstrap_tableinfo_source::"]
-
-[[tests]]
-name = "meta_reserved_id_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-meta", "--test", "transaction_source", "system_database_creation_and_iteration_cover_classic_and_nextgen_rules", "--", "--exact"]
-
-[[tests]]
-name = "system_schema_filter_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "filter::tests::system_schema", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-metadef"],
+  ["test", "-p", "tidb-exec", "--test", "all", "mysql_bootstrap_source::"],
+  ["test", "-p", "tidb-exec", "--test", "all", "mysql_bootstrap_tableinfo_source::"],
+  ["test", "-p", "tidb-meta", "--test", "transaction_source", "system_database_creation_and_iteration_cover_classic_and_nextgen_rules", "--", "--exact"],
+  ["test", "-p", "tidb-util", "--lib", "filter::tests::system_schema", "--", "--exact"],
+]

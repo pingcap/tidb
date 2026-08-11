@@ -13,9 +13,9 @@ drift before a full workspace build.
 
 ### `semantic-package-gate.py` — semantic package gate
 
-Each boundary has one small TOML file naming the accepted Go source, native Rust
-files, and executable tests. The gate derives source truth from Git and writes
-nothing.
+Each completed Go package has one small TOML file containing four things: the
+package path, accepted commit, Rust evidence files, and Cargo commands. The
+gate derives the direct package inventory from Git and writes nothing.
 
 ```bash
 python3 rust/scripts/semantic-package-gate.py <package>.semantic.toml
@@ -23,9 +23,8 @@ python3 rust/scripts/semantic-package-gate.py --all
 python3 rust/scripts/semantic-package-gate.py --all --no-tests
 ```
 
-`whole-go-package` checks the complete tracked package inventory.
-`package-seed` checks only its explicit Go files and makes no package-completion
-claim. Identical commands are deduplicated when multiple specifications run.
+Partial ports are not gate claims. Identical Cargo commands are normalized to
+offline locked 12-job runs and executed once when multiple packages share them.
 
 ### `check-source-size.sh` — the source-size ratchet
 

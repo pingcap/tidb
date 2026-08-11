@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/codec"
 source_commit = "ab1e19714d607a9f591cd6d9d5381c11d7c4d64b"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-codec/src/bytes.rs",
   "rust/crates/tidb-codec/src/datum.rs",
   "rust/crates/tidb-codec/src/decimal.rs",
@@ -20,13 +18,7 @@ rust_files = [
   "rust/crates/tidb-stats/src/fmsketch_codec.rs",
   "rust/crates/tidb-stats/tests/fmsketch_source.rs",
 ]
-
-[[tests]]
-name = "codec_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-codec", "--test", "all", "codec_package_source"]
-
-[[tests]]
-name = "statistics_hash_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-stats", "--test", "all", "fmsketch_source::source_typed_insert_value_and_row_own_the_datum_encoding", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-codec", "--test", "all", "codec_package_source"],
+  ["test", "-p", "tidb-stats", "--test", "all", "fmsketch_source::source_typed_insert_value_and_row_own_the_datum_encoding", "--", "--exact"],
+]

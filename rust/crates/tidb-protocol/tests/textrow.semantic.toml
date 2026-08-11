@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/format/textrow"
 source_commit = "7a93ade30951d31fa56fb34db3b24e4d944bb34d"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-protocol/src/textrow.rs",
   "rust/crates/tidb-protocol/src/result_encoder.rs",
   "rust/crates/tidb-protocol/src/resultset_stream.rs",
@@ -14,28 +12,12 @@ rust_files = [
   "rust/crates/tidb-server/src/mysql_connection.rs",
   "rust/crates/tidb-server/tests/resultset_writer_source.rs",
   "rust/crates/tidb-server/tests/grants_wire_protocol_source.rs",
-]
-extra_artifacts = [
   "rust/difftests/transaction-tests/fixtures/textrow_vectors.tsv",
   "rust/difftests/transaction-tests/fixtures/generate_textrow_vectors.go",
 ]
-
-[[tests]]
-name = "text_value_package_contract"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "textrow"]
-
-[[tests]]
-name = "result_charset_package_contract"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "result_encoder::tests", "--lib"]
-
-[[tests]]
-name = "live_text_writer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "resultset_writer_source"]
-
-[[tests]]
-name = "result_charset_tcp_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "grants_wire_protocol_source::character_set_results_changes_the_metadata_charset_and_the_row_bytes_over_tcp", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-protocol", "--test", "all", "textrow"],
+  ["test", "-p", "tidb-protocol", "result_encoder::tests", "--lib"],
+  ["test", "-p", "tidb-server", "--test", "all", "resultset_writer_source"],
+  ["test", "-p", "tidb-server", "--test", "all", "grants_wire_protocol_source::character_set_results_changes_the_metadata_charset_and_the_row_bytes_over_tcp", "--", "--exact"],
+]

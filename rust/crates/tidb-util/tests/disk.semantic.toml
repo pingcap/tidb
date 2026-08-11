@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/disk"
 source_commit = "0267f64f0b62b727b497cfd240f9bd8d855231e0"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-util/src/disk/mod.rs",
   "rust/crates/tidb-util/src/disk/spill_storage.rs",
   "rust/crates/tidb-util/src/memory/tracker.rs",
@@ -16,28 +14,10 @@ rust_files = [
   "rust/crates/tidb-server/src/lib.rs",
   "rust/crates/tidb-server/tests/node_config_source.rs",
 ]
-
-[[tests]]
-name = "disk_package_contract"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "disk::spill_storage::tests::"]
-
-[[tests]]
-name = "chunk_spill_path_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-chunk", "--test", "spill_path_contract"]
-
-[[tests]]
-name = "session_spill_authority_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-session", "--lib", "tests_core::lifecycle::server_spill_authority_reaches_every_statement_context", "--", "--exact"]
-
-[[tests]]
-name = "server_spill_config_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "node_config_source::configured_spill_policy_is_loaded_from_the_tidb_config_file", "--", "--exact"]
-
-[[tests]]
-name = "server_spill_startup_admission"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "node_config_source::impossible_spill_quota_fails_before_auth_listener_or_cluster_startup", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "disk::spill_storage::tests::"],
+  ["test", "-p", "tidb-chunk", "--test", "spill_path_contract"],
+  ["test", "-p", "tidb-session", "--lib", "tests_core::lifecycle::server_spill_authority_reaches_every_statement_context", "--", "--exact"],
+  ["test", "-p", "tidb-server", "--test", "all", "node_config_source::configured_spill_policy_is_loaded_from_the_tidb_config_file", "--", "--exact"],
+  ["test", "-p", "tidb-server", "--test", "all", "node_config_source::impossible_spill_quota_fails_before_auth_listener_or_cluster_startup", "--", "--exact"],
+]

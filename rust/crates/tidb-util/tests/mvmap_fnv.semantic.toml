@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/mvmap"
 source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-util/src/mvmap/mod.rs",
   "rust/crates/tidb-util/src/mvmap/fnv.rs",
   "rust/crates/tidb-exec/src/aggregate_distinct.rs",
@@ -10,18 +8,8 @@ rust_files = [
   "rust/crates/tidb-executor/src/join.rs",
   "rust/crates/tidb-executor/src/tests_index_join.rs",
 ]
-
-[[tests]]
-name = "mvmap_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "mvmap"]
-
-[[tests]]
-name = "distinct_membership_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-exec", "--test", "all", "aggregate_distinct_source"]
-
-[[tests]]
-name = "index_join_multivalue_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-executor", "--lib", "tests_index_join::the_index_lookup_and_the_hash_join_agree_row_for_row", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "mvmap"],
+  ["test", "-p", "tidb-exec", "--test", "all", "aggregate_distinct_source"],
+  ["test", "-p", "tidb-executor", "--lib", "tests_index_join::the_index_lookup_and_the_hash_join_agree_row_for_row", "--", "--exact"],
+]

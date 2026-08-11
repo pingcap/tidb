@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/server/internal/column"
 source_commit = "2c3a3f5b4cb01a7fef4b0daf38e29328a3bbb83f"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-protocol/src/column.rs",
   "rust/crates/tidb-protocol/src/textrow.rs",
   "rust/crates/tidb-protocol/src/result_encoder.rs",
@@ -22,53 +20,17 @@ rust_files = [
   "rust/crates/tidb-server/src/connection_resultset.rs",
   "rust/crates/tidb-server/tests/resultset_writer_source.rs",
   "rust/crates/tidb-server/tests/grants_wire_protocol_source.rs",
-]
-extra_artifacts = [
   "rust/difftests/gobinaryrow/go_binary_rows.txt",
   "rust/difftests/transaction-tests/fixtures/textrow_vectors.tsv",
 ]
-
-[[tests]]
-name = "column_metadata"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "column_metadata_source"]
-
-[[tests]]
-name = "column_packet_and_text_framing"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "result_source"]
-
-[[tests]]
-name = "text_value_oracles"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "textrow"]
-
-[[tests]]
-name = "binary_row_oracles"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "prepared_statement_protocol_source::binary_"]
-
-[[tests]]
-name = "binary_type_admission"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-protocol", "--test", "all", "prepared_statement_protocol_source::the_stream_admits_every_type_go_dump_binary_row_has_an_arm_for", "--", "--exact"]
-
-[[tests]]
-name = "result_field_conversion"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-exec", "--test", "all", "result_metadata_source"]
-
-[[tests]]
-name = "live_text_writer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "resultset_writer_source"]
-
-[[tests]]
-name = "live_binary_writer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "connection_resultset::tests", "--lib"]
-
-[[tests]]
-name = "result_charset_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "grants_wire_protocol_source::character_set_results_changes_the_metadata_charset_and_the_row_bytes_over_tcp", "--", "--exact"]
+commands = [
+  ["test", "-p", "tidb-protocol", "--test", "all", "column_metadata_source"],
+  ["test", "-p", "tidb-protocol", "--test", "all", "result_source"],
+  ["test", "-p", "tidb-protocol", "--test", "all", "textrow"],
+  ["test", "-p", "tidb-protocol", "--test", "all", "prepared_statement_protocol_source::binary_"],
+  ["test", "-p", "tidb-protocol", "--test", "all", "prepared_statement_protocol_source::the_stream_admits_every_type_go_dump_binary_row_has_an_arm_for", "--", "--exact"],
+  ["test", "-p", "tidb-exec", "--test", "all", "result_metadata_source"],
+  ["test", "-p", "tidb-server", "--test", "all", "resultset_writer_source"],
+  ["test", "-p", "tidb-server", "connection_resultset::tests", "--lib"],
+  ["test", "-p", "tidb-server", "--test", "all", "grants_wire_protocol_source::character_set_results_changes_the_metadata_charset_and_the_row_bytes_over_tcp", "--", "--exact"],
+]

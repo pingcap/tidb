@@ -1,20 +1,12 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/intest"
 source_commit = "5ea5a54cd3239cf534cfd171422ee676eb7f2934"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-util/Cargo.toml",
   "rust/crates/tidb-util/src/intest/mod.rs",
   "rust/crates/tidb-util/src/lib.rs",
   "rust/crates/tidb-util/src/sqlkiller.rs",
 ]
-
-[[tests]]
-name = "intest_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "intest"]
-
-[[tests]]
-name = "sqlkiller_timing_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "sqlkiller"]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "intest"],
+  ["test", "-p", "tidb-util", "--lib", "sqlkiller"],
+]

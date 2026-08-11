@@ -1,12 +1,8 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/size"
 source_commit = "a9d37829e286e73d13b130711d959e10dbd6e9fc"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-util/src/size/mod.rs",
 ]
-
-[[tests]]
-name = "size_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib"]
+commands = [
+  ["test", "-p", "tidb-util", "--lib"],
+]

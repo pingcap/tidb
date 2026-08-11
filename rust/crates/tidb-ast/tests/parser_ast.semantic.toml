@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/parser/ast"
 source_commit = "db1d5fd04e8452530ef1032181399631ee2b26f2"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-ast/Cargo.toml",
   "rust/crates/tidb-ast/src/lib.rs",
   "rust/crates/tidb-ast/tests/all.rs",
@@ -31,13 +29,7 @@ rust_files = [
   "rust/crates/tidb-parser/src/tests/traffic.rs",
   "rust/crates/tidb-parser/src/tests/util.rs",
 ]
-
-[[tests]]
-name = "parser_ast_owner_contract"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-ast", "--all-targets"]
-
-[[tests]]
-name = "parser_ast_restore_and_visitor_consumers"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-parser", "--lib"]
+commands = [
+  ["test", "-p", "tidb-ast", "--all-targets"],
+  ["test", "-p", "tidb-parser", "--lib"],
+]

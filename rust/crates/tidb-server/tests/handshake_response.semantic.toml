@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/server/internal/handshake"
 source_commit = "b65284da37024c224a2297c9246ee7738096cbc2"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-server/Cargo.toml",
   "rust/crates/tidb-protocol/src/compression.rs",
   "rust/crates/tidb-protocol/src/packet.rs",
@@ -14,18 +12,8 @@ rust_files = [
   "rust/crates/tidb-server/tests/parse_go_source.rs",
   "rust/crates/tidb-server/tests/server_internal_packetio_source.rs",
 ]
-
-[[tests]]
-name = "handshake_response_contract"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "handshake_response_package_source"]
-
-[[tests]]
-name = "handshake_response_parser"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "parse_go_source"]
-
-[[tests]]
-name = "handshake_response_compression_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "server_internal_packetio_source::live_commands_use_negotiated"]
+commands = [
+  ["test", "-p", "tidb-server", "--test", "all", "handshake_response_package_source"],
+  ["test", "-p", "tidb-server", "--test", "all", "parse_go_source"],
+  ["test", "-p", "tidb-server", "--test", "all", "server_internal_packetio_source::live_commands_use_negotiated"],
+]

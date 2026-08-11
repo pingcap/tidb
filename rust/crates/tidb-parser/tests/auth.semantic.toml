@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/parser/auth"
 source_commit = "b81a9dfb0fb0b5a7f714a9c7c3917822b6ecba68"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-parser/src/auth.rs",
   "rust/crates/tidb-parser/src/lib.rs",
   "rust/crates/tidb-parser/tests/parser_auth_package_source.rs",
@@ -16,28 +14,10 @@ rust_files = [
   "rust/crates/tidb-server/tests/native_password_source.rs",
   "rust/crates/tidb-server/tests/hashing_plugin_auth_source.rs",
 ]
-
-[[tests]]
-name = "parser_auth_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-parser", "--test", "all", "parser_auth_package_source::"]
-
-[[tests]]
-name = "account_hashing_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-session", "--lib", "privilege::tests::hashing_password_consumer_preserves_go_string_bytes", "--", "--exact"]
-
-[[tests]]
-name = "password_builtin_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-expr", "--lib", "builtin_ext::crypto::tests::password_go_vectors", "--", "--exact"]
-
-[[tests]]
-name = "native_password_handshake_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "native_password_source::verifies_tidb_source_vector_and_rejects_wrong_or_malformed_responses", "--", "--exact"]
-
-[[tests]]
-name = "hashing_plugin_wire_consumers"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-server", "--test", "all", "hashing_plugin_auth_source::"]
+commands = [
+  ["test", "-p", "tidb-parser", "--test", "all", "parser_auth_package_source::"],
+  ["test", "-p", "tidb-session", "--lib", "privilege::tests::hashing_password_consumer_preserves_go_string_bytes", "--", "--exact"],
+  ["test", "-p", "tidb-expr", "--lib", "builtin_ext::crypto::tests::password_go_vectors", "--", "--exact"],
+  ["test", "-p", "tidb-server", "--test", "all", "native_password_source::verifies_tidb_source_vector_and_rejects_wrong_or_malformed_responses", "--", "--exact"],
+  ["test", "-p", "tidb-server", "--test", "all", "hashing_plugin_auth_source::"],
+]

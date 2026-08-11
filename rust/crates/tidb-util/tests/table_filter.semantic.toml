@@ -1,8 +1,6 @@
-schema = "semantic-package-gate-v3"
-claim = "whole-go-package"
 go_package = "pkg/util/table-filter"
 source_commit = "51e1e13494f5e547be10601a302d6cb9cf88ae64"
-rust_files = [
+evidence_files = [
   "rust/crates/tidb-util/Cargo.toml",
   "rust/crates/tidb-util/src/table_filter/mod.rs",
   "rust/crates/tidb-util/src/table_filter/column_filter.rs",
@@ -15,18 +13,8 @@ rust_files = [
   "rust/crates/tidb-util/src/filter/schema.rs",
   "rust/crates/tidb-util/src/filter/tests.rs",
 ]
-
-[[tests]]
-name = "table_filter_package_semantics"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "table_filter"]
-
-[[tests]]
-name = "table_filter_public_contract"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--test", "table_filter_contract"]
-
-[[tests]]
-name = "mysql_replication_filter_consumer"
-cwd = "rust"
-argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-util", "--lib", "filter"]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "table_filter"],
+  ["test", "-p", "tidb-util", "--test", "table_filter_contract"],
+  ["test", "-p", "tidb-util", "--lib", "filter"],
+]
