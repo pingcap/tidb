@@ -237,6 +237,10 @@ impl Session {
         let version = self.vars.get_system("version").ok();
         let zone = self.session_time_zone();
         let clock = self.statement_clock(&zone);
+        let sysdate_is_now = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_SYSDATE_IS_NOW)
+            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
         let mode = self
             .vars
             .get_system("sql_mode")
@@ -426,6 +430,7 @@ impl Session {
                 .with_block_encryption_mode(block_encryption_mode)
                 .with_sequences(self.sequence_snapshot())
                 .with_sql_mode(scanner_sql_mode_of(&mode))
+                .with_sysdate_is_now(sysdate_is_now)
                 .with_clock(clock, zone);
             return self.attach_spill_storage(ctx);
         }
@@ -455,6 +460,7 @@ impl Session {
         .with_apply_cache_capacity(apply_cache_capacity)
         .with_block_encryption_mode(block_encryption_mode)
         .with_sequences(self.sequence_snapshot())
+        .with_sysdate_is_now(sysdate_is_now)
         .with_clock(clock, zone)
         .with_sql_mode(scanner_sql_mode_of(&mode))
         .with_auto_increment_step(increment, offset)

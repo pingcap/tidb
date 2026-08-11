@@ -252,11 +252,8 @@
 //! while executing one top-level statement, so every clock-reading call
 //! within it reads the identical value — matching real MySQL's "the clock
 //! is fixed once per statement" semantics for free, with no dedicated
-//! cache. `SYSDATE()` is a genuinely different, harder semantic — it
-//! reads the TRUE live clock even mid-statement, ignoring the "fixed per
-//! statement" rule every other function here follows (confirmed via
-//! reading `builtinSysDateWithoutFspSig`'s own `time.Now()` call) — and
-//! remains deliberately out of scope.
+//! cache. `SYSDATE()` normally reads the live clock, while
+//! `tidb_sysdate_is_now=ON` routes it through that same fixed statement clock.
 //!
 //! [`Decimal`] arithmetic (`+`/`-`/`*`) and comparison are exact — computed
 //! digit-by-digit on the literal's own digit string, not through a binary

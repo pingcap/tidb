@@ -1775,14 +1775,18 @@ fn addtime_selects_its_signature_from_the_column_types() {
     }
 }
 
-/// `SYSDATE` is NOT the statement clock: `builtinSysDateWithoutFspSig`
-/// calls `time.Now()` per evaluation, where `NOW` returns the one fixed
-/// statement timestamp. Only the SHAPE is asserted -- the value is a real
-/// wall-clock reading and cannot be pinned.
+/// With `tidb_sysdate_is_now=OFF`, `SYSDATE` calls `time.Now()` per
+/// evaluation while `NOW` returns the fixed statement timestamp.
 #[test]
 fn sysdate_reads_the_wall_clock_and_not_the_statement_timestamp() {
     let mut session = Session::new();
-    let StmtResult::Rows(rows) = session.run("SELECT SYSDATE(), SYSDATE(3)").unwrap() else {
+    session.run("SET time_zone = '+00:00'").unwrap();
+    session.run("SET timestamp = 1").unwrap();
+    session.run("SET tidb_sysdate_is_now = OFF").unwrap();
+    let StmtResult::Rows(rows) = session
+        .run("SELECT SYSDATE(), SYSDATE(3), SYSDATE() = NOW()")
+        .unwrap()
+    else {
         panic!("SYSDATE did not produce rows")
     };
     let text = |value: &Datum| match value {
@@ -1794,6 +1798,37 @@ fn sysdate_reads_the_wall_clock_and_not_the_statement_timestamp() {
     assert_eq!(plain.len(), 19, "SYSDATE() width: {plain}");
     assert_eq!(with_fsp.len(), 23, "SYSDATE(3) width: {with_fsp}");
     assert_eq!(&with_fsp[19..20], ".", "SYSDATE(3) fraction: {with_fsp}");
+    assert_eq!(rows[0][2], Datum::Int(0));
+}
+
+#[test]
+fn sysdate_is_now_uses_the_statement_clock() {
+    let mut session = Session::new();
+    session.run("SET time_zone = '+00:00'").unwrap();
+    session.run("SET timestamp = 1700000000.654321").unwrap();
+    session.run("SET tidb_sysdate_is_now = ON").unwrap();
+
+    assert_eq!(
+        row_text(session.run("SELECT SYSDATE(), NOW(), SYSDATE(3), NOW(3), SYSDATE(6), NOW(6)")),
+        [[
+            "2023-11-14 22:13:20",
+            "2023-11-14 22:13:20",
+            "2023-11-14 22:13:20.654",
+            "2023-11-14 22:13:20.654",
+            "2023-11-14 22:13:20.654320",
+            "2023-11-14 22:13:20.654320",
+        ]]
+    );
+
+    session.run("CREATE TABLE t (ts DATETIME(6))").unwrap();
+    session.run("INSERT INTO t VALUES (SYSDATE(6))").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT ts FROM t")),
+        [["2023-11-14 22:13:20.654320"]]
+    );
+
+    session.run("SET tidb_sysdate_is_now = OFF").unwrap();
+    assert_eq!(row_text(session.run("SELECT SYSDATE() = NOW()")), [["0"]]);
 }
 
 /// Go's `types.ETDatetime` ARGUMENT declaration over real COLUMNS, which is

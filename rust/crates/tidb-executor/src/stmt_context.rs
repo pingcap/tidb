@@ -161,8 +161,8 @@ impl RetryAutoIds {
 /// reports at the end.
 ///
 /// DEFERRED (documented): the rest of `StatementContext` -- the remaining
-/// error groups (bad NULL, no default), the statement-scoped clock, the
-/// resource tracker and the runtime stats.
+/// error groups (bad NULL, no default), the resource tracker and runtime
+/// stats.
 #[derive(Clone, Default)]
 pub struct StmtContext {
     /// Go's `StaticWarnHandler` entries: a LEVEL, a code and a message.
@@ -210,6 +210,7 @@ pub struct StmtContext {
     /// `(utc_seconds, nanos, tz_offset_seconds)`: every `NOW()` in one
     /// statement reads the same instant.
     now: Option<(i64, u32, i32)>,
+    sysdate_is_now: bool,
     time_zone: Option<tidb_expr::SessionTimeZone>,
     /// Go `SessionVars.Rng`: the SESSION-scoped generator unseeded `RAND()`
     /// advances, shared across every statement of one session. `None` is a
@@ -480,6 +481,7 @@ impl StmtContext {
             global_sysvars: Rc::default(),
             connection_id: None,
             now: None,
+            sysdate_is_now: false,
             time_zone: None,
             rand_session: None,
             user_vars: None,
@@ -1013,6 +1015,14 @@ impl StmtContext {
         self
     }
 
+    /// Selects the statement clock for `SYSDATE`, matching
+    /// `@@tidb_sysdate_is_now`.
+    #[must_use]
+    pub fn with_sysdate_is_now(mut self, enabled: bool) -> Self {
+        self.sysdate_is_now = enabled;
+        self
+    }
+
     /// Attaches the session's time zone without inventing a statement clock.
     ///
     /// Metadata-only statement paths such as cluster DDL need the zone for
@@ -1415,6 +1425,10 @@ impl Columns for StmtContext {
 
     fn now(&self) -> Option<(i64, u32, i32)> {
         self.now
+    }
+
+    fn sysdate_is_now(&self) -> bool {
+        self.sysdate_is_now
     }
 
     fn time_zone(&self) -> tidb_expr::SessionTimeZone {

@@ -371,6 +371,11 @@ pub trait Columns {
         None
     }
 
+    /// Whether `SYSDATE` is an alias of the statement-scoped `NOW`.
+    fn sysdate_is_now(&self) -> bool {
+        false
+    }
+
     /// Go `SessionVars.CurrentDB`, which `DATABASE()`/`SCHEMA()` return.
     /// `None` is the no-database-selected state, where Go returns NULL.
     fn current_database(&self) -> Option<String> {
