@@ -34,9 +34,10 @@ const STARTER_NAME: &str = "starter";
 
 /// Deployment mode of the TiDB instance (Go `Mode`). Only allowed when the
 /// kernel type is NextGen.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Mode {
     /// The default deployment mode.
+    #[default]
     Premium,
     /// Fixed-resource premium: workers are not scaled on demand.
     PremiumReserved,
@@ -44,12 +45,6 @@ pub enum Mode {
     Starter,
     /// An arbitrary source integer that Go can construct with `Mode(value)`.
     Unknown(i32),
-}
-
-impl Default for Mode {
-    fn default() -> Self {
-        Self::Premium
-    }
 }
 
 static CURRENT_MODE: AtomicI32 = AtomicI32::new(Mode::Premium.to_i32());
