@@ -385,6 +385,17 @@ fn match_returns_bool() {
     assert!(f.matches(&t("other", "")));
 }
 
+#[test]
+fn utf8_names_use_source_byte_wildcards() {
+    let filter = Filter::new(true, Some(rules(&[], &[], &[("??", "??")], &[]))).unwrap();
+
+    assert!(filter.matches(&t("é", "é")));
+    assert!(!filter.matches(&t("é", "a")));
+    assert!(!filter.matches(&t("a", "é")));
+    assert!(!filter.matches(&t("你", "é")));
+    assert!(filter.matches(&t("é", "é")), "cached result must agree");
+}
+
 // Go TestIsSystemSchema (schema.go).
 #[test]
 fn system_schema() {

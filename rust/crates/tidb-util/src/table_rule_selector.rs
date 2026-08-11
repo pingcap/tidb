@@ -433,42 +433,41 @@ impl<R: Clone> TrieState<R> {
         Ok(entity.expect("non-empty pattern yields a leaf item"))
     }
 
-    fn match_node(&self, start: NodeId, s: &str, mr: &mut MatchedResult<R>) {
-        let sb = s.as_bytes();
+    fn match_node(&self, start: NodeId, input: &[u8], mr: &mut MatchedResult<R>) {
         let mut n = start;
         let mut entity: Option<ItemId> = None;
         let mut returned = false;
 
-        for i in 0..sb.len() {
+        for i in 0..input.len() {
             let asterisk = self.nodes[n].asterisk;
             let question = self.nodes[n].question;
             let r_items = self.nodes[n].r_items.clone();
-            let next = self.nodes[n].characters.get(&sb[i]).copied();
+            let next = self.nodes[n].characters.get(&input[i]).copied();
 
             if let Some(a) = asterisk {
                 self.append_matched_item(a, mr);
             }
 
             if let Some(q) = question {
-                if i == sb.len() - 1 {
+                if i == input.len() - 1 {
                     self.append_matched_item(q, mr);
                 }
                 if let Some(qc) = self.items[q].child {
-                    self.match_node(qc, &s[i + 1..], mr);
+                    self.match_node(qc, &input[i + 1..], mr);
                 }
             }
 
             for ri in r_items {
                 let matched = match &self.items[ri].kind {
-                    ItemKind::Range(spec) => spec.match_char(sb[i]),
+                    ItemKind::Range(spec) => spec.match_char(input[i]),
                     ItemKind::Base => false,
                 };
                 if matched {
-                    if i == sb.len() - 1 {
+                    if i == input.len() - 1 {
                         self.append_matched_item(ri, mr);
                     }
                     if let Some(rc) = self.items[ri].child {
-                        self.match_node(rc, &s[i + 1..], mr);
+                        self.match_node(rc, &input[i + 1..], mr);
                     }
                 }
             }
@@ -690,7 +689,7 @@ impl<R: Clone> TrieState<R> {
 
         let root = self.root;
         let mut matched_schema = MatchedResult::new();
-        self.match_node(root, schema, &mut matched_schema);
+        self.match_node(root, schema.as_bytes(), &mut matched_schema);
 
         // Not found in the schema level.
         if matched_schema.is_empty() {
@@ -701,7 +700,7 @@ impl<R: Clone> TrieState<R> {
         let mut rules: Vec<R> = matched_schema.rules.clone();
         for &si in &matched_schema.nodes {
             let mut matched_table = MatchedResult::new();
-            self.match_node(si, table, &mut matched_table);
+            self.match_node(si, table.as_bytes(), &mut matched_table);
             rules.extend(matched_table.rules.iter().cloned());
         }
 
@@ -1095,6 +1094,44 @@ mod tests {
             sort_rules(entry);
         }
         assert_eq!(actual_cache, cache);
+    }
+
+    #[test]
+    fn utf8_names_follow_source_byte_wildcards_without_panicking() {
+        let selector = TrieSelector::new();
+        selector
+            .insert("?", "", Some("one schema byte"), InsertType::Insert)
+            .unwrap();
+        selector
+            .insert("??", "", Some("two schema bytes"), InsertType::Insert)
+            .unwrap();
+        selector
+            .insert("[!a]?", "", Some("range then byte"), InsertType::Insert)
+            .unwrap();
+        selector
+            .insert("é", "", Some("literal utf8"), InsertType::Insert)
+            .unwrap();
+        selector
+            .insert("??", "?", Some("one table byte"), InsertType::Insert)
+            .unwrap();
+        selector
+            .insert("??", "??", Some("two table bytes"), InsertType::Insert)
+            .unwrap();
+
+        let expected = [
+            "literal utf8",
+            "range then byte",
+            "two schema bytes",
+            "two table bytes",
+        ];
+        for attempt in 0..2 {
+            let mut actual = selector.match_rules("é", "é");
+            actual.sort_unstable();
+            assert_eq!(
+                actual, expected,
+                "attempt {attempt} must preserve byte-oriented matching, including the cache"
+            );
+        }
     }
 
     fn test_append(
