@@ -32,6 +32,7 @@ crc32fast.workspace = true
 des.workspace = true
 getrandom.workspace = true
 num-traits.workspace = true
+prometheus = { version = "0.14", default-features = false }
 regex.workspace = true
 rustix = { workspace = true, features = ["fs"] }
 serde.workspace = true
