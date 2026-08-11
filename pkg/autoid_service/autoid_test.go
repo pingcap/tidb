@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -57,6 +58,24 @@ type rebaseResp struct {
 	*autoid.RebaseResponse
 	error
 	*testing.T
+}
+
+type keyspaceIdentityStorage struct {
+	kv.Storage
+	codec tikv.Codec
+}
+
+func (s *keyspaceIdentityStorage) GetCodec() tikv.Codec {
+	return s.codec
+}
+
+type keyspaceIdentityCodec struct {
+	tikv.Codec
+	meta *keyspacepb.KeyspaceMeta
+}
+
+func (c *keyspaceIdentityCodec) GetKeyspaceMeta() *keyspacepb.KeyspaceMeta {
+	return c.meta
 }
 
 func (resp rebaseResp) check(msg string) {
@@ -171,26 +190,22 @@ func TestAPIWithKeyspaceIdentity(t *testing.T) {
 	}
 
 	identity := &apipb.KeyspaceIdentity{NamespaceId: 42, KeyspaceId: uint32(0xFFFFFF) - 1}
-	store := testkit.CreateMockStore(t, mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
-		Keyspace: &keyspacepb.KeyspaceMeta_KeyspaceIdentity{KeyspaceIdentity: identity},
+	baseCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: identity.KeyspaceId},
 		Name:     keyspace.System,
-	}))
-	cli := MockForTest(store)
-
-	alloc := func(requestIdentity *apipb.KeyspaceIdentity) error {
-		_, err := cli.AllocAutoID(context.Background(), &autoid.AutoIDRequest{
-			DbID:      0,
-			TblID:     0,
-			N:         1,
-			Increment: 1,
-			Offset:    1,
-			Keyspace:  &autoid.AutoIDRequest_KeyspaceIdentity{KeyspaceIdentity: requestIdentity},
-		})
-		return err
+	})
+	require.NoError(t, err)
+	codec := &keyspaceIdentityCodec{
+		Codec: baseCodec,
+		meta: &keyspacepb.KeyspaceMeta{
+			Keyspace: &keyspacepb.KeyspaceMeta_KeyspaceIdentity{KeyspaceIdentity: identity},
+			Name:     keyspace.System,
+		},
 	}
+	service := &Service{store: &keyspaceIdentityStorage{codec: codec}}
 
-	require.NoError(t, alloc(identity))
-	require.ErrorContains(t, alloc(&apipb.KeyspaceIdentity{
+	require.NoError(t, service.validateRequestKeyspace(0, identity))
+	require.ErrorContains(t, service.validateRequestKeyspace(0, &apipb.KeyspaceIdentity{
 		NamespaceId: identity.NamespaceId + 1,
 		KeyspaceId:  identity.KeyspaceId,
 	}), "not leader")
