@@ -106,6 +106,12 @@ func TestReadIndexStepExecutorInitRunsLocalDiskPrecheck(t *testing.T) {
 	require.True(t, precheckCalled)
 }
 
+type staticDiskUsage uint64
+
+func (u staticDiskUsage) GetDiskUsage() uint64 {
+	return uint64(u)
+}
+
 func TestGetRunningLocalSortJobDiskUsage(t *testing.T) {
 	marshalTaskMeta := func(jobID int64, cloudStorageURI string) []byte {
 		meta, err := json.Marshal(&BackfillTaskMeta{
@@ -116,17 +122,42 @@ func TestGetRunningLocalSortJobDiskUsage(t *testing.T) {
 		return meta
 	}
 
-	t.Run("batch task lookup", func(t *testing.T) {
+	t.Run("aggregate running local-sort jobs", func(t *testing.T) {
+		const (
+			currentTaskID = int64(1)
+			localTaskID   = int64(2)
+			localJobID    = int64(102)
+			localDiskUsed = uint64(1234)
+		)
+		localTask := &proto.Task{
+			TaskBase: proto.TaskBase{
+				ID:            localTaskID,
+				Type:          proto.Backfill,
+				Step:          proto.BackfillStepReadIndex,
+				RequiredSlots: 8,
+				ExtraParams: proto.ExtraParams{
+					MaxRuntimeSlots: 2,
+				},
+			},
+			Meta: marshalTaskMeta(localJobID, ""),
+		}
+
+		oldDiskRoot := ingest.LitDiskRoot
+		diskRoot := ingest.NewDiskRootImpl(t.TempDir())
+		ingest.LitDiskRoot = diskRoot
+		diskRoot.Add(localJobID, staticDiskUsage(localDiskUsed))
+		t.Cleanup(func() {
+			diskRoot.Remove(localJobID)
+			ingest.LitDiskRoot = oldDiskRoot
+		})
+
 		ctrl := gomock.NewController(t)
 		taskTable := frameworkmock.NewMockTaskTable(ctrl)
 		taskTable.EXPECT().GetTasksByIDs(
 			gomock.Any(),
 			gomock.InAnyOrder([]int64{2, 3, 4, 5}),
 		).Return([]*proto.Task{
-			{
-				TaskBase: proto.TaskBase{ID: 2, Type: proto.Backfill, Step: proto.BackfillStepReadIndex},
-				Meta:     marshalTaskMeta(102, ""),
-			},
+			localTask,
 			{
 				TaskBase: proto.TaskBase{ID: 3, Type: proto.Backfill, Step: proto.BackfillStepReadIndex},
 				Meta:     marshalTaskMeta(103, "s3://bucket/prefix"),
@@ -144,13 +175,44 @@ func TestGetRunningLocalSortJobDiskUsage(t *testing.T) {
 		jobCount, runtimeSlots, usedBytes, err := getRunningLocalSortJobDiskUsage(
 			context.Background(),
 			taskTable,
-			1,
-			map[int64]int{1: 1, 2: 2, 3: 3, 4: 4, 5: 5},
+			currentTaskID,
+			map[int64]int{
+				currentTaskID: 1,
+				localTaskID:   localTask.GetRuntimeSlots(),
+				3:             3,
+				4:             4,
+				5:             5,
+			},
 		)
 		require.NoError(t, err)
 		require.Equal(t, 1, jobCount)
 		require.Equal(t, 2, runtimeSlots)
+		require.Equal(t, localDiskUsed, usedBytes)
+	})
+
+	t.Run("self task only", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		taskTable := frameworkmock.NewMockTaskTable(ctrl)
+
+		jobCount, runtimeSlots, usedBytes, err := getRunningLocalSortJobDiskUsage(
+			context.Background(), taskTable, 1, map[int64]int{1: 2},
+		)
+		require.NoError(t, err)
+		require.Zero(t, jobCount)
+		require.Zero(t, runtimeSlots)
 		require.Zero(t, usedBytes)
+	})
+
+	t.Run("task table error", func(t *testing.T) {
+		ctrl := gomock.NewController(t)
+		taskTable := frameworkmock.NewMockTaskTable(ctrl)
+		expectedErr := errors.New("task table unavailable")
+		taskTable.EXPECT().GetTasksByIDs(gomock.Any(), []int64{2}).Return(nil, expectedErr)
+
+		_, _, _, err := getRunningLocalSortJobDiskUsage(
+			context.Background(), taskTable, 1, map[int64]int{1: 1, 2: 2},
+		)
+		require.ErrorIs(t, err, expectedErr)
 	})
 
 	t.Run("missing task", func(t *testing.T) {
