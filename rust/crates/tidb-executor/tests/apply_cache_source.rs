@@ -14,7 +14,7 @@
 
 //! Source-backed tests for the memory-budgeted apply cache.
 
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
 use std::thread;
 use tidb_executor::apply_cache::{apply_cache_kv_mem, ApplyCache};
 
@@ -69,43 +69,65 @@ fn apply_cache_rejects_an_item_larger_than_quota_without_mutation() {
 }
 
 #[test]
+fn apply_cache_counts_value_memory_at_the_exact_quota_boundary() {
+    // Source: pkg/executor/internal/applycache/apply_cache.go:35-43,
+    // 86-101. The Go fixture's chunk tracker currently reports zero, but the
+    // production admission rule charges both the key and retained value.
+    let cache = ApplyCache::new(12);
+    assert!(cache.set(b"a0".to_vec(), 0_i64, 4));
+    assert!(cache.set(b"a1".to_vec(), 1_i64, 4));
+    assert_eq!(cache.memory_consumed(), 12);
+
+    // A read promotes a0, so admitting one more six-byte entry evicts a1.
+    assert_eq!(cache.get(b"a0").as_deref(), Some(&0));
+    assert!(cache.set(b"a2".to_vec(), 2_i64, 4));
+    assert_eq!(cache.get(b"a0").as_deref(), Some(&0));
+    assert_eq!(cache.get(b"a1"), None);
+    assert_eq!(cache.get(b"a2").as_deref(), Some(&2));
+    assert_eq!(cache.len(), 2);
+    assert_eq!(cache.memory_consumed(), 12);
+
+    assert!(!cache.set(b"x".to_vec(), 9_i64, 12));
+    assert_eq!(cache.len(), 2, "oversize admission must not evict");
+    assert_eq!(cache.memory_consumed(), 12);
+}
+
+#[test]
 fn apply_cache_serializes_concurrent_get_and_set() {
     // Source: pkg/executor/internal/applycache/apply_cache_test.go:82-138
     // (TestApplyCacheConcurrent). Rust keeps the whole admission/eviction
     // transaction under one mutex, eliminating duplicate-owner races while
     // preserving one shared LRU and the 100-byte retained-memory ceiling.
     let cache = Arc::new(ApplyCache::new(100));
-    cache.set(vec![b'0'; 100], 0_i64, 0);
+    let barrier = Arc::new(Barrier::new(3));
     let keys = [vec![b'0'; 100], vec![b'1'; 100]];
-    let first = {
+    let workers: [thread::JoinHandle<()>; 2] = std::array::from_fn(|index| {
         let cache = Arc::clone(&cache);
-        let keys = keys.clone();
+        let barrier = Arc::clone(&barrier);
+        let key = keys[index].clone();
         thread::spawn(move || {
             for _ in 0..100 {
-                while cache.get(&keys[0]).is_none() {
-                    thread::yield_now();
-                }
-                cache.set(keys[1].clone(), 1_i64, 0);
+                barrier.wait();
+                assert!(cache.set(key.clone(), index as i64, 0));
+                barrier.wait();
             }
         })
-    };
-    let second = {
-        let cache = Arc::clone(&cache);
-        let keys = keys.clone();
-        thread::spawn(move || {
-            for _ in 0..100 {
-                while cache.get(&keys[1]).is_none() {
-                    thread::yield_now();
-                }
-                cache.set(keys[0].clone(), 0_i64, 0);
-            }
-        })
-    };
-    let workers = [first, second];
+    });
+
+    for _ in 0..100 {
+        barrier.wait();
+        barrier.wait();
+        assert_eq!(cache.len(), 1);
+        assert_eq!(cache.memory_consumed(), 100);
+        assert_eq!(
+            keys.iter().filter(|key| cache.get(key).is_some()).count(),
+            1
+        );
+    }
+
     for worker in workers {
         worker.join().expect("apply-cache worker must not panic");
     }
     assert_eq!(cache.len(), 1);
     assert_eq!(cache.memory_consumed(), 100);
-    assert_eq!(cache.get(&keys[0]).as_deref(), Some(&0));
 }
