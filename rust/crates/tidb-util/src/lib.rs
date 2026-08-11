@@ -37,6 +37,7 @@ pub mod globalconn;
 pub mod intest;
 pub mod intset;
 pub mod israce;
+pub mod kvcache;
 pub mod layered_io;
 pub mod logutil;
 pub mod mathutil;

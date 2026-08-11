@@ -138,10 +138,9 @@
 //! Closing it honestly needs an access path to inspect, which this key-only
 //! tier does not have.
 
-use std::collections::VecDeque;
-
 use tidb_ast::{Expr, GroupByItem, JoinNode, OrderItem, QueryStmt, SelectStmt, Stmt};
 use tidb_executor::Catalog;
+use tidb_util::kvcache::SimpleLruCache;
 
 /// Go `getMaxParamLimit`'s default: `PlanCacheMaxParamNum` (200).
 const MAX_PARAM_NUM: usize = 200;
@@ -186,9 +185,9 @@ impl ParamKind {
 /// The per-session cache. Go keeps an LRU sized by
 /// `tidb_non_prepared_plan_cache_size`; the entries here are keys only, for
 /// the reason the module doc states.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct NonPreparedPlanCache {
-    keys: VecDeque<String>,
+    keys: Option<SimpleLruCache<String, ()>>,
     capacity: usize,
 }
 
@@ -197,7 +196,7 @@ impl NonPreparedPlanCache {
     /// (`tidb_non_prepared_plan_cache_size`, Go default 100).
     pub(crate) fn with_capacity(capacity: usize) -> Self {
         Self {
-            keys: VecDeque::new(),
+            keys: (capacity > 0).then(|| SimpleLruCache::new(capacity)),
             capacity,
         }
     }
@@ -208,18 +207,13 @@ impl NonPreparedPlanCache {
     /// own cache maintains; a miss inserts it, evicting the least recent when
     /// the cache is full.
     pub(crate) fn admit(&mut self, key: String) -> bool {
-        if let Some(position) = self.keys.iter().position(|held| *held == key) {
-            self.keys.remove(position);
-            self.keys.push_back(key);
+        let Some(keys) = self.keys.as_mut() else {
+            return false;
+        };
+        if keys.get(key.as_str()).is_some() {
             return true;
         }
-        if self.capacity == 0 {
-            return false;
-        }
-        while self.keys.len() >= self.capacity {
-            self.keys.pop_front();
-        }
-        self.keys.push_back(key);
+        keys.put(key, ());
         false
     }
 }

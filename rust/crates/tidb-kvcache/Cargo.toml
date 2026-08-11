@@ -1,0 +1,11 @@
+[package]
+name = "tidb-kvcache"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "O(1) byte-keyed LRU cache for TiDB package consumers."
+
+[lints]
+workspace = true

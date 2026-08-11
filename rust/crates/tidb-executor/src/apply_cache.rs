@@ -16,11 +16,11 @@
 //!
 //! The Go owner charges each key/value pair as `len(key) + value memory`,
 //! rejects an item larger than the quota, evicts the oldest LRU entries until
-//! the item fits, and then stores it. The cache lives beside its Apply
-//! consumers so quota accounting and executor lifecycle have one owner.
+//! the item fits, and then stores it. `tidb-kvcache` owns the generic LRU order;
+//! this module owns Apply's retained-byte quota and synchronization.
 
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
+use tidb_util::kvcache::SimpleLruCache;
 
 /// Computes the source apply-cache memory charge for one key/value pair.
 #[must_use]
@@ -31,13 +31,11 @@ pub fn apply_cache_kv_mem(key: &[u8], value_memory: i64) -> i64 {
 struct CacheEntry<V> {
     value: Arc<V>,
     memory: i64,
-    last_used: u128,
 }
 
 struct CacheState<V> {
     memory_consumed: i64,
-    clock: u128,
-    entries: HashMap<Vec<u8>, CacheEntry<V>>,
+    entries: SimpleLruCache<Vec<u8>, CacheEntry<V>>,
 }
 
 /// Thread-safe bounded LRU cache whose admission and eviction are driven by
@@ -55,8 +53,7 @@ impl<V> ApplyCache<V> {
             memory_capacity,
             state: Mutex::new(CacheState {
                 memory_consumed: 0,
-                clock: 0,
-                entries: HashMap::new(),
+                entries: SimpleLruCache::new(usize::MAX),
             }),
         }
     }
@@ -64,12 +61,7 @@ impl<V> ApplyCache<V> {
     /// Looks up a shared immutable value and marks it most recently used.
     pub fn get(&self, key: &[u8]) -> Option<Arc<V>> {
         let mut state = self.lock();
-        state.clock += 1;
-        let last_used = state.clock;
-        state.entries.get_mut(key).map(|entry| {
-            entry.last_used = last_used;
-            Arc::clone(&entry.value)
-        })
+        state.entries.get(key).map(|entry| Arc::clone(&entry.value))
     }
 
     /// Attempts to insert a value under the source memory-budget policy.
@@ -94,35 +86,19 @@ impl<V> ApplyCache<V> {
         }
         let mut state = self.lock();
 
-        if let Some(previous) = state.entries.remove(&key) {
+        if let Some((_, previous)) = state.entries.delete(key.as_slice()) {
             state.memory_consumed -= previous.memory;
         }
 
         while memory + state.memory_consumed > self.memory_capacity {
-            let Some(oldest) = state
-                .entries
-                .iter()
-                .min_by_key(|(_, entry)| entry.last_used)
-                .map(|(key, _)| key.clone())
-            else {
+            let Some((_, evicted)) = state.entries.remove_oldest() else {
                 return false;
             };
-            if let Some(evicted) = state.entries.remove(&oldest) {
-                state.memory_consumed -= evicted.memory;
-            }
+            state.memory_consumed -= evicted.memory;
         }
 
         state.memory_consumed += memory;
-        state.clock += 1;
-        let last_used = state.clock;
-        state.entries.insert(
-            key,
-            CacheEntry {
-                value,
-                memory,
-                last_used,
-            },
-        );
+        state.entries.put(key, CacheEntry { value, memory });
         true
     }
 

@@ -21,6 +21,7 @@ testexport = []
 crossbeam-channel = "0.5"
 flate2.workspace = true
 tidb-log = { path = "../tidb-log" }
+tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-mysql = { path = "../tidb-mysql" }
 aes.workspace = true

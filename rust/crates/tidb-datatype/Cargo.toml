@@ -19,6 +19,7 @@ encoding_rs.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }
 tidb-error = { path = "../tidb-error" }
+tidb-kvcache = { path = "../tidb-kvcache" }
 
 [dev-dependencies]
 sha2 = { workspace = true }

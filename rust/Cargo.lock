@@ -1586,6 +1586,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tidb-error",
+ "tidb-kvcache",
 ]
 
 [[package]]
@@ -1699,6 +1700,10 @@ dependencies = [
 
 [[package]]
 name = "tidb-hash"
+version = "0.0.0"
+
+[[package]]
+name = "tidb-kvcache"
 version = "0.0.0"
 
 [[package]]
@@ -1941,6 +1946,7 @@ dependencies = [
  "tempfile",
  "tidb-datatype",
  "tidb-error",
+ "tidb-kvcache",
  "tidb-log",
  "tidb-metadef",
  "tidb-mysql",

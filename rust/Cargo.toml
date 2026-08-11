@@ -9,6 +9,7 @@ members = [
     "crates/tidb-error",
     "crates/tidb-hack",
     "crates/tidb-hash",
+    "crates/tidb-kvcache",
     "crates/tidb-util",
     "crates/tidb-config",
     "crates/tidb-log",

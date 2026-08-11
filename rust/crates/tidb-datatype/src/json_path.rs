@@ -12,9 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::{Mutex, OnceLock};
+
+use tidb_kvcache::SimpleLruCache;
 
 const PATH_CACHE_CAPACITY: usize = 1000;
 
@@ -173,10 +174,16 @@ impl fmt::Display for JSONPathError {
 
 impl std::error::Error for JSONPathError {}
 
-#[derive(Default)]
 struct PathCache {
-    values: HashMap<String, JSONPathExpression>,
-    order: VecDeque<String>,
+    values: SimpleLruCache<String, JSONPathExpression>,
+}
+
+impl Default for PathCache {
+    fn default() -> Self {
+        Self {
+            values: SimpleLruCache::new(PATH_CACHE_CAPACITY),
+        }
+    }
 }
 
 static PATH_CACHE: OnceLock<Mutex<PathCache>> = OnceLock::new();
@@ -186,23 +193,13 @@ pub fn parse_json_path_expr(path: &str) -> Result<JSONPathExpression, JSONPathEr
     let cache = PATH_CACHE.get_or_init(|| Mutex::new(PathCache::default()));
     let mut locked = cache.lock().expect("JSON path cache poisoned");
     if let Some(expression) = locked.values.get(path).cloned() {
-        if let Some(position) = locked.order.iter().position(|cached| cached == path) {
-            locked.order.remove(position);
-        }
-        locked.order.push_back(path.to_owned());
         return Ok(expression);
     }
     drop(locked);
 
     let expression = Parser::new(path).parse()?;
     let mut cache = cache.lock().expect("JSON path cache poisoned");
-    if cache.values.len() == PATH_CACHE_CAPACITY {
-        if let Some(oldest) = cache.order.pop_front() {
-            cache.values.remove(&oldest);
-        }
-    }
-    cache.order.push_back(path.to_owned());
-    cache.values.insert(path.to_owned(), expression.clone());
+    cache.values.put(path.to_owned(), expression.clone());
     Ok(expression)
 }
 

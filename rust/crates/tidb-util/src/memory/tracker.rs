@@ -44,6 +44,8 @@ pub const LABEL_FOR_CURSOR_FETCH: i64 = -29;
 pub const LABEL_FOR_GLOBAL_ANALYZE_MEMORY: i64 = -25;
 /// `LabelForChunkList`: an in-memory `chunk.List`.
 pub const LABEL_FOR_CHUNK_LIST: i64 = -7;
+/// `LabelForGlobalSimpleLRUCache`.
+pub const LABEL_FOR_GLOBAL_SIMPLE_LRU_CACHE: i64 = -8;
 /// `LabelForChunkDataInDiskByRows`: the row-addressed spill file.
 pub const LABEL_FOR_CHUNK_DATA_IN_DISK_BY_ROWS: i64 = -9;
 /// `LabelForRowContainer`.
