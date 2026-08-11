@@ -683,6 +683,17 @@ mod tests {
     }
 
     #[test]
+    fn memory_error_preserves_the_unsigned_connection_id() {
+        let error = memory_exceed_for_query(u64::MAX);
+        assert_eq!(error.code, 8175);
+        assert!(
+            error.message.ends_with("[conn=18446744073709551615]"),
+            "{}",
+            error.message
+        );
+    }
+
+    #[test]
     fn a_session_gives_each_statement_fresh_cancellation_state() {
         let session = SessionMemory::new(1, OomAction::Cancel, 7);
 

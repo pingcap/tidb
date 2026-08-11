@@ -249,11 +249,11 @@ impl SqlKiller {
             KillSignal::MaxExecTimeExceeded => by_args(&exeerrors::ERR_MAX_EXEC_TIME_EXCEEDED, &[]),
             KillSignal::QueryMemoryExceeded => by_args(
                 &exeerrors::ERR_MEMORY_EXCEED_FOR_QUERY,
-                &[FormatArg::from(conn_id as i64)],
+                &[FormatArg::from(conn_id)],
             ),
             KillSignal::ServerMemoryExceeded => by_args(
                 &exeerrors::ERR_MEMORY_EXCEED_FOR_INSTANCE,
-                &[FormatArg::from(conn_id as i64)],
+                &[FormatArg::from(conn_id)],
             ),
             KillSignal::RunawayQueryExceeded => {
                 let proto = &exeerrors::ERR_RESOURCE_GROUP_QUERY_RUNAWAY_INTERRUPTED;
@@ -264,7 +264,7 @@ impl SqlKiller {
                 &exeerrors::ERR_QUERY_EXEC_STOPPED,
                 &[
                     FormatArg::from(self.kill_event_reason().as_str()),
-                    FormatArg::from(conn_id as i64),
+                    FormatArg::from(conn_id),
                 ],
             ),
         })
@@ -452,6 +452,27 @@ mod tests {
 
         killer.reset();
         assert!(killer.handle_signal().is_none());
+    }
+
+    #[test]
+    fn connection_errors_preserve_the_unsigned_id_domain() {
+        let killer = SqlKiller::default();
+        killer.conn_id.store(u64::MAX, SeqCst);
+        let expected = "[conn=18446744073709551615]";
+
+        for signal in [
+            KillSignal::QueryMemoryExceeded,
+            KillSignal::ServerMemoryExceeded,
+        ] {
+            killer.send_kill_signal(signal);
+            let error = killer.handle_signal().expect("kill pending");
+            assert!(error.message().contains(expected), "{}", error.message());
+            killer.reset();
+        }
+
+        killer.send_kill_signal_with_reason(KillSignal::KilledByMemArbitrator, "oom risk");
+        let error = killer.handle_signal().expect("kill pending");
+        assert!(error.message().contains(expected), "{}", error.message());
     }
 
     #[test]
