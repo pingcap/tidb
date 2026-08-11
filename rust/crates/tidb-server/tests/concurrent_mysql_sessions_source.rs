@@ -276,7 +276,9 @@ fn fixed_workers_hold_three_authenticated_sessions_concurrently_and_drain_all() 
     // pkg/server/server.go:753-855 onConn
     // pkg/server/tests/commontest/tidb_test.go:3206 TestConnectionWillNotLeak
     // pkg/server/tests/commontest/tidb_test.go:3295 TestConnectionCount
-    let config = config();
+    let mut config = config();
+    config.version_info = tidb_util::versioninfo::VersionInfo::build_default()
+        .with_configured_edition("Starter");
     let barrier = Arc::new(Barrier::new(4));
     let factory = Arc::new(BarrierFactory {
         barrier: Arc::clone(&barrier),
@@ -327,6 +329,15 @@ fn fixed_workers_hold_three_authenticated_sessions_concurrently_and_drain_all() 
         .collect::<Vec<_>>();
     session_ids.sort_unstable();
     assert_eq!(session_ids, expected_ids);
+    assert!(
+        factory
+            .contexts
+            .lock()
+            .unwrap()
+            .iter()
+            .all(|context| context.version_info.edition == "Starter"),
+        "every fixed worker must retain the listener's immutable build identity"
+    );
     assert_eq!(factory.max_opening.load(Ordering::Acquire), 3);
     assert_eq!(tracker.max_active(), 3);
     assert!(tracker.max_active() <= config.max_connections);

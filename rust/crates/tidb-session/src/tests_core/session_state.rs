@@ -74,6 +74,25 @@ fn session_variables() {
     assert_eq!(session.apply_set("SELECT 1").unwrap(), None);
 }
 
+#[test]
+fn version_comment_uses_the_server_identity_snapshot() {
+    let mut session = Session::new();
+    session.set_version_info(
+        tidb_util::versioninfo::VersionInfo::build_default().with_configured_edition("Starter"),
+    );
+
+    assert_eq!(
+        scalar_text(&mut session, "SELECT @@version_comment"),
+        Some("TiDB Server (Apache License 2.0) Starter Edition, MySQL 8.0 compatible".to_owned())
+    );
+    assert!(matches!(
+        session.apply_set("SET version_comment = 'changed'"),
+        Err(DriverError::Var(
+            tidb_executor::VarErrorKind::ReadOnlyVariable(_)
+        ))
+    ));
+}
+
 /// Hash-join versions are source string variables with a closed value domain:
 /// casing is accepted and retained, while every other spelling is refused by
 /// the variable-specific validation closure.

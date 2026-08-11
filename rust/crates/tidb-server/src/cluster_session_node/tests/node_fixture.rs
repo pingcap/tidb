@@ -431,6 +431,7 @@ pub(super) fn session_context(connection_id: u64) -> SessionContext {
         identity,
         cancellation: ConnectionCancellation::default(),
         close: ConnectionClose::default(),
+        version_info: tidb_util::versioninfo::VersionInfo::build_default(),
     }
 }
 

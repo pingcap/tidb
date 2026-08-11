@@ -165,6 +165,9 @@ impl QuerySessionFactory for PipelineSessionFactory {
 
     fn open_session(&self, context: SessionContext) -> Result<Self::Session, SqlQueryError> {
         let mut session = PipelineServerSession::with_catalog(Arc::clone(&self.catalog));
+        session
+            .session
+            .set_version_info(context.version_info.clone());
         // Go sets `SessionVars.User` from the identity the handshake matched:
         // `CURRENT_USER()` reports that matched grant identity and `USER()`
         // the host the client actually connected from.
@@ -600,7 +603,26 @@ mod tests {
             identity,
             cancellation: ConnectionCancellation::default(),
             close: crate::sql_node::ConnectionClose::default(),
+            version_info: tidb_util::versioninfo::VersionInfo::build_default(),
         }
+    }
+
+    #[test]
+    fn factory_installs_the_listener_version_identity() {
+        let factory = PipelineSessionFactory::default();
+        let mut context = session_context(7);
+        context.version_info =
+            tidb_util::versioninfo::VersionInfo::build_default().with_configured_edition("Starter");
+        let session = factory.open_session(context).expect("session opens");
+
+        assert_eq!(
+            session
+                .session
+                .vars()
+                .get_system("version_comment")
+                .unwrap(),
+            "TiDB Server (Apache License 2.0) Starter Edition, MySQL 8.0 compatible"
+        );
     }
 
     fn open_on(factory: &PipelineSessionFactory, connection_id: u64) -> PipelineServerSession {

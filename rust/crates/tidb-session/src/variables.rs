@@ -829,11 +829,13 @@ impl Session {
                         i32::from(self.last_plan_from_binding()).to_string(),
                     ));
                 }
-                // A no-scope server property always reads its registry value.
-                // GLOBAL and INSTANCE both read the node-wide table; only an
-                // unqualified or explicit SESSION read uses the session copy.
+                // A no-scope server property uses the same read authority as
+                // an unqualified session read. Most answer their registry
+                // default; `version_comment` is derived from the immutable
+                // server identity installed when this connection opened.
+                // GLOBAL and INSTANCE instead read the node-wide table.
                 let result = match scope {
-                    _ if def.scope == sysvar::SCOPE_NONE => Ok(sysvar::effective_default(def)),
+                    _ if def.scope == sysvar::SCOPE_NONE => self.vars.get_system(name),
                     Some(tidb_ast::SysVarScope::Global | tidb_ast::SysVarScope::Instance) => {
                         self.vars.get_global(name)
                     }

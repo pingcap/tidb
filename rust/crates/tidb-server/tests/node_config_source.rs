@@ -118,6 +118,26 @@ spilled-file-encryption-method = "AeS128-CtR"
 }
 
 #[test]
+fn configured_tidb_edition_is_an_owned_server_identity() {
+    let file = ConfigFile::write(
+        "tidb_edition",
+        r#"
+tidb-edition = "Starter"
+"#,
+    );
+    let path = file.0.to_string_lossy().into_owned();
+    let mut args = required();
+    args.extend(["--config", &path]);
+
+    let config = NodeConfig::parse(args).expect("the accepted TiDB edition has a runtime owner");
+    assert_eq!(config.version_info.edition, "Starter");
+    assert_eq!(
+        config.version_info.version_comment(),
+        "TiDB Server (Apache License 2.0) Starter Edition, MySQL 8.0 compatible"
+    );
+}
+
+#[test]
 fn explicit_cli_values_override_the_config_before_validation() {
     let file = ConfigFile::write(
         "cli_precedence",

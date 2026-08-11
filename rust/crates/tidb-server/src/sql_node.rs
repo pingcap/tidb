@@ -30,9 +30,12 @@ use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
 use tidb_txnkv::transaction::OptimisticCommitOutcome;
 use tidb_util::globalconn::{Allocator, GlobalAllocator};
+use tidb_util::versioninfo::VersionInfo;
 
 use crate::configured_user_store::{AuthenticatedIdentity, ConfiguredUserStore};
-use crate::mysql_connection::{serve_mysql_connection_with_tls, MysqlConnectionError};
+use crate::mysql_connection::{
+    serve_mysql_connection_with_tls_and_version_info, MysqlConnectionError, MysqlConnectionRuntime,
+};
 use crate::mysql_tls::{resolve_server_tls, MysqlServerTls};
 use crate::node_config::NodeConfig;
 use crate::resultset_source::ResultSetSource;
@@ -699,6 +702,8 @@ pub struct SessionContext {
     pub cancellation: ConnectionCancellation,
     /// Handle a `KILL` uses to end this connection.
     pub close: ConnectionClose,
+    /// Coherent build identity captured when the SQL listener started.
+    pub version_info: VersionInfo,
 }
 
 /// Query capability retained entirely inside one fixed worker thread.
@@ -1007,6 +1012,13 @@ struct WorkerPool {
     terminal_workers: mpsc::Receiver<WorkerTerminal>,
 }
 
+#[derive(Clone)]
+struct WorkerConnectionConfig {
+    max_allowed_packet: usize,
+    version_info: VersionInfo,
+    tls: Option<MysqlServerTls>,
+}
+
 struct WorkerHandle {
     index: usize,
     join: JoinHandle<()>,
@@ -1188,6 +1200,7 @@ pub struct ConcurrentSqlNode<F: QuerySessionFactory> {
     users: Arc<ConfiguredUserStore>,
     tracker: Arc<ConnectionTracker>,
     max_allowed_packet: usize,
+    version_info: VersionInfo,
     /// Server TLS material, or `None` for a plaintext-only MySQL port. This is
     /// the only thing that lets a connection advertise `CLIENT_SSL`.
     tls: Option<MysqlServerTls>,
@@ -1225,6 +1238,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             users,
             tracker: Arc::new(ConnectionTracker::default()),
             max_allowed_packet: config.max_allowed_packet,
+            version_info: config.version_info.clone(),
             tls,
             worker_count: config.max_connections,
             shutdown: ShutdownHandle::default(),
@@ -1310,8 +1324,11 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
             &self.factory,
             &self.users,
             &self.tracker,
-            self.max_allowed_packet,
-            self.tls.clone(),
+            WorkerConnectionConfig {
+                max_allowed_packet: self.max_allowed_packet,
+                version_info: self.version_info.clone(),
+                tls: self.tls.clone(),
+            },
         )?;
 
         let mut accepted = 0_usize;
@@ -1407,22 +1424,13 @@ fn spawn_workers<F: QuerySessionFactory>(
     factory: &Arc<F>,
     users: &Arc<ConfiguredUserStore>,
     tracker: &Arc<ConnectionTracker>,
-    max_allowed_packet: usize,
-    tls: Option<MysqlServerTls>,
+    connection: WorkerConnectionConfig,
 ) -> Result<WorkerPool, SqlNodeError> {
-    spawn_workers_with(
-        count,
-        factory,
-        users,
-        tracker,
-        max_allowed_packet,
-        tls,
-        |index, job| {
-            std::thread::Builder::new()
-                .name(format!("tidb-sql-connection-{index}"))
-                .spawn(job)
-        },
-    )
+    spawn_workers_with(count, factory, users, tracker, connection, |index, job| {
+        std::thread::Builder::new()
+            .name(format!("tidb-sql-connection-{index}"))
+            .spawn(job)
+    })
 }
 
 fn spawn_workers_with<F, S>(
@@ -1430,8 +1438,7 @@ fn spawn_workers_with<F, S>(
     factory: &Arc<F>,
     users: &Arc<ConfiguredUserStore>,
     tracker: &Arc<ConnectionTracker>,
-    max_allowed_packet: usize,
-    tls: Option<MysqlServerTls>,
+    connection: WorkerConnectionConfig,
     mut spawn: S,
 ) -> Result<WorkerPool, SqlNodeError>
 where
@@ -1449,7 +1456,7 @@ where
         let worker_tracker = Arc::clone(tracker);
         let worker_available = available_sender.clone();
         let worker_terminal = terminal_sender.clone();
-        let worker_tls = tls.clone();
+        let worker_connection = connection.clone();
         let job: WorkerJob = Box::new(move || {
             run_worker(
                 index,
@@ -1463,15 +1470,18 @@ where
                         cancellation,
                         registration: _registration,
                     } = work;
-                    if let Err(error) = serve_mysql_connection_with_tls(
+                    if let Err(error) = serve_mysql_connection_with_tls_and_version_info(
                         stream,
                         peer_addr,
                         cancellation,
                         factory.as_ref(),
                         users.as_ref(),
                         &worker_tracker,
-                        max_allowed_packet,
-                        worker_tls.as_ref(),
+                        MysqlConnectionRuntime {
+                            max_allowed_packet: worker_connection.max_allowed_packet,
+                            tls: worker_connection.tls.as_ref(),
+                            version_info: &worker_connection.version_info,
+                        },
                     ) {
                         let message = error.to_string();
                         eprintln!("{{\"event\":\"connection_error\",\"error\":{message:?}}}");
@@ -1738,6 +1748,7 @@ mod tests {
                 quota_bytes: -1,
                 encryption: tidb_util::disk::SpillEncryptionMethod::Plaintext,
             },
+            version_info: VersionInfo::build_default(),
         }
     }
 
@@ -1814,8 +1825,11 @@ mod tests {
             &factory,
             &users,
             &tracker,
-            tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
-            None,
+            WorkerConnectionConfig {
+                max_allowed_packet: tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET,
+                version_info: VersionInfo::build_default(),
+                tls: None,
+            },
             move |index, job: WorkerJob| {
                 if index == 1 {
                     return Err(std::io::Error::other("injected second spawn failure"));

@@ -34,6 +34,7 @@ use tidb_config::configtypes::parse_go_duration;
 use tidb_pd_client::ClusterSecurity;
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_util::disk::{SpillEncryptionMethod, SpillStorageSpec};
+use tidb_util::versioninfo::VersionInfo;
 
 const DEFAULT_MAX_CONNECTIONS: usize = 8;
 const MAX_CONNECTION_WORKERS: usize = 256;
@@ -199,6 +200,8 @@ pub struct NodeConfig {
     /// Fully resolved process spill policy. Startup acquires the directory
     /// lease and validates capacity before opening any SQL listener.
     pub spill_storage: SpillStorageSpec,
+    /// Coherent build identity plus the optional startup edition override.
+    pub version_info: VersionInfo,
 }
 
 /// Startup configuration failure.
@@ -290,6 +293,7 @@ const SUPPORTED_CONFIG_LEAVES: &[&str] = &[
     "store",
     "tmp-storage-path",
     "tmp-storage-quota",
+    "tidb-edition",
 ];
 
 struct LoadedSourceConfig {
@@ -458,6 +462,7 @@ impl NodeConfig {
         let mut cluster_ssl_cert = None;
         let mut cluster_ssl_key = None;
         let mut config_path = None;
+        let mut tidb_edition = None;
 
         while let Some(argument) = pending.next() {
             if argument == "--help" || argument == "-h" {
@@ -621,6 +626,9 @@ impl NodeConfig {
                         )
                     })?;
             }
+            if loaded.is_defined("tidb-edition") {
+                tidb_edition = Some(config.tidb_edition.clone());
+            }
         }
 
         let host = parse_ip("--host", host.as_deref().unwrap_or("127.0.0.1"))?;
@@ -744,6 +752,8 @@ impl NodeConfig {
             host,
             port,
         );
+        let version_info = VersionInfo::build_default()
+            .with_configured_edition(tidb_edition.as_deref().unwrap_or_default());
 
         Ok(Self {
             host,
@@ -765,6 +775,7 @@ impl NodeConfig {
             disconnect_on_expired_password,
             cluster_security,
             spill_storage,
+            version_info,
         })
     }
 

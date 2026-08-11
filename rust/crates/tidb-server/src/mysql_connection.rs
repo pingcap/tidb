@@ -28,6 +28,7 @@ use tidb_protocol::{
     PacketIoWriter, PacketReader, PreparedParameterType, PreparedParameterTypes, PreparedValue,
     DEFAULT_MAX_ALLOWED_PACKET,
 };
+use tidb_util::versioninfo::VersionInfo;
 
 use crate::auth_exchange::AuthSwitchRequest;
 use crate::configured_user_store::{AuthenticationFailure, ConfiguredUserStore};
@@ -540,6 +541,37 @@ pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
     max_allowed_packet: usize,
     tls: Option<&MysqlServerTls>,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
+    let version_info = VersionInfo::build_default();
+    serve_mysql_connection_with_tls_and_version_info(
+        stream,
+        peer_addr,
+        cancellation,
+        factory,
+        users,
+        tracker,
+        MysqlConnectionRuntime {
+            max_allowed_packet,
+            tls,
+            version_info: &version_info,
+        },
+    )
+}
+
+pub(crate) struct MysqlConnectionRuntime<'a> {
+    pub(crate) max_allowed_packet: usize,
+    pub(crate) tls: Option<&'a MysqlServerTls>,
+    pub(crate) version_info: &'a VersionInfo,
+}
+
+pub(crate) fn serve_mysql_connection_with_tls_and_version_info<F: QuerySessionFactory>(
+    stream: TcpStream,
+    peer_addr: SocketAddr,
+    cancellation: ConnectionCancellation,
+    factory: &F,
+    users: &ConfiguredUserStore,
+    tracker: &Arc<ConnectionTracker>,
+    runtime: MysqlConnectionRuntime<'_>,
+) -> Result<ConnectionReport, MysqlConnectionError> {
     let mut lease = tracker.begin();
     eprintln!(
         "{{\"event\":\"connection_begin\",\"connection_id\":{},\"active\":{},\"accepted\":{}}}",
@@ -558,8 +590,7 @@ pub fn serve_mysql_connection_with_tls<F: QuerySessionFactory>(
         cancellation,
         factory,
         users,
-        max_allowed_packet,
-        tls,
+        runtime,
         &mut commands,
     );
     let failed = result.is_err() && !shutdown.is_cancelled();
@@ -591,8 +622,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     cancellation: ConnectionCancellation,
     factory: &F,
     users: &ConfiguredUserStore,
-    max_allowed_packet: usize,
-    tls: Option<&MysqlServerTls>,
+    runtime: MysqlConnectionRuntime<'_>,
     commands: &mut ConnectionCommandCounts,
 ) -> Result<ConnectionReport, MysqlConnectionError> {
     let AcceptedConnectionIdentity {
@@ -609,7 +639,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // it.
     let socket = ClientStream::plain(stream);
     let mut output = socket.clone();
-    let server_capabilities = if tls.is_some() {
+    let server_capabilities = if runtime.tls.is_some() {
         SERVER_CAPABILITIES | CLIENT_SSL
     } else {
         SERVER_CAPABILITIES
@@ -635,7 +665,8 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         .map_err(MysqlConnectionError::Io)?;
     output.flush().map_err(MysqlConnectionError::Io)?;
 
-    let mut reader = PacketReader::with_max_allowed_packet(socket.clone(), max_allowed_packet);
+    let mut reader =
+        PacketReader::with_max_allowed_packet(socket.clone(), runtime.max_allowed_packet);
     reader.set_sequence(1);
     let mut auth_payload = reader.read_packet()?;
     // Go rejects a pre-4.1 client from the two-byte capability prefix before
@@ -668,7 +699,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // reads two response packets. Sequence numbering is continuous across the
     // upgrade, which is why every later reply sequence shifts by one.
     let mut reply_sequence = 2_u8;
-    if let Some(tls) = tls {
+    if let Some(tls) = runtime.tls {
         let wants_tls = parse_response_header(&auth_payload)
             .is_ok_and(|(header, _)| header.capability & CLIENT_SSL != 0);
         if wants_tls {
@@ -915,6 +946,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         identity,
         cancellation,
         close: close.clone(),
+        version_info: runtime.version_info.clone(),
     }) {
         Ok(session) => session,
         Err(error) => {
@@ -961,7 +993,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         CompressionAlgorithm::None
     };
     let mut reader = PacketIoReader::new(reader.into_inner(), compression)?;
-    reader.set_max_allowed_packet(max_allowed_packet);
+    reader.set_max_allowed_packet(runtime.max_allowed_packet);
     let mut output = PacketIoWriter::new(output, compression)?;
     output.set_zstd_level(zstd_level);
 

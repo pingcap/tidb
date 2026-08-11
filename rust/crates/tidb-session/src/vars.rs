@@ -46,6 +46,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use tidb_planner::fix_control::OptimizerFixControl;
+use tidb_util::versioninfo::VersionInfo;
 
 use crate::sysvar::{
     alias_of, get_sys_var, SysVarDef, ValidationError, SCOPE_GLOBAL, SCOPE_INSTANCE, SCOPE_SESSION,
@@ -370,6 +371,8 @@ pub struct SessionVars {
     /// [`GlobalSysvars`] is cheap (one `Arc` bump), so every session shares
     /// the same underlying map.
     globals: GlobalSysvars,
+    /// Immutable server identity captured when this connection opened.
+    version_info: VersionInfo,
 }
 
 impl SessionVars {
@@ -430,6 +433,9 @@ impl SessionVars {
     pub fn get_system(&self, name: &str) -> Result<String, VarError> {
         let def = get_sys_var(name)
             .ok_or_else(|| VarError::UnknownSystemVariable(name.to_ascii_lowercase()))?;
+        if def.name == "version_comment" {
+            return Ok(self.version_info.version_comment());
+        }
         // An INSTANCE-scoped variable has no session copy either, and its
         // node-wide value is the only one there is: without this arm a
         // `SET GLOBAL tidb_general_log = 1` would store a value that
@@ -442,6 +448,11 @@ impl SessionVars {
             .get(&name.to_ascii_lowercase())
             .cloned()
             .unwrap_or_else(|| crate::sysvar::effective_default(def)))
+    }
+
+    /// Installs the immutable build identity supplied by the server startup.
+    pub fn set_version_info(&mut self, version_info: VersionInfo) {
+        self.version_info = version_info;
     }
 
     /// A snapshot of the session overrides `name` (and its alias) currently

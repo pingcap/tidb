@@ -667,6 +667,11 @@ impl Session {
         &self.vars
     }
 
+    /// Installs the immutable build identity captured by the SQL server.
+    pub fn set_version_info(&mut self, version_info: tidb_util::versioninfo::VersionInfo) {
+        self.vars.set_version_info(version_info);
+    }
+
     /// The live `@@wait_timeout` used by the MySQL connection before reading
     /// its next command packet.
     ///
