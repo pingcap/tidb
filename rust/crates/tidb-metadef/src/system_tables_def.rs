@@ -727,6 +727,9 @@ pub const CREATE_TI_DBRESTORE_REGISTRY_TABLE: &str = r#"CREATE TABLE IF NOT EXIS
 		)
 	) AUTO_INCREMENT = 1;"#;
 
+/// Go `DropMySQLIndexUsageTable`.
+pub const DROP_MYSQL_INDEX_USAGE_TABLE: &str = "DROP TABLE IF EXISTS mysql.schema_index_usage";
+
 /// Go `CreateSchemaUnusedIndexesView`.
 pub const CREATE_SCHEMA_UNUSED_INDEXES_VIEW: &str = r#"CREATE OR REPLACE VIEW sys.schema_unused_indexes AS
 		SELECT
@@ -892,6 +895,9 @@ pub const CREATE_TI_DBBACKGROUND_SUBTASK_HISTORY_TABLE: &str = r#"create table m
 		summary json,
 		key idx_task_key(task_key),
 		key idx_state_update_time(state_update_time))"#;
+
+/// Go `NotifierTableName`.
+pub const NOTIFIER_TABLE_NAME: &str = "tidb_ddl_notifier";
 
 /// Go `CreateTiDBDDLNotifierTable`.
 pub const CREATE_TI_DBDDLNOTIFIER_TABLE: &str = r#"CREATE TABLE mysql.tidb_ddl_notifier (
