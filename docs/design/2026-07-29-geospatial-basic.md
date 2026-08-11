@@ -16,7 +16,6 @@
     * [Geometry engine](#geometry-engine)
     * [Type plumbing](#type-plumbing)
     * [SQL surface and examples](#sql-surface-and-examples)
-    * [Feature flag and rollout](#feature-flag-and-rollout)
     * [Scope and deferrals](#scope-and-deferrals)
     * [Compatibility](#compatibility)
 * [Test Design](#test-design)
@@ -39,12 +38,14 @@ geometry predicate has no index here, so it filters row by row over whatever the
 path returns; other predicates choose their access path as usual.
 
 It is **index-free**. The spatial index is specified in
-`docs/design/2026-06-25-spatial-index.md` (PR #69473) and builds on this layer; later work
+[`docs/design/2026-06-25-spatial-index.md`](2026-06-25-spatial-index.md)
+([PR #69473](https://github.com/pingcap/tidb/pull/69473)) and builds on this layer; later work
 (more SRIDs, the function tail, coprocessor pushdown, the index) extends this design
-rather than replacing it. This replaces the earlier geospatial design (PR #38916).
+rather than replacing it. This replaces the earlier geospatial design
+([PR #38916](https://github.com/pingcap/tidb/pull/38916)).
 
 MySQL behaviors and measurements below were verified against running 8.4.6 and 9.7.2, and
-against the proof of concept, PR #69475.
+against the proof of concept, [PR #69475](https://github.com/pingcap/tidb/pull/69475).
 
 ## Terminology
 
@@ -67,7 +68,8 @@ against the proof of concept, PR #69475.
 
 ## Motivation or Background
 
-Geospatial support is one of the most requested TiDB features: tracking issue #6347 carries
+Geospatial support is one of the most requested TiDB features: [tracking issue #6347](https://github.com/pingcap/tidb/issues/6347)
+carries
 `feature/accepted` and ranks among the top open issues by reactions. The dominant workload
 is storing a location per row and answering "what is near me", "which region contains this
 point", or "what overlaps this box". Bike-share, ride-hailing, parcel delivery and asset
@@ -76,8 +78,7 @@ tracking all reduce to points plus proximity and geofence queries.
 TiDB has none of it today: only the `mysql.TypeGeometry` constant exists
 (`pkg/parser/mysql/type.go`), with no value representation and no `ST_*` functions, so
 users encode geometry into scalar columns by hand and compute distances in the
-application. This design covers the basic layer only, so it can ship, stabilize and have
-its feature flag removed before index work merges on top.
+application. This design covers the basic layer only.
 
 ## Detailed Design
 
@@ -116,7 +117,7 @@ and because a 2D geometry with no SRID flag is plain OGC WKB byte for byte.
 
 | Rule | |
 | --- | --- |
-| Versioning | Numbered from 1, so a leading `0x00` is never a valid version. A release reads every earlier version and writes the current one, so a later format needs no migration. |
+| Versioning | Numbered from 1, so a leading `0x00` is never a valid version. |
 | Lossless | Exact `f64` coordinates and full geometry structure, never truncated. |
 | SRID | Carried by the SRID flag, which may be left unset where the column fixes it with `SRID n`, since that is still valid EWKB. It cannot be dropped unconditionally: an unrestricted `GEOMETRY` column holds a per-row SRID, and a geometry outside any column (function result, join or sort intermediate) has no column metadata to recover it from. |
 | Byte order | Left to EWKB, which flags it per geometry and permits both. |
@@ -368,20 +369,13 @@ MySQL form. No spatial index syntax belongs to this layer.
     SELECT id FROM stores
     WHERE ST_Within(loc, ST_GeomFromText('POLYGON((...))', 4326));
 
-### Feature flag and rollout
-
-The layer is gated on a session/global system variable, `tidb_enable_geospatial`, default
-off. This is a **launch gate, not a compatibility switch**: there is no prior implementation
-to fall back to, so once the feature is stable in master the flag and its dead branches are
-removed in a cleanup PR, tracked in #6347. The index layer ships behind its own flag on top
-of this one.
-
 ### Scope and deferrals
 
 Out of scope here, each with a home:
 
-- The **spatial index** and its pushdown: `docs/design/2026-06-25-spatial-index.md`
-  (#69473), for which this layer is the prerequisite.
+- The **spatial index** and its pushdown:
+  [`docs/design/2026-06-25-spatial-index.md`](2026-06-25-spatial-index.md)
+  ([#69473](https://github.com/pingcap/tidb/pull/69473)), for which this layer is the prerequisite.
 - The **geometry-processing function tail**, typed I/O aliases, `MBR*` family, geohash and
   niche accessors: a later, parallel expression-layer milestone.
 - **SRIDs beyond 0 and 4326**, the full SRS catalog and `ST_Transform`: the extension path
@@ -417,7 +411,7 @@ Out of scope here, each with a home:
 | Planner, statistics, executor | `ST_*` evaluate on the normal expression path; geometry predicates are ordinary `Selection`s with no access path of their own. No new operator, access path or statistics. |
 | TiKV | None. Values are ordinary binary strings; pushdown is deferred. |
 | TiFlash, BR, TiCDC, Dumpling, Lightning | Regular column data. Tools need only carry the bytes and the `SRID`/type metadata; dump/reload uses MySQL's internal format or WKT, not the stored bytes. |
-| Upgrade | Additive, behind the flag. |
+| Upgrade | Additive, and gated by no user-visible variable: the type is absent until it is complete. Any switch used while the work lands is a merge convenience, not documented surface. |
 | Downgrade | A release without the type cannot read a table that has a geometry column, so those columns must be dropped first, an ordinary `DROP COLUMN`. |
 
 ## Test Design
@@ -520,7 +514,8 @@ Risks:
 - **cgo/libgeos (go-geos).** Rejected for v1: it gives OGC-correct geometry but needs
   `libgeos` in the Bazel/CI sandbox, which broke the build. The PoC moved to pure-Go
   `simplefeatures` and stayed MySQL byte-identical. Revisit for the processing tail.
-- **The full #38916 surface at once.** Rejected as too large to review and land.
+- **The full [#38916](https://github.com/pingcap/tidb/pull/38916) surface at once.** Rejected as too large to review and
+  land.
 - **Geometry as a generic BLOB with application-side functions.** The status quo; loses
   MySQL compatibility, type safety, and any path to a spatial index.
 - **PostGIS axis order and always-planar `geometry` semantics.** Rejected in favor of MySQL
