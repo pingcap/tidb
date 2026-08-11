@@ -1434,9 +1434,10 @@ mod tests {
                 )
                 .unwrap(),
             ),
-            C::Duration => {
-                Datum::Duration(MySqlDuration::new(0, 0, i64::try_from(k).unwrap(), 0, 0).unwrap())
-            }
+            C::Duration => Datum::Duration(MySqlDuration::from_raw_parts(
+                i64::try_from(k).unwrap() * 1_000_000_000,
+                field_type.decimal(),
+            )),
             C::NewDecimal => Datum::Decimal(Decimal::from_literal(&k.to_string())),
             // Go appends `types.Set{Name: "a", Value: k}` verbatim, without
             // asking the field type's elems to agree.
