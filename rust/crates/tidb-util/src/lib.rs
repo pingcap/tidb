@@ -62,6 +62,7 @@ pub mod sqlkiller;
 pub mod sys;
 pub mod systimemon;
 pub mod table_filter;
+pub mod table_router;
 pub mod table_rule_selector;
 pub mod texttree;
 pub mod tikvutil;
