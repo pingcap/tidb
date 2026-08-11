@@ -15,11 +15,11 @@
 //! Transcreation of Go `pkg/util/table-filter/matchers.go`.
 //!
 //! Go's `matcher` interface (`stringMatcher`, `trueMatcher`, `regexpMatcher`)
-//! collapses into the [`Matcher`] enum. Go's `regexp` and Rust's `regex` are
-//! both RE2-lineage, so the compiled patterns match identically; only the
-//! compiler's error *text* differs (see [`new_regexp_matcher`]).
+//! collapses into the [`Matcher`] enum. Rust's `regex` supports the accepted
+//! package's RE2-style pattern surface; compiler-owned diagnostics differ (see
+//! [`new_regexp_matcher`]).
 
-use super::FilterError;
+use super::{go_simple_lowercase, FilterError};
 use regex::Regex;
 
 /// Matches a name against a pattern (Go's `matcher` interface).
@@ -48,7 +48,7 @@ impl Matcher {
 
     pub(crate) fn to_lower(&self) -> Matcher {
         match self {
-            Matcher::Str(s) => Matcher::Str(s.to_lowercase()),
+            Matcher::Str(s) => Matcher::Str(go_simple_lowercase(s)),
             Matcher::True => Matcher::True,
             Matcher::Regexp(r) => Matcher::Regexp(
                 Regex::new(&format!("(?i){}", r.as_str()))

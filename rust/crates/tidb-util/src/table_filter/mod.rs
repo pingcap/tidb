@@ -20,9 +20,8 @@
 //!
 //! Go's `Filter`/`matcher` interfaces become the [`Filter`] trait (as
 //! `Box<dyn Filter>`) and the internal `Matcher` enum. Wildcards compile to
-//! regexes via the `regex` crate, which is RE2-lineage like Go's `regexp`, so
-//! match results are identical; only the regex/io compiler *error text* differs
-//! from Go's standard library (documented at the affected call sites and tests).
+//! regexes via the `regex` crate. Source-supported matching is covered by the
+//! package vectors; regex/io library diagnostics retain library-owned wording.
 
 mod column_filter;
 mod compat;
@@ -38,6 +37,7 @@ pub use compat::{
 use matchers::TableRule;
 use parser::{MatcherParser, RuleParser, TableRulesParser};
 use std::fmt;
+use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 /// Error returned by filter parsing.
 #[derive(Debug, Clone)]
@@ -58,7 +58,9 @@ impl fmt::Display for FilterError {
 impl std::error::Error for FilterError {}
 
 /// Checks if a table/schema should be included for processing.
-pub trait Filter {
+///
+/// Parsed filters are immutable and may be moved or shared across workers.
+pub trait Filter: Send + Sync {
     /// Checks if a table can be processed after applying the filter.
     fn match_table(&self, schema: &str, table: &str) -> bool;
     /// Checks if a schema can be processed after applying the filter.
@@ -121,11 +123,11 @@ struct LoweredFilter {
 impl Filter for LoweredFilter {
     fn match_table(&self, schema: &str, table: &str) -> bool {
         self.wrapped
-            .match_table(&schema.to_lowercase(), &table.to_lowercase())
+            .match_table(&go_simple_lowercase(schema), &go_simple_lowercase(table))
     }
 
     fn match_schema(&self, schema: &str) -> bool {
-        self.wrapped.match_schema(&schema.to_lowercase())
+        self.wrapped.match_schema(&go_simple_lowercase(schema))
     }
 
     fn to_lower(&self) -> Box<dyn Filter> {

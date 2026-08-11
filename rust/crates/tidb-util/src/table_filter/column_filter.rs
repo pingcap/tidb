@@ -16,10 +16,12 @@
 
 use super::matchers::ColumnRule;
 use super::parser::{ColumnRulesParser, MatcherParser, RuleParser};
-use super::FilterError;
+use super::{go_simple_lowercase, FilterError};
 
 /// Checks if a column should be included for processing.
-pub trait ColumnFilter {
+///
+/// Parsed filters are immutable and may be moved or shared across workers.
+pub trait ColumnFilter: Send + Sync {
     /// Checks if a column can be processed after applying the column filter.
     fn match_column(&self, column: &str) -> bool;
 }
@@ -33,7 +35,7 @@ impl ColumnFilter for ColumnFilterImpl {
         // Column names and aliases are not case-sensitive on any platform, so
         // always match in lowercase.
         // See https://dev.mysql.com/doc/refman/5.7/en/identifier-case-sensitivity.html
-        let lowercase_column = column.to_lowercase();
+        let lowercase_column = go_simple_lowercase(column);
         for rule in &self.rules {
             if rule.column.match_string(&lowercase_column) {
                 return rule.positive;

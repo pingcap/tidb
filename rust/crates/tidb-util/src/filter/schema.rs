@@ -15,6 +15,7 @@
 //! `pkg/util/filter/schema.go`: the system-schema predicate.
 
 use tidb_metadef::is_mem_or_sys_db;
+use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 /// The DM heartbeat schema name (Go `DMHeartbeatSchema`).
 pub const DM_HEARTBEAT_SCHEMA: &str = "dm_heartbeat";
@@ -27,7 +28,7 @@ pub const INSPECTION_SCHEMA_NAME: &str = "inspection_schema";
 pub fn is_system_schema(schema: &str) -> bool {
     debug_assert_eq!(
         schema,
-        schema.to_lowercase(),
+        go_simple_lowercase(schema),
         "IsSystemSchema expects a lower-cased schema name"
     );
     schema == DM_HEARTBEAT_SCHEMA || schema == INSPECTION_SCHEMA_NAME || is_mem_or_sys_db(schema)

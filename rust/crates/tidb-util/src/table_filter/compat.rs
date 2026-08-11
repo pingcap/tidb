@@ -17,22 +17,23 @@
 //! Legacy MySQL-replication filter compatibility, plus schema/table set
 //! filters.
 //!
-//! Go's `Table`/`MySQLReplicationRules` carry `toml`/`json`/`yaml` struct tags
-//! for config deserialization. No test exercises that serialization and this
-//! crate does not wire up serde/toml/yaml, so the tags are out of scope; the
-//! observable filter behavior (the only thing under test) is fully ported.
+//! Go's `Table`/`MySQLReplicationRules` field tags are format-neutral public
+//! configuration contracts, so the Rust types preserve them through serde.
 
 use super::matchers::{new_regexp_matcher, Matcher, TableRule};
-use super::{Filter, FilterError, TableFilter};
+use super::{go_simple_lowercase, Filter, FilterError, TableFilter};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 /// A qualified table name.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub struct Table {
     /// The name of the schema (database) containing this table.
+    #[serde(default, rename = "db-name")]
     pub schema: String,
     /// The unqualified table name.
+    #[serde(default, rename = "tbl-name")]
     pub name: String,
 }
 
@@ -63,15 +64,19 @@ impl fmt::Display for Table {
 }
 
 /// A set of rules based on MySQL's replication filter.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MySQLReplicationRules {
     /// An allowlist of tables.
+    #[serde(default, rename = "do-tables")]
     pub do_tables: Vec<Table>,
     /// An allowlist of schemas.
+    #[serde(default, rename = "do-dbs")]
     pub do_dbs: Vec<String>,
     /// A blocklist of tables.
+    #[serde(default, rename = "ignore-tables")]
     pub ignore_tables: Vec<Table>,
     /// A blocklist of schemas.
+    #[serde(default, rename = "ignore-dbs")]
     pub ignore_dbs: Vec<String>,
 }
 
@@ -81,18 +86,18 @@ impl MySQLReplicationRules {
     /// Deprecated: use [`super::case_insensitive`] instead.
     pub fn to_lower(&mut self) {
         for table in &mut self.do_tables {
-            table.name = table.name.to_lowercase();
-            table.schema = table.schema.to_lowercase();
+            table.name = go_simple_lowercase(&table.name);
+            table.schema = go_simple_lowercase(&table.schema);
         }
         for table in &mut self.ignore_tables {
-            table.name = table.name.to_lowercase();
-            table.schema = table.schema.to_lowercase();
+            table.name = go_simple_lowercase(&table.name);
+            table.schema = go_simple_lowercase(&table.schema);
         }
         for db in &mut self.ignore_dbs {
-            *db = db.to_lowercase();
+            *db = go_simple_lowercase(db);
         }
         for db in &mut self.do_dbs {
-            *db = db.to_lowercase();
+            *db = go_simple_lowercase(db);
         }
     }
 }
@@ -112,7 +117,11 @@ impl Filter for SchemasFilter {
 
     fn to_lower(&self) -> Box<dyn Filter> {
         Box::new(SchemasFilter {
-            schemas: self.schemas.iter().map(|s| s.to_lowercase()).collect(),
+            schemas: self
+                .schemas
+                .iter()
+                .map(|s| go_simple_lowercase(s))
+                .collect(),
         })
     }
 }
@@ -143,9 +152,9 @@ impl Filter for TablesFilter {
     fn to_lower(&self) -> Box<dyn Filter> {
         let mut lowered: HashMap<String, HashSet<String>> = HashMap::new();
         for (schema, tables) in &self.schemas {
-            let entry = lowered.entry(schema.to_lowercase()).or_default();
+            let entry = lowered.entry(go_simple_lowercase(schema)).or_default();
             for table in tables {
-                entry.insert(table.to_lowercase());
+                entry.insert(go_simple_lowercase(table));
             }
         }
         Box::new(TablesFilter { schemas: lowered })

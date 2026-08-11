@@ -1942,6 +1942,7 @@ dependencies = [
  "tidb-error",
  "tidb-log",
  "tidb-metadef",
+ "tidb-mysql",
  "tracing",
 ]
 

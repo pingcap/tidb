@@ -27,6 +27,7 @@ use std::collections::HashMap;
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use regex::Regex;
+use tidb_mysql::to_lowercase as go_simple_lowercase;
 
 use crate::table_filter::{MySQLReplicationRules, Table};
 use crate::table_rule_selector::{InsertType, Selector, SelectorError, TrieSelector};
@@ -138,8 +139,8 @@ impl Filter {
         for tb in stbs {
             let mut new_tb = tb.clone();
             if !self.case_sensitive {
-                new_tb.schema = new_tb.schema.to_lowercase();
-                new_tb.name = new_tb.name.to_lowercase();
+                new_tb.schema = go_simple_lowercase(&new_tb.schema);
+                new_tb.name = go_simple_lowercase(&new_tb.name);
             }
             if self.matches(&new_tb) {
                 tbs.push(new_tb);
@@ -159,7 +160,10 @@ impl Filter {
             let probe = if self.case_sensitive {
                 tb.clone()
             } else {
-                Table::new(tb.schema.to_lowercase(), tb.name.to_lowercase())
+                Table::new(
+                    go_simple_lowercase(&tb.schema),
+                    go_simple_lowercase(&tb.name),
+                )
             };
             if self.matches(&probe) {
                 tbs.push(tb.clone());
@@ -176,8 +180,8 @@ impl Filter {
         };
         let mut new_tb = tb.clone();
         if !self.case_sensitive {
-            new_tb.schema = new_tb.schema.to_lowercase();
-            new_tb.name = new_tb.name.to_lowercase();
+            new_tb.schema = go_simple_lowercase(&new_tb.schema);
+            new_tb.name = go_simple_lowercase(&new_tb.name);
         }
         let name = new_tb.to_string();
         if let Some(&cached) = self.read_cache().get(&name) {
