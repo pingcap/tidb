@@ -47,12 +47,21 @@ fn clear_drains_values_and_waits_for_disconnect() {
     }
     assert_eq!(dropped.load(Ordering::SeqCst), 2);
     assert!(completion.try_recv().is_err());
+
+    sender.send(CountDrop(Arc::clone(&dropped))).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while dropped.load(Ordering::SeqCst) != 3 && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    assert_eq!(dropped.load(Ordering::SeqCst), 3);
+    assert!(completion.try_recv().is_err());
+
     drop(sender);
     completion
         .recv_timeout(Duration::from_secs(5))
         .expect("clear must return when the final sender disconnects");
     worker.join().unwrap();
-    assert_eq!(dropped.load(Ordering::SeqCst), 2);
+    assert_eq!(dropped.load(Ordering::SeqCst), 3);
 }
 
 #[test]

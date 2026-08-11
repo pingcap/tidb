@@ -1,0 +1,10 @@
+go_package = "pkg/util/channel"
+source_commit = "318e82bbb791bfc2c74ecbb4f89666e072e9803b"
+evidence_files = [
+  "rust/crates/tidb-util/src/channel.rs",
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/tests/channel_contract.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "--test", "channel_contract"],
+]
