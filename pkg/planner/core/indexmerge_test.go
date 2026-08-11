@@ -124,3 +124,32 @@ func TestIndexMergePathGeneration(t *testing.T) {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}
 }
+
+func TestRemoveNonMVIndexMergePaths(t *testing.T) {
+	regularPath := &util.AccessPath{}
+	mvPartialPath := &util.AccessPath{Index: &model.IndexInfo{MVIndex: true}}
+	nonMVPartialPath := &util.AccessPath{Index: &model.IndexInfo{}}
+	newIndexMergePath := func(partialPath *util.AccessPath) *util.AccessPath {
+		return &util.AccessPath{PartialAlternativeIndexPaths: [][][]*util.AccessPath{{{partialPath}}}}
+	}
+
+	mvIndexMergePath := newIndexMergePath(mvPartialPath)
+	paths := []*util.AccessPath{
+		regularPath,
+		mvIndexMergePath,
+		newIndexMergePath(nonMVPartialPath),
+		newIndexMergePath(nonMVPartialPath),
+	}
+	paths = removeNonMVIndexMergePaths(paths, 1)
+	require.Len(t, paths, 2)
+	require.Same(t, regularPath, paths[0])
+	require.Same(t, mvIndexMergePath, paths[1])
+
+	paths = []*util.AccessPath{
+		regularPath,
+		newIndexMergePath(nonMVPartialPath),
+		newIndexMergePath(nonMVPartialPath),
+	}
+	paths = removeNonMVIndexMergePaths(paths, 1)
+	require.Equal(t, []*util.AccessPath{regularPath}, paths)
+}

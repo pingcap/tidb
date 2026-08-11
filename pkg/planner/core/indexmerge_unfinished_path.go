@@ -548,7 +548,7 @@ func estimateCountAfterAccessForIndexMergeOR(ds *logicalop.DataSource, decidedPa
 		if isMVIndexPath(p) {
 			containMVPath = true
 		}
-		indexCondsForP := p.AccessConds[:]
+		indexCondsForP := slices.Clone(p.AccessConds)
 		indexCondsForP = append(indexCondsForP, p.IndexFilters...)
 		if len(indexCondsForP) > 0 {
 			accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), indexCondsForP...))
