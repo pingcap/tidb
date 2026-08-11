@@ -232,11 +232,15 @@ pub(crate) fn check_only_full_group_by(
     // nullable UNIQUE key's dependents without the proof, which is exactly
     // what the recording refuses with 1055.
     let dependencies = super::funcdep::scope_fd_set(scope, select.where_clause.as_ref());
-    let determined = dependencies.closure_of_strict(&super::funcdep::col_set::ColSet::of(
-        pinned.iter().map(|&offset| offset as i32),
+    let determined = dependencies.closure_of_strict(&super::funcdep::ColSet::of(
+        pinned
+            .iter()
+            .map(|&offset| i64::try_from(offset).expect("scope column offset fits source int")),
     ));
     for offender in offenders {
-        if determined.contains(offender.offset as i32) {
+        if determined
+            .has(i64::try_from(offender.offset).expect("scope column offset fits source int"))
+        {
             continue;
         }
         return Err(if select.group_by.is_empty() {

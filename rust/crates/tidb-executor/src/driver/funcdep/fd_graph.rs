@@ -41,7 +41,7 @@
 //! normalization is not an optimization -- Go's own test table asserts on the
 //! resulting edge list, so the shrinking rules are behavior.
 
-use super::col_set::ColSet;
+use super::ColSet;
 
 /// One dependency edge. `strict`/`equiv` together name the four kinds
 /// described in the module doc.
@@ -240,7 +240,7 @@ impl FdSet {
     /// `B` is dropped. Members are tried in order and put back when the rest
     /// cannot derive them.
     pub(crate) fn reduce_cols(&self, cols: &ColSet) -> ColSet {
-        let mut removed = ColSet::new();
+        let mut removed = ColSet::default();
         let mut result = cols.clone();
         for value in cols.iter() {
             removed.insert(value);
@@ -384,7 +384,7 @@ impl FdSet {
         }
         let cols = self.closure_of_strict(&constants);
         self.edges.push(FdEdge {
-            from: ColSet::new(),
+            from: ColSet::default(),
             to: cols.clone(),
             strict: true,
             equiv: false,
@@ -501,7 +501,7 @@ mod tests {
 
     /// Builds an edge list directly, as Go's tests do, to exercise the closure
     /// computations over a set the insertion rules would have normalized.
-    fn strict_edge(from: &[i32], to: &[i32]) -> FdEdge {
+    fn strict_edge(from: &[i64], to: &[i64]) -> FdEdge {
         FdEdge {
             from: ColSet::of(from.iter().copied()),
             to: ColSet::of(to.iter().copied()),
@@ -510,7 +510,7 @@ mod tests {
         }
     }
 
-    fn sorted(set: &ColSet) -> Vec<i32> {
+    fn sorted(set: &ColSet) -> Vec<i64> {
         set.iter().collect()
     }
 

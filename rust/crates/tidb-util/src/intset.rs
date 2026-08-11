@@ -24,7 +24,7 @@
 //! "large" (and stays large even if that value is later removed), exactly
 //! as in the source; `equals` handles the large-but-all-small case.
 
-use std::collections::BTreeSet;
+use std::collections::{btree_set, BTreeSet};
 use std::fmt;
 
 const SMALL_CUT_OFF: i64 = 64;
@@ -43,6 +43,37 @@ pub struct FastIntSet {
     large: Option<BTreeSet<i64>>,
 }
 
+/// Ascending iterator over the values exposed by Go `ForEach`.
+pub struct FastIntSetIter<'a> {
+    inner: FastIntSetIterInner<'a>,
+}
+
+enum FastIntSetIterInner<'a> {
+    Small(u64),
+    Large(btree_set::Iter<'a, i64>),
+}
+
+impl Iterator for FastIntSetIter<'_> {
+    type Item = i64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match &mut self.inner {
+            FastIntSetIterInner::Small(bits) => {
+                if *bits == 0 {
+                    return None;
+                }
+                let value = bits.trailing_zeros() as i64;
+                *bits &= *bits - 1;
+                Some(value)
+            }
+            FastIntSetIterInner::Large(values) => {
+                let value = *values.next()?;
+                (value != MAX_INT).then_some(value)
+            }
+        }
+    }
+}
+
 impl FastIntSet {
     /// Go `NewFastIntSet`.
     pub fn new(values: &[i64]) -> FastIntSet {
@@ -51,6 +82,15 @@ impl FastIntSet {
             res.insert(v);
         }
         res
+    }
+
+    /// Constructs a set from an iterator of source `int` values.
+    pub fn of(values: impl IntoIterator<Item = i64>) -> FastIntSet {
+        let mut result = FastIntSet::default();
+        for value in values {
+            result.insert(value);
+        }
+        result
     }
 
     /// Go `Len`.
@@ -167,22 +207,20 @@ impl FastIntSet {
         res
     }
 
+    /// Iterates the values in the same order and domain as Go `ForEach`.
+    #[must_use]
+    pub fn iter(&self) -> FastIntSetIter<'_> {
+        let inner = match &self.large {
+            Some(values) => FastIntSetIterInner::Large(values.iter()),
+            None => FastIntSetIterInner::Small(self.small),
+        };
+        FastIntSetIter { inner }
+    }
+
     /// Go `ForEach` (ascending).
     pub fn for_each(&self, mut f: impl FnMut(i64)) {
-        if let Some(l) = &self.large {
-            for &x in l {
-                if x == MAX_INT {
-                    break;
-                }
-                f(x);
-            }
-            return;
-        }
-        let mut v = self.small;
-        while v != 0 {
-            let i = v.trailing_zeros() as i64;
-            f(i);
-            v &= !(1u64 << (i as u64));
+        for value in self.iter() {
+            f(value);
         }
     }
 
@@ -396,6 +434,23 @@ impl FastIntSet {
                 self.insert(i);
             }
         }
+    }
+}
+
+impl PartialEq for FastIntSet {
+    fn eq(&self, other: &Self) -> bool {
+        self.equals(other)
+    }
+}
+
+impl Eq for FastIntSet {}
+
+impl<'a> IntoIterator for &'a FastIntSet {
+    type Item = i64;
+    type IntoIter = FastIntSetIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 
@@ -843,6 +898,7 @@ mod tests {
         let mut large = FastIntSet::new(&[1, 2, 64]);
         large.remove(64);
 
+        assert_eq!(small, large);
         assert!(small.equals(&large));
         assert!(large.equals(&small));
         assert!(small.subset_of(&large));
@@ -864,6 +920,13 @@ mod tests {
             lhs_large.intersection(&rhs_large).sorted_array(),
             vec![1, 65]
         );
+    }
+
+    #[test]
+    fn idiomatic_iteration_preserves_source_domain_and_order() {
+        let set = FastIntSet::of([-2, 1, 65, MAX_INT]);
+        assert_eq!(set.iter().collect::<Vec<_>>(), vec![-2, 1, 65]);
+        assert_eq!((&set).into_iter().collect::<Vec<_>>(), vec![-2, 1, 65]);
     }
 
     #[test]

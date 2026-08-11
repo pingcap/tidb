@@ -40,13 +40,12 @@
 //! contributes nothing here -- which refuses queries TiDB answers, and never
 //! answers one TiDB refuses.
 
-pub(crate) mod col_set;
 pub(crate) mod fd_graph;
 pub(crate) mod null_reject;
 
 use super::{FromScope, FromTable};
-use col_set::ColSet;
 use fd_graph::FdSet;
+pub(crate) use tidb_util::intset::FastIntSet as ColSet;
 
 /// The dependencies a base table contributes on its own, as column offsets
 /// LOCAL to the table (Go `DataSource.ExtractFD`).
@@ -86,7 +85,9 @@ pub(crate) fn scope_fd_set(scope: &FromScope, where_clause: Option<&tidb_ast::Ex
 /// Go `DataSource.ExtractFD` for one source, translated to scope offsets.
 fn table_fd_set(table: &FromTable) -> FdSet {
     let mut fds = FdSet::new();
-    let id = |local: usize| (table.offset + local) as i32;
+    let id = |local: usize| {
+        i64::try_from(table.offset + local).expect("scope column offset fits source int")
+    };
     let all_cols = ColSet::of((0..table.columns.len()).map(id));
 
     for key in &table.func_deps.strict_keys {
@@ -136,30 +137,38 @@ fn apply_selection(fds: &mut FdSet, scope: &FromScope, where_clause: &tidb_ast::
     // Go `ExtractNotNullFromConds`: a conjunct that cannot be TRUE while a
     // column it reads is NULL proves that column NOT NULL for every surviving
     // row.
-    let mut not_null = ColSet::new();
+    let mut not_null = ColSet::default();
     for condition in &conditions {
         for path in super::only_full_group_by::bare_columns(condition) {
             let Some(offset) = resolve(&path) else {
                 continue;
             };
             if null_reject::is_null_rejected(condition, offset, &resolve) {
-                not_null.insert(offset as i32);
+                not_null
+                    .insert(i64::try_from(offset).expect("scope column offset fits source int"));
             }
         }
     }
 
     // Go `ExtractConstantCols` / `ExtractEquivalenceCols`: `col = <literal>`
     // fixes a column, `col = col` equates two.
-    let mut constants = ColSet::new();
-    let mut equivalences: Vec<(i32, i32)> = Vec::new();
+    let mut constants = ColSet::default();
+    let mut equivalences: Vec<(i64, i64)> = Vec::new();
     for condition in &conditions {
         let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, lhs, rhs) = strip(condition) else {
             continue;
         };
         match (column_offset(lhs), column_offset(rhs)) {
-            (Some(left), Some(right)) => equivalences.push((left as i32, right as i32)),
-            (Some(left), None) if is_literal(strip(rhs)) => constants.insert(left as i32),
-            (None, Some(right)) if is_literal(strip(lhs)) => constants.insert(right as i32),
+            (Some(left), Some(right)) => equivalences.push((
+                i64::try_from(left).expect("scope column offset fits source int"),
+                i64::try_from(right).expect("scope column offset fits source int"),
+            )),
+            (Some(left), None) if is_literal(strip(rhs)) => {
+                constants.insert(i64::try_from(left).expect("scope column offset fits source int"))
+            }
+            (None, Some(right)) if is_literal(strip(lhs)) => {
+                constants.insert(i64::try_from(right).expect("scope column offset fits source int"))
+            }
             _ => {}
         }
     }
