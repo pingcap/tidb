@@ -75,7 +75,7 @@ pub(crate) fn validation_var_error(name: &str, value: &str, error: ValidationErr
 /// this tier to `mysql.GLOBAL_VARIABLES`, so a real cluster survives a
 /// restart with its `SET GLOBAL` values and this one does not -- the same
 /// documented gap the account/privilege/process registries carry.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct GlobalSysvars {
     values: Arc<Mutex<HashMap<String, String>>>,
     /// The INSTANCE tier: Go `vardef.ScopeInstance`. A per-node value, held
@@ -91,6 +91,20 @@ pub struct GlobalSysvars {
     /// `setSysVariable`, which sends anything `IsGlobal` to
     /// `SetGlobalSysVar`.
     instances: Arc<Mutex<HashMap<String, String>>>,
+    /// Scratch registries validate cluster writes before commit. They must not
+    /// publish process-wide runtime settings until [`Self::replace_from`]
+    /// makes the committed state live.
+    publishes_runtime_settings: bool,
+}
+
+impl Default for GlobalSysvars {
+    fn default() -> Self {
+        Self {
+            values: Arc::default(),
+            instances: Arc::default(),
+            publishes_runtime_settings: true,
+        }
+    }
 }
 
 impl GlobalSysvars {
@@ -170,11 +184,16 @@ impl GlobalSysvars {
             .validate_in_scope(&value, scope)
             .map_err(|error| validation_var_error(name, &value, error))?;
         let key = name.to_ascii_lowercase();
-        let mut values = self.store(def).lock().expect("global sysvar lock poisoned");
-        if let Some(other) = alias_of(&key) {
-            values.insert(other.to_owned(), validated.value.clone());
+        {
+            let mut values = self.store(def).lock().expect("global sysvar lock poisoned");
+            if let Some(other) = alias_of(&key) {
+                values.insert(other.to_owned(), validated.value.clone());
+            }
+            values.insert(key.clone(), validated.value);
         }
-        values.insert(key, validated.value);
+        if key == tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY {
+            self.publish_committer_concurrency();
+        }
         Ok(validated.truncated)
     }
 
@@ -189,6 +208,9 @@ impl GlobalSysvars {
             .lock()
             .expect("global sysvar lock poisoned")
             .remove(&name.to_ascii_lowercase());
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY) {
+            self.publish_committer_concurrency();
+        }
         Ok(())
     }
 
@@ -204,14 +226,20 @@ impl GlobalSysvars {
     /// takes on a column or privilege name the running version does not
     /// know.
     pub fn load_from_cluster<I: IntoIterator<Item = (String, String)>>(&self, rows: I) {
+        let mut loaded_committer_concurrency = false;
         for (name, value) in rows {
             let key = name.to_ascii_lowercase();
             if let Some(def) = get_sys_var(&key) {
+                loaded_committer_concurrency |=
+                    key == tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY;
                 self.store(def)
                     .lock()
                     .expect("global sysvar lock poisoned")
                     .insert(key, value);
             }
+        }
+        if loaded_committer_concurrency {
+            self.publish_committer_concurrency();
         }
     }
 
@@ -231,7 +259,10 @@ impl GlobalSysvars {
     /// takes for an account statement.
     #[must_use]
     pub fn from_cluster_rows<I: IntoIterator<Item = (String, String)>>(rows: I) -> Self {
-        let table = Self::new();
+        let table = Self {
+            publishes_runtime_settings: false,
+            ..Self::default()
+        };
         table.load_from_cluster(rows);
         table
     }
@@ -242,10 +273,27 @@ impl GlobalSysvars {
     /// table has one `Arc<Mutex<..>>` handle rather than several, so the swap
     /// is a single lock instead of one per sub-table.
     pub fn replace_from(&self, fresh: &Self) {
-        *self.values.lock().expect("global sysvar lock poisoned") =
-            std::mem::take(&mut *fresh.values.lock().expect("global sysvar lock poisoned"));
-        *self.instances.lock().expect("global sysvar lock poisoned") =
-            std::mem::take(&mut *fresh.instances.lock().expect("global sysvar lock poisoned"));
+        {
+            *self.values.lock().expect("global sysvar lock poisoned") =
+                std::mem::take(&mut *fresh.values.lock().expect("global sysvar lock poisoned"));
+            *self.instances.lock().expect("global sysvar lock poisoned") =
+                std::mem::take(&mut *fresh.instances.lock().expect("global sysvar lock poisoned"));
+        }
+        self.publish_committer_concurrency();
+    }
+
+    fn publish_committer_concurrency(&self) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        let value = self
+            .values
+            .lock()
+            .expect("global sysvar lock poisoned")
+            .get(tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY)
+            .and_then(|value| value.parse::<i32>().ok())
+            .unwrap_or(tidb_tikvutil::DEFAULT_COMMITTER_CONCURRENCY);
+        tidb_tikvutil::set_committer_concurrency(value);
     }
 }
 

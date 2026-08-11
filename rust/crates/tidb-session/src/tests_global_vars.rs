@@ -356,6 +356,81 @@ fn service_scope_uses_the_shared_naming_contract() {
     assert!(error.message.contains("64 characters or fewer"));
 }
 
+/// `pkg/util/tikvutil.CommitterConcurrency` is the process authority behind
+/// the GLOBAL variable. The stored row and the runtime client configuration
+/// must therefore move together.
+#[test]
+fn committer_concurrency_updates_the_process_authority() {
+    struct Restore(i32);
+
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            tidb_tikvutil::set_committer_concurrency(self.0);
+        }
+    }
+
+    let _restore = Restore(tidb_tikvutil::committer_concurrency());
+    let (mut first, mut second, globals) = two_sessions_sharing_globals();
+
+    globals.load_from_cluster([(
+        tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY.to_owned(),
+        "256".to_owned(),
+    )]);
+    assert_eq!(
+        tidb_tikvutil::committer_concurrency(),
+        256,
+        "loading the live cluster table must initialize the process authority"
+    );
+
+    first
+        .run("SET GLOBAL tidb_committer_concurrency = 1024")
+        .unwrap();
+    assert_eq!(
+        scalar_text(&mut second, "SELECT @@global.tidb_committer_concurrency"),
+        Some("1024".to_owned())
+    );
+    assert_eq!(
+        tidb_tikvutil::committer_concurrency(),
+        1024,
+        "the live atomic must follow the accepted GLOBAL assignment"
+    );
+
+    let scratch = vars::GlobalSysvars::from_cluster_rows([(
+        tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY.to_owned(),
+        "2048".to_owned(),
+    )]);
+    assert_eq!(
+        tidb_tikvutil::committer_concurrency(),
+        1024,
+        "loading transaction scratch state must not publish it"
+    );
+    scratch
+        .set(
+            tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY,
+            "4096".to_owned(),
+        )
+        .unwrap();
+    assert_eq!(
+        tidb_tikvutil::committer_concurrency(),
+        1024,
+        "validated but uncommitted scratch state must remain private"
+    );
+
+    globals.replace_from(&scratch);
+    assert_eq!(
+        tidb_tikvutil::committer_concurrency(),
+        4096,
+        "committed cluster state must publish atomically with the live table"
+    );
+    globals
+        .reset(tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY)
+        .unwrap();
+    assert_eq!(
+        tidb_tikvutil::committer_concurrency(),
+        tidb_tikvutil::DEFAULT_COMMITTER_CONCURRENCY
+    );
+}
+
 /// `SELECT @@global.max_connections` -- some drivers ask at connect. Go's
 /// read path does not run `validateScope`, so an instance-scoped variable
 /// answers it.

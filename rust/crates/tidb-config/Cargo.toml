@@ -16,6 +16,7 @@ serde = { workspace = true }
 regex = { workspace = true }
 rustix = { workspace = true }
 tidb-naming = { path = "../tidb-naming" }
+tidb-tikvutil = { path = "../tidb-tikvutil" }
 serde_ignored = "0.1"
 serde_json = { workspace = true }
 toml = "0.8"

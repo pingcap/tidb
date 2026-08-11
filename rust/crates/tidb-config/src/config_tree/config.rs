@@ -585,7 +585,7 @@ impl Config {
     pub fn get_tikv_config(&self) -> tikvcfg::Config {
         let zone_label = self.labels.get("zone").cloned().unwrap_or_default();
         tikvcfg::Config {
-            committer_concurrency: self.performance.committer_concurrency,
+            committer_concurrency: i64::from(tidb_tikvutil::committer_concurrency()),
             max_txn_ttl: self.performance.max_txn_ttl,
             tikv_client: self.tikv_client.clone(),
             security: tikvcfg::Security::new(
@@ -1265,6 +1265,24 @@ metric-label = "keyspace_meta_label_a"
 
         let tikv_config = config.get_tikv_config();
         assert_eq!(tikv_config.tikv_client.ru_v2.ru_scale, 0.0);
+    }
+
+    #[test]
+    fn test_get_tikv_config_uses_the_runtime_committer_concurrency() {
+        struct Restore(i32);
+
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                tidb_tikvutil::set_committer_concurrency(self.0);
+            }
+        }
+
+        let _restore = Restore(tidb_tikvutil::committer_concurrency());
+        tidb_tikvutil::set_committer_concurrency(512);
+
+        let mut config = new_config();
+        config.performance.committer_concurrency = 7;
+        assert_eq!(config.get_tikv_config().committer_concurrency, 512);
     }
 
     // Go TestLogConfig.

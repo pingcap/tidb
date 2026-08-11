@@ -11,6 +11,7 @@ members = [
     "crates/tidb-hash",
     "crates/tidb-kvcache",
     "crates/tidb-naming",
+    "crates/tidb-tikvutil",
     "crates/tidb-util",
     "crates/tidb-config",
     "crates/tidb-log",

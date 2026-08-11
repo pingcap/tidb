@@ -1644,6 +1644,7 @@ dependencies = [
  "serde_ignored",
  "serde_json",
  "tidb-naming",
+ "tidb-tikvutil",
  "toml",
 ]
 
@@ -1958,6 +1959,7 @@ dependencies = [
  "tidb-parser",
  "tidb-planner",
  "tidb-tablecodec",
+ "tidb-tikvutil",
  "tidb-util",
  "tidb-vardef",
 ]
@@ -1985,6 +1987,10 @@ dependencies = [
  "tidb-datatype",
  "tidb-txnkv",
 ]
+
+[[package]]
+name = "tidb-tikvutil"
+version = "0.0.0"
 
 [[package]]
 name = "tidb-txnkv"
@@ -2032,6 +2038,7 @@ dependencies = [
  "tidb-metadef",
  "tidb-mysql",
  "tidb-naming",
+ "tidb-tikvutil",
  "tracing",
 ]
 
