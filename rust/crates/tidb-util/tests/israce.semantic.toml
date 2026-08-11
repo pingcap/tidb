@@ -1,0 +1,11 @@
+go_package = "pkg/util/israce"
+source_commit = "318e82bbb791bfc2c74ecbb4f89666e072e9803b"
+evidence_files = [
+  "rust/crates/tidb-util/Cargo.toml",
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/src/israce/mod.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "--lib", "israce::tests"],
+  ["test", "-p", "tidb-util", "--lib", "--features", "race", "israce::tests"],
+]
