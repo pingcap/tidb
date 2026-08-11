@@ -220,7 +220,10 @@ impl DeadlockHistory {
 
     /// Returns rows in `INFORMATION_SCHEMA.DEADLOCKS` column order.
     #[must_use]
-    pub fn rows(&self) -> Vec<Vec<Datum>> {
+    pub fn rows<C: crate::keydecoder::KeyInfoCatalog + ?Sized>(
+        &self,
+        catalog: &C,
+    ) -> Vec<Vec<Datum>> {
         self.get_all()
             .into_iter()
             .flat_map(|record| {
@@ -228,7 +231,13 @@ impl DeadlockHistory {
                     .map(move |idx| {
                         DEADLOCK_COLUMNS
                             .iter()
-                            .map(|column| record.to_datum(idx, column))
+                            .map(|column| {
+                                if *column == COL_KEY_INFO {
+                                    key_info_datum(&record.wait_chain[idx].key, catalog)
+                                } else {
+                                    record.to_datum(idx, column)
+                                }
+                            })
                             .collect()
                     })
                     .collect::<Vec<Vec<Datum>>>()
@@ -240,6 +249,26 @@ impl DeadlockHistory {
         self.state
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
+    }
+}
+
+fn key_info_datum<C: crate::keydecoder::KeyInfoCatalog + ?Sized>(key: &[u8], catalog: &C) -> Datum {
+    if key.is_empty() {
+        return Datum::Null;
+    }
+    let decoded = match crate::keydecoder::decode_key(key, catalog) {
+        Ok(decoded) => decoded,
+        Err(error) => {
+            tracing::warn!(%error, "failed to decode deadlock key information");
+            return Datum::Null;
+        }
+    };
+    match serde_json::to_vec(&decoded) {
+        Ok(json) => Datum::String(StringDatum::new(json, Collation::DEFAULT)),
+        Err(error) => {
+            tracing::warn!(%error, "failed to encode deadlock key information as JSON");
+            Datum::Null
+        }
     }
 }
 
@@ -443,7 +472,7 @@ mod tests {
         });
         history.push(record(timestamp(2023, 1, 1, 0)));
 
-        let rows = history.rows();
+        let rows = history.rows(&crate::Catalog::default());
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].len(), 9);
         assert_eq!(rows[0][0], Datum::UInt(1));

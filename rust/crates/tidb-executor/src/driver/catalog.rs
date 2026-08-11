@@ -77,6 +77,8 @@ pub const SYSTEM_DATABASE: &str = "mysql";
 /// than to resolving a name.
 #[derive(Clone, Debug, Default)]
 struct Database {
+    /// Go `DBInfo.ID`, retained for physical-key diagnostics.
+    id: i64,
     /// The name as written, for `SHOW DATABASES` output.
     name: String,
     tables: HashMap<String, TableEntry>,
@@ -87,6 +89,7 @@ struct Database {
 #[derive(Clone, Debug)]
 pub struct Catalog {
     databases: HashMap<String, Database>,
+    next_database_id: i64,
     next_table_id: i64,
     /// Bumped by every mutation that actually CHANGED something, so a
     /// transaction can detect that the shared catalog moved under it (Go
@@ -158,6 +161,7 @@ impl Default for Catalog {
         databases.insert(
             DEFAULT_DATABASE.to_owned(),
             Database {
+                id: 1,
                 name: DEFAULT_DATABASE.to_owned(),
                 tables: HashMap::new(),
             },
@@ -165,6 +169,7 @@ impl Default for Catalog {
         databases.insert(
             "information_schema".to_owned(),
             Database {
+                id: 2,
                 name: "INFORMATION_SCHEMA".to_owned(),
                 tables: HashMap::new(),
             },
@@ -172,12 +177,14 @@ impl Default for Catalog {
         databases.insert(
             SYSTEM_DATABASE.to_owned(),
             Database {
+                id: 3,
                 name: SYSTEM_DATABASE.to_owned(),
                 tables: HashMap::new(),
             },
         );
         let mut catalog = Catalog {
             databases,
+            next_database_id: 3,
             next_table_id: 0,
             version: 0,
             statistics: HashMap::new(),
@@ -415,9 +422,38 @@ impl Catalog {
         if self.databases.contains_key(&key) {
             return false;
         }
+        self.next_database_id += 1;
         self.databases.insert(
             key,
             Database {
+                id: self.next_database_id,
+                name: database.to_owned(),
+                tables: HashMap::new(),
+            },
+        );
+        self.version += 1;
+        true
+    }
+
+    /// Installs a database with the ID from a persisted cluster catalog.
+    ///
+    /// The default catalog already contains `test` and `mysql`; loading those
+    /// schemas replaces their synthetic IDs rather than silently discarding
+    /// the source identity. Returns whether the schema name was newly added.
+    pub fn register_database_with_id(&mut self, database: &str, id: i64) -> bool {
+        let key = database.to_lowercase();
+        self.next_database_id = self.next_database_id.max(id);
+        if let Some(existing) = self.databases.get_mut(&key) {
+            let changed = existing.id != id || existing.name != database;
+            existing.id = id;
+            existing.name = database.to_owned();
+            self.version += u64::from(changed);
+            return false;
+        }
+        self.databases.insert(
+            key,
+            Database {
+                id,
                 name: database.to_owned(),
                 tables: HashMap::new(),
             },
@@ -630,10 +666,17 @@ impl Catalog {
     /// Never: the schema is created just above when it is missing.
     pub fn register_mem_in(&mut self, database: &str, name: &str, table: MemTable) {
         let key = database.to_lowercase();
-        self.databases.entry(key).or_insert_with(|| Database {
-            name: database.to_owned(),
-            tables: HashMap::new(),
-        });
+        if !self.databases.contains_key(&key) {
+            self.next_database_id += 1;
+            self.databases.insert(
+                key,
+                Database {
+                    id: self.next_database_id,
+                    name: database.to_owned(),
+                    tables: HashMap::new(),
+                },
+            );
+        }
         self.register_in(database, name, TableEntry::Mem(table))
             .expect("the schema was just created when it was missing");
     }
@@ -642,10 +685,17 @@ impl Catalog {
     /// scratch schema when it does not exist.
     pub(crate) fn register_cte_in(&mut self, database: &str, name: &str, table: crate::CteTable) {
         let key = database.to_lowercase();
-        self.databases.entry(key).or_insert_with(|| Database {
-            name: database.to_owned(),
-            tables: HashMap::new(),
-        });
+        if !self.databases.contains_key(&key) {
+            self.next_database_id += 1;
+            self.databases.insert(
+                key,
+                Database {
+                    id: self.next_database_id,
+                    name: database.to_owned(),
+                    tables: HashMap::new(),
+                },
+            );
+        }
         self.register_in(database, name, TableEntry::Cte(table))
             .expect("the scratch schema was just created when it was missing");
     }
@@ -743,6 +793,80 @@ impl Catalog {
     pub fn allocate_table_id(&mut self) -> i64 {
         self.next_table_id += 1;
         self.next_table_id
+    }
+}
+
+impl crate::keydecoder::KeyInfoCatalog for Catalog {
+    fn resolve_physical_table(&self, physical_id: i64) -> Option<crate::keydecoder::KeyInfoTable> {
+        for database in self.databases.values() {
+            for (registered_name, entry) in &database.tables {
+                let TableEntry::Kv(table) = entry else {
+                    continue;
+                };
+                if table.table_id == physical_id {
+                    return Some(key_info_table(
+                        database,
+                        registered_name,
+                        table,
+                        0,
+                        String::new(),
+                    ));
+                }
+            }
+        }
+        for database in self.databases.values() {
+            for (registered_name, entry) in &database.tables {
+                let TableEntry::Kv(table) = entry else {
+                    continue;
+                };
+                let Some(partition) = table.partition() else {
+                    continue;
+                };
+                if let Some(definition) = partition
+                    .definitions
+                    .iter()
+                    .find(|definition| definition.id == physical_id)
+                {
+                    return Some(key_info_table(
+                        database,
+                        registered_name,
+                        table,
+                        definition.id,
+                        definition.name.clone(),
+                    ));
+                }
+            }
+        }
+        None
+    }
+}
+
+fn key_info_table(
+    database: &Database,
+    registered_name: &str,
+    table: &KvTable,
+    partition_id: i64,
+    partition_name: String,
+) -> crate::keydecoder::KeyInfoTable {
+    crate::keydecoder::KeyInfoTable {
+        db_name: database.name.clone(),
+        db_id: database.id,
+        table_name: if table.name.is_empty() {
+            registered_name.to_owned()
+        } else {
+            table.name.clone()
+        },
+        table_id: table.table_id,
+        partition_name,
+        partition_id,
+        indexes: table
+            .indexes()
+            .iter()
+            .map(|index| crate::keydecoder::KeyInfoIndex {
+                id: index.id,
+                name: index.name.clone(),
+            })
+            .collect(),
     }
 }
 

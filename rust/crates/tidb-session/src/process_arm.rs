@@ -305,7 +305,9 @@ impl Session {
     }
 
     /// Package-owned rows of `INFORMATION_SCHEMA.DEADLOCKS`.
-    pub(crate) fn deadlock_history_table_rows(&self) -> Vec<Vec<Datum>> {
-        tidb_executor::deadlock_history::global_deadlock_history().rows()
+    pub(crate) fn deadlock_history_table_rows(&mut self) -> Result<Vec<Vec<Datum>>, DriverError> {
+        self.with_catalog_mut(|catalog| {
+            Ok(tidb_executor::deadlock_history::global_deadlock_history().rows(catalog))
+        })
     }
 }

@@ -213,7 +213,7 @@ pub fn cluster_session_catalog(
     let mut skipped = Vec::new();
     for database in &loaded.databases {
         let schema = database.info.name.original().to_owned();
-        catalog.create_database(&schema);
+        catalog.register_database_with_id(&schema, database.info.id);
         for table in &database.tables {
             let auto = AutoIdSource::In {
                 db_id: database.info.id,

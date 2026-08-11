@@ -1721,6 +1721,8 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "serde",
+ "serde_json",
  "sha2",
  "tidb-ast",
  "tidb-chunk",

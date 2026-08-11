@@ -1,0 +1,25 @@
+go_package = "pkg/util/keydecoder"
+source_commit = "b2f2faaa95bff642920560c24e3714957bcb4c74"
+evidence_files = [
+  "rust/Cargo.lock",
+  "rust/crates/tidb-codec/src/table_key.rs",
+  "rust/crates/tidb-exec/Cargo.toml",
+  "rust/crates/tidb-exec/src/cluster_catalog.rs",
+  "rust/crates/tidb-exec/src/keydecoder.rs",
+  "rust/crates/tidb-exec/src/lib.rs",
+  "rust/crates/tidb-exec/tests/keydecoder_source.rs",
+  "rust/crates/tidb-executor/Cargo.toml",
+  "rust/crates/tidb-executor/src/deadlock_history.rs",
+  "rust/crates/tidb-executor/src/driver/catalog.rs",
+  "rust/crates/tidb-executor/src/keydecoder.rs",
+  "rust/crates/tidb-executor/src/lib.rs",
+  "rust/crates/tidb-server/src/cluster_session.rs",
+  "rust/crates/tidb-session/src/dispatch.rs",
+  "rust/crates/tidb-session/src/process_arm.rs",
+  "rust/crates/tidb-session/src/tests_deadlock_history.rs",
+]
+commands = [
+  ["test", "-p", "tidb-exec", "--test", "all", "keydecoder_source"],
+  ["test", "-p", "tidb-session", "--lib", "deadlocks_table_exposes_package_rows_and_requires_process"],
+  ["check", "-p", "tidb-server", "--all-targets"],
+]
