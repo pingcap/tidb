@@ -1306,6 +1306,9 @@ mod tests {
             // `passwordFunctionClass` (`:487`) -- `mysql.PWDHashLen + 1`, the
             // 40 hex digits plus the leading `*`.
             (call("PASSWORD", vec![str_arg("x")]), 41, "password"),
+            // `compressFunctionClass`: zlib's upper bound for five input
+            // bytes, 5 + 13 here because all shifted terms are zero.
+            (call("COMPRESS", vec![str_arg("hello")]), 18, "compress"),
             // `uncompressedLengthFunctionClass` (`:972`).
             (
                 call("UNCOMPRESSED_LENGTH", vec![str_arg("x")]),

@@ -1351,8 +1351,8 @@ fn misc_and_encryption_builtins_reach_live_sql() {
     // The payload below is exactly what Go's `COMPRESS('aaaaaaaa')` emits
     // (captured: `select hex(compress('aaaaaaaa'))`): a four-byte
     // little-endian original length (8) followed by the zlib stream. COMPRESS
-    // itself is NOT ported, so the fixture is spelled as a hex literal rather
-    // than as a round trip through it.
+    // itself now has independent round-trip coverage below; this fixed Go
+    // vector keeps the inverse functions interoperable with Go output.
     const COMPRESSED_AAAAAAAA: &str = "08000000789C4A840240000000FFFF0DAC0309";
     for (sql, expected) in [
         ("SELECT NAME_CONST('a', 5)", "5"),
@@ -1396,6 +1396,26 @@ fn misc_and_encryption_builtins_reach_live_sql() {
     assert_eq!(
         row_text(session.run("SELECT HEX(AES_ENCRYPT('pingcap', '1234567890123456'))"))[0][0],
         "697BFE9B3F8C2F289DD82C88C7BC95C4"
+    );
+}
+
+/// `COMPRESS` is a binary-string builtin: its first four bytes carry the
+/// original byte length and the remainder is a zlib stream. Exercise it
+/// through SQL so return-type inference, binary data, and both inverse
+/// functions stay connected.
+#[test]
+fn compress_round_trips_binary_payloads_through_live_sql() {
+    let mut session = Session::new();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT HEX(LEFT(COMPRESS('hello world'), 4)),\
+                    UNCOMPRESS(COMPRESS('hello world')),\
+                    UNCOMPRESSED_LENGTH(COMPRESS(UNHEX('610062'))),\
+                    HEX(UNCOMPRESS(COMPRESS(UNHEX('610062')))),\
+                    HEX(COMPRESS('')),\
+                    COMPRESS(NULL) IS NULL",
+        )),
+        [["0B000000", "hello world", "3", "610062", "", "1"]]
     );
 }
 

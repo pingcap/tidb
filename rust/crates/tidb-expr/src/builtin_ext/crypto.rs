@@ -20,20 +20,16 @@
 //! `block_encryption_mode`, including all accepted key sizes and ECB/CBC/OFB/
 //! CFB modes, IV validation, NULL propagation, and the ignored-IV warning.
 //!
+//! `COMPRESS`, `UNCOMPRESS`, and `UNCOMPRESSED_LENGTH` implement TiDB's binary
+//! framing: a 4-byte little-endian original-length prefix followed by a zlib
+//! stream. The compressed block layout is deliberately left to Rust's zlib
+//! encoder; SQL observes a standards-compliant stream and the framing, not a
+//! particular standard-library DEFLATE strategy. Corruption warnings from the
+//! inverse functions belong to the statement context and are not fabricated
+//! by this value-only dispatch.
+//!
 //! Deliberately not yet ported from `builtin_encryption.go` because their
 //! required session or binary-value contracts are not present:
-//! - `UNCOMPRESS`/`UNCOMPRESSED_LENGTH` (`builtinUncompressSig`/
-//!   `builtinUncompressedLengthSig`): ported below. Both decode the zlib
-//!   framing (a 4-byte little-endian original-length prefix + a zlib stream),
-//!   and DEFLATE *decoders* are interoperable, so they faithfully consume Go
-//!   `compress/zlib` output. Their corruption warnings belong to the statement
-//!   context and are not fabricated here.
-//! - `COMPRESS` (`builtinCompressSig`): deferred. Its output bytes are produced
-//!   by Go's `compress/flate` *encoder*, whose exact framing (note the
-//!   `00 00 FF FF` sync-flush artifact Go emits) is not byte-reproducible by a
-//!   different DEFLATE encoder such as the `flate2`/miniz_oxide backend. TiDB's
-//!   own test pins those exact bytes, so a non-identical encoder would not be a
-//!   faithful transcreation; only the interoperable decoders are ported.
 //! - `RANDOM_BYTES` (`builtinRandomBytesSig`): non-deterministic
 //!   (`crypto/rand`) — unverifiable against a static golden file.
 //! - `PASSWORD` (`builtinPasswordSig`): the value contract is ported below;
@@ -51,9 +47,11 @@
 //!   `pkg/parser/auth`; the complete expression package must route it through
 //!   the existing Rust parser-auth implementation.
 
-use std::io::Read;
+use std::io::{Read, Write};
 
 use flate2::read::ZlibDecoder;
+use flate2::write::ZlibEncoder;
+use flate2::Compression;
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha224, Sha256, Sha384, Sha512};
@@ -76,6 +74,7 @@ pub(crate) fn dispatch(
         ("VALIDATE_PASSWORD_STRENGTH", 1) => Some(validate_password_strength(&vals[0], ctx)),
         ("ENCODE", 2) => Some(sql_encode(&vals[0], &vals[1])),
         ("DECODE", 2) => Some(sql_decode(&vals[0], &vals[1])),
+        ("COMPRESS", 1) => Some(compress(&vals[0])),
         ("AES_ENCRYPT" | "AES_DECRYPT", _) => {
             eval_aes_lazy(name, vals.len(), |i| Ok(vals[i].clone()), ctx)
         }
@@ -83,6 +82,42 @@ pub(crate) fn dispatch(
         ("UNCOMPRESSED_LENGTH", 1) => Some(uncompressed_length(&vals[0])),
         _ => None,
     }
+}
+
+/// `COMPRESS(payload)`. Empty input remains empty. Non-empty input is framed
+/// as the original byte length followed by a zlib stream. A trailing dot keeps
+/// a stream ending in ASCII space from being changed by SQL trailing-space
+/// handling, matching TiDB's public format.
+fn compress(arg: &Datum) -> Result<Datum, EvalError> {
+    let Some(payload) = sql_string_bytes(arg)? else {
+        return Ok(Datum::Null);
+    };
+    if payload.is_empty() {
+        return Ok(Datum::new_string(Vec::new()));
+    }
+
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    if encoder.write_all(&payload).is_err() {
+        return Ok(Datum::Null);
+    }
+    let Ok(compressed) = encoder.finish() else {
+        return Ok(Datum::Null);
+    };
+    Ok(Datum::new_string(frame_compressed(
+        payload.len() as u32,
+        compressed,
+    )))
+}
+
+fn frame_compressed(original_len: u32, compressed: Vec<u8>) -> Vec<u8> {
+    let append_suffix = compressed.last() == Some(&b' ');
+    let mut framed = Vec::with_capacity(4 + compressed.len() + usize::from(append_suffix));
+    framed.extend_from_slice(&original_len.to_le_bytes());
+    framed.extend_from_slice(&compressed);
+    if append_suffix {
+        framed.push(b'.');
+    }
+    framed
 }
 
 /// Inflates a zlib stream, returning `None` on any decode error. Port of the
@@ -597,7 +632,7 @@ fn parse_string_i64_saturating(value: &str) -> i64 {
 mod tests {
     use std::collections::HashMap;
 
-    use super::dispatch;
+    use super::{dispatch, frame_compressed};
     use crate::{Columns, Datum, Decimal};
 
     fn call(name: &str, vals: &[Datum]) -> Datum {
@@ -780,12 +815,28 @@ mod tests {
             .collect()
     }
 
-    /// UNCOMPRESS / UNCOMPRESSED_LENGTH decoding Go `compress/zlib` output. The
-    /// compressed literals come from goeval (`compress('hello')`), since Go's
-    /// DEFLATE-encoder bytes are not reproducible here and `COMPRESS` is
-    /// deferred; the decoders faithfully consume that output.
+    /// COMPRESS framing and both inverse functions. The decoder also consumes
+    /// a stream produced by Go's `compress/zlib`, proving cross-runtime format
+    /// compatibility without coupling Rust to Go's DEFLATE block layout.
     #[test]
-    fn uncompress_go_vectors() {
+    fn compress_and_uncompress_vectors() {
+        let binary = Datum::new_bytes([b'a', 0, 0xff, b' ']);
+        let compressed = call("COMPRESS", std::slice::from_ref(&binary));
+        let compressed_bytes = bytes_of(&compressed);
+        assert_eq!(&compressed_bytes[..4], &4u32.to_le_bytes());
+        assert_eq!(
+            bytes_of(&call("UNCOMPRESS", std::slice::from_ref(&compressed))),
+            bytes_of(&binary)
+        );
+        assert_eq!(call("UNCOMPRESSED_LENGTH", &[compressed]), Datum::Int(4));
+
+        // The suffix rule is part of the SQL framing, independent of which
+        // inputs a particular zlib implementation happens to encode that way.
+        assert_eq!(
+            frame_compressed(1, vec![0x78, b' ']),
+            vec![1, 0, 0, 0, 0x78, b' ', b'.']
+        );
+
         // compress('hello') = LE(5) + zlib stream.
         let hello = hex_bytes("05000000789CCA48CDC9C907040000FFFF062C0215");
         assert_eq!(
@@ -798,6 +849,7 @@ mod tests {
         );
 
         // Empty input -> empty string / 0.
+        assert_eq!(call("COMPRESS", &[s("")]), s(""));
         assert_eq!(call("UNCOMPRESS", &[s("")]), s(""));
         assert_eq!(call("UNCOMPRESSED_LENGTH", &[s("")]), Datum::Int(0));
 
@@ -824,6 +876,7 @@ mod tests {
         );
 
         // NULL propagation.
+        assert_eq!(call("COMPRESS", &[Datum::Null]), Datum::Null);
         assert_eq!(call("UNCOMPRESS", &[Datum::Null]), Datum::Null);
         assert_eq!(call("UNCOMPRESSED_LENGTH", &[Datum::Null]), Datum::Null);
     }
@@ -1198,8 +1251,8 @@ mod tests {
             dispatch("AES_ENCRYPT", &[s("a")], &ctx),
             Some(Err(crate::EvalError::WrongParameterCount("aes_encrypt")))
         ));
-        // COMPRESS is deferred (Go DEFLATE-encoder bytes are not reproducible).
-        assert!(dispatch("COMPRESS", &[s("a")], &ctx).is_none());
+        assert!(dispatch("COMPRESS", &[], &ctx).is_none());
+        assert!(dispatch("COMPRESS", &[s("a"), s("b")], &ctx).is_none());
         assert!(dispatch("UNCOMPRESS", &[], &ctx).is_none());
         assert!(dispatch("UNCOMPRESSED_LENGTH", &[s("a"), s("b")], &ctx).is_none());
     }

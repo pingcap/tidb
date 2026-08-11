@@ -32,6 +32,9 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use super::control_type::set_numeric_len_from_args;
 use crate::builtin_ext::{GlCmpStringMode, GlSignature};
 
+mod crypto;
+pub(super) use crypto::returns_binary_string;
+
 /// Go `types.SetBinChsClnFlag`: the binary charset/collation plus the binary
 /// flag every non-string literal type carries.
 /// The builtins whose result is a BINARY string: Go's `getFunction` for each
@@ -103,21 +106,6 @@ pub fn go_result_type_code(name: &str) -> Option<FieldTypeCode> {
         "json_unquote" | "json_pretty" => Some(FieldTypeCode::LongBlob),
         _ => None,
     }
-}
-
-pub(super) fn returns_binary_string(name: &str) -> bool {
-    // Every result here is a raw byte string with binary charset/collation.
-    matches!(
-        name,
-        "unhex"
-            | "from_base64"
-            | "inet6_aton"
-            | "weight_string"
-            | "uuid_to_bin"
-            | "uncompress"
-            | "aes_encrypt"
-            | "aes_decrypt"
-    )
 }
 
 pub(super) fn set_binary_charset(ft: &mut FieldType) {
@@ -868,6 +856,9 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
                 ft.set_flen(arg.flen());
             }
             ft
+        }
+        "compress" if args.len() == 1 => {
+            crypto::compress_return_type(str_arg_flen(args, 0), text())
         }
         "aes_encrypt" => {
             let mut ft = text();
