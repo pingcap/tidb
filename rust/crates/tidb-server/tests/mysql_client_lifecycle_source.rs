@@ -43,8 +43,11 @@ const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
 
 #[derive(Default)]
 struct Lifecycle {
+    next_batches: usize,
     finished: usize,
     closed: usize,
+    source_dropped: usize,
+    snapshot_released: usize,
 }
 
 struct Rows {
@@ -301,13 +304,25 @@ fn prepared_point_range_keeps_its_two_marker_contract() {
     assert_eq!(PreparedStatement::PointRead(read).parameter_count(), 2);
 }
 
+struct SnapshotLease {
+    lifecycle: Arc<Mutex<Lifecycle>>,
+}
+
+impl Drop for SnapshotLease {
+    fn drop(&mut self) {
+        self.lifecycle.lock().unwrap().snapshot_released += 1;
+    }
+}
+
 struct PreparedRows {
     value: Option<i64>,
     lifecycle: Arc<Mutex<Lifecycle>>,
+    _snapshot: SnapshotLease,
 }
 
 impl ResultSetSource for PreparedRows {
     fn next_batch(&mut self, _max_rows: usize) -> Result<Vec<Vec<Datum>>, String> {
+        self.lifecycle.lock().unwrap().next_batches += 1;
         Ok(self
             .value
             .take()
@@ -327,6 +342,12 @@ impl ResultSetSource for PreparedRows {
     fn close(&mut self) -> Result<(), String> {
         self.lifecycle.lock().unwrap().closed += 1;
         Ok(())
+    }
+}
+
+impl Drop for PreparedRows {
+    fn drop(&mut self) {
+        self.lifecycle.lock().unwrap().source_dropped += 1;
     }
 }
 
@@ -373,6 +394,9 @@ impl QuerySession for PreparedSession {
         Ok(QueryResult::new(Box::new(PreparedRows {
             value: Some(*value + 100),
             lifecycle: Arc::clone(&self.lifecycle),
+            _snapshot: SnapshotLease {
+                lifecycle: Arc::clone(&self.lifecycle),
+            },
         }))
         .with_statement_status(0, self.wire_status())
         .with_cursor_materialization(
@@ -1348,6 +1372,104 @@ fn assert_prepared_point_read_cursor_protocol(deprecate_eof: bool) {
 fn prepared_point_read_honors_read_only_cursor_protocol() {
     assert_prepared_point_read_cursor_protocol(true);
     assert_prepared_point_read_cursor_protocol(false);
+}
+
+#[test]
+fn cursor_execute_releases_snapshot_before_fetch_and_fetch_uses_only_materialized_rows() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let executed_parameters = Arc::new(Mutex::new(Vec::new()));
+    let lifecycle = Arc::new(Mutex::new(Lifecycle::default()));
+    let tracker = Arc::new(ConnectionTracker::default());
+    let worker_parameters = Arc::clone(&executed_parameters);
+    let worker_lifecycle = Arc::clone(&lifecycle);
+    let worker_tracker = Arc::clone(&tracker);
+    let worker = std::thread::spawn(move || {
+        let (stream, peer_addr) = listener.accept().unwrap();
+        serve_mysql_connection(
+            stream,
+            peer_addr,
+            ConnectionCancellation::default(),
+            &PreparedFactory {
+                executed_parameters: worker_parameters,
+                lifecycle: worker_lifecycle,
+            },
+            &users(),
+            &worker_tracker,
+            DEFAULT_MAX_ALLOWED_PACKET,
+        )
+        .unwrap()
+    });
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let mut reader = PacketReader::new(client.try_clone().unwrap());
+    authenticate(&mut client, &mut reader, "alice", b"secret");
+    reader.set_sequence(2);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+
+    let statement_id = prepare_statement(&mut client, &mut reader);
+    assert_eq!(
+        open_prepared_point_cursor(&mut client, &mut reader, statement_id, true, 7),
+        0x0043,
+    );
+
+    // A PING roundtrip is the event-loop barrier after COM_STMT_EXECUTE: the
+    // worker has returned past `drop(result)` and installed the cursor, while
+    // no FETCH has run. The storage source and snapshot lease must be gone.
+    write_packet(&mut client, 0, &[COM_PING]);
+    reader.set_sequence(1);
+    assert_eq!(reader.read_packet().unwrap()[0], 0);
+    let before_fetch = {
+        let lifecycle = lifecycle.lock().unwrap();
+        assert_eq!(lifecycle.next_batches, 2, "the source was drained to EOF");
+        assert_eq!(lifecycle.finished, 1);
+        assert_eq!(lifecycle.closed, 1);
+        assert_eq!(lifecycle.source_dropped, 1);
+        assert_eq!(lifecycle.snapshot_released, 1);
+        (
+            lifecycle.next_batches,
+            lifecycle.finished,
+            lifecycle.closed,
+            lifecycle.source_dropped,
+            lifecycle.snapshot_released,
+        )
+    };
+
+    let mut fetch = vec![COM_STMT_FETCH];
+    fetch.extend_from_slice(&statement_id.to_le_bytes());
+    fetch.extend_from_slice(&1_u32.to_le_bytes());
+    write_packet(&mut client, 0, &fetch);
+    reader.set_sequence(1);
+    let row = reader.read_packet().unwrap();
+    assert_eq!(&row[..2], [0, 0]);
+    assert_eq!(i64::from_le_bytes(row[2..10].try_into().unwrap()), 107);
+    let fetch_end = reader.read_packet().unwrap();
+    assert_eq!(fetch_end[0], 0xfe);
+    assert_eq!(
+        u16::from_le_bytes([fetch_end[3], fetch_end[4]]),
+        0x0083,
+        "the materialized row exhausted the cursor",
+    );
+
+    let after_fetch = {
+        let lifecycle = lifecycle.lock().unwrap();
+        (
+            lifecycle.next_batches,
+            lifecycle.finished,
+            lifecycle.closed,
+            lifecycle.source_dropped,
+            lifecycle.snapshot_released,
+        )
+    };
+    assert_eq!(after_fetch, before_fetch, "FETCH must not revisit storage");
+
+    let mut close = vec![COM_STMT_CLOSE];
+    close.extend_from_slice(&statement_id.to_le_bytes());
+    write_packet(&mut client, 0, &close);
+    write_packet(&mut client, 0, &[COM_QUIT]);
+    drop(client);
+    assert_eq!(worker.join().unwrap().exit, ConnectionExit::Quit);
+    assert_eq!(executed_parameters.lock().unwrap().as_slice(), [7]);
 }
 
 #[test]
