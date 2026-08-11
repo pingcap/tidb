@@ -128,8 +128,11 @@ func TestSharedLockBlockedByExclusiveLock(t *testing.T) {
 	tk2.MustExec("use test")
 	tk3.MustExec("use test")
 	tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk1.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 	tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 	tk3.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk3.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 
 	prepareForeignKeyTables(tk1)
 
@@ -184,8 +187,11 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 	tk2.MustExec("use test")
 	tk3.MustExec("use test")
 	tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk1.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 	tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 	tk3.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk3.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 
 	prepareForeignKeyTables(tk1)
 
@@ -238,8 +244,11 @@ func TestSharedLockChildTableConflict(t *testing.T) {
 	tk2.MustExec("use test")
 	tk3.MustExec("use test")
 	tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk1.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 	tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 	tk3.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk3.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 
 	prepareForeignKeyTables(tk1)
 
@@ -378,7 +387,9 @@ func TestSharedLockLockView(t *testing.T) {
 	tk2.MustExec("use test")
 	testTk.MustExec("use test")
 	tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk1.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 	tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk2.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 
 	prepareForeignKeyTables(tk1)
 
@@ -464,6 +475,7 @@ func TestSharedLockDataLockWaitsFromStorageWaitTable(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
+	allowForeignKeyCheckInSharedLockForTest(t)
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
