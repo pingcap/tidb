@@ -163,6 +163,58 @@ func TestTiDBMaxKeysRead(t *testing.T) {
 	require.True(t, sv.IsHintUpdatableVerified)
 }
 
+func TestTxnFileSysVars(t *testing.T) {
+	vars := NewSessionVars(nil)
+
+	t.Run("defaults and session propagation", func(t *testing.T) {
+		disableTxnFile := GetSysVar(vardef.TiDBDisableTxnFile)
+		require.NotNil(t, disableTxnFile)
+		require.Equal(t, vardef.ScopeGlobal|vardef.ScopeSession, disableTxnFile.Scope)
+		require.Equal(t, vardef.Off, disableTxnFile.Value)
+		require.False(t, vars.KVVars.DisableTxnFile)
+
+		val, err := disableTxnFile.Validate(vars, vardef.On, vardef.ScopeSession)
+		require.NoError(t, err)
+		require.NoError(t, disableTxnFile.SetSessionFromHook(vars, val))
+		require.True(t, vars.KVVars.DisableTxnFile)
+
+		minMutationSize := GetSysVar(vardef.TiDBTxnFileMinMutationSize)
+		require.NotNil(t, minMutationSize)
+		require.Equal(t, vardef.ScopeGlobal|vardef.ScopeSession, minMutationSize.Scope)
+		require.Equal(t, "0", minMutationSize.Value)
+		require.Zero(t, vars.KVVars.TxnFileMinMutationSize)
+
+		val, err = minMutationSize.Validate(vars, strconv.FormatUint(uint64(vardef.MinTiDBTxnFileMinMutationSize), 10), vardef.ScopeSession)
+		require.NoError(t, err)
+		require.NoError(t, minMutationSize.SetSessionFromHook(vars, val))
+		require.Equal(t, uint64(vardef.MinTiDBTxnFileMinMutationSize), vars.KVVars.TxnFileMinMutationSize)
+	})
+
+	t.Run("rejects nonzero sizes below 1 MiB", func(t *testing.T) {
+		minMutationSize := GetSysVar(vardef.TiDBTxnFileMinMutationSize)
+		for _, val := range []string{"1", strconv.FormatUint(vardef.MinTiDBTxnFileMinMutationSize-1, 10)} {
+			_, err := minMutationSize.Validate(vars, val, vardef.ScopeSession)
+			require.Error(t, err)
+		}
+
+		val, err := minMutationSize.Validate(vars, "0", vardef.ScopeSession)
+		require.NoError(t, err)
+		require.Equal(t, "0", val)
+	})
+
+	t.Run("rejected size preserves previous value", func(t *testing.T) {
+		minMutationSize := GetSysVar(vardef.TiDBTxnFileMinMutationSize)
+		validSize := uint64(vardef.MinTiDBTxnFileMinMutationSize * 2)
+		val, err := minMutationSize.Validate(vars, strconv.FormatUint(validSize, 10), vardef.ScopeSession)
+		require.NoError(t, err)
+		require.NoError(t, minMutationSize.SetSessionFromHook(vars, val))
+
+		_, err = minMutationSize.Validate(vars, "1", vardef.ScopeSession)
+		require.Error(t, err)
+		require.Equal(t, validSize, vars.KVVars.TxnFileMinMutationSize)
+	})
+}
+
 func TestGetMaxKeysRead(t *testing.T) {
 	vars := NewSessionVars(nil)
 	vars.MaxKeysRead = 100
