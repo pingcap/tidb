@@ -53,6 +53,7 @@ pub mod ppcpuusage;
 pub mod prefetch;
 pub mod queue;
 pub mod redact;
+pub mod regexpr_router;
 pub mod selection;
 pub mod sem;
 pub mod size;
