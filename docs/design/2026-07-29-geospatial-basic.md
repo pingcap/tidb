@@ -180,10 +180,9 @@ positional, so on 4326 `ST_X` is the latitude here and in MySQL (verified: `ST_X
 `ST_Latitude` = 30 for `POINT(30 50)`) and the longitude in PostGIS. The per-SRID breakdown
 belongs in the user docs as migration guidance.
 
-Coordinates are **stored as parsed**, so latitude-first on 4326, which is the order S2 wants
-and costs no swap on the geodesic and index paths. MySQL stores the opposite order and swaps
-at every boundary, visible as `HEX(g)` and `ST_AsBinary(g)` returning swapped coordinates
-for the same 4326 point; both engines emit the same WKB.
+Coordinates are **stored as parsed**, so latitude-first on 4326. MySQL stores the opposite
+order and swaps at every boundary, visible as `HEX(g)` and `ST_AsBinary(g)` returning
+swapped coordinates for the same 4326 point; both engines emit the same WKB.
 
 **Extension path** (documented, not built here):
 
