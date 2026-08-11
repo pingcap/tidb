@@ -73,7 +73,7 @@ impl<'a> FormatFragment<'a> {
 /// precision, positional arguments, radix, and custom `Display`/`Debug`) and
 /// guarantees that command-looking bytes inside a value remain ordinary data.
 pub trait Formatter: Write {
-    /// Applies `fragments`, writes the result, and returns the written byte
+    /// Applies `fragments` with one writer call and returns that call's byte
     /// count.
     fn format(&mut self, fragments: &[FormatFragment<'_>]) -> io::Result<usize>;
 }
@@ -133,8 +133,7 @@ impl<W: Write> IndentFormatter<W> {
                 FormatFragment::Unindent => self.indent_level -= 1,
             }
         }
-        self.writer.write_all(&buffer)?;
-        Ok(buffer.len())
+        self.writer.write(&buffer)
     }
 
     fn push_template_text(&mut self, flat: bool, text: &[u8], buffer: &mut Vec<u8>) {

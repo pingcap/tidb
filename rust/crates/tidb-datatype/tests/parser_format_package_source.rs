@@ -135,17 +135,18 @@ fn formatter_uses_native_width_precision_indexing_and_radix() {
 }
 
 #[derive(Default)]
-struct ChunkedWriter {
+struct BoundedWriter {
     bytes: Vec<u8>,
     chunk_size: usize,
     calls: usize,
     fail: bool,
 }
 
-impl Write for ChunkedWriter {
+impl Write for BoundedWriter {
     fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
         self.calls += 1;
         if self.fail {
+            self.fail = false;
             return Err(io::Error::other("writer failed"));
         }
         let written = self.chunk_size.min(buffer.len());
@@ -159,20 +160,32 @@ impl Write for ChunkedWriter {
 }
 
 #[test]
-fn formatter_writes_complete_output_and_propagates_errors() {
-    let writer = ChunkedWriter {
+fn formatter_performs_one_source_write_and_propagates_errors() {
+    let writer = BoundedWriter {
         bytes: Vec::new(),
         chunk_size: 2,
         calls: 0,
         fail: false,
     };
     let mut formatter = IndentFormatter::new(writer, "  ");
-    assert_eq!(formatter.format(&[F::text("abcdef")]).unwrap(), 6);
+    assert_eq!(formatter.format(&[F::text("abcdef")]).unwrap(), 2);
     let writer = formatter.into_inner();
-    assert_eq!(writer.calls, 3);
-    assert_eq!(writer.bytes, b"abcdef");
+    assert_eq!(writer.calls, 1);
+    assert_eq!(writer.bytes, b"ab");
 
-    let writer = ChunkedWriter {
+    let writer = BoundedWriter {
+        bytes: Vec::new(),
+        chunk_size: 0,
+        calls: 0,
+        fail: false,
+    };
+    let mut formatter = IndentFormatter::new(writer, "  ");
+    assert_eq!(formatter.format(&[F::text("abcdef")]).unwrap(), 0);
+    let writer = formatter.into_inner();
+    assert_eq!(writer.calls, 1);
+    assert!(writer.bytes.is_empty());
+
+    let writer = BoundedWriter {
         bytes: Vec::new(),
         chunk_size: usize::MAX,
         calls: 0,
@@ -186,6 +199,30 @@ fn formatter_writes_complete_output_and_propagates_errors() {
     let writer = formatter.into_inner();
     assert_eq!(writer.calls, 1);
     assert!(writer.bytes.is_empty());
+}
+
+#[test]
+fn formatter_state_advances_before_errors_and_direct_writes_are_opaque() {
+    let writer = BoundedWriter {
+        bytes: Vec::new(),
+        chunk_size: usize::MAX,
+        calls: 0,
+        fail: true,
+    };
+    let mut formatter = IndentFormatter::new(writer, "  ");
+    formatter
+        .format(&[F::text("a"), F::Indent, F::text("\n")])
+        .unwrap_err();
+    assert_eq!(formatter.format(&[F::text("b\n")]).unwrap(), 4);
+    let writer = formatter.into_inner();
+    assert_eq!(writer.calls, 2);
+    assert_eq!(writer.bytes, b"  b\n");
+
+    let mut formatter = IndentFormatter::new(Vec::new(), "  ");
+    assert_eq!(formatter.format(&[F::Indent]).unwrap(), 0);
+    formatter.write_all(b"raw\n").unwrap();
+    assert_eq!(formatter.format(&[F::text("tail\n")]).unwrap(), 7);
+    assert_eq!(formatter.into_inner(), b"raw\n  tail\n");
 }
 
 #[test]

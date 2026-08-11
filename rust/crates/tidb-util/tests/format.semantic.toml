@@ -1,0 +1,19 @@
+go_package = "pkg/util/format"
+source_commit = "59dfa4d3b214ded26f957249efbda21f95149bb5"
+evidence_files = [
+  "rust/crates/tidb-datatype/src/format.rs",
+  "rust/crates/tidb-datatype/src/lib.rs",
+  "rust/crates/tidb-datatype/tests/parser_format_package_source.rs",
+  "rust/crates/tidb-util/src/format.rs",
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/tests/format_contract.rs",
+  "rust/crates/tidb-executor/src/column_default.rs",
+  "rust/crates/tidb-session/src/show.rs",
+  "rust/crates/tidb-session/src/tests_column_defaults.rs",
+]
+commands = [
+  ["test", "-p", "tidb-datatype", "--test", "all", "parser_format_package_source::"],
+  ["test", "-p", "tidb-util", "--test", "format_contract"],
+  ["test", "-p", "tidb-executor", "--lib", "column_default::tests::literal_show_create_clause_uses_util_output_format", "--", "--exact"],
+  ["test", "-p", "tidb-session", "--lib", "tests_column_defaults::a_folded_default_stays_a_settled_literal", "--", "--exact"],
+]

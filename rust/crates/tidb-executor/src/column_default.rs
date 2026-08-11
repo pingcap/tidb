@@ -463,6 +463,15 @@ mod tests {
     use tidb_datatype::{CoreTime, Time, TimeType, STRICT_FLAGS};
     use tidb_model::column::COLUMN_INFO_VERSION0;
 
+    #[test]
+    fn literal_show_create_clause_uses_util_output_format() {
+        let default = ColumnDefault::Value(Datum::new_string("unused"));
+        let field_type = FieldType::new(FieldTypeCode::Varchar);
+        let clause = default.show_create_clause(&field_type, "slash\\quote'\0nul\nline\rcarriage");
+
+        assert_eq!(clause, "'slash\\\\quote''\\0nul\\nline\\rcarriage'");
+    }
+
     fn fixed_zone(name: &str, offset_secs: i32) -> SessionTimeZone {
         SessionTimeZone::Fixed {
             name: name.to_owned(),

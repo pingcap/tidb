@@ -14,9 +14,34 @@
 
 //! Executable package contract for `pkg/util/format`.
 
+use std::io::{self, Write};
+
 use tidb_util::format::{
     output_format, FlatFormatter, FormatFragment as F, Formatter, IndentFormatter,
 };
+
+struct ObservingWriter {
+    bytes: Vec<u8>,
+    limit: usize,
+    calls: usize,
+    fail: bool,
+}
+
+impl Write for ObservingWriter {
+    fn write(&mut self, input: &[u8]) -> io::Result<usize> {
+        self.calls += 1;
+        if self.fail {
+            return Err(io::Error::other("writer failed"));
+        }
+        let written = self.limit.min(input.len());
+        self.bytes.extend_from_slice(&input[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
 
 #[test]
 fn format_package_semantics() {
@@ -55,4 +80,39 @@ fn format_package_semantics() {
         output_format("slash\\quote'\0nul\nline\rcarriage"),
         "slash\\\\quote''\\0nul\\nline\\rcarriage"
     );
+}
+
+#[test]
+fn formatter_performs_one_source_write_and_returns_its_count() {
+    let writer = ObservingWriter {
+        bytes: Vec::new(),
+        limit: 3,
+        calls: 0,
+        fail: false,
+    };
+    let mut formatter = IndentFormatter::new(writer, "  ");
+
+    assert_eq!(formatter.format(&[F::text("abcdef")]).unwrap(), 3);
+    let writer = formatter.into_inner();
+    assert_eq!(writer.calls, 1);
+    assert_eq!(writer.bytes, b"abc");
+}
+
+#[test]
+fn empty_format_still_observes_the_source_writer() {
+    let writer = ObservingWriter {
+        bytes: Vec::new(),
+        limit: usize::MAX,
+        calls: 0,
+        fail: true,
+    };
+    let mut formatter = IndentFormatter::new(writer, "  ");
+
+    assert_eq!(
+        formatter.format(&[]).unwrap_err().kind(),
+        io::ErrorKind::Other
+    );
+    let writer = formatter.into_inner();
+    assert_eq!(writer.calls, 1);
+    assert!(writer.bytes.is_empty());
 }
