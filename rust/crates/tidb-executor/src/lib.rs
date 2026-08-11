@@ -105,6 +105,7 @@ mod tests_index_join;
 mod tests_join_search;
 pub mod topn;
 pub mod topn_spill;
+pub mod vec_group_checker;
 pub mod view;
 mod window;
 pub mod zero_date;

@@ -1763,27 +1763,6 @@ fn eval_keys(
     Ok((keys, collations))
 }
 
-/// Whether two key rows are the SAME key -- the peer/partition identity, taken
-/// under each key part's own derived collation.
-///
-/// This is the equality half of [`tidb_expr::compare_datums_with_collation`],
-/// which is what Go's `VecGroupChecker` gets by comparing
-/// `codec.ConvertByCollationStr` sort keys rather than raw bytes.
-fn keys_equal(
-    left: &[Datum],
-    right: &[Datum],
-    collations: &[tidb_datatype::Collation],
-) -> Result<bool, DriverError> {
-    for ((l, r), collation) in left.iter().zip(right).zip(collations) {
-        let ordering = tidb_expr::compare_datums_with_collation(l, r, *collation)
-            .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
-        if !ordering.is_eq() {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
 /// Evaluates a window function's own argument expressions for every row.
 ///
 /// Unlike [`eval_keys`], which is indexed by row, the result is indexed by
@@ -1902,19 +1881,14 @@ fn peer_groups(
 ) -> Result<Vec<(usize, usize)>, DriverError> {
     let total = indices.len();
     let mut peers = vec![(0usize, total); total];
-    let mut group_start = 0;
-    for position in 1..=total {
-        let ends = position == total
-            || !keys_equal(
-                &order_keys[indices[position]],
-                &order_keys[indices[position - 1]],
-                order_collations,
-            )?;
-        if ends {
-            for entry in &mut peers[group_start..position] {
-                *entry = (group_start, position);
-            }
-            group_start = position;
+    let mut checker = crate::vec_group_checker::VecGroupChecker::new(Vec::new());
+    checker
+        .split_indexed(indices, order_keys, order_collations)
+        .map_err(|error| DriverError::Exec(crate::ExecError::Eval(error)))?;
+    while !checker.is_exhausted() {
+        let (begin, end) = checker.get_next_group();
+        for entry in &mut peers[begin..end] {
+            *entry = (begin, end);
         }
     }
     Ok(peers)
