@@ -1,8 +1,0 @@
-go_package = "pkg/util/queue"
-source_commit = "b931f16351cbd7b76bceff8477b7afc7e1ba6632"
-evidence_files = [
-  "rust/crates/tidb-util/src/queue.rs",
-]
-commands = [
-  ["test", "-p", "tidb-util", "--lib"],
-]

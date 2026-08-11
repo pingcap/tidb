@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Compile anchors for the complete `pkg/meta/model` package receipt.
+//! Compile anchors for the current `pkg/meta/model` public surface.
 
 mod pkg_meta_model_package_anchors;
 

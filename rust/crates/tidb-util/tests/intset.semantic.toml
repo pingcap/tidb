@@ -1,8 +1,0 @@
-go_package = "pkg/util/intset"
-source_commit = "56d06365eae71a692e538986d84003565f880103"
-evidence_files = [
-  "rust/crates/tidb-util/src/intset.rs",
-]
-commands = [
-  ["test", "-p", "tidb-util", "--lib"],
-]

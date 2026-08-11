@@ -1,8 +1,0 @@
-go_package = "pkg/util/zeropool"
-source_commit = "e67e11b83b50a0a13ff59c80e6f524558585f48c"
-evidence_files = [
-  "rust/crates/tidb-util/src/zeropool/mod.rs",
-]
-commands = [
-  ["test", "-p", "tidb-util", "--lib"],
-]

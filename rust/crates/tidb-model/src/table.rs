@@ -18,8 +18,8 @@
 //!
 //! [`crate::TableInfo`] and [`crate::PartitionInfo`] own the enclosing table
 //! and partition rules; this module owns their persisted sub-structures and
-//! independent helpers. The package receipt records representation boundaries
-//! that cannot be expressed by the existing owned Rust model.
+//! independent helpers. Representation boundaries that cannot be expressed by
+//! the existing owned Rust model remain explicit at their APIs.
 
 use chrono::{DateTime, FixedOffset};
 use std::ops::{Deref, DerefMut};

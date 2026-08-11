@@ -1,8 +1,0 @@
-go_package = "pkg/util/slice"
-source_commit = "3bc65f2096f2b888f4119f04e45034c8f16f53ab"
-evidence_files = [
-  "rust/crates/tidb-util/src/slice.rs",
-]
-commands = [
-  ["test", "-p", "tidb-util", "--lib"],
-]

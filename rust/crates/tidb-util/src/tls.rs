@@ -23,7 +23,7 @@
 //! Rust deliberately has one live authority instead of duplicating that state:
 //! `tidb_session::GlobalSysvars` stores the GLOBAL value, and
 //! `tidb_server::ConfiguredUserStore` reads it into the secure-transport policy
-//! for every login. The semantic receipt for this package gates that live path.
+//! for every login.
 
 /// TLS protocol version 1.0.
 pub const VERSION_TLS10: u16 = 0x0301;

@@ -18,10 +18,9 @@
 //! this crate has no charset domain at all).
 //!
 //! JSON targets retain their native datum domain. DATE/DATETIME keep the
-//! evaluator's established string result boundary; the semantic package gate
-//! records the native temporal integration gap explicitly. Every rule here
-//! (string-to-number prefix
-//! parsing width, rounding tie-breaking per source type, `UNSIGNED`'s
+//! evaluator's established string result boundary; the native temporal
+//! integration gap remains explicit at that API. Every rule here
+//! (string-to-number prefix parsing width, rounding tie-breaking per source type, `UNSIGNED`'s
 //! negative-float-clamps-to-zero rule, `DECIMAL`'s precision clamp,
 //! `BINARY`'s NUL-padding) was confirmed via `goeval`, not assumed — see
 //! each function's own doc for the specific probe.

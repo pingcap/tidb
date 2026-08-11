@@ -1,8 +1,0 @@
-go_package = "pkg/util/column-mapping"
-source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
-evidence_files = [
-  "rust/crates/tidb-util/src/column_mapping.rs",
-]
-commands = [
-  ["test", "-p", "tidb-util", "--lib", "column_mapping"],
-]

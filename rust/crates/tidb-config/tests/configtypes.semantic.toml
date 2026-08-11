@@ -1,9 +1,0 @@
-go_package = "pkg/config/configtypes"
-source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
-evidence_files = [
-  "rust/crates/tidb-config/src/configtypes.rs",
-  "rust/crates/tidb-config/tests/configtypes_source.rs",
-]
-commands = [
-  ["test", "-p", "tidb-config", "--test", "configtypes_source"],
-]

@@ -1,9 +1,0 @@
-go_package = "pkg/util/disttask"
-source_commit = "1ea1db40cd7c9fcc110126c0371cb5133f28a0d5"
-evidence_files = [
-  "rust/crates/tidb-util/src/lib.rs",
-  "rust/crates/tidb-util/src/disttask.rs",
-]
-commands = [
-  ["test", "-p", "tidb-util", "--lib", "disttask::tests"],
-]

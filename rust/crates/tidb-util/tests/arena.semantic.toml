@@ -1,8 +1,0 @@
-go_package = "pkg/util/arena"
-source_commit = "fb8490526c5e30408fd0a444057b5b2e7072ad61"
-evidence_files = [
-  "rust/crates/tidb-util/src/arena.rs",
-]
-commands = [
-  ["test", "-p", "tidb-util", "--lib"],
-]

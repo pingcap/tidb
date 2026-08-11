@@ -8,23 +8,7 @@ drift before a full workspace build.
 | script | what it answers | cost |
 |---|---|---|
 | `check-source-size.sh` | has any source file grown past its recorded bound, or shrunk enough to retire its entry? | ~1s, no build |
-| `semantic-package-gate.py` | are accepted Go sources pinned and do their Rust semantic tests pass? | source check plus deduplicated tests |
 | `run-doctests.sh` | do the examples in `///` comments still compile, still pass, and still exist? | ~4s warm, needs the libs built |
-
-### `semantic-package-gate.py` — semantic package gate
-
-Each completed Go package has one small TOML file containing four things: the
-package path, accepted commit, Rust evidence files, and Cargo commands. The
-gate derives the direct package inventory from Git and writes nothing.
-
-```bash
-python3 rust/scripts/semantic-package-gate.py <package>.semantic.toml
-python3 rust/scripts/semantic-package-gate.py --all
-python3 rust/scripts/semantic-package-gate.py --all --no-tests
-```
-
-Partial ports are not gate claims. Identical Cargo commands are normalized to
-offline locked 12-job runs and executed once when multiple packages share them.
 
 ### `check-source-size.sh` — the source-size ratchet
 

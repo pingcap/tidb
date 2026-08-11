@@ -1,8 +1,0 @@
-go_package = "pkg/util/prefetch"
-source_commit = "0f5ba8fbaabdfcc78f1fec7d80c94104dd96bdc3"
-evidence_files = [
-  "rust/crates/tidb-util/src/prefetch.rs",
-]
-commands = [
-  ["test", "-p", "tidb-util", "--lib", "prefetch"],
-]

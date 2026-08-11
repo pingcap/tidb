@@ -14,8 +14,8 @@
 
 //! `pkg/meta/model`: TiDB schema/table metadata types.
 //!
-//! The Go-package seed is tracked by `tests/pkg_meta_model.semantic.toml`.
-//! Individual modules are not independent whole-package completion claims.
+//! This remains a Go-package seed. Individual modules are not independent
+//! whole-package completion claims.
 
 pub mod action_type;
 pub mod bdr;

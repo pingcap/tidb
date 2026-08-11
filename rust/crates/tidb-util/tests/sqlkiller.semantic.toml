@@ -1,9 +1,0 @@
-go_package = "pkg/util/sqlkiller"
-source_commit = "5663a072a31821e81396d0396eea2b61de53f392"
-evidence_files = [
-  "rust/crates/tidb-util/src/sqlkiller.rs",
-]
-commands = [
-  ["test", "-p", "tidb-util", "--lib", "sqlkiller"],
-  ["test", "-p", "tidb-executor", "--lib", "mem_quota::tests::cancel_raises_8175_once_the_operator_crosses_the_quota", "--", "--exact"],
-]

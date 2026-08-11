@@ -1,8 +1,0 @@
-go_package = "pkg/util/tikvutil"
-source_commit = "e14a77f78d457d27c88d5892e1a173c28a586823"
-evidence_files = [
-  "rust/crates/tidb-util/src/tikvutil/mod.rs",
-]
-commands = [
-  ["test", "-p", "tidb-util", "--lib"],
-]
