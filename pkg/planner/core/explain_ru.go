@@ -372,6 +372,14 @@ func (m *readBillingDemoExecutionMask) isSkippedInner(join, child *FlatOperator)
 	return m.skippedInnerByJoin[join] == child
 }
 
+func (m *readBillingDemoExecutionMask) hasSkippedInner(join *FlatOperator) bool {
+	if m == nil || join == nil {
+		return false
+	}
+	_, ok := m.skippedInnerByJoin[join]
+	return ok
+}
+
 func (m *readBillingDemoExecutionMask) isExplicitZeroLimit(node *FlatOperator) bool {
 	if m == nil || node == nil {
 		return false
@@ -879,20 +887,20 @@ func readBillingDemoOptionalExecutionMask(
 	}
 }
 
-func readBillingDemoJoinChildIDs(node *FlatOperator) (innerPlanID, outerPlanID int, ok bool) {
+func readBillingDemoOuterDrivenChildIDs(node *FlatOperator) (innerPlanID, outerPlanID int, ok bool) {
 	if node == nil || node.Origin == nil || !node.IsRoot {
 		return 0, 0, false
 	}
 	var plan base.PhysicalPlan
 	var innerIdx int
 	switch join := node.Origin.(type) {
-	case *physicalop.PhysicalApply:
-		plan, innerIdx = join, join.InnerChildIdx
 	case *physicalop.PhysicalIndexJoin:
 		plan, innerIdx = join, join.InnerChildIdx
 	case *physicalop.PhysicalIndexHashJoin:
 		plan, innerIdx = join, join.InnerChildIdx
 	case *physicalop.PhysicalIndexMergeJoin:
+		plan, innerIdx = join, join.InnerChildIdx
+	case *physicalop.PhysicalApply:
 		plan, innerIdx = join, join.InnerChildIdx
 	default:
 		return 0, 0, false
@@ -1036,7 +1044,7 @@ func readBillingDemoSkipCandidateAt(tree FlatPlanTree, treeOrdinal, joinIdx int)
 		return candidate, false
 	}
 	joinNode := tree[joinIdx]
-	innerPlanID, outerPlanID, ok := readBillingDemoJoinChildIDs(joinNode)
+	innerPlanID, outerPlanID, ok := readBillingDemoOuterDrivenChildIDs(joinNode)
 	if !ok || joinNode.Origin.ID() <= 0 || len(joinNode.ChildrenIdx) != 2 ||
 		joinNode.ChildrenEndIdx < joinIdx || joinNode.ChildrenEndIdx >= len(tree) {
 		return candidate, false
@@ -1439,7 +1447,32 @@ func readBillingDemoObservedCompletedZero(runtimeStats *execdetails.RuntimeStats
 		return false
 	}
 	basic := runtimeStats.GetBasicRuntimeStats(node.Origin.ID(), false)
-	return basic != nil && basic.HasBytes() && basic.GetActRows() == 0
+	return basic != nil && basic.GetActRows() == 0 && (basic.HasRuntimeRows() || basic.HasBytes())
+}
+
+func readBillingDemoOuterDrivenZeroOutputCompatible(runtimeStats *execdetails.RuntimeStatsColl, node *FlatOperator) bool {
+	if runtimeStats == nil || node == nil || node.Origin == nil || !node.IsRoot {
+		return false
+	}
+	basic := runtimeStats.GetBasicRuntimeStats(node.Origin.ID(), false)
+	if basic == nil || (!basic.HasRuntimeRows() && !basic.HasBytes()) {
+		return true
+	}
+	return basic.GetActRows() == 0
+}
+
+func readBillingDemoMaskedRootSemanticZero(runtimeStats *execdetails.RuntimeStatsColl, mask *readBillingDemoExecutionMask, node *FlatOperator) bool {
+	if mask == nil || node == nil || node.Origin == nil || !node.IsRoot {
+		return false
+	}
+	return mask.isExplicitZeroLimit(node) ||
+		mask.suppressesTransportProducer(node) ||
+		mask.hasSkippedInner(node) && readBillingDemoOuterDrivenZeroOutputCompatible(runtimeStats, node)
+}
+
+func readBillingDemoRootKnownZero(runtimeStats *execdetails.RuntimeStatsColl, mask *readBillingDemoExecutionMask, node *FlatOperator) bool {
+	return readBillingDemoObservedCompletedZero(runtimeStats, node) ||
+		readBillingDemoMaskedRootSemanticZero(runtimeStats, mask, node)
 }
 
 func readBillingDemoZeroLimitRootEvidenceCompatible(runtimeStats *execdetails.RuntimeStatsColl, node *FlatOperator) bool {
@@ -1447,7 +1480,7 @@ func readBillingDemoZeroLimitRootEvidenceCompatible(runtimeStats *execdetails.Ru
 		return false
 	}
 	basic := runtimeStats.GetBasicRuntimeStats(node.Origin.ID(), false)
-	if basic != nil && basic.HasBytes() && basic.GetActRows() != 0 {
+	if basic != nil && (basic.HasBytes() || basic.HasRuntimeRows()) && basic.GetActRows() != 0 {
 		return false
 	}
 	if !runtimeStats.ExistsRootStats(node.Origin.ID()) {
@@ -1470,32 +1503,55 @@ func readBillingDemoInnerHasExecutionEvidence(
 	return readBillingDemoNodesHaveExecutionEvidence(runtimeStats, candidate.innerNodes)
 }
 
+func readBillingDemoInnerHasUnmaskedExecutionEvidence(
+	runtimeStats *execdetails.RuntimeStatsColl,
+	mask *readBillingDemoExecutionMask,
+	candidate readBillingDemoSkipCandidate,
+) bool {
+	if mask == nil {
+		return readBillingDemoInnerHasExecutionEvidence(runtimeStats, candidate)
+	}
+	for _, node := range candidate.innerNodes {
+		if mask.isSkipped(node) {
+			continue
+		}
+		if readBillingDemoNodeHasExecutionEvidence(runtimeStats, node) {
+			return true
+		}
+	}
+	return false
+}
+
+func readBillingDemoNodeHasExecutionEvidence(runtimeStats *execdetails.RuntimeStatsColl, node *FlatOperator) bool {
+	if runtimeStats == nil {
+		return false
+	}
+	if node == nil || node.Origin == nil {
+		return true
+	}
+	planID := node.Origin.ID()
+	if basic := runtimeStats.GetBasicRuntimeStats(planID, false); basic != nil && (basic.HasBytes() || basic.HasRuntimeRows()) {
+		return true
+	}
+	if runtimeStats.ExistsRootStats(planID) {
+		_, groups := runtimeStats.GetRootStats(planID).MergeStats()
+		for _, group := range groups {
+			switch group.Tp() {
+			case execdetails.TpSelectResultRuntimeStats, execdetails.TpRuntimeStatsWithSnapshot:
+				return true
+			}
+		}
+	}
+	_, detailRecords, observedTasks, expectedTasks := runtimeStats.GetCopScanDetailAndCoverage(planID)
+	return detailRecords != 0 || observedTasks != 0 || expectedTasks != 0
+}
+
 func readBillingDemoNodesHaveExecutionEvidence(
 	runtimeStats *execdetails.RuntimeStatsColl,
 	nodes []*FlatOperator,
 ) bool {
-	if runtimeStats == nil {
-		return false
-	}
 	for _, node := range nodes {
-		if node == nil || node.Origin == nil {
-			return true
-		}
-		planID := node.Origin.ID()
-		if basic := runtimeStats.GetBasicRuntimeStats(planID, false); basic != nil && basic.HasBytes() {
-			return true
-		}
-		if runtimeStats.ExistsRootStats(planID) {
-			_, groups := runtimeStats.GetRootStats(planID).MergeStats()
-			for _, group := range groups {
-				switch group.Tp() {
-				case execdetails.TpSelectResultRuntimeStats, execdetails.TpRuntimeStatsWithSnapshot:
-					return true
-				}
-			}
-		}
-		_, detailRecords, observedTasks, expectedTasks := runtimeStats.GetCopScanDetailAndCoverage(planID)
-		if detailRecords != 0 || observedTasks != 0 || expectedTasks != 0 {
+		if readBillingDemoNodeHasExecutionEvidence(runtimeStats, node) {
 			return true
 		}
 	}
@@ -1525,7 +1581,7 @@ func readBillingDemoIndexLookupTableLegProvenSkipped(
 		return false
 	}
 	rootStats := runtimeStats.GetBasicRuntimeStats(candidate.lookup.node.Origin.ID(), false)
-	if rootStats == nil || !rootStats.HasBytes() || rootStats.GetActRows() != 0 {
+	if rootStats == nil || (!rootStats.HasRuntimeRows() && !rootStats.HasBytes()) || rootStats.GetActRows() != 0 {
 		return false
 	}
 	indexRows, ok := readBillingDemoObservedCompleteCopRows(runtimeStats, candidate.indexRoot.node)
@@ -1624,6 +1680,28 @@ func readBillingDemoMaskUnexecutedCTEParts(
 	}
 }
 
+func readBillingDemoApplyOuterDrivenSkipCandidate(
+	mask *readBillingDemoExecutionMask,
+	candidate readBillingDemoSkipCandidate,
+) bool {
+	if mask == nil || mask.isSkipped(candidate.join.node) || mask.isSkipped(candidate.outer.node) {
+		return false
+	}
+	if mask.hasSkippedInner(candidate.join.node) {
+		return false
+	}
+	for _, node := range candidate.innerNodes {
+		if mask.isSkipped(node) {
+			return false
+		}
+	}
+	mask.skippedInnerByJoin[candidate.join.node] = candidate.innerRoot.node
+	for _, node := range candidate.innerNodes {
+		mask.skippedNodes[node] = struct{}{}
+	}
+	return true
+}
+
 func buildReadBillingDemoExecutionMask(
 	flat *FlatPhysicalPlan,
 	runtimeStats *execdetails.RuntimeStatsColl,
@@ -1651,14 +1729,14 @@ func buildReadBillingDemoExecutionMask(
 		emptyMask.planIDOccurrences[planID] = len(occurrences)
 	}
 
-	joinCandidates := make([]readBillingDemoSkipCandidate, 0)
+	outerDrivenCandidates := make([]readBillingDemoSkipCandidate, 0)
 	indexLookupCandidates := make([]readBillingDemoIndexLookupSkipCandidate, 0)
 	indexMergeCandidates := make([]readBillingDemoIndexMergeSkipCandidate, 0)
 	zeroLimitCandidates := make([]readBillingDemoZeroLimitSkipCandidate, 0)
 	for treeOrdinal, tree := range trees {
 		for idx := range tree {
 			if candidate, ok := readBillingDemoSkipCandidateAt(tree, treeOrdinal, idx); ok {
-				joinCandidates = append(joinCandidates, candidate)
+				outerDrivenCandidates = append(outerDrivenCandidates, candidate)
 			}
 			if candidate, ok := readBillingDemoIndexLookupSkipCandidateAt(tree, treeOrdinal, idx); ok {
 				indexLookupCandidates = append(indexLookupCandidates, candidate)
@@ -1671,17 +1749,6 @@ func buildReadBillingDemoExecutionMask(
 			}
 		}
 	}
-	eligibleJoins := make([]readBillingDemoSkipCandidate, 0, len(joinCandidates))
-	for _, candidate := range joinCandidates {
-		if !readBillingDemoCandidateHasExclusiveOwnership(candidate, ownership) ||
-			!readBillingDemoObservedCompletedZero(runtimeStats, candidate.join.node) ||
-			!readBillingDemoObservedCompletedZero(runtimeStats, candidate.outer.node) ||
-			readBillingDemoInnerHasExecutionEvidence(runtimeStats, candidate) {
-			continue
-		}
-		eligibleJoins = append(eligibleJoins, candidate)
-	}
-	acceptedJoins := readBillingDemoRemoveConflictingSkipCandidates(eligibleJoins)
 	eligibleZeroLimits := make([]readBillingDemoZeroLimitSkipCandidate, 0, len(zeroLimitCandidates))
 	for _, candidate := range zeroLimitCandidates {
 		if !readBillingDemoZeroLimitCandidateHasExclusiveOwnership(candidate, ownership) ||
@@ -1696,16 +1763,40 @@ func buildReadBillingDemoExecutionMask(
 	mask := newReadBillingDemoExecutionMask()
 	mask.planIDOccurrences = emptyMask.planIDOccurrences
 	readBillingDemoMaskUnexecutedCTEParts(flat, runtimeStats, mask)
-	proofs := make([]readBillingDemoPlanOccurrence, 0, len(acceptedJoins)*2+len(acceptedZeroLimits)+len(indexLookupCandidates)*2+len(indexMergeCandidates)*3)
-	for _, candidate := range acceptedJoins {
-		if mask.isSkipped(candidate.join.node) {
-			continue
+	proofs := make([]readBillingDemoPlanOccurrence, 0, len(outerDrivenCandidates)*2+len(acceptedZeroLimits)+len(indexLookupCandidates)*2+len(indexMergeCandidates)*3)
+	proofNodes := make(map[*FlatOperator]struct{}, cap(proofs))
+	addProofs := func(newProofs ...readBillingDemoPlanOccurrence) {
+		for _, proof := range newProofs {
+			proofs = append(proofs, proof)
+			proofNodes[proof.node] = struct{}{}
 		}
-		mask.skippedInnerByJoin[candidate.join.node] = candidate.innerRoot.node
-		for _, node := range candidate.innerNodes {
-			mask.skippedNodes[node] = struct{}{}
+	}
+	nodesContainProof := func(nodes []*FlatOperator) bool {
+		for _, node := range nodes {
+			if _, ok := proofNodes[node]; ok {
+				return true
+			}
 		}
-		proofs = append(proofs, candidate.join, candidate.outer)
+		return false
+	}
+	applyOuterDrivenSkips := func() bool {
+		changed := false
+		for _, candidate := range outerDrivenCandidates {
+			if !readBillingDemoCandidateHasExclusiveOwnership(candidate, ownership) ||
+				nodesContainProof(candidate.innerNodes) ||
+				!readBillingDemoOuterDrivenZeroOutputCompatible(runtimeStats, candidate.join.node) ||
+				!readBillingDemoRootKnownZero(runtimeStats, mask, candidate.outer.node) ||
+				readBillingDemoInnerHasUnmaskedExecutionEvidence(runtimeStats, mask, candidate) {
+				continue
+			}
+			if readBillingDemoApplyOuterDrivenSkipCandidate(mask, candidate) {
+				addProofs(candidate.join, candidate.outer)
+				changed = true
+			}
+		}
+		return changed
+	}
+	for applyOuterDrivenSkips() {
 	}
 	for _, candidate := range acceptedZeroLimits {
 		if mask.isSkipped(candidate.root.node) {
@@ -1718,7 +1809,7 @@ func buildReadBillingDemoExecutionMask(
 				break
 			}
 		}
-		if overlapsExistingMask {
+		if overlapsExistingMask || nodesContainProof(candidate.dominatedNodes) {
 			continue
 		}
 		for _, node := range candidate.dominatedNodes {
@@ -1730,7 +1821,7 @@ func buildReadBillingDemoExecutionMask(
 		if candidate.embeddedReader {
 			mask.suppressedTransportProducers[candidate.root.node] = struct{}{}
 		}
-		proofs = append(proofs, candidate.root)
+		addProofs(candidate.root)
 	}
 	for _, candidate := range indexLookupCandidates {
 		if !readBillingDemoIndexLookupCandidateHasExclusiveOwnership(candidate, ownership) ||
@@ -1746,13 +1837,13 @@ func buildReadBillingDemoExecutionMask(
 				break
 			}
 		}
-		if overlapsExistingMask {
+		if overlapsExistingMask || nodesContainProof(candidate.tableNodes) {
 			continue
 		}
 		for _, node := range candidate.tableNodes {
 			mask.skippedNodes[node] = struct{}{}
 		}
-		proofs = append(proofs, candidate.lookup, candidate.indexRoot)
+		addProofs(candidate.lookup, candidate.indexRoot)
 	}
 	for _, candidate := range indexMergeCandidates {
 		if !readBillingDemoIndexMergeCandidateHasExclusiveOwnership(candidate, ownership) ||
@@ -1778,14 +1869,16 @@ func buildReadBillingDemoExecutionMask(
 				break
 			}
 		}
-		if overlapsExistingMask {
+		if overlapsExistingMask || nodesContainProof(candidate.tableNodes) {
 			continue
 		}
 		for _, node := range candidate.tableNodes {
 			mask.skippedNodes[node] = struct{}{}
 		}
-		proofs = append(proofs, candidate.merge)
-		proofs = append(proofs, candidate.partialRoots...)
+		addProofs(candidate.merge)
+		addProofs(candidate.partialRoots...)
+	}
+	for applyOuterDrivenSkips() {
 	}
 	if !readBillingDemoExecutionMaskOwnershipValid(flat, mask, proofs, ownership) {
 		return emptyMask
@@ -2086,7 +2179,7 @@ func readBillingDemoPointLookupLocallyShortCircuited(runtimeStats *execdetails.R
 		return false
 	}
 	basic := runtimeStats.GetBasicRuntimeStats(planID, false)
-	return basic != nil && basic.HasBytes() && basic.GetActRows() == 0
+	return basic != nil && basic.GetActRows() == 0 && (basic.HasRuntimeRows() || basic.HasBytes())
 }
 
 func readBillingDemoPointScanDetailFailure(detail tikvutil.ScanDetail, detailRecords, completedResponses uint64) string {
@@ -3223,6 +3316,12 @@ func readBillingDemoRootUnits(
 		}}, "", true
 	}
 	outputRows, hasOutputRows := readBillingDemoPlanActRows(runtimeStats, op.Origin.ID())
+	outputRowsSource := readBillingDemoInputSourceRuntimeOperatorActRows
+	if !hasOutputRows && operator.opClass == readBillingDemoOpClassLookupJoin && executionMask.hasSkippedInner(op) {
+		outputRows = 0
+		hasOutputRows = true
+		outputRowsSource = readBillingDemoInputSourcePhysicalPlan
+	}
 	if !hasOutputRows || outputRows < 0 {
 		return nil, readBillingDemoReasonMissingRuntimeRows, false
 	}
@@ -3270,7 +3369,7 @@ func readBillingDemoRootUnits(
 		if reason, ok := appendExpressionCPU(inputRows, inputSource); !ok {
 			return nil, reason, false
 		}
-		units = append(units, readBillingDemoUnit{unit: readBillingDemoUnitJoinOutputRows, source: readBillingDemoInputSourceRuntimeOperatorActRows, side: readBillingDemoInputSideAll, value: float64(outputRows), widthSource: explainRUWidthSourceNotApplicable})
+		units = append(units, readBillingDemoUnit{unit: readBillingDemoUnitJoinOutputRows, source: outputRowsSource, side: readBillingDemoInputSideAll, value: float64(outputRows), widthSource: explainRUWidthSourceNotApplicable})
 		if operator.opClass == readBillingDemoOpClassHashJoin {
 			stateRows, ok := readBillingDemoHashStateRows(runtimeStats, op.Origin.ID())
 			if !ok {
@@ -3500,7 +3599,7 @@ func readBillingDemoDirectChildActRows(
 	if child == nil || child.Origin == nil {
 		return 0, false, false
 	}
-	if executionMask.isExplicitZeroLimit(child) || executionMask.suppressesTransportProducer(child) {
+	if readBillingDemoMaskedRootSemanticZero(runtimeStats, executionMask, child) {
 		return 0, true, true
 	}
 	rows, ok = readBillingDemoPlanActRows(runtimeStats, child.Origin.ID())

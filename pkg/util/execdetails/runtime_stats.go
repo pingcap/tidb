@@ -354,6 +354,12 @@ func (e *BasicRuntimeStats) GetActRows() int64 {
 	return e.rows.Load()
 }
 
+// HasRuntimeRows returns whether executor Next has recorded row-count evidence.
+// It can be true even when GetActRows returns zero.
+func (e *BasicRuntimeStats) HasRuntimeRows() bool {
+	return e != nil && e.loop.Load() > 0
+}
+
 // GetInputBytes returns total input bytes of BasicRuntimeStats.
 func (e *BasicRuntimeStats) GetInputBytes() int64 {
 	return e.inputBytes.Load()
