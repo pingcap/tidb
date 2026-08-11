@@ -249,6 +249,10 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return ver, errors.Trace(err)
 	}
 
+	if err := w.registerTTLTableToExternalWorkload(jobCtx.ctx, tbInfo); err != nil {
+		return ver, cancelJobOnExternalTTLWorkloadError(job, err)
+	}
+
 	// Finish this job.
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
 	return ver, errors.Trace(err)
@@ -292,6 +296,9 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
 		if err != nil {
 			return ver, errors.Trace(err)
+		}
+		if err := w.registerTTLTableToExternalWorkload(jobCtx.ctx, tbInfo); err != nil {
+			return ver, cancelJobOnExternalTTLWorkloadError(job, err)
 		}
 
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tbInfo)
@@ -352,11 +359,39 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			return ver, errors.Trace(err)
 		}
 	}
+	if err = w.registerTTLTablesToExternalWorkload(jobCtx.ctx, job, tableInfos); err != nil {
+		return ver, err
+	}
 
 	job.State = model.JobStateDone
 	job.SchemaState = model.StatePublic
 	job.BinlogInfo.SetTableInfos(ver, tableInfos)
 	return ver, errors.Trace(err)
+}
+
+func (w *worker) registerTTLTablesToExternalWorkload(
+	ctx context.Context,
+	job *model.Job,
+	tableInfos []*model.TableInfo,
+) error {
+	registeredTTLTableIDs := make([]int64, 0, len(tableInfos))
+	for i := range tableInfos {
+		if err := w.registerTTLTableToExternalWorkload(ctx, tableInfos[i]); err != nil {
+			for j := len(registeredTTLTableIDs) - 1; j >= 0; j-- {
+				compensateTableID := registeredTTLTableIDs[j]
+				if compensateErr := w.deleteTTLTableFromExternalWorkload(ctx, compensateTableID); compensateErr != nil {
+					logutil.DDLLogger().Warn("failed to roll back TTL table registration in external workload controller",
+						zap.Int64("tableID", compensateTableID),
+						zap.Error(compensateErr))
+				}
+			}
+			return cancelJobOnExternalTTLWorkloadError(job, err)
+		}
+		if tableInfos[i] != nil && tableInfos[i].TTLInfo != nil && tableInfos[i].TTLInfo.Enable {
+			registeredTTLTableIDs = append(registeredTTLTableIDs, tableInfos[i].ID)
+		}
+	}
+	return nil
 }
 
 func createTableOrViewWithCheck(t *meta.Mutator, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {

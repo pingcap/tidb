@@ -526,10 +526,10 @@ func main() {
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
-	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
+	storage, dom, externalWorkloadManager, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
 	terror.MustNil(err)
 	repository.SetupRepository(dom)
-	if externalWorkloadManager := extworkload.GetManagerFromStore(storage); externalWorkloadManager != nil {
+	if externalWorkloadManager != nil {
 		defer closeExternalWorkloadManager(storage, externalWorkloadManager)
 	}
 	svr := createServer(storage, dom)
@@ -659,7 +659,7 @@ func registerStores() error {
 	return err
 }
 
-func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain, error) {
+func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.Domain, extworkload.Manager, error) {
 	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
 		kv.StandAloneTiDB = true
 	}
@@ -670,12 +670,12 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 		if pdhttpCli != nil {
 			pdStatus, err := pdhttpCli.GetStatus(context.Background())
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			if !kerneltype.IsMatch(pdStatus.KernelType) {
 				log.Error("kernel type mismatch", zap.String("pd", pdStatus.KernelType),
 					zap.String("tidb", kerneltype.Name()))
-				return nil, nil, errors.New("kernel type mismatch")
+				return nil, nil, nil, errors.New("kernel type mismatch")
 			}
 		}
 	}
@@ -685,14 +685,20 @@ func createStoreDDLOwnerMgrAndDomain(keyspaceName string) (kv.Storage, *domain.D
 	// Bootstrap a session to load information schema.
 	err := ddl.StartOwnerManager(context.Background(), storage)
 	if err != nil {
-		return nil, nil, err
+		closeExternalWorkloadManager(storage, externalWorkloadManager)
+		return nil, nil, nil, err
 	}
-	dom, err := session.BootstrapSession(storage)
+	dom, err := session.BootstrapSessionWithExternalWorkloadManager(storage, externalWorkloadManager)
 	if err != nil {
-		return nil, nil, err
+		closeExternalWorkloadManager(storage, externalWorkloadManager)
+		return nil, nil, nil, err
 	}
 	initializeExternalWorkloadGCV2(context.Background(), storage, externalWorkloadManager)
-	return storage, dom, nil
+	externalWorkloadManager = extworkload.GetManagerFromStore(storage)
+	if externalWorkloadManager == nil {
+		dom.SetExternalWorkloadManager(nil)
+	}
+	return storage, dom, externalWorkloadManager, nil
 }
 
 // Prometheus push.

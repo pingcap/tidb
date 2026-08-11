@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -348,6 +349,7 @@ type ddlCtx struct {
 	etcdCli      *clientv3.Client
 	autoidCli    *autoid.ClientDiscover
 	schemaLoader SchemaLoader
+	extWorkload  extworkload.Manager
 
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
@@ -780,6 +782,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		etcdCli:           opt.EtcdCli,
 		autoidCli:         opt.AutoIDClient,
 		schemaLoader:      opt.SchemaLoader,
+		extWorkload:       opt.ExtWorkloadMgr,
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*ReorgContext)
