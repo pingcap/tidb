@@ -7,6 +7,7 @@
 //! only in the foreground and are bounded by the current member set.
 
 mod client;
+mod engine;
 mod error;
 mod etcd;
 mod model;
@@ -18,6 +19,7 @@ pub use client::{
     GET_PREV_REGION_PATH, GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH,
     SCAN_REGIONS_PATH, TSO_PATH,
 };
+pub use engine::{is_tiflash, is_tiflash_http_response, is_tiflash_write_http_response};
 pub use error::{PdClientError, PdClientShutdownError, PdOperation};
 pub use etcd::{
     EtcdClient, EtcdError, EtcdWatchEvent, EtcdWatchStats, EtcdWatcher,
