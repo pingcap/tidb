@@ -24,7 +24,7 @@ use std::time::{Duration, Instant};
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
-use tidb_util::globalconn::{Allocator, SimpleAllocator};
+use tidb_util::globalconn::{Allocator, GlobalAllocator};
 
 use crate::configured_user_store::{AuthenticatedIdentity, ConfiguredUserStore};
 use crate::mysql_connection::{serve_mysql_connection_with_tls, MysqlConnectionError};
@@ -36,6 +36,7 @@ use tidb_session::process::ProcessKillTarget;
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
+const STANDALONE_SERVER_ID: u64 = 1;
 
 /// Cloneable process shutdown signal for the sole production accept loop.
 #[derive(Clone, Debug, Default)]
@@ -835,8 +836,8 @@ pub trait QuerySessionFactory: Send + Sync + 'static {
 }
 
 /// Process-wide connection accounting with exactly-once owned-lease cleanup.
-#[derive(Debug, Default)]
 pub struct ConnectionTracker {
+    connection_ids: GlobalAllocator,
     active: AtomicUsize,
     max_active: AtomicUsize,
     accepted: AtomicU64,
@@ -844,9 +845,36 @@ pub struct ConnectionTracker {
     failed: AtomicU64,
 }
 
+impl Default for ConnectionTracker {
+    fn default() -> Self {
+        Self {
+            connection_ids: GlobalAllocator::new(|| STANDALONE_SERVER_ID, true),
+            active: AtomicUsize::default(),
+            max_active: AtomicUsize::default(),
+            accepted: AtomicU64::default(),
+            completed: AtomicU64::default(),
+            failed: AtomicU64::default(),
+        }
+    }
+}
+
+impl fmt::Debug for ConnectionTracker {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ConnectionTracker")
+            .field("active", &self.active())
+            .field("max_active", &self.max_active())
+            .field("accepted", &self.accepted())
+            .field("completed", &self.completed())
+            .field("failed", &self.failed())
+            .finish()
+    }
+}
+
 impl ConnectionTracker {
     pub(crate) fn begin(self: &Arc<Self>) -> ConnectionLease {
-        let id = self.accepted.fetch_add(1, Ordering::AcqRel) + 1;
+        let id = self.connection_ids.next_id();
+        self.accepted.fetch_add(1, Ordering::AcqRel);
         let active = self.active.fetch_add(1, Ordering::AcqRel) + 1;
         self.max_active.fetch_max(active, Ordering::AcqRel);
         ConnectionLease {
@@ -911,6 +939,7 @@ impl Drop for ConnectionLease {
         if self.failed {
             self.tracker.failed.fetch_add(1, Ordering::AcqRel);
         }
+        self.tracker.connection_ids.release(self.id);
     }
 }
 
@@ -1237,7 +1266,6 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         )?;
 
         let mut accepted = 0_usize;
-        let connection_ids = SimpleAllocator::new();
         let accept_result = (|| loop {
             if limit == Some(accepted) || self.shutdown.is_shutdown_requested() {
                 break Ok(());
@@ -1262,7 +1290,10 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
                 }
             };
             prepare_stream(&stream, self.connection_timeout)?;
-            let connection_key = connection_ids.next_id();
+            let connection_key = u64::try_from(accepted)
+                .ok()
+                .and_then(|value| value.checked_add(1))
+                .expect("accepted connection count fits u64");
             let cancellation = ConnectionCancellation::default();
             eprintln!(
                     "{{\"event\":\"connection_dispatch\",\"connection_key\":{connection_key},\"worker_index\":{worker_index}}}"

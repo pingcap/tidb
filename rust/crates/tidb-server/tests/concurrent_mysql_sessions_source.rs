@@ -21,6 +21,7 @@ use tidb_server::{
     NodeConfig, QueryCancellationLease, QueryResult, QuerySession, QuerySessionFactory,
     ResultSetSource, SessionContext, SqlQueryError,
 };
+use tidb_util::globalconn::{parse_conn_id, Gcid};
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;
@@ -299,7 +300,24 @@ fn fixed_workers_hold_three_authenticated_sessions_concurrently_and_drain_all() 
     server.join().unwrap();
 
     client_ids.sort_unstable();
-    assert_eq!(client_ids, [1, 2, 3]);
+    let expected_ids = [1, 2, 3].map(|local_conn_id| {
+        Gcid {
+            server_id: 1,
+            local_conn_id,
+            is_64bits: false,
+        }
+        .to_conn_id()
+    });
+    assert_eq!(
+        client_ids,
+        expected_ids.map(|id| u32::try_from(id).unwrap())
+    );
+    for id in &client_ids {
+        let (gcid, truncated) = parse_conn_id(u64::from(*id)).unwrap();
+        assert!(!truncated);
+        assert_eq!(gcid.server_id, 1);
+        assert!(!gcid.is_64bits);
+    }
     let mut session_ids = factory
         .contexts
         .lock()
@@ -308,7 +326,7 @@ fn fixed_workers_hold_three_authenticated_sessions_concurrently_and_drain_all() 
         .map(|context| context.connection_id)
         .collect::<Vec<_>>();
     session_ids.sort_unstable();
-    assert_eq!(session_ids, [1, 2, 3]);
+    assert_eq!(session_ids, expected_ids);
     assert_eq!(factory.max_opening.load(Ordering::Acquire), 3);
     assert_eq!(tracker.max_active(), 3);
     assert!(tracker.max_active() <= config.max_connections);

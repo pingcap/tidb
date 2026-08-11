@@ -32,6 +32,7 @@ use tidb_server::{
     serve_mysql_connection, ConfiguredUserStore, ConnectionCancellation, ConnectionExit,
     ConnectionTracker, PipelineSessionFactory,
 };
+use tidb_util::globalconn::parse_conn_id;
 
 const CLIENT_PROTOCOL_41: u32 = 1 << 9;
 const CLIENT_SECURE_CONNECTION: u32 = 1 << 15;
@@ -1673,6 +1674,10 @@ fn mysql_client_reads_the_process_list_and_kills_by_id() {
     assert_eq!(row[6], "autocommit");
     assert_eq!(row[7], "SHOW PROCESSLIST");
     let connection_id: u64 = row[0].parse().unwrap();
+    let (gcid, truncated) = parse_conn_id(connection_id).unwrap();
+    assert!(!truncated);
+    assert_eq!(gcid.server_id, 1);
+    assert!(!gcid.is_64bits);
 
     // FULL differs only in that Info is not truncated.
     let full = run_query(&mut client, &mut reader, "SHOW FULL PROCESSLIST");
