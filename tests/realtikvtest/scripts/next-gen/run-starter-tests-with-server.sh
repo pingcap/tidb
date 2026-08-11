@@ -286,6 +286,10 @@ function run_under_cluster() {
         pd_status_url="http://${pd_status_url}"
     fi
     local tikv_worker_url="${STARTER_TIKV_WORKER_URL:-localhost:19000}"
+    local txn_chunk_writer_addr="${STARTER_TXN_CHUNK_WRITER_ADDR:-$tikv_worker_url}"
+    local txn_chunk_writer_concurrency="${STARTER_TXN_CHUNK_WRITER_CONCURRENCY:-2}"
+    local txn_chunk_max_size="${STARTER_TXN_CHUNK_MAX_SIZE:-262144}"
+    local txn_file_min_mutation_size="${STARTER_TXN_FILE_MIN_MUTATION_SIZE:-1048576}"
 
     prepare_starter_keyspace "${keyspace_name}" "${pd_status_url}" "${tidb_server_bin}" "${self_dir}"
 
@@ -293,6 +297,12 @@ function run_under_cluster() {
 deploy-mode = "starter"
 max-allowed-packet = ${max_allowed_packet}
 tikv-worker-url = "${tikv_worker_url}"
+
+[tikv-client]
+txn-chunk-writer-addr = "${txn_chunk_writer_addr}"
+txn-chunk-writer-concurrency = ${txn_chunk_writer_concurrency}
+txn-chunk-max-size = ${txn_chunk_max_size}
+txn-file-min-mutation-size = ${txn_file_min_mutation_size}
 EOF
 
     local activate_metadata_json=""
