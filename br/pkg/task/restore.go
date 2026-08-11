@@ -852,6 +852,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			schedulersRemovable = true
 			return errors.Trace(err)
 		}
+		if client.GetCheckPrivilegeTableRowsCollateCompatiblity() && canLoadSysTablePhysical {
+			log.Info("The system tables schema match so no need to set sys check collation")
+			client.SetCheckPrivilegeTableRowsCollateCompatiblity(false)
+		}
 	}
 
 	if client.IsFullClusterRestore() && client.HasBackedUpSysDB() {
