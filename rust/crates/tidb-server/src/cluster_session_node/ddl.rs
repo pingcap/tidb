@@ -172,11 +172,11 @@ impl IndexBackfiller for KvTableIndexBackfiller {
         };
         let name = index.name.clone();
         if plan.add {
-            // The DDL's own context: no session variables reach a catalog
-            // change, and the loader refuses a generated column outright, so
-            // nothing here can read a session fact that this default lacks.
+            // This cluster DDL plan carries no session context, so its
+            // backfill uses the DDL statement defaults while still
+            // recomputing every generated column through RowDecoder.
             table
-                .create_index(index, &StmtContext::default())
+                .create_index_with_context(index, &StmtContext::default())
                 .map_err(backfill_failure)?;
         } else if !table
             .drop_index(&name, &StmtContext::default().session_zone())

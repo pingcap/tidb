@@ -135,8 +135,8 @@ pub use explain::{
 pub use hash_agg::{AggFunc, AggKind, HashAggExec};
 pub use join::{JoinExec, JoinKind};
 pub use kv_table::{
-    FkAction, IndexRange, KvColumn, KvForeignKey, KvIndex, KvTable, RowDecodeContext, TableCharset,
-    TableScanExec,
+    DecodedRow, FkAction, GeneratedColumnSelection, IndexRange, KvColumn, KvForeignKey, KvIndex,
+    KvTable, RowDecodeContext, RowDecoder, TableCharset, TableHandle, TableScanExec,
 };
 pub use limit::LimitExec;
 pub use mem_quota::{OomAction, SessionMemory, StatementMemory};

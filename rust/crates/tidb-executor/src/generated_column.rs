@@ -312,6 +312,22 @@ pub fn materialize<S: GeneratedColumnSlot>(
     only_virtual: bool,
     ctx: &impl tidb_expr::Columns,
 ) -> Result<(), GenerationError> {
+    materialize_with_conversion_flags(
+        columns,
+        row,
+        only_virtual,
+        ctx,
+        tidb_datatype::DEFAULT_STATEMENT_FLAGS,
+    )
+}
+
+pub(crate) fn materialize_with_conversion_flags<S: GeneratedColumnSlot>(
+    columns: &[S],
+    row: &mut [Datum],
+    only_virtual: bool,
+    ctx: &impl tidb_expr::Columns,
+    conversion_flags: tidb_datatype::ConversionFlags,
+) -> Result<(), GenerationError> {
     if !columns.iter().any(|c| c.generation().is_some()) {
         return Ok(());
     }
@@ -358,7 +374,7 @@ pub fn materialize<S: GeneratedColumnSlot>(
         let value = if value.is_null() {
             Datum::Null
         } else {
-            match value.convert_to(column.column_type(), tidb_datatype::DEFAULT_STATEMENT_FLAGS) {
+            match value.convert_to_in(column.column_type(), conversion_flags, &ctx.time_zone()) {
                 Ok(converted) => converted.value,
                 Err(error) => {
                     return Err(GenerationError {

@@ -1149,7 +1149,7 @@ mod tests {
         let index = kv_index(&index(1, "vi", "v", 1, -1), &columns).expect("a full-value index");
 
         walked
-            .create_index(index, &tidb_executor::StmtContext::default())
+            .create_index_with_context(index, &tidb_executor::StmtContext::default())
             .expect("a backfill that allocates nothing needs no allocator");
         assert!(
             walked

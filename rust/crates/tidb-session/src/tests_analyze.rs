@@ -126,6 +126,62 @@ fn analyze_publishes_the_row_count_and_the_distribution() {
     );
 }
 
+/// The row decoder used by `ANALYZE` evaluates generated columns instead of
+/// refusing the table or sampling the stored placeholder for a virtual one.
+#[test]
+fn analyze_materializes_virtual_and_stored_generated_columns() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE generated_stats (\
+                 a INT, \
+                 virtual_value INT AS (a + 1), \
+                 stored_value INT AS (a + 2) STORED\
+             )",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO generated_stats (a) VALUES (1),(2),(2),(3)")
+        .unwrap();
+
+    assert_eq!(
+        session.run("ANALYZE TABLE generated_stats").unwrap(),
+        StmtResult::Affected(0)
+    );
+
+    session
+        .with_catalog_mut(|catalog| {
+            let (table_id, column_ids) = {
+                let Some(tidb_executor::TableEntry::Kv(table)) =
+                    catalog.table_in("test", "generated_stats")
+                else {
+                    panic!("generated_stats is not stored as table bytes")
+                };
+                (
+                    table.table_id,
+                    table
+                        .columns
+                        .iter()
+                        .map(|column| column.id)
+                        .collect::<Vec<_>>(),
+                )
+            };
+            let statistics = catalog
+                .table_statistics(table_id)
+                .expect("ANALYZE publishes table statistics");
+            assert_eq!(statistics.row_count, 4);
+            assert_eq!(column_ids.len(), 3);
+            for column_id in column_ids {
+                assert!(
+                    statistics.columns.contains_key(&column_id),
+                    "ANALYZE omitted generated column id {column_id}"
+                );
+            }
+            Ok(())
+        })
+        .unwrap();
+}
+
 /// An ANALYZED EMPTY table stays pseudo.
 ///
 /// Captured -- and this is the one that looks wrong until you check it:

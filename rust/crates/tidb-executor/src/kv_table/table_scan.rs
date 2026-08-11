@@ -16,8 +16,7 @@
 //! that walk a key range, and the [`TableScanExec`] executor those feed.
 //!
 //! Inside: [`capture_decoded_column_ids`], the per-thread probe that makes
-//! column pruning checkable; `decode_int_handle` and `RowDecoder`, the
-//! inverse of the encode path in the parent module; [`RowCursor`] and
+//! column pruning checkable; [`RowCursor`] and
 //! [`IndexRangeCursor`] over the in-process store, [`RemoteRowCursor`] over a
 //! coprocessor stream; and [`TableScanExec`], which turns any of them into
 //! chunk rows and also carries the `TableAccess` plan surface (pruning,
@@ -27,9 +26,9 @@
 //! `DecodeRowToDatumMap`/`DecodeRecordKey`: the writes live with the table in
 //! the parent module, and this file is only the read direction.
 
+use super::row_decoder::{decode_int_handle, RowDecoder};
 use super::{
-    index_entry_handle, IndexRange, KvColumn, KvIndex, KvTable, KvTableError, RowDecodeContext,
-    TableHandle,
+    index_entry_handle, IndexRange, KvIndex, KvTable, KvTableError, RowDecodeContext, TableHandle,
 };
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::predicate_pushdown::ScanPredicate;
@@ -38,16 +37,13 @@ use crate::remote_scan::{
     EXTRA_HANDLE_COLUMN_ID,
 };
 use crate::storage::StorageIterator;
-use std::collections::BTreeMap;
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
     encode_index_seek_key, encode_row_key_with_handle, get_table_handle_key_range, RecordHandle,
-    RECORD_ROW_KEY_LEN,
 };
 use tidb_codec::Encoder;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_expr::schema::Schema;
-use tidb_tablecodec::decode_table_row_to_map;
 use tidb_txnkv::Key;
 
 /// The read direction of [`KvTable`]: the entry points that open a decoder
@@ -67,64 +63,28 @@ impl KvTable {
         &self,
         keep: Option<&[usize]>,
         context: &RowDecodeContext,
-    ) -> RowDecoder {
-        let kept: Option<std::collections::BTreeSet<usize>> = keep.map(|keep| {
-            let mut kept: std::collections::BTreeSet<usize> = keep.iter().copied().collect();
-            // A kept generated column is computed, not decoded, so the
-            // columns its expression READS have to survive the pruning even
-            // when the query never named them. Repeating to a fixed point
-            // covers a chain of generated columns.
-            loop {
-                let before = kept.len();
-                for offset in kept.clone() {
-                    if let Some(generated) = &self.columns[offset].generated {
-                        // Names, resolved against the current column list --
-                        // the dependency set is keyed by name so no ALTER can
-                        // leave it pointing at a column it never read.
-                        //
-                        // A name that does NOT resolve is a catalog bug: DDL
-                        // refuses to drop or rename a column a generated
-                        // expression reads (3108/3837), and nothing else can
-                        // unmake a name. There is no error channel on a row
-                        // decoder, and the release fallback -- decode fewer
-                        // columns, so the expression evaluates over holes --
-                        // is exactly the silent wrong answer #202 was about,
-                        // so the bug is asserted where it can be seen.
-                        let resolved = crate::generated_column::dependency_offsets(
-                            &self.columns,
-                            &generated.dependencies,
-                        );
-                        debug_assert!(
-                            resolved.is_ok(),
-                            "generated column `{}` reads `{}`, which the table does not define",
-                            self.columns[offset].name,
-                            resolved.as_ref().unwrap_err(),
-                        );
-                        kept.extend(resolved.unwrap_or_default());
-                    }
-                }
-                if kept.len() == before {
-                    break;
-                }
-            }
-            kept
-        });
-        let column_types: BTreeMap<i64, FieldType> = self
-            .columns
-            .iter()
-            .enumerate()
-            .filter(|(offset, _)| kept.as_ref().is_none_or(|kept| kept.contains(offset)))
-            .map(|(_, c)| (c.id, c.field_type.clone()))
-            .collect();
-        note_decoded_column_ids(column_types.keys().copied());
-        RowDecoder {
-            column_types,
-            columns: self.columns.clone(),
-            pk_handle_offset: self.pk_handle_offset,
-            common_handle_offsets: self.common_handle_offsets.clone(),
-            keep: keep.map(<[usize]>::to_vec),
-            context: context.clone(),
-        }
+    ) -> Result<RowDecoder, KvTableError> {
+        let decoder = RowDecoder::for_table_read(
+            self.columns.clone(),
+            self.pk_handle_offset,
+            self.common_handle_offsets.clone(),
+            keep,
+            context.clone(),
+        )?;
+        note_decoded_column_ids(decoder.decoded_column_ids());
+        Ok(decoder)
+    }
+
+    fn row_decoder_recomputed(
+        &self,
+        context: &RowDecodeContext,
+    ) -> Result<RowDecoder, KvTableError> {
+        RowDecoder::for_recomputed_read(
+            self.columns.clone(),
+            self.pk_handle_offset,
+            self.common_handle_offsets.clone(),
+            context.clone(),
+        )
     }
 
     /// A forward cursor over the table's record-key range, in key order.
@@ -162,7 +122,15 @@ impl KvTable {
         handle_ranges: Option<&[IndexRange]>,
         context: &RowDecodeContext,
     ) -> Result<RowCursor, KvTableError> {
-        let decoder = self.row_decoder_projected(keep, context);
+        let decoder = self.row_decoder_projected(keep, context)?;
+        self.row_cursor_with_decoder(decoder, handle_ranges)
+    }
+
+    fn row_cursor_with_decoder(
+        &mut self,
+        decoder: RowDecoder,
+        handle_ranges: Option<&[IndexRange]>,
+    ) -> Result<RowCursor, KvTableError> {
         let mut iterators = Vec::new();
         for (low, upper) in self.record_key_ranges(handle_ranges) {
             iterators.push(
@@ -331,11 +299,11 @@ impl KvTable {
         // `Unsupported` the caller turned into a byte-level cursor) is not
         // recorded as a coprocessor read.
         crate::storage::note_storage_op(|ops| ops.cop_scans += 1);
-        let decoder = self.row_decoder_projected(Some(keep), context);
+        let decoder = self.row_decoder_projected(Some(keep), context)?;
         let mut staged = Vec::with_capacity(scan.staged.len());
         for (key, value) in scan.staged {
             let row = match value {
-                Some(value) => Some(decoder.decode(key.as_bytes(), &value)?.1),
+                Some(value) => Some(decoder.decode_record(key.as_bytes(), &value)?.1),
                 None => None,
             };
             staged.push((key.into_bytes(), row));
@@ -429,6 +397,19 @@ impl KvTable {
         context: &RowDecodeContext,
     ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
         let mut cursor = self.row_cursor_projected_with_context(None, handle_ranges, context)?;
+        let mut rows = Vec::new();
+        while let Some(entry) = cursor.next_row()? {
+            rows.push(entry);
+        }
+        Ok(rows)
+    }
+
+    pub(crate) fn scan_rows_with_handles_recomputed(
+        &mut self,
+        context: &RowDecodeContext,
+    ) -> Result<Vec<(TableHandle, Vec<Datum>)>, KvTableError> {
+        let decoder = self.row_decoder_recomputed(context)?;
+        let mut cursor = self.row_cursor_with_decoder(decoder, None)?;
         let mut rows = Vec::new();
         while let Some(entry) = cursor.next_row()? {
             rows.push(entry);
@@ -593,172 +574,6 @@ pub(crate) fn note_decoded_column_ids(ids: impl Iterator<Item = i64>) {
     });
 }
 
-/// The integer handle a record key encodes: the trailing big-endian-ordered
-/// eight bytes `encode_row_key_with_handle` wrote.
-pub(crate) fn decode_int_handle(key: &[u8]) -> Result<i64, KvTableError> {
-    let tail: [u8; 8] = key
-        .get(key.len().wrapping_sub(8)..)
-        .and_then(|bytes| bytes.try_into().ok())
-        .ok_or_else(|| KvTableError::Decode("record key is too short for a handle".to_owned()))?;
-    // The codec writes the handle sign-flipped so byte order matches numeric
-    // order; `decode_int` is its inverse.
-    Ok(i64::from_be_bytes(tail) ^ i64::MIN)
-}
-
-/// Everything decoding a record key/value pair into a row needs, owned
-/// independently of the [`KvTable`] it was taken from.
-#[derive(Clone, Debug)]
-pub(crate) struct RowDecoder {
-    columns: Vec<KvColumn>,
-    column_types: BTreeMap<i64, FieldType>,
-    pk_handle_offset: Option<usize>,
-    common_handle_offsets: Vec<usize>,
-    /// The column offsets this decoder keeps, ascending and unique, or `None`
-    /// for the whole schema. The projection runs AFTER the handle columns are
-    /// filled, so a kept handle column reads its real value and a dropped one
-    /// is discarded rather than left holding a substitute -- that ordering is
-    /// the point, and it is why `column_types` may ask the row codec for
-    /// fewer ids than the table has columns.
-    keep: Option<Vec<usize>>,
-    /// The statement class and session zone used to materialize a missing
-    /// column's origin default and render stored `TIMESTAMP` values.
-    ///
-    /// It belongs to the DECODER rather than to the table because the table
-    /// is shared by every session while the zone is not: two sessions
-    /// scanning the same table must read the same stored bytes as two
-    /// different wall-clock values, which is exactly what `TIMESTAMP` means
-    /// and `DATETIME` does not.
-    context: RowDecodeContext,
-}
-
-/// Restores the handle columns into a decoded row, which Go does by reading
-/// `h.IntValue()` or `h.EncodedCol(i)` rather than the value.
-///
-/// Go `tablecodec.DecodeHandleToDatumMap`: each handle column goes through
-/// `decodeHandleToDatum` and then `Unflatten`. Both halves matter and neither
-/// is optional.
-///
-/// * `decodeHandleToDatum` reads an INT handle as an unsigned datum when the
-///   column carries the unsigned flag, so an `unsigned bigint` primary key
-///   past `i64::MAX` is not a negative number (captured: a row keyed
-///   `18446744073709551615` selects back as `18446744073709551615`).
-/// * `Unflatten` turns the FLAT stored form into the column's own type. A
-///   common handle is written flat -- a `bit` column as an integer, a
-///   `datetime` as its packed `uint64` -- and reading it back without
-///   unflattening hands the rest of the engine a datum whose kind disagrees
-///   with the column's declared type. That is not merely untidy: it panicked a
-///   `bit(1)` primary key in a var-length chunk column, and a `datetime`
-///   primary key would have read back as a bare integer (captured: a row keyed
-///   `'2020-01-02 03:04:05'` selects back as `2020-01-02 03:04:05`).
-pub(crate) fn fill_handle_columns(
-    columns: &[KvColumn],
-    pk_handle_offset: Option<usize>,
-    common_handle_offsets: &[usize],
-    row: &mut [Datum],
-    handle: &TableHandle,
-    zone: &SessionTimeZone,
-) -> Result<(), KvTableError> {
-    let unflatten = |offset: usize, value: Datum| -> Result<Datum, KvTableError> {
-        tidb_tablecodec::unflatten_datum(value, &columns[offset].field_type, Some(zone))
-            .map_err(|e| KvTableError::Decode(format!("{e:?}")))
-    };
-    match handle {
-        TableHandle::Int(value) => {
-            if let Some(offset) = pk_handle_offset {
-                let decoded = if columns[offset].field_type.is_unsigned() {
-                    Datum::UInt(*value as u64)
-                } else {
-                    Datum::Int(*value)
-                };
-                row[offset] = unflatten(offset, decoded)?;
-            }
-        }
-        TableHandle::Common(bytes) => {
-            let mut rest: &[u8] = bytes;
-            for offset in common_handle_offsets {
-                let (remaining, value) = tidb_codec::decode_one(rest)
-                    .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-                row[*offset] = unflatten(*offset, value)?;
-                rest = remaining;
-            }
-        }
-    }
-    Ok(())
-}
-
-impl RowDecoder {
-    /// The handle a record key encodes: the bytes after the record prefix,
-    /// read as an integer or kept whole as a common handle.
-    fn record_handle(&self, key: &[u8]) -> Result<TableHandle, KvTableError> {
-        if self.common_handle_offsets.is_empty() {
-            return decode_int_handle(key).map(TableHandle::Int);
-        }
-        let bytes = key
-            .get(RECORD_ROW_KEY_LEN - 8..)
-            .ok_or_else(|| KvTableError::Decode("record key is too short".to_owned()))?;
-        Ok(TableHandle::Common(bytes.to_vec()))
-    }
-
-    /// One stored record, as a handle plus a row in schema order.
-    pub(crate) fn decode(
-        &self,
-        key: &[u8],
-        value: &[u8],
-    ) -> Result<(TableHandle, Vec<Datum>), KvTableError> {
-        let handle = self.record_handle(key)?;
-        let mut decoded =
-            decode_table_row_to_map(value, &self.column_types, Some(self.context.zone()))
-                .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-        let mut row = Vec::with_capacity(self.columns.len());
-        for column in &self.columns {
-            let value = match decoded.remove(&column.id) {
-                Some(value) => value,
-                // A row written before this column existed reads back its
-                // origin default.
-                None => column
-                    .origin_default_value(self.context.origin_default_flags(), self.context.zone())
-                    .map_err(|error| KvTableError::Decode(error.to_string()))?,
-            };
-            row.push(value);
-        }
-        fill_handle_columns(
-            &self.columns,
-            self.pk_handle_offset,
-            &self.common_handle_offsets,
-            &mut row,
-            &handle,
-            self.context.zone(),
-        )?;
-        // A VIRTUAL generated column was never written, so it is restored the
-        // same way it was skipped: by evaluating its expression over the row.
-        // This runs BEFORE the projection because the expression may read a
-        // column the projection drops.
-        //
-        // A scan is a READ, so it evaluates at Go's query level: a zero
-        // divisor warns and the column reads NULL rather than failing the
-        // statement -- see `KvTable::fill_virtual_columns`.
-        crate::generated_column::materialize(
-            &self.columns,
-            &mut row,
-            true,
-            &tidb_expr::ZonedNoColumns(self.context.zone().clone()),
-        )
-        .map_err(|error| KvTableError::Generation {
-            column: error.column,
-            detail: error.detail,
-            eval: error.eval,
-        })?;
-        if let Some(keep) = &self.keep {
-            let projected: Vec<Datum> = keep
-                .iter()
-                .map(|offset| std::mem::replace(&mut row[*offset], Datum::Null))
-                .collect();
-            return Ok((handle, projected));
-        }
-        Ok((handle, row))
-    }
-}
-
 /// A forward cursor over a table's record range, decoding one row per pull.
 ///
 /// See [`KvTable::row_cursor`]. Over
@@ -793,7 +608,7 @@ impl RowCursor {
             }
             let decoded = self
                 .decoder
-                .decode(iterator.key().as_bytes(), iterator.value())?;
+                .decode_record(iterator.key().as_bytes(), iterator.value())?;
             iterator
                 .next()
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;

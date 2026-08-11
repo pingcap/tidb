@@ -40,6 +40,7 @@ mod auto_id;
 mod auto_increment;
 mod column_deps;
 mod index_entries;
+mod row_decoder;
 mod table_meta;
 mod table_scan;
 
@@ -52,6 +53,7 @@ pub use auto_id::{
 
 pub use auto_increment::{AutoIncrement, TableAutoId};
 
+pub use row_decoder::{DecodedRow, GeneratedColumnSelection, RowDecoder};
 pub use table_meta::{
     index_ranges_estimated_memory_usage, intersect_index_ranges, FkAction, IndexRange, KvColumn,
     KvForeignKey, KvIndex, RowDecodeContext, TableCharset, TableHandle,
@@ -62,14 +64,14 @@ pub use table_scan::{
 
 use crate::storage::{MemTableStorage, StorageError, TableStorage};
 use auto_id::AutoIdAllocator;
-use std::collections::{BTreeMap, HashSet};
+use row_decoder::fill_handle_columns;
+use std::collections::HashSet;
 use table_meta::NOT_NULL_FLAG;
-use table_scan::fill_handle_columns;
 use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 
 use index_entries::{duplicate_value_text, index_entry_handle};
-use tidb_tablecodec::{decode_table_row_to_map, encode_table_row};
+use tidb_tablecodec::encode_table_row;
 use tidb_txnkv::Key;
 
 /// Deduplicates index columns by table-column offset, preserving the first
@@ -1025,39 +1027,6 @@ impl KvTable {
             .map_err(generation_error)
     }
 
-    /// Restores the generated columns a decoded row does not carry: the
-    /// VIRTUAL ones, whose value was never written.
-    ///
-    /// The READ path evaluates at Go's query level, where a zero divisor is a
-    /// warning and the column reads NULL -- `ERROR_FOR_DIVISION_BY_ZERO` is
-    /// resolved from the SQL mode for `INSERT`/`UPDATE`/`DELETE` only
-    /// (`errctx.ErrGroupDividedByZero`), and a `SELECT` is not one of those.
-    /// A caller that needs the WRITE level -- an index backfill, whose value
-    /// is about to be persisted -- passes its own context to
-    /// [`Self::fill_virtual_columns_in`].
-    ///
-    /// `zone` is the reading session's `time_zone`, which the expression is
-    /// REBUILT in when it folds a temporal literal (Go rewrites the stored
-    /// AST per statement); it is not optional decoration, since `NoColumns`
-    /// alone would answer the trait's mock-oracle zone.
-    fn fill_virtual_columns(
-        &self,
-        row: &mut [Datum],
-        zone: &SessionTimeZone,
-    ) -> Result<(), KvTableError> {
-        self.fill_virtual_columns_in(row, &tidb_expr::ZonedNoColumns(zone.clone()))
-    }
-
-    /// [`Self::fill_virtual_columns`] under a caller-chosen context.
-    fn fill_virtual_columns_in(
-        &self,
-        row: &mut [Datum],
-        ctx: &impl tidb_expr::Columns,
-    ) -> Result<(), KvTableError> {
-        crate::generated_column::materialize(&self.columns, row, true, ctx)
-            .map_err(generation_error)
-    }
-
     /// The handle a row's values produce.
     ///
     /// A table with no clustered handle gets Go's `_tidb_rowid`, and that
@@ -1230,18 +1199,11 @@ impl KvTable {
         {
             return Err(KvTableError::DuplicateKeyName(index.name.clone()));
         }
-        // Backfill from the rows that already exist. The scan filled the
-        // virtual columns at the READ level; the entries about to be
-        // PERSISTED are a write, so they are recomputed under the DDL's own
-        // context -- which is what makes `ALTER TABLE t ADD INDEX ((100/a))`
-        // over a row with `a = 0` fail with 1365 under
-        // `ERROR_FOR_DIVISION_BY_ZERO` instead of quietly indexing a NULL.
-        // Recomputation is idempotent, so this changes no value that the
-        // read level already agreed on.
-        let mut rows = self.scan_rows_with_handles_with_context(decode_context)?;
-        for (_, row) in &mut rows {
-            self.fill_virtual_columns_in(row, ctx)?;
-        }
+        // Go's index worker uses a full RowDecoder map. Every generated
+        // column is therefore recomputed under the DDL statement context
+        // before an index entry is persisted, including STORED columns whose
+        // old bytes may predate this backfill.
+        let rows = self.scan_rows_with_handles_recomputed(decode_context)?;
         let mut written = Vec::new();
         for (handle, row) in &rows {
             let (key, distinct) = self.index_key(&index, row, handle, &zone)?;
@@ -1301,7 +1263,7 @@ impl KvTable {
             return Ok(false);
         };
         let index = self.indexes.remove(position);
-        let rows = self.scan_rows_with_handles_with_context(decode_context)?;
+        let rows = self.scan_rows_with_handles_recomputed(decode_context)?;
         for (handle, row) in &rows {
             let (key, _) = self.index_key(&index, row, handle, zone)?;
             self.store
@@ -1928,32 +1890,19 @@ impl KvTable {
         handle: &TableHandle,
         context: &RowDecodeContext,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
+        let decoder = RowDecoder::for_table_read(
+            self.columns.clone(),
+            self.pk_handle_offset,
+            self.common_handle_offsets.clone(),
+            None,
+            context.clone(),
+        )?;
         let Some((_, entry)) = self.stored_record(handle)? else {
             return Ok(None);
         };
-        let column_types: BTreeMap<i64, FieldType> = self
-            .columns
-            .iter()
-            .map(|c| (c.id, c.field_type.clone()))
-            .collect();
-        let mut decoded = decode_table_row_to_map(&entry, &column_types, Some(context.zone()))
-            .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-        let mut row = Vec::with_capacity(self.columns.len());
-        for column in &self.columns {
-            let value = match decoded.remove(&column.id) {
-                Some(value) => value,
-                None => column
-                    .origin_default_value(context.origin_default_flags(), context.zone())
-                    .map_err(|error| KvTableError::Decode(error.to_string()))?,
-            };
-            row.push(value);
-        }
-        // The handle columns are not in the value; Go reads them from the
-        // handle itself.
-        self.fill_handle_columns(&mut row, handle, context.zone())?;
-        // Nor is a VIRTUAL generated column, whose value is its expression.
-        self.fill_virtual_columns(&mut row, context.zone())?;
-        Ok(Some(row))
+        Ok(Some(
+            decoder.decode_and_eval(handle, &entry)?.into_parts().0,
+        ))
     }
 
     /// Whether a row is already stored under `handle`, in ANY partition.

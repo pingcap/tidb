@@ -72,7 +72,7 @@ pub fn analyze_kv_table(
     let decode_context = RowDecodeContext::for_analyze(ctx);
     let plan = kv_analyze_plan(table, &decode_context)?;
     let rows = table
-        .scan_rows_with_context(&decode_context)
+        .scan_rows_with_handles_recomputed(&decode_context)
         .map_err(|error| {
             AnalyzeError::Unsupported(format!(
                 "this node could not read `{}` to analyze it: {error:?}",
@@ -81,7 +81,7 @@ pub fn analyze_kv_table(
         })?;
     let analyzed_columns = plan.columns().len();
     let mut run = AnalyzeRun::start(&plan, options, realtime_count)?;
-    for row in &rows {
+    for (_, row) in &rows {
         run.push(&row[..analyzed_columns])?;
     }
     let analyzed = run.finish()?;
@@ -167,13 +167,6 @@ fn kv_analyze_plan(
     let visible = table.visible_columns();
     let mut columns = Vec::with_capacity(visible.len());
     for column in visible {
-        if column.generated.is_some() {
-            return Err(AnalyzeError::Unsupported(format!(
-                "this node does not analyze `{}`.`{}`: a generated column's value is an \
-                 expression it does not evaluate over stored rows",
-                table.name, column.name
-            )));
-        }
         let qualified = format!("`{}`.`{}`", table.name, column.name);
         let collation = AnalyzedColumn::sampling_collation(&column.field_type, &qualified)?;
         columns.push(AnalyzedColumn {

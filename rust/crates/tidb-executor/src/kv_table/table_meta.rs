@@ -34,15 +34,14 @@ use tidb_datatype::{Charset, Collation, ConversionFlags, Datum, FieldType, Sessi
 
 /// The statement-owned facts needed while stored row bytes become Datums.
 ///
-/// Go hands row decoding an expression/type context, so the same absent
-/// column can be cast under SELECT, DML, DDL, or ANALYZE flags without the
-/// table inventing a process-wide default. Rust keeps only the two facts this
-/// decoder consumes: the flags for `OriginDefaultValue` and the session zone
-/// for temporal decoding.
-#[derive(Clone, Debug)]
+/// Go hands row decoding the statement's expression/type context. Keeping
+/// that context intact makes defaults, generated expressions, warnings,
+/// SQL-mode error levels, and temporal values one statement-owned decision.
+#[derive(Clone)]
 pub struct RowDecodeContext {
     origin_default_flags: ConversionFlags,
     zone: SessionTimeZone,
+    expression: crate::StmtContext,
 }
 
 impl RowDecodeContext {
@@ -57,6 +56,7 @@ impl RowDecodeContext {
         Self {
             origin_default_flags: tidb_datatype::DEFAULT_STATEMENT_FLAGS,
             zone: zone.clone(),
+            expression: crate::StmtContext::for_query().with_time_zone(zone.clone()),
         }
     }
 
@@ -67,6 +67,7 @@ impl RowDecodeContext {
         Self {
             origin_default_flags: ctx.query_default_conversion_flags(),
             zone: ctx.session_zone(),
+            expression: ctx.clone(),
         }
     }
 
@@ -77,6 +78,7 @@ impl RowDecodeContext {
         Self {
             origin_default_flags: ctx.write_conversion_flags(),
             zone: ctx.session_zone(),
+            expression: ctx.clone(),
         }
     }
 
@@ -87,6 +89,7 @@ impl RowDecodeContext {
         Self {
             origin_default_flags: ctx.reorg_default_conversion_flags(),
             zone: ctx.session_zone(),
+            expression: ctx.clone(),
         }
     }
 
@@ -102,6 +105,7 @@ impl RowDecodeContext {
         Self {
             origin_default_flags: ctx.show_default_conversion_flags(),
             zone: ctx.session_zone(),
+            expression: ctx.clone(),
         }
     }
 
@@ -116,6 +120,10 @@ impl RowDecodeContext {
     #[must_use]
     pub(crate) fn origin_default_flags(&self) -> ConversionFlags {
         self.origin_default_flags
+    }
+
+    pub(crate) fn expression(&self) -> &crate::StmtContext {
+        &self.expression
     }
 
     /// Query-class UTC decoding for unit fixtures with no session.

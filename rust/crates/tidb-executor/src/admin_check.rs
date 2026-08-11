@@ -179,7 +179,7 @@ pub fn check_table(
     };
 
     let rows = table
-        .scan_rows_with_handles_with_context(context)
+        .scan_rows_with_handles_recomputed(context)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
     let table_count = rows.len() as i64;
 
@@ -312,7 +312,7 @@ pub fn check_index_ranges(
     columns.push("extra_handle".to_owned());
 
     let rows = table
-        .scan_rows_with_handles_with_context(context)
+        .scan_rows_with_handles_recomputed(context)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
     let by_handle: BTreeMap<Vec<u8>, (TableHandle, Vec<Datum>)> = rows
         .iter()
