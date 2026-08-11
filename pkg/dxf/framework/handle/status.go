@@ -91,6 +91,20 @@ func GetActiveTaskSummary(ctx context.Context) (*storage.ActiveTaskSummary, erro
 	return summary, nil
 }
 
+// GetDXFNodes returns all nodes registered in mysql.dist_framework_meta.
+func GetDXFNodes(ctx context.Context) ([]proto.ManagedNode, error) {
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	manager, err := storage.GetTaskManager()
+	if err != nil {
+		return nil, err
+	}
+	nodes, err := manager.GetAllNodes(ctx)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return nodes, nil
+}
+
 // ListHistoryTasks lists history tasks with keyset pagination and optional keyspace filter.
 func ListHistoryTasks(ctx context.Context, pageSize int, pageToken int64, keyspace string) (*storage.HistoryTaskPage, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)

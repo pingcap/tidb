@@ -789,6 +789,43 @@ These APIs are registered only on TiDB instances running in the TiDB-X SYSTEM ke
 
 The `/dxf/...` APIs are for DXF (Distributed eXecution Framework) operator observability and emergency runtime tuning. In TiDB-X, DXF runs as a shared SYSTEM-keyspace service for resource-intensive work such as IMPORT INTO and distributed add index, so some APIs are called on a SYSTEM-keyspace TiDB process but target a user keyspace parameter.
 
+### List DXF nodes
+
+This API lists the TiDB nodes registered with DXF. The response is ordered by `host` and omits the internal `keyspace_id` field.
+
+Usage:
+
+```shell
+curl http://{TiDBIP}:10080/dxf/nodes
+```
+
+Parameters: none.
+
+Response fields:
+
+- `host`: The TiDB execution ID in `IP:PORT` form.
+- `role`: The node's configured TiDB service scope. `dxf_service` is the normal value for TiDB-X DXF nodes; `background`, an empty string, or another configured scope can also appear.
+- `cpu_count`: The number of CPU slots available to DXF on the node.
+
+Example response:
+
+```json
+[
+ {
+  "host": "192.168.1.10:5000",
+  "role": "dxf_service",
+  "cpu_count": 8
+ },
+ {
+  "host": "192.168.1.11:5000",
+  "role": "background",
+  "cpu_count": 16
+ }
+]
+```
+
+If no DXF nodes are registered, the response is `[]`.
+
 ### Get the DXF schedule status
 
 This API returns the scheduler view used by cluster controllers to decide how many DXF worker nodes are needed. It includes the number of scheduled tasks, current and required TiDB/TiKV worker counts, busy DXF nodes, and temporary scheduler flags such as `pause_scale_in`.
