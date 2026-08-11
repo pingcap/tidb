@@ -35,8 +35,8 @@ pub mod resultset_stream;
 mod textrow;
 
 pub use binary_params::{
-    parse_binary_params, parse_length_encoded_int, BinaryParam, BinaryParamError, TYPE_NULL,
-    TYPE_UNSPECIFIED,
+    parse_binary_params, parse_length_encoded_bytes, parse_length_encoded_int,
+    parse_null_term_string, BinaryParam, BinaryParamError, TYPE_NULL, TYPE_UNSPECIFIED,
 };
 pub use column::{
     dump_column, dump_column_with_default, dump_flag, dump_type, ColumnDefault, ColumnInfo,

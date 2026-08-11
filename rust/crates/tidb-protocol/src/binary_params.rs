@@ -23,6 +23,8 @@
 //! decimal parser. Typed interpretation remains a downstream step, matching
 //! Go's `expression.ExecBinaryParam` boundary.
 
+use std::{convert::TryFrom, io};
+
 use tidb_datatype::{find_encoding_take_utf8_as_noop, TransformOp};
 use tidb_error::tidb::errcode;
 
@@ -140,6 +142,47 @@ pub fn parse_length_encoded_int(bytes: &[u8]) -> Option<(u64, bool, usize)> {
         }
         // 0-250 are the value; 0xff is undefined and reaches here as its value.
         _ => Some((u64::from(first), false, 1)),
+    }
+}
+
+/// Decodes one MySQL length-encoded byte slice from the front of `bytes`.
+///
+/// Ported from Go `ParseLengthEncodedBytes` (`pkg/server/internal/util`).
+/// Returns `(value, is_null, consumed)`. `0xfb` is the NULL marker; `0x00`
+/// through `0xfa` are the value's own length prefix; any other first byte is
+/// parsed via [`parse_length_encoded_int`]. Returns `UnexpectedEof` on
+/// truncation (Go's `io.EOF`).
+#[must_use]
+pub fn parse_length_encoded_bytes(
+    bytes: &[u8],
+) -> Result<(Option<Vec<u8>>, bool, usize), io::Error> {
+    let (length, is_null, consumed) = parse_length_encoded_int(bytes)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "EOF"))?;
+    if length == 0 {
+        return Ok((None, is_null, consumed));
+    }
+
+    let length =
+        usize::try_from(length).map_err(|_| io::Error::new(io::ErrorKind::UnexpectedEof, "EOF"))?;
+    let end = consumed
+        .checked_add(length)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "EOF"))?;
+    let value = bytes
+        .get(consumed..end)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "EOF"))?;
+    Ok((Some(value.to_vec()), false, end))
+}
+
+/// Splits a null-terminated byte string into the prefix and the remainder.
+///
+/// Ported from Go `ParseNullTermString` (`pkg/server/internal/util`). When no
+/// terminator is present, the prefix is empty and the remainder is the entire
+/// input, matching the Go helper's `(nil, input)` result.
+#[must_use]
+pub fn parse_null_term_string(bytes: &[u8]) -> (&[u8], &[u8]) {
+    match bytes.iter().position(|byte| *byte == 0) {
+        Some(off) => (&bytes[..off], &bytes[off + 1..]),
+        None => (&[], bytes),
     }
 }
 
