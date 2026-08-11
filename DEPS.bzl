@@ -4425,6 +4425,13 @@ def go_deps():
         version = "v2.6.4",
     )
     go_repository(
+        name = "com_github_tencentcloud_tencentcloud_sdk_go_tencentcloud_common",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common",
+        sum = "h1:oK2uueo6FtSdhepL64WqJD0NjVl6prDSreUYKuzSp3M=",
+        version = "v1.3.142",
+    )
+    go_repository(
         name = "com_github_tenntenn_modver",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tenntenn/modver",
