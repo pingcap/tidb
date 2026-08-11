@@ -18,49 +18,10 @@
 use std::cmp::Ordering;
 
 use tidb_datatype::Collation;
-
-/// One token of a compiled `LIKE` pattern.
-enum Pat {
-    /// `%` — any run of zero or more characters.
-    Any,
-    /// `_` — exactly one character.
-    One,
-    /// A literal character (including an escaped `%`, `_`, or the
-    /// escape character itself).
-    Lit(char),
-}
-
-/// Compiles a `LIKE` pattern under the given escape character (`escape`
-/// mirrors `tidb_ast::Expr::Like::escape`'s own shape exactly: `None`
-/// means the real MySQL/TiDB default, `\`; `Some(0)` means `ESCAPE ''`,
-/// i.e. NO character triggers escape processing at all — every `\` in
-/// the pattern is then just an ordinary literal character, not special;
-/// `Some(b)` is an explicit single-byte escape character). `\c` (or
-/// `<escape>c`) for any `c` is the literal character `c`; a TRAILING
-/// escape character with nothing following it is a literal instance of
-/// itself (confirmed via `gorun` for the default `\` case; generalizes
-/// naturally to any other escape byte, not separately re-verified).
-fn compile_like(pattern: &str, escape: Option<u8>) -> Vec<Pat> {
-    let escape_char = match escape {
-        None => Some('\\'),
-        Some(0) => None,
-        Some(b) => Some(b as char),
-    };
-    let mut out = Vec::new();
-    let mut chars = pattern.chars();
-    while let Some(c) = chars.next() {
-        if Some(c) == escape_char {
-            out.push(Pat::Lit(chars.next().unwrap_or(c)));
-            continue;
-        }
-        out.push(match c {
-            '%' => Pat::Any,
-            '_' => Pat::One,
-            other => Pat::Lit(other),
-        });
-    }
-    out
-}
+use tidb_util::stringutil::{
+    compile_pattern_with_escape, do_match_customized, lower_one_string,
+    lower_one_string_excluding_escape_char,
+};
 
 /// Matches `text` against a `LIKE` pattern (`%` any run, `_` one character),
 /// case-sensitively. Greedy scan with backtracking on the most recent `%`.
@@ -95,42 +56,13 @@ fn like_match_by<F>(text: &str, pattern: &str, escape: Option<u8>, equal: F) -> 
 where
     F: Fn(char, char) -> bool,
 {
-    let pat = compile_like(pattern, escape);
-    let text: Vec<char> = text.chars().collect();
-    let (mut i, mut j) = (0usize, 0usize);
-    // Last `%` seen and the text position where it started matching, so a
-    // failed match can resume with the `%` consuming one more character.
-    let (mut star_j, mut star_i): (Option<usize>, usize) = (None, 0);
-    while i < text.len() {
-        match pat.get(j) {
-            Some(Pat::One) => {
-                i += 1;
-                j += 1;
-            }
-            Some(Pat::Lit(c)) if equal(*c, text[i]) => {
-                i += 1;
-                j += 1;
-            }
-            Some(Pat::Any) => {
-                star_j = Some(j);
-                star_i = i;
-                j += 1;
-            }
-            _ => match star_j {
-                Some(sj) => {
-                    j = sj + 1;
-                    star_i += 1;
-                    i = star_i;
-                }
-                None => return false,
-            },
-        }
-    }
-    // Any trailing `%` tokens match the empty string.
-    while matches!(pat.get(j), Some(Pat::Any)) {
-        j += 1;
-    }
-    j == pat.len()
+    let escape = match escape {
+        None => Some('\\'),
+        Some(0) => None,
+        Some(byte) => Some(char::from(byte)),
+    };
+    let (weights, types) = compile_pattern_with_escape(pattern, escape);
+    do_match_customized(text, &weights, &types, equal)
 }
 
 /// Compares one source rune under a TiDB collation.
@@ -187,16 +119,9 @@ pub fn ilike_match(text: &str, pattern: &str, escape: u8) -> bool {
 }
 
 fn lower_ascii(value: &str) -> String {
-    value
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_uppercase() {
-                ch.to_ascii_lowercase()
-            } else {
-                ch
-            }
-        })
-        .collect()
+    let mut value = value.as_bytes().to_vec();
+    lower_one_string(&mut value);
+    String::from_utf8(value).expect("ASCII lowercasing preserves UTF-8")
 }
 
 /// Port `stringutil.LowerOneStringExcludeEscapeChar` without applying Unicode
@@ -204,31 +129,12 @@ fn lower_ascii(value: &str) -> String {
 /// escape marker for exactly one following character, matching Go's byte
 /// implementation (including the `AA` -> `Aa` example for escape `A`).
 fn lower_ascii_excluding_escape(value: &str, escape: u8) -> (String, u8) {
-    let actual_escape = if escape.is_ascii_lowercase() {
-        escape.to_ascii_uppercase()
-    } else {
-        escape
-    };
-    let mut out = String::with_capacity(value.len());
-    let mut escaped = false;
-    for ch in value.chars() {
-        if ch.is_ascii_uppercase() {
-            if ch as u8 == escape && !escaped {
-                out.push(ch);
-                escaped = true;
-                continue;
-            }
-            out.push(ch.to_ascii_lowercase());
-        } else if ch.is_ascii() && ch as u8 == escape && !escaped {
-            out.push(actual_escape as char);
-            escaped = true;
-            continue;
-        } else {
-            out.push(ch);
-        }
-        escaped = false;
-    }
-    (out, actual_escape)
+    let mut value = value.as_bytes().to_vec();
+    let actual_escape = lower_one_string_excluding_escape_char(&mut value, escape);
+    (
+        String::from_utf8(value).expect("ASCII lowercasing preserves UTF-8"),
+        actual_escape,
+    )
 }
 
 #[cfg(test)]
