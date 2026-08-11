@@ -1,0 +1,34 @@
+schema = "semantic-package-gate-v3"
+claim = "whole-go-package"
+go_package = "pkg/planner/util/costusage"
+source_commit = "7d124185db87468a37dce190aed8b1d99bfefe7f"
+rust_files = [
+  "rust/crates/tidb-planner/Cargo.toml",
+  "rust/crates/tidb-planner/src/lib.rs",
+  "rust/crates/tidb-planner/src/cost_usage.rs",
+  "rust/crates/tidb-planner/src/plan_cost_ver2.rs",
+  "rust/crates/tidb-planner/src/plan_cost_ver2/golden_tests.rs",
+  "rust/crates/tidb-planner/src/candidate_cost.rs",
+  "rust/crates/tidb-planner/src/find_best_task.rs",
+  "rust/crates/tidb-planner/src/find_best_task/tests.rs",
+]
+
+[[tests]]
+name = "costusage_package_semantics"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-planner", "--lib", "cost_usage::tests::"]
+
+[[tests]]
+name = "cost_model_v2_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-planner", "--lib", "plan_cost_ver2::golden_tests::"]
+
+[[tests]]
+name = "candidate_cost_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-planner", "--lib", "candidate_cost::tests::"]
+
+[[tests]]
+name = "task_selection_consumer"
+cwd = "rust"
+argv = ["cargo", "test", "--offline", "--locked", "-j12", "-p", "tidb-planner", "--lib", "find_best_task::tests::"]
