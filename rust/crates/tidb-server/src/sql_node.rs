@@ -1742,6 +1742,8 @@ mod tests {
             max_connections: 2,
             connection_timeout: Duration::from_secs(5),
             max_topn_rows: 1_024,
+            deadlock_history_capacity: 10,
+            deadlock_history_collect_retryable: false,
             schema_lease: Duration::from_millis(45_000),
             cluster_security: tidb_pd_client::ClusterSecurity::plaintext(),
             spill_storage: tidb_util::disk::SpillStorageSpec {

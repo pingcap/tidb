@@ -264,7 +264,7 @@ mod tests {
     use tidb_error::terror::ERR_RESULT_UNDETERMINED;
     use tidb_txnkv::region::RegionBackoffKind;
     use tidb_txnkv::transaction::{
-        CommittedTransaction, DeadlockDetail, OptimisticCommitOutcome,
+        CommittedTransaction, DeadlockDetail, DeadlockWaitChainItem, OptimisticCommitOutcome,
         OptimisticTransactionReceipt, PessimisticLockFailure, RolledBackTransaction,
         TransactionCause, UndeterminedTransaction,
     };
@@ -483,7 +483,12 @@ mod tests {
             lock_key: b"k".to_vec(),
             deadlock_key_hash: 1,
             deadlock_key: b"j".to_vec(),
-            wait_chain: vec![(7, 8)],
+            wait_chain: vec![DeadlockWaitChainItem {
+                txn: 7,
+                wait_for_txn: 8,
+                key: Vec::new(),
+                resource_group_tag: Vec::new(),
+            }],
         }));
         assert_eq!(error.code, ERR_LOCK_DEADLOCK);
         assert_eq!(&error.state, b"40001");

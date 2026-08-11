@@ -49,6 +49,7 @@ use std::time::Duration;
 
 use tidb_codec::table_key::{decode_record_key, encode_row_key_with_handle, RecordHandle};
 use tidb_datatype::Datum;
+use tidb_executor::deadlock_history::record_deadlock;
 use tidb_planner::prepared_dml::ConfiguredPreparedWrite;
 use tidb_planner::read_only_scan::{
     ConfiguredColumnKind, ConfiguredTable, ReadLockWait, ResolvedProjectionColumn,
@@ -138,6 +139,9 @@ impl TransactionStatementError {
     }
 
     fn from_lock_failure(failure: &PessimisticLockFailure) -> Self {
+        if let PessimisticLockFailure::Deadlock(detail) = failure {
+            record_deadlock(detail, false);
+        }
         let error = lock_failure_to_sql_error(failure);
         if failure.is_statement_scoped() {
             Self::Statement(error)
@@ -534,6 +538,12 @@ impl MultiStatementTransaction {
                     locked_with_conflict_error(transaction.start_ts(), *conflict_commit_ts, key)
                 }
                 Err(failure) => {
+                    // Go's lock-context callback records a deadlock as soon as
+                    // TiKV reports it, before statement-lock cleanup. Build the
+                    // terminal SQL error now so a rollback failure cannot erase
+                    // the diagnostic event.
+                    let terminal_error = (!is_retryable_statement_failure(&failure))
+                        .then(|| TransactionStatementError::from_lock_failure(&failure));
                     // Release only what this statement added; the transaction's
                     // earlier locks must survive its own failed statement.
                     let added = keys
@@ -546,8 +556,8 @@ impl MultiStatementTransaction {
                             transaction_cause_to_sql_error(&cause),
                         ));
                     }
-                    if !is_retryable_statement_failure(&failure) {
-                        return Err(TransactionStatementError::from_lock_failure(&failure));
+                    if let Some(error) = terminal_error {
+                        return Err(error);
                     }
                     lock_failure_to_sql_error(&failure)
                 }
@@ -770,6 +780,8 @@ fn coordinator_error(error: OptimisticCoordinatorError) -> TransactionStatementE
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Mutex;
+
     use super::{
         classify_commit_outcome, written_handles, Duration, MultiStatementTransaction,
         TransactionStatementError, UnaryCallContext, TRANSACTION_END_TIMEOUT,
@@ -780,9 +792,25 @@ mod tests {
     };
     use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
     use tidb_txnkv::transaction::{
-        OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,
+        DeadlockDetail, DeadlockWaitChainItem, OptimisticCommitOutcome,
+        OptimisticTransactionReceipt, PessimisticLockFailure, RolledBackTransaction,
         TransactionCause,
     };
+
+    use tidb_executor::deadlock_history::{
+        configure_global_deadlock_history, global_deadlock_history,
+    };
+
+    static DEADLOCK_HISTORY_TEST: Mutex<()> = Mutex::new(());
+
+    struct ResetDeadlockHistory;
+
+    impl Drop for ResetDeadlockHistory {
+        fn drop(&mut self) {
+            global_deadlock_history().clear();
+            configure_global_deadlock_history(0, false);
+        }
+    }
 
     fn table() -> ConfiguredTable {
         ConfiguredTable::new(
@@ -880,6 +908,35 @@ mod tests {
         assert!(statement.keeps_transaction_open());
         let ended = TransactionStatementError::Transaction(statement.sql_error().clone());
         assert!(!ended.keeps_transaction_open());
+    }
+
+    #[test]
+    fn a_live_deadlock_failure_is_recorded_before_it_reaches_sql() {
+        let _serial = DEADLOCK_HISTORY_TEST.lock().unwrap();
+        let _reset = ResetDeadlockHistory;
+        configure_global_deadlock_history(2, false);
+        global_deadlock_history().clear();
+        let failure = PessimisticLockFailure::Deadlock(DeadlockDetail {
+            lock_ts: 7,
+            lock_key: b"blocked".to_vec(),
+            deadlock_key_hash: 9,
+            deadlock_key: b"held".to_vec(),
+            wait_chain: vec![DeadlockWaitChainItem {
+                txn: 7,
+                wait_for_txn: 8,
+                key: b"row-key".to_vec(),
+                resource_group_tag: Vec::new(),
+            }],
+        });
+
+        let error = TransactionStatementError::from_lock_failure(&failure);
+        assert_eq!(error.sql_error().code, 1213);
+        let records = global_deadlock_history().get_all();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].id, 1);
+        assert_eq!(records[0].wait_chain[0].try_lock_txn, 7);
+        assert_eq!(records[0].wait_chain[0].txn_holding_lock, 8);
+        assert_eq!(records[0].wait_chain[0].key, b"row-key");
     }
 
     #[test]

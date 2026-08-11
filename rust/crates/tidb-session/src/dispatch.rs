@@ -242,6 +242,11 @@ impl Session {
         // which only ever sees the catalog.
         let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
             self.process_list_table_rows()
+        } else if table_name.eq_ignore_ascii_case("DEADLOCKS") {
+            if !self.has_process_privilege() {
+                return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+            }
+            self.deadlock_history_table_rows()
         } else if table_name.eq_ignore_ascii_case("USER_PRIVILEGES") {
             self.user_privileges_table_rows()
         } else {

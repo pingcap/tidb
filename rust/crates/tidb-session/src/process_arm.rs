@@ -211,17 +211,7 @@ impl Session {
                 }),
             }],
         };
-        let has_process_via_registry = self.privileges.as_ref().is_some_and(|registry| {
-            self.current_identity().is_some_and(|(user, host)| {
-                registry.has_global_priv_with_roles(
-                    user,
-                    host,
-                    self.active_roles(),
-                    privilege::GlobalPriv::Process,
-                )
-            })
-        });
-        if self.has_process_priv || has_process_via_registry || self.login_user.is_none() {
+        if self.has_process_privilege() {
             return rows;
         }
         let me = self.process_list_user();
@@ -296,5 +286,26 @@ impl Session {
                 ]
             })
             .collect()
+    }
+
+    /// Whether this session may inspect process-wide diagnostic state.
+    pub(crate) fn has_process_privilege(&self) -> bool {
+        self.has_process_priv
+            || self.privileges.as_ref().is_some_and(|registry| {
+                self.current_identity().is_some_and(|(user, host)| {
+                    registry.has_global_priv_with_roles(
+                        user,
+                        host,
+                        self.active_roles(),
+                        privilege::GlobalPriv::Process,
+                    )
+                })
+            })
+            || self.login_user.is_none()
+    }
+
+    /// Package-owned rows of `INFORMATION_SCHEMA.DEADLOCKS`.
+    pub(crate) fn deadlock_history_table_rows(&self) -> Vec<Vec<Datum>> {
+        tidb_executor::deadlock_history::global_deadlock_history().rows()
     }
 }

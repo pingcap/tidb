@@ -35,7 +35,8 @@ pub use mutation::{
 };
 pub use mutation_buffer::{MutationBufferError, TransactionMutationBuffer};
 pub use pessimistic::{
-    AcquiredLocks, DeadlockDetail, LockWaitTime, PessimisticLockFailure, RealPessimisticTransaction,
+    AcquiredLocks, DeadlockDetail, DeadlockWaitChainItem, LockWaitTime, PessimisticLockFailure,
+    RealPessimisticTransaction,
 };
 pub use region_batches::RegionMutationBatch;
 pub use state::{

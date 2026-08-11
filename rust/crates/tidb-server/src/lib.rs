@@ -261,6 +261,10 @@ fn start_system_time_monitor() -> tidb_util::systimemon::SystemTimeMonitor {
 fn open_spill_storage(
     config: &NodeConfig,
 ) -> Result<Arc<tidb_util::disk::SpillStorage>, RunConfiguredNodeError> {
+    tidb_executor::deadlock_history::configure_global_deadlock_history(
+        config.deadlock_history_capacity,
+        config.deadlock_history_collect_retryable,
+    );
     if config.sem_enabled {
         tidb_util::sem::enable();
     } else {

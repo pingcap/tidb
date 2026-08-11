@@ -129,6 +129,19 @@ const LOCK_NO_WAIT: i64 = -1;
 /// client-go `kv.LockAlwaysWait`.
 const LOCK_ALWAYS_WAIT: i64 = i64::MAX;
 
+/// One lock-wait edge in a deadlock cycle proved by TiKV's detector.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeadlockWaitChainItem {
+    /// Transaction trying to acquire the lock.
+    pub txn: u64,
+    /// Transaction currently holding the lock.
+    pub wait_for_txn: u64,
+    /// Encoded key on which `txn` is waiting.
+    pub key: Vec<u8>,
+    /// Encoded resource-group tag carrying the blocked SQL digest.
+    pub resource_group_tag: Vec<u8>,
+}
+
 /// A deadlock TiKV's detector proved, reported verbatim to the SQL layer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DeadlockDetail {
@@ -140,8 +153,8 @@ pub struct DeadlockDetail {
     pub deadlock_key_hash: u64,
     /// Key this transaction already holds that closes the cycle.
     pub deadlock_key: Vec<u8>,
-    /// Every transaction on the detected cycle, as `(txn, wait_for_txn)`.
-    pub wait_chain: Vec<(u64, u64)>,
+    /// Every lock wait on the detected cycle.
+    pub wait_chain: Vec<DeadlockWaitChainItem>,
 }
 
 impl From<&KvrpcDeadlock> for DeadlockDetail {
@@ -154,7 +167,12 @@ impl From<&KvrpcDeadlock> for DeadlockDetail {
             wait_chain: deadlock
                 .wait_chain
                 .iter()
-                .map(|entry| (entry.txn, entry.wait_for_txn))
+                .map(|entry| DeadlockWaitChainItem {
+                    txn: entry.txn,
+                    wait_for_txn: entry.wait_for_txn,
+                    key: entry.key.clone(),
+                    resource_group_tag: entry.resource_group_tag.clone(),
+                })
                 .collect(),
         }
     }

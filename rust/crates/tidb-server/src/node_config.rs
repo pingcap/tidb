@@ -159,6 +159,10 @@ pub struct NodeConfig {
     pub connection_timeout: Duration,
     /// Process-wide maximum ORDER BY LIMIT heap cardinality for the bounded executor.
     pub max_topn_rows: usize,
+    /// Maximum recent deadlock records retained process-wide.
+    pub deadlock_history_capacity: usize,
+    /// Whether retryable in-statement deadlocks are retained.
+    pub deadlock_history_collect_retryable: bool,
     /// DDL schema lease. A node that loaded its schema from the cluster
     /// re-reads the catalog every `schema_lease / 2`, so it is never more than
     /// one lease behind the cluster's schema version.
@@ -284,6 +288,8 @@ const SUPPORTED_CONFIG_LEAVES: &[&str] = &[
     "lease",
     "max-allowed-packet",
     "path",
+    "pessimistic-txn.deadlock-history-capacity",
+    "pessimistic-txn.deadlock-history-collect-retryable",
     "port",
     "security.auto-tls",
     "security.cluster-ssl-ca",
@@ -568,6 +574,12 @@ impl NodeConfig {
         let mut file_auto_tls = None;
         let mut file_disconnect_on_expired_password = None;
         let mut sem_enabled = false;
+        let defaults = SourceConfig::default();
+        let mut deadlock_history_capacity =
+            usize::try_from(defaults.pessimistic_txn.deadlock_history_capacity)
+                .expect("source deadlock-history default fits usize");
+        let mut deadlock_history_collect_retryable =
+            defaults.pessimistic_txn.deadlock_history_collect_retryable;
         if let Some(loaded) = source.as_ref() {
             let config = &loaded.config;
             if host.is_none() && loaded.is_defined("host") {
@@ -615,6 +627,21 @@ impl NodeConfig {
             }
             if loaded.is_defined("security.enable-sem") {
                 sem_enabled = config.security.enable_sem;
+            }
+            if loaded.is_defined("pessimistic-txn.deadlock-history-capacity") {
+                deadlock_history_capacity = usize::try_from(
+                    config.pessimistic_txn.deadlock_history_capacity,
+                )
+                .map_err(|_| {
+                    invalid(
+                        "pessimistic-txn.deadlock-history-capacity",
+                        "value does not fit this platform",
+                    )
+                })?;
+            }
+            if loaded.is_defined("pessimistic-txn.deadlock-history-collect-retryable") {
+                deadlock_history_collect_retryable =
+                    config.pessimistic_txn.deadlock_history_collect_retryable;
             }
             if loaded.is_defined("tmp-storage-path") {
                 temp_storage_base = Some(config.temp_storage_path.clone());
@@ -775,6 +802,8 @@ impl NodeConfig {
             max_connections,
             connection_timeout,
             max_topn_rows,
+            deadlock_history_capacity,
+            deadlock_history_collect_retryable,
             schema_lease,
             load_privileges,
             cluster_session,

@@ -56,6 +56,7 @@ pub(crate) mod column_prune;
 pub mod cte_storage;
 pub mod ddl;
 pub mod ddl_sequence;
+pub mod deadlock_history;
 pub mod driver;
 pub mod error_context;
 pub mod executor;

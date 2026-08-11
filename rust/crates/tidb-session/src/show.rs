@@ -235,6 +235,12 @@ fn show_create_table_text(
             clauses.push(clause);
             continue;
         }
+        // A nullable TIMESTAMP needs an explicit NULL marker. Unlike the
+        // other nullable types, omitting it historically selects TIMESTAMP's
+        // implicit NOT NULL behavior, so TiDB always prints the marker.
+        if !not_null && column.field_type.code() == tidb_datatype::FieldTypeCode::Timestamp {
+            clause.push_str(" NULL");
+        }
         if not_null {
             clause.push_str(" NOT NULL");
         }

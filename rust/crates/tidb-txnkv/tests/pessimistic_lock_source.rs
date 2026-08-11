@@ -35,12 +35,12 @@ use tidb_proto::tikvpb::batch_commands_response::response::Cmd as ResponseCmd;
 use tidb_proto::tikvpb::tikv_server::{Tikv, TikvServer};
 use tidb_proto::tikvpb::{batch_commands_response, BatchCommandsRequest, BatchCommandsResponse};
 use tidb_proto::{
-    CoprocessorRequest, CoprocessorResponse, KvrpcCommitRequest, KvrpcCommitResponse, KvrpcDeadlock,
-    KvrpcKeyError, KvrpcLockInfo, KvrpcOp, KvrpcPessimisticAction, KvrpcPessimisticLockKeyResult,
-    KvrpcPessimisticLockKeyResultType, KvrpcPessimisticLockRequest, KvrpcPessimisticLockResponse,
-    KvrpcPessimisticLockWakeUpMode,
-    KvrpcPessimisticRollbackRequest, KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest,
-    KvrpcPrewriteResponse, KvrpcWaitForEntry, KvrpcWriteConflict,
+    CoprocessorRequest, CoprocessorResponse, KvrpcCommitRequest, KvrpcCommitResponse,
+    KvrpcDeadlock, KvrpcKeyError, KvrpcLockInfo, KvrpcOp, KvrpcPessimisticAction,
+    KvrpcPessimisticLockKeyResult, KvrpcPessimisticLockKeyResultType, KvrpcPessimisticLockRequest,
+    KvrpcPessimisticLockResponse, KvrpcPessimisticLockWakeUpMode, KvrpcPessimisticRollbackRequest,
+    KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
+    KvrpcWaitForEntry, KvrpcWriteConflict,
 };
 use tidb_txnkv::lock::TimestampSource;
 use tidb_txnkv::region::{
@@ -271,7 +271,9 @@ fn lock_response(outcome: &LockOutcome, request: &KvrpcPessimisticLockRequest) -
         LockOutcome::Granted => KvrpcPessimisticLockResponse::default(),
         LockOutcome::RegionError => KvrpcPessimisticLockResponse {
             region_error: Some(errorpb::Error {
-                recovery_in_progress: Some(errorpb::RecoveryInProgress { region_id: REGION_ID }),
+                recovery_in_progress: Some(errorpb::RecoveryInProgress {
+                    region_id: REGION_ID,
+                }),
                 ..errorpb::Error::default()
             }),
             ..KvrpcPessimisticLockResponse::default()
@@ -287,11 +289,15 @@ fn lock_response(outcome: &LockOutcome, request: &KvrpcPessimisticLockRequest) -
                         KvrpcWaitForEntry {
                             txn: START_TS,
                             wait_for_txn: BLOCKER_TS,
+                            key: b"wait-a".to_vec(),
+                            resource_group_tag: b"tag-a".to_vec(),
                             ..KvrpcWaitForEntry::default()
                         },
                         KvrpcWaitForEntry {
                             txn: BLOCKER_TS,
                             wait_for_txn: START_TS,
+                            key: b"wait-b".to_vec(),
+                            resource_group_tag: b"tag-b".to_vec(),
                             ..KvrpcWaitForEntry::default()
                         },
                     ],
@@ -730,10 +736,18 @@ fn a_detected_deadlock_aborts_the_statement_without_retrying() {
     assert_eq!(detail.deadlock_key, PRIMARY_KEY.to_vec());
     assert_eq!(detail.deadlock_key_hash, 99);
     assert_eq!(
-        detail.wait_chain,
+        detail
+            .wait_chain
+            .iter()
+            .map(|item| (item.txn, item.wait_for_txn))
+            .collect::<Vec<_>>(),
         vec![(START_TS, BLOCKER_TS), (BLOCKER_TS, START_TS)],
         "the whole proven cycle must reach the SQL layer"
     );
+    assert_eq!(detail.wait_chain[0].key, b"wait-a");
+    assert_eq!(detail.wait_chain[0].resource_group_tag, b"tag-a");
+    assert_eq!(detail.wait_chain[1].key, b"wait-b");
+    assert_eq!(detail.wait_chain[1].resource_group_tag, b"tag-b");
     assert_eq!(
         recorded.lock().unwrap().locks.len(),
         1,
@@ -818,9 +832,8 @@ fn nowait_fails_immediately_rather_than_queueing_behind_a_live_owner() {
 /// An exhausted lock-wait budget is a timeout, distinct from `NOWAIT`.
 #[test]
 fn an_exhausted_lock_wait_budget_reports_a_timeout() {
-    let (_server, recorded, mut transaction) = fixture(vec![LockOutcome::BlockedByLiveLock {
-        refreshed_ms: 10,
-    }]);
+    let (_server, recorded, mut transaction) =
+        fixture(vec![LockOutcome::BlockedByLiveLock { refreshed_ms: 10 }]);
 
     let failure = transaction
         .acquire_locks(
@@ -1001,7 +1014,10 @@ fn a_lock_granted_with_conflict_is_kept_and_reports_the_conflicting_timestamp() 
     );
     assert_eq!(acquired.for_update_ts, START_TS);
     assert_eq!(transaction.for_update_ts(), START_TS);
-    assert_eq!(transaction.max_locked_with_conflict_ts(), conflict_commit_ts);
+    assert_eq!(
+        transaction.max_locked_with_conflict_ts(),
+        conflict_commit_ts
+    );
     assert_eq!(transaction.locked_keys(), vec![PRIMARY_KEY.to_vec()]);
     assert_eq!(
         recorded.lock().unwrap().locks.len(),

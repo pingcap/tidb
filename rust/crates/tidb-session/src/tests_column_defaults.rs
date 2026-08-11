@@ -846,6 +846,7 @@ fn alter_column_set_default_reaches_the_next_row_only() {
         "`a` int DEFAULT '222'",
         "`b` varchar(8) DEFAULT NULL",
         "`c` varchar(8) NOT NULL DEFAULT 'xx'",
+        "`d` timestamp NULL DEFAULT NULL",
     ] {
         assert!(body.contains(clause), "missing `{clause}`: {body}");
     }

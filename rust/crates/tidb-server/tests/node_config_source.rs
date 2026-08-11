@@ -65,6 +65,10 @@ tmp-storage-quota = 1048576
 
 [security]
 spilled-file-encryption-method = "AeS128-CtR"
+
+[pessimistic-txn]
+deadlock-history-capacity = 123
+deadlock-history-collect-retryable = true
 "#,
     );
     let path = file.0.to_string_lossy().into_owned();
@@ -82,6 +86,8 @@ spilled-file-encryption-method = "AeS128-CtR"
     assert_eq!(config.host, IpAddr::V4(Ipv4Addr::LOCALHOST));
     assert_eq!(config.pd_endpoints, ["127.0.0.1:2379"]);
     assert_eq!(config.spill_storage.quota_bytes, 1_048_576);
+    assert_eq!(config.deadlock_history_capacity, 123);
+    assert!(config.deadlock_history_collect_retryable);
     assert_eq!(
         config.spill_storage.encryption,
         SpillEncryptionMethod::Aes128Ctr
@@ -112,8 +118,7 @@ spilled-file-encryption-method = "AeS128-CtR"
             .and_then(std::path::Path::parent)
             .and_then(std::path::Path::file_name)
             .unwrap(),
-        format!("{}_tidb", rustix::process::getuid().as_raw())
-            .as_str()
+        format!("{}_tidb", rustix::process::getuid().as_raw()).as_str()
     );
 }
 
@@ -129,10 +134,7 @@ fn configured_sem_is_installed_before_startup_resource_admission() {
 
     tidb_util::sem::disable();
     let _reset = DisableSemOnDrop;
-    let base = std::env::temp_dir().join(format!(
-        "tidb-server-sem-startup-{}",
-        std::process::id()
-    ));
+    let base = std::env::temp_dir().join(format!("tidb-server-sem-startup-{}", std::process::id()));
     let file = ConfigFile::write(
         "sem_startup",
         &format!(
@@ -312,6 +314,8 @@ fn source_tikv_startup_surface_is_explicit_and_bounded() {
     assert_eq!(config.max_connections, 8);
     assert_eq!(config.connection_timeout, Duration::from_secs(30));
     assert_eq!(config.max_topn_rows, 1_024);
+    assert_eq!(config.deadlock_history_capacity, 10);
+    assert!(!config.deadlock_history_collect_retryable);
 }
 
 /// A `--read-table` for the sysbench `sbtest1` shape with a trailing non-unique

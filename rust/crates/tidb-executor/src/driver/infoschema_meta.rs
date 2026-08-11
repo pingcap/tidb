@@ -97,9 +97,15 @@ impl InfoColumn {
             FieldTypeCode::LongBlob => 1 << 32,
             _ => self.size,
         });
-        // Go's `columnInfo.decimal` is zero for every column of the tables
-        // this tier serves, and `SetDecimal(0)` is what it then stores.
-        field_type.set_decimal(0);
+        // OCCUR_TIME is the one FSP-6 timestamp in the tables this tier
+        // serves. Every other current declaration has decimal zero.
+        field_type.set_decimal(
+            if self.name == "OCCUR_TIME" && self.tp == FieldTypeCode::Timestamp {
+                6
+            } else {
+                0
+            },
+        );
         field_type.set_flags(self.flag);
         field_type
     }
@@ -1092,6 +1098,73 @@ const PROCESSLIST_COLUMNS: &[InfoColumn] = &[
     },
 ];
 
+/// Go `infoschema.tableDeadlocksCols`.
+const DEADLOCKS_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "DEADLOCK_ID",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "OCCUR_TIME",
+        tp: FieldTypeCode::Timestamp,
+        size: 26,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "RETRYABLE",
+        tp: FieldTypeCode::Tiny,
+        size: 1,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "TRY_LOCK_TRX_ID",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: NOT_NULL_FLAG | UNSIGNED_FLAG,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "CURRENT_SQL_DIGEST",
+        tp: FieldTypeCode::Varchar,
+        size: 64,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "CURRENT_SQL_DIGEST_TEXT",
+        tp: FieldTypeCode::Blob,
+        size: UNSPECIFIED_LENGTH,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "KEY",
+        tp: FieldTypeCode::Blob,
+        size: UNSPECIFIED_LENGTH,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "KEY_INFO",
+        tp: FieldTypeCode::Blob,
+        size: UNSPECIFIED_LENGTH,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "TRX_HOLDING_LOCK",
+        tp: FieldTypeCode::LongLong,
+        size: 21,
+        flag: NOT_NULL_FLAG | UNSIGNED_FLAG,
+        deflt: None,
+    },
+];
+
 /// Go `infoschema.tableUserPrivilegesCols`.
 ///
 /// CAPTURED: unlike its `SCHEMA_PRIVILEGES`/`TABLE_PRIVILEGES`/
@@ -1296,12 +1369,13 @@ const COLUMN_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
 ///
 /// DIVERGENCE (documented, measured): Go serves 94 tables in this schema
 /// (captured: `use information_schema; show tables` returns 94 names), of
-/// which these 13 are ported. `SHOW TABLES` therefore under-reports rather
+/// which these 14 are ported. `SHOW TABLES` therefore under-reports rather
 /// than reporting nothing, and naming an unported one still refuses with
 /// 1146 -- the same honest shape `mysql` has.
 const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
     ("COLUMNS", COLUMNS_COLUMNS),
     ("COLUMN_PRIVILEGES", COLUMN_PRIVILEGES_COLUMNS),
+    ("DEADLOCKS", DEADLOCKS_COLUMNS),
     ("KEY_COLUMN_USAGE", KEY_COLUMN_USAGE_COLUMNS),
     ("PROCESSLIST", PROCESSLIST_COLUMNS),
     ("REFERENTIAL_CONSTRAINTS", REFERENTIAL_CONSTRAINTS_COLUMNS),
