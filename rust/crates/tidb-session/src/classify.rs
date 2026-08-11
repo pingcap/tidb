@@ -163,6 +163,14 @@ impl Session {
         let Ok(stmt) = self.parse(sql) else {
             return StatementReadShape::Unknown;
         };
+        // Fix 52592 turns the point/batch shortcut into an ordinary range.
+        // Snapshot declaration happens before `apply_set_var_hints`, so
+        // derive the direct-AST overlay here as part of the same parse used
+        // for shape classification. Declaring MaxTS first and disabling the
+        // point plan later would silently read a range without a snapshot.
+        if crate::variables::effective_fix_52592(&stmt, self.vars.optimizer_fix_control()) {
+            return StatementReadShape::Unknown;
+        }
         let catalog = self
             .catalog
             .lock()

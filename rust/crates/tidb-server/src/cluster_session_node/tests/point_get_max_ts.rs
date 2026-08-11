@@ -125,6 +125,104 @@ fn a_prepared_point_get_takes_no_timestamp_either() {
     assert_eq!(node.live.load(Ordering::Acquire), 0);
 }
 
+/// Fix 52592 deliberately turns point/batch fast plans back into ordinary
+/// ranges. Snapshot declaration runs before the statement overlay is applied,
+/// so it must derive the SAME effective direct-AST `SET_VAR` value up front;
+/// otherwise the range read is incorrectly opened at `MaxUint64`.
+#[test]
+fn fix_52592_and_its_statement_overlay_gate_max_ts_before_execution() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, node) = open_session();
+    seed(&mut session);
+
+    session
+        .execute_write("SET tidb_opt_fix_control = '52592:OFF'")
+        .expect("fix off");
+    let opens = opens_of(&node, || {
+        assert_eq!(
+            rows(
+                &mut session,
+                "SELECT /*+ SET_VAR(tidb_opt_fix_control='52592:ON') */ v \
+                 FROM t WHERE id=1",
+            ),
+            vec![vec![Datum::Int(10)]]
+        );
+    });
+    assert_eq!(
+        opens, PAID,
+        "a direct ON overlay declared a point MaxTS read"
+    );
+
+    session
+        .execute_write("SET tidb_opt_fix_control = '52592:ON'")
+        .expect("persistent fix on");
+    let opens = opens_of(&node, || {
+        assert_eq!(
+            rows(&mut session, "SELECT v FROM t WHERE id=1"),
+            vec![vec![Datum::Int(10)]]
+        );
+    });
+    assert_eq!(opens, PAID, "persistent ON declared a point MaxTS read");
+
+    let opens = opens_of(&node, || {
+        assert_eq!(
+            rows(
+                &mut session,
+                "SELECT /*+ SET_VAR(tidb_opt_fix_control='52592:OFF') */ v \
+                 FROM t WHERE id=1",
+            ),
+            vec![vec![Datum::Int(10)]]
+        );
+    });
+    assert_eq!(
+        opens, FREE,
+        "a direct OFF overlay did not restore point MaxTS"
+    );
+
+    session
+        .execute_write("SET tidb_opt_fix_control = '52592:OFF'")
+        .expect("persistent fix off");
+    let opens = opens_of(&node, || {
+        assert_eq!(
+            rows(
+                &mut session,
+                "SELECT /*+ SET_VAR(tidb_opt_fix_control='invalid') \
+                 SET_VAR(tidb_opt_fix_control='52592:ON') */ v FROM t WHERE id=1",
+            ),
+            vec![vec![Datum::Int(10)]]
+        );
+    });
+    assert_eq!(
+        opens, FREE,
+        "an invalid first value did not occupy the classifier's first-wins slot"
+    );
+
+    let statement = session
+        .prepare_general(
+            "SELECT /*+ SET_VAR(tidb_opt_fix_control='52592:ON') */ v FROM t WHERE id=?",
+        )
+        .expect("prepare hinted point");
+    let opens = opens_of(&node, || {
+        let outcome = session
+            .execute_general(&statement, &[PreparedValue::SignedLongLong(2)])
+            .expect("execute hinted point");
+        let GeneralExecuteOutcome::Rows(mut result) = outcome else {
+            panic!("a query must answer with rows");
+        };
+        let source = result.source();
+        let mut answer = Vec::new();
+        while let Ok(batch) = source.next_batch(8) {
+            if batch.is_empty() {
+                break;
+            }
+            answer.extend(batch);
+        }
+        assert_eq!(answer, vec![vec![Datum::Int(20)]]);
+    });
+    assert_eq!(opens, PAID, "prepared direct ON overlay used MaxTS");
+}
+
 /// A second equality beside the handle is NOT this tier's point get: the
 /// handle arm requires exactly one name/value pair (Go's `len(pairs) == 1`),
 /// so the statement plans as a scan with a filter and must pay.

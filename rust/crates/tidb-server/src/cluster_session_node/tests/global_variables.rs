@@ -15,9 +15,12 @@
 //! `SET GLOBAL` errors that must retain their commit disposition through the
 //! cluster sysvar seam and the MySQL packet writer.
 
+use super::super::*;
+use super::mock_cluster::MockTransactions;
+use super::mock_seams::MockAnalyze;
 use super::node_fixture::*;
 use crate::cluster_sysvar_seam::{ClusterSysvarWriter, PendingSysvarChange};
-use crate::sql_node::QuerySession;
+use crate::sql_node::{QuerySession, QuerySessionFactory};
 use std::sync::Arc;
 use tidb_session::vars::GlobalSysvars;
 use tidb_txnkv::region::RegionBackoffKind;
@@ -75,6 +78,58 @@ impl PendingSysvarChange for BackoffSysvarChange {
                 .expect("an exhausted max-ts backoff cannot answer success"),
         )
     }
+}
+
+fn factory_with_globals(node: &MockNode, globals: GlobalSysvars) -> ClusterSessionFactory {
+    ClusterSessionFactory::new(
+        Arc::new(MockTransactions(Arc::clone(&node.cluster))),
+        Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
+        Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn ClusterSysvarWriter>,
+        Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+        Arc::clone(&node.catalog),
+        node.accounts.live.clone(),
+        globals,
+        Arc::new(SharedStats::new(
+            tidb_exec::stats_watch::StatsSnapshot::new(),
+        )),
+        Arc::new(crate::cluster_session::LocalTableAutoIds::default()),
+    )
+}
+
+#[test]
+fn factory_rejects_invalid_persisted_fix_control_without_process_leak() {
+    let node = MockNode::start();
+    let invalid_globals = GlobalSysvars::from_cluster_rows([(
+        "tidb_opt_fix_control".to_owned(),
+        "invalid".to_owned(),
+    )]);
+    let invalid_factory = factory_with_globals(&node, invalid_globals);
+    let Err(error) = invalid_factory.open_session(session_context(51)) else {
+        panic!("an invalid persisted fix-control row must refuse the cluster session");
+    };
+    assert_eq!(error.code, 1105);
+    assert_eq!(error.state, *b"HY000");
+    assert_eq!(
+        error.message,
+        "invalid fix control: expected colon not found"
+    );
+    assert!(
+        invalid_factory.processes().snapshot().is_empty(),
+        "a rejected cluster session must release its process registration"
+    );
+
+    let valid_globals = GlobalSysvars::from_cluster_rows([(
+        "tidb_opt_fix_control".to_owned(),
+        "52592:ON".to_owned(),
+    )]);
+    let valid_factory = factory_with_globals(&node, valid_globals);
+    let session = valid_factory
+        .open_session(session_context(52))
+        .expect("a valid persisted fix-control row opens normally");
+    assert_eq!(valid_factory.processes().snapshot().len(), 1);
+    drop(session);
+    assert!(valid_factory.processes().snapshot().is_empty());
 }
 
 #[test]

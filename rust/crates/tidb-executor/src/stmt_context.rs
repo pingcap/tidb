@@ -300,6 +300,12 @@ pub struct StmtContext {
     /// default NO group qualifies, so a stock session never reorders --
     /// see [`crate::driver::join_reorder`].
     join_reorder_threshold: i32,
+    /// The statement snapshot of Go `SessionVars.OptimizerFixControl`.
+    ///
+    /// Keeping the parsed map on the context makes planner decisions consume
+    /// the same value that the session writer validated, including a
+    /// statement-local `SET_VAR(tidb_opt_fix_control=...)` overlay.
+    optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl,
     /// Go `SessionVars.TiDBOptJoinReorderThroughProj`
     /// (`@@tidb_opt_join_reorder_through_proj`, default `OFF`): whether
     /// `extractJoinGroup` may look THROUGH a `Projection` sitting on a join
@@ -493,6 +499,7 @@ impl StmtContext {
             cte_max_recursion_depth: 1000,
             join_reorder_threshold: tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD
                 as i32,
+            optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
             // Go `vardef.DefTiDBOptJoinReorderThroughProj`.
             join_reorder_through_proj: false,
             // Go `vardef.DefTiDBOptJoinReorderThroughSel`.
@@ -783,6 +790,23 @@ impl StmtContext {
     pub fn with_join_reorder_threshold(mut self, threshold: i32) -> Self {
         self.join_reorder_threshold = threshold;
         self
+    }
+
+    /// Attaches the validated statement snapshot of
+    /// `@@tidb_opt_fix_control`.
+    #[must_use]
+    pub fn with_optimizer_fix_control(
+        mut self,
+        control: tidb_planner::fix_control::OptimizerFixControl,
+    ) -> Self {
+        self.optimizer_fix_control = control;
+        self
+    }
+
+    /// The statement's parsed optimizer-fix controls.
+    #[must_use]
+    pub const fn optimizer_fix_control(&self) -> &tidb_planner::fix_control::OptimizerFixControl {
+        &self.optimizer_fix_control
     }
 
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`. Non-positive -- and `0`

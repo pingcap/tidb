@@ -954,6 +954,8 @@ mod tests_explain_derived;
 mod tests_explain_merge_join;
 mod tests_expression_indexes;
 #[cfg(test)]
+mod tests_fix_control;
+#[cfg(test)]
 mod tests_foreign_key;
 mod tests_generated_columns;
 #[cfg(test)]

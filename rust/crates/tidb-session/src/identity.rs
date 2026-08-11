@@ -327,8 +327,13 @@ impl Session {
     /// and snapshots its current overrides into this session's own copy --
     /// see [`vars::SessionVars::seed_from_globals`] for why that snapshot
     /// happens exactly once, here, rather than on every read.
-    pub fn attach_globals(&mut self, globals: vars::GlobalSysvars) {
-        self.vars.seed_from_globals(globals);
+    pub fn attach_globals(
+        &mut self,
+        globals: vars::GlobalSysvars,
+    ) -> Result<(), crate::DriverError> {
+        self.vars
+            .seed_from_globals(globals)
+            .map_err(crate::variables::var_error)
     }
 
     /// Points this session at a different shared GLOBAL-scope sysvar table

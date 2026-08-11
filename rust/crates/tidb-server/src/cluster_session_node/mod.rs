@@ -501,7 +501,9 @@ impl QuerySessionFactory for ClusterSessionFactory {
         );
         session.attach_process(context.connection_id, guard);
         session.attach_privileges(self.privileges.clone());
-        session.attach_globals(self.global_vars.clone());
+        session
+            .attach_globals(self.global_vars.clone())
+            .map_err(map_error)?;
 
         Ok(ClusterServerSession {
             session,

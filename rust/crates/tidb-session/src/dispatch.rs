@@ -299,6 +299,15 @@ impl Session {
         // uses. It only decides whether this statement's plan would already
         // have been there; it never replaces the planning that follows.
         self.probe_non_prepared_plan_cache(&stmt);
+        // `apply_schema_stmt` dispatches administrative statements early.
+        // EXPLAIN is the one such wrapper whose inner query/DML can own
+        // `SET_VAR`, so install that direct-AST overlay before the early
+        // dispatch builds the target plan. The ordinary query/DML path below
+        // applies its own hints after its early control-statement doors.
+        if matches!(&stmt, Stmt::Admin(admin) if matches!(&**admin, tidb_ast::AdminStmt::Explain(_)))
+        {
+            self.apply_set_var_hints(&stmt);
+        }
         // USE / CREATE DATABASE / DROP DATABASE / SHOW DATABASES / SHOW TABLES.
         if let Some(output) = self.apply_schema_stmt(&stmt)? {
             return Ok(output);

@@ -75,6 +75,9 @@ pub(crate) fn commit_fast_path_source(
     // decision here reads; taking it from `ctx` keeps the two from being
     // separately supplied and separately wrong.
     let zone = &ctx.session_zone();
+    let disable_point_get = ctx
+        .optimizer_fix_control()
+        .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false);
     let mut index_order: Option<IndexAccessOrder> = None;
     let Some(table) = single_kv_table(&select.from, catalog, current_db) else {
         return Ok(None);
@@ -122,7 +125,11 @@ pub(crate) fn commit_fast_path_source(
         }
     }
     // Go tries the batch point get before the single one.
-    if let Some(handles) = try_batch_point_get(select, &table, &columns, zone)? {
+    if let Some(handles) = (!disable_point_get)
+        .then(|| try_batch_point_get(select, &table, &columns, zone))
+        .transpose()?
+        .flatten()
+    {
         let exec = HandleSourceExec::new_with_context(
             ExecutorMeta::new(
                 Schema::new(source_schema_columns(&columns)),
@@ -157,7 +164,8 @@ pub(crate) fn commit_fast_path_source(
     // BATCH point get below is deliberately NOT gated: Go's
     // `tryWhereIn2BatchPointGet` never consults the hints, and captured TiDB
     // plans `Batch_Point_Get` for `FORCE INDEX(idx_b) WHERE a IN (2,3)`.
-    if !hints.allows_table()
+    if disable_point_get
+        || !hints.allows_table()
         || try_point_get(&PointPlanStmt::of_select(select), &table, &columns, zone)?.is_none()
     {
         match choose_index_range_path(
@@ -192,7 +200,10 @@ pub(crate) fn commit_fast_path_source(
                         // the NULL-ended interval, leaving nothing to read.
                         if ranges.is_empty() {
                             trace.empty_range_table_dual();
-                        } else if let Some(handle) = single_point_handle(&ranges) {
+                        } else if let Some(handle) = (!disable_point_get)
+                            .then(|| single_point_handle(&ranges))
+                            .flatten()
+                        {
                             // Go's `isPointGetPath` converts a table path whose
                             // one range is a single non-null point on the
                             // integer handle to a `Point_Get`
@@ -229,8 +240,7 @@ pub(crate) fn commit_fast_path_source(
             None => {}
         }
     }
-    if let Some(handle) = hints
-        .allows_table()
+    if let Some(handle) = (!disable_point_get && hints.allows_table())
         .then(|| try_point_get(&PointPlanStmt::of_select(select), &table, &columns, zone))
         .transpose()?
         .flatten()
@@ -941,7 +951,7 @@ pub(crate) fn write_read_path(
     database: &str,
     name: &str,
     stmt: &PointPlanStmt<'_>,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Result<Option<WriteReadPath>, DriverError> {
     let Some(TableEntry::Kv(table)) = catalog.get_in(database, name) else {
         return Ok(None);
@@ -955,7 +965,15 @@ pub(crate) fn write_read_path(
         .iter()
         .map(|column| (column.name.clone(), column.field_type.clone()))
         .collect();
-    if let Some(handle) = try_point_get(stmt, table, &columns, zone)? {
+    let zone = &ctx.session_zone();
+    let disable_point_get = ctx
+        .optimizer_fix_control()
+        .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false);
+    if let Some(handle) = (!disable_point_get)
+        .then(|| try_point_get(stmt, table, &columns, zone))
+        .transpose()?
+        .flatten()
+    {
         return Ok(Some(WriteReadPath::Point(handle)));
     }
     // Go's write plan costs the index paths beside the table path, through the

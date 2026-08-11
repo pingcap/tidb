@@ -497,6 +497,15 @@ fn quoted_string(value: &str, alternate: bool, ascii_only: bool) -> String {
     rendered
 }
 
+/// Quotes a string exactly as Go `fmt.Sprintf("%q", value)` does.
+///
+/// This deliberately uses the checked-in Go `strconv.IsPrint` tables above
+/// rather than Rust's host Unicode classification, whose printable set differs
+/// for values such as U+0085 and U+200B.
+pub fn go_quote_string(value: &str) -> String {
+    quoted_string(value, false, false)
+}
+
 fn integer_character(argument: &FormatArg) -> char {
     let codepoint = match argument.kind {
         FormatKind::Signed => argument

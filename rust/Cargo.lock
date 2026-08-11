@@ -1882,6 +1882,7 @@ dependencies = [
  "tidb-ast",
  "tidb-codec",
  "tidb-datatype",
+ "tidb-error",
  "tidb-hash",
  "tidb-parser",
  "tidb-stats",
@@ -1951,6 +1952,8 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "serde",
+ "serde_json",
  "tidb-ast",
  "tidb-datatype",
  "tidb-executor",
