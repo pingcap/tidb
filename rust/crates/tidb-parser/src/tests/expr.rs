@@ -1471,6 +1471,16 @@ fn adjacent_string_concat() {
         r("select 'a' 'b', 'c' 'd' from t"),
         "SELECT _UTF8MB4'ab',_UTF8MB4'cd' FROM `t`"
     );
+
+    let Stmt::Query(query) = parse("select 'a' 'b', 'é' 'x', 'single'").unwrap() else {
+        panic!("expected query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+        panic!("expected select");
+    };
+    assert_eq!(select.fields.projection_offset(0), Some(1));
+    assert_eq!(select.fields.projection_offset(1), Some(2));
+    assert_eq!(select.fields.projection_offset(2), None);
 }
 
 /// `POSITION(substr IN str)` — see `tidb_ast::Expr::Position`'s own doc.

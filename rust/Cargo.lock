@@ -1657,6 +1657,7 @@ dependencies = [
  "tidb-error",
  "tidb-expr",
  "tidb-model",
+ "tidb-mysql",
  "tidb-parser",
  "tidb-planner",
  "tidb-stats",

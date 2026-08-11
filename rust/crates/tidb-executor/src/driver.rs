@@ -70,7 +70,7 @@ use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 /// for this field (for example a field synthesized by a rewrite pass rather
 /// than parsed from source).
 ///
-/// # The literal switch, and the one arm this tier still cannot reach
+/// # The literal switch
 ///
 /// Go's literal handling is a switch on the `driver.ValueExpr`'s DATUM KIND,
 /// not on its source text, and every arm below is that switch:
@@ -82,22 +82,11 @@ use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
 /// * `KindBinaryLiteral` (a `0x`/`b''` literal) keeps its source text.
 /// * `KindInt64` carrying `IsBooleanFlag` -- a `TRUE`/`FALSE` keyword -- is
 ///   named `TRUE` or `FALSE` by its VALUE, so `select false` is `FALSE`.
+/// * adjacent string literals use the decoded value of the first token, via
+///   [`SelectFieldList::projection_offset`].
 /// * every other literal keeps its source text with `\t\n +(` trimmed from
 ///   the left and `\t\n )` from the right, so `select +1` is named `1`.
-///
-/// The one arm this tier answers differently is Go's `GetProjectionOffset()`
-/// inside `KindString`. Go's parser folds ADJACENT string literals into one
-/// value (`pkg/parser/expr_parser.go`'s `parseLiteral`, `case stringLit:`)
-/// and records the FIRST literal's decoded length on the value node, so
-/// `select "ss" "a"` is named `ss` and not `ssa`. This tier's parser folds
-/// them the same way (see `tidb_parser`'s `TokenKind::Str` arm) but
-/// [`tidb_ast::Expr::String`] carries only the folded value, with nowhere to
-/// put the offset; the label here is therefore the WHOLE folded value.
-/// MEASURED RESIDUE: 7 statements in `executor/executor`
-/// (`select 'a' ' ' 'string'` and its six siblings). Closing it means giving
-/// the string literal a place to carry the first token's length -- an AST
-/// change, not a change here.
-pub(crate) fn default_field_display_name(
+pub fn default_field_display_name(
     fields: &SelectFieldList,
     index: usize,
     expr: &tidb_ast::Expr,
@@ -141,7 +130,7 @@ pub(crate) fn default_field_display_name(
     // were measured as regressions before
     // `SelectFieldList::written_literal` recorded the parse-time answer.
     if fields.written_literal(index) && is_value_literal(inner) {
-        return literal_field_display_name(inner, &text());
+        return literal_field_display_name(fields, index, inner, &text());
     }
     // Non-literal: named by its source text with MySQL special-result-field
     // comment markers removed -- Go's
@@ -153,11 +142,22 @@ pub(crate) fn default_field_display_name(
 
 /// Go `buildProjectionFieldNameFromExpressions`'s literal switch, over the
 /// literal `expr` and the field's own source `text`.
-fn literal_field_display_name(expr: &tidb_ast::Expr, text: &str) -> String {
+fn literal_field_display_name(
+    fields: &SelectFieldList,
+    index: usize,
+    expr: &tidb_ast::Expr,
+    text: &str,
+) -> String {
     match expr {
         // `types.KindString`: the VALUE names the column, with leading
         // non-graphic characters trimmed.
         tidb_ast::Expr::String(value) | tidb_ast::Expr::RawString(value) => {
+            let value = match fields.projection_offset(index) {
+                Some(offset) => value
+                    .get(..offset)
+                    .expect("parser projection offset is a decoded string boundary"),
+                None => value,
+            };
             trim_leading_non_graphic(value).to_owned()
         }
         // `types.KindNull`.
@@ -201,20 +201,10 @@ fn literal_label_value(expr: &tidb_ast::Expr) -> Option<String> {
 /// !unicode.IsOneOf(mysql.RangeGraph, r) })`: drops leading characters that
 /// are not "graphic" in MySQL's sense.
 ///
-/// `mysql.RangeGraph` is the union of the Unicode general categories `L*`,
-/// `M*`, `N*`, `P*` and `S*`, so its complement -- what is trimmed -- is
-/// exactly `C*` (control, format, surrogate, private-use, unassigned) and
-/// `Z*` (the separators). This tier recognizes the two halves the recorded
-/// corpus reaches: `Zs`/`Zl`/`Zp` and the whitespace controls, through
-/// `char::is_whitespace`, and `Cc` through `char::is_control`.
-///
-/// NAMED RESIDUE: `Cf` (format characters such as U+200B and U+FEFF), `Co`
-/// (private use) and `Cn` (unassigned) are graphic here and non-graphic in
-/// Go. Rust's standard library exposes no general-category table, so closing
-/// this needs a Unicode category table this workspace does not carry; no
-/// statement in the 257-topic corpus starts a string literal with one.
+/// `tidb-mysql` owns the exact source category tables, so this does not depend
+/// on the Unicode version bundled with Rust.
 fn trim_leading_non_graphic(value: &str) -> &str {
-    value.trim_start_matches(|c: char| c.is_whitespace() || c.is_control())
+    value.trim_start_matches(|c: char| !tidb_mysql::is_range_graph(c))
 }
 
 /// Go `getInnerFromParenthesesAndUnaryPlus`: strips enclosing parentheses and
@@ -1601,9 +1591,14 @@ mod field_name_tests {
         // and symbols (`So`), which are both members of `mysql.RangeGraph`.
         assert_eq!(label_of(r"select '\n\t   中文 col'"), "中文 col");
         assert_eq!(label_of("select '   \u{1f606}col'"), "\u{1f606}col");
+        assert_eq!(label_of("select '\u{200b}col'"), "col");
         // The value rule is reached through parentheses and a unary plus.
         assert_eq!(label_of("select (('abc'))"), "abc");
         assert_eq!(label_of(r#"select +"aaa""#), "aaa");
+        // Adjacent literals concatenate as a value but retain the decoded
+        // byte length of the first token for the result-column name.
+        assert_eq!(label_of("select 'a' 'b'"), "a");
+        assert_eq!(label_of("select 'é' 'x'"), "é");
     }
 
     /// Go's `default` arm: a numeric literal keeps its SOURCE TEXT, with the

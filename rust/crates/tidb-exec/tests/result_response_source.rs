@@ -37,6 +37,23 @@ fn tableless_literals_and_aliases_produce_protocol_columns() {
 }
 
 #[test]
+fn string_literal_result_names_preserve_source_projection_semantics() {
+    let cases = [
+        ("SELECT 'raw'", "raw"),
+        ("SELECT 'a' 'b'", "a"),
+        ("SELECT ('a' 'b')", "a"),
+        ("SELECT 'é' 'x'", "é"),
+        (r"SELECT '\nhello'", "hello"),
+    ];
+
+    for (sql, expected) in cases {
+        let result = derive_tableless_select_result(sql, utf8(), "")
+            .unwrap_or_else(|error| panic!("{sql}: {error}"));
+        assert_eq!(result.columns[0].name, expected, "source SQL: {sql}");
+    }
+}
+
+#[test]
 fn tableless_operator_and_function_metadata_is_derived() {
     let columns = derive_tableless_select_columns(
         "SELECT 1 + 2 AS total, CONCAT('a', 'b') AS text_value",

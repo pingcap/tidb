@@ -39,6 +39,7 @@ mod stringify;
 
 pub use stringify::{
     datums_to_string, datums_to_string_no_error, datums_to_string_no_error_smart, is_printable,
+    unwrap_from_single_quotes, wrap_in_single_quotes,
 };
 
 /// Go TiDB's complete datum-kind domain.

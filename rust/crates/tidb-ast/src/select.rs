@@ -668,6 +668,7 @@ pub struct SelectFieldList {
     fields: Vec<SelectField>,
     text: Vec<NodeText>,
     written_literal: Vec<bool>,
+    projection_offsets: Vec<Option<usize>>,
 }
 
 impl SelectFieldList {
@@ -687,15 +688,29 @@ impl SelectFieldList {
     /// Appends a field with empty source metadata.
     pub fn push(&mut self, field: SelectField) {
         self.written_literal.push(was_written_as_literal(&field));
+        self.projection_offsets.push(None);
         self.fields.push(field);
         self.text.push(NodeText::default());
     }
 
     /// Appends a field and records its exact source bytes.
     pub fn push_with_text(&mut self, field: SelectField, source: impl Into<Vec<u8>>) {
+        self.push_with_text_and_projection_offset(field, source, None);
+    }
+
+    /// Appends a parsed field with its source bytes and the decoded byte
+    /// length of the first adjacent string literal, when concatenation
+    /// occurred.
+    pub fn push_with_text_and_projection_offset(
+        &mut self,
+        field: SelectField,
+        source: impl Into<Vec<u8>>,
+        projection_offset: Option<usize>,
+    ) {
         let mut text = NodeText::default();
         text.set_text(None, source);
         self.written_literal.push(was_written_as_literal(&field));
+        self.projection_offsets.push(projection_offset);
         self.fields.push(field);
         self.text.push(text);
     }
@@ -726,6 +741,13 @@ impl SelectFieldList {
     #[must_use]
     pub fn written_literal(&self, index: usize) -> bool {
         self.written_literal.get(index).copied().unwrap_or(false)
+    }
+
+    /// Decoded byte length of the first adjacent string literal for field
+    /// `index`, or `None` when the field was not formed by concatenation.
+    #[must_use]
+    pub fn projection_offset(&self, index: usize) -> Option<usize> {
+        self.projection_offsets.get(index).copied().flatten()
     }
 }
 
@@ -758,10 +780,12 @@ impl From<Vec<SelectField>> for SelectFieldList {
     fn from(fields: Vec<SelectField>) -> Self {
         let text = vec![NodeText::default(); fields.len()];
         let written_literal = fields.iter().map(was_written_as_literal).collect();
+        let projection_offsets = vec![None; fields.len()];
         Self {
             fields,
             text,
             written_literal,
+            projection_offsets,
         }
     }
 }

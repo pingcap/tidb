@@ -22,6 +22,40 @@ use std::fmt;
 
 use super::{Datum, DatumKind, DatumStringError, DatumValueError};
 
+/// Escapes backslashes and single quotes, then surrounds the bytes with
+/// single quotes. This is the byte-preserving form of parser driver's
+/// `WrapInSingleQuotes`.
+#[must_use]
+pub fn wrap_in_single_quotes(value: &[u8]) -> Vec<u8> {
+    quote_value_expr(value)
+}
+
+/// Reverses [`wrap_in_single_quotes`]. Bytes without surrounding single
+/// quotes are returned unchanged.
+#[must_use]
+pub fn unwrap_from_single_quotes(value: &[u8]) -> Vec<u8> {
+    if value.len() < 2 || value.first() != Some(&b'\'') || value.last() != Some(&b'\'') {
+        return value.to_vec();
+    }
+    let unescaped_backslashes = collapse_byte_pair(&value[1..value.len() - 1], b'\\');
+    collapse_byte_pair(&unescaped_backslashes, b'\'')
+}
+
+fn collapse_byte_pair(value: &[u8], byte: u8) -> Vec<u8> {
+    let mut output = Vec::with_capacity(value.len());
+    let mut index = 0;
+    while index < value.len() {
+        if value[index] == byte && value.get(index + 1) == Some(&byte) {
+            output.push(byte);
+            index += 2;
+        } else {
+            output.push(value[index]);
+            index += 1;
+        }
+    }
+    output
+}
+
 impl Datum {
     /// Renders the scalar in the existing Go-oracle label format.
     ///

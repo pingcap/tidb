@@ -202,8 +202,8 @@ pub use error_context::{
 pub use error_conversion::{exec_error_descriptor, exec_error_kind, RenderedExecError};
 pub use result::{Outcome, ResultSet, Row};
 pub use result_field_resolver::{
-    resolve_result_fields, resolve_select_fields, ResolvedResultField, ResultFieldResolveError,
-    ResultFieldSpec,
+    resolve_parsed_select_fields, resolve_result_fields, resolve_select_fields,
+    ResolvedResultField, ResultFieldResolveError, ResultFieldSpec,
 };
 pub use result_metadata::{
     col_names_to_result_fields, columns_from_adapted_fields, convert_result_field,

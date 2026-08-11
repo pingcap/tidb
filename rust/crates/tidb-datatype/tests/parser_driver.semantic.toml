@@ -1,0 +1,30 @@
+go_package = "pkg/types/parser_driver"
+source_commit = "665fc02e2be48a7199d5ffeb5d3d6bec1dfed04f"
+evidence_files = [
+  "rust/crates/tidb-datatype/src/datum/mod.rs",
+  "rust/crates/tidb-datatype/src/datum/stringify.rs",
+  "rust/crates/tidb-datatype/src/lib.rs",
+  "rust/crates/tidb-datatype/tests/value_expr_source.rs",
+  "rust/crates/tidb-ast/src/expr.rs",
+  "rust/crates/tidb-ast/src/expr/restore.rs",
+  "rust/crates/tidb-ast/src/select.rs",
+  "rust/crates/tidb-parser/src/expr.rs",
+  "rust/crates/tidb-parser/src/lib.rs",
+  "rust/crates/tidb-parser/src/select.rs",
+  "rust/crates/tidb-parser/src/tests/expr.rs",
+  "rust/crates/tidb-executor/Cargo.toml",
+  "rust/crates/tidb-executor/src/driver.rs",
+  "rust/crates/tidb-executor/src/driver/params.rs",
+  "rust/crates/tidb-exec/src/lib.rs",
+  "rust/crates/tidb-exec/src/result_field_resolver.rs",
+  "rust/crates/tidb-exec/src/result_response.rs",
+  "rust/crates/tidb-exec/tests/result_response_source.rs",
+]
+commands = [
+  ["test", "-p", "tidb-datatype", "--test", "all", "value_expr_source::"],
+  ["test", "-p", "tidb-parser", "--lib", "tests::expr::"],
+  ["test", "-p", "tidb-parser", "--lib", "tests::expressions::test_expresions_visitor_cover", "--", "--exact"],
+  ["test", "-p", "tidb-executor", "--lib", "driver::params::tests::"],
+  ["test", "-p", "tidb-executor", "--lib", "driver::field_name_tests::"],
+  ["test", "-p", "tidb-exec", "--test", "all", "result_response_source::"],
+]

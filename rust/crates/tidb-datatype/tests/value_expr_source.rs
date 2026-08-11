@@ -15,7 +15,8 @@
 //! Row-for-row translations of `pkg/types/parser_driver/value_expr_test.go`.
 
 use tidb_datatype::{
-    BinaryLiteral, CoreTime, Datum, Decimal, MySqlDuration, Time, TimeType,
+    unwrap_from_single_quotes, wrap_in_single_quotes, BinaryLiteral, CoreTime, Datum, Decimal,
+    MySqlDuration, Time, TimeType,
 };
 
 fn binary_literal() -> Datum {
@@ -90,4 +91,23 @@ fn test_value_expr_format() {
     for (datum, expected) in rows {
         assert_eq!(datum.format_value_expr().unwrap(), expected.as_bytes());
     }
+}
+
+#[test]
+fn single_quote_helpers_are_byte_preserving_inverses() {
+    let rows: &[&[u8]] = &[
+        b"plain",
+        b"a'b",
+        br"a\b",
+        br"\''",
+        b"\xff\0'\\",
+    ];
+    for value in rows {
+        let wrapped = wrap_in_single_quotes(value);
+        assert_eq!(unwrap_from_single_quotes(&wrapped), *value);
+    }
+
+    assert_eq!(wrap_in_single_quotes(br"a\'b"), br"'a\\''b'");
+    assert_eq!(unwrap_from_single_quotes(b"not quoted"), b"not quoted");
+    assert_eq!(unwrap_from_single_quotes(b"'unterminated"), b"'unterminated");
 }

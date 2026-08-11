@@ -377,6 +377,9 @@ struct Parser {
     pos: usize,
     enable_mariadb: bool,
     param_marker_position: usize,
+    /// Decoded byte length of the first token in the most recently parsed
+    /// adjacent bare-string literal.
+    string_projection_offset: Option<usize>,
     connection_charset: String,
     connection_collation: String,
     real_as_float: bool,
@@ -435,6 +438,7 @@ impl Parser {
             pos: 0,
             enable_mariadb,
             param_marker_position: 0,
+            string_projection_offset: None,
             connection_charset: charset.to_owned(),
             connection_collation: collation.to_owned(),
             real_as_float: sql_mode.real_as_float,
@@ -548,6 +552,7 @@ impl Parser {
             pos: 0,
             enable_mariadb: false,
             param_marker_position: 0,
+            string_projection_offset: None,
             connection_charset: tidb_mysql::DefaultCharset.to_owned(),
             connection_collation: tidb_mysql::DefaultCollationName.to_owned(),
             real_as_float: false,

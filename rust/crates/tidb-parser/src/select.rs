@@ -70,7 +70,8 @@
 use tidb_ast::{
     Cte, Expr, Hint, HintKind, HintTable, Join, JoinNode, JoinType, LeadingElement, Limit,
     OrderItem, QueryStmt, SampleMethod, SampleUnit, SelectField, SelectStatementKind, SelectStmt,
-    SetOp, SetOprStmt, SetOprTerm, SetOprTermBody, TableRef, TableSample, WindowDef, WithClause,
+    SetOp, SetOprStmt, SetOprTerm, SetOprTermBody, TableRef, TableSample, UnaryOp, WindowDef,
+    WithClause,
 };
 use tidb_lexer::TokenKind;
 
@@ -1047,18 +1048,19 @@ impl Parser {
 
     pub(crate) fn parse_select_list(&mut self) -> PResult<tidb_ast::SelectFieldList> {
         let mut fields = tidb_ast::SelectFieldList::default();
-        let (field, text) = self.parse_select_field()?;
-        fields.push_with_text(field, text);
+        let (field, text, projection_offset) = self.parse_select_field()?;
+        fields.push_with_text_and_projection_offset(field, text, projection_offset);
         while self.is_op(",") {
             self.bump();
-            let (field, text) = self.parse_select_field()?;
-            fields.push_with_text(field, text);
+            let (field, text, projection_offset) = self.parse_select_field()?;
+            fields.push_with_text_and_projection_offset(field, text, projection_offset);
         }
         Ok(fields)
     }
 
-    fn parse_select_field(&mut self) -> PResult<(SelectField, Vec<u8>)> {
+    fn parse_select_field(&mut self) -> PResult<(SelectField, Vec<u8>, Option<usize>)> {
         let start = self.peek().offset;
+        let mut projection_offset = None;
         let field = if self.is_op("*") {
             self.bump();
             SelectField::Wildcard(Vec::new())
@@ -1071,7 +1073,11 @@ impl Parser {
         } else if let Some(path) = self.try_take_wildcard() {
             SelectField::Wildcard(path)
         } else {
+            self.string_projection_offset = None;
             let expr = self.parse_expr(prec::NONE)?;
+            if is_string_value_literal(&expr) {
+                projection_offset = self.string_projection_offset;
+            }
             let alias = self.parse_opt_alias()?;
             SelectField::Expr { expr, alias }
         };
@@ -1081,7 +1087,7 @@ impl Parser {
         } else {
             Vec::new()
         };
-        Ok((field, text))
+        Ok((field, text, projection_offset))
     }
 
     /// If the upcoming tokens form a qualified wildcard — `IDENT ('.' IDENT)*
@@ -1223,6 +1229,14 @@ impl Parser {
             crate::normalize_identifier(name.text)
         }
     }
+}
+
+fn is_string_value_literal(expr: &Expr) -> bool {
+    let mut inner = expr;
+    while let Expr::Paren(next) | Expr::Unary(UnaryOp::Plus, next) = inner {
+        inner = next;
+    }
+    matches!(inner, Expr::String(_))
 }
 
 /// Whether `name` is one of the keywords real MySQL/TiDB never accepts

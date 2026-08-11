@@ -414,10 +414,14 @@ impl Parser {
             TokenKind::Str => {
                 self.bump();
                 let mut val = self.decode_string(&t.text);
+                let first_len = val.len();
+                let mut concatenated = false;
                 while self.peek().kind == TokenKind::Str {
+                    concatenated = true;
                     let next = self.bump();
                     val.push_str(&self.decode_string(&next.text));
                 }
+                self.string_projection_offset = concatenated.then_some(first_len);
                 Ok(Expr::String(val))
             }
             // `_charset'x'` / `N'x'` / `n'x'` — a character-set-introduced

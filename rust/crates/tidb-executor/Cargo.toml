@@ -18,6 +18,7 @@ tidb-distsql = { path = "../tidb-distsql" }
 tidb-error = { path = "../tidb-error" }
 tidb-expr = { path = "../tidb-expr" }
 tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-planner = { path = "../tidb-planner" }
 tidb-stats = { path = "../tidb-stats" }

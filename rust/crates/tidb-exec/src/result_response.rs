@@ -30,7 +30,7 @@ use tidb_parser::ParseError;
 use tidb_protocol::ColumnInfo;
 
 use crate::result_field_resolver::{
-    resolve_select_fields, ResolvedResultField, ResultFieldResolveError,
+    resolve_parsed_select_fields, ResolvedResultField, ResultFieldResolveError,
 };
 use crate::result_metadata::{
     col_names_to_result_fields, columns_from_adapted_fields, AdaptedResultField,
@@ -123,7 +123,7 @@ pub fn derive_tableless_select_result(
         return Err(AutomaticResultResponseError::WithRequiresSchema);
     }
 
-    let resolved_fields = resolve_select_fields(&select.fields, default_collation)?;
+    let resolved_fields = resolve_parsed_select_fields(&select.fields, default_collation)?;
     let schema = resolved_fields
         .iter()
         .map(|field| field.field_type.clone())

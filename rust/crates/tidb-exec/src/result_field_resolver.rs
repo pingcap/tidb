@@ -23,7 +23,7 @@
 
 use std::fmt;
 
-use tidb_ast::{BinaryOp, CastType, Expr, SelectField, UnaryOp};
+use tidb_ast::{BinaryOp, CastType, Expr, SelectField, SelectFieldList, UnaryOp};
 use tidb_datatype::{Charset, Collation, FieldTypeCode};
 use tidb_planner::aggregation_descriptor::AggregateKind;
 
@@ -127,6 +127,26 @@ pub fn resolve_select_fields(
         })
         .collect::<Result<Vec<_>, _>>()?;
     resolve_result_fields(&specs, default_collation)
+}
+
+/// Resolves a parser-owned select list, including source-only literal naming
+/// metadata that is intentionally absent from the semantic [`Expr`] tree.
+pub fn resolve_parsed_select_fields(
+    fields: &SelectFieldList,
+    default_collation: Collation,
+) -> Result<Vec<ResolvedResultField>, ResultFieldResolveError> {
+    let mut resolved = resolve_select_fields(fields.fields(), default_collation)?;
+    for (index, field) in fields.fields().iter().enumerate() {
+        let SelectField::Expr { expr, alias } = field else {
+            continue;
+        };
+        if alias.as_deref().is_none_or(str::is_empty) {
+            resolved[index].names.column = IdentifierMetadata::new(
+                tidb_executor::driver::default_field_display_name(fields, index, expr),
+            );
+        }
+    }
+    Ok(resolved)
 }
 
 /// Resolves explicitly supplied field specifications.
