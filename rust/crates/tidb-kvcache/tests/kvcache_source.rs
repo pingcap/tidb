@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+// http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -17,10 +17,7 @@
 use std::io;
 use std::sync::{Arc, Mutex};
 
-use tidb_util::kvcache::{
-    global_lru_memory_tracker, CacheKey, MemoryProbeError, SimpleLruCache, PROFILE_NAME,
-};
-use tidb_util::memory::LABEL_FOR_GLOBAL_SIMPLE_LRU_CACHE;
+use tidb_kvcache::{CacheKey, MemoryProbeError, SimpleLruCache, PROFILE_NAME};
 
 #[derive(Debug, Eq, PartialEq)]
 struct Key {
@@ -199,13 +196,9 @@ fn zero_capacity_panics() {
 }
 
 #[test]
-fn public_profile_and_global_tracker_contracts_are_stable() {
+fn profile_name_is_stable() {
     assert_eq!(
         PROFILE_NAME,
         "github.com/pingcap/tidb/pkg/util/kvcache.(*SimpleLRUCache).Put"
     );
-    let first = global_lru_memory_tracker();
-    let second = global_lru_memory_tracker();
-    assert!(Arc::ptr_eq(first, second));
-    assert_eq!(first.label(), LABEL_FOR_GLOBAL_SIMPLE_LRU_CACHE);
 }

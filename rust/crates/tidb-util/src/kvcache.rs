@@ -26,3 +26,16 @@ pub fn global_lru_memory_tracker() -> &'static Arc<Tracker> {
     static TRACKER: OnceLock<Arc<Tracker>> = OnceLock::new();
     TRACKER.get_or_init(|| Tracker::new(LABEL_FOR_GLOBAL_SIMPLE_LRU_CACHE, -1))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn global_tracker_is_stable_and_source_labeled() {
+        let first = global_lru_memory_tracker();
+        let second = global_lru_memory_tracker();
+        assert!(Arc::ptr_eq(first, second));
+        assert_eq!(first.label(), LABEL_FOR_GLOBAL_SIMPLE_LRU_CACHE);
+    }
+}
