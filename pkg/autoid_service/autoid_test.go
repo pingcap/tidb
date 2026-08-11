@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/kvproto/pkg/apipb"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -162,6 +163,37 @@ func TestAPI(t *testing.T) {
 		}
 		testAPIWithKeyspace(t, &keyspaceMeta)
 	}
+}
+
+func TestAPIWithKeyspaceIdentity(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("keyspace identity is only supported in next-gen mode")
+	}
+
+	identity := &apipb.KeyspaceIdentity{NamespaceId: 42, KeyspaceId: uint32(0xFFFFFF) - 1}
+	store := testkit.CreateMockStore(t, mockstore.WithCurrentKeyspaceMeta(&keyspacepb.KeyspaceMeta{
+		Keyspace: &keyspacepb.KeyspaceMeta_KeyspaceIdentity{KeyspaceIdentity: identity},
+		Name:     keyspace.System,
+	}))
+	cli := MockForTest(store)
+
+	alloc := func(requestIdentity *apipb.KeyspaceIdentity) error {
+		_, err := cli.AllocAutoID(context.Background(), &autoid.AutoIDRequest{
+			DbID:      0,
+			TblID:     0,
+			N:         1,
+			Increment: 1,
+			Offset:    1,
+			Keyspace:  &autoid.AutoIDRequest_KeyspaceIdentity{KeyspaceIdentity: requestIdentity},
+		})
+		return err
+	}
+
+	require.NoError(t, alloc(identity))
+	require.ErrorContains(t, alloc(&apipb.KeyspaceIdentity{
+		NamespaceId: identity.NamespaceId + 1,
+		KeyspaceId:  identity.KeyspaceId,
+	}), "not leader")
 }
 
 func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
