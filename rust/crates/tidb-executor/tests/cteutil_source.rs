@@ -17,6 +17,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_executor::{CteStorage, ExecError, OomAction, StatementMemory};
 use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
@@ -87,12 +88,36 @@ fn storage_add_get_reopen_and_state_match_the_source_contract() {
         .add_rows([vec![Datum::Int(42)]])
         .expect("reopened storage accepts rows");
     assert_eq!(storage.get_row(0, 0).unwrap(), vec![Datum::Int(42)]);
+
+    for _ in 0..100 {
+        storage.reopen().unwrap();
+    }
+    storage
+        .add_rows([vec![Datum::Int(99)]])
+        .expect("repeated reopen leaves a usable fresh storage");
+    assert_eq!(storage.get_row(0, 0).unwrap(), vec![Datum::Int(99)]);
+
     storage.close();
     assert_eq!(storage.num_rows(), 0);
     assert!(matches!(
         storage.add_rows([vec![Datum::Int(9)]]),
         Err(ExecError::Internal(_))
     ));
+}
+
+#[test]
+fn closed_storage_rejects_an_empty_chunk_before_the_empty_shortcut() {
+    let field_types = vec![int_type()];
+    let mut storage = CteStorage::new(field_types.clone(), 4, unlimited_memory());
+    storage.close();
+
+    let error = storage
+        .add_chunk(Chunk::new_with_capacity(&field_types, 1))
+        .expect_err("a closed storage rejects every batch, including an empty one");
+    match error {
+        ExecError::Internal(message) => assert_eq!(message, "CTE storage is not open"),
+        other => panic!("unexpected error: {other:?}"),
+    }
 }
 
 #[test]

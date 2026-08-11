@@ -141,12 +141,12 @@ impl CteStorage {
             .ok_or_else(|| ExecError::internal("CTE storage is not open"))
     }
 
-    /// Adds one already-columnar batch. Empty batches are a no-op.
+    /// Adds one already-columnar batch. Empty batches are a no-op while open.
     pub fn add_chunk(&mut self, chunk: Chunk) -> Result<(), ExecError> {
+        let data = self.data_mut()?;
         if chunk.num_rows() == 0 {
             return Ok(());
         }
-        let data = self.data_mut()?;
         data.rows
             .add(chunk)
             .map_err(|error| ExecError::SpillFailed(error.to_string()))?;
