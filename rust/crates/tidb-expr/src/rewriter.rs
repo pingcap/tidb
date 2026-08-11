@@ -1298,6 +1298,7 @@ mod tests {
             // odd one out, lumped into the UNSIZED string family.
             (call("MD5", vec![str_arg("a")]), 32, "md5"),
             (call("SHA1", vec![str_arg("a")]), 40, "sha1"),
+            (call("SM3", vec![str_arg("a")]), 40, "sm3"),
             (
                 call("SHA2", vec![str_arg("a"), int_arg("256")]),
                 128,

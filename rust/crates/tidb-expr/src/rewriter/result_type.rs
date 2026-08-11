@@ -704,7 +704,9 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // binary, unlike `UNHEX`/`FROM_BASE64` above -- with a fixed flen:
         // `sha1FunctionClass` 40 (one SHA-1 digest hexed) and
         // `sha2FunctionClass` 128 (sized for its widest variant, SHA-512).
-        "sha" | "sha1" if args.len() == 1 => {
+        // Go gives both SHA-1 and SM3 flen 40. SM3 actually emits 64 hex
+        // digits, but the 40-byte metadata is observable and source-owned.
+        "sha" | "sha1" | "sm3" if args.len() == 1 => {
             let mut ft = text();
             ft.set_flen(40);
             ft

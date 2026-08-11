@@ -43,9 +43,6 @@
 //!   its UTF-8/default-charset scalar value contract below; connection
 //!   charset/session warning behavior and arbitrary typed collation metadata
 //!   remain explicit boundaries.
-//! - `SM3` (`builtinSM3Sig`): TiDB extension hash backed by
-//!   `pkg/parser/auth`; the complete expression package must route it through
-//!   the existing Rust parser-auth implementation.
 
 use std::io::{Read, Write};
 
@@ -70,6 +67,7 @@ pub(crate) fn dispatch(
         ("MD5", 1) => Some(hash_unary::<Md5>(&vals[0])),
         ("SHA" | "SHA1", 1) => Some(hash_unary::<Sha1>(&vals[0])),
         ("SHA2", 2) => Some(sha2_hash(&vals[0], &vals[1])),
+        ("SM3", 1) => Some(sm3_hash(&vals[0])),
         ("PASSWORD", 1) => Some(password_hash(&vals[0])),
         ("VALIDATE_PASSWORD_STRENGTH", 1) => Some(validate_password_strength(&vals[0], ctx)),
         ("ENCODE", 2) => Some(sql_encode(&vals[0], &vals[1])),
@@ -494,6 +492,17 @@ fn hash_unary<D: Digest>(v: &Datum) -> Result<Datum, EvalError> {
     }
 }
 
+/// `SM3(str)`: the parser-auth SM3 digest rendered as lowercase hex. TiDB's
+/// SQL builtin and password plugin deliberately share this digest owner.
+fn sm3_hash(value: &Datum) -> Result<Datum, EvalError> {
+    match hash_input(value)? {
+        Some(bytes) => Ok(Datum::new_string(hex_lower(&tidb_parser::auth::sm3_hash(
+            &bytes,
+        )))),
+        None => Ok(Datum::Null),
+    }
+}
+
 /// Returns the exact bytes consumed by Go's `EvalString` at the hash
 /// boundary. String and binary datums are already byte payloads (a TiDB Go
 /// string is not required to be UTF-8), while scalar numerics use their
@@ -879,6 +888,25 @@ mod tests {
         assert_eq!(call("COMPRESS", &[Datum::Null]), Datum::Null);
         assert_eq!(call("UNCOMPRESS", &[Datum::Null]), Datum::Null);
         assert_eq!(call("UNCOMPRESSED_LENGTH", &[Datum::Null]), Datum::Null);
+    }
+
+    /// Parser-auth's source-owned SM3 vectors, exercised through the SQL
+    /// builtin boundary so the expression layer cannot silently diverge.
+    #[test]
+    fn sm3_go_vectors() {
+        for (input, expected) in [
+            (
+                "abc",
+                "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0",
+            ),
+            (
+                "abcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd",
+                "debe9ff92275b8a138604889c18e5a4d6fdb70e5387e5765293dcba39c0c5732",
+            ),
+        ] {
+            assert_eq!(call("SM3", &[s(input)]), s(expected));
+        }
+        assert_eq!(call("SM3", &[Datum::Null]), Datum::Null);
     }
 
     /// Vectors from `TestMD5Hash` (default charset cases only — GBK cases

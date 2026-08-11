@@ -1419,6 +1419,21 @@ fn compress_round_trips_binary_payloads_through_live_sql() {
     );
 }
 
+/// `SM3` is TiDB's parser-auth digest exposed as an SQL encryption builtin.
+/// Exercise the standard source vector through the full rewrite/evaluation
+/// path, including NULL propagation.
+#[test]
+fn sm3_hash_reaches_live_sql() {
+    let mut session = Session::new();
+    assert_eq!(
+        row_text(session.run("SELECT SM3('abc'), SM3(NULL) IS NULL")),
+        [[
+            "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0",
+            "1",
+        ]]
+    );
+}
+
 /// `AES_ENCRYPT` and `AES_DECRYPT` select their signature from the live
 /// `block_encryption_mode` session variable. These are the accepted Go test
 /// vectors for every supported mode/key-size pair, exercised through SQL so
