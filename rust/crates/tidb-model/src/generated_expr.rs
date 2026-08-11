@@ -152,6 +152,16 @@ mod tests {
         }
     }
 
+    // Go TestParseExpression.
+    #[test]
+    fn parse_expression_matches_go_test() {
+        let parsed = parse_expression("json_extract(a, '$.a')").unwrap();
+        let Expr::Func { name, .. } = parsed else {
+            panic!("JSON_EXTRACT parses as a function call")
+        };
+        assert_eq!(name, "json_extract");
+    }
+
     #[test]
     fn parse_expression_returns_the_first_select_field() {
         let parsed = parse_expression("json_extract(payload, '$.a'), ignored").unwrap();
@@ -160,6 +170,11 @@ mod tests {
         };
         assert_eq!(name, "json_extract");
         assert_eq!(args.len(), 2);
+    }
+
+    #[test]
+    fn parse_expression_returns_syntax_errors() {
+        assert!(parse_expression("json_extract(").is_err());
     }
 
     #[test]
