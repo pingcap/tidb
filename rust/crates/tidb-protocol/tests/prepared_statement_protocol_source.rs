@@ -20,10 +20,10 @@ use tidb_protocol::{
     decode_prepared_statement_execute_with_bound_params, decode_prepared_statement_fetch,
     decode_prepared_statement_send_long_data, encode_binary_datetime, encode_binary_result_row,
     encode_binary_signed_longlong_row, encode_binary_time,
-    encode_prepared_statement_prepare_response, BinaryDateTimeType, BinaryResultCell,
-    BinaryResultSetStream, ColumnInfo, PreparedParameterType, PreparedParameterTypes,
-    split_prepared_statement_execute, PreparedStatementError, PreparedStatementSendLongData,
-    PreparedValue, ResultSetOptions, TYPE_LONGLONG,
+    encode_prepared_statement_prepare_response, split_prepared_statement_execute,
+    BinaryDateTimeType, BinaryResultCell, BinaryResultSetStream, ColumnInfo, PreparedParameterType,
+    PreparedParameterTypes, PreparedStatementError, PreparedStatementSendLongData, PreparedValue,
+    ResultSetOptions, TYPE_LONGLONG,
 };
 
 /// pkg/server/internal/parse/parse.go:35-48 `StmtFetchCmd`.
@@ -31,6 +31,25 @@ use tidb_protocol::{
 /// The wire field is a u32, but TiDB caps every valid request at 1024 rows.
 /// Pin both sides of the boundary and the largest encodable request so this
 /// test observes the cap rather than one recorded packet.
+#[test]
+fn stmt_fetch_matches_every_go_source_row() {
+    let cases = [
+        (vec![3, 0, 0, 0, 50, 0, 0, 0], Some((3, 50))),
+        (vec![5, 0, 0, 0, 232, 3, 0, 0], Some((5, 1000))),
+        (vec![5, 0, 0, 0, 0, 8, 0, 0], Some((5, 1024))),
+        (vec![5, 0, 0], None),
+        (vec![1, 0, 0, 0, 3, 2, 0, 0, 3, 5, 6], None),
+        (vec![], None),
+    ];
+
+    for (payload, expected) in cases {
+        match expected {
+            Some(expected) => assert_eq!(decode_prepared_statement_fetch(&payload), Ok(expected)),
+            None => assert!(decode_prepared_statement_fetch(&payload).is_err()),
+        }
+    }
+}
+
 #[test]
 fn stmt_fetch_caps_the_requested_row_count_at_the_go_boundary() {
     for (requested, expected) in [

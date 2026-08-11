@@ -17,11 +17,13 @@
 use std::sync::Arc;
 use tidb_server::handshake::{
     parse_response, parse_response_body_into_with_attrs_state, parse_response_header_into,
-    parse_response_with_attrs_state, ConnectionAttrsState, CLIENT_CONNECT_ATTRS,
-    CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH, CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA,
-    CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION, CLIENT_ZSTD_COMPRESSION_ALGORITHM,
+    parse_response_with_attrs_state, parse_response_with_global_sysvars, ConnectionAttrsState,
+    CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH,
+    CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION,
+    CLIENT_ZSTD_COMPRESSION_ALGORITHM,
 };
 use tidb_server::HandshakeResponse41;
+use tidb_session::GlobalSysvars;
 
 fn header(capability: u32) -> Vec<u8> {
     let mut packet = capability.to_le_bytes().to_vec();
@@ -50,6 +52,60 @@ fn response_with_attrs(attrs: &[u8]) -> Vec<u8> {
     packet.extend_from_slice(&lenenc(attrs.len()));
     packet.extend_from_slice(attrs);
     packet
+}
+
+/// Exact row from `handshake_test.go::TestAuthSwitchRequest`, captured from a
+/// MySQL 8.0 client. Keeping the whole packet makes auth-plugin extraction
+/// accountable to the source fixture rather than only synthetic packets.
+#[test]
+fn mysql_8_auth_switch_response_preserves_caching_sha2_plugin() {
+    let data = [
+        0x85, 0xa6, 0xff, 0x1, 0x0, 0x0, 0x0, 0x1, 0x21, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0,
+        0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x72, 0x6f,
+        0x6f, 0x74, 0x0, 0x0, 0x63, 0x61, 0x63, 0x68, 0x69, 0x6e, 0x67, 0x5f, 0x73, 0x68, 0x61,
+        0x32, 0x5f, 0x70, 0x61, 0x73, 0x73, 0x77, 0x6f, 0x72, 0x64, 0x0, 0x79, 0x4, 0x5f, 0x70,
+        0x69, 0x64, 0x5, 0x37, 0x37, 0x30, 0x38, 0x36, 0x9, 0x5f, 0x70, 0x6c, 0x61, 0x74, 0x66,
+        0x6f, 0x72, 0x6d, 0x6, 0x78, 0x38, 0x36, 0x5f, 0x36, 0x34, 0x3, 0x5f, 0x6f, 0x73, 0x5,
+        0x4c, 0x69, 0x6e, 0x75, 0x78, 0xc, 0x5f, 0x63, 0x6c, 0x69, 0x65, 0x6e, 0x74, 0x5f, 0x6e,
+        0x61, 0x6d, 0x65, 0x8, 0x6c, 0x69, 0x62, 0x6d, 0x79, 0x73, 0x71, 0x6c, 0x7, 0x6f, 0x73,
+        0x5f, 0x75, 0x73, 0x65, 0x72, 0xa, 0x6e, 0x75, 0x6c, 0x6c, 0x6e, 0x6f, 0x74, 0x6e, 0x69,
+        0x6c, 0xf, 0x5f, 0x63, 0x6c, 0x69, 0x65, 0x6e, 0x74, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69,
+        0x6f, 0x6e, 0x6, 0x38, 0x2e, 0x30, 0x2e, 0x32, 0x31, 0xc, 0x70, 0x72, 0x6f, 0x67, 0x72,
+        0x61, 0x6d, 0x5f, 0x6e, 0x61, 0x6d, 0x65, 0x5, 0x6d, 0x79, 0x73, 0x71, 0x6c,
+    ];
+
+    let response = parse_response(&data).expect("MySQL 8 response");
+    assert_eq!(response.auth_plugin.as_bytes(), b"caching_sha2_password");
+}
+
+#[test]
+fn shared_global_connection_attr_limit_reaches_the_parse_state() {
+    let globals = GlobalSysvars::new();
+    let attrs = [2, b'a', b'b', 2, b'c', b'd', 2, b'e', b'f', 2, b'g', b'h'];
+    let packet = response_with_attrs(&attrs);
+
+    globals
+        .set(
+            "performance_schema_session_connect_attrs_size",
+            "5".to_owned(),
+        )
+        .expect("SET GLOBAL limit");
+    let response = parse_response_with_global_sysvars(&packet, &globals).expect("limited response");
+    assert_eq!(response.attrs.get("ab").map(String::as_str), Some("cd"));
+    assert_eq!(
+        response.attrs.get("_truncated").map(String::as_str),
+        Some("4")
+    );
+
+    globals
+        .set(
+            "performance_schema_session_connect_attrs_size",
+            "-1".to_owned(),
+        )
+        .expect("SET GLOBAL autosize");
+    let response =
+        parse_response_with_global_sysvars(&packet, &globals).expect("autosized response");
+    assert_eq!(response.attrs.get("ef").map(String::as_str), Some("gh"));
 }
 
 /// `parseAttrs` uses Go's default `ConnectAttrsSize` of 4096 bytes. The

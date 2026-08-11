@@ -27,6 +27,7 @@ use std::{
 };
 
 use tidb_protocol::{PacketError, PacketWriter};
+use tidb_session::GlobalSysvars;
 
 use crate::handshake_response::{HandshakeResponse41, WireString};
 
@@ -118,6 +119,30 @@ impl ConnectionAttrsState {
 
 static CONNECTION_ATTRS_STATE: ConnectionAttrsState =
     ConnectionAttrsState::new(DEFAULT_CONNECT_ATTRS_SIZE);
+
+/// Parses a response after synchronizing the connection-attribute limit from
+/// the shared GLOBAL sysvar table.
+///
+/// Go's parser snapshots `vardef.ConnectAttrsSize` for each response. A local
+/// state gives this response the same snapshot while the process-wide metric
+/// atomics remain cumulative across concurrent connections and limit changes.
+pub fn parse_response_with_global_sysvars(
+    data: &[u8],
+    global_vars: &GlobalSysvars,
+) -> Result<HandshakeResponse41, HandshakeError> {
+    let limit = global_vars
+        .get("performance_schema_session_connect_attrs_size")
+        .ok()
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(DEFAULT_CONNECT_ATTRS_SIZE);
+    let local_state = ConnectionAttrsState::new(limit);
+    let result = parse_response_with_attrs_state(data, &local_state);
+    CONNECTION_ATTRS_STATE
+        .lost
+        .fetch_add(local_state.lost(), Ordering::Relaxed);
+    update_connect_attrs_longest_seen(local_state.longest_seen(), &CONNECTION_ATTRS_STATE);
+    result
+}
 
 /// The fields written by Go's `clientConn.writeInitialHandshake`.
 #[derive(Clone, Debug, Eq, PartialEq)]

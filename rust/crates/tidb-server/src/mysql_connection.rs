@@ -42,10 +42,10 @@ use crate::connection_writers::{
 };
 use crate::cursor_state::{CursorFetchError, CursorState};
 use crate::handshake::{
-    negotiate_capabilities, parse_response, parse_response_header, InitialHandshake,
-    AUTH_NATIVE_PASSWORD, CLIENT_COMPRESS, CLIENT_CONNECT_ATTRS, CLIENT_CONNECT_WITH_DB,
-    CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION, CLIENT_SSL,
-    CLIENT_ZSTD_COMPRESSION_ALGORITHM, DEFAULT_COLLATION_ID,
+    negotiate_capabilities, parse_response_header, parse_response_with_global_sysvars,
+    InitialHandshake, AUTH_NATIVE_PASSWORD, CLIENT_COMPRESS, CLIENT_CONNECT_ATTRS,
+    CLIENT_CONNECT_WITH_DB, CLIENT_PLUGIN_AUTH, CLIENT_PROTOCOL_41, CLIENT_SECURE_CONNECTION,
+    CLIENT_SSL, CLIENT_ZSTD_COMPRESSION_ALGORITHM, DEFAULT_COLLATION_ID,
 };
 use crate::mysql_tls::{ClientStream, MysqlServerTls};
 use crate::native_password::generate_handshake_salt;
@@ -679,7 +679,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             reply_sequence = 3;
         }
     }
-    let response = match parse_response(&auth_payload) {
+    let response = match parse_response_with_global_sysvars(&auth_payload, &users.global_vars()) {
         Ok(response) => response,
         Err(error) => {
             // Go writes parser failures through the ordinary error boundary:
