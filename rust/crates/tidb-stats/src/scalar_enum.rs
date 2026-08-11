@@ -78,7 +78,9 @@ pub fn enum_range_values(
         }
         (Datum::Duration(low), Datum::Duration(high)) => {
             let fsp = low.fsp().max(high.fsp());
-            let step = 10_i64.pow(u32::from(6 - fsp)) * 1_000;
+            let step = 10_i64
+                .pow(u32::try_from(6 - fsp).expect("duration FSP does not exceed MaxFsp"))
+                * 1_000;
             let low_nanos = rounded_to_step(low.nanoseconds(), step);
             let remaining = high
                 .nanoseconds()
@@ -92,11 +94,10 @@ pub fn enum_range_values(
             let start = low_nanos.wrapping_add(i64::from(low_exclude).wrapping_mul(step));
             let mut values = Vec::with_capacity(remaining as usize);
             for offset in 0..remaining {
-                let duration = MySqlDuration::from_nanoseconds(
+                let duration = MySqlDuration::from_raw_parts(
                     start.wrapping_add(offset.wrapping_mul(step)),
-                    i64::from(fsp),
-                )
-                .ok()?;
+                    fsp,
+                );
                 values.push(Datum::Duration(duration));
             }
             Some(values)

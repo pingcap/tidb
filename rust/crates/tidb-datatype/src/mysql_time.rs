@@ -521,7 +521,7 @@ impl Time {
         if self.kind == TimeType::Date {
             core = CoreTime::from_date(core.year() as u16, core.month(), core.day(), 0, 0, 0, 0);
         }
-        Self::new(core, self.kind, i64::from(self.fsp.max(duration.fsp())))
+        Self::new(core, self.kind, i64::from(self.fsp).max(duration.fsp()))
     }
 
     /// Formats this value with TiDB's MySQL `DATE_FORMAT` conversion rules.
@@ -1669,7 +1669,7 @@ mod tests {
                 "2017-08-21 01:01:01.001",
             ),
         ] {
-            let time = Time::new(time, TimeType::DateTime, duration.fsp().into()).unwrap();
+            let time = Time::new(time, TimeType::DateTime, duration.fsp()).unwrap();
             assert_eq!(time.add_duration(duration).unwrap().to_string(), expected);
         }
     }

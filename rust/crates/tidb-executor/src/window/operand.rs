@@ -99,7 +99,7 @@ pub(super) fn coerce_to_domain(value: Datum, target: &FieldType) -> Datum {
     // temporal rows are the whole reachable table.
     domain.set_decimal(match (&value, temporal_target) {
         (Datum::Time(time), true) => i64::from(time.fsp()),
-        (Datum::Duration(duration), true) => i64::from(duration.fsp()),
+        (Datum::Duration(duration), true) => duration.fsp(),
         _ => tidb_datatype::UNSPECIFIED_FSP,
     });
     if target.is_unsigned() {

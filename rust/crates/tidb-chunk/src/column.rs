@@ -454,14 +454,9 @@ impl Column {
     /// stamped on as the fractional-second precision (the column itself does
     /// not store fsp).
     ///
-    /// # Panics
-    /// Panics if `fill_fsp` is out of range (Go's `types.Duration.Fsp` is an
-    /// unchecked `int`; `MySqlDuration` validates). `UNSPECIFIED_FSP` (`-1`)
-    /// maps to the default fsp.
     #[must_use]
     pub fn get_duration(&self, row_id: usize, fill_fsp: i64) -> MySqlDuration {
-        MySqlDuration::from_nanoseconds(self.get_int64(row_id), fill_fsp)
-            .expect("valid fill_fsp for chunk duration cell")
+        MySqlDuration::from_raw_parts(self.get_int64(row_id), fill_fsp)
     }
 
     /// Go `appendNameValue`: a name/value cell is the 8-byte native-endian

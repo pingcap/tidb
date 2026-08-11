@@ -106,3 +106,21 @@ fn row_raw_len_preserves_source_width_and_row_index() {
     assert_eq!(Row::get_raw_len(&row, 0), size_of::<i64>());
     assert_eq!(Row::get_raw_len(&row, 1), b"second".len());
 }
+
+#[test]
+fn duration_reads_preserve_the_caller_fsp_verbatim() {
+    let field = FieldType::new(FieldTypeCode::Duration);
+    let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), 1);
+    chunk.append_int64(0, 1_234_567_890);
+
+    let row = chunk.get_row(0);
+    for fsp in [-2, -1, 0, 6, 7] {
+        assert_eq!(row.get_duration(0, fsp).fsp(), fsp, "fsp {fsp}");
+    }
+
+    assert_eq!(field.decimal(), -1);
+    let Datum::Duration(duration) = row.get_datum(0, &field) else {
+        panic!("duration field materializes a duration datum");
+    };
+    assert_eq!(duration.fsp(), -1);
+}

@@ -40,7 +40,7 @@ pub const MIN_TIME_NANOS: i64 = -MAX_TIME_NANOS;
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct MySqlDuration {
     nanoseconds: i64,
-    fsp: u8,
+    fsp: i64,
 }
 
 impl MySqlDuration {
@@ -57,7 +57,7 @@ impl MySqlDuration {
         microsecond: i64,
         fsp: i64,
     ) -> Result<Self, FspError> {
-        let fsp = check_fsp(fsp)? as u8;
+        let fsp = check_fsp(fsp)?;
         Ok(Self {
             nanoseconds: (hour * 3_600 + minute * 60 + second) * 1_000_000_000
                 + microsecond * 1_000,
@@ -67,10 +67,16 @@ impl MySqlDuration {
 
     /// Constructs from an existing signed nanosecond count.
     pub fn from_nanoseconds(nanoseconds: i64, fsp: i64) -> Result<Self, FspError> {
-        Ok(Self {
-            nanoseconds,
-            fsp: check_fsp(fsp)? as u8,
-        })
+        Ok(Self::from_raw_parts(nanoseconds, check_fsp(fsp)?))
+    }
+
+    /// Constructs the source `types.Duration` value without normalizing its
+    /// metadata. Chunk cells store only nanoseconds; Go's `GetDuration`
+    /// stamps the caller-provided `fillFsp` integer verbatim, including
+    /// `UnspecifiedFsp` and values outside SQL's validated 0..=6 domain.
+    #[must_use]
+    pub const fn from_raw_parts(nanoseconds: i64, fsp: i64) -> Self {
+        Self { nanoseconds, fsp }
     }
 
     /// Returns the signed nanosecond count.
@@ -79,7 +85,7 @@ impl MySqlDuration {
     }
 
     /// Returns fractional-seconds precision.
-    pub const fn fsp(self) -> u8 {
+    pub const fn fsp(self) -> i64 {
         self.fsp
     }
 
@@ -202,7 +208,7 @@ impl MySqlDuration {
                 self.hour(),
                 self.minute(),
                 self.second(),
-                &fraction[..usize::from(self.fsp)]
+                &fraction[..usize::try_from(self.fsp).expect("nonnegative duration FSP")]
             )
         };
         let value = Decimal::from_literal(&literal);
@@ -215,10 +221,10 @@ impl MySqlDuration {
 
     /// Rounds fractional seconds with TiDB's half-up rule.
     pub fn round_frac(self, fsp: i64) -> Result<Self, DurationRoundError> {
-        let rounded = round_duration_fsp(self.nanoseconds, i64::from(self.fsp), fsp)?;
+        let rounded = round_duration_fsp(self.nanoseconds, self.fsp, fsp)?;
         Ok(Self {
             nanoseconds: rounded.nanoseconds(),
-            fsp: rounded.fsp() as u8,
+            fsp: rounded.fsp(),
         })
     }
 
@@ -262,11 +268,7 @@ impl MySqlDuration {
         let value = midnight
             .checked_add_signed(ChronoDuration::nanoseconds(self.nanoseconds))
             .ok_or(TimeError::OutOfRange("time"))?;
-        let datetime = Time::new(
-            core_time_from_datetime(value),
-            TimeType::DateTime,
-            i64::from(self.fsp),
-        )?;
+        let datetime = Time::new(core_time_from_datetime(value), TimeType::DateTime, self.fsp)?;
         datetime
             .convert_kind(kind, allow_zero_in_date, allow_invalid_date, &timezone)
             .map(|result| result.0)
@@ -324,7 +326,11 @@ impl fmt::Display for MySqlDuration {
         )?;
         if self.fsp > 0 {
             let fraction = format!("{:06}", self.microsecond());
-            write!(formatter, ".{}", &fraction[..usize::from(self.fsp)])?;
+            write!(
+                formatter,
+                ".{}",
+                &fraction[..usize::try_from(self.fsp).expect("positive duration FSP")]
+            )?;
         }
         Ok(())
     }
@@ -713,7 +719,7 @@ pub fn parse_mysql_duration<TZ: TimeZone>(
             let duration = time.to_duration().map_err(DurationValueError::Time)?;
             Ok(ParsedDuration {
                 nanoseconds: duration.nanoseconds(),
-                fsp: i64::from(duration.fsp()),
+                fsp: duration.fsp(),
                 overflow: None,
                 truncated: false,
             })

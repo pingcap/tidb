@@ -166,10 +166,9 @@ fn get_chunk_keeps_the_live_in_memory_view() {
 
 /// Go `TestSel`: the selection vector survives the move to disk.
 ///
-/// Go drives this through `NewMultiIterator(NewIterator4RowContainer(rc),
-/// NewIterator4Chunk(chk))`; [`Iterator4RowContainer`] is not a
-/// `ChunkIterator` (see its doc), so the container half is iterated on its
-/// own here and the trailing chunk is checked separately.
+/// The common row-container plus trailing-chunk composition is covered by
+/// `iterator::tests::selected_row_container_and_trailing_chunk_compose_before_and_after_spill`;
+/// this test pins the container's own selection and spill accounting.
 #[test]
 fn a_selection_vector_survives_the_spill() {
     let fields = int64_fields();

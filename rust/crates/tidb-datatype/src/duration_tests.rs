@@ -360,6 +360,17 @@ fn test_duration_clock() {
     }
 }
 
+#[test]
+fn raw_duration_parts_keep_source_metadata_without_weakening_validation() {
+    assert_eq!(
+        MySqlDuration::from_nanoseconds(1, -1).unwrap().fsp(),
+        0,
+        "the ordinary SQL constructor still normalizes UnspecifiedFsp"
+    );
+    assert_eq!(MySqlDuration::from_raw_parts(1, -1).fsp(), -1);
+    assert_eq!(MySqlDuration::from_raw_parts(1, 7).fsp(), 7);
+}
+
 /// Complete translation of `pkg/types/time_test.go::TestTimeFsp`.
 #[test]
 fn test_time_fsp() {

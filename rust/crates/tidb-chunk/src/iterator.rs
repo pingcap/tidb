@@ -409,11 +409,9 @@ impl<'a> ChunkIterator<'a> for MultiIterator<'a> {
         self.iters[self.cur_ptr].begin()
     }
 
-    /// Go additionally latches `it.err = it.curIter.Error()` here when the
-    /// current row is `End`. `Current` is a read in this port (`&self`), and
-    /// the latch is unobservable while `iterator4RowContainer` -- the only
-    /// iterator that can produce an error -- is deferred: every iterator that
-    /// exists here reports `None`. It moves back in with that file.
+    /// This fixed-lifetime iterator family cannot own a row-container decode
+    /// buffer. [`LendingMultiIterator`] is the common surface for fallible
+    /// row-container composition and latches its error before advancing.
     fn current(&self) -> Option<Row<'a>> {
         if self.cur_ptr == self.num_iter {
             return self.end();

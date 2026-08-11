@@ -533,7 +533,7 @@ pub(crate) fn approx_count_distinct_encode(datum: &Datum) -> Result<Vec<u8>, Exe
         Datum::Duration(duration) => {
             let mut encoded = Vec::with_capacity(16);
             encoded.extend_from_slice(&duration.nanoseconds().to_le_bytes());
-            encoded.extend_from_slice(&(i64::from(duration.fsp())).to_le_bytes());
+            encoded.extend_from_slice(&duration.fsp().to_le_bytes());
             encoded
         }
         Datum::Json(json) => json.hash_value().map_err(|_| unsupported())?,

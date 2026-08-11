@@ -936,7 +936,7 @@ fn ordering_to_bool(op: BinaryOp, ordering: std::cmp::Ordering) -> Datum {
 /// in its own numeric domain and passes through.
 fn numeric_context_value(value: Datum) -> Datum {
     let (number, fsp) = match value {
-        Datum::Time(time) => (time.to_number(), time.fsp()),
+        Datum::Time(time) => (time.to_number(), i64::from(time.fsp())),
         Datum::Duration(duration) => (duration.to_number(), duration.fsp()),
         other => return other,
     };

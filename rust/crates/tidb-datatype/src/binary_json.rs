@@ -237,7 +237,7 @@ impl BinaryJSON {
     /// Embeds a MySQL TIME duration.
     pub fn from_duration(value: MySqlDuration) -> Self {
         let mut bytes = value.nanoseconds().to_le_bytes().to_vec();
-        bytes.extend_from_slice(&u32::from(value.fsp()).to_le_bytes());
+        bytes.extend_from_slice(&(value.fsp() as u32).to_le_bytes());
         Self {
             type_code: JSON_TYPE_CODE_DURATION,
             value: bytes,
@@ -251,8 +251,7 @@ impl BinaryJSON {
         }
         let nanoseconds = i64::from_le_bytes(self.value[..8].try_into().unwrap());
         let fsp = u32::from_le_bytes(self.value[8..].try_into().unwrap());
-        MySqlDuration::from_nanoseconds(nanoseconds, i64::from(fsp))
-            .map_err(|_| BinaryJSONError::InvalidBinary)
+        Ok(MySqlDuration::from_raw_parts(nanoseconds, i64::from(fsp)))
     }
 
     /// Parses JSON text and builds TiDB's binary representation.

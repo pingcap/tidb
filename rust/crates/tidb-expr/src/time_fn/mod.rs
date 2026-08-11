@@ -864,7 +864,9 @@ fn duration_precision(value: &Datum) -> Result<usize, EvalError> {
             .to_string()
             .split_once('.')
             .map_or(0, |(_, f)| f.len().min(6)),
-        Datum::Duration(value) => usize::from(value.fsp()),
+        Datum::Duration(value) => {
+            usize::try_from(value.fsp()).expect("duration FSP is nonnegative")
+        }
         Datum::Time(value) => usize::from(value.fsp()),
         Datum::Null => 0,
         Datum::MinNotNull | Datum::MaxValue => {
