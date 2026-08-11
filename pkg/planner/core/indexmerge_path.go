@@ -573,16 +573,8 @@ func generateOtherIndexMerge(ds *logicalop.DataSource, regularPathCount int, ind
 		return "", nil
 	}
 
-	ds.PossibleAccessPaths = removeNonMVIndexMergePaths(ds.PossibleAccessPaths, regularPathCount)
-	if len(ds.PossibleAccessPaths) == regularPathCount {
-		return "IndexMerge is inapplicable or disabled. ", nil
-	}
-	return "", nil
-}
-
-func removeNonMVIndexMergePaths(paths []*util.AccessPath, regularPathCount int) []*util.AccessPath {
-	for i := len(paths) - 1; i >= regularPathCount; i-- {
-		path := paths[i]
+	for i := len(ds.PossibleAccessPaths) - 1; i >= regularPathCount; i-- {
+		path := ds.PossibleAccessPaths[i]
 		containMVPath := false
 		for _, p := range util.SliceRecursiveFlattenIter[*util.AccessPath](path.PartialAlternativeIndexPaths) {
 			if isMVIndexPath(p) {
@@ -592,10 +584,13 @@ func removeNonMVIndexMergePaths(paths []*util.AccessPath, regularPathCount int) 
 		}
 
 		if !containMVPath {
-			paths = slices.Delete(paths, i, i+1)
+			ds.PossibleAccessPaths = slices.Delete(ds.PossibleAccessPaths, i, i+1)
 		}
 	}
-	return paths
+	if len(ds.PossibleAccessPaths) == regularPathCount {
+		return "IndexMerge is inapplicable or disabled. ", nil
+	}
+	return "", nil
 }
 
 // generateANDIndexMerge4ComposedIndex tries to generate AND type index merge AccessPath for ( json_member_of /
