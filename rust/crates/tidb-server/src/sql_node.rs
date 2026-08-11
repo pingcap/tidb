@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
 use tidb_planner::read_only_scan::ConfiguredPreparedPointReadTemplate;
 use tidb_protocol::ColumnInfo;
+use tidb_util::globalconn::{Allocator, SimpleAllocator};
 
 use crate::configured_user_store::{AuthenticatedIdentity, ConfiguredUserStore};
 use crate::mysql_connection::{serve_mysql_connection_with_tls, MysqlConnectionError};
@@ -1236,7 +1237,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
         )?;
 
         let mut accepted = 0_usize;
-        let mut next_connection_key = 1_u64;
+        let connection_ids = SimpleAllocator::new();
         let accept_result = (|| loop {
             if limit == Some(accepted) || self.shutdown.is_shutdown_requested() {
                 break Ok(());
@@ -1261,11 +1262,7 @@ impl<F: QuerySessionFactory> ConcurrentSqlNode<F> {
                 }
             };
             prepare_stream(&stream, self.connection_timeout)?;
-            let connection_key = next_connection_key;
-            next_connection_key = next_connection_key.wrapping_add(1);
-            if next_connection_key == 0 {
-                break Err(SqlNodeError::ConnectionIdentityExhausted);
-            }
+            let connection_key = connection_ids.next_id();
             let cancellation = ConnectionCancellation::default();
             eprintln!(
                     "{{\"event\":\"connection_dispatch\",\"connection_key\":{connection_key},\"worker_index\":{worker_index}}}"
@@ -1546,8 +1543,6 @@ pub enum SqlNodeError {
     },
     /// Shared admission or active-socket state was poisoned.
     WorkerStatePoisoned,
-    /// The bounded connection identity counter wrapped.
-    ConnectionIdentityExhausted,
     /// One accepted connection failed in a direct lifecycle proof.
     Connection(MysqlConnectionError),
     /// Server TLS material for the MySQL port could not be obtained.
@@ -1571,9 +1566,6 @@ impl fmt::Display for SqlNodeError {
                 write!(formatter, "SQL workers panicked during join: {indexes:?}")
             }
             Self::WorkerStatePoisoned => formatter.write_str("SQL worker state is poisoned"),
-            Self::ConnectionIdentityExhausted => {
-                formatter.write_str("SQL connection identity space exhausted")
-            }
             Self::Connection(error) => write!(formatter, "MySQL connection failed: {error}"),
             Self::Tls(detail) => write!(formatter, "MySQL port TLS is unusable: {detail}"),
             Self::Multiple(failures) => {
@@ -1596,7 +1588,6 @@ impl std::error::Error for SqlNodeError {
             | Self::WorkerTerminated { .. }
             | Self::WorkersPanicked { .. }
             | Self::WorkerStatePoisoned
-            | Self::ConnectionIdentityExhausted
             | Self::Tls(_)
             | Self::Multiple(_) => None,
         }

@@ -424,6 +424,8 @@ mod tests {
     #[test]
     fn get_reserved_conn_id() {
         let simple = SimpleAllocator::new();
+        assert_eq!(simple.next_id(), 1);
+        assert_eq!(simple.next_id(), 2);
         assert_eq!(simple.get_reserved_conn_id(0), u64::MAX);
         assert_eq!(simple.get_reserved_conn_id(1), u64::MAX - 1);
 
