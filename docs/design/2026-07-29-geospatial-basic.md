@@ -199,7 +199,23 @@ function until a later milestone adds it.
 
 - **I/O readers:** `ST_GeomFromText`, `ST_GeomFromWKB`, `ST_GeomFromGeoJSON`.
 - **I/O writers:** `ST_AsText` (`ST_AsWKT`), `ST_AsBinary` (`ST_AsWKB`), `ST_AsGeoJSON`.
-- **Constructors:** `Point`, `LineString`, `Polygon`.
+- **Option arguments.** `axis-order` on the WKT and WKB readers and writers, taking
+  `lat-long`, `long-lat` or `srid-defined` (the default), rejecting anything else with
+  `ERROR 3559` and having no effect at SRID 0. It is the explicit way to read or write
+  longitude-first data against a latitude-first SRS, so a client need not pre-swap.
+  `ST_GeomFromGeoJSON` takes its own `options` and `srid` arguments: `options` 1 rejects
+  coordinate dimensions above 2 and is the default, while 2, 3 and 4 accept and strip
+  them, so a GeoJSON Z position is dropped rather than stored.
+- **Constructors:** the full set of MySQL's
+  [functions that create geometry values](https://dev.mysql.com/doc/refman/8.0/en/gis-mysql-specific-functions.html):
+  `Point`, `LineString`, `Polygon`, `MultiPoint`, `MultiLineString`, `MultiPolygon`,
+  `GeometryCollection`.
+  `Point(x, y)` returns SRID 0; `ST_SRID(g, srid)` then stamps the SRS, validating the
+  coordinates (`ERROR 3731`, `ERROR 3732`) without transforming them. For a geographic SRS
+  that makes `Point` **(longitude, latitude)**, the opposite of WKT at 4326:
+  `ST_SRID(Point(30, 50), 4326)` is `POINT(50 30)`, latitude 50. Since values are stored
+  latitude-first at 4326, this is where the internal order becomes observable and the pair
+  must be swapped.
 - **Accessors:** `ST_X`, `ST_Y`, `ST_Latitude`, `ST_Longitude`, `ST_SRID` (getter and the
   `ST_SRID(g, srid)` setter), `ST_GeometryType`, `ST_Dimension`, `ST_Envelope`,
   `ST_IsEmpty`, `ST_IsValid`, `ST_StartPoint`, `ST_EndPoint`, `ST_PointN`, `ST_NumPoints`,
@@ -213,9 +229,9 @@ function until a later milestone adds it.
   covering-cell prefilter has no false negatives). Other PostGIS-only functions are added
   later only if index-supported or by demand.
 
-The geometry-processing tail (`ST_Buffer`, `ST_Union`, `ST_Intersection`, ...), the typed
-I/O aliases, the `Multi*`/`GeometryCollection` constructors, the `MBR*` family, geohash,
-the niche accessors and the GeoJSON `options`/`srid` arguments are a later milestone.
+A later milestone covers the geometry-processing tail (`ST_Buffer`, `ST_Union`,
+`ST_Intersection`, ...), the typed I/O aliases, the `MBR*` family, geohash, the niche
+accessors and `ST_AsGeoJSON`'s bbox and CRS-URN flags.
 
 Semantics match MySQL, with three v1 limitations:
 
@@ -241,9 +257,9 @@ follow MySQL, verified on 8.4.6 and 9.7.2:
 | named `crs` URN | sets the SRID (`urn:ogc:def:crs:OGC:1.3:CRS84` is 4326, link-object CRSs are not accepted, and a nested `crs` naming a different SRID errors); absent, the SRID is 4326 |
 | position with more than two coordinates | rejected, `ERROR 3073` |
 
-MySQL's `options` argument, which accepts such positions and strips the extra coordinates,
-ships with the function tail, as do `ST_AsGeoJSON`'s bbox and CRS-URN flags. Round-trips are
-not idempotent: a FeatureCollection returns from `ST_AsGeoJSON` as a GeometryCollection.
+The `options` argument accepts such positions and strips the extra coordinates.
+`ST_AsGeoJSON`'s bbox and CRS-URN flags ship with the tail. Round-trips are not
+idempotent: a FeatureCollection returns from `ST_AsGeoJSON` as a GeometryCollection.
 
 Every geometry-returning builtin is typed `GEOMETRY`, so a plain B-tree functional index
 over such an expression is rejected.
@@ -282,8 +298,14 @@ meaningful.
 
 ### SQL surface and examples
 
-    col_name {GEOMETRY | POINT | LINESTRING | POLYGON | MULTIPOINT | ...}
+    col_name {GEOMETRY | POINT | LINESTRING | POLYGON | MULTIPOINT
+              | MULTILINESTRING | MULTIPOLYGON | GEOMETRYCOLLECTION}
         [NOT NULL] [SRID {0 | 4326}]
+
+The type names stay usable as identifiers, as in MySQL: a column named `point` keeps
+working, and `Point(x, y)` is a function call rather than a type reference. `ST_*` are
+ordinary function calls and need no syntax of their own. `SHOW CREATE TABLE` emits the
+MySQL form. No spatial index syntax belongs to this layer.
 
     CREATE TABLE stores (
       id  BIGINT PRIMARY KEY,
@@ -303,9 +325,6 @@ meaningful.
     -- the geometry predicate is evaluated per row here; the index accelerates it later
     SELECT id FROM stores
     WHERE ST_Within(loc, ST_GeomFromText('POLYGON((...))', 4326));
-
-`SHOW CREATE TABLE` emits the plain MySQL form (`loc point NOT NULL SRID 4326`). No spatial
-index syntax is part of this layer.
 
 ### Feature flag and rollout
 
@@ -339,10 +358,8 @@ Out of scope here, each with a home:
   `CREATE SPATIAL REFERENCE SYSTEM` needs anyway, and internal parsed metadata. Neither
   widens this table: extra columns belong in a TiDB-specific companion, expressed as WKT2
   (ISO 19162) or PROJJSON.
-- **The axis-order controls**: MySQL's `axis-order=long-lat` option argument on
-  `ST_GeomFromText`/`ST_GeomFromWKB`/`ST_AsText`/`ST_AsBinary`, and `ST_SwapXY`, which let a
-  client read or write longitude-first against a latitude-first SRS. Both ship with the
-  function tail.
+- **`ST_SwapXY`**, which swaps a geometry's coordinates in place. The `axis-order` option
+  covers the read and write direction in v1; this is the geometry-mutating variant.
 - **3D / measured (Z/M) geometry**: computation is 2D only, as in MySQL/MariaDB, while the
   values are stored and returned unchanged.
 
@@ -380,7 +397,11 @@ Out of scope here, each with a home:
 - Extended data: Z/M values entered as WKB, and SRIDs outside 0 and 4326, store and read
   back byte-identical, while `ST_AsBinary`/`ST_AsText`/`ST_AsGeoJSON` and every function
   that interprets coordinates error clearly on them.
-- GeoJSON: the table above, each row matched against MySQL 8.4 and 9.7.
+- GeoJSON: the table above, each row matched against MySQL 8.4 and 9.7, plus the `options`
+  argument rejecting a Z position at 1 and stripping it at 2, 3 and 4.
+- `axis-order`: `long-lat` swaps on read and on write at 4326, `lat-long` and
+  `srid-defined` agree there, the option is inert at SRID 0, and a bad value gives
+  `ERROR 3559`.
 - Format version: version 1 decodes; an unknown or zero version byte is rejected with a
   clear error rather than misparsed.
 - Type plumbing: geometry through the audited operation surface returns correct bytes.
