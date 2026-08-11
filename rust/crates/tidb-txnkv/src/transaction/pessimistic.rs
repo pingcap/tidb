@@ -264,6 +264,12 @@ pub struct RealPessimisticTransaction<C, L, T> {
     max_locked_with_conflict_ts: u64,
 }
 
+impl<C, L, T> crate::new_txn::TxnResourceGroup for RealPessimisticTransaction<C, L, T> {
+    fn set_resource_group_name(&mut self, name: &str) {
+        crate::new_txn::TxnResourceGroup::set_resource_group_name(&mut self.two_pc, name);
+    }
+}
+
 impl<C, L, T> RealPessimisticTransaction<C, L, T>
 where
     C: TransactionCommandClient + LockRecoveryClient,
@@ -789,9 +795,10 @@ where
         request: &KvrpcPessimisticLockRequest,
         call: &UnaryCallContext,
     ) -> Result<KvrpcPessimisticLockResponse, PessimisticLockFailure> {
+        let context = self.two_pc.write_context(batch.context());
         let published = match self.two_pc.runtime().client().try_borrow_mut() {
             Ok(mut client) => {
-                client.publish_pessimistic_lock(batch.address(), request, batch.context(), call)
+                client.publish_pessimistic_lock(batch.address(), request, &context, call)
             }
             Err(_) => PublishedCommand::BeforePublication(
                 "TiKV client is already borrowed while publishing PessimisticLock".to_owned(),

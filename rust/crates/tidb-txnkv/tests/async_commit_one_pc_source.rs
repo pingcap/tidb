@@ -49,7 +49,7 @@ use tidb_txnkv::transaction::{
     CommitProtocol, CommittedProtocol, OptimisticCommitOutcome, OptimisticMutation,
     OptimisticTransactionState, RealOptimisticTransaction, TransactionAttemptPhase,
 };
-use tidb_txnkv::SharedReadRuntime;
+use tidb_txnkv::{set_txn_resource_group, SharedReadRuntime};
 
 const START_TS: u64 = 1_000 << 18;
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -514,6 +514,61 @@ fn a_multi_region_transaction_never_asks_for_one_pc() {
         "a two-region transaction must not ask any batch for 1PC"
     );
     assert_eq!(recorded.commits.len(), 2);
+}
+
+/// `pkg/kv.SetTxnResourceGroup` reaches every Prewrite and Commit request,
+/// including the primary and secondary batches of a multi-region 2PC.
+#[test]
+fn txn_resource_group_is_attached_to_prewrite_and_commit_rpc_contexts() {
+    let service = ScriptedTikv::new(vec![ok(1_100 << 18), ok(1_200 << 18)]);
+    let recorded = Arc::clone(&service.recorded);
+    let server = TestServer::start(service);
+    let (mut transaction, _) = transaction(
+        server.store_address(),
+        CommitProtocol::two_phase_only(),
+    );
+    set_txn_resource_group(&mut transaction, "analytics");
+
+    let outcome = transaction
+        .commit(
+            two_region_mutations(),
+            &UnaryCallContext::with_timeout(CALL_TIMEOUT),
+        )
+        .expect("the scripted two-phase commit completes");
+    assert_eq!(outcome.state(), OptimisticTransactionState::Committed);
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.prewrites.len(), 2);
+    assert_eq!(recorded.commits.len(), 2);
+    for context in recorded
+        .prewrites
+        .iter()
+        .map(|request| {
+            request
+                .context
+                .as_ref()
+                .expect("the transport attaches the Prewrite context")
+        })
+        .chain(
+            recorded
+                .commits
+                .iter()
+                .map(|request| {
+                    request
+                        .context
+                        .as_ref()
+                        .expect("the transport attaches the Commit context")
+                }),
+        )
+    {
+        assert_eq!(
+            context
+                .resource_control_context
+                .as_ref()
+                .map(|resource| resource.resource_group_name.as_str()),
+            Some("analytics")
+        );
+    }
 }
 
 /// TiKV refusing 1PC — a zero `one_pc_commit_ts` — falls back to normal 2PC,

@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Source-shaped translation of every non-benchmark test in `pkg/kv`.
+//! Source-shaped translation of every business-semantic non-benchmark test in
+//! `pkg/kv`. Go's `TestMain` only installs Go runtime test setup and a goroutine
+//! leak checker; Cargo owns the Rust harness, so it has no executable semantic
+//! counterpart here.
 
 #![allow(non_snake_case)]
 
@@ -142,7 +145,15 @@ fn TestIsPoint() {
 fn TestBasicFunc() {
     assert!(!is_txn_retryable_error(None));
     assert!(is_txn_retryable_error(Some(&ERR_TXN_RETRYABLE)));
+    assert!(is_txn_retryable_error(Some(&ERR_WRITE_CONFLICT)));
+    assert!(is_txn_retryable_error(Some(&ERR_WRITE_CONFLICT_IN_TIDB)));
     assert!(!is_txn_retryable_error(Some(&ERR_NOT_EXIST)));
+    assert!(!is_txn_retryable_error(Some(&std::io::Error::other(
+        "test"
+    ))));
+
+    let region_unavailable = to_tidb_driver_error(&StorageDriverError::RegionUnavailable);
+    assert!(!is_txn_retryable_error(Some(&region_unavailable)));
 }
 
 #[test]
@@ -371,7 +382,7 @@ fn TestResourceGroupTagEncoding() {
 }
 
 #[test]
-fn TestMain() {
+fn package_retry_and_inner_txn_defaults_are_pinned() {
     assert_eq!(MAX_RETRY_COUNT, 100);
     assert!(!GLOBAL_INNER_TXN_START_TS.contains(0));
 }
@@ -431,6 +442,15 @@ impl NewTxnTransaction for MockNewTransaction {
     }
 }
 
+impl TxnResourceGroup for MockNewTransaction {
+    fn set_resource_group_name(&mut self, name: &str) {
+        self.options.push((
+            OptionKey::ResourceGroupName,
+            TxnOptionValue::String(name.to_owned()),
+        ));
+    }
+}
+
 struct MockNewStorage {
     starts: u64,
     commit_error: Option<MockError>,
@@ -445,6 +465,25 @@ impl NewTxnStorage for MockNewStorage {
         Ok(MockNewTransaction {
             start_ts: self.starts,
             commit_error: self.commit_error.clone(),
+            ..MockNewTransaction::default()
+        })
+    }
+}
+
+#[derive(Default)]
+struct RetryOnceStorage {
+    starts: u64,
+}
+
+impl NewTxnStorage for RetryOnceStorage {
+    type Transaction = MockNewTransaction;
+    type Error = MockError;
+
+    fn begin(&mut self) -> Result<Self::Transaction, Self::Error> {
+        self.starts += 1;
+        Ok(MockNewTransaction {
+            start_ts: self.starts,
+            commit_error: (self.starts == 1).then_some(MockError::Retryable),
             ..MockNewTransaction::default()
         })
     }
@@ -551,6 +590,38 @@ fn TestRetryExceedCountError() {
     );
     assert_eq!(result, Err(MockError::Ordinary));
     assert_eq!(storage.starts, 1);
+}
+
+/// The `mockCommitErrorInNewTxn=retry_once` source failpoint: the failed
+/// commit is discarded, a fresh transaction is opened, and the second commit
+/// succeeds after exactly one backoff.
+#[test]
+fn retryable_commit_failure_succeeds_on_the_next_fresh_transaction() {
+    let context = RunInNewTxnContext {
+        request_source: Some(RequestSource {
+            internal: true,
+            source_type: INTERNAL_TXN_OTHERS.to_owned(),
+            explicit_source_type: String::new(),
+        }),
+    };
+    let registry = InnerTxnStartTsBox::new();
+    let mut storage = RetryOnceStorage::default();
+    let mut backoffs = Vec::new();
+
+    let result = run_in_new_txn_with(
+        &context,
+        &mut storage,
+        true,
+        5,
+        &registry,
+        |_| Ok(()),
+        |attempt| backoffs.push(attempt),
+    );
+
+    assert_eq!(result, Ok(()));
+    assert_eq!(storage.starts, 2);
+    assert_eq!(backoffs, vec![0]);
+    assert!(!registry.contains(1));
 }
 
 fn tso_at_millis(milliseconds: u64) -> u64 {

@@ -40,8 +40,8 @@ pub const ERR_LOCK_ACQUIRE_FAIL_AND_NO_WAIT_SET: u16 = 3572;
 /// Go `errno.ErrWriteConflict`, the statement-scoped conflict a pessimistic
 /// retry resolves.
 pub const ERR_WRITE_CONFLICT: u16 = 9007;
-/// Go `errno.ErrRegionUnavailable`, a determinate routing failure an
-/// autocommit statement may replay at a fresh timestamp.
+/// Go `errno.ErrRegionUnavailable`, a determinate routing failure that is not
+/// one of `pkg/kv.IsTxnRetryableError`'s three retryable identities.
 pub const ERR_REGION_UNAVAILABLE: u16 = 9005;
 
 /// Go `mysql.DefaultMySQLState`, used by every code absent from `state.go`.
@@ -141,9 +141,10 @@ pub fn commit_outcome_to_sql_error(outcome: &OptimisticCommitOutcome) -> Result<
 
 /// Renders a transaction-ending cause as the error TiDB reports for it.
 ///
-/// Write conflicts and determinate region failures keep the codes Go uses to
-/// decide whether an autocommit statement can be replayed. Everything else
-/// keeps its exact diagnostic under the generic 1105.
+/// Write conflicts keep Go's retryable 9007 identity. Determinate region
+/// failures retain their current 9005 diagnostic, which `pkg/kv` deliberately
+/// excludes from automatic replay. Everything else keeps its exact diagnostic
+/// under the generic 1105.
 #[must_use]
 pub fn transaction_cause_to_sql_error(cause: &TransactionCause) -> LockSqlError {
     match cause {
@@ -268,7 +269,7 @@ mod tests {
     }
 
     #[test]
-    fn retryable_transaction_causes_keep_their_tidb_codes() {
+    fn transaction_causes_keep_their_current_tidb_codes() {
         assert_eq!(
             transaction_cause_to_sql_error(&TransactionCause::WriteConflict {
                 detail: "d".to_owned()

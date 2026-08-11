@@ -161,7 +161,8 @@ pub use mvcc_metadata::{
 };
 pub use new_txn::{
     retry_backoff_delay, run_in_new_txn, run_in_new_txn_with, set_txn_resource_group, NewTxnError,
-    NewTxnStorage, NewTxnTransaction, RunInNewTxnContext, TxnOptionValue, MAX_RETRY_COUNT,
+    NewTxnStorage, NewTxnTransaction, RunInNewTxnContext, TxnOptionValue, TxnResourceGroup,
+    MAX_RETRY_COUNT,
 };
 pub use option::{
     get_internal_source_type, OptionKey, ReplicaReadType, RequestSource, TxnSizeLimits,

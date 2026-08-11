@@ -101,7 +101,7 @@ use super::node_fixture::*;
 use crate::resultset_source::ResultSetSource;
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
-use tidb_exec::pessimistic_lock_error::ERR_WRITE_CONFLICT;
+use tidb_exec::pessimistic_lock_error::{ERR_REGION_UNAVAILABLE, ERR_WRITE_CONFLICT};
 
 fn set(session: &mut ClusterServerSession, sql: &str) {
     session.execute_write(sql).expect("SET");
@@ -408,16 +408,56 @@ fn an_autocommit_update_that_loses_the_race_is_retried_at_a_new_read() {
 }
 
 #[test]
-fn region_unavailable_is_retryable_only_for_bounded_autocommit_replay() {
+fn txn_retryable_error_matrix_matches_the_reachable_go_allowlist() {
     let (mut session, _) = open_session();
+    let conflict = SqlQueryError::new(ERR_WRITE_CONFLICT, *b"HY000", "Write conflict");
     let unavailable =
         SqlQueryError::new(ERR_REGION_UNAVAILABLE, *b"HY000", "Region is unavailable");
 
-    assert!(session.may_retry_autocommit_statement(&unavailable, 0));
-    assert!(!session.may_retry_autocommit_statement(&unavailable, AUTOCOMMIT_RETRY_LIMIT));
+    assert!(session.may_retry_autocommit_statement(&conflict, 0));
+    assert!(!session.may_retry_autocommit_statement(&conflict, AUTOCOMMIT_RETRY_LIMIT));
+    assert!(!session.may_retry_autocommit_statement(&unavailable, 0));
 
     session.control_transaction("BEGIN").expect("begin");
-    assert!(!session.may_retry_autocommit_statement(&unavailable, 0));
+    assert!(!session.may_retry_autocommit_statement(&conflict, 0));
+}
+
+/// `pkg/kv.IsTxnRetryableError` deliberately excludes TiKV's explicit 9005.
+/// A one-shot failure keeps the assertion honest: replaying it would make the
+/// second attempt succeed, publish `v = 15`, and hide the error from the
+/// client.
+#[test]
+fn a_region_unavailable_commit_is_reported_without_replaying_the_statement() {
+    let (mut session, cluster) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+    let opened_before = cluster.opened.load(Ordering::Acquire);
+    let publications_before = cluster.publications.load(Ordering::Acquire);
+
+    cluster
+        .fail_next_region_commit
+        .store(true, Ordering::Release);
+    let error = session
+        .execute_write("UPDATE t SET v = v + 5 WHERE id = 1")
+        .expect_err("9005 must reach the client instead of being replayed");
+
+    assert_eq!(error.code, ERR_REGION_UNAVAILABLE, "{}", error.message);
+    assert_eq!(
+        cluster.opened.load(Ordering::Acquire),
+        opened_before + 1,
+        "the failed statement opened exactly one attempt"
+    );
+    assert_eq!(
+        cluster.publications.load(Ordering::Acquire),
+        publications_before,
+        "the failed statement published nothing"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT v FROM t WHERE id = 1"),
+        vec![vec![Datum::Int(10)]],
+        "the rejected statement left the row unchanged"
+    );
 }
 
 /// The bound on that retry, which is the other half of the contract clients

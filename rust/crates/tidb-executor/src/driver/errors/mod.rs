@@ -1564,7 +1564,7 @@ mod source_tests {
     }
 
     #[test]
-    fn region_unavailable_uses_tidb_retryable_error() {
+    fn region_unavailable_uses_tidb_error_code() {
         let error = DriverError::Txn(TxnErrorKind::RegionUnavailable).to_mysql_error();
         assert_eq!(error.code, tidb_error::tidb::errcode::ErrRegionUnavailable);
         assert_eq!(error.state, *b"HY000");

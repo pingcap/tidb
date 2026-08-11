@@ -40,7 +40,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tidb_proto::KvrpcKeyError;
+use tidb_proto::{KvrpcContext, KvrpcKeyError};
 
 use crate::gc_state::{GcStateCache, VisibilityError};
 use crate::lock::{LockRecoveryClient, TimestampSource};
@@ -216,6 +216,8 @@ pub struct RealOptimisticTransaction<C, L, T> {
     /// validated against once TiKV has answered.
     gc_state: Arc<GcStateCache>,
     protocol: CommitProtocol,
+    /// Resource group inherited by Prewrite and Commit request contexts.
+    resource_group_name: Option<String>,
     /// Transactions whose locks every later read from this snapshot may step
     /// over, and transactions whose committed value every later read must see
     /// through their lock.
@@ -227,6 +229,12 @@ pub struct RealOptimisticTransaction<C, L, T> {
     /// min-commit-ts TiKV pushed meets the very same lock on its retry, which
     /// is the deadloop `client_helper.go`'s own comment warns about.
     resolved_locks: crate::lock::SnapshotLockSet,
+}
+
+impl<C, L, T> crate::new_txn::TxnResourceGroup for RealOptimisticTransaction<C, L, T> {
+    fn set_resource_group_name(&mut self, name: &str) {
+        self.resource_group_name = Some(name.to_owned());
+    }
 }
 
 /// What a pessimistic transaction already proved before it reached Prewrite.
@@ -347,6 +355,7 @@ where
             pinned_primary_key: None,
             gc_state,
             protocol: CommitProtocol::two_phase_only(),
+            resource_group_name: None,
             resolved_locks: crate::lock::SnapshotLockSet::default(),
         })
     }
@@ -394,6 +403,21 @@ where
 
     pub(super) const fn call_timeout(&self) -> Duration {
         self.timeout
+    }
+
+    /// Clones a routed request context and attaches this transaction's resource
+    /// group without disturbing route, priority, penalty, or tracing fields.
+    pub(super) fn write_context(&self, context: &KvrpcContext) -> KvrpcContext {
+        let mut context = context.clone();
+        if let Some(resource_group_name) = self.resource_group_name.as_ref() {
+            resource_group_name.clone_into(
+                &mut context
+                    .resource_control_context
+                    .get_or_insert_with(Default::default)
+                    .resource_group_name,
+            );
+        }
+        context
     }
 
     /// Snapshot timestamp allocated before any read or write.

@@ -594,7 +594,7 @@ where
                 use_async_commit: false,
                 ..KvrpcCommitRequest::default()
             };
-            let mut context = route.context().clone();
+            let mut context = self.write_context(route.context());
             context.is_retry_request = attempt > 0;
             let published = match self.runtime.client().try_borrow_mut() {
                 Ok(mut client) => client.publish_commit(route.address(), &request, &context, call),
@@ -801,9 +801,10 @@ where
                 use_async_commit,
                 ..KvrpcCommitRequest::default()
             };
+            let context = self.write_context(batch.context());
             let published = match self.runtime.client().try_borrow_mut() {
                 Ok(mut client) => {
-                    client.publish_commit(batch.address(), &request, batch.context(), &cleanup_call)
+                    client.publish_commit(batch.address(), &request, &context, &cleanup_call)
                 }
                 Err(_) => PublishedCommand::BeforePublication(
                     "TiKV client is already borrowed while publishing secondary Commit".to_owned(),

@@ -166,7 +166,7 @@ where
                 .collect();
         }
         request.context = None;
-        let mut context = batch.context().clone();
+        let mut context = self.write_context(batch.context());
         context.is_retry_request = is_retry;
         match self.runtime.client().try_borrow_mut() {
             Ok(mut client) => client.publish_prewrite(batch.address(), &request, &context, call),

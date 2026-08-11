@@ -13,7 +13,7 @@
 use super::super::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
+use tidb_exec::pessimistic_lock_error::{commit_outcome_to_sql_error, ERR_REGION_UNAVAILABLE};
 use tidb_executor::cluster_storage::SnapshotPairs;
 use tidb_executor::storage::StorageError;
 use tidb_txnkv::transaction::{
@@ -50,6 +50,9 @@ pub(super) struct MockCluster {
     /// Publications that actually carried mutations.
     pub(super) publications: AtomicUsize,
     pub(super) fail_commit: AtomicBool,
+    /// One-shot explicit `tikv:9005` at the SQL commit boundary. Unlike a
+    /// write conflict, Go reports this error without replaying the statement.
+    pub(super) fail_next_region_commit: AtomicBool,
     /// One-shot: the NEXT autocommit read snapshot opened is followed
     /// immediately by another session's commit of the row that already exists.
     ///
@@ -251,6 +254,13 @@ impl ClusterTransactions for MockTransactions {
         let staged = buffer.staged();
         if staged.is_empty() {
             return Ok(());
+        }
+        if self.0.fail_next_region_commit.swap(false, Ordering::AcqRel) {
+            return Err(SqlQueryError::new(
+                ERR_REGION_UNAVAILABLE,
+                *b"HY000",
+                "Region is unavailable",
+            ));
         }
         // Autocommit publishes at the timestamp the statement READ at, which is
         // what puts a commit that landed in between inside TiKV's conflict

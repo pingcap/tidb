@@ -52,7 +52,7 @@ use tidb_txnkv::transaction::{
     LockWaitTime, OptimisticCommitOutcome, OptimisticMutation, PessimisticLockFailure,
     RealOptimisticTransaction, RealPessimisticTransaction, TransactionCause,
 };
-use tidb_txnkv::SharedReadRuntime;
+use tidb_txnkv::{set_txn_resource_group, SharedReadRuntime};
 
 const START_TS: u64 = 400;
 const CALL_TIMEOUT: Duration = Duration::from_secs(10);
@@ -638,6 +638,36 @@ fn a_granted_lock_carries_the_statement_timestamp_and_a_stable_primary() {
     assert!(
         !later.is_first_lock,
         "only the very first lock may skip deadlock detection"
+    );
+}
+
+/// The same transaction resource group is attached before a PessimisticLock
+/// is serialized into BatchCommands.
+#[test]
+fn txn_resource_group_is_attached_to_pessimistic_lock_rpc_context() {
+    let (_server, recorded, mut transaction) = fixture(Vec::new());
+    set_txn_resource_group(&mut transaction, "analytics");
+
+    transaction
+        .acquire_locks(
+            &[PRIMARY_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .expect("the resource-group lock is granted");
+
+    let recorded = recorded.lock().unwrap();
+    let context = recorded.locks[0]
+        .context
+        .as_ref()
+        .expect("the transport attaches the routed context");
+    assert_eq!(
+        context
+            .resource_control_context
+            .as_ref()
+            .map(|resource| resource.resource_group_name.as_str()),
+        Some("analytics")
     );
 }
 

@@ -35,8 +35,14 @@ pub enum TxnOptionValue {
     String(String),
 }
 
+/// A transaction whose write RPCs can be assigned to a resource group.
+pub trait TxnResourceGroup {
+    /// Sets the resource group inherited by this transaction's write RPCs.
+    fn set_resource_group_name(&mut self, name: &str);
+}
+
 /// Transaction operations needed by `RunInNewTxn`.
-pub trait NewTxnTransaction {
+pub trait NewTxnTransaction: TxnResourceGroup {
     /// Error identity shared with its storage.
     type Error: NewTxnError;
 
@@ -208,11 +214,8 @@ fn set_request_source<T: NewTxnTransaction>(context: &RunInNewTxnContext, transa
 /// The Go failpoint validates the eventual RPC context after this option is
 /// consumed. Rust keeps the package boundary exact here; the transaction
 /// transport owns the corresponding RPC-context assertion.
-pub fn set_txn_resource_group<T: NewTxnTransaction>(transaction: &mut T, name: &str) {
-    transaction.set_option(
-        OptionKey::ResourceGroupName,
-        TxnOptionValue::String(name.to_owned()),
-    );
+pub fn set_txn_resource_group<T: TxnResourceGroup>(transaction: &mut T, name: &str) {
+    transaction.set_resource_group_name(name);
 }
 
 /// Samples Go's full-jitter delay for one commit retry.
