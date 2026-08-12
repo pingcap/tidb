@@ -94,10 +94,21 @@ pub struct GlobalSysvars {
     /// `setSysVariable`, which sends anything `IsGlobal` to
     /// `SetGlobalSysVar`.
     instances: Arc<Mutex<HashMap<String, String>>>,
+    /// Ordered INSTANCE-only writes made against a cluster transaction's
+    /// scratch table. Cluster rows never contain this tier, so the writer must
+    /// replay these mutations into the live node only after the statement's
+    /// durable GLOBAL half has committed.
+    instance_mutations: Option<Arc<Mutex<Vec<InstanceMutation>>>>,
     /// Scratch registries validate cluster writes before commit. They must not
     /// publish process-wide runtime settings until [`Self::replace_from`]
     /// makes the committed state live.
     publishes_runtime_settings: bool,
+}
+
+#[derive(Clone, Debug)]
+enum InstanceMutation {
+    Set(String, String),
+    Reset(String),
 }
 
 impl Default for GlobalSysvars {
@@ -105,6 +116,7 @@ impl Default for GlobalSysvars {
         Self {
             values: Arc::default(),
             instances: Arc::default(),
+            instance_mutations: None,
             publishes_runtime_settings: true,
         }
     }
@@ -191,12 +203,16 @@ impl GlobalSysvars {
             OptimizerFixControl::parse(&validated.value)
                 .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
         }
+        let stored_value = validated.value;
         {
             let mut values = self.store(def).lock().expect("global sysvar lock poisoned");
             if let Some(other) = alias_of(&key) {
-                values.insert(other.to_owned(), validated.value.clone());
+                values.insert(other.to_owned(), stored_value.clone());
             }
-            values.insert(key.clone(), validated.value);
+            values.insert(key.clone(), stored_value.clone());
+        }
+        if !def.has_global_scope() {
+            self.record_instance_mutation(InstanceMutation::Set(key.clone(), stored_value));
         }
         if key == tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY {
             self.publish_committer_concurrency();
@@ -214,10 +230,14 @@ impl GlobalSysvars {
         if !def.has_global_scope() && !def.has_instance_scope() {
             return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
         }
+        let key = name.to_ascii_lowercase();
         self.store(def)
             .lock()
             .expect("global sysvar lock poisoned")
-            .remove(&name.to_ascii_lowercase());
+            .remove(&key);
+        if !def.has_global_scope() {
+            self.record_instance_mutation(InstanceMutation::Reset(key));
+        }
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY) {
             self.publish_committer_concurrency();
         }
@@ -235,10 +255,14 @@ impl GlobalSysvars {
         if !def.has_instance_scope() {
             return Err(VarError::SessionOnlyVariable(name.to_ascii_lowercase()));
         }
+        let key = name.to_ascii_lowercase();
         self.store(def)
             .lock()
             .expect("global sysvar lock poisoned")
-            .remove(&name.to_ascii_lowercase());
+            .remove(&key);
+        if !def.has_global_scope() {
+            self.record_instance_mutation(InstanceMutation::Reset(key));
+        }
         Ok(())
     }
 
@@ -288,6 +312,7 @@ impl GlobalSysvars {
     #[must_use]
     pub fn from_cluster_rows<I: IntoIterator<Item = (String, String)>>(rows: I) -> Self {
         let table = Self {
+            instance_mutations: Some(Arc::default()),
             publishes_runtime_settings: false,
             ..Self::default()
         };
@@ -295,19 +320,97 @@ impl GlobalSysvars {
         table
     }
 
-    /// Publishes `fresh`'s values into every existing clone of this table.
+    /// Publishes `fresh`'s GLOBAL values into every existing clone of this
+    /// table while retaining this node's INSTANCE-only overrides.
     ///
     /// Mirrors [`crate::privilege::PrivilegeRegistry::replace_from`]: this
-    /// table has one `Arc<Mutex<..>>` handle rather than several, so the swap
-    /// is a single lock instead of one per sub-table.
+    /// `mysql.global_variables` never contains the process-local INSTANCE
+    /// tier. A startup or periodic cluster rebuild must therefore replace the
+    /// persisted GLOBAL image without clearing settings written through
+    /// `SET INSTANCE` on this node.
     pub fn replace_from(&self, fresh: &Self) {
-        {
-            *self.values.lock().expect("global sysvar lock poisoned") =
-                std::mem::take(&mut *fresh.values.lock().expect("global sysvar lock poisoned"));
-            *self.instances.lock().expect("global sysvar lock poisoned") =
-                std::mem::take(&mut *fresh.instances.lock().expect("global sysvar lock poisoned"));
-        }
+        *self.values.lock().expect("global sysvar lock poisoned") =
+            std::mem::take(&mut *fresh.values.lock().expect("global sysvar lock poisoned"));
         self.publish_committer_concurrency();
+    }
+
+    /// Publishes only the named GLOBAL variables from `fresh`.
+    ///
+    /// The cluster writer uses this as its post-commit fallback when the
+    /// durable whole-image reread fails. Applying only the statement's own
+    /// changed names cannot erase a disjoint concurrent `SET GLOBAL`, while
+    /// `set`/`reset` retain validation aliases and runtime-setting hooks.
+    pub fn publish_global_changes_from(&self, fresh: &Self, changed: &[String]) {
+        let desired = fresh.overrides();
+        for name in changed {
+            if get_sys_var(name).is_none() {
+                // A newer peer may have stored a sysvar this binary does not
+                // know. The cluster loader deliberately skips such rows; a
+                // post-commit fallback must do the same instead of turning a
+                // confirmed durable change into a process panic.
+                continue;
+            }
+            match desired.get(name).cloned() {
+                Some(value) => {
+                    self.set(name, value)
+                        .expect("the committed scratch table contains validated sysvars");
+                }
+                None => {
+                    self.reset(name)
+                        .expect("the committed plan contains registered sysvars");
+                }
+            }
+        }
+    }
+
+    /// Replays the INSTANCE-only part of one committed cluster statement into
+    /// this node's live table. Mutations retain source order so repeated
+    /// assignments to one name have the same last-assignment-wins behavior as
+    /// the statement that produced the scratch table.
+    pub fn publish_instance_changes_from_if(
+        &self,
+        fresh: &Self,
+        mut should_publish: impl FnMut(&str) -> bool,
+    ) -> Vec<String> {
+        let Some(mutations) = &fresh.instance_mutations else {
+            return Vec::new();
+        };
+        let mutations = std::mem::take(
+            &mut *mutations
+                .lock()
+                .expect("instance sysvar mutation lock poisoned"),
+        );
+        let mut published = Vec::new();
+        for mutation in mutations {
+            let name = match &mutation {
+                InstanceMutation::Set(name, _) | InstanceMutation::Reset(name) => name,
+            };
+            if !should_publish(name) {
+                continue;
+            }
+            match mutation {
+                InstanceMutation::Set(name, value) => {
+                    self.set_instance(&name, value)
+                        .expect("the committed scratch table contains validated instance sysvars");
+                    published.push(name);
+                }
+                InstanceMutation::Reset(name) => {
+                    self.reset_instance(&name)
+                        .expect("the committed scratch table contains registered instance sysvars");
+                    published.push(name);
+                }
+            }
+        }
+        published
+    }
+
+    fn record_instance_mutation(&self, mutation: InstanceMutation) {
+        if let Some(mutations) = &self.instance_mutations {
+            mutations
+                .lock()
+                .expect("instance sysvar mutation lock poisoned")
+                .push(mutation);
+        }
     }
 
     fn publish_committer_concurrency(&self) {
@@ -699,6 +802,16 @@ mod tests {
         );
         assert_eq!(enabled.get_system("hostname").unwrap(), "localhost");
 
+        let mut recovery = crate::Session::new();
+        recovery.set_user("recovery@%".to_owned(), "recovery@127.0.0.1".to_owned());
+        recovery.attach_privileges(crate::privilege::PrivilegeRegistry::default());
+        assert!(recovery.sem_hides_status_var("tidb_gc_leader_desc"));
+        recovery.enable_privilege_bypass();
+        assert!(
+            !recovery.sem_hides_status_var("tidb_gc_leader_desc"),
+            "skip-grant-table satisfies RESTRICTED_STATUS_ADMIN verification",
+        );
+
         tidb_util::sem::disable();
         let disabled = SessionVars::new();
         assert_eq!(
@@ -804,6 +917,27 @@ mod tests {
             vars.set_global("debug_sync", "x".to_owned()),
             Err(VarError::SessionOnlyVariable("debug_sync".to_owned()))
         );
+    }
+
+    #[test]
+    fn replacing_a_cluster_global_image_preserves_instance_only_values() {
+        let globals = GlobalSysvars::new();
+        globals
+            .set_instance("tidb_general_log", "ON".to_owned())
+            .expect("the instance-only variable sets");
+        globals
+            .set("autocommit", "OFF".to_owned())
+            .expect("the old global override sets");
+
+        let fresh = GlobalSysvars::from_cluster_rows([(
+            "require_secure_transport".to_owned(),
+            "ON".to_owned(),
+        )]);
+        globals.replace_from(&fresh);
+
+        assert_eq!(globals.get("tidb_general_log").as_deref(), Ok("ON"));
+        assert_eq!(globals.get("require_secure_transport").as_deref(), Ok("ON"));
+        assert_eq!(globals.get("autocommit").as_deref(), Ok("ON"));
     }
 
     #[test]

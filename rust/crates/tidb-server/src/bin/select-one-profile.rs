@@ -160,7 +160,7 @@ fn wire_floor(iterations: usize) {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &PipelineSessionFactory::with_configured_store(&store),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,

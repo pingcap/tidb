@@ -202,3 +202,19 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
         ]
     );
 }
+
+#[test]
+fn skip_grant_bypasses_process_for_deadlocks_table() {
+    let mut session = Session::new();
+    session.set_user("recovery@%".to_owned(), "recovery@127.0.0.1".to_owned());
+    session.enable_privilege_bypass();
+    session.attach_privileges(crate::privilege::PrivilegeRegistry::default());
+
+    let StmtOutput::Rows { columns, .. } = session
+        .run_with_columns("SELECT DEADLOCK_ID FROM information_schema.DEADLOCKS")
+        .expect("skip-grant-table bypasses the PROCESS gate")
+    else {
+        panic!("DEADLOCKS must return rows");
+    };
+    assert_eq!(columns[0].0, "DEADLOCK_ID");
+}

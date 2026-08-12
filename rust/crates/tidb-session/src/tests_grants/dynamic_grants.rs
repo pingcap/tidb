@@ -231,3 +231,100 @@ fn user_privileges_table_reports_static_and_dynamic_rows() {
         ]
     );
 }
+
+/// Go's raw cache does not turn a bare `mysql.GrantPriv` bit into a
+/// USER_PRIVILEGES row. `USAGE` is emitted only for an account with no
+/// non-dynamic privilege bits at all, and is never grantable; once a named
+/// privilege exists, GRANT OPTION only changes that named row's flag.
+#[test]
+fn user_privileges_does_not_render_grant_option_as_usage() {
+    let mut session = session_with_privileges();
+    session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
+    session.run("CREATE USER 'grant_only'@'%'").unwrap();
+    session
+        .run("GRANT GRANT OPTION ON *.* TO 'grant_only'@'%'")
+        .unwrap();
+
+    let rows = row_text(session.run(
+        "SELECT privilege_type, is_grantable \
+         FROM information_schema.USER_PRIVILEGES \
+         WHERE grantee = '''grant_only''@''%'''",
+    ));
+    assert!(
+        rows.is_empty(),
+        "a lone GRANT OPTION is not a row: {rows:?}"
+    );
+
+    session
+        .run("GRANT SELECT ON *.* TO 'grant_only'@'%'")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "SELECT privilege_type, is_grantable \
+             FROM information_schema.USER_PRIVILEGES \
+             WHERE grantee = '''grant_only''@''%'''",
+        )),
+        [["SELECT", "YES"]]
+    );
+}
+
+#[test]
+fn user_privileges_uses_raw_host_patterns_and_mysql_schema_select() {
+    let mut admin = session_with_privileges();
+    for sql in [
+        "CREATE USER 'alice'@'%'",
+        "CREATE USER 'alice'@'localhost'",
+        "CREATE USER 'bob'@'%'",
+    ] {
+        admin.run(sql).unwrap();
+    }
+    let registry = admin.privileges.clone().unwrap();
+    let mut alice = Session::new();
+    // The login host is the address the raw USER_PRIVILEGES cache matches;
+    // CURRENT_USER holds the most-specific mysql.user row selected by auth.
+    alice.set_user("alice@localhost".to_owned(), "alice@127.0.0.1".to_owned());
+    alice.attach_privileges(registry.clone());
+
+    let own_rows = row_text(
+        alice.run("SELECT grantee FROM information_schema.USER_PRIVILEGES ORDER BY grantee"),
+    );
+    assert_eq!(
+        own_rows,
+        [["'alice'@'%'"], ["'alice'@'localhost'"]],
+        "the raw cache exposes every matching host-pattern row, not merely the canonical one"
+    );
+
+    admin.run("GRANT SELECT ON `my%`.* TO 'alice'@'%'").unwrap();
+    let all_rows = row_text(
+        alice.run("SELECT grantee FROM information_schema.USER_PRIVILEGES ORDER BY grantee"),
+    );
+    assert!(
+        all_rows.iter().any(|row| row[0] == "'bob'@'%'"),
+        "SELECT on mysql.* exposes every account row: {all_rows:?}"
+    );
+    assert!(
+        all_rows.iter().any(|row| row[0] == "'root'@'%'"),
+        "a wildcard mysql.db row independently matches alice@% even though mysql.user selected localhost: {all_rows:?}"
+    );
+
+    admin.run("CREATE ROLE 'reader'@'%'").unwrap();
+    admin
+        .run("GRANT SELECT ON `my%`.* TO 'reader'@'%'")
+        .unwrap();
+    admin
+        .run("GRANT 'reader'@'%' TO 'alice'@'localhost'")
+        .unwrap();
+    alice.run("SET ROLE 'reader'@'%'").unwrap();
+    // Remove alice's own schema privilege so only the active role can make
+    // the raw USER_PRIVILEGES table show every account.
+    admin
+        .run("REVOKE SELECT ON `my%`.* FROM 'alice'@'%'")
+        .unwrap();
+    let role_rows = row_text(
+        alice.run("SELECT grantee FROM information_schema.USER_PRIVILEGES ORDER BY grantee"),
+    );
+    assert!(
+        role_rows.iter().any(|row| row[0] == "'bob'@'%'"),
+        "an active role's wildcard mysql.db row uses the same raw matching semantics: {role_rows:?}"
+    );
+}

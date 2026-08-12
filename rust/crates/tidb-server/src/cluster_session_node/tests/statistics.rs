@@ -171,6 +171,7 @@ fn open_session_as(node: &MockNode, user: &str) -> ClusterServerSession {
             connection_id: 2,
             peer_addr,
             identity,
+            secure_transport: false,
             cancellation: ConnectionCancellation::default(),
             close: ConnectionClose::default(),
             version_info: tidb_util::versioninfo::VersionInfo::build_default(),

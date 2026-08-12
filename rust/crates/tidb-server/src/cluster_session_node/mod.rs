@@ -487,8 +487,12 @@ impl QuerySessionFactory for ClusterSessionFactory {
             format!("{}@{}", identity.username(), context.peer_addr.ip()),
         );
         session.set_connection_id(context.connection_id);
+        session.set_secure_transport(context.secure_transport);
         if identity.in_sandbox_mode() {
             session.enable_sandbox_mode();
+        }
+        if identity.privilege_bypassed() {
+            session.enable_privilege_bypass();
         }
         let guard = self.processes.register(
             context.connection_id,
@@ -1189,7 +1193,19 @@ impl ClusterServerSession {
     /// The connection's own tables are not rebuilt here; its next statement
     /// finds the node's catalog moved and rebuilds them, which is the one
     /// place that decision lives.
-    fn run_ddl(&mut self, statement: &DdlStatement) -> Result<WriteOutcome, SqlQueryError> {
+    fn run_ddl(
+        &mut self,
+        sql: &str,
+        statement: &DdlStatement,
+    ) -> Result<WriteOutcome, SqlQueryError> {
+        // Go plans and checks DDL privileges before its implicit-commit
+        // executor boundary. Do the same while this connection's transaction
+        // is still intact: a denial must neither publish staged writes nor
+        // reach the cluster catalog authority.
+        let parsed = self.session.parse_statement(sql).map_err(map_error)?;
+        self.session
+            .require_statement_table_privileges(&parsed)
+            .map_err(map_error)?;
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
@@ -1282,7 +1298,7 @@ impl QuerySession for ClusterServerSession {
         // Routed before anything else: what happens to a stored-state change
         // must not depend on which answer shape it would otherwise have taken.
         match self.schema_route(sql)? {
-            StatementRoute::Ddl(statement) => return self.run_ddl(&statement).map(Some),
+            StatementRoute::Ddl(statement) => return self.run_ddl(sql, &statement).map(Some),
             StatementRoute::Accounts => return self.run_account_statement(sql).map(Some),
             StatementRoute::GlobalVars => return self.run_global_var_statement(sql).map(Some),
             StatementRoute::Analyze(tables) => return self.run_analyze(&tables).map(Some),
@@ -1401,7 +1417,9 @@ impl QuerySession for ClusterServerSession {
         }
         match self.schema_route(statement.sql())? {
             StatementRoute::Ddl(ddl) => {
-                return self.run_ddl(&ddl).map(GeneralExecuteOutcome::Write)
+                return self
+                    .run_ddl(statement.sql(), &ddl)
+                    .map(GeneralExecuteOutcome::Write)
             }
             StatementRoute::Accounts => {
                 return self
@@ -1461,7 +1479,7 @@ impl QuerySession for ClusterServerSession {
         // statement runs exactly once either way.
         match self.schema_route(sql)? {
             StatementRoute::Ddl(statement) => {
-                self.run_ddl(&statement)?;
+                self.run_ddl(sql, &statement)?;
                 return Ok(QueryResult::new(Box::new(
                     crate::pipeline_session::affected_rows_source(0),
                 )));

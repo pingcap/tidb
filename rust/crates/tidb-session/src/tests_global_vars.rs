@@ -71,6 +71,42 @@ fn set_global_is_visible_to_a_peer_only_through_the_global_form() {
     );
 }
 
+/// Go's transport-sensitive validator runs only on SQL `SET GLOBAL`: a
+/// plaintext session cannot enable the process gate and lock itself out, but
+/// a TLS session can. Bool validation still precedes that transport check.
+#[test]
+fn require_secure_transport_can_only_be_enabled_by_a_secure_session() {
+    let (mut plaintext, mut secure, globals) = two_sessions_sharing_globals();
+
+    let invalid = plaintext
+        .run("SET GLOBAL require_secure_transport = 2")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(invalid.code, 1231, "Bool validation wins: {invalid:?}");
+
+    let refused = plaintext
+        .run("SET GLOBAL require_secure_transport = ON")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(refused.code, 1105, "{refused:?}");
+    assert_eq!(refused.state, *b"HY000");
+    assert_eq!(
+        refused.message,
+        "require_secure_transport can only be set to ON if the connection issuing the change is secure"
+    );
+    assert_eq!(
+        globals.get("require_secure_transport").as_deref(),
+        Ok("OFF"),
+        "a refused assignment cannot publish partial state"
+    );
+
+    secure.set_secure_transport(true);
+    secure
+        .run("SET GLOBAL require_secure_transport = TRUE")
+        .unwrap();
+    assert_eq!(globals.get("require_secure_transport").as_deref(), Ok("ON"));
+}
+
 /// `SHOW GLOBAL VARIABLES` reads the shared table live; `SHOW SESSION
 /// VARIABLES` (and the unqualified default) reads the session's own copy --
 /// so the two diverge after a session-only `SET` exactly as they do after a

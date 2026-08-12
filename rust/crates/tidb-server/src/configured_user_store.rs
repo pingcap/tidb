@@ -23,7 +23,9 @@
 //! is therefore only a *provisioning* format (the operator's initial rows),
 //! not a separate, immutable catalog: an account `CREATE USER ... IDENTIFIED
 //! BY` adds at runtime can log in immediately, and one `DROP USER` removes
-//! can no longer log in at all.
+//! can no longer log in at all. Process-wide skip-grant-table is the explicit
+//! recovery exception: it retains this registry as statement storage but
+//! admits the requested identity without reading a row or checking a secret.
 
 use std::collections::HashSet;
 use std::fs::File;
@@ -37,17 +39,30 @@ use tidb_session::privilege::{
 use tidb_session::GlobalSysvars;
 
 use crate::auth_identity::{
-    IdentityCatalog, IdentityLookupRequest, IdentityLookupResult, MatchedIdentity,
-    DEFAULT_AUTH_PLUGIN,
+    IdentityCatalog, IdentityLookupPolicy, IdentityLookupRequest, IdentityLookupResult,
+    MatchedIdentity, DEFAULT_AUTH_PLUGIN,
 };
 use crate::native_password::{verify_candidate, NativePasswordHash};
-use crate::secure_transport::{SecureTransportPolicy, TransportKind};
+use crate::secure_transport::{SecureTransportError, SecureTransportPolicy, TransportKind};
 
-/// Canonical identity established only after password verification succeeds.
+/// Canonical identity established after either ordinary account/password
+/// verification or the validated process-wide skip-grant-table admission.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AuthenticatedIdentity {
     identity: MatchedIdentity,
     in_sandbox_mode: bool,
+    privilege_bypassed: bool,
+}
+
+/// Proof that the process-wide secure-transport gate admitted this socket.
+///
+/// The fields are deliberately private: the MySQL connection owner obtains
+/// this value before any auth-plugin exchange, then hands the same decision
+/// back to the account verifier so the live global policy is read exactly
+/// once, in Go's order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct TransportAdmission {
+    secure_for_account_policy: bool,
 }
 
 /// Why [`ConfiguredUserStore::authenticate_native`] refused a login. Go's
@@ -78,24 +93,27 @@ pub enum AuthenticationFailure {
     /// The process-wide `require_secure_transport` is ON and the connection
     /// is plaintext TCP -- Go's `conn.go:669` gate, which fires BEFORE any
     /// account is looked up, so it is the one failure that does not depend
-    /// on who the client claims to be. Errno 8052.
+    /// on who the client claims to be. Errno 3159.
     SecureTransportRequired,
 }
 
 impl AuthenticatedIdentity {
-    /// Canonical username selected by TiDB-compatible host matching.
+    /// Canonical matched username for ordinary authentication, or the
+    /// requested username retained by skip-grant admission.
     #[must_use]
     pub fn username(&self) -> &str {
         self.identity.username()
     }
 
-    /// Canonical host pattern selected by TiDB-compatible host matching.
+    /// Canonical matched host pattern for ordinary authentication, or the
+    /// presented peer host retained by skip-grant admission.
     #[must_use]
     pub fn host(&self) -> &str {
         self.identity.host()
     }
 
-    /// Configured plugin verified for this milestone.
+    /// The verified configured native plugin for an ordinary account, or the
+    /// fixed native-plugin handoff Go uses before bypass admission.
     #[must_use]
     pub const fn auth_plugin(&self) -> &'static str {
         DEFAULT_AUTH_PLUGIN
@@ -115,6 +133,15 @@ impl AuthenticatedIdentity {
     pub const fn in_sandbox_mode(&self) -> bool {
         self.in_sandbox_mode
     }
+
+    /// Whether startup enabled TiDB's process-wide skip-grant-table policy
+    /// for this login. Both privilege-enforcing front-end session factories
+    /// (pipeline and cluster) carry this admission fact into the statement
+    /// authorization layer.
+    #[must_use]
+    pub const fn privilege_bypassed(&self) -> bool {
+        self.privilege_bypassed
+    }
 }
 
 /// The live `mysql.user` table, plus the login verifier that reads it.
@@ -131,6 +158,9 @@ pub struct ConfiguredUserStore {
     /// this store's own private table until [`Self::with_global_vars`]
     /// points it at the one the session factory shares.
     global_vars: GlobalSysvars,
+    /// Immutable startup policy corresponding to Go's process-global
+    /// `privileges.SkipWithGrant` switch.
+    identity_policy: IdentityLookupPolicy,
 }
 
 impl ConfiguredUserStore {
@@ -218,6 +248,7 @@ impl ConfiguredUserStore {
         Ok(Self {
             accounts: PrivilegeRegistry::bootstrapped_from(provisioned),
             global_vars: GlobalSysvars::new(),
+            identity_policy: IdentityLookupPolicy::default(),
         })
     }
 
@@ -233,7 +264,29 @@ impl ConfiguredUserStore {
         Self {
             accounts,
             global_vars: GlobalSysvars::new(),
+            identity_policy: IdentityLookupPolicy::default(),
         }
+    }
+
+    /// Creates the deliberately empty account storage used only by a server
+    /// admitted under skip-grant-table.
+    ///
+    /// Go does not load privilege tables in this recovery mode. The registry
+    /// still exists so administrative statements have a real storage owner,
+    /// but startup neither needs nor fabricates an account row.
+    #[must_use]
+    pub(crate) fn empty_for_skip_grant_table() -> Self {
+        Self::from_accounts(PrivilegeRegistry::bootstrapped_from([])).with_skip_grant_table(true)
+    }
+
+    /// Applies TiDB's process-wide skip-grant-table identity policy.
+    ///
+    /// The policy is fixed before the store is shared with a listener. Login
+    /// and every session opened from it therefore observe one startup value.
+    #[must_use]
+    pub fn with_skip_grant_table(mut self, enabled: bool) -> Self {
+        self.identity_policy = IdentityLookupPolicy::new(enabled);
+        self
     }
 
     /// The live account table, to be shared with the session factory so that
@@ -287,9 +340,13 @@ impl ConfiguredUserStore {
     /// `None` for an unknown account or one with no plugin column, which is
     /// Go's "no user plugin set, assuming MySQL Native Password" -- and is
     /// also why an unknown username cannot be probed by watching which
-    /// auth-switch the server sends.
+    /// auth-switch the server sends. In skip-grant mode every request returns
+    /// native password before any row read, matching Go's fixed bypass plugin.
     #[must_use]
     pub fn auth_plugin_for(&self, username: &str, remote_host: &str) -> Option<String> {
+        if self.identity_policy.skip_with_grant() {
+            return Some(DEFAULT_AUTH_PLUGIN.to_owned());
+        }
         let catalog = IdentityCatalog::new(
             self.accounts
                 .accounts()
@@ -306,12 +363,13 @@ impl ConfiguredUserStore {
     }
 
     /// Resolves and verifies one native-password response against the LIVE
-    /// account table.
+    /// account table, except that validated skip-grant mode admits the
+    /// requested user/peer identity without consulting rows or the response.
     ///
     /// An unknown user or host still executes the native verifier against a
     /// dummy hash before returning [`AuthenticationFailure::AccessDenied`].
-    /// The successful result contains the canonical stored host pattern, not
-    /// the client-supplied host.
+    /// An ordinary successful result contains the canonical stored host
+    /// pattern; a bypass result deliberately keeps the client-supplied host.
     ///
     /// A passwordless NATIVE account (empty `authentication_string`)
     /// authenticates only on an empty auth response, which is what a client
@@ -346,7 +404,7 @@ impl ConfiguredUserStore {
     }
 
     /// [`Self::authenticate_native`] told what the connection's transport
-    /// actually is, which is what the two TLS rules need.
+    /// actually is, which is what the TLS rules need.
     ///
     /// Go applies them at two different places and this keeps both:
     ///
@@ -360,6 +418,10 @@ impl ConfiguredUserStore {
     ///   after the account is matched and before the password is compared --
     ///   and reports the SAME generic `ErrAccessDenied` a wrong password
     ///   does, so it tells a client nothing about why.
+    ///
+    /// Skip-grant mode still enforces the process-wide rule first, then skips
+    /// the per-account `REQUIRE` rule together with every other account-row
+    /// policy because no account row is selected.
     pub fn authenticate(
         &self,
         username: &str,
@@ -368,25 +430,65 @@ impl ConfiguredUserStore {
         response: &[u8],
         transport: TransportKind,
     ) -> Result<AuthenticatedIdentity, AuthenticationFailure> {
+        let admission = self
+            .admit_transport(transport)
+            .map_err(|_| AuthenticationFailure::SecureTransportRequired)?;
+        self.authenticate_admitted(username, remote_host, salt, response, admission)
+    }
+
+    /// Applies the process-wide transport gate before any auth-plugin
+    /// negotiation and returns a token for the later account verifier.
+    pub(crate) fn admit_transport(
+        &self,
+        transport: TransportKind,
+    ) -> Result<TransportAdmission, SecureTransportError> {
         let policy = SecureTransportPolicy::new(
             self.global_vars
                 .get("require_secure_transport")
                 .is_ok_and(|value| value == "ON" || value == "1"),
         );
-        if policy.admit(transport).is_err() {
-            return Err(AuthenticationFailure::SecureTransportRequired);
+        policy.admit(transport)?;
+        Ok(TransportAdmission {
+            secure_for_account_policy: !matches!(transport, TransportKind::PlainTcp),
+        })
+    }
+
+    /// Verifies the account after [`Self::admit_transport`] succeeded.
+    ///
+    /// The opaque token prevents the wire owner from accidentally reaching
+    /// password/account policy while skipping the earlier process-wide gate.
+    pub(crate) fn authenticate_admitted(
+        &self,
+        username: &str,
+        remote_host: &str,
+        salt: &[u8],
+        response: &[u8],
+        admission: TransportAdmission,
+    ) -> Result<AuthenticatedIdentity, AuthenticationFailure> {
+        let is_tls = admission.secure_for_account_policy;
+        let request = IdentityLookupRequest::new(username, remote_host, true);
+        if let IdentityLookupResult::Bypassed(identity) =
+            IdentityCatalog::default().resolve_with_policy(self.identity_policy, &request, &[])
+        {
+            return Ok(AuthenticatedIdentity {
+                identity,
+                in_sandbox_mode: false,
+                privilege_bypassed: true,
+            });
         }
-        let is_tls = !matches!(transport, TransportKind::PlainTcp);
+        // The source bypass returned above without taking any account-table
+        // lock. Only ordinary authentication constructs and sorts the live
+        // identity catalog.
         let catalog = IdentityCatalog::new(
             self.accounts
                 .accounts()
                 .into_iter()
                 .map(|(user, host)| MatchedIdentity::new(&user, &host)),
         );
-        let request = IdentityLookupRequest::new(username, remote_host, true);
         let identity = match catalog.resolve(&request, &[]) {
             IdentityLookupResult::Matched(identity) => Some(identity),
-            IdentityLookupResult::Bypassed(_) | IdentityLookupResult::NotFound => None,
+            IdentityLookupResult::Bypassed(_) => unreachable!("ordinary resolution cannot bypass"),
+            IdentityLookupResult::NotFound => None,
         };
         // Go runs `verifyAccountAutoLock` before `ConnectionVerification`,
         // which is what makes a locked account report 3955 rather than 1045
@@ -509,6 +611,7 @@ impl ConfiguredUserStore {
         Ok(AuthenticatedIdentity {
             identity,
             in_sandbox_mode,
+            privilege_bypassed: false,
         })
     }
 }

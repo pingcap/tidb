@@ -664,7 +664,7 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &PipelineSessionFactory::with_configured_store(&store),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -1510,7 +1510,7 @@ fn system_variable_scope_errors_reach_text_and_prepare_wire() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &PipelineSessionFactory::with_configured_store(&store),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -1580,7 +1580,7 @@ fn cursor_materialization_without_tmp_storage_is_8175_and_never_opens_cursor() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &PipelineSessionFactory::with_configured_store(&store),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -1725,7 +1725,7 @@ fn mysql_client_reads_the_process_list_and_kills_by_id() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &PipelineSessionFactory::with_configured_store(&store),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -1819,7 +1819,7 @@ fn prepared_handle_range_frames_its_binary_result_set() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &PipelineSessionFactory::with_configured_store(&store),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -1948,7 +1948,7 @@ fn kill_connection_ends_the_targeted_peer() {
     // Both connections are served by ONE factory: that is what gives them one
     // process list, as one TiDB instance has one session manager.
     let store = Arc::new(users());
-    let factory = Arc::new(PipelineSessionFactory::with_accounts(store.accounts()));
+    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
     let acceptor = std::thread::spawn(move || {
         let mut workers = Vec::new();
         for _ in 0..2 {
@@ -2064,7 +2064,7 @@ fn prepared_transaction_control_answers_like_the_text_protocol() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &PipelineSessionFactory::with_configured_store(&store),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,
@@ -2206,7 +2206,7 @@ fn the_ok_packet_reports_the_statements_warning_count() {
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &PipelineSessionFactory::with_configured_store(&store),
             &store,
             &worker_tracker,
             DEFAULT_MAX_ALLOWED_PACKET,

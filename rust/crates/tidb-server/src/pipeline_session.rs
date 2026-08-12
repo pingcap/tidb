@@ -50,6 +50,7 @@ use crate::sql_node::{
     QuerySessionFactory, SessionContext, SqlQueryError, WriteOutcome,
 };
 use crate::wire_status::WireStatus;
+use crate::ConfiguredUserStore;
 
 /// One connection's pipeline-backed query session.
 pub struct PipelineServerSession {
@@ -107,16 +108,18 @@ pub struct PipelineSessionFactory {
 }
 
 impl PipelineSessionFactory {
-    /// Builds a factory over an EXISTING account table -- normally
-    /// `ConfiguredUserStore::accounts()`, so that the accounts a connection
-    /// can authenticate as and the accounts `CREATE USER`/`GRANT`/`DROP
-    /// USER` manipulate are one set of rows. `Default` instead starts from a
-    /// fresh table bootstrapped with `root`@`%`, for in-process sessions
-    /// that have no wire front end.
+    /// Builds a wire-facing factory over one configured store.
+    ///
+    /// Both the account table and GLOBAL-scope sysvar table are adopted as a
+    /// pair. This is a correctness and security boundary: SQL executed by a
+    /// session can change `require_secure_transport`, and the next handshake
+    /// must read that exact same process-wide authority. `Default` remains
+    /// available for in-process sessions with no wire authenticator.
     #[must_use]
-    pub fn with_accounts(accounts: PrivilegeRegistry) -> Self {
+    pub fn with_configured_store(store: &ConfiguredUserStore) -> Self {
         Self {
-            privileges: accounts,
+            privileges: store.accounts(),
+            global_vars: store.global_vars(),
             ..Self::default()
         }
     }
@@ -181,11 +184,17 @@ impl QuerySessionFactory for PipelineSessionFactory {
         // dropped entirely when `SessionContext` was threaded through here --
         // double-check it actually arrives (see the TCP-level test below).
         session.session.set_connection_id(context.connection_id);
+        session
+            .session
+            .set_secure_transport(context.secure_transport);
         // Go's `session.Auth` calls `EnableSandBoxMode()` when
         // `ConnectionVerification` admitted an expired password, which
         // restricts this connection to the statement that fixes it.
         if identity.in_sandbox_mode() {
             session.session.enable_sandbox_mode();
+        }
+        if identity.privilege_bypassed() {
+            session.session.enable_privilege_bypass();
         }
         // Go registers the connection with the session manager right after
         // authentication, which is what puts it in `SHOW PROCESSLIST` and
@@ -202,11 +211,11 @@ impl QuerySessionFactory for PipelineSessionFactory {
             ))),
         );
         session.session.attach_process(context.connection_id, guard);
-        // No seeding here: the identity the handshake matched IS a row in
-        // this same registry (`ConfiguredUserStore` verifies logins against
-        // it), exactly as Go's one `mysql.user` holds both the
-        // authentication and the privilege columns. `SHOW GRANTS` therefore
-        // always finds at least USAGE for an authenticated session.
+        // No seeding here: ordinary authentication matched a row in this
+        // same registry, exactly as Go's one `mysql.user` holds both secrets
+        // and grants. Skip-grant authentication is the deliberate exception:
+        // it may have no row, while the registry remains attached as account
+        // statement storage and raw information-schema input.
         session.session.attach_privileges(self.privileges.clone());
         // Snapshots this factory's current GLOBAL-scope overrides into the
         // new session's own copy -- Go's rule that a session's variables are
@@ -601,6 +610,7 @@ mod tests {
             connection_id,
             peer_addr,
             identity,
+            secure_transport: false,
             cancellation: ConnectionCancellation::default(),
             close: crate::sql_node::ConnectionClose::default(),
             version_info: tidb_util::versioninfo::VersionInfo::build_default(),
@@ -669,6 +679,37 @@ mod tests {
         assert_eq!(valid_factory.processes().snapshot().len(), 1);
         drop(session);
         assert!(valid_factory.processes().snapshot().is_empty());
+    }
+
+    #[test]
+    fn configured_store_and_pipeline_sessions_share_one_global_authority() {
+        let store =
+            ConfiguredUserStore::parse(&format!("root\t%\tmysql_native_password\t{ABC_HASH}\n"))
+                .expect("configured user store");
+        let login_store = store.clone();
+        let factory = PipelineSessionFactory::with_configured_store(&store);
+        let mut context = session_context(43);
+        context.secure_transport = true;
+        let mut session = factory
+            .open_session(context)
+            .expect("secure pipeline session opens");
+
+        session
+            .execute_write("SET GLOBAL require_secure_transport = ON")
+            .expect("a secure administrator can enable the transport gate");
+
+        assert_eq!(
+            store
+                .global_vars()
+                .get("require_secure_transport")
+                .expect("configured store reads the process-wide value"),
+            "ON",
+            "the next handshake must read the same authority SET GLOBAL wrote"
+        );
+        assert!(matches!(
+            login_store.authenticate_native("root", "127.0.0.1", &SALT, &scramble(b"abc", &SALT)),
+            Err(crate::configured_user_store::AuthenticationFailure::SecureTransportRequired)
+        ));
     }
 
     /// Go's sessions read the instance-wide schema state, so a table created

@@ -183,6 +183,69 @@ fn set_default_role_replaces_the_whole_default_set() {
     ));
 }
 
+#[test]
+fn skip_unknown_current_user_is_not_the_explicit_self_shortcut() {
+    let mut session = session_with_privileges();
+    session.set_user(
+        "missing@127.0.0.1".to_owned(),
+        "missing@127.0.0.1".to_owned(),
+    );
+    session.enable_privilege_bypass();
+
+    session
+        .run("SET DEFAULT ROLE ALL TO 'missing'@'127.0.0.1'")
+        .expect("Go's written explicit self identity takes the sole-current shortcut");
+    let registry = session.privileges.clone().unwrap();
+    let actual = ("missing".to_owned(), "127.0.0.1".to_owned());
+    let sentinel = ("sentinel".to_owned(), "%".to_owned());
+    registry.set_default_roles(&actual, std::slice::from_ref(&sentinel));
+
+    assert!(matches!(
+        session.run("SET DEFAULT ROLE no_such_role TO CURRENT_USER"),
+        Err(DriverError::CannotUserRole {
+            operation: "SET DEFAULT ROLE",
+            ref target,
+        }) if target == "@"
+    ));
+    assert!(matches!(
+        session.run("SET DEFAULT ROLE ALL TO CURRENT_USER"),
+        Err(DriverError::CannotUserRole {
+            operation: "SET DEFAULT ROLE",
+            ref target,
+        }) if target == "@"
+    ));
+    session
+        .run("SET DEFAULT ROLE NONE TO CURRENT_USER")
+        .expect("NONE is a storage-only delete of the raw AST identity");
+    assert_eq!(
+        registry.default_roles(&actual),
+        [sentinel],
+        "CURRENT_USER remains raw `@`, so NONE must not clear the actual account"
+    );
+}
+
+#[test]
+fn set_default_role_multi_target_failure_publishes_nothing() {
+    let mut session = session_with_privileges();
+    session.run("CREATE ROLE r1").unwrap();
+    session.run("CREATE USER u1").unwrap();
+    session.run("CREATE USER u2").unwrap();
+    session.run("GRANT r1 TO u1").unwrap();
+    let registry = session.privileges.clone().unwrap();
+
+    assert!(matches!(
+        session.run("SET DEFAULT ROLE r1 TO u1, u2"),
+        Err(DriverError::RoleNotGranted { ref role, ref user, .. })
+            if role == "r1" && user == "u2"
+    ));
+    assert!(registry
+        .default_roles(&("u1".to_owned(), "%".to_owned()))
+        .is_empty());
+    assert!(registry
+        .default_roles(&("u2".to_owned(), "%".to_owned()))
+        .is_empty());
+}
+
 /// CAPTURED: every `SET ROLE` form and the `CURRENT_ROLE()` text after it.
 /// `NONE` reports the literal `NONE`; anything else reports the
 /// backtick-quoted identities joined by a BARE comma. A rejected `SET ROLE`

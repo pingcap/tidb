@@ -20,9 +20,127 @@
 //! request-verification and `showGrants`) and
 //! `pkg/privilege/privileges/privileges.go` (`UserPrivileges`).
 
+use std::cmp::Ordering as Comparison;
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::atomic::Ordering;
 
 use super::*;
+
+fn compare_host(left: &str, right: &str) -> Comparison {
+    if left == "%" || right == "%" {
+        return match (left == "%", right == "%") {
+            (true, true) => Comparison::Equal,
+            (false, true) => Comparison::Less,
+            (true, false) => Comparison::Greater,
+            (false, false) => unreachable!("percent branch requires a catch-all"),
+        };
+    }
+    if left.is_empty() || right.is_empty() {
+        return match (left.is_empty(), right.is_empty()) {
+            (true, true) => Comparison::Equal,
+            (false, true) => Comparison::Less,
+            (true, false) => Comparison::Greater,
+            (false, false) => unreachable!("empty branch requires a catch-all"),
+        };
+    }
+    let left_suffix = left.ends_with('%');
+    let right_suffix = right.ends_with('%');
+    match (left_suffix, right_suffix) {
+        (false, true) => Comparison::Less,
+        (true, false) => Comparison::Greater,
+        (true, true) => right.len().cmp(&left.len()),
+        (false, false) => left.cmp(right),
+    }
+}
+
+fn host_matches(pattern: &str, host: &str) -> bool {
+    if let Some((network, mask)) = parse_ipv4_network(pattern) {
+        if let Ok(IpAddr::V4(address)) = host.parse::<IpAddr>() {
+            return network
+                .octets()
+                .iter()
+                .zip(mask.octets())
+                .zip(address.octets())
+                .all(|((network, mask), address)| network & mask == address & mask);
+        }
+    }
+    if pattern == "localhost"
+        && host
+            .parse::<IpAddr>()
+            .map(|address| address.is_loopback())
+            .unwrap_or(false)
+    {
+        return true;
+    }
+    wildcard_match(host.as_bytes(), pattern.as_bytes())
+}
+
+fn database_matches(pattern: &str, database: &str) -> bool {
+    wildcard_match(
+        database.to_ascii_uppercase().as_bytes(),
+        pattern.to_ascii_uppercase().as_bytes(),
+    )
+}
+
+fn parse_ipv4_network(pattern: &str) -> Option<(Ipv4Addr, Ipv4Addr)> {
+    let (network, mask) = pattern.split_once('/')?;
+    let network = network.parse().ok()?;
+    let mask = mask.parse().ok()?;
+    (u32::from(network) & u32::from(mask) == u32::from(network)).then_some((network, mask))
+}
+
+fn wildcard_match(value: &[u8], pattern: &[u8]) -> bool {
+    let mut value_index = 0;
+    let mut pattern_index = 0;
+    let mut wildcard_pattern = None;
+    let mut wildcard_value = 0;
+    while value_index < value.len() {
+        if pattern_index < pattern.len() {
+            match pattern[pattern_index] {
+                b'\\' if pattern_index + 1 < pattern.len() => {
+                    if value[value_index] == pattern[pattern_index + 1] {
+                        value_index += 1;
+                        pattern_index += 2;
+                        continue;
+                    }
+                }
+                b'\\' if value[value_index] == b'\\' => {
+                    value_index += 1;
+                    pattern_index += 1;
+                    continue;
+                }
+                b'%' => {
+                    wildcard_pattern = Some(pattern_index);
+                    wildcard_value = value_index;
+                    pattern_index += 1;
+                    continue;
+                }
+                b'_' => {
+                    value_index += 1;
+                    pattern_index += 1;
+                    continue;
+                }
+                literal if literal == value[value_index] => {
+                    value_index += 1;
+                    pattern_index += 1;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        if let Some(wildcard_pattern) = wildcard_pattern {
+            pattern_index = wildcard_pattern + 1;
+            wildcard_value += 1;
+            value_index = wildcard_value;
+            continue;
+        }
+        return false;
+    }
+    while pattern_index < pattern.len() && pattern[pattern_index] == b'%' {
+        pattern_index += 1;
+    }
+    pattern_index == pattern.len()
+}
 
 impl PrivilegeRegistry {
     fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), UserRecord>> {
@@ -73,6 +191,68 @@ impl PrivilegeRegistry {
     pub fn user_exists(&self, user: &str, host: &str) -> bool {
         self.lock()
             .contains_key(&(user.to_owned(), host.to_owned()))
+    }
+
+    /// Returns the most-specific stored account whose host pattern matches
+    /// the presented host, following Go `MySQLPrivilege.matchUser`.
+    ///
+    /// Authentication normally hands sessions the canonical stored host.
+    /// Skip-grant-table intentionally keeps the requested peer host instead,
+    /// so raw privilege-cache readers such as `USER_PRIVILEGES` must perform
+    /// this match themselves just as Go does.
+    #[must_use]
+    pub fn matching_account(&self, user: &str, host: &str) -> Option<Account> {
+        self.lock()
+            .keys()
+            .filter(|(candidate, pattern)| candidate == user && host_matches(pattern, host))
+            .min_by(|(_, left), (_, right)| compare_host(left, right))
+            .cloned()
+    }
+
+    /// Whether this stored account row matches a presented user and host.
+    ///
+    /// Go's raw `USER_PRIVILEGES` cache tests every row, rather than only
+    /// the most-specific account authentication selected. Consequently both
+    /// `alice@127.%` and `alice@%` are visible to `alice@127.0.0.1`.
+    #[must_use]
+    pub fn account_matches(&self, account: &Account, user: &str, host: &str) -> bool {
+        account.0 == user && host_matches(&account.1, host)
+    }
+
+    /// Go `RequestVerification` against the raw cache for a presented host.
+    ///
+    /// The user and schema tables each select their own most-specific host
+    /// pattern. They need not use the same pattern: `alice@localhost` can be
+    /// the account row while an `alice@%` `mysql.db` row supplies `SELECT ON
+    /// mysql.*`.
+    #[must_use]
+    pub fn has_matching_global_or_schema_priv(
+        &self,
+        user: &str,
+        host: &str,
+        database: &str,
+        mask: u64,
+    ) -> bool {
+        if self
+            .matching_account(user, host)
+            .is_some_and(|account| self.has_global_priv_mask(&account.0, &account.1, mask))
+        {
+            return true;
+        }
+        self.lock_db()
+            .iter()
+            .filter(|((row_user, row_host, row_database), _)| {
+                row_user == user
+                    && host_matches(row_host, host)
+                    && database_matches(row_database, database)
+            })
+            .min_by(
+                |((_, left_host, left_database), _), ((_, right_host, right_database), _)| {
+                    compare_host(left_host, right_host)
+                        .then_with(|| left_database.cmp(right_database))
+                },
+            )
+            .is_some_and(|(_, privileges)| privileges & mask != 0)
     }
 
     /// Go's `userExists` + `ErrCannotUser("CREATE USER", ...)`: creating an
@@ -798,12 +978,27 @@ impl PrivilegeRegistry {
     /// replace and never a merge). An empty set leaves no row at all, which
     /// is the `SET DEFAULT ROLE NONE` state.
     pub fn set_default_roles(&self, account: &Account, roles: &[Account]) {
+        self.replace_default_roles(std::iter::once((account, roles)));
+    }
+
+    /// Atomically replaces several accounts' default-role sets.
+    ///
+    /// Go applies a multi-target `SET DEFAULT ROLE` in one SQL transaction,
+    /// so a concurrent login or `SET ROLE DEFAULT` observes either the old
+    /// batch or the new batch, never a prefix. Holding the one registry lock
+    /// across every replacement gives the in-memory authority that boundary.
+    pub fn replace_default_roles<'a>(
+        &self,
+        replacements: impl IntoIterator<Item = (&'a Account, &'a [Account])>,
+    ) {
         let mut defaults = self.lock_default_roles();
-        if roles.is_empty() {
-            defaults.remove(account);
-            return;
+        for (account, roles) in replacements {
+            if roles.is_empty() {
+                defaults.remove(account);
+            } else {
+                defaults.insert(account.clone(), roles.iter().cloned().collect());
+            }
         }
-        defaults.insert(account.clone(), roles.iter().cloned().collect());
     }
 
     /// Sets every bit in `mask`, on an account the caller has already
@@ -827,9 +1022,13 @@ impl PrivilegeRegistry {
     /// active-role set.
     #[must_use]
     pub fn has_global_priv(&self, user: &str, host: &str, global_priv: GlobalPriv) -> bool {
+        self.has_global_priv_mask(user, host, global_priv.bit())
+    }
+
+    fn has_global_priv_mask(&self, user: &str, host: &str, mask: u64) -> bool {
         self.lock()
             .get(&(user.to_owned(), host.to_owned()))
-            .is_some_and(|record| record.privs & global_priv.bit() != 0)
+            .is_some_and(|record| record.privs & mask != 0)
     }
 
     /// Go `MySQLPrivilege.RequestVerification`'s global-scope arm: the

@@ -231,7 +231,7 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
             }
         };
     }
-    if config.load_privileges {
+    if command_line_privilege_source_requires_cluster(&config) {
         // The account load rides the same authority a `--load-table` node
         // connects; a command-line-only node never connects one, so there is
         // nothing to read `mysql.*` through.
@@ -248,6 +248,10 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
             format!("configured SQL node requires one or two tables, got {count}"),
         ))),
     }
+}
+
+fn command_line_privilege_source_requires_cluster(config: &NodeConfig) -> bool {
+    config.load_privileges && !config.skip_grant_table
 }
 
 static SYSTEM_TIME_JUMP_BACKWARD_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -274,4 +278,32 @@ fn open_spill_storage(
     tidb_util::disk::SpillStorage::open(config.spill_storage.clone())
         .map(Arc::new)
         .map_err(RunConfiguredNodeError::Spill)
+}
+
+#[cfg(test)]
+mod skip_grant_startup_tests {
+    use super::*;
+
+    #[test]
+    fn skip_grant_table_ignores_a_command_line_privilege_source_without_cluster_tables() {
+        let mut config = NodeConfig::parse([
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--read-table",
+            "test",
+            "rows",
+            "42",
+            "1",
+            "id:1:clustered-pk",
+            "--load-privileges",
+        ])
+        .expect("the command line shape parses");
+        assert!(command_line_privilege_source_requires_cluster(&config));
+        config.skip_grant_table = true;
+        assert!(
+            !command_line_privilege_source_requires_cluster(&config),
+            "recovery mode does not consult the configured privilege source"
+        );
+    }
 }

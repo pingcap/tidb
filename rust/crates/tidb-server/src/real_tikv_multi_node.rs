@@ -1016,12 +1016,10 @@ pub(crate) fn run_configured_multi_node_with_spill(
     config: NodeConfig,
     spill_storage: Arc<tidb_util::disk::SpillStorage>,
 ) -> Result<(), RunConfiguredNodeError> {
-    let users =
-        ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?;
-    crate::real_tikv_node::apply_expired_password_policy(&config, &users);
-    let users = Arc::new(users);
+    let users = crate::real_tikv_node::configured_account_store(&config)?;
     let (factory, authority) =
         RealTiKvMultiSessionFactory::connect(&config).map_err(RunConfiguredNodeError::Engine)?;
+    let users = Arc::new(users);
     run_bound_multi_node(config, factory, authority, users, spill_storage, None)
 }
 
@@ -1040,6 +1038,8 @@ pub(crate) fn run_bound_multi_node(
     spill_storage: Arc<tidb_util::disk::SpillStorage>,
     privilege_reloader: Option<PrivilegeReloader>,
 ) -> Result<(), RunConfiguredNodeError> {
+    let sysvar_reloader =
+        crate::real_tikv_node::prepare_cluster_sysvar_runtime(&config, &users, &authority);
     let factory = Arc::new(factory.with_spill_storage(spill_storage));
     let cluster_id = factory.cluster_id();
     let authority_id = factory.authority_id();
@@ -1061,6 +1061,9 @@ pub(crate) fn run_bound_multi_node(
         // stopped by `Drop` when this closure returns, whether the node
         // exited normally or by error.
         let privilege_reloader = privilege_reloader;
+        let sysvar_reloader = sysvar_reloader?;
+        let sysvar_watcher =
+            crate::real_tikv_node::spawn_sysvar_watch(&config, sysvar_reloader.as_ref());
         let node =
             ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
                 emit_connections_startup_failure(&error);
@@ -1088,7 +1091,10 @@ pub(crate) fn run_bound_multi_node(
             users.len(),
         );
         let result = node.run().map_err(RunConfiguredNodeError::Node);
+        drop(sysvar_watcher);
         crate::real_tikv_node::emit_privilege_reload_stats(privilege_reloader.as_ref());
+        crate::real_tikv_node::emit_sysvar_reload_stats(sysvar_reloader.as_ref());
+        drop(sysvar_reloader);
         result
     })
 }

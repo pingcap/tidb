@@ -263,7 +263,7 @@ impl IdentityLookupPolicy {
     }
 }
 
-/// In-memory identity rows owned by a future privilege/user-store adapter.
+/// In-memory identity rows owned by the configured privilege/user store.
 ///
 /// Rows are sorted with the same source ordering before matching: exact and
 /// longer host patterns precede suffix wildcards, and `%` is the least

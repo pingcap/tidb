@@ -1191,16 +1191,34 @@ pub(crate) fn served_table_descriptor(table: &ConfiguredTable) -> String {
 /// Go `cmd/tidb-server/main.go` around line 1067:
 /// `vardef.IsSandBoxModeEnabled.Store(!cfg.Security.DisconnectOnExpiredPassword)`.
 ///
-/// This is the ONLY production writer of the server-wide sandbox flag, and
-/// therefore the whole reason the flag's reader (the login path's
-/// `check_password_expired`) can ever return "admitted, sandboxed" instead of
-/// 1862 -- which in turn is the only way a session's sandbox mode, and the
-/// per-statement gate that restricts a sandboxed session to
-/// `SET PASSWORD`/`ALTER USER`, become reachable.
-pub(crate) fn apply_expired_password_policy(config: &NodeConfig, users: &ConfiguredUserStore) {
+/// This is the common production writer for the account policies the login
+/// path reads. It installs the inverse password-expiry sandbox flag and the
+/// root-only skip-grant-table identity policy before any listener shares the
+/// store. Every file-backed and cluster-backed constructor passes through
+/// this helper, so admission cannot depend on which node route was selected.
+pub(crate) fn apply_account_policies(
+    config: &NodeConfig,
+    users: ConfiguredUserStore,
+) -> ConfiguredUserStore {
     users
         .accounts()
         .set_sandbox_mode_enabled(!config.disconnect_on_expired_password);
+    users.with_skip_grant_table(config.skip_grant_table)
+}
+
+/// Opens the configured file-backed account source, except in TiDB's
+/// skip-grant-table recovery mode where privilege storage must not be read at
+/// all. The empty registry remains writable for account/role statements that
+/// run after startup.
+pub(crate) fn configured_account_store(
+    config: &NodeConfig,
+) -> Result<ConfiguredUserStore, RunConfiguredNodeError> {
+    let users = if config.skip_grant_table {
+        ConfiguredUserStore::empty_for_skip_grant_table()
+    } else {
+        ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?
+    };
+    Ok(apply_account_policies(config, users))
 }
 
 /// Starts the bounded concurrent production Rust SQL node.
@@ -1213,12 +1231,10 @@ pub(crate) fn run_configured_node_with_spill(
     config: NodeConfig,
     spill_storage: Arc<tidb_util::disk::SpillStorage>,
 ) -> Result<(), RunConfiguredNodeError> {
-    let users =
-        ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?;
-    apply_expired_password_policy(&config, &users);
-    let users = Arc::new(users);
+    let users = configured_account_store(&config)?;
     let (factory, authority) =
         RealTiKvSessionFactory::connect(&config).map_err(RunConfiguredNodeError::Engine)?;
+    let users = Arc::new(users);
     run_bound_node(config, factory, authority, users, spill_storage, None)
 }
 
@@ -1237,6 +1253,11 @@ pub(crate) fn run_bound_node(
     spill_storage: Arc<tidb_util::disk::SpillStorage>,
     privilege_reloader: Option<PrivilegeReloader>,
 ) -> Result<(), RunConfiguredNodeError> {
+    // Install the persisted image synchronously, then start the ongoing half,
+    // all before bind. Defer propagating either failure until the authority
+    // is owned by `run_with_process_shutdown`, so startup failures still take
+    // the ordered PD/transport shutdown path.
+    let sysvar_reloader = prepare_cluster_sysvar_runtime(&config, &users, &authority);
     let factory = Arc::new(factory.with_spill_storage(spill_storage));
     let cluster_id = factory.cluster_id();
     let authority_id = factory.authority_id();
@@ -1262,6 +1283,8 @@ pub(crate) fn run_bound_node(
         // stopped by `Drop` when this closure returns, whether the node
         // exited normally or by error.
         let privilege_reloader = privilege_reloader;
+        let sysvar_reloader = sysvar_reloader?;
+        let sysvar_watcher = spawn_sysvar_watch(&config, sysvar_reloader.as_ref());
         let node =
             ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users)).map_err(|error| {
                 emit_connections_startup_failure(&error);
@@ -1287,7 +1310,13 @@ pub(crate) fn run_bound_node(
             stats_receipt.pseudo,
         );
         let result = node.run().map_err(RunConfiguredNodeError::Node);
+        // A watch only nudges its reloader, so stop it first. Both own PD
+        // handles and must be gone before `run_with_process_shutdown` drains
+        // the process authority.
+        drop(sysvar_watcher);
         emit_privilege_reload_stats(privilege_reloader.as_ref());
+        emit_sysvar_reload_stats(sysvar_reloader.as_ref());
+        drop(sysvar_reloader);
         result
     })
 }
@@ -1299,6 +1328,18 @@ pub(crate) fn emit_privilege_reload_stats(reloader: Option<&PrivilegeReloader>) 
         let stats = reloader.stats();
         eprintln!(
             "{{\"event\":\"privilege_reload_stats\",\"passes\":{},\"reloads\":{},\"failures\":{}}}",
+            stats.passes, stats.reloads, stats.failures
+        );
+    }
+}
+
+pub(crate) fn emit_sysvar_reload_stats(
+    reloader: Option<&crate::cluster_sysvar_seam::SysvarReloader>,
+) {
+    if let Some(reloader) = reloader {
+        let stats = reloader.stats();
+        eprintln!(
+            "{{\"event\":\"sysvar_reload_stats\",\"passes\":{},\"reloads\":{},\"failures\":{}}}",
             stats.passes, stats.reloads, stats.failures
         );
     }
@@ -1322,10 +1363,12 @@ pub(crate) fn node_accounts(
     config: &NodeConfig,
     authority: &ProductionReadProcessAuthority,
 ) -> Result<(Arc<ConfiguredUserStore>, Option<PrivilegeReloader>), RunConfiguredNodeError> {
+    if config.skip_grant_table {
+        let users = configured_account_store(config)?;
+        return Ok((Arc::new(users), None));
+    }
     if !config.load_privileges {
-        let users =
-            ConfiguredUserStore::load(&config.auth_file).map_err(RunConfiguredNodeError::Auth)?;
-        apply_expired_password_policy(config, &users);
+        let users = configured_account_store(config)?;
         return Ok((Arc::new(users), None));
     }
     let accounts = tidb_exec::real_tikv_privileges::load_accounts_from_cluster(
@@ -1365,20 +1408,13 @@ pub(crate) fn node_accounts(
         accounts.sysvars.len(),
     );
     let users = ConfiguredUserStore::from_accounts(loaded.registry);
-    // `--load-privileges` implies loading `mysql.global_variables` too,
-    // rather than adding a second flag for it: both read the same
-    // already-bootstrapped `mysql.*` at the same snapshot
-    // (`load_accounts_from_cluster` took both in one transaction), and a
-    // node that trusts the cluster for its accounts has no principled reason
-    // to keep trusting only its own sysvar defaults. `load_from_cluster`
-    // writes straight into the store's shared `GlobalSysvars`, so every
-    // session this node opens sees the loaded overrides as their defaults --
-    // this is a one-shot load, not a write-through: a `SET GLOBAL` a Go node
-    // runs after this point is invisible here until this node restarts, and a
-    // `SET GLOBAL` run through this node's own wide session updates only this
-    // in-memory table, not `mysql.global_variables` itself.
+    // Seed the same startup snapshot's global variables now; `run_bound_*`
+    // immediately replaces this with a fresh complete image and starts the
+    // ongoing sysvar reloader before bind. Keeping the first image here makes
+    // this account load internally coherent even if a caller inspects it
+    // before handing it to the listener lifecycle.
     users.global_vars().load_from_cluster(accounts.sysvars);
-    apply_expired_password_policy(config, &users);
+    let users = apply_account_policies(config, users);
     let users = Arc::new(users);
     // Ticks at the same `schema_lease / 2` cadence as the catalog reloader,
     // so a node is never more than one lease behind the cluster's accounts
@@ -1393,6 +1429,97 @@ pub(crate) fn node_accounts(
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     Ok((users, Some(reloader)))
+}
+
+/// Rebuilds the cluster-backed global-sysvar cache synchronously before the
+/// server accepts a connection.
+///
+/// Go runs its sysvar cache independently of the privilege cache, including
+/// in skip-grant-table recovery mode. Keeping the load unconditional also
+/// prevents a persisted `require_secure_transport=ON` from having a
+/// fail-open startup window on ordinary auth-file and loaded-account routes.
+pub(crate) fn load_cluster_sysvars(
+    users: &ConfiguredUserStore,
+    authority: &ProductionReadProcessAuthority,
+) -> Result<(), RunConfiguredNodeError> {
+    let opener = authority.transaction_opener();
+    load_cluster_sysvars_with_read(users, move || {
+        tidb_exec::real_tikv_privileges::load_sysvars_from_cluster(
+            &opener,
+            PRODUCTION_CONTROL_PLANE_TIMEOUT,
+        )
+        .map_err(|error| error.to_string())
+    })
+}
+
+fn load_cluster_sysvars_with_read(
+    users: &ConfiguredUserStore,
+    read: impl FnOnce() -> Result<Vec<(String, String)>, String>,
+) -> Result<(), RunConfiguredNodeError> {
+    let sysvars =
+        read().map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    let fresh = tidb_session::GlobalSysvars::from_cluster_rows(sysvars);
+    users.global_vars().replace_from(&fresh);
+    Ok(())
+}
+
+pub(crate) fn prepare_cluster_sysvar_runtime(
+    config: &NodeConfig,
+    users: &ConfiguredUserStore,
+    authority: &ProductionReadProcessAuthority,
+) -> Result<Option<crate::cluster_sysvar_seam::SysvarReloader>, RunConfiguredNodeError> {
+    let startup_opener = authority.transaction_opener();
+    let reload_opener = authority.transaction_opener();
+    prepare_cluster_sysvar_runtime_with_reads(
+        config,
+        users,
+        move || {
+            tidb_exec::real_tikv_privileges::load_sysvars_from_cluster(
+                &startup_opener,
+                PRODUCTION_CONTROL_PLANE_TIMEOUT,
+            )
+            .map_err(|error| error.to_string())
+        },
+        Box::new(move || {
+            tidb_exec::real_tikv_privileges::load_sysvars_from_cluster(
+                &reload_opener,
+                PRODUCTION_CONTROL_PLANE_TIMEOUT,
+            )
+            .map_err(|error| error.to_string())
+        }),
+    )
+}
+
+fn prepare_cluster_sysvar_runtime_with_reads(
+    config: &NodeConfig,
+    users: &ConfiguredUserStore,
+    startup_read: impl FnOnce() -> Result<Vec<(String, String)>, String>,
+    reload_read: crate::cluster_sysvar_seam::SysvarReloadRead,
+) -> Result<Option<crate::cluster_sysvar_seam::SysvarReloader>, RunConfiguredNodeError> {
+    load_cluster_sysvars_with_read(users, startup_read)?;
+    spawn_cluster_sysvar_reloader_with_read(config, users, reload_read)
+}
+
+fn spawn_cluster_sysvar_reloader_with_read(
+    config: &NodeConfig,
+    users: &ConfiguredUserStore,
+    read: crate::cluster_sysvar_seam::SysvarReloadRead,
+) -> Result<Option<crate::cluster_sysvar_seam::SysvarReloader>, RunConfiguredNodeError> {
+    crate::cluster_sysvar_seam::SysvarReloader::spawn_with_read(
+        users.global_vars(),
+        sysvar_reload_interval(config.schema_lease),
+        crate::cluster_sysvar_seam::SysvarPublicationFence::default(),
+        read,
+    )
+    .map(Some)
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))
+}
+
+pub(crate) fn sysvar_reload_interval(schema_lease: Duration) -> Duration {
+    // Go's `LoadSysVarCacheLoop` has a fixed 30-second fallback even when
+    // etcd watch delivery is unavailable. A schema lease may demand a
+    // tighter cadence, but it must never relax that safety bound.
+    (schema_lease / 2).min(Duration::from_secs(30))
 }
 
 /// Every servable-table outcome a `--load-table` node can settle on, once its
@@ -1688,6 +1815,7 @@ mod tests {
     use super::*;
     use crate::connection_writers::{write_query_error, ConnectionPacketOutput};
     use crate::mysql_connection::MysqlConnectionError;
+    use crate::secure_transport::TransportKind;
     use std::cell::Cell;
     use std::sync::Mutex;
     use tidb_exec::real_tikv_ddl::ClusterDdlError;
@@ -1707,6 +1835,187 @@ mod tests {
             self.0.push(payload.to_vec());
             Ok(sequence.wrapping_add(1))
         }
+    }
+
+    #[test]
+    fn configured_account_policy_makes_skip_grant_table_a_real_login_authority() {
+        let mut config = NodeConfig::parse([
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--load-table",
+            "test.rows",
+            "--auth-file",
+            "/tmp/users.tsv",
+        ])
+        .expect("base config");
+        config.skip_grant_table = true;
+        let users = configured_account_store(&config)
+            .expect("skip-grant-table does not read the nonexistent auth file");
+        assert_eq!(
+            users.auth_plugin_for("no-row", "127.0.0.1").as_deref(),
+            Some("mysql_native_password")
+        );
+        let identity = users
+            .authenticate_native("no-row", "127.0.0.1", &[7; 20], b"arbitrary")
+            .expect("the production startup policy reaches login");
+        assert_eq!(identity.username(), "no-row");
+        assert_eq!(identity.host(), "127.0.0.1");
+        assert!(identity.privilege_bypassed());
+    }
+
+    #[test]
+    fn skip_grant_sysvar_runtime_is_fail_closed_at_first_login_and_reloads_without_accounts() {
+        let mut config = NodeConfig::parse([
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--load-table",
+            "test.rows",
+            "--auth-file",
+            "/tmp/users.tsv",
+        ])
+        .expect("base config");
+        config.skip_grant_table = true;
+        // The test nudges the worker; a long tick proves the observed update
+        // came from that runtime path rather than an incidental timer pass.
+        config.schema_lease = Duration::from_secs(120);
+        assert_eq!(
+            sysvar_reload_interval(config.schema_lease),
+            Duration::from_secs(30)
+        );
+        assert_eq!(
+            sysvar_reload_interval(Duration::from_secs(10)),
+            Duration::from_secs(5)
+        );
+        let users = configured_account_store(&config)
+            .expect("skip-grant startup creates no file-backed accounts");
+
+        load_cluster_sysvars_with_read(&users, || {
+            Ok(vec![(
+                "require_secure_transport".to_owned(),
+                "ON".to_owned(),
+            )])
+        })
+        .expect("the persisted startup image loads before admission");
+        assert!(
+            users.is_empty(),
+            "sysvar loading must not fabricate accounts"
+        );
+        assert_eq!(
+            users.authenticate(
+                "recovery",
+                "192.0.2.7",
+                &[7; 20],
+                b"ignored",
+                TransportKind::PlainTcp,
+            ),
+            Err(crate::configured_user_store::AuthenticationFailure::SecureTransportRequired),
+            "the very first admission must see persisted require_secure_transport=ON"
+        );
+
+        let reads = Arc::new(AtomicUsize::new(0));
+        let reload_reads = Arc::clone(&reads);
+        let mut reloader = spawn_cluster_sysvar_reloader_with_read(
+            &config,
+            &users,
+            Box::new(move || {
+                reload_reads.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![(
+                    "require_secure_transport".to_owned(),
+                    "OFF".to_owned(),
+                )])
+            }),
+        )
+        .expect("the production runtime wiring starts")
+        .expect("skip-grant mode owns a sysvar reloader");
+        reloader.waker().nudge();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while reloader.stats().reloads == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        users
+            .authenticate(
+                "recovery",
+                "192.0.2.7",
+                &[7; 20],
+                b"ignored",
+                TransportKind::PlainTcp,
+            )
+            .expect("runtime OFF makes a later plaintext admission legal");
+        assert!(users.is_empty(), "the reload remains sysvar-only");
+        reloader.shutdown().expect("the worker stops cleanly");
+    }
+
+    #[test]
+    fn ordinary_cluster_sysvars_are_also_installed_before_login_and_reloaded() {
+        let mut config = NodeConfig::parse([
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--load-table",
+            "test.rows",
+            "--auth-file",
+            "/tmp/users.tsv",
+        ])
+        .expect("base config");
+        config.schema_lease = Duration::from_secs(120);
+        let users = ConfiguredUserStore::from_accounts(
+            tidb_session::privilege::PrivilegeRegistry::bootstrapped_from([]),
+        );
+        let reads = Arc::new(AtomicUsize::new(0));
+        let reload_reads = Arc::clone(&reads);
+        users
+            .global_vars()
+            .load_from_cluster([("require_secure_transport".to_owned(), "ON".to_owned())]);
+        let mut reloader = prepare_cluster_sysvar_runtime_with_reads(
+            &config,
+            &users,
+            || Ok(Vec::new()),
+            Box::new(move || {
+                reload_reads.fetch_add(1, Ordering::SeqCst);
+                Ok(vec![(
+                    "require_secure_transport".to_owned(),
+                    "ON".to_owned(),
+                )])
+            }),
+        )
+        .expect("ordinary cluster-backed nodes own the same sysvar runtime")
+        .expect("the runtime always includes an ongoing reloader");
+        assert_eq!(
+            users
+                .global_vars()
+                .get("require_secure_transport")
+                .as_deref(),
+            Ok("OFF"),
+            "a complete empty startup image removes a previously loaded ON row"
+        );
+        reloader.waker().nudge();
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while reloader.stats().reloads == 0 && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(reads.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            users
+                .global_vars()
+                .get("require_secure_transport")
+                .as_deref(),
+            Ok("ON")
+        );
+        assert_eq!(
+            users.authenticate(
+                "ordinary",
+                "192.0.2.8",
+                &[7; 20],
+                b"ignored",
+                TransportKind::PlainTcp,
+            ),
+            Err(crate::configured_user_store::AuthenticationFailure::SecureTransportRequired),
+            "the ongoing ordinary-node reload restores fail-closed admission"
+        );
+        reloader.shutdown().expect("the worker stops cleanly");
     }
 
     #[test]

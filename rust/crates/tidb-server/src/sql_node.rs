@@ -696,8 +696,12 @@ pub struct SessionContext {
     pub connection_id: u64,
     /// Accepted peer address.
     pub peer_addr: SocketAddr,
-    /// Canonical configured identity established by password verification.
+    /// Identity established by ordinary password verification or validated
+    /// process-wide skip-grant admission.
     pub identity: AuthenticatedIdentity,
+    /// Whether the MySQL front end completed a TLS handshake for this
+    /// connection.
+    pub secure_transport: bool,
     /// Forced-drain carrier on which the session registers each active query.
     pub cancellation: ConnectionCancellation,
     /// Handle a `KILL` uses to end this connection.
@@ -1740,6 +1744,7 @@ mod tests {
             auto_tls: false,
             disconnect_on_expired_password: true,
             sem_enabled: false,
+            skip_grant_table: false,
             max_connections: 2,
             connection_timeout: Duration::from_secs(5),
             max_topn_rows: 1_024,

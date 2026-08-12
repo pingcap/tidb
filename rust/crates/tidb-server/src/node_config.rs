@@ -134,8 +134,9 @@ pub struct NodeConfig {
     pub load_tables: Vec<LoadedTableName>,
     /// Maximum accepted logical MySQL packet size.
     pub max_allowed_packet: usize,
-    /// Immutable native-password account file. Empty when the accounts come
-    /// from the cluster's own `mysql.*` instead (see [`Self::load_privileges`]).
+    /// Immutable native-password account file. Empty when accounts would
+    /// come from the cluster's own `mysql.*` (see [`Self::load_privileges`])
+    /// or when [`Self::skip_grant_table`] deliberately uses neither source.
     pub auth_file: PathBuf,
     /// Load accounts and grants from the cluster's `mysql.*` tables at
     /// startup instead of from `--auth-file`.
@@ -192,6 +193,9 @@ pub struct NodeConfig {
     /// TiDB's `[security] enable-sem`: install the process-wide Security
     /// Enhanced Mode policy before any startup resource is admitted.
     pub sem_enabled: bool,
+    /// TiDB's `[security] skip-grant-table`, accepted only when the process
+    /// effective uid passes the source root-only validation.
+    pub skip_grant_table: bool,
     /// Generate a self-signed certificate when no `--ssl-cert`/`--ssl-key` is
     /// configured, as TiDB's `[security] auto-tls` does.
     ///
@@ -300,6 +304,7 @@ const SUPPORTED_CONFIG_LEAVES: &[&str] = &[
     "security.cluster-ssl-key",
     "security.disconnect-on-expired-password",
     "security.enable-sem",
+    "security.skip-grant-table",
     "security.spilled-file-encryption-method",
     "security.ssl-cert",
     "security.ssl-key",
@@ -589,6 +594,7 @@ impl NodeConfig {
                 .expect("source deadlock-history default fits usize");
         let mut deadlock_history_collect_retryable =
             defaults.pessimistic_txn.deadlock_history_collect_retryable;
+        let mut file_skip_grant_table = false;
         if let Some(loaded) = source.as_ref() {
             let config = &loaded.config;
             if host.is_none() && loaded.is_defined("host") {
@@ -652,6 +658,9 @@ impl NodeConfig {
                 deadlock_history_collect_retryable =
                     config.pessimistic_txn.deadlock_history_collect_retryable;
             }
+            if loaded.is_defined("security.skip-grant-table") {
+                file_skip_grant_table = config.security.skip_grant_table;
+            }
             if loaded.is_defined("tmp-storage-path") {
                 temp_storage_base = Some(config.temp_storage_path.clone());
             }
@@ -685,7 +694,7 @@ impl NodeConfig {
         // Cluster privilege mode is used behind TiProxy on a private network.
         // The configured auth-file mode keeps the original loopback-only
         // boundary because it has no cluster-backed account lifecycle.
-        if !host.is_loopback() && !load_privileges {
+        if !host.is_loopback() && !load_privileges && !file_skip_grant_table {
             return Err(NodeConfigError::NonLoopbackHost(host));
         }
         let port = parse_number("--port", port.as_deref().unwrap_or("4000"))?;
@@ -714,19 +723,21 @@ impl NodeConfig {
             Some(value) => parse_positive_number("--max-allowed-packet", &value)?,
             None => DEFAULT_MAX_ALLOWED_PACKET,
         };
-        // Exactly one account source. Accepting both would leave two answers
-        // to "may this user log in", and accepting neither would leave none.
-        let auth_file = match (auth_file, load_privileges) {
-            (Some(_), true) => {
+        // Exactly one account source in ordinary mode. Skip-grant-table is a
+        // recovery mode that deliberately uses neither source, matching Go's
+        // decision not to start the privilege loader at all.
+        let auth_file = match (auth_file, load_privileges, file_skip_grant_table) {
+            (_, _, true) => PathBuf::new(),
+            (Some(_), true, false) => {
                 return Err(invalid(
                     "--load-privileges",
                     "cannot be combined with --auth-file; the cluster's mysql.* is then \
                      the only account source",
                 ))
             }
-            (Some(file), false) => PathBuf::from(file),
-            (None, true) => PathBuf::new(),
-            (None, false) => return Err(NodeConfigError::MissingOption("--auth-file")),
+            (Some(file), false, false) => PathBuf::from(file),
+            (None, true, false) => PathBuf::new(),
+            (None, false, false) => return Err(NodeConfigError::MissingOption("--auth-file")),
         };
         let max_connections = match max_connections {
             Some(value) => parse_positive_number("--max-connections", &value)?,
@@ -786,6 +797,7 @@ impl NodeConfig {
             config.security.auto_tls = auto_tls;
             config.security.disconnect_on_expired_password = disconnect_on_expired_password;
             config.security.enable_sem = sem_enabled;
+            config.security.skip_grant_table = file_skip_grant_table;
             config.security.cluster_ssl_ca = cluster_ssl_ca.clone().unwrap_or_default();
             config.security.cluster_ssl_cert = cluster_ssl_cert.clone().unwrap_or_default();
             config.security.cluster_ssl_key = cluster_ssl_key.clone().unwrap_or_default();
@@ -842,6 +854,7 @@ impl NodeConfig {
             auto_tls,
             disconnect_on_expired_password,
             sem_enabled,
+            skip_grant_table: file_skip_grant_table,
             cluster_security,
             spill_storage,
             version_info,
@@ -911,6 +924,7 @@ impl NodeConfig {
                 "auto-tls": self.auto_tls,
                 "disconnect-on-expired-password": self.disconnect_on_expired_password,
                 "enable-sem": self.sem_enabled,
+                "skip-grant-table": self.skip_grant_table,
                 "ssl-cert": self.ssl_cert.as_ref().map(|path| path.to_string_lossy().into_owned()),
                 "ssl-key": self.ssl_key.as_ref().map(|path| path.to_string_lossy().into_owned()),
             },
@@ -1397,7 +1411,9 @@ fn invalid(option: &str, reason: &str) -> NodeConfigError {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
     use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
         encoded_spill_path_for_identity, parse_column_descriptor, ConfiguredReadColumnKind,
@@ -1615,6 +1631,84 @@ mod tests {
             NodeConfig::parse(base),
             Err(NodeConfigError::MissingOption("--auth-file"))
         ));
+    }
+
+    /// The only source surface for skip-grant-table is TiDB's security TOML
+    /// field. Source validation admits it only to an effective-root process;
+    /// the resolved NodeConfig then carries the exact startup policy that the
+    /// configured account store consumes.
+    #[test]
+    fn skip_grant_table_is_root_only_and_reaches_the_resolved_node_config() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("wall clock after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "tidb-skip-grant-{}-{nonce}.toml",
+            std::process::id()
+        ));
+        fs::write(&path, "[security]\nskip-grant-table = true\n").expect("write source config");
+        let path_text = path.to_string_lossy().into_owned();
+        let parsed = NodeConfig::parse([
+            "tidb-server",
+            "--config",
+            &path_text,
+            "--path",
+            "127.0.0.1:2379",
+            "--load-table",
+            "test.rows",
+        ]);
+        let combined = NodeConfig::parse([
+            "tidb-server",
+            "--config",
+            &path_text,
+            "--path",
+            "127.0.0.1:2379",
+            "--load-table",
+            "test.rows",
+            "--load-privileges",
+            "--auth-file",
+            "/definitely/not/read.tsv",
+        ]);
+        fs::remove_file(&path).expect("remove source config");
+
+        #[cfg(unix)]
+        let is_root = rustix::process::geteuid().as_raw() == 0;
+        #[cfg(not(unix))]
+        let is_root = false;
+        if is_root {
+            let parsed = parsed.expect("effective root may opt in");
+            assert!(parsed.skip_grant_table);
+            assert_eq!(parsed.auth_file.as_os_str(), "");
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&parsed.startup_config_json())
+                    .expect("startup projection is JSON")["security"]["skip-grant-table"],
+                true,
+            );
+
+            let combined = combined.expect("recovery mode ignores both account sources");
+            assert!(combined.skip_grant_table);
+            assert_eq!(combined.auth_file.as_os_str(), "");
+        } else {
+            assert!(matches!(
+                parsed,
+                Err(NodeConfigError::InvalidValue { option, reason })
+                    if option == "--config"
+                        && reason == "TiDB run with skip-grant-table need root privilege"
+            ));
+        }
+
+        let ordinary = NodeConfig::parse([
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--load-table",
+            "test.rows",
+            "--auth-file",
+            "/tmp/users.tsv",
+        ])
+        .expect("ordinary config");
+        assert!(!ordinary.skip_grant_table);
     }
 
     /// Go `cmd/tidb-server/main.go` around line 1067 stores the INVERSE of

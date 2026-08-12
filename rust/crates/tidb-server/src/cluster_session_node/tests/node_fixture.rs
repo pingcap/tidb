@@ -269,23 +269,8 @@ pub(super) struct MockNode {
 /// A detached copy of one registry's rows, since
 /// [`PrivilegeRegistry::replace_from`] empties its source.
 pub(super) fn clone_registry(source: &PrivilegeRegistry) -> PrivilegeRegistry {
-    let copy = PrivilegeRegistry::bootstrapped_from(Vec::new());
-    for (user, host) in source.accounts() {
-        if source.is_role(&user, &host) {
-            copy.create_role(&user, &host);
-        } else {
-            copy.create_user_with_plugin(
-                &user,
-                &host,
-                &source.auth_string(&user, &host).unwrap_or_default(),
-                &source.plugin(&user, &host).unwrap_or_default(),
-            );
-        }
-    }
-    for ((user, host), mask) in source.global_priv_masks() {
-        copy.grant(&user, &host, mask);
-    }
-    copy
+    let image = crate::cluster_privileges::cluster_image_from_registry(source);
+    crate::cluster_privileges::registry_from_cluster(&image).registry
 }
 
 /// The node IS its committed store as far as an assertion is concerned, so
@@ -329,6 +314,24 @@ pub(super) fn open_session_on(node: &MockNode) -> ClusterServerSession {
         Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
         Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
         Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+    )
+}
+
+/// Opens the same production cluster factory with a caller-supplied login
+/// verdict. Privilege tests use this to distinguish a normal low-privilege
+/// identity from one admitted by skip-grant-table without bypassing the
+/// factory that carries that verdict into `Session`.
+pub(super) fn open_session_on_with_context(
+    node: &MockNode,
+    context: SessionContext,
+) -> ClusterServerSession {
+    open_session_on_with_context_and_seams(
+        node,
+        Arc::clone(&node.ddl) as Arc<dyn ClusterDdl>,
+        Arc::clone(&node.accounts) as Arc<dyn ClusterAccountWriter>,
+        Arc::clone(&node.sysvars) as Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
+        Arc::new(MockAnalyze) as Arc<dyn ClusterAnalyze>,
+        context,
     )
 }
 
@@ -393,6 +396,28 @@ fn open_session_on_with_seams(
     sysvars: Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
     analyze: Arc<dyn ClusterAnalyze>,
 ) -> ClusterServerSession {
+    let mut session = open_session_on_with_context_and_seams(
+        node,
+        ddl,
+        accounts,
+        sysvars,
+        analyze,
+        session_context(1),
+    );
+    // The catalog is loaded, not created here: `USE` is how a connection
+    // reaches it, exactly as it does over the wire.
+    session.execute_write("USE app").expect("USE app");
+    session
+}
+
+fn open_session_on_with_context_and_seams(
+    node: &MockNode,
+    ddl: Arc<dyn ClusterDdl>,
+    accounts: Arc<dyn ClusterAccountWriter>,
+    sysvars: Arc<dyn crate::cluster_sysvar_seam::ClusterSysvarWriter>,
+    analyze: Arc<dyn ClusterAnalyze>,
+    context: SessionContext,
+) -> ClusterServerSession {
     let cluster = Arc::clone(&node.cluster);
     let factory = ClusterSessionFactory::new(
         Arc::new(MockTransactions(cluster)),
@@ -408,13 +433,9 @@ fn open_session_on_with_seams(
         )),
         Arc::new(crate::cluster_session::LocalTableAutoIds::default()),
     );
-    let mut session = factory
-        .open_session(session_context(1))
-        .expect("the cluster session opens");
-    // The catalog is loaded, not created here: `USE` is how a connection
-    // reaches it, exactly as it does over the wire.
-    session.execute_write("USE app").expect("USE app");
-    session
+    factory
+        .open_session(context)
+        .expect("the cluster session opens")
 }
 
 pub(super) fn session_context(connection_id: u64) -> SessionContext {
@@ -424,11 +445,19 @@ pub(super) fn session_context(connection_id: u64) -> SessionContext {
     let identity = users
         .authenticate_native("root", "127.0.0.1", &SALT, &scramble(b"abc", &SALT))
         .expect("authenticated identity");
+    session_context_with_identity(connection_id, identity)
+}
+
+pub(super) fn session_context_with_identity(
+    connection_id: u64,
+    identity: crate::configured_user_store::AuthenticatedIdentity,
+) -> SessionContext {
     let peer_addr: SocketAddr = "127.0.0.1:4000".parse().expect("peer address");
     SessionContext {
         connection_id,
         peer_addr,
         identity,
+        secure_transport: false,
         cancellation: ConnectionCancellation::default(),
         close: ConnectionClose::default(),
         version_info: tidb_util::versioninfo::VersionInfo::build_default(),

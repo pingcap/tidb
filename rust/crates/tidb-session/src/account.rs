@@ -342,7 +342,10 @@ impl Session {
         user: &str,
         host: &str,
     ) -> Result<(), DriverError> {
-        if self.privileges.is_none() || self.current_identity().is_none() {
+        if self.privilege_checks_bypassed()
+            || self.privileges.is_none()
+            || self.current_identity().is_none()
+        {
             return Ok(());
         }
         if self.has_dynamic_privilege("SYSTEM_USER", false)
@@ -661,6 +664,9 @@ impl Session {
         &mut self,
         set_role: &tidb_ast::SetRoleStmt,
     ) -> Result<StmtOutput, DriverError> {
+        if self.privilege_checks_bypassed() {
+            return Ok(StmtOutput::Affected(0));
+        }
         let Some(registry) = self.privileges.clone() else {
             return Err(DriverError::unsupported(
                 "SET ROLE requires a server front end with a privilege registry",
@@ -703,16 +709,17 @@ impl Session {
                 "SET DEFAULT ROLE requires a server front end with a privilege registry",
             ));
         };
-        let accounts = self.resolve_role_grantees(&set_default.users, "SET DEFAULT ROLE")?;
+        let sole_current = set_default.users.len() == 1
+            && set_default
+                .users
+                .first()
+                .zip(self.current_identity())
+                .is_some_and(|(spec, current)| spec.user == current.0 && spec.host == current.1);
         // Go `executeSetDefaultRole` (`executor/simple.go` around line 445):
         // setting one's OWN default roles needs no privilege at all;
         // anything else needs `UPDATE` on `mysql.default_roles`, else the
         // global `CREATE USER` privilege.
-        let only_self = accounts.len() == 1
-            && accounts
-                .first()
-                .is_some_and(|(user, host)| self.is_own_account(user, host));
-        if !only_self
+        if !sole_current
             && !self.has_scoped_privilege(
                 tidb_mysql::consts::SystemDB,
                 tidb_mysql::consts::DefaultRoleTable,
@@ -722,16 +729,93 @@ impl Session {
         {
             return Err(DriverError::SpecificAccessDenied("CREATE USER".to_owned()));
         }
+        // Only after the authorization gate does Go disclose whether a
+        // non-current target or explicit role exists.
+        //
+        // Two storage-only paths do not require a `mysql.user` cache row:
+        // NONE in the ordinary deployment mode, and every form targeting the
+        // sole current user by its written, explicit identity. Go deliberately
+        // keeps the CURRENT_USER AST pseudo-user's empty username/hostname in
+        // this statement: NONE deletes `@` as a no-op, while ALL/regular fail
+        // the ordinary target-existence check for `@`.
+        let accounts = if sole_current
+            || matches!(&set_default.selection, tidb_ast::DefaultRoleSelection::None)
+        {
+            set_default
+                .users
+                .iter()
+                .map(|spec| (spec.user.clone(), spec.host.clone()))
+                .collect()
+        } else {
+            set_default
+                .users
+                .iter()
+                .map(|spec| {
+                    if registry.user_exists(&spec.user, &spec.host) {
+                        Ok((spec.user.clone(), spec.host.clone()))
+                    } else {
+                        Err(DriverError::CannotUserRole {
+                            operation: "SET DEFAULT ROLE",
+                            target: format!("{}@{}", spec.user, spec.host),
+                        })
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        if matches!(
+            &set_default.selection,
+            tidb_ast::DefaultRoleSelection::Roles(_)
+        ) && !sole_current
+        {
+            let tidb_ast::DefaultRoleSelection::Roles(roles) = &set_default.selection else {
+                unreachable!("the selection was matched above")
+            };
+            for role in roles {
+                let (role, host) = role_identity(role);
+                if !registry.user_exists(&role, &host) {
+                    return Err(DriverError::CannotUserRole {
+                        operation: "SET DEFAULT ROLE",
+                        target: format!("`{role}`@`{host}`"),
+                    });
+                }
+            }
+        }
+        // Go performs this replacement in one transaction. Resolve every
+        // account's complete replacement first so a later 3530 cannot publish
+        // an earlier account's default roles before the statement fails.
+        let mut replacements = Vec::with_capacity(accounts.len());
         for account in &accounts {
             let roles = match &set_default.selection {
                 tidb_ast::DefaultRoleSelection::None => Vec::new(),
                 tidb_ast::DefaultRoleSelection::All => registry.granted_roles(account),
                 tidb_ast::DefaultRoleSelection::Roles(roles) => {
+                    // Go's skip-grant manager makes `FindEdge` return false:
+                    // an explicit role therefore reports 3530 even when the
+                    // storage row exists. `ALL` and `NONE` remain storage
+                    // operations and deliberately take the arms above.
+                    if self.privilege_checks_bypassed() {
+                        let role = roles
+                            .first()
+                            .map(role_identity)
+                            .expect("the parser requires at least one explicit default role");
+                        return Err(DriverError::RoleNotGranted {
+                            role: role.0,
+                            role_host: role.1,
+                            user: account.0.clone(),
+                            host: account.1.clone(),
+                        });
+                    }
                     self.granted_roles_or_error(&registry, account, roles)?
                 }
             };
-            registry.set_default_roles(account, &roles);
+            replacements.push(roles);
         }
+        registry.replace_default_roles(
+            accounts
+                .iter()
+                .zip(&replacements)
+                .map(|(account, roles)| (account, roles.as_slice())),
+        );
         Ok(StmtOutput::Affected(0))
     }
 
@@ -1812,6 +1896,29 @@ impl Session {
             }
             Some(spec) => (spec.user.clone(), spec.host.clone()),
         };
+        if self.privilege_checks_bypassed() {
+            // Go validates every explicit USING role through `FindEdge`
+            // before calling the SkipWithGrant-aware `ShowGrants`. The
+            // former deliberately returns false in bypass mode, so USING
+            // reports 3530 while the role-less form reaches the fixed 1141.
+            if let Some(spec) = show.roles.first() {
+                let role_host = if spec.host.is_empty() {
+                    "%".to_owned()
+                } else {
+                    spec.host.clone()
+                };
+                return Err(DriverError::RoleNotGranted {
+                    role: spec.user.clone(),
+                    role_host,
+                    user,
+                    host,
+                });
+            }
+            return Err(DriverError::NonexistingGrant {
+                user: "root".to_owned(),
+                host: "%".to_owned(),
+            });
+        }
         // Go `executor/show.go`'s `fetchShowGrants` (around line 2018):
         // reading ANOTHER account's grants needs `SELECT` on the whole
         // `mysql` schema, because that is what reading the grant tables

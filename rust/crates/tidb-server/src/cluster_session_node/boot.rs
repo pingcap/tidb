@@ -27,7 +27,7 @@ use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
 use crate::cluster_account_seam::RealClusterAccountWriter;
 use crate::cluster_analyze_seam::RealClusterAnalyze;
 use crate::cluster_session::SkippedTable;
-use crate::cluster_sysvar_seam::RealClusterSysvarWriter;
+use crate::cluster_sysvar_seam::{RealClusterSysvarWriter, SysvarPublicationFence};
 use crate::node_config::NodeConfig;
 use crate::real_tikv_node::{
     node_accounts, run_with_process_shutdown, spawn_catalog_reloader, spawn_privilege_watch,
@@ -81,6 +81,10 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // parallel); it must stay alive for the node's run and drop before the
     // authority's shutdown drain, like the catalog reloader below.
     let (users, privilege_reloader) = node_accounts(&config, &authority)?;
+    // The cluster-session path owns one process-wide sysvar reloader below.
+    // Install its persisted boot image synchronously before that reloader and,
+    // crucially, before bind. This is independent of privilege-cache policy.
+    crate::real_tikv_node::load_cluster_sysvars(&users, &authority)?;
     // Statistics for every table this convergence node's boot catalog holds.
     // Read before `spawn_catalog_reloader` consumes `startup`, so the boot
     // load sees the exact table set the node is about to serve. Held in the
@@ -110,13 +114,15 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // The sysvar half of the same division: a Go peer's `SET GLOBAL` is
     // durable in `mysql.global_variables` the instant it commits, and this
     // reloader is what makes THIS node notice it -- one tick, or one round
-    // trip if the etcd watch fires first. Ticks at the same `schema_lease / 2`
-    // cadence [`node_accounts`] uses for the privilege reloader.
+    // trip if the etcd watch fires first. The fallback is capped at Go's
+    // 30-second `LoadSysVarCacheLoop` interval even with a longer lease.
+    let sysvar_publication_fence = SysvarPublicationFence::default();
     let sysvar_reloader = crate::cluster_sysvar_seam::SysvarReloader::spawn(
         users.global_vars(),
         authority.transaction_opener(),
-        config.schema_lease / 2,
+        crate::real_tikv_node::sysvar_reload_interval(config.schema_lease),
         CONTROL_PLANE_TIMEOUT,
+        sysvar_publication_fence.clone(),
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let sysvar_watcher = crate::real_tikv_node::spawn_sysvar_watch(&config, Some(&sysvar_reloader));
@@ -150,6 +156,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
                 users.global_vars(),
                 CONTROL_PLANE_TIMEOUT,
                 crate::real_tikv_node::connect_schema_notifier(&config),
+                sysvar_publication_fence,
             )),
             Arc::new(RealClusterAnalyze::new(
                 Arc::new(authority.transaction_opener()),

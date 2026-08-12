@@ -447,6 +447,17 @@ pub struct Session {
     /// which is why every check through it falls back to the pre-existing
     /// bit above rather than treating an absent registry as "no privilege".
     privileges: Option<privilege::PrivilegeRegistry>,
+    /// Go's process-wide `privileges.SkipWithGrant` admission copied onto
+    /// this connection by the front end. The registry remains attached for
+    /// account/role storage, while authorization readers treat the session
+    /// as unrestricted.
+    privilege_bypassed: bool,
+    /// Whether this connection completed a TLS handshake (or an equivalent
+    /// trusted gateway assertion). Go keeps the same fact in
+    /// `SessionVars.TLSConnectionState`; `SET GLOBAL
+    /// require_secure_transport=ON` needs it to avoid locking every current
+    /// plaintext administrator out of the server.
+    secure_transport: bool,
     /// Go `session.sandboxMode`: this connection logged in with an EXPIRED
     /// password while the server allowed it, so it may run nothing but the
     /// `SET PASSWORD` / `ALTER USER` that fixes the password. Set by the
@@ -514,6 +525,8 @@ impl Default for Session {
             process: None,
             has_process_priv: false,
             privileges: None,
+            privilege_bypassed: false,
+            secure_transport: false,
             sandbox_mode: false,
             rand: new_time_seeded_rand(),
             prepared_statements: prepared_statements::PreparedStore::default(),

@@ -48,6 +48,10 @@ pub(crate) struct TablePrivilegeRequest {
     /// `UPDATE`'s `SET` target reports, since
     /// `logical_plan_builder.go`'s `buildNewAssignments` passes `nil`.
     pub(crate) table_named_in_error: bool,
+    /// Whether Go reports a database-scoped denial (1044) instead of the
+    /// table-scoped 1142 form. `CREATE/DROP DATABASE` carry a schema name but
+    /// no table, and their planner visitInfo attaches exactly that error.
+    pub(crate) database_named_in_error: bool,
 }
 
 impl TablePrivilegeRequest {
@@ -57,6 +61,7 @@ impl TablePrivilegeRequest {
             table: table.to_owned(),
             privilege,
             table_named_in_error: true,
+            database_named_in_error: false,
         }
     }
 
@@ -65,6 +70,14 @@ impl TablePrivilegeRequest {
         Self {
             table_named_in_error: false,
             ..Self::new(database, table, privilege)
+        }
+    }
+
+    fn database(database: &str, privilege: GlobalPriv) -> Self {
+        Self {
+            table_named_in_error: false,
+            database_named_in_error: true,
+            ..Self::new(database, "", privilege)
         }
     }
 }
@@ -414,6 +427,14 @@ fn ddl_table_privileges(ddl: &DdlStmt, current_db: &str) -> Vec<TablePrivilegeRe
             .unwrap_or_default()
     };
     match ddl {
+        // `planbuilder.go` around line 5392 / 5508: database DDL attaches
+        // ErrDBaccessDenied (1044), with the schema name as the scope.
+        DdlStmt::CreateDatabase { name, .. } => {
+            vec![TablePrivilegeRequest::database(name, GlobalPriv::Create)]
+        }
+        DdlStmt::DropDatabase { name, .. } => {
+            vec![TablePrivilegeRequest::database(name, GlobalPriv::Drop)]
+        }
         // `planbuilder.go` around line 5428.
         DdlStmt::CreateTable(create) => one(&create.name, GlobalPriv::Create),
         // Around line 5528. Go appends one entry per named table.

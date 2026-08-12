@@ -5,11 +5,13 @@
 
 use super::super::*;
 use super::node_fixture::*;
+use crate::configured_user_store::ConfiguredUserStore;
 use crate::sql_node::{cluster_ddl_error, SqlQueryError};
 use std::sync::atomic::Ordering;
 use tidb_datatype::Datum;
 use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
 use tidb_exec::real_tikv_ddl::classify_session_ddl_commit_error;
+use tidb_session::privilege::GlobalPriv;
 use tidb_txnkv::region::RegionBackoffKind;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,
@@ -296,6 +298,70 @@ fn a_ddl_implicitly_commits_the_open_transaction() {
     // And the new table is usable straight away, which it could not be if
     // the connection still believed it was inside the old transaction.
     assert!(rows(&mut session, "SELECT id FROM after").is_empty());
+}
+
+/// DDL privilege admission belongs before the implicit commit and before the
+/// cluster catalog writer. A skip-grant-table identity crosses the same door
+/// but deliberately bypasses its grant lookup.
+#[test]
+fn ddl_privileges_are_checked_before_cluster_commit_and_skip_grant_bypasses_them() {
+    let node = MockNode::start();
+    assert!(node.accounts.live.create_user("low", "%", ""));
+    // Make `app` visible without granting CREATE or DROP.
+    node.accounts
+        .live
+        .grant_db("low", "%", "app", GlobalPriv::CreateTemporaryTables.mask());
+    let normal_store = ConfiguredUserStore::from_accounts(node.accounts.live.clone());
+    let normal_identity = normal_store
+        .authenticate_native("low", "127.0.0.1", &SALT, &[])
+        .expect("the zero-DDL-privilege account authenticates normally");
+    let mut normal =
+        open_session_on_with_context(&node, session_context_with_identity(21, normal_identity));
+    normal.execute_write("USE app").expect("app is visible");
+    normal.control_transaction("BEGIN").expect("begin");
+
+    let denied = normal
+        .execute_write("CREATE TABLE blocked (id BIGINT PRIMARY KEY)")
+        .expect_err("CREATE must be checked before the cluster DDL seam");
+    assert_eq!((denied.code, denied.state), (1142, *b"42000"));
+    assert_eq!(
+        denied.message,
+        "CREATE command denied to user 'low'@'%' for table 'blocked'"
+    );
+    assert!(
+        normal.session.in_transaction(),
+        "a denied DDL must not implicitly commit the caller's transaction"
+    );
+    assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
+    normal.control_transaction("ROLLBACK").expect("rollback");
+
+    for (sql, database) in [
+        ("CREATE DATABASE blocked_db", "blocked_db"),
+        ("DROP DATABASE app", "app"),
+    ] {
+        let denied = normal
+            .execute_write(sql)
+            .expect_err("database DDL needs its schema-scoped privilege");
+        assert_eq!((denied.code, denied.state), (1044, *b"42000"), "{sql}");
+        assert_eq!(
+            denied.message,
+            format!("Access denied for user 'low'@'%' to database '{database}'"),
+            "{sql}"
+        );
+    }
+    assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
+
+    let bypass_store =
+        ConfiguredUserStore::from_accounts(node.accounts.live.clone()).with_skip_grant_table(true);
+    let bypass_identity = bypass_store
+        .authenticate_native("ghost", "127.0.0.1", &SALT, b"ignored")
+        .expect("skip-grant-table admits an identity without an account row");
+    let mut bypass =
+        open_session_on_with_context(&node, session_context_with_identity(22, bypass_identity));
+    bypass
+        .execute_write("CREATE TABLE app.allowed (id BIGINT PRIMARY KEY)")
+        .expect("skip-grant-table bypasses DDL authorization");
+    assert_eq!(node.ddl.applied.load(Ordering::Acquire), 1);
 }
 
 /// Inside an explicit transaction the connection keeps the schema its

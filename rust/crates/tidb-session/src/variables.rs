@@ -313,6 +313,29 @@ impl Session {
         self.check_max_allowed_packet_scope(&assignment.name, &value, is_node_wide)?;
         self.warn_removed_feature_var(&assignment.name, &value);
         if is_node_wide {
+            // Go's `require_secure_transport` Validation closure runs after
+            // Bool normalization and the SET GLOBAL privilege check, but
+            // before SetGlobal mutates the live table. Direct startup/cache
+            // loads do not run this SQL-only guard.
+            if is_global
+                && assignment
+                    .name
+                    .eq_ignore_ascii_case("require_secure_transport")
+            {
+                let definition = sysvar::get_sys_var(&assignment.name)
+                    .expect("the assignment named a registered sysvar");
+                let normalized = definition
+                    .validate_in_scope(&value, sysvar::SCOPE_GLOBAL)
+                    .map_err(|error| {
+                        var_error(validation_var_error(&assignment.name, &value, error))
+                    })?;
+                if normalized.value == "ON" && !self.has_secure_transport() {
+                    return Err(var_error(VarError::ValidationRefused(
+                        "require_secure_transport can only be set to ON if the connection issuing the change is secure"
+                            .to_owned(),
+                    )));
+                }
+            }
             let truncated = if is_global {
                 self.vars.set_global(&assignment.name, value.clone())
             } else {

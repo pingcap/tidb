@@ -313,6 +313,14 @@ impl Session {
         {
             self.apply_set_var_hints(&stmt);
         }
+        // Database DDL is answered by `apply_schema_stmt` below, before the
+        // ordinary planner door. Its Go visitInfo must therefore be checked
+        // here, while the statement is still side-effect free. Table DDL is
+        // checked here too so both early schema arms and later executor arms
+        // have one pre-commit privilege boundary.
+        if matches!(stmt, Stmt::Ddl(_)) {
+            self.require_statement_table_privileges(&stmt)?;
+        }
         // USE / CREATE DATABASE / DROP DATABASE / SHOW DATABASES / SHOW TABLES.
         if let Some(output) = self.apply_schema_stmt(&stmt)? {
             return Ok(output);

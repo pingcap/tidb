@@ -56,7 +56,7 @@ fn start_server() -> (
             stream,
             peer_addr,
             ConnectionCancellation::default(),
-            &PipelineSessionFactory::with_accounts(store.accounts()),
+            &PipelineSessionFactory::with_configured_store(&store),
             &store,
             &tracker,
             DEFAULT_MAX_ALLOWED_PACKET,

@@ -241,6 +241,32 @@ fn table_ddl_demands_its_own_privilege() {
     assert!(bob.run("DROP TABLE made").is_ok());
 }
 
+/// `CREATE/DROP DATABASE` carry database-scoped visitInfo and therefore use
+/// Go's 1044 denial, before the early schema arm can mutate the catalog.
+#[test]
+fn database_ddl_demands_create_and_drop_before_catalog_mutation() {
+    let (_, mut boot, mut bob) = scoped();
+
+    assert_eq!(
+        denied(&mut bob, "CREATE DATABASE blocked"),
+        (
+            1044,
+            "Access denied for user 'bob'@'%' to database 'blocked'".to_owned(),
+        )
+    );
+    assert_eq!(
+        denied(&mut bob, "DROP DATABASE test"),
+        (
+            1044,
+            "Access denied for user 'bob'@'%' to database 'test'".to_owned(),
+        )
+    );
+
+    boot.run("GRANT CREATE, DROP ON *.* TO 'bob'@'%'").unwrap();
+    assert!(bob.run("CREATE DATABASE allowed").is_ok());
+    assert!(bob.run("DROP DATABASE allowed").is_ok());
+}
+
 /// A session with no authenticated identity -- the in-process driver, and
 /// the server's own bootstrap -- stays unrestricted, which is the rule
 /// every other check here follows and what keeps the embedded driver

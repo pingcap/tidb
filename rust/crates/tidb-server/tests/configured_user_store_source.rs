@@ -30,7 +30,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use configured_user_store::{ConfiguredUserStore, ConfiguredUserStoreError};
+use configured_user_store::{AuthenticationFailure, ConfiguredUserStore, ConfiguredUserStoreError};
+use secure_transport::TransportKind;
 use sha1::{Digest, Sha1};
 
 const ABC_HASH: &str = "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E";
@@ -85,6 +86,66 @@ fn wrong_password_unknown_user_and_unknown_host_all_deny_authentication() {
     assert!(store
         .authenticate_native("alice", "192.0.2.7", &SOURCE_SALT, &correct)
         .is_err());
+}
+
+#[test]
+fn skip_grant_table_bypasses_rows_and_passwords_but_not_secure_transport() {
+    let store =
+        ConfiguredUserStore::parse(&format!("alice\t%\tmysql_native_password\t{ABC_HASH}\n"))
+            .expect("catalog")
+            .with_skip_grant_table(true);
+    store
+        .global_vars()
+        .set("require_secure_transport", "ON".to_owned())
+        .expect("valid global policy");
+
+    assert_eq!(
+        store.authenticate(
+            "unknown",
+            "192.0.2.7",
+            &SOURCE_SALT,
+            b"arbitrary",
+            TransportKind::PlainTcp,
+        ),
+        Err(AuthenticationFailure::SecureTransportRequired)
+    );
+    let identity = store
+        .authenticate(
+            "unknown",
+            "192.0.2.7",
+            &SOURCE_SALT,
+            b"arbitrary",
+            TransportKind::DirectTls,
+        )
+        .expect("TLS reaches the source bypass before any account lookup");
+    assert_eq!(identity.username(), "unknown");
+    assert_eq!(identity.host(), "192.0.2.7");
+    assert!(identity.privilege_bypassed());
+    assert!(!identity.in_sandbox_mode());
+    assert_eq!(
+        store.auth_plugin_for("unknown", "192.0.2.7").as_deref(),
+        Some("mysql_native_password")
+    );
+}
+
+#[test]
+fn persisted_secure_transport_is_effective_immediately_in_skip_grant_mode() {
+    let store = ConfiguredUserStore::empty_for_skip_grant_table();
+    store
+        .global_vars()
+        .load_from_cluster([("require_secure_transport".to_owned(), "ON".to_owned())]);
+
+    assert_eq!(
+        store.authenticate(
+            "recovery",
+            "192.0.2.7",
+            &SOURCE_SALT,
+            b"ignored",
+            TransportKind::PlainTcp,
+        ),
+        Err(AuthenticationFailure::SecureTransportRequired),
+        "the synchronous startup sysvar snapshot must precede admission"
+    );
 }
 
 #[test]

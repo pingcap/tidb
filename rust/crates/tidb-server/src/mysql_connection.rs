@@ -740,6 +740,35 @@ fn serve_connection_inner<F: QuerySessionFactory>(
     // the protocol parser.
     let response_user = response.user.to_string_lossy().into_owned();
     let response_db_name = response.db_name.to_string_lossy().into_owned();
+    // Go rejects an insecure transport immediately after parsing the full
+    // handshake response, before selecting an account plugin or sending an
+    // AuthSwitchRequest. Keep the returned token so the account verifier
+    // consumes this exact live-global decision instead of reading it again
+    // after an interactive auth exchange.
+    let transport = if socket.is_tls() {
+        TransportKind::DirectTls
+    } else {
+        TransportKind::PlainTcp
+    };
+    let transport_admission = match users.admit_transport(transport) {
+        Ok(admission) => admission,
+        Err(_) => {
+            write_error(
+                &mut output,
+                reply_sequence,
+                ER_SECURE_TRANSPORT_REQUIRED,
+                *b"HY000",
+                SECURE_TRANSPORT_REQUIRED_MESSAGE,
+                response.capability & CLIENT_PROTOCOL_41 != 0,
+            )?;
+            return Ok(ConnectionReport {
+                connection_id,
+                queries: 0,
+                commands: *commands,
+                exit: ConnectionExit::AuthenticationRejected,
+            });
+        }
+    };
     let capabilities = match negotiate_capabilities(response.capability, server_capabilities) {
         Ok(capabilities) => capabilities,
         Err(_error) => {
@@ -830,20 +859,15 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         } else {
             (auth_response, response_sequence)
         };
-    // Go's two TLS rules both live behind this call; what the connection
-    // owner knows and the account table does not is whether the socket was
-    // upgraded. Every port here is TCP -- this server opens no Unix-domain
-    // listener -- so the transport is exactly "TLS or not".
-    let auth_result = users.authenticate(
+    // The process-wide transport rule already ran before plugin selection.
+    // This call consumes that proof and applies only the matched account's
+    // own REQUIRE clause plus ordinary/bypassed identity authentication.
+    let auth_result = users.authenticate_admitted(
         &response_user,
         &peer_addr.ip().to_string(),
         &salt,
         &auth_response,
-        if socket.is_tls() {
-            TransportKind::DirectTls
-        } else {
-            TransportKind::PlainTcp
-        },
+        transport_admission,
     );
     let identity = match auth_result {
         Ok(identity) => identity,
@@ -944,6 +968,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         connection_id,
         peer_addr,
         identity,
+        secure_transport: socket.is_tls(),
         cancellation,
         close: close.clone(),
         version_info: runtime.version_info.clone(),

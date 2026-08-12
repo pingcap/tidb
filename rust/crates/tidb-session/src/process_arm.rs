@@ -82,17 +82,18 @@ impl Session {
                 // Go compares the process's USERNAME against the
                 // logged-in username, ignoring host.
                 let same_user = owner.as_deref() == Some(self.process_list_user().as_str());
-                let may_kill = self.privileges.as_ref().is_some_and(|registry| {
-                    self.current_identity().is_some_and(|(user, host)| {
-                        registry.has_dynamic_priv_with_roles(
-                            user,
-                            host,
-                            self.active_roles(),
-                            "CONNECTION_ADMIN",
-                            false,
-                        )
-                    })
-                });
+                let may_kill = self.privilege_checks_bypassed()
+                    || self.privileges.as_ref().is_some_and(|registry| {
+                        self.current_identity().is_some_and(|(user, host)| {
+                            registry.has_dynamic_priv_with_roles(
+                                user,
+                                host,
+                                self.active_roles(),
+                                "CONNECTION_ADMIN",
+                                false,
+                            )
+                        })
+                    });
                 if owner.is_some() && !same_user && !may_kill {
                     return Err(DriverError::KillAccessDenied);
                 }
@@ -290,7 +291,8 @@ impl Session {
 
     /// Whether this session may inspect process-wide diagnostic state.
     pub(crate) fn has_process_privilege(&self) -> bool {
-        self.has_process_priv
+        self.privilege_checks_bypassed()
+            || self.has_process_priv
             || self.privileges.as_ref().is_some_and(|registry| {
                 self.current_identity().is_some_and(|(user, host)| {
                     registry.has_global_priv_with_roles(

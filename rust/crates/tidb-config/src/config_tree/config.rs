@@ -544,12 +544,26 @@ pub fn get_global_keyspace_name() -> String {
         .clone()
 }
 
-// Go `hasRootPrivilege`. Reads the process effective uid; deferred here
-// (returns false) because std has no geteuid and skip-grant-table defaults
-// off, so the only effect is that skip-grant-table=true is conservatively
-// rejected (matching Go's "need root privilege" outcome absent root).
+// Go `hasRootPrivilege`. The effective uid, not the real uid, is the
+// authority that determines whether this process may start with all grant
+// checks disabled.
 fn has_root_privilege() -> bool {
-    false
+    #[cfg(unix)]
+    {
+        rustix::process::geteuid().as_raw() == 0
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
+fn validate_skip_grant_table(skip_grant_table: bool, has_root: bool) -> Result<(), String> {
+    if skip_grant_table && !has_root {
+        Err("TiDB run with skip-grant-table need root privilege".into())
+    } else {
+        Ok(())
+    }
 }
 
 impl Config {
@@ -625,9 +639,7 @@ impl Config {
             self.log.disable_timestamp = crate::config_tree::NB_UNSET;
         }
 
-        if self.security.skip_grant_table && !has_root_privilege() {
-            return Err("TiDB run with skip-grant-table need root privilege".into());
-        }
+        validate_skip_grant_table(self.security.skip_grant_table, has_root_privilege())?;
         if !self.error_message_extensions.is_empty() && self.deploy_mode != Mode::Starter {
             return Err(
                 "error-msg-extension can only be configured when deploy-mode is starter".into(),
@@ -827,6 +839,16 @@ mod tests {
     use super::*;
 
     static GLOBAL_CONFIG_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn skip_grant_table_validation_has_both_effective_uid_outcomes() {
+        assert_eq!(validate_skip_grant_table(false, false), Ok(()));
+        assert_eq!(validate_skip_grant_table(true, true), Ok(()));
+        assert_eq!(
+            validate_skip_grant_table(true, false),
+            Err("TiDB run with skip-grant-table need root privilege".to_owned())
+        );
+    }
 
     // Go TestEncodeDefTempStorageDir.
     #[test]

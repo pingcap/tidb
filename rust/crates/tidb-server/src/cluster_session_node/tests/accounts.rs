@@ -8,12 +8,66 @@
 use super::super::*;
 use super::node_fixture::*;
 use crate::cluster_account_seam::{ClusterAccountWriter, PendingAccountChange};
+use crate::ConfiguredUserStore;
 use std::sync::atomic::Ordering;
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_txnkv::region::RegionBackoffKind;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction, TransactionCause,
 };
+
+/// The cluster factory consumes the same authenticated bypass marker as the
+/// pipeline factory, including while an account statement temporarily swaps
+/// the session onto a cluster-loaded scratch registry.
+#[test]
+fn skip_grant_table_bypasses_cluster_session_authorization_without_detaching_account_state() {
+    let node = MockNode::start();
+    // Recovery boot deliberately leaves the live authorization cache empty;
+    // account statements still begin from the persisted mysql.* image.
+    node.accounts
+        .live
+        .replace_from(&PrivilegeRegistry::bootstrapped_from([]));
+    assert!(node.accounts.live.create_user("low", "%", ""));
+    assert!(node.accounts.stored.create_user("low", "%", ""));
+
+    let normal_store = ConfiguredUserStore::from_accounts(node.accounts.live.clone());
+    let normal_identity = normal_store
+        .authenticate_native("low", "127.0.0.1", &SALT, &[])
+        .expect("the zero-privilege account authenticates normally");
+    let mut normal =
+        open_session_on_with_context(&node, session_context_with_identity(10, normal_identity));
+    let denied = normal
+        .execute_write("CREATE ROLE normal_denied")
+        .expect_err("a normal zero-privilege account must be denied");
+    assert_eq!(denied.code, 1227, "{}", denied.message);
+    assert!(!node.accounts.stored.user_exists("normal_denied", "%"));
+
+    // Empty the live cache again after the normal control. Root exists only
+    // in stored mysql.*, which the account writer reloads into statement
+    // scratch; the GRANT below proves recovery mode did not lose storage.
+    node.accounts
+        .live
+        .replace_from(&PrivilegeRegistry::bootstrapped_from([]));
+    let bypass_store =
+        ConfiguredUserStore::from_accounts(node.accounts.live.clone()).with_skip_grant_table(true);
+    let bypass_identity = bypass_store
+        .authenticate_native("ghost", "127.0.0.1", &SALT, b"not-a-password")
+        .expect("skip-grant-table admits an identity with no account row");
+    let mut bypass =
+        open_session_on_with_context(&node, session_context_with_identity(11, bypass_identity));
+    bypass
+        .execute_write("CREATE ROLE r_skip")
+        .expect("the account scratch registry retains the session bypass policy");
+    assert!(node.accounts.stored.is_role("r_skip", "%"));
+    assert!(node.accounts.live.is_role("r_skip", "%"));
+    bypass
+        .execute_write("GRANT r_skip TO root")
+        .expect("the bypassed cluster account statement still persists role storage");
+    let root = ("root".to_owned(), "%".to_owned());
+    let role = ("r_skip".to_owned(), "%".to_owned());
+    assert!(node.accounts.stored.has_role(&root, &role));
+    assert!(node.accounts.live.has_role(&root, &role));
+}
 
 struct UndeterminedAccountWriter(PrivilegeRegistry);
 

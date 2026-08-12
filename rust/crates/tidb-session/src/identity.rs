@@ -35,10 +35,7 @@ impl Session {
     /// front end) is treated as unrestricted, matching every other
     /// privilege check this session performs before a registry is attached.
     pub(crate) fn require_set_global_privilege(&self) -> Result<(), DriverError> {
-        let Some(registry) = &self.privileges else {
-            return Ok(());
-        };
-        let Some((user, host)) = self.current_identity() else {
+        let Some((registry, user, host)) = self.privilege_context() else {
             return Ok(());
         };
         if registry.has_dynamic_priv_with_roles(
@@ -64,6 +61,9 @@ impl Session {
     /// sessions legitimately have none, so they pass instead -- the rule
     /// every check here already followed, now stated once.
     fn privilege_context(&self) -> Option<(&privilege::PrivilegeRegistry, &str, &str)> {
+        if self.privilege_bypassed {
+            return None;
+        }
         let registry = self.privileges.as_ref()?;
         let (user, host) = self.current_identity()?;
         Some((registry, user, host))
@@ -242,7 +242,8 @@ impl Session {
     }
 
     pub(crate) fn sem_hides_status_var(&self, name: &str) -> bool {
-        tidb_util::sem::is_enabled()
+        !self.privilege_checks_bypassed()
+            && tidb_util::sem::is_enabled()
             && tidb_util::sem::is_invisible_status_var(name)
             && self
                 .privilege_context()
@@ -257,6 +258,9 @@ impl Session {
     /// `CREATE USER`-privileged caller.
     #[must_use]
     pub(crate) fn target_has_dynamic_privilege(&self, user: &str, host: &str, name: &str) -> bool {
+        if self.privilege_bypassed {
+            return true;
+        }
         let Some(registry) = self.privileges.as_ref() else {
             return false;
         };
@@ -273,7 +277,7 @@ impl Session {
     /// FIRST failure is reported -- with the statement's own
     /// `ErrTableaccessDenied` (1142) where Go attached one, and with the
     /// generic `ErrPrivilegeCheckFail` (8121) where it did not.
-    pub(crate) fn require_statement_table_privileges(
+    pub fn require_statement_table_privileges(
         &self,
         stmt: &tidb_ast::Stmt,
     ) -> Result<(), DriverError> {
@@ -290,7 +294,13 @@ impl Session {
             if granted {
                 continue;
             }
-            return Err(if request.table_named_in_error {
+            return Err(if request.database_named_in_error {
+                DriverError::DbAccessDenied {
+                    user,
+                    host,
+                    database: request.database,
+                }
+            } else if request.table_named_in_error {
                 DriverError::TableAccessDenied {
                     // Go's `authErr` spells the verb as the uppercase
                     // command name and the table as `tableInfo.Name.L`.
@@ -356,10 +366,40 @@ impl Session {
         // The registry is what makes that answerable, so attaching it is the
         // one place that can do it -- the front end installs the identity
         // first and the registry second.
-        if let Some((user, host)) = self.current_identity() {
-            self.active_roles = registry.default_roles(&(user.to_owned(), host.to_owned()));
+        if !self.privilege_bypassed {
+            if let Some((user, host)) = self.current_identity() {
+                self.active_roles = registry.default_roles(&(user.to_owned(), host.to_owned()));
+            }
         }
         self.privileges = Some(registry);
+    }
+
+    /// Carries the login's process-wide skip-grant-table admission into this
+    /// session. Account and role storage remains attached; only privilege
+    /// verification and role activation are bypassed.
+    pub fn enable_privilege_bypass(&mut self) {
+        self.privilege_bypassed = true;
+        self.active_roles.clear();
+    }
+
+    /// Records that this connection completed a secure transport handshake.
+    ///
+    /// Go stores the full TLS state on `SessionVars`; this tier needs only
+    /// its presence bit for the transport-sensitive GLOBAL sysvar validator.
+    pub fn set_secure_transport(&mut self, secure: bool) {
+        self.secure_transport = secure;
+    }
+
+    /// Whether the front end established TLS for this connection.
+    #[must_use]
+    pub(crate) const fn has_secure_transport(&self) -> bool {
+        self.secure_transport
+    }
+
+    /// Whether this connection was admitted under skip-grant-table.
+    #[must_use]
+    pub(crate) const fn privilege_checks_bypassed(&self) -> bool {
+        self.privilege_bypassed
     }
 
     /// Points this session at a different account table for one statement,
@@ -496,19 +536,57 @@ impl Session {
     ///
     /// Visibility (Go: "Seeing all users requires SELECT ON * FROM mysql.*.
     /// The SUPER privilege (or any other dynamic privilege) doesn't help
-    /// here. This is verified against MySQL."): without global `SELECT`, a
-    /// session sees only its own account's rows.
+    /// here. This is verified against MySQL."): without global or `mysql.*`
+    /// `SELECT`, a session sees every one of its own host-pattern rows.
     pub(crate) fn user_privileges_table_rows(&self) -> Vec<Vec<Datum>> {
         let Some(registry) = &self.privileges else {
             return Vec::new();
         };
         let identity = self
-            .current_identity()
+            .login_user
+            .as_deref()
+            .and_then(|identity| identity.split_once('@'))
             .map(|(user, host)| (user.to_owned(), host.to_owned()));
+        // Go's `UserPrivilegesTable` deliberately calls the raw privilege
+        // cache rather than the SkipWithGrant-aware manager wrapper. A
+        // bypassed no-row identity therefore sees no account rows here; it
+        // does not gain an information-schema account inventory.
         let show_all = identity.as_ref().is_none_or(|(user, host)| {
-            registry.has_global_priv(user, host, privilege::GlobalPriv::Select)
+            let own_raw_cache = registry.has_matching_global_or_schema_priv(
+                user,
+                host,
+                tidb_mysql::consts::SystemDB,
+                privilege::GlobalPriv::Select.bit(),
+            );
+            if self.privilege_bypassed {
+                return own_raw_cache;
+            }
+            let roles = self
+                .current_identity()
+                .is_some_and(|(current_user, current_host)| {
+                    registry
+                        .effective_roles(
+                            &(current_user.to_owned(), current_host.to_owned()),
+                            self.active_roles(),
+                        )
+                        .into_iter()
+                        .any(|(role_user, role_host)| {
+                            registry.has_matching_global_or_schema_priv(
+                                &role_user,
+                                &role_host,
+                                tidb_mysql::consts::SystemDB,
+                                privilege::GlobalPriv::Select.bit(),
+                            )
+                        })
+                });
+            own_raw_cache || roles
         });
-        let visible = |account: &(String, String)| show_all || identity.as_ref() == Some(account);
+        let visible = |account: &(String, String)| {
+            show_all
+                || identity
+                    .as_ref()
+                    .is_some_and(|(user, host)| registry.account_matches(account, user, host))
+        };
 
         let grantee = |(user, host): &(String, String)| format!("'{user}'@'{host}'");
         let cell = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
@@ -527,12 +605,18 @@ impl Session {
                 .filter(|priv_| privs & priv_.bit() != 0)
                 .collect();
             if named.is_empty() {
-                rows.push(vec![
-                    cell(&grantee(account)),
-                    cell("def"),
-                    cell("USAGE"),
-                    grantable.clone(),
-                ]);
+                // Go emits USAGE only for a truly empty static mask, and it
+                // is never grantable. A lone mysql.GrantPriv bit is greater
+                // than the Usage sentinel but is deliberately absent from
+                // mysql.AllGlobalPrivs, so it produces no static row at all.
+                if *privs == 0 {
+                    rows.push(vec![
+                        cell(&grantee(account)),
+                        cell("def"),
+                        cell("USAGE"),
+                        flag(false),
+                    ]);
+                }
                 continue;
             }
             for priv_ in named {

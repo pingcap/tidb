@@ -33,8 +33,9 @@
 //! INITIAL provisioning and `CREATE USER ... IDENTIFIED BY` / `DROP USER`
 //! write the very rows a login is verified against -- exactly as Go has one
 //! `mysql.user` carrying both `authentication_string` and the privilege
-//! columns. `PipelineSessionFactory::with_accounts(store.accounts())` is
-//! what ties the wire authenticator and the SQL executor to that one table;
+//! columns. `PipelineSessionFactory::with_configured_store(&store)` is what
+//! ties the wire authenticator and the SQL executor to that one table and to
+//! the same process-wide GLOBAL-variable authority;
 //! nothing seeds accounts at login time any more, because an identity the
 //! handshake matched IS a registry row by construction.
 //!
@@ -114,6 +115,22 @@ fn try_authenticate(
     user: &str,
     password: &[u8],
 ) -> Vec<u8> {
+    try_authenticate_with_plugin(
+        client,
+        reader,
+        user,
+        password,
+        "mysql_native_password",
+    )
+}
+
+fn try_authenticate_with_plugin(
+    client: &mut TcpStream,
+    reader: &mut PacketReader<TcpStream>,
+    user: &str,
+    password: &[u8],
+    auth_plugin: &str,
+) -> Vec<u8> {
     reader.set_sequence(0);
     let initial = reader.read_packet().unwrap();
     let salt = handshake_salt(&initial);
@@ -132,11 +149,70 @@ fn try_authenticate(
     let auth = native_response(password, &salt);
     response.push(u8::try_from(auth.len()).unwrap());
     response.extend_from_slice(&auth);
-    response.extend_from_slice(b"mysql_native_password\0");
+    response.extend_from_slice(auth_plugin.as_bytes());
+    response.push(0);
     response.push(0);
     write_packet(client, 1, &response);
     reader.set_sequence(2);
     reader.read_packet().unwrap()
+}
+
+/// Source `clientConn.handshake` rejects plaintext at the process-wide
+/// secure-transport gate before it calls `handleAuthPlugin`. Skip-grant-table
+/// does not weaken that ordering: a client offering another plugin must see
+/// 3159 directly, never an AuthSwitchRequest first.
+#[test]
+fn skip_grant_table_still_rejects_insecure_transport_before_auth_switch() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let store = Arc::new(users().with_skip_grant_table(true));
+    store
+        .global_vars()
+        .set("require_secure_transport", "ON".to_owned())
+        .expect("valid process-wide transport policy");
+    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
+    let acceptor = {
+        let factory = Arc::clone(&factory);
+        let store = Arc::clone(&store);
+        let tracker = Arc::clone(&tracker);
+        std::thread::spawn(move || {
+            let (stream, peer_addr) = listener.accept().unwrap();
+            serve_mysql_connection(
+                stream,
+                peer_addr,
+                ConnectionCancellation::default(),
+                factory.as_ref(),
+                store.as_ref(),
+                &tracker,
+                DEFAULT_MAX_ALLOWED_PACKET,
+            )
+            .unwrap()
+        })
+    };
+
+    let mut client = TcpStream::connect(address).unwrap();
+    let read = client.try_clone().unwrap();
+    let mut reader = PacketReader::new(read);
+    let reply = try_authenticate_with_plugin(
+        &mut client,
+        &mut reader,
+        "unknown",
+        b"arbitrary",
+        "caching_sha2_password",
+    );
+    assert_eq!(reply[0], 0xff, "must reject before AuthSwitch: {reply:?}");
+    assert_eq!(u16::from_le_bytes([reply[1], reply[2]]), 3159);
+    assert_eq!(&reply[4..9], b"HY000");
+    assert_eq!(
+        String::from_utf8_lossy(&reply[9..]),
+        "Connections using insecure transport are prohibited while --require_secure_transport=ON."
+    );
+    assert_eq!(
+        acceptor.join().unwrap().exit,
+        ConnectionExit::AuthenticationRejected
+    );
+    assert_eq!(tracker.active(), 0);
 }
 
 fn read_length_encoded_string(packet: &mut &[u8]) -> Vec<u8> {
@@ -174,13 +250,14 @@ fn run_write(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, sql: 
     u64::from(packet[1])
 }
 
-/// Sends one COM_QUERY expected to fail, and returns `(error_code, message)`
-/// read straight off the ERR packet's wire bytes.
+/// Sends one COM_QUERY expected to fail, and returns
+/// `(error_code, SQLSTATE, message)` read straight off the ERR packet's wire
+/// bytes.
 fn run_query_expect_error(
     client: &mut TcpStream,
     reader: &mut PacketReader<TcpStream>,
     sql: &str,
-) -> (u16, String) {
+) -> (u16, String, String) {
     let mut command = vec![COM_QUERY];
     command.extend_from_slice(sql.as_bytes());
     write_packet(client, 0, &command);
@@ -190,8 +267,10 @@ fn run_query_expect_error(
     let code = u16::from_le_bytes([packet[1], packet[2]]);
     // Byte 3 is the '#' SQLSTATE marker, bytes 4..9 the 5-byte SQLSTATE, the
     // rest is the human-readable message.
+    assert_eq!(packet[3], b'#', "{sql} ERR packet has no SQLSTATE marker");
+    let sql_state = String::from_utf8_lossy(&packet[4..9]).into_owned();
     let message = String::from_utf8_lossy(&packet[9..]).into_owned();
-    (code, message)
+    (code, sql_state, message)
 }
 
 /// `CREATE USER`/`GRANT`/`REVOKE` are Go `AdminStmt`s that answer over the
@@ -238,6 +317,308 @@ fn run_query(client: &mut TcpStream, reader: &mut PacketReader<TcpStream>, sql: 
     rows
 }
 
+/// Source `pkg/session/test/privileges::{TestSessionAuth,TestSkipWithGrant}`
+/// through the real handshake and statement wire.
+///
+/// Normal admission still hides account existence behind 1045. With
+/// skip-grant-table enabled, an arbitrary requested identity and root with a
+/// wrong password both connect; authorization is bypassed while the account
+/// registry remains attached, so role writes still have storage. Go's
+/// `SET ROLE` bypass arm deliberately leaves active roles unchanged, and its
+/// `SHOW GRANTS` bypass arm reports 1141 when the record set is drained --
+/// the Go source test uses `MustExec`, so it proves only statement creation.
+#[test]
+fn skip_grant_table_authentication_and_role_chain_reach_the_wire() {
+    // The TestSessionAuth/normal half: a user with no mysql.user row is
+    // refused over the actual handshake.
+    {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let tracker = Arc::new(ConnectionTracker::default());
+        let store = Arc::new(users());
+        let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
+        let acceptor = {
+            let factory = Arc::clone(&factory);
+            let store = Arc::clone(&store);
+            let tracker = Arc::clone(&tracker);
+            std::thread::spawn(move || {
+                let (stream, peer_addr) = listener.accept().unwrap();
+                serve_mysql_connection(
+                    stream,
+                    peer_addr,
+                    ConnectionCancellation::default(),
+                    factory.as_ref(),
+                    store.as_ref(),
+                    &tracker,
+                    DEFAULT_MAX_ALLOWED_PACKET,
+                )
+                .unwrap()
+            })
+        };
+        let mut client = TcpStream::connect(address).unwrap();
+        let read = client.try_clone().unwrap();
+        let mut reader = PacketReader::new(read);
+        let reply = try_authenticate(&mut client, &mut reader, "xxx", b"irrelevant");
+        assert_eq!(reply[0], 0xff, "unknown login must be an ERR: {reply:?}");
+        assert_eq!(u16::from_le_bytes([reply[1], reply[2]]), 1045);
+        assert_eq!(&reply[4..9], b"28000");
+        assert_eq!(
+            acceptor.join().unwrap().exit,
+            ConnectionExit::AuthenticationRejected
+        );
+        assert_eq!(tracker.active(), 0);
+    }
+
+    // The SkipWithGrant half: one immutable store policy reaches both login
+    // and the session factory through the authenticated identity.
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let tracker = Arc::new(ConnectionTracker::default());
+    let store = Arc::new(users().with_skip_grant_table(true));
+    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
+    let acceptor = {
+        let factory = Arc::clone(&factory);
+        let store = Arc::clone(&store);
+        let tracker = Arc::clone(&tracker);
+        std::thread::spawn(move || {
+            let mut workers = Vec::new();
+            for _ in 0..2 {
+                let (stream, peer_addr) = listener.accept().unwrap();
+                let factory = Arc::clone(&factory);
+                let store = Arc::clone(&store);
+                let tracker = Arc::clone(&tracker);
+                workers.push(std::thread::spawn(move || {
+                    serve_mysql_connection(
+                        stream,
+                        peer_addr,
+                        ConnectionCancellation::default(),
+                        factory.as_ref(),
+                        store.as_ref(),
+                        &tracker,
+                        DEFAULT_MAX_ALLOWED_PACKET,
+                    )
+                    .unwrap()
+                }));
+            }
+            workers
+        })
+    };
+
+    let mut unknown = TcpStream::connect(address).unwrap();
+    let unknown_read = unknown.try_clone().unwrap();
+    let mut unknown_reader = PacketReader::new(unknown_read);
+    authenticate(
+        &mut unknown,
+        &mut unknown_reader,
+        "xxx",
+        b"there-is-no-account-row",
+    );
+    assert_eq!(
+        run_query(&mut unknown, &mut unknown_reader, "SELECT CURRENT_USER()"),
+        vec![vec!["xxx@127.0.0.1".to_owned()]]
+    );
+    assert_eq!(run_write(&mut unknown, &mut unknown_reader, "USE test"), 0);
+    assert_eq!(
+        run_write(
+            &mut unknown,
+            &mut unknown_reader,
+            "SET DEFAULT ROLE NONE TO CURRENT_USER"
+        ),
+        0,
+        "NONE is a storage-only delete and needs no mysql.user row"
+    );
+    for sql in [
+        "SET DEFAULT ROLE no_such_role TO CURRENT_USER",
+        "SET DEFAULT ROLE ALL TO CURRENT_USER",
+    ] {
+        let (code, state, message) =
+            run_query_expect_error(&mut unknown, &mut unknown_reader, sql);
+        assert_eq!(code, 1396, "{sql}: {message}");
+        assert_eq!(state, "HY000", "{sql}: {message}");
+        assert_eq!(
+            message, "Operation SET DEFAULT ROLE failed for @",
+            "{sql}"
+        );
+    }
+    assert_eq!(
+        run_write(
+            &mut unknown,
+            &mut unknown_reader,
+            "CREATE TABLE skip_unknown_t (id BIGINT PRIMARY KEY)"
+        ),
+        0,
+        "an identity with no privilege row reaches a normally privileged DDL"
+    );
+
+    let mut root = TcpStream::connect(address).unwrap();
+    let root_read = root.try_clone().unwrap();
+    let mut root_reader = PacketReader::new(root_read);
+    authenticate(&mut root, &mut root_reader, "root", b"wrong-password");
+    assert_eq!(run_write(&mut root, &mut root_reader, "USE test"), 0);
+    assert_eq!(
+        run_write(
+            &mut root,
+            &mut root_reader,
+            "CREATE TABLE skip_grant_t (id BIGINT PRIMARY KEY)"
+        ),
+        0
+    );
+    assert_eq!(run_write(&mut root, &mut root_reader, "CREATE ROLE r_1"), 0);
+    assert_eq!(run_admin(&mut root, &mut root_reader, "GRANT r_1 TO root"), 0);
+    let (code, state, message) = run_query_expect_error(
+        &mut unknown,
+        &mut unknown_reader,
+        "SET DEFAULT ROLE r_1 TO CURRENT_USER",
+    );
+    assert_eq!(code, 1396, "{message}");
+    assert_eq!(state, "HY000", "{message}");
+    assert_eq!(
+        message,
+        "Operation SET DEFAULT ROLE failed for @"
+    );
+    assert_eq!(
+        run_write(
+            &mut root,
+            &mut root_reader,
+            "SET DEFAULT ROLE NONE TO 'missing'@'%'"
+        ),
+        0,
+        "NONE is a storage-only delete and does not require a target account row"
+    );
+    let (code, state, message) = run_query_expect_error(
+        &mut root,
+        &mut root_reader,
+        "SET DEFAULT ROLE no_such_role TO root",
+    );
+    assert_eq!(code, 1396, "{message}");
+    assert_eq!(state, "HY000", "{message}");
+    assert_eq!(
+        message,
+        "Operation SET DEFAULT ROLE failed for `no_such_role`@`%`"
+    );
+    let (code, state, message) = run_query_expect_error(
+        &mut root,
+        &mut root_reader,
+        "SET DEFAULT ROLE r_1 TO root",
+    );
+    assert_eq!(code, 3530, "{message}");
+    assert_eq!(state, "HY000", "{message}");
+    assert_eq!(message, "`r_1`@`%` is not granted to root@%");
+    assert_eq!(run_write(&mut root, &mut root_reader, "SET ROLE ALL"), 0);
+    assert_eq!(
+        run_query(&mut root, &mut root_reader, "SELECT CURRENT_ROLE()"),
+        vec![vec!["NONE".to_owned()]],
+        "skip-grant-table admits SET ROLE without activating registry roles"
+    );
+    let (code, state, message) = run_query_expect_error(
+        &mut root,
+        &mut root_reader,
+        "SHOW GRANTS FOR 'root'@'%'",
+    );
+    assert_eq!(code, 1141, "{message}");
+    assert_eq!(state, "42000", "{message}");
+    assert_eq!(
+        message,
+        "There is no such grant defined for user 'root' on host '%'"
+    );
+    let (code, state, message) = run_query_expect_error(
+        &mut root,
+        &mut root_reader,
+        "SHOW GRANTS FOR 'root'@'%' USING 'r_1'",
+    );
+    assert_eq!(code, 3530, "{message}");
+    assert_eq!(state, "HY000", "{message}");
+    assert_eq!(message, "`r_1`@`%` is not granted to root@%");
+    assert_eq!(
+        run_query(&mut root, &mut root_reader, "SELECT 1"),
+        vec![vec!["1".to_owned()]],
+        "the SHOW GRANTS error is statement-local"
+    );
+
+    assert_eq!(
+        run_write(
+            &mut unknown,
+            &mut unknown_reader,
+            "SET GLOBAL wait_timeout = 321"
+        ),
+        0,
+        "the direct SET GLOBAL privilege gate observes the bypass"
+    );
+    let (code, state, message) = run_query_expect_error(
+        &mut unknown,
+        &mut unknown_reader,
+        "SET GLOBAL require_secure_transport = ON",
+    );
+    assert_eq!(code, 1105, "{message}");
+    assert_eq!(state, "HY000", "{message}");
+    assert_eq!(
+        message,
+        "require_secure_transport can only be set to ON if the connection issuing the change is secure"
+    );
+    assert_eq!(
+        run_query(
+            &mut unknown,
+            &mut unknown_reader,
+            "SELECT @@global.require_secure_transport"
+        ),
+        vec![vec!["0".to_owned()]],
+        "the refused plaintext write must leave the live global unchanged"
+    );
+    let processes = run_query(&mut unknown, &mut unknown_reader, "SHOW PROCESSLIST");
+    assert_eq!(
+        processes.len(),
+        2,
+        "the direct PROCESS visibility gate observes the bypass: {processes:?}"
+    );
+    let root_connection_id = processes
+        .iter()
+        .find(|row| row[1] == "root")
+        .expect("root process row")[0]
+        .parse::<u64>()
+        .expect("connection id");
+    assert!(
+        !run_query(
+            &mut root,
+            &mut root_reader,
+            "SELECT GRANTEE FROM information_schema.USER_PRIVILEGES"
+        )
+        .is_empty(),
+        "root@% must match the requested loopback host and its SELECT exposes the raw cache"
+    );
+    assert!(
+        run_query(
+            &mut unknown,
+            &mut unknown_reader,
+            "SELECT GRANTEE FROM information_schema.USER_PRIVILEGES"
+        )
+        .is_empty(),
+        "Go's raw USER_PRIVILEGES cache does not expose other accounts merely because admission bypassed grants"
+    );
+    assert_eq!(
+        run_write(
+            &mut unknown,
+            &mut unknown_reader,
+            &format!("KILL {root_connection_id}")
+        ),
+        0,
+        "the direct CONNECTION_ADMIN gate observes the bypass"
+    );
+
+    write_packet(&mut unknown, 0, &[0x01]);
+    drop(unknown);
+    drop(root);
+    let exits: Vec<_> = acceptor
+        .join()
+        .unwrap()
+        .into_iter()
+        .map(|worker| worker.join().unwrap().exit)
+        .collect();
+    assert!(exits.contains(&ConnectionExit::Quit), "{exits:?}");
+    assert!(exits.contains(&ConnectionExit::Killed), "{exits:?}");
+    assert_eq!(tracker.active(), 0);
+    assert!(factory.processes().snapshot().is_empty());
+}
+
 /// The full grants lifecycle over TWO real, independently authenticated TCP
 /// connections sharing one server (one `PipelineSessionFactory`, exactly as
 /// one TiDB instance shares one `Domain`):
@@ -264,7 +645,7 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     let store = Arc::new(users());
     // One table: the accounts this factory's `CREATE USER` writes are the
     // accounts `store` authenticates logins against.
-    let factory = Arc::new(PipelineSessionFactory::with_accounts(store.accounts()));
+    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
 
     let acceptor_factory = Arc::clone(&factory);
     let acceptor_store = Arc::clone(&store);
@@ -431,7 +812,7 @@ fn grant_process_and_scoped_select_are_visible_and_live_across_real_connections(
     // Holding neither SUPER nor CONNECTION_ADMIN, bob cannot KILL root's
     // connection -- Go's `planbuilder.go` `*ast.KillStmt` case reports
     // `ErrSpecificAccessDenied` (1227), not the unused 1095 `ErrKillDenied`.
-    let (code, message) = run_query_expect_error(
+    let (code, _state, message) = run_query_expect_error(
         &mut bob,
         &mut bob_reader,
         &format!("KILL {root_connection_id}"),
@@ -501,7 +882,7 @@ fn a_runtime_created_account_can_log_in_over_tcp_until_it_is_dropped() {
     let address = listener.local_addr().unwrap();
     let tracker = Arc::new(ConnectionTracker::default());
     let store = Arc::new(users());
-    let factory = Arc::new(PipelineSessionFactory::with_accounts(store.accounts()));
+    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
 
     let acceptor_factory = Arc::clone(&factory);
     let acceptor_store = Arc::clone(&store);
@@ -647,7 +1028,7 @@ fn a_caching_sha2_password_account_creates_and_then_logs_in() {
     let address = listener.local_addr().unwrap();
     let tracker = Arc::new(ConnectionTracker::default());
     let store = Arc::new(users());
-    let factory = Arc::new(PipelineSessionFactory::with_accounts(store.accounts()));
+    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
 
     let acceptor_factory = Arc::clone(&factory);
     let acceptor_store = Arc::clone(&store);
@@ -754,7 +1135,7 @@ fn an_account_lock_rejects_the_next_login_with_3118_and_unlock_restores_it() {
     let address = listener.local_addr().unwrap();
     let tracker = Arc::new(ConnectionTracker::default());
     let store = Arc::new(users());
-    let factory = Arc::new(PipelineSessionFactory::with_accounts(store.accounts()));
+    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
 
     let acceptor_factory = Arc::clone(&factory);
     let acceptor_store = Arc::clone(&store);
@@ -875,7 +1256,7 @@ fn failed_login_attempts_auto_lock_reports_3955_over_the_wire_until_unlocked() {
     let address = listener.local_addr().unwrap();
     let tracker = Arc::new(ConnectionTracker::default());
     let store = Arc::new(users());
-    let factory = Arc::new(PipelineSessionFactory::with_accounts(store.accounts()));
+    let factory = Arc::new(PipelineSessionFactory::with_configured_store(&store));
 
     let acceptor_factory = Arc::clone(&factory);
     let acceptor_store = Arc::clone(&store);
