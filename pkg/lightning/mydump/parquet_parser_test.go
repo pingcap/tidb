@@ -337,6 +337,86 @@ func TestParquetVariousTypes(t *testing.T) {
 	assert.NoError(t, reader.ReadRow())
 	assert.Equal(t, types.KindUint64, reader.lastRow.Row[0].Kind())
 	assert.Equal(t, uint64(1), reader.lastRow.Row[0].GetValue())
+
+	// Enough repeated rows that the writer keeps the dictionary page instead of
+	// falling back to PLAIN, so every row decodes to the same shared buffer.
+	const dictRows = 256
+	repeatedByteArray := func(val []byte) func(int) (any, []int16) {
+		return func(numRows int) (any, []int16) {
+			values := make([]parquet.ByteArray, numRows)
+			levels := make([]int16, numRows)
+			for i := range numRows {
+				values[i] = val
+				levels[i] = 1
+			}
+			return values, levels
+		}
+	}
+	repeatedFixedLenByteArray := func(val []byte) func(int) (any, []int16) {
+		return func(numRows int) (any, []int16) {
+			values := make([]parquet.FixedLenByteArray, numRows)
+			levels := make([]int16, numRows)
+			for i := range numRows {
+				values[i] = val
+				levels[i] = 1
+			}
+			return values, levels
+		}
+	}
+
+	pc = []ParquetColumn{
+		{
+			Name:      "positive",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.Decimal,
+			Precision: 9,
+			Scale:     2,
+			Gen:       repeatedByteArray([]byte{0x30, 0x39}), // 12345
+		},
+		{
+			// binaryToDecimalStr only rewrites its input for negative values,
+			// so this is the column that catches the shared-buffer aliasing.
+			Name:      "negative",
+			Type:      parquet.Types.ByteArray,
+			Converted: schema.ConvertedTypes.Decimal,
+			Precision: 9,
+			Scale:     2,
+			Gen:       repeatedByteArray([]byte{0xcf, 0xc7}), // -12345
+		},
+		{
+			Name:      "fixed_len_negative",
+			Type:      parquet.Types.FixedLenByteArray,
+			Converted: schema.ConvertedTypes.Decimal,
+			TypeLen:   4,
+			Precision: 9,
+			Scale:     2,
+			Gen:       repeatedFixedLenByteArray([]byte{0xff, 0xff, 0xcf, 0xc7}), // -12345
+		},
+	}
+
+	fileName = "test.decimal.dictionary.parquet"
+	require.NoError(t, WriteParquetFile(dir, fileName, pc, dictRows))
+
+	r, err = store.Open(context.TODO(), fileName, nil)
+	require.NoError(t, err)
+	reader, err = NewParquetParser(context.TODO(), store, r, fileName, ParquetFileMeta{})
+	require.NoError(t, err)
+	defer reader.Close()
+
+	for i := range pc {
+		cc, err := reader.readers[0].MetaData().RowGroup(0).ColumnChunk(i)
+		require.NoError(t, err)
+		require.True(t, cc.HasDictionaryPage(), "column %s is not dictionary encoded", pc[i].Name)
+	}
+
+	expectedValues := []string{"123.45", "-123.45", "-123.45"}
+	for range dictRows {
+		require.NoError(t, reader.ReadRow())
+		require.Len(t, reader.lastRow.Row, len(expectedValues))
+		for i, expectValue := range expectedValues {
+			require.Equal(t, expectValue, reader.lastRow.Row[i].GetString())
+		}
+	}
 }
 
 func TestParquetAurora(t *testing.T) {
