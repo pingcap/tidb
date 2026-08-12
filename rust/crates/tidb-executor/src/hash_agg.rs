@@ -50,8 +50,7 @@
 //! `APPROX_PERCENTILE` ranks the group's values -- see each [`AggKind`]
 //! variant for the exact Go rule and its captured edges.
 //!
-//! DEFERRED (documented): the parallel partial/final worker pipeline and Go's
-//! `Round(retTp.GetDecimal())` display step on the AVG result.
+//! DEFERRED (documented): the parallel partial/final worker pipeline.
 //!
 //! `APPROX_COUNT_DISTINCT` ports Go's `BJKST` sketch
 //! (`func_count_distinct.go`'s `partialResult4ApproxCountDistinct`, see
@@ -81,7 +80,10 @@ use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_codec::encode_compact_bytes;
-use tidb_datatype::{BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, FieldType, TimeType};
+use tidb_datatype::{
+    BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, FieldType, TimeType, MAX_DECIMAL_SCALE,
+    UNSPECIFIED_LENGTH,
+};
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
@@ -1258,6 +1260,28 @@ impl<C: Columns> HashAggExec<C> {
             let mut value = self.ordered[idx][c]
                 .partial
                 .finish(order_by, div_precision_increment)?;
+            if matches!(
+                self.agg_funcs.get(c).map(|func| &func.kind),
+                Some(AggKind::Avg)
+            ) {
+                value = match value {
+                    Datum::Decimal(decimal) => {
+                        let declared_scale = self.meta.ret_field_types()[c].decimal();
+                        let result_scale = if declared_scale == UNSPECIFIED_LENGTH {
+                            MAX_DECIMAL_SCALE
+                        } else {
+                            declared_scale
+                        };
+                        Datum::Decimal(
+                            decimal.round_to_scale(
+                                i32::try_from(result_scale)
+                                    .expect("AVG result scale must fit MySQL decimal metadata"),
+                            ),
+                        )
+                    }
+                    other => other,
+                };
+            }
             if let (Some(func), Datum::Bytes(joined)) = (self.agg_funcs.get(c), &mut value) {
                 if matches!(func.kind, AggKind::GroupConcat { .. })
                     && max_len > 0
@@ -1583,6 +1607,20 @@ mod tests {
         })
     }
 
+    fn decimal_source(values: &[&str], field_type: &FieldType) -> Box<dyn Executor> {
+        let fields = vec![field_type.clone()];
+        let mut data = Chunk::new_with_capacity(&fields, values.len().max(1));
+        for value in values {
+            data.append_datum(0, &Datum::Decimal(Decimal::from_literal(value)));
+        }
+        let mut column = Column::new(1, field_type.clone());
+        column.index = 0;
+        Box::new(OneChunkSource {
+            meta: ExecutorMeta::new(Schema::new(vec![column]), 0, values.len().max(1), 1024),
+            data: Some(data),
+        })
+    }
+
     fn out_meta(n: usize) -> ExecutorMeta {
         let mut cols = Vec::new();
         for i in 0..n {
@@ -1666,7 +1704,7 @@ mod tests {
     /// implementation in this repository.
     #[test]
     fn avg_over_integers_is_decimal_scaled_by_the_precision_increment() {
-        let types = [decimal()];
+        let types = [decimal().with_decimal(4)];
         for (values, want) in [
             (vec![1i64, 2, 3], "2.0000"),
             (vec![1, 2, 4], "2.3333"),
@@ -1689,6 +1727,35 @@ mod tests {
                 "AVG of {values:?}"
             );
         }
+    }
+
+    #[test]
+    fn decimal_avg_rounds_to_the_static_result_scale() {
+        let input_type = FieldType::new(FieldTypeCode::NewDecimal)
+            .with_flen(10)
+            .with_decimal(2);
+        let result_type = FieldType::new(FieldTypeCode::NewDecimal)
+            .with_flen(14)
+            .with_decimal(6);
+        let mut input_column = Column::new(1, input_type.clone());
+        input_column.index = 0;
+        let agg = HashAggExec::new(
+            out_meta_typed(std::slice::from_ref(&result_type)),
+            vec![],
+            vec![AggFunc::new(
+                AggKind::Avg,
+                Some(Expression::Column(input_column)),
+            )],
+            decimal_source(&["1", "2"], &input_type),
+            NoColumns,
+            StatementMemory::default(),
+        );
+
+        let rows = run_typed(agg, &[result_type]);
+        let Datum::Decimal(value) = &rows[0][0] else {
+            panic!("AVG must return DECIMAL, got {:?}", rows[0][0]);
+        };
+        assert_eq!(value.to_string(), "1.500000");
     }
 
     #[test]
