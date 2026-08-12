@@ -19,8 +19,11 @@
 //! first value, and an empty name set never reads the input. Malformed input
 //! before the last requested member still fails. Error text is native
 //! `serde_json` wording; the failure boundary matches the package contract.
+//! Like Go `encoding/json`, invalid UTF-8 and unpaired UTF-16 surrogates in
+//! JSON strings become U+FFFD; ordinary valid input stays on the borrowed path.
 //! `BUILD.bazel`'s `fastjson` and `partialjson` aliases both map to this module.
 
+use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -107,6 +110,7 @@ pub fn extract_top_level_members(
         return Ok(HashMap::new());
     }
 
+    let content = normalize_json_strings(content);
     let out = RefCell::new(HashMap::with_capacity(names.len()));
     let done = Cell::new(false);
     let seed = ExtractSeed {
@@ -114,7 +118,7 @@ pub fn extract_top_level_members(
         out: &out,
         done: &done,
     };
-    let mut de = serde_json::Deserializer::from_slice(content);
+    let mut de = serde_json::Deserializer::from_str(&content);
     // No `de.end()`: content after the top-level object is never inspected.
     match seed.deserialize(&mut de) {
         Ok(()) => Ok(out.into_inner()),
@@ -123,6 +127,92 @@ pub fn extract_top_level_members(
         Err(_) if done.get() => Ok(out.into_inner()),
         Err(e) => Err(PartialJsonError(e.to_string())),
     }
+}
+
+fn normalize_json_strings(content: &[u8]) -> Cow<'_, str> {
+    let utf8 = String::from_utf8_lossy(content);
+    let bytes = utf8.as_bytes();
+    let mut output: Option<Vec<u8>> = None;
+    let mut in_string = false;
+    let mut index = 0;
+
+    while index < bytes.len() {
+        let byte = bytes[index];
+        if !in_string {
+            if byte == b'"' {
+                in_string = true;
+            }
+            if let Some(output) = &mut output {
+                output.push(byte);
+            }
+            index += 1;
+            continue;
+        }
+        if byte == b'"' {
+            in_string = false;
+            if let Some(output) = &mut output {
+                output.push(byte);
+            }
+            index += 1;
+            continue;
+        }
+        if byte != b'\\' || bytes.get(index + 1) != Some(&b'u') {
+            let width = if byte == b'\\' && index + 1 < bytes.len() {
+                2
+            } else {
+                1
+            };
+            if let Some(output) = &mut output {
+                output.extend_from_slice(&bytes[index..index + width]);
+            }
+            index += width;
+            continue;
+        }
+
+        let Some(code) = parse_hex_quad(bytes.get(index + 2..index + 6)) else {
+            if let Some(output) = &mut output {
+                output.push(byte);
+            }
+            index += 1;
+            continue;
+        };
+        let valid_pair = (0xd800..=0xdbff).contains(&code)
+            && bytes.get(index + 6..index + 8) == Some(br#"\u"#)
+            && parse_hex_quad(bytes.get(index + 8..index + 12))
+                .is_some_and(|low| (0xdc00..=0xdfff).contains(&low));
+        let invalid =
+            (0xdc00..=0xdfff).contains(&code) || ((0xd800..=0xdbff).contains(&code) && !valid_pair);
+
+        if invalid {
+            let output = output.get_or_insert_with(|| bytes[..index].to_vec());
+            output.extend_from_slice(br#"\uFFFD"#);
+            index += 6;
+        } else {
+            let width = if valid_pair { 12 } else { 6 };
+            if let Some(output) = &mut output {
+                output.extend_from_slice(&bytes[index..index + width]);
+            }
+            index += width;
+        }
+    }
+
+    match output {
+        Some(output) => Cow::Owned(String::from_utf8(output).expect("normalized JSON stays UTF-8")),
+        None => utf8,
+    }
+}
+
+fn parse_hex_quad(bytes: Option<&[u8]>) -> Option<u16> {
+    let bytes: &[u8; 4] = bytes?.try_into().ok()?;
+    bytes.iter().try_fold(0_u16, |value, byte| {
+        let digit = match byte {
+            b'0'..=b'9' => u16::from(byte - b'0'),
+            b'a'..=b'f' => u16::from(byte - b'a' + 10),
+            b'A'..=b'F' => u16::from(byte - b'A' + 10),
+            _ => return None,
+        };
+        Some(value * 16 + digit)
+    })
 }
 
 #[cfg(test)]
@@ -190,5 +280,38 @@ mod tests {
         // Malformed JSON BEFORE the last requested member still fails: the
         // early-stop tolerance never masks a broken needed value.
         assert!(extract_top_level_members(br#"{"b": GARBAGE, "a": 1}"#, &["a"]).is_err());
+    }
+
+    #[test]
+    fn invalid_utf8_in_json_strings_uses_replacement_character() {
+        let selected = extract_top_level_members(b"{\"name\":\"\xff\"}", &["name"]).unwrap();
+        assert_eq!(
+            serde_json::from_str::<String>(selected["name"].get()).unwrap(),
+            "\u{fffd}"
+        );
+
+        let skipped =
+            extract_top_level_members(b"{\"skip\":\"\xff\",\"name\":\"ok\"}", &["name"]).unwrap();
+        assert_eq!(
+            serde_json::from_str::<String>(skipped["name"].get()).unwrap(),
+            "ok"
+        );
+
+        let key = extract_top_level_members(b"{\"\xff\":1}", &["\u{fffd}"]).unwrap();
+        assert_eq!(key["\u{fffd}"].get(), "1");
+
+        let surrogate = extract_top_level_members(
+            br#"{"name":"\uD800","pair":"\uD83D\uDE00"}"#,
+            &["name", "pair"],
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::from_str::<String>(surrogate["name"].get()).unwrap(),
+            "\u{fffd}"
+        );
+        assert_eq!(
+            serde_json::from_str::<String>(surrogate["pair"].get()).unwrap(),
+            "\u{1f600}"
+        );
     }
 }

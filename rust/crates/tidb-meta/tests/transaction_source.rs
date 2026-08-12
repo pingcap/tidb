@@ -1706,6 +1706,12 @@ fn job_name_filter_keeps_go_operator_precedence() {
     ] {
         assert!(extract_schema_and_table_name_from_job(malformed).is_err());
     }
+
+    let invalid_string_encoding = b"{\"schema_name\":\"s\xff\",\"table_name\":\"t\\uD800\"}";
+    assert_eq!(
+        extract_schema_and_table_name_from_job(invalid_string_encoding).unwrap(),
+        ("s\u{fffd}".to_owned(), "t\u{fffd}".to_owned())
+    );
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
