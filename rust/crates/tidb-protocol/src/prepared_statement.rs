@@ -20,11 +20,11 @@
 
 use crate::{
     append_length_encoded_bytes, append_length_encoded_int, encode_eof_packet, ColumnInfo,
-    EofPacket, ResultSetOptions, TYPE_BIT, TYPE_BLOB, TYPE_DATE, TYPE_DATETIME, TYPE_DOUBLE,
-    TYPE_DURATION, TYPE_ENUM, TYPE_FLOAT, TYPE_GEOMETRY, TYPE_INT24, TYPE_JSON, TYPE_LONG,
-    TYPE_LONGLONG, TYPE_LONG_BLOB, TYPE_MEDIUM_BLOB, TYPE_NEW_DECIMAL, TYPE_SET, TYPE_SHORT,
-    TYPE_STRING, TYPE_TIDB_VECTOR_FLOAT32, TYPE_TIMESTAMP, TYPE_TINY, TYPE_TINY_BLOB,
-    TYPE_UNSPECIFIED, TYPE_VARCHAR, TYPE_VAR_STRING, TYPE_YEAR,
+    EofPacket, ResultSetOptions, DEFAULT_COLLATION_ID, TYPE_BIT, TYPE_BLOB, TYPE_DATE,
+    TYPE_DATETIME, TYPE_DOUBLE, TYPE_DURATION, TYPE_ENUM, TYPE_FLOAT, TYPE_GEOMETRY, TYPE_INT24,
+    TYPE_JSON, TYPE_LONG, TYPE_LONGLONG, TYPE_LONG_BLOB, TYPE_MEDIUM_BLOB, TYPE_NEW_DECIMAL,
+    TYPE_SET, TYPE_SHORT, TYPE_STRING, TYPE_TIDB_VECTOR_FLOAT32, TYPE_TIMESTAMP, TYPE_TINY,
+    TYPE_TINY_BLOB, TYPE_UNSPECIFIED, TYPE_VARCHAR, TYPE_VAR_STRING, TYPE_YEAR,
 };
 use tidb_datatype::{Decimal, PackedTime};
 
@@ -814,12 +814,10 @@ pub enum BinaryResultCell {
 /// order — a `TypeLonglong` as `dump.Uint64` (eight little-endian bytes) and a
 /// string type as `dump.LengthEncodedString`.
 ///
-/// Scope note from the Go source: `DumpBinaryRow` writes the string case as
-/// `dump.LengthEncodedString(d.EncodeData(row.GetBytes(i)))`, re-encoding the
-/// value into the *result* charset. This encoder passes the raw bytes through,
-/// which equals `EncodeData` only when the result charset matches the column
-/// charset — the configured node's fixed `utf8mb4` case. A differing client
-/// charset is out of scope here and must re-encode before calling this.
+/// This raw primitive length-encodes string bytes as supplied. The column-aware
+/// [`BinaryResultSetStream`] applies `ResultEncoder::EncodeData` first, matching
+/// Go `DumpBinaryRow`; callers without column metadata remain responsible for
+/// supplying encoded bytes.
 #[must_use]
 pub fn encode_binary_result_row(cells: &[BinaryResultCell]) -> Vec<u8> {
     let null_bitmap_len = (cells.len() + 7 + 2) / 8;
@@ -1064,7 +1062,24 @@ impl BinaryResultSetStream {
                 });
             }
         }
-        Ok(encode_binary_result_row(cells))
+        let mut encoded_cells = cells.to_vec();
+        let mut encoder = self.options.result_encoder;
+        for (cell, metadata) in encoded_cells.iter_mut().zip(&self.columns) {
+            let BinaryResultCell::String(bytes) = cell else {
+                continue;
+            };
+            let collation = if matches!(metadata.type_code, TYPE_JSON | TYPE_TIDB_VECTOR_FLOAT32) {
+                DEFAULT_COLLATION_ID
+            } else {
+                metadata.charset
+            };
+            if encoder.update_data_encoding(collation).is_ok() {
+                if let Ok(encoded) = encoder.encode_data(bytes) {
+                    *bytes = encoded;
+                }
+            }
+        }
+        Ok(encode_binary_result_row(&encoded_cells))
     }
 
     /// Emits the terminal EOF exactly once.

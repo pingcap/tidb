@@ -23,8 +23,9 @@ use tidb_protocol::{
     encode_prepared_statement_prepare_response, split_prepared_statement_execute,
     BinaryDateTimeType, BinaryResultCell, BinaryResultSetStream, ColumnInfo, PreparedParameterType,
     PreparedParameterTypes, PreparedStatementError, PreparedStatementSendLongData, PreparedValue,
-    ResultSetOptions, TYPE_LONGLONG,
+    ResultSetOptions, BINARY_DEFAULT_COLLATION_ID, TYPE_JSON, TYPE_LONGLONG,
 };
+use tidb_protocol::result_encoder::ResultEncoder;
 
 /// pkg/server/internal/parse/parse.go:35-48 `StmtFetchCmd`.
 ///
@@ -691,6 +692,38 @@ fn the_stream_admits_every_type_go_dump_binary_row_has_an_arm_for() {
             "type {tp} has no DumpBinaryRow arm and must be refused"
         );
     }
+}
+
+#[test]
+fn binary_string_rows_use_the_connection_result_charset() {
+    let utf8 = varstring_column("utf8");
+    let mut binary = varstring_column("binary");
+    binary.charset = BINARY_DEFAULT_COLLATION_ID;
+    let mut json = varstring_column("json");
+    json.charset = BINARY_DEFAULT_COLLATION_ID;
+    json.type_code = TYPE_JSON;
+    let mut stream = BinaryResultSetStream::new(
+        vec![utf8, binary, json],
+        ResultSetOptions {
+            result_encoder: ResultEncoder::new("gbk").unwrap(),
+            ..ResultSetOptions::default()
+        },
+    )
+    .unwrap();
+    stream.metadata_packets().unwrap();
+
+    assert_eq!(
+        stream
+            .row_packet(&[
+                BinaryResultCell::String("一".as_bytes().to_vec()),
+                BinaryResultCell::String("一".as_bytes().to_vec()),
+                BinaryResultCell::String("一".as_bytes().to_vec()),
+            ])
+            .unwrap(),
+        vec![
+            0x00, 0x00, 0x02, 0xd2, 0xbb, 0x03, 0xe4, 0xb8, 0x80, 0x02, 0xd2, 0xbb,
+        ]
+    );
 }
 
 /// Byte-level oracle: every row here was produced by running the production Go
