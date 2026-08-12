@@ -19,7 +19,17 @@ use crate::{Datum, Decimal, EvalError};
 use tidb_util::vitess::hash_uint64;
 
 /// Dispatches this family's builtins; `None` if `name` isn't one of them.
+#[cfg(test)]
 pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
+    dispatch_in(name, vals, &crate::NoColumns)
+}
+
+/// Dispatches this family while preserving warnings from implicit casts.
+pub(crate) fn dispatch_in(
+    name: &str,
+    vals: &[Datum],
+    ctx: &dyn crate::Columns,
+) -> Option<Result<Datum, EvalError>> {
     match (name, vals) {
         ("ANY_VALUE", [value]) => Some(Ok(value.clone())),
         // Go's nameConstFunctionClass selects a typed signature from the
@@ -38,8 +48,8 @@ pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalE
         ("UUID_TO_BIN", [value, flag]) => Some(uuid_to_bin(value, Some(flag))),
         ("BIN_TO_UUID", [value]) => Some(bin_to_uuid(value, None)),
         ("BIN_TO_UUID", [value, flag]) => Some(bin_to_uuid(value, Some(flag))),
-        ("TIDB_SHARD", [value]) => Some(tidb_shard(value)),
-        ("VITESS_HASH", [value]) => Some(vitess_hash(value)),
+        ("TIDB_SHARD", [value]) => Some(tidb_shard(value, ctx)),
+        ("VITESS_HASH", [value]) => Some(vitess_hash(value, ctx)),
         _ => None,
     }
 }
@@ -172,14 +182,14 @@ fn format_uuid_swapped(uuid: &[u8; 16]) -> String {
 /// TiDB first casts the one argument to signed `ETInt`, then Vitess-hashes its
 /// two's-complement `uint64` bits and takes the big-endian ciphertext's low
 /// byte. The bucket count is 256, so the low byte is exactly the modulo.
-fn tidb_shard(value: &Datum) -> Result<Datum, EvalError> {
+fn tidb_shard(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     if matches!(value, Datum::Null) {
         return Ok(Datum::Null);
     }
     // `WrapWithCastAsInt` selects the ETInt cast signature before
     // `builtinTidbShardSig.evalInt` runs. Reuse the same integer-prefix
     // conversion used by this evaluator's SIGNED cast for scalar values.
-    let shard_key = crate::cast::to_i64_signed(value) as u64;
+    let shard_key = crate::cast::to_i64_signed_with_warnings(value, ctx)? as u64;
     Ok(Datum::UInt(hash_uint64(shard_key) % 256))
 }
 
@@ -187,11 +197,11 @@ fn tidb_shard(value: &Datum) -> Result<Datum, EvalError> {
 /// `TIDB_SHARD`, the ETInt-coerced argument is Vitess-hashed, but the whole
 /// 64-bit digest is returned. The result column is UNSIGNED, so it is a
 /// `Datum::UInt`.
-fn vitess_hash(value: &Datum) -> Result<Datum, EvalError> {
+fn vitess_hash(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
     if matches!(value, Datum::Null) {
         return Ok(Datum::Null);
     }
-    let shard_key = crate::cast::to_i64_signed(value) as u64;
+    let shard_key = crate::cast::to_i64_signed_with_warnings(value, ctx)? as u64;
     Ok(Datum::UInt(hash_uint64(shard_key)))
 }
 
@@ -368,9 +378,24 @@ fn hex_nibble(byte: u8) -> Option<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::dispatch;
+    use std::cell::RefCell;
+
+    use super::{dispatch, dispatch_in, hash_uint64};
     use crate::Datum;
     use tidb_datatype::{BinaryLiteral, Collation, MysqlEnum, MysqlSet};
+
+    #[derive(Default)]
+    struct WarningContext(RefCell<Vec<(u16, String)>>);
+
+    impl crate::Columns for WarningContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+    }
 
     /// Exact scalar vectors from `TestAnyValue` in
     /// `pkg/expression/builtin_miscellaneous_test.go`. Each Go signature's
@@ -867,6 +892,52 @@ mod tests {
         assert!(dispatch("TIDB_SHARD", &[]).is_none());
         assert!(dispatch("TIDB_SHARD", &[Datum::Int(1), Datum::Int(2)]).is_none());
         assert!(dispatch("UNKNOWN", &[Datum::Int(1)]).is_none());
+    }
+
+    #[test]
+    fn hash_builtins_preserve_implicit_signed_cast_overflow_warnings() {
+        for (name, expected) in [
+            ("VITESS_HASH", Datum::UInt(hash_uint64((-2_i64) as u64))),
+            (
+                "TIDB_SHARD",
+                Datum::UInt(hash_uint64((-2_i64) as u64) % 256),
+            ),
+        ] {
+            let ctx = WarningContext::default();
+            let value = dispatch_in(
+                name,
+                &[Datum::new_string("18446744073709551614".to_owned())],
+                &ctx,
+            )
+            .expect("the builtin must dispatch")
+            .expect("the implicit cast must evaluate");
+            assert_eq!(value, expected);
+            assert_eq!(
+                *ctx.0.borrow(),
+                vec![(
+                    8030,
+                    "Cast to signed converted positive out-of-range integer to its negative complement"
+                        .to_owned(),
+                )],
+            );
+        }
+
+        let ctx = WarningContext::default();
+        let value = dispatch_in(
+            "VITESS_HASH",
+            &[Datum::new_string("18446744073709551616".to_owned())],
+            &ctx,
+        )
+        .expect("VITESS_HASH must dispatch")
+        .expect("the overflowing implicit cast must retain its best-effort value");
+        assert_eq!(value, Datum::UInt(hash_uint64(u64::MAX)));
+        assert_eq!(
+            *ctx.0.borrow(),
+            vec![(
+                1292,
+                "Truncated incorrect INTEGER value: '18446744073709551616'".to_owned(),
+            )],
+        );
     }
 
     /// `VITESS_HASH` returns the whole Vitess DES digest as an UNSIGNED value.

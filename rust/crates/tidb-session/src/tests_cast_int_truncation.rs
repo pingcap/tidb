@@ -121,6 +121,43 @@ fn a_partly_numeric_string_cast_to_int_warns_1292_and_keeps_the_prefix() {
     }
 }
 
+#[test]
+fn signed_string_overflow_reaches_sql_and_implicit_int_consumers() {
+    let mut session = Session::new();
+
+    assert_eq!(
+        row_text(session.run("SELECT CAST('18446744073709551614' AS SIGNED)")),
+        [["-2"]],
+    );
+    assert_eq!(
+        warnings(&session),
+        [(
+            8030,
+            "Cast to signed converted positive out-of-range integer to its negative complement"
+                .to_owned(),
+        )],
+    );
+
+    let expected_hash = tidb_util::vitess::hash_uint64((-2_i64) as u64).to_string();
+    assert_eq!(
+        row_text(session.run("SELECT VITESS_HASH('18446744073709551614')")),
+        [[expected_hash]],
+    );
+    assert_eq!(warnings(&session)[0].0, 8030);
+
+    assert_eq!(
+        row_text(session.run("SELECT CAST('18446744073709551616' AS SIGNED)")),
+        [["-1"]],
+    );
+    assert_eq!(
+        warnings(&session),
+        [(
+            1292,
+            "Truncated incorrect INTEGER value: '18446744073709551616'".to_owned(),
+        )],
+    );
+}
+
 /// The reported unit itself: two bad casts in one statement leave two
 /// warnings, not one and not zero -- the count is per evaluation, so a
 /// deduplicating sink would still read as "it warns".

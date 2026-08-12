@@ -62,11 +62,7 @@ pub(crate) fn eval_cast(
         ));
     }
     match cast_type {
-        CastType::Signed => {
-            report_int_truncation(&v, ctx)?;
-            report_signed_overflow(&v, ctx);
-            Ok(Datum::Int(to_i64_signed_in(&v, &ctx.time_zone())))
-        }
+        CastType::Signed => Ok(Datum::Int(to_i64_signed_with_warnings(&v, ctx)?)),
         CastType::Unsigned => {
             report_int_truncation(&v, ctx)?;
             Ok(Datum::UInt(to_u64_unsigned(&v, ctx)))
@@ -285,10 +281,10 @@ fn datum_binary_bytes(value: &Datum) -> Result<Vec<u8>, EvalError> {
 /// leading `[+-]?digits` prefix ONLY (no `.`, no exponent — confirmed via
 /// `goeval`: `CAST('3.5abc' AS SIGNED)` sees just `3`, `CAST('.5' AS
 /// SIGNED)` sees no digits at all), defaulting to `0` if no digit is
-/// found, and ALSO saturates past `i64` range rather than replicating
-/// real TiDB's own exotic bit-reinterpretation overflow behavior there (a
-/// KNOWN, deliberately excluded divergence for a value nobody writes
-/// intentionally — see [`str_int_prefix`]'s own doc).
+/// found. A nonnegative integer prefix is parsed through the full `u64`
+/// domain and then converted to `i64`, preserving Go's negative-complement
+/// result above `i64::MAX`; true `u64` overflow returns `-1`. Negative
+/// overflow clamps to `i64::MIN`.
 pub(crate) fn to_i64_signed(v: &Datum) -> i64 {
     to_i64_signed_in(v, &tidb_datatype::SessionTimeZone::utc())
 }
@@ -307,6 +303,20 @@ pub(crate) fn to_i64_signed_in(v: &Datum, zone: &tidb_datatype::SessionTimeZone)
         Datum::Null | Datum::MinNotNull | Datum::MaxValue => unreachable!("guarded by caller"),
         other => other.to_i64_in(zone).map_or(0, |converted| converted.value),
     }
+}
+
+/// Signed integer coercion plus the warnings produced by Go's cast signature.
+///
+/// Builtins whose arguments are wrapped with `WrapWithCastAsInt` must use this
+/// boundary rather than the value-only helper so their statement warning list
+/// remains identical to an explicit `CAST(... AS SIGNED)`.
+pub(crate) fn to_i64_signed_with_warnings(
+    v: &Datum,
+    ctx: &dyn crate::Columns,
+) -> Result<i64, EvalError> {
+    report_int_truncation(v, ctx)?;
+    report_signed_overflow(v, ctx);
+    Ok(to_i64_signed_in(v, &ctx.time_zone()))
 }
 
 /// `UNSIGNED`'s own coercion. Integer and integer-string sources preserve
@@ -510,7 +520,37 @@ fn report_signed_overflow(v: &Datum, ctx: &dyn crate::Columns) {
             1292,
             &format!("Truncated incorrect DECIMAL value: '{value}'"),
         ),
+        Datum::String(value) => {
+            if let Ok(text) = value.as_utf8() {
+                report_positive_string_signed_complement(text, ctx);
+            }
+        }
+        Datum::Bytes(value) => {
+            if let Ok(text) = std::str::from_utf8(value) {
+                report_positive_string_signed_complement(text, ctx);
+            }
+        }
         _ => {}
+    }
+}
+
+fn report_positive_string_signed_complement(text: &str, ctx: &dyn crate::Columns) {
+    if !int_prefix_consumed_all(text) {
+        return;
+    }
+    let trimmed = text.trim();
+    if trimmed.starts_with('-') {
+        return;
+    }
+    let digits = trimmed.strip_prefix('+').unwrap_or(trimmed);
+    if digits
+        .parse::<u64>()
+        .is_ok_and(|value| value > i64::MAX as u64)
+    {
+        ctx.append_warning(
+            8030,
+            "Cast to signed converted positive out-of-range integer to its negative complement",
+        );
     }
 }
 
@@ -524,11 +564,31 @@ pub(crate) fn report_int_truncation(v: &Datum, ctx: &dyn crate::Columns) -> Resu
         _ => None,
     };
     match text {
-        Some(text) if !int_prefix_consumed_all(text) => ctx.handle_truncate(&format!(
-            "Truncated incorrect INTEGER value: '{}'",
-            text.trim()
-        )),
+        Some(text)
+            if !int_prefix_consumed_all(text) || signed_string_integer_parse_overflows(text) =>
+        {
+            ctx.handle_truncate(&format!(
+                "Truncated incorrect INTEGER value: '{}'",
+                text.trim()
+            ))
+        }
         _ => Ok(()),
+    }
+}
+
+fn signed_string_integer_parse_overflows(text: &str) -> bool {
+    if !int_prefix_consumed_all(text) {
+        return false;
+    }
+    let trimmed = text.trim();
+    if trimmed.starts_with('-') {
+        trimmed.parse::<i64>().is_err()
+    } else {
+        trimmed
+            .strip_prefix('+')
+            .unwrap_or(trimmed)
+            .parse::<u64>()
+            .is_err()
     }
 }
 
@@ -542,21 +602,10 @@ fn str_int_prefix(s: &str) -> i64 {
     if digits.is_empty() {
         return 0;
     }
-    match digits.parse::<i64>() {
-        Ok(mag) => {
-            if negative {
-                -mag
-            } else {
-                mag
-            }
-        }
-        Err(_) => {
-            if negative {
-                i64::MIN
-            } else {
-                i64::MAX
-            }
-        }
+    if negative {
+        format!("-{digits}").parse::<i64>().unwrap_or(i64::MIN)
+    } else {
+        digits.parse::<u64>().map_or(-1, |value| value as i64)
     }
 }
 
@@ -1246,8 +1295,64 @@ fn cast_to_year(v: &Datum) -> Result<Datum, EvalError> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use super::*;
     use crate::context::NoColumns;
+
+    struct WarningContext(RefCell<Vec<(u16, String)>>);
+
+    impl crate::Columns for WarningContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    #[test]
+    fn signed_string_overflow_keeps_go_complement_and_warning_semantics() {
+        for (input, expected, warning) in [
+            (
+                "18446744073709551614",
+                -2,
+                (
+                    8030,
+                    "Cast to signed converted positive out-of-range integer to its negative complement",
+                ),
+            ),
+            (
+                "18446744073709551616",
+                -1,
+                (1292, "Truncated incorrect INTEGER value: '18446744073709551616'"),
+            ),
+            (
+                "-9223372036854775809",
+                i64::MIN,
+                (1292, "Truncated incorrect INTEGER value: '-9223372036854775809'"),
+            ),
+        ] {
+            let ctx = WarningContext(RefCell::new(Vec::new()));
+            assert_eq!(
+                eval_cast(
+                    &CastType::Signed,
+                    Datum::new_string(input),
+                    None,
+                    &ctx,
+                )
+                .unwrap(),
+                Datum::Int(expected),
+                "{input}",
+            );
+            assert_eq!(
+                ctx.0.borrow().as_slice(),
+                &[(warning.0, warning.1.to_owned())],
+                "{input}",
+            );
+        }
+    }
 
     #[test]
     fn cast_decimal_as_unsigned_keeps_the_upper_half_of_unsigned_bigint() {

@@ -59,5 +59,5 @@ pub(crate) fn dispatch(
         .or_else(|| json2::dispatch(name, vals))
         .or_else(|| regexp::dispatch(name, vals))
         .or_else(|| compare2::dispatch(name, vals, ctx))
-        .or_else(|| misc::dispatch(name, vals))
+        .or_else(|| misc::dispatch_in(name, vals, ctx))
 }
