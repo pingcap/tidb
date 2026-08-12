@@ -1937,6 +1937,7 @@ dependencies = [
  "tidb-exec",
  "tidb-executor",
  "tidb-model",
+ "tidb-mysql",
  "tidb-parser",
  "tidb-pd-client",
  "tidb-planner",

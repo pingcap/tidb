@@ -51,6 +51,7 @@ pub mod partialjson;
 pub mod password_validation;
 pub mod ppcpuusage;
 pub mod prefetch;
+pub mod printer;
 pub mod promutil;
 pub mod queue;
 pub mod redact;

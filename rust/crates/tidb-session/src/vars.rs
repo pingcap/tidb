@@ -436,6 +436,9 @@ impl SessionVars {
         if def.name == "version_comment" {
             return Ok(self.version_info.version_comment());
         }
+        if def.name == "version" {
+            return Ok(self.version_info.server_version.clone());
+        }
         // An INSTANCE-scoped variable has no session copy either, and its
         // node-wide value is the only one there is: without this arm a
         // `SET GLOBAL tidb_general_log = 1` would store a value that
@@ -453,6 +456,12 @@ impl SessionVars {
     /// Installs the immutable build identity supplied by the server startup.
     pub fn set_version_info(&mut self, version_info: VersionInfo) {
         self.version_info = version_info;
+    }
+
+    /// The immutable build/config identity returned by `TIDB_VERSION()`.
+    #[must_use]
+    pub(crate) fn tidb_info(&self) -> String {
+        tidb_util::printer::get_tidb_info(&self.version_info)
     }
 
     /// A snapshot of the session overrides `name` (and its alias) currently

@@ -653,7 +653,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         // Go `writeInitialHandshake` (`pkg/server/conn.go:496`) hardcodes this
         // one word, and only this one: the handshake precedes any session.
         status_flags: WireStatus::AUTOCOMMIT.bits(),
-        server_version: "5.7.25-TiDB-Rust".to_owned(),
+        server_version: runtime.version_info.server_version.clone(),
         auth_plugin: AUTH_NATIVE_PASSWORD.to_owned(),
     };
     output

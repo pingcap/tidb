@@ -50,6 +50,9 @@ pub const TIDB_ENTERPRISE_EXTENSION_GIT_HASH: &str =
         None => "",
     };
 
+/// Compiler/runtime identity captured by this crate's build script.
+pub const RUST_VERSION: &str = env!("TIDB_RUST_VERSION");
+
 /// One server process's coherent build and edition identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VersionInfo {
@@ -63,6 +66,20 @@ pub struct VersionInfo {
     pub edition: String,
     /// Enterprise extension commit hash, empty for builds without it.
     pub enterprise_extension_git_hash: String,
+    /// TiDB release version used by the MySQL handshake and status surfaces.
+    pub release_version: String,
+    /// MySQL-compatible server version used by `VERSION()` and the handshake.
+    pub server_version: String,
+    /// Compiler/runtime version for this Rust binary.
+    pub runtime_version: String,
+    /// Whether startup's linker flag requires table validation before drop.
+    pub check_table_before_drop: bool,
+    /// Configured storage backend.
+    pub store: String,
+    /// Compile-time kernel type (`Classic` or `Next Generation`).
+    pub kernel_type: String,
+    /// Next-generation deployment mode; absent for the classic kernel.
+    pub deploy_mode: Option<String>,
 }
 
 impl Default for VersionInfo {
@@ -75,12 +92,20 @@ impl VersionInfo {
     /// Captures the five build-injected package values.
     #[must_use]
     pub fn build_default() -> Self {
+        let runtime_versions = tidb_mysql::runtime_versions();
         Self {
             build_ts: TIDB_BUILD_TS.to_owned(),
             git_hash: TIDB_GIT_HASH.to_owned(),
             git_branch: TIDB_GIT_BRANCH.to_owned(),
             edition: TIDB_EDITION.to_owned(),
             enterprise_extension_git_hash: TIDB_ENTERPRISE_EXTENSION_GIT_HASH.to_owned(),
+            release_version: runtime_versions.tidb_release_version,
+            server_version: runtime_versions.server_version,
+            runtime_version: RUST_VERSION.to_owned(),
+            check_table_before_drop: false,
+            store: "tikv".to_owned(),
+            kernel_type: "Classic".to_owned(),
+            deploy_mode: None,
         }
     }
 
@@ -90,6 +115,34 @@ impl VersionInfo {
         if !edition.is_empty() {
             self.edition = edition.to_owned();
         }
+        self
+    }
+
+    /// Applies Go startup's non-empty classic-kernel version overrides.
+    #[must_use]
+    pub fn with_configured_versions(mut self, release_version: &str, server_version: &str) -> Self {
+        if !release_version.is_empty() {
+            self.release_version = release_version.to_owned();
+        }
+        if !server_version.is_empty() {
+            self.server_version = server_version.to_owned();
+        }
+        self
+    }
+
+    /// Captures the startup settings printed beside the immutable build identity.
+    #[must_use]
+    pub fn with_runtime_environment(
+        mut self,
+        check_table_before_drop: bool,
+        store: impl Into<String>,
+        kernel_type: impl Into<String>,
+        deploy_mode: Option<String>,
+    ) -> Self {
+        self.check_table_before_drop = check_table_before_drop;
+        self.store = store.into();
+        self.kernel_type = kernel_type.into();
+        self.deploy_mode = deploy_mode;
         self
     }
 
@@ -141,6 +194,19 @@ mod tests {
             TIDB_ENTERPRISE_EXTENSION_GIT_HASH
         );
         assert_eq!(
+            build.release_version,
+            tidb_mysql::runtime_versions().tidb_release_version
+        );
+        assert_eq!(
+            build.server_version,
+            tidb_mysql::runtime_versions().server_version
+        );
+        assert_eq!(build.runtime_version, RUST_VERSION);
+        assert!(!build.check_table_before_drop);
+        assert_eq!(build.store, "tikv");
+        assert_eq!(build.kernel_type, "Classic");
+        assert_eq!(build.deploy_mode, None);
+        assert_eq!(
             build.clone().with_configured_edition("").edition,
             build.edition
         );
@@ -148,5 +214,19 @@ mod tests {
             build.with_configured_edition("Starter").version_comment(),
             "TiDB Server (Apache License 2.0) Starter Edition, MySQL 8.0 compatible"
         );
+
+        let configured = VersionInfo::build_default().with_runtime_environment(
+            true,
+            "tikv",
+            "Next Generation",
+            Some("starter".to_owned()),
+        );
+        assert!(configured.check_table_before_drop);
+        assert_eq!(configured.kernel_type, "Next Generation");
+        assert_eq!(configured.deploy_mode.as_deref(), Some("starter"));
+
+        let overridden = configured.with_configured_versions("v9.0.0", "8.0.11-TiDB-v9.0.0");
+        assert_eq!(overridden.release_version, "v9.0.0");
+        assert_eq!(overridden.server_version, "8.0.11-TiDB-v9.0.0");
     }
 }

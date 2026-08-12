@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Complete TiDB utility package transcreations shared by the Rust SQL node."
+build = "build.rs"
 
 [lints]
 workspace = true

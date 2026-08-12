@@ -168,6 +168,7 @@ fn native_response(password: &[u8], salt: &[u8]) -> [u8; 20] {
 }
 
 struct InitialHandshakeFields {
+    server_version: String,
     salt: [u8; 20],
     capability: u32,
 }
@@ -187,6 +188,7 @@ fn read_initial_handshake(initial: &[u8]) -> InitialHandshakeFields {
     let low = u16::from_le_bytes([initial[first + 9], initial[first + 10]]);
     let high = u16::from_le_bytes([initial[first + 14], initial[first + 15]]);
     InitialHandshakeFields {
+        server_version: String::from_utf8(initial[1..version_end].to_vec()).unwrap(),
         salt,
         capability: u32::from(low) | (u32::from(high) << 16),
     }
@@ -293,6 +295,11 @@ fn connect(database: InitialDatabase) -> (TcpStream, PacketReader<TcpStream>, st
     reader.set_sequence(0);
     let initial = reader.read_packet().unwrap();
     let fields = read_initial_handshake(&initial);
+    assert_eq!(
+        fields.server_version,
+        tidb_util::versioninfo::VersionInfo::build_default().server_version,
+        "the wire handshake must use the process identity snapshot"
+    );
     write_client_response(
         &mut client,
         fields.capability,

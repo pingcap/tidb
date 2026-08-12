@@ -594,6 +594,9 @@ impl ScalarFunction {
                 "version" => {
                     return Ok(ctx.sysvar(None, "version").unwrap_or(Datum::Null));
                 }
+                "tidb_version" => {
+                    return Ok(Datum::Bytes(ctx.tidb_info().into_bytes()));
+                }
                 // Go `builtinCurrentUserSig` reports the MATCHED grant
                 // identity (`UserIdentity.String()`, which prefers
                 // AuthUsername@AuthHostname). CURRENT_USER is the only name
@@ -1037,6 +1040,7 @@ mod tests {
         current_user: Option<String>,
         current_role: Option<String>,
         connection_id: Option<u64>,
+        tidb_info: Option<String>,
     }
 
     impl Columns for InfoColumns {
@@ -1054,6 +1058,14 @@ mod tests {
 
         fn connection_id(&self) -> Option<u64> {
             self.connection_id
+        }
+
+        fn tidb_info(&self) -> String {
+            self.tidb_info.clone().unwrap_or_else(|| {
+                tidb_util::printer::get_tidb_info(
+                    &tidb_util::versioninfo::VersionInfo::build_default(),
+                )
+            })
         }
     }
 
@@ -1110,6 +1122,19 @@ mod tests {
         assert_eq!(
             eval_info("connection_id", result_type, &ctx),
             Datum::UInt(1)
+        );
+    }
+
+    // Go TestTiDBVersion.
+    #[test]
+    fn test_tidb_version() {
+        let ctx = InfoColumns {
+            tidb_info: Some("Release Version: test\nKernel Type: Classic".to_owned()),
+            ..InfoColumns::default()
+        };
+        assert_eq!(
+            eval_info("tidb_version", text_ft(), &ctx),
+            Datum::Bytes(b"Release Version: test\nKernel Type: Classic".to_vec())
         );
     }
 

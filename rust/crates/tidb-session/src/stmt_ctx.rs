@@ -235,6 +235,7 @@ impl Session {
             Some(self.current_db.clone())
         };
         let version = self.vars.get_system("version").ok();
+        let tidb_info = Some(self.vars.tidb_info());
         let zone = self.session_time_zone();
         let clock = self.statement_clock(&zone);
         let sysdate_is_now = self
@@ -411,7 +412,7 @@ impl Session {
                 .with_outer_join_reorder(outer_join_reorder)
                 .with_static_partition_prune(static_partition_prune)
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
-                .with_session_state(current_db, version)
+                .with_session_state(current_db, version, tidb_info)
                 .with_user(self.current_user.clone(), self.login_user.clone())
                 .with_global_sysvars(password_validation_globals.clone())
                 .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
@@ -442,7 +443,7 @@ impl Session {
         )
         .with_date_modes(date_modes)
         .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
-        .with_session_state(current_db, version)
+        .with_session_state(current_db, version, tidb_info)
         .with_user(self.current_user.clone(), self.login_user.clone())
         .with_global_sysvars(password_validation_globals)
         .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))

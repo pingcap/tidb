@@ -7,6 +7,7 @@
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::PathBuf;
+use std::process::Command;
 use std::time::Duration;
 
 use tidb_server::{
@@ -177,6 +178,42 @@ tidb-edition = "Starter"
     assert_eq!(
         config.version_info.version_comment(),
         "TiDB Server (Apache License 2.0) Starter Edition, MySQL 8.0 compatible"
+    );
+}
+
+#[test]
+fn version_flag_prints_the_effective_source_identity_without_topology() {
+    let defaults = NodeConfig::version_info_for_display(["tidb-server", "-V"]).unwrap();
+    assert_eq!(defaults.store, "unistore");
+
+    let file = ConfigFile::write(
+        "version_flag",
+        "store = \"tikv\"\n\
+         tidb-edition = \"Starter\"\n\
+         tidb-release-version = \"v9.0.0\"\n\
+         server-version = \"8.0.11-TiDB-v9.0.0\"\n",
+    );
+    let path = file.0.to_string_lossy().into_owned();
+    let expected = NodeConfig::version_info_for_display([
+        "tidb-server",
+        "-V",
+        "--config",
+        path.as_str(),
+    ])
+    .unwrap();
+    assert_eq!(expected.store, "tikv");
+    assert_eq!(expected.edition, "Starter");
+    assert_eq!(expected.release_version, "v9.0.0");
+    assert_eq!(expected.server_version, "8.0.11-TiDB-v9.0.0");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tidb-server"))
+        .args(["-V", "--config", path.as_str()])
+        .output()
+        .expect("run tidb-server -V");
+    assert!(output.status.success(), "{:?}", output.status);
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim_end(),
+        tidb_util::printer::get_tidb_info(&expected)
     );
 }
 

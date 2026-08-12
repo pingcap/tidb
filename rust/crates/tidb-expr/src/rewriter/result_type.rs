@@ -637,6 +637,12 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             ft.set_flen(64);
             ft
         }
+        // Go sizes this VarString from `printer.GetTiDBInfo()`.
+        "tidb_version" if args.is_empty() => ft_with_flen(
+            text(),
+            i64::try_from(tidb_util::printer::get_tidb_info(&Default::default()).len())
+                .unwrap_or(i64::MAX),
+        ),
         // Go `connectionIDFunctionClass` fixes an unsigned `LongLong`.
         "connection_id" => {
             let mut ft = int();

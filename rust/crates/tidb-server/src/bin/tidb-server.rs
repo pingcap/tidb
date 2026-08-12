@@ -29,7 +29,28 @@ fn runtime_exit_code<E: std::fmt::Display>(result: Result<(), E>) -> ExitCode {
 }
 
 fn main() -> ExitCode {
-    match NodeConfig::parse(std::env::args()) {
+    let arguments = std::env::args().collect::<Vec<_>>();
+    if arguments
+        .iter()
+        .skip(1)
+        .any(|argument| argument == "-h" || argument == "--help")
+    {
+        println!("{}", NodeConfig::help_text());
+        return ExitCode::SUCCESS;
+    }
+    if arguments.iter().skip(1).any(|argument| argument == "-V") {
+        return match NodeConfig::version_info_for_display(arguments) {
+            Ok(info) => {
+                println!("{}", tidb_util::printer::get_tidb_info(&info));
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("tidb-server configuration failure: {error}");
+                ExitCode::from(2)
+            }
+        };
+    }
+    match NodeConfig::parse(arguments) {
         Ok(config) => runtime_exit_code(run_configured_node(config)),
         Err(NodeConfigError::HelpRequested) => {
             println!("{}", NodeConfig::help_text());

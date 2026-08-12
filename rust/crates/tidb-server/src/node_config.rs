@@ -31,6 +31,7 @@ use base64::engine::general_purpose::URL_SAFE;
 use base64::Engine;
 use tidb_config::config_tree::Config as SourceConfig;
 use tidb_config::configtypes::parse_go_duration;
+use tidb_config::{deploymode, kerneltype};
 use tidb_pd_client::ClusterSecurity;
 use tidb_protocol::DEFAULT_MAX_ALLOWED_PACKET;
 use tidb_util::disk::{SpillEncryptionMethod, SpillStorageSpec};
@@ -300,10 +301,12 @@ const SUPPORTED_CONFIG_LEAVES: &[&str] = &[
     "security.spilled-file-encryption-method",
     "security.ssl-cert",
     "security.ssl-key",
+    "server-version",
     "store",
+    "tidb-edition",
+    "tidb-release-version",
     "tmp-storage-path",
     "tmp-storage-quota",
-    "tidb-edition",
 ];
 
 struct LoadedSourceConfig {
@@ -473,6 +476,8 @@ impl NodeConfig {
         let mut cluster_ssl_key = None;
         let mut config_path = None;
         let mut tidb_edition = None;
+        let mut tidb_release_version = None;
+        let mut server_version = None;
 
         while let Some(argument) = pending.next() {
             if argument == "--help" || argument == "-h" {
@@ -664,6 +669,12 @@ impl NodeConfig {
             if loaded.is_defined("tidb-edition") {
                 tidb_edition = Some(config.tidb_edition.clone());
             }
+            if loaded.is_defined("tidb-release-version") {
+                tidb_release_version = Some(config.tidb_release_version.clone());
+            }
+            if loaded.is_defined("server-version") {
+                server_version = Some(config.server_version.clone());
+            }
         }
 
         let host = parse_ip("--host", host.as_deref().unwrap_or("127.0.0.1"))?;
@@ -788,8 +799,21 @@ impl NodeConfig {
             host,
             port,
         );
-        let version_info = VersionInfo::build_default()
-            .with_configured_edition(tidb_edition.as_deref().unwrap_or_default());
+        let deploy_mode = if kerneltype::is_next_gen() {
+            Some(source.as_ref().map_or_else(
+                || deploymode::get().to_string(),
+                |loaded| loaded.config.deploy_mode.to_string(),
+            ))
+        } else {
+            None
+        };
+        let version_info = configured_version_info(
+            tidb_edition.as_deref().unwrap_or_default(),
+            tidb_release_version.as_deref().unwrap_or_default(),
+            server_version.as_deref().unwrap_or_default(),
+            store,
+            deploy_mode,
+        )?;
 
         Ok(Self {
             host,
@@ -818,10 +842,80 @@ impl NodeConfig {
         })
     }
 
+    /// Builds the identity printed by `-V` without requiring a runnable node topology.
+    pub fn version_info_for_display<I, S>(arguments: I) -> Result<VersionInfo, NodeConfigError>
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let mut arguments = arguments.into_iter().map(Into::into);
+        let _program = arguments.next();
+        let mut pending = arguments.peekable();
+        let mut config_path = None;
+        let mut store = None;
+        while let Some(argument) = pending.next() {
+            if argument == "-V" {
+                continue;
+            }
+            if argument == "--config" {
+                let value = pending
+                    .next()
+                    .filter(|value| !value.starts_with("--"))
+                    .ok_or_else(|| NodeConfigError::MissingValue("--config".to_owned()))?;
+                set_once(&mut config_path, "--config", value)?;
+            } else if let Some(value) = argument.strip_prefix("--config=") {
+                set_once(&mut config_path, "--config", value.to_owned())?;
+            } else if argument == "--store" {
+                let value = pending
+                    .next()
+                    .filter(|value| !value.starts_with("--"))
+                    .ok_or_else(|| NodeConfigError::MissingValue("--store".to_owned()))?;
+                set_once(&mut store, "--store", value)?;
+            } else if let Some(value) = argument.strip_prefix("--store=") {
+                set_once(&mut store, "--store", value.to_owned())?;
+            }
+        }
+
+        let source = config_path.as_deref().map(load_source_config).transpose()?;
+        let defaults = SourceConfig::default();
+        let config = source.as_ref().map_or(&defaults, |loaded| &loaded.config);
+        let deploy_mode = kerneltype::is_next_gen().then(|| config.deploy_mode.to_string());
+        configured_version_info(
+            &config.tidb_edition,
+            &config.tidb_release_version,
+            &config.server_version,
+            store.as_deref().unwrap_or(&config.store.0),
+            deploy_mode,
+        )
+    }
+
+    /// JSON projection of every startup value this bounded node owns.
+    pub(crate) fn startup_config_json(&self) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({
+            "host": self.host.to_string(),
+            "port": self.port,
+            "path": self.pd_endpoints.join(","),
+            "store": &self.version_info.store,
+            "max-allowed-packet": self.max_allowed_packet,
+            "instance": { "max_connections": self.max_connections },
+            "lease-ms": u64::try_from(self.schema_lease.as_millis()).unwrap_or(u64::MAX),
+            "cluster-session": self.cluster_session,
+            "load-privileges": self.load_privileges,
+            "security": {
+                "auto-tls": self.auto_tls,
+                "disconnect-on-expired-password": self.disconnect_on_expired_password,
+                "enable-sem": self.sem_enabled,
+                "ssl-cert": self.ssl_cert.as_ref().map(|path| path.to_string_lossy().into_owned()),
+                "ssl-key": self.ssl_key.as_ref().map(|path| path.to_string_lossy().into_owned()),
+            },
+        }))
+        .expect("owned startup config projection is serializable")
+    }
+
     /// Stable usage text printed by the executable for `--help`.
     #[must_use]
     pub const fn help_text() -> &'static str {
-        "Usage: tidb-server [--config <tidb.toml>] --path <pd[,pd...]> \
+        "Usage: tidb-server [-V] [--config <tidb.toml>] --path <pd[,pd...]> \
 [--read-table <database> <table> <table-id> <column-count> \
 <name>:<id>:<clustered-pk|stored-not-null> \
 [<name>:<id>:<clustered-pk|stored-not-null> ...]] \
@@ -836,6 +930,41 @@ impl NodeConfig {
 [--no-disconnect-on-expired-password] \
 [--cluster-ssl-ca <ca-pem> [--cluster-ssl-cert <cert-pem> --cluster-ssl-key <key-pem>]]"
     }
+}
+
+fn configured_version_info(
+    edition: &str,
+    release_version: &str,
+    server_version: &str,
+    store: &str,
+    deploy_mode: Option<String>,
+) -> Result<VersionInfo, NodeConfigError> {
+    let mut info = VersionInfo::build_default();
+    if kerneltype::is_next_gen() {
+        if !edition.is_empty() || !release_version.is_empty() || !server_version.is_empty() {
+            return Err(invalid(
+                "--config",
+                "config options tidb-edition, tidb-release-version and server-version are not \
+                 allowed to set in nextgen kernel",
+            ));
+        }
+        let component =
+            tidb_mysql::normalize_tidb_release_version_for_next_gen(&info.release_version)
+                .to_owned();
+        let server_version = tidb_mysql::build_tidbx_server_version(&component)
+            .map_err(|error| invalid("--config", &error.to_string()))?;
+        info = info.with_configured_versions(&component, &server_version);
+    } else {
+        info = info
+            .with_configured_edition(edition)
+            .with_configured_versions(release_version, server_version);
+    }
+    Ok(info.with_runtime_environment(
+        tidb_config::config_tree::config::check_table_before_drop(),
+        store,
+        kerneltype::name(),
+        deploy_mode,
+    ))
 }
 
 fn parse_read_table<I>(
@@ -1512,5 +1641,28 @@ mod tests {
             ),
             Err(NodeConfigError::DuplicateOption(_))
         ));
+    }
+
+    #[test]
+    fn startup_config_projection_contains_the_effective_owned_values() {
+        let config = NodeConfig::parse([
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--load-table",
+            "test.rows",
+            "--auth-file",
+            "/tmp/users.tsv",
+            "--port",
+            "4406",
+        ])
+        .unwrap();
+        let projected: serde_json::Value =
+            serde_json::from_slice(&config.startup_config_json()).unwrap();
+        assert_eq!(projected["host"], "127.0.0.1");
+        assert_eq!(projected["port"], 4406);
+        assert_eq!(projected["path"], "127.0.0.1:2379");
+        assert_eq!(projected["store"], "tikv");
+        assert_eq!(projected["instance"]["max_connections"], 8);
     }
 }

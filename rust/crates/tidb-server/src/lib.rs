@@ -197,6 +197,7 @@ pub use wire_status::{
 /// serves the cluster's whole loaded catalog through the wide-SQL session
 /// driver ([`cluster_session_node`]), so it is routed first.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
+    tidb_util::printer::print_tidb_info(&config.version_info, &config.startup_config_json());
     let _system_time_monitor = start_system_time_monitor();
     let spill_storage = open_spill_storage(&config)?;
     if config.cluster_session {

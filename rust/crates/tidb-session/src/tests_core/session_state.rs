@@ -77,13 +77,25 @@ fn session_variables() {
 #[test]
 fn version_comment_uses_the_server_identity_snapshot() {
     let mut session = Session::new();
-    session.set_version_info(
-        tidb_util::versioninfo::VersionInfo::build_default().with_configured_edition("Starter"),
-    );
+    let info = tidb_util::versioninfo::VersionInfo::build_default()
+        .with_configured_edition("Starter")
+        .with_configured_versions("v9.0.0", "8.0.11-TiDB-v9.0.0")
+        .with_runtime_environment(true, "tikv", "Classic", None);
+    let expected_tidb_info = tidb_util::printer::get_tidb_info(&info);
+    let expected_server_version = info.server_version.clone();
+    session.set_version_info(info);
 
     assert_eq!(
         scalar_text(&mut session, "SELECT @@version_comment"),
         Some("TiDB Server (Apache License 2.0) Starter Edition, MySQL 8.0 compatible".to_owned())
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT TIDB_VERSION()"),
+        Some(expected_tidb_info)
+    );
+    assert_eq!(
+        scalar_text(&mut session, "SELECT VERSION()"),
+        Some(expected_server_version)
     );
     assert!(matches!(
         session.apply_set("SET version_comment = 'changed'"),
