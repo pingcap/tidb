@@ -1118,7 +1118,7 @@ func TestParquetVariousTypes(t *testing.T) {
 			}
 		}
 
-		pc := []testutils.ParquetColumn{
+		pc := []ParquetColumn{
 			{
 				Name:      "positive",
 				Type:      parquet.Types.ByteArray,
@@ -1158,7 +1158,7 @@ func TestParquetVariousTypes(t *testing.T) {
 
 		dir := t.TempDir()
 		fileName := "test.decimal.dictionary.parquet"
-		require.NoError(t, testutils.WriteParquetFile(dir, fileName, pc, rows))
+		require.NoError(t, WriteParquetFile(dir, fileName, pc, rows))
 
 		rdr, err := file.OpenParquetFile(filepath.Join(dir, fileName), false)
 		require.NoError(t, err)
@@ -1171,7 +1171,7 @@ func TestParquetVariousTypes(t *testing.T) {
 			require.True(t, cc.HasDictionaryPage(), "column %s is not dictionary encoded", pc[i].Name)
 		}
 
-		reader := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{})
+		reader := newParquetParserForTest(context.Background(), t, dir, fileName, 0, ParquetFileMeta{})
 
 		expectedValues := []string{
 			"123.45", "-123.45", "123.45",
