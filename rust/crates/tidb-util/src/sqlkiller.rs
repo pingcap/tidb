@@ -36,7 +36,7 @@
 //! `intest`), and `Reset`.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::SeqCst};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use tidb_error::mysql::FormatArg;
@@ -44,6 +44,10 @@ use tidb_error::terror::TerrorError;
 
 use crate::dbterror::exeerrors;
 use crate::intest;
+
+fn lock_unpoison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Kill signal types (Go `killSignal` constants). When adding a new signal,
 /// the source also updates `store/driver/error/ToTiDBErr`.
@@ -112,15 +116,19 @@ impl KillEventSubscription {
 
     /// Whether this subscription's channel has been closed.
     pub fn is_ready(&self) -> bool {
-        let state = self.shared.state.lock().unwrap();
+        let state = lock_unpoison(&self.shared.state);
         Self::ready(&state, self.generation)
     }
 
     /// Waits until a kill or reset closes this subscription.
     pub fn wait(&self) {
-        let mut state = self.shared.state.lock().unwrap();
+        let mut state = lock_unpoison(&self.shared.state);
         while !Self::ready(&state, self.generation) {
-            state = self.shared.ready.wait(state).unwrap();
+            state = self
+                .shared
+                .ready
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner);
         }
     }
 }
@@ -160,7 +168,7 @@ impl SqlKiller {
     /// Returns the current kill-event subscription (Go
     /// `GetKillEventChan`).
     pub fn get_kill_event(&self) -> KillEventSubscription {
-        let generation = self.kill_event.state.lock().unwrap().generation;
+        let generation = lock_unpoison(&self.kill_event.state).generation;
         KillEventSubscription {
             shared: Arc::clone(&self.kill_event),
             generation,
@@ -169,7 +177,7 @@ impl SqlKiller {
 
     /// Whether the kill event has been triggered (a closed Go channel).
     pub fn kill_event_triggered(&self) -> bool {
-        self.kill_event.state.lock().unwrap().triggered
+        lock_unpoison(&self.kill_event.state).triggered
     }
 
     /// Subscribes to and waits for the current kill event.
@@ -178,7 +186,7 @@ impl SqlKiller {
     }
 
     fn trigger_kill_event(&self) {
-        let mut state = self.kill_event.state.lock().unwrap();
+        let mut state = lock_unpoison(&self.kill_event.state);
         if state.triggered {
             return;
         }
@@ -187,7 +195,7 @@ impl SqlKiller {
     }
 
     fn reset_kill_event(&self) {
-        let mut state = self.kill_event.state.lock().unwrap();
+        let mut state = lock_unpoison(&self.kill_event.state);
         state.generation = state.generation.wrapping_add(1);
         state.triggered = false;
         state.desc.clear();
@@ -197,7 +205,7 @@ impl SqlKiller {
     /// Sets the kill-event reason and sends the signal (Go
     /// `SendKillSignalWithKillEventReason`).
     pub fn send_kill_signal_with_reason(&self, signal: KillSignal, desc: &str) {
-        self.kill_event.state.lock().unwrap().desc = desc.to_string();
+        lock_unpoison(&self.kill_event.state).desc = desc.to_string();
         self.send_kill_signal_inner(signal);
         self.trigger_kill_event();
     }
@@ -231,7 +239,7 @@ impl SqlKiller {
     }
 
     fn kill_event_reason(&self) -> String {
-        self.kill_event.state.lock().unwrap().desc.clone()
+        lock_unpoison(&self.kill_event.state).desc.clone()
     }
 
     /// The error for a kill status (Go `getKillError`); `None` when no kill
@@ -273,7 +281,7 @@ impl SqlKiller {
     /// Closes the result set to release resources when a killed query is
     /// stuck writing to the client (Go `FinishResultSet`).
     pub fn finish_result_set(&self) {
-        let finish = self.finish.lock().unwrap();
+        let finish = lock_unpoison(&self.finish);
         if let Some(f) = finish.as_ref() {
             f();
         }
@@ -281,12 +289,12 @@ impl SqlKiller {
 
     /// Sets the finish function.
     pub fn set_finish_func(&self, f: FinishFn) {
-        *self.finish.lock().unwrap() = Some(f);
+        *lock_unpoison(&self.finish) = Some(f);
     }
 
     /// Clears the finish function.
     pub fn clear_finish_func(&self) {
-        *self.finish.lock().unwrap() = None;
+        *lock_unpoison(&self.finish) = None;
     }
 
     /// Installs the connection-liveness probe and returns its registration.
@@ -298,7 +306,7 @@ impl SqlKiller {
             .next_alive_registration
             .fetch_add(1, SeqCst)
             .wrapping_add(1);
-        *self.is_connection_alive.lock().unwrap() = Some(AliveProbe {
+        *lock_unpoison(&self.is_connection_alive) = Some(AliveProbe {
             registration,
             callback: Arc::from(f),
         });
@@ -307,7 +315,7 @@ impl SqlKiller {
 
     /// Removes the probe only when `registration` still owns the slot.
     pub fn clear_is_connection_alive(&self, registration: ConnectionAliveRegistration) -> bool {
-        let mut probe = self.is_connection_alive.lock().unwrap();
+        let mut probe = lock_unpoison(&self.is_connection_alive);
         if probe.as_ref().map(|p| p.registration) != Some(registration.0) {
             return false;
         }
@@ -319,10 +327,7 @@ impl SqlKiller {
     /// `HandleSignal`). Also polls connection liveness at most once per
     /// second (1ms under `intest`), like the source.
     pub fn handle_signal(&self) -> Option<TerrorError> {
-        let alive = self
-            .is_connection_alive
-            .lock()
-            .unwrap()
+        let alive = lock_unpoison(&self.is_connection_alive)
             .as_ref()
             .map(|probe| Arc::clone(&probe.callback));
         if let Some(fn_alive) = alive {
@@ -333,7 +338,7 @@ impl SqlKiller {
             };
             let now = Instant::now();
             let should_check = {
-                let mut last = self.last_check_time.lock().unwrap();
+                let mut last = lock_unpoison(&self.last_check_time);
                 match *last {
                     None => {
                         *last = Some(now);
@@ -364,10 +369,7 @@ impl SqlKiller {
 
     /// Checks connection liveness immediately (Go `CheckConnectionAlive`).
     pub fn check_connection_alive(&self) {
-        let alive = self
-            .is_connection_alive
-            .lock()
-            .unwrap()
+        let alive = lock_unpoison(&self.is_connection_alive)
             .as_ref()
             .map(|probe| Arc::clone(&probe.callback));
         if let Some(fn_alive) = alive {
@@ -384,7 +386,7 @@ impl SqlKiller {
         }
         self.signal.store(0, SeqCst);
         self.reset_kill_event();
-        *self.last_check_time.lock().unwrap() = None;
+        *lock_unpoison(&self.last_check_time) = None;
     }
 }
 
@@ -575,5 +577,22 @@ mod tests {
         killer.in_write_result_set.store(true, SeqCst);
         assert!(killer.in_write_result_set.load(SeqCst));
         killer.in_write_result_set.store(false, SeqCst);
+    }
+
+    #[test]
+    fn recovered_finish_panic_does_not_disable_the_killer() {
+        let killer = SqlKiller::default();
+        killer.set_finish_func(Box::new(|| panic!("finish failed")));
+
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            killer.finish_result_set();
+        }))
+        .is_err());
+
+        let called = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&called);
+        killer.set_finish_func(Box::new(move || observed.store(true, SeqCst)));
+        killer.finish_result_set();
+        assert!(called.load(SeqCst));
     }
 }
