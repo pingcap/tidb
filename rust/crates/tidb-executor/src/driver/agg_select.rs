@@ -1230,6 +1230,7 @@ fn build_aggregation(
             vec![pred],
             source,
             ctx.clone(),
+            ctx.statement_memory(),
         ));
     }
     // The `Selection` is RECORDED whenever the statement wrote a `WHERE`,
@@ -1414,6 +1415,7 @@ fn build_having_stage(
             vec![predicate],
             root,
             ctx.clone(),
+            ctx.statement_memory(),
         ));
     }
     Ok(root)

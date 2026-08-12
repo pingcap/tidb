@@ -20,9 +20,12 @@
 //!
 //! The executor retains its position in the current child chunk across calls,
 //! stops when the output chunk is full, and returns one row at a time when a
-//! filter has order-sensitive side effects. Pure filters still use the scalar
-//! evaluator; Go's column-vector filter implementation and memory-accounting
-//! instrumentation remain outside this seed.
+//! filter has order-sensitive side effects. Its cached child chunk is charged
+//! to the statement memory budget for its whole open lifetime. Pure filters
+//! still use the scalar evaluator; Go's column-vector filter implementation
+//! remains outside this seed.
+
+use std::sync::Arc;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use tidb_chunk::chunk::Chunk;
@@ -31,6 +34,9 @@ use tidb_expr::evaluator::vectorizable;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::{truthy_of, Columns};
+use tidb_util::memory::Tracker;
+
+use crate::StatementMemory;
 
 /// Go `SelectionExec`: filters its child's rows by a conjunction of predicates.
 pub struct SelectionExec<C: Columns> {
@@ -38,7 +44,9 @@ pub struct SelectionExec<C: Columns> {
     filters: Vec<Expression>,
     child: Box<dyn Executor>,
     ctx: C,
-    child_chunk: Chunk,
+    child_chunk: Option<Chunk>,
+    tracker: Arc<Tracker>,
+    memory: StatementMemory,
     input_row: usize,
     batched: bool,
     done: bool,
@@ -53,15 +61,18 @@ impl<C: Columns> SelectionExec<C> {
         filters: Vec<Expression>,
         child: Box<dyn Executor>,
         ctx: C,
+        memory: StatementMemory,
     ) -> Self {
-        let child_chunk = child.new_chunk();
         let batched = vectorizable(&filters);
+        let tracker = memory.operator_tracker(meta.id());
         SelectionExec {
             meta,
             filters,
             child,
             ctx,
-            child_chunk,
+            child_chunk: None,
+            tracker,
+            memory,
             input_row: 0,
             batched,
             done: false,
@@ -79,12 +90,20 @@ impl<C: Columns> SelectionExec<C> {
         }
         Ok(true)
     }
+
+    fn release_child_chunk(&mut self) {
+        self.child_chunk = None;
+        self.tracker.replace_bytes_used(0);
+    }
 }
 
 impl<C: Columns> Executor for SelectionExec<C> {
     fn open(&mut self) -> Result<(), ExecError> {
+        self.release_child_chunk();
         self.child.open()?;
-        self.child_chunk.reset();
+        let child_chunk = self.child.new_chunk();
+        self.tracker.replace_bytes_used(child_chunk.memory_usage());
+        self.child_chunk = Some(child_chunk);
         self.input_row = 0;
         self.done = false;
         Ok(())
@@ -95,13 +114,18 @@ impl<C: Columns> Executor for SelectionExec<C> {
         if self.done {
             return Ok(());
         }
+        self.memory.check()?;
         loop {
-            let rows = self.child_chunk.num_rows();
+            let child_chunk = self
+                .child_chunk
+                .as_ref()
+                .expect("selection child chunk exists while open");
+            let rows = child_chunk.num_rows();
             while self.input_row < rows {
                 if req.is_full() {
                     return Ok(());
                 }
-                let row = self.child_chunk.get_row(self.input_row);
+                let row = child_chunk.get_row(self.input_row);
                 let selected = self.row_passes(row)?;
                 if selected {
                     req.append_row(row);
@@ -112,9 +136,17 @@ impl<C: Columns> Executor for SelectionExec<C> {
                 }
             }
 
-            self.child.next(&mut self.child_chunk)?;
+            let child_chunk = self
+                .child_chunk
+                .as_mut()
+                .expect("selection child chunk exists while open");
+            let before = child_chunk.memory_usage();
+            let result = self.child.next(child_chunk);
+            self.tracker.consume(child_chunk.memory_usage() - before);
+            result?;
+            self.memory.check()?;
             self.input_row = 0;
-            if self.child_chunk.num_rows() == 0 {
+            if child_chunk.num_rows() == 0 {
                 self.done = true;
                 return Ok(());
             }
@@ -122,6 +154,7 @@ impl<C: Columns> Executor for SelectionExec<C> {
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
+        self.release_child_chunk();
         self.child.close()
     }
 
@@ -146,6 +179,12 @@ impl<C: Columns> Executor for SelectionExec<C> {
     }
 }
 
+impl<C: Columns> Drop for SelectionExec<C> {
+    fn drop(&mut self) {
+        self.release_child_chunk();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -158,6 +197,8 @@ mod tests {
     use tidb_expr::constant::Constant;
     use tidb_expr::expression::ScalarFunction;
     use tidb_expr::NoColumns;
+
+    use crate::{OomAction, StatementMemory};
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::Long)
@@ -258,6 +299,7 @@ mod tests {
             vec![filter],
             Box::new(source),
             NoColumns,
+            StatementMemory::default(),
         );
 
         sel.open().unwrap();
@@ -298,6 +340,7 @@ mod tests {
             vec![filter],
             Box::new(source),
             NoColumns,
+            StatementMemory::default(),
         );
         sel.open().unwrap();
         let mut req = sel.new_chunk();
@@ -330,6 +373,7 @@ mod tests {
             vec![filter],
             Box::new(source),
             NoColumns,
+            StatementMemory::default(),
         );
 
         selection.open().unwrap();
@@ -352,6 +396,45 @@ mod tests {
             batches,
             vec![vec![1, 2], vec![3, 4], vec![5, 6], vec![7, 8]]
         );
+    }
+
+    #[test]
+    fn selection_accounts_cached_child_chunk_against_query_quota() {
+        let mut data = Chunk::new_with_capacity(std::slice::from_ref(&long()), 64);
+        for value in 0..64 {
+            data.append_int64(0, value);
+        }
+        let source = OneChunkSource {
+            meta: ExecutorMeta::new(one_long_col_schema(), 0, 0, 64),
+            data: Some(data),
+        };
+        let mut column = Column::new(1, long());
+        column.index = 0;
+        let filter = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("gt"),
+            long(),
+            vec![
+                Expression::Column(column),
+                Expression::Constant(Constant::new(Datum::Int(-1), long())),
+            ],
+        ));
+        let memory = StatementMemory::new(200, OomAction::Cancel, 71);
+        let mut selection = SelectionExec::new(
+            ExecutorMeta::new(one_long_col_schema(), 1, 0, 64),
+            vec![filter],
+            Box::new(source),
+            NoColumns,
+            memory.clone(),
+        );
+
+        selection.open().unwrap();
+        let mut req = selection.new_chunk();
+        assert!(matches!(
+            selection.next(&mut req),
+            Err(ExecError::MemoryExceedForQuery { conn_id: 71 })
+        ));
+        selection.close().unwrap();
+        assert_eq!(memory.bytes_consumed(), 0);
     }
 
     #[test]
@@ -378,6 +461,7 @@ mod tests {
             vec![filter],
             Box::new(source),
             UserVariables::default(),
+            StatementMemory::default(),
         );
 
         selection.open().unwrap();

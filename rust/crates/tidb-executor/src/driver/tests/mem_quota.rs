@@ -180,6 +180,29 @@ fn log_lets_an_over_quota_write_finish() {
     );
 }
 
+#[test]
+fn selection_cached_chunk_is_part_of_the_query_quota() {
+    let catalog = seeded();
+    let cancelling = cancelling();
+    let error = run_select_on("SELECT a FROM t WHERE a + 0 > 0", &catalog, &cancelling)
+        .expect_err("Selection's cached child chunk must be charged to the statement");
+    assert!(is_memory_exceeded(&error), "expected 8175, got {error:?}");
+    assert_eq!(
+        cancelling.statement_memory().bytes_consumed(),
+        0,
+        "the failed executor must release its cached chunk without an explicit close"
+    );
+
+    assert_eq!(
+        run_select_on("SELECT a FROM t WHERE a + 0 > 0", &catalog, &permitting()).unwrap(),
+        vec![
+            vec![Datum::Int(1)],
+            vec![Datum::Int(2)],
+            vec![Datum::Int(3)],
+        ]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The READ path: a runaway cross join, and the control that keeps the quota
 // honest.

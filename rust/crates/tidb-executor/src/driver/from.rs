@@ -1119,6 +1119,7 @@ pub(crate) fn build_lateral_join(
             vec![predicate],
             exec,
             ctx.clone(),
+            ctx.statement_memory(),
         ));
     }
     // An Apply's row order follows its OUTER side, which this tier does not

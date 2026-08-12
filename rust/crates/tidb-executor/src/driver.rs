@@ -966,6 +966,7 @@ pub(crate) fn run_select_traced(
             vec![pred],
             source,
             ctx.clone(),
+            ctx.statement_memory(),
         ));
         if let Some(trace) = trace.as_deref_mut() {
             // An Apply below this selection (a correlated subquery in the

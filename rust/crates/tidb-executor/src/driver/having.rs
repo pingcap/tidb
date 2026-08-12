@@ -163,6 +163,7 @@ pub(crate) fn build_plain_having(
         vec![predicate],
         source,
         ctx.clone(),
+        ctx.statement_memory(),
     )))
 }
 
