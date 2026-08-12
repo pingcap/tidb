@@ -1155,6 +1155,40 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
+		Scope:    ScopeGlobal,
+		Name:     TiDBAnalyzeDefaultNumBuckets,
+		Value:    strconv.FormatUint(DefTiDBAnalyzeDefaultNumBuckets, 10),
+		Type:     TypeUnsigned,
+		MinValue: MinTiDBAnalyzeDefaultNumBuckets, MaxValue: MaxTiDBAnalyzeDefaultNumBuckets,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(AnalyzeDefaultNumBuckets.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				AnalyzeDefaultNumBuckets.Store(num)
+			}
+			return err
+		},
+	},
+	{
+		Scope:    ScopeGlobal,
+		Name:     TiDBAnalyzeDefaultNumTopN,
+		Value:    strconv.FormatUint(DefTiDBAnalyzeDefaultNumTopN, 10),
+		Type:     TypeUnsigned,
+		MinValue: MinTiDBAnalyzeDefaultNumTopN, MaxValue: MaxTiDBAnalyzeDefaultNumTopN,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatUint(AnalyzeDefaultNumTopN.Load(), 10), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			num, err := strconv.ParseUint(val, 10, 64)
+			if err == nil {
+				AnalyzeDefaultNumTopN.Store(num)
+			}
+			return err
+		},
+	},
+	{
 		Scope: ScopeGlobal, Name: TiDBEnableAutoAnalyzePriorityQueue, Value: BoolToOnOff(DefTiDBEnableAutoAnalyzePriorityQueue), Type: TypeBool,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 			return BoolToOnOff(EnableAutoAnalyzePriorityQueue.Load()), nil

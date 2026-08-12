@@ -1515,15 +1515,17 @@ const (
 	// ...
 	// [version231, version238] is the version range reserved for patches of 8.5.x
 	// ...
-	// next version should start with 241
+	// next version should start with 242
 	version239 = 239
 	// version 240 widens mysql.user.Max_user_connections from SMALLINT to INT.
 	version240 = 240
+	// version 241 backfills analyze default bucket and TopN global variables.
+	version241 = 241
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version240
+var currentBootstrapVersion int64 = version241
 
 // currentEEBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
@@ -1717,6 +1719,7 @@ var (
 		upgradeToVer232,
 		upgradeToVer239,
 		upgradeToVer240,
+		upgradeToVer241,
 	}
 )
 
@@ -3817,6 +3820,17 @@ func upgradeToVer240(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN IF NOT EXISTS `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Max_user_connections = 0 WHERE Max_user_connections IS NULL")
 	doReentrantDDL(s, "ALTER TABLE mysql.user MODIFY COLUMN `Max_user_connections` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `Password_lifetime`")
+}
+
+func upgradeToVer241(s sessiontypes.Session, ver int64) {
+	if ver >= version241 {
+		return
+	}
+
+	// Fresh clusters materialize these rows during bootstrap, but upgraded clusters can miss them.
+	// Backfill only absent rows so @@global reads use defaults while preserving user-set values.
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeDefaultNumBuckets, variable.DefTiDBAnalyzeDefaultNumBuckets)
+	initGlobalVariableIfNotExists(s, variable.TiDBAnalyzeDefaultNumTopN, variable.DefTiDBAnalyzeDefaultNumTopN)
 }
 
 func upgradeEEToVer2(s sessiontypes.Session, ver int64) {

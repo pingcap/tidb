@@ -1781,6 +1781,55 @@ func TestEnableWindowFunction(t *testing.T) {
 	require.Equal(t, vars.EnableWindowFunction, true)
 }
 
+func TestTiDBAnalyzeDefaultBucketAndTopNOptions(t *testing.T) {
+	ctx := context.Background()
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+
+	origBuckets := AnalyzeDefaultNumBuckets.Load()
+	origTopN := AnalyzeDefaultNumTopN.Load()
+	t.Cleanup(func() {
+		AnalyzeDefaultNumBuckets.Store(origBuckets)
+		AnalyzeDefaultNumTopN.Store(origTopN)
+	})
+
+	bucketsVar := GetSysVar(TiDBAnalyzeDefaultNumBuckets)
+	require.NotNil(t, bucketsVar)
+	require.NoError(t, bucketsVar.SetGlobalFromHook(ctx, vars, "100", false))
+	require.Equal(t, uint64(100), AnalyzeDefaultNumBuckets.Load())
+
+	val, err := bucketsVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "100", val)
+
+	val, err = bucketsVar.Validate(vars, "0", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(MinTiDBAnalyzeDefaultNumBuckets, 10), val)
+
+	val, err = bucketsVar.Validate(vars, "100001", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(MaxTiDBAnalyzeDefaultNumBuckets, 10), val)
+
+	topNVar := GetSysVar(TiDBAnalyzeDefaultNumTopN)
+	require.NotNil(t, topNVar)
+	require.NoError(t, topNVar.SetGlobalFromHook(ctx, vars, "50", false))
+	require.Equal(t, uint64(50), AnalyzeDefaultNumTopN.Load())
+
+	val, err = topNVar.GetGlobal(ctx, vars)
+	require.NoError(t, err)
+	require.Equal(t, "50", val)
+
+	val, err = topNVar.Validate(vars, "0", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatInt(MinTiDBAnalyzeDefaultNumTopN, 10), val)
+
+	val, err = topNVar.Validate(vars, "100001", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, strconv.FormatUint(MaxTiDBAnalyzeDefaultNumTopN, 10), val)
+}
+
 func TestTiDBHashJoinVersion(t *testing.T) {
 	vars := NewSessionVars(nil)
 	sv := GetSysVar(TiDBHashJoinVersion)

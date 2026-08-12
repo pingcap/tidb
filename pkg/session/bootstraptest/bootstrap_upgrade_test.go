@@ -1120,6 +1120,50 @@ func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 	})
 }
 
+func TestUpgradeBackfillsAnalyzeDefaultOptions(t *testing.T) {
+	ctx := context.Background()
+	origBuckets := variable.AnalyzeDefaultNumBuckets.Load()
+	origTopN := variable.AnalyzeDefaultNumTopN.Load()
+	t.Cleanup(func() {
+		variable.AnalyzeDefaultNumBuckets.Store(origBuckets)
+		variable.AnalyzeDefaultNumTopN.Store(origTopN)
+	})
+
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	seV240 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	require.NoError(t, meta.NewMutator(txn).FinishBootstrap(240))
+	require.NoError(t, txn.Commit(ctx))
+	revertVersionAndVariables(t, seV240, 240)
+
+	for _, name := range []string{
+		variable.TiDBAnalyzeDefaultNumBuckets,
+		variable.TiDBAnalyzeDefaultNumTopN,
+	} {
+		session.MustExec(t, seV240, fmt.Sprintf("delete from mysql.global_variables where variable_name='%s'", name))
+	}
+	session.MustExec(t, seV240, "commit")
+	session.UnsetStoreBootstrapped(store.UUID())
+	dom.Close()
+
+	domCurrent, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurrent.Close()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("select variable_value from mysql.global_variables where variable_name=?", variable.TiDBAnalyzeDefaultNumBuckets).
+		Check(testkit.Rows(strconv.FormatUint(variable.DefTiDBAnalyzeDefaultNumBuckets, 10)))
+	tk.MustQuery("select variable_value from mysql.global_variables where variable_name=?", variable.TiDBAnalyzeDefaultNumTopN).
+		Check(testkit.Rows(strconv.FormatUint(variable.DefTiDBAnalyzeDefaultNumTopN, 10)))
+	tk.MustExec("set global tidb_analyze_default_num_buckets = 512")
+	tk.MustExec("set global tidb_analyze_default_num_topn = 150")
+	tk.MustQuery("select @@global.tidb_analyze_default_num_buckets, @@global.tidb_analyze_default_num_topn").
+		Check(testkit.Rows("512 150"))
+}
+
 func TestAnalyzeDistsqlConcurrencyByUpgrade750To850(t *testing.T) {
 	ctx := context.Background()
 	store, dom := session.CreateStoreAndBootstrap(t)
