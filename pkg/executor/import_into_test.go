@@ -368,8 +368,9 @@ func testNextGenUnsupportedLocalSortAndOptions(t *testing.T, store kv.Storage, i
 			require.ErrorIs(t, err, exeerrors.ErrLoadDataUnsupportedOption)
 			require.ErrorContains(t, err, option)
 		}
+		// DO NOT MERGE: __force_merge_step is temporarily allowed under SEM, see
+		// disallowedOptionsForSEM.
 		for _, option := range []string{
-			"__force_merge_step",
 			"__manual_recovery",
 		} {
 			err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM 's3://bucket/*.csv?access-key=ak&secret-access-key=sk' with %s", option))

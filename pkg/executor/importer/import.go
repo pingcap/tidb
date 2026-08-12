@@ -184,9 +184,11 @@ var (
 		recordErrorsOption:    {},
 	}
 
+	// DO NOT MERGE: forceMergeStep is temporarily allowed under SEM so that a
+	// SEM-enabled cluster can force the global-sort merge step when benchmarking
+	// https://github.com/pingcap/tidb/pull/70305. Restore it before merging.
 	disallowedOptionsForSEM = map[string]struct{}{
 		maxEngineSizeOption:  {},
-		forceMergeStep:       {},
 		manualRecoveryOption: {},
 	}
 
