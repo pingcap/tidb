@@ -19,6 +19,7 @@ import (
 	"container/list"
 	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -653,4 +654,40 @@ func getEvicted(ssbdee *stmtSummaryByDigestEvictedElement) string {
 	buf := bytes.NewBuffer(nil)
 	buf.WriteString(fmt.Sprintf("{begin: %v, end: %v, count: %v}", ssbdee.beginTime, ssbdee.endTime, ssbdee.count))
 	return buf.String()
+}
+
+// TestToEvictedCountDatumConcurrent verifies that ToEvictedCountDatum is safe
+// to call concurrently with AddEvicted (V1-11 data race fix).
+func TestToEvictedCountDatumConcurrent(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	ssMap.Clear()
+	now := time.Now().Unix()
+	interval := ssMap.refreshInterval()
+	ssMap.beginTimeForCurInterval = now + interval
+
+	err := ssMap.summaryMap.SetCapacity(1)
+	require.NoError(t, err)
+	ssMap.Clear()
+
+	var wg sync.WaitGroup
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			sei := generateAnyExecInfo()
+			sei.SchemaName = fmt.Sprintf("schema_%d", i)
+			ssMap.AddStatement(sei)
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			_ = ssMap.ToEvictedCountDatum()
+		}
+	}()
+
+	wg.Wait()
 }

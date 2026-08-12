@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extworkload"
@@ -64,7 +65,8 @@ type domainMap struct {
 }
 
 type domainCreateOptions struct {
-	extWorkloadMgr extworkload.Manager
+	extWorkloadMgr          extworkload.Manager
+	serverInfoSyncerOptions []serverinfo.SyncerOption
 }
 
 // Get or create the domain for store.
@@ -82,7 +84,18 @@ func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Fil
 	return dm.getWithEtcdClient(store, nil, filter, domainCreateOptions{})
 }
 
-func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Client, schemaFilter issyncer.Filter, opts domainCreateOptions) (d *domain.Domain, err error) {
+func (dm *domainMap) getDomainForGlobalVarInit(store kv.Storage) (d *domain.Domain, err error) {
+	return dm.getWithEtcdClient(store, nil, systemDBFilter{}, domainCreateOptions{
+		serverInfoSyncerOptions: []serverinfo.SyncerOption{serverinfo.WithoutStatusEndpointClaim()},
+	})
+}
+
+func (dm *domainMap) getWithEtcdClient(
+	store kv.Storage,
+	etcdClient *clientv3.Client,
+	schemaFilter issyncer.Filter,
+	opts domainCreateOptions,
+) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -117,6 +130,7 @@ func (dm *domainMap) getWithEtcdClient(store kv.Storage, etcdClient *clientv3.Cl
 			},
 			etcdClient,
 			schemaFilter,
+			opts.serverInfoSyncerOptions...,
 		)
 		d.SetExternalWorkloadManager(opts.extWorkloadMgr)
 
