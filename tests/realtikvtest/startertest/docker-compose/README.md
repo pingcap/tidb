@@ -108,11 +108,8 @@ activation output, and captured test output/client log attempts. Active
 containers are read with `compose exec`; stopped containers fall back to
 `docker cp`.
 
-The exit trap always runs exactly:
-
-```sh
-docker compose ... down -v --remove-orphans --rmi local
-```
+The exit trap runs a project-scoped
+`docker compose down -v --remove-orphans --rmi local` command.
 
 This removes the project's containers, volumes, network, orphans, and local
 TiDB image. The runner also removes its host temporary directory. An original

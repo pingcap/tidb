@@ -167,10 +167,10 @@ wait_completed() {
             exit_code=$(docker inspect --format '{{.State.ExitCode}}' "${container}" 2>/dev/null || true)
             case "${state}" in
                 exited)
-                    if [[ ${exit_code} -eq 0 ]]; then
+                    if [[ ${exit_code} == 0 ]]; then
                         return 0
                     fi
-                    printf '%s exited with exit code %s\n' "${service}" "${exit_code}" >&2
+                    printf '%s exited with exit code %s\n' "${service}" "${exit_code:-unknown}" >&2
                     return 1
                     ;;
                 dead)

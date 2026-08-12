@@ -132,12 +132,36 @@ func queryTxnFileRegionIDs(ctx context.Context, db *sql.DB) ([3]uint64, bool, er
 		return [3]uint64{}, false, fmt.Errorf("show txn-file regions: %w", err)
 	}
 	defer rows.Close()
+	columns, err := rows.Columns()
+	if err != nil {
+		return [3]uint64{}, false, fmt.Errorf("read txn-file region columns: %w", err)
+	}
+	regionIDIndex, startKeyIndex, endKeyIndex := -1, -1, -1
+	for i, column := range columns {
+		switch {
+		case strings.EqualFold(column, "region_id"):
+			regionIDIndex = i
+		case strings.EqualFold(column, "start_key"):
+			startKeyIndex = i
+		case strings.EqualFold(column, "end_key"):
+			endKeyIndex = i
+		}
+	}
+	if regionIDIndex < 0 || startKeyIndex < 0 || endKeyIndex < 0 {
+		return [3]uint64{}, false, fmt.Errorf("show txn-file regions returned columns %v without region_id, start_key, and end_key", columns)
+	}
 	var ids [3]uint64
 	for rows.Next() {
 		var regionID uint64
 		var startKey, endKey string
-		var ignored [10]any
-		if err := rows.Scan(&regionID, &startKey, &endKey, &ignored[0], &ignored[1], &ignored[2], &ignored[3], &ignored[4], &ignored[5], &ignored[6], &ignored[7], &ignored[8], &ignored[9]); err != nil {
+		destinations := make([]any, len(columns))
+		for i := range destinations {
+			destinations[i] = new(any)
+		}
+		destinations[regionIDIndex] = &regionID
+		destinations[startKeyIndex] = &startKey
+		destinations[endKeyIndex] = &endKey
+		if err := rows.Scan(destinations...); err != nil {
 			return ids, false, fmt.Errorf("scan txn-file region: %w", err)
 		}
 		switch {
