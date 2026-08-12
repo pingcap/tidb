@@ -797,19 +797,18 @@ impl Catalog {
 }
 
 impl crate::keydecoder::KeyInfoCatalog for Catalog {
-    fn resolve_physical_table(&self, physical_id: i64) -> Option<crate::keydecoder::KeyInfoTable> {
+    fn resolve_physical_table(
+        &self,
+        physical_id: i64,
+    ) -> Option<crate::keydecoder::KeyInfoTableLookup> {
         for database in self.databases.values() {
             for (registered_name, entry) in &database.tables {
                 let TableEntry::Kv(table) = entry else {
                     continue;
                 };
                 if table.table_id == physical_id {
-                    return Some(key_info_table(
-                        database,
-                        registered_name,
-                        table,
-                        0,
-                        String::new(),
+                    return Some(crate::keydecoder::KeyInfoTableLookup::Resolved(
+                        key_info_table(database, registered_name, table, 0, String::new()),
                     ));
                 }
             }
@@ -827,12 +826,14 @@ impl crate::keydecoder::KeyInfoCatalog for Catalog {
                     .iter()
                     .find(|definition| definition.id == physical_id)
                 {
-                    return Some(key_info_table(
-                        database,
-                        registered_name,
-                        table,
-                        definition.id,
-                        definition.name.clone(),
+                    return Some(crate::keydecoder::KeyInfoTableLookup::Resolved(
+                        key_info_table(
+                            database,
+                            registered_name,
+                            table,
+                            definition.id,
+                            definition.name.clone(),
+                        ),
                     ));
                 }
             }

@@ -21,7 +21,9 @@ use tidb_codec::table_key::{
 use tidb_codec::{encode_key, gen_table_record_prefix};
 use tidb_datatype::Datum;
 use tidb_exec::cluster_catalog::{ClusterCatalog, LoadedDatabase};
-use tidb_exec::keydecoder::{decode_key, DecodedKey, HandleType, KeyDecoderError};
+use tidb_exec::keydecoder::{
+    decode_key, DecodedKey, HandleType, KeyDecoderError, KeyInfoCatalog, KeyInfoTableLookup,
+};
 use tidb_executor::{Catalog, KvTable};
 use tidb_model::db::DBInfo;
 use tidb_model::go_runtime::GoShared;
@@ -103,6 +105,34 @@ fn assert_json(decoded: &DecodedKey, expected: &str) {
     assert_eq!(serde_json::to_string(decoded).unwrap(), expected);
 }
 
+struct LogicalTableWithoutSchema;
+
+impl KeyInfoCatalog for LogicalTableWithoutSchema {
+    fn resolve_physical_table(&self, physical_id: i64) -> Option<KeyInfoTableLookup> {
+        Some(KeyInfoTableLookup::TableWithoutSchema {
+            table_name: "orphaned_table".to_owned(),
+            table_id: physical_id,
+        })
+    }
+}
+
+#[test]
+fn logical_table_without_schema_stops_before_payload_decode() {
+    let catalog = LogicalTableWithoutSchema;
+
+    let mut malformed_record = gen_table_record_prefix(9);
+    malformed_record.push(0xff);
+    let decoded = decode_key(&malformed_record, &catalog).unwrap();
+    assert_json(&decoded, r#"{"table_name":"orphaned_table","table_id":9}"#);
+
+    let decoded = decode_key(
+        &index_key(9, 7, &[Datum::new_string("must-not-be-decoded")]),
+        &catalog,
+    )
+    .unwrap();
+    assert_json(&decoded, r#"{"table_name":"orphaned_table","table_id":9}"#);
+}
+
 #[test]
 fn integer_and_common_record_handles_match_go() {
     let catalog = catalog();
@@ -124,9 +154,8 @@ fn integer_and_common_record_handles_match_go() {
         r#"{"db_name":"test","table_name":"table1","handle_type":"int","handle_value":"1","db_id":1,"table_id":1}"#,
     );
 
-    let common = RecordHandle::Common(
-        encode_key(&[Datum::Int(100), Datum::new_string("abc")]).unwrap(),
-    );
+    let common =
+        RecordHandle::Common(encode_key(&[Datum::Int(100), Datum::new_string("abc")]).unwrap());
     let decoded = decode_key(&record_key(2, common), &catalog).unwrap();
     assert_eq!(decoded.db_id, 1);
     assert_eq!(decoded.db_name, "test");
@@ -178,11 +207,7 @@ fn index_and_partition_metadata_match_go() {
         r#"{"db_name":"test","table_name":"table1","index_name":"index1","index_values":["abc","1"],"db_id":1,"table_id":1,"index_id":1}"#,
     );
 
-    let decoded = decode_key(
-        &record_key(5, RecordHandle::Int(10)),
-        &catalog,
-    )
-    .unwrap();
+    let decoded = decode_key(&record_key(5, RecordHandle::Int(10)), &catalog).unwrap();
     assert_eq!(decoded.db_id, 1);
     assert_eq!(decoded.db_name, "test");
     assert_eq!(decoded.table_id, 3);
@@ -220,11 +245,7 @@ fn missing_and_invalid_keys_preserve_go_results() {
     let catalog = catalog();
     assert_json(&DecodedKey::default(), r#"{"table_id":0}"#);
 
-    let decoded = decode_key(
-        &record_key(4, RecordHandle::Int(1)),
-        &catalog,
-    )
-    .unwrap();
+    let decoded = decode_key(&record_key(4, RecordHandle::Int(1)), &catalog).unwrap();
     assert_eq!(decoded.table_id, 4);
     assert_eq!(decoded.handle_type, HandleType::Int);
     assert_eq!(decoded.handle_value, "1");

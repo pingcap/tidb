@@ -54,10 +54,24 @@ pub struct KeyInfoTable {
     pub indexes: Vec<KeyInfoIndex>,
 }
 
+/// The two successful table lookup states exposed by Go's `InfoSchema`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum KeyInfoTableLookup {
+    /// Metadata is available and payload decoding should continue.
+    Resolved(KeyInfoTable),
+    /// The table is visible, but schema churn removed its association.
+    TableWithoutSchema {
+        /// Logical table name in its original spelling.
+        table_name: String,
+        /// Logical table ID.
+        table_id: i64,
+    },
+}
+
 /// The `InfoSchema` lookup needed by [`decode_key`].
 pub trait KeyInfoCatalog {
     /// Resolves a logical table ID first, then a physical partition ID.
-    fn resolve_physical_table(&self, physical_id: i64) -> Option<KeyInfoTable>;
+    fn resolve_physical_table(&self, physical_id: i64) -> Option<KeyInfoTableLookup>;
 }
 
 /// Go `keydecoder.HandleType`.
@@ -218,15 +232,26 @@ pub fn decode_key<C: KeyInfoCatalog + ?Sized>(
         ..DecodedKey::default()
     };
 
-    let table = catalog.resolve_physical_table(physical_table_id);
-    if let Some(table) = table.as_ref() {
-        decoded.table_id = table.table_id;
-        decoded.table_name.clone_from(&table.table_name);
-        decoded.db_id = table.db_id;
-        decoded.db_name.clone_from(&table.db_name);
-        decoded.partition_id = table.partition_id;
-        decoded.partition_name.clone_from(&table.partition_name);
-    }
+    let table = match catalog.resolve_physical_table(physical_table_id) {
+        Some(KeyInfoTableLookup::Resolved(table)) => {
+            decoded.table_id = table.table_id;
+            decoded.table_name.clone_from(&table.table_name);
+            decoded.db_id = table.db_id;
+            decoded.db_name.clone_from(&table.db_name);
+            decoded.partition_id = table.partition_id;
+            decoded.partition_name.clone_from(&table.partition_name);
+            Some(table)
+        }
+        Some(KeyInfoTableLookup::TableWithoutSchema {
+            table_name,
+            table_id,
+        }) => {
+            decoded.table_name = table_name;
+            decoded.table_id = table_id;
+            return Ok(decoded);
+        }
+        None => None,
+    };
 
     if is_record {
         return decode_record(key, decoded, physical_table_id);

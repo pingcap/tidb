@@ -16,16 +16,21 @@
 
 pub use tidb_executor::keydecoder::{
     decode_key, DecodedKey, HandleType, KeyDecoderError, KeyDecoderFailure, KeyInfoCatalog,
-    KeyInfoIndex, KeyInfoTable,
+    KeyInfoIndex, KeyInfoTable, KeyInfoTableLookup,
 };
 
 use crate::cluster_catalog::ClusterCatalog;
 
 impl KeyInfoCatalog for ClusterCatalog {
-    fn resolve_physical_table(&self, physical_id: i64) -> Option<KeyInfoTable> {
+    fn resolve_physical_table(&self, physical_id: i64) -> Option<KeyInfoTableLookup> {
         for database in &self.databases {
             if let Some(table) = database.tables.iter().find(|table| table.id == physical_id) {
-                return Some(table_info(database, table, 0, String::new()));
+                return Some(KeyInfoTableLookup::Resolved(table_info(
+                    database,
+                    table,
+                    0,
+                    String::new(),
+                )));
             }
         }
         for database in &self.databases {
@@ -40,12 +45,12 @@ impl KeyInfoCatalog for ClusterCatalog {
                     .into_iter()
                     .find(|definition| definition.id == physical_id)
                 {
-                    return Some(table_info(
+                    return Some(KeyInfoTableLookup::Resolved(table_info(
                         database,
                         table,
                         definition.id,
                         definition.name.original().to_owned(),
-                    ));
+                    )));
                 }
             }
         }
