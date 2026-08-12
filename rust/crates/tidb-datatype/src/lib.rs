@@ -194,7 +194,7 @@ pub use format::{output_format, FlatFormatter, FormatFragment, Formatter, Indent
 pub use fsp::{
     align_frac, check_fsp, parse_frac, FspError, DEFAULT_FSP, MAX_FSP, MIN_FSP, UNSPECIFIED_FSP,
 };
-pub use go_string::{decode_go_utf8_lossy, GoString, GoStringSource};
+pub use go_string::{decode_go_utf8_lossy, go_chars, GoChars, GoString, GoStringSource};
 pub use json_path::{
     parse_json_path_expr, JSONPathArraySelection, JSONPathError, JSONPathExpression, JSONPathLeg,
 };

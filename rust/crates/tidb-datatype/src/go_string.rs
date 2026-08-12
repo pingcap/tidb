@@ -47,6 +47,55 @@ pub trait GoStringSource {
     fn to_go_string(&self) -> GoString;
 }
 
+/// Iterator over a Go string's Unicode code points.
+pub struct GoChars<'a> {
+    bytes: &'a [u8],
+    offset: usize,
+}
+
+impl Iterator for GoChars<'_> {
+    type Item = char;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let first = *self.bytes.get(self.offset)?;
+        if first < 0x80 {
+            self.offset += 1;
+            return Some(char::from(first));
+        }
+
+        let width = match first {
+            0xc2..=0xdf => 2,
+            0xe0..=0xef => 3,
+            0xf0..=0xf4 => 4,
+            _ => 1,
+        };
+        let character = self
+            .bytes
+            .get(self.offset..self.offset + width)
+            .and_then(|encoded| std::str::from_utf8(encoded).ok())
+            .and_then(|valid| valid.chars().next());
+        if let Some(character) = character {
+            self.offset += width;
+            Some(character)
+        } else {
+            self.offset += 1;
+            Some(char::REPLACEMENT_CHARACTER)
+        }
+    }
+}
+
+/// Iterates a Go string, replacing each invalid byte with one U+FFFD.
+#[must_use]
+pub fn go_chars<T>(input: &T) -> GoChars<'_>
+where
+    T: GoStringSource + ?Sized,
+{
+    GoChars {
+        bytes: input.as_go_bytes(),
+        offset: 0,
+    }
+}
+
 /// Decodes a Go string as UTF-8, replacing each invalid byte with one U+FFFD.
 ///
 /// Go's string iteration advances by one byte after an invalid encoding. This
@@ -54,25 +103,8 @@ pub trait GoStringSource {
 /// multi-byte subsequence with a single replacement character.
 #[must_use]
 pub fn decode_go_utf8_lossy(input: impl GoStringSource) -> String {
-    let bytes = input.as_go_bytes();
-    let mut offset = 0;
-    let mut output = String::with_capacity(bytes.len());
-    while offset < bytes.len() {
-        match std::str::from_utf8(&bytes[offset..]) {
-            Ok(valid) => {
-                output.push_str(valid);
-                break;
-            }
-            Err(error) => {
-                let valid_len = error.valid_up_to();
-                let valid = std::str::from_utf8(&bytes[offset..offset + valid_len])
-                    .expect("Utf8Error valid prefix is UTF-8");
-                output.push_str(valid);
-                output.push('\u{fffd}');
-                offset += valid_len + 1;
-            }
-        }
-    }
+    let mut output = String::with_capacity(input.as_go_bytes().len());
+    output.extend(go_chars(&input));
     output
 }
 
