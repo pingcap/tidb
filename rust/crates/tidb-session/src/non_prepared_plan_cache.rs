@@ -140,6 +140,8 @@
 
 use tidb_ast::{Expr, GroupByItem, JoinNode, OrderItem, QueryStmt, SelectStmt, Stmt};
 use tidb_executor::Catalog;
+use tidb_mysql::to_lowercase as go_simple_lowercase;
+use tidb_util::filter::is_system_schema;
 use tidb_util::kvcache::SimpleLruCache;
 
 /// Go `getMaxParamLimit`'s default: `PlanCacheMaxParamNum` (200).
@@ -277,7 +279,7 @@ struct Walk<'a> {
     enable_param_limit: bool,
     /// Go `checker.tableNodes`: the at-most-two tables the query reads, whose
     /// schemas the filter-column rule consults.
-    tables: Vec<String>,
+    tables: Vec<(String, String)>,
     params: Vec<ParamKind>,
     const_count: usize,
     /// Go `checker.filterCnt`: non-zero while inside a filter, which is what
@@ -335,8 +337,16 @@ impl Walk<'_> {
     fn extract_from_node(&mut self, node: &JoinNode) -> Result<(), Refusal> {
         match node {
             JoinNode::Table(table) => {
+                let Some(table_name) = table.name.last() else {
+                    return Err(Refusal("some column is not found in table schema"));
+                };
+                let schema = if table.name.len() >= 2 {
+                    &table.name[table.name.len() - 2]
+                } else {
+                    self.current_db
+                };
                 self.tables
-                    .push(table.name.last().cloned().unwrap_or_default());
+                    .push((go_simple_lowercase(schema), go_simple_lowercase(table_name)));
                 Ok(())
             }
             JoinNode::Join(inner) => self.extract_table_names(inner),
@@ -491,8 +501,8 @@ impl Walk<'_> {
             return Err(Refusal("some column is not found in table schema"));
         };
         let mut found = false;
-        for table in &self.tables {
-            let Some(entry) = self.catalog.table_in(self.current_db, table) else {
+        for (schema, table) in &self.tables {
+            let Some(entry) = self.catalog.table_in(schema, table) else {
                 continue;
             };
             for (held, field_type) in entry.column_types() {
@@ -517,11 +527,11 @@ impl Walk<'_> {
     /// Go's `TableName` arm plus `checkTableCacheable`: a system schema, a
     /// view and a sequence are all refused before any expression is examined.
     fn table_names_cacheable(&self) -> Result<(), Refusal> {
-        if is_system_schema(self.current_db) {
-            return Err(Refusal("access tables in system schema"));
-        }
-        for table in &self.tables {
-            let Some(entry) = self.catalog.table_in(self.current_db, table) else {
+        for (schema, table) in &self.tables {
+            if is_system_schema(schema) {
+                return Err(Refusal("access tables in system schema"));
+            }
+            let Some(entry) = self.catalog.table_in(schema, table) else {
                 // An unknown table is not this check's error to report -- the
                 // statement's own resolution will raise it -- but it must not
                 // be cached either.
@@ -633,12 +643,4 @@ impl crate::Session {
             Err(_) => default,
         }
     }
-}
-
-/// Go `filter.IsSystemSchema`.
-fn is_system_schema(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "information_schema" | "performance_schema" | "mysql" | "sys" | "metrics_schema"
-    )
 }

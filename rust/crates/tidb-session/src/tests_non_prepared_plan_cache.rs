@@ -366,6 +366,39 @@ fn go_refuses_a_view_and_a_union() {
 }
 
 #[test]
+fn go_refuses_tables_in_every_system_schema_owned_by_filter() {
+    for schema in ["dm_heartbeat", "inspection_schema"] {
+        let mut session = Session::new();
+        session
+            .run(&format!("create database {schema}"))
+            .expect("create system schema fixture");
+        session
+            .run(&format!("use {}", schema.to_ascii_uppercase()))
+            .expect("system schema lookup is case insensitive");
+        session.run("create table t (a int)").expect("create table");
+        session
+            .run("insert into t values (1),(2)")
+            .expect("seed table");
+        session
+            .run("set tidb_enable_non_prepared_plan_cache = true")
+            .expect("enable");
+
+        refused(
+            &mut session,
+            "select a from t where a = 1",
+            "select a from t where a = 2",
+        );
+
+        session.run("use test").expect("leave system schema");
+        refused(
+            &mut session,
+            &format!("select a from {schema}.t where a = 1"),
+            &format!("select a from {schema}.t where a = 2"),
+        );
+    }
+}
+
+#[test]
 fn go_refuses_a_locking_read_and_a_statement_that_is_not_a_select() {
     let mut session = cache_session();
 
