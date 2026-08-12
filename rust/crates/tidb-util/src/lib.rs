@@ -58,6 +58,7 @@ pub mod redact;
 pub mod regexpr_router;
 pub mod selection;
 pub mod sem;
+pub mod set;
 pub mod size;
 pub mod slice;
 pub mod sqlescape;

@@ -43,6 +43,7 @@ serde_json = { workspace = true, features = ["raw_value"] }
 tempfile.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
+tidb-hack = { path = "../tidb-hack" }
 tracing = "0.1"
 
 [target.'cfg(windows)'.dependencies]

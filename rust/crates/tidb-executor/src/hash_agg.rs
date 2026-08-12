@@ -80,7 +80,7 @@ use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::mem_quota::StatementMemory;
 use spill::new_group_bytes;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
@@ -94,6 +94,7 @@ use tidb_expr::Columns;
 use tidb_util::disk;
 use tidb_util::memory::{ActionOnExceed, ArcAction, Tracker};
 use tidb_util::selection::{select, Selectable};
+use tidb_util::set::MemorySet;
 
 struct DatumSelection<'a>(&'a mut [Datum]);
 
@@ -328,7 +329,7 @@ enum Partial {
 /// is why the aggregate cannot re-read the datum and has to be told.
 struct AggState {
     partial: Partial,
-    seen: Option<HashSet<Vec<u8>>>,
+    seen: Option<MemorySet<Vec<u8>>>,
     collation: tidb_datatype::Collation,
 }
 
@@ -340,7 +341,7 @@ impl AggState {
             .map_or(tidb_datatype::Collation::DEFAULT, expr_collation);
         AggState {
             partial: Partial::new(&func.kind),
-            seen: func.distinct.then(HashSet::new),
+            seen: func.distinct.then(MemorySet::new),
             collation,
         }
     }
@@ -374,10 +375,11 @@ impl AggState {
                         .map_err(|_| ExecError::unsupported("DISTINCT over this datum kind"))?,
                 };
                 let key_bytes = i64::try_from(key.len()).unwrap_or(i64::MAX);
-                if !seen.insert(key) {
+                let (map_delta, inserted) = seen.insert(key);
+                if !inserted {
                     return Ok(0);
                 }
-                delta += key_bytes;
+                delta += key_bytes + map_delta;
             }
         }
         delta += self.partial.retained_row_bytes(value.as_ref());
@@ -841,10 +843,10 @@ impl Partial {
     /// [`new_group_bytes`].
     ///
     /// DIVERGENCE (named): Go's `memDelta` also carries each accumulator's own
-    /// bookkeeping -- the `valueSet` map's growth steps, the
-    /// `APPROX_COUNT_DISTINCT` sketch's rehash -- which this does not model.
-    /// What it does model is the payload the group RETAINS, which is the term
-    /// that grows without bound.
+    /// bookkeeping. The DISTINCT value-set table is charged by [`MemorySet`];
+    /// the `APPROX_COUNT_DISTINCT` sketch's rehash is represented by its
+    /// retained hash payload. The payload is the term that grows without
+    /// bound.
     fn retained_row_bytes(&self, value: Option<&Datum>) -> i64 {
         let retains = matches!(
             self,
@@ -1747,6 +1749,33 @@ mod tests {
                     Datum::Decimal(tidb_datatype::Decimal::from_int(5))
                 ],
             ]
+        );
+    }
+
+    #[test]
+    fn distinct_memory_delta_includes_value_set_growth() {
+        let mut count = AggFunc::new(AggKind::Count, None);
+        count.distinct = true;
+        let mut state = AggState::new(&count);
+        let mut retained_key_bytes = 0_i64;
+        let mut total_delta = 0_i64;
+        for byte in 0..128_u8 {
+            let value = Datum::Bytes(vec![byte; 32]);
+            retained_key_bytes +=
+                i64::try_from(group_key_part(&tidb_datatype::Collation::DEFAULT, &value).len())
+                    .unwrap();
+            total_delta += state.update(Some(value), &[], Vec::new()).unwrap();
+        }
+        assert!(
+            total_delta > retained_key_bytes,
+            "DISTINCT must charge both retained keys and value-set table growth"
+        );
+        assert_eq!(
+            state
+                .update(Some(Datum::Bytes(vec![127; 32])), &[], Vec::new())
+                .unwrap(),
+            0,
+            "a duplicate grows neither the retained payload nor the table"
         );
     }
 

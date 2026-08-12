@@ -2040,6 +2040,7 @@ dependencies = [
  "tempfile",
  "tidb-datatype",
  "tidb-error",
+ "tidb-hack",
  "tidb-kvcache",
  "tidb-log",
  "tidb-metadef",
