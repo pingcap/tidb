@@ -40,6 +40,12 @@ import (
 
 var maxConcurrency = 32
 
+// maxReadersPerCore bounds how many files are read at once. Every reader keeps a
+// smallBlockBuf of its own for the whole batch, so the reader count is itself a
+// memory cost: each buffer rounds its last block up to smallBlockSize, and that
+// waste scales with the number of readers rather than with the data read.
+const maxReadersPerCore = 32
+
 // assignReaderMemory charges each file whole buffers of its own byte range. The
 // budget is shared among the files that can fill at least one buffer, because
 // having more of them decoding at once is worth more than reading any one of them
@@ -126,6 +132,7 @@ func readAllData(
 
 	concurrency = max(concurrency, 1)
 	memoryLimit := readerMemoryQuotaPerCore * int64(concurrency)
+	maxReaders := maxReadersPerCore * concurrency
 
 	readerMemory := semaphore.NewWeighted(memoryLimit)
 	rangeSizes := make([]uint64, len(dataFiles))
@@ -149,8 +156,7 @@ func readAllData(
 		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	readConn := 1000
-	readConn = min(readConn, len(dataFiles))
+	readConn := min(maxReaders, len(dataFiles))
 	taskCh := make(chan int)
 	output.memKVBuffers = make([]*membuf.Buffer, readConn*2)
 	for readIdx := range readConn {

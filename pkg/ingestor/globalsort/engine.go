@@ -222,6 +222,7 @@ func NewExternalEngine(
 	logutil.Logger(ctx).Info("create external engine",
 		zap.String("memLimitForLoadRange", units.BytesSize(float64(memLimit))),
 		zap.String("readerMemLimit", units.BytesSize(float64(readerMemoryQuotaPerCore*int64(workerConcurrency)))),
+		zap.Int("readerCountLimit", maxReadersPerCore*workerConcurrency),
 		zap.Int("dataFileCount", len(dataFiles)),
 		zap.Int("jobKeysCount", len(jobKeys)),
 		zap.Int("splitKeysCount", len(splitKeys)),
