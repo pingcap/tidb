@@ -50,13 +50,8 @@
 //! `APPROX_PERCENTILE` ranks the group's values -- see each [`AggKind`]
 //! variant for the exact Go rule and its captured edges.
 //!
-//! DEFERRED (documented): the parallel partial/final worker pipeline, spill,
-//! memory tracking; and a BINARY-charset JSON aggregate argument, which Go
-//! wraps in a JSON `Opaque`;
-//! SUM-over-integer's DECIMAL result domain -- this seed accumulates integer
-//! sums in `i64` and reports overflow as an error rather than widening to
-//! decimal (Go returns DECIMAL; lands with the layout-faithful MyDecimal);
-//! and Go's `Round(retTp.GetDecimal())` display step on the AVG result.
+//! DEFERRED (documented): the parallel partial/final worker pipeline and Go's
+//! `Round(retTp.GetDecimal())` display step on the AVG result.
 //!
 //! `APPROX_COUNT_DISTINCT` ports Go's `BJKST` sketch
 //! (`func_count_distinct.go`'s `partialResult4ApproxCountDistinct`, see
@@ -678,7 +673,7 @@ impl Partial {
                 return Err(ExecError::unsupported("SUM requires an argument"))
             }
             (Partial::SumDecimal(_) | Partial::SumReal(_), Some(Datum::Null)) => {}
-            (this @ Partial::SumDecimal(None), Some(Datum::Real(v))) => {
+            (this @ Partial::SumDecimal(None), Some(Datum::Real(v) | Datum::Float32(v))) => {
                 // First non-NULL input is real: the sum's domain is real.
                 *this = Partial::SumReal(Some(v));
             }
@@ -698,7 +693,7 @@ impl Partial {
                     None => addend,
                 });
             }
-            (Partial::SumReal(acc), Some(Datum::Real(v))) => {
+            (Partial::SumReal(acc), Some(Datum::Real(v) | Datum::Float32(v))) => {
                 *acc = Some(acc.unwrap_or(0.0) + v);
             }
             (Partial::SumReal(acc), Some(Datum::Int(v))) => {
@@ -748,7 +743,7 @@ impl Partial {
                 return Err(ExecError::unsupported("AVG requires an argument"))
             }
             (Partial::AvgDecimal { .. } | Partial::AvgReal { .. }, Some(Datum::Null)) => {}
-            (this @ Partial::AvgDecimal { .. }, Some(Datum::Real(v))) => {
+            (this @ Partial::AvgDecimal { .. }, Some(Datum::Real(v) | Datum::Float32(v))) => {
                 // First non-NULL input is real: Go's return type is DOUBLE.
                 let Partial::AvgDecimal { count, .. } = this else {
                     unreachable!()
@@ -819,7 +814,7 @@ impl Partial {
             }
             (Partial::AvgReal { sum, count }, Some(input)) => {
                 let addend = match input {
-                    Datum::Real(v) => v,
+                    Datum::Real(v) | Datum::Float32(v) => v,
                     Datum::Int(v) => v as f64,
                     _ => {
                         return Err(ExecError::unsupported(

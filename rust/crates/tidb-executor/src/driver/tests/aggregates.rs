@@ -100,6 +100,28 @@ fn aggregate_selects() {
     );
 }
 
+#[test]
+fn float_sum_and_avg_use_the_real_domain() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE f (v FLOAT)", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO f VALUES (1.25), (2.5), (NULL)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        run_select_on(
+            "SELECT SUM(v), AVG(v) FROM f",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap(),
+        vec![vec![Datum::Real(3.75), Datum::Real(1.875)]],
+    );
+}
+
 /// HAVING filters aggregate output rows, ORDER BY sorts them, and an
 /// aggregate that appears only in those clauses is computed as a hidden
 /// column and trimmed from the result (Go's resolveHavingAndOrderBy plus
