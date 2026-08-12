@@ -18,7 +18,6 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::num::ParseIntError;
-use std::string::FromUtf8Error;
 use std::sync::LazyLock;
 
 use base64::engine::general_purpose::STANDARD;
@@ -60,8 +59,6 @@ pub enum PlanCodecError {
     Snappy(snap::Error),
     /// Invalid ExplainData protobuf data.
     Protobuf(prost::DecodeError),
-    /// A decoded textual plan was not UTF-8.
-    Utf8(FromUtf8Error),
     /// A textual plan integer was malformed.
     Integer(ParseIntError),
     /// A textual plan violated the tree encoding contract.
@@ -83,7 +80,6 @@ impl fmt::Display for PlanCodecError {
             }
             Self::Snappy(_) => f.write_str("snappy: corrupt input"),
             Self::Protobuf(error) => write!(f, "{}", format_protobuf_error(error)),
-            Self::Utf8(error) => write!(f, "decoded plan is not UTF-8: {error}"),
             Self::Integer(error) => write!(f, "invalid integer in encoded plan: {error}"),
             Self::InvalidPlan(error) => f.write_str(error),
         }
@@ -96,7 +92,6 @@ impl Error for PlanCodecError {
             Self::Base64(error) => Some(error),
             Self::Snappy(error) => Some(error),
             Self::Protobuf(error) => Some(error),
-            Self::Utf8(error) => Some(error),
             Self::Integer(error) => Some(error),
             Self::InvalidPlan(_) => None,
         }
@@ -118,12 +113,6 @@ impl From<snap::Error> for PlanCodecError {
 impl From<prost::DecodeError> for PlanCodecError {
     fn from(error: prost::DecodeError) -> Self {
         Self::Protobuf(error)
-    }
-}
-
-impl From<FromUtf8Error> for PlanCodecError {
-    fn from(error: FromUtf8Error) -> Self {
-        Self::Utf8(error)
     }
 }
 
@@ -285,18 +274,6 @@ pub fn encode_task_type_for_normalize(is_root: bool, store_type: PlanStoreType) 
     }
 }
 
-fn decode_task_type(value: &str) -> Result<String> {
-    let segments: Vec<&str> = value.split('_').collect();
-    if segments.first() == Some(&"0") {
-        return Ok("root".to_owned());
-    }
-    if segments.len() == 1 {
-        return Ok("cop".to_owned());
-    }
-    let store = segments[1].parse::<i64>()?;
-    Ok(format!("cop[{}]", PlanStoreType::name_for_code(store)))
-}
-
 /// Snappy-compresses and standard-base64 encodes bytes.
 #[must_use]
 pub fn compress(input: &[u8]) -> String {
@@ -313,25 +290,29 @@ pub fn decompress(input: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Decodes a compressed textual plan into its aligned tree display.
-pub fn decode_plan(plan: impl AsRef<[u8]>) -> Result<String> {
+///
+/// The result is bytes because Go strings, including plan fields, are not
+/// required to be UTF-8.
+pub fn decode_plan(plan: impl AsRef<[u8]>) -> Result<Vec<u8>> {
     let plan = plan.as_ref();
     if plan.is_empty() {
-        return Ok(String::new());
+        return Ok(Vec::new());
     }
     let raw = match decompress(plan) {
         Ok(raw) => raw,
         Err(_) if plan == PLAN_DISCARDED_ENCODED.as_bytes() => {
-            return Ok(PLAN_DISCARDED_DECODED.to_owned());
+            return Ok(PLAN_DISCARDED_DECODED.as_bytes().to_vec());
         }
         Err(error) => return Err(error),
     };
-    build_plan_tree(&String::from_utf8(raw)?, true)
+    build_plan_tree(&raw, true)
 }
 
 /// Decodes an uncompressed normalized-plan stream into its aligned tree display.
-pub fn decode_normalized_plan(plan: &str) -> Result<String> {
+pub fn decode_normalized_plan(plan: impl AsRef<[u8]>) -> Result<Vec<u8>> {
+    let plan = plan.as_ref();
     if plan.is_empty() {
-        return Ok(String::new());
+        return Ok(Vec::new());
     }
     build_plan_tree(plan, false)
 }
@@ -339,12 +320,12 @@ pub fn decode_normalized_plan(plan: &str) -> Result<String> {
 #[derive(Debug)]
 struct PlanInfo {
     depth: usize,
-    fields: Vec<String>,
+    fields: Vec<Vec<u8>>,
 }
 
-fn build_plan_tree(plan: &str, add_header: bool) -> Result<String> {
+fn build_plan_tree(plan: &[u8], add_header: bool) -> Result<Vec<u8>> {
     let mut infos = Vec::new();
-    for node in plan.split('\n') {
+    for node in plan.split(|byte| *byte == b'\n') {
         if let Some(info) = decode_plan_info(node)? {
             infos.push(info);
         }
@@ -365,7 +346,10 @@ fn build_plan_tree(plan: &str, add_header: bool) -> Result<String> {
             0,
             PlanInfo {
                 depth: 0,
-                fields: fields.into_iter().map(str::to_owned).collect(),
+                fields: fields
+                    .into_iter()
+                    .map(|field| field.as_bytes().to_vec())
+                    .collect(),
             },
         );
     }
@@ -393,18 +377,21 @@ fn build_plan_tree(plan: &str, add_header: bool) -> Result<String> {
     }
 
     align_fields(&mut infos, &indents);
-    let mut output = String::new();
+    let mut output = Vec::new();
     for (row, info) in infos.iter().enumerate() {
         if row > 0 {
-            output.push('\n');
+            output.push(b'\n');
         }
-        output.push('\t');
-        output.extend(indents[row].iter());
+        output.push(b'\t');
+        for character in &indents[row] {
+            let mut encoded = [0; 4];
+            output.extend_from_slice(character.encode_utf8(&mut encoded).as_bytes());
+        }
         for (field, value) in info.fields.iter().enumerate() {
             if field > 0 {
-                output.push('\t');
+                output.push(b'\t');
             }
-            output.push_str(value);
+            output.extend_from_slice(value);
         }
     }
     Ok(output)
@@ -455,7 +442,7 @@ fn align_fields(infos: &mut [PlanInfo], indents: &[Vec<char>]) {
         return;
     };
     for info in infos.iter_mut() {
-        info.fields.resize(max_fields, String::new());
+        info.fields.resize(max_fields, Vec::new());
     }
     for column in 0..max_fields.saturating_sub(1) {
         let max_len = infos
@@ -466,7 +453,7 @@ fn align_fields(infos: &mut [PlanInfo], indents: &[Vec<char>]) {
             .unwrap_or(0);
         for (row, info) in infos.iter_mut().enumerate() {
             let fill = max_len - field_len(row, column, info, indents);
-            info.fields[column].extend(std::iter::repeat_n(' ', fill));
+            info.fields[column].extend(std::iter::repeat_n(b' ', fill));
         }
     }
 }
@@ -479,33 +466,52 @@ fn field_len(row: usize, column: usize, info: &PlanInfo, indents: &[Vec<char>]) 
     }
 }
 
-fn decode_plan_info(value: &str) -> Result<Option<PlanInfo>> {
-    let values: Vec<&str> = value.split('\t').collect();
+fn decode_plan_info(value: &[u8]) -> Result<Option<PlanInfo>> {
+    let values: Vec<&[u8]> = value.split(|byte| *byte == b'\t').collect();
     if values.len() < 2 {
         return Ok(None);
     }
-    let depth = values[0].parse::<isize>()?;
-    let depth = usize::try_from(depth).map_err(|_| {
-        PlanCodecError::InvalidPlan(format!("decode plan: {value}, negative depth: {depth}"))
+    let depth_text = std::str::from_utf8(values[0]).map_err(|error| {
+        PlanCodecError::InvalidPlan(format!("invalid encoded plan depth: {error}"))
     })?;
-    let ids: Vec<&str> = values[1].split('_').collect();
+    let depth = depth_text.parse::<isize>()?;
+    let depth = usize::try_from(depth).map_err(|_| {
+        PlanCodecError::InvalidPlan(format!("negative encoded plan depth: {depth}"))
+    })?;
+    let ids: Vec<&[u8]> = values[1].split(|byte| *byte == b'_').collect();
     if !matches!(ids.len(), 1 | 2) {
         return Err(PlanCodecError::InvalidPlan(format!(
-            "decode plan: {value} error, invalid plan id: {}",
-            values[1]
+            "invalid encoded plan id: {}",
+            String::from_utf8_lossy(values[1])
         )));
     }
-    let id = ids[0].parse::<i32>()?;
-    let mut fields = vec![physical_id_to_type_string(id)];
+    let id = std::str::from_utf8(ids[0])
+        .map_err(|error| PlanCodecError::InvalidPlan(format!("invalid encoded plan id: {error}")))?
+        .parse::<i32>()?;
+    let mut fields = vec![physical_id_to_type_string(id).into_bytes()];
     if ids.len() == 2 {
-        fields[0].push('_');
-        fields[0].push_str(ids[1]);
+        fields[0].push(b'_');
+        fields[0].extend_from_slice(ids[1]);
     }
     if let Some(task) = values.get(2) {
-        fields.push(decode_task_type(task)?);
+        fields.push(decode_task_type_bytes(task)?);
     }
-    fields.extend(values.iter().skip(3).map(|field| (*field).to_owned()));
+    fields.extend(values.iter().skip(3).map(|field| field.to_vec()));
     Ok(Some(PlanInfo { depth, fields }))
+}
+
+fn decode_task_type_bytes(value: &[u8]) -> Result<Vec<u8>> {
+    let segments: Vec<&[u8]> = value.split(|byte| *byte == b'_').collect();
+    if segments.first() == Some(&b"0".as_slice()) {
+        return Ok(b"root".to_vec());
+    }
+    if segments.len() == 1 {
+        return Ok(b"cop".to_vec());
+    }
+    let store = std::str::from_utf8(segments[1])
+        .map_err(|error| PlanCodecError::InvalidPlan(format!("invalid task type: {error}")))?
+        .parse::<i64>()?;
+    Ok(format!("cop[{}]", PlanStoreType::name_for_code(store)).into_bytes())
 }
 
 /// Appends one textual plan node to an encoded plan stream.
@@ -952,11 +958,17 @@ mod tests {
         ];
         for (root, store, encoded, decoded) in cases {
             assert_eq!(encode_task_type(root, store), encoded);
-            assert_eq!(decode_task_type(encoded).unwrap(), decoded);
+            assert_eq!(
+                decode_task_type_bytes(encoded.as_bytes()).unwrap(),
+                decoded.as_bytes()
+            );
         }
-        assert_eq!(decode_task_type("1").unwrap(), "cop");
-        assert!(decode_task_type("1_x").is_err());
-        assert_eq!(decode_task_type("1_255").unwrap(), "cop[unspecified]");
+        assert_eq!(decode_task_type_bytes(b"1").unwrap(), b"cop");
+        assert!(decode_task_type_bytes(b"1_x").is_err());
+        assert_eq!(
+            decode_task_type_bytes(b"1_255").unwrap(),
+            b"cop[unspecified]"
+        );
         assert_eq!(
             encode_task_type_for_normalize(false, PlanStoreType::TiKv),
             "1"
@@ -997,7 +1009,7 @@ mod tests {
             &mut raw,
         );
         let encoded = compress(raw.as_bytes());
-        let decoded = decode_plan(&encoded).unwrap();
+        let decoded = String::from_utf8(decode_plan(&encoded).unwrap()).unwrap();
         assert!(decoded.starts_with("\tid"));
         assert!(decoded.contains("HashJoin_1"));
         assert!(decoded.contains("└─TableScan_2"));
@@ -1005,10 +1017,23 @@ mod tests {
         assert!(decoded.contains("cop[tikv]"));
         assert_eq!(
             decode_plan(PLAN_DISCARDED_ENCODED).unwrap(),
-            PLAN_DISCARDED_DECODED
+            PLAN_DISCARDED_DECODED.as_bytes()
         );
-        assert_eq!(decode_plan("").unwrap(), "");
+        assert_eq!(decode_plan("").unwrap(), b"");
         assert!(decode_plan("not base64").is_err());
+    }
+
+    #[test]
+    fn textual_plan_preserves_non_utf8_go_string_bytes() {
+        let encoded = compress(b"0\t1\t0\t1\t\xff\n");
+        assert_eq!(
+            decode_plan(encoded).unwrap(),
+            b"\tid       \ttask\testRows\toperator info\n\tSelection\troot\t1      \t\xff"
+        );
+        assert_eq!(
+            decode_normalized_plan(b"0\t1\t0\t\xff\n").unwrap(),
+            b"\tSelection\troot\t\xff"
+        );
     }
 
     #[test]
@@ -1016,7 +1041,7 @@ mod tests {
         let mut raw = String::new();
         normalize_plan_node(0, TYPE_SELECTION, "0", "eq(a, 1)", &mut raw);
         normalize_plan_node(1, TYPE_TABLE_SCAN, "1", "table:t", &mut raw);
-        let decoded = decode_normalized_plan(&raw).unwrap();
+        let decoded = String::from_utf8(decode_normalized_plan(&raw).unwrap()).unwrap();
         assert!(!decoded.contains("\tid\t"));
         assert!(decoded.starts_with("\tSelection"));
         assert!(decoded.contains("└─TableScan"));

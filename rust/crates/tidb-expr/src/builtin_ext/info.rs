@@ -281,6 +281,20 @@ mod tests {
         .sql_string()
         .unwrap();
         assert!(decoded.contains("Selection"));
+
+        let encoded = tidb_util::plancodec::compress(b"0\t1\t0\t1\t\xff\n");
+        let decoded = dispatch(
+            "TIDB_DECODE_PLAN",
+            &[Datum::new_string(encoded)],
+            &crate::NoColumns,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            decoded.as_raw_bytes().unwrap(),
+            b"\tid       \ttask\testRows\toperator info\n\tSelection\troot\t1      \t\xff"
+        );
+
         assert_eq!(
             dispatch(
                 "TIDB_DECODE_PLAN",
