@@ -99,12 +99,7 @@ fn bin_to_uuid(value: &Datum, flag: Option<&Datum>) -> Result<Datum, EvalError> 
 /// String/bytes datums are returned byte-for-byte; scalar numeric values are
 /// stringified, while NULL propagates without evaluating the optional flag.
 fn eval_string_bytes(value: &Datum) -> Result<Option<Vec<u8>>, EvalError> {
-    match value {
-        Datum::Null => Ok(None),
-        Datum::String(value) => Ok(Some(value.bytes().to_vec())),
-        Datum::Bytes(value) => Ok(Some(value.clone())),
-        _ => Ok(coerce_str(value)?.map(String::into_bytes)),
-    }
+    crate::coerce::coerce_str_bytes(value)
 }
 
 fn eval_int_flag(flag: Option<&Datum>) -> i64 {
@@ -210,15 +205,18 @@ fn vitess_hash(value: &Datum) -> Result<Datum, EvalError> {
 /// are examined. Keep that last behavior: it is explicitly covered by
 /// TiDB's `TestIsUUID` and is why this is not a canonical-format validator.
 fn is_uuid(value: &Datum) -> Result<Datum, EvalError> {
-    let Some(value) = coerce_str(value)? else {
+    let Some(value) = eval_string_bytes(value)? else {
         return Ok(Datum::Null);
     };
-    if value.trim() != value {
+    // Go strings are byte strings. `strings.TrimSpace` decodes malformed
+    // bytes as RuneError (which is not whitespace), while still trimming
+    // valid whitespace around them. Lossy decoding has exactly that property;
+    // the original bytes remain authoritative for `uuid.Parse` below.
+    let trim_view = String::from_utf8_lossy(&value);
+    if trim_view.trim() != trim_view.as_ref() {
         return Ok(Datum::Int(0));
     }
-    Ok(Datum::Int(i64::from(
-        parse_uuid(value.as_bytes()).is_some(),
-    )))
+    Ok(Datum::Int(i64::from(parse_uuid(&value).is_some())))
 }
 
 /// `UUID_VERSION(value)`, ported from `builtinUUIDVersionSig.evalInt` in
@@ -574,6 +572,41 @@ mod tests {
                 Datum::Int(0)
             );
         }
+    }
+
+    #[test]
+    fn is_uuid_preserves_go_byte_string_boundaries() {
+        for value in [
+            Datum::new_string(vec![0xff]),
+            Datum::Bytes(vec![0xff]),
+            Datum::BinaryLiteral(BinaryLiteral::from(vec![0xff])),
+        ] {
+            assert_eq!(
+                dispatch("IS_UUID", &[value])
+                    .expect("IS_UUID must dispatch")
+                    .expect("invalid bytes are a non-UUID value, not an evaluation error"),
+                Datum::Int(0)
+            );
+        }
+
+        let mut invalid_wrapper = vec![0xff];
+        invalid_wrapper.extend_from_slice(b"99a9ad03-5298-11ec-8f5c-00ff90147ac3*");
+        assert_eq!(
+            dispatch("IS_UUID", &[Datum::Bytes(invalid_wrapper)])
+                .expect("IS_UUID must dispatch")
+                .expect("Go's 38-byte UUID parse ignores the invalid wrapper bytes"),
+            Datum::Int(1)
+        );
+
+        let mut leading_space = vec![b' '];
+        leading_space.extend_from_slice(b"99a9ad03-5298-11ec-8f5c-00ff90147ac3");
+        leading_space.push(0xff);
+        assert_eq!(
+            dispatch("IS_UUID", &[Datum::Bytes(leading_space)])
+                .expect("IS_UUID must dispatch")
+                .expect("Go checks surrounding whitespace before its UUID parse"),
+            Datum::Int(0)
+        );
     }
 
     /// Exact source vectors from `TestUUIDTimestamp` in
