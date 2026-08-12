@@ -652,7 +652,7 @@ fn pushing_a_predicate_into_the_scan_keeps_the_captured_plan_shape() {
         ("SELECT a, b FROM t WHERE a > 5", "gt(test.t.a, 5)"),
         (
             "SELECT a, b FROM t WHERE a > 5 AND b + 1 < 10",
-            "and(gt(test.t.a, 5), lt(plus(test.t.b, 1), 10))",
+            "gt(test.t.a, 5), lt(plus(test.t.b, 1), 10)",
         ),
         (
             "SELECT a, b FROM t WHERE a > 5 OR b < 10",

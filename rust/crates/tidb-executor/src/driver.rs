@@ -836,7 +836,7 @@ pub(crate) fn run_select_traced(
     let mut current_scope = scope.clone();
     // Predicate push-down: over a single base table, offer the source the
     // conjuncts it can apply itself; only the residual needs a `Selection`.
-    let executed_where =
+    let (executed_where, pushed_where) =
         negotiate_scan_filter(select, &scope, &mut source, ctx, trace.as_deref_mut());
     // LIMIT push-down: offer the source the row cap, when nothing between it
     // and the `LimitExec` can add, drop or reorder a row.
@@ -852,13 +852,14 @@ pub(crate) fn run_select_traced(
     offer_keep_order(select, index_order.as_ref(), &resolver, &mut source);
 
     // A `WHERE` whose conjuncts all moved into the scan still records its
-    // `Selection`, over the predicate as written, and meters the filtered
-    // rows the scan now emits.
+    // `Selection`, using the built predicates the scan accepted, and meters
+    // the filtered rows the scan now emits.
     if executed_where.is_none() && select.where_clause.is_some() {
         if let Some(trace) = trace.as_deref_mut() {
             if let Some(written) = &traced_select.where_clause {
                 trace.selection(
                     written,
+                    Some(&pushed_where),
                     &qualify,
                     select_stats_selectivity(select, catalog, current_db, &scope),
                 );
@@ -961,6 +962,11 @@ pub(crate) fn run_select_traced(
         let mut pred = rewrite_expr_resolved(&predicate, &predicate_resolver)
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
         refine_comparisons(&mut pred, ctx);
+        let explained_where = trace.is_some().then(|| {
+            let mut predicates = pushed_where;
+            predicates.push(pred.clone());
+            predicates
+        });
         source = Box::new(SelectionExec::new(
             ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
             vec![pred],
@@ -976,6 +982,7 @@ pub(crate) fn run_select_traced(
             if let Some(written) = &traced_select.where_clause {
                 trace.selection(
                     written,
+                    explained_where.as_deref(),
                     &qualify,
                     select_stats_selectivity(select, catalog, current_db, &scope),
                 );

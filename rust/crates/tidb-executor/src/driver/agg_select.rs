@@ -1215,16 +1215,21 @@ fn build_aggregation(
     // not an `Aggregation` sits above it -- and the aggregate shapes are
     // exactly the ones that most need it, because they drag every source row
     // across the seam and then return one row.
-    let executed_where = super::access::negotiate_scan_filter(
+    let (executed_where, pushed_where) = super::access::negotiate_scan_filter(
         select,
         resolver.scope,
         &mut source,
         ctx,
         trace.as_deref_mut(),
     );
+    let mut explained_where = trace.is_some().then_some(pushed_where);
     if let Some(predicate) = &executed_where {
-        let pred = rewrite_expr_resolved(predicate, resolver)
+        let mut pred = rewrite_expr_resolved(predicate, resolver)
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+        refine_comparisons(&mut pred, ctx);
+        if let Some(explained) = &mut explained_where {
+            explained.push(pred.clone());
+        }
         source = Box::new(SelectionExec::new(
             ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
             vec![pred],
@@ -1242,6 +1247,7 @@ fn build_aggregation(
             if let Some(written) = &traced_select.where_clause {
                 trace.selection(
                     written,
+                    explained_where.as_deref(),
                     &qualify,
                     select_stats_selectivity(select, catalog, current_db, resolver.scope),
                 );

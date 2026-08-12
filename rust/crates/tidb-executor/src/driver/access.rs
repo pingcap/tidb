@@ -499,8 +499,11 @@ pub(crate) fn prune_scan_columns(
     }
 }
 
-/// Offers the source the conjuncts it can apply itself, and reports the
-/// `WHERE` that must still run above it (`None`: the source took all of it).
+/// Offers the source the conjuncts it can apply itself, and reports both the
+/// `WHERE` that must still run above it (`None`: the source took all of it)
+/// and the built expressions the source accepted. The latter are the same
+/// values execution and EXPLAIN consume; rebuilding them would repeat
+/// build-time conversions and their warnings.
 ///
 /// Over a single base table every source below is a real streaming scan, so
 /// each answers for itself whether it can keep the promise
@@ -517,7 +520,7 @@ pub(crate) fn negotiate_scan_filter(
     source: &mut Box<dyn Executor>,
     ctx: &crate::StmtContext,
     trace: Option<&mut PlanTrace>,
-) -> Option<tidb_ast::Expr> {
+) -> (Option<tidb_ast::Expr>, Vec<Expression>) {
     match (&select.where_clause, scope.tables.len()) {
         (Some(predicate), 1) => {
             let (pushed, residual) = split_scan_predicates(predicate, &scope_resolver(scope), ctx);
@@ -537,12 +540,12 @@ pub(crate) fn negotiate_scan_filter(
                 ) {
                     trace.set_scan_act_rows(scanned);
                 }
-                residual
+                (residual, pushed.filters().to_vec())
             } else {
-                Some(predicate.clone())
+                (Some(predicate.clone()), Vec::new())
             }
         }
-        (where_clause, _) => where_clause.clone(),
+        (where_clause, _) => (where_clause.clone(), Vec::new()),
     }
 }
 

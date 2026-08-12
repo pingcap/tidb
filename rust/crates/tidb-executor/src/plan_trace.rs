@@ -48,6 +48,7 @@ use std::rc::Rc;
 
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType};
+use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
 use crate::access_cost::ScanEstimate;
@@ -800,9 +801,14 @@ impl PlanTrace {
     /// `stats_selectivity` is `cardinality.Selectivity`'s answer when the
     /// table has loaded statistics; without it the stats-less rates above
     /// stand, which is Go's `pseudoSelectivity`.
+    ///
+    /// `built` is the expression list execution owns after build-time folds.
+    /// The written AST remains the selectivity input and the atomic display
+    /// fallback for a built node this recorder cannot name.
     pub(crate) fn selection(
         &mut self,
         predicate: &tidb_ast::Expr,
+        built: Option<&[Expression]>,
         qualify: &Qualifier<'_>,
         stats_selectivity: Option<f64>,
     ) {
@@ -811,7 +817,11 @@ impl PlanTrace {
         } else {
             Est::Scale(stats_selectivity.unwrap_or_else(|| pseudo_selectivity(predicate)))
         };
-        self.wrap("Selection", est, qualify.expr(predicate));
+        let info = built
+            .filter(|expressions| !expressions.is_empty())
+            .and_then(|expressions| qualify.expressions(expressions))
+            .unwrap_or_else(|| qualify.expr(predicate));
+        self.wrap("Selection", est, info);
     }
 
     /// The one-phase aggregate this tier builds for `GROUP BY` / an
@@ -1599,6 +1609,58 @@ pub(crate) struct Qualifier<'a> {
 }
 
 impl Qualifier<'_> {
+    fn expressions(&self, expressions: &[Expression]) -> Option<String> {
+        let mut rendered: Vec<String> = expressions
+            .iter()
+            .map(|expression| self.built_expr(expression))
+            .collect::<Option<_>>()?;
+        rendered.sort_unstable();
+        Some(rendered.join(", "))
+    }
+
+    fn built_expr(&self, expression: &Expression) -> Option<String> {
+        match expression {
+            Expression::Column(column) => self.built_column(column),
+            Expression::CorrelatedColumn(column) => self.built_column(&column.column),
+            Expression::Constant(constant) => explain_constant(constant),
+            Expression::ScalarFunction(function) => {
+                let args = function
+                    .args
+                    .iter()
+                    .map(|argument| self.built_expr(argument))
+                    .collect::<Option<Vec<_>>>()?;
+                if function.func_name.lowercase() == "cast" {
+                    let result_type = function
+                        .ret_type
+                        .as_ref()
+                        .map(ToString::to_string)
+                        .filter(|value| !value.is_empty())?;
+                    Some(format!("cast({}, {result_type})", args.join(", ")))
+                } else {
+                    Some(format!(
+                        "{}({})",
+                        function.func_name.lowercase(),
+                        args.join(", ")
+                    ))
+                }
+            }
+        }
+    }
+
+    fn built_column(&self, column: &tidb_expr::column::Column) -> Option<String> {
+        let index = usize::try_from(column.index).ok()?;
+        self.scope
+            .tables
+            .iter()
+            .find(|table| (table.offset..table.offset + table.columns.len()).contains(&index))
+            .and_then(|table| {
+                let (name, _) = table.columns.get(index - table.offset)?;
+                let database = table.database.as_deref().unwrap_or(self.db);
+                Some(format!("{database}.{}.{}", table.name, name))
+            })
+            .or_else(|| (!column.orig_name.is_empty()).then(|| column.orig_name.clone()))
+    }
+
     pub(crate) fn expr(&self, expr: &tidb_ast::Expr) -> String {
         match expr {
             tidb_ast::Expr::Column(path) => self.column(path),
@@ -1651,6 +1713,35 @@ impl Qualifier<'_> {
             [table, name] => format!("{}.{table}.{name}", self.db),
             _ => path.join("."),
         }
+    }
+}
+
+fn explain_constant(constant: &tidb_expr::constant::Constant) -> Option<String> {
+    if constant.deferred_expr.is_some() || constant.param_marker.is_some() {
+        return None;
+    }
+    let value = constant
+        .value
+        .truncated_stringify()
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())?;
+    let value = match &constant.value {
+        Datum::String(_)
+        | Datum::Bytes(_)
+        | Datum::Enum(_, _)
+        | Datum::Set(_, _)
+        | Datum::Json(_)
+        | Datum::BinaryLiteral(_)
+        | Datum::Bit(_) => format!("\"{value}\""),
+        _ => value,
+    };
+    if constant.subquery_ref_id > 0 {
+        Some(format!(
+            "ScalarQueryCol#{}({value})",
+            constant.subquery_ref_id
+        ))
+    } else {
+        Some(value)
     }
 }
 

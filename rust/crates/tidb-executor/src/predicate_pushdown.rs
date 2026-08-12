@@ -240,6 +240,12 @@ impl PushedScanFilter {
         &self.predicates
     }
 
+    /// The built expressions the accepting source evaluates.
+    #[must_use]
+    pub(crate) fn filters(&self) -> &[Expression] {
+        &self.filters
+    }
+
     /// Whether anything was pushed at all.
     #[must_use]
     pub fn is_empty(&self) -> bool {

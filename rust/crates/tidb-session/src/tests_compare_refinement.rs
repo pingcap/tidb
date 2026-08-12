@@ -159,35 +159,37 @@ fn the_warning_count_does_not_grow_with_the_scanned_rows() {
     assert_eq!(rows.len(), 190, "a > 10 over 1..200");
     assert_eq!(warning_texts(&session).len(), 2);
     assert_eq!(session.wire_warning_count(), 2);
+
+    assert_eq!(
+        row_text(session.run("select count(*) from big where a > '10ab'")),
+        [["190"]],
+    );
+    assert_eq!(warning_texts(&session).len(), 2);
+    assert_eq!(session.wire_warning_count(), 2);
 }
 
-/// EXPLAIN still prints the constant AS WRITTEN, and that is a REMAINING gap,
-/// not a passing assertion: TiDB's own recording prints the refined form
+/// EXPLAIN prints the refined constant that the scan actually evaluates.
+/// TiDB's own recording prints the same built form
 /// (`gt(executor__partition__partition_with_expression.trange.a, 10)`,
 /// `tests/integrationtest/r/executor/partition/partition_with_expression.result`
 /// :1239).
-///
-/// The cause is structural and is NOT the refinement: this tier's plan trace
-/// renders the WRITTEN AST (`PlanTrace::selection` takes the `tidb_ast::Expr`),
-/// while the refinement rewrites the built `Expression` the scan evaluates.
-/// So the predicate that RUNS is int-to-int -- which is what
-/// `tidb_expr::builtin_compare`'s own tests assert structurally, and what the
-/// two warning-count tests above measure -- and only the printed text lags.
-/// Closing it means teaching the trace to print built expressions, which is a
-/// change to the recorder rather than to this rule.
 #[test]
-#[ignore = "EXPLAIN prints the written AST, not the refined expression"]
-fn explain_still_prints_the_written_constant() {
+fn explain_prints_the_refined_constant() {
     let mut session = partition_session();
-    let plan = row_text(session.run("explain select * from t where a > '10ab'"))
-        .iter()
-        .map(|row| row.join(" "))
-        .collect::<Vec<_>>()
-        .join("\n");
-    assert!(
-        plan.contains("gt(") && plan.contains(", 10)") && !plan.contains("10ab"),
-        "TiDB prints the refined constant; got:\n{plan}"
-    );
+    for sql in [
+        "explain select * from t where a > '10ab'",
+        "explain select count(*) from t where a > '10ab'",
+    ] {
+        let plan = row_text(session.run(sql))
+            .iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            plan.contains("gt(") && plan.contains(", 10)") && !plan.contains("10ab"),
+            "TiDB prints the refined constant for `{sql}`; got:\n{plan}"
+        );
+    }
 }
 
 /// The ACCESS-PATH question, answered: refinement is not what lets an

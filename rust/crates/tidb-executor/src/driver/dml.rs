@@ -2106,6 +2106,7 @@ fn trace_dml_source(
     );
     trace.selection(
         predicate,
+        None,
         &Qualifier {
             db: current_db,
             scope: &scope,

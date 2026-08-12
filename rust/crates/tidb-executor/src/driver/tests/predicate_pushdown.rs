@@ -101,6 +101,40 @@ fn the_scan_takes_comparisons_against_constants_and_nothing_else() {
     }
 }
 
+#[test]
+fn the_scan_keeps_the_refined_expression_it_executes() {
+    let scope = FromScope {
+        tables: vec![FromTable {
+            name: "t".to_owned(),
+            database: Some("test".to_owned()),
+            columns: vec![("a".to_owned(), FieldType::new(FieldTypeCode::Long))],
+            offset: 0,
+            func_deps: Default::default(),
+        }],
+        ..FromScope::default()
+    };
+    let statement = tidb_parser::parse("SELECT * FROM t WHERE a > '10ab'").unwrap();
+    let Stmt::Query(query) = &statement else {
+        panic!("a select");
+    };
+    let QueryStmt::Select(statement) = &**query else {
+        panic!("a select");
+    };
+    let (pushed, residual) = split_scan_predicates(
+        statement.where_clause.as_ref().unwrap(),
+        &ScopeResolver { scope: &scope },
+        &crate::StmtContext::default(),
+    );
+    assert!(residual.is_none());
+    let [Expression::ScalarFunction(comparison)] = pushed.filters() else {
+        panic!("one built comparison: {pushed:?}");
+    };
+    let [Expression::Column(_), Expression::Constant(constant)] = comparison.args.as_slice() else {
+        panic!("column-to-constant comparison: {comparison:?}");
+    };
+    assert_eq!(constant.value, Datum::Int(10));
+}
+
 /// The composed shapes the coprocessor's whitelist admits: `OR`, `NOT`,
 /// `IS [NOT] NULL` and `[NOT] IN`. Each becomes one described conjunct and
 /// leaves no residual, because the whole conjunct moved into the scan.

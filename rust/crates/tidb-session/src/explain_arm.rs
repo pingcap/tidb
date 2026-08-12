@@ -58,11 +58,15 @@ impl Session {
         let target = bound.as_ref().unwrap_or(target);
         let current_db = self.current_db.clone();
         // Both forms plan through the driver's own build path (see
-        // `tidb_executor::explain`), which needs the statement context every
-        // executor it builds evaluates against -- plain EXPLAIN builds the
-        // pipeline without draining it, so no row is produced and no write
-        // runs.
-        let ctx = self.statement_context(true);
+        // `tidb_executor::explain`), using the context of the statement
+        // INSIDE EXPLAIN. Go unwraps `ExplainStmt` before its SELECT/DML
+        // switch for the same reason: a query warns on truncation while a
+        // strict write rejects it. Plain EXPLAIN still only builds the
+        // pipeline, so no row is produced and no write runs.
+        let ctx = self.statement_context(matches!(
+            crate::classify::statement_kind_of(target),
+            crate::classify::StatementKind::Dml
+        ));
         if explain.analyze {
             let (columns, rows) = match target {
                 Stmt::Query(query) => {
