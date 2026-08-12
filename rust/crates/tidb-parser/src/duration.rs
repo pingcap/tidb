@@ -16,6 +16,8 @@
 
 use std::fmt;
 
+use tidb_mysql::is_unicode_decimal_digit;
+
 const MINUTE_NANOS: f64 = 60_000_000_000.0;
 const HOUR_NANOS: f64 = 60.0 * MINUTE_NANOS;
 const DAY_NANOS: f64 = 24.0 * HOUR_NANOS;
@@ -64,11 +66,11 @@ pub fn parse_config_duration(mut source: &str) -> Result<i64, ConfigDurationErro
 
     let mut duration = 0_i64;
     while !source.is_empty() {
-        // `strconv.ParseFloat` accepts ASCII decimal syntax. Scanning that
-        // syntax directly avoids copying Go's Unicode tables merely to reject
-        // non-ASCII digits one step later.
+        // Go's `readFloat` scans `unicode.IsDigit` before `strconv.ParseFloat`
+        // validates the ASCII numeric spelling. Keep that ordering because the
+        // ParseFloat error is exposed through SQL parser diagnostics.
         let split = source
-            .find(|character: char| !(character.is_ascii_digit() || character == '.'))
+            .find(|character: char| !(is_unicode_decimal_digit(character) || character == '.'))
             .ok_or(ConfigDurationError::MissingNumber)?;
         if split == 0 {
             return Err(ConfigDurationError::MissingNumber);
@@ -82,18 +84,17 @@ pub fn parse_config_duration(mut source: &str) -> Result<i64, ConfigDurationErro
             return Err(ConfigDurationError::NumberOutOfRange(number.to_owned()));
         }
 
-        let unit = source[split..]
-            .chars()
-            .next()
-            .expect("split points at a unit");
+        // The source switches on `s[0]`, so even malformed UTF-8 unit text is
+        // diagnosed using its first byte rather than its first Unicode scalar.
+        let unit = source.as_bytes()[split];
         let nanos = match unit {
-            'd' => value * DAY_NANOS,
-            'h' => value * HOUR_NANOS,
-            'm' => value * MINUTE_NANOS,
-            other => return Err(ConfigDurationError::UnknownUnit(other)),
+            b'd' => value * DAY_NANOS,
+            b'h' => value * HOUR_NANOS,
+            b'm' => value * MINUTE_NANOS,
+            other => return Err(ConfigDurationError::UnknownUnit(char::from(other))),
         } as i64;
         duration = duration.wrapping_add(nanos);
-        source = &source[split + unit.len_utf8()..];
+        source = &source[split + 1..];
     }
     Ok(duration)
 }

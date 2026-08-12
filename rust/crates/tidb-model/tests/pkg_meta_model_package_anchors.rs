@@ -503,6 +503,19 @@ fn pkg_meta_model_process_hooks() {
     assert_eq!(index_default, "classic-false-default");
     assert_eq!(job_default, "classic-v1");
     assert_eq!(ttl, "3600000000000");
+
+    for (source, expected) in [
+        ("٢h", "strconv.ParseFloat: parsing \"٢\": invalid syntax"),
+        ("1雪", "unknown unit é"),
+    ] {
+        let error = tidb_model::table::TTLInfo {
+            job_interval: source.to_owned(),
+            ..Default::default()
+        }
+        .get_job_interval()
+        .unwrap_err();
+        assert_eq!(error.to_string(), expected);
+    }
 }
 
 #[test]

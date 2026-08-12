@@ -65,6 +65,40 @@ fn malformed_components_fail_without_go_runtime_emulation() {
 }
 
 #[test]
+fn unicode_decimal_digits_reach_parse_float_before_sql_error_wrapping() {
+    for (source, number) in [("٢h", "٢"), ("1٢h", "1٢")] {
+        assert_eq!(
+            parse_config_duration(source).unwrap_err().to_string(),
+            format!("strconv.ParseFloat: parsing {number:?}: invalid syntax")
+        );
+    }
+
+    let ttl_error = parse("create table t (a int) TTL_JOB_INTERVAL='٢h'").unwrap_err();
+    assert_eq!(
+        ttl_error.message,
+        "The TTL_JOB_INTERVAL option is not a valid duration: strconv.ParseFloat: parsing \"٢\": invalid syntax"
+    );
+    let calibrate_error = parse("calibrate resource duration='1٢h'").unwrap_err();
+    assert_eq!(
+        calibrate_error.message,
+        "The DURATION option is not a valid duration: strconv.ParseFloat: parsing \"1٢\": invalid syntax"
+    );
+}
+
+#[test]
+fn a_non_ascii_unit_reports_the_first_source_byte() {
+    assert_eq!(
+        parse_config_duration("1雪").unwrap_err(),
+        ConfigDurationError::UnknownUnit('é')
+    );
+    let error = parse("calibrate resource duration='1雪'").unwrap_err();
+    assert_eq!(
+        error.message,
+        "The DURATION option is not a valid duration: unknown unit é"
+    );
+}
+
+#[test]
 fn sql_consumers_use_the_same_duration_contract() {
     for value in ["", "0", "1h", "1h100m", "1.5d", "1d3.555h"] {
         assert!(
