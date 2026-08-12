@@ -40,6 +40,7 @@
 use std::time::Duration;
 
 use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+use tidb_datatype::SessionTimeZone;
 use tidb_exec::real_tikv_dml::{commit_configured_write, prepare_configured_write};
 use tidb_exec::real_tikv_read::{ProductionReadProcessAuthority, RealOptimisticTransactionOpener};
 use tidb_planner::prepared_dml::PreparedBindValue;
@@ -144,8 +145,13 @@ fn prepared_insert_and_update_persist_through_one_shared_authority() {
         .expect("INSERT lowers")
         .bind(&int_binds([HANDLE, INSERTED_BALANCE]))
         .expect("INSERT binds");
-    let insert_report =
-        commit_configured_write(&write_opener, &insert, RPC_TIMEOUT, 0).expect("INSERT commits");
+    let insert_report = commit_configured_write(
+        &write_opener,
+        &insert,
+        RPC_TIMEOUT,
+        &SessionTimeZone::utc(),
+    )
+    .expect("INSERT commits");
     assert_eq!(insert_report.affected_rows, 1);
     assert_eq!(insert_report.no_write, None);
     assert_eq!(
@@ -159,8 +165,13 @@ fn prepared_insert_and_update_persist_through_one_shared_authority() {
         .expect("UPDATE lowers")
         .bind(&int_binds([ADDEND, HANDLE]))
         .expect("UPDATE binds");
-    let update_report =
-        commit_configured_write(&write_opener, &update, RPC_TIMEOUT, 0).expect("UPDATE commits");
+    let update_report = commit_configured_write(
+        &write_opener,
+        &update,
+        RPC_TIMEOUT,
+        &SessionTimeZone::utc(),
+    )
+    .expect("UPDATE commits");
     assert_eq!(update_report.affected_rows, 1);
     let expected_balance = INSERTED_BALANCE + ADDEND;
     assert_eq!(read_balance(&write_opener, HANDLE), Some(expected_balance));
@@ -170,8 +181,13 @@ fn prepared_insert_and_update_persist_through_one_shared_authority() {
         .expect("UPDATE lowers")
         .bind(&int_binds([ADDEND, MISSING_HANDLE]))
         .expect("UPDATE binds");
-    let missing_report = commit_configured_write(&write_opener, &missing_update, RPC_TIMEOUT, 0)
-        .expect("missing UPDATE returns without publication");
+    let missing_report = commit_configured_write(
+        &write_opener,
+        &missing_update,
+        RPC_TIMEOUT,
+        &SessionTimeZone::utc(),
+    )
+    .expect("missing UPDATE returns without publication");
     assert_eq!(missing_report.affected_rows, 0);
     assert!(missing_report.no_write.is_some());
     assert_eq!(read_balance(&write_opener, MISSING_HANDLE), None);

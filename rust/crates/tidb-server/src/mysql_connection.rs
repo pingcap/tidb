@@ -1978,7 +1978,8 @@ mod prepared_execute_wire_tests {
             panic!("expected an INSERT command");
         };
         let ConfiguredWritePlan::Write { mutations, .. } =
-            plan_insert(&table, &rows, 0).expect("insert must plan")
+            plan_insert(&table, &rows, &tidb_datatype::SessionTimeZone::utc())
+                .expect("insert must plan")
         else {
             panic!("an INSERT always publishes");
         };
@@ -2016,7 +2017,8 @@ mod prepared_execute_wire_tests {
             panic!("expected an INSERT command");
         };
         let ConfiguredWritePlan::Write { mutations, .. } =
-            plan_insert(&table, &rows, 0).expect("insert must plan")
+            plan_insert(&table, &rows, &tidb_datatype::SessionTimeZone::utc())
+                .expect("insert must plan")
         else {
             panic!("an INSERT always publishes");
         };
@@ -2067,7 +2069,8 @@ mod prepared_execute_wire_tests {
             panic!("expected an INSERT command");
         };
         let ConfiguredWritePlan::Write { mutations, .. } =
-            plan_insert(&seeded_table, &rows, 0).expect("seed insert must plan")
+            plan_insert(&seeded_table, &rows, &tidb_datatype::SessionTimeZone::utc())
+                .expect("seed insert must plan")
         else {
             panic!("an INSERT always publishes");
         };
@@ -2093,10 +2096,15 @@ mod prepared_execute_wire_tests {
         else {
             panic!("expected an UPDATE command");
         };
-        let ConfiguredWritePlan::Write { mutations, .. } =
-            plan_update(&table, handle, column_index, assignment, Some(&stored), 0)
-                .expect("update must plan")
-        else {
+        let ConfiguredWritePlan::Write { mutations, .. } = plan_update(
+            &table,
+            handle,
+            column_index,
+            assignment,
+            Some(&stored),
+            &tidb_datatype::SessionTimeZone::utc(),
+        )
+        .expect("update must plan") else {
             panic!("a changed row publishes");
         };
         assert_eq!(

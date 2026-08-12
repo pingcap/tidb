@@ -27,11 +27,13 @@
 use tidb_codec::table_key::{
     encode_non_unique_index_key, encode_row_key_with_handle, non_unique_index_value, RecordHandle,
 };
-use tidb_datatype::Datum;
+use tidb_datatype::{Datum, SessionTimeZone};
 use tidb_tablecodec::encode_table_row;
 use tidb_exec::real_tikv_dml::{
-    plan_configured_write, plan_delete, plan_insert, plan_update, planned_publication_bounds,
-    prepare_configured_write, prepare_text_write,
+    plan_configured_write as plan_configured_write_in_zone, plan_delete,
+    plan_insert as plan_insert_in_zone, plan_update as plan_update_in_zone,
+    planned_publication_bounds as planned_publication_bounds_in_zone, prepare_configured_write,
+    prepare_text_write,
     ConfiguredWriteError, ConfiguredWritePlan, NoWriteReason, WritePlanningSnapshot,
 };
 use tidb_planner::{
@@ -44,6 +46,55 @@ use tidb_planner::{
 };
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::OptimisticMutationKind;
+
+fn fixed_zone(offset_secs: i32) -> SessionTimeZone {
+    SessionTimeZone::Fixed {
+        name: String::new(),
+        offset_secs,
+    }
+}
+
+fn plan_insert(
+    table: &ConfiguredTable,
+    rows: &[ConfiguredInsertRow],
+    offset_secs: i32,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    plan_insert_in_zone(table, rows, &fixed_zone(offset_secs))
+}
+
+fn plan_update(
+    table: &ConfiguredTable,
+    handle: i64,
+    column_index: usize,
+    assignment: ConfiguredAssignment,
+    stored: Option<&[u8]>,
+    offset_secs: i32,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    plan_update_in_zone(
+        table,
+        handle,
+        column_index,
+        assignment,
+        stored,
+        &fixed_zone(offset_secs),
+    )
+}
+
+fn planned_publication_bounds(
+    write: &ConfiguredPreparedWrite,
+    offset_secs: i32,
+) -> Result<(usize, usize), ConfiguredWriteError> {
+    planned_publication_bounds_in_zone(write, &fixed_zone(offset_secs))
+}
+
+fn plan_configured_write<S: WritePlanningSnapshot>(
+    snapshot: &mut S,
+    write: &ConfiguredPreparedWrite,
+    call: &UnaryCallContext,
+    offset_secs: i32,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    plan_configured_write_in_zone(snapshot, write, call, &fixed_zone(offset_secs))
+}
 
 /// Wraps signed integers as the planner's bind currency for these int-only cases.
 fn int_binds(params: &[i64]) -> Vec<PreparedBindValue> {
@@ -1473,6 +1524,14 @@ fn insert_one_at_tz(
     value: PreparedBindValue,
     tz_offset_secs: i32,
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    insert_one_in_zone(table, value, &fixed_zone(tz_offset_secs))
+}
+
+fn insert_one_in_zone(
+    table: &ConfiguredTable,
+    value: PreparedBindValue,
+    session_tz: &SessionTimeZone,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
     let catalog = ConfiguredCatalog::new([table.clone()]).expect("catalog must validate");
     let ConfiguredPreparedWrite::InsertRows { table, rows } = lower_prepared_write(
         &tidb_parser::parse("INSERT INTO widen.t (id, v) VALUES (?, ?)").expect("SQL must parse"),
@@ -1484,7 +1543,7 @@ fn insert_one_at_tz(
     else {
         panic!("expected an INSERT command");
     };
-    plan_insert(&table, &rows, tz_offset_secs)
+    plan_insert_in_zone(&table, &rows, session_tz)
 }
 
 fn decode_one(table: &ConfiguredTable, value_bytes: &[u8]) -> Datum {
@@ -1693,6 +1752,34 @@ fn timestamp_converts_session_local_literal_to_utc_for_storage() {
     // DATETIME carries no timezone: the literal is stored exactly as written,
     // unlike the TIMESTAMP column above.
     assert_eq!(datetime_time.to_string(), "2020-01-01 10:00:00");
+}
+
+#[test]
+fn timestamp_uses_the_named_zones_offset_at_the_literal_instant() {
+    let table = widened_table(ConfiguredColumn::stored_timestamp_not_null("v", 2, 0));
+    let los_angeles = SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
+
+    let stored = |literal: &[u8]| {
+        let ConfiguredWritePlan::Write { mutations, .. } = insert_one_in_zone(
+            &table,
+            PreparedBindValue::Bytes(literal.to_vec()),
+            &los_angeles,
+        )
+        .expect("named-zone timestamp must plan")
+        else {
+            panic!("an INSERT always publishes");
+        };
+        decode_one(&table, mutations[0].value())
+    };
+
+    let Datum::Time(winter) = stored(b"2020-01-01 10:00:00") else {
+        panic!("expected a temporal value");
+    };
+    let Datum::Time(summer) = stored(b"2020-07-01 10:00:00") else {
+        panic!("expected a temporal value");
+    };
+    assert_eq!(winter.to_string(), "2020-01-01 18:00:00");
+    assert_eq!(summer.to_string(), "2020-07-01 17:00:00");
 }
 
 /// The captured boundary errors from `TestDumpTsz`: a session `time_zone` that

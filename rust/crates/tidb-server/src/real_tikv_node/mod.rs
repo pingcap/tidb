@@ -99,7 +99,9 @@ pub(crate) use schema_following::{
     connect_schema_notifier, spawn_catalog_reloader, spawn_node_stats, spawn_privilege_watch,
     spawn_schema_version_watch, spawn_sysvar_watch,
 };
-pub(crate) use session_time_zone::{parse_set_time_zone, RealTiKvSessionTimeZone};
+pub(crate) use session_time_zone::{
+    parse_set_time_zone, time_zone_sql_error, RealTiKvSessionTimeZone,
+};
 
 const PRODUCTION_CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
 // Go `vardef.DefInitChunkSize` / `DefMaxChunkSize`. The bounded real-TiKV
@@ -486,12 +488,13 @@ pub struct RealTiKvServerSession {
     /// The session's explicit-transaction state, pinning one read snapshot for
     /// the duration of a `BEGIN`/`COMMIT` transaction.
     transaction: SessionTransaction,
-    /// This session's `time_zone`, as `(display name, seconds east of UTC)`.
+    /// This session's resolved `time_zone`.
     /// Threaded into every read's DAG request (`TimeZoneName`/`TimeZoneOffset`)
     /// and every write's `TIMESTAMP` literal-to-UTC conversion, so both sides
     /// of the round trip use the same session-visible zone Go's
     /// `SessionVars.Location()` would. `SET time_zone` updates it in place;
-    /// a fresh session starts at `UTC`/`0`, matching Go's connection default.
+    /// a fresh session starts at the cluster's `SYSTEM` location, matching
+    /// Go's `time_zone=SYSTEM` connection default.
     time_zone: RealTiKvSessionTimeZone,
     /// Persistent connection-level quota roots retained by open cursors.
     cursor_memory: tidb_executor::SessionMemory,
@@ -674,10 +677,10 @@ impl RealTiKvServerSession {
         let bound = template
             .bind(parameters)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let tz_offset_secs = self.time_zone.offset_secs;
+        let session_tz = self.time_zone.zone();
         let buffered = self
             .transaction_for_statement()?
-            .map(|transaction| transaction.execute_write(&bound, tz_offset_secs));
+            .map(|transaction| transaction.execute_write(&bound, &session_tz));
         let report = match buffered {
             Some(Ok(report)) => report,
             Some(Err(error)) => return Err(self.report(&error)),
@@ -685,7 +688,7 @@ impl RealTiKvServerSession {
                 &self.transaction_opener,
                 &bound,
                 PRODUCTION_CONTROL_PLANE_TIMEOUT,
-                tz_offset_secs,
+                &session_tz,
             )
             .map_err(|error| configured_write_error(&error))?,
         };
@@ -1019,9 +1022,8 @@ impl QuerySession for RealTiKvServerSession {
         // storage at all: every read's DAG request and every write's
         // `TIMESTAMP` literal conversion consult it from here on.
         if let Some(value) = parse_set_time_zone(sql) {
-            let parsed = RealTiKvSessionTimeZone::parse(value.trim()).ok_or_else(|| {
-                SqlQueryError::unknown(format!("unsupported SET time_zone value: {value}"))
-            })?;
+            let parsed =
+                RealTiKvSessionTimeZone::parse(value.trim()).map_err(time_zone_sql_error)?;
             self.inner.set_time_zone(&parsed.zone());
             self.time_zone = parsed;
             return Ok(Some(WriteOutcome {

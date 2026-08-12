@@ -52,8 +52,8 @@ use crate::real_tikv_node::{
     install_remote_publication_observer, lightweight_ddl_statement_context,
     observe_real_tikv_query, parse_set_time_zone, point_read_result_field_types,
     refusal_aware_error, run_with_process_shutdown, served_table_descriptor,
-    shape_prepared_point_read_result, QueryActivity, QueryCompletion, RealTiKvSessionTimeZone,
-    RunConfiguredNodeError, CURSOR_INIT_CHUNK_SIZE, CURSOR_MAX_CHUNK_SIZE,
+    shape_prepared_point_read_result, time_zone_sql_error, QueryActivity, QueryCompletion,
+    RealTiKvSessionTimeZone, RunConfiguredNodeError, CURSOR_INIT_CHUNK_SIZE, CURSOR_MAX_CHUNK_SIZE,
 };
 use crate::resultset_source::ResultSetSource;
 use crate::sql_node::{
@@ -443,12 +443,12 @@ impl QuerySession for RealTiKvMultiServerSession {
             .template()
             .bind(parameters)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let tz_offset_secs = self.time_zone.offset_secs;
+        let session_tz = self.time_zone.zone();
         let report = commit_configured_write(
             &self.transaction_opener,
             &bound,
             CONTROL_PLANE_TIMEOUT,
-            tz_offset_secs,
+            &session_tz,
         )
         .map_err(|error| configured_write_error(&error))?;
         Ok(WriteOutcome {
@@ -470,9 +470,8 @@ impl QuerySession for RealTiKvMultiServerSession {
         // `TIMESTAMP` write literal consult it from here on, mirroring
         // `RealTiKvServerSession::execute_write`.
         if let Some(value) = parse_set_time_zone(sql) {
-            let parsed = RealTiKvSessionTimeZone::parse(value.trim()).ok_or_else(|| {
-                SqlQueryError::unknown(format!("unsupported SET time_zone value: {value}"))
-            })?;
+            let parsed =
+                RealTiKvSessionTimeZone::parse(value.trim()).map_err(time_zone_sql_error)?;
             self.reader.set_time_zone(&parsed.zone());
             self.time_zone = parsed;
             return Ok(Some(WriteOutcome {

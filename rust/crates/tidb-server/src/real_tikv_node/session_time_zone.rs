@@ -1,89 +1,62 @@
 //! The `time_zone` a real-TiKV session reads and writes in.
 //!
-//! One value serves both directions of the round trip: its display name goes
-//! into the DAG request's `TimeZoneName` field, and the same zone's offset
-//! converts every write's `TIMESTAMP` literal to UTC -- so both sides see the
-//! zone Go's `SessionVars.Location()` would. Only fixed offsets and the bare
-//! `UTC`/`SYSTEM` spellings are supported, because this node threads in no
-//! IANA timezone database and approximating a named zone silently would be a
-//! wrong answer rather than a missing feature.
+//! One value serves both directions of the round trip: its name and current
+//! offset go into the DAG request, and the same DST-aware zone converts write
+//! literals. Parsing is delegated to `tidb_util::timeutil::parse_time_zone`,
+//! the package owner of Go `timeutil.ParseTimeZone`'s accepted domain.
 
-/// A real-TiKV session's `time_zone` value: a display name for the DAG
-/// request's `TimeZoneName` field, and the same zone's offset in seconds east
-/// of UTC. Only fixed offsets and the bare `UTC`/`SYSTEM` spellings are
-/// supported — this node carries no IANA timezone database.
+/// A real-TiKV session's resolved `time_zone`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct RealTiKvSessionTimeZone {
-    pub(crate) name: String,
-    pub(crate) offset_secs: i32,
+    zone: tidb_datatype::SessionTimeZone,
 }
 
 impl Default for RealTiKvSessionTimeZone {
     fn default() -> Self {
-        Self {
-            name: "UTC".to_owned(),
-            offset_secs: 0,
-        }
+        Self::from_timeutil(tidb_util::timeutil::system_location())
     }
 }
 
 impl RealTiKvSessionTimeZone {
-    /// This value as the shared [`tidb_datatype::SessionTimeZone`], which is
-    /// what derives the DAG request's `TimeZoneName`/`TimeZoneOffset` pair
-    /// (`SessionTimeZone::dag_zone`, Go `timeutil.Zone`).
-    ///
-    /// `SYSTEM` resolves to `UTC` here rather than being passed through as
-    /// the written word: Go sends `Zone(SystemLocation())`, the RESOLVED
-    /// system zone's name, and this node's system zone IS UTC -- that is
-    /// what [`Self::parse`]'s `offset_secs: 0` says. Passing `"SYSTEM"`
-    /// through would name a zone no zone database can load, which is the
-    /// same failure the offset spellings had.
-    pub(crate) fn zone(&self) -> tidb_datatype::SessionTimeZone {
-        let system = self.name.eq_ignore_ascii_case("SYSTEM");
-        tidb_datatype::SessionTimeZone::Fixed {
-            name: if system {
-                "UTC".to_owned()
-            } else {
-                self.name.clone()
-            },
-            offset_secs: self.offset_secs,
-        }
+    fn from_timeutil(zone: tidb_util::timeutil::TimeZone) -> Self {
+        let zone = match zone {
+            tidb_util::timeutil::TimeZone::Local => tidb_datatype::SessionTimeZone::Local,
+            tidb_util::timeutil::TimeZone::Named(zone) => {
+                tidb_datatype::SessionTimeZone::Named(zone)
+            }
+            tidb_util::timeutil::TimeZone::Fixed { name, offset_secs } => {
+                tidb_datatype::SessionTimeZone::Fixed { name, offset_secs }
+            }
+        };
+        Self { zone }
     }
 
-    /// Parses `SET time_zone = <value>`'s source-observable subset: `SYSTEM`,
-    /// `UTC`, and fixed `+HH:MM`/`-HH:MM` offsets. Named IANA zones are
-    /// refused rather than silently approximated, matching this node's
-    /// generally-UTC-only temporal seed.
-    pub(crate) fn parse(value: &str) -> Option<Self> {
-        if value.eq_ignore_ascii_case("SYSTEM") || value.eq_ignore_ascii_case("UTC") {
-            return Some(Self {
-                name: value.to_owned(),
-                offset_secs: 0,
-            });
-        }
-        let offset_secs = parse_fixed_tz_offset(value)?;
-        Some(Self {
-            name: value.to_owned(),
-            offset_secs,
-        })
+    /// The shared zone used by reads and writes.
+    pub(crate) fn zone(&self) -> tidb_datatype::SessionTimeZone {
+        self.zone.clone()
+    }
+
+    /// Parses the complete Go `timeutil.ParseTimeZone` domain.
+    pub(crate) fn parse(value: &str) -> Result<Self, tidb_error::terror::TerrorError> {
+        Ok(Self::from_timeutil(tidb_util::timeutil::parse_time_zone(
+            value,
+        )?))
     }
 }
 
-/// Parses a fixed UTC offset (`+HH:MM`/`-HH:MM`, e.g. `'+05:00'`, `'-08:00'`)
-/// into whole seconds east of UTC.
-fn parse_fixed_tz_offset(s: &str) -> Option<i32> {
-    let bytes = s.as_bytes();
-    if bytes.len() != 6 || bytes[3] != b':' {
-        return None;
-    }
-    let sign = match bytes[0] {
-        b'+' => 1,
-        b'-' => -1,
-        _ => return None,
-    };
-    let hh: i32 = s.get(1..3)?.parse().ok()?;
-    let mm: i32 = s.get(4..6)?.parse().ok()?;
-    Some(sign * (hh * 3600 + mm * 60))
+pub(crate) fn time_zone_sql_error(
+    error: tidb_error::terror::TerrorError,
+) -> crate::sql_node::SqlQueryError {
+    let error = error.to_sql_error();
+    crate::sql_node::SqlQueryError::new(
+        error.code,
+        error
+            .state
+            .as_bytes()
+            .try_into()
+            .expect("five-byte SQLSTATE"),
+        error.message,
+    )
 }
 
 /// Recognizes `SET [SESSION] time_zone = <value>` / `SET @@time_zone = <value>`
@@ -168,12 +141,12 @@ mod tests {
     /// '-08:00'        -> name ""              offset -28800
     /// 'UTC'           -> name "UTC"           offset 0
     /// '+00:00'        -> name ""              offset 0
-    /// 'SYSTEM'        -> name "Asia/Shanghai" offset 28800
+    /// 'SYSTEM'        -> the resolved `timeutil.SystemLocation()` pair
     /// ```
     ///
     /// Note the last two rows: `'+00:00'` is NOT `"UTC"` -- it is an offset
     /// zone that happens to be zero -- and `SYSTEM` sends the RESOLVED system
-    /// zone's name, which for this node (whose system zone is UTC) is `UTC`.
+    /// zone's name rather than the spelling `SYSTEM`.
     #[test]
     fn an_offset_zone_stamps_an_empty_dag_name_and_a_named_one_stamps_its_name() {
         let dag = |value: &str| {
@@ -186,42 +159,74 @@ mod tests {
         assert_eq!(dag("-08:00"), (String::new(), -28_800));
         assert_eq!(dag("+00:00"), (String::new(), 0));
         assert_eq!(dag("UTC"), ("UTC".to_owned(), 0));
-        assert_eq!(dag("SYSTEM"), ("UTC".to_owned(), 0));
+        let system = tidb_util::timeutil::system_location();
+        assert_eq!(dag("SYSTEM"), tidb_util::timeutil::zone(&system));
     }
 
     #[test]
-    fn real_tikv_session_time_zone_parses_fixed_offsets_and_refuses_named_zones() {
+    fn real_tikv_session_time_zone_uses_the_source_parser() {
         assert_eq!(
-            RealTiKvSessionTimeZone::parse("+05:00"),
-            Some(RealTiKvSessionTimeZone {
-                name: "+05:00".to_owned(),
-                offset_secs: 18_000,
-            })
+            RealTiKvSessionTimeZone::parse("+05:00")
+                .unwrap()
+                .zone()
+                .dag_zone(),
+            (String::new(), 18_000)
         );
         assert_eq!(
-            RealTiKvSessionTimeZone::parse("-12:00"),
-            Some(RealTiKvSessionTimeZone {
-                name: "-12:00".to_owned(),
-                offset_secs: -43_200,
-            })
+            RealTiKvSessionTimeZone::parse("-12:00")
+                .unwrap()
+                .zone()
+                .dag_zone(),
+            (String::new(), -43_200)
         );
         assert_eq!(
-            RealTiKvSessionTimeZone::parse("UTC"),
-            Some(RealTiKvSessionTimeZone {
-                name: "UTC".to_owned(),
-                offset_secs: 0,
-            })
+            RealTiKvSessionTimeZone::parse("UTC")
+                .unwrap()
+                .zone()
+                .dag_zone(),
+            ("UTC".to_owned(), 0)
         );
         assert_eq!(
-            RealTiKvSessionTimeZone::parse("SYSTEM"),
-            Some(RealTiKvSessionTimeZone {
-                name: "SYSTEM".to_owned(),
-                offset_secs: 0,
-            })
+            RealTiKvSessionTimeZone::parse("Asia/Shanghai")
+                .unwrap()
+                .zone()
+                .dag_zone(),
+            ("Asia/Shanghai".to_owned(), 28_800)
         );
-        // No IANA timezone database is threaded in, so a named zone is
-        // refused rather than silently approximated.
-        assert_eq!(RealTiKvSessionTimeZone::parse("Asia/Shanghai"), None);
-        assert_eq!(RealTiKvSessionTimeZone::parse("not-a-zone"), None);
+        assert_eq!(
+            RealTiKvSessionTimeZone::parse("not-a-zone")
+                .expect_err("an invalid name must be rejected")
+                .to_sql_error()
+                .code,
+            1298
+        );
+    }
+
+    #[test]
+    fn real_tikv_session_time_zone_accepts_the_go_parse_time_zone_domain() {
+        let shanghai = RealTiKvSessionTimeZone::parse("Asia/Shanghai")
+            .expect("Go timeutil.ParseTimeZone accepts named IANA zones");
+        assert_eq!(shanghai.zone().dag_zone().0, "Asia/Shanghai");
+
+        let compact = RealTiKvSessionTimeZone::parse("+2")
+            .expect("Go parses offsets with MySQL duration grammar");
+        assert_eq!(compact.zone().dag_zone(), (String::new(), 2));
+
+        let error = time_zone_sql_error(
+            RealTiKvSessionTimeZone::parse("not-a-zone").expect_err("invalid zone"),
+        );
+        assert_eq!(error.code, 1298);
+        assert_eq!(error.state, *b"HY000");
+        assert_eq!(
+            error.message,
+            "Unknown or incorrect time zone: 'not-a-zone'"
+        );
+    }
+
+    #[test]
+    fn fresh_session_uses_the_resolved_system_location() {
+        let default = RealTiKvSessionTimeZone::default().zone().dag_zone();
+        let system = tidb_util::timeutil::system_location();
+        assert_eq!(default, tidb_util::timeutil::zone(&system));
     }
 }

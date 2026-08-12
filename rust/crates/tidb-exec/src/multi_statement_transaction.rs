@@ -48,7 +48,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use tidb_codec::table_key::{decode_record_key, encode_row_key_with_handle, RecordHandle};
-use tidb_datatype::Datum;
+use tidb_datatype::{Datum, SessionTimeZone};
 use tidb_executor::deadlock_history::record_deadlock;
 use tidb_planner::prepared_dml::ConfiguredPreparedWrite;
 use tidb_planner::read_only_scan::{
@@ -443,7 +443,7 @@ impl MultiStatementTransaction {
     pub fn execute_write(
         &mut self,
         write: &ConfiguredPreparedWrite,
-        tz_offset_secs: i32,
+        session_tz: &SessionTimeZone,
     ) -> Result<ConfiguredWriteReport, TransactionStatementError> {
         if self.mode.is_pessimistic() {
             let handles = written_handles(write);
@@ -453,7 +453,7 @@ impl MultiStatementTransaction {
                 self.lock_handles(&handles, ReadLockWait::Blocking)?;
             }
         }
-        let plan = plan_configured_write(self, write, &self.statement_call(), tz_offset_secs)
+        let plan = plan_configured_write(self, write, &self.statement_call(), session_tz)
             .map_err(|error| TransactionStatementError::write(&error))?;
         match plan {
             ConfiguredWritePlan::Write {
