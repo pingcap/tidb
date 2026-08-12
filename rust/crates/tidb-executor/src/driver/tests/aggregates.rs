@@ -101,6 +101,29 @@ fn aggregate_selects() {
 }
 
 #[test]
+fn group_concat_casts_duration_inputs_to_strings() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE d (v TIME(6))", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO d VALUES ('01:02:03.400000'), ('11:22:33.000001')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+
+    let rows = run_select_on(
+        "SELECT GROUP_CONCAT(v ORDER BY v) FROM d",
+        &catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    assert_eq!(
+        datum_text_for_test(&rows[0][0]),
+        "01:02:03.400000,11:22:33.000001"
+    );
+}
+
+#[test]
 fn float_sum_and_avg_use_the_real_domain() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on("CREATE TABLE f (v FLOAT)", &mut catalog).unwrap();

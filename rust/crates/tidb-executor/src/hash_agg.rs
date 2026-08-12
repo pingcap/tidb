@@ -81,8 +81,8 @@ use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_codec::encode_compact_bytes;
 use tidb_datatype::{
-    BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, FieldType, TimeType, MAX_DECIMAL_SCALE,
-    UNSPECIFIED_LENGTH,
+    BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, FieldType, FieldTypeCode, TimeType,
+    MAX_DECIMAL_SCALE, UNSPECIFIED_LENGTH,
 };
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
@@ -439,19 +439,16 @@ fn group_concat_arg_text(func: &AggFunc) -> String {
     }
 }
 
-fn group_concat_bytes(value: &Datum) -> Result<Vec<u8>, ExecError> {
-    Ok(match value {
-        Datum::Bytes(bytes) => bytes.clone(),
-        Datum::String(text) => text.bytes().to_vec(),
-        Datum::Int(number) => number.to_string().into_bytes(),
-        Datum::UInt(number) => number.to_string().into_bytes(),
-        Datum::Real(number) => number.to_string().into_bytes(),
-        Datum::Decimal(number) => number.to_string().into_bytes(),
-        _ => {
-            return Err(ExecError::unsupported(
-                "GROUP_CONCAT over this datum kind is not yet supported",
-            ))
-        }
+fn group_concat_bytes(value: &Datum, field_type: Option<&FieldType>) -> Result<Vec<u8>, ExecError> {
+    // `WrapCastForAggArgs` wraps GROUP_CONCAT arguments with CAST AS STRING.
+    // YEAR has one cast-only spelling rule that the datum alone cannot carry.
+    if field_type.is_some_and(|field_type| field_type.code() == FieldTypeCode::Year)
+        && matches!(value, Datum::Int(0) | Datum::UInt(0))
+    {
+        return Ok(b"0000".to_vec());
+    }
+    value.sql_bytes().map_err(|_| {
+        ExecError::unsupported("GROUP_CONCAT over this datum kind is not yet supported")
     })
 }
 
@@ -713,7 +710,7 @@ impl Partial {
             }
             (Partial::GroupConcat { .. }, Some(Datum::Null)) => {}
             (Partial::GroupConcat { values, .. }, Some(input)) => {
-                values.push((group_concat_bytes(&input)?, sort_key));
+                values.push((group_concat_bytes(&input, None)?, sort_key));
             }
             (Partial::FirstRow(slot), value) => {
                 if slot.is_none() {
@@ -1438,7 +1435,11 @@ fn eval_agg_input<C: Columns>(
     row: tidb_chunk::row::Row<'_>,
     extra_values: &mut Vec<Datum>,
 ) -> Result<Option<Datum>, ExecError> {
-    let value = if f.extra_args.is_empty() && !matches!(f.kind, AggKind::ApproxCountDistinct) {
+    let value = if f.extra_args.is_empty()
+        && !matches!(
+            f.kind,
+            AggKind::ApproxCountDistinct | AggKind::GroupConcat { .. }
+        ) {
         match &f.arg {
             Some(expr) => Some(expr.eval(ctx, row)?),
             None => None,
@@ -1521,7 +1522,7 @@ fn eval_agg_input<C: Columns>(
                 break;
             }
             if let Some(buf) = &mut concatenated {
-                buf.extend_from_slice(&group_concat_bytes(&datum)?);
+                buf.extend_from_slice(&group_concat_bytes(&datum, expr.static_type())?);
             }
         }
         Some(concatenated.map_or(Datum::Null, Datum::Bytes))
@@ -1770,6 +1771,15 @@ mod tests {
             StatementMemory::default(),
         );
         assert_eq!(run_typed(agg, &types), vec![vec![Datum::Null]]);
+    }
+
+    #[test]
+    fn group_concat_uses_the_year_zero_cast_spelling() {
+        let year = FieldType::new(FieldTypeCode::Year);
+        assert_eq!(
+            group_concat_bytes(&Datum::Int(0), Some(&year)).unwrap(),
+            b"0000"
+        );
     }
 
     /// DISTINCT folds repeated inputs once per group, and the de-duplication
