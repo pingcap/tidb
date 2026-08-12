@@ -65,7 +65,7 @@ impl SystemTimeMonitor {
         N: FnMut() -> SystemTime + Send + 'static,
         H: FnMut() + Send + 'static,
     {
-        tidb_log::info("start system time monitor", &[]);
+        crate::logutil::bg_logger().info("start system time monitor", &[]);
         let state = Arc::new(StopState::default());
         let worker_state = Arc::clone(&state);
         let worker = thread::Builder::new()
@@ -83,7 +83,7 @@ impl SystemTimeMonitor {
                 drop(stopped);
 
                 if now() < previous {
-                    tidb_log::error(
+                    crate::logutil::bg_logger().error(
                         "system time jump backward",
                         &[Field::new("last", Value::I64(unix_nanos(previous)))],
                     );
