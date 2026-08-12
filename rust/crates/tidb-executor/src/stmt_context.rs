@@ -954,6 +954,21 @@ impl StmtContext {
         self
     }
 
+    /// Length of the server identity this statement returns from
+    /// `TIDB_VERSION()`.
+    #[must_use]
+    pub fn tidb_info_len(&self) -> usize {
+        self.tidb_info.as_ref().map_or_else(
+            || {
+                tidb_util::printer::get_tidb_info(
+                    &tidb_util::versioninfo::VersionInfo::build_default(),
+                )
+                .len()
+            },
+            String::len,
+        )
+    }
+
     /// Attaches the authenticated identity, which Go keeps on
     /// `SessionVars.User` in the two spellings its builtins report.
     #[must_use]

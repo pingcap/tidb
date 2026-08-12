@@ -39,6 +39,8 @@ pub(crate) struct FromScope {
     /// this `FROM` already receives; the statement build points set it from
     /// `StmtContext::session_zone` and every derived scope clones it along.
     pub(crate) zone: tidb_expr::SessionTimeZone,
+    /// Result width of this statement's configured `TIDB_VERSION()` value.
+    pub(crate) tidb_info_len: usize,
     /// The row offsets a `NATURAL`/`USING` join coalesced AWAY: the inner
     /// side's copy of each common column, which stays reachable through its
     /// own table's qualifier (`SELECT u2.id`) but is invisible to `*` and to
@@ -104,6 +106,10 @@ impl Default for FromScope {
             star: Vec::new(),
             qualified_star_is_output_only: false,
             zone: tidb_expr::SessionTimeZone::utc(),
+            tidb_info_len: tidb_util::printer::get_tidb_info(
+                &tidb_util::versioninfo::VersionInfo::build_default(),
+            )
+            .len(),
         }
     }
 }
@@ -203,6 +209,10 @@ impl ColumnResolver for ScopeResolver<'_> {
     /// `StmtContext` -- see [`FromScope::zone`].
     fn time_zone(&self) -> tidb_expr::SessionTimeZone {
         self.scope.zone.clone()
+    }
+
+    fn tidb_info_len(&self) -> usize {
+        self.scope.tidb_info_len
     }
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
@@ -646,6 +656,7 @@ pub(crate) fn build_from(
                     offset: 0,
                 }],
                 zone: ctx.session_zone(),
+                tidb_info_len: ctx.tidb_info_len(),
                 ..FromScope::default()
             };
             // What this leaf DELIVERS -- read off the branch that RAN, which
@@ -788,6 +799,7 @@ pub(crate) fn build_derived_source(
             func_deps: Default::default(),
         }],
         zone: ctx.session_zone(),
+        tidb_info_len: ctx.tidb_info_len(),
         ..FromScope::default()
     };
     Ok((exec, scope))
@@ -1224,6 +1236,7 @@ pub(crate) fn build_view_source(
             func_deps: Default::default(),
         }],
         zone: ctx.session_zone(),
+        tidb_info_len: ctx.tidb_info_len(),
         ..FromScope::default()
     };
     Ok((exec, scope))

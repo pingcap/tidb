@@ -80,6 +80,14 @@ pub trait ColumnResolver {
     /// in rather than silently inheriting a hardcode -- which is exactly the
     /// dropped-Context bug this accessor closes.
     fn time_zone(&self) -> tidb_datatype::SessionTimeZone;
+
+    /// Length of the immutable server identity returned by `TIDB_VERSION()`.
+    /// Go reads the process globals while building this function and uses the
+    /// same rendered value to set its result width.
+    fn tidb_info_len(&self) -> usize {
+        tidb_util::printer::get_tidb_info(&tidb_util::versioninfo::VersionInfo::build_default())
+            .len()
+    }
 }
 
 /// A resolver that knows no columns but folds in a REAL session zone: what
@@ -1057,9 +1065,12 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 .iter()
                 .map(|arg| rewrite_expr_resolved(arg, resolver))
                 .collect::<Result<_, _>>()?;
-            let ret_type = builtin_return_type(&lowered, &rewritten).ok_or(
+            let mut ret_type = builtin_return_type(&lowered, &rewritten).ok_or(
                 EvalError::Unsupported("this builtin is not yet built for chunk evaluation"),
             )?;
+            if lowered == "tidb_version" {
+                ret_type.set_flen(i64::try_from(resolver.tidb_info_len()).unwrap_or(i64::MAX));
+            }
             let rewritten = wrap_binary_literals(&lowered, ret_type.charset_name(), rewritten);
             Ok(Expression::ScalarFunction(ScalarFunction::new(
                 CiString::new(&lowered),

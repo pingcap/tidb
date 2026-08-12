@@ -105,6 +105,23 @@ fn version_comment_uses_the_server_identity_snapshot() {
     ));
 }
 
+#[test]
+fn tidb_version_metadata_uses_the_server_identity_snapshot() {
+    let mut session = Session::new();
+    let info = tidb_util::versioninfo::VersionInfo::build_default()
+        .with_configured_edition("An Edition Whose Name Changes The Result Width");
+    let expected_flen = tidb_util::printer::get_tidb_info(&info).len() as i64;
+    session.set_version_info(info);
+
+    let StmtOutput::Rows { columns, .. } = session
+        .run_with_columns("SELECT TIDB_VERSION()")
+        .expect("TIDB_VERSION query")
+    else {
+        panic!("TIDB_VERSION must return rows");
+    };
+    assert_eq!(columns[0].1.flen(), expected_flen);
+}
+
 /// Hash-join versions are source string variables with a closed value domain:
 /// casing is accepted and retained, while every other spelling is refused by
 /// the variable-specific validation closure.

@@ -170,6 +170,7 @@ struct MultiSource {
     /// the `WHERE`/`ON`/`SET` rewrites over this source fold temporal
     /// literals in the session's zone (see [`FromScope::zone`]).
     zone: tidb_expr::SessionTimeZone,
+    tidb_info_len: usize,
 }
 
 impl MultiSource {
@@ -193,6 +194,7 @@ impl MultiSource {
                 })
                 .collect(),
             zone: self.zone.clone(),
+            tidb_info_len: self.tidb_info_len,
             ..FromScope::default()
         }
     }
@@ -248,9 +250,13 @@ fn build_multi_node(
     ctx: &crate::StmtContext,
 ) -> Result<MultiSource, DriverError> {
     match node {
-        tidb_ast::JoinNode::Table(table_ref) => {
-            scan_base_table(table_ref, catalog, current_db, &ctx.session_zone())
-        }
+        tidb_ast::JoinNode::Table(table_ref) => scan_base_table(
+            table_ref,
+            catalog,
+            current_db,
+            &ctx.session_zone(),
+            ctx.tidb_info_len(),
+        ),
         tidb_ast::JoinNode::Join(join) => build_multi_source(join, catalog, current_db, ctx),
         tidb_ast::JoinNode::Derived {
             subquery,
@@ -323,6 +329,7 @@ fn scan_derived_table(
         .collect();
     Ok(MultiSource {
         zone: ctx.session_zone(),
+        tidb_info_len: ctx.tidb_info_len(),
         tables: vec![SourceTable {
             visible: alias.to_owned(),
             // An alias is the only qualifier a derived table answers to.
@@ -342,6 +349,7 @@ fn scan_base_table(
     catalog: &Catalog,
     current_db: &str,
     zone: &tidb_datatype::SessionTimeZone,
+    tidb_info_len: usize,
 ) -> Result<MultiSource, DriverError> {
     let (database, name) = split_table_path(&table_ref.name, current_db)?;
     let entry = catalog
@@ -386,6 +394,7 @@ fn scan_base_table(
     let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
     Ok(MultiSource {
         zone: zone.clone(),
+        tidb_info_len,
         tables: vec![SourceTable {
             visible,
             qualifiable_db: table_ref.alias.is_none().then(|| database.to_owned()),
@@ -424,6 +433,7 @@ fn join_sources(
         tables,
         rows: Vec::new(),
         zone: ctx.session_zone(),
+        tidb_info_len: ctx.tidb_info_len(),
     };
     let field_types = joined.field_types();
     let condition = match &join.on {
