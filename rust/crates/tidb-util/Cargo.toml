@@ -18,6 +18,9 @@ intest = []
 race = []
 testexport = []
 
+[build-dependencies]
+chrono.workspace = true
+
 [dependencies]
 base64.workspace = true
 crossbeam-channel = "0.5"

@@ -24,31 +24,15 @@
 pub const COMMUNITY_EDITION: &str = "Community";
 
 /// Build-time value of Go `TiDBBuildTS`.
-pub const TIDB_BUILD_TS: &str = match option_env!("TIDB_BUILD_TS") {
-    Some(v) => v,
-    None => "None",
-};
+pub const TIDB_BUILD_TS: &str = env!("TIDB_BUILD_TS");
 /// Build-time value of Go `TiDBGitHash`.
-pub const TIDB_GIT_HASH: &str = match option_env!("TIDB_GIT_HASH") {
-    Some(v) => v,
-    None => "None",
-};
+pub const TIDB_GIT_HASH: &str = env!("TIDB_GIT_HASH");
 /// Build-time value of Go `TiDBGitBranch`.
-pub const TIDB_GIT_BRANCH: &str = match option_env!("TIDB_GIT_BRANCH") {
-    Some(v) => v,
-    None => "None",
-};
+pub const TIDB_GIT_BRANCH: &str = env!("TIDB_GIT_BRANCH");
 /// Build-time default of Go `TiDBEdition`.
-pub const TIDB_EDITION: &str = match option_env!("TIDB_EDITION") {
-    Some(v) => v,
-    None => COMMUNITY_EDITION,
-};
+pub const TIDB_EDITION: &str = env!("TIDB_EDITION");
 /// Build-time value of Go `TiDBEnterpriseExtensionGitHash`.
-pub const TIDB_ENTERPRISE_EXTENSION_GIT_HASH: &str =
-    match option_env!("TIDB_ENTERPRISE_EXTENSION_GIT_HASH") {
-        Some(v) => v,
-        None => "",
-    };
+pub const TIDB_ENTERPRISE_EXTENSION_GIT_HASH: &str = env!("TIDB_ENTERPRISE_EXTENSION_GIT_HASH");
 
 /// Compiler/runtime identity captured by this crate's build script.
 pub const RUST_VERSION: &str = env!("TIDB_RUST_VERSION");
@@ -228,5 +212,49 @@ mod tests {
         let overridden = configured.with_configured_versions("v9.0.0", "8.0.11-TiDB-v9.0.0");
         assert_eq!(overridden.release_version, "v9.0.0");
         assert_eq!(overridden.server_version, "8.0.11-TiDB-v9.0.0");
+    }
+
+    #[test]
+    fn repository_build_captures_the_source_identity() {
+        let build = VersionInfo::build_default();
+        if let Ok(build_ts) = std::env::var("TIDB_BUILD_TS") {
+            assert_eq!(build.build_ts, build_ts);
+        } else {
+            assert!(
+                chrono::NaiveDateTime::parse_from_str(&build.build_ts, "%Y-%m-%d %H:%M:%S").is_ok(),
+                "build timestamp: {}",
+                build.build_ts
+            );
+        }
+        assert_eq!(
+            build.git_hash,
+            std::env::var("TIDB_GIT_HASH").unwrap_or_else(|_| {
+                String::from_utf8(
+                    std::process::Command::new("git")
+                        .args(["rev-parse", "HEAD"])
+                        .output()
+                        .unwrap()
+                        .stdout,
+                )
+                .unwrap()
+                .trim()
+                .to_owned()
+            })
+        );
+        assert_eq!(
+            build.git_branch,
+            std::env::var("TIDB_GIT_BRANCH").unwrap_or_else(|_| {
+                String::from_utf8(
+                    std::process::Command::new("git")
+                        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+                        .output()
+                        .unwrap()
+                        .stdout,
+                )
+                .unwrap()
+                .trim()
+                .to_owned()
+            })
+        );
     }
 }
