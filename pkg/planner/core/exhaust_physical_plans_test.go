@@ -208,7 +208,7 @@ func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase 
 		joinOtherConditions:   others,
 		outerJoinKeys:         testCase.innerKeys,
 		innerJoinKeys:         testCase.innerKeys,
-		innerStats:            dataSourceNode.StatsInfo(),
+		innerTableStats:       dataSourceNode.TableStats,
 		innerSchema:           dataSourceNode.Schema(),
 		innerPushedConditions: dataSourceNode.PushedDownConds}
 	result, _, err := indexJoinPathBuild(ctx, testCtx.path, indexJoinInfo, testCase.rebuildMode)

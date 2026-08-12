@@ -2480,6 +2480,32 @@ JOIN
 	require.True(t, len(r.Rows()) > 0) // no error
 }
 
+// TestIndexJoinUsesOriginalTableStatsForPathNDV verifies that IndexJoin path selection estimates
+// the used columns' NDV from the original table statistics. It is a regression test for issue #63869.
+func TestIndexJoinUsesOriginalTableStatsForPathNDV(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table ts (idx int, code int, a int, key k(idx, code))`)
+	tk.MustExec(`insert into ts select * from (
+		  with recursive tt as (
+			select 0 as idx, 0 as code, 0 as a
+			union all
+			select mod(a, 100) as idx, 0 as code, a+1 as a from tt where a<200
+		  ) select * from tt) tt`)
+	tk.MustExec(`create table h (idx int, code int, typ1 int, typ2 int, update_time int, key k1(idx, typ1, typ2), key k2(idx, update_time))`)
+	tk.MustExec(`insert into h select * from (
+		  with recursive tt as (
+			select 0 idx, 0 as code, 0 as typ1, 0 as typ2, 0 as update_time
+			union all
+			select mod(update_time, 5) as idx, 0 as code, 0 as typ1, 0 as typ2, update_time+1 as update_time from tt where update_time<200
+		  ) select * from tt) tt`)
+	tk.MustExec(`analyze table ts, h`)
+	// use the index k2(idx, update_time) since update_time has a higher NDV than typ1 and typ2
+	tk.MustUseIndex(`select /*+ tidb_inlj(h) */ 1 from ts inner join h on ts.idx=h.idx and ts.code=h.code
+				where h.typ1=0 and h.typ2=0 and h.update_time>0 and h.update_time<2 and h.code=0`, "k2")
+}
+
 func TestIssue58829(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

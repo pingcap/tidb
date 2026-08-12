@@ -94,6 +94,7 @@ type indexJoinPathResult struct {
 	chosenRanges   ranger.MutableRanges    // the ranges used to access this index
 	usedColsLen    int                     // the number of columns used on this index, `t1.a=t2.a and t1.b=t2.b` can use 2 columns of index t1(a, b, c)
 	usedColsNDV    float64                 // the estimated NDV of the used columns on this index, the NDV of `t1(a, b)`
+	lastColIsRange bool                    // whether the last used column is accessed by a range (non-EQ) condition
 	idxOff2KeyOff  []int
 	lastColManager *ColWithCmpFuncManager
 }
@@ -105,7 +106,7 @@ type indexJoinPathInfo struct {
 	innerJoinKeys         []*expression.Column
 	innerSchema           *expression.Schema
 	innerPushedConditions []expression.Expression
-	innerStats            *property.StatsInfo
+	innerTableStats       *property.StatsInfo // the original table's stats
 }
 
 // indexJoinPathTmp records temporary information when building IndexJoin.
@@ -213,7 +214,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		}
 		lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
+		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, false, lastColPos)
 		return ret, false, nil
 	}
 	lastPossibleCol := path.IdxCols[lastColPos]
@@ -252,17 +253,19 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 		// update accesses and remained by colAccesses and colRemained.
 		remained = append(remained, colRemained...)
+		lastColIsRange := false
 		if tempRangeRes.nextColInRange {
 			if path.IdxColLens[lastColPos] != types.UnspecifiedLength {
 				remained = append(remained, colAccesses...)
 			}
 			accesses = append(accesses, colAccesses...)
 			lastColPos = lastColPos + 1
+			lastColIsRange = true
 		} else {
 			remained = append(remained, colAccesses...)
 		}
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
+		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColIsRange, lastColPos)
 		return ret, false, nil
 	}
 	tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nil, true, rangeMaxSize)
@@ -272,9 +275,11 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 	lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 
 	remained = append(remained, rangeFilterCandidates...)
+	lastColIsRange := false
 	if tempRangeRes.extraColInRange {
 		accesses = append(accesses, lastColAccess...)
 		lastColPos = lastColPos + 1
+		lastColIsRange = true
 	} else {
 		if tempRangeRes.keyCntInRange <= 0 {
 			return nil, false, nil
@@ -282,7 +287,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		lastColManager = nil
 	}
 	mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-	ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, lastColManager, lastColPos)
+	ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, lastColManager, lastColIsRange, lastColPos)
 	return ret, false, nil
 }
 
@@ -330,9 +335,14 @@ func indexJoinPathConstructResult(
 	path *util.AccessPath, accesses,
 	remained []expression.Expression,
 	lastColManager *ColWithCmpFuncManager,
+	lastColIsRange bool,
 	usedColsLen int) *indexJoinPathResult {
 	var innerNDV float64
-	if stats := indexJoinInfo.innerStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
+	if stats := indexJoinInfo.innerTableStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
+		// NOTE: use the original table's stats (DataSource.TableStats) to estimate NDV instead of stats
+		// AFTER APPLYING ALL FILTERS (DataSource.stats). Because here we'll use the NDV to measure how many
+		// rows we need to scan in double-read, and these filters will be applied after the scanning, so we need to
+		// ignore these filters to avoid underestimation. See #63869.
 		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(path.IdxCols[:usedColsLen], indexJoinInfo.innerSchema, stats)
 	}
 	idxOff2KeyOff := make([]int, len(buildTmp.curIdxOff2KeyOff))
@@ -342,6 +352,7 @@ func indexJoinPathConstructResult(
 		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen),
 		usedColsLen:    len(ranges.Range()[0].LowVal),
 		usedColsNDV:    innerNDV,
+		lastColIsRange: lastColIsRange,
 		chosenRanges:   ranges,
 		chosenAccess:   accesses,
 		chosenRemained: remained,
@@ -470,6 +481,39 @@ func indexJoinPathRangeInfo(sctx planctx.PlanContext,
 	}
 	buffer.WriteString("]")
 	return buffer.String()
+}
+
+// indexJoinPathGetRangeInfoAndMaxOneRow computes the range information string and determines
+// whether the index join can guarantee at most one row will be returned per probe.
+// This happens when:
+// 1. The chosen index is unique AND
+// 2. All index columns are used for the join (usedColsLen == len(FullIdxCols)) AND
+// 3. Either there are no access conditions, or the last access condition is an equality condition
+//
+// Parameters:
+//   - sctx: the plan context
+//   - outerJoinKeys: the outer join keys used to generate range info string
+//   - indexJoinResult: the index join path result containing the chosen path and access conditions
+//
+// Returns:
+//   - rangeInfo: a string representation of the range information for explain output
+//   - maxOneRow: true if the index join guarantees at most one row per probe
+func indexJoinPathGetRangeInfoAndMaxOneRow(
+	sctx planctx.PlanContext,
+	outerJoinKeys []*expression.Column,
+	indexJoinResult *indexJoinPathResult) (rangeInfo string, maxOneRow bool) {
+	rangeInfo = indexJoinPathRangeInfo(sctx, outerJoinKeys, indexJoinResult)
+	maxOneRow = false
+	if indexJoinResult.chosenPath.Index.Unique && indexJoinResult.usedColsLen == len(indexJoinResult.chosenPath.FullIdxCols) {
+		l := len(indexJoinResult.chosenAccess)
+		if l == 0 {
+			maxOneRow = true
+		} else {
+			sf, ok := indexJoinResult.chosenAccess[l-1].(*expression.ScalarFunction)
+			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
+		}
+	}
+	return rangeInfo, maxOneRow
 }
 
 // Reset the 'curIdxOff2KeyOff', 'curNotUsedIndexCols' and 'curNotUsedColLens' by innerKeys and idxCols
@@ -612,7 +656,7 @@ func getBestIndexJoinPathResult(
 		innerJoinKeys:         innerJoinKeys,
 		innerPushedConditions: innerChild.PushedDownConds,
 		innerSchema:           innerChild.Schema(),
-		innerStats:            innerChild.StatsInfo(),
+		innerTableStats:       innerChild.TableStats,
 	}
 	var bestResult *indexJoinPathResult
 	for _, path := range innerChild.PossibleAccessPaths {

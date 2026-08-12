@@ -186,9 +186,9 @@ Projection	12.50	root		planner__core__casetest__index__index.t3.a, planner__core
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t3.a))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─TableReader(Probe)	9.99	root		data:Selection
-    └─Selection	9.99	cop[tikv]		eq(planner__core__casetest__index__index.t4.b, 1)
-      └─TableRangeScan	9990.00	cop[tikv]	table:t4	range: decided by [eq(planner__core__casetest__index__index.t4.a, planner__core__casetest__index__index.t3.a) eq(planner__core__casetest__index__index.t4.b, 1)], keep order:false, stats:pseudo
+  └─TableReader(Probe)	12.50	root		data:Selection
+    └─Selection	12.50	cop[tikv]		eq(planner__core__casetest__index__index.t4.b, 1)
+      └─TableRangeScan	12.50	cop[tikv]	table:t4	range: decided by [eq(planner__core__casetest__index__index.t4.a, planner__core__casetest__index__index.t3.a) eq(planner__core__casetest__index__index.t4.b, 1)], keep order:false, stats:pseudo
 desc format = 'brief' select /*+ INL_JOIN(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 1;
 id	estRows	task	access object	operator info
 Projection	12.50	root		planner__core__casetest__index__index.t3.a, planner__core__casetest__index__index.t3.b, planner__core__casetest__index__index.t3.c, planner__core__casetest__index__index.t4.a, planner__core__casetest__index__index.t4.b, planner__core__casetest__index__index.t4.c
@@ -196,9 +196,9 @@ Projection	12.50	root		planner__core__casetest__index__index.t3.a, planner__core
   ├─TableReader(Build)	9990.00	root		data:Selection
   │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t3.b))
   │   └─TableFullScan	10000.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─TableReader(Probe)	9.99	root		data:Selection
-    └─Selection	9.99	cop[tikv]		eq(planner__core__casetest__index__index.t4.a, 1)
-      └─TableRangeScan	9990.00	cop[tikv]	table:t4	range: decided by [eq(planner__core__casetest__index__index.t4.b, planner__core__casetest__index__index.t3.b) eq(planner__core__casetest__index__index.t4.a, 1)], keep order:false, stats:pseudo
+  └─TableReader(Probe)	12.50	root		data:Selection
+    └─Selection	12.50	cop[tikv]		eq(planner__core__casetest__index__index.t4.a, 1)
+      └─TableRangeScan	12.50	cop[tikv]	table:t4	range: decided by [eq(planner__core__casetest__index__index.t4.b, planner__core__casetest__index__index.t3.b) eq(planner__core__casetest__index__index.t4.a, 1)], keep order:false, stats:pseudo
 set tidb_cost_model_version=2;
 drop table if exists t1, t2;
 create table t1(a int not null, b int not null, c int not null);
