@@ -190,7 +190,6 @@ pub mod upgrade_versions;
 pub mod used_stats;
 pub mod varpop;
 pub mod varsamp;
-pub mod vec_group_checker_int;
 pub mod warning_publication;
 pub mod wide_scan_selection;
 mod window;

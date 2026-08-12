@@ -22,7 +22,7 @@
 //! is an implementation detail rather than part of that contract.
 
 use tidb_chunk::chunk::Chunk;
-use tidb_datatype::{Collation, Datum};
+use tidb_datatype::{Collation, Datum, StringDatum};
 use tidb_expr::{collation_derive::collation_of_node, expression::Expression};
 use tidb_expr::{Columns, EvalError};
 
@@ -31,7 +31,7 @@ use tidb_expr::{Columns, EvalError};
 pub struct VecGroupChecker {
     group_by_items: Vec<Expression>,
     collations: Vec<Collation>,
-    previous_last_key: Option<Vec<Datum>>,
+    previous_last_key: Option<Vec<u8>>,
     group_offsets: Vec<usize>,
     next_group_id: usize,
 }
@@ -132,15 +132,14 @@ impl VecGroupChecker {
             .clone()
             .next_back()
             .expect("the non-empty iterator has a last key");
-        let continues_previous = match &self.previous_last_key {
-            Some(previous) => keys_equal(previous, first, collations)?,
-            None => false,
-        };
-        self.previous_last_key = Some(last.to_vec());
+        let first_encoded = encode_boundary_key(first, collations)?;
+        let last_encoded = encode_boundary_key(last, collations)?;
+        let continues_previous = self.previous_last_key.as_ref() == Some(&first_encoded);
+        self.previous_last_key = Some(last_encoded.clone());
 
         // Upstream has this fast path and its callers guarantee sorted input.
         // Besides avoiding work, preserving it keeps that precondition exact.
-        if keys_equal(first, last, collations)? {
+        if first_encoded == last_encoded {
             self.group_offsets.push(keys.len());
             return Ok(continues_previous);
         }
@@ -194,6 +193,22 @@ impl VecGroupChecker {
     }
 }
 
+fn encode_boundary_key(values: &[Datum], collations: &[Collation]) -> Result<Vec<u8>, EvalError> {
+    let values = values
+        .iter()
+        .zip(collations)
+        .map(|(value, collation)| match value {
+            Datum::String(_) | Datum::Bytes(_) | Datum::Enum(_, _) | Datum::Set(_, _) => {
+                Datum::String(StringDatum::new(value.go_bytes(), *collation))
+            }
+            value => value.clone(),
+        })
+        .collect::<Vec<_>>();
+    tidb_codec::Encoder::new(true)
+        .encode_key(&values)
+        .map_err(|_| EvalError::Unsupported("group boundary key cannot be encoded"))
+}
+
 fn keys_equal(
     left: &[Datum],
     right: &[Datum],
@@ -212,7 +227,7 @@ fn keys_equal(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_datatype::{BinaryJSON, Decimal, FieldType, FieldTypeCode};
+    use tidb_datatype::{BinaryJSON, Decimal, FieldType, FieldTypeCode, MysqlEnum};
     use tidb_expr::{column::Column, NoColumns};
 
     fn column(index: usize, field_type: FieldType) -> Expression {
@@ -366,6 +381,66 @@ mod tests {
         let mut checker = VecGroupChecker::new(Vec::new());
         checker
             .split_evaluated(&keys, &[Collation::Binary, Collation::Binary])
+            .unwrap();
+        assert_eq!(ranges(&mut checker), [(0, 2), (2, 3), (3, 4)]);
+    }
+
+    #[test]
+    fn enum_grouping_uses_the_member_name_in_the_string_domain() {
+        let keys = vec![
+            vec![Datum::new_enum(
+                MysqlEnum::new("same", 1),
+                Collation::Utf8Mb4GeneralCi,
+            )],
+            vec![Datum::new_enum(
+                MysqlEnum::new("same", 2),
+                Collation::Utf8Mb4GeneralCi,
+            )],
+            vec![Datum::new_enum(
+                MysqlEnum::new("other", 3),
+                Collation::Utf8Mb4GeneralCi,
+            )],
+        ];
+        let mut checker = VecGroupChecker::new(Vec::new());
+        checker
+            .split_evaluated(&keys, &[Collation::Utf8Mb4GeneralCi])
+            .unwrap();
+        assert_eq!(ranges(&mut checker), [(0, 2), (2, 3)]);
+    }
+
+    #[test]
+    fn cross_chunk_float_identity_uses_the_source_encoded_key() {
+        let field = FieldType::new(FieldTypeCode::Double);
+        let chunk = |values: &[f64]| {
+            let mut chunk = Chunk::new_with_capacity(std::slice::from_ref(&field), values.len());
+            for value in values {
+                chunk.append_float64(0, *value);
+            }
+            chunk
+        };
+        let mut checker = VecGroupChecker::new(vec![column(0, field.clone())]);
+        checker
+            .split_into_groups(&NoColumns, &chunk(&[-0.0]))
+            .unwrap();
+        assert!(checker
+            .split_into_groups(&NoColumns, &chunk(&[0.0]))
+            .unwrap());
+
+        let nan = f64::from_bits(0x7ff8_0000_0000_0001);
+        checker = VecGroupChecker::new(vec![column(0, field.clone())]);
+        checker
+            .split_into_groups(&NoColumns, &chunk(&[nan]))
+            .unwrap();
+        assert!(checker
+            .split_into_groups(&NoColumns, &chunk(&[nan]))
+            .unwrap());
+        assert!(!checker
+            .split_into_groups(&NoColumns, &chunk(&[f64::from_bits(0x7ff8_0000_0000_0002)]),)
+            .unwrap());
+
+        checker = VecGroupChecker::new(vec![column(0, field.clone())]);
+        checker
+            .split_into_groups(&NoColumns, &chunk(&[-0.0, 0.0, nan, nan]))
             .unwrap();
         assert_eq!(ranges(&mut checker), [(0, 2), (2, 3), (3, 4)]);
     }
