@@ -330,22 +330,14 @@ impl RowDecoder {
                 values[*offset] = value.clone();
             }
         }
-        let pk_handle_offset = self
-            .pk_handle_offset
-            .filter(|offset| self.decoded_offsets.contains(offset));
-        let common_handle_offsets = self
-            .common_handle_offsets
-            .iter()
-            .copied()
-            .filter(|offset| self.decoded_offsets.contains(offset))
-            .collect::<Vec<_>>();
-        fill_handle_columns(
+        fill_handle_columns_if(
             &self.columns,
-            pk_handle_offset,
-            &common_handle_offsets,
+            self.pk_handle_offset,
+            &self.common_handle_offsets,
             &mut values,
             handle,
             self.context.zone(),
+            |offset| self.decoded_offsets.contains(&offset),
         )?;
         for offset in self.handle_offsets() {
             let column = &self.columns[offset];
@@ -493,6 +485,26 @@ pub(crate) fn fill_handle_columns(
     handle: &TableHandle,
     zone: &SessionTimeZone,
 ) -> Result<(), KvTableError> {
+    fill_handle_columns_if(
+        columns,
+        pk_handle_offset,
+        common_handle_offsets,
+        row,
+        handle,
+        zone,
+        |_| true,
+    )
+}
+
+fn fill_handle_columns_if(
+    columns: &[KvColumn],
+    pk_handle_offset: Option<usize>,
+    common_handle_offsets: &[usize],
+    row: &mut [Datum],
+    handle: &TableHandle,
+    zone: &SessionTimeZone,
+    selected: impl Fn(usize) -> bool,
+) -> Result<(), KvTableError> {
     let unflatten = |offset: usize, value: Datum| -> Result<Datum, KvTableError> {
         tidb_tablecodec::unflatten_datum(value, &columns[offset].field_type, Some(zone))
             .map_err(|error| KvTableError::Decode(format!("{error:?}")))
@@ -500,6 +512,9 @@ pub(crate) fn fill_handle_columns(
     match handle {
         TableHandle::Int(value) => {
             if let Some(offset) = pk_handle_offset {
+                if !selected(offset) {
+                    return Ok(());
+                }
                 let decoded = if columns[offset].field_type.is_unsigned() {
                     Datum::UInt(*value as u64)
                 } else {
@@ -513,8 +528,10 @@ pub(crate) fn fill_handle_columns(
             for offset in common_handle_offsets {
                 let (remaining, value) = tidb_codec::decode_one(rest)
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
-                row[*offset] = unflatten(*offset, value)?;
                 rest = remaining;
+                if selected(*offset) {
+                    row[*offset] = unflatten(*offset, value)?;
+                }
             }
         }
     }

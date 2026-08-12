@@ -281,6 +281,62 @@ fn row_decoder_restores_every_common_handle_column() {
 }
 
 #[test]
+fn projected_row_decoder_keeps_common_handle_component_positions() {
+    let zone = SessionTimeZone::utc();
+    let columns = vec![
+        column(1, "c1", FieldType::new(FieldTypeCode::LongLong)),
+        column(2, "c2", FieldType::new(FieldTypeCode::Varchar)),
+        column(3, "payload", FieldType::new(FieldTypeCode::LongLong)),
+    ];
+    let handle =
+        tidb_codec::encode_key(&[Datum::Int(100), Datum::new_bytes(b"abc".to_vec())]).unwrap();
+    let bytes = encode(&[3], &[Datum::Int(9)], true, &zone);
+
+    let decoded = RowDecoder::projected(
+        columns.clone(),
+        None,
+        vec![0, 1],
+        GeneratedColumnSelection::None,
+        &[1],
+        query_context(&zone),
+    )
+    .unwrap()
+    .decode_and_eval(&TableHandle::Common(handle), &bytes)
+    .unwrap();
+
+    assert_eq!(decoded.values()[0], Datum::Null);
+    assert_eq!(decoded.values()[1].go_bytes(), b"abc");
+    assert_eq!(decoded.values()[2], Datum::Null);
+    assert!(!decoded.by_id().contains_key(&1));
+    assert_eq!(decoded.by_id().get(&2).unwrap().go_bytes(), b"abc");
+    assert!(!decoded.by_id().contains_key(&3));
+
+    let statement = StmtContext::for_query().with_time_zone(zone.clone());
+    let mut table = KvTable::new(42, columns);
+    table.set_common_handle_offsets(vec![0, 1]);
+    table
+        .insert_row(
+            &[Datum::Int(100), Datum::new_string("abc"), Datum::Int(9)],
+            &statement,
+        )
+        .unwrap();
+    let mut cursor = table
+        .row_cursor_projected_with_context(
+            Some(&[1]),
+            None,
+            &RowDecodeContext::for_query(&statement),
+        )
+        .unwrap();
+    let (_, projected) = cursor
+        .next_row()
+        .unwrap()
+        .expect("stored common-handle row");
+    assert_eq!(projected.len(), 1);
+    assert_eq!(projected[0].go_bytes(), b"abc");
+    assert!(cursor.next_row().unwrap().is_none());
+}
+
+#[test]
 fn split_phase_defers_changing_and_generated_columns() {
     let zone = SessionTimeZone::utc();
     let mut columns = vec![
