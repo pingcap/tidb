@@ -48,7 +48,7 @@ func TestExternalStarterTxnFileWriteConflictRollsBack(t *testing.T) {
 	baseline := makeTxnFileRows('d')
 	losing := makeTxnFileRows('g')
 	winner := bytes.Repeat([]byte{'w'}, txnFileValueSize)
-	seedConn := openTxnFileConn(t, ctx, db)
+	seedConn := openTxnFileConn(ctx, t, db)
 	require.NoError(t, disableTxnFileSession(ctx, seedConn))
 	seedTx, err := seedConn.BeginTx(ctx, nil)
 	require.NoError(t, err)
@@ -56,7 +56,7 @@ func TestExternalStarterTxnFileWriteConflictRollsBack(t *testing.T) {
 	require.NoError(t, insertTxnFileConflictRows(ctx, seedTx, baseline))
 	require.NoError(t, seedTx.Commit())
 
-	loserConn := openTxnFileConn(t, ctx, db)
+	loserConn := openTxnFileConn(ctx, t, db)
 	require.NoError(t, enableTxnFileSession(ctx, loserConn))
 	loserTx, err := loserConn.BeginTx(ctx, nil)
 	require.NoError(t, err)
@@ -66,7 +66,7 @@ func TestExternalStarterTxnFileWriteConflictRollsBack(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	winnerConn := openTxnFileConn(t, ctx, db)
+	winnerConn := openTxnFileConn(ctx, t, db)
 	require.NoError(t, disableTxnFileSession(ctx, winnerConn))
 	var winnerMode string
 	require.NoError(t, winnerConn.QueryRowContext(ctx, "SELECT @@tidb_txn_mode").Scan(&winnerMode))
@@ -95,7 +95,7 @@ func TestExternalStarterTxnFileWriteConflictRollsBack(t *testing.T) {
 	probeTxnFileConflictLocks(ctx, t, db)
 }
 
-func openTxnFileConn(t *testing.T, ctx context.Context, db *sql.DB) *sql.Conn {
+func openTxnFileConn(ctx context.Context, t *testing.T, db *sql.DB) *sql.Conn {
 	t.Helper()
 	conn, err := db.Conn(ctx)
 	require.NoError(t, err)
@@ -156,7 +156,7 @@ func probeTxnFileConflictLocks(ctx context.Context, t *testing.T, db *sql.DB) {
 	t.Helper()
 	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	conn := openTxnFileConn(t, probeCtx, db)
+	conn := openTxnFileConn(probeCtx, t, db)
 	require.NoError(t, disableTxnFileSession(probeCtx, conn))
 	_, err := conn.ExecContext(probeCtx, "BEGIN PESSIMISTIC")
 	require.NoError(t, err)
