@@ -374,6 +374,49 @@ fn invalid_regex() {
     }
 }
 
+#[test]
+fn perl_character_classes_are_ascii_only_like_go_regexp() {
+    let ascii_digit = Filter::new(true, Some(rules(&[r"~^tenant\d+$"], &[], &[], &[])))
+        .expect("Go regexp syntax");
+    assert!(ascii_digit.matches(&t("tenant1", "")));
+    assert!(!ascii_digit.matches(&t("tenant١", "")));
+
+    let bracketed_digit = Filter::new(true, Some(rules(&[r"~^tenant[\d]+$"], &[], &[], &[])))
+        .expect("Go regexp syntax");
+    assert!(bracketed_digit.matches(&t("tenant1", "")));
+    assert!(!bracketed_digit.matches(&t("tenant١", "")));
+
+    let not_ascii_digit =
+        Filter::new(true, Some(rules(&[r"~^[\D]+$"], &[], &[], &[]))).expect("Go regexp syntax");
+    assert!(not_ascii_digit.matches(&t("١", "")));
+
+    let ascii_word =
+        Filter::new(true, Some(rules(&[r"~^\w+$"], &[], &[], &[]))).expect("Go regexp syntax");
+    assert!(ascii_word.matches(&t("tenant_1", "")));
+    assert!(!ascii_word.matches(&t("ténant", "")));
+
+    let ascii_space =
+        Filter::new(true, Some(rules(&[r"~^\s+$"], &[], &[], &[]))).expect("Go regexp syntax");
+    assert!(ascii_space.matches(&t("\t ", "")));
+    assert!(!ascii_space.matches(&t("\u{a0}", "")));
+
+    let not_ascii_space =
+        Filter::new(true, Some(rules(&[r"~^\S+$"], &[], &[], &[]))).expect("Go regexp syntax");
+    assert!(not_ascii_space.matches(&t("\u{a0}", "")));
+
+    let not_ascii_word =
+        Filter::new(true, Some(rules(&[r"~^\W+$"], &[], &[], &[]))).expect("Go regexp syntax");
+    assert!(not_ascii_word.matches(&t("é", "")));
+
+    let ascii_boundary =
+        Filter::new(true, Some(rules(&[r"~\bé\b"], &[], &[], &[]))).expect("Go regexp syntax");
+    assert!(!ascii_boundary.matches(&t("é", "")));
+
+    let not_ascii_boundary =
+        Filter::new(true, Some(rules(&[r"~\Bé\B"], &[], &[], &[]))).expect("Go regexp syntax");
+    assert!(not_ascii_boundary.matches(&t("é", "")));
+}
+
 // Go TestMatchReturnsBool.
 #[test]
 fn match_returns_bool() {

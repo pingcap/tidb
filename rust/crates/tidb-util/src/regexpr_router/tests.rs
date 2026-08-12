@@ -123,6 +123,21 @@ fn regexp_route() {
     }
 }
 
+#[test]
+fn regexp_route_keeps_go_ascii_perl_classes() {
+    let mut rules = vec![rule(r"~^tenant\d+$", "", "routed", "")];
+    let router = RouteTable::new(true, &mut rules).unwrap();
+
+    assert_eq!(
+        router.route("tenant1", "orders").unwrap(),
+        ("routed".to_owned(), "orders".to_owned())
+    );
+    assert_eq!(
+        router.route("tenant١", "orders").unwrap(),
+        ("tenant١".to_owned(), "orders".to_owned())
+    );
+}
+
 // Go TestFetchExtendColumn.
 #[test]
 fn fetch_extend_column() {

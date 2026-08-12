@@ -41,6 +41,7 @@ num-traits.workspace = true
 nix.workspace = true
 prometheus = { version = "0.14", default-features = false }
 regex.workspace = true
+regex-syntax.workspace = true
 rustix = { workspace = true, features = ["fs", "system", "thread"] }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }

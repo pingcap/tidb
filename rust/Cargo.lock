@@ -2052,6 +2052,7 @@ dependencies = [
  "prometheus",
  "prost",
  "regex",
+ "regex-syntax",
  "rustix",
  "serde",
  "serde_json",
