@@ -7,11 +7,12 @@ Track the design decisions and staged implementation plan for adding SQL standar
 
 Tracking issue: https://github.com/pingcap/tidb/issues/69998
 
-The feature is developed in three steps:
+The feature is developed in four steps:
 
 1. Add syntax, AST restore, and a feature gate. Keep execution unsupported.
-2. Add root planner and HashJoin v1 executor support.
-3. Add TiFlash MPP shuffle join support after root semantics are stable.
+2. Add root planner support while keeping execution unsupported.
+3. Add root HashJoin v1 executor support.
+4. Add TiFlash MPP shuffle join support after root semantics are stable.
 
 ## Scope
 
@@ -60,6 +61,13 @@ complete.
 In Step 1, `FULL OUTER JOIN` still returns `ErrNotSupportedYet` even if the
 variable is set to `ON`. This is intentional: Step 1 only makes the syntax
 recognizable and prevents silent fallback to another join type.
+
+In Step 2, planner-only support allows optimizer tests and planner APIs to
+exercise the full outer join path when the variable is `ON`, but user SQL
+execution must still fail with `ErrNotSupportedYet("FULL OUTER JOIN")`. This
+includes `EXPLAIN`, because TiDB's explain executor still builds the target
+executor for partition-pruning metadata. The HashJoin v1 executor guard is
+removed only in Step 3.
 
 ### No Silent Fallback
 
@@ -132,7 +140,7 @@ The intended first TiFlash scope is shuffle HashJoin only:
 - keep `<=>` / `NullEQ` join-key pushdown unsupported until that is handled as a
   separate compatibility item
 
-## Three-Step Development Plan
+## Four-Step Development Plan
 
 ### Step 1: Syntax and Gate
 
@@ -154,7 +162,7 @@ User-visible behavior after Step 1:
 - `FULL JOIN` remains parsed as alias-compatible syntax.
 - Executing `FULL OUTER JOIN` still returns unsupported.
 
-### Step 2: Root Full Outer Join
+### Step 2: Root Planner Support
 
 Status: planned.
 
@@ -167,16 +175,34 @@ Implementation scope:
 - Guard predicate pushdown, outer join simplification, join reorder, runtime
   filters, and physical plan enumeration.
 - Restrict physical plan support to root HashJoin v1.
-- Implement HashJoin v1 full outer join matched and unmatched row behavior.
-- Add planner, executor, and integration coverage.
+- Add a temporary executor build guard so normal execution still returns
+  `ErrNotSupportedYet("FULL OUTER JOIN")`.
+- Add planner coverage for logical and physical plan behavior.
 
 Expected user-visible behavior after Step 2:
+
+- Planner tests can produce root full outer join plans when the feature gate is
+  enabled.
+- Executing or explaining `FULL OUTER JOIN ... ON ...` still returns unsupported.
+- Unsupported forms and unsupported planner paths still fail fast.
+
+### Step 3: Root HashJoin v1 Executor
+
+Status: planned.
+
+Implementation scope:
+
+- Implement HashJoin v1 full outer join matched and unmatched row behavior.
+- Remove the temporary executor build guard from Step 2.
+- Add executor and integration coverage.
+
+Expected user-visible behavior after Step 3:
 
 - `FULL OUTER JOIN ... ON ...` works on root HashJoin v1 when the feature gate is
   enabled.
 - Unsupported forms and unsupported execution paths still fail fast.
 
-### Step 3: TiFlash MPP Shuffle Join
+### Step 4: TiFlash MPP Shuffle Join
 
 Status: planned.
 
@@ -188,7 +214,7 @@ Implementation scope:
 - Use a safe output partition property for full outer join.
 - Add MPP planner tests.
 
-Expected user-visible behavior after Step 3:
+Expected user-visible behavior after Step 4:
 
 - Full outer join can be planned as TiFlash MPP shuffle join when applicable.
 - Broadcast join and `NullEQ` join-key pushdown remain separate follow-up items.
@@ -198,8 +224,9 @@ Expected user-visible behavior after Step 3:
 | Step | Scope | Status |
 | --- | --- | --- |
 | Step 1 | Parser, AST restore, sysvar gate, planner fail-fast guard | Done |
-| Step 2 | Root planner semantics and HashJoin v1 executor support | Planned |
-| Step 3 | TiFlash MPP shuffle full outer join pushdown | Planned |
+| Step 2 | Root planner semantics and temporary executor unsupported guard | Planned |
+| Step 3 | Root HashJoin v1 executor support | Planned |
+| Step 4 | TiFlash MPP shuffle full outer join pushdown | Planned |
 
 ## Review Checklist
 

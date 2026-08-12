@@ -182,6 +182,17 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
 			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
 		}
+	case base.FullOuterJoin:
+		// For full outer join in the root phase, always use the regular
+		// hash join probe path. Build side is still chosen by cost / hints.
+		if forceLeftToBuild {
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
+		} else if forceRightToBuild {
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
+		} else {
+			appendHashJoins(getHashJoin(ge, p, prop, 1, false))
+			appendHashJoins(getHashJoin(ge, p, prop, 0, false))
+		}
 	}
 
 	forced = (p.PreferJoinType&h.PreferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
@@ -2196,6 +2207,32 @@ func exhaustPhysicalPlans4LogicalJoin(super base.LogicalPlan, prop *property.Phy
 	}
 	if prop.MPPPartitionTp == property.BroadcastType {
 		return nil, false, nil
+	}
+	if p.JoinType == base.FullOuterJoin {
+		// Planner-only/root phase restriction: full outer join uses root hash
+		// join only. TiFlash MPP is introduced in a later PR.
+		if prop.IsFlashProp() {
+			return nil, true, nil
+		}
+		hashJoins, forced := getHashJoins(p, prop)
+		if forced && len(hashJoins) > 0 {
+			return hashJoins, true, nil
+		}
+		if p.PreferJoinType > 0 {
+			// recordWarnings only reports index-join-family hint failures for LogicalJoin.
+			// Since full outer join returns before merge join enumeration, report the
+			// merge-join hint here while leaving index-join-family hints to that path.
+			if p.PreferJoinType&h.PreferMergeJoin > 0 {
+				var mergeJoinTables []h.HintedTable
+				if p.HintInfo != nil {
+					mergeJoinTables = p.HintInfo.SortMergeJoin
+				}
+				p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("Optimizer Hint %s or %s is inapplicable",
+					h.Restore2JoinHint(h.HintSMJ, mergeJoinTables), h.Restore2JoinHint(h.TiDBMergeJoin, mergeJoinTables)))
+			}
+			return hashJoins, false, nil
+		}
+		return hashJoins, true, nil
 	}
 	joins := make([]base.PhysicalPlan, 0, 8)
 	// we lift the p.canPushToTiFlash check here, because we want to generate all the plans to be decided by the attachment layer.
