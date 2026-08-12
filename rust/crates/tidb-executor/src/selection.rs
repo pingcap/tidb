@@ -18,13 +18,16 @@
 //! A row passes when every filter is truthy; a filter that is false OR NULL
 //! rejects the row (MySQL's three-valued logic, via [`truthy_of`]).
 //!
-//! This is a simplified serial path: one `Next` call drains the child and
-//! materializes all surviving rows. Go's chunk-full batching (`req.IsFull` /
-//! `GrowAndReset`) and the vectorized filter are deferred (documented).
+//! The executor retains its position in the current child chunk across calls,
+//! stops when the output chunk is full, and returns one row at a time when a
+//! filter has order-sensitive side effects. Pure filters still use the scalar
+//! evaluator; Go's column-vector filter implementation and memory-accounting
+//! instrumentation remain outside this seed.
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use tidb_chunk::chunk::Chunk;
 use tidb_datatype::FieldType;
+use tidb_expr::evaluator::vectorizable;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::{truthy_of, Columns};
@@ -36,6 +39,8 @@ pub struct SelectionExec<C: Columns> {
     child: Box<dyn Executor>,
     ctx: C,
     child_chunk: Chunk,
+    input_row: usize,
+    batched: bool,
     done: bool,
 }
 
@@ -50,12 +55,15 @@ impl<C: Columns> SelectionExec<C> {
         ctx: C,
     ) -> Self {
         let child_chunk = child.new_chunk();
+        let batched = vectorizable(&filters);
         SelectionExec {
             meta,
             filters,
             child,
             ctx,
             child_chunk,
+            input_row: 0,
+            batched,
             done: false,
         }
     }
@@ -77,27 +85,38 @@ impl<C: Columns> Executor for SelectionExec<C> {
     fn open(&mut self) -> Result<(), ExecError> {
         self.child.open()?;
         self.child_chunk.reset();
+        self.input_row = 0;
         self.done = false;
         Ok(())
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
-        req.reset();
+        req.grow_and_reset(self.max_chunk_size());
         if self.done {
             return Ok(());
         }
         loop {
-            self.child.next(&mut self.child_chunk)?;
             let rows = self.child_chunk.num_rows();
-            if rows == 0 {
-                self.done = true;
-                return Ok(());
-            }
-            for r in 0..rows {
-                let row = self.child_chunk.get_row(r);
-                if self.row_passes(row)? {
+            while self.input_row < rows {
+                if req.is_full() {
+                    return Ok(());
+                }
+                let row = self.child_chunk.get_row(self.input_row);
+                let selected = self.row_passes(row)?;
+                if selected {
                     req.append_row(row);
                 }
+                self.input_row += 1;
+                if selected && !self.batched {
+                    return Ok(());
+                }
+            }
+
+            self.child.next(&mut self.child_chunk)?;
+            self.input_row = 0;
+            if self.child_chunk.num_rows() == 0 {
+                self.done = true;
+                return Ok(());
             }
         }
     }
@@ -129,6 +148,9 @@ impl<C: Columns> Executor for SelectionExec<C> {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
     use super::*;
     use tidb_ast::CiString;
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -139,6 +161,27 @@ mod tests {
 
     fn long() -> FieldType {
         FieldType::new(FieldTypeCode::Long)
+    }
+
+    fn string() -> FieldType {
+        FieldType::new(FieldTypeCode::VarString)
+    }
+
+    #[derive(Default)]
+    struct UserVariables(RefCell<HashMap<String, Datum>>);
+
+    impl Columns for UserVariables {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn get_uservar(&self, name: &str) -> Option<Datum> {
+            self.0.borrow().get(&name.to_ascii_lowercase()).cloned()
+        }
+
+        fn set_uservar(&self, name: &str, value: Datum) {
+            self.0.borrow_mut().insert(name.to_ascii_lowercase(), value);
+        }
     }
 
     /// A test-only source that emits one prebuilt chunk, then EOF.
@@ -259,6 +302,93 @@ mod tests {
         sel.open().unwrap();
         let mut req = sel.new_chunk();
         sel.next(&mut req).unwrap();
+        assert_eq!(req.num_rows(), 0);
+    }
+
+    #[test]
+    fn selection_preserves_filtered_rows_across_requested_batches() {
+        let mut data = Chunk::new_with_capacity(std::slice::from_ref(&long()), 8);
+        for value in 1..=8 {
+            data.append_int64(0, value);
+        }
+        let source = OneChunkSource {
+            meta: ExecutorMeta::new(one_long_col_schema(), 0, 8, 8),
+            data: Some(data),
+        };
+        let mut column = Column::new(1, long());
+        column.index = 0;
+        let filter = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("gt"),
+            long(),
+            vec![
+                Expression::Column(column),
+                Expression::Constant(Constant::new(Datum::Int(0), long())),
+            ],
+        ));
+        let mut selection = SelectionExec::new(
+            ExecutorMeta::new(one_long_col_schema(), 1, 3, 3),
+            vec![filter],
+            Box::new(source),
+            NoColumns,
+        );
+
+        selection.open().unwrap();
+        let mut req = selection.new_chunk();
+        req.set_required_rows(2, 3);
+        let mut batches = Vec::new();
+        loop {
+            selection.next(&mut req).unwrap();
+            if req.num_rows() == 0 {
+                break;
+            }
+            batches.push(
+                (0..req.num_rows())
+                    .map(|row| req.get_row(row).get_int64(0))
+                    .collect::<Vec<_>>(),
+            );
+        }
+
+        assert_eq!(
+            batches,
+            vec![vec![1, 2], vec![3, 4], vec![5, 6], vec![7, 8]]
+        );
+    }
+
+    #[test]
+    fn side_effecting_filter_returns_one_row_before_projection_observes_it() {
+        let mut data = Chunk::new_with_capacity(std::slice::from_ref(&long()), 3);
+        for value in 1..=3 {
+            data.append_int64(0, value);
+        }
+        let source = OneChunkSource {
+            meta: ExecutorMeta::new(one_long_col_schema(), 0, 3, 3),
+            data: Some(data),
+        };
+        let mut column = Column::new(1, long());
+        column.index = 0;
+        let variable_name =
+            Expression::Constant(Constant::new(Datum::Bytes(b"v".to_vec()), string()));
+        let filter = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("setvar"),
+            long(),
+            vec![variable_name, Expression::Column(column)],
+        ));
+        let mut selection = SelectionExec::new(
+            ExecutorMeta::new(one_long_col_schema(), 1, 3, 3),
+            vec![filter],
+            Box::new(source),
+            UserVariables::default(),
+        );
+
+        selection.open().unwrap();
+        let mut req = selection.new_chunk();
+        for expected in 1..=3 {
+            selection.next(&mut req).unwrap();
+            assert_eq!(req.num_rows(), 1);
+            assert_eq!(req.get_row(0).get_int64(0), expected);
+            assert_eq!(selection.ctx.get_uservar("v"), Some(Datum::Int(expected)));
+        }
+        selection.next(&mut req).unwrap();
         assert_eq!(req.num_rows(), 0);
     }
 }
