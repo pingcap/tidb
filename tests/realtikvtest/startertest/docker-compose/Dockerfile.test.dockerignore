@@ -1,0 +1,12 @@
+**/.codegraph
+**/.omo
+**/.trees
+**/bazel-bin
+**/bazel-out
+**/bazel-testlogs
+**/bazel-tidb
+**/bin
+**/coverage
+**/tmp
+Dockerfile-dev
+build-dev-image.sh

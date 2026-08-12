@@ -1,0 +1,54 @@
+[server]
+addr = "0.0.0.0:20160"
+advertise-addr = "tikv-3:20160"
+status-addr = "0.0.0.0:20180"
+advertise-status-addr = "tikv-3:20180"
+
+[log]
+
+[log.file]
+filename = "/var/log/tikv/tikv.log"
+
+[pd]
+endpoints = ["http://pd:2379"]
+load-all-keyspaces-on-start = true
+report-store-size-with-keyspace-name = true
+
+[storage]
+api-version = 2
+data-dir = "/var/lib/tikv"
+enable-ttl = true
+low-space-threshold = "5%"
+
+[kvengine]
+dfs-load-concurrency-per-core = 32
+
+[dfs]
+backend = "s3"
+prefix = "cse"
+s3-endpoint = "http://minio:9000"
+s3-key-id = "minioadmin"
+s3-secret-key = "minioadmin"
+s3-bucket = "tidbcloud-local-dfs"
+s3-region = "us-west-2"
+remote-compactor-addr = "http://tikv-worker:19000/compact"
+
+[raftstore]
+aux-worker-count = 3
+aux-worker-max-util = 40
+main-worker-max-util = 60
+raftdb-path = "/var/lib/raft"
+store-max-batch-size = 10240
+
+[readpool]
+
+[readpool.unified]
+use-tokio = false
+
+[rfengine]
+compaction-concurrency = 4
+enable-compact-rate-limiter = true
+force-rotate-interval = "24h"
+lightweight-backup = true
+max-wal-chunk-gap-duration = "30m"
+wal-sync-dir = "/var/lib/raft/data"

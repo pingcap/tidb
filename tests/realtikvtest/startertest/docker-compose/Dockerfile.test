@@ -1,0 +1,23 @@
+FROM golang:1.25.12@sha256:fe5d57d3b718e7a4986bae156c2d73f44973bfd313073aed08a4de6692bb6161
+
+WORKDIR /workspace
+
+COPY go.mod go.sum ./
+COPY pkg/parser/go.mod pkg/parser/go.sum ./pkg/parser/
+RUN go mod download
+
+COPY . .
+
+RUN NEXT_GEN=1 make server && \
+    go test -c -tags=intest,nextgen -o /tmp/startertest.test ./tests/realtikvtest/startertest && \
+    mkdir -p /opt/tidb/bin && \
+    mv bin/tidb-server /opt/tidb/bin/tidb-server && \
+    mv /tmp/startertest.test /opt/tidb/bin/startertest.test && \
+    git rev-parse HEAD > /opt/tidb/source-commit && \
+    git status --porcelain=v1 > /opt/tidb/source-status && \
+    sha256sum /opt/tidb/bin/tidb-server /opt/tidb/bin/startertest.test > /opt/tidb/binary-sha256
+
+LABEL org.opencontainers.image.source="current-checkout" \
+      org.opencontainers.image.title="tidb-startertest-local"
+
+WORKDIR /opt/tidb

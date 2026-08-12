@@ -95,6 +95,13 @@ next-gen code paths.
 Because the script reuses `bootstrap-test-with-cluster.sh`, `bin/pd-server`,
 `bin/tikv-server`, and `bin/tikv-worker` must also be available.
 
+For a focused, one-command Docker Compose run of the two starter txn-file SQL
+cases, see the
+[`startertest/docker-compose` helper](../../startertest/docker-compose/README.md).
+It builds TiDB and the test binary from the current checkout and runs the full
+private NextGen starter lifecycle in containers. This is an additional local
+workflow and does not replace the binary-based commands documented here.
+
 Usage:
 
 ```bash
