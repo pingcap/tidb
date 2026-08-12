@@ -656,7 +656,7 @@ pub fn encode_binary_time(nanoseconds: i64) -> Vec<u8> {
     let mut remaining = nanoseconds;
     if remaining < 0 {
         data[1] = 1;
-        remaining = -remaining;
+        remaining = remaining.wrapping_neg();
     }
     let days = remaining / NS_PER_DAY;
     remaining -= days * NS_PER_DAY;

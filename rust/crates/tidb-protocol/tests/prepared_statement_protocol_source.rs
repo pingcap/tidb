@@ -859,6 +859,13 @@ fn binary_time_matches_go_dump_binary_time_vectors() {
         encode_binary_time(2 * 1_000_000_000),
         vec![8, 0, 0, 0, 0, 0, 0, 0, 2]
     );
+
+    // Go's time.Duration is an int64. Negating MinInt64 wraps to itself, so
+    // BinaryTime must encode that value rather than panic in checked builds.
+    assert_eq!(
+        encode_binary_time(i64::MIN),
+        vec![12, 1, 1, 0, 0, 0, 233, 209, 240, 9, 245, 242, 255]
+    );
 }
 
 #[test]
