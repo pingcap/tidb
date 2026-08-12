@@ -18,8 +18,15 @@ use tidb_log::{Field, Value};
 
 use crate::versioninfo::VersionInfo;
 
+const NEXT_GENERATION_KERNEL: &str = "Next Generation";
+const DEFAULT_DEPLOY_MODE: &str = "premium";
+
+fn is_next_generation(info: &VersionInfo) -> bool {
+    info.kernel_type == NEXT_GENERATION_KERNEL
+}
+
 fn release_versions_for_display(info: &VersionInfo) -> (String, Option<String>) {
-    if info.kernel_type != "Next Generation" {
+    if !is_next_generation(info) {
         return (info.release_version.clone(), None);
     }
     let component = tidb_mysql::normalize_tidb_release_version_for_next_gen(&info.release_version);
@@ -87,8 +94,15 @@ fn print_tidb_info_to(logger: &tidb_log::Logger, info: &VersionInfo, config_json
             Value::Str(component_version),
         ));
     }
-    if let Some(deploy_mode) = &info.deploy_mode {
-        fields.push(Field::new("Deploy Mode", Value::Str(deploy_mode.clone())));
+    if is_next_generation(info) {
+        fields.push(Field::new(
+            "Deploy Mode",
+            Value::Str(
+                info.deploy_mode
+                    .clone()
+                    .unwrap_or_else(|| DEFAULT_DEPLOY_MODE.to_owned()),
+            ),
+        ));
     }
     fields.push(Field::new(
         "Kernel Type",
@@ -221,5 +235,38 @@ mod tests {
         assert!(output.contains("[\"Deploy Mode\"=starter]"));
         assert!(output.contains("loaded config"));
         assert!(output.contains(r#"{\"store\":\"tikv\"}"#));
+    }
+
+    #[test]
+    fn deploy_mode_field_is_owned_by_next_generation_kernel() {
+        let sink = Arc::new(tidb_log::MemorySink::default());
+        let log_config = tidb_log::Config {
+            level: "info".to_owned(),
+            disable_timestamp: true,
+            ..tidb_log::Config::default()
+        };
+        let (logger, _) =
+            tidb_log::init_test_logger(sink.clone(), &log_config).expect("test logger");
+
+        let classic = VersionInfo::build_default().with_runtime_environment(
+            false,
+            "tikv",
+            "Classic",
+            Some("starter".to_owned()),
+        );
+        print_tidb_info_to(&logger, &classic, b"{}");
+        assert!(!sink.string().contains("Deploy Mode"));
+
+        let sink = Arc::new(tidb_log::MemorySink::default());
+        let (logger, _) =
+            tidb_log::init_test_logger(sink.clone(), &log_config).expect("test logger");
+        let next_gen = VersionInfo::build_default().with_runtime_environment(
+            false,
+            "tikv",
+            "Next Generation",
+            None,
+        );
+        print_tidb_info_to(&logger, &next_gen, b"{}");
+        assert!(sink.string().contains("[\"Deploy Mode\"=premium]"));
     }
 }
