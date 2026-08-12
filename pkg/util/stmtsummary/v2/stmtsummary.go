@@ -179,8 +179,8 @@ func NewStmtSummary(cfg *Config) (*StmtSummary, error) {
 		optRefreshInterval:     atomic2.NewUint32(defaultRefreshInterval),
 		optPersistEvicted:      atomic2.NewBool(false),
 		optGroupByUser:         atomic2.NewBool(false),
-		storage: storage,
-		evictedCh: make(chan *StmtRecord, evictedLogChanCap),
+		storage:                storage,
+		evictedCh:              make(chan *StmtRecord, evictedLogChanCap),
 	}
 	s.window = newStmtWindow(timeNow(), uint(defaultMaxStmtCount), s.onEvict)
 
