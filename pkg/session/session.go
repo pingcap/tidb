@@ -1451,6 +1451,13 @@ func (s *session) SetGlobalSysVar(ctx context.Context, name string, value string
 	if value, err = sv.Validate(s.sessionVars, value, vardef.ScopeGlobal); err != nil {
 		return err
 	}
+	// SysVar.SetGlobal is also called while rebuilding the sysvar cache. Keep
+	// the external notification on the explicit global update path.
+	if sv.Name == vardef.TiDBTTLJobEnable && variable.UpdateExternalWorkloadTTLJobEnable != nil {
+		if err = variable.UpdateExternalWorkloadTTLJobEnable(ctx, variable.TiDBOptOn(value)); err != nil {
+			return err
+		}
+	}
 	if err = sv.SetGlobalFromHook(ctx, s.sessionVars, value, false); err != nil {
 		return err
 	}
@@ -4385,12 +4392,17 @@ func InitMDLVariable(store kv.Storage) error {
 
 // BootstrapSession bootstrap session and domain.
 func BootstrapSession(store kv.Storage) (*domain.Domain, error) {
-	return bootstrapSessionImpl(context.Background(), store, createSessions)
+	return BootstrapSessionWithExternalWorkloadManager(store, nil)
+}
+
+// BootstrapSessionWithExternalWorkloadManager bootstraps session and domain with an external workload manager.
+func BootstrapSessionWithExternalWorkloadManager(store kv.Storage, manager extworkload.Manager) (*domain.Domain, error) {
+	return bootstrapSessionImpl(context.Background(), store, createSessions, manager)
 }
 
 // BootstrapSession4DistExecution bootstrap session and dom for Distributed execution test, only for unit testing.
 func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
-	return bootstrapSessionImpl(context.Background(), store, createSessions4DistExecution)
+	return bootstrapSessionImpl(context.Background(), store, createSessions4DistExecution, nil)
 }
 
 // bootstrapSessionImpl bootstraps session and domain.
@@ -4405,7 +4417,7 @@ func BootstrapSession4DistExecution(store kv.Storage) (*domain.Domain, error) {
 // - initialization global variables from system table that's required to use sessionCtx,
 // such as system time zone
 // - start domain and other routines.
-func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error)) (*domain.Domain, error) {
+func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsImpl func(store kv.Storage, cnt int) ([]*session, error), extWorkloadMgr extworkload.Manager) (*domain.Domain, error) {
 	ver := getStoreBootstrapVersionWithCache(store)
 	failpoint.InjectCall("afterGetStoreBootstrapVersion", ver)
 	if kv.IsUserKS(store) {
@@ -4445,7 +4457,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 	if ver < currentBootstrapVersion {
-		err = runInBootstrapSession(store, ver)
+		err = runInBootstrapSession(store, ver, domainCreateOptions{extWorkloadMgr: extWorkloadMgr})
 		if err != nil {
 			return nil, err
 		}
@@ -4494,6 +4506,12 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 	if concurrency < 0 { // it is only for test, in the production, negative value is illegal.
 		concurrency = 0
+	}
+
+	if extWorkloadMgr != nil {
+		if _, err := domap.getWithEtcdClient(store, nil, nil, domainCreateOptions{extWorkloadMgr: extWorkloadMgr}); err != nil {
+			return nil, err
+		}
 	}
 	ses, err := createSessionsImpl(store, 10)
 	if err != nil {
@@ -4694,7 +4712,7 @@ func getStartMode(ver int64) ddl.StartMode {
 // If no bootstrap and storage is remote, we must use a little lease time to
 // bootstrap quickly, after bootstrapped, we will reset the lease time.
 // TODO: Using a bootstrap tool for doing this may be better later.
-func runInBootstrapSession(store kv.Storage, ver int64) error {
+func runInBootstrapSession(store kv.Storage, ver int64, opts domainCreateOptions) error {
 	startMode := getStartMode(ver)
 	startTime := time.Now()
 	defer func() {
@@ -4741,12 +4759,13 @@ func runInBootstrapSession(store kv.Storage, ver int64) error {
 			}
 		}
 	}
-	s, err := createSession(store)
+	s, err := createSessionWithDomainOptions(store, opts)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
 	dom := domain.GetDomain(s)
+	failpoint.InjectCall("checkBootstrapExternalWorkloadManager", dom)
 	err = dom.Start(startMode)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
@@ -4813,7 +4832,11 @@ func createSessionsImpl(store kv.Storage, cnt int) ([]*session, error) {
 // This means the min ts reporter is not aware of it and may report a wrong min start ts.
 // In most cases you should use a session pool in domain instead.
 func createSession(store kv.Storage) (*session, error) {
-	dom, err := domap.Get(store)
+	return createSessionWithDomainOptions(store, domainCreateOptions{})
+}
+
+func createSessionWithDomainOptions(store kv.Storage, opts domainCreateOptions) (*session, error) {
+	dom, err := domap.getWithEtcdClient(store, nil, nil, opts)
 	if err != nil {
 		return nil, err
 	}

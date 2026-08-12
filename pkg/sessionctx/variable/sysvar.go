@@ -135,6 +135,23 @@ func newExecConcurrencySysVar(name string, defValue int, setter concurrencySette
 	return sv
 }
 
+func allowSetForeignKeyCheckInSharedLock() bool {
+	if !kerneltype.IsNextGen() {
+		return true
+	}
+	return config.GetGlobalConfig().Experimental.AllowEnableForeignKeyCheckInSharedLock
+}
+
+func getForeignKeyCheckInSharedLockSession(s *SessionVars) (string, error) {
+	if val, ok := s.systems[vardef.TiDBForeignKeyCheckInSharedLock]; ok {
+		return val, nil
+	}
+	if s.GlobalVarsAccessor != nil {
+		return s.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBForeignKeyCheckInSharedLock)
+	}
+	return BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), nil
+}
+
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
 //
 //	[NONE, SESSION, INSTANCE, GLOBAL, GLOBAL & SESSION]
@@ -2101,9 +2118,21 @@ var defaultSysVars = []*SysVar{
 		}
 		return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.ForeignKeyChecks, originalValue)
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBForeignKeyCheckInSharedLock, Value: BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBForeignKeyCheckInSharedLock, Value: BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), Type: vardef.TypeBool, Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
+		if TiDBOptOn(normalizedValue) && !allowSetForeignKeyCheckInSharedLock() {
+			return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBForeignKeyCheckInSharedLock, originalValue)
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
 		s.ForeignKeyCheckInSharedLock = TiDBOptOn(val)
 		return nil
+	}, GetSession: func(s *SessionVars) (string, error) {
+		return getForeignKeyCheckInSharedLockSession(s)
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		if s.GlobalVarsAccessor == nil {
+			return BoolToOnOff(vardef.DefTiDBForeignKeyCheckInSharedLock), nil
+		}
+		return s.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBForeignKeyCheckInSharedLock)
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBEnableForeignKey, Value: BoolToOnOff(true), Type: vardef.TypeBool, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		vardef.EnableForeignKey.Store(TiDBOptOn(val))
@@ -3230,10 +3259,27 @@ var defaultSysVars = []*SysVar{
 		},
 	},
 	{
-		Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMergePartitionStatsConcurrency, Value: strconv.FormatInt(vardef.DefTiDBMergePartitionStatsConcurrency, 10), Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency,
-		SetSession: func(s *SessionVars, val string) error {
-			s.AnalyzePartitionMergeConcurrency = TidbOptInt(val, vardef.DefTiDBMergePartitionStatsConcurrency)
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMergePartitionStatsConcurrency, Value: "1", Type: vardef.TypeInt, MinValue: 1, MaxValue: vardef.MaxConfigurableConcurrency,
+		SetSession: func(_ *SessionVars, _ string) error {
+			// Deprecated: do nothing.
 			return nil
+		},
+		// Both read paths return "1" unconditionally. Validation alone is
+		// not enough: session.GetGlobalSysVar() applies only
+		// ValidateFromType on the persisted value (skipping the
+		// Validation callback), so a cluster upgraded from an older
+		// TiDB with a non-1 value persisted in mysql.global_variables
+		// would otherwise read that stale value.
+		GetSession: func(_ *SessionVars) (string, error) { return "1", nil },
+		GetGlobal:  func(_ context.Context, _ *SessionVars) (string, error) { return "1", nil },
+		Validation: func(vars *SessionVars, normalizedValue string, _ string, _ vardef.ScopeFlag) (string, error) {
+			if normalizedValue != "1" {
+				// Use errWarnDeprecatedSyntax (MySQL code 1287) for
+				// consistency with other deprecated sysvar warnings
+				// such as tidb_index_serial_scan_concurrency.
+				vars.StmtCtx.AppendWarning(errWarnDeprecatedSyntax.FastGen("tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility."))
+			}
+			return "1", nil
 		},
 	},
 	{

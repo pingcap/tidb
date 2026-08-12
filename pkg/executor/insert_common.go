@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -48,7 +49,19 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
+
+// Limit concurrent EMBED_TEXT evaluations for generated columns. The
+// inference runtime may further deduplicate and batch provider requests, so
+// this is not a direct provider HTTP concurrency limit.
+const embedTextEvalConcurrency = 800
+
+type embedTextGeneratedColumn struct {
+	offset int
+	column *table.Column
+	expr   expression.Expression
+}
 
 // InsertValues is the data to insert.
 // nolint:structcheck
@@ -68,7 +81,9 @@ type InsertValues struct {
 	Columns []*ast.ColumnName
 	Lists   [][]expression.Expression
 
-	GenExprs []expression.Expression
+	GenExprs                          []expression.Expression
+	embedTextGeneratedCols            []embedTextGeneratedColumn
+	embedTextGeneratedColsInitialized bool
 
 	insertColumns []*table.Column
 
@@ -194,6 +209,7 @@ func (e *InsertValues) initInsertColumns() error {
 	if err != nil {
 		return err
 	}
+	e.initEmbedTextGeneratedCols()
 	return nil
 }
 
@@ -210,6 +226,42 @@ func (e *InsertValues) initEvalBuffer() {
 		e.evalBufferTypes[len(e.evalBufferTypes)-1] = types.NewFieldType(mysql.TypeLonglong)
 	}
 	e.evalBuffer = chunk.MutRowFromTypes(e.evalBufferTypes)
+}
+
+func (e *InsertValues) initEmbedTextGeneratedCols() {
+	if e.embedTextGeneratedColsInitialized {
+		return
+	}
+	e.embedTextGeneratedColsInitialized = true
+	if len(e.GenExprs) == 0 || e.Table == nil {
+		e.embedTextGeneratedCols = nil
+		return
+	}
+
+	embedTextCols := make([]embedTextGeneratedColumn, 0)
+	generatedExprIdx := -1
+	for colIdx, col := range e.Table.Cols() {
+		if !col.IsGenerated() {
+			continue
+		}
+		generatedExprIdx++
+		if !expression.IsEmbedTextFuncCall(col.GeneratedExpr.Internal()) {
+			continue
+		}
+		embedTextCols = append(embedTextCols, embedTextGeneratedColumn{
+			offset: colIdx,
+			column: col,
+			expr:   e.GenExprs[generatedExprIdx],
+		})
+	}
+	e.embedTextGeneratedCols = embedTextCols
+}
+
+func (e *InsertValues) getEmbedTextGeneratedCols() []embedTextGeneratedColumn {
+	if !e.embedTextGeneratedColsInitialized {
+		e.initEmbedTextGeneratedCols()
+	}
+	return e.embedTextGeneratedCols
 }
 
 func (e *InsertValues) lazilyInitColDefaultValBuf() (ok bool) {
@@ -259,6 +311,10 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 			if err != nil {
 				return err
 			}
+			rows, err = e.fillEmbedTextValues(ctx, rows)
+			if err != nil {
+				return err
+			}
 			if err = base.exec(ctx, rows); err != nil {
 				return err
 			}
@@ -277,6 +333,10 @@ func insertRows(ctx context.Context, base insertCommon) (err error) {
 	}
 	// Fill the batch allocated autoIDs.
 	rows, err = e.lazyAdjustAutoIncrementDatum(ctx, rows)
+	if err != nil {
+		return err
+	}
+	rows, err = e.fillEmbedTextValues(ctx, rows)
 	if err != nil {
 		return err
 	}
@@ -340,6 +400,10 @@ func completeLoadErr(col *model.ColumnInfo, rowIdx int, err error) error {
 func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int, err error) error {
 	if err == nil {
 		return nil
+	}
+	// The allocator did not produce an ID, so INSERT IGNORE cannot safely continue.
+	if autoid.IsRPCRetryLimitError(err) {
+		return err
 	}
 
 	// Convert the error with full messages.
@@ -532,6 +596,10 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 				memUsageOfExtraCols = types.EstimatedMemUsage(extraColsInSel[0], len(extraColsInSel))
 				totalMemDelta += memUsageOfRows + memUsageOfExtraCols
 				e.Ctx().GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
+				rows, err = e.fillEmbedTextValues(ctx, rows)
+				if err != nil {
+					return err
+				}
 				if err = base.exec(ctx, rows); err != nil {
 					return err
 				}
@@ -552,6 +620,10 @@ func insertRowsFromSelect(ctx context.Context, base insertCommon) error {
 			memUsageOfExtraCols = types.EstimatedMemUsage(extraColsInSel[0], len(extraColsInSel))
 			memTracker.Consume(memUsageOfRows + memUsageOfExtraCols)
 			e.Ctx().GetSessionVars().CurrInsertBatchExtraCols = extraColsInSel
+		}
+		rows, err = e.fillEmbedTextValues(ctx, rows)
+		if err != nil {
+			return err
 		}
 		err = base.exec(ctx, rows)
 		if err != nil {
@@ -637,6 +709,149 @@ func (e *InsertValues) getColDefaultValue(idx int, col *table.Column) (d types.D
 	}
 
 	return defaultVal, nil
+}
+
+func (e *InsertValues) fillEmbedTextValues(ctx context.Context, rows [][]types.Datum) ([][]types.Datum, error) {
+	return e.fillEmbedTextValuesWithRowCount(ctx, rows, e.rowCount)
+}
+
+func (e *InsertValues) fillEmbedTextValuesWithRowCount(ctx context.Context, rows [][]types.Datum, endRowCount uint64) ([][]types.Datum, error) {
+	if len(rows) == 0 {
+		return rows, nil
+	}
+	embedTextGeneratedCols := e.getEmbedTextGeneratedCols()
+	if len(embedTextGeneratedCols) == 0 {
+		return rows, nil
+	}
+	if err := expression.CheckEmbedTextAllowed(); err != nil {
+		return nil, err
+	}
+
+	inLoadData := e.Ctx().GetSessionVars().StmtCtx.InLoadDataStmt
+	firstBatchRowIdx := uint64(0)
+	if rowCount := uint64(len(rows)); endRowCount >= rowCount {
+		firstBatchRowIdx = endRowCount - rowCount
+	}
+
+	type embedTextEvalTask struct {
+		rowIdx       int
+		generatedCol embedTextGeneratedColumn
+	}
+	type embedTextEvalResult struct {
+		val types.Datum
+		err error
+	}
+	type embedTextEvalInput struct {
+		args   *expression.EmbedTextArgs
+		isNull bool
+	}
+
+	inputColOffsets := make([]int, 0)
+	seenInputCols := make(map[int]struct{})
+	for _, generatedCol := range embedTextGeneratedCols {
+		for _, col := range expression.ExtractColumns(generatedCol.expr) {
+			if _, ok := seenInputCols[col.Index]; ok {
+				continue
+			}
+			seenInputCols[col.Index] = struct{}{}
+			inputColOffsets = append(inputColOffsets, col.Index)
+		}
+	}
+
+	taskCapacity := len(rows) * len(embedTextGeneratedCols)
+	tasks := make([]embedTextEvalTask, 0, taskCapacity)
+	results := make([]embedTextEvalResult, 0, taskCapacity)
+	inputs := make([]embedTextEvalInput, 0, taskCapacity)
+	var evalRow chunk.MutRow
+	evalRowInitialized := false
+	for rowIdx, row := range rows {
+		if row == nil {
+			// LOAD DATA can leave a nil row after a non-restrictive row
+			// conversion error. Do not evaluate generated expressions for it.
+			continue
+		}
+		if !evalRowInitialized {
+			evalRow = chunk.MutRowFromDatums(row)
+			evalRowInitialized = true
+		} else {
+			for _, colIdx := range inputColOffsets {
+				evalRow.SetDatum(colIdx, row[colIdx])
+			}
+		}
+		for _, generatedCol := range embedTextGeneratedCols {
+			task := embedTextEvalTask{
+				rowIdx:       rowIdx,
+				generatedCol: generatedCol,
+			}
+			embedArgs, isNull, err := expression.EvalEmbedTextArgsFromExpr(e.Ctx().GetExprCtx().GetEvalCtx(), evalRow.ToRow(), generatedCol.expr)
+			result := embedTextEvalResult{err: err}
+			input := embedTextEvalInput{isNull: isNull}
+			if err == nil && !isNull {
+				// EvalString may return a zero-copy string backed by evalRow.
+				// Clone it before reusing the row buffer for the next input row.
+				embedArgs.Text = strings.Clone(embedArgs.Text)
+				input.args = embedArgs
+			}
+			tasks = append(tasks, task)
+			results = append(results, result)
+			inputs = append(inputs, input)
+		}
+	}
+	if len(tasks) == 0 {
+		return rows, nil
+	}
+
+	group, groupCtx := errgroup.WithContext(ctx)
+	group.SetLimit(embedTextEvalConcurrency)
+	for i := range tasks {
+		group.Go(func() error {
+			if err := groupCtx.Err(); err != nil {
+				return err
+			}
+			if results[i].err != nil {
+				return nil
+			}
+			if inputs[i].isNull {
+				results[i].val.SetNull()
+				return nil
+			}
+			val, err := expression.EvalEmbedTextArgsToDatum(groupCtx, e.Ctx(), inputs[i].args)
+			if err != nil {
+				results[i].err = err
+				return nil
+			}
+			results[i].val = val
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
+		return nil, err
+	}
+
+	for i, result := range results {
+		task := tasks[i]
+		if e.Ctx().GetSessionVars().StmtCtx.HandleTruncate(result.err) != nil {
+			return nil, result.err
+		}
+		val, err := table.CastValue(e.Ctx(), result.val, task.generatedCol.column.ToInfo(), false, false)
+		rowIdx := int(firstBatchRowIdx) + task.rowIdx
+		if inLoadData {
+			rowIdx++
+		}
+		if err = e.handleErr(task.generatedCol.column, &result.val, rowIdx, err); err != nil {
+			return nil, err
+		}
+		rows[task.rowIdx][task.generatedCol.offset] = val
+
+		rowCntInLoadData := uint64(0)
+		if inLoadData {
+			rowCntInLoadData = firstBatchRowIdx + uint64(task.rowIdx) + 1
+		}
+		if err = task.generatedCol.column.HandleBadNull(e.Ctx().GetSessionVars().StmtCtx.ErrCtx(), &rows[task.rowIdx][task.generatedCol.offset], rowCntInLoadData); err != nil {
+			return nil, err
+		}
+	}
+	return rows, nil
 }
 
 // fillColValue fills the column value if it is not set in the insert statement.
@@ -758,6 +973,9 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	// full row copy O(columns) allocation for every generated column — O(G*C) total.
 	mutRow := chunk.MutRowFromDatums(row)
 	for i, gCol := range gCols {
+		if expression.IsEmbedTextFuncCall(gCol.GeneratedExpr.Internal()) {
+			continue
+		}
 		colIdx := gCol.ColumnInfo.Offset
 		val, err := e.GenExprs[i].Eval(evalCtx, mutRow.ToRow())
 		if err != nil && gCol.FieldType.IsArray() {

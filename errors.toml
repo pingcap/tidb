@@ -341,6 +341,11 @@ error = '''
 stream task has no storage
 '''
 
+["GlobalSort:TooManyDataFiles"]
+error = '''
+cannot merge %d data files with concurrency %d into at most %d target files
+'''
+
 ["Import:ErrCastValue"]
 error = '''
 Value conversion failed for column '%s'. Expected type: %s, received value: %s. Reason: %s.

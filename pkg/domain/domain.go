@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/inference"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
@@ -239,6 +240,10 @@ type Domain struct {
 	// only used for nextgen
 	crossKSSessMgr           *crossks.Manager
 	crossKSSessFactoryGetter func(string, validatorapi.Validator) pools.Factory
+
+	// extWorkloadMgr coordinates background workloads such as TTL with the
+	// external workload controller in Starter deployments.
+	extWorkloadMgr extworkload.Manager
 }
 
 var _ sqlsvrapi.Server = (*Domain)(nil)
@@ -708,6 +713,7 @@ func (do *Domain) Init(
 		ddl.WithLease(do.schemaLease),
 		ddl.WithSchemaLoader(do.isSyncer),
 		ddl.WithEventPublishStore(ddlNotifierStore),
+		ddl.WithExternalWorkloadManager(do.extWorkloadMgr),
 	)
 
 	failpoint.Inject("MockReplaceDDL", func(val failpoint.Value) {
@@ -944,6 +950,17 @@ func (do *Domain) InitInfo4Test() {
 // SetOnClose used to set do.onClose func.
 func (do *Domain) SetOnClose(onClose func()) {
 	do.onClose = onClose
+}
+
+// SetExternalWorkloadManager installs the external workload manager used by
+// background components that coordinate work with an external controller.
+func (do *Domain) SetExternalWorkloadManager(manager extworkload.Manager) {
+	do.extWorkloadMgr = manager
+}
+
+// ExternalWorkloadManager returns the external workload manager for this domain.
+func (do *Domain) ExternalWorkloadManager() extworkload.Manager {
+	return do.extWorkloadMgr
 }
 
 func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
@@ -2882,11 +2899,47 @@ func (do *Domain) serverIDKeeper() {
 	}
 }
 
-// StartTTLJobManager creates and starts the ttl job manager
+// StartTTLJobManager creates and starts the ttl job manager when this domain
+// should run it; otherwise it returns without storing a manager instance.
 func (do *Domain) StartTTLJobManager() {
-	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.advancedSysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
+	role, configured := do.ttlExternalWorkloadRole()
+	if !do.shouldStartTTLJobManager() {
+		fields := make([]zap.Field, 0, 1)
+		if configured {
+			fields = append(fields, zap.String("role", string(role)))
+		}
+		logutil.BgLogger().Info("don't run ttl job manager", fields...)
+		return
+	}
+	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.advancedSysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner, ttlworker.WithExternalWorkloadManager(do.extWorkloadMgr))
 	do.ttlJobManager.Store(ttlJobManager)
 	ttlJobManager.Start()
+}
+
+func (do *Domain) ttlExternalWorkloadRole() (config.ExternalWorkloadRole, bool) {
+	if do.extWorkloadMgr != nil {
+		return do.extWorkloadMgr.Role(), true
+	}
+	cfg := config.GetGlobalConfig().ExternalWorkload
+	if !cfg.Enable {
+		return "", false
+	}
+	if cfg.Role == "" {
+		return config.RoleMaster, true
+	}
+	return cfg.Role, true
+}
+
+func (do *Domain) shouldStartTTLJobManager() bool {
+	// Once external workload is configured, TTL jobs must run only on the
+	// dedicated TTL task worker with a live controller manager. Falling back to
+	// local TTL scheduling when controller coordination is unavailable can cause
+	// split-brain ownership with externally assigned TTL tasks.
+	role, configured := do.ttlExternalWorkloadRole()
+	if !configured {
+		return true
+	}
+	return do.extWorkloadMgr != nil && role == config.RoleTTLTaskWorker
 }
 
 // TTLJobManager returns the ttl job manager on this domain

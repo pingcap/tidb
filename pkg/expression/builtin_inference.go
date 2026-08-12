@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -38,6 +39,15 @@ type embedTextFunctionClass struct {
 type builtinEmbedTextSig struct {
 	baseBuiltinFunc
 	expropt.SessionContextPropReader
+}
+
+// EmbedTextArgs contains evaluated arguments for one EMBED_TEXT invocation.
+// Evaluating arguments separately lets generated-column execution batch the
+// remote calls without evaluating ordinary SQL expressions concurrently.
+type EmbedTextArgs struct {
+	Model string
+	Text  string
+	Opts  map[string]any
 }
 
 // Clone implements builtinFunc.Clone.
@@ -66,49 +76,102 @@ func (c *embedTextFunctionClass) getFunction(ctx BuildContext, args []Expression
 func (b *builtinEmbedTextSig) evalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
 	// Check the deployment mode before evaluating any argument. In unsupported
 	// deployments EMBED_TEXT must not trigger argument side effects or external calls.
-	if !deploymode.IsStarter() {
-		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT is only supported in starter deployment mode")
+	if err := CheckEmbedTextAllowed(); err != nil {
+		return types.ZeroVectorFloat32, false, err
 	}
 
 	sctx, err := b.GetSessionContext(ctx)
-	if err != nil || sctx == nil {
+	if err != nil {
+		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT requires session context: %w", err)
+	}
+	if sctx == nil {
 		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT requires session context")
 	}
-	model, isNull, err := b.args[0].EvalString(ctx, row)
+	embedArgs, isNull, err := EvalEmbedTextArgs(ctx, row, b.args)
 	if isNull || err != nil {
 		return types.ZeroVectorFloat32, isNull, err
 	}
-	text, isNull, err := b.args[1].EvalString(ctx, row)
-	if isNull || err != nil {
-		return types.ZeroVectorFloat32, isNull, err
-	}
-	opts, err := evalEmbedTextOptions(ctx, row, b.args)
+	datum, err := EvalEmbedTextArgsToDatum(sctx.GetTraceCtx(), sctx, embedArgs)
 	if err != nil {
 		return types.ZeroVectorFloat32, false, err
 	}
+	return datum.GetVectorFloat32(), false, nil
+}
 
+// EvalEmbedTextArgsFromExpr evaluates the arguments of a direct
+// EMBED_TEXT scalar expression without calling the embedding provider.
+func EvalEmbedTextArgsFromExpr(ctx EvalContext, row chunk.Row, expr Expression) (*EmbedTextArgs, bool, error) {
+	sf, ok := expr.(*ScalarFunction)
+	if !ok {
+		return nil, false, fmt.Errorf("generated-column evaluation expects EMBED_TEXT()")
+	}
+	if _, ok := sf.Function.(*builtinEmbedTextSig); !ok {
+		return nil, false, fmt.Errorf("generated-column evaluation expects EMBED_TEXT()")
+	}
+	return EvalEmbedTextArgs(ctx, row, sf.GetArgs())
+}
+
+// EvalEmbedTextArgs evaluates EMBED_TEXT arguments without calling the provider.
+func EvalEmbedTextArgs(ctx EvalContext, row chunk.Row, args []Expression) (*EmbedTextArgs, bool, error) {
+	if len(args) < 2 || len(args) > 3 {
+		return nil, false, fmt.Errorf("invalid EMBED_TEXT() usage")
+	}
+	model, isNull, err := args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return nil, isNull, err
+	}
+	text, isNull, err := args[1].EvalString(ctx, row)
+	if isNull || err != nil {
+		return nil, isNull, err
+	}
+	opts, err := evalEmbedTextOptions(ctx, row, args)
+	if err != nil {
+		return nil, false, err
+	}
+	return &EmbedTextArgs{Model: model, Text: text, Opts: opts}, false, nil
+}
+
+// CheckEmbedTextAllowed validates deployment-level EMBED_TEXT availability.
+func CheckEmbedTextAllowed() error {
+	if !deploymode.IsStarter() {
+		return fmt.Errorf("EMBED_TEXT is only supported in starter deployment mode")
+	}
+	return nil
+}
+
+// EvalEmbedTextArgsToDatum materializes evaluated EMBED_TEXT arguments as a vector datum.
+func EvalEmbedTextArgsToDatum(ctx context.Context, sctx expropt.SessionContext, embedArgs *EmbedTextArgs) (types.Datum, error) {
+	if sctx == nil {
+		return types.Datum{}, fmt.Errorf("EMBED_TEXT requires session context")
+	}
+	if err := CheckEmbedTextAllowed(); err != nil {
+		return types.Datum{}, err
+	}
+	if embedArgs == nil {
+		return types.Datum{}, fmt.Errorf("invalid EMBED_TEXT() usage")
+	}
 	embedFn := domainadaptor.GetEmbedFn(sctx)
 	if embedFn == nil {
-		return types.ZeroVectorFloat32, false, fmt.Errorf("EMBED_TEXT requires an initialized Domain embedding runtime")
+		return types.Datum{}, fmt.Errorf("EMBED_TEXT requires an initialized Domain embedding runtime")
 	}
 	embedding, err := embedFn.EmbedWithContext(
-		sctx.GetTraceCtx(),
+		ctx,
 		func() bool { return sctx.GetSessionVars().SQLKiller.GetKillSignal() > 0 },
-		model,
-		text,
-		opts,
+		embedArgs.Model,
+		embedArgs.Text,
+		embedArgs.Opts,
 	)
 	if err != nil {
-		return types.ZeroVectorFloat32, false, err
+		return types.Datum{}, err
 	}
 	if err := types.CheckVectorDimValid(len(embedding)); err != nil {
-		return types.ZeroVectorFloat32, false, err
+		return types.Datum{}, err
 	}
 	vector, err := types.CreateVectorFloat32(embedding)
 	if err != nil {
-		return types.ZeroVectorFloat32, false, err
+		return types.Datum{}, err
 	}
-	return vector, false, nil
+	return types.NewVectorFloat32Datum(vector), nil
 }
 
 func evalEmbedTextOptions(ctx EvalContext, row chunk.Row, args []Expression) (map[string]any, error) {

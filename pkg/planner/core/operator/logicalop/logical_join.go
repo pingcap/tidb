@@ -234,6 +234,17 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		p.LeftConditions = nil
 		ret = append(expression.ScalarFuncs2Exprs(equalCond), otherCond...)
 		ret = append(ret, leftPushCond...)
+	case base.FullOuterJoin:
+		// Both children are preserved sides for full outer join. Keep filters
+		// above the join and avoid turning one-side ON conditions into child
+		// selections.
+		predicates = expression.ExtractFiltersFromDNFs(p.SCtx().GetExprCtx(), predicates)
+		predicates = expression.PropagateConstant(p.SCtx().GetExprCtx(), nil, predicates...)
+		dual := Conds2TableDual(p, predicates)
+		if dual != nil {
+			return ret, dual, nil
+		}
+		ret = append(ret, predicates...)
 	case base.SemiJoin, base.InnerJoin:
 		tempCond := make([]expression.Expression, 0, len(p.LeftConditions)+len(p.RightConditions)+len(p.EqualConditions)+len(p.OtherConditions)+len(predicates))
 		tempCond = append(tempCond, p.LeftConditions...)
@@ -302,9 +313,13 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	return ret, newnChild, err
 }
 
-// simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
+// simplifyOuterJoin transforms outer joins to simpler join types when predicates are null-rejected.
 func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
-	if p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.InnerJoin {
+	if p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.FullOuterJoin && p.JoinType != base.InnerJoin {
+		return
+	}
+	if p.JoinType == base.FullOuterJoin {
+		p.JoinType = simplifyFullOuterJoin(p, predicates)
 		return
 	}
 
@@ -333,6 +348,33 @@ func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 	if canBeSimplified {
 		p.JoinType = base.InnerJoin
 	}
+}
+
+// simplifyFullOuterJoin tries to reduce full outer join based on null-rejected predicates.
+// - reject left-null rows  => remove unmatched-right rows => LeftOuterJoin
+// - reject right-null rows => remove unmatched-left rows  => RightOuterJoin
+// - reject both sides      => InnerJoin
+func simplifyFullOuterJoin(p *LogicalJoin, predicates []expression.Expression) base.JoinType {
+	leftNullRejected, rightNullRejected := false, false
+	leftSchema, rightSchema := p.children[0].Schema(), p.children[1].Schema()
+	for _, expr := range predicates {
+		if !leftNullRejected && util.IsNullRejected(p.SCtx(), leftSchema, expr) {
+			leftNullRejected = true
+		}
+		if !rightNullRejected && util.IsNullRejected(p.SCtx(), rightSchema, expr) {
+			rightNullRejected = true
+		}
+		if leftNullRejected && rightNullRejected {
+			return base.InnerJoin
+		}
+	}
+	if leftNullRejected {
+		return base.LeftOuterJoin
+	}
+	if rightNullRejected {
+		return base.RightOuterJoin
+	}
+	return base.FullOuterJoin
 }
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
@@ -600,6 +642,9 @@ func (p *LogicalJoin) DeriveStats(childStats []*property.StatsInfo, selfSchema *
 		count = math.Max(count, leftProfile.RowCount)
 	} else if p.JoinType == base.RightOuterJoin {
 		count = math.Max(count, rightProfile.RowCount)
+	} else if p.JoinType == base.FullOuterJoin {
+		count = math.Max(count, leftProfile.RowCount)
+		count = math.Max(count, rightProfile.RowCount)
 	}
 	colNDVs := make(map[int64]float64, selfSchema.Len())
 	for id, c := range leftProfile.ColNDVs {
@@ -654,6 +699,9 @@ func (p *LogicalJoin) PreparePossibleProperties(_ *expression.Schema, childrenPr
 		rightProperties = nil
 	} else if p.JoinType == base.RightOuterJoin {
 		leftProperties = nil
+	} else if p.JoinType == base.FullOuterJoin {
+		leftProperties = nil
+		rightProperties = nil
 	}
 	resultProperties := make([][]*expression.Column, len(leftProperties)+len(rightProperties))
 	for i, cols := range leftProperties {
@@ -1517,6 +1565,10 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 		} else {
 			leftCond = append(leftCond, expr)
 		}
+	case base.FullOuterJoin:
+		// Keep constant predicates as join filters on both sides.
+		leftCond = append(leftCond, expr)
+		rightCond = append(rightCond, expr)
 	case base.SemiJoin, base.InnerJoin:
 		leftCond = append(leftCond, expr)
 		rightCond = append(rightCond, expr)
@@ -2189,6 +2241,8 @@ func BuildLogicalJoinSchema(joinType base.JoinType, join base.LogicalPlan) *expr
 		util.ResetNotNullFlag(newSchema, leftSchema.Len(), newSchema.Len())
 	} else if joinType == base.RightOuterJoin {
 		util.ResetNotNullFlag(newSchema, 0, leftSchema.Len())
+	} else if joinType == base.FullOuterJoin {
+		util.ResetNotNullFlag(newSchema, 0, newSchema.Len())
 	}
 	return newSchema
 }

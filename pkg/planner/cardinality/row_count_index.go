@@ -433,8 +433,11 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	histCnt, matched := idx.Histogram.EqualRowCount(sctx, val, true)
 	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
+	// A zero Repeat means no point frequency was recorded for this upper
+	// bound, not that the value has no rows. See equalRowCount in
+	// row_count_column.go.
 	// also check if this last bucket end value is underrepresented
-	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
+	if matched && histCnt > 0 && !IsLastBucketEndValueUnderrepresented(sctx,
 		&idx.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
 		return statistics.DefaultRowEst(histCnt)
 	}
