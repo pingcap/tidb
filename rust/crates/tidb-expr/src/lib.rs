@@ -90,12 +90,12 @@
 //! [`time_fn::calendar::from_days`] itself).
 //!
 //! `DATE_ADD`/`DATE_SUB(date, INTERVAL amount unit)` are also covered, for
-//! `DAY`, `WEEK`, `MONTH`, `YEAR`, `HOUR`, `MINUTE`, `SECOND`, and every
+//! `DAY`, `WEEK`, `MONTH`, `QUARTER`, `YEAR`, `HOUR`, `MINUTE`, `SECOND`, and every
 //! COMPOSITE unit (`YEAR_MONTH`, `DAY_HOUR`, `DAY_MINUTE`, `DAY_SECOND`,
 //! `HOUR_MINUTE`, `HOUR_SECOND`, `MINUTE_SECOND`, and their
 //! `*_MICROSECOND` variants — see [`time_fn::calendar::date_add`]'s own doc
 //! for the composite split rules, ported from `parseTimeValue`
-//! (`pkg/types/time.go`)); `QUARTER` is the one remaining unsupported unit.
+//! (`pkg/types/time.go`)).
 //! `DAY` is exact day arithmetic via the same
 //! `days_from_civil`/`civil_from_days` round-trip `TO_DAYS`/`FROM_DAYS`
 //! use, so month/year rollover and leap days are handled correctly for

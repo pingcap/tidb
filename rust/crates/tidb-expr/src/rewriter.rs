@@ -1002,9 +1002,8 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 if let [date, Expr::Interval { value, unit }] = args.as_slice() {
                     let subtract = lowered == "date_sub" || lowered == "subdate";
                     let unit = unit.to_ascii_uppercase();
-                    // Only the units `date_add` itself implements are built;
-                    // `QUARTER` still parses but is refused here rather than
-                    // deferred to a runtime error. The composite units
+                    // Only the units `date_add` itself implements are built.
+                    // The composite units
                     // (`HOUR_MINUTE`, `DAY_SECOND`, `YEAR_MONTH`, ...) ARE
                     // built — `time_fn::calendar::date_add` handles them via
                     // `composite_spec`.
@@ -1013,6 +1012,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                         "DAY"
                             | "WEEK"
                             | "MONTH"
+                            | "QUARTER"
                             | "YEAR"
                             | "HOUR"
                             | "MINUTE"

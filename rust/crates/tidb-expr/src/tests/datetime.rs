@@ -687,12 +687,20 @@ fn date_parts() {
         "STR:2024-04-30"
     );
     assert_eq!(
+        chunk_e("date_add('2024-01-31', interval 1 quarter)"),
+        "STR:2024-04-30"
+    );
+    assert_eq!(
         e("date_add('2024-11-30', interval 1 quarter)"),
         "STR:2025-02-28"
     );
     assert_eq!(
         e("date_add('2024-01-31', interval 2 quarter)"),
         "STR:2024-07-31"
+    );
+    assert_eq!(
+        chunk_e("date_sub('2024-01-31', interval 2 quarter)"),
+        "STR:2023-07-31"
     );
 
     // A STRING `INTERVAL` amount for a non-composite unit is NOT the same
