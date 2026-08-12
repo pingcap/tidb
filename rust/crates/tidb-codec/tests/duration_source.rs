@@ -17,6 +17,7 @@
 use tidb_codec::{
     decode_duration, decode_value, encode_duration, CodecError, RawDuration, VALUE_DURATION_FLAG,
 };
+use tidb_datatype::{Datum, MySqlDuration};
 
 #[test]
 fn duration_value_uses_signed_comparable_int_and_max_fsp() {
@@ -48,8 +49,8 @@ fn duration_value_boundary_preserves_tag_and_remainder() {
     assert_eq!(remain, &[0xaa, 0xbb]);
     assert_eq!(raw.flag, VALUE_DURATION_FLAG);
     assert_eq!(
-        raw.decode_datum(),
-        Err(CodecError::UnsupportedValueTag(VALUE_DURATION_FLAG))
+        raw.decode_datum().unwrap(),
+        Datum::new_duration(MySqlDuration::from_raw_parts(-42, 6))
     );
     let (payload_remain, decoded) = decode_duration(raw.payload).expect("duration payload");
     assert!(payload_remain.is_empty());

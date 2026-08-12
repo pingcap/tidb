@@ -29,7 +29,9 @@ use crate::json::{decode_json, peek_json_len, RawJson};
 use crate::number::{decode_int, decode_uint, decode_uvarint, decode_varint};
 use crate::temporal::decode_packed_time;
 use crate::CodecError;
-use tidb_datatype::{Datum, PackedTime};
+use tidb_datatype::{
+    deserialize_vector_float32, peek_vector_float32, BinaryJSON, Datum, MySqlDuration, PackedTime,
+};
 
 /// Go `codec`'s SQL NULL value tag.
 pub const VALUE_NIL_FLAG: u8 = 0;
@@ -70,14 +72,10 @@ pub struct RawValue<'a> {
 impl<'a> RawValue<'a> {
     /// Decodes the source `codec.DecodeOne` scalar subset into a [`Datum`].
     ///
-    /// Go's `DecodeOne` is schema-independent for integer, floating-point,
-    /// bytes, and decimal tags.  This method follows those exact wire
-    /// decoders and insists that the already-framed payload is consumed in
-    /// full. Duration, JSON, and vector values remain outside the currently
-    /// ported `tidb_datatype::Datum` domain and return an explicit
-    /// unsupported-tag error instead of being reinterpreted. In particular,
-    /// Go `DecodeOne` rejects `maxFlag`; only the distinct range decoder may
-    /// interpret a terminal `maxFlag` as [`Datum::MaxValue`].
+    /// This follows Go's schema-independent `DecodeOne` domain and insists
+    /// that the already-framed payload is consumed in full. Go `DecodeOne`
+    /// rejects `maxFlag`; only the distinct range decoder may interpret a
+    /// terminal `maxFlag` as [`Datum::MaxValue`].
     pub fn decode_datum(self) -> Result<Datum, CodecError> {
         fn finish<T>(result: Result<(&[u8], T), CodecError>) -> Result<T, CodecError> {
             let (remain, value) = result?;
@@ -108,8 +106,23 @@ impl<'a> RawValue<'a> {
                 finish(decode_decimal(self.payload).map(|(remain, value, _, _)| (remain, value)))
                     .map(Datum::new_decimal)
             }
+            VALUE_DURATION_FLAG => finish(decode_int(self.payload)).map(|nanoseconds| {
+                Datum::new_duration(MySqlDuration::from_raw_parts(nanoseconds, 6))
+            }),
             VALUE_VARINT_FLAG => finish(decode_varint(self.payload)).map(Datum::new_int),
             VALUE_UVARINT_FLAG => finish(decode_uvarint(self.payload)).map(Datum::new_uint),
+            VALUE_JSON_FLAG => finish(decode_json(self.payload)).map(|json| {
+                Datum::new_json(BinaryJSON::from_encoded_parts(
+                    json.type_code(),
+                    json.value(),
+                ))
+            }),
+            VALUE_VECTOR_FLOAT32_FLAG => finish(
+                deserialize_vector_float32(self.payload)
+                    .map(|(value, remain)| (remain, value))
+                    .map_err(|_| CodecError::InvalidEncoding("invalid vector float32")),
+            )
+            .map(Datum::new_vector_float32),
             flag => Err(CodecError::UnsupportedValueTag(flag)),
         }
     }
@@ -151,10 +164,8 @@ impl<'a> RawValue<'a> {
 /// Decodes one complete `EncodeValue` value and returns the unconsumed suffix.
 ///
 /// The supported tags are those whose byte boundary is self-contained in the
-/// source codec. Vector values intentionally return
-/// [`CodecError::UnsupportedValueTag`], because their typed payload length
-/// belongs to the still-unported vector codec. BinaryJSON now uses the exact
-/// source `PeekBytesAsJSON` type/length rules instead of guessing a boundary.
+/// source codec. BinaryJSON and vector values use their source-defined peek
+/// functions rather than guessing a boundary.
 pub fn decode_value(input: &[u8]) -> Result<(&[u8], RawValue<'_>), CodecError> {
     let (&flag, payload) = input
         .split_first()
@@ -212,7 +223,7 @@ pub fn decode_default_rows(
 
 fn value_payload_len(flag: u8, input: &[u8]) -> Result<usize, CodecError> {
     match flag {
-        VALUE_NIL_FLAG | VALUE_MAX_FLAG => Ok(0),
+        VALUE_NIL_FLAG => Ok(0),
         VALUE_BYTES_FLAG => peek_bytes_len(input, false),
         VALUE_COMPACT_BYTES_FLAG => compact_bytes_payload_len(input),
         VALUE_INT_FLAG | VALUE_UINT_FLAG | VALUE_FLOAT_FLAG | VALUE_DURATION_FLAG => Ok(8),
@@ -220,7 +231,8 @@ fn value_payload_len(flag: u8, input: &[u8]) -> Result<usize, CodecError> {
         VALUE_VARINT_FLAG => varint_payload_len(input),
         VALUE_UVARINT_FLAG => uvarint_payload_len(input),
         VALUE_JSON_FLAG => peek_json_len(input),
-        VALUE_VECTOR_FLOAT32_FLAG => Err(CodecError::UnsupportedValueTag(flag)),
+        VALUE_VECTOR_FLOAT32_FLAG => peek_vector_float32(input)
+            .map_err(|_| CodecError::InvalidEncoding("invalid vector float32")),
         _ => Err(CodecError::UnsupportedValueTag(flag)),
     }
 }

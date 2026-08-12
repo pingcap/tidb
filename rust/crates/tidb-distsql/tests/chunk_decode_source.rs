@@ -16,8 +16,11 @@
 //! chunk boundary. These tests intentionally stop before typed Datum decode.
 
 use prost::Message;
-use tidb_codec::{ColumnLayout, VALUE_COMPACT_BYTES_FLAG, VALUE_NIL_FLAG, VALUE_VARINT_FLAG};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_codec::{
+    encode_value, ColumnLayout, VALUE_COMPACT_BYTES_FLAG, VALUE_NIL_FLAG, VALUE_VARINT_FLAG,
+    VALUE_VECTOR_FLOAT32_FLAG,
+};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode, VectorFloat32};
 use tidb_distsql::{
     decode_chunk, decode_response_chunks, decode_select_response, ChunkDecodeError,
 };
@@ -172,6 +175,28 @@ fn default_chunk_uses_source_value_framing_without_datum_guessing() {
     assert_eq!(rows[0][0].flag, VALUE_NIL_FLAG);
     assert_eq!(rows[0][1].payload, &[0x02]);
     assert_eq!(rows[0][2].payload, &[0x06, b'a', b'b', b'c']);
+}
+
+#[test]
+fn default_chunk_frames_a_vector_before_the_following_value() {
+    let vector = VectorFloat32::must_create(vec![1.25, -3.5]);
+    let rows_data = encode_value(&[
+        Datum::new_vector_float32(vector.clone()),
+        Datum::new_int(9),
+    ])
+    .unwrap();
+    let chunk = Chunk {
+        rows_data: Some(rows_data),
+        ..Default::default()
+    };
+
+    let raw = decode_chunk(&chunk, EncodeType::TypeDefault).expect("raw default chunk");
+    let rows = raw.decode_default_values(2).expect("vector row framing");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0][0].flag, VALUE_VECTOR_FLOAT32_FLAG);
+    assert_eq!(rows[0][0].payload, vector.serialize());
+    assert_eq!(rows[0][1].flag, VALUE_VARINT_FLAG);
+    assert_eq!(rows[0][1].payload, &[0x12]);
 }
 
 #[test]

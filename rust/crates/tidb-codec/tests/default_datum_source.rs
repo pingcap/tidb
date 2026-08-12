@@ -16,11 +16,11 @@
 
 use tidb_codec::{
     decode_value, encode_bytes, encode_compact_bytes, encode_float, encode_int, encode_uint,
-    encode_varint, CodecError, RawValue, VALUE_BYTES_FLAG, VALUE_COMPACT_BYTES_FLAG,
-    VALUE_DECIMAL_FLAG, VALUE_FLOAT_FLAG, VALUE_INT_FLAG, VALUE_MAX_FLAG, VALUE_NIL_FLAG,
-    VALUE_UINT_FLAG, VALUE_UVARINT_FLAG, VALUE_VARINT_FLAG,
+    encode_value, encode_varint, CodecError, RawValue, VALUE_BYTES_FLAG,
+    VALUE_COMPACT_BYTES_FLAG, VALUE_DECIMAL_FLAG, VALUE_FLOAT_FLAG, VALUE_INT_FLAG,
+    VALUE_MAX_FLAG, VALUE_NIL_FLAG, VALUE_UINT_FLAG, VALUE_UVARINT_FLAG, VALUE_VARINT_FLAG,
 };
-use tidb_datatype::{Datum, Decimal};
+use tidb_datatype::{BinaryJSON, Datum, Decimal, MySqlDuration, VectorFloat32};
 
 fn decode(encoded: &[u8]) -> Result<Datum, CodecError> {
     let (remain, raw) = decode_value(encoded)?;
@@ -76,16 +76,14 @@ fn decode_one_source_scalar_rows_materialize_losslessly() {
 }
 
 #[test]
-fn decode_one_source_rejects_unported_and_malformed_typed_values() {
+fn decode_one_source_rejects_malformed_typed_values() {
     assert_eq!(
         RawValue {
             flag: tidb_codec::VALUE_DURATION_FLAG,
-            payload: &[0; 8],
+            payload: &[0; 7],
         }
         .decode_datum(),
-        Err(CodecError::UnsupportedValueTag(
-            tidb_codec::VALUE_DURATION_FLAG
-        ))
+        Err(CodecError::InsufficientBytes)
     );
     assert_eq!(
         RawValue {
@@ -93,7 +91,7 @@ fn decode_one_source_rejects_unported_and_malformed_typed_values() {
             payload: &[],
         }
         .decode_datum(),
-        Err(CodecError::UnsupportedValueTag(tidb_codec::VALUE_JSON_FLAG))
+        Err(CodecError::InsufficientBytes)
     );
     assert_eq!(
         RawValue {
@@ -110,5 +108,44 @@ fn decode_one_source_rejects_unported_and_malformed_typed_values() {
         }
         .decode_datum(),
         Err(CodecError::InsufficientBytes)
+    );
+}
+
+#[test]
+fn decode_one_source_materializes_duration_json_and_vector() {
+    let duration = MySqlDuration::from_raw_parts(1_230_000_000, 2);
+    let json = BinaryJSON::parse(r#"{"n":7}"#).unwrap();
+    let vector = VectorFloat32::must_create(vec![-1.25, 0.0, 3.5]);
+    let values = [
+        Datum::new_duration(duration),
+        Datum::new_json(json.clone()),
+        Datum::new_vector_float32(vector.clone()),
+    ];
+    let encoded = encode_value(&values).unwrap();
+
+    let mut remain = encoded.as_slice();
+    let mut decoded = Vec::new();
+    while !remain.is_empty() {
+        let (next, raw) = decode_value(remain).unwrap();
+        decoded.push(raw.decode_datum().unwrap());
+        remain = next;
+    }
+
+    assert_eq!(
+        decoded,
+        vec![
+            // Go DecodeOne deliberately restores duration values at MaxFsp.
+            Datum::new_duration(MySqlDuration::from_raw_parts(1_230_000_000, 6)),
+            Datum::new_json(json),
+            Datum::new_vector_float32(vector),
+        ]
+    );
+}
+
+#[test]
+fn cut_one_source_rejects_a_bare_max_sentinel() {
+    assert_eq!(
+        decode_value(&[VALUE_MAX_FLAG]),
+        Err(CodecError::UnsupportedValueTag(VALUE_MAX_FLAG))
     );
 }
