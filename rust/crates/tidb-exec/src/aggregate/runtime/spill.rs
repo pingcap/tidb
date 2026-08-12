@@ -17,6 +17,7 @@
 use super::avg::AvgFloat64State;
 use super::sum::SumFloat64State;
 use tidb_datatype::Decimal;
+use tidb_util::serialization::{serialize_f64, serialize_i64, Cursor};
 
 /// Fixed widths of the source primitive fields.
 pub const COUNT_WIRE_SIZE: usize = std::mem::size_of::<i64>();
@@ -56,7 +57,7 @@ impl SpillSerializer {
     /// Serializes one signed COUNT partial result in native byte order.
     pub fn serialize_count(&mut self, value: i64) -> &[u8] {
         self.buffer.clear();
-        self.buffer.extend_from_slice(&value.to_ne_bytes());
+        serialize_i64(value, &mut self.buffer);
         &self.buffer
     }
 
@@ -83,14 +84,14 @@ impl SpillSerializer {
         self.buffer
             .extend_from_slice(&(coefficient.len() as u32).to_ne_bytes());
         self.buffer.extend_from_slice(coefficient);
-        self.buffer.extend_from_slice(&count.to_ne_bytes());
+        serialize_i64(count, &mut self.buffer);
         &self.buffer
     }
 
     fn serialize_numeric_pair(&mut self, value: f64, count: i64) -> &[u8] {
         self.buffer.clear();
-        self.buffer.extend_from_slice(&value.to_ne_bytes());
-        self.buffer.extend_from_slice(&count.to_ne_bytes());
+        serialize_f64(value, &mut self.buffer);
+        serialize_i64(count, &mut self.buffer);
         &self.buffer
     }
 
@@ -109,9 +110,9 @@ pub fn deserialize_count(bytes: &[u8]) -> Result<i64, InvalidWireLength> {
             expected: COUNT_WIRE_SIZE,
         });
     }
-    let mut value = [0_u8; COUNT_WIRE_SIZE];
-    value.copy_from_slice(bytes);
-    Ok(i64::from_ne_bytes(value))
+    Ok(Cursor::new(bytes)
+        .read_i64()
+        .expect("the exact fixed-width row was checked above"))
 }
 
 /// Decodes a floating-point AVG sum-and-count partial result.
@@ -133,11 +134,14 @@ fn deserialize_numeric_pair(bytes: &[u8]) -> Result<(f64, i64), InvalidWireLengt
             expected: NUMERIC_PAIR_WIRE_SIZE,
         });
     }
-    let mut value = [0_u8; 8];
-    value.copy_from_slice(&bytes[..8]);
-    let mut count = [0_u8; 8];
-    count.copy_from_slice(&bytes[8..]);
-    Ok((f64::from_ne_bytes(value), i64::from_ne_bytes(count)))
+    let mut cursor = Cursor::new(bytes);
+    let value = cursor
+        .read_f64()
+        .expect("the exact fixed-width row was checked above");
+    let count = cursor
+        .read_i64()
+        .expect("the exact fixed-width row was checked above");
+    Ok((value, count))
 }
 
 /// Decodes the decimal/count pair emitted by [`SpillSerializer::serialize_decimal_pair`].

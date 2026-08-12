@@ -26,6 +26,9 @@
 use std::fmt;
 
 use tidb_datatype::{Collation, Datum, DatumKind};
+use tidb_util::serialization::{
+    serialize_bool, serialize_buffer, serialize_f64, serialize_i64, Cursor, SerializationError,
+};
 
 /// Go's type-specific FIRST_ROW spill payload selected by aggregate metadata.
 ///
@@ -114,8 +117,8 @@ impl FirstRowSpillSerializer {
         kind: FirstRowSpillKind,
     ) -> Result<&[u8], FirstRowWireError> {
         self.buffer.clear();
-        self.buffer.push(u8::from(state.is_null));
-        self.buffer.push(u8::from(state.got_first_row));
+        serialize_bool(state.is_null, &mut self.buffer);
+        serialize_bool(state.got_first_row, &mut self.buffer);
         encode_source_payload(&mut self.buffer, &state.value, kind)?;
         Ok(&self.buffer)
     }
@@ -227,12 +230,12 @@ impl FirstRowState {
 
     /// Deserializes one complete source spill row using its external type.
     pub fn deserialize(bytes: &[u8], kind: FirstRowSpillKind) -> Result<Self, FirstRowWireError> {
-        let mut decoder = Decoder::new(bytes);
-        let is_null = decoder.read_bool()?;
-        let got_first_row = decoder.read_bool()?;
-        let value = decode_source_payload(&mut decoder, kind)?;
-        if decoder.remaining() != 0 {
-            return Err(FirstRowWireError::TrailingBytes(decoder.remaining()));
+        let mut cursor = Cursor::new(bytes);
+        let is_null = cursor.read_bool().map_err(map_wire_error)?;
+        let got_first_row = cursor.read_bool().map_err(map_wire_error)?;
+        let value = decode_source_payload(&mut cursor, kind)?;
+        if cursor.remaining() != 0 {
+            return Err(FirstRowWireError::TrailingBytes(cursor.remaining()));
         }
         Ok(Self::from_parts(is_null, got_first_row, value))
     }
@@ -263,24 +266,24 @@ fn encode_source_payload(
 ) -> Result<(), FirstRowWireError> {
     match (kind, value) {
         (FirstRowSpillKind::Int, Datum::Int(value)) => {
-            output.extend_from_slice(&value.to_ne_bytes());
+            serialize_i64(*value, output);
         }
         (FirstRowSpillKind::Float64, Datum::Real(value)) => {
-            output.extend_from_slice(&value.to_ne_bytes());
+            serialize_f64(*value, output);
         }
         (FirstRowSpillKind::String(_), Datum::String(value)) => {
-            encode_bytes(output, value.bytes());
+            serialize_buffer(value.bytes(), output);
         }
         // Go evaluates NULL into the typed zero payload and records nullness
         // in the independent flag. Rust's Datum::Null has no typed payload,
         // so reconstruct that source zero from the externally selected kind.
         (FirstRowSpillKind::Int, Datum::Null) => {
-            output.extend_from_slice(&0_i64.to_ne_bytes());
+            serialize_i64(0, output);
         }
         (FirstRowSpillKind::Float64, Datum::Null) => {
-            output.extend_from_slice(&0_f64.to_ne_bytes());
+            serialize_f64(0.0, output);
         }
-        (FirstRowSpillKind::String(_), Datum::Null) => encode_bytes(output, &[]),
+        (FirstRowSpillKind::String(_), Datum::Null) => serialize_buffer(&[], output),
         (expected, actual) => {
             return Err(FirstRowWireError::DatumKindMismatch {
                 expected,
@@ -292,81 +295,29 @@ fn encode_source_payload(
 }
 
 fn decode_source_payload(
-    decoder: &mut Decoder<'_>,
+    cursor: &mut Cursor<'_>,
     kind: FirstRowSpillKind,
 ) -> Result<Datum, FirstRowWireError> {
     match kind {
-        FirstRowSpillKind::Int => Ok(Datum::Int(i64::from_ne_bytes(decoder.read_array()?))),
-        FirstRowSpillKind::Float64 => Ok(Datum::Real(f64::from_ne_bytes(decoder.read_array()?))),
+        FirstRowSpillKind::Int => Ok(Datum::Int(cursor.read_i64().map_err(map_wire_error)?)),
+        FirstRowSpillKind::Float64 => Ok(Datum::Real(cursor.read_f64().map_err(map_wire_error)?)),
         FirstRowSpillKind::String(collation) => Ok(Datum::new_collation_string(
-            decoder.read_bytes()?.to_vec(),
+            cursor.read_buffer().map_err(map_wire_error)?.to_vec(),
             collation,
         )),
     }
 }
 
-fn encode_bytes(output: &mut Vec<u8>, bytes: &[u8]) {
-    output.extend_from_slice(&bytes.len().to_ne_bytes());
-    output.extend_from_slice(bytes);
-}
-
-struct Decoder<'a> {
-    bytes: &'a [u8],
-    offset: usize,
-}
-
-impl<'a> Decoder<'a> {
-    const fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, offset: 0 }
-    }
-
-    fn remaining(&self) -> usize {
-        self.bytes.len() - self.offset
-    }
-
-    fn read_u8(&mut self) -> Result<u8, FirstRowWireError> {
-        let value = *self
-            .bytes
-            .get(self.offset)
-            .ok_or(FirstRowWireError::Truncated)?;
-        self.offset += 1;
-        Ok(value)
-    }
-
-    fn read_bool(&mut self) -> Result<bool, FirstRowWireError> {
-        match self.read_u8()? {
-            0 => Ok(false),
-            1 => Ok(true),
-            value => Err(FirstRowWireError::InvalidBool(value)),
+fn map_wire_error(error: SerializationError) -> FirstRowWireError {
+    match error {
+        SerializationError::InvalidBool(value) => FirstRowWireError::InvalidBool(value),
+        SerializationError::Truncated | SerializationError::InvalidLength(_) => {
+            FirstRowWireError::Truncated
         }
-    }
-
-    fn read_array<const N: usize>(&mut self) -> Result<[u8; N], FirstRowWireError> {
-        let end = self
-            .offset
-            .checked_add(N)
-            .ok_or(FirstRowWireError::Truncated)?;
-        let source = self
-            .bytes
-            .get(self.offset..end)
-            .ok_or(FirstRowWireError::Truncated)?;
-        let mut value = [0_u8; N];
-        value.copy_from_slice(source);
-        self.offset = end;
-        Ok(value)
-    }
-
-    fn read_bytes(&mut self) -> Result<&'a [u8], FirstRowWireError> {
-        let length = usize::from_ne_bytes(self.read_array()?);
-        let end = self
-            .offset
-            .checked_add(length)
-            .ok_or(FirstRowWireError::Truncated)?;
-        let value = self
-            .bytes
-            .get(self.offset..end)
-            .ok_or(FirstRowWireError::Truncated)?;
-        self.offset = end;
-        Ok(value)
+        // FIRST_ROW consumes only booleans, fixed-width numbers, and buffers.
+        // The remaining shared-decoder errors are unreachable for this format.
+        SerializationError::InvalidInterfaceType(_)
+        | SerializationError::InvalidDecimal(_)
+        | SerializationError::InvalidTime(_) => FirstRowWireError::Truncated,
     }
 }
