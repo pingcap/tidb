@@ -58,7 +58,6 @@ where
 {
     let escape = match escape {
         None => Some('\\'),
-        Some(0) => None,
         Some(byte) => Some(char::from(byte)),
     };
     let (weights, types) = compile_pattern_with_escape(pattern, escape);
@@ -141,7 +140,12 @@ fn lower_ascii_excluding_escape(value: &str, escape: u8) -> (String, u8) {
 mod tests {
     use tidb_datatype::Collation;
 
-    use super::{ilike_match, like_match_with_collation};
+    use super::{ilike_match, like_match, like_match_with_collation};
+
+    #[test]
+    fn zero_escape_byte_preserves_go_nul_escape_behavior() {
+        assert!(like_match("a_", "a\0_", Some(0)));
+    }
 
     /// Source rows from `pkg/expression/builtin_like_test.go:100
     /// TestCILike`. Each row is run against the two collations represented by

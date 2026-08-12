@@ -1445,9 +1445,10 @@ fn like_predicate() {
 
     // The source matcher compiles an explicit ESCAPE byte exactly like
     // `pkg/util/stringutil.CompilePattern`: a custom byte quotes the next
-    // character, while ESCAPE '' disables quoting completely.  A trailing
-    // escape byte is retained as a literal (the Go compiler leaves the
-    // escape rune in place when there is no following rune).
+    // character. ESCAPE '' passes byte zero to the source compiler: ordinary
+    // escape characters become literals, while an embedded NUL still quotes
+    // the following character. A trailing escape byte is retained as a
+    // literal (the Go compiler leaves it in place when nothing follows).
     assert_eq!(e("'a' like '+a' escape '+'"), "INT:1");
     assert_eq!(e("'a+' like 'a+' escape '+'"), "INT:1");
     assert_eq!(e("'a+' like 'a++' escape '+'"), "INT:1");
@@ -1455,6 +1456,7 @@ fn like_predicate() {
     assert_eq!(e("'a\\\\' like 'a\\\\'"), "INT:1");
     assert_eq!(e("'a' like 'a\\\\' escape ''"), "INT:0");
     assert_eq!(e("'a\\\\' like 'a\\\\' escape ''"), "INT:1");
+    assert_eq!(e("'a_' like 'a\\0_' escape ''"), "INT:1");
 }
 
 #[test]
