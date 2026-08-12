@@ -391,6 +391,22 @@ fn like_source_vectors_preserve_default_escape_semantics() {
 }
 
 #[test]
+fn like_preserves_invalid_utf8_source_bytes() {
+    // Both Go wildcard implementations accept arbitrary string bytes: the
+    // binary collation compares bytes, while utf8mb4_bin consumes malformed
+    // bytes one at a time as RuneError. Converting either operand to a Rust
+    // `String` turns these valid LIKE expressions into errors.
+    for expression in ["0xff like 0xff", "0xff like '_'", "0xffff like '__'"] {
+        assert_eq!(e(expression), "INT:1", "AST tier: {expression}");
+        assert_eq!(chunk_e(expression), "INT:1", "chunk tier: {expression}");
+    }
+    assert_eq!(e("0xffff like '_'"), "INT:0");
+    assert_eq!(chunk_e("0xffff like '_'"), "INT:0");
+    assert_eq!(chunk_e("_binary 0xff like _binary 0xfe"), "INT:0");
+    assert_eq!(chunk_e("_binary 0xff ilike _binary 0xfe"), "INT:0");
+}
+
+#[test]
 fn ilike_uses_source_ascii_lowering_and_escape_rules() {
     // `pkg/expression/builtin_ilike_test.go::TestIlike`: TiDB lowers ASCII
     // bytes only, so Unicode case pairs remain distinct. An ASCII-letter

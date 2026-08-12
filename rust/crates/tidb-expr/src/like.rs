@@ -19,16 +19,20 @@ use std::cmp::Ordering;
 
 use tidb_datatype::Collation;
 use tidb_util::stringutil::{
-    compile_pattern_with_escape, do_match_customized, lower_one_string,
-    lower_one_string_excluding_escape_char,
+    compile_pattern_binary, compile_pattern_with_escape, do_match_binary, do_match_customized,
+    lower_one_string, lower_one_string_excluding_escape_char,
 };
 
 /// Matches `text` against a `LIKE` pattern (`%` any run, `_` one character),
 /// case-sensitively. Greedy scan with backtracking on the most recent `%`.
 /// `escape` is `tidb_ast::Expr::Like::escape` passed straight through —
 /// see `compile_like`'s own doc for its exact meaning.
-pub(crate) fn like_match(text: &str, pattern: &str, escape: Option<u8>) -> bool {
-    like_match_by(text, pattern, escape, |left, right| left == right)
+pub(crate) fn like_match(
+    text: impl AsRef<[u8]>,
+    pattern: impl AsRef<[u8]>,
+    escape: Option<u8>,
+) -> bool {
+    like_match_with_collation(text, pattern, escape, Collation::Utf8Mb4Bin)
 }
 
 /// Matches a pattern using one of the collations translated into
@@ -42,26 +46,22 @@ pub(crate) fn like_match(text: &str, pattern: &str, escape: Option<u8>) -> bool 
 /// `utf8mb4_general_ci` and `utf8mb4_unicode_ci` collator contracts without
 /// inventing session metadata in the value-only evaluator.
 pub fn like_match_with_collation(
-    text: &str,
-    pattern: &str,
+    text: impl AsRef<[u8]>,
+    pattern: impl AsRef<[u8]>,
     escape: Option<u8>,
     collation: Collation,
 ) -> bool {
-    like_match_by(text, pattern, escape, |left, right| {
+    let text = text.as_ref();
+    let pattern = pattern.as_ref();
+    let escape = escape.unwrap_or(b'\\');
+    if collation == Collation::Binary {
+        let (weights, types) = compile_pattern_binary(pattern, escape);
+        return do_match_binary(text, &weights, &types);
+    }
+    let (weights, types) = compile_pattern_with_escape(pattern, Some(char::from(escape)));
+    do_match_customized(text, &weights, &types, |left, right| {
         collation_char_equal(left, right, collation)
     })
-}
-
-fn like_match_by<F>(text: &str, pattern: &str, escape: Option<u8>, equal: F) -> bool
-where
-    F: Fn(char, char) -> bool,
-{
-    let escape = match escape {
-        None => Some('\\'),
-        Some(byte) => Some(char::from(byte)),
-    };
-    let (weights, types) = compile_pattern_with_escape(pattern, escape);
-    do_match_customized(text, &weights, &types, equal)
 }
 
 /// Compares one source rune under a TiDB collation.
@@ -98,42 +98,53 @@ fn collation_char_equal(left: char, right: char, collation: Collation) -> bool {
     collation.compare(left.as_bytes(), right.as_bytes()) == Ordering::Equal
 }
 
-/// Matches TiDB's `ILIKE` seed semantics: ASCII letters compare without case,
+/// Matches TiDB's `ILIKE` semantics: ASCII letters compare without case,
 /// while every non-ASCII character remains byte/rune-sensitive.  The Go
 /// builtin lowercases the value and pattern before handing them to the binary
 /// wildcard matcher.  When the escape byte itself is an ASCII letter, the
 /// pattern lowercasing must preserve escape markers and return the transformed
 /// marker (`'a'` becomes `'A'`); otherwise an escaped wildcard would change
-/// meaning.  This helper deliberately owns only that scalar value path.  The
-/// Go signature/cache/vectorized chunk state and session collation registry
-/// remain outside this seed evaluator.
-pub fn ilike_match(text: &str, pattern: &str, escape: u8) -> bool {
-    let text = lower_ascii(text);
-    let (pattern, escape) = if escape.is_ascii_alphabetic() {
-        lower_ascii_excluding_escape(pattern, escape)
-    } else {
-        (lower_ascii(pattern), escape)
-    };
-    like_match(&text, &pattern, Some(escape))
+/// meaning.
+pub fn ilike_match(text: impl AsRef<[u8]>, pattern: impl AsRef<[u8]>, escape: u8) -> bool {
+    ilike_match_with_collation(text, pattern, escape, Collation::Utf8Mb4Bin)
 }
 
-fn lower_ascii(value: &str) -> String {
-    let mut value = value.as_bytes().to_vec();
+/// Matches `ILIKE` using the binary wildcard implementation selected by the
+/// expression collation. Only the `binary` collation is byte-oriented.
+pub fn ilike_match_with_collation(
+    text: impl AsRef<[u8]>,
+    pattern: impl AsRef<[u8]>,
+    escape: u8,
+    collation: Collation,
+) -> bool {
+    let text = lower_ascii(text.as_ref());
+    let (pattern, escape) = if escape.is_ascii_alphabetic() {
+        lower_ascii_excluding_escape(pattern.as_ref(), escape)
+    } else {
+        (lower_ascii(pattern.as_ref()), escape)
+    };
+    let binary_collation = if collation == Collation::Binary {
+        Collation::Binary
+    } else {
+        Collation::Utf8Mb4Bin
+    };
+    like_match_with_collation(text, pattern, Some(escape), binary_collation)
+}
+
+fn lower_ascii(value: &[u8]) -> Vec<u8> {
+    let mut value = value.to_vec();
     lower_one_string(&mut value);
-    String::from_utf8(value).expect("ASCII lowercasing preserves UTF-8")
+    value
 }
 
 /// Port `stringutil.LowerOneStringExcludeEscapeChar` without applying Unicode
 /// case folding.  The `escaped` state is intentionally carried across an
 /// escape marker for exactly one following character, matching Go's byte
 /// implementation (including the `AA` -> `Aa` example for escape `A`).
-fn lower_ascii_excluding_escape(value: &str, escape: u8) -> (String, u8) {
-    let mut value = value.as_bytes().to_vec();
+fn lower_ascii_excluding_escape(value: &[u8], escape: u8) -> (Vec<u8>, u8) {
+    let mut value = value.to_vec();
     let actual_escape = lower_one_string_excluding_escape_char(&mut value, escape);
-    (
-        String::from_utf8(value).expect("ASCII lowercasing preserves UTF-8"),
-        actual_escape,
-    )
+    (value, actual_escape)
 }
 
 #[cfg(test)]
@@ -145,6 +156,24 @@ mod tests {
     #[test]
     fn zero_escape_byte_preserves_go_nul_escape_behavior() {
         assert!(like_match("a_", "a\0_", Some(0)));
+    }
+
+    #[test]
+    fn malformed_bytes_follow_the_selected_go_pattern_implementation() {
+        // `binPattern` compares raw bytes. `derivedBinPattern` decodes each
+        // malformed byte as one RuneError before comparing runes.
+        assert!(!like_match_with_collation(
+            [0xff],
+            [0xfe],
+            Some(b'\\'),
+            Collation::Binary,
+        ));
+        assert!(like_match_with_collation(
+            [0xff],
+            [0xfe],
+            Some(b'\\'),
+            Collation::Utf8Mb4Bin,
+        ));
     }
 
     /// Source rows from `pkg/expression/builtin_like_test.go:100

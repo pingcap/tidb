@@ -846,16 +846,16 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             match (eval_in(expr, cols)?, eval_in(pattern, cols)?) {
                 (Datum::Null, _) | (_, Datum::Null) => Ok(Datum::Null),
                 (v, p) => {
-                    let value = v
-                        .sql_string()
-                        .map_err(|_| EvalError::Unsupported("invalid UTF-8 LIKE operand"))?;
-                    let pattern = p
-                        .sql_string()
-                        .map_err(|_| EvalError::Unsupported("invalid UTF-8 LIKE pattern"))?;
+                    let value = v.sql_bytes().map_err(|_| {
+                        EvalError::Unsupported("invalid LIKE operand scalar domain")
+                    })?;
+                    let pattern = p.sql_bytes().map_err(|_| {
+                        EvalError::Unsupported("invalid LIKE pattern scalar domain")
+                    })?;
                     let matched = if *ilike {
-                        ilike_match(&value, &pattern, escape.unwrap_or(b'\\'))
+                        ilike_match(value, pattern, escape.unwrap_or(b'\\'))
                     } else {
-                        like_match(&value, &pattern, *escape)
+                        like_match(value, pattern, *escape)
                     };
                     Ok(bool_int(matched ^ not))
                 }

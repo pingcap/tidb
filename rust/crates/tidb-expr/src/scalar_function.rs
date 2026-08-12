@@ -423,15 +423,20 @@ impl ScalarFunction {
                 _ => None,
             };
             let text = value
-                .sql_string()
-                .map_err(|_| EvalError::Unsupported("invalid UTF-8 LIKE operand"))?;
+                .sql_bytes()
+                .map_err(|_| EvalError::Unsupported("invalid LIKE operand scalar domain"))?;
             let pattern = pattern
-                .sql_string()
-                .map_err(|_| EvalError::Unsupported("invalid UTF-8 LIKE pattern"))?;
+                .sql_bytes()
+                .map_err(|_| EvalError::Unsupported("invalid LIKE pattern scalar domain"))?;
             let matched = if name == "ilike" {
-                crate::ilike_match(&text, &pattern, escape.unwrap_or(b'\\'))
+                crate::like::ilike_match_with_collation(
+                    text,
+                    pattern,
+                    escape.unwrap_or(b'\\'),
+                    self.derived_collation(),
+                )
             } else {
-                crate::like_match_with_collation(&text, &pattern, escape, self.derived_collation())
+                crate::like_match_with_collation(text, pattern, escape, self.derived_collation())
             };
             return Ok(Datum::Int(i64::from(matched)));
         }
