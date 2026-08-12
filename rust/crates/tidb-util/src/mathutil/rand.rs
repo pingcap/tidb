@@ -136,6 +136,17 @@ mod tests {
     }
 
     #[test]
+    fn source_seed_setters_preserve_u32_wrapping() {
+        let rng = MysqlRng::new_with_seed(0);
+        rng.set_seed1(u32::MAX);
+        rng.set_seed2(u32::MAX);
+
+        assert_eq!(rng.gen().to_bits(), 0.0_f64.to_bits());
+        assert_eq!(rng.get_seed1(), 0);
+        assert_eq!(rng.get_seed2(), 32);
+    }
+
+    #[test]
     fn concurrent_generation_is_one_serialized_sequence() {
         const THREADS: usize = 8;
         const VALUES_PER_THREAD: usize = 1_000;

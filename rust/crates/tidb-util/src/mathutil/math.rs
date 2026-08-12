@@ -230,4 +230,14 @@ mod tests {
             (isize::MAX, isize::MIN, usize::MAX)
         );
     }
+
+    #[test]
+    fn clamp_preserves_source_nan_and_signed_zero_comparisons() {
+        let source_nan = f64::from_bits(0x7ff8_0000_0000_0001);
+        assert_eq!(clamp(0.0_f64, -1.0, -0.0).to_bits(), (-0.0_f64).to_bits());
+        assert_eq!(clamp(-0.0_f64, 0.0, 1.0).to_bits(), 0.0_f64.to_bits());
+        assert_eq!(clamp(source_nan, 1.0, 3.0).to_bits(), source_nan.to_bits());
+        assert_eq!(clamp(2.0, source_nan, 3.0), 2.0);
+        assert_eq!(clamp(2.0, 1.0, source_nan), 2.0);
+    }
 }

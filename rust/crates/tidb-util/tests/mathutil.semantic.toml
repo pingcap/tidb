@@ -1,0 +1,29 @@
+go_package = "pkg/util/mathutil"
+source_commit = "0eb881e406a4df7f7e44f94f6c12be1616aeffd7"
+evidence_files = [
+  "rust/crates/tidb-executor/src/driver/tests/column_defaults.rs",
+  "rust/crates/tidb-executor/src/stmt_context.rs",
+  "rust/crates/tidb-expr/src/lib.rs",
+  "rust/crates/tidb-expr/src/math_fn/mod.rs",
+  "rust/crates/tidb-session/src/lib.rs",
+  "rust/crates/tidb-session/src/stmt_ctx.rs",
+  "rust/crates/tidb-session/src/tests_core/numeric_domain.rs",
+  "rust/crates/tidb-session/src/variables.rs",
+  "rust/crates/tidb-stats/src/row_estimate.rs",
+  "rust/crates/tidb-stats/tests/row_estimate_source.rs",
+  "rust/crates/tidb-util/Cargo.toml",
+  "rust/crates/tidb-util/src/lib.rs",
+  "rust/crates/tidb-util/src/mathutil/exponential_average.rs",
+  "rust/crates/tidb-util/src/mathutil/math.rs",
+  "rust/crates/tidb-util/src/mathutil/mod.rs",
+  "rust/crates/tidb-util/src/mathutil/rand.rs",
+]
+commands = [
+  ["test", "-p", "tidb-util", "mathutil", "--", "--test-threads=1"],
+  ["test", "-p", "tidb-expr", "--lib", "math_fn::tests::rand"],
+  ["test", "-p", "tidb-executor", "--lib", "rand_"],
+  ["test", "-p", "tidb-executor", "--lib", "explicit_values_defaults_are_lowered_before_runtime_expressions"],
+  ["test", "-p", "tidb-session", "--lib", "tests_core::numeric_domain::rand_"],
+  ["test", "-p", "tidb-stats", "--test", "all", "row_estimate_source"],
+  ["check", "-p", "tidb-util", "--all-targets"],
+]

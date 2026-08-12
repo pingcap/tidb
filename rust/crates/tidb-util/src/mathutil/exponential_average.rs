@@ -16,7 +16,7 @@
 
 /// An exponential moving average measurement. Like the Go source, callers
 /// need exclusive access while updating it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct ExponentialMovingAverage {
     value: f64,
     sum: f64,
@@ -87,6 +87,21 @@ mod tests {
             window.add(sample);
         }
         assert_eq!(window.get() as i64, 3886);
+    }
+
+    #[test]
+    fn source_zero_value_is_usable_and_preserves_ieee754_behavior() {
+        let mut window = ExponentialMovingAverage::default();
+        assert_eq!(window.get().to_bits(), 0.0_f64.to_bits());
+
+        for sample in [8.0, -8.0] {
+            window.add(sample);
+            assert_eq!(window.get().to_bits(), 0.0_f64.to_bits());
+        }
+        window.add(f64::INFINITY);
+        assert!(window.get().is_nan());
+        window.add(1.0);
+        assert!(window.get().is_nan());
     }
 
     #[test]
