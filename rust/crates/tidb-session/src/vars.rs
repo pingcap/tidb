@@ -211,6 +211,9 @@ impl GlobalSysvars {
             }
             values.insert(key.clone(), stored_value.clone());
         }
+        if key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG {
+            self.publish_redaction_mode();
+        }
         if !def.has_global_scope() {
             self.record_instance_mutation(InstanceMutation::Set(key.clone(), stored_value));
         }
@@ -240,6 +243,9 @@ impl GlobalSysvars {
         }
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY) {
             self.publish_committer_concurrency();
+        }
+        if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_REDACT_LOG) {
+            self.publish_redaction_mode();
         }
         Ok(())
     }
@@ -279,11 +285,13 @@ impl GlobalSysvars {
     /// know.
     pub fn load_from_cluster<I: IntoIterator<Item = (String, String)>>(&self, rows: I) {
         let mut loaded_committer_concurrency = false;
+        let mut loaded_redaction_mode = false;
         for (name, value) in rows {
             let key = name.to_ascii_lowercase();
             if let Some(def) = get_sys_var(&key) {
                 loaded_committer_concurrency |=
                     key == tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY;
+                loaded_redaction_mode |= key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG;
                 self.store(def)
                     .lock()
                     .expect("global sysvar lock poisoned")
@@ -292,6 +300,9 @@ impl GlobalSysvars {
         }
         if loaded_committer_concurrency {
             self.publish_committer_concurrency();
+        }
+        if loaded_redaction_mode {
+            self.publish_redaction_mode();
         }
     }
 
@@ -332,6 +343,7 @@ impl GlobalSysvars {
         *self.values.lock().expect("global sysvar lock poisoned") =
             std::mem::take(&mut *fresh.values.lock().expect("global sysvar lock poisoned"));
         self.publish_committer_concurrency();
+        self.publish_redaction_mode();
     }
 
     /// Publishes only the named GLOBAL variables from `fresh`.
@@ -425,6 +437,25 @@ impl GlobalSysvars {
             .and_then(|value| value.parse::<i32>().ok())
             .unwrap_or(tidb_tikvutil::DEFAULT_COMMITTER_CONCURRENCY);
         tidb_tikvutil::set_committer_concurrency(value);
+    }
+
+    fn publish_redaction_mode(&self) {
+        if !self.publishes_runtime_settings {
+            return;
+        }
+        let value = self
+            .values
+            .lock()
+            .expect("global sysvar lock poisoned")
+            .get(tidb_vardef::tidb_vars::TIDB_REDACT_LOG)
+            .cloned()
+            .unwrap_or_else(|| {
+                crate::sysvar::effective_default(
+                    get_sys_var(tidb_vardef::tidb_vars::TIDB_REDACT_LOG)
+                        .expect("tidb_redact_log is registered"),
+                )
+            });
+        tidb_util::redact::set_redact_mode(&value);
     }
 }
 
@@ -907,6 +938,33 @@ mod tests {
         vars.set_global("autocommit", "OFF".to_owned()).unwrap();
         assert_eq!(vars.get_system("autocommit").unwrap(), "ON");
         assert_eq!(vars.get_global("autocommit").unwrap(), "OFF");
+    }
+
+    #[test]
+    fn set_global_redact_log_updates_the_process_redaction_authority() {
+        let mut vars = SessionVars::new();
+        vars.set_global("tidb_redact_log", "MARKER".to_owned())
+            .unwrap();
+        assert!(tidb_util::redact::need_redact());
+        assert_eq!(tidb_util::redact::value("secret"), "?");
+
+        vars.globals.reset("tidb_redact_log").unwrap();
+        assert!(!tidb_util::redact::need_redact());
+
+        let scratch =
+            GlobalSysvars::from_cluster_rows([("tidb_redact_log".to_owned(), "MARKER".to_owned())]);
+        assert!(!tidb_util::redact::need_redact());
+        vars.globals.replace_from(&scratch);
+        assert!(tidb_util::redact::need_redact());
+
+        vars.set_global("tidb_redact_log", "OFF".to_owned())
+            .unwrap();
+        assert!(!tidb_util::redact::need_redact());
+
+        vars.globals
+            .load_from_cluster([("tidb_redact_log".to_owned(), "ON".to_owned())]);
+        assert!(tidb_util::redact::need_redact());
+        vars.globals.reset("tidb_redact_log").unwrap();
     }
 
     #[test]

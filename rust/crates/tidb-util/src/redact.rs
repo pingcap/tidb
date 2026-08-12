@@ -26,8 +26,6 @@
 //!   S3/GCS/Azure credential fields changed by Go, and preserves gogo's
 //!   compact protobuf text without mutating the source task.
 
-use std::sync::atomic::{AtomicU8, Ordering};
-
 use tidb_proto::backup;
 
 mod compact_text;
@@ -38,13 +36,6 @@ pub const REDACT_LOG_ENABLE: &str = "ON";
 pub const REDACT_LOG_DISABLE: &str = "OFF";
 /// `errors.RedactLogMarker`: redaction by wrapping values in `‹...›`.
 pub const REDACT_LOG_MARKER: &str = "MARKER";
-
-/// The process-wide redact-log flag (`errors.RedactLogEnabled`). Its zero
-/// value is the empty string, meaning "not initialized" (no redaction).
-const REDACT_STATE_UNINITIALIZED: u8 = 0;
-const REDACT_STATE_DISABLED: u8 = 1;
-const REDACT_STATE_ENABLED: u8 = 2;
-static REDACT_LOG_ENABLED: AtomicU8 = AtomicU8::new(REDACT_STATE_UNINITIALIZED);
 
 /// Go `redact.String`: redacts `input` according to `mode`.
 ///
@@ -280,19 +271,25 @@ pub fn init_redact(redact_log: bool) {
     } else {
         REDACT_LOG_DISABLE
     };
-    let state = if mode == REDACT_LOG_ENABLE {
-        REDACT_STATE_ENABLED
-    } else {
-        REDACT_STATE_DISABLED
+    set_redact_mode(mode);
+}
+
+/// Publishes the validated `tidb_redact_log` value to the one process-wide
+/// redaction authority shared by errors and utility helpers.
+pub fn set_redact_mode(mode: &str) {
+    let mode = match mode {
+        REDACT_LOG_ENABLE => tidb_error::mysql::RedactionMode::Enabled,
+        REDACT_LOG_MARKER => tidb_error::mysql::RedactionMode::Marker,
+        _ => tidb_error::mysql::RedactionMode::Disabled,
     };
-    REDACT_LOG_ENABLED.store(state, Ordering::SeqCst);
+    tidb_error::mysql::set_redaction_mode(mode);
 }
 
 /// Go `redact.NeedRedact`: whether redaction is currently enabled (the flag
 /// is neither `OFF` nor its uninitialized empty value).
 #[must_use]
 pub fn need_redact() -> bool {
-    REDACT_LOG_ENABLED.load(Ordering::SeqCst) == REDACT_STATE_ENABLED
+    tidb_error::mysql::redaction_mode() != tidb_error::mysql::RedactionMode::Disabled
 }
 
 /// Go `redact.Value`: `?` when redaction is enabled, else `arg` unchanged.
@@ -477,6 +474,16 @@ mod tests {
         assert_eq!(key(&[0xab, 0xcd, 0xef]), "ABCDEF");
 
         init_redact(true);
+        assert_eq!(value(secret), "?");
+        assert_eq!(key(secret.as_bytes()), "?");
+
+        // Go's helpers and SQL-error formatting read the same
+        // `errors.RedactLogEnabled` singleton. A mode written through that
+        // owner must therefore be visible here too, including MARKER (which
+        // `NeedRedact` treats as enabled).
+        init_redact(false);
+        tidb_error::mysql::set_redaction_mode(tidb_error::mysql::RedactionMode::Marker);
+        assert!(need_redact());
         assert_eq!(value(secret), "?");
         assert_eq!(key(secret.as_bytes()), "?");
 
