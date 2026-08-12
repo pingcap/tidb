@@ -32,10 +32,9 @@ import (
 )
 
 const (
-	reportTimeout         = 40 * time.Second
-	collectChanBufferSize = 2
-	// maxPendingReportWindows allows one retry window before stale pending data is discarded.
-	maxPendingReportWindows = 2
+	reportTimeout               = 40 * time.Second
+	collectChanBufferSize       = 2
+	reportCollectedDataChanSize = 2
 )
 
 var nowFunc = time.Now
@@ -85,7 +84,6 @@ type RemoteTopSQLReporter struct {
 	collectStmtStatsChan    chan stmtstats.StatementStatsMap
 	collectRUIncrementsChan chan ruBatch
 	collecting              *collecting
-	reportChannelFullCount  int
 	ruAggregator            *ruWindowAggregator // Online 15s RU aggregation (400->200->100 pipeline)
 	normalizedSQLMap        *normalizedSQLMap
 	normalizedPlanMap       *normalizedPlanMap
@@ -119,7 +117,7 @@ func NewRemoteTopSQLReporter(decodePlan planBinaryDecodeFunc, compressPlan planB
 		collectCPUTimeChan:        make(chan []collector.SQLCPUTimeRecord, collectChanBufferSize),
 		collectStmtStatsChan:      make(chan stmtstats.StatementStatsMap, collectChanBufferSize),
 		collectRUIncrementsChan:   make(chan ruBatch, collectChanBufferSize),
-		reportCollectedDataChan:   make(chan collectedData, 1),
+		reportCollectedDataChan:   make(chan collectedData, reportCollectedDataChanSize),
 		collecting:                newCollecting(),
 		ruAggregator:              newRUWindowAggregator(),
 		normalizedSQLMap:          newNormalizedSQLMap(),
@@ -352,18 +350,13 @@ func (tsr *RemoteTopSQLReporter) takeDataAndSendToReportChan(timestamp uint64) {
 	// between this check and the send below.
 	if len(tsr.reportCollectedDataChan) == cap(tsr.reportCollectedDataChan) {
 		reporter_metrics.IgnoreReportChannelFullCounter.Inc()
-		tsr.reportChannelFullCount++
-		if tsr.reportChannelFullCount >= maxPendingReportWindows {
-			// Preserve bounded SQL/plan metadata so later records can still be decoded,
-			// but discard data after prolonged backpressure to bound retained state.
-			tsr.collecting = newCollecting()
-			tsr.ruAggregator.dropReportData(timestamp)
-			reporter_metrics.IgnoreReportDataByBackpressureCounter.Inc()
-			tsr.reportChannelFullCount = 0
-		}
+		// SQL/plan metadata remains on the reporter side because it is bounded by
+		// MaxCollect and can decode records collected after backpressure recovers.
+		tsr.collecting = newCollecting()
+		tsr.ruAggregator.dropReportData(timestamp)
+		reporter_metrics.IgnoreReportDataByBackpressureCounter.Inc()
 		return
 	}
-	tsr.reportChannelFullCount = 0
 
 	ruRecords := tsr.ruAggregator.takeReportRecords(
 		timestamp,
