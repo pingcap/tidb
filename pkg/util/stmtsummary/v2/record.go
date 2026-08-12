@@ -97,7 +97,7 @@ type StmtRecord struct {
 	MaxRocksdbBlockReadCount       uint64        `json:"max_rocksdb_block_read_count"`
 	SumRocksdbBlockReadByte        uint64        `json:"sum_rocksdb_block_read_byte"`
 	MaxRocksdbBlockReadByte        uint64        `json:"max_rocksdb_block_read_byte"`
-	IARemoteExecCount              int64         `json:"ia_remote_exec_count"`
+	IAExecCount                    int64         `json:"ia_remote_exec_count"`
 	SumIARemoteReadSegmentCount    uint64        `json:"sum_ia_remote_read_segment_count"`
 	MaxIARemoteReadSegmentCount    uint64        `json:"max_ia_remote_read_segment_count"`
 	SumIARemoteReadSegmentSize     uint64        `json:"sum_ia_remote_read_segment_size"`
@@ -329,7 +329,7 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 		}
 		iaStats := execdetails.GetIARemoteReadSegmentStats(info.ExecDetail.ScanDetail)
 		if iaStats.Count > 0 {
-			r.IARemoteExecCount++
+			r.IAExecCount++
 		}
 		r.SumIARemoteReadSegmentCount += iaStats.Count
 		if iaStats.Count > r.MaxIARemoteReadSegmentCount {
@@ -548,7 +548,7 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	if r.MaxRocksdbBlockReadByte < other.MaxRocksdbBlockReadByte {
 		r.MaxRocksdbBlockReadByte = other.MaxRocksdbBlockReadByte
 	}
-	r.IARemoteExecCount += other.IARemoteExecCount
+	r.IAExecCount += other.IAExecCount
 	r.SumIARemoteReadSegmentCount += other.SumIARemoteReadSegmentCount
 	if r.MaxIARemoteReadSegmentCount < other.MaxIARemoteReadSegmentCount {
 		r.MaxIARemoteReadSegmentCount = other.MaxIARemoteReadSegmentCount

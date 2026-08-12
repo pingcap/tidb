@@ -159,7 +159,7 @@ func TestColumn(t *testing.T) {
 
 func TestIAAvgColumns(t *testing.T) {
 	columns := []*model.ColumnInfo{
-		{Name: ast.NewCIStr(IARemoteExecCountStr)},
+		{Name: ast.NewCIStr(IAExecCountStr)},
 		{Name: ast.NewCIStr(AvgIARemoteReadSegmentCountStr)},
 		{Name: ast.NewCIStr(MaxIARemoteReadSegmentCountStr)},
 		{Name: ast.NewCIStr(AvgIARemoteReadSegmentSizeStr)},
@@ -191,7 +191,7 @@ func TestIAAvgColumns(t *testing.T) {
 
 func TestIAAvgColumnsChunkRoundTrip(t *testing.T) {
 	columns := []*model.ColumnInfo{
-		{Name: ast.NewCIStr(IARemoteExecCountStr)},
+		{Name: ast.NewCIStr(IAExecCountStr)},
 		{Name: ast.NewCIStr(AvgIARemoteReadSegmentCountStr)},
 		{Name: ast.NewCIStr(MaxIARemoteReadSegmentCountStr)},
 		{Name: ast.NewCIStr(AvgIARemoteReadSegmentSizeStr)},

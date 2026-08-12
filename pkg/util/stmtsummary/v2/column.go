@@ -78,7 +78,7 @@ const (
 	MaxRocksdbBlockReadCountStr                = "MAX_ROCKSDB_BLOCK_READ_COUNT"
 	AvgRocksdbBlockReadByteStr                 = "AVG_ROCKSDB_BLOCK_READ_BYTE"
 	MaxRocksdbBlockReadByteStr                 = "MAX_ROCKSDB_BLOCK_READ_BYTE"
-	IARemoteExecCountStr                       = "IA_REMOTE_EXEC_COUNT"
+	IAExecCountStr                             = "IA_REMOTE_EXEC_COUNT"
 	AvgIARemoteReadSegmentCountStr             = "AVG_IA_REMOTE_READ_SEGMENT_COUNT"
 	MaxIARemoteReadSegmentCountStr             = "MAX_IA_REMOTE_READ_SEGMENT_COUNT"
 	AvgIARemoteReadSegmentSizeStr              = "AVG_IA_REMOTE_READ_SEGMENT_SIZE"
@@ -329,8 +329,8 @@ var columnFactoryMap = map[string]columnFactory{
 	MaxRocksdbBlockReadByteStr: func(_ columnInfo, record *StmtRecord) any {
 		return record.MaxRocksdbBlockReadByte
 	},
-	IARemoteExecCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.IARemoteExecCount
+	IAExecCountStr: func(_ columnInfo, record *StmtRecord) any {
+		return record.IAExecCount
 	},
 	AvgIARemoteReadSegmentCountStr: func(_ columnInfo, record *StmtRecord) any {
 		return avgFloat4Uint(record.SumIARemoteReadSegmentCount, record.ExecCount)

@@ -230,7 +230,7 @@ func TestMemReader(t *testing.T) {
 	columns := []*model.ColumnInfo{
 		{Name: ast.NewCIStr(DigestStr)},
 		{Name: ast.NewCIStr(ExecCountStr)},
-		{Name: ast.NewCIStr(IARemoteExecCountStr)},
+		{Name: ast.NewCIStr(IAExecCountStr)},
 	}
 
 	ss := NewStmtSummary4Test(3)
@@ -290,7 +290,7 @@ func TestHistoryReader(t *testing.T) {
 	columns := []*model.ColumnInfo{
 		{Name: ast.NewCIStr(DigestStr)},
 		{Name: ast.NewCIStr(ExecCountStr)},
-		{Name: ast.NewCIStr(IARemoteExecCountStr)},
+		{Name: ast.NewCIStr(IAExecCountStr)},
 	}
 
 	func() {

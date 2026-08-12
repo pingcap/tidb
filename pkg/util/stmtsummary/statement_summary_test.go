@@ -1158,7 +1158,7 @@ func TestToDatumIAColumns(t *testing.T) {
 	ssMap.AddStatement(stmtExecInfo2)
 	reader := newStmtSummaryReaderWithColumnNamesForTest(
 		ssMap,
-		IARemoteExecCountStr,
+		IAExecCountStr,
 		AvgIARemoteReadSegmentCountStr,
 		MaxIARemoteReadSegmentCountStr,
 		AvgIARemoteReadSegmentSizeStr,
@@ -1199,7 +1199,7 @@ func TestToDatumIAColumnsChunkRoundTrip(t *testing.T) {
 
 	reader := newStmtSummaryReaderWithColumnNamesForTest(
 		ssMap,
-		IARemoteExecCountStr,
+		IAExecCountStr,
 		AvgIARemoteReadSegmentCountStr,
 		MaxIARemoteReadSegmentCountStr,
 		AvgIARemoteReadSegmentSizeStr,

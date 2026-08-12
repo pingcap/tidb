@@ -70,7 +70,7 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.TotalRUV2, record1.SumRUV2)
 	require.Equal(t, info.CPUUsages.TidbCPUTime, record1.SumTidbCPU)
 	require.Equal(t, info.CPUUsages.TikvCPUTime, record1.SumTikvCPU)
-	require.Equal(t, int64(1), record1.IARemoteExecCount)
+	require.Equal(t, int64(1), record1.IAExecCount)
 	require.Equal(t, uint64(3), record1.SumIARemoteReadSegmentCount)
 	require.Equal(t, uint64(3), record1.MaxIARemoteReadSegmentCount)
 
@@ -89,7 +89,7 @@ func TestStmtRecord(t *testing.T) {
 	require.Equal(t, info.TotalRUV2*2, record2.SumRUV2)
 	require.Equal(t, info.CPUUsages.TidbCPUTime*2, record2.SumTidbCPU)
 	require.Equal(t, info.CPUUsages.TikvCPUTime*2, record2.SumTikvCPU)
-	require.Equal(t, int64(2), record2.IARemoteExecCount)
+	require.Equal(t, int64(2), record2.IAExecCount)
 	require.Equal(t, uint64(6), record2.SumIARemoteReadSegmentCount)
 	require.Equal(t, uint64(3), record2.MaxIARemoteReadSegmentCount)
 
