@@ -150,21 +150,21 @@ impl RangeSpec {
         self.has_not
     }
 
-    fn str(&self) -> String {
-        let mut ret = String::from("[");
+    fn pattern_bytes(&self) -> Vec<u8> {
+        let mut ret = vec![RANGE_OPEN];
         if self.has_not {
-            ret.push(RANGE_NOT as char);
+            ret.push(RANGE_NOT);
         }
         for r in &self.ranges {
             if r.has_between {
-                ret.push(r.start as char);
-                ret.push(RANGE_BETWEEN as char);
-                ret.push(r.end as char);
+                ret.push(r.start);
+                ret.push(RANGE_BETWEEN);
+                ret.push(r.end);
             } else {
-                ret.push(r.start as char);
+                ret.push(r.start);
             }
         }
-        ret.push(RANGE_CLOSE as char);
+        ret.push(RANGE_CLOSE);
         ret
     }
 }
@@ -609,7 +609,7 @@ impl<R: Clone> TrieState<R> {
         for ri in r_items {
             let mut pattern = word.clone();
             if let ItemKind::Range(spec) = &self.items[ri].kind {
-                pattern.extend_from_slice(spec.str().as_bytes());
+                pattern.extend_from_slice(&spec.pattern_bytes());
             }
             self.insert_matched_item_into_map(&pattern, ri, rules, nodes.as_deref_mut());
             if let Some(rc) = self.items[ri].child {
@@ -1132,6 +1132,19 @@ mod tests {
                 "attempt {attempt} must preserve byte-oriented matching, including the cache"
             );
         }
+    }
+
+    #[test]
+    fn all_rules_preserves_utf8_range_pattern_bytes() {
+        let selector = TrieSelector::new();
+        selector
+            .insert("[é]", "", Some("rule"), InsertType::Insert)
+            .unwrap();
+
+        let (schema_rules, table_rules) = selector.all_rules();
+        assert_eq!(schema_rules.get("[é]"), Some(&vec!["rule"]));
+        assert_eq!(schema_rules.len(), 1);
+        assert!(table_rules.is_empty());
     }
 
     fn test_append(
