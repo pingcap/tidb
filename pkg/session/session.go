@@ -4325,19 +4325,6 @@ func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables 
 	return nil
 }
 
-// InitMDLVariableForBootstrap initializes the metadata lock variable.
-func InitMDLVariableForBootstrap(store kv.Storage) error {
-	err := kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		return t.SetMetadataLock(true)
-	})
-	if err != nil {
-		return err
-	}
-	vardef.SetEnableMDL(true)
-	return nil
-}
-
 // InitTiDBSchemaCacheSize initializes the tidb schema cache size.
 func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	var (
@@ -4362,32 +4349,6 @@ func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	}
 	vardef.SchemaCacheSize.Store(size)
 	return nil
-}
-
-// InitMDLVariable initializes the metadata lock variable.
-func InitMDLVariable(store kv.Storage) error {
-	isNull := false
-	enable := false
-	var err error
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		enable, isNull, err = t.GetMetadataLock()
-		if err != nil {
-			return err
-		}
-		if isNull {
-			// Workaround for version: nightly-2022-11-07 to nightly-2022-11-17.
-			enable = true
-			logutil.BgLogger().Warn("metadata lock is null")
-			err = t.SetMetadataLock(true)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-	vardef.SetEnableMDL(enable)
-	return err
 }
 
 // BootstrapSession bootstrap session and domain.
@@ -4463,7 +4424,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		}
 	} else {
 		logutil.BgLogger().Info("cluster already bootstrapped", zap.Int64("version", ver))
-		err = InitMDLVariable(store)
+		_, err = InitMDLVariable(store, MDLInitEnableOnNull)
 		if err != nil {
 			return nil, err
 		}
@@ -4759,6 +4720,29 @@ func runInBootstrapSession(store kv.Storage, ver int64, opts domainCreateOptions
 			}
 		}
 	}
+	// The DDL scheduler can start running jobs as soon as dom.Start returns, so
+	// persist any MDL change and initialize the runtime state first.
+	var (
+		mdlIsNull bool
+		err       error
+	)
+	switch startMode {
+	case ddl.Bootstrap:
+		mdlIsNull, err = InitMDLVariable(store, MDLInitForceEnable)
+	case ddl.Upgrade:
+		mdlIsNull, err = InitMDLVariable(store, MDLInitKeepDisabledOnNull)
+	case ddl.Normal:
+		// The initial mode was Upgrade, but another TiDB completed the upgrade
+		// before this instance acquired the upgrade lock.
+		// See https://github.com/pingcap/tidb/issues/64539.
+		mdlIsNull, err = InitMDLVariable(store, MDLInitEnableOnNull)
+	default:
+		return errors.Errorf("unknown start mode %q when initializing metadata lock", startMode)
+	}
+	if err != nil {
+		logutil.BgLogger().Fatal("init metadata lock before starting domain failed",
+			zap.String("startMode", string(startMode)), zap.Error(err))
+	}
 	s, err := createSessionWithDomainOptions(store, opts)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
@@ -4784,13 +4768,7 @@ func runInBootstrapSession(store kv.Storage, ver int64, opts domainCreateOptions
 		// below sleep is used to mitigate https://github.com/pingcap/tidb/issues/57003,
 		// to let the older owner have time to notice that it's already retired.
 		time.Sleep(owner.WaitTimeOnForceOwner)
-		upgrade(s)
-	case ddl.Normal:
-		// We need to init MDL variable before start the domain to prevent potential stuck issue
-		// when upgrade is skipped. See https://github.com/pingcap/tidb/issues/64539.
-		if err := InitMDLVariable(store); err != nil {
-			logutil.BgLogger().Fatal("init metadata lock failed during normal startup", zap.Error(err))
-		}
+		upgradeWithMDLState(s, mdlIsNull)
 	}
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
