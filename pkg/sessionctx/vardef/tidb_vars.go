@@ -972,6 +972,12 @@ const (
 	// TiDBEnablePrepPlanCacheMemoryMonitor indicates whether to enable prepared plan cache monitor
 	TiDBEnablePrepPlanCacheMemoryMonitor = "tidb_enable_prepared_plan_cache_memory_monitor"
 
+	// TiDBEnablePointGetExecShortcut routes non-prepared point-get SELECT
+	// statements through the same execution shortcut prepared point-gets use,
+	// skipping the runStmt envelope (rich trace events, flight recorder
+	// triggers, telemetry counters). Default off; opt-in while the change
+	// soaks in production.
+	TiDBEnablePointGetExecShortcut = "tidb_enable_point_get_exec_shortcut"
 	// TiDBEnableNonPreparedPlanCache indicates whether to enable non-prepared plan cache.
 	TiDBEnableNonPreparedPlanCache = "tidb_enable_non_prepared_plan_cache"
 	// TiDBEnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
