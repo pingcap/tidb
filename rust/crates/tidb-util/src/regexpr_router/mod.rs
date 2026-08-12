@@ -19,10 +19,9 @@
 //! one selected rule is rejected. Rule validation and extractor configuration
 //! are shared with [`crate::table_router`].
 
-use crate::filter::{Filter, Rules};
+use crate::filter::{compile_go_regexp, Filter, Rules};
 use crate::table_filter::Table as FilterTable;
 use crate::table_router::TableRule;
-use regex::Regex;
 use std::fmt;
 
 /// The integer classification used by the Go router's filter wrappers.
@@ -229,7 +228,7 @@ impl RouteTable {
 }
 
 fn extract_value(value: &str, pattern: &str) -> String {
-    let Some(captures) = Regex::new(pattern)
+    let Some(captures) = compile_go_regexp(pattern, true)
         .ok()
         .and_then(|regexp| regexp.captures(value))
     else {

@@ -345,13 +345,7 @@ fn init_one_regex(
     case_sensitive: bool,
 ) -> Result<(), FilterError> {
     if !pattern_map.contains_key(origin) {
-        let go_pattern = go_regexp_pattern(origin).map_err(FilterError::Regex)?;
-        let compile_str = if case_sensitive {
-            go_pattern
-        } else {
-            format!("(?i){go_pattern}")
-        };
-        let re = Regex::new(&compile_str).map_err(|e| FilterError::Regex(e.to_string()))?;
+        let re = compile_go_regexp(origin, case_sensitive).map_err(FilterError::Regex)?;
         pattern_map.insert(origin.to_owned(), re);
     }
     Ok(())
@@ -444,6 +438,16 @@ fn go_regexp_pattern(pattern: &str) -> Result<String, String> {
         result.replace_range(replacement.start..replacement.end, replacement.value);
     }
     Ok(result)
+}
+
+pub(crate) fn compile_go_regexp(pattern: &str, case_sensitive: bool) -> Result<Regex, String> {
+    let pattern = go_regexp_pattern(pattern)?;
+    let pattern = if case_sensitive {
+        pattern
+    } else {
+        format!("(?i){pattern}")
+    };
+    Regex::new(&pattern).map_err(|error| error.to_string())
 }
 
 // Go `initSchemaRule`.

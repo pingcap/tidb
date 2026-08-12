@@ -171,6 +171,22 @@ fn fetch_extend_column() {
     );
 }
 
+#[test]
+fn extractor_keeps_go_ascii_perl_classes() {
+    let mut route_rule = rule("tenant*", "", "target", "");
+    route_rule.schema_extractor = Some(SchemaExtractor::new("tenant_id", r"^tenant(\d+)$"));
+    let router = RouteTable::new(true, &mut [route_rule]).unwrap();
+
+    assert_eq!(
+        router.fetch_extend_column("tenant1", "orders", "source"),
+        (vec!["tenant_id".into()], vec!["1".into()])
+    );
+    assert_eq!(
+        router.fetch_extend_column("tenant١", "orders", "source"),
+        (vec!["tenant_id".into()], vec![String::new()])
+    );
+}
+
 // Go TestAllRule.
 #[test]
 fn all_rules() {
