@@ -27,6 +27,7 @@ use std::hash::Hash;
 use std::sync::Arc;
 use tidb_datatype::{GoString, MyDecimal};
 use tidb_hack::MemAwareMap;
+use tidb_mysql::{to_lowercase, to_uppercase};
 
 /// A value whose set identity is an arbitrary-byte Go string.
 pub trait SetKey {
@@ -293,11 +294,11 @@ impl StringSet {
     pub fn intersection_with_case(&self, right: &Self, to_lower: bool) -> Self {
         let mut result = Self::default();
         for original in &right.values {
-            let text = String::from_utf8_lossy(original.as_bytes());
+            let text = original.to_utf8_lossy_go();
             let folded = if to_lower {
-                text.to_lowercase()
+                to_lowercase(&text)
             } else {
-                text.to_uppercase()
+                to_uppercase(&text)
             };
             if self.values.contains(&GoString::from(folded)) {
                 result.values.insert(original.clone());
@@ -726,6 +727,25 @@ mod tests {
         assert!(!floats.contains(nan));
         floats.insert(nan);
         assert_eq!(floats.len(), 3);
+    }
+
+    #[test]
+    fn string_set_case_intersection_uses_go_simple_case_mapping() {
+        let dotted_capital_i = StringSet::new(["\u{130}"]);
+        assert_eq!(
+            StringSet::new(["i"]).intersection_with_case(&dotted_capital_i, true),
+            dotted_capital_i
+        );
+
+        let sharp_s = StringSet::new(["ß"]);
+        assert_eq!(sharp_s.intersection_with_case(&sharp_s, false), sharp_s);
+
+        let malformed = GoString::from_bytes([0xe2, 0x82]);
+        assert_eq!(
+            StringSet::new(["\u{fffd}\u{fffd}"])
+                .intersection_with_case(&StringSet::new([malformed.clone()]), true),
+            StringSet::new([malformed])
+        );
     }
 
     #[test]
