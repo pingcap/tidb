@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -47,6 +48,11 @@ type oversizedChunkSelectResult struct {
 	returned bool
 }
 
+type partialThenErrorSelectResult struct {
+	oversizedChunkSelectResult
+	err error
+}
+
 func (*oversizedChunkSelectResult) NextRaw(context.Context) ([]byte, error) { return nil, nil }
 func (*oversizedChunkSelectResult) Close() error                            { return nil }
 
@@ -62,6 +68,14 @@ func (r *oversizedChunkSelectResult) Next(_ context.Context, chk *chunk.Chunk) e
 	}
 	r.returned = true
 	return nil
+}
+
+func (r *partialThenErrorSelectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
+	if !r.returned {
+		return r.oversizedChunkSelectResult.Next(ctx, chk)
+	}
+	chk.Reset()
+	return r.err
 }
 
 func (*oversizedChunkSelectResult) IntoIter([][]*types.FieldType) (distsql.SelectResultIter, error) {
@@ -182,7 +196,13 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	directLookup.PushedLimit = &physicalop.PushedDownLimit{Count: 10}
 	require.Nil(t, findAdaptiveLimitIndexLookupCandidate(directLookup))
 	directLookup.PushedLimit = nil
-	directController := exec.NewAdaptiveLimitLookupController(100, 32, 128, 32, 128)
+	directController := exec.NewAdaptiveLimitLookupController(exec.AdaptiveLimitConfig{
+		DemandRows:             100,
+		InitialLookupWindow:    32,
+		MaxLookupWindow:        128,
+		InitialLookupBatchSize: 32,
+		MaxLookupBatchSize:     128,
+	})
 	directLookup.adaptiveLimitController = directController
 	directLookup.reportAdaptiveLimitStats = true
 	require.Same(t, directController, directLookup.adaptiveLimitController)
@@ -366,6 +386,176 @@ func TestAdaptiveLimitEligibility(t *testing.T) {
 	indexLookup.indexLookUpPushDown = false
 	indexLookup.PushedLimit = &physicalop.PushedDownLimit{Count: 10}
 	assertIneligible()
+}
+
+func TestAdaptiveLimitReservationExitPaths(t *testing.T) {
+	newController := func() *exec.AdaptiveLimitController {
+		return exec.NewAdaptiveLimitLookupController(exec.AdaptiveLimitConfig{
+			DemandRows:             100,
+			InitialLookupWindow:    2,
+			MaxLookupWindow:        2,
+			InitialLookupBatchSize: 2,
+			MaxLookupBatchSize:     2,
+		})
+	}
+	reserveLookup := func(t *testing.T, controller *exec.AdaptiveLimitController) int {
+		t.Helper()
+		reserved, ok, err := controller.ReserveLookup(context.Background(), 2)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Equal(t, 2, reserved)
+		return reserved
+	}
+	newExtractionWorker := func(controller *exec.AdaptiveLimitController) (*indexWorker, *chunk.Chunk) {
+		sctx := mock.NewContext()
+		handleColumn := &expression.Column{
+			ID:      model.ExtraHandleID,
+			Index:   0,
+			RetType: types.NewFieldType(mysql.TypeLonglong),
+		}
+		indexScan := physicalop.PhysicalIndexScan{}.Init(sctx, 0)
+		indexScan.SetSchema(expression.NewSchema(handleColumn))
+		indexLookup := &IndexLookUpExecutor{
+			BaseExecutorV2: exec.NewBaseExecutorV2(sctx.GetSessionVars(), nil, 1),
+			index:          &model.IndexInfo{},
+			handleCols:     []*expression.Column{handleColumn},
+			dagPB:          &tipb.DAGRequest{OutputOffsets: []uint32{0}},
+			idxPlans:       []base.PhysicalPlan{indexScan},
+		}
+		worker := &indexWorker{
+			idxLookup:               indexLookup,
+			adaptiveLimitController: controller,
+			batchSize:               2,
+			maxBatchSize:            2,
+			maxChunkSize:            32,
+		}
+		chk := chunk.NewChunkWithCapacity(
+			[]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
+			32,
+		)
+		return worker, chk
+	}
+
+	t.Run("partial extraction error", func(t *testing.T) {
+		controller := newController()
+		worker, chk := newExtractionWorker(controller)
+		expectedErr := fmt.Errorf("adaptive limit extraction failed")
+		result := &partialThenErrorSelectResult{
+			oversizedChunkSelectResult: oversizedChunkSelectResult{rows: []int64{1}},
+			err:                        expectedErr,
+		}
+
+		data, err := worker.extractLookupTaskData(
+			context.Background(), result, nil, chk, []int{0},
+		)
+		require.ErrorIs(t, err, expectedErr)
+		require.Len(t, data.handles, 1)
+		require.Zero(t, data.adaptiveLimitReservation)
+		snapshot := controller.Snapshot()
+		require.Zero(t, snapshot.LookupReserved)
+		require.Zero(t, snapshot.LookupHandles)
+		require.Zero(t, snapshot.LookupRows)
+	})
+
+	t.Run("empty extraction EOF", func(t *testing.T) {
+		controller := newController()
+		worker, chk := newExtractionWorker(controller)
+
+		data, err := worker.extractLookupTaskData(
+			context.Background(), &oversizedChunkSelectResult{}, nil, chk, []int{0},
+		)
+		require.NoError(t, err)
+		require.True(t, data.exhausted)
+		require.Empty(t, data.handles)
+		require.Zero(t, data.adaptiveLimitReservation)
+		require.Zero(t, controller.Snapshot().LookupReserved)
+	})
+
+	t.Run("partial extraction dispatch and completion", func(t *testing.T) {
+		controller := newController()
+		worker, chk := newExtractionWorker(controller)
+		resultCh := make(chan *lookupTableTask, 1)
+		worker.resultCh = resultCh
+		worker.finished = make(chan struct{})
+		worker.idxLookup.adaptiveLimitController = controller
+		worker.idxLookup.resultCh = resultCh
+		worker.idxLookup.tblWorkerWg = &sync.WaitGroup{}
+		worker.idxLookup.pool = &workerPool{}
+		worker.idxLookup.finished = make(chan struct{})
+		close(worker.idxLookup.finished)
+
+		data, err := worker.extractLookupTaskData(
+			context.Background(), &oversizedChunkSelectResult{rows: []int64{1}}, nil, chk, []int{0},
+		)
+		require.NoError(t, err)
+		require.Len(t, data.handles, 1)
+		require.Equal(t, 1, data.adaptiveLimitReservation)
+		require.Equal(t, uint64(1), controller.Snapshot().LookupReserved)
+
+		taskID := 0
+		require.False(t, worker.buildAndDispatchLookupTasks(context.Background(), 0, &taskID, &data))
+		require.Zero(t, data.adaptiveLimitReservation)
+		task := <-resultCh
+		worker.idxLookup.tblWorkerWg.Wait()
+		require.Len(t, task.handles, 1)
+		require.Equal(t, 1, task.adaptiveLimitReservation)
+		require.Equal(t, uint64(1), controller.Snapshot().LookupReserved)
+
+		task.rows = []chunk.Row{{}}
+		task.cursor = len(task.rows)
+		worker.idxLookup.completeAdaptiveLookupTask(task)
+		require.Zero(t, task.adaptiveLimitReservation)
+		snapshot := controller.Snapshot()
+		require.Zero(t, snapshot.LookupReserved)
+		require.Equal(t, uint64(1), snapshot.LookupHandles)
+		require.Equal(t, uint64(1), snapshot.LookupRows)
+	})
+
+	t.Run("canceled before dispatch", func(t *testing.T) {
+		controller := newController()
+		reserved := reserveLookup(t, controller)
+		data := extractedLookupTaskData{
+			handles:                  []kv.Handle{kv.IntHandle(1), kv.IntHandle(2)},
+			adaptiveLimitReservation: reserved,
+		}
+		worker := &indexWorker{
+			idxLookup: &IndexLookUpExecutor{
+				BaseExecutorV2: exec.NewBaseExecutorV2(mock.NewContext().GetSessionVars(), nil, 0),
+			},
+			adaptiveLimitController: controller,
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		taskID := 0
+
+		require.True(t, worker.buildAndDispatchLookupTasks(ctx, 0, &taskID, &data))
+		require.Zero(t, data.adaptiveLimitReservation)
+		require.Zero(t, controller.Snapshot().LookupReserved)
+	})
+
+	t.Run("table task error", func(t *testing.T) {
+		controller := newController()
+		reserved := reserveLookup(t, controller)
+		expectedErr := fmt.Errorf("adaptive limit table lookup failed")
+		task := &lookupTableTask{
+			doneCh:                   make(chan error, 1),
+			adaptiveLimitReservation: reserved,
+		}
+		task.doneCh <- expectedErr
+		resultCh := make(chan *lookupTableTask, 1)
+		resultCh <- task
+		indexLookup := &IndexLookUpExecutor{
+			BaseExecutorV2:          exec.NewBaseExecutorV2(mock.NewContext().GetSessionVars(), nil, 0),
+			adaptiveLimitController: controller,
+			resultCh:                resultCh,
+		}
+
+		result, err := indexLookup.getResultTask()
+		require.Nil(t, result)
+		require.ErrorIs(t, err, expectedErr)
+		require.Zero(t, task.adaptiveLimitReservation)
+		require.Zero(t, controller.Snapshot().LookupReserved)
+	})
 }
 
 func TestIndexLookUpAdaptiveLimitRuntimeStats(t *testing.T) {

@@ -386,7 +386,7 @@ The feature is controlled by:
 SET SESSION tidb_enable_adaptive_limit_scan = ON;
 ```
 
-The variable has GLOBAL and SESSION scope, uses Boolean values, and defaults to OFF. It does not affect plan selection and does not introduce persistent profile state.
+The variable has GLOBAL and SESSION scope, uses Boolean values, and defaults to ON. It can be disabled to restore the existing executor behavior for subsequent statements. It does not affect plan selection and does not introduce persistent profile state.
 
 Existing batch and concurrency variables are unchanged and remain upper bounds. In particular, enabling this feature does not override or reduce the existing DistSQL request concurrency.
 
@@ -456,7 +456,7 @@ Additional limitations are:
 
 **Planner and plan cache:** The controller is attached while executors are built. It does not select a plan or change plan-cache keys. Cached plans are eligible or ineligible at execution time according to the same executor properties and session switch.
 
-**Mixed versions:** The design changes only TiDB-side execution and does not require a TiKV, PD, TiFlash, or protocol change. A rolling upgrade can leave the switch OFF until all desired TiDB instances are upgraded.
+**Mixed versions:** The design changes only TiDB-side execution and does not require a TiKV, PD, TiFlash, or protocol change. During a rolling upgrade, operators can explicitly set the GLOBAL switch to OFF until all desired TiDB instances are upgraded.
 
 **Partitioned tables and unsupported readers:** Unsupported paths skip the feature and preserve current behavior.
 
@@ -514,7 +514,7 @@ The complete SQL scenario matrix should include:
 
 Tests verify:
 
-- the switch is GLOBAL/SESSION, Boolean, and OFF by default;
+- the switch is GLOBAL/SESSION, Boolean, and ON by default;
 - OFF uses the existing executor behavior and omits adaptive runtime stats;
 - unsupported plans remain unchanged;
 - user batch and concurrency settings remain hard upper bounds;
@@ -595,7 +595,7 @@ Risks include:
 - recent samples may be biased if task completion order does not match the intended ordered consumption contract;
 - unchanged DistSQL concurrency can still read ahead inside requests before TiDB-side admission stops.
 
-The default-OFF gate limits rollout risk. Performance evaluation must compare latency, throughput, and RU in addition to scan counters.
+The GLOBAL/SESSION gate provides an immediate opt-out if a regression is observed. Because the feature defaults to ON, performance evaluation must compare latency, throughput, and RU in addition to scan counters.
 
 ## Investigation and Alternatives
 

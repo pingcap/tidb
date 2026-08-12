@@ -123,6 +123,14 @@ type lookupTableTask struct {
 	memTracker *memory.Tracker
 }
 
+func (task *lookupTableTask) abortAdaptiveLimitReservation(controller *exec.AdaptiveLimitController) {
+	reservation := task.adaptiveLimitReservation
+	task.adaptiveLimitReservation = 0
+	if controller != nil && reservation > 0 {
+		controller.AbortLookup(reservation)
+	}
+}
+
 func (task *lookupTableTask) Len() int {
 	return len(task.rows)
 }
@@ -1322,10 +1330,7 @@ func (e *IndexLookUpExecutor) getResultTask() (*lookupTableTask, error) {
 		indexFetchedInstant = time.Now()
 	}
 	if err := <-task.doneCh; err != nil {
-		if e.adaptiveLimitController != nil {
-			e.adaptiveLimitController.AbortLookup(task.adaptiveLimitReservation)
-			task.adaptiveLimitReservation = 0
-		}
+		task.abortAdaptiveLimitReservation(e.adaptiveLimitController)
 		return nil, err
 	}
 	if enableStats {
@@ -1499,6 +1504,30 @@ type extractedLookupTaskData struct {
 	// adaptiveLimitStopped reports that admission stopped without an extraction
 	// error, so the fetch loop should finish normally.
 	adaptiveLimitStopped bool
+}
+
+func (data *extractedLookupTaskData) takeAdaptiveLimitReservation() int {
+	reservation := data.adaptiveLimitReservation
+	data.adaptiveLimitReservation = 0
+	return reservation
+}
+
+func (data *extractedLookupTaskData) abortAdaptiveLimitReservation(controller *exec.AdaptiveLimitController) {
+	reservation := data.takeAdaptiveLimitReservation()
+	if controller != nil && reservation > 0 {
+		controller.AbortLookup(reservation)
+	}
+}
+
+func (data *extractedLookupTaskData) trimAdaptiveLimitReservation(
+	controller *exec.AdaptiveLimitController, actualHandles int,
+) {
+	if data.adaptiveLimitReservation <= actualHandles {
+		return
+	}
+	excess := data.adaptiveLimitReservation - actualHandles
+	controller.AbortLookup(excess)
+	data.adaptiveLimitReservation = actualHandles
 }
 
 // fetchHandles fetches a batch of handles from index data and builds the index lookup tasks.
@@ -1678,23 +1707,16 @@ func (w *indexWorker) extractLookupTaskData(
 		data.exhausted = len(data.handles) == 0
 	}
 	data.finishFetch = time.Now()
-	if err != nil && data.adaptiveLimitReservation > 0 {
-		w.adaptiveLimitController.AbortLookup(data.adaptiveLimitReservation)
-		data.adaptiveLimitReservation = 0
+	if err != nil {
+		data.abortAdaptiveLimitReservation(w.adaptiveLimitController)
 	}
-	if data.adaptiveLimitReservation > len(data.handles) {
-		w.adaptiveLimitController.AbortLookup(data.adaptiveLimitReservation - len(data.handles))
-		data.adaptiveLimitReservation = len(data.handles)
-	}
+	data.trimAdaptiveLimitReservation(w.adaptiveLimitController, len(data.handles))
 	return data, err
 }
 
 func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResultIdx int, taskID *int, data *extractedLookupTaskData) (stopped bool) {
 	if len(data.handles) == 0 && len(data.completedRows) == 0 {
-		if data.adaptiveLimitReservation > 0 {
-			w.adaptiveLimitController.AbortLookup(data.adaptiveLimitReservation)
-			data.adaptiveLimitReservation = 0
-		}
+		data.abortAdaptiveLimitReservation(w.adaptiveLimitController)
 		return false
 	}
 
@@ -1715,24 +1737,22 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 			metrics.IndexLookUpNormalRowsCounter.Add(float64(rowCnt))
 		}
 		tableLookUpTask = w.buildTableTask(*taskID, data.handles, data.retChunk)
-		tableLookUpTask.adaptiveLimitReservation = data.adaptiveLimitReservation
 		if w.idxLookup.partitionTableMode {
 			tableLookUpTask.partitionTable = w.idxLookup.prunedPartitions[curResultIdx]
 		}
 		*taskID++
 	}
+	if tableLookUpTask == nil {
+		data.abortAdaptiveLimitReservation(w.adaptiveLimitController)
+	}
 
 	finishBuild := time.Now()
 	select {
 	case <-ctx.Done():
-		if data.adaptiveLimitReservation > 0 {
-			w.adaptiveLimitController.AbortLookup(data.adaptiveLimitReservation)
-		}
+		data.abortAdaptiveLimitReservation(w.adaptiveLimitController)
 		return true
 	case <-w.finished:
-		if data.adaptiveLimitReservation > 0 {
-			w.adaptiveLimitController.AbortLookup(data.adaptiveLimitReservation)
-		}
+		data.abortAdaptiveLimitReservation(w.adaptiveLimitController)
 		return true
 	default:
 		if completedTask != nil {
@@ -1740,6 +1760,7 @@ func (w *indexWorker) buildAndDispatchLookupTasks(ctx context.Context, curResult
 		}
 
 		if tableLookUpTask != nil {
+			tableLookUpTask.adaptiveLimitReservation = data.takeAdaptiveLimitReservation()
 			e := w.idxLookup
 			e.tblWorkerWg.Add(1)
 			e.pool.submit(func() {

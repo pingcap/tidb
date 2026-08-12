@@ -453,7 +453,13 @@ func TestAdaptiveLimitControllerBoundsLookupAdmission(t *testing.T) {
 }
 
 func TestAdaptiveLimitControllerDirectLookupUsesLookupYield(t *testing.T) {
-	controller := NewAdaptiveLimitLookupController(1000, 32, 100000, 32, 100000)
+	controller := NewAdaptiveLimitLookupController(AdaptiveLimitConfig{
+		DemandRows:             1000,
+		InitialLookupWindow:    32,
+		MaxLookupWindow:        100000,
+		InitialLookupBatchSize: 32,
+		MaxLookupBatchSize:     100000,
+	})
 	require.Zero(t, controller.Snapshot().OuterWindow)
 	reserved, ok := reserveOuterForTest(t, controller, 32)
 	require.False(t, ok)
@@ -469,7 +475,13 @@ func TestAdaptiveLimitControllerDirectLookupUsesLookupYield(t *testing.T) {
 	require.Equal(t, uint64(1), snapshot.LookupRows)
 	require.Greater(t, snapshot.LookupWindow, uint64(32))
 
-	stopController := NewAdaptiveLimitLookupController(2, 2, 32, 2, 32)
+	stopController := NewAdaptiveLimitLookupController(AdaptiveLimitConfig{
+		DemandRows:             2,
+		InitialLookupWindow:    2,
+		MaxLookupWindow:        32,
+		InitialLookupBatchSize: 2,
+		MaxLookupBatchSize:     32,
+	})
 	reserved, ok = reserveLookupForTest(t, stopController, 2)
 	require.True(t, ok)
 	stopController.CompleteLookup(reserved, reserved, 2)
@@ -481,7 +493,13 @@ func TestAdaptiveLimitControllerDirectLookupUsesLookupYield(t *testing.T) {
 }
 
 func TestAdaptiveLimitControllerDirectLookupGrowsOnNoOutput(t *testing.T) {
-	controller := NewAdaptiveLimitLookupController(1000, 32, 100000, 32, 100000)
+	controller := NewAdaptiveLimitLookupController(AdaptiveLimitConfig{
+		DemandRows:             1000,
+		InitialLookupWindow:    32,
+		MaxLookupWindow:        100000,
+		InitialLookupBatchSize: 32,
+		MaxLookupBatchSize:     100000,
+	})
 	for _, expected := range []uint64{64, 128, 256} {
 		reserved, ok := reserveLookupForTest(t, controller, 1000)
 		require.True(t, ok)

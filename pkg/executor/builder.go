@@ -858,61 +858,7 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 		begin:        v.Offset,
 		end:          v.Offset + v.Count,
 	}
-	// V1 attaches one statement-local controller only to:
-	//
-	//	Limit -> Projection* -> ordered IndexLookUpJoin
-	//	      -> Projection* -> keep-order IndexLookUp
-	//
-	// Unsupported reader modes retain the existing execution path.
-	if b.sctx.GetSessionVars().EnableAdaptiveLimitScan {
-		if indexJoin := findAdaptiveLimitIndexJoin(childExec); indexJoin != nil && indexJoin.AdaptiveLimitEligible {
-			if outerIndexLookup := findAdaptiveLimitIndexLookupCandidate(indexJoin.Children(0)); outerIndexLookup != nil {
-				demandRows := v.Offset + v.Count
-				initialWindow := adaptiveLimitInitialWindow(demandRows, b.sctx.GetSessionVars().IndexJoinBatchSize)
-				maxOuterWindow := uint64(b.sctx.GetSessionVars().IndexJoinBatchSize) * uint64(b.sctx.GetSessionVars().IndexLookupJoinConcurrency())
-				initialLookupWindow := adaptiveLimitInitialWindow(demandRows, b.sctx.GetSessionVars().IndexLookupSize)
-				maxLookupWindow := uint64(b.sctx.GetSessionVars().IndexLookupSize) * uint64(b.sctx.GetSessionVars().IndexLookupConcurrency())
-				initialLookupBatchSize := adaptiveLimitInitialLookupBatchSize(
-					initialLookupWindow,
-					outerIndexLookup.indexPaging,
-					b.sctx.GetSessionVars().MaxChunkSize,
-					b.sctx.GetSessionVars().IndexLookupSize,
-				)
-				controller := exec.NewAdaptiveLimitController(exec.AdaptiveLimitConfig{
-					DemandRows:             demandRows,
-					InitialOuterWindow:     initialWindow,
-					MaxOuterWindow:         maxOuterWindow,
-					InitialLookupWindow:    initialLookupWindow,
-					MaxLookupWindow:        maxLookupWindow,
-					InitialLookupBatchSize: initialLookupBatchSize,
-					MaxLookupBatchSize:     uint64(b.sctx.GetSessionVars().IndexLookupSize),
-				})
-				outerIndexLookup.adaptiveLimitController = controller
-				e.adaptiveLimitController = controller
-				indexJoin.AdaptiveLimitController = controller
-			}
-		} else if indexLookup := findAdaptiveLimitIndexLookupCandidate(childExec); indexLookup != nil {
-			demandRows := v.Offset + v.Count
-			initialLookupWindow := adaptiveLimitInitialWindow(demandRows, b.sctx.GetSessionVars().IndexLookupSize)
-			maxLookupWindow := uint64(b.sctx.GetSessionVars().IndexLookupSize) * uint64(b.sctx.GetSessionVars().IndexLookupConcurrency())
-			initialLookupBatchSize := adaptiveLimitInitialLookupBatchSize(
-				initialLookupWindow,
-				indexLookup.indexPaging,
-				b.sctx.GetSessionVars().MaxChunkSize,
-				b.sctx.GetSessionVars().IndexLookupSize,
-			)
-			controller := exec.NewAdaptiveLimitLookupController(
-				demandRows,
-				initialLookupWindow,
-				maxLookupWindow,
-				initialLookupBatchSize,
-				uint64(b.sctx.GetSessionVars().IndexLookupSize),
-			)
-			indexLookup.adaptiveLimitController = controller
-			indexLookup.reportAdaptiveLimitStats = true
-			e.adaptiveLimitController = controller
-		}
-	}
+	b.attachAdaptiveLimitController(v, e, childExec)
 
 	childSchemaLen := v.Children()[0].Schema().Len()
 	childUsedSchema := markChildrenUsedCols(v.Schema().Columns, v.Children()[0].Schema())[0]
@@ -925,6 +871,70 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 		e.columnSwapHelper = chunk.NewColumnSwapHelper(e.columnIdxsUsedByChild)
 	}
 	return e
+}
+
+func (b *executorBuilder) attachAdaptiveLimitController(
+	limitPlan *physicalop.PhysicalLimit, limitExec *LimitExec, childExec exec.Executor,
+) {
+	if !b.sctx.GetSessionVars().EnableAdaptiveLimitScan {
+		return
+	}
+	// V1 recognizes two roots. Unsupported reader modes retain the existing path:
+	//
+	//	Limit -> Projection* -> ordered IndexLookUpJoin
+	//	Limit -> Projection* -> keep-order IndexLookUp
+	indexJoin := findAdaptiveLimitIndexJoin(childExec)
+	if indexJoin != nil {
+		if !indexJoin.AdaptiveLimitEligible {
+			return
+		}
+		outerIndexLookup := findAdaptiveLimitIndexLookupCandidate(indexJoin.Children(0))
+		if outerIndexLookup == nil {
+			return
+		}
+		demandRows := limitPlan.Offset + limitPlan.Count
+		config := b.buildAdaptiveLimitConfig(demandRows, outerIndexLookup)
+		config.InitialOuterWindow = adaptiveLimitInitialWindow(demandRows, b.sctx.GetSessionVars().IndexJoinBatchSize)
+		config.MaxOuterWindow = uint64(b.sctx.GetSessionVars().IndexJoinBatchSize) *
+			uint64(b.sctx.GetSessionVars().IndexLookupJoinConcurrency())
+		controller := exec.NewAdaptiveLimitController(config)
+		outerIndexLookup.adaptiveLimitController = controller
+		indexJoin.AdaptiveLimitController = controller
+		limitExec.adaptiveLimitController = controller
+		return
+	}
+
+	indexLookup := findAdaptiveLimitIndexLookupCandidate(childExec)
+	if indexLookup == nil {
+		return
+	}
+	controller := exec.NewAdaptiveLimitLookupController(b.buildAdaptiveLimitConfig(
+		limitPlan.Offset+limitPlan.Count,
+		indexLookup,
+	))
+	indexLookup.adaptiveLimitController = controller
+	indexLookup.reportAdaptiveLimitStats = true
+	limitExec.adaptiveLimitController = controller
+}
+
+func (b *executorBuilder) buildAdaptiveLimitConfig(
+	demandRows uint64, indexLookup *IndexLookUpExecutor,
+) exec.AdaptiveLimitConfig {
+	sessionVars := b.sctx.GetSessionVars()
+	initialLookupWindow := adaptiveLimitInitialWindow(demandRows, sessionVars.IndexLookupSize)
+	return exec.AdaptiveLimitConfig{
+		DemandRows:          demandRows,
+		InitialLookupWindow: initialLookupWindow,
+		MaxLookupWindow: uint64(sessionVars.IndexLookupSize) *
+			uint64(sessionVars.IndexLookupConcurrency()),
+		InitialLookupBatchSize: adaptiveLimitInitialLookupBatchSize(
+			initialLookupWindow,
+			indexLookup.indexPaging,
+			sessionVars.MaxChunkSize,
+			sessionVars.IndexLookupSize,
+		),
+		MaxLookupBatchSize: uint64(sessionVars.IndexLookupSize),
+	}
 }
 
 func adaptiveLimitInitialWindow(demandRows uint64, ceiling int) uint64 {

@@ -29,6 +29,15 @@ const (
 	adaptiveLimitDirectIndexLookup
 )
 
+// adaptiveAdmissionStage identifies both the admitted unit and the accounting
+// path: outer admission counts rows, while lookup admission counts handles.
+type adaptiveAdmissionStage uint8
+
+const (
+	adaptiveOuterRowsAdmission adaptiveAdmissionStage = iota
+	adaptiveLookupHandlesAdmission
+)
+
 // adaptiveYieldWindow keeps a small recent sample alongside the controller's
 // cumulative counters. The recent sample lets an ordered scan react when the
 // selectivity near its current position differs from earlier input.
@@ -146,6 +155,11 @@ type AdaptiveLimitConfig struct {
 //	outer rows:     ReserveOuter -> CommitOuter -> ObserveJoinProgress
 //	lookup handles: ReserveLookup -> lookup task -> CompleteLookup / AbortLookup
 //
+// Both lifecycles are active for an IndexJoin: lookup admission bounds the
+// index handles used to produce outer rows, while outer admission bounds the
+// rows consumed by the join to produce final rows. A direct IndexLookUp uses
+// only the lookup lifecycle.
+//
 // Outer admission is measured in IndexJoin outer rows. Lookup admission is
 // measured in index handles. The accounting must remain separate because a
 // table-side filter can make many handles produce few or no rows. Every
@@ -241,16 +255,8 @@ func NewAdaptiveLimitController(config AdaptiveLimitConfig) *AdaptiveLimitContro
 // NewAdaptiveLimitLookupController creates a controller for a direct ordered
 // IndexLookUp under LIMIT. Direct lookup has no Join outer stage, so only its
 // lookup handle budget is initialized.
-func NewAdaptiveLimitLookupController(
-	demandRows, initialLookupWindow, maxLookupWindow, initialLookupBatchSize, maxLookupBatchSize uint64,
-) *AdaptiveLimitController {
-	return newAdaptiveLimitController(AdaptiveLimitConfig{
-		DemandRows:             demandRows,
-		InitialLookupWindow:    initialLookupWindow,
-		MaxLookupWindow:        maxLookupWindow,
-		InitialLookupBatchSize: initialLookupBatchSize,
-		MaxLookupBatchSize:     maxLookupBatchSize,
-	}, adaptiveLimitDirectIndexLookup)
+func NewAdaptiveLimitLookupController(config AdaptiveLimitConfig) *AdaptiveLimitController {
+	return newAdaptiveLimitController(config, adaptiveLimitDirectIndexLookup)
 }
 
 func newAdaptiveLimitController(config AdaptiveLimitConfig, mode adaptiveLimitMode) *AdaptiveLimitController {
@@ -340,21 +346,23 @@ func (c *AdaptiveLimitController) ReserveOuter(ctx context.Context, maxRows int)
 	if c.mode == adaptiveLimitDirectIndexLookup {
 		return 0, false, nil
 	}
-	return c.reserve(ctx, maxRows, true)
+	return c.reserve(ctx, maxRows, adaptiveOuterRowsAdmission)
 }
 
 // ReserveLookup bounds handles admitted to the double-read table lookup stage.
 // The bool is false after LIMIT completion; context cancellation is returned as
 // an error.
-func (c *AdaptiveLimitController) ReserveLookup(ctx context.Context, maxRows int) (int, bool, error) {
-	return c.reserve(ctx, maxRows, false)
+func (c *AdaptiveLimitController) ReserveLookup(ctx context.Context, maxHandles int) (int, bool, error) {
+	return c.reserve(ctx, maxHandles, adaptiveLookupHandlesAdmission)
 }
 
-func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, outer bool) (int, bool, error) {
+func (c *AdaptiveLimitController) reserve(
+	ctx context.Context, maxUnits int, stage adaptiveAdmissionStage,
+) (int, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return 0, false, err
 	}
-	if maxRows <= 0 {
+	if maxUnits <= 0 {
 		return 0, true, nil
 	}
 	waiting := false
@@ -362,14 +370,14 @@ func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, oute
 		c.mu.Lock()
 		if err := ctx.Err(); err != nil {
 			if waiting {
-				c.endAdmissionBlockedLocked(outer, time.Now())
+				c.endAdmissionBlockedLocked(stage, time.Now())
 			}
 			c.mu.Unlock()
 			return 0, false, err
 		}
 		if c.stopped {
 			if waiting {
-				c.endAdmissionBlockedLocked(outer, time.Now())
+				c.endAdmissionBlockedLocked(stage, time.Now())
 			}
 			c.mu.Unlock()
 			return 0, false, nil
@@ -377,7 +385,7 @@ func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, oute
 		window := c.lookupPhysicalWindowLocked()
 		outstanding := c.lookupReserved
 		changed := c.lookupChanged
-		if outer {
+		if stage == adaptiveOuterRowsAdmission {
 			window = c.outerWindow
 			// Fetched-but-unconsumed rows and uncommitted reservations both
 			// consume outer admission capacity.
@@ -386,20 +394,20 @@ func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, oute
 		}
 		if outstanding < window {
 			if waiting {
-				c.endAdmissionBlockedLocked(outer, time.Now())
+				c.endAdmissionBlockedLocked(stage, time.Now())
 			}
-			rows := min(uint64(maxRows), window-outstanding)
-			if outer {
-				c.outerReserved += rows
+			units := min(uint64(maxUnits), window-outstanding)
+			if stage == adaptiveOuterRowsAdmission {
+				c.outerReserved += units
 			} else {
-				rows = min(rows, c.lookupBatchSize)
-				c.lookupReserved += rows
+				units = min(units, c.lookupBatchSize)
+				c.lookupReserved += units
 			}
 			c.mu.Unlock()
-			return int(rows), true, nil
+			return int(units), true, nil
 		}
 		if !waiting {
-			c.beginAdmissionBlockedLocked(outer, time.Now())
+			c.beginAdmissionBlockedLocked(stage, time.Now())
 			waiting = true
 		}
 		stopCh := c.stopCh
@@ -407,10 +415,10 @@ func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, oute
 
 		select {
 		case <-ctx.Done():
-			c.endAdmissionBlocked(outer)
+			c.endAdmissionBlocked(stage)
 			return 0, false, ctx.Err()
 		case <-stopCh:
-			c.endAdmissionBlocked(outer)
+			c.endAdmissionBlocked(stage)
 			if err := ctx.Err(); err != nil {
 				return 0, false, err
 			}
@@ -420,9 +428,9 @@ func (c *AdaptiveLimitController) reserve(ctx context.Context, maxRows int, oute
 	}
 }
 
-func (c *AdaptiveLimitController) beginAdmissionBlockedLocked(outer bool, now time.Time) {
+func (c *AdaptiveLimitController) beginAdmissionBlockedLocked(stage adaptiveAdmissionStage, now time.Time) {
 	stats := &c.lookupAdmissionBlocked
-	if outer {
+	if stage == adaptiveOuterRowsAdmission {
 		stats = &c.outerAdmissionBlocked
 	}
 	if stats.waiters == 0 {
@@ -431,15 +439,15 @@ func (c *AdaptiveLimitController) beginAdmissionBlockedLocked(outer bool, now ti
 	stats.waiters++
 }
 
-func (c *AdaptiveLimitController) endAdmissionBlocked(outer bool) {
+func (c *AdaptiveLimitController) endAdmissionBlocked(stage adaptiveAdmissionStage) {
 	c.mu.Lock()
-	c.endAdmissionBlockedLocked(outer, time.Now())
+	c.endAdmissionBlockedLocked(stage, time.Now())
 	c.mu.Unlock()
 }
 
-func (c *AdaptiveLimitController) endAdmissionBlockedLocked(outer bool, now time.Time) {
+func (c *AdaptiveLimitController) endAdmissionBlockedLocked(stage adaptiveAdmissionStage, now time.Time) {
 	stats := &c.lookupAdmissionBlocked
-	if outer {
+	if stage == adaptiveOuterRowsAdmission {
 		stats = &c.outerAdmissionBlocked
 	}
 	if stats.waiters == 0 {
@@ -452,9 +460,9 @@ func (c *AdaptiveLimitController) endAdmissionBlockedLocked(outer bool, now time
 	}
 }
 
-func (c *AdaptiveLimitController) finishAdmissionBlockedLocked(outer bool, now time.Time) {
+func (c *AdaptiveLimitController) finishAdmissionBlockedLocked(stage adaptiveAdmissionStage, now time.Time) {
 	stats := &c.lookupAdmissionBlocked
-	if outer {
+	if stage == adaptiveOuterRowsAdmission {
 		stats = &c.outerAdmissionBlocked
 	}
 	if stats.waiters == 0 {
@@ -619,8 +627,8 @@ func (c *AdaptiveLimitController) Snapshot() AdaptiveLimitSnapshot {
 		LookupBatchSize:         c.lookupBatchSize,
 		LookupPhysicalWindow:    c.lookupPhysicalWindowLocked(),
 		LookupOutstandingAtStop: c.lookupOutstandingAtStop,
-		OuterAdmissionBlocked:   c.admissionBlockedTimeLocked(true),
-		LookupAdmissionBlocked:  c.admissionBlockedTimeLocked(false),
+		OuterAdmissionBlocked:   c.admissionBlockedTimeLocked(adaptiveOuterRowsAdmission),
+		LookupAdmissionBlocked:  c.admissionBlockedTimeLocked(adaptiveLookupHandlesAdmission),
 		Stopped:                 c.stopped,
 	}
 }
@@ -639,17 +647,7 @@ func (c *AdaptiveLimitController) recomputeOuterWindowLocked() {
 		)
 		estimatedInput = max(estimatedInput, recentEstimate)
 	}
-	var target uint64
-	// Preserve more headroom early in the statement, then taper it as LIMIT
-	// completion approaches to reduce tail over-admission.
-	switch {
-	case remainingOutput <= c.demandRows/4:
-		target = estimatedInput
-	case remainingOutput <= c.demandRows/2:
-		target = divideAndRoundUp(saturatingMultiply(estimatedInput, 9), 8)
-	default:
-		target = divideAndRoundUp(saturatingMultiply(estimatedInput, 5), 4)
-	}
+	target := addAdaptiveWindowHeadroom(estimatedInput, remainingOutput, c.demandRows)
 	var grew bool
 	c.outerWindow, grew = adjustAdaptiveWindow(
 		target, c.outerWindow, 1, c.maxOuterWindow, c.outerConsumed > c.outerGrowthBarrier,
@@ -713,15 +711,7 @@ func (c *AdaptiveLimitController) recomputeDirectLookupWindowLocked() {
 		estimatedHandles = max(estimatedHandles, recentEstimate)
 	}
 
-	var target uint64
-	switch {
-	case remainingOutput <= c.demandRows/4:
-		target = estimatedHandles
-	case remainingOutput <= c.demandRows/2:
-		target = divideAndRoundUp(saturatingMultiply(estimatedHandles, 9), 8)
-	default:
-		target = divideAndRoundUp(saturatingMultiply(estimatedHandles, 5), 4)
-	}
+	target := addAdaptiveWindowHeadroom(estimatedHandles, remainingOutput, c.demandRows)
 	var grew bool
 	c.lookupWindow, grew = adjustAdaptiveWindow(
 		target, c.lookupWindow, c.initialLookupWindow, c.maxLookupWindow,
@@ -783,8 +773,8 @@ func (c *AdaptiveLimitController) stopLocked() {
 	}
 	c.stopped = true
 	now := time.Now()
-	c.finishAdmissionBlockedLocked(true, now)
-	c.finishAdmissionBlockedLocked(false, now)
+	c.finishAdmissionBlockedLocked(adaptiveOuterRowsAdmission, now)
+	c.finishAdmissionBlockedLocked(adaptiveLookupHandlesAdmission, now)
 	c.outerOutstandingAtStop = saturatingAdd(
 		c.outerFetched-min(c.outerFetched, c.outerConsumed),
 		c.outerReserved,
@@ -798,9 +788,9 @@ func (c *AdaptiveLimitController) stopLocked() {
 	close(c.stopCh)
 }
 
-func (c *AdaptiveLimitController) admissionBlockedTimeLocked(outer bool) time.Duration {
+func (c *AdaptiveLimitController) admissionBlockedTimeLocked(stage adaptiveAdmissionStage) time.Duration {
 	stats := c.lookupAdmissionBlocked
-	if outer {
+	if stage == adaptiveOuterRowsAdmission {
 		stats = c.outerAdmissionBlocked
 	}
 	if stats.waiters == 0 {
@@ -834,6 +824,19 @@ func normalizeAdaptiveWindow(initial, maximum uint64) (normalizedInitial, normal
 func growAdaptiveWindow(window, maximum uint64) uint64 {
 	next := saturatingMultiply(window, 2)
 	return min(next, maximum)
+}
+
+func addAdaptiveWindowHeadroom(estimatedInput, remainingOutput, demandRows uint64) uint64 {
+	// Preserve more headroom early in the statement, then taper it as LIMIT
+	// completion approaches to reduce tail over-admission.
+	switch {
+	case remainingOutput <= demandRows/4:
+		return estimatedInput
+	case remainingOutput <= demandRows/2:
+		return divideAndRoundUp(saturatingMultiply(estimatedInput, 9), 8)
+	default:
+		return divideAndRoundUp(saturatingMultiply(estimatedInput, 5), 4)
+	}
 }
 
 func adjustAdaptiveWindow(target, current, minimum, maximum uint64, canGrow bool) (uint64, bool) {
