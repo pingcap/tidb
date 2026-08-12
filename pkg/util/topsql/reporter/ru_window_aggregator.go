@@ -152,6 +152,19 @@ func (a *ruWindowAggregator) takeReportRecords(nowTs, itemInterval uint64, keysp
 	return buildReportRecords(takenBuckets, windowStart, windowEnd, itemInterval, keyspaceName)
 }
 
+// dropReportData discards all pending buckets and advances the report boundary.
+func (a *ruWindowAggregator) dropReportData(nowTs uint64) {
+	windowEnd := alignToInterval(nowTs, ruReportWindowSeconds)
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.buckets = make(map[uint64]*ruPointBucket)
+	if windowEnd > a.lastReportedEndTs {
+		a.lastReportedEndTs = windowEnd
+	}
+}
+
 // takeBucketsForWindow extracts buckets for the given window under lock.
 // It returns nil if the window has already been reported or is not ready.
 func (a *ruWindowAggregator) takeBucketsForWindow(windowEnd uint64) map[uint64]*ruPointBucket {

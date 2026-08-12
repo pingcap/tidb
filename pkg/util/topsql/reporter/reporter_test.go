@@ -885,6 +885,67 @@ func TestReporterChannelsFullDropsAndMetrics(t *testing.T) {
 	require.NotEmpty(t, recovered.collected.getReportRecords())
 	require.Len(t, recovered.normalizedSQLMap.toProto(keyspaceName), 1)
 	require.Len(t, recovered.normalizedPlanMap.toProto(keyspaceName, tsr.decodePlan, tsr.compressPlan), 1)
+
+	origMaxStatementCount := topsqlstate.GlobalState.MaxStatementCount.Load()
+	topsqlstate.GlobalState.MaxStatementCount.Store(1)
+	t.Cleanup(func() {
+		topsqlstate.GlobalState.MaxStatementCount.Store(origMaxStatementCount)
+	})
+
+	boundedSQLDigests := [][]byte{[]byte("bounded-sql-1"), []byte("bounded-sql-2")}
+	boundedPlanDigests := [][]byte{[]byte("bounded-plan-1"), []byte("bounded-plan-2")}
+	for i := range boundedSQLDigests {
+		tsr.RegisterSQL(boundedSQLDigests[i], fmt.Sprintf("select %d", i+1), false)
+		tsr.RegisterPlan(boundedPlanDigests[i], fmt.Sprintf("point_get_%d", i+1), false)
+	}
+
+	tsr.reportCollectedDataChan <- collectedData{} // keep the report channel blocked
+	beforeBackpressureDrop := readCounter(t, reporter_metrics.IgnoreReportDataByBackpressureCounter)
+	const blockedReportWindows = maxPendingReportWindows * 3
+	var lastReportEnd uint64
+	for i := 1; i <= blockedReportWindows; i++ {
+		reportEnd := uint64(120 + i*defaultReportInterval)
+		lastReportEnd = reportEnd
+		sampleTimestamp := reportEnd - 1
+		tsr.processCPUTimeData(sampleTimestamp, cpuRecords{
+			{SQLDigest: boundedSQLDigests[0], PlanDigest: boundedPlanDigests[0], CPUTimeMs: 2},
+			{SQLDigest: boundedSQLDigests[1], PlanDigest: boundedPlanDigests[1], CPUTimeMs: 1},
+		})
+		tsr.ruAggregator.addBatch(ruBatch{
+			timestamp: sampleTimestamp,
+			data:      ruData,
+			version:   rmclient.DefaultRUVersion,
+		})
+		tsr.takeDataAndSendToReportChan(reportEnd)
+		if i%maxPendingReportWindows != 0 {
+			require.NotEmpty(t, tsr.collecting.records)
+			require.NotEmpty(t, tsr.collecting.evicted)
+		} else {
+			require.Empty(t, tsr.collecting.records)
+			require.Empty(t, tsr.collecting.evicted)
+		}
+		tsr.ruAggregator.mu.Lock()
+		bucketCount := len(tsr.ruAggregator.buckets)
+		tsr.ruAggregator.mu.Unlock()
+		require.LessOrEqual(t, bucketCount, maxPendingReportWindows-1)
+	}
+
+	require.Empty(t, tsr.collecting.records)
+	require.Empty(t, tsr.collecting.evicted)
+	require.InDelta(t, float64(blockedReportWindows/maxPendingReportWindows), readCounter(t, reporter_metrics.IgnoreReportDataByBackpressureCounter)-beforeBackpressureDrop, 1e-9)
+	<-tsr.reportCollectedDataChan
+
+	recoveryTimestamp := lastReportEnd + uint64(defaultReportInterval) - 1
+	tsr.processCPUTimeData(recoveryTimestamp, cpuRecords{{
+		SQLDigest:  boundedSQLDigests[0],
+		PlanDigest: boundedPlanDigests[0],
+		CPUTimeMs:  1,
+	}})
+	tsr.takeDataAndSendToReportChan(lastReportEnd + uint64(defaultReportInterval))
+	recovered = <-tsr.reportCollectedDataChan
+	require.Len(t, recovered.collected.getReportRecords(), 1)
+	require.Len(t, recovered.normalizedSQLMap.toProto(keyspaceName), len(boundedSQLDigests))
+	require.Len(t, recovered.normalizedPlanMap.toProto(keyspaceName, tsr.decodePlan, tsr.compressPlan), len(boundedPlanDigests))
 }
 
 // TestReporterBackpressureAndDropScenario covers the reporter backpressure
