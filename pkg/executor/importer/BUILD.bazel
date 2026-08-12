@@ -117,7 +117,11 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 43,
+=======
+    shard_count = 45,
+>>>>>>> d5f9ca5690c (importinto: forbid importing into TTL-enabled tables (#70427))
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",
