@@ -188,6 +188,25 @@ fn avg_and_sum_spill_pairs_round_trip_all_original_vectors() {
 }
 
 #[test]
+fn hidden_decimal_precision_survives_spill_round_trip() {
+    let decimal = Decimal::from_literal("8")
+        .true_div(&Decimal::from_literal("7"), 7)
+        .expect("the source decimal division is representable");
+    assert_eq!(decimal.scale(), 7);
+    assert_eq!(decimal.storage_scale(), 9);
+
+    let mut serializer = SpillSerializer::new();
+    let bytes = serializer.serialize_decimal_pair(&decimal, 3).to_vec();
+    assert_eq!(bytes.len(), 40 + std::mem::size_of::<i64>());
+    let (decoded, count) = deserialize_decimal_pair(&bytes).unwrap();
+    assert_eq!(count, 3);
+    assert_eq!(decoded, decimal);
+    assert_eq!(decoded.scale(), 7);
+    assert_eq!(decoded.storage_scale(), 9);
+    assert_eq!(decoded.coefficient_digits(), "1142857142");
+}
+
+#[test]
 fn source_benchmark_shapes_do_not_use_a_second_state_family() {
     // func_avg_test.go:65 and func_count_test.go:173 use 50,000 rows.
     let mut count = CountState::new();

@@ -171,6 +171,31 @@ impl Decimal {
         Self::new_with_storage(parsed.negative, digits, result_scale, storage_scale)
     }
 
+    /// Converts this value to Go's exact `MyDecimal` storage shape without
+    /// discarding fraction digits retained beyond the displayed scale.
+    pub fn to_my_decimal(&self) -> Result<MyDecimal, crate::mydecimal::DecimalError> {
+        let storage_scale = self.storage_scale as usize;
+        let split = self.digits.len() - storage_scale;
+        let magnitude = if storage_scale == 0 {
+            self.digits.clone()
+        } else {
+            format!("{}.{}", &self.digits[..split], &self.digits[split..])
+        };
+        let literal = if self.negative {
+            format!("-{magnitude}")
+        } else {
+            magnitude
+        };
+        let (mut value, error) = MyDecimal::from_string(literal.as_bytes());
+        if let Some(error) = error {
+            return Err(error);
+        }
+        let result_scale =
+            i8::try_from(self.scale).map_err(|_| crate::mydecimal::DecimalError::BadNumber)?;
+        value.set_result_frac(result_scale);
+        Ok(value)
+    }
+
     /// Parses the signed decimal strings accepted by datatype conversion.
     pub fn from_signed_literal(text: &str) -> Self {
         Self::parse_mysql(text).0

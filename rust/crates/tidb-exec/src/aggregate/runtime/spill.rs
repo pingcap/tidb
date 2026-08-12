@@ -16,8 +16,8 @@
 
 use super::avg::AvgFloat64State;
 use super::sum::SumFloat64State;
-use tidb_datatype::Decimal;
-use tidb_util::serialization::{serialize_f64, serialize_i64, Cursor};
+use tidb_datatype::{Decimal, MyDecimal, MYDECIMAL_STRUCT_SIZE};
+use tidb_util::serialization::{serialize_f64, serialize_i64, serialize_my_decimal, Cursor};
 
 /// Fixed widths of the source primitive fields.
 pub const COUNT_WIRE_SIZE: usize = std::mem::size_of::<i64>();
@@ -76,14 +76,10 @@ impl SpillSerializer {
     /// Serializes the representable decimal AVG/SUM partial pair.
     pub fn serialize_decimal_pair(&mut self, value: &Decimal, count: i64) -> &[u8] {
         self.buffer.clear();
-        self.buffer.push(u8::from(value.is_negative()));
-        self.buffer.extend_from_slice(&value.scale().to_ne_bytes());
-        self.buffer
-            .extend_from_slice(&value.storage_scale().to_ne_bytes());
-        let coefficient = value.coefficient_digits().as_bytes();
-        self.buffer
-            .extend_from_slice(&(coefficient.len() as u32).to_ne_bytes());
-        self.buffer.extend_from_slice(coefficient);
+        let value = value
+            .to_my_decimal()
+            .expect("aggregate decimals remain inside MyDecimal's source domain");
+        serialize_my_decimal(&value, &mut self.buffer);
         serialize_i64(count, &mut self.buffer);
         &self.buffer
     }
@@ -146,47 +142,20 @@ fn deserialize_numeric_pair(bytes: &[u8]) -> Result<(f64, i64), InvalidWireLengt
 
 /// Decodes the decimal/count pair emitted by [`SpillSerializer::serialize_decimal_pair`].
 pub fn deserialize_decimal_pair(bytes: &[u8]) -> Result<(Decimal, i64), InvalidWireLength> {
-    const HEADER: usize = 1 + 4 + 4 + 4;
-    const COUNT: usize = 8;
-    if bytes.len() < HEADER + COUNT {
+    const EXPECTED: usize = MYDECIMAL_STRUCT_SIZE + std::mem::size_of::<i64>();
+    if bytes.len() != EXPECTED {
         return Err(InvalidWireLength {
             actual: bytes.len(),
-            expected: HEADER + COUNT,
+            expected: EXPECTED,
         });
     }
-    let negative = bytes[0] != 0;
-    let mut scale = [0_u8; 4];
-    scale.copy_from_slice(&bytes[1..5]);
-    let scale = u32::from_ne_bytes(scale);
-    let mut storage_scale = [0_u8; 4];
-    storage_scale.copy_from_slice(&bytes[5..9]);
-    let storage_scale = u32::from_ne_bytes(storage_scale);
-    let mut length = [0_u8; 4];
-    length.copy_from_slice(&bytes[9..13]);
-    let length = u32::from_ne_bytes(length) as usize;
-    let expected = HEADER + length + COUNT;
-    if bytes.len() != expected || storage_scale != scale {
-        return Err(InvalidWireLength {
-            actual: bytes.len(),
-            expected,
-        });
-    }
-    let coefficient =
-        std::str::from_utf8(&bytes[HEADER..HEADER + length]).map_err(|_| InvalidWireLength {
-            actual: bytes.len(),
-            expected,
-        })?;
-    let split = coefficient.len().saturating_sub(scale as usize);
-    let literal = if scale == 0 {
-        coefficient.to_string()
-    } else {
-        format!("{}.{}", &coefficient[..split], &coefficient[split..])
-    };
-    let value = Decimal::from_literal(&literal);
-    let value = if negative { value.negate() } else { value };
-    let mut count = [0_u8; 8];
-    count.copy_from_slice(&bytes[HEADER + length..]);
-    Ok((value, i64::from_ne_bytes(count)))
+    let mut cursor = Cursor::new(bytes);
+    let value: MyDecimal = cursor.read_my_decimal().map_err(|_| InvalidWireLength {
+        actual: bytes.len(),
+        expected: EXPECTED,
+    })?;
+    let count = cursor.read_i64().expect("the exact row width was checked");
+    Ok((Decimal::from_my_decimal(&value), count))
 }
 
 /// Sequential count-row reader matching Go's `deserializeHelper` loop.

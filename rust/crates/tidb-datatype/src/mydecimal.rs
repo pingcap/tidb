@@ -1233,6 +1233,11 @@ impl MyDecimal {
         self.result_frac
     }
 
+    pub(crate) fn set_result_frac(&mut self, result_frac: i8) {
+        debug_assert!(result_frac >= 0 && result_frac <= self.digits_frac);
+        self.result_frac = result_frac;
+    }
+
     /// Go `removeLeadingZeros`.
     fn remove_leading_zeros(&self) -> (usize, i32) {
         let mut word_idx = 0usize;
