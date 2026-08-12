@@ -34,6 +34,7 @@ go_library(
         "//pkg/distsql/context",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/domain/serverinfo",
         "//pkg/domain/sqlsvrapi",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/scheduler",
@@ -182,6 +183,7 @@ go_test(
         "//pkg/config/deploymode",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
+        "//pkg/ddl/util",
         "//pkg/domain",
         "//pkg/executor",
         "//pkg/expression",
@@ -226,6 +228,7 @@ go_test(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
         "@com_github_tikv_pd_client//http",
+        "@io_etcd_go_etcd_client_v3//:client",
         "@io_etcd_go_etcd_tests_v3//integration",
         "@org_uber_go_atomic//:atomic",  #keep
         "@org_uber_go_goleak//:goleak",
