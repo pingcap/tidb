@@ -89,6 +89,7 @@ getrandom = "0.3"
 # Safe process signal delivery for bounded SQL-node graceful shutdown.
 ctrlc = { version = "3.4", features = ["termination"] }
 rustix = { version = "1.1", features = ["process"] }
+nix = { version = "0.31.3", features = ["socket"] }
 # Go os.Hostname uses GetComputerNameExW on Windows; SEM restores that value.
 windows-sys = "0.61"
 base64 = "0.22"

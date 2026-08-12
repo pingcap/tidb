@@ -1715,6 +1715,7 @@ mod tests {
         NodeConfig {
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
+            affinity_cpus: Vec::new(),
             pd_endpoints: vec!["127.0.0.1:2379".to_owned()],
             read_tables: vec![ConfiguredReadTable {
                 database: "test".to_owned(),

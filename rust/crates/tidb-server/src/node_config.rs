@@ -122,6 +122,8 @@ pub struct NodeConfig {
     pub host: IpAddr,
     /// MySQL protocol port. Zero requests an ephemeral test port.
     pub port: u16,
+    /// CPU indexes from Go's `--affinity-cpus` startup option.
+    pub affinity_cpus: Vec<i64>,
     /// Plaintext PD endpoints in configured order.
     pub pd_endpoints: Vec<String>,
     /// Checked tables exposed to the bounded planner in command-line order.
@@ -455,6 +457,7 @@ impl NodeConfig {
 
         let mut host = None;
         let mut port = None;
+        let mut affinity_cpus = None;
         let mut path = None;
         let mut store = None;
         let mut read_tables = Vec::new();
@@ -541,6 +544,7 @@ impl NodeConfig {
             };
             match option {
                 "--host" => set_once(&mut host, option, value)?,
+                "--affinity-cpus" => set_once(&mut affinity_cpus, option, value)?,
                 "--port" => set_once(&mut port, option, value)?,
                 "--path" => set_once(&mut path, option, value)?,
                 "--store" => set_once(&mut store, option, value)?,
@@ -685,6 +689,7 @@ impl NodeConfig {
             return Err(NodeConfigError::NonLoopbackHost(host));
         }
         let port = parse_number("--port", port.as_deref().unwrap_or("4000"))?;
+        let affinity_cpus = parse_affinity_cpus(affinity_cpus.as_deref().unwrap_or_default())?;
         let store = store.as_deref().unwrap_or("tikv");
         if !store.eq_ignore_ascii_case("tikv") {
             return Err(NodeConfigError::UnsupportedStore(store.to_owned()));
@@ -818,6 +823,7 @@ impl NodeConfig {
         Ok(Self {
             host,
             port,
+            affinity_cpus,
             pd_endpoints,
             read_tables,
             load_tables,
@@ -925,6 +931,7 @@ impl NodeConfig {
 [--max-topn-rows <rows>] [--lease-ms <milliseconds>] \
 [--auth-file <mode-0600-tsv> | --load-privileges] \
 [--host <listen-ip>] [-P <port>|--port <port>] [--store tikv] \
+[--affinity-cpus <cpu[,cpu...]>] \
 [--max-allowed-packet <bytes>] \
 [--ssl-cert <cert-pem> --ssl-key <key-pem>] [--no-auto-tls] \
 [--no-disconnect-on-expired-password] \
@@ -1101,6 +1108,18 @@ fn parse_ip(option: &str, value: &str) -> Result<IpAddr, NodeConfigError> {
     value
         .parse()
         .map_err(|_| invalid(option, "expected an IP address"))
+}
+
+fn parse_affinity_cpus(value: &str) -> Result<Vec<i64>, NodeConfigError> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|cpu| !cpu.is_empty())
+        .map(|cpu| {
+            cpu.parse::<i64>()
+                .map_err(|_| invalid("--affinity-cpus", "expected comma-separated CPU indexes"))
+        })
+        .collect()
 }
 
 fn parse_number<T>(option: &str, value: &str) -> Result<T, NodeConfigError>
@@ -1664,5 +1683,40 @@ mod tests {
         assert_eq!(projected["path"], "127.0.0.1:2379");
         assert_eq!(projected["store"], "tikv");
         assert_eq!(projected["instance"]["max_connections"], 8);
+    }
+
+    #[test]
+    fn affinity_cpu_list_matches_the_source_command_line_parser() {
+        let base = [
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--load-table",
+            "test.rows",
+            "--auth-file",
+            "/tmp/users.tsv",
+        ];
+        assert!(NodeConfig::parse(base).unwrap().affinity_cpus.is_empty());
+        assert_eq!(
+            NodeConfig::parse(
+                base.iter()
+                    .copied()
+                    .chain(["--affinity-cpus", " 1, ,3,-1 "])
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap()
+            .affinity_cpus,
+            [1, 3, -1]
+        );
+        assert!(matches!(
+            NodeConfig::parse(
+                base.iter()
+                    .copied()
+                    .chain(["--affinity-cpus", "1,nope"])
+                    .collect::<Vec<_>>(),
+            ),
+            Err(NodeConfigError::InvalidValue { option, .. })
+                if option == "--affinity-cpus"
+        ));
     }
 }

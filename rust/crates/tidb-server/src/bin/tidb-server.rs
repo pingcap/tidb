@@ -51,7 +51,15 @@ fn main() -> ExitCode {
         };
     }
     match NodeConfig::parse(arguments) {
-        Ok(config) => runtime_exit_code(run_configured_node(config)),
+        Ok(config) => {
+            if !config.affinity_cpus.is_empty() {
+                if let Err(error) = tidb_util::sys::linux::set_affinity(&config.affinity_cpus) {
+                    eprintln!("set cpu affinity failure: {error}");
+                    return ExitCode::FAILURE;
+                }
+            }
+            runtime_exit_code(run_configured_node(config))
+        }
         Err(NodeConfigError::HelpRequested) => {
             println!("{}", NodeConfig::help_text());
             ExitCode::SUCCESS

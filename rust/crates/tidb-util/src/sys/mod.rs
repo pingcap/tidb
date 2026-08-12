@@ -14,4 +14,5 @@
 
 //! Operating-system utility packages.
 
+pub mod linux;
 pub mod storage;
