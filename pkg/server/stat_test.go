@@ -71,6 +71,11 @@ func TestInitStatsSessionBlockGC(t *testing.T) {
 	defer func() {
 		config.StoreGlobalConfig(origConfig)
 	}()
+	// Adapted from #67206: earlier tests in this package (e.g. via
+	// testkit.CreateMockStoreAndDomain -> session.DisableStats4Test) may leave the
+	// process-global stats lease at -1, which would stop the init-stats session from
+	// blocking GC. Reset it to the default so this test is order-independent.
+	session.SetStatsLease(3 * time.Second)
 	newConfig := *origConfig
 	for _, lite := range []bool{false, true} {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/beforeInitStats", "pause"))
