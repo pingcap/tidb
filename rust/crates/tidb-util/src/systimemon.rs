@@ -18,6 +18,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime};
 
+use tidb_log::{Field, Value};
+
 /// Source monitoring cadence.
 pub const MONITOR_INTERVAL: Duration = Duration::from_millis(100);
 
@@ -63,6 +65,7 @@ impl SystemTimeMonitor {
         N: FnMut() -> SystemTime + Send + 'static,
         H: FnMut() + Send + 'static,
     {
+        tidb_log::info("start system time monitor", &[]);
         let state = Arc::new(StopState::default());
         let worker_state = Arc::clone(&state);
         let worker = thread::Builder::new()
@@ -80,6 +83,10 @@ impl SystemTimeMonitor {
                 drop(stopped);
 
                 if now() < previous {
+                    tidb_log::error(
+                        "system time jump backward",
+                        &[Field::new("last", Value::I64(unix_nanos(previous)))],
+                    );
                     on_backward();
                 }
             })
@@ -101,6 +108,14 @@ impl SystemTimeMonitor {
             let _ = worker.join();
         }
     }
+}
+
+fn unix_nanos(time: SystemTime) -> i64 {
+    let nanos = match time.duration_since(SystemTime::UNIX_EPOCH) {
+        Ok(duration) => duration.as_nanos() as i128,
+        Err(error) => -(error.duration().as_nanos() as i128),
+    };
+    nanos as i64
 }
 
 impl Drop for SystemTimeMonitor {

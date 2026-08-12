@@ -259,7 +259,6 @@ static SYSTEM_TIME_JUMP_BACKWARD_COUNT: AtomicU64 = AtomicU64::new(0);
 fn start_system_time_monitor() -> tidb_util::systimemon::SystemTimeMonitor {
     tidb_util::systimemon::SystemTimeMonitor::start(SystemTime::now, || {
         SYSTEM_TIME_JUMP_BACKWARD_COUNT.fetch_add(1, Ordering::Relaxed);
-        eprintln!("system time jumped backward");
     })
 }
 
