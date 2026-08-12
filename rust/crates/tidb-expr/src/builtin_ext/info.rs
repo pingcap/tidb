@@ -162,7 +162,9 @@ fn scientific(value: f64) -> String {
 mod tests {
     use super::dispatch;
     use crate::{Columns, Datum};
+    use prost::Message;
     use std::cell::RefCell;
+    use tidb_proto::tipb::{ExplainData, ExplainOperator, TaskType};
 
     fn call(name: &str, value: Datum) -> Datum {
         dispatch(name, &[value], &crate::NoColumns)
@@ -358,6 +360,31 @@ mod tests {
             .unwrap(),
             tidb_util::plancodec::PLAN_DISCARDED_DECODED
         );
+
+        let encoded = tidb_util::plancodec::compress(
+            &ExplainData {
+                main: Some(ExplainOperator {
+                    name: "TableScan_1".to_owned(),
+                    act_rows: u64::MAX,
+                    task_type: TaskType::Root as i32,
+                    ..Default::default()
+                }),
+                with_runtime_stats: true,
+                ..Default::default()
+            }
+            .encode_to_vec(),
+        );
+        let decoded = dispatch(
+            "TIDB_DECODE_BINARY_PLAN",
+            &[Datum::new_string(encoded)],
+            &warnings,
+        )
+        .unwrap()
+        .unwrap()
+        .sql_string()
+        .unwrap();
+        assert!(decoded.contains("| -1 "));
+
         assert_eq!(
             dispatch("TIDB_DECODE_PLAN", &[Datum::Null], &warnings)
                 .unwrap()

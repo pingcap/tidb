@@ -1768,6 +1768,7 @@ dependencies = [
  "flate2",
  "getrandom 0.3.4",
  "md-5",
+ "prost",
  "regex",
  "serde_json",
  "sha1",

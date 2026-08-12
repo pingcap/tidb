@@ -784,7 +784,7 @@ fn decode_binary_operator(
         format_plan_float(operator.cost, false),
     ];
     if runtime {
-        row.push(operator.act_rows.to_string());
+        row.push((operator.act_rows as i64).to_string());
     }
     let mut task = TaskType::try_from(operator.task_type).map_or_else(
         |_| operator.task_type.to_string(),
@@ -1162,6 +1162,29 @@ mod tests {
         let top_sql = decode_binary_plan_for_connection(&encoded, "row", true).unwrap();
         assert_eq!(top_sql[0].len(), 5);
         assert_eq!(top_sql[0][3], "root");
+    }
+
+    #[test]
+    fn binary_plan_formats_act_rows_through_the_source_signed_boundary() {
+        let encoded = compress(
+            &ExplainData {
+                main: Some(ExplainOperator {
+                    name: "TableScan_1".to_owned(),
+                    act_rows: u64::MAX,
+                    task_type: TaskType::Root as i32,
+                    memory_bytes: -1,
+                    disk_bytes: -1,
+                    ..Default::default()
+                }),
+                with_runtime_stats: true,
+                ..Default::default()
+            }
+            .encode_to_vec(),
+        );
+
+        let connection = decode_binary_plan_for_connection(&encoded, "verbose", false).unwrap();
+        assert_eq!(connection[0][3], "-1");
+        assert!(decode_binary_plan(&encoded).unwrap().contains("| -1 "));
     }
 
     #[test]
