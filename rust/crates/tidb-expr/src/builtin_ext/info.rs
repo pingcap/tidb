@@ -295,6 +295,19 @@ mod tests {
             b"\tid       \ttask\testRows\toperator info\n\tSelection\troot\t1      \t\xff"
         );
 
+        let encoded = tidb_util::plancodec::compress(b"0\t2147483648\t0\tinfo\n");
+        let decoded = dispatch(
+            "TIDB_DECODE_PLAN",
+            &[Datum::new_string(encoded)],
+            &crate::NoColumns,
+        )
+        .unwrap()
+        .unwrap();
+        assert!(decoded
+            .sql_string()
+            .unwrap()
+            .contains("UnknownPlanID2147483648"));
+
         assert_eq!(
             dispatch(
                 "TIDB_DECODE_PLAN",

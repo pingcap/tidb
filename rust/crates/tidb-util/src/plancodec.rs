@@ -221,8 +221,12 @@ pub fn type_string_to_physical_id(plan_type: &str) -> i32 {
 /// Converts a physical ID to its plan type string.
 #[must_use]
 pub fn physical_id_to_type_string(id: i32) -> String {
-    usize::try_from(id - 1)
-        .ok()
+    physical_id_to_type_string_i64(i64::from(id))
+}
+
+fn physical_id_to_type_string_i64(id: i64) -> String {
+    id.checked_sub(1)
+        .and_then(|index| usize::try_from(index).ok())
         .and_then(|index| PLAN_TYPES.get(index))
         .map_or_else(|| format!("UnknownPlanID{id}"), |value| (*value).to_owned())
 }
@@ -487,8 +491,8 @@ fn decode_plan_info(value: &[u8]) -> Result<Option<PlanInfo>> {
     }
     let id = std::str::from_utf8(ids[0])
         .map_err(|error| PlanCodecError::InvalidPlan(format!("invalid encoded plan id: {error}")))?
-        .parse::<i32>()?;
-    let mut fields = vec![physical_id_to_type_string(id).into_bytes()];
+        .parse::<i64>()?;
+    let mut fields = vec![physical_id_to_type_string_i64(id).into_bytes()];
     if ids.len() == 2 {
         fields[0].push(b'_');
         fields[0].extend_from_slice(ids[1]);
@@ -946,6 +950,22 @@ mod tests {
         }
         assert_eq!(type_string_to_physical_id("Sequence"), 0);
         assert_eq!(physical_id_to_type_string(64), "UnknownPlanID64");
+        assert_eq!(
+            physical_id_to_type_string(i32::MIN),
+            "UnknownPlanID-2147483648"
+        );
+    }
+
+    #[test]
+    fn textual_plan_accepts_machine_width_unknown_plan_ids() {
+        assert_eq!(
+            decode_normalized_plan(b"0\t2147483648\t0\tinfo\n").unwrap(),
+            b"\tUnknownPlanID2147483648\troot\tinfo"
+        );
+        assert_eq!(
+            decode_normalized_plan(b"0\t-2147483649\t0\tinfo\n").unwrap(),
+            b"\tUnknownPlanID-2147483649\troot\tinfo"
+        );
     }
 
     #[test]
