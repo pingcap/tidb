@@ -242,13 +242,9 @@ fn eval_bool_matches_tidb_per_eval_type() {
     }
 }
 
-/// The one row of the table this engine cannot answer: a BIT column in a
-/// boolean context. TiDB converts the binary literal to an integer, so the
-/// non-zero row passes; here the chunk row getter for `Bit` is still deferred
-/// and reading the cell panics before any truth test runs. Go's answer is
-/// asserted so this stays a tracked work item rather than a silent gap.
+/// A BIT column in a boolean context is converted from its binary literal to
+/// an integer, so only the non-zero row passes.
 #[test]
-#[ignore = "chunk Row::get_datum has no Bit column getter yet (panics before the truth test)"]
 fn eval_bool_on_bit_column() {
     let mut session = Session::new();
     session.run("CREATE TABLE b1(id INT, v BIT(8))").unwrap();
