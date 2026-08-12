@@ -244,13 +244,13 @@ pub fn locked_with_conflict_error(
 /// Whether the SQL layer may retry only the statement, under a newer
 /// `for_update_ts`, instead of ending the transaction.
 ///
-/// Go retries a pessimistic statement after a write conflict but never after a
-/// proven deadlock: `pkg/executor/adapter.go` aborts the statement outright,
-/// because retrying would re-form the same cycle. NOWAIT and the lock-wait
-/// timeout are the user's own explicit budgets, so they are reported too.
+/// Go retries a pessimistic statement after a write conflict and after the
+/// single-statement deadlock identified by client-go's `hashInKeys`. Other
+/// deadlocks abort the statement because retrying would re-form the same cycle.
 #[must_use]
 pub const fn is_retryable_statement_failure(failure: &PessimisticLockFailure) -> bool {
     matches!(failure, PessimisticLockFailure::WriteConflict { .. })
+        || matches!(failure, PessimisticLockFailure::Deadlock(detail) if detail.is_retryable)
 }
 
 #[cfg(test)]
@@ -483,6 +483,7 @@ mod tests {
             lock_key: b"k".to_vec(),
             deadlock_key_hash: 1,
             deadlock_key: b"j".to_vec(),
+            is_retryable: false,
             wait_chain: vec![DeadlockWaitChainItem {
                 txn: 7,
                 wait_for_txn: 8,
@@ -495,7 +496,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_write_conflict_is_worth_retrying_the_statement_for() {
+    fn write_conflicts_and_single_statement_deadlocks_are_retryable() {
         let conflict = PessimisticLockFailure::WriteConflict {
             detail: "txnStartTS=1".to_owned(),
         };
@@ -513,6 +514,17 @@ mod tests {
                 lock_key: Vec::new(),
                 deadlock_key_hash: 0,
                 deadlock_key: Vec::new(),
+                is_retryable: false,
+                wait_chain: Vec::new(),
+            })
+        ));
+        assert!(is_retryable_statement_failure(
+            &PessimisticLockFailure::Deadlock(DeadlockDetail {
+                lock_ts: 1,
+                lock_key: Vec::new(),
+                deadlock_key_hash: 0,
+                deadlock_key: Vec::new(),
+                is_retryable: true,
                 wait_chain: Vec::new(),
             })
         ));

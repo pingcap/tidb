@@ -139,15 +139,18 @@ impl TransactionStatementError {
     }
 
     fn from_lock_failure(failure: &PessimisticLockFailure) -> Self {
-        if let PessimisticLockFailure::Deadlock(detail) = failure {
-            record_deadlock(detail, false);
-        }
         let error = lock_failure_to_sql_error(failure);
         if failure.is_statement_scoped() {
             Self::Statement(error)
         } else {
             Self::Transaction(error)
         }
+    }
+}
+
+fn record_lock_failure(failure: &PessimisticLockFailure) {
+    if let PessimisticLockFailure::Deadlock(detail) = failure {
+        record_deadlock(detail);
     }
 }
 
@@ -542,6 +545,7 @@ impl MultiStatementTransaction {
                     // TiKV reports it, before statement-lock cleanup. Build the
                     // terminal SQL error now so a rollback failure cannot erase
                     // the diagnostic event.
+                    record_lock_failure(&failure);
                     let terminal_error = (!is_retryable_statement_failure(&failure))
                         .then(|| TransactionStatementError::from_lock_failure(&failure));
                     // Release only what this statement added; the transaction's
@@ -558,6 +562,12 @@ impl MultiStatementTransaction {
                     }
                     if let Some(error) = terminal_error {
                         return Err(error);
+                    }
+                    if matches!(
+                        &failure,
+                        PessimisticLockFailure::Deadlock(detail) if detail.is_retryable
+                    ) {
+                        std::thread::sleep(Duration::from_millis(5));
                     }
                     lock_failure_to_sql_error(&failure)
                 }
@@ -783,8 +793,9 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        classify_commit_outcome, written_handles, Duration, MultiStatementTransaction,
-        TransactionStatementError, UnaryCallContext, TRANSACTION_END_TIMEOUT,
+        classify_commit_outcome, record_lock_failure, written_handles, Duration,
+        MultiStatementTransaction, TransactionStatementError, UnaryCallContext,
+        TRANSACTION_END_TIMEOUT,
     };
     use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, ERR_WRITE_CONFLICT};
     use tidb_planner::prepared_dml::{
@@ -921,6 +932,7 @@ mod tests {
             lock_key: b"blocked".to_vec(),
             deadlock_key_hash: 9,
             deadlock_key: b"held".to_vec(),
+            is_retryable: false,
             wait_chain: vec![DeadlockWaitChainItem {
                 txn: 7,
                 wait_for_txn: 8,
@@ -929,6 +941,7 @@ mod tests {
             }],
         });
 
+        record_lock_failure(&failure);
         let error = TransactionStatementError::from_lock_failure(&failure);
         assert_eq!(error.sql_error().code, 1213);
         let records = global_deadlock_history().get_all();
@@ -937,6 +950,30 @@ mod tests {
         assert_eq!(records[0].wait_chain[0].try_lock_txn, 7);
         assert_eq!(records[0].wait_chain[0].txn_holding_lock, 8);
         assert_eq!(records[0].wait_chain[0].key, b"row-key");
+    }
+
+    #[test]
+    fn retryable_deadlock_history_obeys_the_process_policy() {
+        let _serial = DEADLOCK_HISTORY_TEST.lock().unwrap();
+        let _reset = ResetDeadlockHistory;
+        let failure = PessimisticLockFailure::Deadlock(DeadlockDetail {
+            lock_ts: 7,
+            lock_key: b"blocked".to_vec(),
+            deadlock_key_hash: 9,
+            deadlock_key: b"held".to_vec(),
+            is_retryable: true,
+            wait_chain: Vec::new(),
+        });
+
+        configure_global_deadlock_history(2, false);
+        record_lock_failure(&failure);
+        assert!(global_deadlock_history().get_all().is_empty());
+
+        configure_global_deadlock_history(2, true);
+        record_lock_failure(&failure);
+        let records = global_deadlock_history().get_all();
+        assert_eq!(records.len(), 1);
+        assert!(records[0].is_retryable);
     }
 
     #[test]

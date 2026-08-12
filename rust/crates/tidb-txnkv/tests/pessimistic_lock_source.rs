@@ -188,6 +188,8 @@ enum LockOutcome {
     RegionError,
     /// TiKV's detector proved a cycle.
     Deadlock,
+    /// The cycle closes over another key in this same statement.
+    RetryableDeadlock,
     /// A newer commit invalidated this statement's `for_update_ts`.
     WriteConflict,
     /// Blocked by a lock the owner refreshed `refreshed_ms` ago.
@@ -278,12 +280,16 @@ fn lock_response(outcome: &LockOutcome, request: &KvrpcPessimisticLockRequest) -
             }),
             ..KvrpcPessimisticLockResponse::default()
         },
-        LockOutcome::Deadlock => KvrpcPessimisticLockResponse {
+        LockOutcome::Deadlock | LockOutcome::RetryableDeadlock => KvrpcPessimisticLockResponse {
             errors: vec![KvrpcKeyError {
                 deadlock: Some(KvrpcDeadlock {
                     lock_ts: BLOCKER_TS,
                     lock_key: blocked_key,
-                    deadlock_key_hash: 99,
+                    deadlock_key_hash: if matches!(outcome, LockOutcome::RetryableDeadlock) {
+                        12_917_804_110_809_363_939
+                    } else {
+                        99
+                    },
                     deadlock_key: PRIMARY_KEY.to_vec(),
                     wait_chain: vec![
                         KvrpcWaitForEntry {
@@ -735,6 +741,7 @@ fn a_detected_deadlock_aborts_the_statement_without_retrying() {
     assert_eq!(detail.lock_ts, BLOCKER_TS);
     assert_eq!(detail.deadlock_key, PRIMARY_KEY.to_vec());
     assert_eq!(detail.deadlock_key_hash, 99);
+    assert!(!detail.is_retryable);
     assert_eq!(
         detail
             .wait_chain
@@ -755,6 +762,27 @@ fn a_detected_deadlock_aborts_the_statement_without_retrying() {
     );
     // The transaction itself survives: only this statement is dead.
     assert!(transaction.locked_keys().is_empty());
+}
+
+/// client-go marks a cycle retryable when TiKV's deadlock-key fingerprint is
+/// one of the keys in the current lock request.
+#[test]
+fn a_deadlock_over_this_statement_key_keeps_its_retryable_identity() {
+    let (_server, _recorded, mut transaction) = fixture(vec![LockOutcome::RetryableDeadlock]);
+
+    let failure = transaction
+        .acquire_locks(
+            &[PRIMARY_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .expect_err("TiKV still reports the cycle to the SQL retry owner");
+
+    let PessimisticLockFailure::Deadlock(detail) = failure else {
+        panic!("a deadlock must keep its own identity, got {failure:?}");
+    };
+    assert!(detail.is_retryable);
 }
 
 /// A write conflict costs the statement, not the transaction: a fresh
@@ -1296,7 +1324,10 @@ fn committing_without_any_lock_keeps_every_key_on_the_optimistic_check() {
 #[test]
 fn a_statement_that_fails_on_a_later_batch_keeps_the_locks_it_already_took() {
     // The first batch is granted; the second is rejected outright.
-    let service = ScriptedTikv::new(vec![LockOutcome::Granted, LockOutcome::Deadlock]);
+    let service = ScriptedTikv::new(vec![
+        LockOutcome::Granted,
+        LockOutcome::RetryableDeadlock,
+    ]);
     let server = TestServer::start(service);
     let mut transaction = transaction(SingleRegion::new_split(server.store_address(), SECOND_KEY));
 
@@ -1308,9 +1339,12 @@ fn a_statement_that_fails_on_a_later_batch_keeps_the_locks_it_already_took() {
             &call(),
         )
         .expect_err("the second batch ends the statement");
+    let PessimisticLockFailure::Deadlock(detail) = failure else {
+        panic!("unexpected failure: {failure:?}");
+    };
     assert!(
-        matches!(failure, PessimisticLockFailure::Deadlock { .. }),
-        "unexpected failure: {failure:?}"
+        detail.is_retryable,
+        "client-go compares the fingerprint with the whole statement key set, not only the failing region batch"
     );
 
     assert_eq!(

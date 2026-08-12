@@ -43,6 +43,7 @@ mod counter;
 pub mod driver;
 mod driver_error;
 mod error;
+mod farmhash;
 mod fault_injection;
 pub mod gc_state;
 mod go_is_print;

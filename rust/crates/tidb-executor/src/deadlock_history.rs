@@ -85,7 +85,7 @@ pub struct DeadlockRecord {
 impl DeadlockRecord {
     /// Builds a record from TiKV's complete deadlock payload.
     #[must_use]
-    pub fn from_deadlock(detail: &DeadlockDetail, is_retryable: bool) -> Self {
+    pub fn from_deadlock(detail: &DeadlockDetail) -> Self {
         let wait_chain = detail
             .wait_chain
             .iter()
@@ -115,7 +115,7 @@ impl DeadlockRecord {
             occur_time,
             wait_chain,
             id: 0,
-            is_retryable,
+            is_retryable: detail.is_retryable,
         }
     }
 
@@ -289,11 +289,11 @@ pub fn configure_global_deadlock_history(capacity: usize, collect_retryable: boo
 }
 
 /// Records one live TiKV deadlock when the configured policy admits it.
-pub fn record_deadlock(detail: &DeadlockDetail, is_retryable: bool) {
-    if is_retryable && !COLLECT_RETRYABLE.load(Ordering::Acquire) {
+pub fn record_deadlock(detail: &DeadlockDetail) {
+    if detail.is_retryable && !COLLECT_RETRYABLE.load(Ordering::Acquire) {
         return;
     }
-    GLOBAL_DEADLOCK_HISTORY.push(DeadlockRecord::from_deadlock(detail, is_retryable));
+    GLOBAL_DEADLOCK_HISTORY.push(DeadlockRecord::from_deadlock(detail));
 }
 
 fn hex(bytes: &[u8], upper: bool) -> String {
@@ -512,6 +512,7 @@ mod tests {
             lock_key: b"k1".to_vec(),
             deadlock_key_hash: 1_234_567,
             deadlock_key: b"k1".to_vec(),
+            is_retryable: true,
             wait_chain: vec![
                 DeadlockWaitChainItem {
                     txn: 100,
@@ -528,7 +529,7 @@ mod tests {
             ],
         };
 
-        let record = DeadlockRecord::from_deadlock(&detail, true);
+        let record = DeadlockRecord::from_deadlock(&detail);
         assert_eq!(record.occur_time.kind(), TimeType::Timestamp);
         assert_eq!(record.occur_time.fsp(), 6);
         assert!(record.is_retryable);
@@ -562,19 +563,22 @@ mod tests {
             lock_key: Vec::new(),
             deadlock_key_hash: 0,
             deadlock_key: Vec::new(),
+            is_retryable: true,
             wait_chain: Vec::new(),
         };
 
         configure_global_deadlock_history(3, false);
         global_deadlock_history().clear();
-        record_deadlock(&detail, true);
+        record_deadlock(&detail);
         assert!(global_deadlock_history().get_all().is_empty());
 
-        record_deadlock(&detail, false);
+        let mut terminal = detail.clone();
+        terminal.is_retryable = false;
+        record_deadlock(&terminal);
         assert_eq!(global_deadlock_history().get_all()[0].id, 1);
 
         configure_global_deadlock_history(3, true);
-        record_deadlock(&detail, true);
+        record_deadlock(&detail);
         let records = global_deadlock_history().get_all();
         assert_eq!(records.len(), 2);
         assert_eq!(records[1].id, 2);

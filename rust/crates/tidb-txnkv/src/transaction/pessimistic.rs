@@ -153,6 +153,8 @@ pub struct DeadlockDetail {
     pub deadlock_key_hash: u64,
     /// Key this transaction already holds that closes the cycle.
     pub deadlock_key: Vec<u8>,
+    /// Whether the cycle contains another key from this same lock request.
+    pub is_retryable: bool,
     /// Every lock wait on the detected cycle.
     pub wait_chain: Vec<DeadlockWaitChainItem>,
 }
@@ -164,6 +166,7 @@ impl From<&KvrpcDeadlock> for DeadlockDetail {
             lock_key: deadlock.lock_key.clone(),
             deadlock_key_hash: deadlock.deadlock_key_hash,
             deadlock_key: deadlock.deadlock_key.clone(),
+            is_retryable: false,
             wait_chain: deadlock
                 .wait_chain
                 .iter()
@@ -461,6 +464,7 @@ where
         while let Some(batch) = queue.pop_front() {
             match self.lock_batch(
                 &batch,
+                &sorted,
                 &primary_key,
                 is_first_lock,
                 presume_not_exists,
@@ -651,6 +655,7 @@ where
     fn lock_batch(
         &mut self,
         batch: &RegionKeyBatch,
+        statement_keys: &[Vec<u8>],
         primary_key: &[u8],
         is_first_lock: bool,
         presume_not_exists: &BTreeSet<Vec<u8>>,
@@ -716,6 +721,7 @@ where
                     ForceLockOutcome::Failed => {
                         self.wait_out_blockers(
                             &response.errors,
+                            statement_keys,
                             batch,
                             wait,
                             wait_started_at,
@@ -741,7 +747,14 @@ where
                     conflicts: Vec::new(),
                 });
             }
-            self.wait_out_blockers(&response.errors, batch, wait, wait_started_at, call)?;
+            self.wait_out_blockers(
+                &response.errors,
+                statement_keys,
+                batch,
+                wait,
+                wait_started_at,
+                call,
+            )?;
         }
     }
 
@@ -843,12 +856,13 @@ where
     fn wait_out_blockers(
         &mut self,
         errors: &[KvrpcKeyError],
+        statement_keys: &[Vec<u8>],
         batch: &RegionKeyBatch,
         wait: LockWaitTime,
         wait_started_at: Instant,
         call: &UnaryCallContext,
     ) -> Result<(), PessimisticLockFailure> {
-        let blockers = collect_blocking_locks(errors)?;
+        let blockers = collect_blocking_locks(errors, statement_keys)?;
         if blockers.is_empty() {
             // TiKV reported only lock errors it wants re-sent, which is how a
             // wait-timeout wake-up looks when nothing is worth resolving.
@@ -931,13 +945,16 @@ enum ForceLockOutcome {
 /// either answer.
 fn collect_blocking_locks(
     errors: &[KvrpcKeyError],
+    statement_keys: &[Vec<u8>],
 ) -> Result<Vec<BlockingLock>, PessimisticLockFailure> {
     let mut blockers = Vec::new();
     for error in errors {
         if let Some(deadlock) = error.deadlock.as_ref() {
-            return Err(PessimisticLockFailure::Deadlock(DeadlockDetail::from(
-                deadlock,
-            )));
+            let mut detail = DeadlockDetail::from(deadlock);
+            detail.is_retryable = statement_keys
+                .iter()
+                .any(|key| crate::farmhash::fingerprint64(key) == detail.deadlock_key_hash);
+            return Err(PessimisticLockFailure::Deadlock(detail));
         }
         if let Some(conflict) = error.conflict.as_ref() {
             return Err(PessimisticLockFailure::WriteConflict {
