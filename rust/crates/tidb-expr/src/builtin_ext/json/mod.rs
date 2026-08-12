@@ -62,7 +62,9 @@ use text::json_pretty;
 use crate::{Datum, EvalError};
 use tidb_datatype::FieldType;
 
-pub(crate) use value::{cast_as_json, cast_as_json_typed, parse_json_document_argument};
+pub(crate) use value::{
+    cast_as_json, cast_as_json_typed, cast_as_json_value_typed, parse_json_document_argument,
+};
 
 /// Dispatches the JSON family.  The match and arities are ports of the
 /// function classes in `pkg/expression/builtin_json.go`:

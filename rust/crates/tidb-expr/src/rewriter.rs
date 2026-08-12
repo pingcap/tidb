@@ -201,7 +201,11 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
         // Likewise, the year cast yields an integer value here.
         CastType::Year => FieldType::new(FieldTypeCode::LongLong),
         CastType::Double | CastType::Float => FieldType::new(FieldTypeCode::Double),
-        CastType::Json => FieldType::new(FieldTypeCode::Json),
+        CastType::Json => {
+            let mut ft = FieldType::new(FieldTypeCode::Json);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON);
+            ft
+        }
         CastType::Time { .. } | CastType::Vector { .. } => return None,
     };
     Some((name, ft))
@@ -297,11 +301,13 @@ fn binary_expression(op: BinaryOp, left: Expression, right: Expression) -> Expre
         .or_else(|| crate::builtin_compare::infer_compare_type(name))
         .or_else(|| crate::builtin_op::infer_op_type(name));
     match ret_type {
-        Some(ret_type) => Expression::ScalarFunction(ScalarFunction::new(
-            CiString::new(name),
-            ret_type,
-            vec![left, right],
-        )),
+        Some(ret_type) => {
+            let mut args = vec![left, right];
+            if crate::builtin_compare::infer_compare_type(name).is_some() {
+                crate::builtin_compare::prepare_json_comparison_args(&mut args);
+            }
+            Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), ret_type, args))
+        }
         None => scalar(name, vec![left, right]),
     }
 }
@@ -756,16 +762,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             } else {
                 (BinaryOp::Ge, BinaryOp::Le, "and")
             };
-            let compare = |op: BinaryOp, left: Expression, right: Expression| {
-                let name = binary_op_name(op);
-                let ret_type = crate::builtin_compare::infer_compare_type(name)
-                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-                Expression::ScalarFunction(ScalarFunction::new(
-                    CiString::new(name),
-                    ret_type,
-                    vec![left, right],
-                ))
-            };
+            let compare = binary_expression;
             let lower = compare(lower_op, value.clone(), low);
             let upper = compare(upper_op, value, high);
             // The joining `AND`/`OR` is a `booleanFunctions` name, so the whole

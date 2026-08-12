@@ -544,10 +544,17 @@ impl ScalarFunction {
                 // which `crate::cast::eval_cast`'s untyped `CastType::Json`
                 // arm cannot see.
                 if target == "json" {
-                    return crate::builtin_ext::cast_as_json_typed(
-                        &value,
-                        self.args[0].static_type(),
-                    );
+                    let parse_document = self.get_static_type().is_some_and(|field_type| {
+                        field_type.flags() & tidb_datatype::FieldTypeFlags::PARSE_TO_JSON != 0
+                    });
+                    return if parse_document {
+                        crate::builtin_ext::cast_as_json_typed(&value, self.args[0].static_type())
+                    } else {
+                        crate::builtin_ext::cast_as_json_value_typed(
+                            &value,
+                            self.args[0].static_type(),
+                        )
+                    };
                 }
                 let ret_type = self
                     .get_static_type()

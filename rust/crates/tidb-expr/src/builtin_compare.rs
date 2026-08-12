@@ -27,8 +27,8 @@
 //! `refineArgs`' constant refinement (`int non-constant <cmp> non-int
 //! constant`) IS ported, as [`refine_comparisons`] over the built tree --
 //! see that function for the Go it follows and for what within `refineArgs`
-//! is still deferred. The JSON `DisableParseJSONFlag4Expr` tweak, which also
-//! touches only the args, is not ported.
+//! is still deferred. JSON comparisons also clear `ParseToJSONFlag` on every
+//! non-column operand, matching `generateCmpSigs`.
 
 use crate::builtin_arithmetic::new_return_field_type;
 use crate::constant::Constant;
@@ -53,6 +53,29 @@ pub fn infer_compare_type(name: &str) -> Option<FieldType> {
             Some(ret)
         }
         _ => None,
+    }
+}
+
+/// Go `generateCmpSigs`' JSON argument rule. `GetAccurateCmpType` selects the
+/// JSON comparison signature when either operand has MySQL type JSON. The
+/// signature then clears `ParseToJSONFlag` on constants and scalar functions,
+/// but deliberately leaves columns and correlated columns unchanged.
+pub(crate) fn prepare_json_comparison_args(args: &mut [Expression]) {
+    if !args
+        .iter()
+        .any(|arg| arg.static_type().map(FieldType::code) == Some(FieldTypeCode::Json))
+    {
+        return;
+    }
+    for arg in args {
+        let ret_type = match arg {
+            Expression::Column(_) | Expression::CorrelatedColumn(_) => continue,
+            Expression::Constant(constant) => constant.ret_type.as_mut(),
+            Expression::ScalarFunction(function) => function.ret_type.as_mut(),
+        };
+        if let Some(ret_type) = ret_type {
+            ret_type.and_flags(!FieldTypeFlags::PARSE_TO_JSON);
+        }
     }
 }
 
@@ -460,6 +483,7 @@ pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) {
     // derives the comparison type -- and the argument casts that go with it --
     // from the arguments that survived it (`builtin_compare.go:1984-1989`).
     wrap_year_operand_for_datetime_compare(left, right);
+    prepare_json_comparison_args(&mut function.args);
 }
 
 /// `refineArgs`' own body, over the two arguments of one comparison. `name` is

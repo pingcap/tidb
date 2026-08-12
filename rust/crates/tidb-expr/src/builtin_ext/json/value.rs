@@ -189,6 +189,28 @@ pub(crate) fn cast_as_json_typed(
     cast_as_json(value)
 }
 
+/// The same cast after Go `DisableParseJSONFlag4Expr` clears the target
+/// type's `ParseToJSONFlag`. This is the coercion comparison operators use:
+/// an SQL string becomes a JSON string value instead of being parsed as a
+/// JSON document.
+pub(crate) fn cast_as_json_value_typed(
+    value: &Datum,
+    field_type: Option<&FieldType>,
+) -> Result<Datum, EvalError> {
+    if value.is_null() {
+        return Ok(Datum::Null);
+    }
+    if let Some(field_type) = field_type {
+        if is_binary_datum(value, Some(field_type)) {
+            return value
+                .to_mysql_json_with_source_type(field_type)
+                .map(Datum::Json)
+                .map_err(|_| EvalError::Unsupported("datum JSON conversion"));
+        }
+    }
+    binary_json_datum(json_argument(value, StringArgument::Value, field_type)?)
+}
+
 /// What a SQL STRING argument means to the signature receiving it -- Go's
 /// `ParseToJSONFlag`, the single bit that separates the JSON family's two
 /// argument kinds.

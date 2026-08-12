@@ -32,6 +32,50 @@ fn compare_source_vector_promotes_real_and_decimal() {
 }
 
 #[test]
+fn json_comparison_treats_an_explicit_cast_string_as_a_json_value() {
+    // pkg/expression/builtin_compare.go::generateCmpSigs clears
+    // ParseToJSONFlag on non-column JSON operands. Therefore the explicit
+    // cast contributes the JSON string "1", not the JSON number 1.
+    use crate::context::NoColumns;
+    use crate::rewriter::{rewrite_expr_resolved, ColumnResolver};
+    use tidb_ast::{QueryStmt, SelectField, Stmt};
+    use tidb_datatype::{BinaryJSON, FieldType, FieldTypeCode};
+
+    assert_eq!(chunk_e("cast('1' as json)"), "JSON:1");
+
+    struct JsonColumn;
+    impl ColumnResolver for JsonColumn {
+        fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+            (path.last()? == "j").then(|| (0, FieldType::new(FieldTypeCode::Json), 1))
+        }
+
+        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+            tidb_datatype::SessionTimeZone::utc()
+        }
+    }
+
+    let stmt = tidb_parser::parse("select j = cast('1' as json)").expect("parse");
+    let Stmt::Query(query) = stmt else {
+        panic!("not query")
+    };
+    let QueryStmt::Select(select) = query.into_inner() else {
+        panic!("not select")
+    };
+    let SelectField::Expr { expr, .. } = &select.fields[0] else {
+        panic!("not expression")
+    };
+    let rewritten = rewrite_expr_resolved(expr, &JsonColumn).expect("rewrite");
+    let field_type = FieldType::new(FieldTypeCode::Json);
+    let mut chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&[field_type], 1);
+    chunk.append_json(0, &BinaryJSON::parse(r#""1""#).expect("JSON string"));
+
+    assert_eq!(
+        rewritten.eval(&NoColumns, chunk.get_row(0)),
+        Ok(Datum::Int(1))
+    );
+}
+
+#[test]
 fn greatest_least_source_vectors_preserve_mixed_integer_result_domain() {
     // pkg/expression/builtin_compare_test.go:286 TestGreatestLeastFunc
     assert_eq!(
