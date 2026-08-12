@@ -820,6 +820,13 @@ pub enum BinaryResultCell {
 /// supplying encoded bytes.
 #[must_use]
 pub fn encode_binary_result_row(cells: &[BinaryResultCell]) -> Vec<u8> {
+    encode_binary_result_row_inner(cells, None)
+}
+
+fn encode_binary_result_row_inner(
+    cells: &[BinaryResultCell],
+    mut column_encoding: Option<(&[ColumnInfo], crate::result_encoder::ResultEncoder)>,
+) -> Vec<u8> {
     let null_bitmap_len = (cells.len() + 7 + 2) / 8;
     let mut encoded = Vec::with_capacity(1 + null_bitmap_len + cells.len() * 8);
     encoded.push(0);
@@ -857,6 +864,21 @@ pub fn encode_binary_result_row(cells: &[BinaryResultCell]) -> Vec<u8> {
                 append_length_encoded_bytes(&mut encoded, Some(value.to_string().as_bytes()));
             }
             BinaryResultCell::String(bytes) => {
+                if let Some((columns, encoder)) = &mut column_encoding {
+                    let metadata = &columns[index];
+                    let collation =
+                        if matches!(metadata.type_code, TYPE_JSON | TYPE_TIDB_VECTOR_FLOAT32) {
+                            DEFAULT_COLLATION_ID
+                        } else {
+                            metadata.charset
+                        };
+                    if encoder.update_data_encoding(collation).is_ok() {
+                        if let Ok(bytes) = encoder.encode_data(bytes) {
+                            append_length_encoded_bytes(&mut encoded, Some(&bytes));
+                            continue;
+                        }
+                    }
+                }
                 append_length_encoded_bytes(&mut encoded, Some(bytes));
             }
             // `dump.BinaryDateTime(buffer, row.GetTime(i))` and
@@ -1062,24 +1084,10 @@ impl BinaryResultSetStream {
                 });
             }
         }
-        let mut encoded_cells = cells.to_vec();
-        let mut encoder = self.options.result_encoder;
-        for (cell, metadata) in encoded_cells.iter_mut().zip(&self.columns) {
-            let BinaryResultCell::String(bytes) = cell else {
-                continue;
-            };
-            let collation = if matches!(metadata.type_code, TYPE_JSON | TYPE_TIDB_VECTOR_FLOAT32) {
-                DEFAULT_COLLATION_ID
-            } else {
-                metadata.charset
-            };
-            if encoder.update_data_encoding(collation).is_ok() {
-                if let Ok(encoded) = encoder.encode_data(bytes) {
-                    *bytes = encoded;
-                }
-            }
-        }
-        Ok(encode_binary_result_row(&encoded_cells))
+        Ok(encode_binary_result_row_inner(
+            cells,
+            Some((&self.columns, self.options.result_encoder)),
+        ))
     }
 
     /// Emits the terminal EOF exactly once.
