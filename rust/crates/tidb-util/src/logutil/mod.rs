@@ -23,8 +23,10 @@
 //! - Go `context.Context` value plumbing (`WithConnID`, `WithFields`, ...)
 //!   becomes explicit [`Logger`] composition: each helper returns a logger
 //!   carrying the fields, which callers thread instead of a context.
-//! - Loggers writing to the same filename share one [`SharedSink`] (the
-//!   syncer-identity contract the Go tests assert).
+//! - Loggers that reuse the global filename share one [`SharedSink`] (the
+//!   syncer-identity contract the Go tests assert); separately constructed
+//!   dedicated loggers retain independent writers even when their filenames
+//!   happen to match.
 //! - `initGRPCLogger`, opentracing `Event`/`SetTag`, and the
 //!   runtime/trace `WithTraceLogger` tee are Go-ecosystem integrations
 //!   with no behavioral log-format contract: not ported.
@@ -114,8 +116,22 @@ pub fn new_log_config(
 
 /// Slow log time format is RFC3339Nano (Go `SlowLogTimeFormat`).
 pub fn format_slow_log_time(t: &DateTime<FixedOffset>) -> String {
-    // Go RFC3339Nano trims trailing fractional zeros.
-    t.format("%Y-%m-%dT%H:%M:%S%.f%:z").to_string()
+    let mut formatted = t.format("%Y-%m-%dT%H:%M:%S").to_string();
+    let nanos = t.timestamp_subsec_nanos();
+    if nanos != 0 {
+        let mut fraction = format!("{nanos:09}");
+        while fraction.ends_with('0') {
+            fraction.pop();
+        }
+        formatted.push('.');
+        formatted.push_str(&fraction);
+    }
+    if t.offset().local_minus_utc() == 0 {
+        formatted.push('Z');
+    } else {
+        formatted.push_str(&t.format("%:z").to_string());
+    }
+    formatted
 }
 
 fn level_ord(l: Level) -> u8 {
@@ -172,6 +188,7 @@ pub fn parse_level(s: &str) -> Result<Level, String> {
     }
 }
 
+#[derive(Clone)]
 enum Encoding {
     Unified,
     /// Slow-log format: `# Time: <RFC3339Nano>\n<message>\n`.
@@ -223,7 +240,7 @@ impl Logger {
         Logger {
             inner: Arc::new(LoggerInner {
                 encoder: self.inner.encoder.with_fields(fields),
-                encoding: Encoding::Unified,
+                encoding: self.inner.encoding.clone(),
                 sink: Arc::clone(&self.inner.sink),
                 level: self.inner.level.clone(),
             }),
@@ -241,9 +258,13 @@ impl Logger {
         Arc::ptr_eq(&self.inner.sink, &other.inner.sink)
     }
 
+    fn enabled(&self, level: Level) -> bool {
+        self.inner.level.enabled(level)
+    }
+
     #[track_caller]
     fn emit(&self, level: Level, msg: &str, fields: &[Field]) {
-        if !self.inner.level.enabled(level) {
+        if !self.enabled(level) {
             return;
         }
         let loc = std::panic::Location::caller();
@@ -309,7 +330,12 @@ fn read_globals<R>(f: impl FnOnce(&Globals) -> R) -> R {
     let mut w = GLOBALS.write().unwrap();
     if w.is_none() {
         let level = AtomicLevel::new(Level::Info);
-        let l = Logger::stdout();
+        let l = Logger::new(
+            TextEncoder::default(),
+            Encoding::Unified,
+            Arc::new(Mutex::new(Sink::Stdout)),
+            level.clone(),
+        );
         *w = Some(Globals {
             global: l.clone(),
             slow_query: l.clone(),
@@ -361,15 +387,9 @@ fn validate_compression(c: &str) -> Result<bool, String> {
     }
 }
 
-fn build_sink(
-    file: &FileLogConfig,
-    registry: &mut HashMap<String, SharedSink>,
-) -> Result<SharedSink, String> {
+fn build_sink(file: &FileLogConfig) -> Result<SharedSink, String> {
     if file.filename.is_empty() {
         return Ok(Arc::new(Mutex::new(Sink::Stdout)));
-    }
-    if let Some(s) = registry.get(&file.filename) {
-        return Ok(Arc::clone(s));
     }
     let compress = validate_compression(&file.compression)?;
     let rf = RotatingFile::open(
@@ -379,9 +399,7 @@ fn build_sink(
         compress,
     )
     .map_err(|e| e.to_string())?;
-    let sink: SharedSink = Arc::new(Mutex::new(Sink::File(rf)));
-    registry.insert(file.filename.clone(), Arc::clone(&sink));
-    Ok(sink)
+    Ok(Arc::new(Mutex::new(Sink::File(rf))))
 }
 
 // Go `newSlowQueryLogConfig`/`newGeneralLogConfig`: same file settings,
@@ -404,12 +422,11 @@ pub fn init_logger(cfg: &LogConfig) -> Result<(), String> {
 /// them even when the call site supplies no context fields.
 pub fn init_logger_with_core_fields(cfg: &LogConfig, core_fields: &[Field]) -> Result<(), String> {
     let level = AtomicLevel::new(parse_level(&cfg.config.level)?);
-    let mut registry: HashMap<String, SharedSink> = HashMap::new();
 
     let encoder = TextEncoder::new(&cfg.config)?.with_fields(core_fields);
-    let global_sink = build_sink(&cfg.config.file, &mut registry)?;
+    let global_sink = build_sink(&cfg.config.file)?;
     let global = Logger::new(
-        encoder.clone(),
+        encoder,
         Encoding::Unified,
         Arc::clone(&global_sink),
         level.clone(),
@@ -429,30 +446,41 @@ pub fn init_logger_with_core_fields(cfg: &LogConfig, core_fields: &[Field]) -> R
         )
     };
 
-    // Slow-query logger: dedicated file (shared sink when equal); its
-    // level ignores the global config (always info).
-    let slow_query = {
-        let file = sub_file_config(cfg, &cfg.slow_query_file);
-        let sink = build_sink(&file, &mut registry)?;
-        Logger::new(
-            TextEncoder::default(),
-            Encoding::SlowLog,
-            sink,
-            AtomicLevel::new(Level::Info),
-        )
-    };
+    // Slow/general loggers reuse the global level and sink when their
+    // configured filename is empty or names the global file. Dedicated
+    // loggers are initialized independently at the default info level.
+    let slow_query =
+        if cfg.slow_query_file.is_empty() || cfg.slow_query_file == cfg.config.file.filename {
+            Logger::new(
+                TextEncoder::default(),
+                Encoding::SlowLog,
+                Arc::clone(&global_sink),
+                level.clone(),
+            )
+        } else {
+            let file = sub_file_config(cfg, &cfg.slow_query_file);
+            let sink = build_sink(&file)?;
+            Logger::new(
+                TextEncoder::default(),
+                Encoding::SlowLog,
+                sink,
+                AtomicLevel::new(Level::Info),
+            )
+        };
 
-    // General logger: same shape, unified encoding.
-    let general = {
-        let file = sub_file_config(cfg, &cfg.general_log_file);
-        let sink = build_sink(&file, &mut registry)?;
-        Logger::new(
-            encoder,
-            Encoding::Unified,
-            sink,
-            AtomicLevel::new(Level::Info),
-        )
-    };
+    let general =
+        if cfg.general_log_file.is_empty() || cfg.general_log_file == cfg.config.file.filename {
+            global.clone()
+        } else {
+            let file = sub_file_config(cfg, &cfg.general_log_file);
+            let sink = build_sink(&file)?;
+            Logger::new(
+                TextEncoder::new(&cfg.config)?,
+                Encoding::Unified,
+                sink,
+                AtomicLevel::new(Level::Info),
+            )
+        };
 
     *GLOBALS.write().unwrap() = Some(Globals {
         global,
@@ -466,7 +494,53 @@ pub fn init_logger_with_core_fields(cfg: &LogConfig, core_fields: &[Field]) -> R
 
 /// Replaces the global loggers (Go `ReplaceLogger`).
 pub fn replace_logger(cfg: &LogConfig) -> Result<(), String> {
-    init_logger(cfg)
+    let level = AtomicLevel::new(parse_level(&cfg.config.level)?);
+
+    let global_sink = build_sink(&cfg.config.file)?;
+    let global = Logger::new(
+        TextEncoder::new(&cfg.config)?,
+        Encoding::Unified,
+        global_sink,
+        level.clone(),
+    );
+
+    // Go ReplaceLogger calls both dedicated constructors unconditionally.
+    // Each constructor initializes its own write syncer, even when an empty
+    // sub-logger filename resolves to the same path as the global logger.
+    let slow_file = sub_file_config(cfg, &cfg.slow_query_file);
+    let slow_sink = build_sink(&slow_file)?;
+    let slow_query = Logger::new(
+        TextEncoder::default(),
+        Encoding::SlowLog,
+        slow_sink,
+        AtomicLevel::new(Level::Info),
+    );
+
+    let general_file = sub_file_config(cfg, &cfg.general_log_file);
+    let general_sink = build_sink(&general_file)?;
+    let general = Logger::new(
+        TextEncoder::new(&cfg.config)?,
+        Encoding::Unified,
+        general_sink,
+        AtomicLevel::new(Level::Info),
+    );
+
+    // Go ReplaceLogger does not update errVerboseLogger.
+    let err_verbose = err_verbose_logger();
+    *GLOBALS.write().unwrap() = Some(Globals {
+        global,
+        slow_query,
+        general,
+        err_verbose,
+        level,
+    });
+
+    let config = serde_json::to_string(&cfg.config).map_err(|e| e.to_string())?;
+    bg_logger().info(
+        &format!("replaced global logger with config: {config}"),
+        &[],
+    );
+    Ok(())
 }
 
 // ----- contextual loggers (Go context plumbing -> logger composition) -----
@@ -555,29 +629,29 @@ pub struct ProxyField {
     pub value: String,
 }
 
-/// Go `proxyFields` (httpproxy.FromEnvironment reads the lowercase form
-/// first, then uppercase).
+/// Go `proxyFields` (`httpproxy.FromEnvironment` reads uppercase first, then
+/// lowercase).
 pub fn proxy_fields() -> Vec<ProxyField> {
-    let get = |lower: &str, upper: &str| {
-        std::env::var(lower)
+    let get = |upper: &str, lower: &str| {
+        std::env::var(upper)
             .ok()
             .filter(|v| !v.is_empty())
-            .or_else(|| std::env::var(upper).ok().filter(|v| !v.is_empty()))
+            .or_else(|| std::env::var(lower).ok().filter(|v| !v.is_empty()))
     };
     let mut fields = Vec::with_capacity(3);
-    if let Some(v) = get("http_proxy", "HTTP_PROXY") {
+    if let Some(v) = get("HTTP_PROXY", "http_proxy") {
         fields.push(ProxyField {
             key: "http_proxy",
             value: v,
         });
     }
-    if let Some(v) = get("https_proxy", "HTTPS_PROXY") {
+    if let Some(v) = get("HTTPS_PROXY", "https_proxy") {
         fields.push(ProxyField {
             key: "https_proxy",
             value: v,
         });
     }
-    if let Some(v) = get("no_proxy", "NO_PROXY") {
+    if let Some(v) = get("NO_PROXY", "no_proxy") {
         fields.push(ProxyField {
             key: "no_proxy",
             value: v,
@@ -600,13 +674,29 @@ pub fn log_env_variables() {
 
 // ----- sampled loggers -----
 
-struct SamplerState {
-    window_start: Instant,
-    counts: HashMap<String, u64>,
+struct SampleWindow {
+    started: Instant,
+    count: u64,
 }
 
-/// A sampling logger: logs the first `first` entries per message per
-/// `tick` window (zap `NewSamplerWithOptions` with thereafter=0).
+struct SamplerState {
+    windows: HashMap<(Level, u16), SampleWindow>,
+}
+
+fn sampler_bucket(message: &str) -> u16 {
+    const OFFSET_32: u32 = 2_166_136_261;
+    const PRIME_32: u32 = 16_777_619;
+    const COUNTERS_PER_LEVEL: u32 = 4096;
+
+    let hash = message.bytes().fold(OFFSET_32, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(PRIME_32)
+    });
+    (hash % COUNTERS_PER_LEVEL) as u16
+}
+
+/// A sampling logger: logs the first `first` entries per level and hashed
+/// message bucket per `tick` window (zap `NewSamplerWithOptions`, whose fixed
+/// 4096 counters per level can intentionally collide, with thereafter=0).
 #[derive(Clone)]
 pub struct SampledLogger {
     inner: Logger,
@@ -619,27 +709,48 @@ impl SampledLogger {
     /// Info-level sampled log.
     #[track_caller]
     pub fn info(&self, msg: &str, fields: &[Field]) {
-        if self.admit(msg) {
+        if self.inner.enabled(Level::Info) && self.admit(Level::Info, msg) {
             self.inner.info(msg, fields);
+        }
+    }
+    /// Debug-level sampled log.
+    #[track_caller]
+    pub fn debug(&self, msg: &str, fields: &[Field]) {
+        if self.inner.enabled(Level::Debug) && self.admit(Level::Debug, msg) {
+            self.inner.debug(msg, fields);
         }
     }
     /// Warn-level sampled log.
     #[track_caller]
     pub fn warn(&self, msg: &str, fields: &[Field]) {
-        if self.admit(msg) {
+        if self.inner.enabled(Level::Warn) && self.admit(Level::Warn, msg) {
             self.inner.warn(msg, fields);
         }
     }
-
-    fn admit(&self, msg: &str) -> bool {
-        let mut st = self.state.lock().unwrap();
-        if st.window_start.elapsed() >= self.tick {
-            st.window_start = Instant::now();
-            st.counts.clear();
+    /// Error-level sampled log.
+    #[track_caller]
+    pub fn error(&self, msg: &str, fields: &[Field]) {
+        if self.inner.enabled(Level::Error) && self.admit(Level::Error, msg) {
+            self.inner.error(msg, fields);
         }
-        let n = st.counts.entry(msg.to_string()).or_insert(0);
-        *n += 1;
-        *n <= self.first
+    }
+
+    fn admit(&self, level: Level, msg: &str) -> bool {
+        let mut st = self.state.lock().unwrap();
+        let now = Instant::now();
+        let window = st
+            .windows
+            .entry((level, sampler_bucket(msg)))
+            .or_insert(SampleWindow {
+                started: now,
+                count: 0,
+            });
+        if now.duration_since(window.started) >= self.tick {
+            window.started = now;
+            window.count = 0;
+        }
+        window.count = window.count.wrapping_add(1);
+        window.count <= self.first
     }
 }
 
@@ -651,8 +762,7 @@ fn sampled(base: Logger, tick: Duration, first: u64, fields: &[Field]) -> Sample
         tick,
         first,
         state: Arc::new(Mutex::new(SamplerState {
-            window_start: Instant::now(),
-            counts: HashMap::new(),
+            windows: HashMap::new(),
         })),
     }
 }
@@ -846,10 +956,34 @@ mod tests {
         assert_eq!(f.len(), 2);
     }
 
+    #[test]
+    fn slow_log_time_matches_rfc3339_nano() {
+        let cases = [
+            ("2026-08-12T00:00:05Z", "2026-08-12T00:00:05Z"),
+            ("2026-08-12T08:00:05+08:00", "2026-08-12T08:00:05+08:00"),
+            (
+                "2026-08-12T08:00:05.120000000+08:00",
+                "2026-08-12T08:00:05.12+08:00",
+            ),
+            (
+                "2026-08-12T08:00:05.123456789+08:00",
+                "2026-08-12T08:00:05.123456789+08:00",
+            ),
+        ];
+        for (input, expected) in cases {
+            let timestamp = DateTime::parse_from_rfc3339(input).unwrap();
+            assert_eq!(format_slow_log_time(&timestamp), expected);
+        }
+    }
+
     // Go TestSetLevel.
     #[test]
     fn set_level_test() {
         let _g = guard();
+        *GLOBALS.write().unwrap() = None;
+        set_level("warn").unwrap();
+        assert_eq!(bg_logger().level(), tidb_log::Level::Warn);
+
         let conf = new_log_config(
             "info",
             DEFAULT_LOG_FORMAT,
@@ -868,9 +1002,9 @@ mod tests {
         assert_eq!(get_level(), tidb_log::Level::Debug);
     }
 
-    // Go TestSlowQueryLoggerAndGeneralLoggerCreation (level pinning) and
-    // TestSlowQueryLoggerAndGeneralUseSameLogFileName (shared sink + both
-    // formats in one file).
+    // Go TestSlowQueryLoggerAndGeneralLoggerCreation (dedicated level
+    // pinning) and TestSlowQueryLoggerAndGeneralUseSameLogFileName (shared
+    // sink + shared global level + both formats in one file).
     #[test]
     fn slow_query_and_general_loggers() {
         let _g = guard();
@@ -885,12 +1019,26 @@ mod tests {
         let conf = new_log_config("error", DEFAULT_LOG_FORMAT, "", "", file_cfg, false);
         init_logger(&conf).unwrap();
 
-        // Slow/general loggers ignore the global level (pinned to info).
-        assert_eq!(slow_query_logger().level(), tidb_log::Level::Info);
-        assert_eq!(general_logger().level(), tidb_log::Level::Info);
-
-        // Same filename -> same write syncer, both formats interleaved.
+        // Same effective filename reuses the global level and write syncer.
+        assert_eq!(slow_query_logger().level(), tidb_log::Level::Error);
+        assert_eq!(general_logger().level(), tidb_log::Level::Error);
         assert!(slow_query_logger().same_sink(&general_logger()));
+
+        let conf = new_log_config(
+            "info",
+            DEFAULT_LOG_FORMAT,
+            "",
+            "",
+            FileLogConfig {
+                filename: filename.clone(),
+                max_size: 10,
+                max_days: 10,
+                max_backups: 10,
+                ..Default::default()
+            },
+            false,
+        );
+        init_logger(&conf).unwrap();
         slow_query_logger().info("123", &[]);
         general_logger().info("GENERAL LOG", &[Field::new("test", Value::I64(123))]);
 
@@ -899,18 +1047,85 @@ mod tests {
         assert!(content.contains("GENERAL LOG"));
         let _ = std::fs::remove_file(&filename);
 
-        // Dedicated slow-query file -> different sink.
+        // Dedicated files ignore the global level and pin both loggers to info.
         let slow_file = temp_file("slow.log");
+        let general_file = temp_file("general.log");
         let file_cfg = FileLogConfig {
             filename: filename.clone(),
             max_size: 10,
             ..Default::default()
         };
-        let conf = new_log_config("warn", DEFAULT_LOG_FORMAT, &slow_file, "", file_cfg, false);
+        let conf = new_log_config(
+            "warn",
+            DEFAULT_LOG_FORMAT,
+            &slow_file,
+            &general_file,
+            file_cfg,
+            false,
+        );
         init_logger(&conf).unwrap();
+        assert_eq!(slow_query_logger().level(), tidb_log::Level::Info);
+        assert_eq!(general_logger().level(), tidb_log::Level::Info);
         assert!(!slow_query_logger().same_sink(&bg_logger()));
+        assert!(!general_logger().same_sink(&bg_logger()));
         let _ = std::fs::remove_file(&filename);
         let _ = std::fs::remove_file(&slow_file);
+        let _ = std::fs::remove_file(&general_file);
+
+        let shared_dedicated_file = temp_file("shared_dedicated.log");
+        let conf = new_log_config(
+            "warn",
+            DEFAULT_LOG_FORMAT,
+            &shared_dedicated_file,
+            &shared_dedicated_file,
+            FileLogConfig {
+                filename: filename.clone(),
+                max_size: 10,
+                ..Default::default()
+            },
+            false,
+        );
+        init_logger(&conf).unwrap();
+        assert!(!slow_query_logger().same_sink(&general_logger()));
+        let _ = std::fs::remove_file(&filename);
+        let _ = std::fs::remove_file(&shared_dedicated_file);
+    }
+
+    #[test]
+    fn slow_query_fields_preserve_slow_log_encoding() {
+        let _g = guard();
+        let filename = temp_file("slow_fields.log");
+        let file_cfg = FileLogConfig {
+            filename: filename.clone(),
+            max_size: 4096,
+            ..Default::default()
+        };
+        let conf = new_log_config("info", DEFAULT_LOG_FORMAT, "", "", file_cfg, false);
+        init_logger(&conf).unwrap();
+
+        slow_query_logger()
+            .with_fields(&[Field::new("conn", Value::U64(1))])
+            .info("slow fields", &[]);
+        let content = std::fs::read_to_string(&filename).unwrap();
+        assert!(content.starts_with("# Time:"), "content: {content}");
+        assert!(content.contains("slow fields"), "content: {content}");
+        let _ = std::fs::remove_file(&filename);
+    }
+
+    #[test]
+    fn equal_empty_filenames_share_stdout_sink() {
+        let _g = guard();
+        let conf = new_log_config(
+            "info",
+            DEFAULT_LOG_FORMAT,
+            "",
+            "",
+            FileLogConfig::default(),
+            false,
+        );
+        init_logger(&conf).unwrap();
+        assert!(bg_logger().same_sink(&slow_query_logger()));
+        assert!(bg_logger().same_sink(&general_logger()));
     }
 
     // Go TestCompressedLog.
@@ -956,12 +1171,23 @@ mod tests {
         init_logger(&conf).unwrap();
         conf.config.file.max_days = 14;
         replace_logger(&conf).unwrap();
+
+        // Go ReplaceLogger always recreates the slow-query and general
+        // loggers through their dedicated constructors, even when their
+        // configured filenames are empty and resolve to the global file.
+        assert_eq!(slow_query_logger().level(), tidb_log::Level::Info);
+        assert_eq!(general_logger().level(), tidb_log::Level::Info);
+        assert!(!slow_query_logger().same_sink(&bg_logger()));
+        assert!(!general_logger().same_sink(&bg_logger()));
+        assert!(!slow_query_logger().same_sink(&general_logger()));
+        assert!(!err_verbose_logger().same_sink(&bg_logger()));
         let _ = std::fs::remove_file(&filename);
     }
 
     // Go TestProxyFields: exhaust env combinations.
     #[test]
     fn proxy_fields_test() {
+        let _g = guard();
         let envs = ["http_proxy", "https_proxy", "no_proxy"];
         let uppers = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"];
         let presets = [
@@ -989,6 +1215,12 @@ mod tests {
             std::env::remove_var(l);
             std::env::remove_var(u);
         }
+
+        std::env::set_var("http_proxy", "http://lower.example");
+        std::env::set_var("HTTP_PROXY", "http://upper.example");
+        assert_eq!(proxy_fields()[0].value, "http://upper.example");
+        std::env::remove_var("http_proxy");
+        std::env::remove_var("HTTP_PROXY");
     }
 
     // Go TestSampleLoggerFactory.
@@ -1013,6 +1245,132 @@ mod tests {
         }
         let content = std::fs::read_to_string(&filename).unwrap();
         assert_eq!(content.matches("sample log test").count(), 3);
+        let _ = std::fs::remove_file(&filename);
+    }
+
+    #[test]
+    fn sampled_logger_separates_levels() {
+        let _g = guard();
+        let filename = temp_file("sampled_levels.log");
+        let file_cfg = FileLogConfig {
+            filename: filename.clone(),
+            max_size: 4096,
+            ..Default::default()
+        };
+        let conf = new_log_config("debug", DEFAULT_LOG_FORMAT, "", "", file_cfg, false);
+        init_logger(&conf).unwrap();
+        let logger = sample_logger_factory(Duration::from_secs(60), 1, Vec::new())();
+        logger.debug("same message", &[]);
+        logger.info("same message", &[]);
+        logger.warn("same message", &[]);
+        logger.error("same message", &[]);
+
+        let content = std::fs::read_to_string(&filename).unwrap();
+        assert_eq!(
+            content.matches("same message").count(),
+            4,
+            "content: {content}"
+        );
+        let _ = std::fs::remove_file(&filename);
+    }
+
+    #[test]
+    fn sampled_logger_does_not_count_disabled_entries() {
+        let _g = guard();
+        let filename = temp_file("sampled_disabled.log");
+        let file_cfg = FileLogConfig {
+            filename: filename.clone(),
+            max_size: 4096,
+            ..Default::default()
+        };
+        let conf = new_log_config("warn", DEFAULT_LOG_FORMAT, "", "", file_cfg, false);
+        init_logger(&conf).unwrap();
+        let logger = sample_logger_factory(Duration::from_secs(60), 1, Vec::new())();
+
+        logger.info("enabled later", &[]);
+        set_level("info").unwrap();
+        logger.info("enabled later", &[]);
+
+        let content = std::fs::read_to_string(&filename).unwrap();
+        assert_eq!(
+            content.matches("enabled later").count(),
+            1,
+            "content: {content}"
+        );
+        let _ = std::fs::remove_file(&filename);
+    }
+
+    #[test]
+    fn sampled_logger_uses_source_buckets() {
+        let _g = guard();
+        let filename = temp_file("sampled_buckets.log");
+        let file_cfg = FileLogConfig {
+            filename: filename.clone(),
+            max_size: 4096,
+            ..Default::default()
+        };
+        let conf = new_log_config("info", DEFAULT_LOG_FORMAT, "", "", file_cfg, false);
+        init_logger(&conf).unwrap();
+
+        let mut seen = HashMap::new();
+        let (first, collision) = (0..=4096)
+            .find_map(|i| {
+                let message = format!("message {i}");
+                let bucket = sampler_bucket(&message);
+                seen.insert(bucket, message.clone())
+                    .map(|previous| (previous, message))
+            })
+            .unwrap();
+
+        let logger = sample_logger_factory(Duration::from_secs(60), 1, Vec::new())();
+        logger.info(&first, &[]);
+        logger.info(&collision, &[]);
+
+        let content = std::fs::read_to_string(&filename).unwrap();
+        assert!(content.contains(&first), "content: {content}");
+        assert!(!content.contains(&collision), "content: {content}");
+        let _ = std::fs::remove_file(&filename);
+    }
+
+    #[test]
+    fn sampled_logger_resets_each_message_window_independently() {
+        let _g = guard();
+        let filename = temp_file("sampled_windows.log");
+        let file_cfg = FileLogConfig {
+            filename: filename.clone(),
+            max_size: 4096,
+            ..Default::default()
+        };
+        let conf = new_log_config("info", DEFAULT_LOG_FORMAT, "", "", file_cfg, false);
+        init_logger(&conf).unwrap();
+        let logger = sample_logger_factory(Duration::from_secs(120), 1, Vec::new())();
+        logger.info("message a", &[]);
+        logger.info("message b", &[]);
+        logger.info("message a", &[]);
+        logger.info("message b", &[]);
+
+        logger
+            .state
+            .lock()
+            .unwrap()
+            .windows
+            .get_mut(&(Level::Info, sampler_bucket("message a")))
+            .unwrap()
+            .started = Instant::now() - Duration::from_secs(121);
+        logger.info("message a", &[]);
+        logger.info("message b", &[]);
+
+        let content = std::fs::read_to_string(&filename).unwrap();
+        assert_eq!(
+            content.matches("message a").count(),
+            2,
+            "content: {content}"
+        );
+        assert_eq!(
+            content.matches("message b").count(),
+            1,
+            "content: {content}"
+        );
         let _ = std::fs::remove_file(&filename);
     }
 
