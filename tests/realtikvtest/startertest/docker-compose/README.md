@@ -40,10 +40,10 @@ do not lower it for normal runs.
   RAM, and 30 GiB free Docker disk; more capacity reduces build and bootstrap
   time.
 
-The default external images are pinned by digest in `docker-compose.yml`:
+The default external images in `docker-compose.yml`:
 
-- PD: `release-nextgen-202603@sha256:2af376596238fb9c6350ba962780cb45cf4284e4d8c90574a697b45222b6049a`
-- TiKV and TiKV worker: `release-nextgen-202603@sha256:be56383f85979aaf45e15a59201b5f41d1345dd96a19b9fd8c41d2226556408f`
+- PD: `master-nextgen` (moving tag, not pinned by digest)
+- TiKV and TiKV worker: `cloud-engine-nextgen` (moving tag, not pinned by digest)
 - MinIO: `sha256:d5c7b30d2e49f3886d7da679ffddd8fc327508b4ee564053da619c86b71ac0ba`
 - MinIO client: `sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727`
 - Go build image: `golang:1.25.12@sha256:fe5d57d3b718e7a4986bae156c2d73f44973bfd313073aed08a4de6692bb6161`

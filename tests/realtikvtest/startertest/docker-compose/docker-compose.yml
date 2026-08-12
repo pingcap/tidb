@@ -87,7 +87,7 @@ services:
 
   pd:
     <<: *service-limits
-    image: hub-zot.pingcap.net/mirrors/tidbx/tikv/pd/image:release-nextgen-202603@sha256:2af376596238fb9c6350ba962780cb45cf4284e4d8c90574a697b45222b6049a
+    image: hub-zot.pingcap.net/mirrors/tidbx/tikv/pd/image:master-nextgen
     entrypoint: ["/bin/sh"]
     command: ["-ec", "mkdir -p /var/log/pd && exec /pd-server --config /etc/pd/pd.toml"]
     environment: *no-proxy-env
@@ -103,7 +103,7 @@ services:
 
   create-keyspace:
     <<: *bootstrap-limits
-    image: hub-zot.pingcap.net/mirrors/tidbx/tikv/pd/image:release-nextgen-202603@sha256:2af376596238fb9c6350ba962780cb45cf4284e4d8c90574a697b45222b6049a
+    image: hub-zot.pingcap.net/mirrors/tidbx/tikv/pd/image:master-nextgen
     entrypoint: ["/bin/sh"]
     depends_on:
       pd:
@@ -142,7 +142,7 @@ services:
 
   tikv-1:
     <<: *service-limits
-    image: ${TIKV_COMPOSE_IMAGE:-hub-zot.pingcap.net/mirrors/tidbx/tikv/tikv/image:release-nextgen-202603@sha256:be56383f85979aaf45e15a59201b5f41d1345dd96a19b9fd8c41d2226556408f}
+    image: ${TIKV_COMPOSE_IMAGE:-hub-zot.pingcap.net/mirrors/tidbx/tikv/tikv/image:cloud-engine-nextgen}
     entrypoint: ["/bin/sh"]
     command: ["-ec", "mkdir -p /var/lib/tikv /var/lib/raft/data /var/log/tikv && exec /tikv-server --config /etc/tikv/tikv.toml"]
     environment: *common-env
@@ -166,7 +166,7 @@ services:
 
   tikv-2:
     <<: *service-limits
-    image: ${TIKV_COMPOSE_IMAGE:-hub-zot.pingcap.net/mirrors/tidbx/tikv/tikv/image:release-nextgen-202603@sha256:be56383f85979aaf45e15a59201b5f41d1345dd96a19b9fd8c41d2226556408f}
+    image: ${TIKV_COMPOSE_IMAGE:-hub-zot.pingcap.net/mirrors/tidbx/tikv/tikv/image:cloud-engine-nextgen}
     entrypoint: ["/bin/sh"]
     command: ["-ec", "mkdir -p /var/lib/tikv /var/lib/raft/data /var/log/tikv && exec /tikv-server --config /etc/tikv/tikv.toml"]
     environment: *common-env
@@ -190,7 +190,7 @@ services:
 
   tikv-3:
     <<: *service-limits
-    image: ${TIKV_COMPOSE_IMAGE:-hub-zot.pingcap.net/mirrors/tidbx/tikv/tikv/image:release-nextgen-202603@sha256:be56383f85979aaf45e15a59201b5f41d1345dd96a19b9fd8c41d2226556408f}
+    image: ${TIKV_COMPOSE_IMAGE:-hub-zot.pingcap.net/mirrors/tidbx/tikv/tikv/image:cloud-engine-nextgen}
     entrypoint: ["/bin/sh"]
     command: ["-ec", "mkdir -p /var/lib/tikv /var/lib/raft/data /var/log/tikv && exec /tikv-server --config /etc/tikv/tikv.toml"]
     environment: *common-env
@@ -214,7 +214,7 @@ services:
 
   tikv-worker:
     <<: *service-limits
-    image: ${TIKV_COMPOSE_IMAGE:-hub-zot.pingcap.net/mirrors/tidbx/tikv/tikv/image:release-nextgen-202603@sha256:be56383f85979aaf45e15a59201b5f41d1345dd96a19b9fd8c41d2226556408f}
+    image: ${TIKV_COMPOSE_IMAGE:-hub-zot.pingcap.net/mirrors/tidbx/tikv/tikv/image:cloud-engine-nextgen}
     entrypoint: ["/bin/sh"]
     command: ["-ec", "mkdir -p /var/lib/tikv-worker /var/log/tikv-worker && exec /tikv-worker --config /etc/tikv-worker/config.toml --log-file /var/log/tikv-worker/tikv-worker.log"]
     environment: *common-env
