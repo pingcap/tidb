@@ -363,7 +363,8 @@ fn an_orphaned_index_entry_is_caught() {
     assert!(message.contains("index: idx_b"), "{message}");
 }
 
-/// `ADMIN CHECK INDEX` naming an index the table does not have is Go's 1176.
+/// `ADMIN CHECK INDEX` naming an index the table does not have reaches Go's
+/// generic error boundary because the planner returns a plain `errors.Errorf`.
 #[test]
 fn an_unknown_index_is_named() {
     let mut session = Session::new();
@@ -371,9 +372,13 @@ fn an_unknown_index_is_named() {
     session
         .run("create table t (a int, index idx_a(a))")
         .unwrap();
-    let (code, message) = error_of(&mut session, "admin check index t nosuch");
-    assert_eq!(code, 1091, "{message}");
-    assert!(message.contains("nosuch"), "{message}");
+    let error = session
+        .run("admin check index t nosuch")
+        .expect_err("the index is absent");
+    let mysql = error.to_mysql_error();
+    assert_eq!(mysql.code, 1105, "{}", mysql.message);
+    assert_eq!(mysql.state, *b"HY000");
+    assert_eq!(mysql.message, "secondary index nosuch does not exist");
 }
 
 /// A view has no rows of its own, so `ADMIN CHECK` over one is refused by

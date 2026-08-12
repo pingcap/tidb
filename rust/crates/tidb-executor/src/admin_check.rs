@@ -98,7 +98,8 @@ pub enum AdminCheckError {
     /// nothing to check it against. Refused rather than answered OK.
     NotStored(String),
     /// `ADMIN CHECK INDEX` named an index the table does not have. Go's
-    /// planner raises `ErrKeyDoesNotExist` (1176) for this.
+    /// planner returns a plain `errors.Errorf`, which reaches the client as
+    /// the generic 1105 error.
     UnknownIndex {
         /// The index name as written.
         index: String,

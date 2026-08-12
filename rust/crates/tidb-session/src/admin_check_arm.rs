@@ -182,9 +182,9 @@ fn admin_check_error(error: tidb_executor::admin_check::AdminCheckError) -> Driv
             "data inconsistency in table: {table}, index: {index}, handle: {handle}, \
              index-values:{index_values} != record-values:{record_values}"
         )),
-        AdminCheckError::UnknownIndex { index, table } => {
-            DriverError::UnknownIndex(format!("{index} on {table}"))
-        }
+        AdminCheckError::UnknownIndex { index, .. } => DriverError::from(
+            tidb_executor::ExecError::internal(format!("secondary index {index} does not exist")),
+        ),
         AdminCheckError::NotStored(detail) | AdminCheckError::Decode(detail) => {
             DriverError::unsupported(detail)
         }
