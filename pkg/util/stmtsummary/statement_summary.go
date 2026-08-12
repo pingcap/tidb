@@ -667,7 +667,8 @@ func newStmtSummaryByDigestElement(sei *StmtExecInfo, beginTime int64, intervalS
 	// because it compacts performance to update every time.
 	samplePlan, planHint, e := sei.LazyInfo.GetEncodedPlan()
 	if e != nil {
-		return nil
+		samplePlan = plancodec.PlanDiscardedEncoded
+		planHint = ""
 	}
 	if len(samplePlan) > MaxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
