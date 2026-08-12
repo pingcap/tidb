@@ -635,7 +635,7 @@ fn test_column_encode() {
 /// Source: `rowcodec_test.go::TestRowChecksum`.
 #[test]
 fn test_row_checksum() {
-    let columns = vec![
+    let mut columns = vec![
         DatumColumn {
             id: 3,
             field_type: field(FieldTypeCode::Varchar),
@@ -652,6 +652,7 @@ fn test_row_checksum() {
             datum: Datum::Int(42),
         },
     ];
+    columns.sort_by_key(|column| column.id);
     let mut row = RowData {
         columns,
         data: Vec::new(),
@@ -661,6 +662,32 @@ fn test_row_checksum() {
     assert_eq!(checksum, crc32fast::hash(&encoded));
     assert_ne!(checksum, 0);
     assert_eq!(RowData::default().checksum(None).unwrap(), 0);
+}
+
+#[test]
+fn row_data_preserves_caller_order() {
+    let columns = vec![
+        DatumColumn {
+            id: 2,
+            field_type: field(FieldTypeCode::Varchar),
+            datum: Datum::new_bytes(b"second"),
+        },
+        DatumColumn {
+            id: 1,
+            field_type: field(FieldTypeCode::Varchar),
+            datum: Datum::new_bytes(b"first"),
+        },
+    ];
+    let mut row = RowData {
+        columns,
+        data: Vec::new(),
+    };
+
+    let encoded = row.encode(None).unwrap().to_vec();
+    assert_eq!(row.columns[0].id, 2);
+    assert_eq!(row.columns[1].id, 1);
+    assert_eq!(encoded, b"\x06\0\0\0second\x05\0\0\0first");
+    assert_eq!(row.checksum(None).unwrap(), crc32fast::hash(&encoded));
 }
 
 /// Source: `rowcodec_test.go::TestEncodeDecodeRowWithChecksum`.

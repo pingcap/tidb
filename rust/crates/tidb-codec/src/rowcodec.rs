@@ -103,19 +103,19 @@ pub struct DatumColumn {
     pub datum: Datum,
 }
 
-/// Ordered row data used by TiCDC-compatible column-level checksums.
+/// Caller-ordered row data used by TiCDC-compatible column-level checksums.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RowData {
-    /// Columns; encoding and checksum sort by ID like Go's `sort.Sort`.
+    /// Columns in encoding order. Callers must sort by ID when schema order is
+    /// required, matching Go's `RowData` contract.
     pub columns: Vec<DatumColumn>,
     /// Reusable output buffer.
     pub data: Vec<u8>,
 }
 
 impl RowData {
-    /// Encodes all columns in ID order.
+    /// Encodes all columns in caller-provided order.
     pub fn encode(&mut self, timezone: Option<&SessionTimeZone>) -> Result<&[u8], RowPackageError> {
-        self.columns.sort_by_key(|column| column.id);
         self.data.clear();
         for column in &self.columns {
             append_datum_for_checksum(
@@ -130,7 +130,6 @@ impl RowData {
 
     /// Calculates the same incremental IEEE CRC32 as Go `RowData.Checksum`.
     pub fn checksum(&mut self, timezone: Option<&SessionTimeZone>) -> Result<u32, RowPackageError> {
-        self.columns.sort_by_key(|column| column.id);
         let mut hasher = Hasher::new();
         for column in &self.columns {
             self.data.clear();
