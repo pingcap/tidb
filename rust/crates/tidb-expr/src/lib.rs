@@ -852,12 +852,12 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
                     let pattern = p
                         .sql_string()
                         .map_err(|_| EvalError::Unsupported("invalid UTF-8 LIKE pattern"))?;
-                    let (value, pattern) = if *ilike {
-                        (value.to_lowercase(), pattern.to_lowercase())
+                    let matched = if *ilike {
+                        ilike_match(&value, &pattern, escape.unwrap_or(b'\\'))
                     } else {
-                        (value, pattern)
+                        like_match(&value, &pattern, *escape)
                     };
-                    Ok(bool_int(like_match(&value, &pattern, *escape) ^ not))
+                    Ok(bool_int(matched ^ not))
                 }
             }
         }

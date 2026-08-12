@@ -391,6 +391,15 @@ fn like_source_vectors_preserve_default_escape_semantics() {
 }
 
 #[test]
+fn ilike_uses_source_ascii_lowering_and_escape_rules() {
+    // `pkg/expression/builtin_ilike_test.go::TestIlike`: TiDB lowers ASCII
+    // bytes only, so Unicode case pairs remain distinct. An ASCII-letter
+    // escape marker is preserved while the other pattern bytes are lowered.
+    assert_eq!(e("'ü' ilike 'Ü'"), "INT:0");
+    assert_eq!(e("'abc' ilike 'ABC' escape 'A'"), "INT:0");
+}
+
+#[test]
 fn reverse_source_vectors_preserve_scalar_string_coercion() {
     // pkg/expression/builtin_string_test.go:689 TestReverse
     assert_eq!(e("reverse(null)"), "NULL");
