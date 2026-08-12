@@ -124,46 +124,64 @@ fn print_tidb_info_to(logger: &tidb_log::Logger, info: &VersionInfo, config_json
     );
 }
 
-/// Formats rows as TiDB's ASCII table and rejects empty or ragged inputs.
+/// Formats byte-preserving Go strings as TiDB's ASCII table.
+///
+/// Widths are byte counts, and output bytes are copied unchanged. This is the
+/// semantic boundary of Go's `string`, which is not restricted to UTF-8.
 #[must_use]
-pub fn get_print_result(columns: &[String], rows: &[Vec<String>]) -> Option<String> {
+pub fn get_print_result_bytes<C, D>(columns: &[C], rows: &[Vec<D>]) -> Option<Vec<u8>>
+where
+    C: AsRef<[u8]>,
+    D: AsRef<[u8]>,
+{
     if columns.is_empty() || rows.is_empty() || rows.iter().any(|row| row.len() != columns.len()) {
         return None;
     }
 
-    let mut widths = columns.iter().map(String::len).collect::<Vec<_>>();
+    let mut widths = columns
+        .iter()
+        .map(|column| column.as_ref().len())
+        .collect::<Vec<_>>();
     for row in rows {
         for (width, value) in widths.iter_mut().zip(row) {
-            *width = (*width).max(value.len());
+            *width = (*width).max(value.as_ref().len());
         }
     }
 
-    let divider = widths
-        .iter()
-        .map(|width| format!("+{}", "-".repeat(width + 2)))
-        .collect::<String>()
-        + "+\n";
-    let render_row = |row: &[String]| {
-        let mut rendered = String::new();
-        for (value, width) in row.iter().zip(&widths) {
-            rendered.push('|');
-            rendered.push(' ');
-            rendered.push_str(value);
-            rendered.push_str(&" ".repeat(width + 1 - value.len()));
-        }
-        rendered.push_str("|\n");
-        rendered
-    };
+    let mut divider = Vec::new();
+    for width in &widths {
+        divider.push(b'+');
+        divider.resize(divider.len() + width + 2, b'-');
+    }
+    divider.extend_from_slice(b"+\n");
 
-    let mut output = String::new();
-    output.push_str(&divider);
-    output.push_str(&render_row(columns));
-    output.push_str(&divider);
+    let mut output = Vec::new();
+    output.extend_from_slice(&divider);
+    render_print_row(columns, &widths, &mut output);
+    output.extend_from_slice(&divider);
     for row in rows {
-        output.push_str(&render_row(row));
+        render_print_row(row, &widths, &mut output);
     }
-    output.push_str(&divider);
+    output.extend_from_slice(&divider);
     Some(output)
+}
+
+fn render_print_row<T: AsRef<[u8]>>(row: &[T], widths: &[usize], output: &mut Vec<u8>) {
+    for (value, width) in row.iter().zip(widths) {
+        let value = value.as_ref();
+        output.extend_from_slice(b"| ");
+        output.extend_from_slice(value);
+        output.resize(output.len() + width + 1 - value.len(), b' ');
+    }
+    output.extend_from_slice(b"|\n");
+}
+
+/// Formats UTF-8 rows as TiDB's ASCII table and rejects empty or ragged inputs.
+#[must_use]
+pub fn get_print_result(columns: &[String], rows: &[Vec<String>]) -> Option<String> {
+    get_print_result_bytes(columns, rows).map(|output| {
+        String::from_utf8(output).expect("UTF-8 table inputs produce UTF-8 table output")
+    })
 }
 
 #[cfg(test)]
