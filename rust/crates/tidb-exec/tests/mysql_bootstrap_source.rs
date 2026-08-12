@@ -28,7 +28,7 @@ use tidb_exec::cluster_catalog::{
     load_cluster_catalog, ClusterCatalogError, MetaPairs, MetaSnapshot,
 };
 use tidb_exec::cluster_privilege_load::{
-    load_cluster_privileges, read_bootstrap_state, ClusterBootstrapState,
+    load_cluster_privileges, read_bootstrap_state, read_system_tz, ClusterBootstrapState,
 };
 use tidb_exec::mysql_bootstrap::{
     plan_mysql_bootstrap, BootstrapEnvironment, BootstrapError, BootstrapWrite,
@@ -139,6 +139,16 @@ fn the_bootstrap_marker_is_the_one_the_detector_reads() {
         state,
         ClusterBootstrapState::Bootstrapped { version: Some(_) }
     ));
+}
+
+#[test]
+fn the_seeded_system_timezone_is_the_one_startup_reads() {
+    let mut store = bootstrapped();
+    let catalog = load_cluster_catalog(&mut store).expect("the catalog loads");
+    assert_eq!(
+        read_system_tz(&mut store, &catalog).expect("system_tz reads back"),
+        "Asia/Shanghai"
+    );
 }
 
 #[test]

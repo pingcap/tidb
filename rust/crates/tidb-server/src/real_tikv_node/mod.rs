@@ -1431,27 +1431,7 @@ pub(crate) fn node_accounts(
     Ok((users, Some(reloader)))
 }
 
-/// Rebuilds the cluster-backed global-sysvar cache synchronously before the
-/// server accepts a connection.
-///
-/// Go runs its sysvar cache independently of the privilege cache, including
-/// in skip-grant-table recovery mode. Keeping the load unconditional also
-/// prevents a persisted `require_secure_transport=ON` from having a
-/// fail-open startup window on ordinary auth-file and loaded-account routes.
-pub(crate) fn load_cluster_sysvars(
-    users: &ConfiguredUserStore,
-    authority: &ProductionReadProcessAuthority,
-) -> Result<(), RunConfiguredNodeError> {
-    let opener = authority.transaction_opener();
-    load_cluster_sysvars_with_read(users, move || {
-        tidb_exec::real_tikv_privileges::load_sysvars_from_cluster(
-            &opener,
-            PRODUCTION_CONTROL_PLANE_TIMEOUT,
-        )
-        .map_err(|error| error.to_string())
-    })
-}
-
+#[cfg(test)]
 fn load_cluster_sysvars_with_read(
     users: &ConfiguredUserStore,
     read: impl FnOnce() -> Result<Vec<(String, String)>, String>,
@@ -1468,18 +1448,11 @@ pub(crate) fn prepare_cluster_sysvar_runtime(
     users: &ConfiguredUserStore,
     authority: &ProductionReadProcessAuthority,
 ) -> Result<Option<crate::cluster_sysvar_seam::SysvarReloader>, RunConfiguredNodeError> {
-    let startup_opener = authority.transaction_opener();
+    load_cluster_startup_variables(users, authority)?;
     let reload_opener = authority.transaction_opener();
-    prepare_cluster_sysvar_runtime_with_reads(
+    spawn_cluster_sysvar_reloader_with_read(
         config,
         users,
-        move || {
-            tidb_exec::real_tikv_privileges::load_sysvars_from_cluster(
-                &startup_opener,
-                PRODUCTION_CONTROL_PLANE_TIMEOUT,
-            )
-            .map_err(|error| error.to_string())
-        },
         Box::new(move || {
             tidb_exec::real_tikv_privileges::load_sysvars_from_cluster(
                 &reload_opener,
@@ -1490,6 +1463,32 @@ pub(crate) fn prepare_cluster_sysvar_runtime(
     )
 }
 
+pub(crate) fn load_cluster_startup_variables(
+    users: &ConfiguredUserStore,
+    authority: &ProductionReadProcessAuthority,
+) -> Result<(), RunConfiguredNodeError> {
+    let opener = authority.transaction_opener();
+    let variables = tidb_exec::real_tikv_privileges::load_startup_variables_from_cluster(
+        &opener,
+        PRODUCTION_CONTROL_PLANE_TIMEOUT,
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    initialize_cluster_system_tz_with_read(|| Ok(variables.system_tz))?;
+    let fresh = tidb_session::GlobalSysvars::from_cluster_rows(variables.sysvars);
+    users.global_vars().replace_from(&fresh);
+    Ok(())
+}
+
+fn initialize_cluster_system_tz_with_read(
+    read: impl FnOnce() -> Result<String, String>,
+) -> Result<(), RunConfiguredNodeError> {
+    let system_tz =
+        read().map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    tidb_util::timeutil::set_system_tz(&system_tz);
+    Ok(())
+}
+
+#[cfg(test)]
 fn prepare_cluster_sysvar_runtime_with_reads(
     config: &NodeConfig,
     users: &ConfiguredUserStore,
@@ -1862,6 +1861,16 @@ mod tests {
         assert_eq!(identity.username(), "no-row");
         assert_eq!(identity.host(), "127.0.0.1");
         assert!(identity.privilege_bypassed());
+    }
+
+    #[test]
+    fn cluster_startup_installs_the_bootstrap_system_timezone() {
+        initialize_cluster_system_tz_with_read(|| Ok("Asia/Shanghai".to_owned()))
+            .expect("the persisted timezone installs");
+        assert_eq!(
+            tidb_util::timeutil::get_system_tz().expect("system_tz is initialized"),
+            "Asia/Shanghai"
+        );
     }
 
     #[test]

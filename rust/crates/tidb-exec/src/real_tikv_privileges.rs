@@ -27,7 +27,8 @@ use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
 
 use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_privilege_load::{
-    load_cluster_privileges, read_bootstrap_state, ClusterBootstrapState, ClusterPrivileges,
+    load_cluster_privileges, read_bootstrap_state, read_system_tz, ClusterBootstrapState,
+    ClusterPrivileges,
 };
 use crate::cluster_sysvar_load::load_cluster_sysvars;
 use crate::mysql_system_tables::SystemTableError;
@@ -43,6 +44,16 @@ pub struct ClusterAccounts {
     /// Every `SET GLOBAL` override `mysql.global_variables` held at that same
     /// snapshot, as `(name, value)` pairs ready for
     /// `tidb_session::GlobalSysvars::load_from_cluster`.
+    pub sysvars: Vec<(String, String)>,
+}
+
+/// The process-global values that must be installed from one startup
+/// snapshot before the first session is admitted.
+#[derive(Clone, Debug)]
+pub struct ClusterStartupVariables {
+    /// Go `mysql.tidb.system_tz`.
+    pub system_tz: String,
+    /// Persisted `SET GLOBAL` overrides.
     pub sysvars: Vec<(String, String)>,
 }
 
@@ -110,6 +121,29 @@ pub fn load_sysvars_from_cluster(
         .finish_without_writes()
         .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
     Ok(sysvars)
+}
+
+/// Reads the bootstrap-persisted system time zone and global variables from
+/// one consistent read-only snapshot.
+pub fn load_startup_variables_from_cluster(
+    opener: &RealOptimisticTransactionOpener,
+    timeout: Duration,
+) -> Result<ClusterStartupVariables, SystemTableError> {
+    let mut transaction = opener
+        .begin_read_only()
+        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+    let variables = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        let catalog = load_cluster_catalog(&mut snapshot)?;
+        ClusterStartupVariables {
+            system_tz: read_system_tz(&mut snapshot, &catalog)?,
+            sysvars: load_cluster_sysvars(&mut snapshot, &catalog)?,
+        }
+    };
+    transaction
+        .finish_without_writes()
+        .map_err(|error| SystemTableError::Snapshot(error.to_string()))?;
+    Ok(variables)
 }
 
 fn load_sysvars_from_snapshot<S: MetaSnapshot>(

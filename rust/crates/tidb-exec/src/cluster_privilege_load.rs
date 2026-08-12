@@ -347,6 +347,8 @@ impl fmt::Display for ClusterBootstrapState {
 const BOOTSTRAPPED_VAR: &str = "bootstrapped";
 /// Go `tidbServerVersionVar`.
 const TIDB_SERVER_VERSION_VAR: &str = "tidb_server_version";
+/// Go `tidbSystemTZ`.
+const SYSTEM_TZ_VAR: &str = "system_tz";
 /// Go `varTrue`.
 const VAR_TRUE: &str = "True";
 
@@ -377,6 +379,33 @@ pub fn read_bootstrap_state<S: MetaSnapshot>(
         ClusterBootstrapState::Bootstrapped { version }
     } else {
         ClusterBootstrapState::Unflagged
+    })
+}
+
+/// Reads the process-wide system time zone persisted by TiDB bootstrap.
+///
+/// Go installs this value from `mysql.tidb` before it creates ordinary
+/// sessions. A missing row is a startup error rather than permission to use
+/// the local host's zone, because every node in one cluster must agree.
+pub fn read_system_tz<S: MetaSnapshot>(
+    snapshot: &mut S,
+    catalog: &ClusterCatalog,
+) -> Result<String, SystemTableError> {
+    let view = SystemTableView::locate(catalog, "tidb", &["variable_name", "variable_value"])?;
+    for (key, value) in scan_system_table(snapshot, &view)? {
+        let row = SystemRow::parse(&view, &key, &value)?;
+        if row.text("variable_name")?.as_deref() == Some(SYSTEM_TZ_VAR) {
+            return row
+                .text("variable_value")?
+                .ok_or_else(|| SystemTableError::Decode {
+                    name: "mysql.tidb".to_owned(),
+                    detail: "the system_tz row has a NULL value".to_owned(),
+                });
+        }
+    }
+    Err(SystemTableError::Decode {
+        name: "mysql.tidb".to_owned(),
+        detail: "the system_tz row is missing".to_owned(),
     })
 }
 

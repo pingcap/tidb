@@ -81,10 +81,11 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // parallel); it must stay alive for the node's run and drop before the
     // authority's shutdown drain, like the catalog reloader below.
     let (users, privilege_reloader) = node_accounts(&config, &authority)?;
+    crate::real_tikv_node::load_cluster_startup_variables(&users, &authority)?;
     // The cluster-session path owns one process-wide sysvar reloader below.
-    // Install its persisted boot image synchronously before that reloader and,
-    // crucially, before bind. This is independent of privilege-cache policy.
-    crate::real_tikv_node::load_cluster_sysvars(&users, &authority)?;
+    // Its persisted boot image was installed synchronously above, before this
+    // reloader and, crucially, before bind. This is independent of
+    // privilege-cache policy.
     // Statistics for every table this convergence node's boot catalog holds.
     // Read before `spawn_catalog_reloader` consumes `startup`, so the boot
     // load sees the exact table set the node is about to serve. Held in the
