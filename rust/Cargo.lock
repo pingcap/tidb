@@ -1516,6 +1516,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
 
 [[package]]
+name = "snap"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "199905e6153d6405f9728fe44daace35f8f837bbf830bb6e85fbd5828709a886"
+
+[[package]]
 name = "socket2"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2021,6 +2027,7 @@ name = "tidb-util"
 version = "0.0.0"
 dependencies = [
  "aes",
+ "base64",
  "chrono",
  "chrono-tz",
  "crc32fast",
@@ -2032,11 +2039,13 @@ dependencies = [
  "getrandom 0.3.4",
  "num-traits",
  "prometheus",
+ "prost",
  "regex",
  "rustix",
  "serde",
  "serde_json",
  "sha2",
+ "snap",
  "tempfile",
  "tidb-datatype",
  "tidb-error",

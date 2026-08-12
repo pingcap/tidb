@@ -19,8 +19,11 @@ race = []
 testexport = []
 
 [dependencies]
+base64.workspace = true
 crossbeam-channel = "0.5"
 flate2.workspace = true
+prost.workspace = true
+snap.workspace = true
 tidb-log = { path = "../tidb-log" }
 tidb-kvcache = { path = "../tidb-kvcache" }
 tidb-metadef = { path = "../tidb-metadef" }

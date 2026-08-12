@@ -49,6 +49,7 @@ pub mod nocopy;
 pub mod paging;
 pub mod partialjson;
 pub mod password_validation;
+pub mod plancodec;
 pub mod ppcpuusage;
 pub mod prefetch;
 pub mod printer;

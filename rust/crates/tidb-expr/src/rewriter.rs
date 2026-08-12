@@ -1797,6 +1797,8 @@ mod builtin_type_tests {
             // No fixed flen.
             ("format_bytes(0)", unspecified, false),
             ("format_nano_time(0)", unspecified, false),
+            ("tidb_decode_plan('')", unspecified, false),
+            ("tidb_decode_binary_plan('')", unspecified, false),
             ("json_search('[\"a\"]', 'one', 'a')", unspecified, false),
         ] {
             let ft = ret_type(expr);
@@ -1947,6 +1949,22 @@ mod builtin_type_tests {
         assert_eq!(eval("to_seconds('0000-00-00')"), Datum::Null);
         assert_eq!(eval("to_seconds(950501)"), Datum::Int(62_966_505_600));
         assert_eq!(eval("format_bytes(0)"), text_datum("0 bytes"));
+        let encoded = tidb_util::plancodec::compress(b"0\t1\t0\t1\teq(a, 1)\n");
+        assert_eq!(
+            eval(&format!("tidb_decode_plan('{encoded}')")),
+            text_datum(
+                "\tid       \ttask\testRows\toperator info\n\tSelection\troot\t1      \teq(a, 1)"
+            )
+        );
+        assert_eq!(
+            eval("tidb_decode_plan('malformed')"),
+            text_datum("malformed")
+        );
+        let binary_discarded = tidb_util::plancodec::BINARY_PLAN_DISCARDED_ENCODED.as_str();
+        assert_eq!(
+            eval(&format!("tidb_decode_binary_plan('{binary_discarded}')")),
+            text_datum(tidb_util::plancodec::PLAN_DISCARDED_DECODED)
+        );
         assert_eq!(
             eval("time_format('23:00:00', '%H %k')"),
             text_datum("23 23")

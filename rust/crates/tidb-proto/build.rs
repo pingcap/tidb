@@ -14,6 +14,7 @@ fn main() {
     println!("cargo:rerun-if-changed=proto/etcdserverpb.proto");
     println!("cargo:rerun-if-changed=proto/brpb.proto");
     println!("cargo:rerun-if-changed=proto/encryptionpb.proto");
+    println!("cargo:rerun-if-changed=proto/explain.proto");
 
     tonic_prost_build::configure()
         .build_client(true)
@@ -34,6 +35,7 @@ fn main() {
                 "proto/etcdserverpb.proto",
                 "proto/brpb.proto",
                 "proto/encryptionpb.proto",
+                "proto/explain.proto",
             ],
             &["proto"],
         )

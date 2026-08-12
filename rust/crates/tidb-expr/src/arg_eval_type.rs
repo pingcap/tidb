@@ -319,6 +319,9 @@ const fn string_arg_mask(name: &str) -> ArgMask {
         // `builtin_string.go:3180` `types.ETString, types.ETString`
         // (quoteFunctionClass) -- the leading entry is the RETURN type.
         b"QUOTE" => 1 << 0,
+        // `tidbDecodePlanFunctionClass.getFunction`: both textual and binary
+        // decoders declare their sole argument as `types.ETString`.
+        b"TIDB_DECODE_PLAN" | b"TIDB_DECODE_BINARY_PLAN" => 1 << 0,
         // `builtin_string.go:2029` `types.ETString, types.ETString`
         // (lTrimFunctionClass) and `:2098` the same for `rTrimFunctionClass`.
         b"LTRIM" | b"RTRIM" => 1 << 0,

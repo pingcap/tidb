@@ -92,6 +92,7 @@ rustix = { version = "1.1", features = ["process"] }
 # Go os.Hostname uses GetComputerNameExW on Windows; SEM restores that value.
 windows-sys = "0.61"
 base64 = "0.22"
+snap = "1"
 # Secure, atomic temporary spill-file creation. The random-name algorithm is
 # an OS/library concern; TiDB's contract is uniqueness, privacy, and exclusive
 # creation, all of which `tempfile` provides without a hand-rolled loop.

@@ -911,10 +911,9 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // its own. Whether the arguments are compared as ints or as reals is
         // an ARGUMENT-side choice that does not reach the result type.
         "interval" if args.len() >= 2 => int(),
-        // Go `formatBytesFunctionClass`/`formatNanoTimeFunctionClass`
-        // (`pkg/expression/builtin_info.go`): real in, connection-charset
-        // text out, with no fixed flen.
+        // These information functions return connection-charset text with no fixed flen.
         "format_bytes" | "format_nano_time" if args.len() == 1 => text(),
+        "tidb_decode_plan" | "tidb_decode_binary_plan" if args.len() == 1 => text(),
         // Go `timeFormatFunctionClass` (`pkg/expression/builtin_time.go`):
         // a DURATION and a format string in, text out, with the flen sized
         // from the FORMAT argument's -- `(flen + 1) / 2 * 11`, an upper bound

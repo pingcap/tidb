@@ -27,7 +27,39 @@ pub(crate) fn dispatch(
     match (name, vals) {
         ("FORMAT_BYTES", [value]) => Some(format_bytes(value, ctx)),
         ("FORMAT_NANO_TIME", [value]) => Some(format_nano_time(value, ctx)),
+        ("TIDB_DECODE_PLAN", [value]) => Some(decode_plan(value)),
+        ("TIDB_DECODE_BINARY_PLAN", [value]) => Some(decode_binary_plan(value, ctx)),
         _ => None,
+    }
+}
+
+/// `TIDB_DECODE_PLAN(value)`. TiDB deliberately returns the original encoded
+/// value when a textual plan is malformed, so slow-log queries remain useful
+/// even when one row predates the current codec.
+fn decode_plan(value: &Datum) -> Result<Datum, EvalError> {
+    let Some(input) = crate::arg_eval_type::eval_string(value)? else {
+        return Ok(Datum::Null);
+    };
+    Ok(match tidb_util::plancodec::decode_plan(&input) {
+        Ok(decoded) => Datum::new_string(decoded),
+        Err(_) => Datum::new_string(input),
+    })
+}
+
+/// `TIDB_DECODE_BINARY_PLAN(value)`. Its error policy differs from the textual
+/// builtin: malformed data becomes an empty string and one statement warning.
+fn decode_binary_plan(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    let Some(input) = crate::arg_eval_type::eval_string(value)? else {
+        return Ok(Datum::Null);
+    };
+    let decoded =
+        tidb_util::plancodec::decode_binary_plan(&input).map_err(|error| error.to_string());
+    match decoded {
+        Ok(decoded) => Ok(Datum::new_string(decoded)),
+        Err(error) => {
+            ctx.append_warning(1105, &error);
+            Ok(Datum::new_string(Vec::new()))
+        }
     }
 }
 
@@ -129,7 +161,8 @@ fn scientific(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::dispatch;
-    use crate::Datum;
+    use crate::{Columns, Datum};
+    use std::cell::RefCell;
 
     fn call(name: &str, value: Datum) -> Datum {
         dispatch(name, &[value], &crate::NoColumns)
@@ -211,6 +244,122 @@ mod tests {
                 .sql_string()
                 .unwrap(),
             "0 ns"
+        );
+    }
+
+    #[derive(Default)]
+    struct Warnings(RefCell<Vec<(u16, String)>>);
+
+    impl Columns for Warnings {
+        fn get(&self, _path: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    #[test]
+    fn decode_plan_builtins_preserve_their_distinct_error_policies() {
+        let mut raw = String::new();
+        tidb_util::plancodec::normalize_plan_node(
+            0,
+            tidb_util::plancodec::TYPE_SELECTION,
+            "0",
+            "eq(a, 1)",
+            &mut raw,
+        );
+        let encoded = tidb_util::plancodec::compress(raw.as_bytes());
+        let decoded = dispatch(
+            "TIDB_DECODE_PLAN",
+            &[Datum::new_string(encoded)],
+            &crate::NoColumns,
+        )
+        .unwrap()
+        .unwrap()
+        .sql_string()
+        .unwrap();
+        assert!(decoded.contains("Selection"));
+        assert_eq!(
+            dispatch(
+                "TIDB_DECODE_PLAN",
+                &[Datum::new_string("malformed")],
+                &crate::NoColumns,
+            )
+            .unwrap()
+            .unwrap()
+            .sql_string()
+            .unwrap(),
+            "malformed"
+        );
+
+        let warnings = Warnings::default();
+        for (input, warning) in [
+            ("some random bytes", "illegal base64 data at input byte 4"),
+            ("c29tZSByYW5kb20gYnl0ZXM=", "snappy: corrupt input"),
+            ("EUBzb21lIHJhbmRvbSBieXRlcw==", "proto: illegal wireType 7"),
+        ] {
+            assert_eq!(
+                dispatch(
+                    "TIDB_DECODE_BINARY_PLAN",
+                    &[Datum::new_string(input)],
+                    &warnings,
+                )
+                .unwrap()
+                .unwrap()
+                .sql_string()
+                .unwrap(),
+                ""
+            );
+            assert_eq!(
+                warnings.0.borrow().last().unwrap(),
+                &(1105, warning.to_owned())
+            );
+        }
+        assert_eq!(
+            dispatch(
+                "TIDB_DECODE_BINARY_PLAN",
+                &[Datum::new_string(
+                    tidb_util::plancodec::BINARY_PLAN_DISCARDED_ENCODED.as_str(),
+                )],
+                &warnings,
+            )
+            .unwrap()
+            .unwrap()
+            .sql_string()
+            .unwrap(),
+            tidb_util::plancodec::PLAN_DISCARDED_DECODED
+        );
+        assert_eq!(
+            dispatch("TIDB_DECODE_PLAN", &[Datum::Null], &warnings)
+                .unwrap()
+                .unwrap(),
+            Datum::Null
+        );
+        assert_eq!(
+            dispatch(
+                "TIDB_DECODE_PLAN",
+                &[Datum::new_string(vec![0xff])],
+                &warnings,
+            )
+            .unwrap()
+            .unwrap(),
+            Datum::new_string(vec![0xff])
+        );
+        assert_eq!(
+            dispatch(
+                "TIDB_DECODE_BINARY_PLAN",
+                &[Datum::new_string(vec![0xff])],
+                &warnings,
+            )
+            .unwrap()
+            .unwrap(),
+            Datum::new_string(Vec::new())
+        );
+        assert_eq!(
+            warnings.0.borrow().last().unwrap(),
+            &(1105, "illegal base64 data at input byte 0".to_owned())
         );
     }
 }
