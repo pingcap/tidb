@@ -384,6 +384,17 @@ func setFloat64Data(val float64, d *types.Datum) error {
 	return nil
 }
 
+// getDecimalByteSetter returns a setter for byte array DECIMAL columns.
+// Dictionary decoded values alias the shared dictionary buffer, and the
+// conversion consumes its input in place, so copy it into our own buffer first.
+func getDecimalByteSetter[T parquet.ByteArray | parquet.FixedLenByteArray](scale int) setter[T] {
+	var buf []byte
+	return func(val T, d *types.Datum) error {
+		buf = append(buf[:0], val...)
+		return setDatumFromDecimalByte(d, buf, scale)
+	}
+}
+
 func getByteArraySetter(converted *convertedType) setter[parquet.ByteArray] {
 	switch converted.converted {
 	case schema.ConvertedTypes.None, schema.ConvertedTypes.BSON, schema.ConvertedTypes.JSON, schema.ConvertedTypes.UTF8, schema.ConvertedTypes.Enum:
@@ -393,9 +404,7 @@ func getByteArraySetter(converted *convertedType) setter[parquet.ByteArray] {
 			return nil
 		}
 	case schema.ConvertedTypes.Decimal:
-		return func(val parquet.ByteArray, d *types.Datum) error {
-			return setDatumFromDecimalByte(d, val, int(converted.decimalMeta.Scale))
-		}
+		return getDecimalByteSetter[parquet.ByteArray](int(converted.decimalMeta.Scale))
 	}
 
 	return nil
@@ -410,9 +419,7 @@ func getFixedLenByteArraySetter(converted *convertedType) setter[parquet.FixedLe
 			return nil
 		}
 	case schema.ConvertedTypes.Decimal:
-		return func(val parquet.FixedLenByteArray, d *types.Datum) error {
-			return setDatumFromDecimalByte(d, val, int(converted.decimalMeta.Scale))
-		}
+		return getDecimalByteSetter[parquet.FixedLenByteArray](int(converted.decimalMeta.Scale))
 	}
 
 	return nil
