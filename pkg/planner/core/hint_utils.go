@@ -351,7 +351,7 @@ func genJoinMethodHintForSinglePhysicalJoin(
 	if parentQBOffset == -1 {
 		return nil
 	}
-	hintTbls, hintQBName := genHintTblForJoinNodes(sctx, children, parentQBOffset, nodeType)
+	hintTbls, hintQBName, qbOffsets := genHintTblForJoinNodes(sctx, children, parentQBOffset, nodeType)
 	effectiveHintTbls := slices.DeleteFunc(slices.Clone(hintTbls), func(ht *ast.HintTable) bool {
 		return ht == nil
 	})
@@ -360,6 +360,12 @@ func genJoinMethodHintForSinglePhysicalJoin(
 	}
 
 	if onlyFirstTbl && hintTbls[0] == nil {
+		return nil
+	}
+	// Directional join hints name a specific child. Do not emit one when the
+	// same canonical identity also names its sibling, because replay could not
+	// preserve the intended build/probe or inner/outer side.
+	if onlyFirstTbl && !hintTableIdentityIsUnique(hintTbls, qbOffsets, 0) {
 		return nil
 	}
 
@@ -378,15 +384,15 @@ func genJoinMethodHintForSinglePhysicalJoin(
 
 // genHintTblForJoinNodes tries to generate ast.HintTable for each join node, and the QB name for the hint itself.
 // (Join node here means the operators that are joined, not Join operator itself)
-// If the return values is not (nil,nil), len(hintTbls) should be equal to len(joinedNodes). The invalid ones in the
-// returned hintTbls slice will be nil.
+// len(hintTbls) and len(qbOffsets) equal len(joinedNodes). Invalid entries are
+// represented by nil in hintTbls and -1 at the same position in qbOffsets.
 // The hintQBNamePtr will be nil if it's not needed, or we failed to generate one.
 func genHintTblForJoinNodes(
 	sctx base.PlanContext,
 	joinedNodes []base.PhysicalPlan,
 	parentQBOffset int,
 	nodeType h.NodeType,
-) (hintTbls []*ast.HintTable, hintQBNamePtr *ast.CIStr) {
+) (hintTbls []*ast.HintTable, hintQBNamePtr *ast.CIStr, qbOffsets []int) {
 	// 1. Use genHintTblForSingleJoinNode() to generate QB offset and table name for each join node.
 
 	// Note that if we failed to generate valid information for one element in joinedNodes, we append -1 and nil instead
@@ -394,7 +400,7 @@ func genHintTblForJoinNodes(
 	// So qbOffsets[x] is -1 if and only if hintTbls[x] is nil;
 	// and qbOffsets[x] >=0 if and only if hintTbls[x] is not nil.
 	hintTbls = make([]*ast.HintTable, 0, len(joinedNodes))
-	qbOffsets := make([]int, 0, len(joinedNodes))
+	qbOffsets = make([]int, 0, len(joinedNodes))
 	for _, plan := range joinedNodes {
 		qbOffset, _, ht := genHintTblForSingleJoinNode(sctx, plan, parentQBOffset)
 		if qbOffset < 0 || ht == nil {
@@ -432,7 +438,7 @@ func genHintTblForJoinNodes(
 	// The hint belongs to the frozen join-group owner. Never infer it from
 	// operand origins; mixed origins are expected after derived-table flattening.
 	if slices.Contains(qbOffsets, -1) {
-		return hintTbls, nil
+		return hintTbls, nil, qbOffsets
 	}
 
 	// We don't generate an unnecessary QB name for the outermost block.
@@ -440,11 +446,63 @@ func genHintTblForJoinNodes(
 		(parentQBOffset > 0 && (nodeType == h.TypeUpdate || nodeType == h.TypeDelete)) {
 		hintQBName, err := h.GenerateQBName(nodeType, parentQBOffset)
 		if err != nil {
-			return nil, nil
+			return nil, nil, nil
 		}
 		hintQBNamePtr = &hintQBName
 	}
-	return hintTbls, hintQBNamePtr
+	return hintTbls, hintQBNamePtr, qbOffsets
+}
+
+// generatedHintTableIdentity is only an equality key for identities already
+// resolved by genHintTblForSingleJoinNode; it does not perform identity resolution.
+type generatedHintTableIdentity struct {
+	dbName, tableName string
+	qbOffset          int
+}
+
+func generatedHintTableIdentityAt(
+	hintTbls []*ast.HintTable,
+	qbOffsets []int,
+	index int,
+) (generatedHintTableIdentity, bool) {
+	if index < 0 || index >= len(hintTbls) || index >= len(qbOffsets) ||
+		hintTbls[index] == nil || qbOffsets[index] < 0 {
+		return generatedHintTableIdentity{}, false
+	}
+	return generatedHintTableIdentity{
+		dbName:    hintTbls[index].DBName.L,
+		tableName: hintTbls[index].TableName.L,
+		qbOffset:  qbOffsets[index],
+	}, true
+}
+
+func hintTableIdentityIsUnique(hintTbls []*ast.HintTable, qbOffsets []int, target int) bool {
+	targetIdentity, ok := generatedHintTableIdentityAt(hintTbls, qbOffsets, target)
+	if !ok {
+		return false
+	}
+	for i := range hintTbls {
+		identity, ok := generatedHintTableIdentityAt(hintTbls, qbOffsets, i)
+		if ok && i != target && identity == targetIdentity {
+			return false
+		}
+	}
+	return true
+}
+
+func hintTableIdentitiesAreUnique(hintTbls []*ast.HintTable, qbOffsets []int) bool {
+	seen := make(map[generatedHintTableIdentity]struct{}, len(hintTbls))
+	for i := range hintTbls {
+		identity, ok := generatedHintTableIdentityAt(hintTbls, qbOffsets, i)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[identity]; exists {
+			return false
+		}
+		seen[identity] = struct{}{}
+	}
+	return true
 }
 
 // genHintTblForSingleJoinNode resolves one physical join operand in the frozen
@@ -532,13 +590,19 @@ func genJoinOrderHintFromRootPhysicalJoin(
 	}
 
 	// 2. Generate the leading hint based on the ordered join nodes.
-	hintTbls, hintQBName := genHintTblForJoinNodes(p.SCtx(), orderedJoinGroup, p.QueryBlockOffset(), nodeType)
+	hintTbls, hintQBName, qbOffsets := genHintTblForJoinNodes(p.SCtx(), orderedJoinGroup, p.QueryBlockOffset(), nodeType)
 
 	// For now, we generate the leading hint only if we successfully generate the names for all nodes.
 	if slices.Contains(hintTbls, nil) {
 		return nil
 	}
 	if len(hintTbls) <= 2 {
+		return nil
+	}
+	// LEADING must identify every operand in the ordered join group. If two
+	// operands have the same canonical owner-visible identity, no generated
+	// list can replay the physical order unambiguously.
+	if !hintTableIdentitiesAreUnique(hintTbls, qbOffsets) {
 		return nil
 	}
 	for id := range localVisitedIDs {

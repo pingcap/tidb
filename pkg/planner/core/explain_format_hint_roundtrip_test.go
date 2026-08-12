@@ -164,6 +164,28 @@ func TestExplainFormatHintRecoverableForDerivedTableAlias(t *testing.T) {
 		require.Contains(t, replayedHints, "leading(`test`.`o1`, `test`.`o2`, `test`.`o3`, `test`.`o4`)")
 		require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
 	})
+
+	t.Run("flattened multi-table derived alias is not emitted as duplicate leading operands", func(t *testing.T) {
+		hints := tk.MustQuery(`explain format='hint' select *
+			from t1
+			join (
+				select /*+ merge_join(t2, t3) */ t2.a, t2.b
+				from t2 join t3 on t2.a = t3.a
+			) dt on t1.a = dt.a`).Rows()[0][0]
+
+		require.NotRegexp(t, `leading\([^)]*dt[^)]*dt`, hints)
+		require.NotRegexp(t, `hash_join_(build|probe)\([^)]*dt`, hints)
+		require.Contains(t, hints, "merge_join(`test`.`dt`)")
+
+		replayedHints := tk.MustQuery(fmt.Sprintf(`explain format='hint' select /*+ %s */ *
+			from t1
+			join (
+				select t2.a, t2.b
+				from t2 join t3 on t2.a = t3.a
+			) dt on t1.a = dt.a`, hints)).Rows()[0][0]
+		require.Contains(t, replayedHints, "merge_join(`test`.`dt`)")
+		require.Empty(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+	})
 }
 
 func TestExplainFormatHintDoesNotExtendLeadingAcrossQueryBlockOwners(t *testing.T) {
