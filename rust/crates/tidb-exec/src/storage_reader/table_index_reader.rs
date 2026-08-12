@@ -15,7 +15,7 @@
 //! Direct lifecycle translation of Go TableReaderExecutor and
 //! IndexReaderExecutor after request construction.
 
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_distsql::{
     InjectedQueryRuntime, QueryResultContext, QueryRuntimeError, QueryTransport, SelectInput,
     SelectResponseIter, SelectResultError, SelectResultRow, SelectResultSource,
@@ -37,6 +37,7 @@ pub struct ReaderPlan {
     kind: ReaderKind,
     requests: Vec<TransportRequest>,
     final_field_types: Vec<FieldType>,
+    time_zone: SessionTimeZone,
     intermediate_output_types: Vec<Vec<FieldType>>,
     warnings: WarningCollector,
     cop_plan_ids: Vec<isize>,
@@ -58,6 +59,7 @@ impl ReaderPlan {
             kind,
             requests,
             final_field_types,
+            time_zone: SessionTimeZone::utc(),
             intermediate_output_types: Vec::new(),
             warnings: WarningCollector::new(),
             cop_plan_ids: Vec::new(),
@@ -89,6 +91,13 @@ impl ReaderPlan {
     #[must_use]
     pub fn with_warnings(mut self, warnings: WarningCollector) -> Self {
         self.warnings = warnings;
+        self
+    }
+
+    /// Uses the statement location when decoding packed `TIMESTAMP` values.
+    #[must_use]
+    pub fn with_time_zone(mut self, time_zone: SessionTimeZone) -> Self {
+        self.time_zone = time_zone;
         self
     }
 
@@ -242,7 +251,8 @@ where
                 QueryResultContext::new(
                     self.plan.final_field_types.clone(),
                     self.plan.warnings.clone(),
-                ),
+                )
+                .with_time_zone(self.plan.time_zone.clone()),
                 self.plan.cop_plan_ids.clone(),
                 self.plan.root_plan_id,
                 self.plan.runtime_stats_collector_enabled,

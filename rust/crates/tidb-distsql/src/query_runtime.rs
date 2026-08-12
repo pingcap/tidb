@@ -26,7 +26,7 @@ mod query_response;
 
 pub use query_response::{QueryResponse, QueryResponseError, QueryResultSubset, QuerySelectResult};
 
-use tidb_datatype::FieldType;
+use tidb_datatype::{FieldType, SessionTimeZone};
 use tidb_txnkv::EventCallback;
 
 use crate::{
@@ -69,6 +69,7 @@ pub struct QueryDispatch {
 #[derive(Clone)]
 pub struct QueryResultContext {
     final_field_types: Vec<FieldType>,
+    time_zone: SessionTimeZone,
     warnings: WarningCollector,
     event_callback: Option<EventCallback>,
 }
@@ -76,12 +77,20 @@ pub struct QueryResultContext {
 impl QueryResultContext {
     /// Creates the decoding context for one result owner.
     #[must_use]
-    pub const fn new(final_field_types: Vec<FieldType>, warnings: WarningCollector) -> Self {
+    pub fn new(final_field_types: Vec<FieldType>, warnings: WarningCollector) -> Self {
         Self {
             final_field_types,
+            time_zone: SessionTimeZone::utc(),
             warnings,
             event_callback: None,
         }
+    }
+
+    /// Uses the statement location for schema-aware timestamp decoding.
+    #[must_use]
+    pub fn with_time_zone(mut self, time_zone: SessionTimeZone) -> Self {
+        self.time_zone = time_zone;
+        self
     }
 
     /// Installs the transaction-event callback passed through Go's
@@ -314,6 +323,7 @@ impl<T: QueryTransport> InjectedQueryRuntime<T> {
             response,
             dispatch.result,
             result_context.final_field_types,
+            result_context.time_zone,
             result_context.warnings,
             runtime_stats_collector_enabled,
         ))

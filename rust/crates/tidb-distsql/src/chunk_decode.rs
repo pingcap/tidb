@@ -17,19 +17,17 @@
 //! TiDB's `selectResult.fetchResp` first unmarshals a tipb `SelectResponse`,
 //! then consumes each `Chunk` according to its response-level `EncodeType`.
 //! This module owns the wire/metadata boundary plus source-shaped default and
-//! columnar byte framing. A bounded scalar conversion is exposed only for
-//! source-proven integer/float/string columns; temporal, JSON, vector, and
-//! schema-dependent conversions still depend on the unported Go
-//! `types`/`chunk` owners and must not be guessed.
+//! columnar byte framing. Default rows are materialized with the exact field
+//! metadata and statement location used by Go's `codec.Decoder.DecodeOne`.
 
 use std::fmt;
 
 use prost::Message;
 use tidb_codec::{
-    decode_column_datums, decode_columns, decode_default_rows, CodecError, ColumnCodecError,
-    ColumnLayout, RawColumn, RawValue, TypedColumnError,
+    decode_column_datums, decode_columns, decode_default_rows, decode_one_typed_in_timezone,
+    CodecError, ColumnCodecError, ColumnLayout, RawColumn, RawValue, TypedColumnError,
 };
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_proto::{Chunk, EncodeType, RowMeta, SelectResponse};
 
 /// A raw row slice described by a tipb [`RowMeta`].
@@ -238,25 +236,49 @@ impl RawChunk<'_> {
         decode_default_rows(self.rows_data, column_count).map_err(ChunkDecodeError::DefaultCodec)
     }
 
-    /// Materializes the source-proven scalar subset of a `TypeDefault` row.
-    ///
-    /// This keeps row framing and typed conversion separate: each value is
-    /// decoded by `codec.DecodeOne`-equivalent logic, while temporal, JSON,
-    /// vector, and sentinel tags return an explicit codec error until their
-    /// owning `Datum` representations are ported.
+    /// Materializes `TypeDefault` rows in UTC.
     pub fn decode_default_datums(
         &self,
-        column_count: usize,
+        field_types: &[FieldType],
     ) -> Result<Vec<Vec<Datum>>, ChunkDecodeError> {
-        self.decode_default_values(column_count)?
-            .into_iter()
-            .map(|row| {
-                row.into_iter()
-                    .map(RawValue::decode_datum)
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(ChunkDecodeError::DefaultCodec)
-            })
-            .collect()
+        self.decode_default_datums_in_timezone(field_types, &SessionTimeZone::utc())
+    }
+
+    /// Materializes source `TypeDefault` rows with Go's field-aware decoder.
+    pub fn decode_default_datums_in_timezone(
+        &self,
+        field_types: &[FieldType],
+        time_zone: &SessionTimeZone,
+    ) -> Result<Vec<Vec<Datum>>, ChunkDecodeError> {
+        if self.encode_type != EncodeType::TypeDefault {
+            return Err(ChunkDecodeError::UnsupportedTypedRowDecoding {
+                encode_type: self.encode_type,
+            });
+        }
+        if field_types.is_empty() {
+            return if self.rows_data.is_empty() {
+                Ok(Vec::new())
+            } else {
+                Err(ChunkDecodeError::DefaultCodec(CodecError::InvalidEncoding(
+                    "nonempty default chunk has no fields",
+                )))
+            };
+        }
+
+        let mut input = self.rows_data;
+        let mut rows = Vec::new();
+        while !input.is_empty() {
+            let mut row = Vec::with_capacity(field_types.len());
+            for field_type in field_types {
+                let (remain, value) =
+                    decode_one_typed_in_timezone(input, field_type, Some(time_zone))
+                        .map_err(ChunkDecodeError::DefaultCodec)?;
+                input = remain;
+                row.push(value);
+            }
+            rows.push(row);
+        }
+        Ok(rows)
     }
 
     /// Decodes source `chunk.Codec` framing for a `TypeChunk` payload.

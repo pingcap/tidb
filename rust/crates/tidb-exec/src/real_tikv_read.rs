@@ -1115,8 +1115,7 @@ pub struct RealTiKvReadSession<T = ProductionReadTransport, S = PdTimestampSourc
     /// to `UTC`/`0`, matching a fresh connection's default zone; [`Self::set_time_zone`]
     /// updates it in place on `SET time_zone`, so every read after that point
     /// (not merely the next one) observes the new zone.
-    time_zone_name: String,
-    time_zone_offset_secs: i32,
+    time_zone: SessionTimeZone,
     /// `DAGRequest.flags`, Go `builder_utils.go`'s `sc.PushDownFlags()`.
     ///
     /// This tier serves ONE statement class -- `ReadOnlyScanPlan` admits
@@ -1168,8 +1167,7 @@ where
             },
             last_snapshot_ts: None,
             _lease: None,
-            time_zone_name: "UTC".to_owned(),
-            time_zone_offset_secs: 0,
+            time_zone: SessionTimeZone::utc(),
             push_down_flags: select_push_down_flags(),
             warnings: WarningCollector::new(),
         }
@@ -1191,8 +1189,7 @@ where
             identity,
             last_snapshot_ts: None,
             _lease: lease,
-            time_zone_name: "UTC".to_owned(),
-            time_zone_offset_secs: 0,
+            time_zone: SessionTimeZone::utc(),
             push_down_flags: select_push_down_flags(),
             warnings: WarningCollector::new(),
         }
@@ -1241,9 +1238,7 @@ where
     /// this stamper and `crate::cop_scan`'s reduce to the one call to
     /// [`SessionTimeZone::dag_zone`] and cannot drift apart.
     pub fn set_time_zone(&mut self, zone: &SessionTimeZone) {
-        let (name, offset_secs) = zone.dag_zone();
-        self.time_zone_name = name;
-        self.time_zone_offset_secs = i32::try_from(offset_secs).unwrap_or_default();
+        self.time_zone = zone.clone();
     }
 
     /// Returns the real PD cluster identity, or zero for an injected test engine.
@@ -1415,7 +1410,12 @@ where
                 .finish()
                 .map_err(|error| RealTiKvReadError::Query(error.to_string()))?;
             let record_set = DistSqlRecordSet::new(
-                response.into_select_iter(field_types, Vec::new(), self.warnings.clone()),
+                response.into_select_iter_in_timezone(
+                    field_types,
+                    Vec::new(),
+                    self.time_zone.clone(),
+                    self.warnings.clone(),
+                ),
                 protocol_columns,
             );
             self.last_snapshot_ts = None;
@@ -1439,10 +1439,11 @@ where
         let key_ranges = signed_handle_ranges_to_kv_ranges(table_id, &handle_ranges);
         let snapshot_ts = snapshot_ts.expect("nonempty plans require a supplied snapshot");
 
+        let (time_zone_name, time_zone_offset) = self.time_zone.dag_zone();
         let dag = construct_read_only_dag_req(
             &DagRequestContext::new(
-                self.time_zone_name.clone(),
-                i64::from(self.time_zone_offset_secs),
+                time_zone_name,
+                time_zone_offset,
                 self.push_down_flags,
                 EncodeType::Default,
             ),
@@ -1469,7 +1470,8 @@ where
             .select_with_runtime_stats(
                 &request,
                 SelectInput::default(),
-                QueryResultContext::new(field_types, self.warnings.clone()),
+                QueryResultContext::new(field_types, self.warnings.clone())
+                    .with_time_zone(self.time_zone.clone()),
                 vec![0],
                 0,
                 true,

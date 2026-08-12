@@ -19,7 +19,11 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
-use tidb_datatype::{FieldType, FieldTypeCode};
+use prost::Message;
+use tidb_codec::encode_value_in_timezone;
+use tidb_datatype::{
+    parse_datetime, Datum, FieldType, FieldTypeCode, SessionTimeZone, TimeType,
+};
 use tidb_distsql::query_runtime::{QueryResponse, QueryResponseError, QueryResultSubset};
 use tidb_distsql::{
     InjectedQueryRuntime, KvRequestBuilder, QueryDispatch, QueryOperation, QueryResultContext,
@@ -28,7 +32,8 @@ use tidb_distsql::{
     CHECKSUM_RESULT_LABEL, DAG_RESULT_LABEL, GENERAL_SQL_TYPE, INTERNAL_SQL_TYPE,
     INTERNAL_TXN_STATS_SOURCE,
 };
-use tidb_proto::KvrpcLockInfo;
+use tidb_proto::tipb::SelectResponse;
+use tidb_proto::{Chunk, EncodeType, KvrpcLockInfo};
 use tidb_txnkv::{wrap_cop_meet_lock, CopMeetLock, EventCallback};
 
 fn transport_request(metadata: tidb_distsql::KvRequestMetadata) -> TransportRequest {
@@ -175,6 +180,49 @@ fn select_sends_the_built_request_and_returns_the_transport_iterator() {
     assert!(dispatch.result.paging);
     assert_eq!(dispatch.result.dist_sql_concurrency, 7);
     assert_eq!(iter.result_metadata(), Some(&dispatch.result));
+}
+
+#[test]
+fn select_result_context_carries_the_statement_zone_into_default_decode() {
+    let zone = SessionTimeZone::Fixed {
+        name: "+08:00".to_owned(),
+        offset_secs: 8 * 60 * 60,
+    };
+    let mut timestamp = parse_datetime("2026-08-12 14:30:00", &zone, true, false)
+        .unwrap()
+        .time;
+    timestamp.set_kind(TimeType::Timestamp);
+    let response = SelectResponse {
+        encode_type: Some(EncodeType::TypeDefault as i32),
+        chunks: vec![Chunk {
+            rows_data: Some(
+                encode_value_in_timezone(&zone, &[Datum::new_time(timestamp)]).unwrap(),
+            ),
+            rows_meta: Vec::new(),
+        }],
+        ..SelectResponse::default()
+    };
+    let mut runtime = InjectedQueryRuntime::new(ScriptedTransport::returning(response_with([
+        response.encode_to_vec(),
+    ])));
+    let result = runtime
+        .select(
+            &request(StoreType::TiKv),
+            input(),
+            QueryResultContext::new(
+                vec![FieldType::new(FieldTypeCode::Timestamp)],
+                WarningCollector::new(),
+            )
+            .with_time_zone(zone),
+        )
+        .unwrap();
+    let mut iter = result.into_select_iter(Vec::new());
+
+    assert_eq!(
+        iter.next_row().unwrap().unwrap().row,
+        vec![Datum::new_time(timestamp)]
+    );
+    assert!(iter.next_row().unwrap().is_none());
 }
 
 #[test]

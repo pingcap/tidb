@@ -15,7 +15,7 @@
 //! Pull-based ownership boundary corresponding to Go's `kv.Response` and
 //! `selectResult`.
 
-use tidb_datatype::FieldType;
+use tidb_datatype::{FieldType, SessionTimeZone};
 
 use crate::distsql_runtime::SelectResultMetadata;
 use crate::response_channel::{ResponseRuntimeStats, SelectResponseIter};
@@ -81,6 +81,7 @@ pub struct QuerySelectResult<R: QueryResponse> {
     response: Option<R>,
     metadata: SelectResultMetadata,
     final_field_types: Vec<FieldType>,
+    time_zone: SessionTimeZone,
     warnings: WarningCollector,
     runtime_stats_collector_enabled: Option<bool>,
     closed: bool,
@@ -91,6 +92,7 @@ impl<R: QueryResponse> QuerySelectResult<R> {
         response: R,
         metadata: SelectResultMetadata,
         final_field_types: Vec<FieldType>,
+        time_zone: SessionTimeZone,
         warnings: WarningCollector,
         runtime_stats_collector_enabled: Option<bool>,
     ) -> Self {
@@ -98,6 +100,7 @@ impl<R: QueryResponse> QuerySelectResult<R> {
             response: Some(response),
             metadata,
             final_field_types,
+            time_zone,
             warnings,
             runtime_stats_collector_enabled,
             closed: false,
@@ -157,6 +160,7 @@ impl<R: QueryResponse> QuerySelectResult<R> {
             Box::new(response),
             self.final_field_types.clone(),
             intermediate_output_types,
+            self.time_zone.clone(),
             self.warnings.clone(),
             self.metadata.clone(),
             self.runtime_stats_collector_enabled,

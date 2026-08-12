@@ -28,7 +28,7 @@ use std::fmt;
 
 use tidb_chunk::chunk::Chunk as DecodedChunk;
 use tidb_chunk::codec::Codec as ChunkCodec;
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Datum, FieldType, SessionTimeZone};
 use tidb_proto::{Chunk as ResponseChunk, EncodeType, ExecutorExecutionSummary, SelectResponse};
 
 use super::channel_iter::{ChannelIter, ChannelIterError};
@@ -484,10 +484,28 @@ impl ResponseChannel<Vec<u8>> {
         intermediate_output_types: Vec<Vec<FieldType>>,
         warnings: WarningCollector,
     ) -> SelectResponseIter {
+        self.into_select_iter_in_timezone(
+            final_field_types,
+            intermediate_output_types,
+            SessionTimeZone::utc(),
+            warnings,
+        )
+    }
+
+    /// Converts this source with the statement location used to recover
+    /// `TIMESTAMP` values from TiKV's UTC packed representation.
+    pub fn into_select_iter_in_timezone(
+        self,
+        final_field_types: Vec<FieldType>,
+        intermediate_output_types: Vec<Vec<FieldType>>,
+        time_zone: SessionTimeZone,
+        warnings: WarningCollector,
+    ) -> SelectResponseIter {
         SelectResponseIter {
             source: SelectResponseSource::Channel(self),
             final_field_types,
             intermediate_output_types,
+            time_zone,
             warnings,
             channels: Vec::new(),
             runtime_stats: SelectResultRuntimeStats::default(),
@@ -508,6 +526,7 @@ pub struct SelectResponseIter {
     source: SelectResponseSource,
     final_field_types: Vec<FieldType>,
     intermediate_output_types: Vec<Vec<FieldType>>,
+    time_zone: SessionTimeZone,
     warnings: WarningCollector,
     channels: Vec<SelectResponseChannel>,
     runtime_stats: SelectResultRuntimeStats,
@@ -528,6 +547,7 @@ struct SelectResponseChannel {
     raw_encode_type: Option<i32>,
     chunks: Vec<ResponseChunk>,
     field_types: Vec<FieldType>,
+    time_zone: SessionTimeZone,
     next_chunk_index: usize,
     decoded: Option<DecodedChannel>,
 }
@@ -595,6 +615,7 @@ impl SelectResponseChannel {
                 self.raw_encode_type,
                 chunk,
                 &self.field_types,
+                &self.time_zone,
             )?;
             self.next_chunk_index += 1;
             self.decoded = Some(decoded);
@@ -614,6 +635,7 @@ impl SelectResponseIter {
         response: Box<dyn QueryResponse>,
         final_field_types: Vec<FieldType>,
         intermediate_output_types: Vec<Vec<FieldType>>,
+        time_zone: SessionTimeZone,
         warnings: WarningCollector,
         result_metadata: SelectResultMetadata,
         runtime_stats_collector_enabled: Option<bool>,
@@ -627,6 +649,7 @@ impl SelectResponseIter {
             source: SelectResponseSource::Query(response),
             final_field_types,
             intermediate_output_types,
+            time_zone,
             warnings,
             channels: Vec::new(),
             runtime_stats: SelectResultRuntimeStats::default(),
@@ -865,6 +888,7 @@ impl SelectResponseIter {
                 raw_encode_type: output.encode_type,
                 chunks: output.chunks,
                 field_types: field_types.clone(),
+                time_zone: self.time_zone.clone(),
                 next_chunk_index: 0,
                 decoded: None,
             });
@@ -874,6 +898,7 @@ impl SelectResponseIter {
             raw_encode_type: response.encode_type,
             chunks: response.chunks,
             field_types: self.final_field_types.clone(),
+            time_zone: self.time_zone.clone(),
             next_chunk_index: 0,
             decoded: None,
         });
@@ -886,6 +911,7 @@ fn decode_channel(
     raw_encode_type: Option<i32>,
     chunk: &ResponseChunk,
     field_types: &[FieldType],
+    time_zone: &SessionTimeZone,
 ) -> Result<DecodedChannel, ResponseChannelError> {
     let raw_encode_type = raw_encode_type.unwrap_or(EncodeType::TypeDefault as i32);
     let encode_type = EncodeType::try_from(raw_encode_type).map_err(|_| {
@@ -894,14 +920,14 @@ fn decode_channel(
     if chunk.rows_data.as_deref().unwrap_or_default().is_empty() {
         return Ok(DecodedChannel::Rows(ChannelIter::new(
             channel_index,
-            [Vec::new()],
+            [Vec::<Vec<Datum>>::new()],
         )));
     }
     let raw = decode_chunk(chunk, encode_type).map_err(map_chunk_error)?;
     match encode_type {
         EncodeType::TypeDefault => {
             let rows = raw
-                .decode_default_datums(field_types.len())
+                .decode_default_datums_in_timezone(field_types, time_zone)
                 .map_err(map_chunk_error)?;
             Ok(DecodedChannel::Rows(ChannelIter::new(
                 channel_index,

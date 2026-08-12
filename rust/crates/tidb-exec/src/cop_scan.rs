@@ -298,6 +298,7 @@ where
             key_ranges,
             snapshot_ts: request.snapshot_ts,
             field_types,
+            time_zone: request.statement.time_zone.clone(),
             warnings: request.statement.warnings.clone(),
         };
         let (rows, batches) = sync_channel::<Result<Vec<Vec<Datum>>, String>>(BATCHES_AHEAD);
@@ -380,6 +381,7 @@ struct RemoteScanPlan {
     key_ranges: Vec<KeyRange>,
     snapshot_ts: u64,
     field_types: Vec<FieldType>,
+    time_zone: tidb_datatype::SessionTimeZone,
     /// The statement's warning sink, carried onto the scan thread. It is an
     /// `Arc` handler, so a warning appended here lands in the buffer
     /// `SHOW WARNINGS` reads even though the decode happens off-thread.
@@ -445,7 +447,7 @@ where
             // THE SESSION'S collector, not a fresh one: `response_channel`
             // appends TiKV's warnings in Go's order into whatever it is
             // given, and a fresh collector is dropped with them inside.
-            QueryResultContext::new(plan.field_types, plan.warnings),
+            QueryResultContext::new(plan.field_types, plan.warnings).with_time_zone(plan.time_zone),
             vec![0],
             0,
             true,
