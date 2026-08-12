@@ -15,40 +15,21 @@
 package executor
 
 import (
-	"fmt"
 	"testing"
 
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
 var (
 	statementRUExecStmtSink   *ExecStmt
-	statementRUFlatPlanSink   *plannercore.FlatPhysicalPlan
 	statementRUCalculatorSink statementRUCalculator
 	statementRUFinalizedSink  statementRUFinalizedSnapshot
 	statementRUResultSink     statementRUResultOnly
 	statementRUScanBytesSink  float64
 	statementRUStateSink      statementRUCalibrationState
-	statementRUVisitSink      int
+	statementRUCalculatedSink bool
 )
-
-func buildStatementRUPlanChainForBenchmark(operatorCount int) (*ExecStmt, base.Plan) {
-	ctx := mock.NewContext()
-	stats := &property.StatsInfo{RowCount: 1}
-	var plan base.PhysicalPlan = physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, stats, 0)
-	for range operatorCount - 1 {
-		limit := physicalop.PhysicalLimit{}.Init(ctx, stats, 0)
-		limit.SetChildren(plan)
-		plan = limit
-	}
-	ctx.GetSessionVars().StmtCtx.SetPlan(plan)
-	return &ExecStmt{Ctx: ctx, Plan: plan}, plan
-}
 
 func BenchmarkStatementRUExecStmtSetup(b *testing.B) {
 	// This is the absolute allocation of an otherwise-empty ExecStmt with the
@@ -72,116 +53,39 @@ func BenchmarkStatementRUNilHooks(b *testing.B) {
 	b.Run("finish", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			stmt.finishStatementRU(nil, execdetails.ExecDetails{})
+			stmt.finishStatementRU(nil)
 		}
 	})
 }
 
-func BenchmarkStatementRUPlanWalk(b *testing.B) {
-	for _, operatorCount := range []int{1, 11, 50, 200} {
-		b.Run(fmt.Sprintf("operators=%d", operatorCount), func(b *testing.B) {
-			stmt, plan := buildStatementRUPlanChainForBenchmark(operatorCount)
-			stmtCtx := stmt.Ctx.GetSessionVars().StmtCtx
-			flat := plannercore.FlattenPhysicalPlan(plan, false)
-			observe := func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator) {
-				statementRUVisitSink++
-			}
-			visit := func(
-				walk statementRUFlatPlanWalk,
-				operatorIndex int,
-				operator *plannercore.FlatOperator,
-				scanBytes float64,
-			) statementRUCalculationVisitResult {
-				observe(walk.treeKind, walk.treeIndex, operatorIndex, operator)
-				return statementRUCalculationVisitResult{scanBytes: scanBytes, ok: true}
-			}
-
-			b.Run("flatten-physical-plan", func(b *testing.B) {
-				b.ReportAllocs()
-				for b.Loop() {
-					statementRUFlatPlanSink = plannercore.FlattenPhysicalPlan(plan, false)
-				}
-			})
-
-			b.Run("get-flat-plan/cache-hit", func(b *testing.B) {
-				stmtCtx.SetFlatPlan(flat)
-				b.ReportAllocs()
-				b.ResetTimer()
-				for b.Loop() {
-					statementRUFlatPlanSink = getFlatPlan(stmtCtx)
-				}
-			})
-
-			b.Run("get-flat-plan/cache-miss", func(b *testing.B) {
-				b.ReportAllocs()
-				for b.Loop() {
-					stmtCtx.SetFlatPlan(nil)
-					statementRUFlatPlanSink = getFlatPlan(stmtCtx)
-				}
-			})
-
-			b.Run("walk-only", func(b *testing.B) {
-				b.ReportAllocs()
-				for b.Loop() {
-					walkStatementRUFlatPlan(flat, visit)
-				}
-			})
-
-			// These paths include owner setup, outcome publication, flat lookup,
-			// and the synchronous occurrence walk, but not SQL compilation/execution.
-			b.Run("successful-plan-walk/cache-hit", func(b *testing.B) {
-				stmtCtx.SetFlatPlan(flat)
-				b.ReportAllocs()
-				b.ResetTimer()
-				for b.Loop() {
-					stmt.statementRUOwner = newStatementRUPlanWalkVisitorOwnerForTest(stmt, observe)
-					stmt.RecordStatementRUFinalOutcome(true)
-					stmt.finishStatementRU(nil, execdetails.ExecDetails{})
-				}
-			})
-
-			b.Run("successful-plan-walk/cache-miss", func(b *testing.B) {
-				b.ReportAllocs()
-				for b.Loop() {
-					stmtCtx.SetFlatPlan(nil)
-					stmt.statementRUOwner = newStatementRUPlanWalkVisitorOwnerForTest(stmt, observe)
-					stmt.RecordStatementRUFinalOutcome(true)
-					stmt.finishStatementRU(nil, execdetails.ExecDetails{})
-				}
-			})
-		})
-	}
-}
-
 func BenchmarkStatementRUComponents(b *testing.B) {
-	fixture := newStatementRUSimpleSelectFixture(b, true, true)
+	fixture := newStatementRUSimpleSelectFixture(b)
 	flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
 	setup := fixture.owner.calculationSetup
 
 	b.Run("calculator-setup", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			statementRUCalculatorSink = newStatementRUCalculator(setup, true)
+			statementRUCalculatorSink = newStatementRUCalculator(setup)
 		}
 	})
 
-	b.Run("walk-only", func(b *testing.B) {
-		visit := func(
-			_ statementRUFlatPlanWalk,
-			_ int,
-			_ *plannercore.FlatOperator,
-			scanBytes float64,
-		) statementRUCalculationVisitResult {
-			statementRUVisitSink++
-			return statementRUCalculationVisitResult{scanBytes: scanBytes, ok: true}
-		}
+	b.Run("calculate", func(b *testing.B) {
+		stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
+		metrics := fixture.stmt.Ctx.GetSessionVars().RUV2Metrics
 		b.ReportAllocs()
 		for b.Loop() {
-			walkStatementRUFlatPlan(flat, visit)
+			statementRUFinalizedSink, statementRUCalculatedSink = calculateStatementRU(
+				flat,
+				stmtCtx.RuntimeStatsColl,
+				metrics,
+				setup,
+				true,
+			)
 		}
 	})
 
-	b.Run("reader-scan-evidence", func(b *testing.B) {
+	b.Run("scan-detail-lookup", func(b *testing.B) {
 		stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
 		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
 		b.ReportAllocs()
@@ -191,7 +95,7 @@ func BenchmarkStatementRUComponents(b *testing.B) {
 		}
 	})
 
-	b.Run("scan-unit", func(b *testing.B) {
+	b.Run("scan-byte-estimate", func(b *testing.B) {
 		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
 		detail, _ := fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopScanDetail(reader.TablePlan.ID())
 		b.ReportAllocs()
@@ -211,11 +115,10 @@ func BenchmarkStatementRUComponents(b *testing.B) {
 				NetBytes:             20,
 				FrontendCompileBytes: setup.frontendCompileBytes,
 			},
-			evidenceComplete: true,
 		}
 		b.ReportAllocs()
 		for b.Loop() {
-			statementRUFinalizedSink = calculator.finalize()
+			statementRUFinalizedSink = calculator.finalize(true)
 		}
 	})
 
@@ -248,11 +151,10 @@ func BenchmarkStatementRUComponents(b *testing.B) {
 }
 
 func BenchmarkStatementRUSyntheticFinalization(b *testing.B) {
-	fixture := newStatementRUSimpleSelectFixture(b, true, true)
+	fixture := newStatementRUSimpleSelectFixture(b)
 	stmt := fixture.stmt
 	stmtCtx := stmt.Ctx.GetSessionVars().StmtCtx
 	flat := stmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
-	execDetail := stmtCtx.GetExecDetails()
 
 	// This timer starts before the production owner installer and ends after
 	// ResultOnly and the dormant calibration boundary. It manually invokes
@@ -276,23 +178,23 @@ func BenchmarkStatementRUSyntheticFinalization(b *testing.B) {
 				}
 				stmt.recordStatementRURootEOF()
 				stmt.RecordStatementRUFinalOutcome(true)
-				stmt.finishStatementRU(nil, execDetail)
+				stmt.finishStatementRU(nil)
 			}
 		})
 	}
 }
 
 func BenchmarkStatementRUOwnerSetup(b *testing.B) {
-	fixture := newStatementRUSimpleSelectFixture(b, true, true)
+	fixture := newStatementRUSimpleSelectFixture(b)
 	stmt := fixture.stmt
 	stmtCtx := stmt.Ctx.GetSessionVars().StmtCtx
+	stmtCtx.SetFlatPlan(nil)
 
-	// This includes clearing the flat cache required by installer eligibility.
-	// Every eligible read statement pays this setup cost; it is not the allocation
-	// cost of newStatementRUOwner in isolation.
+	// The fixture's flat-cache reset is setup outside b.Loop. The timed region is
+	// the production owner installer plus the sink assignment that keeps its
+	// allocation observable.
 	b.ReportAllocs()
 	for b.Loop() {
-		stmtCtx.SetFlatPlan(nil)
 		installStatementRUOwner(stmt)
 		statementRUExecStmtSink = stmt
 	}

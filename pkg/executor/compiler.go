@@ -167,7 +167,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		return nil, err
 	}
 	installStatementRUOwner(stmt)
-	failpoint.InjectCall("installStatementRUPlanWalkOwnerForTest", stmt)
+	failpoint.InjectCall("observeStatementRUOwnerInstallForTest", stmt)
 
 	return stmt, nil
 }

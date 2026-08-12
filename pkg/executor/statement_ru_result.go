@@ -35,9 +35,9 @@ const (
 )
 
 type statementRURawUnits struct {
-	// ScanBytes is the sum of physical-byte estimates consumed by supported
-	// TableScan occurrences. Each contribution comes from the actual scan detail
-	// collected for its enclosing TableReader.
+	// ScanBytes is the sum of physical-byte estimates from supported Reader
+	// request components. Each contribution is collected once from the pushed
+	// plan root recorded for that Reader.
 	ScanBytes float64
 	// NetBytes is statement transport evidence, not operator attribution. It is
 	// the TiKV coprocessor response-body byte count finalized in statement-local
@@ -91,7 +91,7 @@ func installStatementRUOwner(stmt *ExecStmt) {
 	if !ok {
 		return
 	}
-	owner := newStatementRUOwner(stmt, nil)
+	owner := newStatementRUOwner(stmt)
 	owner.calculationSetup = setup
 	stmt.statementRUOwner = owner
 }
@@ -130,28 +130,23 @@ func statementRUFrontendCompileBytes(stmt *ExecStmt) float64 {
 }
 
 // statementRUCalculator is terminal-local. It accumulates only typed scalar
-// units and evidence completeness; no plan or execution-detail pointer survives
-// an occurrence callback.
+// units and invalid evidence; no plan or execution-detail pointer survives
+// calculateStatementRU.
 type statementRUCalculator struct {
-	units            statementRURawUnits
-	evidenceComplete bool
+	units           statementRURawUnits
+	invalidEvidence bool
 }
 
-func newStatementRUCalculator(setup statementRUCalculationSetup, evidenceComplete bool) statementRUCalculator {
+func newStatementRUCalculator(setup statementRUCalculationSetup) statementRUCalculator {
 	return statementRUCalculator{
 		units: statementRURawUnits{
 			FrontendCompileBytes: setup.frontendCompileBytes,
 		},
-		evidenceComplete: evidenceComplete,
 	}
 }
 
-func (calculator *statementRUCalculator) markEvidenceIncomplete() {
-	calculator.evidenceComplete = false
-}
-
 // statementRUScanBytes converts a value copy of one Reader's scan evidence into
-// one traversal contribution. It does not retain RuntimeStatsColl or ScanDetail.
+// one raw-unit contribution. It does not retain RuntimeStatsColl or ScanDetail.
 func statementRUScanBytes(totalKeys, processedKeys, processedBytes int64) (float64, statementRUCalibrationState) {
 	if totalKeys < 0 || processedKeys < 0 || processedBytes < 0 {
 		return 0, statementRUCalibrationUnknown
@@ -160,9 +155,6 @@ func statementRUScanBytes(totalKeys, processedKeys, processedBytes int64) (float
 		return 0, statementRUCalibrationUnknown
 	}
 	if totalKeys == 0 || processedKeys == 0 || processedBytes == 0 {
-		if totalKeys != 0 || processedKeys != 0 || processedBytes != 0 {
-			return 0, statementRUCalibrationIncomplete
-		}
 		return 0, statementRUCalibrationIncomplete
 	}
 
@@ -173,12 +165,16 @@ func statementRUScanBytes(totalKeys, processedKeys, processedBytes int64) (float
 	return scanBytes, statementRUCalibrationComplete
 }
 
-func (calculator statementRUCalculator) finalize() statementRUFinalizedSnapshot {
+func (calculator statementRUCalculator) finalize(evidenceComplete bool) statementRUFinalizedSnapshot {
 	finalized := statementRUFinalizedSnapshot{
 		units:            calculator.units,
 		calibrationState: statementRUCalibrationComplete,
 	}
-	if !calculator.evidenceComplete || calculator.units.ScanBytes <= 0 {
+	if calculator.invalidEvidence {
+		finalized.calibrationState = statementRUCalibrationUnknown
+		return finalized
+	}
+	if !evidenceComplete || calculator.units.ScanBytes <= 0 {
 		// A successful statement may still be closed before the client consumes
 		// the result to EOF (for example, after a connection write failure). In
 		// that case the recorded aggregates describe only the work observed before
