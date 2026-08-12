@@ -62,11 +62,13 @@ func (e *LoadDataController) CheckRequirementsBeforeInitDataFiles(ctx context.Co
 
 func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionctx.Context, checkTotalFileSize bool) error {
 	tableInfo := e.Plan.TableInfo
-	// TTL runs asynchronously and can delete data while an import is running, causing
-	// checksum mismatches. This is independent of table mode: although table mode may
-	// prevent writes, a TTL manager that merely checks table mode can still report
-	// protected-table/mode errors, and manager-side checks cannot prevent every such error.
-	// Therefore, IMPORT INTO forbids importing into a table with TTL enabled.
+	// Import table mode can prevent TTL from deleting data and causing a checksum
+	// mismatch. However, because TTL jobs run asynchronously, a job that races with the
+	// switch to import mode may still report a protected-table error. This precheck is
+	// also needed on versions that do not support table mode. Therefore, IMPORT INTO
+	// forbids importing into a table with TTL enabled. If later testing shows that IMPORT
+	// INTO can always switch table mode without an opt-out, TTL can check table mode before
+	// starting a job and this precheck can be removed.
 	if tableInfo.TTLInfo != nil && tableInfo.TTLInfo.Enable {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table has TTL enabled, please disable TTL before IMPORT INTO")
 	}
