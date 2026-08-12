@@ -93,6 +93,28 @@ fn apply_cache_counts_value_memory_at_the_exact_quota_boundary() {
 }
 
 #[test]
+fn replacing_a_key_preserves_the_source_tracker_charge() {
+    // Go ApplyCache.Set always consumes the incoming key/value charge after
+    // its eviction loop. SimpleLRUCache.Put then replaces the value without
+    // refunding the previous charge, so replacing a six-byte entry under a
+    // twelve-byte quota leaves one entry and twelve charged bytes.
+    let cache = ApplyCache::new(12);
+    assert!(cache.set(b"a0".to_vec(), 0_i64, 4));
+    assert!(cache.set(b"a0".to_vec(), 1_i64, 4));
+
+    assert_eq!(cache.len(), 1);
+    assert_eq!(cache.get(b"a0").as_deref(), Some(&1));
+    assert_eq!(cache.memory_consumed(), 12);
+
+    // The next six-byte admission must evict a0 because the source tracker is
+    // already at quota, even though only one physical entry is retained.
+    assert!(cache.set(b"a1".to_vec(), 2_i64, 4));
+    assert_eq!(cache.get(b"a0"), None);
+    assert_eq!(cache.get(b"a1").as_deref(), Some(&2));
+    assert_eq!(cache.memory_consumed(), 12);
+}
+
+#[test]
 fn apply_cache_serializes_concurrent_get_and_set() {
     // Source: pkg/executor/internal/applycache/apply_cache_test.go:82-138
     // (TestApplyCacheConcurrent). Rust keeps the whole admission/eviction

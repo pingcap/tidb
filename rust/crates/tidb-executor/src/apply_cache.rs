@@ -86,10 +86,6 @@ impl<V> ApplyCache<V> {
         }
         let mut state = self.lock();
 
-        if let Some((_, previous)) = state.entries.delete(key.as_slice()) {
-            state.memory_consumed -= previous.memory;
-        }
-
         while memory + state.memory_consumed > self.memory_capacity {
             let Some((_, evicted)) = state.entries.remove_oldest() else {
                 return false;
