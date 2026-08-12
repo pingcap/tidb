@@ -3,11 +3,18 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 go_test(
     name = "startertest_test",
     timeout = "moderate",
-    srcs = ["starter_external_test.go"],
+    srcs = [
+        "starter_external_test.go",
+        "txn_file_conflict_test.go",
+        "txn_file_metrics_test.go",
+        "txn_file_test.go",
+    ],
     flaky = True,
     shard_count = 13,
     deps = [
         "@com_github_go_sql_driver_mysql//:mysql",
+        "@com_github_prometheus_client_model//go",
+        "@com_github_prometheus_common//expfmt",
         "@com_github_stretchr_testify//require",
     ],
 )
