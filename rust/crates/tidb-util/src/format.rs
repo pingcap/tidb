@@ -18,11 +18,13 @@
 //! package reuses its native Rust owner. `OutputFormat` is intentionally owned
 //! here because the util package additionally doubles backslashes.
 
+use tidb_datatype::{decode_go_utf8_lossy, GoStringSource};
 pub use tidb_datatype::{FlatFormatter, FormatFragment, Formatter, IndentFormatter};
 
-/// Applies `pkg/util/format.OutputFormat` to text.
+/// Applies `pkg/util/format.OutputFormat` to a byte-preserving Go string.
 #[must_use]
-pub fn output_format(input: &str) -> String {
+pub fn output_format(input: impl GoStringSource) -> String {
+    let input = decode_go_utf8_lossy(input);
     let mut output = String::with_capacity(input.len());
     for character in input.chars() {
         match character {

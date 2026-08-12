@@ -47,6 +47,35 @@ pub trait GoStringSource {
     fn to_go_string(&self) -> GoString;
 }
 
+/// Decodes a Go string as UTF-8, replacing each invalid byte with one U+FFFD.
+///
+/// Go's string iteration advances by one byte after an invalid encoding. This
+/// differs from [`String::from_utf8_lossy`], which may replace a malformed
+/// multi-byte subsequence with a single replacement character.
+#[must_use]
+pub fn decode_go_utf8_lossy(input: impl GoStringSource) -> String {
+    let bytes = input.as_go_bytes();
+    let mut offset = 0;
+    let mut output = String::with_capacity(bytes.len());
+    while offset < bytes.len() {
+        match std::str::from_utf8(&bytes[offset..]) {
+            Ok(valid) => {
+                output.push_str(valid);
+                break;
+            }
+            Err(error) => {
+                let valid_len = error.valid_up_to();
+                let valid = std::str::from_utf8(&bytes[offset..offset + valid_len])
+                    .expect("Utf8Error valid prefix is UTF-8");
+                output.push_str(valid);
+                output.push('\u{fffd}');
+                offset += valid_len + 1;
+            }
+        }
+    }
+    output
+}
+
 impl GoString {
     /// Constructs a string from an owned byte allocation.
     #[must_use]
@@ -141,28 +170,7 @@ impl GoString {
     /// lossy conversion instead collapses some malformed subsequences.
     #[must_use]
     pub fn to_utf8_lossy_go(&self) -> String {
-        let bytes = self.as_bytes();
-        let mut offset = 0;
-        let mut output = String::with_capacity(bytes.len());
-        while offset < bytes.len() {
-            match std::str::from_utf8(&bytes[offset..]) {
-                Ok(valid) => {
-                    output.push_str(valid);
-                    break;
-                }
-                Err(error) => {
-                    let valid_len = error.valid_up_to();
-                    let valid = std::str::from_utf8(&bytes[offset..offset + valid_len])
-                        .expect("Utf8Error valid prefix is UTF-8");
-                    output.push_str(valid);
-                    output.push('\u{fffd}');
-                    // Go utf8.DecodeRuneInString reports size 1 for every
-                    // invalid encoding, including truncated multibyte input.
-                    offset += valid_len + 1;
-                }
-            }
-        }
-        output
+        decode_go_utf8_lossy(self)
     }
 
     /// Returns the exact JSON string token emitted by Go 1.25

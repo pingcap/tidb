@@ -83,6 +83,14 @@ fn format_package_semantics() {
 }
 
 #[test]
+fn output_format_preserves_go_string_byte_domain() {
+    assert_eq!(
+        output_format(&b"bad:\xff|truncated:\xe2\x82|quote:'|slash:\\|nul:\0"[..]),
+        "bad:\u{fffd}|truncated:\u{fffd}\u{fffd}|quote:''|slash:\\\\|nul:\\0"
+    );
+}
+
+#[test]
 fn formatter_performs_one_source_write_and_returns_its_count() {
     let writer = ObservingWriter {
         bytes: Vec::new(),
