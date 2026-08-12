@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -56,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -117,6 +117,15 @@ type Chunk struct {
 // GetKey returns the chunk key used in logs and encode errors.
 func (c *Chunk) GetKey() string {
 	return c.Path + ":" + strconv.FormatInt(c.Offset, 10)
+}
+
+// GetSize get the original file size of this chunk.
+func (c *Chunk) GetSize() int64 {
+	if c.Type == mydump.SourceTypeParquet {
+		// for parquet, Offset/EndOffset means rows
+		return c.FileSize
+	}
+	return c.EndOffset - c.Offset
 }
 
 func (c *Chunk) toSourceFileMeta() mydump.SourceFileMeta {
@@ -345,8 +354,8 @@ func (ti *TableImporter) GetKVStore() tidbkv.Storage {
 }
 
 // EstimateParquetReaderMemory estimates parser memory for the parquet file path.
-func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path string) (int64, error) {
-	return parquetfile.EstimateParquetReaderMemory(ctx, ti.LoadDataController.dataStore, path)
+func (ti *TableImporter) EstimateParquetReaderMemory(ctx context.Context, path string, fileSize int64) (int64, error) {
+	return parquetfile.EstimateParquetReaderMemory(ctx, ti.LoadDataController.dataStore, path, fileSize)
 }
 
 func (e *LoadDataController) getParser(ctx context.Context, chunk *Chunk) (mydump.Parser, error) {
@@ -906,16 +915,10 @@ func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs ma
 		return err2
 	}
 
-	addrs := strings.Split(tidbCfg.Path, ",")
-	etcdCli, err := clientv3.New(clientv3.Config{
-		Endpoints:        addrs,
-		AutoSyncInterval: 30 * time.Second,
-		TLS:              tls.TLSConfig(),
-	})
+	etcdCli, err := newEtcdClientForAllocatorRebase(ctx, kvStore, tls, strings.Split(tidbCfg.Path, ","))
 	if err != nil {
 		return errors.Trace(err)
 	}
-	etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
 	autoidCli := autoid.NewClientDiscover(etcdCli)
 	r := autoIDRequirement{store: kvStore, autoidCli: autoidCli}
 	err = common.RebaseTableAllocators(ctx, maxIDs, &r, plan.DBID, plan.DesiredTableInfo)
@@ -927,6 +930,28 @@ func RebaseAllocatorBases(ctx context.Context, kvStore tidbkv.Storage, maxIDs ma
 }
 
 type remoteChecksumFunction func() (*ingestctrl.RemoteChecksum, error)
+
+func newEtcdClientForAllocatorRebase(
+	ctx context.Context,
+	kvStore tidbkv.Storage,
+	tls *common.TLS,
+	callerPDAddrs []string,
+) (*clientv3.Client, error) {
+	kvStoreWithPD, ok := kvStore.(tidbkv.StorageWithPD)
+	if !ok {
+		return nil, errors.Errorf("TiKV store does not expose PD client")
+	}
+	return metaservice.NewEtcdClientFromPDClient(
+		ctx,
+		kvStoreWithPD.GetPDClient(),
+		kvStore.GetCodec().GetKeyspaceMeta(),
+		callerPDAddrs,
+		clientv3.Config{
+			AutoSyncInterval: 30 * time.Second,
+			TLS:              tls.TLSConfig(),
+		},
+	)
+}
 
 // VerifyChecksum verify the checksum of the table.
 func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChecksum, logger *zap.Logger, getRemoteChecksumFn remoteChecksumFunction) error {

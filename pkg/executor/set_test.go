@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -102,6 +103,60 @@ func TestSetGCLifeTimeNotifiesExternalWorkloadWithEffectiveValue(t *testing.T) {
 			require.Equal(t, tc.expectedNotify, mgr.gcLifeTime)
 		})
 	}
+}
+
+func TestSetEmbeddingAPIKeyRedactedForAuditPlugin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	receivedValues := make(map[string]string)
+	const pluginName = "audit_embedding_api_key_redaction"
+	require.NoError(t, plugin.StaticPlugins.Add(pluginName, func() *plugin.Manifest {
+		return plugin.ExportManifest(&plugin.AuditManifest{
+			Manifest: plugin.Manifest{
+				Kind:    plugin.Audit,
+				Name:    pluginName,
+				Version: 1,
+				OnInit: func(context.Context, *plugin.Manifest) error {
+					return nil
+				},
+			},
+			OnGlobalVariableEvent: func(_ context.Context, _ *variable.SessionVars, name, value string) {
+				receivedValues[name] = value
+			},
+		})
+	}))
+	t.Cleanup(plugin.StaticPlugins.Clear)
+
+	pluginCfg := plugin.Config{Plugins: []string{pluginName + "-1"}}
+	require.NoError(t, plugin.Load(context.Background(), pluginCfg))
+	require.NoError(t, plugin.Init(context.Background(), pluginCfg))
+	t.Cleanup(func() { plugin.Shutdown(context.Background()) })
+
+	originalVersion := vardef.EmbeddingConfigVersion.Load()
+	t.Cleanup(func() { vardef.EmbeddingConfigVersion.Store(originalVersion) })
+	apiKeys := []struct {
+		name  string
+		load  func() string
+		store func(string)
+	}{
+		{name: vardef.TiDBExpEmbedJinaAIAPIKey, load: vardef.EmbedJinaAPIKey.Load, store: vardef.EmbedJinaAPIKey.Store},
+		{name: vardef.TiDBExpEmbedOpenAIAPIKey, load: vardef.EmbedOpenAIAPIKey.Load, store: vardef.EmbedOpenAIAPIKey.Store},
+		{name: vardef.TiDBExpEmbedCohereAPIKey, load: vardef.EmbedCohereAPIKey.Load, store: vardef.EmbedCohereAPIKey.Store},
+		{name: vardef.TiDBExpEmbedHuggingFaceAPIKey, load: vardef.EmbedHuggingFaceAPIKey.Load, store: vardef.EmbedHuggingFaceAPIKey.Store},
+		{name: vardef.TiDBExpEmbedNvidiaNIMAPIKey, load: vardef.EmbedNvidiaNIMAPIKey.Load, store: vardef.EmbedNvidiaNIMAPIKey.Store},
+		{name: vardef.TiDBExpEmbedGeminiAPIKey, load: vardef.EmbedGeminiAPIKey.Load, store: vardef.EmbedGeminiAPIKey.Store},
+	}
+	for _, apiKey := range apiKeys {
+		originalValue := apiKey.load()
+		t.Cleanup(func() { apiKey.store(originalValue) })
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	for _, apiKey := range apiKeys {
+		tk.MustExec(fmt.Sprintf("SET @@GLOBAL.%s = 'secret-%s'", apiKey.name, apiKey.name))
+		require.Equal(t, "******", receivedValues[apiKey.name])
+	}
+	require.Len(t, receivedValues, len(apiKeys))
 }
 
 func TestSetVar(t *testing.T) {
@@ -1564,6 +1619,16 @@ func TestSetConcurrency(t *testing.T) {
 	tk.MustExec("set @@tidb_index_serial_scan_concurrency=4")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1287 The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'."))
 	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows("4"))
+
+	// tidb_merge_partition_stats_concurrency is deprecated: setting to 1 is silent, other values warn, value always stays 1.
+	tk.MustExec("set @@tidb_merge_partition_stats_concurrency=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_merge_partition_stats_concurrency=4")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1287 tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility."))
+	tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows("1"))
+	// Global getter is overridden too, a stale persisted non-1 value must not leak through.
+	tk.MustQuery("select @@global.tidb_merge_partition_stats_concurrency").Check(testkit.Rows("1"))
 
 	// test setting deprecated value unset
 	tk.MustExec("set @@tidb_index_lookup_concurrency=-1;")

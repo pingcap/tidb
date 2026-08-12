@@ -50,6 +50,8 @@ import (
 
 const tiflashCheckTiDBHTTPAPIHalfInterval = 2500 * time.Millisecond
 
+const truncateTTLRestoreOldRegistrationLogKey = "truncate_ttl_restore_old_registration_failed"
+
 func repairTableOrViewWithCheck(t *meta.Mutator, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
 	err := checkTableInfoValid(tbInfo)
 	if err != nil {
@@ -79,6 +81,11 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 			err = checkDropTableHasForeignKeyReferredInOwner(jobCtx.infoCache, job, args)
 			if err != nil {
 				return ver, err
+			}
+		}
+		if jobCtx.oldDDLCtx != nil && tblInfo.TTLInfo != nil {
+			if err := jobCtx.oldDDLCtx.deleteTTLTableFromExternalWorkload(jobCtx.ctx, tblInfo.ID); err != nil {
+				return ver, cancelJobOnExternalTTLWorkloadError(job, err)
 			}
 		}
 		tblInfo.State = model.StateWriteOnly
@@ -475,6 +482,11 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	if err != nil {
 		return ver, err
 	}
+	if jobCtx.oldDDLCtx != nil {
+		if err := w.truncateTTLTableInExternalWorkload(jobCtx.ctx, job, oldTblInfo, args.NewTableID); err != nil {
+			return ver, err
+		}
+	}
 	err = metaMut.DropTableOrView(schemaID, tblInfo.ID)
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -633,6 +645,36 @@ func (w *worker) onTruncateTable(jobCtx *jobContext, job *model.Job) (ver int64,
 	args.NewPartitionIDs = newPartitionIDs
 	job.FillFinishedArgs(args)
 	return ver, nil
+}
+
+func (w *worker) truncateTTLTableInExternalWorkload(
+	ctx context.Context,
+	job *model.Job,
+	oldTblInfo *model.TableInfo,
+	newTableID int64,
+) error {
+	if oldTblInfo.TTLInfo == nil {
+		return nil
+	}
+	if err := w.deleteTTLTableFromExternalWorkload(ctx, oldTblInfo.ID); err != nil {
+		return cancelJobOnExternalTTLWorkloadError(job, err)
+	}
+	if oldTblInfo.TTLInfo.Enable {
+		newTTLTableInfo := oldTblInfo.Clone()
+		newTTLTableInfo.ID = newTableID
+		if err := w.registerTTLTableToExternalWorkload(ctx, newTTLTableInfo); err != nil {
+			if compensateErr := w.registerTTLTableToExternalWorkload(ctx, oldTblInfo); compensateErr != nil {
+				logutil.DDLLogger().Warn("truncate TTL external workload compensation failed",
+					zap.String("keyword", truncateTTLRestoreOldRegistrationLogKey),
+					zap.Int64("oldTableID", oldTblInfo.ID),
+					zap.Int64("newTableID", newTTLTableInfo.ID),
+					zap.Error(compensateErr),
+					zap.NamedError("registerNewTableErr", err))
+			}
+			return cancelJobOnExternalTTLWorkloadError(job, err)
+		}
+	}
+	return nil
 }
 
 func onRebaseAutoIncrementIDType(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {

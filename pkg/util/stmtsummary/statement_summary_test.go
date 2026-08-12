@@ -2069,3 +2069,42 @@ func TestStmtDigestKeyBoundary(t *testing.T) {
 	legacy = append(legacy, hack.Slice("rg")...)
 	require.Equal(t, legacy, off.Hash())
 }
+
+type mockLazyInfoPlanError struct {
+	mockLazyInfo
+}
+
+func (*mockLazyInfoPlanError) GetEncodedPlan() (string, string, any) {
+	return "", "", "mock plan encoding error"
+}
+
+// TestAddStatementPlanEncodeError verifies that a plan encoding failure does not
+// cause a nil dereference panic. The statement summary should still record the
+// statement with a discarded plan marker.
+func TestAddStatementPlanEncodeError(t *testing.T) {
+	ssMap := newStmtSummaryByDigestMap()
+	now := time.Now().Unix()
+	ssMap.beginTimeForCurInterval = now + 60
+
+	sei := generateAnyExecInfo()
+	sei.LazyInfo = &mockLazyInfoPlanError{
+		mockLazyInfo: mockLazyInfo{
+			originalSQL: "select 1",
+		},
+	}
+
+	require.NotPanics(t, func() {
+		ssMap.AddStatement(sei)
+	})
+
+	key := &StmtDigestKey{}
+	key.Init(sei.SchemaName, sei.Digest, "", sei.PlanDigest, sei.ResourceGroupName, "")
+	value, ok := ssMap.summaryMap.Get(key)
+	require.True(t, ok)
+	ssbd := value.(*stmtSummaryByDigest)
+	ssbd.Lock()
+	elem := ssbd.history.Front().Value.(*stmtSummaryByDigestElement)
+	require.Equal(t, plancodec.PlanDiscardedEncoded, elem.samplePlan)
+	require.Equal(t, int64(1), elem.execCount)
+	ssbd.Unlock()
+}
