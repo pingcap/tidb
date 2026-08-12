@@ -26,7 +26,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
@@ -35,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/tikv/client-go/v2/util"
 	"google.golang.org/grpc/codes"
@@ -457,6 +461,132 @@ abc,10,11,11,11,11
 	})
 }
 
+func (s *mockGCSSuite) TestGlobalSortMultiValuedUniqueIndexCountsConflictedRowOnce() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	bak := conflictedkv.BufferedHandleLimit
+	conflictedkv.BufferedHandleLimit = 2
+	s.T().Cleanup(func() {
+		conflictedkv.BufferedHandleLimit = bak
+	})
+
+	// The next-gen resource planner assigns one slot to this tiny input by
+	// default. Amplify its estimated size so the concurrent dispatcher and
+	// collectors are exercised.
+	testfailpoint.Enable(
+		s.T(),
+		"github.com/pingcap/tidb/pkg/executor/importer/amplifyRealSize",
+		fmt.Sprintf("return(%d)", 2*units.GiB),
+	)
+
+	// Issue #69799: handle 1 occurs in separate buffers because its two array
+	// elements conflict with different rows.
+	jobID := s.testConflictResolutionWithOptions(
+		`create table t (
+			pk bigint primary key clustered,
+			a json not null,
+			unique key uk_a ((cast(a->'$' as unsigned array)))
+		)`,
+		[]string{"1,\"[1000,2000]\"\n2,\"[1000]\"\n3,\"[2000]\"\n"},
+		[]string{},
+		"checksum_table = 'required'",
+	)
+	s.Greater(s.getTaskByJob(jobID).RequiredSlots, 1)
+}
+
+func (s *mockGCSSuite) TestGlobalSortResolvesGlobalIndexConflictsAcrossPartitions() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	// Issue #69800: the global index uses the logical table ID, while the
+	// conflicting record KVs are stored under their physical partition IDs.
+	s.testConflictResolutionWithOptions(
+		`create table t (
+			id bigint not null,
+			p int not null,
+			u int not null,
+			payload varchar(20),
+			unique key uk_u (u) global
+		) partition by range (p) (
+			partition p0 values less than (10),
+			partition p1 values less than (maxvalue)
+		)`,
+		[]string{"1,1,10,a\n2,11,10,b\n3,12,30,c\n"},
+		[]string{"3 12 30 c"},
+		"checksum_table = 'required'",
+	)
+
+	s.tk.MustQuery("select * from t force index (uk_u) order by id").
+		Check(testkit.Rows("3 12 30 c"))
+}
+
+func (s *mockGCSSuite) TestGlobalSortDistinguishesCommonHandlesWithSameString() {
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	// Issue #69801: these distinct common handles both stringify as
+	// "{x, y, z}" but belong to different unique-index conflict groups.
+	s.testConflictResolutionWithOptions(
+		`create table t (
+			pk1 varchar(32) not null,
+			pk2 varchar(32) not null,
+			u1 int not null,
+			u2 int not null,
+			primary key (pk1, pk2) clustered,
+			unique key uk1 (u1),
+			unique key uk2 (u2)
+		)`,
+		[]string{"\"x, y\",z,10,100\na,b,10,101\nx,\"y, z\",20,200\nc,d,21,200\n"},
+		[]string{},
+		"checksum_table = 'required'",
+	)
+}
+
+func (s *mockGCSSuite) TestGlobalSortFunctionalIndexConflictAfterAddingVisibleColumn() {
+	if kerneltype.IsClassic() {
+		s.T().Skip("requires the NextGen MinIO object store")
+	}
+
+	sourceStore, err := handle.NewObjStore(s.ctx, realtikvtest.GetNextGenObjStoreURI("issue-70372"))
+	s.NoError(err)
+	s.T().Cleanup(func() {
+		s.NoError(sourceStore.DeleteFile(s.ctx, "issue-70372.csv"))
+		sourceStore.Close()
+	})
+	s.NoError(sourceStore.WriteFile(s.ctx, "issue-70372.csv", []byte("1,10,100\n2,10,200\n")))
+
+	s.prepareAndUseDB("issue_70372")
+	s.tk.MustExec(`create table t (
+		id bigint primary key clustered,
+		a int,
+		unique key uk_expr ((a + 1))
+	)`)
+	s.tk.MustExec("alter table t add column tail int")
+	s.tk.MustExec("alter table t add unique key uk_tail (tail)")
+
+	result := s.tk.MustQuery(fmt.Sprintf(`import into t from '%s'
+		with on_duplicate_key='capture', cloud_storage_uri='%s'`,
+		realtikvtest.GetNextGenObjStoreURI("issue-70372/*.csv"),
+		realtikvtest.GetNextGenObjStoreURI("issue-70372-sort"))).Rows()
+	s.Len(result, 1)
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+
+	rows := s.tk.MustQuery("select summary from mysql.tidb_import_jobs where id = ?", jobID).Rows()
+	s.Len(rows, 1)
+	var summary importer.Summary
+	s.NoError(json.Unmarshal([]byte(rows[0][0].(string)), &summary))
+	s.Zero(summary.ImportedRows)
+	s.EqualValues(2, summary.ConflictRowCnt)
+
+	s.tk.MustQuery("select * from t").Check(testkit.Rows())
+	s.tk.MustExec("admin check table t")
+	s.tk.MustExec("insert into t values (3, 30, 100)")
+	s.tk.MustQuery("select * from t").Check(testkit.Rows("3 30 100"))
+	s.tk.MustExec("admin check table t")
+}
+
 func (s *mockGCSSuite) TestGlobalSortConflictResolutionMultipleSubtasks() {
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "conflicts"})
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
@@ -701,7 +831,7 @@ func (s *mockGCSSuite) TestGlobalSortTooManyConflictedRowsFromIndex() {
 
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/forceHandleConflictsBySingleThread", "return(true)")
 	var fpEntered atomic.Int32
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv/mockHandleSetSizeLimit", func(limitP *int64) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv/mockKeySetSizeLimit", func(limitP *int64) {
 		*limitP = 0
 		fpEntered.CompareAndSwap(0, 1)
 	})

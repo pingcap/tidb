@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -67,14 +68,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 	orderByClause, err := buildOrderByClause(tctx, mockConf, baseConn, database, table, true)
 	require.NoError(t, err)
 
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
-
-	selectedField, _, err := buildSelectField(tctx, baseConn, database, table, false)
-	require.NoError(t, err)
-
-	q := buildSelectQuery(database, table, selectedField, "", "", orderByClause)
+	q := buildSelectQuery(database, table, "*", "", "", orderByClause)
 	require.Equal(t, fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `_tidb_rowid`", database, table), q)
 
 	mock.ExpectQuery(fmt.Sprintf("SHOW INDEX FROM `%s`.`%s`", database, table)).
@@ -84,14 +78,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 	orderByClause, err = buildOrderByClause(tctx, mockConf, baseConn, database, table, false)
 	require.NoError(t, err)
 
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
-
-	selectedField, _, err = buildSelectField(tctx, baseConn, database, table, false)
-	require.NoError(t, err)
-
-	q = buildSelectQuery(database, table, selectedField, "", "", orderByClause)
+	q = buildSelectQuery(database, table, "*", "", "", orderByClause)
 	require.Equal(t, fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `id`", database, table), q)
 	require.NoError(t, mock.ExpectationsWereMet())
 
@@ -109,14 +96,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 		orderByClause, err := buildOrderByClause(tctx, mockConf, baseConn, database, table, false)
 		require.NoError(t, err, comment)
 
-		mock.ExpectQuery("SHOW COLUMNS FROM").
-			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
-
-		selectedField, _, err = buildSelectField(tctx, baseConn, database, table, false)
-		require.NoError(t, err, comment)
-
-		q = buildSelectQuery(database, table, selectedField, "", "", orderByClause)
+		q = buildSelectQuery(database, table, "*", "", "", orderByClause)
 		require.Equal(t, fmt.Sprintf("SELECT * FROM `%s`.`%s` ORDER BY `id`", database, table), q, comment)
 
 		err = mock.ExpectationsWereMet()
@@ -135,14 +115,7 @@ func TestBuildSelectAllQuery(t *testing.T) {
 		orderByClause, err := buildOrderByClause(tctx, mockConf, baseConn, database, table, false)
 		require.NoError(t, err, comment)
 
-		mock.ExpectQuery("SHOW COLUMNS FROM").
-			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
-
-		selectedField, _, err = buildSelectField(tctx, baseConn, "test", "t", false)
-		require.NoError(t, err, comment)
-
-		q := buildSelectQuery(database, table, selectedField, "", "", orderByClause)
+		q := buildSelectQuery(database, table, "*", "", "", orderByClause)
 		require.Equal(t, fmt.Sprintf("SELECT * FROM `%s`.`%s`", database, table), q, comment)
 
 		err = mock.ExpectationsWereMet()
@@ -156,17 +129,41 @@ func TestBuildSelectAllQuery(t *testing.T) {
 		mockConf.ServerInfo.ServerType = tp
 		comment := fmt.Sprintf("current server type: %v", tp)
 
-		mock.ExpectQuery("SHOW COLUMNS FROM").
-			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-				AddRow("id", "int(11)", "NO", "PRI", nil, ""))
-
-		selectedField, _, err := buildSelectField(tctx, baseConn, "test", "t", false)
-		require.NoError(t, err, comment)
-
-		q := buildSelectQuery(database, table, selectedField, "", "", "")
+		q := buildSelectQuery(database, table, "*", "", "", "")
 		require.Equal(t, fmt.Sprintf("SELECT * FROM `%s`.`%s`", database, table), q, comment)
 		require.NoError(t, mock.ExpectationsWereMet(), comment)
 	}
+}
+
+func TestGetColumnTypesRetriesCloseError(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, db.Close())
+	}()
+
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	require.NoError(t, err)
+	tctx := tcontext.Background().WithLogger(appLogger)
+	baseConn := newBaseConn(conn, true, nil)
+
+	query := fmt.Sprintf("SELECT `id` FROM `%s`.`%s` LIMIT 1", database, table)
+	firstRows := sqlmock.NewRowsWithColumnDefinition(
+		sqlmock.NewColumn("id").OfType("INT", int64(0)),
+	).AddRow(1).CloseError(errors.New("close failed"))
+	secondRows := sqlmock.NewRowsWithColumnDefinition(
+		sqlmock.NewColumn("id").OfType("INT", int64(0)),
+	).AddRow(1)
+	mock.ExpectQuery(regexp.QuoteMeta(query)).WillReturnRows(firstRows)
+	mock.ExpectQuery(regexp.QuoteMeta(query)).WillReturnRows(secondRows)
+
+	colTypes, err := GetColumnTypes(tctx, baseConn, "`id`", database, table)
+	require.NoError(t, err)
+	require.Len(t, colTypes, 1)
+	require.Equal(t, "id", colTypes[0].Name())
+	require.Equal(t, "INT", colTypes[0].DatabaseTypeName())
+	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestBuildOrderByClause(t *testing.T) {
@@ -245,69 +242,6 @@ func TestBuildOrderByClause(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 	require.Equal(t, "ORDER BY `id`", orderByClause)
-}
-
-func TestBuildSelectField(t *testing.T) {
-	db, mock, err := sqlmock.New()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, db.Close())
-	}()
-
-	conn, err := db.Conn(context.Background())
-	require.NoError(t, err)
-	tctx := tcontext.Background().WithLogger(appLogger)
-	baseConn := newBaseConn(conn, true, nil)
-
-	// generate columns not found
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
-
-	selectedField, _, err := buildSelectField(tctx, baseConn, "test", "t", false)
-	require.Equal(t, "*", selectedField)
-	require.NoError(t, err)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	// user assigns completeInsert
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("id", "int(11)", "NO", "PRI", nil, "").
-			AddRow("name", "varchar(12)", "NO", "", nil, "").
-			AddRow("quo`te", "varchar(12)", "NO", "UNI", nil, ""))
-
-	selectedField, _, err = buildSelectField(tctx, baseConn, "test", "t", true)
-	require.Equal(t, "`id`,`name`,`quo``te`", selectedField)
-	require.NoError(t, err)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	// found generate columns, rest columns is `id`,`name`
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("id", "int(11)", "NO", "PRI", nil, "").
-			AddRow("name", "varchar(12)", "NO", "", nil, "").
-			AddRow("quo`te", "varchar(12)", "NO", "UNI", nil, "").
-			AddRow("generated", "varchar(12)", "NO", "", nil, "VIRTUAL GENERATED"))
-
-	selectedField, _, err = buildSelectField(tctx, baseConn, "test", "t", false)
-	require.Equal(t, "`id`,`name`,`quo``te`", selectedField)
-	require.NoError(t, err)
-	require.NoError(t, mock.ExpectationsWereMet())
-
-	// Test build SelectField with retry
-	baseConn = newBaseConn(conn, true, func(conn *sql.Conn, b bool) (*sql.Conn, error) {
-		return conn, nil
-	})
-	mock.ExpectQuery("SHOW COLUMNS FROM").WillReturnError(errors.New("invalid connection"))
-	mock.ExpectQuery("SHOW COLUMNS FROM").WillReturnError(errors.New("invalid connection"))
-	mock.ExpectQuery("SHOW COLUMNS FROM").
-		WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-			AddRow("id", "int(11)", "NO", "PRI", nil, ""))
-
-	selectedField, _, err = buildSelectField(tctx, baseConn, "test", "t", false)
-	require.Equal(t, "*", selectedField)
-	require.NoError(t, err)
-	require.NoError(t, mock.ExpectationsWereMet())
 }
 
 func TestParseSnapshotToTSO(t *testing.T) {
@@ -1053,7 +987,6 @@ func TestBuildRegionQueriesWithoutPartition(t *testing.T) {
 			dbName:           database,
 			tblName:          table,
 			selectedField:    "*",
-			selectedLen:      len(handleColNames),
 			hasImplicitRowID: testCase.hasTiDBRowID,
 			colTypes:         handleColTypes,
 			colNames:         handleColNames,
@@ -1256,7 +1189,6 @@ func TestBuildRegionQueriesWithPartitions(t *testing.T) {
 			dbName:           database,
 			tblName:          table,
 			selectedField:    "*",
-			selectedLen:      len(handleColNames),
 			hasImplicitRowID: testCase.hasTiDBRowID,
 			colTypes:         handleColTypes,
 			colNames:         handleColNames,

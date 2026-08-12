@@ -91,13 +91,15 @@ func TestOverrideConfigKeyspaceActivateMode(t *testing.T) {
 	fset := initFlagSet()
 	require.NoError(t, fset.Parse([]string{
 		"--keyspace-activate=true",
-		"--starter-additional-params=pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1",
+		"--starter-additional-params=pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,enable-rg-fallback=true",
 	}))
 
 	cfg := config.NewConfig()
+	cfg.DeployMode = deploymode.Starter
 	overrideConfig(cfg, fset)
 	require.True(t, cfg.KeyspaceActivateMode)
-	require.Equal(t, "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1", *starterAdditionalParams)
+	require.True(t, cfg.StarterParams.EnableRGFallback)
+	require.Equal(t, "pod-name=pod-1,pod-ip=10.0.0.1,pod-namespace=ns-1,enable-rg-fallback=true", *starterAdditionalParams)
 }
 
 func TestSetGlobalVars(t *testing.T) {
@@ -258,6 +260,11 @@ func TestCreateMgrClientRequiresPodIdentityInStarter(t *testing.T) {
 	starterAdditionalParams = &unknownParam
 	_, err = createMgrClientForStarter()
 	require.ErrorContains(t, err, `unknown starter additional param "unknown"`)
+
+	invalidBoolParam := "enable-rg-fallback=definitely"
+	starterAdditionalParams = &invalidBoolParam
+	_, err = createMgrClientForStarter()
+	require.ErrorContains(t, err, `starter additional param "enable-rg-fallback" must be a bool`)
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.StarterParams.ManagerAddr = ""

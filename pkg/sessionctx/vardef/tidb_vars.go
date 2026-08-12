@@ -1026,7 +1026,8 @@ const (
 	TiDBOptUseInvisibleIndexes = "tidb_opt_use_invisible_indexes"
 	// TiDBAnalyzePartitionConcurrency is the number of concurrent workers to save statistics to the system tables.
 	TiDBAnalyzePartitionConcurrency = "tidb_analyze_partition_concurrency"
-	// TiDBMergePartitionStatsConcurrency indicates the concurrency when merge partition stats into global stats
+	// TiDBMergePartitionStatsConcurrency is deprecated. It is kept for backward compatibility
+	// but no longer affects behavior. Global stats always use the combined merge algorithm.
 	TiDBMergePartitionStatsConcurrency = "tidb_merge_partition_stats_concurrency"
 	// TiDBEnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
 	TiDBEnableAsyncMergeGlobalStats = "tidb_enable_async_merge_global_stats"
@@ -1047,6 +1048,9 @@ const (
 
 	// TiDBEnablePlanReplayerContinuousCapture indicates whether to enable continuous capture
 	TiDBEnablePlanReplayerContinuousCapture = "tidb_enable_plan_replayer_continuous_capture"
+
+	// TiDBPlanReplayerFileRetentionTime indicates how long to retain non-capture plan replayer files.
+	TiDBPlanReplayerFileRetentionTime = "tidb_plan_replayer_file_retention_time"
 	// TiDBEnableReusechunk indicates whether to enable chunk alloc
 	TiDBEnableReusechunk = "tidb_enable_reuse_chunk"
 
@@ -1110,6 +1114,9 @@ const (
 
 	// TiDBOptEnableHashJoin indicates whether to enable hash join.
 	TiDBOptEnableHashJoin = "tidb_opt_enable_hash_join"
+
+	// TiDBEnableFullOuterJoin indicates whether to enable FULL OUTER JOIN.
+	TiDBEnableFullOuterJoin = "tidb_enable_full_outer_join"
 
 	// TiDBHashJoinVersion indicates whether to use hash join implementation v2.
 	TiDBHashJoinVersion = "tidb_hash_join_version"
@@ -1238,6 +1245,21 @@ const (
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
 	// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
 	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
+	// The "exp" prefix in the following embedding system variables means experimental.
+	// TiDBExpEmbedJinaAIAPIKey is the API key to use when calling Jina embedding API.
+	TiDBExpEmbedJinaAIAPIKey = "tidb_exp_embed_jina_ai_api_key"
+	// TiDBExpEmbedOpenAIAPIKey is the API key to use when calling OpenAI-compatible embedding API.
+	TiDBExpEmbedOpenAIAPIKey = "tidb_exp_embed_openai_api_key"
+	// TiDBExpEmbedOpenAIAPIBase is the base URL to use when calling OpenAI-compatible embedding API.
+	TiDBExpEmbedOpenAIAPIBase = "tidb_exp_embed_openai_api_base"
+	// TiDBExpEmbedCohereAPIKey is the API key to use when calling Cohere embedding API.
+	TiDBExpEmbedCohereAPIKey = "tidb_exp_embed_cohere_api_key"
+	// TiDBExpEmbedHuggingFaceAPIKey is the API key to use when calling Hugging Face embedding API.
+	TiDBExpEmbedHuggingFaceAPIKey = "tidb_exp_embed_huggingface_api_key"
+	// TiDBExpEmbedNvidiaNIMAPIKey is the API key to use when calling NVIDIA NIM embedding API.
+	TiDBExpEmbedNvidiaNIMAPIKey = "tidb_exp_embed_nvidia_nim_api_key"
+	// TiDBExpEmbedGeminiAPIKey is the API key to use when calling Gemini embedding API.
+	TiDBExpEmbedGeminiAPIKey = "tidb_exp_embed_gemini_api_key"
 	// TiDBAutoBuildStatsConcurrency is the number of concurrent workers to automatically analyze tables or partitions.
 	// It is very similar to the `tidb_build_stats_concurrency` variable, but it is used for the auto analyze feature.
 	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
@@ -1519,6 +1541,7 @@ const (
 	DefInitChunkSize                    = 32
 	DefMinPagingSize                    = int(paging.MinPagingSize)
 	DefMaxPagingSize                    = int(paging.MinAllowedMaxPagingSize)
+	DefTiDBEmbedOpenAIAPIBase           = "https://api.openai.com/v1"
 	// DefPagingSizeBytes defaults to 0 (byte-budget paging disabled).
 	// A non-zero value takes effect only when Resource Control is enabled and the active Resource Group
 	// is non-burstable (has limited burst).
@@ -1736,23 +1759,22 @@ const (
 	MinTiDBInstancePlanCacheMemSize                   = 100 * size.MB
 	DefTiDBInstancePlanCacheReservedPercentage        = 0.1
 	// MaxDDLReorgBatchSize is exported for testing.
-	MaxDDLReorgBatchSize                  int32  = 10240
-	MinDDLReorgBatchSize                  int32  = 32
-	MinExpensiveQueryTimeThreshold        uint64 = 10 // 10s
-	MinExpensiveTxnTimeThreshold          uint64 = 60 // 60s
-	DefTiDBAutoBuildStatsConcurrency             = DefBuildStatsConcurrency
-	DefTiDBSysProcScanConcurrency                = DefAnalyzeDistSQLScanConcurrency
-	DefTiDBRcWriteCheckTs                        = false
-	DefTiDBForeignKeyChecks                      = true
-	DefTiDBForeignKeyCheckInSharedLock           = false
-	DefTiDBOptAdvancedJoinHint                   = true
-	DefTiDBAnalyzePartitionConcurrency           = 2
-	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
-	DefTiDBCostModelVer                          = 2
-	DefTiDBServerMemoryLimitSessMinSize          = 128 << 20
-	DefTiDBMergePartitionStatsConcurrency        = 1
-	DefTiDBServerMemoryLimitGCTrigger            = 0.7
-	DefTiDBEnableGOGCTuner                       = true
+	MaxDDLReorgBatchSize                int32  = 10240
+	MinDDLReorgBatchSize                int32  = 32
+	MinExpensiveQueryTimeThreshold      uint64 = 10 // 10s
+	MinExpensiveTxnTimeThreshold        uint64 = 60 // 60s
+	DefTiDBAutoBuildStatsConcurrency           = DefBuildStatsConcurrency
+	DefTiDBSysProcScanConcurrency              = DefAnalyzeDistSQLScanConcurrency
+	DefTiDBRcWriteCheckTs                      = false
+	DefTiDBForeignKeyChecks                    = true
+	DefTiDBForeignKeyCheckInSharedLock         = false
+	DefTiDBOptAdvancedJoinHint                 = true
+	DefTiDBAnalyzePartitionConcurrency         = 2
+	DefTiDBOptRangeMaxSize                     = 64 * int64(size.MB) // 64 MB
+	DefTiDBCostModelVer                        = 2
+	DefTiDBServerMemoryLimitSessMinSize        = 128 << 20
+	DefTiDBServerMemoryLimitGCTrigger          = 0.7
+	DefTiDBEnableGOGCTuner                     = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
 	DefTiDBGOGCTunerThreshold                 float64 = 0.6
 	DefTiDBGOGCMaxValue                               = 500
@@ -1765,6 +1787,7 @@ const (
 	DefTiDBEnableReusechunk                           = true
 	DefTiDBUseAlloc                                   = false
 	DefTiDBEnablePlanReplayerCapture                  = true
+	DefTiDBPlanReplayerFileRetentionTime              = 7 * 24 * time.Hour
 	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
 	DefTiDBTTLJobEnable                               = true
 	DefTiDBTTLScanBatchSize                           = 500
@@ -1821,6 +1844,7 @@ const (
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
 	DefTiDBOptEnableHashJoin                          = true
+	DefTiDBEnableFullOuterJoin                        = false
 	DefTiDBHashJoinVersion                            = joinversion.HashJoinVersionOptimized
 	DefTiDBOptIndexJoinBuild                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
@@ -1994,8 +2018,18 @@ var (
 	ServiceScope                    = atomic.NewString("")
 	SchemaVersionCacheLimit         = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI                 = atomic.NewString("")
-	IgnoreInlistPlanDigest          = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
-	TxnEntrySizeLimit               = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
+	EmbedJinaAPIKey                 = atomic.NewString("")
+	EmbedOpenAIAPIKey               = atomic.NewString("")
+	EmbedOpenAIAPIBase              = atomic.NewString("")
+	EmbedCohereAPIKey               = atomic.NewString("")
+	EmbedHuggingFaceAPIKey          = atomic.NewString("")
+	EmbedNvidiaNIMAPIKey            = atomic.NewString("")
+	EmbedGeminiAPIKey               = atomic.NewString("")
+	// EmbeddingConfigVersion invalidates cached embeddings when a dynamic
+	// provider credential or endpoint changes without putting secrets in cache keys.
+	EmbeddingConfigVersion = atomic.NewUint64(0)
+	IgnoreInlistPlanDigest = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
+	TxnEntrySizeLimit      = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 
 	SchemaCacheSize              = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText    = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))

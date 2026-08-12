@@ -62,6 +62,21 @@ func createGetBucketRegionServer(region string, statusCode int, incHeader bool) 
 	}))
 }
 
+type rewriteRequestHostTransport struct {
+	targetHost string
+	base       http.RoundTripper
+}
+
+func (t *rewriteRequestHostTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	req := r.Clone(r.Context())
+	if req.Host == "" {
+		req.Host = r.URL.Host
+	}
+	req.URL.Scheme = "http"
+	req.URL.Host = t.targetHost
+	return t.base.RoundTrip(req)
+}
+
 func TestApply(t *testing.T) {
 	type testcase struct {
 		name      string
@@ -425,6 +440,71 @@ func TestS3Storage(t *testing.T) {
 	for i := range tests {
 		testFn(&tests[i], t)
 	}
+
+	t.Run("cache assumed role credentials", func(t *testing.T) {
+		const assumeRoleResponse = `<?xml version="1.0" encoding="UTF-8"?>
+<AssumeRoleResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <AssumeRoleResult>
+    <AssumedRoleUser>
+      <Arn>arn:aws:sts::123456789012:assumed-role/test-role/test-session</Arn>
+      <AssumedRoleId>AROAEXAMPLE:test-session</AssumedRoleId>
+    </AssumedRoleUser>
+    <Credentials>
+      <AccessKeyId>assumed-access-key</AccessKeyId>
+      <SecretAccessKey>assumed-secret-access-key</SecretAccessKey>
+      <SessionToken>assumed-session-token</SessionToken>
+      <Expiration>2099-01-01T00:00:00Z</Expiration>
+    </Credentials>
+  </AssumeRoleResult>
+  <ResponseMetadata>
+    <RequestId>00000000-0000-0000-0000-000000000000</RequestId>
+  </ResponseMetadata>
+</AssumeRoleResponse>`
+
+		var assumeRoleCalls, s3Calls, assumedCredentialUses atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Method == http.MethodPost {
+				assumeRoleCalls.Add(1)
+				w.Header().Set("Content-Type", "text/xml")
+				if _, err := fmt.Fprint(w, assumeRoleResponse); err != nil {
+					t.Errorf("write AssumeRole response: %v", err)
+				}
+				return
+			}
+
+			s3Calls.Add(1)
+			if strings.Contains(r.Header.Get("Authorization"), "Credential=assumed-access-key/") {
+				assumedCredentialUses.Add(1)
+			}
+			w.Header().Set(bucketRegionHeader, "us-west-2")
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		httpClient := server.Client()
+		httpClient.Transport = &rewriteRequestHostTransport{
+			targetHost: strings.TrimPrefix(server.URL, "http://"),
+			base:       httpClient.Transport,
+		}
+		storage, err := NewS3Storage(context.Background(), &backuppb.S3{
+			Region:         "us-west-2",
+			Endpoint:       server.URL,
+			Provider:       "aws",
+			Bucket:         "bucket",
+			ForcePathStyle: true,
+			RoleArn:        "arn:aws:iam::123456789012:role/test-role",
+		}, &storeapi.Options{HTTPClient: httpClient})
+		require.NoError(t, err)
+
+		for range 2 {
+			exists, err := storage.FileExists(context.Background(), "object")
+			require.NoError(t, err)
+			require.True(t, exists)
+		}
+		require.GreaterOrEqual(t, s3Calls.Load(), int32(2))
+		require.Equal(t, s3Calls.Load(), assumedCredentialUses.Load())
+		require.Equal(t, int32(1), assumeRoleCalls.Load())
+	})
 }
 
 func TestS3URI(t *testing.T) {
