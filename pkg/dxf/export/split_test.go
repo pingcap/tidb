@@ -15,10 +15,14 @@
 package export
 
 import (
+	"bytes"
 	"encoding/json"
+	"math"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -120,4 +124,65 @@ func TestChunkCntFor(t *testing.T) {
 	// At least one.
 	require.Equal(t, 1, chunkCntFor(0, 5))
 	require.Equal(t, 1, chunkCntFor(1, 10))
+}
+
+func TestAssembleChunks(t *testing.T) {
+	const size = 8 * 1024 * 1024 * 1024
+	b := keys("a", "b", "c", "d", "e") // 4 regions
+
+	chunks, next := assembleChunks(2, 100, b, 2, size, 0)
+	require.Len(t, chunks, 2)
+	require.Equal(t, 2, next)
+
+	// Cover [a, e) with no gap or overlap, in key order.
+	require.Equal(t, []byte("a"), chunks[0].Start)
+	require.Equal(t, chunks[0].End, chunks[1].Start)
+	require.Equal(t, []byte("e"), chunks[1].End)
+	// Table-local ordinals and metadata.
+	require.Equal(t, 0, chunks[0].Ordinal)
+	require.Equal(t, 1, chunks[1].Ordinal)
+	require.Equal(t, 2, chunks[0].TableIdx)
+	require.Equal(t, int64(100), chunks[0].PhysicalID)
+	// Size apportioned by region count (2 of 4 regions each).
+	require.Equal(t, int64(size)*2/4, chunks[0].Size)
+
+	// Deterministic.
+	again, _ := assembleChunks(2, 100, b, 2, size, 0)
+	require.Equal(t, chunks, again)
+
+	// Ordinal continues across partitions of the same table.
+	more, next2 := assembleChunks(2, 200, keys("a", "z"), 1, size, next)
+	require.Equal(t, 2, more[0].Ordinal)
+	require.Equal(t, int64(200), more[0].PhysicalID)
+	require.Equal(t, 3, next2)
+}
+
+func TestPhysicalTableRange(t *testing.T) {
+	const pid = 100
+	prefix := tablecodec.GenTableRecordPrefix(pid)
+	end := prefix.PrefixNext()
+
+	// Common handle: start is the bare record prefix.
+	cs, ce := physicalTableRange(&model.TableInfo{IsCommonHandle: true}, pid)
+	require.Equal(t, kv.Key(prefix), cs)
+	require.Equal(t, end, ce)
+
+	// Int handle: start is a well-formed MinInt64 record key under the table's
+	// record prefix (a bare prefix start makes TiKV return nothing), and stays
+	// within [prefix, end).
+	is, ie := physicalTableRange(&model.TableInfo{IsCommonHandle: false}, pid)
+	require.Equal(t, tablecodec.EncodeRowKeyWithHandle(pid, kv.IntHandle(math.MinInt64)), is)
+	require.Equal(t, end, ie)
+	require.True(t, bytes.HasPrefix(is, cs))
+	require.True(t, bytes.Compare(is, ie) < 0)
+}
+
+func TestPhysicalIDs(t *testing.T) {
+	require.Equal(t, []int64{100}, physicalIDs(&model.TableInfo{ID: 100}))
+
+	part := &model.TableInfo{ID: 100, Partition: &model.PartitionInfo{
+		Enable:      true,
+		Definitions: []model.PartitionDefinition{{ID: 101}, {ID: 102}, {ID: 103}},
+	}}
+	require.Equal(t, []int64{101, 102, 103}, physicalIDs(part))
 }

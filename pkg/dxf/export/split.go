@@ -32,27 +32,18 @@ import (
 
 const (
 	loadRegionMaxRetry = 8
-	// defaultRegionSize approximates a TiKV region's size, used to size a chunk
-	// by region count without querying PD. A later refinement can sum PD region
-	// approximate sizes for an accurate estimate.
-	defaultRegionSize = 96 * 1024 * 1024
-	// chunkSize is the target key-range size of one chunk — the unit of work a
-	// worker pulls and exports. It is deliberately larger than FileSize (the
-	// within-chunk file-cut size): a worker reads a chunk and rotates a new
-	// output file every FileSize, so e.g. a 1 GiB chunk with a 256 MiB FileSize
-	// emits about four files.
+	defaultRegionSize  = 96 * 1024 * 1024
+	// chunkSize is the work granularity, deliberately larger than FileSize (the
+	// within-chunk file-cut size), so fewer, larger chunks mean fewer partial
+	// tail files.
 	chunkSize = 1024 * 1024 * 1024
-	// maxChunksPerSubtask caps how many chunks one subtask carries, so a schema
-	// of many small tables still spreads across subtasks.
+	// maxChunksPerSubtask caps chunks per subtask so a schema of many small
+	// tables still spreads across subtasks.
 	maxChunksPerSubtask = 4000
 )
 
-// splitTableSet builds the Dump-step subtasks for the whole table set. It first
-// carves every table into key-ordered chunks (each ≈ one output file), then
-// packs the chunks into subtasks. A chunk is the atomic unit of work with a
-// fixed, worker-independent file name; a subtask is a batch of chunks whose
-// worker pool exports them concurrently. The result is deterministic given the
-// same region layout.
+// splitTableSet carves every table into ~chunkSize chunks, then packs the chunks
+// into size-balanced subtasks. Deterministic given the same region layout.
 func splitTableSet(ctx context.Context, store kv.Storage, meta *TaskMeta, nodeCnt int) ([][]byte, error) {
 	var chunks []Chunk
 	var totalSize int64
@@ -69,16 +60,10 @@ func splitTableSet(ctx context.Context, store kv.Storage, meta *TaskMeta, nodeCn
 	return packSubtasks(chunks, totalSize, nodeCnt)
 }
 
-// chunkTable carves one table into key-ordered chunks of ≈ chunkSize each,
-// stamping a running table-local Ordinal across all of its partitions so file
-// names never collide within the table, and estimating each chunk's byte size.
-// The sort + continuity check runs per physical table (cross-partition key gaps
-// are expected).
-//
-// The chunk count comes from the table's real byte size (PD region stats),
-// while the chunk boundaries come from the region cache; a chunk's size is that
-// total apportioned by its region count. When PD stats are unavailable (e.g. a
-// mock store) it falls back to a region-count estimate.
+// chunkTable carves one table into key-ordered chunks. The chunk count comes
+// from the table's real byte size, the boundaries from the region cache, and a
+// running table-local ordinal spans all partitions so file names never collide
+// within the table.
 func chunkTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx int) ([]Chunk, error) {
 	tblInfo := meta.Tables[tableIdx].TableInfo
 	var chunks []Chunk
@@ -91,29 +76,40 @@ func chunkTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx 
 		}
 		regionCnt := len(boundaries) - 1
 		totalSize := estimatePhysicalSize(ctx, store, pid, regionCnt)
-		chunkCnt := chunkCntFor(totalSize, regionCnt)
-		for _, g := range groupBoundaries(boundaries, chunkCnt) {
-			chunkRegions := len(g) - 1
-			chunks = append(chunks, Chunk{
-				TableIdx:   tableIdx,
-				PhysicalID: pid,
-				Start:      g[0],
-				End:        g[len(g)-1],
-				Size:       totalSize * int64(chunkRegions) / int64(regionCnt),
-				Ordinal:    ordinal,
-			})
-			ordinal++
-		}
+		var tableChunks []Chunk
+		tableChunks, ordinal = assembleChunks(tableIdx, pid, boundaries, chunkCntFor(totalSize, regionCnt), totalSize, ordinal)
+		chunks = append(chunks, tableChunks...)
 	}
 	return chunks, nil
 }
 
-// estimatePhysicalSize returns the byte size of a physical table from PD region
-// stats, falling back to region count × defaultRegionSize when PD is unavailable.
+// assembleChunks groups one physical table's boundaries into chunkCnt key-ordered
+// chunks, apportioning totalSize by region count and continuing the table-local
+// ordinal from startOrdinal. It returns the chunks and the next ordinal.
+func assembleChunks(tableIdx int, pid int64, boundaries []kv.Key, chunkCnt int, totalSize int64, startOrdinal int) ([]Chunk, int) {
+	regionCnt := len(boundaries) - 1
+	ord := startOrdinal
+	chunks := make([]Chunk, 0, chunkCnt)
+	for _, g := range groupBoundaries(boundaries, chunkCnt) {
+		chunkRegions := len(g) - 1
+		chunks = append(chunks, Chunk{
+			TableIdx:   tableIdx,
+			PhysicalID: pid,
+			Start:      g[0],
+			End:        g[len(g)-1],
+			Size:       totalSize * int64(chunkRegions) / int64(regionCnt),
+			Ordinal:    ord,
+		})
+		ord++
+	}
+	return chunks, ord
+}
+
+// estimatePhysicalSize returns a physical table's byte size from PD region stats,
+// falling back to region count × defaultRegionSize when PD is unavailable.
 func estimatePhysicalSize(ctx context.Context, store kv.Storage, pid int64, regionCnt int) int64 {
 	if hStore, ok := store.(helper.Storage); ok {
 		h := helper.NewHelper(hStore)
-		// noIndexStats: size the record data only (no index KV).
 		if stats, err := h.GetPDRegionStats(ctx, pid, true); err == nil && stats.StorageSize > 0 {
 			return stats.StorageSize * 1024 * 1024
 		}
@@ -121,17 +117,15 @@ func estimatePhysicalSize(ctx context.Context, store kv.Storage, pid int64, regi
 	return int64(regionCnt) * defaultRegionSize
 }
 
-// chunkCntFor decides how many chunks a physical table splits into, one per
-// ≈ chunkSize of data but never more than its region count.
+// chunkCntFor is one chunk per ~chunkSize of data, never more than the region count.
 func chunkCntFor(totalSize int64, regionCnt int) int {
 	n := int((totalSize + chunkSize - 1) / chunkSize)
 	return max(1, min(n, regionCnt))
 }
 
-// packSubtasks groups the chunks into subtasks in key order so each subtask
-// holds a similar amount of data, following IMPORT INTO's adjusted-engine-size
-// approach: aim for about one subtask per node, target engineSize =
-// ceil(totalSize/subtaskCnt), and accumulate chunks until a subtask reaches it.
+// packSubtasks groups chunks into subtasks in key order so each holds a similar
+// amount of data, following IMPORT INTO's adjusted-engine-size approach:
+// engineSize = ceil(totalSize/subtaskCnt), accumulate until a subtask reaches it.
 func packSubtasks(chunks []Chunk, totalSize int64, nodeCnt int) ([][]byte, error) {
 	if len(chunks) == 0 {
 		return nil, nil
@@ -153,8 +147,6 @@ func packSubtasks(chunks []Chunk, totalSize int64, nodeCnt int) ([][]byte, error
 	for _, c := range chunks {
 		batch = append(batch, c)
 		acc += c.Size
-		// Cap the chunk count too, so a schema of many zero/small chunks still
-		// spreads instead of collapsing into one subtask.
 		if (engineSize > 0 && acc >= engineSize) || len(batch) >= maxChunksPerSubtask {
 			if err := emit(batch); err != nil {
 				return nil, err
@@ -170,8 +162,8 @@ func packSubtasks(chunks []Chunk, totalSize int64, nodeCnt int) ([][]byte, error
 	return subtasks, nil
 }
 
-// subtaskCntFor targets about one subtask per node, but caps chunks per subtask
-// so a schema of many small tables does not collapse into a few huge subtasks.
+// subtaskCntFor targets about one subtask per node, capped so many small tables
+// do not collapse into a few huge subtasks.
 func subtaskCntFor(chunkCnt, nodeCnt int) int {
 	if nodeCnt <= 0 {
 		nodeCnt = 1
@@ -181,8 +173,8 @@ func subtaskCntFor(chunkCnt, nodeCnt int) int {
 	return max(cnt, minCnt, 1)
 }
 
-// physicalIDs returns the physical table ids to export: one per partition for a
-// partitioned table, otherwise the table id itself.
+// physicalIDs returns one id per partition for a partitioned table, otherwise
+// the table id.
 func physicalIDs(tblInfo *model.TableInfo) []int64 {
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		ids := make([]int64, 0, len(pi.Definitions))
@@ -206,10 +198,9 @@ func physicalTableRange(tblInfo *model.TableInfo, pid int64) (start, end kv.Key)
 	return tablecodec.EncodeRowKeyWithHandle(pid, kv.IntHandle(math.MinInt64)), prefix.PrefixNext()
 }
 
-// loadRegionBoundaries returns the sorted, continuous region boundaries covering
-// [start, end), clamped to the range. The result has at least two elements:
-// result[0] == start and result[len-1] == end. It errors if the regions are not
-// continuous (a gap would silently drop rows).
+// loadRegionBoundaries returns the sorted region boundaries covering [start, end),
+// with result[0] == start and result[len-1] == end. It errors when the regions
+// are not continuous, since a gap would silently drop rows.
 func loadRegionBoundaries(ctx context.Context, store kv.Storage, start, end kv.Key) ([]kv.Key, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
@@ -259,8 +250,8 @@ func loadRegionBoundaries(ctx context.Context, store kv.Storage, start, end kv.K
 }
 
 // groupBoundaries splits the boundary list into at most groupCnt contiguous
-// groups of roughly equal region count, in key order. Each returned group has
-// its span endpoints as the first and last element.
+// groups of roughly equal region count, each group's first and last element
+// being its span endpoints.
 func groupBoundaries(boundaries []kv.Key, groupCnt int) [][]kv.Key {
 	rangeCnt := len(boundaries) - 1
 	sizes := mathutil.Divide2Batches(rangeCnt, max(groupCnt, 1))

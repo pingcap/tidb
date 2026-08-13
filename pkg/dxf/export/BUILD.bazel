@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "export",
     srcs = [
-        "doc.go",
         "proto.go",
         "scheduler.go",
         "split.go",
@@ -36,12 +35,13 @@ go_test(
     ],
     embed = [":export"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 11,
     deps = [
         "//pkg/dxf/framework/proto",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/ast",
+        "//pkg/tablecodec",
         "@com_github_stretchr_testify//require",
     ],
 )

@@ -116,9 +116,8 @@ func (*exportScheduler) ModifyMeta(oldMeta []byte, _ []proto.Modification) ([]by
 	return oldMeta, nil
 }
 
-// TaskKey returns the DXF task key for exporting the given table set root at the
-// given snapshot. tableID is the first table's id for EXPORT TABLE, or the
-// schema id for EXPORT SCHEMA.
+// TaskKey returns the DXF task key: the first table's id (EXPORT TABLE) or the
+// schema id (EXPORT SCHEMA), plus the snapshot.
 func TaskKey(tableID int64, snapshotTS uint64) string {
 	return fmt.Sprintf("export/%d/%d", tableID, snapshotTS)
 }

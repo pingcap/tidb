@@ -29,11 +29,10 @@ func TestTaskMetaRoundTrip(t *testing.T) {
 			{DBName: "db1", TableInfo: &model.TableInfo{ID: 100, Name: ast.NewCIStr("t1")}},
 			{DBName: "db1", TableInfo: &model.TableInfo{ID: 200, Name: ast.NewCIStr("t2")}},
 		},
-		SnapshotTS:     123456789,
-		Dest:           "s3://bucket/prefix?access-key=x",
-		Format:         "csv",
-		FileSize:       256 << 20,
-		SubtaskRegions: 8,
+		SnapshotTS: 123456789,
+		Dest:       "s3://bucket/prefix?access-key=x",
+		Format:     "csv",
+		FileSize:   256 << 20,
 	}
 	bs, err := json.Marshal(meta)
 	require.NoError(t, err)
