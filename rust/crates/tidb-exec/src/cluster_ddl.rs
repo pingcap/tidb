@@ -124,6 +124,17 @@ pub enum DdlStatement {
         /// ID and timestamp the publishing transaction assigns.
         template: Box<TableInfo>,
     },
+    /// `ALTER TABLE ... [FORCE] AUTO_RANDOM_BASE=n`.
+    RebaseAutoRandom {
+        /// Database containing the table.
+        schema: String,
+        /// Table whose TARID allocator is rebased.
+        table: String,
+        /// Requested next incremental ID, as Go's uint64-to-int64 pattern.
+        next: i64,
+        /// Whether a lower value replaces rather than preserves the counter.
+        force: bool,
+    },
     /// `DROP TABLE [IF EXISTS] [schema.]table`.
     DropTable {
         /// The resolved database name.
@@ -315,6 +326,27 @@ fn lower_alter_table_catalog(
                 from_table,
                 to_schema,
                 to_table,
+            }))
+        }
+        tidb_ast::AlterTableAction::SetTableOptions { options } => {
+            let [option] = options.as_slice() else {
+                return Ok(None);
+            };
+            let (value, force) = match option {
+                tidb_ast::TableOption::AutoRandomBase(value) => (value, false),
+                tidb_ast::TableOption::ForceAutoRandomBase(value) => (value, true),
+                _ => return Ok(None),
+            };
+            let next = value
+                .parse::<u64>()
+                .map_err(|_| DdlAdmissionError::new("AUTO_RANDOM_BASE needs an integer value"))?
+                as i64;
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::RebaseAutoRandom {
+                schema,
+                table,
+                next,
+                force,
             }))
         }
         _ => Ok(None),
@@ -602,6 +634,10 @@ pub enum DdlPlanError {
         /// The table name as written.
         table: String,
     },
+    /// TiDB `ErrInvalidAutoRandom` (8216).
+    InvalidAutoRandom(String),
+    /// TiDB `ErrAutoincReadFailed` (1467), used by FORCE base zero.
+    AutoIdReadFailed,
     /// The named table is already in the named database.
     TableExists {
         /// The database name as written.
@@ -641,6 +677,10 @@ impl fmt::Display for DdlPlanError {
             }
             Self::UnknownTable { schema, table } => {
                 write!(formatter, "Unknown table '{schema}.{table}'")
+            }
+            Self::InvalidAutoRandom(reason) => write!(formatter, "Invalid auto random: {reason}"),
+            Self::AutoIdReadFailed => {
+                formatter.write_str("Failed to read auto-increment value from storage engine")
             }
             Self::TableExists { schema, table } => {
                 write!(formatter, "Table '{schema}.{table}' already exists")
@@ -901,7 +941,81 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     value::encode_int_value(info.auto_inc_id - 1),
                 )?);
             }
+            if info.auto_random_bits > 0 && info.auto_rand_id > 1 {
+                writes.push(OptimisticMutation::meta_put(
+                    crate::cluster_auto_id::auto_random_id_key_for(db_id, &info),
+                    value::encode_int_value(info.auto_rand_id - 1),
+                )?);
+            }
             diff.action_type = ActionType::ACTION_CREATE_TABLE;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::RebaseAutoRandom {
+            schema,
+            table,
+            next,
+            force,
+        } => {
+            let Some(database) = find_database(&catalog, schema) else {
+                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            };
+            let Some(stored) = find_table(database, table) else {
+                return Err(DdlPlanError::UnknownTable {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                });
+            };
+            if stored.auto_random_bits == 0 {
+                return Err(DdlPlanError::InvalidAutoRandom(
+                    "alter auto_random_base of a non auto_random table".to_owned(),
+                ));
+            }
+            let unsigned = stored.is_auto_random_bit_col_unsigned();
+            let range_bits = if stored.auto_random_range_bits == 0 {
+                64
+            } else {
+                stored.auto_random_range_bits
+            };
+            let incremental_bits = range_bits - stored.auto_random_bits - u64::from(!unsigned);
+            let maximum = (1_u64 << incremental_bits) - 1;
+            let requested = *next as u64;
+            if *next < 0 || requested & maximum != requested {
+                return Err(DdlPlanError::InvalidAutoRandom(format!(
+                    "alter auto_random_base to {next} overflows the incremental bits, max allowed base is {maximum}"
+                )));
+            }
+            if *force && requested == 0 {
+                return Err(DdlPlanError::AutoIdReadFailed);
+            }
+            let db_id = database.info.id;
+            let table_id = stored.id;
+            let counter_key = key::auto_random_table_id_kv_key(db_id, table_id);
+            let current = snapshot
+                .get(&counter_key)?
+                .map(|bytes| value::parse_int_value(&bytes))
+                .transpose()
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+                .unwrap_or(0)
+                .saturating_add(1) as u64;
+            let effective = if *force {
+                requested
+            } else {
+                requested.max(current)
+            };
+            let mut info = stored.clone();
+            info.auto_rand_id = effective as i64;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            writes.push(OptimisticMutation::meta_put(
+                counter_key,
+                value::encode_int_value(effective as i64 - 1),
+            )?);
+            diff.action_type = ActionType::ACTION_REBASE_AUTO_RANDOM_BASE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }

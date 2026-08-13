@@ -77,6 +77,15 @@ impl AutoRandom {
 pub enum AutoRandomError {
     /// A non-zero explicit value was supplied while the session gate was off.
     ExplicitInsertDisabled,
+    /// A rebase was requested for a table without AUTO_RANDOM.
+    NotApplicable,
+    /// The requested base does not fit the increasing portion.
+    RebaseOverflow {
+        /// The requested next base.
+        base: i64,
+        /// The greatest base the layout accepts.
+        maximum: u64,
+    },
     /// The increasing ID source failed or exhausted its assigned bit range.
     AutoId(AutoIdError),
 }
@@ -100,6 +109,44 @@ impl KvTable {
     #[must_use]
     pub const fn auto_random(&self) -> Option<AutoRandomSpec> {
         self.auto_random
+    }
+
+    /// The next increasing value this allocator will compose.
+    #[must_use]
+    pub fn next_auto_random(&self) -> Option<u64> {
+        self.auto_random.map(|_| self.auto_random_id.next())
+    }
+
+    /// Go `ALTER TABLE ... AUTO_RANDOM_BASE=n`: raise the next increasing
+    /// value, leaving a higher counter unchanged.
+    pub fn rebase_auto_random(&mut self, next: i64) -> Result<(), AutoRandomError> {
+        let next = self.checked_auto_random_base(next)?;
+        self.auto_random_id
+            .rebase_to_next(next)
+            .map_err(|error| AutoRandomError::AutoId(AutoIdError::Store(error)))
+    }
+
+    /// Go `FORCE AUTO_RANDOM_BASE=n`: replace the next increasing value even
+    /// when that moves the counter backwards.
+    pub fn force_rebase_auto_random(&mut self, next: i64) -> Result<(), AutoRandomError> {
+        let next = self.checked_auto_random_base(next)?;
+        self.auto_random_id
+            .force_rebase_to_next(next)
+            .map_err(AutoRandomError::AutoId)
+    }
+
+    fn checked_auto_random_base(&self, next: i64) -> Result<u64, AutoRandomError> {
+        let Some(spec) = self.auto_random else {
+            return Err(AutoRandomError::NotApplicable);
+        };
+        let pattern = next as u64;
+        if next < 0 || pattern & spec.incremental_mask() != pattern {
+            return Err(AutoRandomError::RebaseOverflow {
+                base: next,
+                maximum: spec.incremental_mask(),
+            });
+        }
+        Ok(pattern)
     }
 
     /// Applies Go's explicit-value, rebase, retry, allocation, and composition

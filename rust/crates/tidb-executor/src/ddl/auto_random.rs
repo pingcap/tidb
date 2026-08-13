@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use crate::kv_table::AutoRandomSpec;
+use crate::kv_table::{AutoIdError, AutoRandomError, AutoRandomSpec};
 use crate::DriverError;
 use tidb_datatype::{FieldType, FieldTypeCode};
 
@@ -103,4 +103,28 @@ pub fn validate(
         });
     }
     Ok(found)
+}
+
+/// Maps the allocator-layer AUTO_RANDOM failure to TiDB's client error.
+pub fn rebase_error(error: AutoRandomError) -> DriverError {
+    match error {
+        AutoRandomError::NotApplicable => DriverError::InvalidAutoRandom(
+            "alter auto_random_base of a non auto_random table".to_owned(),
+        ),
+        AutoRandomError::RebaseOverflow { base, maximum } => DriverError::InvalidAutoRandom(
+            format!(
+                "alter auto_random_base to {base} overflows the incremental bits, max allowed base is {maximum}"
+            ),
+        ),
+        AutoRandomError::AutoId(AutoIdError::Exhausted) => DriverError::AutoincReadFailed,
+        AutoRandomError::AutoId(AutoIdError::OutOfRange { value, type_name }) => {
+            DriverError::ConstantOverflows { value, type_name }
+        }
+        AutoRandomError::AutoId(AutoIdError::Store(detail)) => {
+            DriverError::AutoIdUnavailable(detail.0)
+        }
+        AutoRandomError::ExplicitInsertDisabled => {
+            unreachable!("a rebase does not inspect row values")
+        }
+    }
 }

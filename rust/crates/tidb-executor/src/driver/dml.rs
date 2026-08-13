@@ -680,6 +680,10 @@ pub(crate) fn run_insert_traced(
                         AutoRandomError::AutoId(AutoIdError::Store(detail)) => {
                             DriverError::AutoIdUnavailable(detail.0)
                         }
+                        AutoRandomError::NotApplicable
+                        | AutoRandomError::RebaseOverflow { .. } => {
+                            unreachable!("row allocation does not rebase a table option")
+                        }
                     })?;
                 if let Some(placed) = outcome.placed() {
                     ctx.record_auto_random_id(placed);

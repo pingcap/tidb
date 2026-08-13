@@ -176,6 +176,43 @@ impl ClusterDdl for MockDdl {
                 info.id = id;
                 next.databases[at].tables.push(info);
             }
+            DdlStatement::RebaseAutoRandom {
+                schema,
+                table,
+                next: requested,
+                force,
+            } => {
+                let at = find(&mut next.databases, schema).ok_or_else(|| {
+                    SqlQueryError::unknown(format!("Unknown database '{schema}'"))
+                })?;
+                let lowered = table.to_lowercase();
+                let stored = next.databases[at]
+                    .tables
+                    .iter_mut()
+                    .find(|stored| stored.name.lowercase() == lowered)
+                    .ok_or_else(|| {
+                        SqlQueryError::unknown(format!("Unknown table '{schema}.{table}'"))
+                    })?;
+                if stored.auto_random_bits == 0 {
+                    return Err(SqlQueryError::new(
+                        8216,
+                        *b"HY000",
+                        "Invalid auto random: alter auto_random_base of a non auto_random table",
+                    ));
+                }
+                if *force && *requested == 0 {
+                    return Err(SqlQueryError::new(
+                        1467,
+                        *b"HY000",
+                        "Failed to read auto-increment value from storage engine",
+                    ));
+                }
+                stored.auto_rand_id = if *force {
+                    *requested
+                } else {
+                    (*requested).max(stored.auto_rand_id)
+                };
+            }
             DdlStatement::DropTable {
                 schema,
                 table,

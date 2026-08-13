@@ -69,6 +69,29 @@ fn full_cluster_ddl_keeps_a_region_backoff_error_coded_on_the_wire() {
     );
 }
 
+#[test]
+fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
+    let invalid = cluster_ddl_error(tidb_exec::real_tikv_ddl::ClusterDdlError::Plan(
+        tidb_exec::cluster_ddl::DdlPlanError::InvalidAutoRandom(
+            "alter auto_random_base of a non auto_random table".to_owned(),
+        ),
+    ));
+    assert_query_error_packet(
+        &invalid,
+        8216,
+        "Invalid auto random: alter auto_random_base of a non auto_random table",
+    );
+
+    let zero = cluster_ddl_error(tidb_exec::real_tikv_ddl::ClusterDdlError::Plan(
+        tidb_exec::cluster_ddl::DdlPlanError::AutoIdReadFailed,
+    ));
+    assert_query_error_packet(
+        &zero,
+        1467,
+        "Failed to read auto-increment value from storage engine",
+    );
+}
+
 /// A stored-schema change the cluster DDL path cannot express keeps a
 /// precise refusal -- and it names its own reason rather than a generic
 /// unsupported error.

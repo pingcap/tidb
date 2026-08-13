@@ -630,6 +630,29 @@ fn set_table_options_action(
                         }
                     })?;
             }
+            tidb_ast::TableOption::AutoRandomBase(value)
+            | tidb_ast::TableOption::ForceAutoRandomBase(value) => {
+                let next = value.parse::<u64>().map_err(|_| {
+                    DriverError::unsupported("AUTO_RANDOM_BASE needs an integer value")
+                })? as i64;
+                let force = matches!(option, tidb_ast::TableOption::ForceAutoRandomBase(_));
+                let previous = table.next_auto_random();
+                let result = if force {
+                    table.force_rebase_auto_random(next)
+                } else {
+                    table.rebase_auto_random(next)
+                };
+                result.map_err(super::auto_random::rebase_error)?;
+                if !force && previous.is_some_and(|current| (next as u64) < current) {
+                    ctx.append_warning_parts(
+                        1105,
+                        &format!(
+                            "Can't reset AUTO_INCREMENT to {next} without FORCE option, using {} instead",
+                            previous.expect("checked above")
+                        ),
+                    );
+                }
+            }
             _ => {
                 return Err(DriverError::unsupported(
                     "this ALTER TABLE table option is not supported yet",

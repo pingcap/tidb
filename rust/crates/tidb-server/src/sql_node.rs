@@ -320,6 +320,16 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
     match error {
         ClusterDdlError::Undetermined(_) => SqlQueryError::result_undetermined(),
         ClusterDdlError::Commit(error) => lock_sql_error(&error),
+        ClusterDdlError::Plan(tidb_exec::cluster_ddl::DdlPlanError::InvalidAutoRandom(reason)) => {
+            SqlQueryError::new(8216, *b"HY000", format!("Invalid auto random: {reason}"))
+        }
+        ClusterDdlError::Plan(tidb_exec::cluster_ddl::DdlPlanError::AutoIdReadFailed) => {
+            SqlQueryError::new(
+                1467,
+                *b"HY000",
+                "Failed to read auto-increment value from storage engine",
+            )
+        }
         other => SqlQueryError::unknown(other.to_string()),
     }
 }

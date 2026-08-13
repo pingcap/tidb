@@ -317,6 +317,7 @@ pub fn build_table_info_with_context(
     let mut declared_collate = None;
     let mut comment = String::new();
     let mut auto_inc_id = 0i64;
+    let mut auto_rand_id = 0i64;
     for option in &create.table_options {
         match option {
             TableOption::CharacterSet(charset) => declared_charset = Some(charset.clone()),
@@ -328,6 +329,13 @@ pub fn build_table_info_with_context(
                         "CREATE TABLE AUTO_INCREMENT = {value} is not an integer this node can store"
                     ))
                 })?;
+            }
+            TableOption::AutoRandomBase(value) => {
+                auto_rand_id = value.parse::<u64>().map_err(|_| {
+                    DdlAdmissionError::new(format!(
+                        "CREATE TABLE AUTO_RANDOM_BASE = {value} is not an integer this node can store"
+                    ))
+                })? as i64;
             }
             // Go's own `handleTableOptions` records nothing for these: the
             // storage engine is always InnoDB in name only, and the statistics
@@ -438,6 +446,7 @@ pub fn build_table_info_with_context(
     }
     table.comment = comment;
     table.auto_inc_id = auto_inc_id;
+    table.auto_rand_id = auto_rand_id;
     Ok(table)
 }
 

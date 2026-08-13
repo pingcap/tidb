@@ -367,6 +367,26 @@ fn auto_increment_option(options: &[tidb_ast::TableOption]) -> Result<Option<i64
     Ok(seed)
 }
 
+fn auto_random_base_option(options: &[tidb_ast::TableOption]) -> Result<Option<i64>, DriverError> {
+    let mut seed = None;
+    for option in options {
+        match option {
+            tidb_ast::TableOption::AutoRandomBase(value) => {
+                seed = Some(value.parse::<u64>().map_err(|_| {
+                    DriverError::unsupported("AUTO_RANDOM_BASE needs an integer value")
+                })? as i64);
+            }
+            tidb_ast::TableOption::ForceAutoRandomBase(_) => {
+                return Err(DriverError::unsupported(
+                    "FORCE AUTO_RANDOM_BASE is not valid on CREATE TABLE",
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(seed)
+}
+
 const MAX_TABLE_COMMENT_BYTES: usize = 2048;
 
 /// The final `COMMENT=` option a CREATE or ALTER TABLE applies.
@@ -1053,6 +1073,13 @@ pub fn run_create_table_in(
     }
     if let Some(spec) = auto_random {
         table.set_auto_random(spec);
+        if let Some(seed) = auto_random_base_option(&create.table_options)? {
+            if seed > 1 {
+                table
+                    .rebase_auto_random(seed)
+                    .map_err(auto_random::rebase_error)?;
+            }
+        }
     }
     let clustered = handle.is_clustered();
     if let Some(offset) = auto_increment_offset {

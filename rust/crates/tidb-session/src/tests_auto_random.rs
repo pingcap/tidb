@@ -94,3 +94,79 @@ fn auto_random_is_the_first_column_of_a_clustered_common_handle() {
     assert_eq!(ids[0] & incremental_mask, 1);
     assert_eq!(ids[1] & incremental_mask, 2);
 }
+
+#[test]
+fn auto_random_base_seeds_rebases_reports_and_validates_the_counter() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE ar_base (id BIGINT AUTO_RANDOM(5) PRIMARY KEY, v INT) \
+             AUTO_RANDOM_BASE=100",
+        )
+        .unwrap();
+    let shown = rows(&mut session, "SHOW CREATE TABLE ar_base")[0][1].clone();
+    assert!(shown.contains("/*T![auto_rand_base] AUTO_RANDOM_BASE=100 */"));
+
+    session.run("INSERT INTO ar_base (v) VALUES (1)").unwrap();
+    let first = rows(&mut session, "SELECT id FROM ar_base")[0][0]
+        .parse::<i64>()
+        .unwrap();
+    assert_eq!(first & ((1_i64 << 58) - 1), 100);
+
+    session
+        .run("ALTER TABLE ar_base AUTO_RANDOM_BASE=500")
+        .unwrap();
+    session.run("INSERT INTO ar_base (v) VALUES (2)").unwrap();
+    let second = rows(&mut session, "SELECT id FROM ar_base WHERE v=2")[0][0]
+        .parse::<i64>()
+        .unwrap();
+    assert_eq!(second & ((1_i64 << 58) - 1), 500);
+
+    session
+        .run("ALTER TABLE ar_base AUTO_RANDOM_BASE=10")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SHOW WARNINGS"),
+        vec![vec![
+            "Warning".to_owned(),
+            "1105".to_owned(),
+            "Can't reset AUTO_INCREMENT to 10 without FORCE option, using 501 instead".to_owned(),
+        ]]
+    );
+    session.run("INSERT INTO ar_base (v) VALUES (3)").unwrap();
+    let third = rows(&mut session, "SELECT id FROM ar_base WHERE v=3")[0][0]
+        .parse::<i64>()
+        .unwrap();
+    assert_eq!(third & ((1_i64 << 58) - 1), 501);
+
+    session
+        .run("ALTER TABLE ar_base FORCE AUTO_RANDOM_BASE=2")
+        .unwrap();
+    session.run("INSERT INTO ar_base (v) VALUES (4)").unwrap();
+    let fourth = rows(&mut session, "SELECT id FROM ar_base WHERE v=4")[0][0]
+        .parse::<i64>()
+        .unwrap();
+    assert_eq!(fourth & ((1_i64 << 58) - 1), 2);
+
+    let error = session
+        .run("ALTER TABLE ar_base FORCE AUTO_RANDOM_BASE=0")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1467);
+
+    let error = session
+        .run(&format!(
+            "ALTER TABLE ar_base AUTO_RANDOM_BASE={}",
+            1_u64 << 58
+        ))
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8216);
+
+    session.run("CREATE TABLE plain (id BIGINT)").unwrap();
+    let error = session
+        .run("ALTER TABLE plain AUTO_RANDOM_BASE=10")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8216);
+}

@@ -1045,7 +1045,8 @@ fn create_table_with_auto_increment_is_admitted_now_the_counter_has_a_home() {
 #[test]
 fn create_table_with_auto_random_persists_its_allocator_format() {
     let parsed = tidb_parser::parse(
-        "CREATE TABLE ar (id BIGINT UNSIGNED AUTO_RANDOM(5, 32) PRIMARY KEY, v INT)",
+        "CREATE TABLE ar (id BIGINT UNSIGNED AUTO_RANDOM(5, 32) PRIMARY KEY, v INT) \
+         AUTO_RANDOM_BASE=100",
     )
     .expect("the fixture SQL parses");
     let DdlStatement::CreateTable { template, .. } = lower_ddl(&parsed, "test")
@@ -1056,7 +1057,125 @@ fn create_table_with_auto_random_persists_its_allocator_format() {
     };
     assert_eq!(template.auto_random_bits, 5);
     assert_eq!(template.auto_random_range_bits, 32);
+    assert_eq!(template.auto_rand_id, 100);
     assert!(template.is_auto_random_bit_col_unsigned());
+    assert_eq!(
+        tidb_exec::cluster_auto_id::auto_random_id_key_for(7, &template),
+        tidb_meta::key::auto_random_table_id_kv_key(7, template.id),
+    );
+
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE ar (id BIGINT UNSIGNED AUTO_RANDOM(5, 32) PRIMARY KEY, v INT) \
+         AUTO_RANDOM_BASE=100",
+        123,
+    );
+    assert_eq!(
+        stored_value(
+            &write,
+            &tidb_meta::key::auto_random_table_id_kv_key(112, write.created_id.unwrap())
+        ),
+        b"99"
+    );
+}
+
+#[test]
+fn alter_auto_random_base_updates_table_info_and_the_tarid_counter_together() {
+    let mut store = bootstrapped();
+    let create = plan(
+        &mut store,
+        "CREATE TABLE ar_alter (id BIGINT AUTO_RANDOM(5) PRIMARY KEY, v INT)",
+        123,
+    );
+    apply(&mut store, &create);
+    store.put(key::schema_version_kv_key(), b"61".to_vec());
+
+    let alter = plan(
+        &mut store,
+        "ALTER TABLE ar_alter AUTO_RANDOM_BASE=500",
+        124,
+    );
+    let table_id = create.created_id.unwrap();
+    let table: tidb_model::TableInfo = serde_json::from_slice(stored_value(
+        &alter,
+        &key::table_kv_key(112, table_id),
+    ))
+    .unwrap();
+    assert_eq!(table.auto_rand_id, 500);
+    assert_eq!(
+        stored_value(
+            &alter,
+            &key::auto_random_table_id_kv_key(112, table_id)
+        ),
+        b"499"
+    );
+    assert_eq!(
+        alter.diff.action_type,
+        tidb_model::ActionType::ACTION_REBASE_AUTO_RANDOM_BASE
+    );
+
+    apply(&mut store, &alter);
+    store.put(key::schema_version_kv_key(), b"62".to_vec());
+    let lower = plan(
+        &mut store,
+        "ALTER TABLE ar_alter AUTO_RANDOM_BASE=10",
+        125,
+    );
+    let lower_table: tidb_model::TableInfo = serde_json::from_slice(stored_value(
+        &lower,
+        &key::table_kv_key(112, table_id),
+    ))
+    .unwrap();
+    assert_eq!(lower_table.auto_rand_id, 500);
+    assert_eq!(
+        stored_value(
+            &lower,
+            &key::auto_random_table_id_kv_key(112, table_id)
+        ),
+        b"499"
+    );
+
+    apply(&mut store, &lower);
+    store.put(key::schema_version_kv_key(), b"63".to_vec());
+    let forced = plan(
+        &mut store,
+        "ALTER TABLE ar_alter FORCE AUTO_RANDOM_BASE=2",
+        126,
+    );
+    let forced_table: tidb_model::TableInfo = serde_json::from_slice(stored_value(
+        &forced,
+        &key::table_kv_key(112, table_id),
+    ))
+    .unwrap();
+    assert_eq!(forced_table.auto_rand_id, 2);
+    assert_eq!(
+        stored_value(
+            &forced,
+            &key::auto_random_table_id_kv_key(112, table_id)
+        ),
+        b"1"
+    );
+
+    let forced_zero = statement("ALTER TABLE ar_alter FORCE AUTO_RANDOM_BASE=0");
+    assert!(matches!(
+        plan_ddl(&mut store, &forced_zero, 127).unwrap_err(),
+        DdlPlanError::AutoIdReadFailed
+    ));
+
+    let plain_create = plan(
+        &mut store,
+        "CREATE TABLE not_random (id BIGINT PRIMARY KEY)",
+        128,
+    );
+    apply(&mut store, &plain_create);
+    store.put(key::schema_version_kv_key(), b"64".to_vec());
+    let non_random = statement("ALTER TABLE not_random AUTO_RANDOM_BASE=10");
+    assert!(matches!(
+        plan_ddl(&mut store, &non_random, 129).unwrap_err(),
+        DdlPlanError::InvalidAutoRandom(reason)
+            if reason == "alter auto_random_base of a non auto_random table"
+    ));
 }
 
 /// `AUTO_ID_CACHE 1` is Go's `SepAutoInc`, and only then does the counter move
