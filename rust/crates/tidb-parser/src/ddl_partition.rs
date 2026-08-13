@@ -283,7 +283,11 @@ fn parse_partition_columns(parser: &mut Parser, non_empty: bool) -> PResult<Vec<
 
 fn parse_partition_count(parser: &mut Parser, what: &str) -> PResult<u64> {
     let count = parse_partition_uint(parser, what)?;
-    if count == 0 {
+    // Keep the written zero on the primary partition clause so the DDL layer
+    // can return TiDB's typed `ErrNoParts` (1504), rather than turning a DDL
+    // validation error into a syntax error. The nested count and KEY
+    // algorithm forms have no equivalent DDL boundary in this node.
+    if count == 0 && what != "partitions" {
         return Err(parser.err_here(&format!("{what} count must be positive")));
     }
     Ok(count)
