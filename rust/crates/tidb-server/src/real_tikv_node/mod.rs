@@ -47,7 +47,7 @@ use tidb_exec::real_tikv_ddl::{
     commit_cluster_ddl, prepare_cluster_ddl_with_context, ClusterDdlReport, SchemaVersionNotifier,
 };
 use tidb_exec::real_tikv_dml::{
-    commit_configured_write, prepare_configured_write, prepare_text_write,
+    commit_configured_write, prepare_configured_write, prepare_text_write, ConfiguredWriteWarning,
 };
 use tidb_exec::real_tikv_read::{
     prepare_configured_point_read, PdTimestampSource, ProductionReadProcessAuthority,
@@ -489,6 +489,7 @@ impl QuerySessionFactory for RealTiKvSessionFactory {
             transaction: SessionTransaction::new(),
             time_zone: RealTiKvSessionTimeZone::default(),
             cursor_memory,
+            statement_warnings: Vec::new(),
         })
     }
 }
@@ -518,6 +519,9 @@ pub struct RealTiKvServerSession {
     time_zone: RealTiKvSessionTimeZone,
     /// Persistent connection-level quota roots retained by open cursors.
     cursor_memory: tidb_executor::SessionMemory,
+    /// The warning records the most recently completed statement exposes in
+    /// its OK packet. Configured DML builds them while resolving `IGNORE`.
+    statement_warnings: Vec<ConfiguredWriteWarning>,
 }
 
 impl RealTiKvServerSession {
@@ -694,6 +698,7 @@ impl RealTiKvServerSession {
         template: &ConfiguredPreparedWriteTemplate,
         parameters: &[PreparedBindValue],
     ) -> Result<WriteOutcome, SqlQueryError> {
+        self.statement_warnings.clear();
         let bound = template
             .bind(parameters)
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
@@ -712,6 +717,7 @@ impl RealTiKvServerSession {
             )
             .map_err(|error| configured_write_error(&error))?,
         };
+        self.statement_warnings = report.warnings;
         Ok(WriteOutcome {
             affected_rows: report.affected_rows,
             // This node has no auto-increment allocator.
@@ -944,7 +950,12 @@ impl QuerySession for RealTiKvServerSession {
         WireStatus::autocommit_session(self.transaction.is_active())
     }
 
+    fn warning_count(&self) -> u16 {
+        u16::try_from(self.statement_warnings.len()).unwrap_or(u16::MAX)
+    }
+
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        self.statement_warnings.clear();
         let (query_id, query_activity) = self.begin_query()?;
         let cancellation = Arc::new(CancelHandle::default());
         let cancellation_lease = self.context.cancellation.install(cancellation.clone());
@@ -1137,7 +1148,7 @@ pub(crate) fn configured_table(table: &ConfiguredReadTable) -> ConfiguredTable {
         .collect();
     let indexes = table.indexes.iter().map(|index| {
         if index.unique {
-            ConfiguredIndex::unique(index.index_id, index.column_id)
+            ConfiguredIndex::named_unique(&index.name, index.index_id, index.column_id)
         } else {
             ConfiguredIndex::non_unique(index.index_id, index.column_id)
         }

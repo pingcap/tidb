@@ -759,7 +759,11 @@ fn expected_index_entry(balance: i64, handle: i64) -> Vec<u8> {
 }
 
 fn unique_indexed_table() -> ConfiguredTable {
-    table().with_indexes([ConfiguredIndex::unique(BALANCE_INDEX_ID, BALANCE_COLUMN)])
+    table().with_indexes([ConfiguredIndex::named_unique(
+        "balance_key",
+        BALANCE_INDEX_ID,
+        BALANCE_COLUMN,
+    )])
 }
 
 fn expected_unique_index_entry(balance: i64) -> Vec<u8> {
@@ -768,6 +772,64 @@ fn expected_unique_index_entry(balance: i64) -> Vec<u8> {
         BALANCE_INDEX_ID,
         &encode_key(&[Datum::new_int(balance)]).expect("index value encodes"),
     )
+}
+
+#[test]
+fn insert_ignore_skips_primary_conflicts_and_keeps_later_rows() {
+    let write = bound_write(
+        "INSERT IGNORE INTO campaign28.accounts (id, balance) VALUES (?, ?), (?, ?)",
+        &[10, 200, 11, 110],
+    );
+    let duplicate = encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10));
+    let accepted = encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(11));
+    let mut snapshot = ReplaceSnapshot::with([(duplicate.clone(), stored_row(100))]);
+
+    let ConfiguredWritePlan::Ignore {
+        mutations,
+        affected_rows,
+        warnings,
+    } = plan_configured_write(&mut snapshot, &write, &call(), 0).expect("IGNORE must plan")
+    else {
+        panic!("INSERT IGNORE has its own plan shape");
+    };
+
+    assert_eq!(affected_rows, 1);
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0].code, 1062);
+    assert_eq!(warnings[0].message, "Duplicate entry '10' for key 'PRIMARY'");
+    assert!(mutations.iter().any(|mutation| mutation.key() == accepted));
+    assert!(!mutations.iter().any(|mutation| mutation.key() == duplicate));
+}
+
+#[test]
+fn insert_ignore_reports_the_configured_unique_index_name() {
+    let catalog = ConfiguredCatalog::new([unique_indexed_table()]).expect("catalog must validate");
+    let write = lower_prepared_write(
+        &tidb_parser::parse("INSERT IGNORE INTO campaign28.accounts (id, balance) VALUES (?, ?)")
+            .expect("SQL must parse"),
+        &catalog,
+    )
+    .expect("IGNORE must lower")
+    .bind(&int_binds(&[20, 100]))
+    .expect("IGNORE must bind");
+    let mut snapshot = ReplaceSnapshot::with([(
+        expected_unique_index_entry(100),
+        10_i64.to_be_bytes().to_vec(),
+    )]);
+
+    let ConfiguredWritePlan::Ignore {
+        mutations,
+        affected_rows,
+        warnings,
+    } = plan_configured_write(&mut snapshot, &write, &call(), 0).expect("IGNORE must plan")
+    else {
+        panic!("INSERT IGNORE has its own plan shape");
+    };
+
+    assert!(mutations.is_empty());
+    assert_eq!(affected_rows, 0);
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0].message, "Duplicate entry '100' for key 'balance_key'");
 }
 
 #[test]

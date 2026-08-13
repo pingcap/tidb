@@ -433,6 +433,7 @@ impl QuerySession for PreparedSession {
         }
         let affected_rows = match bound {
             ConfiguredPreparedWrite::InsertRows { rows, .. }
+            | ConfiguredPreparedWrite::InsertIgnoreRows { rows, .. }
             | ConfiguredPreparedWrite::ReplaceRows { rows, .. } => rows.len() as u64,
             ConfiguredPreparedWrite::UpdatePoint { .. }
             | ConfiguredPreparedWrite::DeletePoint { .. } => 1,

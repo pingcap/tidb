@@ -119,6 +119,19 @@ fn two_row_insert_binds_every_marker_in_source_order() {
 }
 
 #[test]
+fn insert_ignore_binds_to_the_conflict_tolerant_write_shape() {
+    let template = template("INSERT IGNORE INTO campaign28.accounts (id, balance) VALUES (?, ?)");
+    let ConfiguredPreparedWrite::InsertIgnoreRows { table, rows } = template
+        .bind(&ints(&[10, 100]))
+        .expect("bind must succeed")
+    else {
+        panic!("expected an INSERT IGNORE command");
+    };
+    assert_eq!(table.table_id(), TABLE_ID);
+    assert_eq!(rows[0].values(), int_pairs(&[(0, 10), (1, 100)]).as_slice());
+}
+
+#[test]
 fn insert_column_order_follows_the_written_list_not_the_catalog() {
     let template = template("INSERT INTO campaign28.accounts (balance, id) VALUES (?, ?)");
     let ConfiguredPreparedWrite::InsertRows { rows, .. } =
@@ -221,10 +234,6 @@ fn insert_rows_stay_inside_the_checked_process_limit() {
 
 #[test]
 fn unsupported_insert_forms_are_rejected_before_a_handle_exists() {
-    assert_eq!(
-        unsupported("INSERT IGNORE INTO campaign28.accounts (id, balance) VALUES (?, ?)"),
-        UnsupportedPreparedWrite::Ignore
-    );
     assert_eq!(
         unsupported(
             "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?) \

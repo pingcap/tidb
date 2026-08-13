@@ -61,7 +61,9 @@ use crate::sql_node::{
     PreparedWrite, QueryResult, QuerySession, QuerySessionFactory, SessionContext, SqlQueryError,
     WriteOutcome,
 };
-use tidb_exec::real_tikv_dml::{commit_configured_write, prepare_configured_write};
+use tidb_exec::real_tikv_dml::{
+    commit_configured_write, prepare_configured_write, ConfiguredWriteWarning,
+};
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
 
 const CONTROL_PLANE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -223,6 +225,7 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
             max_topn_rows: self.max_topn_rows,
             time_zone: RealTiKvSessionTimeZone::default(),
             cursor_memory,
+            statement_warnings: Vec::new(),
         })
     }
 }
@@ -245,10 +248,12 @@ pub struct RealTiKvMultiServerSession {
     /// session's own `time_zone` field (`RealTiKvServerSession`).
     time_zone: RealTiKvSessionTimeZone,
     cursor_memory: tidb_executor::SessionMemory,
+    statement_warnings: Vec<ConfiguredWriteWarning>,
 }
 
 impl QuerySession for RealTiKvMultiServerSession {
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError> {
+        self.statement_warnings.clear();
         let query_id = self.next_query_id;
         self.next_query_id = self
             .next_query_id
@@ -454,6 +459,7 @@ impl QuerySession for RealTiKvMultiServerSession {
         statement: &PreparedWrite,
         parameters: &[PreparedBindValue],
     ) -> Result<WriteOutcome, SqlQueryError> {
+        self.statement_warnings.clear();
         let bound = statement
             .template()
             .bind(parameters)
@@ -466,11 +472,16 @@ impl QuerySession for RealTiKvMultiServerSession {
             &session_tz,
         )
         .map_err(|error| configured_write_error(&error))?;
+        self.statement_warnings = report.warnings;
         Ok(WriteOutcome {
             affected_rows: report.affected_rows,
             // This node has no auto-increment allocator.
             last_insert_id: 0,
         })
+    }
+
+    fn warning_count(&self) -> u16 {
+        u16::try_from(self.statement_warnings.len()).unwrap_or(u16::MAX)
     }
 
     /// A catalog change is the only text-protocol OK-packet statement this

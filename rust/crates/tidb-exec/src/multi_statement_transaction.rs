@@ -535,6 +535,7 @@ impl MultiStatementTransaction {
                 Ok(ConfiguredWriteReport {
                     affected_rows,
                     no_write: None,
+                    warnings: Vec::new(),
                 })
             }
             ConfiguredWritePlan::NoWrite {
@@ -543,7 +544,26 @@ impl MultiStatementTransaction {
             } => Ok(ConfiguredWriteReport {
                 affected_rows,
                 no_write: Some(reason),
+                warnings: Vec::new(),
             }),
+            ConfiguredWritePlan::Ignore {
+                mutations,
+                affected_rows,
+                warnings,
+            } => {
+                for mutation in mutations {
+                    self.buffer.stage(mutation).map_err(|error| {
+                        TransactionStatementError::refused(format!(
+                            "configured write staging: {error}"
+                        ))
+                    })?;
+                }
+                Ok(ConfiguredWriteReport {
+                    affected_rows,
+                    no_write: None,
+                    warnings,
+                })
+            }
         }
     }
 
@@ -810,6 +830,10 @@ fn planned_mutation_keys(plan: &ConfiguredWritePlan) -> Vec<Vec<u8>> {
             .map(|mutation| mutation.key().to_vec())
             .collect(),
         ConfiguredWritePlan::NoWrite { .. } => Vec::new(),
+        ConfiguredWritePlan::Ignore { mutations, .. } => mutations
+            .iter()
+            .map(|mutation| mutation.key().to_vec())
+            .collect(),
     }
 }
 
@@ -998,6 +1022,7 @@ fn selection_matches_staged_row(
 fn written_handles(write: &ConfiguredPreparedWrite) -> Vec<i64> {
     match write {
         ConfiguredPreparedWrite::InsertRows { .. }
+        | ConfiguredPreparedWrite::InsertIgnoreRows { .. }
         | ConfiguredPreparedWrite::ReplaceRows { .. } => {
             // An INSERT's row is new, so there is no existing row to lock; TiKV
             // enforces its absence through the Insert operation's assertion.

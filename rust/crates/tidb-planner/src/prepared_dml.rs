@@ -497,6 +497,7 @@ fn parse_unsigned_integer(expr: &Expr) -> Option<u64> {
 pub struct ConfiguredPreparedInsertTemplate {
     table: ConfiguredTable,
     replace: bool,
+    ignore: bool,
     /// Configured column index for each named INSERT column, in source order.
     columns: Vec<usize>,
     rows: usize,
@@ -541,6 +542,11 @@ impl ConfiguredPreparedInsertTemplate {
             .collect();
         if self.replace {
             Ok(ConfiguredPreparedWrite::ReplaceRows {
+                table: self.table.clone(),
+                rows,
+            })
+        } else if self.ignore {
+            Ok(ConfiguredPreparedWrite::InsertIgnoreRows {
                 table: self.table.clone(),
                 rows,
             })
@@ -701,6 +707,14 @@ pub enum ConfiguredPreparedWrite {
         /// Bound rows in statement order.
         rows: Vec<ConfiguredInsertRow>,
     },
+    /// Insert complete rows while turning pre-existing primary/unique-key
+    /// conflicts into statement warnings.
+    InsertIgnoreRows {
+        /// Resolved target table.
+        table: ConfiguredTable,
+        /// Bound rows in statement order.
+        rows: Vec<ConfiguredInsertRow>,
+    },
     /// Replace one or more complete configured rows after removing every
     /// conflicting clustered or unique-index row.
     ReplaceRows {
@@ -801,9 +815,6 @@ fn lower_insert(
     catalog: &ConfiguredCatalog,
     mode: ValueMode,
 ) -> Result<ConfiguredPreparedInsertTemplate, PreparedWritePlanError> {
-    if statement.ignore {
-        return Err(unsupported(UnsupportedPreparedWrite::Ignore));
-    }
     if !statement.on_duplicate.is_empty() {
         return Err(unsupported(UnsupportedPreparedWrite::OnDuplicateKey));
     }
@@ -858,6 +869,7 @@ fn lower_insert(
     Ok(ConfiguredPreparedInsertTemplate {
         table: table.clone(),
         replace: statement.replace,
+        ignore: statement.ignore,
         columns,
         rows,
         values,

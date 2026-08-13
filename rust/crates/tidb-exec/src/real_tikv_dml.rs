@@ -356,6 +356,16 @@ pub enum ConfiguredWritePlan {
         /// Rows to report in the MySQL OK packet.
         affected_rows: u64,
     },
+    /// Publish the accepted `INSERT IGNORE` rows and report duplicate-key
+    /// warnings for the rows it skipped.
+    Ignore {
+        /// Mutations for the rows without a visible conflict.
+        mutations: Vec<OptimisticMutation>,
+        /// Rows accepted for insertion.
+        affected_rows: u64,
+        /// Duplicate-key warnings in source row order.
+        warnings: Vec<ConfiguredWriteWarning>,
+    },
 }
 
 /// Why a bound statement publishes no mutation.
@@ -365,6 +375,17 @@ pub enum NoWriteReason {
     MissingRow,
     /// The stored value already equals the assigned value.
     UnchangedRow,
+    /// Every `INSERT IGNORE` row conflicted with an existing primary or unique key.
+    IgnoredDuplicate,
+}
+
+/// One warning a configured write reports in its OK packet.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfiguredWriteWarning {
+    /// MySQL warning number.
+    pub code: u16,
+    /// MySQL warning text.
+    pub message: String,
 }
 
 /// Encodes one INSERT statement's rows into typed mutations.
@@ -408,6 +429,73 @@ pub fn plan_insert(
     })
 }
 
+/// Plans `INSERT IGNORE` over this transaction's read-your-own-writes view.
+///
+/// A duplicate is a row outcome, not a statement failure: the conflicting row
+/// contributes no mutations and produces 1062 in the same source order as the
+/// VALUES rows. The remaining rows share one mutation buffer so a duplicate
+/// introduced by an earlier VALUES row is ignored too.
+pub fn plan_insert_ignore<S: WritePlanningSnapshot>(
+    snapshot: &mut S,
+    table: &ConfiguredTable,
+    rows: &[ConfiguredInsertRow],
+    call: &UnaryCallContext,
+    session_tz: &SessionTimeZone,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    let mut staged = TransactionMutationBuffer::new();
+    let mut warnings = Vec::new();
+    let mut affected_rows = 0;
+
+    for row in rows {
+        let (handle, columns) = split_row(table, row, session_tz)?;
+        let record_key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
+        let conflict = if staged_or_snapshot(snapshot, &staged, &record_key, call)?.is_some() {
+            Some((handle.to_string(), "PRIMARY".to_owned()))
+        } else {
+            let mut conflict = None;
+            for index in table.indexes().iter().filter(|index| index.is_unique()) {
+                let value = indexed_insert_value(index, &columns)?;
+                let key = unique_index_key(table.table_id(), index.index_id(), value)?;
+                if staged_or_snapshot(snapshot, &staged, &key, call)?.is_some() {
+                    let name = if index.name().is_empty() {
+                        index.index_id().to_string()
+                    } else {
+                        index.name().to_owned()
+                    };
+                    conflict = Some((value.to_string(), name));
+                    break;
+                }
+            }
+            conflict
+        };
+        if let Some((value, key)) = conflict {
+            warnings.push(ConfiguredWriteWarning {
+                code: 1062,
+                message: format!("Duplicate entry '{value}' for key '{key}'"),
+            });
+            continue;
+        }
+
+        let ConfiguredWritePlan::Write { mutations, .. } =
+            plan_insert(table, std::slice::from_ref(row), session_tz)?
+        else {
+            unreachable!("one INSERT IGNORE row always has an insert plan")
+        };
+        for mutation in mutations {
+            staged
+                .stage(mutation)
+                .map_err(ConfiguredWriteError::Staging)?;
+        }
+        affected_rows += 1;
+    }
+
+    Ok(ConfiguredWritePlan::Ignore {
+        mutations: staged.into_mutations(),
+        affected_rows,
+        warnings,
+    })
+}
+
 /// Plans `REPLACE` against one transaction snapshot.
 ///
 /// Go tries the row insert, removes every clustered or unique-index conflict,
@@ -442,6 +530,9 @@ pub fn plan_replace<S: WritePlanningSnapshot>(
                 affected_rows: row_affected,
                 ..
             } => affected_rows += row_affected,
+            ConfiguredWritePlan::Ignore { .. } => {
+                unreachable!("plan_replace_row never produces an INSERT IGNORE plan")
+            }
         }
     }
     if staged.is_empty() {
@@ -1359,7 +1450,8 @@ pub fn planned_publication_bounds(
     session_tz: &SessionTimeZone,
 ) -> Result<(usize, usize), ConfiguredWriteError> {
     match write {
-        ConfiguredPreparedWrite::InsertRows { table, rows } => {
+        ConfiguredPreparedWrite::InsertRows { table, rows }
+        | ConfiguredPreparedWrite::InsertIgnoreRows { table, rows } => {
             // Re-plans with the statement's real `time_zone` so a `TIMESTAMP`
             // literal that only overflows (or only fits) under this session's
             // own zone is admitted/refused identically here and in the real
@@ -1477,6 +1569,8 @@ pub enum ConfiguredWriteOutcome {
         outcome: Box<OptimisticCommitOutcome>,
         /// Rows this statement would report on a determinate commit.
         affected_rows: u64,
+        /// Warnings produced while planning this statement.
+        warnings: Vec<ConfiguredWriteWarning>,
     },
     /// Nothing was published; the statement still has an affected-row count.
     NoPublication {
@@ -1486,6 +1580,8 @@ pub enum ConfiguredWriteOutcome {
         reason: NoWriteReason,
         /// Rows to report in the MySQL OK packet.
         affected_rows: u64,
+        /// Warnings raised while determining that no mutation is needed.
+        warnings: Vec<ConfiguredWriteWarning>,
     },
 }
 
@@ -1534,12 +1630,14 @@ pub fn prepare_text_write(
 }
 
 /// What one committed statement reports to the MySQL client.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfiguredWriteReport {
     /// Rows to report in the OK packet.
     pub affected_rows: u64,
     /// Set when the statement matched nothing or changed nothing.
     pub no_write: Option<NoWriteReason>,
+    /// Warnings the server must expose in the statement's OK packet.
+    pub warnings: Vec<ConfiguredWriteWarning>,
 }
 
 /// Opens one transaction on the shared authority, publishes a bound write, and
@@ -1562,20 +1660,24 @@ pub fn commit_configured_write(
         ConfiguredWriteOutcome::Published {
             outcome,
             affected_rows,
+            warnings,
         } => {
             classify_configured_write_commit_outcome(&outcome)?;
             Ok(ConfiguredWriteReport {
                 affected_rows,
                 no_write: None,
+                warnings,
             })
         }
         ConfiguredWriteOutcome::NoPublication {
             reason,
             affected_rows,
+            warnings,
             ..
         } => Ok(ConfiguredWriteReport {
             affected_rows,
             no_write: Some(reason),
+            warnings,
         }),
     }
 }
@@ -1639,6 +1741,9 @@ pub fn plan_configured_write<S: WritePlanningSnapshot>(
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
     match write {
         ConfiguredPreparedWrite::InsertRows { table, rows } => plan_insert(table, rows, session_tz),
+        ConfiguredPreparedWrite::InsertIgnoreRows { table, rows } => {
+            plan_insert_ignore(snapshot, table, rows, call, session_tz)
+        }
         ConfiguredPreparedWrite::ReplaceRows { table, rows } => {
             plan_replace(snapshot, table, rows, call, session_tz)
         }
@@ -1691,6 +1796,7 @@ where
         } => Ok(ConfiguredWriteOutcome::Published {
             outcome: Box::new(transaction.commit(mutations, call)?),
             affected_rows,
+            warnings: Vec::new(),
         }),
         ConfiguredWritePlan::NoWrite {
             reason,
@@ -1699,7 +1805,30 @@ where
             transaction: transaction.finish_without_writes()?,
             reason,
             affected_rows,
+            warnings: Vec::new(),
         }),
+        ConfiguredWritePlan::Ignore {
+            mutations,
+            affected_rows,
+            warnings,
+        } if mutations.is_empty() => Ok(ConfiguredWriteOutcome::NoPublication {
+            transaction: transaction.finish_without_writes()?,
+            reason: NoWriteReason::IgnoredDuplicate,
+            affected_rows,
+            warnings,
+        }),
+        ConfiguredWritePlan::Ignore {
+            mutations,
+            affected_rows,
+            warnings,
+        } => {
+            let outcome = transaction.commit(mutations, call)?;
+            Ok(ConfiguredWriteOutcome::Published {
+                outcome: Box::new(outcome),
+                affected_rows,
+                warnings,
+            })
+        }
     }
 }
 

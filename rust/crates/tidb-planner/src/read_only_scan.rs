@@ -750,8 +750,9 @@ impl ConfiguredColumn {
 /// Scoped to a single stored column. The configured write path distinguishes a
 /// non-unique key, which carries its handle in the key, from a unique key,
 /// which carries its handle in the value and is inserted atomically.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfiguredIndex {
+    name: String,
     index_id: i64,
     column_id: i64,
     unique: bool,
@@ -762,6 +763,7 @@ impl ConfiguredIndex {
     #[must_use]
     pub const fn non_unique(index_id: i64, column_id: i64) -> Self {
         Self {
+            name: String::new(),
             index_id,
             column_id,
             unique: false,
@@ -772,10 +774,28 @@ impl ConfiguredIndex {
     #[must_use]
     pub const fn unique(index_id: i64, column_id: i64) -> Self {
         Self {
+            name: String::new(),
             index_id,
             column_id,
             unique: true,
         }
+    }
+
+    /// Configures one named unique secondary index.
+    #[must_use]
+    pub fn named_unique(name: impl Into<String>, index_id: i64, column_id: i64) -> Self {
+        Self {
+            name: name.into(),
+            index_id,
+            column_id,
+            unique: true,
+        }
+    }
+
+    /// Index-visible name for duplicate-entry diagnostics.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     /// Returns the physical index ID used in TiKV index keys.
