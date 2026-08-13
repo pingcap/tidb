@@ -2030,3 +2030,43 @@ fn show_create_table_matches_go_for_every_served_information_schema_table() {
     }
     assert_eq!(blocks.len(), infoschema::served_table_names().len());
 }
+
+/// `information_schema` is a virtual base table, not a special one-table
+/// statement form. Its computed rows must therefore join ordinary catalog
+/// tables in either operand position.
+#[test]
+fn information_schema_rows_join_stored_tables_on_either_side() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE joined_base (a INT)").unwrap();
+    session.run("INSERT INTO joined_base VALUES (7)").unwrap();
+
+    let expected = vec![vec!["7".to_owned(), "joined_base".to_owned()]];
+    assert_eq!(
+        row_text(session.run(
+            "SELECT b.a, i.table_name FROM joined_base AS b \
+             JOIN information_schema.tables AS i \
+             ON b.a = 7 AND i.table_name = 'joined_base' \
+             WHERE i.table_schema = 'test'"
+        )),
+        expected
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT b.a, i.table_name FROM information_schema.tables AS i \
+             JOIN joined_base AS b \
+             ON b.a = 7 AND i.table_name = 'joined_base' \
+             WHERE i.table_schema = 'test'"
+        )),
+        vec![vec!["7".to_owned(), "joined_base".to_owned()]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT d.table_name FROM ( \
+             SELECT table_name FROM information_schema.tables \
+             WHERE table_schema = 'test' ) AS d \
+             WHERE d.table_name = 'joined_base'"
+        )),
+        vec![vec!["joined_base".to_owned()]],
+        "a derived query sees the same materialized virtual source"
+    );
+}

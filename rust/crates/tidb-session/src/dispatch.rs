@@ -22,11 +22,79 @@
 //! dispatch over query/DML/DDL.
 
 use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
-use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
+use tidb_executor::{DriverError, SchemaErrorKind};
 
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
 use crate::{infoschema, statement_kind_of, Session, StatementKind, StmtOutput, WarningLevel};
 use crate::{CHECK_CONSTRAINT_IS_OFF_CODE, CHECK_CONSTRAINT_IS_OFF_MESSAGE};
+
+/// Every `information_schema` base table a top-level join tree references.
+///
+/// The ordinary executor resolves bare names against `current_db`; mirror
+/// that here so `USE information_schema; SELECT ... FROM tables` materializes
+/// the same virtual source as its qualified spelling.
+fn information_schema_tables_in_join(
+    node: &tidb_ast::JoinNode,
+    current_db: &str,
+    out: &mut Vec<String>,
+) {
+    match node {
+        tidb_ast::JoinNode::Table(table) => match table.name.as_slice() {
+            [name] if infoschema::is_information_schema(current_db) => out.push(name.clone()),
+            [schema, name] if infoschema::is_information_schema(schema) => out.push(name.clone()),
+            _ => {}
+        },
+        tidb_ast::JoinNode::Join(join) => {
+            information_schema_tables_in_join(&join.left, current_db, out);
+            if let Some(right) = &join.right {
+                information_schema_tables_in_join(right, current_db, out);
+            }
+        }
+        tidb_ast::JoinNode::Derived { subquery, .. } => {
+            information_schema_tables_in_query(subquery, current_db, out);
+        }
+    }
+}
+
+/// Continues [`information_schema_tables_in_join`] across a derived query's
+/// SELECT or nested set-operation terms.
+fn information_schema_tables_in_query(
+    query: &tidb_ast::QueryStmt,
+    current_db: &str,
+    out: &mut Vec<String>,
+) {
+    match query {
+        tidb_ast::QueryStmt::Select(select) => {
+            if let Some(join) = &select.from {
+                information_schema_tables_in_join(&join.left, current_db, out);
+                if let Some(right) = &join.right {
+                    information_schema_tables_in_join(right, current_db, out);
+                }
+            }
+        }
+        tidb_ast::QueryStmt::SetOpr(set_opr) => {
+            for term in &set_opr.terms {
+                match &term.body {
+                    tidb_ast::SetOprTermBody::Select(select) => {
+                        if let Some(join) = &select.from {
+                            information_schema_tables_in_join(&join.left, current_db, out);
+                            if let Some(right) = &join.right {
+                                information_schema_tables_in_join(right, current_db, out);
+                            }
+                        }
+                    }
+                    tidb_ast::SetOprTermBody::Nested(nested) => {
+                        information_schema_tables_in_query(
+                            &tidb_ast::QueryStmt::SetOpr(nested.clone()),
+                            current_db,
+                            out,
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
 
 /// Names the AST variant behind a refused statement, for a "not supported
 /// yet" message that says WHAT it refused instead of just that it did.
@@ -204,9 +272,6 @@ impl Session {
     /// Returns `None` when the statement is an ordinary one, so the caller
     /// falls through to the storage path.
     ///
-    /// DEFERRED (documented): a join between a virtual table and a stored one,
-    /// because the scratch catalog holds only the virtual side. Such a
-    /// statement is rejected rather than answered from half the data.
     fn run_information_schema_select(
         &mut self,
         select: &tidb_ast::SelectStmt,
@@ -214,65 +279,65 @@ impl Session {
         let Some(join) = &select.from else {
             return Ok(None);
         };
-        let tidb_ast::JoinNode::Table(table_ref) = &join.left else {
-            return Ok(None);
-        };
-        // `information_schema.X`, or a bare `X` while that schema is current.
-        let (schema, table_name) = match table_ref.name.as_slice() {
-            [name] => (self.current_db.clone(), name.clone()),
-            [schema, name] => (schema.clone(), name.clone()),
-            _ => return Ok(None),
-        };
-        if !infoschema::is_information_schema(&schema) {
+        let mut table_names = Vec::new();
+        information_schema_tables_in_join(&join.left, &self.current_db, &mut table_names);
+        if let Some(right) = &join.right {
+            information_schema_tables_in_join(right, &self.current_db, &mut table_names);
+        }
+        if table_names.is_empty() {
             return Ok(None);
         }
-        if join.right.is_some() {
-            return Err(DriverError::unsupported(
-                "joining an information_schema table is not supported yet",
-            ));
-        }
-        let Some(columns) = infoschema::table_schema(&table_name) else {
-            return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
-                "{schema}.{table_name}"
-            ))));
-        };
         let ctx = self.statement_context(false);
-        // `PROCESSLIST` is session/registry state, not catalog state, so it
-        // is built directly rather than through `infoschema::table_rows`,
-        // which only ever sees the catalog.
-        let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
-            self.process_list_table_rows()
-        } else if table_name.eq_ignore_ascii_case("DEADLOCKS") {
-            if !self.has_process_privilege() {
-                return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
-            }
-            self.deadlock_history_table_rows()?
-        } else if table_name.eq_ignore_ascii_case("USER_PRIVILEGES") {
-            self.user_privileges_table_rows()
-        } else {
-            let visibility = self.schema_visibility();
-            self.with_catalog_mut(|catalog| {
-                Ok(
-                    infoschema::table_rows(&table_name, catalog, &visibility, &ctx)
-                        .unwrap_or_default(),
-                )
-            })?
-        };
+        table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
+        table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
+        let mut materialized = Vec::with_capacity(table_names.len());
+        for table_name in table_names {
+            let Some(columns) = infoschema::table_schema(&table_name) else {
+                return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                    "{}.{}",
+                    infoschema::INFORMATION_SCHEMA,
+                    table_name
+                ))));
+            };
+            // PROCESSLIST and the privilege/deadlock tables draw on session
+            // state. All other virtual rows are computed from the catalog.
+            let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
+                self.process_list_table_rows()
+            } else if table_name.eq_ignore_ascii_case("DEADLOCKS") {
+                if !self.has_process_privilege() {
+                    return Err(DriverError::SpecificAccessDenied("PROCESS".to_owned()));
+                }
+                self.deadlock_history_table_rows()?
+            } else if table_name.eq_ignore_ascii_case("USER_PRIVILEGES") {
+                self.user_privileges_table_rows()
+            } else {
+                let visibility = self.schema_visibility();
+                self.with_catalog_mut(|catalog| {
+                    Ok(
+                        infoschema::table_rows(&table_name, catalog, &visibility, &ctx)
+                            .unwrap_or_default(),
+                    )
+                })?
+            };
+            materialized.push((table_name, columns, rows));
+        }
 
-        // A scratch catalog holding just this table, so the ordinary plan runs
-        // over it.
-        let mut scratch = Catalog::default();
-        scratch.register_mem_in(
-            infoschema::INFORMATION_SCHEMA,
-            &table_name,
-            tidb_executor::MemTable { columns, rows },
-        );
-        let (columns, rows) = tidb_executor::run_select_meta_stmt(
-            select,
-            &scratch,
-            infoschema::INFORMATION_SCHEMA,
-            &ctx,
-        )?;
+        // Virtual rows need the same query's real base tables and other
+        // virtual sources. Clone the statement-visible catalog and overlay
+        // just their computed contents; the normal planner then owns every
+        // join, predicate, aggregate and ordering decision.
+        let current_db = self.current_db.clone();
+        let (columns, rows) = self.with_catalog_mut(|catalog| {
+            let mut scratch = catalog.clone();
+            for (table_name, columns, rows) in materialized {
+                scratch.register_mem_in(
+                    infoschema::INFORMATION_SCHEMA,
+                    &table_name,
+                    tidb_executor::MemTable { columns, rows },
+                );
+            }
+            tidb_executor::run_select_meta_stmt(select, &scratch, &current_db, &ctx)
+        })?;
         self.drain_eval_warnings(&ctx);
         Ok(Some(StmtOutput::Rows { columns, rows }))
     }
