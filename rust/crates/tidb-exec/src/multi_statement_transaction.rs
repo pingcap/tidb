@@ -500,16 +500,26 @@ impl MultiStatementTransaction {
         write: &ConfiguredPreparedWrite,
         session_tz: &SessionTimeZone,
     ) -> Result<ConfiguredWriteReport, TransactionStatementError> {
-        if self.mode.is_pessimistic() {
-            let handles = written_handles(write);
-            if !handles.is_empty() {
-                // A write blocks for the lock rather than failing fast: NOWAIT
-                // is a locking-read clause, never a DML one.
-                self.lock_handles(&handles, ReadLockWait::Blocking)?;
+        let plan = if self.mode.is_pessimistic() {
+            match write {
+                ConfiguredPreparedWrite::ReplaceRows { .. } => {
+                    self.plan_pessimistic_replace(write, session_tz)?
+                }
+                _ => {
+                    let handles = written_handles(write);
+                    if !handles.is_empty() {
+                        // A write blocks for the lock rather than failing fast:
+                        // NOWAIT is a locking-read clause, never a DML one.
+                        self.lock_handles(&handles, ReadLockWait::Blocking)?;
+                    }
+                    plan_configured_write(self, write, &self.statement_call(), session_tz)
+                        .map_err(|error| TransactionStatementError::write(&error))?
+                }
             }
-        }
-        let plan = plan_configured_write(self, write, &self.statement_call(), session_tz)
-            .map_err(|error| TransactionStatementError::write(&error))?;
+        } else {
+            plan_configured_write(self, write, &self.statement_call(), session_tz)
+                .map_err(|error| TransactionStatementError::write(&error))?
+        };
         match plan {
             ConfiguredWritePlan::Write {
                 mutations,
@@ -534,6 +544,43 @@ impl MultiStatementTransaction {
                 affected_rows,
                 no_write: Some(reason),
             }),
+        }
+    }
+
+    /// Plans a pessimistic `REPLACE` until every key it might change is locked.
+    ///
+    /// Go runs the replace executor, locks its resulting MemBuffer write set,
+    /// then retries the statement after a lock conflict. A primary or unique
+    /// conflict is discovered only by reading storage, so locking just the
+    /// incoming handle (as point UPDATE does) misses the old record and index
+    /// entries that REPLACE deletes. Every re-plan runs at the current
+    /// `for_update_ts`; once all emitted mutation keys are held, no concurrent
+    /// writer can add another conflicting version to the candidate key set.
+    fn plan_pessimistic_replace(
+        &mut self,
+        write: &ConfiguredPreparedWrite,
+        session_tz: &SessionTimeZone,
+    ) -> Result<ConfiguredWritePlan, TransactionStatementError> {
+        loop {
+            let plan = plan_configured_write(self, write, &self.statement_call(), session_tz)
+                .map_err(|error| TransactionStatementError::write(&error))?;
+            let held = match &self.open {
+                OpenTransaction::Pessimistic(transaction) => transaction
+                    .locked_keys()
+                    .into_iter()
+                    .collect::<BTreeSet<_>>(),
+                OpenTransaction::Optimistic(_) => unreachable!(
+                    "plan_pessimistic_replace is called only for a pessimistic transaction"
+                ),
+            };
+            let missing = planned_mutation_keys(&plan)
+                .into_iter()
+                .filter(|key| !held.contains(key))
+                .collect::<Vec<_>>();
+            if missing.is_empty() {
+                return Ok(plan);
+            }
+            self.lock_keys(&missing, ReadLockWait::Blocking)?;
         }
     }
 
@@ -564,6 +611,19 @@ impl MultiStatementTransaction {
                 encode_row_key_with_handle(self.table.table_id(), &RecordHandle::Int(*handle))
             })
             .collect::<Vec<_>>();
+        self.lock_keys(&keys, wait)
+    }
+
+    /// Acquires exclusive pessimistic locks on already-encoded DML keys.
+    ///
+    /// Point `UPDATE`/`DELETE` use [`Self::lock_handles`], while REPLACE must
+    /// also protect unique-index and displaced-row keys discovered from its
+    /// own tentative mutation set.
+    fn lock_keys(
+        &mut self,
+        keys: &[Vec<u8>],
+        wait: ReadLockWait,
+    ) -> Result<(), TransactionStatementError> {
         let wait = match wait {
             // Go maps a plain `FOR UPDATE` to `@@innodb_lock_wait_timeout`,
             // not to "wait forever": `AlwaysWait` here could only end at the
@@ -581,9 +641,12 @@ impl MultiStatementTransaction {
         let held: BTreeSet<Vec<u8>> = transaction.locked_keys().into_iter().collect();
         let mut attempt = 0;
         let acquired = loop {
-            // No key of a locking read is presumed absent: the rows already
-            // exist, which is why the statement is locking them.
-            let retry_reason = match transaction.acquire_locks(&keys, &BTreeSet::new(), wait, &call)
+            // This shared lock path deliberately carries no absence
+            // presumption. Locking reads target existing rows, while REPLACE
+            // must be allowed to observe and delete a duplicate rather than
+            // fail at lock time; ordinary INSERT retains its NotExist
+            // assertion at Prewrite.
+            let retry_reason = match transaction.acquire_locks(keys, &BTreeSet::new(), wait, &call)
             {
                 Ok(acquired) if acquired.locked_with_conflict.is_empty() => break acquired,
                 // Fair locking: TiKV granted the locks despite a newer
@@ -732,6 +795,21 @@ impl MultiStatementTransaction {
                 classify_commit_outcome(&outcome).map(|()| end)
             }
         }
+    }
+}
+
+/// Keys a tentative write would modify, in source mutation order.
+///
+/// `RealPessimisticTransaction::acquire_locks` deduplicates and orders them
+/// before it reaches TiKV. Keeping this extraction order-preserving makes the
+/// write planner and the eventual transaction buffer describe the same set.
+fn planned_mutation_keys(plan: &ConfiguredWritePlan) -> Vec<Vec<u8>> {
+    match plan {
+        ConfiguredWritePlan::Write { mutations, .. } => mutations
+            .iter()
+            .map(|mutation| mutation.key().to_vec())
+            .collect(),
+        ConfiguredWritePlan::NoWrite { .. } => Vec::new(),
     }
 }
 
@@ -954,9 +1032,10 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        classify_commit_outcome, record_lock_failure, selection_matches_staged_row,
-        written_handles, Duration, MultiStatementTransaction, TransactionStatementError,
-        UnaryCallContext, TRANSACTION_END_TIMEOUT,
+        classify_commit_outcome, planned_mutation_keys, record_lock_failure,
+        selection_matches_staged_row, written_handles, ConfiguredWritePlan, Duration,
+        MultiStatementTransaction, TransactionStatementError, UnaryCallContext,
+        TRANSACTION_END_TIMEOUT,
     };
     use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, ERR_WRITE_CONFLICT};
     use tidb_planner::physical_selection::{
@@ -967,7 +1046,7 @@ mod tests {
     };
     use tidb_planner::read_only_scan::{ConfiguredColumn, ConfiguredTable};
     use tidb_txnkv::transaction::{
-        DeadlockDetail, DeadlockWaitChainItem, OptimisticCommitOutcome,
+        DeadlockDetail, DeadlockWaitChainItem, OptimisticCommitOutcome, OptimisticMutation,
         OptimisticTransactionReceipt, PessimisticLockFailure, RolledBackTransaction,
         TransactionCause,
     };
@@ -1167,6 +1246,33 @@ mod tests {
             rows: Vec::new(),
         })
         .is_empty());
+    }
+
+    #[test]
+    fn a_replace_lock_set_covers_every_tentative_record_and_index_mutation() {
+        // REPLACE can delete a row found through a unique key, then delete its
+        // old index entry and add the incoming record/index entries. The
+        // pessimistic loop must lock all of them, including the displaced row
+        // key that was not knowable from the incoming handle alone.
+        let plan = ConfiguredWritePlan::Write {
+            mutations: vec![
+                OptimisticMutation::delete(b"record/old".to_vec()).unwrap(),
+                OptimisticMutation::index_delete(b"index/old".to_vec()).unwrap(),
+                OptimisticMutation::insert(b"record/new".to_vec(), b"row".to_vec()).unwrap(),
+                OptimisticMutation::unique_index_insert(b"index/new".to_vec(), b"handle".to_vec())
+                    .unwrap(),
+            ],
+            affected_rows: 2,
+        };
+        assert_eq!(
+            planned_mutation_keys(&plan),
+            vec![
+                b"record/old".to_vec(),
+                b"index/old".to_vec(),
+                b"record/new".to_vec(),
+                b"index/new".to_vec(),
+            ]
+        );
     }
 
     #[test]
