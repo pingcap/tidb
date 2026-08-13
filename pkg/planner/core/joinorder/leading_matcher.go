@@ -41,6 +41,10 @@ const (
 	// LeadingLegacyQualifiedConcrete indicates a qualified table reference
 	// matched under legacy compatibility rules.
 	LeadingLegacyQualifiedConcrete
+	// LeadingQualifiedDecorrelatedConcrete indicates a unique concrete table
+	// that entered the owner join group through decorrelation and is qualified
+	// by its source query block.
+	LeadingQualifiedDecorrelatedConcrete
 	// LeadingQualifiedOwnerVisible indicates a qualified hint matches a
 	// table visible in the owner query block.
 	LeadingQualifiedOwnerVisible
@@ -63,6 +67,7 @@ func (m LeadingMatch) Matched() bool {
 	case LeadingCanonicalOwner,
 		LeadingLegacyRaw,
 		LeadingLegacyQualifiedConcrete,
+		LeadingQualifiedDecorrelatedConcrete,
 		LeadingQualifiedOwnerVisible,
 		LeadingLegacyPositionalOwnerVisible:
 		return true
@@ -76,6 +81,7 @@ func (m LeadingMatch) Matched() bool {
 func (m LeadingMatch) PreserveBoundary() bool {
 	switch m.Kind {
 	case LeadingCanonicalOwner,
+		LeadingQualifiedDecorrelatedConcrete,
 		LeadingQualifiedOwnerVisible,
 		LeadingLegacyPositionalOwnerVisible:
 		return true
@@ -248,10 +254,6 @@ func MatchLeadingHint(
 		return LeadingMatch{}
 	}
 
-	// Absent and broken owners permit only unqualified concrete compatibility.
-	if facts.Owner.Kind != plannerutil.OwnerUnique {
-		return LeadingMatch{}
-	}
 	expectedQB := leadingSelectOffset(table.QBName.L)
 	if expectedQB < 0 {
 		return LeadingMatch{}
@@ -259,6 +261,14 @@ func MatchLeadingHint(
 	concrete := matchingConcreteOccurrences(table, facts, expectedQB)
 	if len(concrete) > 1 {
 		return LeadingMatch{Kind: LeadingAmbiguous}
+	}
+	if facts.Owner.Kind == plannerutil.OwnerAbsent && len(concrete) == 1 {
+		return LeadingMatch{Kind: LeadingQualifiedDecorrelatedConcrete}
+	}
+	// Broken alias chains and other non-unique owners must not use qualified
+	// compatibility paths because their intended visible identity is unknown.
+	if facts.Owner.Kind != plannerutil.OwnerUnique {
+		return LeadingMatch{}
 	}
 	if expectedQB == ownerQB {
 		if leadingHintMatchesIdentity(table, facts.Owner.Identity) {

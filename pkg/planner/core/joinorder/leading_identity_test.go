@@ -66,6 +66,11 @@ func TestMatchLeadingHintTableToOperandFailClosed(t *testing.T) {
 				require.Equal(t, test.want, got.Kind)
 			})
 		}
+		require.Equal(t, joinorder.LeadingQualifiedDecorrelatedConcrete,
+			match(qualifiedHint("t2", 2), plannerutil.OperandIdentityFacts{
+				Owner:       plannerutil.OwnerResolution{Kind: plannerutil.OwnerAbsent},
+				Occurrences: concrete,
+			}, nil).Kind)
 	})
 
 	t.Run("broken alias itself and qualified paths are rejected", func(t *testing.T) {
@@ -109,6 +114,11 @@ func TestMatchLeadingHintTableToOperandFailClosed(t *testing.T) {
 				name: "qualified concrete", table: qualifiedHint("t2", 2),
 				facts: plannerutil.OperandIdentityFacts{Owner: uniqueOwner("dt"), Occurrences: []plannerutil.IdentityOccurrence{occurrence("t2", 2, 10, plannerutil.ConcreteOccurrence)}},
 				kind:  joinorder.LeadingLegacyQualifiedConcrete, matched: true,
+			},
+			{
+				name: "qualified decorrelated concrete", table: qualifiedHint("t2", 2),
+				facts: plannerutil.OperandIdentityFacts{Owner: plannerutil.OwnerResolution{Kind: plannerutil.OwnerAbsent}, Occurrences: []plannerutil.IdentityOccurrence{occurrence("t2", 2, 10, plannerutil.ConcreteOccurrence)}},
+				kind:  joinorder.LeadingQualifiedDecorrelatedConcrete, matched: true, preserve: true,
 			},
 			{
 				name: "qualified owner visible", table: qualifiedHint("dt", 2),

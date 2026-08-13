@@ -351,7 +351,7 @@ func genJoinMethodHintForSinglePhysicalJoin(
 	if parentQBOffset == -1 {
 		return nil
 	}
-	hintTbls, hintQBName, qbOffsets := genHintTblForJoinNodes(sctx, children, parentQBOffset, nodeType)
+	hintTbls, hintQBName, qbOffsets := genHintTblForJoinNodes(sctx, children, parentQBOffset, nodeType, false)
 	effectiveHintTbls := slices.DeleteFunc(slices.Clone(hintTbls), func(ht *ast.HintTable) bool {
 		return ht == nil
 	})
@@ -392,6 +392,7 @@ func genHintTblForJoinNodes(
 	joinedNodes []base.PhysicalPlan,
 	parentQBOffset int,
 	nodeType h.NodeType,
+	allowQualifiedConcrete bool,
 ) (hintTbls []*ast.HintTable, hintQBNamePtr *ast.CIStr, qbOffsets []int) {
 	// 1. Use genHintTblForSingleJoinNode() to generate QB offset and table name for each join node.
 
@@ -402,7 +403,7 @@ func genHintTblForJoinNodes(
 	hintTbls = make([]*ast.HintTable, 0, len(joinedNodes))
 	qbOffsets = make([]int, 0, len(joinedNodes))
 	for _, plan := range joinedNodes {
-		qbOffset, _, ht := genHintTblForSingleJoinNode(sctx, plan, parentQBOffset)
+		qbOffset, _, ht := genHintTblForSingleJoinNode(sctx, plan, parentQBOffset, allowQualifiedConcrete)
 		if qbOffset < 0 || ht == nil {
 			qbOffsets = append(qbOffsets, -1)
 			hintTbls = append(hintTbls, nil)
@@ -512,6 +513,7 @@ func genHintTblForSingleJoinNode(
 	sctx base.PlanContext,
 	joinNode base.PhysicalPlan,
 	parentOffset int,
+	allowQualifiedConcrete bool,
 ) (
 	qbOffset int,
 	guessQBOffset bool,
@@ -522,8 +524,8 @@ func genHintTblForSingleJoinNode(
 	}
 	table, ok := plannerutil.ResolveJoinOperandHintIdentity(joinNode, parentOffset)
 	if !ok {
-		if joinNode.QueryBlockOffset() != parentOffset ||
-			plannerutil.JoinOperandHasDerivedAliasCandidate(joinNode, parentOffset) {
+		if plannerutil.JoinOperandHasDerivedAliasCandidate(joinNode, parentOffset) ||
+			(joinNode.QueryBlockOffset() != parentOffset && !allowQualifiedConcrete) {
 			return -1, false, nil
 		}
 		dbName, tableName := extractTableAsName(joinNode)
@@ -534,7 +536,11 @@ func genHintTblForSingleJoinNode(
 			emptyDB := ast.CIStr{}
 			dbName = &emptyDB
 		}
-		return parentOffset, false, &ast.HintTable{DBName: *dbName, TableName: *tableName}
+		qbOffset := joinNode.QueryBlockOffset()
+		if qbOffset <= 0 {
+			qbOffset = parentOffset
+		}
+		return qbOffset, false, &ast.HintTable{DBName: *dbName, TableName: *tableName}
 	}
 	return table.SelectOffset, false, &ast.HintTable{DBName: table.DBName, TableName: table.TblName}
 }
@@ -590,7 +596,7 @@ func genJoinOrderHintFromRootPhysicalJoin(
 	}
 
 	// 2. Generate the leading hint based on the ordered join nodes.
-	hintTbls, hintQBName, qbOffsets := genHintTblForJoinNodes(p.SCtx(), orderedJoinGroup, p.QueryBlockOffset(), nodeType)
+	hintTbls, hintQBName, qbOffsets := genHintTblForJoinNodes(p.SCtx(), orderedJoinGroup, p.QueryBlockOffset(), nodeType, true)
 
 	// For now, we generate the leading hint only if we successfully generate the names for all nodes.
 	if slices.Contains(hintTbls, nil) {
