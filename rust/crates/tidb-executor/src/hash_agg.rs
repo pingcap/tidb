@@ -743,6 +743,13 @@ impl Partial {
             ) => {
                 *this = Partial::SumReal(Some(temporal_real_aggregate_value(&input, "SUM")?));
             }
+            // `calculateSum` selects DOUBLE for every non-integer/non-decimal
+            // input. In particular, a FLOAT/DOUBLE argument reaches the
+            // aggregate as a real datum; it must not be rejected while this
+            // lazily initialized state still has the decimal shape.
+            (this @ Partial::SumDecimal(None), Some(Datum::Real(v) | Datum::Float32(v))) => {
+                *this = Partial::SumReal(Some(v));
+            }
             (Partial::SumDecimal(acc), Some(input)) => match input {
                 Datum::Int(v) => {
                     let addend = Decimal::from_int(v);
@@ -831,6 +838,15 @@ impl Partial {
                     sum: temporal_real_aggregate_value(&input, "AVG")?,
                     count: 1,
                 };
+            }
+            // See the corresponding SUM transition above. Go's
+            // `calculateSum` returns a float datum for real inputs, and AVG
+            // keeps that domain through its final division.
+            (
+                this @ Partial::AvgDecimal { count: 0, .. },
+                Some(Datum::Real(v) | Datum::Float32(v)),
+            ) => {
+                *this = Partial::AvgReal { sum: v, count: 1 };
             }
             (Partial::AvgDecimal { sum, count }, Some(input)) => match input {
                 Datum::Int(v) => {
@@ -1828,11 +1844,11 @@ mod tests {
         assert_eq!(run_typed(agg, &types), vec![vec![Datum::Null]]);
     }
 
-    /// Go infers DOUBLE and calls `EvalReal` for temporal/duration SUM and
-    /// AVG. They therefore use the numeric date/duration spelling rather than
-    /// failing after the values reach the aggregate.
+    /// Go's `calculateSum` selects DOUBLE for real, temporal, and duration
+    /// arguments. Every one of those paths must promote the lazy aggregate
+    /// state out of its integer/decimal shape before folding the first value.
     #[test]
-    fn real_aggregates_accept_temporal_and_duration_inputs() {
+    fn real_aggregates_use_the_real_domain_from_the_first_non_null_input() {
         use tidb_datatype::{CoreTime, MySqlDuration, Time, TimeType};
 
         let date_type = FieldType::new(FieldTypeCode::Date);
@@ -1895,6 +1911,29 @@ mod tests {
         assert_eq!(
             run_typed(avg, std::slice::from_ref(&real)),
             vec![vec![Datum::Real(20_000.0)]]
+        );
+
+        let double_type = FieldType::new(FieldTypeCode::Double);
+        let mut double_column = Column::new(1, double_type.clone());
+        double_column.index = 0;
+        let doubles = [Datum::Null, Datum::Real(1.25), Datum::Real(2.5)];
+        let sum_and_avg = HashAggExec::new(
+            out_meta_typed(&[real.clone(), real.clone()]),
+            vec![],
+            vec![
+                AggFunc::new(
+                    AggKind::Sum,
+                    Some(Expression::Column(double_column.clone())),
+                ),
+                AggFunc::new(AggKind::Avg, Some(Expression::Column(double_column))),
+            ],
+            datum_source(&doubles, &double_type),
+            NoColumns,
+            StatementMemory::default(),
+        );
+        assert_eq!(
+            run_typed(sum_and_avg, &[real.clone(), real]),
+            vec![vec![Datum::Real(3.75), Datum::Real(1.875)]]
         );
     }
 

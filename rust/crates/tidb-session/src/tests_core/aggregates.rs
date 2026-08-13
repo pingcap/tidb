@@ -133,6 +133,13 @@ fn aggregates_over_numeric_domains() {
         row_text(session.run("SELECT SUM(a), SUM(d), SUM(r) FROM t")),
         [["6", "7.00", "7.5"]]
     );
+    // The enforced streaming arm shares the aggregate state with hash
+    // aggregation, but still has to select the real accumulator from the
+    // first non-NULL DOUBLE input.
+    assert_eq!(
+        row_text(session.run("SELECT /*+ STREAM_AGG() */ SUM(r), AVG(r) FROM t")),
+        [["7.5", "2.5"]]
+    );
     // Captured: an empty SUM is NULL, not zero.
     assert_eq!(
         row_text(session.run("SELECT SUM(a) FROM t WHERE a > 100")),

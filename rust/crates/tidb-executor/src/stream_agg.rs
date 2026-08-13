@@ -199,7 +199,14 @@ impl<C: Columns> StreamAggExec<C> {
             if self.source_drained {
                 if self.current_key.is_some() {
                     self.emit_current_group(req)?;
-                } else if !self.default_emitted && self.group_by.is_empty() {
+                // A global aggregate produces one synthetic row only when
+                // the child was empty. If an actual global group was just
+                // emitted above, EOF must terminate rather than append a
+                // second all-NULL group.
+                } else if !self.default_emitted
+                    && self.child_returned_empty
+                    && self.group_by.is_empty()
+                {
                     self.start_group(Vec::new());
                     self.emit_current_group(req)?;
                     self.default_emitted = true;
@@ -484,6 +491,24 @@ mod tests {
         );
         assert!(drain(&mut grouped, &types).unwrap().is_empty());
         assert!(grouped.agg_tree_input_empty());
+    }
+
+    #[test]
+    fn non_empty_global_aggregation_emits_only_its_actual_group() {
+        let types = [decimal()];
+        let mut exec = StreamAggExec::new(
+            output_meta(&types, 8),
+            vec![],
+            vec![AggFunc::new(AggKind::Sum, Some(column(1, long())))],
+            source(&[&[(1, Some(10)), (2, Some(20))]]),
+            NoColumns,
+            StatementMemory::default(),
+        );
+        assert_eq!(
+            drain(&mut exec, &types).unwrap(),
+            vec![vec![Datum::Decimal(Decimal::from_int(30))]]
+        );
+        assert!(!exec.agg_tree_input_empty());
     }
 
     #[test]
