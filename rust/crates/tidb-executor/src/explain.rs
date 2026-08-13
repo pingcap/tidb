@@ -253,6 +253,21 @@ pub fn explain_select_stmt(
     Ok(render(recorded(trace)?, format))
 }
 
+/// Plain `EXPLAIN` over the direct `UNION ALL` shape. The planning trace
+/// records every operand subtree but stops before the materialized set result
+/// is drained, matching Go `ExplainExec`'s build-only path.
+pub fn explain_set_opr_stmt(
+    set_opr: &tidb_ast::SetOprStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    format: ExplainFormat,
+) -> Result<SelectMeta, DriverError> {
+    let mut trace = PlanTrace::planning();
+    run_set_opr_traced(set_opr, catalog, current_db, ctx, Some(&mut trace))?;
+    Ok(render(recorded(trace)?, format))
+}
+
 /// `EXPLAIN ANALYZE <select>`: the same plan [`explain_select_stmt`] records,
 /// but the query actually RUNS (real `EXPLAIN ANALYZE` executes the wrapped
 /// statement to gather its runtime counters, confirmed by capture), and each

@@ -136,7 +136,8 @@ pub use executor::{ExecError, Executor, ExecutorMeta};
 pub use explain::{
     explain_analyze_delete_stmt, explain_analyze_insert_stmt, explain_analyze_select_stmt,
     explain_analyze_set_opr_stmt, explain_analyze_update_stmt, explain_delete_stmt,
-    explain_insert_stmt, explain_select_stmt, explain_update_stmt, ExplainFormat,
+    explain_insert_stmt, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt,
+    ExplainFormat,
 };
 pub use hash_agg::{AggFunc, AggKind, HashAggExec};
 pub use join::{JoinExec, JoinKind};

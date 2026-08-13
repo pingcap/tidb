@@ -630,6 +630,43 @@ fn explain_analyze_union_all_executes_and_meters_each_term() {
     );
 }
 
+/// Plain `EXPLAIN` describes the same physical `Union` tree but must not run
+/// either operand. The plan-only trace records the branches before their
+/// executors are drained, which is Go's `ExplainExec` build-only path.
+#[test]
+fn explain_union_all_records_each_term_without_execution() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1),(2),(3),(4)").unwrap();
+
+    let rows = row_text(
+        session
+            .run("EXPLAIN (SELECT a FROM t WHERE a <= 2) UNION ALL (SELECT a FROM t WHERE a >= 3)"),
+    );
+    assert_eq!(rows.len(), 7);
+    assert!(rows[0][0].starts_with("Union_"));
+    assert_eq!(rows[0][1], "6666.67");
+    assert_eq!(rows[0][2], "root");
+    assert_eq!(
+        rows.iter()
+            .skip(1)
+            .map(|row| row[2].as_str())
+            .collect::<Vec<_>>(),
+        vec!["root", "root", "root", "root", "root", "root"]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a FROM t ORDER BY a")),
+        vec![
+            vec!["1".to_owned()],
+            vec!["2".to_owned()],
+            vec!["3".to_owned()],
+            vec!["4".to_owned()],
+        ]
+    );
+}
+
 /// EXPLAIN still refuses forms this tier cannot plan honestly and format names
 /// Go itself does not recognize.
 #[test]
