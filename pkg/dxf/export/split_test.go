@@ -34,71 +34,63 @@ func keys(ss ...string) []kv.Key {
 	return ks
 }
 
-func TestSubtaskCntFor(t *testing.T) {
-	// About one subtask per node.
-	require.Equal(t, 4, subtaskCntFor(100, 4))
-	// Fewer chunks than nodes → one subtask per chunk, no empties.
-	require.Equal(t, 3, subtaskCntFor(3, 8))
-	// Never zero.
-	require.Equal(t, 1, subtaskCntFor(0, 0))
-	// Capped: many chunks on one node still spread so no subtask exceeds the cap.
-	got := subtaskCntFor(10*maxChunksPerSubtask, 1)
-	require.GreaterOrEqual(t, got, 10)
-}
-
 func TestPackSubtasks(t *testing.T) {
-	// 8 equal-sized chunks (1 GiB each), 4 nodes → engineSize = 8GiB/4 = 2GiB →
-	// each subtask accumulates 2 chunks; covers all chunks in order once.
-	const oneGiB = 1024 * 1024 * 1024
-	chunks := make([]Chunk, 8)
-	var total int64
+	// concurrency=2 → a subtask holds chunksPerWorker*2 chunks worth of bytes.
+	const perSubtask = chunksPerWorker * 2
+	n := perSubtask * 2
+	chunks := make([]Chunk, n)
 	for i := range chunks {
-		chunks[i] = Chunk{TableIdx: 0, Ordinal: i, Size: oneGiB}
-		total += oneGiB
+		chunks[i] = Chunk{Ordinal: i, Size: chunkSize}
 	}
-	metas, err := packSubtasks(chunks, total, 4)
+	metas, err := packSubtasks(chunks, 2)
 	require.NoError(t, err)
-	require.Len(t, metas, 4)
+	require.Len(t, metas, 2)
 	var seen []int
 	for _, bs := range metas {
 		st := &SubtaskMeta{}
 		require.NoError(t, json.Unmarshal(bs, st))
-		require.NotEmpty(t, st.Chunks)
-		require.Len(t, st.Chunks, 2) // balanced by size
+		require.Len(t, st.Chunks, perSubtask)
 		for _, c := range st.Chunks {
 			seen = append(seen, c.Ordinal)
 		}
 	}
-	require.Equal(t, []int{0, 1, 2, 3, 4, 5, 6, 7}, seen)
-
-	// Uneven sizes: one big chunk forms its own subtask.
-	uneven := []Chunk{
-		{Ordinal: 0, Size: 4 * oneGiB},
-		{Ordinal: 1, Size: oneGiB},
-		{Ordinal: 2, Size: oneGiB},
+	want := make([]int, n)
+	for i := range want {
+		want[i] = i
 	}
-	m2, err := packSubtasks(uneven, 6*oneGiB, 2) // engineSize = 3GiB
+	require.Equal(t, want, seen)
+
+	// A subtask is cut as soon as its bytes reach the limit.
+	big := []Chunk{{Ordinal: 0, Size: chunksPerWorker * chunkSize}, {Ordinal: 1, Size: chunkSize}}
+	m2, err := packSubtasks(big, 1) // limit = chunksPerWorker*chunkSize
 	require.NoError(t, err)
 	require.Len(t, m2, 2)
 
-	empty, err := packSubtasks(nil, 0, 4)
+	empty, err := packSubtasks(nil, 2)
 	require.NoError(t, err)
 	require.Nil(t, empty)
+
+	// Hard chunk-count ceiling for a flood of tiny chunks.
+	tiny := make([]Chunk, maxChunksPerSubtask+1)
+	for i := range tiny {
+		tiny[i] = Chunk{Ordinal: i, Size: 1}
+	}
+	m3, err := packSubtasks(tiny, 1)
+	require.NoError(t, err)
+	require.Len(t, m3, 2)
 }
 
 func TestBuildChunks(t *testing.T) {
-	const oneGiB = 1024 * 1024 * 1024
-	// 4 regions, 8 GiB → 8 chunks wanted but capped at 4 regions, so 4 chunks.
-	require.Len(t, mustChunks(buildChunks(0, 1, keys("a", "b", "c", "d", "e"), 8*oneGiB, 0)), 4)
+	b := keys("a", "b", "c", "d", "e") // 4 regions
 	// One chunk per ~chunkSize, rounded up, never more than the region count.
-	require.Len(t, mustChunks(buildChunks(0, 1, keys("a", "b", "c", "d", "e"), 2*oneGiB, 0)), 2)
-	require.Len(t, mustChunks(buildChunks(0, 1, keys("a", "b", "c", "d", "e"), 2*oneGiB+1, 0)), 3)
+	require.Len(t, mustChunks(buildChunks(0, 1, b, 2*chunkSize, 0)), 2)
+	require.Len(t, mustChunks(buildChunks(0, 1, b, 2*chunkSize+1, 0)), 3)
+	// More chunks wanted than regions → capped at the region count.
+	require.Len(t, mustChunks(buildChunks(0, 1, b, 100*chunkSize, 0)), 4)
 	// Zero size still yields one chunk covering the whole span.
-	require.Len(t, mustChunks(buildChunks(0, 1, keys("a", "b", "c", "d", "e"), 0, 0)), 1)
+	require.Len(t, mustChunks(buildChunks(0, 1, b, 0, 0)), 1)
 
-	const size = 8 * oneGiB
-	b := keys("a", "b", "c", "d", "e") // 4 regions → 4 chunks
-
+	const size = 4 * chunkSize // 4 regions → 4 chunks, one region each
 	chunks, next := buildChunks(2, 100, b, size, 0)
 	require.Len(t, chunks, 4)
 	require.Equal(t, 4, next)
@@ -112,7 +104,7 @@ func TestBuildChunks(t *testing.T) {
 	require.Equal(t, 2, chunks[0].TableIdx)
 	require.Equal(t, int64(100), chunks[0].PhysicalID)
 	// Size apportioned by region count (1 of 4 regions each).
-	require.Equal(t, int64(size)*1/4, chunks[0].Size)
+	require.Equal(t, int64(size)/4, chunks[0].Size)
 
 	// Deterministic.
 	again, _ := buildChunks(2, 100, b, size, 0)

@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -79,19 +78,14 @@ func (s *exportScheduler) OnNextSubtasksBatch(
 	ctx context.Context,
 	_ storage.TaskHandle,
 	task *proto.Task,
-	execIDs []string,
+	_ []string,
 	nextStep proto.Step,
 ) ([][]byte, error) {
 	switch nextStep {
 	case proto.ExportStepDump:
-		nodeCnt := len(execIDs)
-		if kerneltype.IsNextGen() {
-			// In nextgen, nodes scale out automatically to the task's MaxNodeCount,
-			// so plan subtasks for that target rather than the currently available
-			// node count.
-			nodeCnt = max(task.MaxNodeCount, 1)
-		}
-		metas, err := splitTables(ctx, s.store, s.taskMeta, nodeCnt)
+		// Size subtasks by the worker concurrency; the framework spreads the
+		// resulting subtasks across the scaled-out nodes.
+		metas, err := splitTables(ctx, s.store, s.taskMeta, max(task.RequiredSlots, 1))
 		if err != nil {
 			return nil, err
 		}

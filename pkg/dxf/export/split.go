@@ -38,33 +38,32 @@ const (
 	loadRegionMaxRetry    = 8
 	scanRegionBackoffBase = 200 * time.Millisecond
 	scanRegionBackoffMax  = 2 * time.Second
-	// chunkSize is the work granularity, deliberately larger than FileSize (the
-	// within-chunk file-cut size), so fewer, larger chunks mean fewer partial
-	// tail files.
-	chunkSize = 1024 * 1024 * 1024
-	// maxChunksPerSubtask caps the chunk count (not bytes) per subtask; the byte
-	// balance is engineSize in packSubtasks. It only bites when chunks are far
-	// smaller than engineSize, e.g. a schema of many tiny tables, keeping one
-	// subtask's chunk list and its meta from growing unbounded.
+	// chunkSize is the per-chunk work granularity, kept well above FileSize (the
+	// within-chunk file-cut size) so each chunk leaves at most one partial tail
+	// file: fewer, larger chunks mean fewer partial files.
+	chunkSize = 10 * 1024 * 1024 * 1024
+	// chunksPerWorker is how many chunks a subtask holds per worker slot, so a
+	// subtask's worker pool has spare chunks to steal and stragglers even out.
+	chunksPerWorker = 2
+	// maxChunksPerSubtask is a hard ceiling on the chunk count per subtask (the
+	// usual bound is the byte size in packSubtasks); it only bites for a schema of
+	// many tiny tables, keeping a subtask's chunk list and its meta bounded.
 	maxChunksPerSubtask = 4000
 )
 
 // splitTables carves every table into ~chunkSize chunks, then packs the chunks
-// into size-balanced subtasks. Deterministic given the same region layout.
-func splitTables(ctx context.Context, store kv.Storage, meta *TaskMeta, nodeCnt int) ([][]byte, error) {
+// into subtasks sized to the worker concurrency. Deterministic given the same
+// region layout.
+func splitTables(ctx context.Context, store kv.Storage, meta *TaskMeta, concurrency int) ([][]byte, error) {
 	var chunks []Chunk
-	var totalSize int64
 	for tableIdx := range meta.Tables {
 		tableChunks, err := splitTable(ctx, store, meta, tableIdx)
 		if err != nil {
 			return nil, err
 		}
-		for _, c := range tableChunks {
-			totalSize += c.Size
-		}
 		chunks = append(chunks, tableChunks...)
 	}
-	return packSubtasks(chunks, totalSize, nodeCnt)
+	return packSubtasks(chunks, concurrency)
 }
 
 // splitTable carves one table into ~chunkSize key-ordered chunks, with a
@@ -111,15 +110,15 @@ func buildChunks(tableIdx int, pid int64, boundaries []kv.Key, totalSize int64, 
 	return chunks, ord
 }
 
-// packSubtasks groups chunks into subtasks in key order so each holds a similar
-// amount of data: engineSize = ceil(totalSize/subtaskCnt), accumulate chunks
-// until a subtask reaches it.
-func packSubtasks(chunks []Chunk, totalSize int64, nodeCnt int) ([][]byte, error) {
+// packSubtasks groups chunks into key-ordered subtasks, cutting a new subtask
+// once it reaches chunksPerWorker*concurrency chunks worth of bytes (so a subtask
+// fills a node's worker pool a few times over yet keeps the failover redo cost
+// bounded), or the maxChunksPerSubtask ceiling.
+func packSubtasks(chunks []Chunk, concurrency int) ([][]byte, error) {
 	if len(chunks) == 0 {
 		return nil, nil
 	}
-	subtaskCnt := subtaskCntFor(len(chunks), nodeCnt)
-	engineSize := (totalSize + int64(subtaskCnt) - 1) / int64(subtaskCnt)
+	maxSubtaskSize := int64(chunksPerWorker*max(concurrency, 1)) * chunkSize
 
 	var subtasks [][]byte
 	emit := func(batch []Chunk) error {
@@ -135,7 +134,7 @@ func packSubtasks(chunks []Chunk, totalSize int64, nodeCnt int) ([][]byte, error
 	for _, c := range chunks {
 		batch = append(batch, c)
 		acc += c.Size
-		if (engineSize > 0 && acc >= engineSize) || len(batch) >= maxChunksPerSubtask {
+		if acc >= maxSubtaskSize || len(batch) >= maxChunksPerSubtask {
 			if err := emit(batch); err != nil {
 				return nil, err
 			}
@@ -148,17 +147,6 @@ func packSubtasks(chunks []Chunk, totalSize int64, nodeCnt int) ([][]byte, error
 		}
 	}
 	return subtasks, nil
-}
-
-// subtaskCntFor targets about one subtask per node, capped so many small tables
-// do not collapse into a few huge subtasks.
-func subtaskCntFor(chunkCnt, nodeCnt int) int {
-	if nodeCnt <= 0 {
-		nodeCnt = 1
-	}
-	cnt := min(nodeCnt, chunkCnt)
-	minCnt := (chunkCnt + maxChunksPerSubtask - 1) / maxChunksPerSubtask
-	return max(cnt, minCnt, 1)
 }
 
 func physicalIDs(tblInfo *model.TableInfo) []int64 {
