@@ -30,7 +30,11 @@ use crate::time_fn::calendar::{format_ymd_result, parse_date_ymd};
 use crate::Decimal;
 use crate::{Datum, EvalError};
 use tidb_ast::CastType;
-use tidb_datatype::{ConversionFlags, FieldType, FieldTypeCode};
+use tidb_datatype::{
+    number_to_duration, ConversionFlags, DatumValueError, EvalType, FieldType, FieldTypeCode,
+    ScalarConversionEvent, JSON_TYPE_CODE_DATE, JSON_TYPE_CODE_DATETIME, JSON_TYPE_CODE_DURATION,
+    JSON_TYPE_CODE_STRING, JSON_TYPE_CODE_TIMESTAMP,
+};
 
 /// Evaluates a [`CastType`] against an already-evaluated, non-`NULL`
 /// operand (`NULL` is handled by the caller — every target type maps
@@ -140,8 +144,78 @@ pub(crate) fn eval_cast(
                 .map(|converted| converted.value)
                 .map_err(|_| EvalError::Unsupported("invalid CAST AS VECTOR operand"))
         }
-        CastType::Time { .. } => Err(EvalError::Unsupported("CAST AS TIME")),
+        CastType::Time { fsp } => cast_to_duration(&v, source, ctx, i64::from(fsp.unwrap_or(0))),
         CastType::Json => crate::builtin_ext::cast_as_json(&v),
+    }
+}
+
+/// `CAST(expr AS TIME[(fsp)])` returns TiDB's elapsed-time datum, not a
+/// calendar string. The source type selects the Go signature: numeric inputs
+/// turn a truncation/overflow into `NULL`, while string inputs retain the
+/// parser's best-effort duration after reporting the truncation event.
+fn cast_to_duration(
+    v: &Datum,
+    source: Option<&tidb_datatype::FieldType>,
+    ctx: &dyn crate::Columns,
+    fsp: i64,
+) -> Result<Datum, EvalError> {
+    let input = v.sql_string().unwrap_or_else(|_| "<binary>".to_owned());
+    let target = FieldType::new(FieldTypeCode::Duration).with_decimal(fsp);
+    let source_eval_type = source.map(FieldType::eval_type);
+
+    if let Datum::Json(value) = v {
+        if !matches!(
+            value.type_code(),
+            JSON_TYPE_CODE_DATE
+                | JSON_TYPE_CODE_DATETIME
+                | JSON_TYPE_CODE_TIMESTAMP
+                | JSON_TYPE_CODE_DURATION
+                | JSON_TYPE_CODE_STRING
+        ) {
+            ctx.handle_truncate(&format!("Truncated incorrect time value: '{input}'"))?;
+            return Ok(Datum::Null);
+        }
+    }
+
+    let numeric = matches!(
+        source_eval_type,
+        Some(EvalType::Int | EvalType::Real | EvalType::Decimal)
+    ) || (source_eval_type.is_none()
+        && matches!(
+            v,
+            Datum::Int(_) | Datum::UInt(_) | Datum::Real(_) | Datum::Float32(_) | Datum::Decimal(_)
+        ));
+    let converted = if source_eval_type == Some(EvalType::Int)
+        || (source_eval_type.is_none() && matches!(v, Datum::Int(_) | Datum::UInt(_)))
+    {
+        let number = match v {
+            Datum::Int(value) => *value,
+            // Go's ETInt ABI is `int64`: an unsigned source reaches this
+            // signature through the same low-64-bit representation.
+            Datum::UInt(value) => *value as i64,
+            _ => return Err(EvalError::Unsupported("CAST AS TIME integer datum")),
+        };
+        number_to_duration(number, fsp)
+            .map(|converted| (Datum::new_duration(converted.value), converted.event))
+            .map_err(|error| DatumValueError::Comparison(error.to_string()))
+    } else {
+        v.convert_to_in(&target, ConversionFlags::default(), &ctx.time_zone())
+            .map(|converted| (converted.value, converted.event))
+    };
+
+    match converted {
+        Ok((value, None | Some(ScalarConversionEvent::RoundedToScale))) => Ok(value),
+        Ok((value, Some(_))) => {
+            ctx.handle_truncate(&format!("Truncated incorrect time value: '{input}'"))?;
+            Ok(if numeric { Datum::Null } else { value })
+        }
+        Err(DatumValueError::Unsupported(_, _)) => {
+            Err(EvalError::Unsupported("CAST AS TIME source datum"))
+        }
+        Err(_) => {
+            ctx.handle_truncate(&format!("Truncated incorrect time value: '{input}'"))?;
+            Ok(Datum::Null)
+        }
     }
 }
 
@@ -1683,5 +1757,85 @@ mod tests {
         )
         .expect("cast");
         assert_eq!(render_time(&date), "2026-08-06");
+    }
+
+    #[test]
+    fn cast_time_dispatches_every_supported_source_domain() {
+        use std::cell::RefCell;
+
+        struct Warnings(RefCell<Vec<(u16, String)>>);
+        impl crate::Columns for Warnings {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+
+            fn append_warning(&self, code: u16, message: &str) {
+                self.0.borrow_mut().push((code, message.to_owned()));
+            }
+        }
+
+        let cast = CastType::Time { fsp: Some(3) };
+        let int_type = FieldType::new(FieldTypeCode::LongLong);
+        let decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
+        let string_type = FieldType::new(FieldTypeCode::VarString);
+        let duration_type = FieldType::new(FieldTypeCode::Duration);
+        let warnings = Warnings(RefCell::new(Vec::new()));
+
+        for (value, source, expected) in [
+            (Datum::Int(125_959), &int_type, "12:59:59.000"),
+            (
+                Datum::Decimal(Decimal::from_literal("125959")),
+                &decimal_type,
+                "12:59:59.000",
+            ),
+            (
+                Datum::new_string("12:59:59".to_owned()),
+                &string_type,
+                "12:59:59.000",
+            ),
+            (
+                Datum::new_duration(
+                    tidb_datatype::MySqlDuration::new(12, 59, 59, 987_654, 6).expect("duration"),
+                ),
+                &duration_type,
+                "12:59:59.988",
+            ),
+        ] {
+            let got = eval_cast(&cast, value, Some(source), &warnings).expect("CAST AS TIME");
+            assert_eq!(got.sql_string().expect("duration string"), expected);
+        }
+
+        // The Go string signature preserves the parser's best effort beside
+        // a truncation warning, whereas the numeric signature returns NULL.
+        let text = eval_cast(
+            &CastType::Time { fsp: None },
+            Datum::new_string("1x".to_owned()),
+            Some(&string_type),
+            &warnings,
+        )
+        .expect("string truncation is a warning");
+        assert_eq!(text.sql_string().expect("duration string"), "00:00:01");
+        let numeric = eval_cast(
+            &CastType::Time { fsp: None },
+            Datum::Int(126_060),
+            Some(&int_type),
+            &warnings,
+        )
+        .expect("numeric truncation is a warning");
+        assert_eq!(numeric, Datum::Null);
+        assert_eq!(warnings.0.borrow().len(), 2);
+
+        // Go's JSON duration signature accepts only temporal/string JSON;
+        // scalar numeric JSON is a NULL plus the same truncation warning.
+        let json_type = FieldType::new(FieldTypeCode::Json);
+        let json = eval_cast(
+            &CastType::Time { fsp: None },
+            Datum::new_json(tidb_datatype::BinaryJSON::parse("123").expect("json")),
+            Some(&json_type),
+            &warnings,
+        )
+        .expect("JSON mismatch is a warning");
+        assert_eq!(json, Datum::Null);
+        assert_eq!(warnings.0.borrow().len(), 3);
     }
 }

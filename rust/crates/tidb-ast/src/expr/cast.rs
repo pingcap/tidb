@@ -224,13 +224,8 @@ pub enum CastType {
         /// The fractional-seconds-precision digit, if given.
         fsp: Option<u32>,
     },
-    /// `TIME[(fsp)]`. Parses and restores fully, but evaluation is
-    /// deliberately `Unsupported` — MySQL `TIME` is an elapsed-time
-    /// domain (can exceed 24 hours, can be negative), genuinely different
-    /// from this crate's `DATE`/`DATETIME` (plain formatted strings) and
-    /// not yet modelled at all (confirmed via `goeval`: a `TIME`-typed
-    /// result is a `KindMysqlDuration` Datum, a value kind this project's
-    /// oracle tooling doesn't even have a comparison label for yet).
+    /// `TIME[(fsp)]`, MySQL's elapsed-time domain. Evaluation maps it to
+    /// `Datum::Duration`, which can exceed 24 hours and be negative.
     Time {
         /// The fractional-seconds-precision digit, if given.
         fsp: Option<u32>,

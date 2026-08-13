@@ -963,7 +963,7 @@ fn cast_and_convert() {
         ("cast('3.5abc' as decimal)", "DEC:4"),
         ("cast('3.5e1abc' as double)", "FLOAT:35"),
         ("cast('1e2' as decimal)", "DEC:100"),
-        ("cast('10:30:00' as time)", "Unsupported(\"CAST AS TIME\")"),
+        ("cast('10:30:00' as time)", "DUR:10:30:00"),
         // Only the STRING signature parses, so a malformed document is
         // TiDB's 3140; successful casts retain the native JSON domain.
         ("cast('{}' as json)", "JSON:{}"),
