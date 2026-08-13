@@ -824,9 +824,14 @@ impl PlanTrace {
         self.wrap("Selection", est, info);
     }
 
-    /// The one-phase aggregate this tier builds for `GROUP BY` / an
+    /// Records a one-phase aggregation this tier builds for `GROUP BY` / an
     /// aggregate select field.
-    pub(crate) fn hash_agg(&mut self, select: &tidb_ast::SelectStmt, qualify: &Qualifier<'_>) {
+    fn aggregation(
+        &mut self,
+        name: &'static str,
+        select: &tidb_ast::SelectStmt,
+        qualify: &Qualifier<'_>,
+    ) {
         let mut info = String::new();
         if !select.group_by.is_empty() {
             info.push_str("group by:");
@@ -856,7 +861,32 @@ impl PlanTrace {
         } else {
             Est::Scale(DISTINCT_FACTOR)
         };
-        self.wrap("HashAgg", est, info);
+        self.wrap(name, est, info);
+    }
+
+    /// The one-phase hash aggregation this tier builds by default.
+    pub(crate) fn hash_agg(&mut self, select: &tidb_ast::SelectStmt, qualify: &Qualifier<'_>) {
+        self.aggregation("HashAgg", select, qualify);
+    }
+
+    /// The source-ordered stream aggregation selected by `STREAM_AGG()`.
+    pub(crate) fn stream_agg(&mut self, select: &tidb_ast::SelectStmt, qualify: &Qualifier<'_>) {
+        self.aggregation("StreamAgg", select, qualify);
+    }
+
+    /// The root sort Go's enforced `STREAM_AGG()` places below the stream
+    /// aggregate when no access path already supplies the grouping order.
+    pub(crate) fn stream_agg_sort(
+        &mut self,
+        group_by: &[tidb_ast::GroupByItem],
+        qualify: &Qualifier<'_>,
+    ) {
+        let info = group_by
+            .iter()
+            .map(|item| qualify.expr(&item.expr))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.wrap("Sort", Est::Inherit, info);
     }
 
     /// Go `util.ExplainByItems`: the by-item list a `Sort` or a `TopN` prints.

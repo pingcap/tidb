@@ -154,6 +154,46 @@ fn aggregates_over_numeric_domains() {
     );
 }
 
+/// `STREAM_AGG()` may enforce the order its aggregate needs. Go's physical
+/// stream aggregate receives a sorted child when no access path already
+/// provides the grouping order; the hint therefore changes this otherwise
+/// unordered result into ascending group-key order.
+#[test]
+fn stream_agg_hint_enforces_group_key_order() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (g BIGINT, v BIGINT)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (2,20),(1,10),(2,21),(3,30)")
+        .unwrap();
+
+    assert_eq!(
+        row_text(session.run("SELECT /*+ STREAM_AGG() */ g, COUNT(v) FROM t GROUP BY g")),
+        [["1", "1"], ["2", "2"], ["3", "1"]]
+    );
+    assert_eq!(
+        row_text(session.run("EXPLAIN SELECT /*+ STREAM_AGG() */ g, COUNT(v) FROM t GROUP BY g"))
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect::<Vec<_>>(),
+        ["StreamAgg_3", "└─Sort_2", "  └─TableFullScan_1"]
+    );
+
+    // Go discards BOTH aggregate preferences when they conflict, with 1815,
+    // leaving its normal (hash) cost choice in effect.
+    row_text(session.run("SELECT /*+ HASH_AGG() STREAM_AGG() */ g, COUNT(v) FROM t GROUP BY g"));
+    assert_eq!(session.warnings().len(), 1);
+    assert_eq!(session.warnings()[0].code, 1815);
+    assert_eq!(
+        session.warnings()[0].message,
+        "Optimizer aggregation hints are conflicted"
+    );
+
+    assert_eq!(
+        row_text(session.run("SELECT /*+ STREAM_AGG() */ COUNT(v), SUM(v) FROM t WHERE g = 99")),
+        [["0", "NULL"]]
+    );
+}
+
 /// `COUNT(a, b, ...)` / `COUNT(DISTINCT a, b, ...)`, checked against
 /// captured TiDB output. Only the `DISTINCT` form is valid SQL for more
 /// than one argument (`pkg/parser` rejects a bare `COUNT(a, b)` at parse

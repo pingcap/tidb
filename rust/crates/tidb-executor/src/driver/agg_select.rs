@@ -32,6 +32,7 @@
 //! current when it reaches the subquery.
 
 use super::*;
+use tidb_expr::Columns;
 
 /// The aggregation's output columns and each clause's hoisted remainder, as
 /// they grow across the pipeline's stages.
@@ -83,6 +84,32 @@ struct AggPipelineState {
     having_expr: Option<tidb_ast::Expr>,
     /// `ORDER BY` with its aggregates hoisted, as `(expr, desc)`.
     order_by_exprs: Vec<(tidb_ast::Expr, bool)>,
+}
+
+/// Go `LogicalAggregation.ResetHintIfConflicted` plus the root-only portion
+/// of `getEnforcedStreamAggs`: this driver has no query-block property graph,
+/// so it honors only an unqualified `STREAM_AGG()` on this SELECT and supplies
+/// the required order with a local sort.
+fn force_stream_aggregation(select: &tidb_ast::SelectStmt, ctx: &crate::StmtContext) -> bool {
+    use tidb_ast::HintKind;
+
+    let mut hash = false;
+    let mut stream = false;
+    for hint in &select.hints {
+        if !matches!(hint.kind, HintKind::Nullary { qb_name: None }) {
+            continue;
+        }
+        if hint.name.eq_ignore_ascii_case("hash_agg") {
+            hash = true;
+        } else if hint.name.eq_ignore_ascii_case("stream_agg") {
+            stream = true;
+        }
+    }
+    if hash && stream {
+        ctx.append_warning(1815, "Optimizer aggregation hints are conflicted");
+        return false;
+    }
+    stream
 }
 
 /// A resolver over the aggregation's CURRENT output columns, which is what
@@ -1258,7 +1285,8 @@ fn build_aggregation(
 
     // Stage 5b: the Applies for the aggregates' own arguments, between the
     // WHERE and the aggregation -- Go's `Apply` under the `HashAgg`.
-    let source = build_pre_agg_applies(source, state, resolver.scope, catalog, current_db, ctx)?;
+    let mut source =
+        build_pre_agg_applies(source, state, resolver.scope, catalog, current_db, ctx)?;
 
     // The aggregation output schema.
     let out_columns: Vec<Column> = state
@@ -1273,6 +1301,7 @@ fn build_aggregation(
         .collect();
     let out_schema = Schema::new(out_columns);
 
+    let force_stream = force_stream_aggregation(traced_select, ctx);
     let root: Box<dyn Executor> = if select.rollup {
         run_rollup_aggregate(
             source,
@@ -1283,6 +1312,39 @@ fn build_aggregation(
             &state.grouping_specs,
             ctx,
         )?
+    } else if force_stream {
+        let input_meta = ExecutorMeta::new(source.schema().clone(), 2, INIT_CAP, MAX_CHUNK_SIZE);
+        if !group_by.is_empty() {
+            let by_items = group_by
+                .iter()
+                .cloned()
+                .map(|expr| SortByItem { expr, desc: false })
+                .collect();
+            source = Box::new(SortExec::new(
+                input_meta,
+                by_items,
+                source,
+                ctx.clone(),
+                ctx.statement_memory(),
+            ));
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.stream_agg_sort(&traced_select.group_by, &qualify);
+                source = trace.meter(source);
+            }
+        }
+        Box::new(StreamAggExec::new(
+            ExecutorMeta::new(
+                out_schema.clone(),
+                if group_by.is_empty() { 2 } else { 3 },
+                INIT_CAP,
+                MAX_CHUNK_SIZE,
+            ),
+            group_by,
+            std::mem::take(&mut state.agg_funcs),
+            source,
+            ctx.clone(),
+            ctx.statement_memory(),
+        ))
     } else {
         Box::new(HashAggExec::new(
             ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
@@ -1295,7 +1357,11 @@ fn build_aggregation(
     };
     let root = match trace {
         Some(trace) => {
-            trace.hash_agg(traced_select, &qualify);
+            if force_stream && !select.rollup {
+                trace.stream_agg(traced_select, &qualify);
+            } else {
+                trace.hash_agg(traced_select, &qualify);
+            }
             trace.meter(root)
         }
         None => root,

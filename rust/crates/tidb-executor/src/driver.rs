@@ -44,6 +44,7 @@ use crate::predicate_pushdown::{
 use crate::projection::ProjectionExec;
 use crate::selection::SelectionExec;
 use crate::sort::{SortByItem, SortExec};
+use crate::stream_agg::StreamAggExec;
 use crate::table_dual::TableDualExec;
 use crate::topn::TopNExec;
 use std::collections::HashMap;
