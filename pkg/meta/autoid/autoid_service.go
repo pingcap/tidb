@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/apipb"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -45,9 +44,8 @@ type singlePointAlloc struct {
 	lastAllocated int64
 	isUnsigned    bool
 	*ClientDiscover
-	keyspaceID       uint32
-	keyspaceIdentity *apipb.KeyspaceIdentity
-	rpcRetryPolicy   rpcRetryPolicy
+	keyspaceID     uint32
+	rpcRetryPolicy rpcRetryPolicy
 }
 
 // ClientDiscover is used to get the AutoIDAllocClient, it creates the grpc connection with autoid service leader.
@@ -373,20 +371,15 @@ retry:
 	}
 
 	clientStart := time.Now()
-	req := &autoid.AutoIDRequest{
+	resp, err := cli.AllocAutoID(ctx, &autoid.AutoIDRequest{
 		DbID:       sp.dbID,
 		TblID:      sp.tblID,
 		N:          n,
 		Increment:  increment,
 		Offset:     offset,
 		IsUnsigned: sp.isUnsigned,
-	}
-	if sp.keyspaceIdentity != nil {
-		req.Keyspace = &autoid.AutoIDRequest_KeyspaceIdentity{KeyspaceIdentity: sp.keyspaceIdentity}
-	} else {
-		req.Keyspace = &autoid.AutoIDRequest_KeyspaceID{KeyspaceID: sp.keyspaceID}
-	}
-	resp, err := cli.AllocAutoID(ctx, req)
+		Keyspace:   &autoid.AutoIDRequest_KeyspaceID{KeyspaceID: sp.keyspaceID},
+	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(clientStart).Seconds())
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
@@ -526,19 +519,13 @@ retry:
 		return errors.Trace(err)
 	}
 	var resp *autoid.RebaseResponse
-	req := &autoid.RebaseRequest{
+	resp, err = cli.Rebase(ctx, &autoid.RebaseRequest{
 		DbID:       sp.dbID,
 		TblID:      sp.tblID,
 		Base:       newBase,
 		Force:      force,
 		IsUnsigned: sp.isUnsigned,
-	}
-	if sp.keyspaceIdentity != nil {
-		req.Keyspace = &autoid.RebaseRequest_KeyspaceIdentity{KeyspaceIdentity: sp.keyspaceIdentity}
-	} else {
-		req.Keyspace = &autoid.RebaseRequest_KeyspaceID{KeyspaceID: sp.keyspaceID}
-	}
-	resp, err = cli.Rebase(ctx, req)
+	})
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
 			if terminalErr := sp.handleRPCRetryError(ctx, "rebase", ver, err, &rpcRetryState, &requestLog); terminalErr != nil {

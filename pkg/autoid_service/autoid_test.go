@@ -22,12 +22,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/kvproto/pkg/apipb"
 	"github.com/pingcap/kvproto/pkg/autoid"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -58,24 +56,6 @@ type rebaseResp struct {
 	*autoid.RebaseResponse
 	error
 	*testing.T
-}
-
-type keyspaceIdentityStorage struct {
-	kv.Storage
-	codec tikv.Codec
-}
-
-func (s *keyspaceIdentityStorage) GetCodec() tikv.Codec {
-	return s.codec
-}
-
-type keyspaceIdentityCodec struct {
-	tikv.Codec
-	meta *keyspacepb.KeyspaceMeta
-}
-
-func (c *keyspaceIdentityCodec) GetKeyspaceMeta() *keyspacepb.KeyspaceMeta {
-	return c.meta
 }
 
 func (resp rebaseResp) check(msg string) {
@@ -119,7 +99,7 @@ func TestConcurrent(t *testing.T) {
 	}
 
 	// Rebase to some value
-	rebaseRequest(t, cli, to, true, 666, keyspaceID).check("")
+	rebaseRequest(t, cli, to, true, 666).check("")
 	checkCurrValue(t, cli, to, 666, 666, keyspaceID)
 	// And +1 concurrently for 30 times
 	close(notify)
@@ -155,14 +135,13 @@ func autoIDRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned
 	return autoIDResp{resp, err, t}
 }
 
-func rebaseRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned bool, n int64, keyspaceID uint32, force ...struct{}) rebaseResp {
+func rebaseRequest(t *testing.T, cli autoid.AutoIDAllocClient, to dest, unsigned bool, n int64, force ...struct{}) rebaseResp {
 	req := &autoid.RebaseRequest{
 		DbID:       to.dbID,
 		TblID:      to.tblID,
 		Base:       n,
 		IsUnsigned: unsigned,
 		Force:      len(force) > 0,
-		Keyspace:   &autoid.RebaseRequest_KeyspaceID{KeyspaceID: keyspaceID},
 	}
 	resp, err := cli.Rebase(context.Background(), req)
 	return rebaseResp{resp, err, t}
@@ -182,33 +161,6 @@ func TestAPI(t *testing.T) {
 		}
 		testAPIWithKeyspace(t, &keyspaceMeta)
 	}
-}
-
-func TestAPIWithKeyspaceIdentity(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("keyspace identity is only supported in next-gen mode")
-	}
-
-	identity := &apipb.KeyspaceIdentity{NamespaceId: 42, KeyspaceId: uint32(0xFFFFFF) - 1}
-	baseCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
-		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: identity.KeyspaceId},
-		Name:     keyspace.System,
-	})
-	require.NoError(t, err)
-	codec := &keyspaceIdentityCodec{
-		Codec: baseCodec,
-		meta: &keyspacepb.KeyspaceMeta{
-			Keyspace: &keyspacepb.KeyspaceMeta_KeyspaceIdentity{KeyspaceIdentity: identity},
-			Name:     keyspace.System,
-		},
-	}
-	service := &Service{store: &keyspaceIdentityStorage{codec: codec}}
-
-	require.NoError(t, service.validateRequestKeyspace(0, identity))
-	require.ErrorContains(t, service.validateRequestKeyspace(0, &apipb.KeyspaceIdentity{
-		NamespaceId: identity.NamespaceId + 1,
-		KeyspaceId:  identity.KeyspaceId,
-	}), "not leader")
 }
 
 func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
@@ -235,15 +187,6 @@ func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
 
 	to := dest{dbID: dbInfo.ID, tblID: tbInfo.ID}
 	var force = struct{}{}
-	if keyspaceMeta != nil {
-		// V1/V2 clients sent RebaseRequest without a keyspace field.
-		_, err := cli.Rebase(context.Background(), &autoid.RebaseRequest{
-			DbID:  to.dbID,
-			TblID: to.tblID,
-			Base:  0,
-		})
-		require.NoError(t, err)
-	}
 
 	// basic auto id operation
 	autoIDRequest(t, cli, to, false, 1, reqKeyspaceID).check(0, 1)
@@ -253,24 +196,24 @@ func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
 	autoIDRequest(t, cli, to, false, 1, reqKeyspaceID, 10, 5).check(139, 145)
 
 	// basic rebase operation
-	rebaseRequest(t, cli, to, false, 666, reqKeyspaceID).check("")
+	rebaseRequest(t, cli, to, false, 666).check("")
 	autoIDRequest(t, cli, to, false, 1, reqKeyspaceID).check(666, 667)
 
-	rebaseRequest(t, cli, to, false, 6666, reqKeyspaceID).check("")
+	rebaseRequest(t, cli, to, false, 6666).check("")
 	autoIDRequest(t, cli, to, false, 1, reqKeyspaceID).check(6666, 6667)
 
 	// rebase will not decrease the value without 'force'
-	rebaseRequest(t, cli, to, false, 44, reqKeyspaceID).check("")
+	rebaseRequest(t, cli, to, false, 44).check("")
 	checkCurrValue(t, cli, to, 6667, 6667, reqKeyspaceID)
-	rebaseRequest(t, cli, to, false, 44, reqKeyspaceID, force).check("")
+	rebaseRequest(t, cli, to, false, 44, force).check("")
 	checkCurrValue(t, cli, to, 44, 44, reqKeyspaceID)
 
 	// max increase 1
-	rebaseRequest(t, cli, to, false, math.MaxInt64, reqKeyspaceID, force).check("")
+	rebaseRequest(t, cli, to, false, math.MaxInt64, force).check("")
 	checkCurrValue(t, cli, to, math.MaxInt64, math.MaxInt64, reqKeyspaceID)
 	autoIDRequest(t, cli, to, false, 1, reqKeyspaceID).checkErrmsg()
 
-	rebaseRequest(t, cli, to, true, 0, reqKeyspaceID, force).check("")
+	rebaseRequest(t, cli, to, true, 0, force).check("")
 	checkCurrValue(t, cli, to, 0, 0, reqKeyspaceID)
 	autoIDRequest(t, cli, to, true, 1, reqKeyspaceID).check(0, 1)
 	autoIDRequest(t, cli, to, true, 10, reqKeyspaceID).check(1, 11)
@@ -278,12 +221,12 @@ func testAPIWithKeyspace(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta) {
 	autoIDRequest(t, cli, to, true, 1, reqKeyspaceID, 10, 5).check(139, 145)
 
 	// max increase 1
-	rebaseRequest(t, cli, to, true, math.MaxInt64, reqKeyspaceID).check("")
+	rebaseRequest(t, cli, to, true, math.MaxInt64).check("")
 	checkCurrValue(t, cli, to, math.MaxInt64, math.MaxInt64, reqKeyspaceID)
 	autoIDRequest(t, cli, to, true, 1, reqKeyspaceID).check(math.MaxInt64, math.MinInt64)
 	autoIDRequest(t, cli, to, true, 1, reqKeyspaceID).check(math.MinInt64, math.MinInt64+1)
 
-	rebaseRequest(t, cli, to, true, -1, reqKeyspaceID).check("")
+	rebaseRequest(t, cli, to, true, -1).check("")
 	checkCurrValue(t, cli, to, -1, -1, reqKeyspaceID)
 	// rebase to max value, the next request should fail
 	autoIDRequest(t, cli, to, true, 1, reqKeyspaceID).checkErrmsg()

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package client is the gRPC client to the external workload controller.
-// Requests that act on workload state carry keyspace identity in
+// Requests that act on workload state carry keyspace information in
 // externalworkloadpb.RequestHeader so the controller can route to the right pool.
 package client
 
@@ -25,7 +25,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/apipb"
 	pb "github.com/pingcap/kvproto/pkg/externalworkloadpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -39,9 +38,8 @@ var ErrControllerPaused = errors.New("external workload controller: worker pause
 
 // Option configures the gRPC client.
 type Option struct {
-	KeyspaceID       uint32
-	KeyspaceIdentity *apipb.KeyspaceIdentity
-	KeyspaceName     string
+	KeyspaceID   uint32
+	KeyspaceName string
 	// TiDBPool names the serving pool, for example vip-tidb-pool or super-vip-tidb-pool.
 	TiDBPool string
 	// ControllerAddr is the external workload controller address.
@@ -136,20 +134,13 @@ type grpcClient struct {
 func (c *grpcClient) Close() error { return c.conn.Close() }
 
 func (c *grpcClient) header() *pb.RequestHeader {
-	header := &pb.RequestHeader{
+	return &pb.RequestHeader{
+		Keyspace: &pb.RequestHeader_KeyspaceId{
+			KeyspaceId: c.opt.KeyspaceID,
+		},
 		KeyspaceName: c.opt.KeyspaceName,
 		TidbPool:     c.opt.TiDBPool,
 	}
-	if c.opt.KeyspaceIdentity != nil {
-		header.Keyspace = &pb.RequestHeader_KeyspaceIdentity{
-			KeyspaceIdentity: c.opt.KeyspaceIdentity,
-		}
-	} else {
-		header.Keyspace = &pb.RequestHeader_KeyspaceId{
-			KeyspaceId: c.opt.KeyspaceID,
-		}
-	}
-	return header
 }
 
 func (c *grpcClient) Ping(ctx context.Context) error {
