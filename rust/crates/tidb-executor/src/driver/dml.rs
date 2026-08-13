@@ -32,14 +32,12 @@ pub(crate) use defaults::{
 /// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against
 /// `catalog`, returning the number of inserted rows.
 ///
-/// The write half of the in-memory gateway (the storage-backed `InsertExec`
-/// with autoid/defaults/constraints lands with real tables). Unsupported here
-/// (rejected, documented): `REPLACE`, `IGNORE`, `ON DUPLICATE KEY UPDATE`,
-/// `SET` syntax, `INSERT ... SELECT`, and partitions. A `RETURNING` clause is
-/// parsed and silently ignored: Go's hand-written parser stores it on the AST
-/// but the planner and executor never read it, so the write runs normally and
-/// answers with a plain OK packet (verified against Go with a testkit probe).
-/// Columns not
+/// The write half of the in-memory gateway. It supports the normal insert
+/// forms, including `REPLACE`, `IGNORE`, `ON DUPLICATE KEY UPDATE`, `SET`
+/// syntax, and query sources. Partition-qualified targets remain rejected.
+/// A `RETURNING` clause is parsed and silently ignored: Go's hand-written
+/// parser stores it on the AST but the planner and executor never read it, so
+/// the write runs normally and answers with a plain OK packet. Columns not
 /// listed in an explicit column list are filled with NULL (column defaults
 /// wait on ColumnInfo default-value wiring).
 pub fn run_insert_on(
