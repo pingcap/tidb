@@ -127,12 +127,28 @@ pub(crate) fn commit_fast_path_source(
         }
     }
     // Go tries the batch point get before the single one.
-    if let Some(decision) = (!disable_point_get)
-        .then(|| try_batch_point_get(select, &table, &columns, zone, &hints))
+    let fast_batch_partition_supported = table.partition().is_none_or(|partition| {
+        partition.dependencies.len() == 1
+            && matches!(
+                partition.kind,
+                crate::PartitionKind::Hash | crate::PartitionKind::Key
+            )
+    });
+    if let Some(decision) = (!disable_point_get && fast_batch_partition_supported)
+        .then(|| try_batch_point_get(select, &table, &columns, zone, &hints, ctx))
         .transpose()?
         .flatten()
+        .filter(|decision| {
+            table.partition().is_none()
+                || ctx.static_partition_prune()
+                || decision.handles.len() <= 1
+        })
     {
-        let BatchPointGetDecision { handles, index } = decision;
+        let BatchPointGetDecision {
+            handles,
+            index,
+            routed_partitions,
+        } = decision;
         // This fast plan only accepts a WHERE that is exactly the IN whose
         // keys it just converted. Go replaces the whole pipeline with the
         // BatchPointGetPlan, so retaining the row expression above this
@@ -151,11 +167,14 @@ pub(crate) fn commit_fast_path_source(
         );
         if let Some(trace) = trace.as_deref_mut() {
             let index = index.as_ref().map(BatchPointGetIndex::access_object);
+            let partitions = routed_partitions
+                .unwrap_or_else(|| table.handle_partition_names(&handles, zone, ctx));
             trace.batch_point_get(
                 source_table_name(scope, &table.name),
                 &handles,
-                &table.handle_partition_names(&handles, zone, ctx),
+                &partitions,
                 index.as_deref(),
+                ctx.static_partition_prune(),
             );
             // The rows are read lazily, so the count is the source's live one
             // rather than a `Vec`'s length.
@@ -818,6 +837,19 @@ fn commit_index_range_source(
             .map(|offset| index_key_part_name(table, *offset))
             .collect();
         let index_columns: Vec<&str> = index_columns.iter().map(String::as_str).collect();
+        let point_ranges = index.unique
+            && !index.has_prefix()
+            && !ranges.is_empty()
+            && ranges.iter().all(|range| {
+                range.low.len() == index.column_offsets.len() && range.is_point(false)
+            });
+        let point_partitions = if point_ranges {
+            index_range_partition_names(table, index, &ranges, ctx)
+        } else {
+            Vec::new()
+        };
+        let clustered = index.name.eq_ignore_ascii_case("PRIMARY")
+            && index.column_offsets == table.common_handle_offsets();
         // Go's `findBestTask` returns a `PhysicalTableDual` the moment a
         // chosen path has NO ranges (`find_best_task.go`: `if
         // len(path.Ranges) == 0`), so a contradictory `WHERE` prints no scan
@@ -832,7 +864,31 @@ fn commit_index_range_source(
         }
         // A path the ranger narrowed nothing on reads the whole index, which
         // Go names `IndexFullScan` and prints without a `range:`.
-        if ranges.len() == 1 && ranges[0].is_full() {
+        if point_ranges && ranges.len() == 1 {
+            trace.index_point_get(
+                source_table_name(scope, &table.name),
+                &point_partitions,
+                &format!(
+                    "{}index:{}({})",
+                    if clustered { "clustered " } else { "" },
+                    index.name,
+                    index_columns.join(", ")
+                ),
+            );
+        } else if point_ranges && ctx.static_partition_prune() {
+            trace.index_batch_point_get(
+                source_table_name(scope, &table.name),
+                ranges.len(),
+                &point_partitions,
+                &format!(
+                    "{}index:{}({})",
+                    if clustered { "clustered " } else { "" },
+                    index.name,
+                    index_columns.join(", ")
+                ),
+                true,
+            );
+        } else if ranges.len() == 1 && ranges[0].is_full() {
             trace.index_full_scan(
                 source_table_name(scope, &table.name),
                 &index.name,
@@ -852,6 +908,35 @@ fn commit_index_range_source(
         trace.set_scan_act_rows(exec.produced_rows());
     }
     *from_source = Some(Box::new(exec));
+}
+
+fn index_range_partition_names(
+    table: &KvTable,
+    index: &crate::kv_table::KvIndex,
+    ranges: &[IndexRange],
+    ctx: &impl tidb_expr::Columns,
+) -> Vec<String> {
+    let Some(partition) = table.partition() else {
+        return Vec::new();
+    };
+    let mut ordinals = Vec::new();
+    for range in ranges {
+        let mut row = vec![Datum::Null; table.columns.len()];
+        for (offset, value) in index.column_offsets.iter().zip(&range.low) {
+            row[*offset] = value.clone();
+        }
+        if let Ok(ordinal) = partition.locate_ordinal(&row, &table.columns, ctx) {
+            if !ordinals.contains(&ordinal) {
+                ordinals.push(ordinal);
+            }
+        }
+    }
+    ordinals.sort_unstable();
+    ordinals
+        .into_iter()
+        .filter_map(|ordinal| partition.definitions.get(ordinal))
+        .map(|definition| definition.name.clone())
+        .collect()
 }
 
 /// The schema a fast-path source emits: the scope's columns in scope order,
@@ -1883,6 +1968,7 @@ pub(crate) struct BatchPointGetDecision {
     pub(crate) handles: Vec<TableHandle>,
     /// The index authority, absent only for an integer handle primary key.
     index: Option<BatchPointGetIndex>,
+    routed_partitions: Option<Vec<String>>,
 }
 
 struct BatchPointGetIndex {
@@ -1908,6 +1994,7 @@ pub(crate) fn try_batch_point_get(
     columns: &[(String, FieldType)],
     zone: &tidb_datatype::SessionTimeZone,
     hints: &crate::index_hints::AvailablePaths,
+    ctx: &impl tidb_expr::Columns,
 ) -> Result<Option<BatchPointGetDecision>, DriverError> {
     if select.having.is_some()
         || !select.order_by.is_empty()
@@ -2078,6 +2165,7 @@ pub(crate) fn try_batch_point_get(
             return Ok(Some(BatchPointGetDecision {
                 handles,
                 index: None,
+                routed_partitions: None,
             }));
         }
     }
@@ -2113,6 +2201,7 @@ pub(crate) fn try_batch_point_get(
                     .collect(),
                 clustered: true,
             }),
+            routed_partitions: None,
         }));
     }
 
@@ -2145,14 +2234,41 @@ pub(crate) fn try_batch_point_get(
             continue;
         };
         let mut handles = Vec::new();
+        let mut routed_partitions = Vec::new();
         for row in &rows {
             let values = ordered_values(row, &order);
             if let Some(handle) = table
                 .lookup_unique(index.id, &values, zone)
                 .map_err(|e| DriverError::Parse(format!("index lookup failed: {e:?}")))?
             {
-                push_unique(&mut handles, handle);
+                if !handles.contains(&handle) {
+                    handles.push(handle);
+                    if let Some(partition) = table.partition() {
+                        let mut full_row = vec![Datum::Null; table.columns.len()];
+                        for (offset, value) in offsets.iter().zip(row) {
+                            full_row[*offset] = value.clone();
+                        }
+                        if let Ok(ordinal) =
+                            partition.locate_ordinal(&full_row, &table.columns, ctx)
+                        {
+                            if let Some(definition) = partition.definitions.get(ordinal) {
+                                if !routed_partitions.contains(&definition.name) {
+                                    routed_partitions.push(definition.name.clone());
+                                }
+                            }
+                        }
+                    }
+                }
             }
+        }
+        if let Some(partition) = table.partition() {
+            routed_partitions.sort_by_key(|name| {
+                partition
+                    .definitions
+                    .iter()
+                    .position(|definition| definition.name.eq_ignore_ascii_case(name))
+                    .unwrap_or(usize::MAX)
+            });
         }
         return Ok(Some(BatchPointGetDecision {
             handles,
@@ -2165,6 +2281,7 @@ pub(crate) fn try_batch_point_get(
                     .collect(),
                 clustered: false,
             }),
+            routed_partitions: Some(routed_partitions),
         }));
     }
     Ok(None)

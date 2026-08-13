@@ -313,6 +313,21 @@ impl PlanTrace {
     /// `p0` is absent because pruning already dropped it -- the fan-out names
     /// what SURVIVED, never every declared partition.
     pub(crate) fn partition_union(&mut self, partitions: &[String]) {
+        // A join leaf is recorded before the parent has predicates to prune,
+        // so static mode may have already fanned it out across every declared
+        // partition. A later single-table access decision has the exact
+        // survivors: collapse that provisional fan-out back to its scan and
+        // rebuild it below. This keeps one source of truth for both shapes.
+        if let Some(mut union) = self.stack.pop_if(|top| top.name == "PartitionUnion") {
+            if union.children.is_empty() {
+                self.stack.push(union);
+            } else {
+                let mut leaf = union.children.remove(0);
+                leaf.access = without_partition(&leaf.access);
+                leaf.act_rows = union.act_rows.take();
+                self.stack.push(leaf);
+            }
+        }
         // Only a SCAN fans out. A point get names its own partition from the
         // handle it already has (Go `PointGetPlan.AccessObject`) and is never
         // a union; a `TableDual` reads nothing to divide.
@@ -744,7 +759,13 @@ impl PlanTrace {
         handles: &[TableHandle],
         partitions: &[String],
         index: Option<&str>,
+        static_partition_prune: bool,
     ) {
+        let access_partitions = if static_partition_prune && partitions.len() > 1 {
+            &[][..]
+        } else {
+            partitions
+        };
         let printed: Vec<String> = handles.iter().map(handle_text).collect();
         let index = index.map_or_else(String::new, |index| format!(", {index}"));
         let info = if index.is_empty() {
@@ -758,8 +779,52 @@ impl PlanTrace {
         self.replace_top(PlanNode::new(
             "Batch_Point_Get",
             Some(handles.len() as f64),
-            format!("table:{visible}{}{index}", partition_object(partitions)),
+            format!(
+                "table:{visible}{}{index}",
+                partition_object(access_partitions)
+            ),
             info,
+        ));
+        if static_partition_prune {
+            self.partition_union(partitions);
+        }
+        self.consumed = true;
+    }
+
+    pub(crate) fn index_batch_point_get(
+        &mut self,
+        visible: &str,
+        count: usize,
+        partitions: &[String],
+        index: &str,
+        static_partition_prune: bool,
+    ) {
+        let access_partitions = if static_partition_prune && partitions.len() > 1 {
+            &[][..]
+        } else {
+            partitions
+        };
+        self.replace_top(PlanNode::new(
+            "Batch_Point_Get",
+            Some(count as f64),
+            format!(
+                "table:{visible}{}, {index}",
+                partition_object(access_partitions)
+            ),
+            "keep order:false, desc:false".to_owned(),
+        ));
+        if static_partition_prune {
+            self.partition_union(partitions);
+        }
+        self.consumed = true;
+    }
+
+    pub(crate) fn index_point_get(&mut self, visible: &str, partitions: &[String], index: &str) {
+        self.replace_top(PlanNode::new(
+            "Point_Get",
+            Some(1.0),
+            format!("table:{visible}{}, {index}", partition_object(partitions)),
+            String::new(),
         ));
         self.consumed = true;
     }
@@ -1536,6 +1601,7 @@ fn handle_text(handle: &TableHandle) -> String {
 /// `PlanTrace::partition_union` may fan out. Every other leaf either names
 /// its partition itself (the point gets) or reads no partition at all.
 const PARTITIONED_SCANS: &[&str] = &[
+    "Batch_Point_Get",
     "TableFullScan",
     "TableRangeScan",
     "IndexFullScan",
@@ -1550,6 +1616,17 @@ fn with_partition(access: &str, partition: &str) -> String {
     match access.find(", ") {
         Some(at) => format!("{}, partition:{partition}{}", &access[..at], &access[at..]),
         None => format!("{access}, partition:{partition}"),
+    }
+}
+
+fn without_partition(access: &str) -> String {
+    let Some(start) = access.find(", partition:") else {
+        return access.to_owned();
+    };
+    let value_start = start + ", partition:".len();
+    match access[value_start..].find(", ") {
+        Some(rest) => format!("{}{}", &access[..start], &access[value_start + rest..]),
+        None => access[..start].to_owned(),
     }
 }
 

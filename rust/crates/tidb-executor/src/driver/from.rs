@@ -673,6 +673,26 @@ pub(crate) fn build_from(
                     unreachable!("views and sequences take the branches above")
                 }
             };
+            if ctx.static_partition_prune() {
+                if let TableEntry::Kv(table) = entry {
+                    if let (Some(trace), Some(partition)) =
+                        (trace.as_deref_mut(), table.partition())
+                    {
+                        let mut names = Vec::new();
+                        for definition in &partition.definitions {
+                            if table_ref.partitions.is_empty()
+                                || table_ref
+                                    .partitions
+                                    .iter()
+                                    .any(|name| name.eq_ignore_ascii_case(&definition.name))
+                            {
+                                names.push(definition.name.clone());
+                            }
+                        }
+                        trace.partition_union(&names);
+                    }
+                }
+            }
             let scope = FromScope {
                 tables: vec![FromTable {
                     name: visible,

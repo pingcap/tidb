@@ -401,6 +401,7 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             &columns,
             &tidb_datatype::SessionTimeZone::utc(),
             &crate::index_hints::AvailablePaths::unrestricted(),
+            &crate::StmtContext::for_query(),
         )
         .unwrap()
         .map(|decision| decision.handles)
@@ -477,6 +478,7 @@ fn row_batch_point_get_covers_a_composite_unique_key() {
             &columns,
             &tidb_datatype::SessionTimeZone::utc(),
             &crate::index_hints::AvailablePaths::unrestricted(),
+            &crate::StmtContext::for_query(),
         )
         .unwrap()
         .map(|decision| decision.handles)
@@ -542,6 +544,7 @@ fn row_batch_point_get_covers_a_composite_unique_key() {
         &common_columns,
         &tidb_datatype::SessionTimeZone::utc(),
         &crate::index_hints::AvailablePaths::unrestricted(),
+        &crate::StmtContext::for_query(),
     )
     .unwrap()
     .expect("the common primary key is the unique access path")

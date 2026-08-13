@@ -420,10 +420,11 @@ fn prune_range_ids(
             RangeBound::Value(value) => Some(value),
             RangeBound::MaxValue => None,
         };
-        if ranges
-            .iter()
-            .any(|range| range_meets_partition(range, low, high, unsigned))
-        {
+        if ranges.iter().any(|range| {
+            (index == 0 && interval_includes_null(range))
+                || (!interval_is_null_point(range)
+                    && range_meets_partition(range, low, high, unsigned))
+        }) {
             kept.push(definition.id);
         }
     }
@@ -716,6 +717,10 @@ mod tests {
                 &[interval(Datum::Int(9), false, Datum::Int(20), false)]
             ),
             Some(vec![101, 102, 103])
+        );
+        assert_eq!(
+            pruned_ids(&spec, &[interval(Datum::Null, false, Datum::Null, false)]),
+            Some(vec![101])
         );
     }
 

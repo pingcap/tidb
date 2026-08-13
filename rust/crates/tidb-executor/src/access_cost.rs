@@ -1241,7 +1241,15 @@ fn index_path(
     let index_net = net_cost(after_index.min(rows), index_net_row_size);
     let index_side = (index_scan + index_net) / DIST_SQL_SCAN_CONCURRENCY;
 
-    let cost = if covering {
+    let point_get = index.unique
+        && !index.has_prefix()
+        && !ranges.is_empty()
+        && ranges
+            .iter()
+            .all(|range| range.low.len() == index.column_offsets.len() && range.is_point(false));
+    let cost = if point_get {
+        net_cost(ranges.len() as f64, output_row_size)
+    } else if covering {
         index_side
     } else {
         let mut table_scan_columns: Vec<RowSizeColumn> = table
