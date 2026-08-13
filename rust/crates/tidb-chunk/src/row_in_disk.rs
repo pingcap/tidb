@@ -518,10 +518,7 @@ mod tests {
     impl ReadAt for SliceReadAt {
         fn read_at(&self, destination: &mut [u8], offset: i64) -> ReadAtResult {
             if self.fail_at == Some(offset) {
-                return ReadAtResult::io(
-                    0,
-                    io::Error::new(io::ErrorKind::Other, "injected read failure"),
-                );
+                return ReadAtResult::io(0, io::Error::other("injected read failure"));
             }
             let Ok(offset) = usize::try_from(offset) else {
                 return ReadAtResult::io(
