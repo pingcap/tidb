@@ -281,6 +281,8 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         ft
     };
     let int = || FieldType::new(FieldTypeCode::LongLong);
+    let real = || FieldType::new(FieldTypeCode::Double);
+    let vector = || FieldType::new(FieldTypeCode::VectorFloat32);
     // `date_add_<unit>`/`date_sub_<unit>` carry the INTERVAL unit in the name
     // (see the `Expr::Func` arm of `rewrite_expr_resolved`). Real TiDB types
     // these from the date argument (DATE in, DATE out; DATETIME in, DATETIME
@@ -507,6 +509,15 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         | "year_month" | "day_hour" | "day_minute" | "day_second" | "day_microsecond"
         | "hour_minute" | "hour_second" | "hour_microsecond" | "minute_second"
         | "minute_microsecond" | "second_microsecond" => int(),
+        // `pkg/expression/builtin_vec.go`: vectors are accepted as either
+        // stored vector cells or text casts, but the scalar return domain is
+        // fixed by each function class.
+        "vec_dims" if args.len() == 1 => int(),
+        "vec_l1_distance" | "vec_l2_distance" | "vec_negative_inner_product"
+        | "vec_cosine_distance" if args.len() == 2 => real(),
+        "vec_l2_norm" if args.len() == 1 => real(),
+        "vec_from_text" if args.len() == 1 => vector(),
+        "vec_as_text" if args.len() == 1 => text(),
         // The math family. Go types these from the ARGUMENT, and the captured
         // types are what a chunk cell must be sized for: `ABS` and `MOD`
         // preserve the argument domain, `CEIL`/`FLOOR` return an integer for
@@ -1470,6 +1481,50 @@ mod time_source_tests {
         assert_eq!(result.decimal(), 0);
         assert_eq!(result.flen(), 10);
         assert!(builtin_return_type("time", &[]).is_none());
+    }
+}
+
+#[cfg(test)]
+mod vector_result_type_tests {
+    use super::*;
+
+    fn string_arg() -> Expression {
+        Expression::Constant(Constant::new(
+            Datum::new_string("[1,2]"),
+            FieldType::new(FieldTypeCode::VarString),
+        ))
+    }
+
+    #[test]
+    fn vector_builtin_result_domains_match_their_function_classes() {
+        let vector = Expression::Constant(Constant::new(
+            Datum::Null,
+            FieldType::new(FieldTypeCode::VectorFloat32),
+        ));
+        assert_eq!(
+            builtin_return_type("vec_dims", std::slice::from_ref(&vector))
+                .expect("VEC_DIMS type")
+                .code(),
+            FieldTypeCode::LongLong
+        );
+        assert_eq!(
+            builtin_return_type("vec_l2_distance", &[vector.clone(), vector.clone()])
+                .expect("VEC_L2_DISTANCE type")
+                .code(),
+            FieldTypeCode::Double
+        );
+        assert_eq!(
+            builtin_return_type("vec_from_text", &[string_arg()])
+                .expect("VEC_FROM_TEXT type")
+                .code(),
+            FieldTypeCode::VectorFloat32
+        );
+        assert_eq!(
+            builtin_return_type("vec_as_text", &[vector])
+                .expect("VEC_AS_TEXT type")
+                .code(),
+            FieldTypeCode::VarString
+        );
     }
 }
 

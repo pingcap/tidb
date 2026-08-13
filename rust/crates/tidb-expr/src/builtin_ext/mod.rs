@@ -30,6 +30,7 @@ pub(crate) mod json2;
 pub(crate) mod misc;
 pub(crate) mod regexp;
 pub(crate) mod string2;
+pub(crate) mod vec;
 
 pub(crate) use compare2::{extremum_with_signature, GlCmpStringMode, GlSignature};
 pub(crate) use crypto::eval_aes_lazy;
@@ -60,4 +61,5 @@ pub(crate) fn dispatch(
         .or_else(|| regexp::dispatch(name, vals))
         .or_else(|| compare2::dispatch(name, vals, ctx))
         .or_else(|| misc::dispatch_in(name, vals, ctx))
+        .or_else(|| vec::dispatch(name, vals))
 }
