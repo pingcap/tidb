@@ -1286,6 +1286,16 @@ fn extremum_return_type(args: &[Expression]) -> Option<FieldType> {
         .filter(|ft| ft.code() != FieldTypeCode::Null)
         .collect();
     let first = (*typed.first()?).clone();
+    // `GetAccurateCmpType` selects ETVectorFloat32 as soon as either side is
+    // vector, and `greatestFunctionClass`/`leastFunctionClass` use that
+    // comparison domain as their return type too. The accompanying cast turns
+    // text arguments into vectors before evaluation.
+    if typed
+        .iter()
+        .any(|ft| ft.eval_type() == tidb_datatype::EvalType::VectorFloat32)
+    {
+        return Some(FieldType::new(FieldTypeCode::VectorFloat32));
+    }
     if typed
         .iter()
         .all(|ft| ft.eval_type() == tidb_datatype::EvalType::String)

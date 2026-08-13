@@ -242,6 +242,9 @@ pub(crate) fn extremum_with_signature(
     }
     let signature = signature.unwrap_or_else(|| value_derived_signature(vals));
     let mode = signature.cmp_string_mode;
+    if signature.arg_type == tidb_datatype::EvalType::VectorFloat32 {
+        return extremum_vector(vals, want);
+    }
     if signature.arg_type != tidb_datatype::EvalType::String {
         // Go's ETDatetime/ETTimestamp arm; every other arm -- ETInt, ETReal,
         // ETDecimal, ETDuration, ETVectorFloat32 -- shares the
@@ -427,7 +430,11 @@ fn extremum_numeric(vals: &[Datum], want: Ordering) -> Result<Datum, EvalError> 
 /// what a bare datum cannot reveal.
 fn value_derived_signature(vals: &[Datum]) -> GlSignature {
     use tidb_datatype::EvalType;
-    let arg_type = if vals.iter().all(|v| matches!(v, Datum::Time(_))) {
+    let arg_type = if vals.iter().any(|v| matches!(v, Datum::VectorFloat32(_))) {
+        // `GetAccurateCmpType` selects ETVectorFloat32 as soon as either
+        // operand is vector, exactly like the binary comparison signatures.
+        EvalType::VectorFloat32
+    } else if vals.iter().all(|v| matches!(v, Datum::Time(_))) {
         EvalType::Datetime
     } else if vals
         .iter()
@@ -444,6 +451,34 @@ fn value_derived_signature(vals: &[Datum]) -> GlSignature {
             .iter()
             .all(|v| matches!(v, Datum::Time(time) if time.kind() == TimeType::Date)),
     }
+}
+
+/// Go's `builtinGreatestVectorFloat32Sig` / `builtinLeastVectorFloat32Sig`.
+/// The function class casts every argument into the vector domain before it
+/// chooses a winner, so a vector-text mix returns a vector cell rather than
+/// the original text that happened to win the comparison.
+fn extremum_vector(vals: &[Datum], want: Ordering) -> Result<Datum, EvalError> {
+    let target = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VectorFloat32);
+    let mut values = vals.iter().map(|value| {
+        match value
+            .convert_to(&target, tidb_datatype::ConversionFlags::default())
+            .map_err(|error| EvalError::Vector(error.to_string()))?
+            .value
+        {
+            Datum::VectorFloat32(value) => Ok(value),
+            _ => unreachable!("a VectorFloat32 conversion returns a vector datum"),
+        }
+    });
+    let mut best = values
+        .next()
+        .expect("GREATEST/LEAST is rejected at arity zero")?;
+    for value in values {
+        let value = value?;
+        if value.compare(&best) == want {
+            best = value;
+        }
+    }
+    Ok(Datum::new_vector_float32(best))
 }
 
 fn extremum_string_value(value: &Datum) -> Result<Vec<u8>, EvalError> {
@@ -804,6 +839,7 @@ mod tests {
     use super::dispatch;
     use crate::Datum;
     use crate::Decimal;
+    use tidb_datatype::VectorFloat32;
 
     fn call(name: &str, vals: &[Datum]) -> Datum {
         dispatch(name, vals, &crate::NoColumns)
@@ -1179,5 +1215,43 @@ mod tests {
         ] {
             assert_eq!(text(call(name, &args)), expected, "{name}({args:?})");
         }
+    }
+
+    #[test]
+    fn extremum_uses_the_vector_signature_when_either_argument_is_a_vector() {
+        let vector = |values| Datum::new_vector_float32(VectorFloat32::must_create(values));
+        assert_eq!(
+            call(
+                "GREATEST",
+                &[vector(vec![1.0, 2.0]), Datum::new_string("[1,3]")]
+            ),
+            vector(vec![1.0, 3.0])
+        );
+        assert_eq!(
+            call("LEAST", &[vector(vec![1.0, 3.0]), vector(vec![1.0, 2.0])]),
+            vector(vec![1.0, 2.0])
+        );
+
+        let expression = tidb_ast::Expr::Func {
+            name: "greatest".to_owned(),
+            args: vec![
+                tidb_ast::Expr::Func {
+                    name: "vec_from_text".to_owned(),
+                    args: vec![tidb_ast::Expr::String("[1,2]".to_owned())],
+                    origin_position: 0,
+                },
+                tidb_ast::Expr::String("[1,3]".to_owned()),
+            ],
+            origin_position: 0,
+        };
+        let rewritten =
+            crate::rewriter::rewrite_expr(&expression).expect("vector extremum rewrite");
+        assert_eq!(
+            rewritten
+                .static_type()
+                .expect("vector return type")
+                .eval_type(),
+            tidb_datatype::EvalType::VectorFloat32
+        );
     }
 }
