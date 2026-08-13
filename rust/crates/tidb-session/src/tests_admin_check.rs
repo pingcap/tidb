@@ -363,19 +363,18 @@ fn an_orphaned_index_entry_is_caught() {
     assert!(message.contains("index: idx_b"), "{message}");
 }
 
-/// Go `admin.CheckRecordAndIndex` asks a UNIQUE index for the handle stored at
-/// each row's expected key. If that key names another row, it reports the
-/// expected row handle and preserves both record identities in the 8223
-/// detail. Merely checking that the key exists loses that contract.
+/// With equal counts Go's `CheckTableExec` checks INDEX -> ROW. Swapping two
+/// unique-index handles therefore reports the first stored entry against the
+/// row that entry names, as the column-level 8134 mismatch.
 #[test]
 fn a_unique_index_entry_naming_the_wrong_row_reports_both_records() {
     let mut session = Session::new();
     session.run("drop table if exists t").unwrap();
     session
-        .run("create table t (a int primary key, b varchar(10), unique index idx_b(b))")
+        .run("create table t (a int primary key, b int, unique index idx_b(b))")
         .unwrap();
     session
-        .run("insert into t values (1, 'aa'), (2, 'bb')")
+        .run("insert into t values (1, 10), (2, 20)")
         .unwrap();
 
     session
@@ -399,14 +398,70 @@ fn a_unique_index_entry_naming_the_wrong_row_reports_both_records() {
         .unwrap();
 
     let (code, message) = error_of(&mut session, "admin check table t");
-    assert_eq!(code, 8223, "{message}");
+    assert_eq!(code, 8134, "{message}");
     assert!(
-        message.contains("handle: 1, index-values:handle: 2, values:"),
+        message.contains("col: b, handle: \"2\", index-values:\"KindInt64 10\""),
         "{message}"
     );
     assert!(
-        message.contains("record-values:handle: 1, values:"),
+        message.contains("record-values:\"KindInt64 20\", compare err:<nil>"),
         "{message}"
+    );
+}
+
+/// Go `TestAdminCheckGlobalIndex`'s equal-count corruption: an index entry
+/// still names a live row, but its indexed datum differs from that row. The
+/// normal checker reports the column-level executor error 8134 rather than
+/// the general missing-entry error 8223.
+#[test]
+fn an_index_value_mismatch_reports_the_column_and_both_values() {
+    let mut session = Session::new();
+    session.run("drop table if exists t").unwrap();
+    session
+        .run("create table t (a int primary key, b int, unique index idx_b(b))")
+        .unwrap();
+    session
+        .run("insert into t values (1, 10), (2, 20)")
+        .unwrap();
+
+    session
+        .with_catalog_mut(|catalog| {
+            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
+            else {
+                panic!("t is not stored as bytes");
+            };
+            let index = table
+                .index_list_for_check()
+                .into_iter()
+                .find(|index| index.name.eq_ignore_ascii_case("idx_b"))
+                .expect("idx_b");
+            let entries = table.index_entries_for_check(index.id).expect("entries");
+            let (old_key, _) = entries
+                .iter()
+                .find(|(_, handle)| *handle == tidb_executor::kv_table::TableHandle::Int(2))
+                .expect("row 2 index entry");
+            let row = vec![tidb_datatype::Datum::Int(2), tidb_datatype::Datum::Int(100)];
+            let (new_key, _) = table
+                .index_key_for_check(
+                    &index,
+                    &row,
+                    &tidb_executor::kv_table::TableHandle::Int(2),
+                    &tidb_datatype::SessionTimeZone::utc(),
+                )
+                .expect("wrong index key");
+            table
+                .move_raw_value_for_test(old_key, new_key)
+                .expect("move the index entry");
+            Ok(())
+        })
+        .unwrap();
+
+    let (code, message) = error_of(&mut session, "admin check table t");
+    assert_eq!(code, 8134, "{message}");
+    assert_eq!(
+        message,
+        "data inconsistency in table: t, index: idx_b, col: b, handle: \"2\", \
+         index-values:\"KindInt64 100\" != record-values:\"KindInt64 20\", compare err:<nil>"
     );
 }
 

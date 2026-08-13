@@ -395,6 +395,9 @@ impl DriverError {
         DriverError::AdminCheckTable(detail) => MysqlError::new(8003, *b"HY000", detail),
         // Go `ClassAdmin.NewStd(errno.ErrDataInconsistent)`: 8223, HY000.
         DriverError::DataInconsistent(detail) => MysqlError::new(8223, *b"HY000", detail),
+        DriverError::DataInconsistentMismatchIndex(detail) => {
+            MysqlError::new(8134, *b"HY000", detail)
+        }
         // Captured from TiDB: both `EXECUTE stmt` with a marker left unbound
         // and `EXECUTE stmt USING @a` with no marker report
         // `[planner:8112]Wrong parameter count`, not 1210 -- the check is

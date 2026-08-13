@@ -28,33 +28,23 @@
 //! entirely in the errors it does not raise. Answering it with `Ok` without
 //! reading a byte would be a success return that is not one -- the exact
 //! shape of bug this engine converts into refusals elsewhere. So this module
-//! runs both directions over the real stored bytes, and
+//! runs TiDB's count-selected direction over the real stored bytes, and
 //! [`crate::kv_table::KvTable`] is the only backing it accepts: a table with
 //! no stored index entries at all (a `MemTable`) is REFUSED by name rather
 //! than passed (see [`AdminCheckError::NotStored`]).
 //!
-//! # The two directions, and why byte identity is the right comparison
-//!
-//! Go compares an index entry's decoded datums against the row's datums
-//! through a collator (`tables.CompareIndexAndVal`). This compares the
-//! *encoded index key* instead: for each stored entry it reads the handle,
-//! reads that row, re-runs the very encoder the write path used
-//! (`KvTable::index_key`, Go `GenIndexKey`), and requires the bytes to be
-//! equal. That is the same question asked without a second decoder --
-//! `tidb_codec::encode_key` maps a value to its collation key, so two values
-//! encode alike exactly when Go's collator calls them equal -- and it also
-//! catches an entry filed under the wrong key, which a datum-by-datum
-//! compare of the decoded values cannot see.
+//! # The two directions
 //!
 //! - ROW -> INDEX (Go `CheckRecordAndIndex`): every row must have the entry
 //!   its own values encode to, and a unique index's entry must name it.
 //! - INDEX -> ROW (Go `compareData`): every entry's handle must name a row,
-//!   and that row must re-encode to this exact entry key.
+//!   and each decoded index datum must compare equal to that row's datum.
 //!
-//! Together the two directions are a bijection, so they subsume the row/entry
-//! count comparison. The count check is still run FIRST, because Go reports
-//! it first and with its own error (8003) for `ADMIN CHECK INDEX`.
+//! Go's count check chooses which direction runs: table-heavy mismatches use
+//! ROW -> INDEX; index-heavy mismatches and equal counts use INDEX -> ROW.
+//! `ADMIN CHECK INDEX` reports a count mismatch as 8003 before either scan.
 
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 
 use tidb_codec::table_key::encode_index_seek_key;
@@ -94,6 +84,9 @@ pub enum AdminCheckError {
         /// The record side, or `""` when the row is missing.
         record_values: String,
     },
+    /// Go `ErrDataInconsistentMismatchIndex` (8134): an index entry names a
+    /// live row, but one indexed column differs from that row.
+    ValueMismatch(Box<AdminValueMismatch>),
     /// The named table is not stored as index-bearing bytes, so there is
     /// nothing to check it against. Refused rather than answered OK.
     NotStored(String),
@@ -111,6 +104,25 @@ pub enum AdminCheckError {
     Decode(String),
 }
 
+/// The detail carried by [`AdminCheckError::ValueMismatch`].
+#[derive(Debug, Clone)]
+pub struct AdminValueMismatch {
+    /// The table being checked.
+    pub table: String,
+    /// The index the disagreement is in.
+    pub index: String,
+    /// The first mismatching indexed column.
+    pub column: String,
+    /// The row handle, as Go prints it before the error template quotes it.
+    pub handle: String,
+    /// Go's debug rendering of the stored index datum.
+    pub index_value: String,
+    /// Go's debug rendering of the row datum.
+    pub record_value: String,
+    /// Comparison failure, or `<nil>` for an ordinary unequal comparison.
+    pub compare_error: String,
+}
+
 /// The value Go prints for one side of an inconsistency: the datums in
 /// `%#v` form, which for a slice of datums is its Go debug rendering. This
 /// engine prints the values it holds; the *presence* of the two sides is what
@@ -125,6 +137,35 @@ fn render_values(values: &[Datum]) -> String {
     }
     out.push(']');
     out
+}
+
+fn render_go_datum(value: &Datum) -> String {
+    fn quoted_content(bytes: &[u8]) -> String {
+        let quoted = format!("{:?}", String::from_utf8_lossy(bytes));
+        quoted[1..quoted.len() - 1].to_owned()
+    }
+
+    match value {
+        Datum::Null => "KindNull <nil>".to_owned(),
+        Datum::Int(value) => format!("KindInt64 {value}"),
+        Datum::UInt(value) => format!("KindUint64 {value}"),
+        Datum::Float32(value) => format!("KindFloat32 {value}"),
+        Datum::Real(value) => format!("KindFloat64 {value}"),
+        Datum::String(value) => format!("KindString {}", quoted_content(value.bytes())),
+        Datum::Bytes(value) => format!("KindBytes {}", quoted_content(value)),
+        Datum::BinaryLiteral(value) => format!("KindBinaryLiteral {value}"),
+        Datum::Decimal(value) => format!("KindMysqlDecimal {value}"),
+        Datum::Duration(value) => format!("KindMysqlDuration {value}"),
+        Datum::Enum(value, _) => format!("KindMysqlEnum {value}"),
+        Datum::Bit(value) => format!("KindMysqlBit {value}"),
+        Datum::Set(value, _) => format!("KindMysqlSet {value}"),
+        Datum::Time(value) => format!("KindMysqlTime {value}"),
+        Datum::Json(value) => format!("KindMysqlJSON {value}"),
+        Datum::Raw(_) => "KindRaw <nil>".to_owned(),
+        Datum::VectorFloat32(value) => format!("KindVectorFloat32 {value}"),
+        Datum::MinNotNull => "KindMinNotNull <nil>".to_owned(),
+        Datum::MaxValue => "KindMaxValue <nil>".to_owned(),
+    }
 }
 
 /// Go `consistency.RecordData.String`: both the handle and the indexed
@@ -154,9 +195,9 @@ fn render_handle(handle: &TableHandle) -> String {
 fn index_entries(
     table: &mut KvTable,
     index_id: i64,
-) -> Result<Vec<(Vec<u8>, TableHandle)>, AdminCheckError> {
+) -> Result<Vec<crate::kv_table::IndexEntryForCheck>, AdminCheckError> {
     table
-        .index_entries_for_check(index_id)
+        .index_entry_records_for_check(index_id)
         .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))
 }
 
@@ -211,68 +252,95 @@ pub fn check_table(
     let table_name = table.name.clone();
     let mut checked = 0usize;
     for index in &selected {
-        // ROW -> INDEX. Go's `CheckRecordAndIndex` walks the record range and
-        // asks the index whether each row's entry exists.
-        let mut expected: BTreeMap<Vec<u8>, (TableHandle, Vec<Datum>)> = BTreeMap::new();
-        for (handle, row) in &rows {
-            let (key, _) = table
-                .index_key_for_check(index, row, handle, context.zone())
-                .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
-            expected.insert(key, (handle.clone(), row.clone()));
-        }
-
+        // Go chooses the direction from the count comparison. Equal counts
+        // use IndexLookUp (INDEX -> ROW); only a table-heavy mismatch uses
+        // `CheckRecordAndIndex` (ROW -> INDEX).
         let stored = index_entries(table, index.id)?;
-        let stored_keys: BTreeMap<Vec<u8>, TableHandle> = stored.into_iter().collect();
-
-        for (key, (handle, row)) in &expected {
-            let indexed: Vec<Datum> = index
-                .column_offsets
+        if table_count > stored.len() as i64 {
+            let mut expected: BTreeMap<Vec<u8>, (TableHandle, &Vec<Datum>)> = BTreeMap::new();
+            for (handle, row) in &rows {
+                let (key, _) = table
+                    .index_key_for_check(index, row, handle, context.zone())
+                    .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
+                expected.insert(key, (handle.clone(), row));
+            }
+            let stored_keys: BTreeMap<Vec<u8>, TableHandle> = stored
                 .iter()
-                .map(|offset| row.get(*offset).cloned().unwrap_or(Datum::Null))
+                .map(|entry| (entry.key.clone(), entry.handle.clone()))
                 .collect();
-            match stored_keys.get(key) {
-                Some(stored_handle) if stored_handle == handle => {}
-                // Go `idx.Exist` returns `kv.ErrKeyExists` here. Its reporter
-                // names the row being checked and preserves the independently
-                // stored handle on the index side.
-                Some(stored_handle) => {
-                    return Err(AdminCheckError::Inconsistent {
-                        table: table_name.clone(),
-                        index: index.name.clone(),
-                        handle: render_handle(handle),
-                        index_values: render_record(stored_handle, &indexed),
-                        record_values: render_record(handle, &indexed),
-                    });
-                }
-                None => {
-                    return Err(AdminCheckError::Inconsistent {
-                        table: table_name.clone(),
-                        index: index.name.clone(),
-                        handle: render_handle(handle),
-                        index_values: String::new(),
-                        record_values: render_record(handle, &indexed),
-                    });
+            for (key, (handle, row)) in &expected {
+                let indexed = table.index_values_for_check(index, row);
+                match stored_keys.get(key) {
+                    Some(stored_handle) if stored_handle == handle => {}
+                    Some(stored_handle) => {
+                        return Err(AdminCheckError::Inconsistent {
+                            table: table_name.clone(),
+                            index: index.name.clone(),
+                            handle: render_handle(handle),
+                            index_values: render_record(stored_handle, &indexed),
+                            record_values: render_record(handle, &indexed),
+                        });
+                    }
+                    None => {
+                        return Err(AdminCheckError::Inconsistent {
+                            table: table_name.clone(),
+                            index: index.name.clone(),
+                            handle: render_handle(handle),
+                            index_values: String::new(),
+                            record_values: render_record(handle, &indexed),
+                        });
+                    }
                 }
             }
-        }
-
-        // INDEX -> ROW. Go's `compareData` reads each entry's row and
-        // compares the two sides; an entry whose handle names no row is
-        // reported with an empty record side.
-        for (key, handle) in &stored_keys {
-            match expected.get(key) {
-                Some((expected_handle, _)) if expected_handle == handle => {}
-                // A mismatched handle at an expected key was already reported
-                // by the row -> index pass above, matching Go's check order.
-                Some(_) => unreachable!("row-to-index check accepted a mismatched handle"),
-                None => {
+        } else {
+            let rows_by_handle: BTreeMap<_, _> = rows
+                .iter()
+                .map(|(handle, row)| (handle.clone(), row))
+                .collect();
+            for entry in &stored {
+                let key = &entry.key;
+                let value = &entry.value;
+                let handle = &entry.handle;
+                let Some(row) = rows_by_handle.get(handle) else {
+                    let indexed = table
+                        .index_entry_values_for_check(index, key, value, context.zone())
+                        .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
                     return Err(AdminCheckError::Inconsistent {
                         table: table_name.clone(),
                         index: index.name.clone(),
                         handle: render_handle(handle),
-                        index_values: String::from("<entry>"),
+                        index_values: render_record(handle, &indexed),
                         record_values: String::new(),
-                    })
+                    });
+                };
+                let indexed = table
+                    .index_entry_values_for_check(index, key, value, context.zone())
+                    .map_err(|error| AdminCheckError::Decode(format!("{error:?}")))?;
+                let recorded = table.index_values_for_check(index, row);
+                for (position, (index_value, record_value)) in
+                    indexed.iter().zip(&recorded).enumerate()
+                {
+                    let column_offset = index.column_offsets[position];
+                    let column = &table.columns[column_offset];
+                    match index_value.compare(record_value, column.field_type.collation()) {
+                        Ok(Ordering::Equal) => {}
+                        comparison => {
+                            return Err(AdminCheckError::ValueMismatch(Box::new(
+                                AdminValueMismatch {
+                                    table: table_name.clone(),
+                                    index: index.name.clone(),
+                                    column: column.name.clone(),
+                                    handle: render_handle(handle),
+                                    index_value: render_go_datum(index_value),
+                                    record_value: render_go_datum(record_value),
+                                    compare_error: comparison.err().map_or_else(
+                                        || "<nil>".to_owned(),
+                                        |error| error.to_string(),
+                                    ),
+                                },
+                            )));
+                        }
+                    }
                 }
             }
         }

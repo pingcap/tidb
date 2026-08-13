@@ -42,7 +42,100 @@ use crate::storage::StorageError;
 
 use super::{datum_text, KvIndex, KvTable, KvTableError, TableHandle};
 
+pub(crate) struct IndexEntryForCheck {
+    pub(crate) key: Vec<u8>,
+    pub(crate) value: Vec<u8>,
+    pub(crate) handle: TableHandle,
+}
+
 impl KvTable {
+    /// Moves a stored raw value to a different key, constructing an index
+    /// entry whose value still names the same row but whose indexed datum is
+    /// wrong. Ordinary writes cannot create this corruption.
+    pub fn move_raw_value_for_test(
+        &mut self,
+        old_key: &[u8],
+        new_key: Vec<u8>,
+    ) -> Result<(), KvTableError> {
+        let old_key = tidb_txnkv::Key::from_bytes(old_key.to_vec());
+        let value = self
+            .store
+            .get(&old_key)
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        self.store
+            .delete(old_key)
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        self.store
+            .set(tidb_txnkv::Key::from_bytes(new_key), value)
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))
+    }
+
+    /// Every stored entry of one index, as `(entry key, the handle it names)`.
+    pub fn index_entries_for_check(
+        &mut self,
+        index_id: i64,
+    ) -> Result<Vec<(Vec<u8>, TableHandle)>, KvTableError> {
+        Ok(self
+            .index_entry_records_for_check(index_id)?
+            .into_iter()
+            .map(|entry| (entry.key, entry.handle))
+            .collect())
+    }
+
+    pub(crate) fn index_entry_records_for_check(
+        &mut self,
+        index_id: i64,
+    ) -> Result<Vec<IndexEntryForCheck>, KvTableError> {
+        let Some(index) = self
+            .indexes
+            .iter()
+            .find(|index| index.id == index_id)
+            .cloned()
+        else {
+            return Err(KvTableError::Decode("no such index".to_owned()));
+        };
+        let common = !self.common_handle_offsets().is_empty();
+        let (low, high) = crate::admin_check::index_key_bounds(self.table_id, index_id);
+        let mut iterator = self
+            .store
+            .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(high)))
+            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        let mut entries = Vec::new();
+        while iterator.valid() {
+            let key = iterator.key().as_bytes().to_vec();
+            let value = iterator.value().to_vec();
+            let handle = index_entry_handle(&index, &key, &value, common)?;
+            entries.push(IndexEntryForCheck { key, value, handle });
+            iterator
+                .next()
+                .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+        }
+        iterator.close();
+        Ok(entries)
+    }
+
+    pub(crate) fn index_entry_values_for_check(
+        &self,
+        index: &KvIndex,
+        key: &[u8],
+        value: &[u8],
+        zone: &SessionTimeZone,
+    ) -> Result<Vec<Datum>, KvTableError> {
+        self.codec_table_info()
+            .decode_index_values_from_index(
+                self.use_new_collation,
+                Some(zone),
+                &self.codec_index_info(index),
+                key,
+                value,
+            )
+            .map_err(|error| KvTableError::Decode(format!("{error:?}")))
+    }
+
+    pub(crate) fn index_values_for_check(&self, index: &KvIndex, row: &[Datum]) -> Vec<Datum> {
+        self.index_values(index, row)
+    }
+
     /// Swaps the stored values of two raw keys without changing either key.
     ///
     /// This constructs the unique-index corruption where both expected keys

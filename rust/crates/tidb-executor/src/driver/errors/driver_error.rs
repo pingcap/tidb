@@ -231,6 +231,9 @@ pub enum DriverError {
     /// 8223): `ADMIN CHECK` found a row and an index entry that disagree.
     /// Carries Go's already-formatted detail.
     DataInconsistent(String),
+    /// Go `ErrDataInconsistentMismatchIndex` (8134): an index entry names a
+    /// row but an indexed column differs from that row.
+    DataInconsistentMismatchIndex(String),
     /// Go `plannererrors.ErrWrongParamCount` (8112): the number of values an
     /// `EXECUTE` supplies is not the number of `?` markers the prepared
     /// statement carries. Raised by `planCachePreprocess`'s step 1, which both

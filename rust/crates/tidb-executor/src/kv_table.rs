@@ -70,7 +70,9 @@ use table_meta::NOT_NULL_FLAG;
 use tidb_codec::table_key::{encode_row_key_with_handle, get_table_handle_key_range};
 use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 
-use index_entries::{duplicate_value_text, index_entry_handle};
+use index_entries::duplicate_value_text;
+pub(in crate::kv_table) use index_entries::index_entry_handle;
+pub(crate) use index_entries::IndexEntryForCheck;
 use tidb_tablecodec::encode_table_row;
 use tidb_txnkv::Key;
 
@@ -1801,43 +1803,6 @@ impl KvTable {
         zone: &SessionTimeZone,
     ) -> Result<(Vec<u8>, bool), KvTableError> {
         self.index_key(index, row, handle, zone)
-    }
-
-    /// Every stored entry of one index, as `(entry key, the handle it names)`.
-    ///
-    /// This is the only sweep of a WHOLE index in the engine: an ordinary
-    /// index read has datum bounds and goes through
-    /// [`KvTable::index_range_cursor`]. `ADMIN CHECK` has none -- its subject
-    /// is exactly the set of entries that exist.
-    pub fn index_entries_for_check(
-        &mut self,
-        index_id: i64,
-    ) -> Result<Vec<(Vec<u8>, TableHandle)>, KvTableError> {
-        let Some(index) = self
-            .indexes
-            .iter()
-            .find(|index| index.id == index_id)
-            .cloned()
-        else {
-            return Err(KvTableError::Decode("no such index".to_owned()));
-        };
-        let common = !self.common_handle_offsets.is_empty();
-        let (low, high) = crate::admin_check::index_key_bounds(self.table_id, index_id);
-        let mut iterator = self
-            .store
-            .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(high)))
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        let mut entries = Vec::new();
-        while iterator.valid() {
-            let key = iterator.key().as_bytes().to_vec();
-            let handle = index_entry_handle(&index, &key, iterator.value(), common)?;
-            entries.push((key, handle));
-            iterator
-                .next()
-                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        }
-        iterator.close();
-        Ok(entries)
     }
 
     /// Removes one stored key without touching anything else -- the only way

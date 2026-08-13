@@ -158,26 +158,8 @@ pub struct TableInfo {
 }
 
 impl TableInfo {
-    /// Mirrors `TableInfo.HasClusteredIndex`.
-    #[must_use]
-    pub const fn has_clustered_index(&self) -> bool {
-        self.pk_is_handle || self.is_common_handle
-    }
-
-    /// Decodes and renders the indexed columns from one index entry.
-    ///
-    /// This is the byte-preserving counterpart of Go
-    /// `tables.GenIndexValueFromIndex`. Binary strings and bit values escape
-    /// every non-printable ASCII byte as an uppercase `\\xNN` sequence.
-    pub fn generate_index_values_from_index(
-        &self,
-        use_new_collation: bool,
-        timezone: Option<&SessionTimeZone>,
-        index: &IndexInfo,
-        key: &[u8],
-        value: &[u8],
-    ) -> Result<Vec<Vec<u8>>, TableIndexError> {
-        let columns = index
+    fn index_columns(&self, index: &IndexInfo) -> Result<Vec<ColumnInfo>, TableIndexError> {
+        index
             .columns
             .iter()
             .map(|index_column| {
@@ -200,7 +182,19 @@ impl TableInfo {
                     field_type: field_type.clone(),
                 })
             })
-            .collect::<Result<Vec<_>, TableIndexError>>()?;
+            .collect()
+    }
+
+    /// Decodes the indexed datums stored by one index entry.
+    pub fn decode_index_values_from_index(
+        &self,
+        use_new_collation: bool,
+        timezone: Option<&SessionTimeZone>,
+        index: &IndexInfo,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<Vec<Datum>, TableIndexError> {
+        let columns = self.index_columns(index)?;
         let encoded_values = decode_index_kv(
             use_new_collation,
             key,
@@ -209,7 +203,43 @@ impl TableInfo {
             HandleStatus::NotNeeded,
             &columns,
         )?;
+        encoded_values
+            .iter()
+            .zip(&columns)
+            .map(|(encoded, column)| {
+                Ok(decode_column_value(encoded, &column.field_type, timezone)?)
+            })
+            .collect()
+    }
 
+    /// Mirrors `TableInfo.HasClusteredIndex`.
+    #[must_use]
+    pub const fn has_clustered_index(&self) -> bool {
+        self.pk_is_handle || self.is_common_handle
+    }
+
+    /// Decodes and renders the indexed columns from one index entry.
+    ///
+    /// This is the byte-preserving counterpart of Go
+    /// `tables.GenIndexValueFromIndex`. Binary strings and bit values escape
+    /// every non-printable ASCII byte as an uppercase `\\xNN` sequence.
+    pub fn generate_index_values_from_index(
+        &self,
+        use_new_collation: bool,
+        timezone: Option<&SessionTimeZone>,
+        index: &IndexInfo,
+        key: &[u8],
+        value: &[u8],
+    ) -> Result<Vec<Vec<u8>>, TableIndexError> {
+        let columns = self.index_columns(index)?;
+        let encoded_values = decode_index_kv(
+            use_new_collation,
+            key,
+            value,
+            columns.len(),
+            HandleStatus::NotNeeded,
+            &columns,
+        )?;
         encoded_values
             .iter()
             .zip(&columns)

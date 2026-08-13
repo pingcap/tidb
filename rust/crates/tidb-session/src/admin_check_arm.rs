@@ -182,6 +182,22 @@ fn admin_check_error(error: tidb_executor::admin_check::AdminCheckError) -> Driv
             "data inconsistency in table: {table}, index: {index}, handle: {handle}, \
              index-values:{index_values} != record-values:{record_values}"
         )),
+        AdminCheckError::ValueMismatch(mismatch) => {
+            let tidb_executor::admin_check::AdminValueMismatch {
+                table,
+                index,
+                column,
+                handle,
+                index_value,
+                record_value,
+                compare_error,
+            } = *mismatch;
+            DriverError::DataInconsistentMismatchIndex(format!(
+                "data inconsistency in table: {table}, index: {index}, col: {column}, handle: \
+                 {handle:?}, index-values:{index_value:?} != record-values:{record_value:?}, \
+                 compare err:{compare_error}"
+            ))
+        }
         AdminCheckError::UnknownIndex { index, .. } => DriverError::from(
             tidb_executor::ExecError::internal(format!("secondary index {index} does not exist")),
         ),
