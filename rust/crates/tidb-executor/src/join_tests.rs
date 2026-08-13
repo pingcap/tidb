@@ -251,6 +251,37 @@ fn cross_join_falls_back_to_the_nested_loop() {
     assert_eq!(run(&mut join).len(), 16);
 }
 
+#[test]
+fn cartesian_join_follows_the_costed_build_side_and_bucket_order() {
+    let left = vec![
+        vec![Datum::Int(1), Datum::Int(1)],
+        vec![Datum::Int(2), Datum::Int(2)],
+    ];
+    let right = vec![
+        vec![Datum::Int(7), Datum::Int(7)],
+        vec![Datum::Int(8), Datum::Int(8)],
+    ];
+    let mut join = join_of(JoinKind::Inner, Vec::new(), left, right, 2);
+    assert_eq!(
+        run(&mut join),
+        vec![
+            vec![1, 1, 8, 8],
+            vec![1, 1, 7, 7],
+            vec![2, 2, 8, 8],
+            vec![2, 2, 7, 7],
+        ],
+    );
+
+    let left = vec![vec![Datum::Int(1), Datum::Int(1)]];
+    let right = vec![
+        vec![Datum::Int(7), Datum::Int(7)],
+        vec![Datum::Int(8), Datum::Int(8)],
+    ];
+    let mut join = join_of(JoinKind::Inner, Vec::new(), left, right, 2);
+    join.set_cartesian_build_side(true);
+    assert_eq!(run(&mut join), vec![vec![1, 1, 7, 7], vec![1, 1, 8, 8]]);
+}
+
 /// The scaling claim, asserted on the cost the hash table exists to
 /// remove rather than on the wall clock.
 ///

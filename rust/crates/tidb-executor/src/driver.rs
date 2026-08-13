@@ -57,6 +57,7 @@ use tidb_expr::builtin_compare::refine_comparisons;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
+use tidb_expr::Columns as _;
 
 /// The name an unaliased field takes: a column reference keeps its column
 /// name, anything else keeps the text it was WRITTEN with -- Go's

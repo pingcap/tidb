@@ -460,6 +460,13 @@ pub struct JoinExec<C: Columns> {
     ctx: C,
     /// The indexable `col = col` conjuncts; empty means the nested loop.
     keys: Vec<EquiKey>,
+    /// Go still runs a Cartesian join through hash join v1. Every build row
+    /// has the same empty key, and `concurrentMap.Insert` links the newest row
+    /// at the bucket head, so one probe visits the build side in reverse.
+    cartesian_build_order: bool,
+    /// Which side Go's Cartesian hash join costed as its build input. This is
+    /// consulted only for an inner join with no hash keys.
+    cartesian_build_is_left: bool,
     /// Nested loop only: whether its single all-at-once batch was emitted.
     emitted: bool,
     hash: Option<HashState>,
@@ -519,6 +526,14 @@ impl<C: Columns> JoinExec<C> {
         memory: StatementMemory,
     ) -> Self {
         let keys = crate::hash_join::split_equi(&conditions, left.ret_field_types().len()).keys;
+        // A condition the native splitter cannot hash is still a conditional
+        // nested-loop join. Only a condition-free product (including `ON
+        // TRUE`, which Go folds to the same plan) follows hash join v1's
+        // build-bucket order.
+        let cartesian_build_order = conditions.iter().all(|condition| {
+            matches!(condition, Expression::Constant(constant)
+                if tidb_expr::truthy_of(&constant.value).ok() == Some(Some(true)))
+        });
         let condition_types = left
             .ret_field_types()
             .iter()
@@ -536,6 +551,8 @@ impl<C: Columns> JoinExec<C> {
             right,
             ctx,
             keys,
+            cartesian_build_order,
+            cartesian_build_is_left: false,
             emitted: false,
             hash: None,
             merge: None,
@@ -611,10 +628,17 @@ impl<C: Columns> JoinExec<C> {
         self.keys.clear();
     }
 
+    pub(crate) fn set_cartesian_build_side(&mut self, build_is_left: bool) {
+        self.cartesian_build_is_left = build_is_left;
+    }
+
     /// The outer side is the one whose unmatched rows survive; the inner
     /// side is the other, and is the one the hash path builds its table on.
     /// `true` means the LEFT child is the outer one.
     fn outer_is_left(&self) -> bool {
+        if self.kind == JoinKind::Inner && self.cartesian_build_order {
+            return !self.cartesian_build_is_left;
+        }
         match &self.index_lookup {
             // The index strategy DRIVES from the side it does not look up,
             // whichever side that is -- an inner join whose left child is the
@@ -1480,7 +1504,11 @@ impl<C: Columns> JoinExec<C> {
         for outer_row in outer {
             let before_rows = req.num_rows();
             let before_bytes = req.memory_usage();
-            self.emit_outer_row(req, outer_row, inner.iter().cloned())?;
+            if self.cartesian_build_order {
+                self.emit_outer_row(req, outer_row, inner.iter().rev().cloned())?;
+            } else {
+                self.emit_outer_row(req, outer_row, inner.iter().cloned())?;
+            }
             let produced = i64::try_from(req.num_rows() - before_rows).unwrap_or(i64::MAX);
             let grew = (req.memory_usage() - before_bytes).max(0);
             self.tracker

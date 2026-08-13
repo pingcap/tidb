@@ -1998,7 +1998,7 @@ pub(crate) fn build_join(
     // `exhaustPhysicalPlans4LogicalJoin` under the property this join was
     // required to produce -- and not of the structural rule underneath. See
     // `driver::join_search`.
-    let chosen = crate::driver::join_search::choose(&crate::driver::join_search::SearchInput {
+    let search_input = crate::driver::join_search::SearchInput {
         join,
         join_type: match kind {
             JoinKind::Inner => tidb_planner::find_best_task::LogicalJoinType::Inner,
@@ -2015,7 +2015,23 @@ pub(crate) fn build_join(
             .map(|(left, right)| (left.as_slice(), right.as_slice())),
         required,
         rows: demand.rows,
-    });
+    };
+    let chosen = crate::driver::join_search::choose(&search_input);
+    let positive_concurrency = |value| match value {
+        Some(Datum::Int(value)) if value > 0 => Some(value as f64),
+        Some(Datum::UInt(value)) if value > 0 => Some(value as f64),
+        _ => None,
+    };
+    let hash_join_concurrency =
+        positive_concurrency(ctx.sysvar(None, "tidb_hash_join_concurrency"))
+            .or_else(|| positive_concurrency(ctx.sysvar(None, "tidb_executor_concurrency")))
+            .unwrap_or(tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as f64);
+    join_exec.set_cartesian_build_side(crate::driver::join_search::cartesian_build_is_left(
+        &search_input,
+        crate::access_cost::schema_avg_row_size(&left_types),
+        crate::access_cost::schema_avg_row_size(&right_types),
+        hash_join_concurrency,
+    ));
     let index_join = (!coalescing && chosen == crate::driver::join_search::Chosen::Index)
         .then(|| {
             let (left_side, right_side) = crate::driver::index_join_decision::join_sides(

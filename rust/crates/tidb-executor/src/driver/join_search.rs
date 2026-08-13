@@ -185,6 +185,47 @@ pub(crate) fn choose(input: &SearchInput<'_>) -> Chosen {
     chosen
 }
 
+/// Go costs both build-side variants of an inner Cartesian hash join with
+/// `getPlanCostVer24PhysicalHashJoin`; equal costs keep the first enumerated
+/// candidate, whose build side is the right child.
+pub(crate) fn cartesian_build_is_left(
+    input: &SearchInput<'_>,
+    left_row_size: f64,
+    right_row_size: f64,
+    concurrency: f64,
+) -> bool {
+    if !input.keys.is_empty() || input.join_type != LogicalJoinType::Inner {
+        return false;
+    }
+    let (Some(rows), Some((left_names, right_names))) = (input.rows, side_names(input.join)) else {
+        return false;
+    };
+    let Some(counts) = rows.rows_of_join(&left_names, &right_names) else {
+        return false;
+    };
+    let factors = tidb_planner::plan_cost_ver2::Ver2Factors::default();
+    let zero = tidb_planner::cost_usage::zero_cost_ver2();
+    let cost = |build_rows: f64, probe_rows: f64, build_row_size: f64| {
+        tidb_planner::plan_cost_ver2::hash_join_cost(
+            None,
+            tidb_planner::plan_cost_ver2::HashJoinInput {
+                build_rows,
+                probe_rows,
+                build_row_size,
+                num_build_keys: 0,
+                num_probe_keys: 0,
+                tidb_concurrency: concurrency.max(1.0),
+            },
+            (&[], &[]),
+            (&factors.tidb_cpu, &factors.tidb_mem, 1.0),
+            tidb_planner::task_type::TaskType::Root,
+            (&zero, &zero),
+        )
+        .value()
+    };
+    cost(counts.left, counts.right, left_row_size) < cost(counts.right, counts.left, right_row_size)
+}
+
 #[cfg(test)]
 type Record = Answer;
 #[cfg(not(test))]
