@@ -152,7 +152,6 @@ pub fn parse_length_encoded_int(bytes: &[u8]) -> Option<(u64, bool, usize)> {
 /// through `0xfa` are the value's own length prefix; any other first byte is
 /// parsed via [`parse_length_encoded_int`]. Returns `UnexpectedEof` on
 /// truncation (Go's `io.EOF`).
-#[must_use]
 pub fn parse_length_encoded_bytes(
     bytes: &[u8],
 ) -> Result<(Option<Vec<u8>>, bool, usize), io::Error> {

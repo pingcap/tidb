@@ -1403,32 +1403,6 @@ fn classify_configured_write_commit_outcome(
     }
 }
 
-#[cfg(test)]
-mod commit_error_tests {
-    use super::{classify_configured_write_commit_outcome, ConfiguredWriteError};
-    use tidb_txnkv::region::RegionBackoffKind;
-    use tidb_txnkv::transaction::{
-        OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,
-        TransactionCause,
-    };
-
-    #[test]
-    fn configured_write_backoff_exhaustion_keeps_its_driver_error_identity() {
-        let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
-            receipt: OptimisticTransactionReceipt::new(1, 2, b"k".to_vec(), 1),
-            cause: TransactionCause::BackoffExhausted {
-                kind: RegionBackoffKind::MaxTimestampNotSynced,
-                detail: "maxTimestampNotSynced backoffer exhausted".to_owned(),
-            },
-        });
-        assert!(matches!(
-            classify_configured_write_commit_outcome(&outcome),
-            Err(ConfiguredWriteError::Commit(error))
-                if error.code == tidb_error::tidb::errcode::ErrTiKVMaxTimestampNotSynced
-        ));
-    }
-}
-
 /// The one transaction capability write planning needs: a point Get at the
 /// transaction's start timestamp, reading the row a point `UPDATE`/`DELETE`
 /// rewrites (a row `INSERT` needs no read). Abstracting the Get lets planning
@@ -1530,5 +1504,31 @@ where
             transaction: transaction.finish_without_writes()?,
             reason,
         }),
+    }
+}
+
+#[cfg(test)]
+mod commit_error_tests {
+    use super::{classify_configured_write_commit_outcome, ConfiguredWriteError};
+    use tidb_txnkv::region::RegionBackoffKind;
+    use tidb_txnkv::transaction::{
+        OptimisticCommitOutcome, OptimisticTransactionReceipt, RolledBackTransaction,
+        TransactionCause,
+    };
+
+    #[test]
+    fn configured_write_backoff_exhaustion_keeps_its_driver_error_identity() {
+        let outcome = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
+            receipt: OptimisticTransactionReceipt::new(1, 2, b"k".to_vec(), 1),
+            cause: TransactionCause::BackoffExhausted {
+                kind: RegionBackoffKind::MaxTimestampNotSynced,
+                detail: "maxTimestampNotSynced backoffer exhausted".to_owned(),
+            },
+        });
+        assert!(matches!(
+            classify_configured_write_commit_outcome(&outcome),
+            Err(ConfiguredWriteError::Commit(error))
+                if error.code == tidb_error::tidb::errcode::ErrTiKVMaxTimestampNotSynced
+        ));
     }
 }
