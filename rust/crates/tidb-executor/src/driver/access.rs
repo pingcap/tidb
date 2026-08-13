@@ -462,15 +462,17 @@ fn choose_index_merge_intersection(
 }
 
 /// The non-MV OR shape `generateORIndexMerge` can lower without a hint: a
-/// top-level DNF whose every arm has a real secondary-index range. Go builds
-/// the same partial alternatives from its regular access paths, then lets the
-/// physical IndexMerge reader compete with the normal table/index reader.
+/// top-level AND-list containing one DNF whose every arm has a real
+/// secondary-index range. Go builds every arm together with the other CNF
+/// predicates from its regular access paths, then lets the physical
+/// IndexMerge reader compete with the normal table/index reader.
 ///
 /// This intentionally stops before Go's nested-DNF, MV-index, and
 /// parameter-plan-cache variants. Those require the unfinished-path builder
-/// rather than a second range algebra. The bare OR path below is one complete
-/// source shape: its merged cardinality is the original DNF's selectivity,
-/// and every partial has exactly that arm's access condition.
+/// rather than a second range algebra. The ordinary DNF path below is one
+/// complete source shape: its merged cardinality is the complete predicate's
+/// selectivity, and every partial has that arm plus the shared CNF access
+/// conditions.
 struct AutomaticIndexMergeContext<'a> {
     catalog: &'a Catalog,
     scope: &'a FromScope,
@@ -502,20 +504,45 @@ fn choose_automatic_index_merge_union(
         return None;
     }
     let where_clause = select.where_clause.as_ref()?;
-    let mut branches = Vec::new();
-    collect_index_merge_disjuncts(where_clause, &mut branches);
-    if branches.len() < 2 {
+    let mut conjuncts = Vec::new();
+    collect_conjuncts(where_clause, &mut conjuncts);
+    let dnf = conjuncts
+        .iter()
+        .enumerate()
+        .find_map(|(index, candidate)| {
+            let mut branches = Vec::new();
+            collect_index_merge_disjuncts(candidate, &mut branches);
+            (branches.len() >= 2).then_some((index, branches))
+        })?;
+    // Go's generateORIndexMerge considers every DNF member of the top-level
+    // CNF list. This first automatic tranche accepts exactly one: selecting
+    // between several independently valid merge paths requires carrying all
+    // candidates into the common skyline pruning rather than returning the
+    // first one.
+    if conjuncts.iter().enumerate().any(|(index, candidate)| {
+        index != dnf.0 && {
+            let mut branches = Vec::new();
+            collect_index_merge_disjuncts(candidate, &mut branches);
+            branches.len() >= 2
+        }
+    }) {
         return None;
     }
+    let common = conjuncts
+        .iter()
+        .enumerate()
+        .filter_map(|(index, condition)| (index != dnf.0).then_some(*condition))
+        .collect::<Vec<_>>();
     let resolver = ScopeResolver { scope: input.scope };
     let stats = input.catalog.table_statistics(input.table.table_id);
     let stats = stats.as_ref().map(AsRef::as_ref);
-    let mut paths = Vec::with_capacity(branches.len());
-    for branch in branches {
+    let mut paths = Vec::with_capacity(dnf.1.len());
+    for branch in dnf.1 {
+        let branch = combine_index_merge_conjuncts(&common, branch);
         let candidates = crate::access_cost::enumerate_paths(
             input.table,
             input.columns,
-            Some(branch),
+            Some(&branch),
             &[handle],
             &resolver,
             None,
@@ -577,6 +604,24 @@ fn collect_index_merge_disjuncts<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a
         }
         other => out.push(other),
     }
+}
+
+/// One DNF arm plus its sibling CNF conditions, preserving the ordinary
+/// source predicate shape that Go gives accessPathsForConds. The final
+/// selection still evaluates the original expression, so an unsupported
+/// shared condition cannot widen the SQL result; it only remains above the
+/// reader rather than becoming a range.
+fn combine_index_merge_conjuncts(
+    common: &[&tidb_ast::Expr],
+    branch: &tidb_ast::Expr,
+) -> tidb_ast::Expr {
+    common.iter().rev().fold(branch.clone(), |right, left| {
+        tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::LogicAnd,
+            Box::new((*left).clone()),
+            Box::new(right),
+        )
+    })
 }
 
 fn commit_index_merge_source(

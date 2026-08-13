@@ -302,6 +302,54 @@ fn automatic_index_merge_costs_a_sparse_or_and_honors_the_session_switch() {
 }
 
 #[test]
+fn automatic_index_merge_combines_the_top_level_and_conditions() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE aim_cnf (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, x BIGINT, \
+         KEY ia (a), KEY ib (b))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO aim_cnf VALUES (1, 1, 2, 1), (2, 1, 0, 1), (3, 0, 2, 1), \
+         (4, 0, 0, 1), (5, 1, 9, 0)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let sql = "SELECT id FROM aim_cnf WHERE x = 1 AND (a = 1 OR b = 2)";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    assert!(
+        rows.iter().any(|row| match &row[0] {
+            Datum::Bytes(id) => String::from_utf8_lossy(id).contains("IndexMerge"),
+            _ => false,
+        }),
+        "the DNF reader must retain the top-level AND predicates, got {rows:?}"
+    );
+    let mut ids: Vec<i64> = run_select_on(sql, &catalog, &ctx)
+        .unwrap()
+        .into_iter()
+        .map(|row| match row[0] {
+            Datum::Int(value) => value,
+            ref other => panic!("expected an integer handle, got {other:?}"),
+        })
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![1, 2, 3]);
+}
+
+#[test]
 fn use_index_merge_intersects_indexed_and_branches() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 
