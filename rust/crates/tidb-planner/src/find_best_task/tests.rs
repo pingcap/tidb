@@ -36,6 +36,7 @@ const COMPUTED: i64 = 3;
 const T1_A: i64 = 4;
 const T1_B: i64 = 5;
 const T1_C: i64 = 6;
+const T3_A: i64 = 7;
 
 fn env() -> CostEnv {
     CostEnv::default()
@@ -181,6 +182,7 @@ fn join_1042() -> LogicalJoin {
         // provides: no index orders `plus(mul(t2.b, 2), 10)`.
         left_properties: vec![vec![T2_A]],
         right_properties: vec![vec![T1_A]],
+        force_merge: false,
     }
 }
 
@@ -395,6 +397,187 @@ fn the_unhinted_enumeration_never_produces_a_sort_enforced_merge_join() {
     }
 }
 
+#[test]
+fn a_forced_merge_join_enables_sort_enforcers_on_both_children() {
+    let mut join = join_1042();
+    join.left_keys = vec![T2_A, T2_B];
+    join.right_keys = vec![T1_A, T1_B];
+    join.left_properties.clear();
+    join.right_properties.clear();
+    join.force_merge = true;
+
+    let candidates = exhaust_join(&join, &ordered(&[T2_B]));
+    assert_eq!(candidates.len(), 1, "the hint excludes other join families");
+    let candidate = &candidates[0];
+    assert!(matches!(candidate.strategy, JoinStrategy::Merge { .. }));
+    assert_eq!(
+        candidate.child_props[0].sort_items,
+        vec![asc(T2_B), asc(T2_A)]
+    );
+    assert_eq!(
+        candidate.child_props[1].sort_items,
+        vec![asc(T1_B), asc(T1_A)]
+    );
+    assert!(candidate
+        .child_props
+        .iter()
+        .all(|property| property.can_add_enforcer));
+}
+
+fn join_search_leaf(column: i64, rows: f64, ordered: bool) -> LogicalNode {
+    LogicalNode::Leaf(vec![LeafAlternative {
+        plan: Candidate::Reader {
+            child: Box::new(Candidate::TableScan {
+                rows,
+                row_size: RowSize::Fixed(16.0),
+                is_child_of_inl: None,
+                has_full_range_scan: true,
+                penalty: TableScanPenaltyInput::default(),
+                num_ranges: 1,
+                desc: false,
+            }),
+            rows,
+            row_size: RowSize::Fixed(16.0),
+            kind: ReaderKind::Table,
+        },
+        order: ordered.then(|| asc(column)).into_iter().collect(),
+        role: LeafRole::Plain,
+    }])
+}
+
+struct RecursiveMergeHintModel;
+
+impl JoinCostModel for RecursiveMergeHintModel {
+    fn attach(
+        &self,
+        _join: &LogicalJoin,
+        strategy: &JoinStrategy,
+        children: [&Task; 2],
+    ) -> Option<Candidate> {
+        match strategy {
+            JoinStrategy::Hash(shape) => {
+                let build_at = if shape.use_outer_to_build {
+                    1 - shape.inner_idx
+                } else {
+                    shape.inner_idx
+                };
+                let probe_at = 1 - build_at;
+                Some(Candidate::HashJoin {
+                    build: Box::new(children[build_at].plan.clone()),
+                    probe: Box::new(children[probe_at].plan.clone()),
+                    input: HashJoinInput {
+                        build_rows: children[build_at].costed.rows,
+                        probe_rows: children[probe_at].costed.rows,
+                        build_row_size: children[build_at].costed.row_size,
+                        num_build_keys: 1,
+                        num_probe_keys: 1,
+                        tidb_concurrency: 1.0,
+                    },
+                    build_filters: Vec::new(),
+                    probe_filters: Vec::new(),
+                })
+            }
+            JoinStrategy::Merge {
+                left_keys,
+                right_keys,
+                ..
+            } => Some(Candidate::MergeJoin {
+                left: Box::new(children[0].plan.clone()),
+                right: Box::new(children[1].plan.clone()),
+                child_rows: (children[0].costed.rows, children[1].costed.rows),
+                left_conditions: Vec::new(),
+                right_conditions: Vec::new(),
+                other_conditions: Vec::new(),
+                num_join_keys: (left_keys.len(), right_keys.len()),
+            }),
+            JoinStrategy::Index { .. } => None,
+        }
+    }
+
+    fn enforce(&self, prop: &PhysicalProperty, task: &Task) -> Option<Candidate> {
+        Some(Candidate::Sort {
+            child: Box::new(task.plan.clone()),
+            rows: task.costed.rows,
+            row_size: RowSize::Fixed(task.costed.row_size),
+            by_items: vec![false; prop.sort_items.len()],
+        })
+    }
+}
+
+fn forced_merge_subtree() -> LogicalNode {
+    LogicalNode::Join(Box::new(LogicalJoin {
+        join_type: LogicalJoinType::Inner,
+        left: Box::new(join_search_leaf(T2_A, 8_000.0, false)),
+        right: Box::new(join_search_leaf(T1_A, 10_000.0, false)),
+        left_keys: vec![T2_B],
+        right_keys: vec![T1_A],
+        left_schema: vec![T2_A, T2_B],
+        right_schema: vec![T1_A],
+        left_properties: Vec::new(),
+        right_properties: Vec::new(),
+        force_merge: true,
+    }))
+}
+
+#[test]
+fn a_merge_hint_retries_below_an_incompatible_property_then_sorts_the_result() {
+    let best = find_best_task(
+        &forced_merge_subtree(),
+        &ordered(&[T3_A]),
+        LeafRole::Plain,
+        &RecursiveMergeHintModel,
+        &env(),
+    )
+    .expect("the hint works below one result Sort");
+
+    let Candidate::Sort { child, .. } = best.plan else {
+        panic!(
+            "the incompatible property needs a result Sort: {:#?}",
+            best.plan
+        );
+    };
+    assert!(matches!(*child, Candidate::MergeJoin { .. }));
+}
+
+#[test]
+fn a_child_merge_hint_does_not_force_the_parent_join_method() {
+    let root = LogicalNode::Join(Box::new(LogicalJoin {
+        join_type: LogicalJoinType::Inner,
+        left: Box::new(forced_merge_subtree()),
+        right: Box::new(join_search_leaf(T3_A, 10_000.0, true)),
+        left_keys: vec![T2_A],
+        right_keys: vec![T3_A],
+        left_schema: vec![T2_A, T1_A],
+        right_schema: vec![T3_A],
+        // The hinted child is ordered by its own join key (`t2.b`), not by
+        // the different `t2.a` key its parent joins on.
+        left_properties: vec![vec![T2_B]],
+        right_properties: vec![vec![T3_A]],
+        force_merge: false,
+    }));
+
+    let best = find_best_task(
+        &root,
+        &PhysicalProperty::default(),
+        LeafRole::Plain,
+        &RecursiveMergeHintModel,
+        &env(),
+    )
+    .expect("the recursive tree is buildable");
+
+    let Candidate::HashJoin { build, probe, .. } = best.plan else {
+        panic!(
+            "the unhinted parent should remain a HashJoin: {:#?}",
+            best.plan
+        );
+    };
+    assert!(
+        matches!(*build, Candidate::MergeJoin { .. })
+            || matches!(*probe, Candidate::MergeJoin { .. }),
+        "the child hint must still select its own MergeJoin"
+    );
+}
+
 /// The enumeration order breaks exact ties, because `compareTaskCost` replaces
 /// the incumbent only on a strict `<`.
 #[test]
@@ -586,6 +769,7 @@ fn join_1169() -> LogicalJoin {
         right_schema: vec![T1_A, T1_B],
         left_properties: vec![vec![T2_A]],
         right_properties: vec![vec![T1_A]],
+        force_merge: false,
     }
 }
 

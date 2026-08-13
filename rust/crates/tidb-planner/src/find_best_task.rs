@@ -32,13 +32,13 @@
 //! # The rule table, read off the source
 //!
 //! For a `LogicalJoin` under a required property `prop` on a root task, with
-//! no join hints and no MPP:
+//! no MPP:
 //!
 //! | candidate | emitted when | child properties |
 //! | --- | --- | --- |
 //! | `PhysicalHashJoin` | `prop.SortItems` is EMPTY, and only then -- `getHashJoins` opens with "hash join doesn't promise any orders" and returns nothing otherwise | both empty |
 //! | `PhysicalMergeJoin` | some `LeftProperties` entry covers ALL left join keys, the matching right keys are a `RightProperties` prefix, and (`prop` empty, or `prop` is compatible with the left or the right keys and all one direction) | left: the left join keys; right: the right join keys |
-//! | enforced `PhysicalMergeJoin` (`Sort` under each side) | a `MERGE_JOIN` hint, or hash join disabled. NEVER in an unhinted enumeration | both empty |
+//! | enforced `PhysicalMergeJoin` (`Sort` under each side) | a `MERGE_JOIN` hint. NEVER in an unhinted enumeration | both join-key orders, with enforcers enabled |
 //! | `PhysicalIndexJoin` / `PhysicalIndexHashJoin` | every `prop` column comes from the OUTER child's schema and `prop` is all one direction; two outer sides for an inner join, one for an outer join; times `TableRangeScan` and index | outer: `prop.SortItems` PRESERVED; inner: empty plus the index-join runtime prop |
 //!
 //! and the enforcer branch of `findBestTask` runs only when
@@ -184,6 +184,13 @@ pub struct LogicalJoin {
     pub left_properties: Vec<Vec<i64>>,
     /// `p.RightProperties`.
     pub right_properties: Vec<Vec<i64>>,
+    /// `p.PreferJoinType&PreferMergeJoin > 0`.
+    ///
+    /// A forced merge join differs from an ordinary merge candidate in one
+    /// load-bearing way: each child property permits a Sort enforcer. That is
+    /// how `getEnforcedMergeJoin` remains buildable when neither access path
+    /// already provides the join-key order.
+    pub force_merge: bool,
 }
 
 /// A node of the logical tree the search runs over.
@@ -380,9 +387,73 @@ fn hash_join_shapes(join_type: LogicalJoinType) -> Vec<HashJoinShape> {
 pub fn exhaust_join(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<EnumeratedJoin> {
     let mut out = Vec::new();
     out.extend(merge_join_candidates(join, prop));
+    if join.force_merge {
+        out.extend(enforced_merge_join_candidates(join, prop));
+        if !out.is_empty() {
+            return out;
+        }
+    }
     out.extend(index_join_candidates(join, prop));
     out.extend(hash_join_candidates(join, prop));
     out
+}
+
+/// `getEnforcedMergeJoin`: reorder the join keys so a required output order
+/// is their prefix, then let both children add Sort enforcers.
+fn enforced_merge_join_candidates(
+    join: &LogicalJoin,
+    prop: &PhysicalProperty,
+) -> Vec<EnumeratedJoin> {
+    if join.left_keys.is_empty() || join.left_keys.len() != join.right_keys.len() {
+        return Vec::new();
+    }
+    let (all, desc) = prop.all_same_order();
+    if !all {
+        return Vec::new();
+    }
+
+    let mut offsets = Vec::with_capacity(join.left_keys.len());
+    for item in &prop.sort_items {
+        let left_at = join.left_keys.iter().position(|key| *key == item.col);
+        let right_at = join.right_keys.iter().position(|key| *key == item.col);
+        let Some(at) = left_at.or(right_at) else {
+            return Vec::new();
+        };
+        if join.join_type == LogicalJoinType::LeftOuter && right_at.is_some() {
+            return Vec::new();
+        }
+        if join.join_type == LogicalJoinType::RightOuter && left_at.is_some() {
+            return Vec::new();
+        }
+        if !offsets.contains(&at) {
+            offsets.push(at);
+        }
+    }
+    for at in 0..join.left_keys.len() {
+        if !offsets.contains(&at) {
+            offsets.push(at);
+        }
+    }
+    let left_keys: Vec<i64> = offsets.iter().map(|at| join.left_keys[*at]).collect();
+    let right_keys: Vec<i64> = offsets.iter().map(|at| join.right_keys[*at]).collect();
+    let child_prop = |keys: &[i64]| PhysicalProperty {
+        sort_items: keys
+            .iter()
+            .map(|col| SortItem { col: *col, desc })
+            .collect(),
+        task_tp: TaskType::Root,
+        expected_cnt: f64::MAX,
+        can_add_enforcer: true,
+    };
+    vec![EnumeratedJoin {
+        strategy: JoinStrategy::Merge {
+            left_keys: left_keys.clone(),
+            right_keys: right_keys.clone(),
+            desc,
+        },
+        child_props: [child_prop(&left_keys), child_prop(&right_keys)],
+        child_roles: [LeafRole::Plain, LeafRole::Plain],
+    }]
 }
 
 /// `physicalop.GetMergeJoin` without the enforced branch, which
@@ -590,7 +661,30 @@ fn best_join(
     model: &dyn JoinCostModel,
     env: &CostEnv,
 ) -> Option<Task> {
-    let mut best = enumerate(join, &exhaust_join(join, prop), prop, false, model, env);
+    let candidates = exhaust_join(join, prop);
+    if join.force_merge
+        && !prop.is_sort_item_empty()
+        && !candidates
+            .iter()
+            .any(|candidate| matches!(candidate.strategy, JoinStrategy::Merge { .. }))
+    {
+        // `hintWorksWithProp == false`: Go retries the hint under an empty
+        // property, then adds one Sort above the hinted join. If that retry
+        // works, the non-hinted candidates from the original property are
+        // discarded rather than allowed to defeat the hint on cost.
+        let mut empty = prop.clone();
+        empty.sort_items.clear();
+        empty.expected_cnt = f64::MAX;
+        let under_empty = exhaust_join(join, &empty);
+        if under_empty
+            .iter()
+            .any(|candidate| matches!(candidate.strategy, JoinStrategy::Merge { .. }))
+        {
+            return enumerate(join, &under_empty, prop, true, model, env);
+        }
+    }
+
+    let mut best = enumerate(join, &candidates, prop, false, model, env);
     if prop.can_add_enforcer {
         // `findBestTask`'s enforced branch: exhaust under the EMPTY property,
         // then put the enforcer on each resulting task.

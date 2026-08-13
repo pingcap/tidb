@@ -307,6 +307,7 @@ fn logical_join(input: &SearchInput<'_>, orders: (&[Vec<usize>], &[Vec<usize>]))
             .iter()
             .map(|order| order.iter().map(|at| *at as i64 + shift).collect())
             .collect(),
+        force_merge: false,
     }
 }
 
