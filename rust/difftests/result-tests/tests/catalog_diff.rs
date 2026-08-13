@@ -463,12 +463,9 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// catalog reads, of which 125 match. Five previously red reads left the
 /// divergence set while the compared surface grew by one.
 ///
-/// 95 -> 94: `SHOW COLUMNS` now reports generated-column `Extra` markers. The
-/// first `DESC test_gv_ddl` reads back exactly, while two later descriptions
-/// remain red because their column sets still differ. Those two carried texts
-/// also moved closer to TiDB and are pinned by
-/// [`CATALOG_DIVERGENCE_FINGERPRINT`].
-const KNOWN_CATALOG_DIVERGENCES: usize = 94;
+/// The current replay compares 221 reads: 128 match TiDB and 93 remain
+/// divergent. The fingerprint below pins the exact unresolved set.
+const KNOWN_CATALOG_DIVERGENCES: usize = 93;
 
 /// The floor on catalog reads that MATCH TiDB's recording exactly. See
 /// [`KNOWN_CATALOG_DIVERGENCES`] for why a divergence ceiling alone is not a
@@ -495,7 +492,7 @@ const KNOWN_CATALOG_DIVERGENCES: usize = 94;
 ///
 /// 125 -> 126: generated-column `Extra` markers close the first
 /// `DESC test_gv_ddl` catalog read named above.
-const MATCHED_FLOOR: usize = 126;
+const MATCHED_FLOOR: usize = 128;
 
 /// A fingerprint over the TEXT of every carried divergence, and the reason it
 /// exists is a hole this gate was CAUGHT having on its first day.
@@ -562,10 +559,7 @@ const MATCHED_FLOOR: usize = 126;
 /// exact 95 carried texts after the integrated metadata/default ownership
 /// changes rather than treating the improved count alone as sufficient.
 ///
-/// 6_833_596_090_493_068_542 -> 2_590_747_001_060_177_515: generated-column
-/// `Extra` markers remove one `DESC test_gv_ddl` entry and improve the two
-/// still-red descriptions whose column sets differ.
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 2_590_747_001_060_177_515;
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 539_839_333_133_462_617;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.
