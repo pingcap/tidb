@@ -1,0 +1,46 @@
+drop table if exists articles;
+create table articles (id int primary key, title varchar(200), body text);
+insert into articles values
+(1, 'MySQL Tutorial', 'This tutorial provides a basic MySQL tutorial'),
+(2, 'How To Use MySQL Well', 'After you went through a MySQL tutorial'),
+(3, 'Optimizing MySQL', 'In this tutorial we will show how to optimize MySQL'),
+(4, 'MySQL vs. PostgreSQL', 'This article compares MySQL and PostgreSQL'),
+(5, 'MySQL Security', 'How to secure your MySQL database');
+set @@tidb_enable_local_match_against=ON;
+select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode);
+id	title
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+select id, title from articles where match(title) against('+Optimiz' in boolean mode);
+id	title
+select id, title from articles where match(title) against('+Optimizing' in boolean mode);
+id	title
+3	Optimizing MySQL
+select id, title from articles where match(title) against('Optim*' in boolean mode);
+id	title
+3	Optimizing MySQL
+select id, title from articles where match(title, body) against('"MySQL tutorial"' in boolean mode);
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+select id, title from articles where match(title, body) against('"tutorial MySQL"' in boolean mode);
+id	title
+select id, title from articles where match(title) against('+vs' in boolean mode);
+id	title
+select id, title from articles where match(title) against(NULL in boolean mode);
+id	title
+insert into articles values (6, 'Indexing Basics', NULL);
+select id, title from articles where match(title, body) against('+Indexing -PostgreSQL' in boolean mode);
+id	title
+6	Indexing Basics
+delete from articles where id = 6;
+select id, match(title) against('+MySQL' in boolean mode) as score from articles;
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH ... AGAINST outside direct IN BOOLEAN MODE predicate context'
+select id, title from articles order by match(title) against('+MySQL' in boolean mode) desc;
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH ... AGAINST outside direct IN BOOLEAN MODE predicate context'
+set @@tidb_enable_local_match_against=OFF;
+select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode);
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH ... AGAINST without tidb_enable_local_match_against'
+drop table if exists articles;

@@ -1,0 +1,45 @@
+# Local no-score MATCH ... AGAINST evaluation for the release-8.5 backport.
+drop table if exists articles;
+create table articles (id int primary key, title varchar(200), body text);
+insert into articles values
+  (1, 'MySQL Tutorial', 'This tutorial provides a basic MySQL tutorial'),
+  (2, 'How To Use MySQL Well', 'After you went through a MySQL tutorial'),
+  (3, 'Optimizing MySQL', 'In this tutorial we will show how to optimize MySQL'),
+  (4, 'MySQL vs. PostgreSQL', 'This article compares MySQL and PostgreSQL'),
+  (5, 'MySQL Security', 'How to secure your MySQL database');
+
+set @@tidb_enable_local_match_against=ON;
+
+# Required and prohibited terms.
+select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode);
+
+# Word boundaries and prefix matching.
+select id, title from articles where match(title) against('+Optimiz' in boolean mode);
+select id, title from articles where match(title) against('+Optimizing' in boolean mode);
+select id, title from articles where match(title) against('Optim*' in boolean mode);
+
+# Exact phrase and multi-column matching.
+select id, title from articles where match(title, body) against('"MySQL tutorial"' in boolean mode);
+select id, title from articles where match(title, body) against('"tutorial MySQL"' in boolean mode);
+
+# Tokens below innodb_ft_min_token_size match nothing.
+select id, title from articles where match(title) against('+vs' in boolean mode);
+
+# NULL search and NULL matched columns.
+select id, title from articles where match(title) against(NULL in boolean mode);
+insert into articles values (6, 'Indexing Basics', NULL);
+select id, title from articles where match(title, body) against('+Indexing -PostgreSQL' in boolean mode);
+delete from articles where id = 6;
+
+# Relevance-score positions never receive the local 0/1 value.
+-- error 1235
+select id, match(title) against('+MySQL' in boolean mode) as score from articles;
+-- error 1235
+select id, title from articles order by match(title) against('+MySQL' in boolean mode) desc;
+
+# Disabling the switch restores the release branch's unsupported behaviour.
+set @@tidb_enable_local_match_against=OFF;
+-- error 1235
+select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode);
+
+drop table if exists articles;
