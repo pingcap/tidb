@@ -589,6 +589,13 @@ pub(crate) fn extract_correlated_subquery(
     ctx: &crate::StmtContext,
 ) -> Result<tidb_ast::Expr, DriverError> {
     use tidb_ast::Expr;
+    // Extract exactly one Apply per pass. Callers that can host several
+    // correlated subqueries feed the rewritten expression back through this
+    // function with a wider outer scope, just as Go chains Apply operators.
+    // Stopping here leaves every later subquery intact for that next pass.
+    if found.is_some() {
+        return Ok(expr.clone());
+    }
     // The synthetic name the appended column answers to.
     let placeholder = |index: usize| Expr::Column(vec![format!("__apply_{index}")]);
     Ok(match expr {
@@ -601,11 +608,6 @@ pub(crate) fn extract_correlated_subquery(
             if columns.is_empty() {
                 // Uncorrelated: the folding pass handles it.
                 return Ok(expr.clone());
-            }
-            if found.is_some() {
-                return Err(DriverError::unsupported(
-                    "more than one correlated subquery in an expression is not supported yet",
-                ));
             }
             let kind = match expr {
                 Expr::Exists { not, .. } => SubqueryKind::Exists { not: *not },
@@ -638,7 +640,7 @@ pub(crate) fn extract_correlated_subquery(
             if columns.is_empty() {
                 return Ok(expr.clone());
             }
-            if found.is_some() || expr_has_subquery(lhs) {
+            if expr_has_subquery(lhs) {
                 return Err(DriverError::unsupported(
                     "more than one correlated subquery in an expression is not supported yet",
                 ));
@@ -671,7 +673,7 @@ pub(crate) fn extract_correlated_subquery(
             if columns.is_empty() {
                 return Ok(expr.clone());
             }
-            if found.is_some() || expr_has_subquery(left) {
+            if expr_has_subquery(left) {
                 return Err(DriverError::unsupported(
                     "more than one correlated subquery in an expression is not supported yet",
                 ));

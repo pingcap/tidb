@@ -70,86 +70,26 @@ pub(crate) fn build_plain_having(
     // later against the projection.
     bind_having_correlations(&having, &outputs, current_scope, catalog, current_db, ctx)?;
 
-    // A correlated subquery becomes an Apply below the filter, appending the
-    // column the rewritten predicate reads -- the shape the `WHERE` path
-    // builds, and Go's plan for a subquery it cannot fold.
-    let mut correlated = None;
-    let appended = current_scope.width();
-    let predicate = extract_correlated_subquery(
-        &having,
-        current_scope,
-        catalog,
-        current_db,
-        appended,
-        &mut correlated,
-        ctx,
-    )?;
-    if let Some(correlated) = correlated {
-        let mut value_type = FieldType::new(FieldTypeCode::LongLong);
-        if matches!(correlated.kind, SubqueryKind::Scalar) {
-            value_type = subquery_result_type(&correlated, current_scope, catalog, current_db, ctx)
-                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-        }
-        let inner_scope = current_scope.clone();
-        current_scope.tables.push(FromTable {
-            name: String::new(),
-            database: None,
-            columns: vec![(format!("__apply_{appended}"), value_type)],
-            offset: appended,
-            func_deps: Default::default(),
-        });
-        let columns: Vec<Column> = current_scope
-            .column_list()
-            .iter()
-            .enumerate()
-            .map(|(i, (_, ft))| {
-                let mut col = Column::new((i + 1) as i64, ft.clone());
-                col.index = i as i64;
-                col
-            })
-            .collect();
-        let apply_schema = Schema::new(columns);
-        let cache_columns = correlated_column_indices(&correlated, &inner_scope)?;
-        // The callback outlives this borrow of the catalog, so it owns a
-        // snapshot (see ApplyExec::new); the context is a handle, so the
-        // inner query's warnings reach the statement's one buffer.
-        let inner_catalog = catalog.clone();
-        let inner_db = current_db.to_owned();
-        let inner_ctx = ctx.clone();
-        let runner: crate::apply::InnerRunner = Box::new(move |values: &[Datum]| {
-            run_correlated_subquery(
-                &correlated,
-                values,
-                &inner_scope,
-                &inner_catalog,
-                &inner_db,
-                &inner_ctx,
-            )
-            .map_err(|e| match e {
-                DriverError::Exec(exec) => exec,
-                DriverError::SubqueryReturnsMoreThanOneRow => {
-                    ExecError::SubqueryReturnsMoreThanOneRow
-                }
-                other => ExecError::unsupported(driver_error_text(&other)),
-            })
-        });
-        source = Box::new(
-            crate::apply::ApplyExec::new(
-                ExecutorMeta::new(apply_schema, 7, INIT_CAP, MAX_CHUNK_SIZE),
-                source,
-                runner,
-                ctx.statement_memory(),
-                // The outer side is the statement's SOURCE, never an
-                // aggregation, so Go's deselected-default-row case cannot
-                // arise.
-                None,
-            )
-            .with_cache(
-                ctx.apply_cache_capacity(),
-                cache_columns,
-                ctx.session_zone(),
-            ),
-        );
+    // A correlated subquery becomes an Apply below the filter. Repeat for
+    // each one so the next extraction sees the preceding Apply's output,
+    // exactly as the normal WHERE and SELECT paths do.
+    let mut predicate = having;
+    loop {
+        let mut correlated = None;
+        predicate = extract_correlated_subquery(
+            &predicate,
+            current_scope,
+            catalog,
+            current_db,
+            current_scope.width(),
+            &mut correlated,
+            ctx,
+        )?;
+        let Some(correlated) = correlated else { break };
+        let (applied, widened_scope, _) =
+            append_correlated_apply(source, current_scope, correlated, catalog, current_db, ctx)?;
+        source = applied;
+        *current_scope = widened_scope;
     }
     let resolver = ScopeResolver {
         scope: current_scope,

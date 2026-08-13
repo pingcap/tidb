@@ -554,25 +554,15 @@ fn a_correlated_subquery_in_an_aggregate_argument_matches_go() {
         )),
         [["3"]]
     );
-    // TWO correlated subqueries in ONE argument (Go: `3`) is still refused,
-    // and by the extraction's own pre-existing rule rather than anything this
-    // stage added: `extract_correlated_subquery` rejects a second correlated
-    // subquery in the same expression outright, so it cannot be walked one at
-    // a time the way the stage's hoist loop would otherwise take them. Named
-    // here so the next unit inherits the exact obstacle.
-    let error = session
-        .run(
+    // Each correlated argument becomes an Apply below the aggregation, in
+    // written order. Go answers 3 here: one matching `emp.dept_id` count and
+    // one matching `emp.id` count for every source department row.
+    assert_eq!(
+        row_text(session.run(
             "SELECT SUM((SELECT COUNT(*) FROM emp WHERE emp.dept_id = dept.id) \
-             + (SELECT COUNT(*) FROM emp WHERE emp.id = dept.id)) FROM dept",
-        )
-        .unwrap_err();
-    assert!(
-        matches!(
-            &error,
-            DriverError::Unsupported(message)
-                if message.contains("more than one correlated subquery")
-        ),
-        "unexpected error: {error:?}"
+             + (SELECT COUNT(*) FROM emp WHERE emp.id = dept.id)) FROM dept"
+        )),
+        [["3"]]
     );
     assert_eq!(
         row_text(
@@ -784,6 +774,50 @@ fn correlated_set_operation_subqueries_run_per_outer_row() {
         row_text(session.run(
             "SELECT a FROM outer_rows WHERE a IN \
              (SELECT outer_rows.a UNION SELECT outer_rows.a + 10) ORDER BY a"
+        )),
+        [["1"], ["2"]]
+    );
+}
+
+/// Go builds one Apply for each correlated subquery in a scalar expression
+/// and chains them below the projection or selection. The outer values are
+/// still those from the original row; previously the Rust driver stopped
+/// after the first placeholder and rejected the second.
+#[test]
+fn multiple_correlated_subqueries_share_the_outer_row() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE outer_rows (a INT)").unwrap();
+    session
+        .run("CREATE TABLE inner_rows (k INT, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO outer_rows VALUES (1),(2)")
+        .unwrap();
+    session
+        .run("INSERT INTO inner_rows VALUES (1,10),(2,20)")
+        .unwrap();
+
+    assert_eq!(
+        row_text(session.run(
+            "SELECT a, (SELECT v FROM inner_rows WHERE k = outer_rows.a) + \
+             (SELECT 1 FROM inner_rows WHERE k = outer_rows.a) AS total \
+             FROM outer_rows ORDER BY a"
+        )),
+        [["1", "11"], ["2", "21"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT a FROM outer_rows WHERE \
+             (SELECT v FROM inner_rows WHERE k = outer_rows.a) > 0 AND \
+             EXISTS(SELECT 1 FROM inner_rows WHERE k = outer_rows.a) ORDER BY a"
+        )),
+        [["1"], ["2"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT a FROM outer_rows HAVING \
+             (SELECT v FROM inner_rows WHERE k = outer_rows.a) > 0 AND \
+             EXISTS(SELECT 1 FROM inner_rows WHERE k = outer_rows.a) ORDER BY a"
         )),
         [["1"], ["2"]]
     );

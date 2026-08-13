@@ -462,6 +462,80 @@ pub(crate) fn run_query_stmt(
     }
 }
 
+/// Appends one correlated-subquery Apply above `source` and returns the
+/// widened scope and schema. Callers repeat this for every correlated
+/// subquery in a clause, which is Go's chain of Apply operators.
+pub(crate) fn append_correlated_apply(
+    source: Box<dyn Executor>,
+    outer_scope: &FromScope,
+    correlated: CorrelatedSubquery,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(Box<dyn Executor>, FromScope, Schema), DriverError> {
+    let appended = outer_scope.width();
+    let value_type = if matches!(correlated.kind, SubqueryKind::Scalar) {
+        subquery_result_type(&correlated, outer_scope, catalog, current_db, ctx)
+            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
+    } else {
+        FieldType::new(FieldTypeCode::LongLong)
+    };
+    let mut applied = outer_scope.clone();
+    applied.tables.push(FromTable {
+        name: String::new(),
+        database: None,
+        columns: vec![(format!("__apply_{appended}"), value_type)],
+        offset: appended,
+        func_deps: Default::default(),
+    });
+    let columns: Vec<Column> = applied
+        .column_list()
+        .iter()
+        .enumerate()
+        .map(|(index, (_, field_type))| {
+            let mut column = Column::new((index + 1) as i64, field_type.clone());
+            column.index = index as i64;
+            column
+        })
+        .collect();
+    let schema = Schema::new(columns);
+    let cache_columns = correlated_column_indices(&correlated, outer_scope)?;
+    let inner_scope = outer_scope.clone();
+    let inner_catalog = catalog.clone();
+    let inner_db = current_db.to_owned();
+    let inner_ctx = ctx.clone();
+    let runner: crate::apply::InnerRunner = Box::new(move |values: &[Datum]| {
+        run_correlated_subquery(
+            &correlated,
+            values,
+            &inner_scope,
+            &inner_catalog,
+            &inner_db,
+            &inner_ctx,
+        )
+        .map_err(|error| match error {
+            DriverError::Exec(exec) => exec,
+            DriverError::SubqueryReturnsMoreThanOneRow => ExecError::SubqueryReturnsMoreThanOneRow,
+            other => ExecError::unsupported(driver_error_text(&other)),
+        })
+    });
+    let source = Box::new(
+        crate::apply::ApplyExec::new(
+            ExecutorMeta::new(schema.clone(), 7, INIT_CAP, MAX_CHUNK_SIZE),
+            source,
+            runner,
+            ctx.statement_memory(),
+            None,
+        )
+        .with_cache(
+            ctx.apply_cache_capacity(),
+            cache_columns,
+            ctx.session_zone(),
+        ),
+    );
+    Ok((source, applied, schema))
+}
+
 /// Runs one parsed `SELECT` against the catalog, for a caller that has
 /// already rewritten the statement (session-variable binding, for instance)
 /// and must not go back through SQL text.
@@ -870,96 +944,31 @@ pub(crate) fn run_select_traced(
         }
     }
     if let Some(predicate) = &executed_where {
-        let mut correlated = None;
-        let appended = scope.width();
-        let predicate = extract_correlated_subquery(
-            predicate,
-            &scope,
-            catalog,
-            current_db,
-            appended,
-            &mut correlated,
-            ctx,
-        )?;
-        let (predicate_resolver, predicate_scope);
+        let mut predicate = predicate.clone();
         let mut source_schema = source_schema;
-        if let Some(correlated) = correlated {
-            // The Apply's schema is the source's columns plus the subquery's.
-            let mut applied = scope.clone();
-            let mut value_type = FieldType::new(FieldTypeCode::LongLong);
-            if matches!(correlated.kind, SubqueryKind::Scalar) {
-                value_type = subquery_result_type(&correlated, &scope, catalog, current_db, ctx)
-                    .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-            }
-            applied.tables.push(FromTable {
-                name: String::new(),
-                database: None,
-                columns: vec![(format!("__apply_{appended}"), value_type)],
-                offset: appended,
-                func_deps: Default::default(),
-            });
-            let columns: Vec<Column> = applied
-                .column_list()
-                .iter()
-                .enumerate()
-                .map(|(i, (_, ft))| {
-                    let mut col = Column::new((i + 1) as i64, ft.clone());
-                    col.index = i as i64;
-                    col
-                })
-                .collect();
-            let apply_schema = Schema::new(columns);
-            let inner_scope = scope.clone();
-            let cache_columns = correlated_column_indices(&correlated, &inner_scope)?;
-            // The apply callback outlives this borrow of the catalog, so it
-            // owns a snapshot (see ApplyExec::new).
-            let inner_catalog = catalog.clone();
-            let inner_db = current_db.to_owned();
-            // The statement context is a handle, so the callback shares the
-            // one warning buffer the statement reports.
-            let inner_ctx = ctx.clone();
-            let runner: crate::apply::InnerRunner = Box::new(move |values: &[Datum]| {
-                run_correlated_subquery(
-                    &correlated,
-                    values,
-                    &inner_scope,
-                    &inner_catalog,
-                    &inner_db,
-                    &inner_ctx,
-                )
-                .map_err(|e| match e {
-                    DriverError::Exec(exec) => exec,
-                    DriverError::SubqueryReturnsMoreThanOneRow => {
-                        ExecError::SubqueryReturnsMoreThanOneRow
-                    }
-                    other => ExecError::unsupported(driver_error_text(&other)),
-                })
-            });
-            source = Box::new(
-                crate::apply::ApplyExec::new(
-                    ExecutorMeta::new(apply_schema.clone(), 7, INIT_CAP, MAX_CHUNK_SIZE),
-                    source,
-                    runner,
-                    ctx.statement_memory(),
-                    // The outer side here is the statement's SOURCE, never an
-                    // aggregation, so Go's deselected-default-row case cannot
-                    // arise: there is no mismatch row to pad.
-                    None,
-                )
-                .with_cache(
-                    ctx.apply_cache_capacity(),
-                    cache_columns,
-                    ctx.session_zone(),
-                ),
-            );
-            source_schema = apply_schema;
-            current_scope = applied;
-            predicate_scope = current_scope.clone();
-        } else {
-            predicate_scope = scope.clone();
+        loop {
+            let mut correlated = None;
+            predicate = extract_correlated_subquery(
+                &predicate,
+                &current_scope,
+                catalog,
+                current_db,
+                current_scope.width(),
+                &mut correlated,
+                ctx,
+            )?;
+            let Some(correlated) = correlated else { break };
+            (source, current_scope, source_schema) = append_correlated_apply(
+                source,
+                &current_scope,
+                correlated,
+                catalog,
+                current_db,
+                ctx,
+            )?;
         }
-        predicate_resolver = ScopeResolver {
-            scope: &predicate_scope,
+        let predicate_resolver = ScopeResolver {
+            scope: &current_scope,
         };
         let mut pred = rewrite_expr_resolved(&predicate, &predicate_resolver)
             .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
@@ -1046,84 +1055,29 @@ pub(crate) fn run_select_traced(
         let name = alias
             .clone()
             .unwrap_or_else(|| default_field_display_name(&select.fields, field_index, expr));
-        let mut correlated = None;
-        let appended = current_scope.width();
-        let rewritten = extract_correlated_subquery(
-            expr,
-            &current_scope,
-            catalog,
-            current_db,
-            appended,
-            &mut correlated,
-            ctx,
-        )?;
-        if let Some(correlated) = correlated {
-            let mut value_type = FieldType::new(FieldTypeCode::LongLong);
-            if matches!(correlated.kind, SubqueryKind::Scalar) {
-                value_type =
-                    subquery_result_type(&correlated, &current_scope, catalog, current_db, ctx)
-                        .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
-            }
-            let inner_scope = current_scope.clone();
-            current_scope.tables.push(FromTable {
-                name: String::new(),
-                database: None,
-                columns: vec![(format!("__apply_{appended}"), value_type)],
-                offset: appended,
-                func_deps: Default::default(),
-            });
-            let columns: Vec<Column> = current_scope
-                .column_list()
-                .iter()
-                .enumerate()
-                .map(|(i, (_, ft))| {
-                    let mut col = Column::new((i + 1) as i64, ft.clone());
-                    col.index = i as i64;
-                    col
-                })
-                .collect();
-            let apply_schema = Schema::new(columns);
-            let cache_columns = correlated_column_indices(&correlated, &inner_scope)?;
-            // The callback outlives this borrow of the catalog, so it owns a
-            // snapshot (see ApplyExec::new); the context is a handle, so the
-            // inner query's warnings reach the statement's one buffer.
-            let inner_catalog = catalog.clone();
-            let inner_db = current_db.to_owned();
-            let inner_ctx = ctx.clone();
-            let runner: crate::apply::InnerRunner = Box::new(move |values: &[Datum]| {
-                run_correlated_subquery(
-                    &correlated,
-                    values,
-                    &inner_scope,
-                    &inner_catalog,
-                    &inner_db,
-                    &inner_ctx,
-                )
-                .map_err(|e| match e {
-                    DriverError::Exec(exec) => exec,
-                    DriverError::SubqueryReturnsMoreThanOneRow => {
-                        ExecError::SubqueryReturnsMoreThanOneRow
-                    }
-                    other => ExecError::unsupported(driver_error_text(&other)),
-                })
-            });
-            source = Box::new(
-                crate::apply::ApplyExec::new(
-                    ExecutorMeta::new(apply_schema, 7, INIT_CAP, MAX_CHUNK_SIZE),
-                    source,
-                    runner,
-                    ctx.statement_memory(),
-                    // The outer side here is the statement's SOURCE, never an
-                    // aggregation, so Go's deselected-default-row case cannot
-                    // arise: there is no mismatch row to pad.
-                    None,
-                )
-                .with_cache(
-                    ctx.apply_cache_capacity(),
-                    cache_columns,
-                    ctx.session_zone(),
-                ),
-            );
+        let mut rewritten = expr.clone();
+        loop {
+            let mut correlated = None;
+            rewritten = extract_correlated_subquery(
+                &rewritten,
+                &current_scope,
+                catalog,
+                current_db,
+                current_scope.width(),
+                &mut correlated,
+                ctx,
+            )?;
+            let Some(correlated) = correlated else { break };
+            let (applied, widened_scope, _) = append_correlated_apply(
+                source,
+                &current_scope,
+                correlated,
+                catalog,
+                current_db,
+                ctx,
+            )?;
+            source = applied;
+            current_scope = widened_scope;
         }
         projected.push((
             SelectField::Expr {
