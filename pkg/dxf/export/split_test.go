@@ -80,18 +80,44 @@ func TestPackSubtasks(t *testing.T) {
 	require.Len(t, m3, 2)
 }
 
-func TestBuildChunks(t *testing.T) {
+func TestChunksBySize(t *testing.T) {
+	b := keys("a", "b", "c", "d", "e") // 4 regions
+	half := int64(chunkSize / 2)
+	// Two regions per chunk reach chunkSize → 2 chunks, real accumulated size.
+	chunks, next := chunksBySize(2, 100, b, []int64{half, half, half, half}, 0)
+	require.Len(t, chunks, 2)
+	require.Equal(t, 2, next)
+	require.Equal(t, kv.Key("a"), kv.Key(chunks[0].Start))
+	require.Equal(t, chunks[0].End, chunks[1].Start)
+	require.Equal(t, kv.Key("e"), kv.Key(chunks[len(chunks)-1].End))
+	require.Equal(t, int64(chunkSize), chunks[0].Size)
+	require.Equal(t, 0, chunks[0].Ordinal)
+	require.Equal(t, 2, chunks[0].TableIdx)
+	require.Equal(t, int64(100), chunks[0].PhysicalID)
+
+	// A region past the limit is its own chunk; the sub-limit tail still flushes.
+	c2, _ := chunksBySize(0, 1, keys("a", "b", "c"), []int64{2 * chunkSize, 1}, 0)
+	require.Len(t, c2, 2)
+	require.Equal(t, int64(2*chunkSize), c2[0].Size)
+	require.Equal(t, int64(1), c2[1].Size)
+
+	// Ordinal continues from startOrdinal.
+	_, n := chunksBySize(0, 1, keys("a", "b"), []int64{1}, 5)
+	require.Equal(t, 6, n)
+}
+
+func TestChunksByCount(t *testing.T) {
 	b := keys("a", "b", "c", "d", "e") // 4 regions
 	// One chunk per ~chunkSize, rounded up, never more than the region count.
-	require.Len(t, mustChunks(buildChunks(0, 1, b, 2*chunkSize, 0)), 2)
-	require.Len(t, mustChunks(buildChunks(0, 1, b, 2*chunkSize+1, 0)), 3)
+	require.Len(t, mustChunks(chunksByCount(0, 1, b, 2*chunkSize, 0)), 2)
+	require.Len(t, mustChunks(chunksByCount(0, 1, b, 2*chunkSize+1, 0)), 3)
 	// More chunks wanted than regions → capped at the region count.
-	require.Len(t, mustChunks(buildChunks(0, 1, b, 100*chunkSize, 0)), 4)
+	require.Len(t, mustChunks(chunksByCount(0, 1, b, 100*chunkSize, 0)), 4)
 	// Zero size still yields one chunk covering the whole span.
-	require.Len(t, mustChunks(buildChunks(0, 1, b, 0, 0)), 1)
+	require.Len(t, mustChunks(chunksByCount(0, 1, b, 0, 0)), 1)
 
 	const size = 4 * chunkSize // 4 regions → 4 chunks, one region each
-	chunks, next := buildChunks(2, 100, b, size, 0)
+	chunks, next := chunksByCount(2, 100, b, size, 0)
 	require.Len(t, chunks, 4)
 	require.Equal(t, 4, next)
 
@@ -107,11 +133,11 @@ func TestBuildChunks(t *testing.T) {
 	require.Equal(t, int64(size)/4, chunks[0].Size)
 
 	// Deterministic.
-	again, _ := buildChunks(2, 100, b, size, 0)
+	again, _ := chunksByCount(2, 100, b, size, 0)
 	require.Equal(t, chunks, again)
 
 	// Ordinal continues across partitions of the same table.
-	more, next2 := buildChunks(2, 200, keys("a", "z"), size, next)
+	more, next2 := chunksByCount(2, 200, keys("a", "z"), size, next)
 	require.Equal(t, 4, more[0].Ordinal)
 	require.Equal(t, int64(200), more[0].PhysicalID)
 	require.Equal(t, 5, next2)

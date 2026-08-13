@@ -29,8 +29,9 @@ type TaskMeta struct {
 	Tables     []TableSpec `json:"tables"`
 	SnapshotTS uint64      `json:"snapshot_ts"`
 	// PhysicalSizes maps a physical table (or partition) id to its estimated byte
-	// size, computed once at submit time (where it also feeds resource scaling)
-	// and reused when splitting chunks, so the split never re-scans PD for size.
+	// size, computed once at submit time (where it also feeds resource scaling).
+	// The split prefers a fresh estimate and falls back to this only when PD is
+	// unavailable.
 	PhysicalSizes map[int64]int64 `json:"physical_sizes"`
 	// Dest is the destination URI, with credentials in the query part.
 	Dest     string `json:"dest"`

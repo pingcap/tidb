@@ -849,31 +849,45 @@ func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexSta
 	return pdCli.GetRegionStatusByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), false)
 }
 
-// EstimateKeyRangeSize sums each region's max(ApproximateSize, ApproximateKvSize)
-// over the logical range [startKey, endKey) via PD. It prefers ApproximateKvSize
-// because it tracks logical data size better than the compressed on-disk
-// ApproximateSize; max() covers TiKV not reporting the KV size.
-func (h *Helper) EstimateKeyRangeSize(ctx context.Context, pdCli pd.Client, startKey, endKey kv.Key) (int64, error) {
+// RegionApproximateSizes returns each region's max(ApproximateSize,
+// ApproximateKvSize) in bytes over the logical range [startKey, endKey) via PD,
+// in key order. It prefers ApproximateKvSize because it tracks logical data size
+// better than the compressed on-disk ApproximateSize; max() covers TiKV not
+// reporting the KV size.
+func (h *Helper) RegionApproximateSizes(ctx context.Context, pdCli pd.Client, startKey, endKey kv.Key) ([]int64, error) {
 	start, end := h.Store.GetCodec().EncodeRegionRange(startKey, endKey)
-	var totalSize int64
+	var sizes []int64
 	for {
 		regions, err := pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(start, end), 128)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		if len(regions.Regions) == 0 {
 			break
 		}
 		for _, r := range regions.Regions {
-			totalSize += max(r.ApproximateSize, r.ApproximateKvSize) * 1024 * 1024
+			sizes = append(sizes, max(r.ApproximateSize, r.ApproximateKvSize)*1024*1024)
 		}
 		start, err = hex.DecodeString(regions.Regions[len(regions.Regions)-1].EndKey)
 		if err != nil {
-			return 0, err
+			return nil, err
 		}
 		if bytes.Compare(start, end) >= 0 {
 			break
 		}
+	}
+	return sizes, nil
+}
+
+// EstimateKeyRangeSize sums RegionApproximateSizes over [startKey, endKey).
+func (h *Helper) EstimateKeyRangeSize(ctx context.Context, pdCli pd.Client, startKey, endKey kv.Key) (int64, error) {
+	sizes, err := h.RegionApproximateSizes(ctx, pdCli, startKey, endKey)
+	if err != nil {
+		return 0, err
+	}
+	var totalSize int64
+	for _, s := range sizes {
+		totalSize += s
 	}
 	return totalSize, nil
 }

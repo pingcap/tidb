@@ -42,8 +42,7 @@ const (
 	// within-chunk file-cut size) so each chunk leaves at most one partial tail
 	// file: fewer, larger chunks mean fewer partial files.
 	chunkSize = 10 * 1024 * 1024 * 1024
-	// chunksPerWorker is how many chunks a subtask holds per worker slot, so a
-	// subtask's worker pool has spare chunks to steal and stragglers even out.
+	// chunksPerWorker is how many chunks a subtask holds per worker slot.
 	chunksPerWorker = 2
 	// maxChunksPerSubtask is a hard ceiling on the chunk count per subtask (the
 	// usual bound is the byte size in packSubtasks); it only bites for a schema of
@@ -79,17 +78,73 @@ func splitTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx 
 			return nil, err
 		}
 		var tableChunks []Chunk
-		tableChunks, ordinal = buildChunks(tableIdx, pid, boundaries, meta.PhysicalSizes[pid], ordinal)
+		if sizes, ok := regionSizes(ctx, store, start, end); ok && len(sizes) == len(boundaries)-1 {
+			tableChunks, ordinal = chunksBySize(tableIdx, pid, boundaries, sizes, ordinal)
+		} else {
+			tableChunks, ordinal = chunksByCount(tableIdx, pid, boundaries, meta.PhysicalSizes[pid], ordinal)
+		}
 		chunks = append(chunks, tableChunks...)
 	}
 	return chunks, nil
 }
 
-// buildChunks groups one physical table's boundaries into key-ordered chunks, one
-// chunk per ~chunkSize of data (never more than the region count), apportioning
-// totalSize by region count and continuing the table-local ordinal from
-// startOrdinal. It returns the chunks and the next ordinal.
-func buildChunks(tableIdx int, pid int64, boundaries []kv.Key, totalSize int64, startOrdinal int) ([]Chunk, int) {
+// regionSizes returns the per-region byte sizes over [start, end) from a fresh PD
+// estimate, retried on transient error. ok is false when PD is unavailable, so
+// the caller falls back to count-based splitting.
+func regionSizes(ctx context.Context, store kv.Storage, start, end kv.Key) ([]int64, bool) {
+	hStore, ok := store.(helper.Storage)
+	if !ok {
+		return nil, false
+	}
+	h := helper.NewHelper(hStore)
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		return nil, false
+	}
+	var sizes []int64
+	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
+	err = handle.RunWithRetry(ctx, loadRegionMaxRetry, backoffer, logutil.BgLogger(), func(context.Context) (bool, error) {
+		sizes, err = h.RegionApproximateSizes(ctx, pdCli, start, end)
+		return err != nil, err
+	})
+	if err != nil {
+		return nil, false
+	}
+	return sizes, true
+}
+
+// chunksBySize walks one physical table's regions in key order and starts a new
+// chunk once the accumulated region size reaches chunkSize, so each chunk holds
+// ~chunkSize of real data. boundaries has len(sizes)+1 entries. It continues the
+// table-local ordinal from startOrdinal and returns the chunks and next ordinal.
+func chunksBySize(tableIdx int, pid int64, boundaries []kv.Key, sizes []int64, startOrdinal int) ([]Chunk, int) {
+	var chunks []Chunk
+	ord, lo := startOrdinal, 0
+	var acc int64
+	for i, s := range sizes {
+		acc += s
+		if acc >= chunkSize || i == len(sizes)-1 {
+			chunks = append(chunks, Chunk{
+				TableIdx:   tableIdx,
+				PhysicalID: pid,
+				Start:      boundaries[lo],
+				End:        boundaries[i+1],
+				Size:       acc,
+				Ordinal:    ord,
+			})
+			ord++
+			lo = i + 1
+			acc = 0
+		}
+	}
+	return chunks, ord
+}
+
+// chunksByCount is the fallback split when per-region sizes are unavailable: it
+// divides the regions into equal-count groups (one chunk per ~chunkSize of the
+// total), apportioning totalSize by region count. It continues the table-local
+// ordinal from startOrdinal and returns the chunks and next ordinal.
+func chunksByCount(tableIdx int, pid int64, boundaries []kv.Key, totalSize int64, startOrdinal int) ([]Chunk, int) {
 	regionCnt := len(boundaries) - 1
 	chunkCnt := max(1, min(int((totalSize+chunkSize-1)/chunkSize), regionCnt))
 	sizes := mathutil.Divide2Batches(regionCnt, chunkCnt)
