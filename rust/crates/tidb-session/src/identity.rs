@@ -479,6 +479,7 @@ impl Session {
     /// that has an id but no process registry.
     pub fn set_connection_id(&mut self, connection_id: u64) {
         self.connection_id = Some(connection_id);
+        self.session_memory.set_connection_id(connection_id);
     }
 
     /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports; zero

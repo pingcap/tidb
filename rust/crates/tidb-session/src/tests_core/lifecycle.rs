@@ -40,6 +40,28 @@ fn server_spill_authority_reaches_every_statement_context() {
 }
 
 #[test]
+fn statement_contexts_keep_one_session_memory_root() {
+    let session = Session::new();
+    let first = session.statement_context(false).statement_memory();
+    let second = session.statement_context(false).statement_memory();
+
+    assert!(Arc::ptr_eq(
+        first.session_tracker(),
+        second.session_tracker()
+    ));
+    assert!(!Arc::ptr_eq(first.stmt_tracker(), second.stmt_tracker()));
+
+    let retained = first.operator_tracker(917);
+    retained.consume(128);
+    assert_eq!(
+        second.bytes_consumed(),
+        128,
+        "a retained result from the preceding statement remains under this connection's quota"
+    );
+    retained.consume(-128);
+}
+
+#[test]
 fn apply_cache_quota_reaches_query_and_dml_statement_contexts() {
     let mut session = Session::new();
     assert_eq!(

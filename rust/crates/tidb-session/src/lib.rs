@@ -333,10 +333,10 @@ impl DomainMap {
 /// tier (documented deferral).
 pub struct Session {
     catalog: SharedCatalog,
-    /// Immutable physical spill authority installed by the server that owns
-    /// this session. Standalone sessions leave it absent and use the
-    /// executor's isolated fallback.
-    spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
+    /// One connection-wide memory/disk tracker pair. Every statement gets a
+    /// fresh child below these roots, so an open cursor remains counted when
+    /// the client starts its next command.
+    session_memory: tidb_executor::SessionMemory,
     /// The open transaction, if any.
     txn: Option<Transaction>,
     /// The session's system and user variables.
@@ -500,7 +500,11 @@ impl Default for Session {
     fn default() -> Self {
         Session {
             catalog: SharedCatalog::default(),
-            spill_storage: None,
+            session_memory: tidb_executor::SessionMemory::new(
+                tidb_util::memory::DEF_MEM_QUOTA_QUERY,
+                tidb_executor::OomAction::Cancel,
+                0,
+            ),
             txn: None,
             vars: SessionVars::new(),
             warnings: Vec::new(),
@@ -716,7 +720,7 @@ impl Session {
     /// Installs the server-owned spill policy for every statement created by
     /// this session.
     pub fn set_spill_storage(&mut self, storage: Arc<tidb_util::disk::SpillStorage>) {
-        self.spill_storage = Some(storage);
+        self.session_memory.set_spill_storage(storage);
     }
 
     /// The shared catalog handle, for opening a peer session over the same

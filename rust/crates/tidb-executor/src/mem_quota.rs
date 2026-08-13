@@ -61,7 +61,7 @@
 //! runs to completion here where TiDB cancels it.
 
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use tidb_datatype::{estimated_mem_usage, Datum};
 use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
@@ -231,6 +231,11 @@ fn refresh_global_disk_attachment(
 pub struct SessionMemory {
     session: Arc<Tracker>,
     disk_session: Arc<Tracker>,
+    config: Arc<Mutex<SessionMemoryConfig>>,
+}
+
+#[derive(Clone)]
+struct SessionMemoryConfig {
     spill_storage: Option<Arc<SpillStorage>>,
     tmp_storage_on_oom: bool,
     oom_action: OomAction,
@@ -274,35 +279,78 @@ impl SessionMemory {
         Self {
             session,
             disk_session,
-            spill_storage: None,
-            tmp_storage_on_oom: true,
-            oom_action,
+            config: Arc::new(Mutex::new(SessionMemoryConfig {
+                spill_storage: None,
+                tmp_storage_on_oom: true,
+                oom_action,
+            })),
         }
     }
 
     /// Sets `@@tidb_enable_tmp_storage_on_oom` for subsequently created
     /// statements.
     #[must_use]
-    pub fn with_tmp_storage_on_oom(mut self, enabled: bool) -> Self {
-        self.tmp_storage_on_oom = enabled;
-        refresh_global_disk_attachment(
-            &self.disk_session,
-            self.tmp_storage_on_oom,
-            self.spill_storage.as_ref(),
-        );
+    pub fn with_tmp_storage_on_oom(self, enabled: bool) -> Self {
+        self.set_tmp_storage_on_oom(enabled);
         self
     }
 
     /// Installs the process spill authority on the persistent disk root.
     #[must_use]
-    pub fn with_spill_storage(mut self, storage: Arc<SpillStorage>) -> Self {
-        self.spill_storage = Some(storage);
-        refresh_global_disk_attachment(
-            &self.disk_session,
-            self.tmp_storage_on_oom,
-            self.spill_storage.as_ref(),
-        );
+    pub fn with_spill_storage(self, storage: Arc<SpillStorage>) -> Self {
+        self.set_spill_storage(storage);
         self
+    }
+
+    /// Reconfigures the policy read for the next statement while retaining
+    /// this connection's session roots and any cursor bytes below them.
+    ///
+    /// Go mutates `SessionVars.MemTracker` in `ResetContextOfStmt`; replacing
+    /// the root here would strand a cursor opened by the preceding statement
+    /// outside the current connection's accounting tree.
+    pub fn configure(&self, quota: i64, oom_action: OomAction, tmp_storage_on_oom: bool) {
+        self.session.set_bytes_limit(quota);
+        let mut config = self.config.lock().unwrap();
+        config.oom_action = oom_action;
+        let refresh_disk = config.tmp_storage_on_oom != tmp_storage_on_oom;
+        config.tmp_storage_on_oom = tmp_storage_on_oom;
+        let storage = config.spill_storage.as_ref().map(Arc::clone);
+        drop(config);
+        if refresh_disk {
+            refresh_global_disk_attachment(
+                &self.disk_session,
+                tmp_storage_on_oom,
+                storage.as_ref(),
+            );
+        }
+    }
+
+    /// Gives the persistent roots the connection identity the front end just
+    /// assigned. Existing children are statement-scoped and are never moved
+    /// between connection ids.
+    pub fn set_connection_id(&self, connection_id: u64) {
+        self.session.session_id.store(connection_id, SeqCst);
+        self.disk_session.session_id.store(connection_id, SeqCst);
+    }
+
+    /// Installs the server's immutable spill authority without replacing the
+    /// session roots that already own open cursor accounting.
+    pub fn set_spill_storage(&self, storage: Arc<SpillStorage>) {
+        let mut config = self.config.lock().unwrap();
+        config.spill_storage = Some(storage);
+        let tmp_storage_on_oom = config.tmp_storage_on_oom;
+        let storage = config.spill_storage.as_ref().map(Arc::clone);
+        drop(config);
+        refresh_global_disk_attachment(&self.disk_session, tmp_storage_on_oom, storage.as_ref());
+    }
+
+    /// Updates only the future-statement spill decision.
+    pub fn set_tmp_storage_on_oom(&self, enabled: bool) {
+        let mut config = self.config.lock().unwrap();
+        config.tmp_storage_on_oom = enabled;
+        let storage = config.spill_storage.as_ref().map(Arc::clone);
+        drop(config);
+        refresh_global_disk_attachment(&self.disk_session, enabled, storage.as_ref());
     }
 
     /// Starts one statement with fresh OOM action and kill state while
@@ -310,7 +358,8 @@ impl SessionMemory {
     #[must_use]
     pub fn statement(&self) -> StatementMemory {
         let connection_id = self.session.session_id.load(SeqCst);
-        let killer = install_oom_action(&self.session, self.oom_action, connection_id);
+        let config = self.config.lock().unwrap().clone();
+        let killer = install_oom_action(&self.session, config.oom_action, connection_id);
 
         let stmt = Tracker::new(LABEL_FOR_SQL_TEXT, -1);
         stmt.session_id.store(connection_id, SeqCst);
@@ -328,8 +377,8 @@ impl SessionMemory {
             }),
             session: Arc::clone(&self.session),
             disk_session: Arc::clone(&self.disk_session),
-            spill_storage: self.spill_storage.as_ref().map(Arc::clone),
-            tmp_storage_on_oom: self.tmp_storage_on_oom,
+            spill_storage: config.spill_storage,
+            tmp_storage_on_oom: config.tmp_storage_on_oom,
             killer,
         }
     }

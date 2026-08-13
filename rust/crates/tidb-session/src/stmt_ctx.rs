@@ -23,7 +23,6 @@
 
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use crate::{DriverError, Session, StatementKind, StmtOutput};
 
@@ -387,6 +386,8 @@ impl Session {
                 .get_global("tidb_mem_oom_action")
                 .unwrap_or_default(),
         );
+        self.session_memory
+            .configure(mem_quota, oom_action, tmp_storage_on_oom);
         // The SAME three bits on both branches: a query reads them for
         // `CAST(... AS DATE/DATETIME)`, a DML statement reads them for the
         // column write. They used to be attached only below, which left every
@@ -417,8 +418,7 @@ impl Session {
                 .with_global_sysvars(password_validation_globals.clone())
                 .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
                 .with_connection_id(self.connection_id)
-                .with_mem_quota(mem_quota, oom_action)
-                .with_tmp_storage_on_oom(tmp_storage_on_oom)
+                .with_statement_memory(self.session_memory.statement())
                 .with_rand_session(Rc::clone(&self.rand))
                 .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
                 .with_retry_auto_ids(Rc::clone(&self.retry_auto_ids))
@@ -433,7 +433,7 @@ impl Session {
                 .with_sql_mode(scanner_sql_mode_of(&mode))
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_clock(clock, zone);
-            return self.attach_spill_storage(ctx);
+            return ctx;
         }
         let (increment, offset) = self.auto_increment_step();
         let ctx = tidb_executor::StmtContext::for_dml(
@@ -448,8 +448,7 @@ impl Session {
         .with_global_sysvars(password_validation_globals)
         .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
         .with_connection_id(self.connection_id)
-        .with_mem_quota(mem_quota, oom_action)
-        .with_tmp_storage_on_oom(tmp_storage_on_oom)
+        .with_statement_memory(self.session_memory.statement())
         .with_rand_session(Rc::clone(&self.rand))
         .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
         .with_retry_auto_ids(Rc::clone(&self.retry_auto_ids))
@@ -475,14 +474,7 @@ impl Session {
         .with_join_reorder_through_sel(join_reorder_through_sel)
         .with_outer_join_reorder(outer_join_reorder)
         .with_static_partition_prune(static_partition_prune);
-        self.attach_spill_storage(ctx)
-    }
-
-    fn attach_spill_storage(&self, ctx: tidb_executor::StmtContext) -> tidb_executor::StmtContext {
-        match &self.spill_storage {
-            Some(storage) => ctx.with_spill_storage(Arc::clone(storage)),
-            None => ctx,
-        }
+        ctx
     }
 
     /// Go `SessionVars.ForeignKeyChecks`, read off `@@foreign_key_checks`.

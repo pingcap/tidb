@@ -637,6 +637,16 @@ impl StmtContext {
         self
     }
 
+    /// Attaches the persistent session roots and one fresh statement child
+    /// supplied by the session lifecycle. This is the source-shaped path for
+    /// production sessions; [`Self::with_mem_quota`] remains the standalone
+    /// constructor used by focused executor tests.
+    #[must_use]
+    pub fn with_statement_memory(mut self, memory: StatementMemory) -> Self {
+        self.memory = memory;
+        self
+    }
+
     /// Attaches `@@tidb_enable_tmp_storage_on_oom` (Go
     /// `vardef.EnableTmpStorageOnOOM`, default ON), which decides whether an
     /// operator that exceeds the quota spills to disk or fails with 8175.
