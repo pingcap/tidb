@@ -10,6 +10,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/dxf/export",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/dxf/framework/handle",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/scheduler",
         "//pkg/dxf/framework/storage",
@@ -18,6 +19,7 @@ go_library(
         "//pkg/store/copr",
         "//pkg/store/helper",
         "//pkg/tablecodec",
+        "//pkg/util/backoff",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
         "@com_github_pingcap_errors//:errors",

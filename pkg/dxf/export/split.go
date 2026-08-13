@@ -19,20 +19,26 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
 const (
-	loadRegionMaxRetry = 8
-	defaultRegionSize  = 96 * 1024 * 1024
+	loadRegionMaxRetry    = 8
+	scanRegionBackoffBase = 200 * time.Millisecond
+	scanRegionBackoffMax  = 2 * time.Second
+	defaultRegionSize     = 96 * 1024 * 1024
 	// chunkSize is the work granularity, deliberately larger than FileSize (the
 	// within-chunk file-cut size), so fewer, larger chunks mean fewer partial
 	// tail files.
@@ -197,28 +203,25 @@ func physicalTableRange(tblInfo *model.TableInfo, pid int64) (start, end kv.Key)
 }
 
 // loadRegionBoundaries returns the sorted region boundaries covering [start, end),
-// with result[0] == start and result[len-1] == end, retrying while the regions
-// are not yet continuous.
+// with result[0] == start and result[len-1] == end, retrying with backoff while
+// the regions are not yet continuous (mirrors add-index).
 func loadRegionBoundaries(ctx context.Context, store kv.Storage, start, end kv.Key) ([]kv.Key, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
 		return nil, errors.New("storage does not support region cache")
 	}
-	var lastErr error
-	for range loadRegionMaxRetry {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
+	var boundaries []kv.Key
+	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
+	err := handle.RunWithRetry(ctx, loadRegionMaxRetry, backoffer, logutil.BgLogger(), func(context.Context) (bool, error) {
 		regions, err := copr.LoadSortedContinuousRegions(
 			tikv.NewBackofferWithVars(ctx, 20000, nil), hStore.GetRegionCache(), start, end)
 		if errors.ErrorEqual(err, copr.ErrRegionsNotContinuous) {
-			lastErr = err
-			continue
+			return true, err
 		}
 		if err != nil {
-			return nil, err
+			return false, err
 		}
-		boundaries := make([]kv.Key, 0, len(regions)+1)
+		boundaries = make([]kv.Key, 0, len(regions)+1)
 		boundaries = append(boundaries, start)
 		for _, r := range regions[:len(regions)-1] {
 			k := kv.Key(r.EndKey())
@@ -227,9 +230,9 @@ func loadRegionBoundaries(ctx context.Context, store kv.Storage, start, end kv.K
 			}
 		}
 		boundaries = append(boundaries, end)
-		return boundaries, nil
-	}
-	return nil, lastErr
+		return false, nil
+	})
+	return boundaries, err
 }
 
 // groupBoundaries splits the boundary list into at most groupCnt contiguous
