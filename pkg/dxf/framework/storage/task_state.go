@@ -17,6 +17,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -25,6 +26,16 @@ import (
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
+
+// TaskCancelMessage identifies user cancellation because cancelled tasks finish in
+// TaskStateReverted rather than a distinct cancelled terminal state.
+const TaskCancelMessage = "cancelled by user"
+
+// IsCancelledErr reports whether err's message contains TaskCancelMessage.
+// The substring match keeps wrapped or annotated cancellation errors recognizable.
+func IsCancelledErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), TaskCancelMessage)
+}
 
 // CancelTask cancels task.
 func (mgr *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
@@ -90,6 +101,38 @@ func (mgr *TaskManager) transitTaskStateOnErr(ctx context.Context, taskID int64,
 		targetState, serializeErr(taskErr), taskID, currState,
 	)
 	return err
+}
+
+// PauseTaskOnError updates task state to pausing with error and converts failed subtasks to paused.
+func (mgr *TaskManager) PauseTaskOnError(ctx context.Context, taskID int64, taskState proto.TaskState, step proto.Step, taskErr error) error {
+	if err := injectfailpoint.DXFRandomErrorWithOnePercent(); err != nil {
+		return err
+	}
+	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			update mysql.tidb_global_task
+			set state = %?,
+				error = %?,
+				state_update_time = CURRENT_TIMESTAMP()
+			where id = %? and state = %?`,
+			proto.TaskStatePausing, serializeErr(taskErr), taskID, taskState,
+		)
+		if err != nil {
+			return err
+		}
+		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
+			return ErrTaskChanged
+		}
+		_, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(), `
+			update mysql.tidb_background_subtask
+			set state = %?,
+				state_update_time = unix_timestamp(),
+				end_time = null
+			where task_key = %? and step = %? and state = %?`,
+			proto.SubtaskStatePaused, TaskIDToKey(taskID), step, proto.SubtaskStateFailed,
+		)
+		return err
+	})
 }
 
 // AwaitingResolveTask implements the scheduler.TaskManager interface.
@@ -166,6 +209,7 @@ func (mgr *TaskManager) ResumeTask(ctx context.Context, taskKey string) (bool, e
 		_, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
 			`update mysql.tidb_global_task
 		     set state = %?,
+			     error = null,
 			     state_update_time = CURRENT_TIMESTAMP()
 		     where task_key = %? and state = %?`,
 			proto.TaskStateResuming, taskKey, proto.TaskStatePaused,
@@ -269,7 +313,7 @@ func (mgr *TaskManager) ModifiedTask(ctx context.Context, task *proto.Task) erro
 			update mysql.tidb_background_subtask
 			set concurrency = %?, state_update_time = unix_timestamp()
 			where task_key = %? and state in (%?, %?, %?)`,
-			task.RequiredSlots, task.ID,
+			task.RequiredSlots, TaskIDToKey(task.ID),
 			proto.SubtaskStatePending, proto.SubtaskStateRunning, proto.SubtaskStatePaused)
 		return err
 	})

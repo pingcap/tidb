@@ -1555,7 +1555,7 @@ func makeStore(t *testing.T, keyspaceMeta *keyspacepb.KeyspaceMeta, isHasPrefix 
 	t.Cleanup(func() {
 		ddl.CloseOwnerManager(mockStore)
 	})
-	dom, err := domap.getWithEtcdClient(mockStore, etcdClient, nil)
+	dom, err := domap.getWithEtcdClient(mockStore, etcdClient, nil, domainCreateOptions{})
 	require.NoError(t, err)
 	defer dom.Close()
 
@@ -1595,6 +1595,10 @@ type mockEtcdBackend struct {
 }
 
 func (mebd *mockEtcdBackend) EtcdAddrs() ([]string, error) {
+	return mebd.pdAddrs, nil
+}
+
+func (mebd *mockEtcdBackend) GetPDAddrs() ([]string, error) {
 	return mebd.pdAddrs, nil
 }
 

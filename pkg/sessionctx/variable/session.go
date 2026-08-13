@@ -1499,6 +1499,9 @@ type SessionVars struct {
 	// UseHashJoinV2 indicates whether to use hash join v2.
 	UseHashJoinV2 bool
 
+	// EnableFullOuterJoin indicates whether to enable full outer join.
+	EnableFullOuterJoin bool
+
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
 
@@ -1705,8 +1708,6 @@ type SessionVars struct {
 
 	// AnalyzePartitionConcurrency indicates concurrency for partitions in Analyze
 	AnalyzePartitionConcurrency int
-	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
-	AnalyzePartitionMergeConcurrency int
 
 	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
 	EnableAsyncMergeGlobalStats bool
@@ -1761,6 +1762,10 @@ type SessionVars struct {
 	// NOTE: all statement relate operation should use StmtCtx.ResourceGroupName instead.
 	// NOTE: please don't change it directly. Use `SetResourceGroupName`, because it'll need to inc/dec the metrics
 	ResourceGroupName string
+
+	// PagingSizeBytes is the byte budget per page.
+	// 0 means disabled.
+	PagingSizeBytes int
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
 	// is enabled.
@@ -2459,6 +2464,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		Enable1PC:                        vardef.DefTiDBEnable1PC,
 		GuaranteeLinearizability:         vardef.DefTiDBGuaranteeLinearizability,
 		AnalyzeVersion:                   vardef.DefTiDBAnalyzeVersion,
+		EnableFullOuterJoin:              vardef.DefTiDBEnableFullOuterJoin,
 		EnableIndexMergeJoin:             vardef.DefTiDBEnableIndexMergeJoin,
 		AllowFallbackToTiKV:              make(map[kv.StoreType]struct{}),
 		CTEMaxRecursionDepth:             vardef.DefCTEMaxRecursionDepth,
@@ -2482,6 +2488,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:        vardef.DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:     tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:                resourcegroup.DefaultResourceGroupName,
+		PagingSizeBytes:                  vardef.DefPagingSizeBytes,
 		DefaultCollationForUTF8MB4:       mysql.DefaultCollationName,
 		GroupConcatMaxLen:                vardef.DefGroupConcatMaxLen,
 		EnableRedactLog:                  vardef.DefTiDBRedactLog,

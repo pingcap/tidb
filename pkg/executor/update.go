@@ -393,7 +393,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
 	fields := exec.RetTypes(e.Children(0))
 	colsInfo := physicalop.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
 	globalRowIdx := 0
-	chk := exec.TryNewCacheChunk(e.Children(0))
+	chk := newDMLChildChunk(e, fields, e.Children(0).InitCap())
 	if !e.allAssignmentsAreConstant {
 		e.evalBuffer = chunk.MutRowFromTypes(fields)
 	}

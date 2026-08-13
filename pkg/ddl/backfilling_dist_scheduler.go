@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"math"
 	"sort"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	diststorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
@@ -47,7 +49,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -200,7 +204,17 @@ func getUserTableFromTaskStore(
 		return nil, err
 	}
 	// we don't touch table data during add-index, a fake Allocators is enough.
-	tbl, err := table.TableFromMeta(autoid.NewAllocators(tblInfo.SepAutoInc()), tblInfo)
+	defaultUseNewCollate := collate.NewCollationEnabled()
+	failpoint.Inject("overrideDefaultUseNewCollateForBackfillStep", func(val failpoint.Value) {
+		defaultUseNewCollate = val.(bool)
+	})
+	useNewCollate := job.ReorgMeta.GetUseNewCollateOrDefault(defaultUseNewCollate)
+	failpoint.InjectCall("afterResolveUserTableNewCollateForBackfillStep", job, defaultUseNewCollate, useNewCollate)
+	tbl, err := tables.TableFromMetaWithCollate(
+		useNewCollate,
+		autoid.NewAllocators(tblInfo.SepAutoInc()),
+		tblInfo,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -249,8 +263,8 @@ func (*LitBackfillScheduler) GetEligibleInstances(_ context.Context, _ *proto.Ta
 }
 
 // IsRetryableErr implements scheduler.Extension interface.
-func (*LitBackfillScheduler) IsRetryableErr(error) bool {
-	return true
+func (*LitBackfillScheduler) IsRetryableErr(err error) bool {
+	return !goerrors.Is(err, errdef.ErrTooManyDataFiles)
 }
 
 // ModifyMeta implements scheduler.Extension interface.
@@ -340,7 +354,7 @@ func generatePlanForPhysicalTable(
 		return nil, errors.Trace(err)
 	}
 
-	subTaskMetas := make([][]byte, 0, 4)
+	var subTaskMetas [][]byte
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err = handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := store.(helper.Storage).GetRegionCache()
@@ -352,7 +366,8 @@ func generatePlanForPhysicalTable(
 			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
 		})
 
-		// Check if regions are continuous.
+		// LoadRegionsInKeyRange can combine multiple PD scans. A concurrent region
+		// split or merge can make those scans discontinuous, so retry the full scan.
 		shouldRetry := false
 		cur := recordRegionMetas[0]
 		for _, m := range recordRegionMetas[1:] {
@@ -362,11 +377,15 @@ func generatePlanForPhysicalTable(
 			}
 			cur = m
 		}
+		failpoint.Inject("mockPhysicalTableRegionDiscontinuity", func() {
+			shouldRetry = true
+		})
 
 		if shouldRetry {
-			return true, nil
+			return true, errors.New("regions are not continuous")
 		}
 
+		attemptMetas := make([][]byte, 0, 4)
 		regionBatch := CalculateRegionBatch(len(recordRegionMetas), nodeCnt, !useCloud)
 		logger.Info("calculate region batch",
 			zap.Int("totalRegionCnt", len(recordRegionMetas)),
@@ -379,7 +398,7 @@ func generatePlanForPhysicalTable(
 			// It should be different for each subtask to determine if there are duplicate entries.
 			importTS, err := allocNewTS(ctx, store.(kv.StorageWithPD))
 			if err != nil {
-				return true, nil
+				return true, err
 			}
 			end := min(i+regionBatch, len(recordRegionMetas))
 			batch := recordRegionMetas[i:end]
@@ -399,8 +418,9 @@ func generatePlanForPhysicalTable(
 			if err != nil {
 				return false, err
 			}
-			subTaskMetas = append(subTaskMetas, metaBytes)
+			attemptMetas = append(attemptMetas, metaBytes)
 		}
+		subTaskMetas = attemptMetas
 		return false, nil
 	})
 	if err != nil {
@@ -525,6 +545,11 @@ func generateGlobalSortIngestPlan(
 }
 
 func allocNewTS(ctx context.Context, store kv.StorageWithPD) (uint64, error) {
+	failpoint.Inject("mockAllocNewTSError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(0, errors.New("mock alloc new TS error"))
+		}
+	})
 	pdCli := store.GetPDClient()
 	p, l, err := pdCli.GetTS(ctx)
 	if err != nil {
@@ -878,7 +903,7 @@ func genMergeTempPlanForOneIndex(
 	pid := tbl.GetPhysicalID()
 	start, end := encodeTempIndexRange(pid, idxInfo.ID, idxInfo.ID)
 
-	subTaskMetas := make([][]byte, 0, 4)
+	var subTaskMetas [][]byte
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err := handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := store.(helper.Storage).GetRegionCache()
@@ -890,7 +915,8 @@ func genMergeTempPlanForOneIndex(
 			return bytes.Compare(regionMetas[i].StartKey(), regionMetas[j].StartKey()) < 0
 		})
 
-		// Check if regions are continuous.
+		// LoadRegionsInKeyRange can combine multiple PD scans. A concurrent region
+		// split or merge can make those scans discontinuous, so retry the full scan.
 		shouldRetry := false
 		cur := regionMetas[0]
 		for _, m := range regionMetas[1:] {
@@ -900,11 +926,15 @@ func genMergeTempPlanForOneIndex(
 			}
 			cur = m
 		}
+		failpoint.Inject("mockMergeTempIndexRegionDiscontinuity", func() {
+			shouldRetry = true
+		})
 
 		if shouldRetry {
-			return true, nil
+			return true, errors.New("regions are not continuous")
 		}
 
+		attemptMetas := make([][]byte, 0, 4)
 		regionBatch := calculateTempIndexRegionBatch(len(regionMetas), nodeCnt)
 		logger.Info("calculate temp index region batch",
 			zap.Int64("physicalTableID", pid),
@@ -933,8 +963,9 @@ func genMergeTempPlanForOneIndex(
 			if err != nil {
 				return false, err
 			}
-			subTaskMetas = append(subTaskMetas, metaBytes)
+			attemptMetas = append(attemptMetas, metaBytes)
 		}
+		subTaskMetas = attemptMetas
 		return false, nil
 	})
 	if err != nil {

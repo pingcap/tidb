@@ -37,6 +37,10 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 )
 
+func defaultCodecEncoder() codec.Encoder {
+	return codec.NewEncoder(collate.NewCollationEnabled())
+}
+
 // TestTableCodec  tests some functions in package tablecodec
 // TODO: add more tests.
 func TestTableCodec(t *testing.T) {
@@ -103,7 +107,7 @@ func TestRowCodec(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
-	bs, err := EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
+	bs, err := EncodeRow(defaultCodecEncoder(), sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 
@@ -158,7 +162,7 @@ func TestRowCodec(t *testing.T) {
 	}
 
 	// Make sure empty row return not nil value.
-	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{}, []int64{}, nil, nil)
+	bs, err = EncodeOldRow(defaultCodecEncoder(), sc.TimeZone(), []types.Datum{}, []int64{}, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, bs, 1)
 
@@ -172,7 +176,7 @@ func TestDecodeColumnValue(t *testing.T) {
 
 	// test timestamp
 	d := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, types.DefaultFsp))
-	bs, err := EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err := EncodeOldRow(defaultCodecEncoder(), sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -188,7 +192,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	elems := []string{"a", "b", "c", "d", "e"}
 	e, _ := types.ParseSetValue(elems, uint64(1))
 	d = types.NewMysqlSetDatum(e, "")
-	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err = EncodeOldRow(defaultCodecEncoder(), sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -203,7 +207,7 @@ func TestDecodeColumnValue(t *testing.T) {
 
 	// test bit
 	d = types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(3223600, 3))
-	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err = EncodeOldRow(defaultCodecEncoder(), sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -218,7 +222,7 @@ func TestDecodeColumnValue(t *testing.T) {
 
 	// test empty enum
 	d = types.NewMysqlEnumDatum(types.Enum{})
-	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err = EncodeOldRow(defaultCodecEncoder(), sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -278,7 +282,7 @@ func TestTimeCodec(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	bs, err := EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
+	bs, err := EncodeRow(defaultCodecEncoder(), sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 
@@ -326,7 +330,7 @@ func TestCutRow(t *testing.T) {
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeOldRow(sc.TimeZone(), row, colIDs, nil, nil)
+	bs, err := EncodeOldRow(defaultCodecEncoder(), sc.TimeZone(), row, colIDs, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 
@@ -595,6 +599,15 @@ func TestUntouchedIndexKValue(t *testing.T) {
 	untouchedIndexKey := []byte("t00000001_i000000001")
 	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
 	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue))
+	commonHandleV1CommittedValue := []byte{0, IndexVersionFlag, 1}
+	require.False(t, IsUntouchedIndexKValue(untouchedIndexKey, commonHandleV1CommittedValue))
+	commonHandleV1UntouchedValue := []byte{1, IndexVersionFlag, 1, kv.UnCommitIndexKVFlag}
+	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, commonHandleV1UntouchedValue))
+	legacyUniqueValueWithMarkerLikeBytes := EncodeHandleInUniqueIndexValue(kv.IntHandle(0x017d010000000031), false)
+	require.Len(t, legacyUniqueValueWithMarkerLikeBytes, 8)
+	require.Equal(t, IndexVersionFlag, legacyUniqueValueWithMarkerLikeBytes[1])
+	require.Equal(t, kv.UnCommitIndexKVFlag, legacyUniqueValueWithMarkerLikeBytes[len(legacyUniqueValueWithMarkerLikeBytes)-1])
+	require.False(t, IsUntouchedIndexKValue(untouchedIndexKey, legacyUniqueValueWithMarkerLikeBytes))
 	IndexKey2TempIndexKey(untouchedIndexKey)
 	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue))
 	elem := TempIndexValueElem{Handle: kv.IntHandle(1), Delete: true, Distinct: true}
@@ -875,7 +888,7 @@ func TestUniqueGlobalIndexKeyWithNullValues(t *testing.T) {
 	indexedValues := []types.Datum{types.NewIntDatum(123)}
 	handle := kv.NewPartitionHandle(partitionID, kv.IntHandle(handleID))
 
-	key, distinct, err := GenIndexKey(loc, tblInfo, idxInfo, tableID, indexedValues, handle, nil)
+	key, distinct, err := GenIndexKey(defaultCodecEncoder(), loc, tblInfo, idxInfo, tableID, indexedValues, handle, nil)
 	require.NoError(t, err)
 	require.True(t, distinct, "unique index with non-NULL value should be distinct")
 
@@ -893,7 +906,7 @@ func TestUniqueGlobalIndexKeyWithNullValues(t *testing.T) {
 	indexedValues = []types.Datum{types.NewDatum(nil)} // NULL value
 	handle = kv.NewPartitionHandle(partitionID, kv.IntHandle(handleID))
 
-	key, distinct, err = GenIndexKey(loc, tblInfo, idxInfo, tableID, indexedValues, handle, nil)
+	key, distinct, err = GenIndexKey(defaultCodecEncoder(), loc, tblInfo, idxInfo, tableID, indexedValues, handle, nil)
 	require.NoError(t, err)
 	require.False(t, distinct, "unique index with NULL value should NOT be distinct")
 
@@ -963,7 +976,7 @@ func TestUniqueGlobalIndexKeyWithNullValues(t *testing.T) {
 	indexedValues = []types.Datum{types.NewDatum(nil)} // NULL value
 	intHandle = kv.IntHandle(handleID)
 
-	key, distinct, err = GenIndexKey(loc, tblInfo, idxInfoV0, tableID, indexedValues, intHandle, nil)
+	key, distinct, err = GenIndexKey(defaultCodecEncoder(), loc, tblInfo, idxInfoV0, tableID, indexedValues, intHandle, nil)
 	require.NoError(t, err)
 	require.False(t, distinct, "unique index with NULL value should NOT be distinct")
 

@@ -108,6 +108,13 @@ func Selectivity(
 			// column stats can be ignored.
 			continue
 		}
+		if col.RetType != nil && col.RetType.EvalType() == types.ETJson {
+			// JSON columns have no column statistics (ANALYZE builds none; only
+			// multi-valued indexes over them are analyzed), so they contribute no
+			// selectivity. Skip them to avoid recording a meaningless, stats-load-
+			// timing-dependent status that surfaces as stats:partial[<json col>:...].
+			continue
+		}
 		id := col.UniqueID
 		colStats := coll.GetCol(id)
 		if colStats != nil {
@@ -997,7 +1004,14 @@ func GetSelectivityByFilter(sctx planctx.PlanContext, coll *statistics.HistColl,
 	// The buckets lower bounds are used as random samples and are regarded equally.
 	if hist != nil && histTotalCnt > 0 {
 		selected = selected[:0]
-		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, []expression.Expression{filters}, chunk.NewIterator4Chunk(hist.Bounds), selected)
+		// hist.Bounds is a stats-cache chunk that can be shared by planner sessions.
+		// VectorizedFilter reads the input chunk's existing Sel as a caller mask
+		// and also rewrites Sel while evaluating the filter. Use a shallow chunk
+		// header copy so the bound column data is reused, but the evaluation owns
+		// its Sel state; then clear that Sel to sample all histogram bounds.
+		histBounds := hist.Bounds.Prune([]int{0})
+		histBounds.SetSel(nil)
+		selected, err = expression.VectorizedFilter(sctx.GetExprCtx().GetEvalCtx(), vecEnabled, []expression.Expression{filters}, chunk.NewIterator4Chunk(histBounds), selected)
 		if err != nil {
 			return false, 0, err
 		}

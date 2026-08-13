@@ -74,6 +74,7 @@ type DistSQLContext struct {
 	EnablePaging                  bool
 	MinPagingSize                 int
 	MaxPagingSize                 int
+	PagingSizeBytes               int
 	RequestSourceType             string
 	ExplicitRequestSourceType     string
 	StoreBatchSize                int

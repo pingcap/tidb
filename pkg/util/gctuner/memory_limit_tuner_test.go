@@ -254,6 +254,9 @@ func TestIssue48741(t *testing.T) {
 }
 
 func TestSetMemoryLimit(t *testing.T) {
+	originServerMemoryLimit := memory.ServerMemoryLimit.Load()
+	defer memory.ServerMemoryLimit.Store(originServerMemoryLimit)
+
 	GlobalMemoryLimitTuner.DisableAdjustMemoryLimit()
 	memory.ServerMemoryLimit.Store(1 << 30)   // 1GB
 	GlobalMemoryLimitTuner.SetPercentage(0.8) // 1GB * 80% = 800MB
@@ -262,4 +265,11 @@ func TestSetMemoryLimit(t *testing.T) {
 	GlobalMemoryLimitTuner.EnableAdjustMemoryLimit()
 	GlobalMemoryLimitTuner.UpdateMemoryLimit()
 	require.Equal(t, int64(1<<30*80/100), debug.SetMemoryLimit(-1))
+
+	memory.SetupGlobalMemArbitratorForTest(t.TempDir())
+	defer memory.CleanupGlobalMemArbitratorForTest()
+
+	require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModePriorityName))
+	require.Equal(t, int64(1<<30*95/100), GlobalMemoryLimitTuner.calcMemoryLimit(0.95))
+	require.Equal(t, int64(1<<30), GlobalMemoryLimitTuner.calcMemoryLimit(1.1))
 }

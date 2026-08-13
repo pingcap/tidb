@@ -102,6 +102,10 @@ var ExtraCommitTSName = ast.NewCIStr("_tidb_commit_ts")
 // so a distance column will be added to table_scan. this field is used in the action.
 const VirtualColVecSearchDistanceID int64 = -2000
 
+// VirtualColFTSScoreID is the ID of the column that holds the score of a
+// TiFlash full-text search scan.
+const VirtualColFTSScoreID int64 = -2050
+
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
 
@@ -222,6 +226,14 @@ type TableInfo struct {
 	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
+
+	// EngineAttribute is the ENGINE_ATTRIBUTE for the table.
+	EngineAttribute string `json:"engine_attribute,omitempty"`
+
+	// StorageClassTier is the storage class tier of the table level.
+	StorageClassTier string `json:"storage_class_tier,omitempty"`
+	// StorageClassTransitions is the storage class transition rules of the table level.
+	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
 
 	Mode TableMode `json:"mode,omitempty"`
 }
@@ -543,6 +555,11 @@ func (t *TableInfo) ColumnIsInIndex(c *ColumnInfo) bool {
 	return false
 }
 
+// StorageClassString returns a string representation of the storage class tier and transitions.
+func (t *TableInfo) StorageClassString() string {
+	return buildStorageClassString(t.StorageClassTier, t.StorageClassTransitions)
+}
+
 // HasClusteredIndex checks whether the table has a clustered index.
 func (t *TableInfo) HasClusteredIndex() bool {
 	return t.PKIsHandle || t.IsCommonHandle
@@ -649,12 +666,6 @@ func GetIdxChangingFieldType(idxCol *IndexColumn, col *ColumnInfo) *types.FieldT
 	return &col.FieldType
 }
 
-// ColumnNeedRestoredData checks whether a single index column needs restored data.
-func ColumnNeedRestoredData(idxCol *IndexColumn, colInfos []*ColumnInfo) bool {
-	col := colInfos[idxCol.Offset]
-	return types.NeedRestoredData(GetIdxChangingFieldType(idxCol, col))
-}
-
 // TableNameInfo provides meta data describing a table name info.
 type TableNameInfo struct {
 	ID   int64     `json:"id"`
@@ -756,38 +767,6 @@ func (t TableLockState) String() string {
 		return "public"
 	default:
 		return "none"
-	}
-}
-
-// TableMode is the state for table mode, it's a table level metadata for prevent
-// table read/write during importing(import into) or BR restoring.
-// when table mode isn't TableModeNormal, DMLs or DDLs that change the table will
-// return error.
-// To modify table mode, only internal DDL operations(AlterTableMode) are permitted.
-// Now allow switching between the same table modes, and not allow convert between
-// TableModeImport and TableModeRestore
-type TableMode byte
-
-const (
-	// TableModeNormal means the table is in normal mode.
-	TableModeNormal TableMode = iota
-	// TableModeImport means the table is in import mode.
-	TableModeImport
-	// TableModeRestore means the table is in restore mode.
-	TableModeRestore
-)
-
-// String implements fmt.Stringer interface.
-func (t TableMode) String() string {
-	switch t {
-	case TableModeNormal:
-		return "Normal"
-	case TableModeImport:
-		return "Import"
-	case TableModeRestore:
-		return "Restore"
-	default:
-		return ""
 	}
 }
 
@@ -1219,18 +1198,21 @@ type PartitionState struct {
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	ID                 int64          `json:"id"`
-	Name               ast.CIStr      `json:"name"`
-	LessThan           []string       `json:"less_than"`
-	InValues           [][]string     `json:"in_values"`
-	PlacementPolicyRef *PolicyRefInfo `json:"policy_ref_info"`
-	Comment            string         `json:"comment,omitempty"`
+	ID                      int64                     `json:"id"`
+	Name                    ast.CIStr                 `json:"name"`
+	LessThan                []string                  `json:"less_than"`
+	InValues                [][]string                `json:"in_values"`
+	PlacementPolicyRef      *PolicyRefInfo            `json:"policy_ref_info"`
+	Comment                 string                    `json:"comment,omitempty"`
+	StorageClassTier        string                    `json:"storage_class_tier,omitempty"`
+	StorageClassTransitions []StorageClassTransitRule `json:"storage_class_transitions,omitempty"`
 }
 
 // Clone clones PartitionDefinition.
 func (ci *PartitionDefinition) Clone() PartitionDefinition {
 	nci := *ci
 	nci.LessThan = slices.Clone(ci.LessThan)
+	nci.StorageClassTransitions = slices.Clone(ci.StorageClassTransitions)
 	return nci
 }
 
@@ -1256,6 +1238,11 @@ func (ci *PartitionDefinition) MemoryUsage() (sum int64) {
 		}
 	}
 	return
+}
+
+// StorageClassString returns a string representation of the storage class tier and transitions.
+func (ci *PartitionDefinition) StorageClassString() string {
+	return buildStorageClassString(ci.StorageClassTier, ci.StorageClassTransitions)
 }
 
 // ConstraintInfo provides meta data describing check-expression constraint.

@@ -333,6 +333,11 @@ type Config struct {
 	// StarterParams contains Starter-only extension parameters.
 	StarterParams StarterParams `toml:"starter-params" json:"starter-params"`
 
+	// HostedEmbedding controls the TiDB Cloud hosted embedding provider.
+	HostedEmbedding HostedEmbedding `toml:"hosted-embedding" json:"hosted-embedding"`
+	// ExternalWorkload configures Starter-only external workload coordination.
+	ExternalWorkload ExternalWorkload `toml:"external-workload" json:"external-workload"`
+
 	// The following items are deprecated. We need to keep them here temporarily
 	// to support the upgrade process. They can be removed in future.
 
@@ -1063,8 +1068,37 @@ type IsolationRead struct {
 type Experimental struct {
 	// Whether enable creating expression index.
 	AllowsExpressionIndex bool `toml:"allow-expression-index" json:"allow-expression-index"`
+	// Whether SQL users can enable tidb_foreign_key_check_in_shared_lock on next-gen TiKV.
+	AllowEnableForeignKeyCheckInSharedLock bool `toml:"allow-enable-foreign-key-check-in-shared-lock" json:"allow-enable-foreign-key-check-in-shared-lock"`
 	// Whether enable charset feature.
 	EnableNewCharset bool `toml:"enable-new-charset" json:"-"`
+}
+
+// HostedEmbedding is the config for the TiDB Cloud hosted embedding provider
+// (the tidbcloud_free/ prefix in EMBED_TEXT).
+type HostedEmbedding struct {
+	// Enabled indicates whether the hosted embedding service is enabled.
+	// It is only valid for Starter deploy mode and only takes effect for NextGen kernels.
+	Enabled bool `toml:"enabled" json:"enabled,omitempty"`
+
+	// APIEndpoint is the base URL for the hosted embedding service. TiDB appends
+	// /api/v1/inference/embeddings/<billing-id> when sending a request.
+	// If it is empty, hosted embedding requests fail without preventing TiDB from starting.
+	APIEndpoint string `toml:"api-endpoint" json:"api-endpoint,omitempty"`
+
+	// APIKeyPath is the path to the Bearer API key file for accessing the hosted embedding service.
+	APIKeyPath string `toml:"api-key-path" json:"api-key-path,omitempty"`
+}
+
+func (c HostedEmbedding) configured() bool {
+	return c.Enabled || c.APIEndpoint != "" || c.APIKeyPath != ""
+}
+
+func isHostedEmbeddingDefined(metaData toml.MetaData) bool {
+	return metaData.IsDefined("hosted-embedding") ||
+		metaData.IsDefined("hosted-embedding", "enabled") ||
+		metaData.IsDefined("hosted-embedding", "api-endpoint") ||
+		metaData.IsDefined("hosted-embedding", "api-key-path")
 }
 
 // Standby is the config for standby mode.
@@ -1085,12 +1119,21 @@ type Standby struct {
 type StarterParams struct {
 	// ExportID is the export identifier supplied by standby activation.
 	ExportID string `toml:"export-id" json:"export-id,omitempty"`
+	// BootstrapFile is the path to a starter-only JSON manifest of versioned SQL.
+	// Its bootstrap blocks define the complete starter state for a cluster without
+	// a starter bootstrap version, and its upgrade entries migrate older versions.
+	// Unlike InitializeSQLFile, which runs only after the core cluster bootstrap,
+	// this manifest also initializes existing clusters and applies later upgrades.
+	BootstrapFile string `toml:"bootstrap-file" json:"bootstrap-file,omitempty"`
 	// EnableManagerNotifier indicates whether Starter graceful shutdown should notify TiDB manager.
 	// It is only used in NextGen Starter deployments.
 	EnableManagerNotifier bool `toml:"enable-manager-notifier" json:"enable-manager-notifier,omitempty"`
 	// ManagerAddr is the TiDB manager address used by the shutdown notifier.
 	// When empty and EnableManagerNotifier is true, the Starter path derives the service address from starter additional params.
 	ManagerAddr string `toml:"manager-addr" json:"manager-addr,omitempty"`
+	// EnableRGFallback enables resource group lookup fallback for resource control.
+	// It is populated from --starter-additional-params and is not file-backed config.
+	EnableRGFallback bool `toml:"-" json:"-"`
 	// MaxImportDataSize is the maximum total real source data size allowed for IMPORT INTO.
 	// Zero means unlimited.
 	MaxImportDataSize configtypes.ByteSize `toml:"max-import-data-size" json:"max-import-data-size,omitempty"`
@@ -1138,6 +1181,7 @@ var defaultConf = Config{
 	DeployMode:                   deploymode.Premium,
 	DXFResourceLimit:             DefDXFResourceLimit,
 	RUV2:                         DefaultRUV2Config(),
+	ExternalWorkload:             defaultExternalWorkload(),
 	Log: Log{
 		Level:               "info",
 		Format:              "text",
@@ -1258,6 +1302,7 @@ var defaultConf = Config{
 		Engines: []string{"tikv", "tiflash", "tidb"},
 	},
 	Experimental:               Experimental{},
+	HostedEmbedding:            HostedEmbedding{Enabled: false},
 	EnableCollectExecutionInfo: true,
 	EnableTelemetry:            false,
 	Labels:                     make(map[string]string),
@@ -1574,6 +1619,15 @@ func (c *Config) Load(confFile string) error {
 	if metaData.IsDefined("error-msg-extension") && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("error-msg-extension can only be configured when deploy-mode is starter")
 	}
+	if isHostedEmbeddingDefined(metaData) && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("hosted-embedding can only be configured for starter deploy mode")
+	}
+	if metaData.IsDefined("external-workload") && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("external-workload can only be configured when deploy-mode is starter")
+	}
+	if metaData.IsDefined("starter-params", "bootstrap-file") && c.StarterParams.BootstrapFile != "" && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("starter-params.bootstrap-file can only be configured for starter deploy mode")
+	}
 	if c.DeployMode == deploymode.Starter && !metaData.IsDefined("standby", "enable-zero-backend") {
 		c.Standby.EnableZeroBackend = true
 	}
@@ -1706,8 +1760,14 @@ func (c *Config) Valid() error {
 	if c.StarterParams.EnableManagerNotifier && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("starter-params.enable-manager-notifier can only be configured for starter deploy mode")
 	}
+	if c.StarterParams.BootstrapFile != "" && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("starter-params.bootstrap-file can only be configured for starter deploy mode")
+	}
 	if c.StarterParams.MaxImportDataSize > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("starter-params.max-import-data-size can only be configured for starter deploy mode")
+	}
+	if c.HostedEmbedding.configured() && c.DeployMode != deploymode.Starter {
+		return fmt.Errorf("hosted-embedding can only be configured for starter deploy mode")
 	}
 	if len(c.KeyspaceObservability.Fields) > 0 && c.DeployMode != deploymode.Starter {
 		return fmt.Errorf("keyspace-observability.fields can only be configured when deploy-mode is starter")
@@ -1761,6 +1821,15 @@ func (c *Config) Valid() error {
 	}
 	if err := c.TrxSummary.Valid(); err != nil {
 		return err
+	}
+	if c.DeployMode != deploymode.Starter {
+		if c.ExternalWorkload.isConfigured() {
+			return fmt.Errorf("external-workload can only be configured when deploy-mode is starter")
+		}
+	} else {
+		if err := c.ExternalWorkload.Valid(); err != nil {
+			return err
+		}
 	}
 
 	if c.Performance.TxnTotalSizeLimit > 1<<40 {
