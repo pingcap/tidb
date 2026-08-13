@@ -1330,8 +1330,8 @@ mod tests {
         assert_eq!(first_column(&rows), vec![1, 2, 3]);
         assert_eq!(
             entries.load(Ordering::Relaxed),
-            ROWS as usize,
-            "the arithmetic conjunct is residual, so the scan may not stop early"
+            1024,
+            "the residual selection asks its child for one normal Go MaxChunkSize batch"
         );
     }
 
