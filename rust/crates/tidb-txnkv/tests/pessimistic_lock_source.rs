@@ -36,7 +36,7 @@ use tidb_proto::tikvpb::tikv_server::{Tikv, TikvServer};
 use tidb_proto::tikvpb::{batch_commands_response, BatchCommandsRequest, BatchCommandsResponse};
 use tidb_proto::{
     CoprocessorRequest, CoprocessorResponse, KvrpcCommitRequest, KvrpcCommitResponse,
-    KvrpcDeadlock, KvrpcKeyError, KvrpcLockInfo, KvrpcOp, KvrpcPessimisticAction,
+    KvrpcDeadlock, KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcLockInfo, KvrpcOp, KvrpcPessimisticAction,
     KvrpcPessimisticLockKeyResult, KvrpcPessimisticLockKeyResultType, KvrpcPessimisticLockRequest,
     KvrpcPessimisticLockResponse, KvrpcPessimisticLockWakeUpMode, KvrpcPessimisticRollbackRequest,
     KvrpcPessimisticRollbackResponse, KvrpcPrewriteRequest, KvrpcPrewriteResponse,
@@ -207,6 +207,7 @@ enum LockOutcome {
 
 #[derive(Debug, Default)]
 struct Recorded {
+    gets: Vec<KvrpcGetRequest>,
     locks: Vec<KvrpcPessimisticLockRequest>,
     pessimistic_rollbacks: Vec<KvrpcPessimisticRollbackRequest>,
     prewrites: Vec<KvrpcPrewriteRequest>,
@@ -416,6 +417,18 @@ impl Tikv for ScriptedTikv {
 impl ScriptedTikv {
     fn answer(&self, cmd: RequestCmd) -> Result<ResponseCmd, tonic::Status> {
         match cmd {
+            RequestCmd::Get(body) => {
+                let request = KvrpcGetRequest::decode(body.as_slice())
+                    .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
+                self.recorded.lock().unwrap().gets.push(request);
+                Ok(ResponseCmd::Get(
+                    KvrpcGetResponse {
+                        value: b"value-at-statement-ts".to_vec(),
+                        ..KvrpcGetResponse::default()
+                    }
+                    .encode_to_vec(),
+                ))
+            }
             RequestCmd::PessimisticLock(body) => {
                 let request = KvrpcPessimisticLockRequest::decode(body.as_slice())
                     .map_err(|error| tonic::Status::invalid_argument(error.to_string()))?;
@@ -825,6 +838,33 @@ fn a_write_conflict_is_statement_scoped_and_a_newer_timestamp_retries() {
     assert_eq!(recorded.locks[0].for_update_ts, START_TS);
     assert_eq!(recorded.locks[1].for_update_ts, statement_ts);
     assert_eq!(recorded.locks[1].start_version, START_TS);
+}
+
+/// The retry's DML read is at its newer statement timestamp, rather than the
+/// transaction start timestamp that remains in the eventual Prewrite.
+#[test]
+fn a_pessimistic_retry_reads_at_the_advanced_for_update_timestamp() {
+    let (_server, recorded, mut transaction) = fixture(vec![LockOutcome::WriteConflict]);
+
+    let failure = transaction
+        .acquire_locks(
+            &[PRIMARY_KEY.to_vec()],
+            &no_presumption(),
+            LockWaitTime::AlwaysWait,
+            &call(),
+        )
+        .expect_err("the first statement timestamp is stale");
+    assert!(matches!(failure, PessimisticLockFailure::WriteConflict { .. }));
+
+    let statement_ts = transaction.advance_for_update_ts().unwrap();
+    let read = transaction.for_update_get(PRIMARY_KEY, &call()).unwrap();
+    assert_eq!(read.as_deref(), Some(b"value-at-statement-ts".as_slice()));
+
+    let recorded = recorded.lock().unwrap();
+    assert_eq!(recorded.gets.len(), 1);
+    assert_eq!(recorded.gets[0].key, PRIMARY_KEY);
+    assert_eq!(recorded.gets[0].version, statement_ts);
+    assert_ne!(recorded.gets[0].version, transaction.start_ts());
 }
 
 /// `NOWAIT` fails the statement instead of queueing behind a live owner.

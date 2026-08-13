@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Reads pinned to the transaction's exact `start_ts`: point Get and ranged
-//! Scan, including the lock resolution and GC-visibility check each one owes.
+//! Reads pinned to one transaction timestamp: point Get and ranged Scan,
+//! including the lock resolution and GC-visibility check each one owes.
 //!
 //! Go boundary: client-go's `snapshot.go` — `KVSnapshot.get` / `KVSnapshot.scan`,
 //! whose lock-retry budget and post-read `CheckVisibility` placement this
@@ -68,6 +68,24 @@ where
         key: &[u8],
         call: &UnaryCallContext,
     ) -> Result<SnapshotGetResult, OptimisticCoordinatorError> {
+        self.snapshot_get_at(key, self.start_ts, call)
+    }
+
+    /// Reads one encoded key at `read_ts` through this transaction's shared
+    /// region, lock-resolution, and RPC authority.
+    ///
+    /// A pessimistic statement advances its `for_update_ts` after a write
+    /// conflict while retaining the transaction's original start timestamp for
+    /// Prewrite. Its retry must therefore read the new statement timestamp,
+    /// not the stale transaction snapshot. This is deliberately point-only:
+    /// the configured DML path has only point rewrites, while range reads keep
+    /// their transaction-snapshot contract.
+    pub(crate) fn snapshot_get_at(
+        &mut self,
+        key: &[u8],
+        read_ts: u64,
+        call: &UnaryCallContext,
+    ) -> Result<SnapshotGetResult, OptimisticCoordinatorError> {
         if key.is_empty() {
             return Err(OptimisticCoordinatorError::SnapshotGet(
                 "encoded key is empty".to_owned(),
@@ -87,7 +105,7 @@ where
             self.resolved_locks.stamp(&mut context);
             let request = KvrpcGetRequest {
                 key: key.to_vec(),
-                version: self.start_ts,
+                version: read_ts,
                 need_commit_ts: true,
                 ..KvrpcGetRequest::default()
             };
@@ -110,7 +128,7 @@ where
                     let recovery = resolve_optimistic_locks(
                         &self.runtime,
                         &locks,
-                        self.start_ts,
+                        read_ts,
                         &context,
                         call,
                         &self.timestamps,
@@ -137,13 +155,17 @@ where
                     "TiKV key error: {key_error:?}"
                 )));
             }
-            self.check_visibility()?;
+            self.check_visibility_at(read_ts)?;
             let value = if response.response.not_found {
                 None
             } else {
                 Some(response.response.value)
             };
             let result = SnapshotGetResult {
+                // This receipt identifies the transaction which owns the
+                // coordinator, not the point-read version. A pessimistic
+                // statement may read at a newer for-update timestamp while
+                // Prewrite still belongs to this original transaction.
                 start_ts: self.start_ts,
                 value,
                 region: route.region(),

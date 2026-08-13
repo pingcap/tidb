@@ -184,15 +184,6 @@ enum OpenTransaction {
 }
 
 impl OpenTransaction {
-    /// The two-phase commit coordinator underneath, which is what serves every
-    /// snapshot read in either mode.
-    fn two_pc(&mut self) -> &mut ProductionOptimisticTransaction {
-        match self {
-            Self::Optimistic(transaction) => transaction,
-            Self::Pessimistic(transaction) => transaction.snapshot(),
-        }
-    }
-
     fn start_ts(&self) -> u64 {
         match self {
             Self::Optimistic(transaction) => transaction.start_ts(),
@@ -775,7 +766,15 @@ impl WritePlanningSnapshot for MultiStatementTransaction {
                 OptimisticMutationKind::LockOnly => unreachable!("filtered above"),
             });
         }
-        Ok(self.open.two_pc().snapshot_get(key, call)?.value)
+        let value = match &mut self.open {
+            OpenTransaction::Optimistic(transaction) => transaction.snapshot_get(key, call)?.value,
+            // A pessimistic statement's retry reads its current for-update
+            // timestamp, not the transaction's original start snapshot. The
+            // latter remains the Prewrite start version, but using it here
+            // after a lock conflict would recompute the same stale mutation.
+            OpenTransaction::Pessimistic(transaction) => transaction.for_update_get(key, call)?,
+        };
+        Ok(value)
     }
 }
 

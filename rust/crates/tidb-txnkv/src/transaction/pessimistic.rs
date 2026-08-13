@@ -374,6 +374,24 @@ where
         self.for_update_ts
     }
 
+    /// Reads a point at the current statement timestamp.
+    ///
+    /// Go retries pessimistic DML after a lock conflict with a newer
+    /// `forUpdateTS`; the retry must see the version that invalidated the first
+    /// attempt even though the transaction's `start_ts` remains unchanged for
+    /// commit. Reusing the coordinator's point-read path retains its region,
+    /// lock-resolution, and GC checks while changing only the MVCC version.
+    pub fn for_update_get(
+        &mut self,
+        key: &[u8],
+        call: &UnaryCallContext,
+    ) -> Result<Option<Vec<u8>>, OptimisticCoordinatorError> {
+        Ok(self
+            .two_pc
+            .snapshot_get_at(key, self.for_update_ts, call)?
+            .value)
+    }
+
     /// Primary key, present once any key has been locked.
     #[must_use]
     pub fn primary_key(&self) -> Option<&[u8]> {

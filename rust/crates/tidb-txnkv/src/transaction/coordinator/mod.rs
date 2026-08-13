@@ -367,16 +367,22 @@ where
         self.protocol = protocol;
     }
 
-    /// Rejects a completed read whose `start_ts` GC has already passed.
+    /// Rejects a completed read whose timestamp GC has already passed.
     ///
     /// Called only after TiKV has answered, mirroring client-go's placement of
     /// `CheckVisibility` at the end of `snapshot.get` and `snapshot.scan`. A
     /// pre-read check would be worthless: GC can advance while the RPC is in
     /// flight, so only a post-read check covers the data actually returned.
-    fn check_visibility(&self) -> Result<(), OptimisticCoordinatorError> {
+    fn check_visibility_at(&self, read_ts: u64) -> Result<(), OptimisticCoordinatorError> {
         self.gc_state
-            .check_visibility(self.start_ts)
+            .check_visibility(read_ts)
             .map_err(OptimisticCoordinatorError::Visibility)
+    }
+
+    /// Rejects a completed read whose transaction snapshot GC has already
+    /// passed.
+    fn check_visibility(&self) -> Result<(), OptimisticCoordinatorError> {
+        self.check_visibility_at(self.start_ts)
     }
 
     /// Binds the pessimistic locks a caller already acquired at `start_ts`.
