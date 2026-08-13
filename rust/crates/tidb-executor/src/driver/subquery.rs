@@ -70,8 +70,8 @@ pub(crate) fn subquery_result_type(
             (path.clone(), datum)
         })
         .collect();
-    let typed = bind_subquery_columns(&correlated.select, &probes).ok()?;
-    run_select_stmt(&typed, catalog, current_db, ctx)
+    let typed = bind_subquery_columns_query(&correlated.query, &probes).ok()?;
+    run_query_stmt(&typed, catalog, current_db, ctx)
         .ok()
         .and_then(|(columns, _)| columns.first().map(|(_, ft)| ft.clone()))
 }
@@ -118,7 +118,7 @@ pub(crate) enum SubqueryKind {
 /// A correlated subquery found in an outer expression: the subquery itself and
 /// what its result is asked for.
 pub(crate) struct CorrelatedSubquery {
-    pub(crate) select: tidb_ast::SelectStmt,
+    pub(crate) query: QueryStmt,
     pub(crate) kind: SubqueryKind,
     pub(crate) columns: Vec<Vec<String>>,
 }
@@ -432,7 +432,7 @@ pub(crate) fn correlated_column_indices(
         .collect()
 }
 
-/// Binds every correlated column in `select` and runs it for one outer row.
+/// Binds every correlated column in a query and runs it for one outer row.
 pub(crate) fn run_correlated_subquery(
     correlated: &CorrelatedSubquery,
     outer_values: &[Datum],
@@ -451,8 +451,8 @@ pub(crate) fn run_correlated_subquery(
         bindings.push((path.clone(), value));
     }
 
-    let bound = bind_subquery_columns(&correlated.select, &bindings)?;
-    let (_, rows) = run_select_stmt(&bound, catalog, current_db, ctx)?;
+    let bound = bind_subquery_columns_query(&correlated.query, &bindings)?;
+    let (_, rows) = run_query_stmt(&bound, catalog, current_db, ctx)?;
     match &correlated.kind {
         // EXISTS folds to 1/0 per outer row.
         SubqueryKind::Exists { not } => Ok(Datum::Int(i64::from(!rows.is_empty() != *not))),
@@ -596,13 +596,8 @@ pub(crate) fn extract_correlated_subquery(
         | Expr::Exists {
             subquery: query, ..
         } => {
-            let tidb_ast::QueryStmt::Select(select) = &**query else {
-                return Err(DriverError::unsupported(
-                    "set-operation subqueries are not supported yet",
-                ));
-            };
             let mut columns = Vec::new();
-            collect_correlated_columns(select, outer, catalog, current_db, &mut columns, ctx);
+            collect_correlated_columns_query(query, outer, catalog, current_db, &mut columns, ctx);
             if columns.is_empty() {
                 // Uncorrelated: the folding pass handles it.
                 return Ok(expr.clone());
@@ -617,7 +612,7 @@ pub(crate) fn extract_correlated_subquery(
                 _ => SubqueryKind::Scalar,
             };
             *found = Some(CorrelatedSubquery {
-                select: (**select).clone(),
+                query: (**query).clone(),
                 kind,
                 columns,
             });
@@ -631,9 +626,15 @@ pub(crate) fn extract_correlated_subquery(
             subquery,
             not,
         } => {
-            let select = subquery_select(subquery)?;
             let mut columns = Vec::new();
-            collect_correlated_columns(select, outer, catalog, current_db, &mut columns, ctx);
+            collect_correlated_columns_query(
+                subquery,
+                outer,
+                catalog,
+                current_db,
+                &mut columns,
+                ctx,
+            );
             if columns.is_empty() {
                 return Ok(expr.clone());
             }
@@ -643,7 +644,7 @@ pub(crate) fn extract_correlated_subquery(
                 ));
             }
             *found = Some(CorrelatedSubquery {
-                select: select.clone(),
+                query: (**subquery).clone(),
                 kind: SubqueryKind::In {
                     lhs: (**lhs).clone(),
                     not: *not,
@@ -658,9 +659,15 @@ pub(crate) fn extract_correlated_subquery(
             all,
             subquery,
         } => {
-            let select = subquery_select(subquery)?;
             let mut columns = Vec::new();
-            collect_correlated_columns(select, outer, catalog, current_db, &mut columns, ctx);
+            collect_correlated_columns_query(
+                subquery,
+                outer,
+                catalog,
+                current_db,
+                &mut columns,
+                ctx,
+            );
             if columns.is_empty() {
                 return Ok(expr.clone());
             }
@@ -670,7 +677,7 @@ pub(crate) fn extract_correlated_subquery(
                 ));
             }
             *found = Some(CorrelatedSubquery {
-                select: select.clone(),
+                query: (**subquery).clone(),
                 kind: SubqueryKind::Compare {
                     op: *op,
                     lhs: (**left).clone(),
@@ -707,16 +714,6 @@ pub(crate) fn extract_correlated_subquery(
         ),
         other => other.clone(),
     })
-}
-
-/// The `SELECT` a subquery carries, rejecting the set-operation body.
-fn subquery_select(query: &tidb_ast::QueryStmt) -> Result<&tidb_ast::SelectStmt, DriverError> {
-    match query {
-        tidb_ast::QueryStmt::Select(select) => Ok(select),
-        _ => Err(DriverError::unsupported(
-            "set-operation subqueries are not supported yet",
-        )),
-    }
 }
 
 /// The scope a subquery inside `select` sees as its OUTER scope: `select`'s

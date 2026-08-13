@@ -761,3 +761,30 @@ fn uncorrelated_set_operation_subqueries_fold_like_top_level_queries() {
         [["1"]]
     );
 }
+
+/// Correlation is a property of a query expression, not only a lone SELECT.
+/// Each set-operation term must be rebound for the current outer row before
+/// the existing set-operation executor folds the terms.
+#[test]
+fn correlated_set_operation_subqueries_run_per_outer_row() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE outer_rows (a INT)").unwrap();
+    session
+        .run("INSERT INTO outer_rows VALUES (1),(2)")
+        .unwrap();
+
+    assert_eq!(
+        row_text(session.run(
+            "SELECT a, (SELECT outer_rows.a UNION ALL SELECT outer_rows.a + 10 \
+             ORDER BY 1 LIMIT 1) AS v FROM outer_rows ORDER BY a"
+        )),
+        [["1", "1"], ["2", "2"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT a FROM outer_rows WHERE a IN \
+             (SELECT outer_rows.a UNION SELECT outer_rows.a + 10) ORDER BY a"
+        )),
+        [["1"], ["2"]]
+    );
+}
