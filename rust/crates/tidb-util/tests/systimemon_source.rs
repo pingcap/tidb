@@ -18,8 +18,24 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::{Duration, SystemTime};
 
-use tidb_log::{init_test_logger, replace_globals, Config, MemorySink};
+use tidb_util::logutil::{init_logger, new_log_config, FileLogConfig, DEFAULT_LOG_FORMAT};
 use tidb_util::systimemon::{SystemTimeMonitor, MONITOR_INTERVAL};
+
+struct RestoreStdoutLogger;
+
+impl Drop for RestoreStdoutLogger {
+    fn drop(&mut self) {
+        let config = new_log_config(
+            "info",
+            DEFAULT_LOG_FORMAT,
+            "",
+            "",
+            FileLogConfig::default(),
+            false,
+        );
+        let _ = init_logger(&config);
+    }
+}
 
 #[test]
 fn system_time_monitor_reports_the_source_backward_jump() {
@@ -49,14 +65,22 @@ fn system_time_monitor_reports_the_source_backward_jump() {
 
 #[test]
 fn system_time_monitor_logs_the_source_lifecycle_messages() {
-    let sink = Arc::new(MemorySink::default());
-    let config = Config {
-        level: "info".to_owned(),
-        disable_timestamp: true,
-        ..Config::default()
-    };
-    let (logger, _) = init_test_logger(Arc::clone(&sink), &config).expect("test logger");
-    let restore = replace_globals(logger);
+    let directory = tempfile::tempdir().expect("log directory");
+    let filename = directory.path().join("systimemon.log");
+    let config = new_log_config(
+        "info",
+        DEFAULT_LOG_FORMAT,
+        "",
+        "",
+        FileLogConfig {
+            filename: filename.to_string_lossy().into_owned(),
+            max_size: 4096,
+            ..FileLogConfig::default()
+        },
+        true,
+    );
+    init_logger(&config).expect("install the logger used by systimemon");
+    let _restore = RestoreStdoutLogger;
 
     let calls = Arc::new(AtomicUsize::new(0));
     let now_calls = Arc::clone(&calls);
@@ -78,9 +102,8 @@ fn system_time_monitor_logs_the_source_lifecycle_messages() {
         .recv_timeout(Duration::from_secs(1))
         .expect("backward jump must invoke the handler");
     drop(monitor);
-    restore.restore();
 
-    let output = sink.string();
+    let output = std::fs::read_to_string(filename).expect("read system-time monitor logs");
     assert!(output.contains("start system time monitor"), "{output}");
     assert!(output.contains("system time jump backward"), "{output}");
     assert!(output.contains("last=2"), "{output}");
