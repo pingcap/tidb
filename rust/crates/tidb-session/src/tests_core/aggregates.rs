@@ -1006,6 +1006,19 @@ fn group_concat_max_len_truncates_by_bytes_and_warns_1260_once() {
     );
     assert_eq!(warnings(&session), vec![cut("s")]);
 
+    // DISTINCT still owns its de-duplication set, but its ordered candidate
+    // rows use the same bounded TopN as the non-DISTINCT form. A repeated
+    // `ddd` must not consume another candidate or change the byte cut.
+    session
+        .run("INSERT INTO g VALUES ('ddd','again',3)")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT GROUP_CONCAT(DISTINCT s ORDER BY s DESC) FROM g")),
+        [["ddd,"]]
+    );
+    assert_eq!(warnings(&session), vec![cut("s")]);
+    session.run("DELETE FROM g WHERE t = 'again'").unwrap();
+
     // A group that fits emits nothing at all.
     session.run("SET group_concat_max_len=1024").unwrap();
     assert_eq!(

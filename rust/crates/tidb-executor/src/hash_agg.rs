@@ -357,7 +357,7 @@ impl AggState {
             group_concat_limit: matches!(func.kind, AggKind::GroupConcat { .. })
                 .then(|| usize::try_from(group_concat_max_len).unwrap_or(usize::MAX))
                 .filter(|limit| *limit > 0)
-                .filter(|_| !func.distinct),
+                .filter(|_| !func.distinct || !func.order_by.is_empty()),
             group_concat_order: func
                 .order_by
                 .iter()
