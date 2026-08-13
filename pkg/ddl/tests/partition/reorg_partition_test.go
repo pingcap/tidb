@@ -1054,6 +1054,48 @@ func TestPartitionIssue56634(t *testing.T) {
 	tk.MustExec("alter table t partition by range(a) (partition p1 values less than (20))")
 }
 
+// TestReorgPartitionPrimaryKeyIndexEntries tests that REORGANIZE PARTITION only
+// backfills a PRIMARY KEY that actually has index entries of its own. A clustered
+// one does not, so backfilling it wrote entries that nothing read and that DML
+// never maintained, see issue #70379.
+func TestReorgPartitionPrimaryKeyIndexEntries(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for _, tc := range []struct {
+		tblName       string
+		pkType        string
+		wantPKEntries bool
+	}{
+		{"tClustered", "clustered", false},
+		{"tNonClustered", "nonclustered", true},
+	} {
+		tk.MustExec(fmt.Sprintf(`create table %s (a int, b int, c int, primary key (a,b) %s, key idx_c (c))`+
+			` partition by range (b)`+
+			` (partition p0 values less than (10), partition pMax values less than (MAXVALUE))`,
+			tc.tblName, tc.pkType))
+		tk.MustExec(fmt.Sprintf(`insert into %s values (1,11,1),(2,12,2),(3,13,3),(4,14,4)`, tc.tblName))
+		tk.MustExec(fmt.Sprintf(`alter table %s reorganize partition pMax into`+
+			` (partition p1 values less than (20), partition pMax values less than (MAXVALUE))`, tc.tblName))
+
+		tblInfo := external.GetTableByName(t, tk, "test", tc.tblName).Meta()
+		pid := tblInfo.GetPartitionInfo().GetPartitionIDByName("p1")
+		require.NotEqual(t, int64(-1), pid)
+		pkInfo := tblInfo.FindIndexByName("primary")
+		require.NotNil(t, pkInfo)
+		idxInfo := tblInfo.FindIndexByName("idx_c")
+		require.NotNil(t, idxInfo)
+
+		require.Equal(t, tc.wantPKEntries, HaveEntriesForTableIndex(t, tk, pid, pkInfo.ID), tc.tblName)
+		require.True(t, HaveEntriesForTableIndex(t, tk, pid, idxInfo.ID), tc.tblName)
+
+		tk.MustExec(`admin check table ` + tc.tblName)
+		tk.MustQuery(fmt.Sprintf(`select a,b,c from %s order by a`, tc.tblName)).
+			Check(testkit.Rows("1 11 1", "2 12 2", "3 13 3", "4 14 4"))
+	}
+}
+
 func TestReorgPartitionFailuresPlacementPolicy(t *testing.T) {
 	create := `create table t (a int unsigned PRIMARY KEY, b varchar(255), c int, key (b), key (c,b))` +
 		` partition by range (a) ` +

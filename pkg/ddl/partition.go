@@ -3795,6 +3795,12 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 	var elements []*meta.Element
 	indices := make([]*model.IndexInfo, 0, len(tbl.Meta().Indices))
 	for _, index := range tbl.Meta().Indices {
+		if index.Primary && tbl.Meta().HasClusteredIndex() {
+			// A clustered PRIMARY KEY has no index KV of its own, the record written
+			// by the data copy phase is the index. Backfilling it would write entries
+			// that no reader uses and that DML never maintains.
+			continue
+		}
 		if isNew, ok := tbl.Meta().GetPartitionInfo().DDLChangedIndex[index.ID]; ok && !isNew {
 			// Skip old replaced indexes, but rebuild all other indexes
 			continue
