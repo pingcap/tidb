@@ -731,12 +731,25 @@ fn with_rollup() {
         ]
     );
 
-    // Deferred: a non-column grouping expression cannot be NULLed at the
-    // source, so it is refused rather than answered wrongly.
-    assert!(matches!(
-        session.run("SELECT a+1, SUM(c) FROM t GROUP BY a+1 WITH ROLLUP"),
-        Err(DriverError::Unsupported(_))
-    ));
+    // Expand nulls the derived grouping value for the grand total; it must
+    // not null raw `a`, which a more complex grouping list could still use.
+    let mut derived_rollup =
+        row_text(session.run("SELECT a+1, SUM(c) FROM t GROUP BY a+1 WITH ROLLUP"));
+    derived_rollup.sort();
+    assert_eq!(derived_rollup, [["2", "35"], ["3", "70"], ["NULL", "105"]]);
+    let mut mixed_rollup =
+        row_text(session.run("SELECT a, a+1, SUM(c) FROM t GROUP BY a, a+1 WITH ROLLUP"));
+    mixed_rollup.sort();
+    assert_eq!(
+        mixed_rollup,
+        [
+            ["1", "2", "35"],
+            ["1", "NULL", "35"],
+            ["2", "3", "70"],
+            ["2", "NULL", "70"],
+            ["NULL", "NULL", "105"],
+        ]
+    );
 
     // An empty source yields no rows at all -- not even the grand total
     // -- because Expand replicates zero rows (unlike a scalar aggregate).

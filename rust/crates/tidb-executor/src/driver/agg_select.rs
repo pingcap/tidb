@@ -48,6 +48,10 @@ struct AggPipelineState {
     /// and which `HAVING`/`ORDER BY` may reference even when the select list
     /// does not project them.
     group_by_names: Vec<String>,
+    /// `FIRST_ROW` outputs whose source expression is a `GROUP BY` item.
+    /// `WITH ROLLUP` replaces these derived grouping values with NULL for a
+    /// subtotal, without nulling the raw columns the expression read.
+    rollup_group_carriers: Vec<(usize, usize)>,
     /// The aggregate functions, index-parallel with `names`/`types`.
     agg_funcs: Vec<AggFunc>,
     /// The aggregation output column names, in output order.
@@ -132,7 +136,7 @@ fn agg_output_resolver(state: &AggPipelineState, ctx: &crate::StmtContext) -> Ag
 /// does the same, once [`super::only_full_group_by`] has established the
 /// group determines a value for it); `DISTINCT`
 /// and other aggregate functions are rejected as unsupported. `WITH ROLLUP`
-/// runs through [`run_rollup_aggregate`] (plain-column grouping only).
+/// runs through [`run_rollup_aggregate`].
 /// `HAVING` and `ORDER BY` run over the aggregation's output, as in Go: an
 /// aggregate appearing only in those clauses is appended as a hidden output
 /// column and trimmed by a final projection. `GROUPING()` rides the same
@@ -873,6 +877,7 @@ fn lower_select_fields(
                     .static_type()
                     .cloned()
                     .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+                let output_index = state.agg_funcs.len();
                 state.agg_funcs.push(AggFunc {
                     kind: AggKind::FirstRow,
                     arg: Some(rewritten),
@@ -901,6 +906,17 @@ fn lower_select_fields(
                     _ => display,
                 });
                 state.types.push(t);
+                if select.rollup {
+                    let item_text = other.restore();
+                    if let Some(group_position) = select.group_by.iter().position(|item| {
+                        resolve_group_by_item(&item.expr, &select.fields, resolver)
+                            .is_ok_and(|resolved| resolved.restore() == item_text)
+                    }) {
+                        state
+                            .rollup_group_carriers
+                            .push((output_index, group_position));
+                    }
+                }
             }
         }
     }
@@ -1334,7 +1350,10 @@ fn build_aggregation(
             &state.agg_funcs,
             &out_schema,
             &state.types,
-            &state.grouping_specs,
+            RollupOutputMetadata {
+                grouping_specs: &state.grouping_specs,
+                group_carriers: &state.rollup_group_carriers,
+            },
             ctx,
         )?
     } else if force_stream {

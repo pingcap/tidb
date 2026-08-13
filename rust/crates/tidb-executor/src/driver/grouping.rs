@@ -45,6 +45,12 @@ pub(crate) struct GroupingSpec {
     group_positions: Vec<usize>,
 }
 
+/// Output columns whose values the rollup pass fills after aggregation.
+pub(crate) struct RollupOutputMetadata<'a> {
+    pub grouping_specs: &'a [GroupingSpec],
+    pub group_carriers: &'a [(usize, usize)],
+}
+
 impl GroupingSpec {
     /// The bitmask this call reports for a pass that groups by the first `k`
     /// `GROUP BY` expressions, i.e. one where positions `k..` are rolled up.
@@ -207,24 +213,22 @@ pub(crate) fn run_rollup_aggregate(
     agg_funcs: &[AggFunc],
     out_schema: &Schema,
     out_types: &[FieldType],
-    grouping_specs: &[GroupingSpec],
+    outputs: RollupOutputMetadata<'_>,
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    // Each rolled-up position must be a plain column so it can be NULLed in
-    // the materialized source rows (Go's Expand projects grouping expressions
-    // into dedicated columns; that generality is deferred).
+    // A source column can be NULLed directly. A derived GROUP BY expression
+    // is represented by its matching FIRST_ROW output carrier instead: Go's
+    // Expand projects that derived value then NULLs the projection, never the
+    // columns the expression happened to read.
     let mut group_cols = Vec::with_capacity(group_by.len());
     for expr in group_by {
-        let Expression::Column(col) = expr else {
-            return Err(DriverError::unsupported(
-                "WITH ROLLUP over a non-column GROUP BY expression is not supported yet",
-            ));
-        };
-        group_cols.push(
-            usize::try_from(col.index).map_err(|_| {
+        let column = match expr {
+            Expression::Column(col) => Some(usize::try_from(col.index).map_err(|_| {
                 DriverError::Parse("GROUP BY column has no source index".to_string())
-            })?,
-        );
+            })?),
+            _ => None,
+        };
+        group_cols.push(column);
     }
 
     // Materialize the source once; every prefix pass replays these rows.
@@ -238,7 +242,9 @@ pub(crate) fn run_rollup_aggregate(
             let mut pass_rows = rows.clone();
             for row in &mut pass_rows {
                 for &idx in &group_cols[k..] {
-                    row[idx] = Datum::Null;
+                    if let Some(idx) = idx {
+                        row[idx] = Datum::Null;
+                    }
                 }
             }
             let pass_source = Box::new(MemTableSourceExec::new(
@@ -257,10 +263,17 @@ pub(crate) fn run_rollup_aggregate(
             // each GROUPING() call reports -- the one thing that distinguishes
             // a subtotal's NULL from a data NULL.
             let mut pass_out = drain_executor_rows(Box::new(agg), out_types)?;
-            for spec in grouping_specs {
+            for spec in outputs.grouping_specs {
                 let mask = Datum::UInt(spec.mask_for_prefix(k));
                 for row in &mut pass_out {
                     row[spec.out_index] = mask.clone();
+                }
+            }
+            for &(output, group_position) in outputs.group_carriers {
+                if group_position >= k {
+                    for row in &mut pass_out {
+                        row[output] = Datum::Null;
+                    }
                 }
             }
             out_rows.extend(pass_out);
