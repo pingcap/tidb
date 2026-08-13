@@ -1389,6 +1389,11 @@ impl DriverError {
             *b"42000",
             format!("Identifier name '{ident}' is too long"),
         ),
+        DriverError::TableCommentTooLong(table) => MysqlError::new(
+            1628,
+            *b"HY000",
+            format!("Comment for table '{table}' is too long (max = 2048)"),
+        ),
         // Go: "'%s' is not supported for generated columns."
         DriverError::UnsupportedOnGeneratedColumn(reason) => MysqlError::new(
             3106,

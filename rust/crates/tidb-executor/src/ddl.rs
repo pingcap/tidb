@@ -365,6 +365,45 @@ fn auto_increment_option(options: &[tidb_ast::TableOption]) -> Result<Option<i64
     Ok(seed)
 }
 
+const MAX_TABLE_COMMENT_BYTES: usize = 2048;
+
+/// The final `COMMENT=` option a CREATE or ALTER TABLE applies.
+pub(crate) fn table_comment_option(
+    options: &[tidb_ast::TableOption],
+    table: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Option<String>, DriverError> {
+    let Some(comment) = options.iter().rev().find_map(|option| match option {
+        tidb_ast::TableOption::Comment(comment) => Some(comment),
+        _ => None,
+    }) else {
+        return Ok(None);
+    };
+    normalize_table_comment(comment, table, ctx).map(Some)
+}
+
+/// Validates the comment text a single ALTER TABLE option writes.
+pub(crate) fn normalize_table_comment(
+    comment: &str,
+    table: &str,
+    ctx: &crate::StmtContext,
+) -> Result<String, DriverError> {
+    if comment.len() <= MAX_TABLE_COMMENT_BYTES {
+        return Ok(comment.to_owned());
+    }
+    let error = DriverError::TableCommentTooLong(table.to_owned());
+    if ctx.strict() {
+        return Err(error);
+    }
+    let reported = error.to_mysql_error();
+    ctx.append_warning_parts(reported.code, &reported.message);
+    let mut end = MAX_TABLE_COMMENT_BYTES;
+    while !comment.is_char_boundary(end) {
+        end -= 1;
+    }
+    Ok(comment[..end].to_owned())
+}
+
 /// Parses and executes a `CREATE TABLE`, building a [`TableInfo`] and
 /// registering a TiKV-byte-backed table in `catalog`. Returns whether a table
 /// was created (`false` only for `IF NOT EXISTS` over an existing name).
@@ -990,6 +1029,9 @@ pub fn run_create_table_in(
     let mut table = table;
     table.set_name(name);
     table.set_charset(table_charset);
+    if let Some(comment) = table_comment_option(&create.table_options, name, ctx)? {
+        table.set_comment(comment);
+    }
     match &handle {
         HandleKind::RowId => {}
         HandleKind::IntHandle(offset) => table.set_pk_handle_offset(*offset),

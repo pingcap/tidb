@@ -395,6 +395,8 @@ pub enum DriverError {
     DependentByPartitionFunctional(String),
     /// Go `dbterror.ErrTooLongIdent` (1059), carrying the identifier Go names.
     TooLongIdent(String),
+    /// Go `dbterror.ErrTooLongTableComment` (1628).
+    TableCommentTooLong(String),
     /// Go `dbterror.ErrWrongExprInPartitionFunc` (1486): the partition
     /// expression reads no column at all. See
     /// [`crate::ddl::table_partition`].

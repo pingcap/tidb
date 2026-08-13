@@ -36,9 +36,7 @@
 use super::column_types::{field_type_of, NOT_NULL_FLAG};
 use super::indexes::{add_index_to_table, drop_index_from_table, is_visible};
 use super::table_constraints::{AUTO_INCREMENT_FLAG, PRI_KEY_FLAG};
-use super::{
-    auto_increment_option, Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset,
-};
+use super::{Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 /// Runs an `ALTER TABLE`, applying its actions in source order.
@@ -232,7 +230,7 @@ pub fn run_alter_table_in(
                 drop_foreign_key_action(catalog, &database, &name, &drop.name)?;
             }
             tidb_ast::AlterTableAction::SetTableOptions { options } => {
-                set_table_options_action(catalog, &database, &name, options)?;
+                set_table_options_action(catalog, &database, &name, options, ctx)?;
             }
             // The four metadata-only actions: a name or a flag changes while
             // every column id, column offset and index entry stays put. See
@@ -535,29 +533,43 @@ fn set_table_options_action(
     database: &str,
     name: &str,
     options: &[tidb_ast::TableOption],
+    ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let seed = auto_increment_option(options)?;
-    if options.len() != usize::from(seed.is_some()) {
-        return Err(DriverError::unsupported(
-            "this ALTER TABLE table option is not supported yet",
-        ));
-    }
-    let Some(seed) = seed else { return Ok(()) };
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
         return Err(DriverError::unsupported(
-            "ALTER TABLE ... AUTO_INCREMENT needs a storage-backed table",
+            "ALTER TABLE needs a storage-backed table",
         ));
     };
-    if table.auto_increment_offset().is_none() {
-        // Go `ErrInvalidAutoRandom`-adjacent path: without an auto column
-        // there is no allocator to rebase.
-        return Err(DriverError::unsupported(
-            "ALTER TABLE ... AUTO_INCREMENT needs an AUTO_INCREMENT column",
-        ));
+    for option in options {
+        match option {
+            tidb_ast::TableOption::AutoIncrement(value) => {
+                let seed = value.parse::<u64>().map_err(|_| {
+                    DriverError::unsupported("AUTO_INCREMENT= needs an integer value")
+                })? as i64;
+                if table.auto_increment_offset().is_none() {
+                    return Err(DriverError::unsupported(
+                        "ALTER TABLE ... AUTO_INCREMENT needs an AUTO_INCREMENT column",
+                    ));
+                }
+                table
+                    .rebase_auto_increment(seed)
+                    .map_err(|error| DriverError::AutoIdUnavailable(error.0))?;
+            }
+            tidb_ast::TableOption::Comment(comment) => {
+                table.set_comment(super::normalize_table_comment(comment, name, ctx)?);
+            }
+            tidb_ast::TableOption::ForceAutoIncrement(_) => {
+                return Err(DriverError::unsupported(
+                    "FORCE AUTO_INCREMENT is not supported yet",
+                ));
+            }
+            _ => {
+                return Err(DriverError::unsupported(
+                    "this ALTER TABLE table option is not supported yet",
+                ));
+            }
+        }
     }
-    table
-        .rebase_auto_increment(seed)
-        .map_err(|error| DriverError::AutoIdUnavailable(error.0))?;
     Ok(())
 }
 

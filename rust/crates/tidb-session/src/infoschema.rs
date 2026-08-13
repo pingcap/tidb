@@ -499,7 +499,7 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
             text(COLLATION),
             Datum::Null,
             text(""),
-            text(""),
+            text(table.comment()),
             Datum::Int(table.table_id),
             text(&sharding_info(table)),
             text(&pk_type(table)),

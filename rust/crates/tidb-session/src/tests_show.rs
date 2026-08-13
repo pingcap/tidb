@@ -846,6 +846,74 @@ fn show_table_status() {
     assert_eq!(named[0][0], "u");
 }
 
+/// Table comments are catalog metadata: CREATE/ALTER persist them, CREATE
+/// LIKE copies them, and both metadata statements expose the stored value.
+#[test]
+fn table_comments_round_trip_through_ddl_and_metadata() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE commented (a INT) COMMENT = 'created'")
+        .unwrap();
+    assert!(show_create(&mut session, "commented").ends_with(" COMMENT='created'"));
+    assert_eq!(
+        row_text(session.run("SHOW TABLE STATUS LIKE 'commented'"))[0][17],
+        "created"
+    );
+    let info_comment = match session
+        .run_with_columns("SELECT * FROM information_schema.tables")
+        .unwrap()
+    {
+        StmtOutput::Rows { rows, .. } => rows
+            .iter()
+            .find(|row| datum_text(&row[2]).as_deref() == Some("commented"))
+            .and_then(|row| datum_text(&row[20]))
+            .expect("table comment row"),
+        other => panic!("expected rows, got {other:?}"),
+    };
+    assert_eq!(info_comment, "created");
+
+    session
+        .run("ALTER TABLE commented COMMENT = 'altered'")
+        .unwrap();
+    assert!(show_create(&mut session, "commented").ends_with(" COMMENT='altered'"));
+    session.run("CREATE TABLE copied LIKE commented").unwrap();
+    assert!(show_create(&mut session, "copied").ends_with(" COMMENT='altered'"));
+
+    let too_long = "x".repeat(2049);
+    session
+        .run("SET SESSION sql_mode = 'STRICT_TRANS_TABLES'")
+        .unwrap();
+    let strict = session
+        .run(&format!(
+            "CREATE TABLE too_long (a INT) COMMENT = '{too_long}'"
+        ))
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(strict.code, 1628);
+    assert_eq!(
+        strict.message,
+        "Comment for table 'too_long' is too long (max = 2048)"
+    );
+
+    session.run("SET SESSION sql_mode = ''").unwrap();
+    session
+        .run(&format!(
+            "CREATE TABLE truncated (a INT) COMMENT = '{too_long}'"
+        ))
+        .unwrap();
+    assert_eq!(
+        warnings_of(&session),
+        vec![(
+            1628,
+            "Comment for table 'truncated' is too long (max = 2048)".to_owned()
+        )]
+    );
+    assert_eq!(
+        row_text(session.run("SHOW TABLE STATUS LIKE 'truncated'"))[0][17].len(),
+        2048
+    );
+}
+
 /// `SHOW INDEX` / `SHOW KEYS`, checked against captured TiDB output --
 /// the full 17-column header and one row per index column.
 #[test]

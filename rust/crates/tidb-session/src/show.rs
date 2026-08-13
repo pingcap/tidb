@@ -380,6 +380,12 @@ fn show_create_table_text(
         table_charset.charset.name(),
         table_charset.collation.name()
     ));
+    if !table.comment().is_empty() {
+        out.push_str(&format!(
+            " COMMENT='{}'",
+            tidb_util::format::output_format(table.comment())
+        ));
+    }
     out.push_str(&partition_clause_text(table));
     Ok(out)
 }
@@ -768,6 +774,7 @@ fn show_table_status_row(
     name: &str,
     auto_increment: Option<i64>,
     charset: tidb_executor::TableCharset,
+    comment: &str,
 ) -> Vec<Datum> {
     let text = |value: &str| Datum::Bytes(value.as_bytes().to_vec());
     vec![
@@ -789,9 +796,9 @@ fn show_table_status_row(
         Datum::Null, // Update_time
         Datum::Null, // Check_time
         text(charset.collation.name()),
-        text(""), // Checksum
-        text(""), // Create_options
-        text(""), // Comment
+        text(""),      // Checksum
+        text(""),      // Create_options
+        text(comment), // Comment
     ]
 }
 
@@ -1185,16 +1192,18 @@ impl Session {
                             }
                         }
                         let entry = catalog.table_in(&database, &name);
-                        let (auto_increment, table_charset) = match entry {
-                            Some(tidb_executor::TableEntry::Kv(table)) => {
-                                (table.next_auto_increment(), table.charset())
-                            }
-                            _ => (None, tidb_executor::TableCharset::default()),
+                        let (auto_increment, table_charset, comment) = match entry {
+                            Some(tidb_executor::TableEntry::Kv(table)) => (
+                                table.next_auto_increment(),
+                                table.charset(),
+                                table.comment(),
+                            ),
+                            _ => (None, tidb_executor::TableCharset::default(), ""),
                         };
                         let row = if entry.is_some_and(tidb_executor::TableEntry::is_view) {
                             show_table_status_view_row(&name)
                         } else {
-                            show_table_status_row(&name, auto_increment, table_charset)
+                            show_table_status_row(&name, auto_increment, table_charset, comment)
                         };
                         if let Some(predicate) = &where_clause {
                             if !show_row_matches(

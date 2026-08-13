@@ -429,6 +429,9 @@ pub struct KvTable {
     /// Go `TableInfo.Charset`/`Collate`: the table's default character set and
     /// collation, which its unqualified string columns inherit.
     charset: TableCharset,
+    /// Go `TableInfo.Comment`, persisted by CREATE/ALTER TABLE and served by
+    /// metadata statements.
+    comment: String,
     /// The cluster's persisted new-collation mode, captured when this table
     /// object is built.
     ///
@@ -618,6 +621,7 @@ impl KvTable {
             auto_increment_offset: None,
             auto_id: AutoIdAllocator::new(),
             charset: TableCharset::default(),
+            comment: String::new(),
             use_new_collation,
             foreign_keys: Vec::new(),
             max_foreign_key_id: 0,
@@ -702,6 +706,7 @@ impl KvTable {
         copy.common_handle_offsets = self.common_handle_offsets.clone();
         copy.auto_increment_offset = self.auto_increment_offset;
         copy.charset = self.charset;
+        copy.comment = self.comment.clone();
         if let Some(partition) = self.partition() {
             let mut partition = partition.clone();
             for definition in &mut partition.definitions {
@@ -969,6 +974,17 @@ impl KvTable {
     #[must_use]
     pub const fn charset(&self) -> TableCharset {
         self.charset
+    }
+
+    /// Replaces the table-level comment.
+    pub fn set_comment(&mut self, comment: String) {
+        self.comment = comment;
+    }
+
+    /// The table-level comment served by metadata statements.
+    #[must_use]
+    pub fn comment(&self) -> &str {
+        &self.comment
     }
 
     /// Marks the columns whose encoding is the clustered row handle, which Go
