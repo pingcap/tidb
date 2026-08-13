@@ -50,8 +50,12 @@ pub const DEF_MAX_LIMIT: i64 = 5_000_000_000_000_000;
 
 static RESOURCE_POOL_ID: AtomicI64 = AtomicI64::new(-1);
 
+fn new_pool_uid_from(counter: &AtomicI64) -> u64 {
+    counter.fetch_sub(1, SeqCst).wrapping_sub(1) as u64
+}
+
 pub(crate) fn new_pool_uid() -> u64 {
-    RESOURCE_POOL_ID.fetch_add(-1, SeqCst) as u64
+    new_pool_uid_from(&RESOURCE_POOL_ID)
 }
 
 /// A budget-exceeded failure with the source's exact message.
@@ -875,6 +879,13 @@ mod tests {
             }
             pool.stop();
         }
+    }
+
+    #[test]
+    fn internal_pool_ids_return_the_decremented_counter() {
+        let counter = AtomicI64::new(-1);
+        assert_eq!(new_pool_uid_from(&counter), (-2_i64) as u64);
+        assert_eq!(new_pool_uid_from(&counter), (-3_i64) as u64);
     }
 
     #[test]
