@@ -1171,7 +1171,26 @@ fn show_charset_engines_collation() {
         ]
     );
 
-    assert!(session.run("SHOW CHARSET WHERE Charset = 'utf8'").is_err());
+    assert_eq!(
+        row_text(session.run("SHOW CHARSET WHERE Charset = 'utf8'")),
+        [["utf8", "UTF-8 Unicode", "utf8_bin", "3"]]
+    );
+    assert_eq!(
+        row_text(session.run("SHOW COLLATION WHERE Charset = 'binary'")),
+        [["binary", "binary", "63", "Yes", "Yes", "1", "NO PAD"]]
+    );
+    assert_eq!(
+        row_text(session.run("SHOW ENGINES WHERE Engine = 'InnoDB'")),
+        [[
+            "InnoDB",
+            "DEFAULT",
+            "Supports transactions, row-level locking, and foreign keys",
+            "YES",
+            "YES",
+            "YES",
+        ]]
+    );
+    assert!(row_text(session.run("SHOW ENGINES LIKE 'MyISAM'")).is_empty());
 }
 
 /// `tidb_enable_fast_analyze` names a feature TiDB v7.5.0 REMOVED: turning it

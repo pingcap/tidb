@@ -955,6 +955,30 @@ fn show_index_rows(table_name: &str, table: &tidb_executor::KvTable) -> Vec<Vec<
 /// resolves against.
 const SHOW_VARIABLE_COLUMNS: &[&str; 2] = &["Variable_name", "Value"];
 
+/// The virtual column names available to `SHOW CHARSET WHERE`.
+const SHOW_CHARSET_COLUMNS: &[&str; 4] = &["Charset", "Description", "Default collation", "Maxlen"];
+
+/// The virtual column names available to `SHOW ENGINES WHERE`.
+const SHOW_ENGINES_COLUMNS: &[&str; 6] = &[
+    "Engine",
+    "Support",
+    "Comment",
+    "Transactions",
+    "XA",
+    "Savepoints",
+];
+
+/// The virtual column names available to `SHOW COLLATION WHERE`.
+const SHOW_COLLATION_COLUMNS: &[&str; 7] = &[
+    "Collation",
+    "Charset",
+    "Id",
+    "Default",
+    "Compiled",
+    "Sortlen",
+    "Pad_attribute",
+];
+
 /// The status variables this tier truthfully reports for `SHOW STATUS`, as
 /// `(name, value, session_only)`, in row order.
 ///
@@ -1440,11 +1464,6 @@ impl Session {
             // Go `fetchShowCharset`: one row per charset in the parser's
             // registry, captured from mock TiDB (`Charset | Description |
             // Default collation | Maxlen`).
-            //
-            // DEFERRED (documented, and refused rather than ignored):
-            // `WHERE`, because honoring it needs the same virtual-row
-            // selection machinery `SHOW STATUS` uses and this table is
-            // static rather than session state.
             tidb_ast::AdminStmt::ShowCharset(show) => {
                 let pattern = match &show.filter {
                     Some(tidb_ast::ShowCharsetFilter::Like(tidb_ast::Expr::String(text))) => {
@@ -1455,12 +1474,12 @@ impl Session {
                             "SHOW CHARSET LIKE takes a string pattern",
                         ))
                     }
-                    Some(tidb_ast::ShowCharsetFilter::Where(_)) => {
-                        return Err(DriverError::unsupported(
-                            "SHOW CHARSET WHERE is not supported yet",
-                        ))
-                    }
                     None => None,
+                    Some(tidb_ast::ShowCharsetFilter::Where(_)) => None,
+                };
+                let predicate = match &show.filter {
+                    Some(tidb_ast::ShowCharsetFilter::Where(expr)) => Some(expr),
+                    _ => None,
                 };
                 let text =
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
@@ -1483,12 +1502,18 @@ impl Session {
                             continue;
                         }
                     }
-                    rows.push(vec![
+                    let row = vec![
                         Datum::Bytes(info.name.into_bytes()),
                         Datum::Bytes(info.description.into_bytes()),
                         Datum::Bytes(info.default_collation.into_bytes()),
                         Datum::Int(info.maxlen as i64),
-                    ]);
+                    ];
+                    if let Some(predicate) = predicate {
+                        if !show_row_matches(predicate, SHOW_CHARSET_COLUMNS, &row)? {
+                            continue;
+                        }
+                    }
+                    rows.push(row);
                 }
                 Ok(Some(StmtOutput::Rows {
                     columns: vec![
@@ -1503,19 +1528,45 @@ impl Session {
             // Go `fetchShowEngines`: this tier is the mock/embedded
             // single-engine server, so the table is always the single
             // `InnoDB` row Go's mock session reports.
-            //
-            // DEFERRED (documented, refused rather than ignored): `WHERE`
-            // /`LIKE`, for the same reason as `SHOW CHARSET` above --
-            // there is exactly one row and no virtual-row selection path
-            // wired up for it yet.
             tidb_ast::AdminStmt::ShowEngines(show) => {
-                if show.filter.is_some() {
-                    return Err(DriverError::unsupported(
-                        "SHOW ENGINES filters are not supported yet",
-                    ));
-                }
+                let pattern = match &show.filter {
+                    Some(tidb_ast::ShowEnginesFilter::Like(tidb_ast::Expr::String(text))) => {
+                        Some(text.as_str())
+                    }
+                    Some(tidb_ast::ShowEnginesFilter::Like(_)) => {
+                        return Err(DriverError::unsupported(
+                            "SHOW ENGINES LIKE takes a string pattern",
+                        ));
+                    }
+                    _ => None,
+                };
+                let predicate = match &show.filter {
+                    Some(tidb_ast::ShowEnginesFilter::Where(expr)) => Some(expr),
+                    _ => None,
+                };
                 let text =
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                let row = vec![
+                    Datum::Bytes(b"InnoDB".to_vec()),
+                    Datum::Bytes(b"DEFAULT".to_vec()),
+                    Datum::Bytes(
+                        b"Supports transactions, row-level locking, and foreign keys".to_vec(),
+                    ),
+                    Datum::Bytes(b"YES".to_vec()),
+                    Datum::Bytes(b"YES".to_vec()),
+                    Datum::Bytes(b"YES".to_vec()),
+                ];
+                let included = pattern.is_none_or(|pattern| {
+                    tidb_executor::like_match_with_collation(
+                        "InnoDB",
+                        pattern,
+                        None,
+                        tidb_datatype::Collation::Utf8Mb4Bin,
+                    )
+                }) && predicate
+                    .map(|predicate| show_row_matches(predicate, SHOW_ENGINES_COLUMNS, &row))
+                    .transpose()?
+                    .unwrap_or(true);
                 Ok(Some(StmtOutput::Rows {
                     columns: vec![
                         ("Engine".to_owned(), text()),
@@ -1525,16 +1576,7 @@ impl Session {
                         ("XA".to_owned(), text()),
                         ("Savepoints".to_owned(), text()),
                     ],
-                    rows: vec![vec![
-                        Datum::Bytes(b"InnoDB".to_vec()),
-                        Datum::Bytes(b"DEFAULT".to_vec()),
-                        Datum::Bytes(
-                            b"Supports transactions, row-level locking, and foreign keys".to_vec(),
-                        ),
-                        Datum::Bytes(b"YES".to_vec()),
-                        Datum::Bytes(b"YES".to_vec()),
-                        Datum::Bytes(b"YES".to_vec()),
-                    ]],
+                    rows: included.then_some(row).into_iter().collect(),
                 }))
             }
             // Go `fetchShowCollation`: one row per collation in the
@@ -1546,9 +1588,6 @@ impl Session {
             // COLLATION` capture omits it too, so this table matches the
             // 15 collations Go actually lists rather than this crate's
             // full 16-variant registry.
-            //
-            // DEFERRED (documented, and refused rather than ignored):
-            // `WHERE`, for the same reason as `SHOW CHARSET` above.
             tidb_ast::AdminStmt::ShowCollation(show) => {
                 let pattern = match &show.filter {
                     Some(tidb_ast::ShowCollationFilter::Like(tidb_ast::Expr::String(text))) => {
@@ -1559,12 +1598,12 @@ impl Session {
                             "SHOW COLLATION LIKE takes a string pattern",
                         ))
                     }
-                    Some(tidb_ast::ShowCollationFilter::Where(_)) => {
-                        return Err(DriverError::unsupported(
-                            "SHOW COLLATION WHERE is not supported yet",
-                        ))
-                    }
                     None => None,
+                    Some(tidb_ast::ShowCollationFilter::Where(_)) => None,
+                };
+                let predicate = match &show.filter {
+                    Some(tidb_ast::ShowCollationFilter::Where(expr)) => Some(expr),
+                    _ => None,
                 };
                 let text =
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
@@ -1591,7 +1630,7 @@ impl Session {
                         | tidb_datatype::Collation::Utf8Mb40900Bin => (1, "NO PAD"),
                         _ => (1, "PAD SPACE"),
                     };
-                    rows.push(vec![
+                    let row = vec![
                         Datum::Bytes(name.as_bytes().to_vec()),
                         Datum::Bytes(collation.charset().name().as_bytes().to_vec()),
                         Datum::Int(i64::from(collation.id())),
@@ -1603,7 +1642,13 @@ impl Session {
                         Datum::Bytes(b"Yes".to_vec()),
                         Datum::Int(sortlen),
                         Datum::Bytes(pad_attribute.as_bytes().to_vec()),
-                    ]);
+                    ];
+                    if let Some(predicate) = predicate {
+                        if !show_row_matches(predicate, SHOW_COLLATION_COLUMNS, &row)? {
+                            continue;
+                        }
+                    }
+                    rows.push(row);
                 }
                 Ok(Some(StmtOutput::Rows {
                     columns: vec![
