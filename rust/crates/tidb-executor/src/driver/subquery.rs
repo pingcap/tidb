@@ -29,9 +29,11 @@
 //! aggregation, so the select field records where it reads from
 //! ([`OutputSlot`]) instead of being rewritten in place.
 
+use std::any::Any;
 use std::borrow::Cow;
 
 use super::*;
+use tidb_ast::{Visitable, Visitor};
 /// The type of the column an Apply appends for a correlated scalar subquery.
 ///
 /// Go infers it statically from the subquery's select field, where a
@@ -222,42 +224,51 @@ fn collect_outer_columns(
     outer: &FromScope,
     found: &mut Vec<Vec<String>>,
 ) {
-    use tidb_ast::Expr;
-    match expr {
-        Expr::Column(path) => {
-            let inner_resolver = ScopeResolver { scope: inner };
-            let outer_resolver = ScopeResolver { scope: outer };
+    struct Collector<'a> {
+        inner: &'a FromScope,
+        outer: &'a FromScope,
+        found: &'a mut Vec<Vec<String>>,
+    }
+
+    impl Visitor for Collector<'_> {
+        fn enter(&mut self, node: &mut dyn Any) -> bool {
+            let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
+                return false;
+            };
+            if matches!(
+                expr,
+                tidb_ast::Expr::Subquery(_)
+                    | tidb_ast::Expr::Exists { .. }
+                    | tidb_ast::Expr::InSubquery { .. }
+                    | tidb_ast::Expr::CompareSubquery { .. }
+            ) {
+                return true;
+            }
+            let tidb_ast::Expr::Column(path) = expr else {
+                return false;
+            };
+            let inner_resolver = ScopeResolver { scope: self.inner };
+            let outer_resolver = ScopeResolver { scope: self.outer };
             if inner_resolver.resolve(path).is_none()
                 && outer_resolver.resolve(path).is_some()
-                && !found.contains(path)
+                && !self.found.contains(path)
             {
-                found.push(path.clone());
+                self.found.push(path.clone());
             }
+            true
         }
-        Expr::Paren(inner_expr)
-        | Expr::Unary(_, inner_expr)
-        | Expr::Is {
-            expr: inner_expr, ..
-        } => {
-            collect_outer_columns(inner_expr, inner, outer, found);
+
+        fn leave(&mut self, _node: &mut dyn Any) -> bool {
+            true
         }
-        Expr::Binary(_, lhs, rhs) => {
-            collect_outer_columns(lhs, inner, outer, found);
-            collect_outer_columns(rhs, inner, outer, found);
-        }
-        Expr::In { expr, list, .. } => {
-            collect_outer_columns(expr, inner, outer, found);
-            for item in list {
-                collect_outer_columns(item, inner, outer, found);
-            }
-        }
-        Expr::Aggregate { args, .. } => {
-            for arg in args {
-                collect_outer_columns(arg, inner, outer, found);
-            }
-        }
-        _ => {}
     }
+
+    let mut walked = expr.clone();
+    walked.accept(&mut Collector {
+        inner,
+        outer,
+        found,
+    });
 }
 
 /// Correlated columns referenced by one expression, using the same lexical
@@ -279,48 +290,63 @@ fn bind_correlated_columns(
     expr: &tidb_ast::Expr,
     bindings: &[(Vec<String>, Datum)],
 ) -> Result<tidb_ast::Expr, DriverError> {
-    use tidb_ast::Expr;
-    Ok(match expr {
-        Expr::Column(path) => match bindings.iter().find(|(bound, _)| paths_match(bound, path)) {
-            Some((_, value)) => datum_to_literal(value)?,
-            None => expr.clone(),
-        },
-        Expr::Paren(inner) => Expr::Paren(Box::new(bind_correlated_columns(inner, bindings)?)),
-        Expr::Unary(op, inner) => {
-            Expr::Unary(*op, Box::new(bind_correlated_columns(inner, bindings)?))
+    struct Binder<'a> {
+        bindings: &'a [(Vec<String>, Datum)],
+        error: Option<DriverError>,
+    }
+
+    impl Visitor for Binder<'_> {
+        fn enter(&mut self, node: &mut dyn Any) -> bool {
+            if self.error.is_some() {
+                return true;
+            }
+            let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
+                return false;
+            };
+            // A nested query owns a new lexical scope. Its correlated names
+            // are bound when that query becomes its own Apply, never by
+            // walking through it from this expression.
+            if matches!(
+                expr,
+                tidb_ast::Expr::Subquery(_)
+                    | tidb_ast::Expr::Exists { .. }
+                    | tidb_ast::Expr::InSubquery { .. }
+                    | tidb_ast::Expr::CompareSubquery { .. }
+            ) {
+                return true;
+            }
+            let tidb_ast::Expr::Column(path) = expr else {
+                return false;
+            };
+            let Some((_, value)) = self
+                .bindings
+                .iter()
+                .find(|(bound, _)| paths_match(bound, path))
+            else {
+                return true;
+            };
+            match datum_to_literal(value) {
+                Ok(literal) => *expr = literal,
+                Err(error) => self.error = Some(error),
+            }
+            true
         }
-        Expr::Is { expr, target, not } => Expr::Is {
-            expr: Box::new(bind_correlated_columns(expr, bindings)?),
-            target: *target,
-            not: *not,
-        },
-        Expr::Binary(op, lhs, rhs) => Expr::Binary(
-            *op,
-            Box::new(bind_correlated_columns(lhs, bindings)?),
-            Box::new(bind_correlated_columns(rhs, bindings)?),
-        ),
-        Expr::In { expr, list, not } => Expr::In {
-            expr: Box::new(bind_correlated_columns(expr, bindings)?),
-            list: list
-                .iter()
-                .map(|item| bind_correlated_columns(item, bindings))
-                .collect::<Result<_, _>>()?,
-            not: *not,
-        },
-        Expr::Aggregate {
-            name,
-            distinct,
-            args,
-        } => Expr::Aggregate {
-            name: name.clone(),
-            distinct: *distinct,
-            args: args
-                .iter()
-                .map(|arg| bind_correlated_columns(arg, bindings))
-                .collect::<Result<_, _>>()?,
-        },
-        other => other.clone(),
-    })
+
+        fn leave(&mut self, _node: &mut dyn Any) -> bool {
+            true
+        }
+    }
+
+    let mut bound = expr.clone();
+    let mut binder = Binder {
+        bindings,
+        error: None,
+    };
+    bound.accept(&mut binder);
+    if let Some(error) = binder.error {
+        return Err(error);
+    }
+    Ok(bound)
 }
 
 /// Whether a bound path and a reference name the same column.
@@ -626,134 +652,114 @@ pub(crate) fn extract_correlated_subquery(
     found: &mut Option<CorrelatedSubquery>,
     ctx: &crate::StmtContext,
 ) -> Result<tidb_ast::Expr, DriverError> {
-    use tidb_ast::Expr;
-    // Extract exactly one Apply per pass. Callers that can host several
-    // correlated subqueries feed the rewritten expression back through this
-    // function with a wider outer scope, just as Go chains Apply operators.
-    // Stopping here leaves every later subquery intact for that next pass.
-    if found.is_some() {
-        return Ok(expr.clone());
+    struct Extractor<'a> {
+        outer: &'a FromScope,
+        catalog: &'a Catalog,
+        current_db: &'a str,
+        ctx: &'a crate::StmtContext,
+        index: usize,
+        found: Option<CorrelatedSubquery>,
+        error: Option<DriverError>,
     }
-    // The synthetic name the appended column answers to.
-    let placeholder = |index: usize| Expr::Column(vec![format!("__apply_{index}")]);
-    Ok(match expr {
-        Expr::Subquery(query)
-        | Expr::Exists {
-            subquery: query, ..
-        } => {
-            let mut columns = Vec::new();
-            collect_correlated_columns_query(query, outer, catalog, current_db, &mut columns, ctx);
-            if columns.is_empty() {
-                // Uncorrelated: the folding pass handles it.
-                return Ok(expr.clone());
+
+    impl Visitor for Extractor<'_> {
+        fn enter(&mut self, node: &mut dyn Any) -> bool {
+            if self.found.is_some() || self.error.is_some() {
+                return true;
             }
-            let kind = match expr {
-                Expr::Exists { not, .. } => SubqueryKind::Exists { not: *not },
-                _ => SubqueryKind::Scalar,
+            let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
+                return false;
             };
-            *found = Some(CorrelatedSubquery {
-                query: (**query).clone(),
+            let (query, kind, operand_has_subquery) = match expr {
+                tidb_ast::Expr::Subquery(query) => ((**query).clone(), SubqueryKind::Scalar, false),
+                tidb_ast::Expr::Exists { subquery, not } => (
+                    (**subquery).clone(),
+                    SubqueryKind::Exists { not: *not },
+                    false,
+                ),
+                tidb_ast::Expr::InSubquery {
+                    expr: lhs,
+                    subquery,
+                    not,
+                } => (
+                    (**subquery).clone(),
+                    SubqueryKind::In {
+                        lhs: (**lhs).clone(),
+                        not: *not,
+                    },
+                    expr_has_subquery(lhs),
+                ),
+                tidb_ast::Expr::CompareSubquery {
+                    op,
+                    left,
+                    all,
+                    subquery,
+                } => (
+                    (**subquery).clone(),
+                    SubqueryKind::Compare {
+                        op: *op,
+                        lhs: (**left).clone(),
+                        all: *all,
+                    },
+                    expr_has_subquery(left),
+                ),
+                _ => return false,
+            };
+
+            let mut columns = Vec::new();
+            collect_correlated_columns_query(
+                &query,
+                self.outer,
+                self.catalog,
+                self.current_db,
+                &mut columns,
+                self.ctx,
+            );
+            // Never descend into a subquery body: names there belong to the
+            // inner scope. An uncorrelated subquery is owned by the folding
+            // pass, while a correlated one becomes this pass's one Apply.
+            if columns.is_empty() {
+                return true;
+            }
+            if operand_has_subquery {
+                self.error = Some(DriverError::unsupported(
+                    "more than one correlated subquery in an expression is not supported yet",
+                ));
+                return true;
+            }
+            self.found = Some(CorrelatedSubquery {
+                query,
                 kind,
                 columns,
             });
-            placeholder(index)
+            *expr = tidb_ast::Expr::Column(vec![format!("__apply_{}", self.index)]);
+            true
         }
-        // Go turns a correlated IN / ANY / ALL into a semi join; the Apply
-        // here answers the same question one outer row at a time, with the
-        // tested left operand staying in the outer expression.
-        Expr::InSubquery {
-            expr: lhs,
-            subquery,
-            not,
-        } => {
-            let mut columns = Vec::new();
-            collect_correlated_columns_query(
-                subquery,
-                outer,
-                catalog,
-                current_db,
-                &mut columns,
-                ctx,
-            );
-            if columns.is_empty() {
-                return Ok(expr.clone());
-            }
-            if expr_has_subquery(lhs) {
-                return Err(DriverError::unsupported(
-                    "more than one correlated subquery in an expression is not supported yet",
-                ));
-            }
-            *found = Some(CorrelatedSubquery {
-                query: (**subquery).clone(),
-                kind: SubqueryKind::In {
-                    lhs: (**lhs).clone(),
-                    not: *not,
-                },
-                columns,
-            });
-            placeholder(index)
+
+        fn leave(&mut self, _node: &mut dyn Any) -> bool {
+            true
         }
-        Expr::CompareSubquery {
-            op,
-            left,
-            all,
-            subquery,
-        } => {
-            let mut columns = Vec::new();
-            collect_correlated_columns_query(
-                subquery,
-                outer,
-                catalog,
-                current_db,
-                &mut columns,
-                ctx,
-            );
-            if columns.is_empty() {
-                return Ok(expr.clone());
-            }
-            if expr_has_subquery(left) {
-                return Err(DriverError::unsupported(
-                    "more than one correlated subquery in an expression is not supported yet",
-                ));
-            }
-            *found = Some(CorrelatedSubquery {
-                query: (**subquery).clone(),
-                kind: SubqueryKind::Compare {
-                    op: *op,
-                    lhs: (**left).clone(),
-                    all: *all,
-                },
-                columns,
-            });
-            placeholder(index)
-        }
-        Expr::Paren(inner) => Expr::Paren(Box::new(extract_correlated_subquery(
-            inner, outer, catalog, current_db, index, found, ctx,
-        )?)),
-        Expr::Unary(op, inner) => Expr::Unary(
-            *op,
-            Box::new(extract_correlated_subquery(
-                inner, outer, catalog, current_db, index, found, ctx,
-            )?),
-        ),
-        Expr::Is { expr, target, not } => Expr::Is {
-            expr: Box::new(extract_correlated_subquery(
-                expr, outer, catalog, current_db, index, found, ctx,
-            )?),
-            target: *target,
-            not: *not,
-        },
-        Expr::Binary(op, lhs, rhs) => Expr::Binary(
-            *op,
-            Box::new(extract_correlated_subquery(
-                lhs, outer, catalog, current_db, index, found, ctx,
-            )?),
-            Box::new(extract_correlated_subquery(
-                rhs, outer, catalog, current_db, index, found, ctx,
-            )?),
-        ),
-        other => other.clone(),
-    })
+    }
+
+    if found.is_some() {
+        return Ok(expr.clone());
+    }
+    let mut rewritten = expr.clone();
+    let mut extractor = Extractor {
+        outer,
+        catalog,
+        current_db,
+        ctx,
+        index,
+        found: None,
+        error: None,
+    };
+    rewritten.accept(&mut extractor);
+    if let Some(error) = extractor.error {
+        return Err(error);
+    }
+    *found = extractor.found;
+    Ok(rewritten)
 }
 
 /// The scope a subquery inside `select` sees as its OUTER scope: `select`'s
@@ -931,7 +937,7 @@ pub(crate) fn fold_select_subqueries(
 /// operator rather than folding, and which this leaves for the Apply path
 /// rather than silently evaluating the inner query against the wrong row; and
 /// row constructors (a subquery selecting several columns).
-fn fold_subqueries(
+pub(crate) fn fold_subqueries(
     expr: &tidb_ast::Expr,
     outer: &FromScope,
     catalog: &Catalog,

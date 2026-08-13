@@ -384,9 +384,8 @@ fn an_uncorrelated_subquery_folds_inside_case_function_and_aggregate_arguments()
 /// `select count((select id from d2 where d2.id = d1.id)) from d1` with 3, and
 /// so does this tier now.
 ///
-/// The shapes still refused are the ones whose subquery sits somewhere the
-/// extraction cannot reach -- inside a `CASE` arm, or a function call's
-/// argument -- which stay named rather than answered wrongly.
+/// The complete expression visitor also reaches a subquery under `CASE` rather
+/// than treating that wrapper as a separate unsupported shape.
 #[test]
 fn a_correlated_subquery_in_an_aggregate_argument_runs_below_the_aggregation() {
     let mut session = Session::new();
@@ -396,22 +395,12 @@ fn a_correlated_subquery_in_an_aggregate_argument_runs_below_the_aggregation() {
         row_text(session.run("SELECT COUNT((SELECT id FROM dc d2 WHERE d2.id = dc.id)) FROM dc")),
         [["3"]]
     );
-    // Still refused, by name: a `CASE` arm is not a shape
-    // `extract_correlated_subquery` walks into, so the aggregate's argument
-    // keeps its subquery and `build_agg_func` says so.
-    let error = session
-        .run(
+    assert_eq!(
+        row_text(session.run(
             "SELECT SUM(CASE WHEN EXISTS(SELECT 1 FROM dc d2 WHERE d2.id = dc.id) \
              THEN dc.id ELSE 0 END) FROM dc",
-        )
-        .unwrap_err();
-    assert!(
-        matches!(
-            &error,
-            DriverError::Unsupported(message)
-                if message.contains("subquery inside an aggregate function's argument")
-        ),
-        "unexpected error: {error:?}"
+        )),
+        [["12"]]
     );
 }
 

@@ -21,7 +21,10 @@
 use super::*;
 use crate::kv_table::{AutoIdError, AutoIncrement};
 
+mod correlated;
 mod defaults;
+
+use correlated::{dml_table_scope, DmlExpression};
 
 pub(crate) use defaults::{
     column_default, column_metadata, materialize_column_default, prepare_named_defaults,
@@ -1424,10 +1427,13 @@ pub(crate) fn run_update_traced(
         assignments.push((offset, assignment.value.clone()));
     }
     let predicate = match &update.where_clause {
-        Some(expr) => Some(
-            rewrite_expr_resolved(expr, &resolver)
-                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
-        ),
+        Some(expr) => Some(DmlExpression::build(
+            expr,
+            dml_table_scope(table_ref, &database, &name, column_list.clone(), ctx),
+            catalog,
+            current_db,
+            ctx,
+        )?),
         None => None,
     };
     let default_row = {
@@ -1516,137 +1522,127 @@ pub(crate) fn run_update_traced(
             return Ok(0);
         }
     }
-    // Assigned by every arm that reaches the loops below (a view returns
-    // before them), so a write's read plan always reports a real count.
-    let scanned;
-    let mut matched = 0u64;
-    let entry = catalog
-        .get_mut_in(&database, &name)
-        .ok_or(DriverError::unsupported("unknown table"))?;
+    enum SourceRows {
+        Mem(Vec<Vec<Datum>>),
+        Kv {
+            rows: Vec<(crate::kv_table::TableHandle, Vec<Datum>)>,
+            partition_ids: Option<Vec<i64>>,
+        },
+    }
 
+    // Finish the physical read before evaluating the predicate. The Apply's
+    // inner query needs an immutable view of the complete statement snapshot,
+    // including the target table itself, and no write is applied until every
+    // replacement has been staged.
+    let source_rows = {
+        let entry = catalog
+            .get_mut_in(&database, &name)
+            .ok_or(DriverError::unsupported("unknown table"))?;
+        match entry {
+            TableEntry::Cte(_) | TableEntry::View(_) => {
+                return Err(DriverError::TableNotUpdatable(name.clone()))
+            }
+            TableEntry::Sequence(_) => {
+                return Err(DriverError::unsupported(
+                    "UPDATE of a sequence is not a statement TiDB accepts",
+                ))
+            }
+            TableEntry::Mem(mem) => SourceRows::Mem(mem.rows.clone()),
+            TableEntry::Kv(kv) => {
+                let partition_ids = if table_ref.partitions.is_empty() {
+                    None
+                } else {
+                    let Some(spec) = kv.partition() else {
+                        return Err(DriverError::UnknownPartition {
+                            partition: table_ref.partitions[0].clone(),
+                            table: name.clone(),
+                        });
+                    };
+                    Some(
+                        crate::partition_pruning::ids_for_selected_partitions(
+                            spec,
+                            &table_ref.partitions,
+                        )
+                        .map_err(|partition| {
+                            DriverError::UnknownPartition {
+                                partition,
+                                table: name.clone(),
+                            }
+                        })?,
+                    )
+                };
+                let mut source = restricted_to_partitions(kv, &table_ref.partitions, &name)?;
+                let mut rows = fetch_write_rows(&mut source, read_path.as_ref(), &zone)?;
+                order_rows_for_dml(
+                    &mut rows,
+                    &update.order_by,
+                    &field_types,
+                    &resolver,
+                    &column_names,
+                    ctx,
+                )?;
+                SourceRows::Kv {
+                    rows,
+                    partition_ids,
+                }
+            }
+        }
+    };
+
+    let scanned = match &source_rows {
+        SourceRows::Mem(rows) => rows.len() as u64,
+        SourceRows::Kv { rows, .. } => rows.len() as u64,
+    };
+    let mut matched = 0u64;
     let mut changed = 0u64;
     let mut rewrites: Vec<(crate::kv_table::TableHandle, Vec<Datum>, Vec<Datum>)> = Vec::new();
-    match entry {
-        // Go's planner rejects an UPDATE whose target is a view.
-        TableEntry::Cte(_) | TableEntry::View(_) => {
-            return Err(DriverError::TableNotUpdatable(name.clone()))
-        }
-        // A sequence has no columns, so Go's planner never gets as far as an
-        // updatability check: it fails resolving the assignment's column name
-        // (captured: `update s1 set a = 1` is
-        // `[planner:1054] Unknown column 'a' in 'field list'`). That check
-        // runs before this match, so reaching here means the SET list was
-        // empty, which the parser does not produce.
-        TableEntry::Sequence(_) => {
-            return Err(DriverError::unsupported(
-                "UPDATE of a sequence is not a statement TiDB accepts",
-            ))
-        }
-        TableEntry::Mem(mem) => {
+    let row_evaluator = UpdateRowEvaluator {
+        field_types: &field_types,
+        column_names: &column_names,
+        predicate: &predicate,
+        set_exprs: &set_exprs,
+        catalog,
+        current_db,
+        ctx,
+    };
+    match source_rows {
+        SourceRows::Mem(rows) => {
             let mut updates = Vec::new();
-            scanned = mem.rows.len() as u64;
-            for (index, row) in mem.rows.iter().enumerate() {
+            for (index, row) in rows.iter().enumerate() {
                 if row_limit.is_some_and(|cap| matched >= cap) {
                     break;
                 }
-                if let Some(new_row) = compute_updated_row(
-                    row,
-                    &field_types,
-                    &column_names,
-                    &predicate,
-                    &set_exprs,
-                    ctx,
-                    &mut matched,
-                )? {
+                if let Some(new_row) = row_evaluator.compute(row, &mut matched)? {
                     updates.push((index, new_row));
                 }
             }
             changed = updates.len() as u64;
+            let Some(TableEntry::Mem(mem)) = catalog.get_mut_in(&database, &name) else {
+                unreachable!("the update source kind cannot change within one statement")
+            };
             for (index, new_row) in updates {
                 mem.rows[index] = new_row;
             }
         }
-        TableEntry::Kv(kv) => {
-            // The physical table still owns each staged rewrite, but the
-            // source handle narrows which rows this statement may reach.
-            // `TableHandle` preserves the physical partition id, so applying
-            // the later write through `kv` cannot widen the restriction.
-            let update_partition_ids = if table_ref.partitions.is_empty() {
-                None
-            } else {
-                let Some(spec) = kv.partition() else {
-                    return Err(DriverError::UnknownPartition {
-                        partition: table_ref.partitions[0].clone(),
-                        table: name.clone(),
-                    });
-                };
-                Some(
-                    crate::partition_pruning::ids_for_selected_partitions(
-                        spec,
-                        &table_ref.partitions,
-                    )
-                    .map_err(|partition| DriverError::UnknownPartition {
-                        partition,
-                        table: name.clone(),
-                    })?,
-                )
-            };
-            let mut source = restricted_to_partitions(kv, &table_ref.partitions, &name)?;
-            let mut rows = fetch_write_rows(&mut source, read_path.as_ref(), &zone)?;
-            order_rows_for_dml(
-                &mut rows,
-                &update.order_by,
-                &field_types,
-                &resolver,
-                &column_names,
-                ctx,
-            )?;
-            scanned = rows.len() as u64;
-            // Go `UpdateExec.updateRows` accounts the child's chunk on the way
-            // in and its staged rows as it merges them; this tier holds both
-            // the row it is looking at and every rewrite it has staged, so
-            // both are counted, per row and inside the loop -- an update over
-            // a table too large for the quota stops without staging the rest.
+        SourceRows::Kv {
+            rows,
+            partition_ids,
+        } => {
             let accountant = ctx
                 .statement_memory()
                 .write_accountant(mem_quota::label::UPDATE);
-            // The rewrites are STAGED rather than applied, because both
-            // referential checks need the table released: the child-side
-            // check reads the parent tables, and the parent-side cascade
-            // writes the dependent ones.
+            let Some(TableEntry::Kv(kv)) = catalog.get_in(&database, &name) else {
+                unreachable!("the update source kind cannot change within one statement")
+            };
             for (handle, row) in rows {
                 accountant.account_row(&row).map_err(DriverError::from)?;
-                // Go's `LIMIT` is a plan operator over the rows the statement
-                // reaches, so it counts MATCHED rows -- not the subset whose
-                // value ended up different. Counting changed rows lets a run of
-                // no-op updates slip the cap and reach rows the statement was
-                // never allowed to touch.
                 if row_limit.is_some_and(|cap| matched >= cap) {
                     break;
                 }
-                if let Some(mut new_row) = compute_updated_row(
-                    &row,
-                    &field_types,
-                    &column_names,
-                    &predicate,
-                    &set_exprs,
-                    ctx,
-                    &mut matched,
-                )? {
-                    // The SET list assigns only the columns it names, so a
-                    // generated column still holds the value computed from the
-                    // OLD dependency. `update_row` would recompute it on the
-                    // way to the bytes, but the referential checks below run
-                    // FIRST and read this row: a stale generated value makes a
-                    // referenced key look unchanged, and the `ON UPDATE
-                    // CASCADE` that should repoint the children never fires.
-                    // Recomputing here is the same rule the INSERT path
-                    // follows -- the checks see exactly the row the write will
-                    // store -- and it is idempotent, so `update_row`'s own
-                    // recompute stays a no-op.
+                if let Some(mut new_row) = row_evaluator.compute(&row, &mut matched)? {
                     kv.materialize_generated(&mut new_row, ctx)
                         .map_err(kv_write_error)?;
-                    if let Some(partitions) = &update_partition_ids {
+                    if let Some(partitions) = &partition_ids {
                         kv.validate_update_partitions(&row, &new_row, partitions, ctx)
                             .map_err(kv_write_error)?;
                     }
@@ -1757,76 +1753,79 @@ pub(crate) fn run_update_traced(
     Ok(changed)
 }
 
-/// Applies the `SET` assignments to one row, returning the new row only when
-/// the `WHERE` selected it AND a column actually changed (Go's `changed` flag).
-pub(crate) fn compute_updated_row(
-    row: &[Datum],
-    field_types: &[FieldType],
-    column_names: &[String],
-    predicate: &Option<Expression>,
-    set_exprs: &[(usize, Expression)],
-    ctx: &crate::StmtContext,
-    matched: &mut u64,
-) -> Result<Option<Vec<Datum>>, DriverError> {
-    let chunk = row_chunk(row, field_types)?;
-    if let Some(predicate) = predicate {
-        let selected = predicate
-            .eval(ctx, chunk.get_row(0))
-            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-        if !datum_is_true(&selected) {
+struct UpdateRowEvaluator<'a> {
+    field_types: &'a [FieldType],
+    column_names: &'a [String],
+    predicate: &'a Option<DmlExpression>,
+    set_exprs: &'a [(usize, Expression)],
+    catalog: &'a Catalog,
+    current_db: &'a str,
+    ctx: &'a crate::StmtContext,
+}
+
+impl UpdateRowEvaluator<'_> {
+    /// Applies the `SET` assignments to one row, returning the new row only
+    /// when the `WHERE` selected it AND a column actually changed (Go's
+    /// `changed` flag).
+    fn compute(&self, row: &[Datum], matched: &mut u64) -> Result<Option<Vec<Datum>>, DriverError> {
+        let chunk = row_chunk(row, self.field_types)?;
+        if let Some(predicate) = self.predicate {
+            let selected = predicate.eval(row, self.catalog, self.current_db, self.ctx)?;
+            if !datum_is_true(&selected) {
+                return Ok(None);
+            }
+        }
+        // The `WHERE` selected this row. That is what a `Selection`'s `actRows`
+        // counts -- not the narrower `changed` below, which Go reports as
+        // `affected` rather than as rows the filter passed.
+        *matched += 1;
+        // Every assignment reads the row as the statement found it, so
+        // `SET a = 100, b = a` stores the ORIGINAL `a` in `b`, and
+        // `SET c = a, a = b, b = c` rotates the three original values in one step.
+        // Go builds the whole new row from the old one before writing any of it
+        // (`executor.UpdateExec` composes `newRowData` off the fetched row), which
+        // is why an earlier assignment is invisible to a later one. Evaluating
+        // against the single unmodified `chunk` makes that the only reading there
+        // is, rather than a rule the loop has to re-establish per assignment.
+        let mut new_row = row.to_vec();
+        for (offset, expr) in self.set_exprs {
+            let value = expr
+                .eval(self.ctx, chunk.get_row(0))
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            // Go casts an assigned value to its column's type here too, which is
+            // what stores `SET d = 9.87654` in a DECIMAL(10,3) column as 9.877.
+            new_row[*offset] = cast_value_for_update_assignment(
+                value,
+                &self.field_types[*offset],
+                &self.column_names[*offset],
+                0,
+                self.ctx,
+            )?;
+        }
+        // Go `updateRecord`'s step 5 runs `HandleBadNull` over EVERY column of
+        // the new row, before the row is compared with the old one -- which is
+        // why a row whose NULL is replaced by the same zero it already held is
+        // still counted as unchanged AND still warns. `ErrGroupBadNull` for an
+        // UPDATE is an error exactly under strict mode (`ResetUpdateStmtCtx`).
+        // Zipped rather than indexed because the row can be WIDER than the column
+        // list: an expression index appends a hidden generated column to the
+        // stored row that `column_list` does not name. Go loops `t.Cols()`, which
+        // is the visible columns, so stopping where the names stop IS the rule
+        // and not a bounds guard.
+        let level = crate::bad_null::NullLevel::from_is_error(self.ctx.strict());
+        for ((value, field_type), name) in new_row
+            .iter_mut()
+            .zip(self.field_types.iter())
+            .zip(self.column_names.iter())
+        {
+            crate::bad_null::handle_bad_null(value, field_type, name, level, self.ctx)?;
+        }
+        if new_row == row {
+            // Go counts this row as touched, not affected.
             return Ok(None);
         }
+        Ok(Some(new_row))
     }
-    // The `WHERE` selected this row. That is what a `Selection`'s `actRows`
-    // counts -- not the narrower `changed` below, which Go reports as
-    // `affected` rather than as rows the filter passed.
-    *matched += 1;
-    // Every assignment reads the row as the statement found it, so
-    // `SET a = 100, b = a` stores the ORIGINAL `a` in `b`, and
-    // `SET c = a, a = b, b = c` rotates the three original values in one step.
-    // Go builds the whole new row from the old one before writing any of it
-    // (`executor.UpdateExec` composes `newRowData` off the fetched row), which
-    // is why an earlier assignment is invisible to a later one. Evaluating
-    // against the single unmodified `chunk` makes that the only reading there
-    // is, rather than a rule the loop has to re-establish per assignment.
-    let mut new_row = row.to_vec();
-    for (offset, expr) in set_exprs {
-        let value = expr
-            .eval(ctx, chunk.get_row(0))
-            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-        // Go casts an assigned value to its column's type here too, which is
-        // what stores `SET d = 9.87654` in a DECIMAL(10,3) column as 9.877.
-        new_row[*offset] = cast_value_for_update_assignment(
-            value,
-            &field_types[*offset],
-            &column_names[*offset],
-            0,
-            ctx,
-        )?;
-    }
-    // Go `updateRecord`'s step 5 runs `HandleBadNull` over EVERY column of
-    // the new row, before the row is compared with the old one -- which is
-    // why a row whose NULL is replaced by the same zero it already held is
-    // still counted as unchanged AND still warns. `ErrGroupBadNull` for an
-    // UPDATE is an error exactly under strict mode (`ResetUpdateStmtCtx`).
-    // Zipped rather than indexed because the row can be WIDER than the column
-    // list: an expression index appends a hidden generated column to the
-    // stored row that `column_list` does not name. Go loops `t.Cols()`, which
-    // is the visible columns, so stopping where the names stop IS the rule
-    // and not a bounds guard.
-    let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
-    for ((value, field_type), name) in new_row
-        .iter_mut()
-        .zip(field_types.iter())
-        .zip(column_names.iter())
-    {
-        crate::bad_null::handle_bad_null(value, field_type, name, level, ctx)?;
-    }
-    if new_row == row {
-        // Go counts this row as touched, not affected.
-        return Ok(None);
-    }
-    Ok(Some(new_row))
 }
 
 /// Runs a single-table `DELETE`, returning the number of removed rows.
@@ -1941,10 +1940,13 @@ pub(crate) fn run_delete_traced(
         zone: ctx.session_zone(),
     };
     let predicate = match &delete.where_clause {
-        Some(expr) => Some(
-            rewrite_expr_resolved(expr, &resolver)
-                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
-        ),
+        Some(expr) => Some(DmlExpression::build(
+            expr,
+            dml_table_scope(table_ref, &database, &name, column_list.clone(), ctx),
+            catalog,
+            current_db,
+            ctx,
+        )?),
         None => None,
     };
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
@@ -1982,44 +1984,59 @@ pub(crate) fn run_delete_traced(
             return Ok(0);
         }
     }
-    let scanned;
-    let entry = catalog
-        .get_mut_in(&database, &name)
-        .ok_or(DriverError::unsupported("unknown table"))?;
-
+    enum SourceRows {
+        Mem(Vec<Vec<Datum>>),
+        Kv(Vec<(crate::kv_table::TableHandle, Vec<Datum>)>),
+    }
+    let source_rows = {
+        let entry = catalog
+            .get_mut_in(&database, &name)
+            .ok_or(DriverError::unsupported("unknown table"))?;
+        match entry {
+            TableEntry::Cte(_) | TableEntry::View(_) => {
+                return Err(DriverError::DeleteViewUnsupported(name.clone()))
+            }
+            TableEntry::Sequence(_) => {
+                return Err(DriverError::DeleteSequenceUnsupported(name.clone()))
+            }
+            TableEntry::Mem(mem) => SourceRows::Mem(mem.rows.clone()),
+            TableEntry::Kv(kv) => {
+                let mut source = restricted_to_partitions(kv, &table_ref.partitions, &name)?;
+                let mut rows = fetch_write_rows(&mut source, read_path.as_ref(), &zone)?;
+                order_rows_for_dml(
+                    &mut rows,
+                    &delete.order_by,
+                    &field_types,
+                    &resolver,
+                    &column_names,
+                    ctx,
+                )?;
+                SourceRows::Kv(rows)
+            }
+        }
+    };
+    let scanned = match &source_rows {
+        SourceRows::Mem(rows) => rows.len() as u64,
+        SourceRows::Kv(rows) => rows.len() as u64,
+    };
     let mut deleted = 0u64;
     let mut doomed: Vec<(crate::kv_table::TableHandle, Vec<Datum>)> = Vec::new();
-    match entry {
-        TableEntry::Cte(_) | TableEntry::View(_) => {
-            return Err(DriverError::DeleteViewUnsupported(name.clone()))
-        }
-        TableEntry::Sequence(_) => {
-            return Err(DriverError::DeleteSequenceUnsupported(name.clone()))
-        }
-        TableEntry::Mem(mem) => {
-            let mut kept = Vec::with_capacity(mem.rows.len());
-            scanned = mem.rows.len() as u64;
-            for row in std::mem::take(&mut mem.rows) {
-                if row_is_selected(&row, &field_types, &predicate, ctx)? {
+    match source_rows {
+        SourceRows::Mem(rows) => {
+            let mut kept = Vec::with_capacity(rows.len());
+            for row in rows {
+                if dml_row_is_selected(&row, &predicate, catalog, current_db, ctx)? {
                     deleted += 1;
                 } else {
                     kept.push(row);
                 }
             }
+            let Some(TableEntry::Mem(mem)) = catalog.get_mut_in(&database, &name) else {
+                unreachable!("the delete source kind cannot change within one statement")
+            };
             mem.rows = kept;
         }
-        TableEntry::Kv(kv) => {
-            let mut source = restricted_to_partitions(kv, &table_ref.partitions, &name)?;
-            let mut rows = fetch_write_rows(&mut source, read_path.as_ref(), &zone)?;
-            order_rows_for_dml(
-                &mut rows,
-                &delete.order_by,
-                &field_types,
-                &resolver,
-                &column_names,
-                ctx,
-            )?;
-            scanned = rows.len() as u64;
+        SourceRows::Kv(rows) => {
             // Go `DeleteExec.deleteSingleTableByChunk`: the child's chunk is
             // consumed as it arrives, which is why a `DELETE` over a table
             // too large for the quota is cancelled by the DELETE and not by
@@ -2037,7 +2054,7 @@ pub(crate) fn run_delete_traced(
                 if row_limit.is_some_and(|cap| doomed.len() as u64 >= cap) {
                     break;
                 }
-                if row_is_selected(&row, &field_types, &predicate, ctx)? {
+                if dml_row_is_selected(&row, &predicate, catalog, current_db, ctx)? {
                     doomed.push((handle, row));
                 }
             }
@@ -2276,6 +2293,21 @@ pub(crate) fn row_is_selected(
         .eval(ctx, chunk.get_row(0))
         .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
     Ok(datum_is_true(&selected))
+}
+
+fn dml_row_is_selected(
+    row: &[Datum],
+    predicate: &Option<DmlExpression>,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<bool, DriverError> {
+    let Some(predicate) = predicate else {
+        return Ok(true);
+    };
+    Ok(datum_is_true(
+        &predicate.eval(row, catalog, current_db, ctx)?,
+    ))
 }
 
 /// A one-row chunk holding `row`, so an expression can be evaluated over it.

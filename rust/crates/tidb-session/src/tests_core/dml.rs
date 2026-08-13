@@ -284,6 +284,74 @@ fn insert_select_and_ordered_dml() {
     );
 }
 
+/// Go builds an Apply below a DML write when its source predicate contains a
+/// correlated subquery. The write must therefore see the per-row subquery
+/// result, for DELETE/UPDATE as well as an INSERT/REPLACE query source.
+#[test]
+fn correlated_subqueries_drive_dml_source_rows() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a BIGINT, b INT)").unwrap();
+    session.run("CREATE TABLE t2 (a INT, b INT)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,4),(1,1),(2,2),(3,3),(4,4)")
+        .unwrap();
+    session
+        .run("INSERT INTO t2 VALUES (1,1),(2,2),(3,3),(4,4),(1,1),(2,2),(3,3),(4,4)")
+        .unwrap();
+
+    assert_eq!(
+        session
+            .run("DELETE FROM t WHERE (SELECT MIN(t2.a) * 2 FROM t2 WHERE t2.a < t.a) > 1")
+            .unwrap(),
+        StmtResult::Affected(6)
+    );
+    assert_eq!(
+        row_text(session.run("SELECT * FROM t ORDER BY a, b")),
+        [["1", "1"], ["1", "1"]]
+    );
+
+    session.run("DROP TABLE t").unwrap();
+    session.run("CREATE TABLE t (a SMALLINT, b INT)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1),(2,2),(3,3),(1,1),(2,2),(3,3)")
+        .unwrap();
+    assert_eq!(
+        session
+            .run(
+                "UPDATE t SET a = a + 1 WHERE (SELECT COUNT(*) FROM t2 WHERE t2.a <= t.a) IN (1,2)"
+            )
+            .unwrap(),
+        StmtResult::Affected(2)
+    );
+    assert_eq!(
+        row_text(session.run("SELECT * FROM t ORDER BY a, b")),
+        [
+            ["2", "1"],
+            ["2", "1"],
+            ["2", "2"],
+            ["2", "2"],
+            ["3", "3"],
+            ["3", "3"],
+        ]
+    );
+
+    session.run("DROP TABLE t").unwrap();
+    session
+        .run("CREATE TABLE t (a TINYINT, b INT, UNIQUE INDEX idx(a))")
+        .unwrap();
+    session.run("DELETE FROM t2 WHERE a = 4").unwrap();
+    session
+        .run("INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,4)")
+        .unwrap();
+    session
+        .run("REPLACE INTO t (SELECT POW(t2.a, 2), t2.b FROM t2 WHERE (SELECT MIN(t.a) FROM t WHERE t.a > t2.a) BETWEEN 1 AND 5)")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT * FROM t ORDER BY a, b")),
+        [["1", "1"], ["2", "2"], ["3", "3"], ["4", "2"], ["9", "3"],]
+    );
+}
+
 /// Go `buildValuesListOfInsert`: `INSERT t VALUES ()` is a row of nothing
 /// but defaults, legal only while BOTH the column list and the first value
 /// list are empty.

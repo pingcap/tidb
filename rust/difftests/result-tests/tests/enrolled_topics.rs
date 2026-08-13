@@ -522,10 +522,10 @@ pub const TOPICS: &[(&str, &str)] = &[
     ),
     (
         "executor/parallel_apply",
-        "84 of 97 with 3 divergences, and they are WRONG ROWS rather than plan text: \
-     an `UPDATE`/`DELETE` whose predicate is a correlated subquery leaves rows \
-     that TiDB removes. Onboarded deliberately AS a tripwire on a known \
-     correctness gap -- the number may only go down",
+        "93 of 97 match with zero divergences; the remaining four statements are \
+     rejected by both engines. Correlated scalar subqueries now drive SELECT \
+     projections and DELETE/UPDATE/REPLACE source rows through the same \
+     per-outer-row Apply semantics as TiDB",
     ),
     (
         "executor/window",

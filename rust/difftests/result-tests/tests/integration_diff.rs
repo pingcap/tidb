@@ -1692,7 +1692,9 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // `executor/expand` reached zero: four wrong super-aggregate rows now
     // preserve aggregate inputs while only the copied grouping keys become
     // NULL (77 -> 73).
-    const KNOWN_DIVERGENCES: usize = 73;
+    // `executor/parallel_apply` reached zero: its three wrong DML row sets now
+    // evaluate correlated subqueries before staging the write (73 -> 70).
+    const KNOWN_DIVERGENCES: usize = 70;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

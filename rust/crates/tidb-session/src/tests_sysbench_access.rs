@@ -693,15 +693,17 @@ fn narrowing_survives_aliases_ordering_limits_and_subqueries() {
         vec![vec!["150".to_owned()], vec!["199".to_owned()]]
     );
 
-    // A subquery bound is not a constant the ranger may fold. This tier's
-    // write driver refuses the statement before the read happens at all
-    // (its rewriter has no subquery form), which is the behaviour this unit
-    // found and did not change; what matters here is that the ranger declines
-    // rather than folding an expression it cannot evaluate into a bound.
+    // A subquery bound is not a constant the ranger may fold. The DML source
+    // plan evaluates it as an Apply over the immutable statement snapshot,
+    // then updates exactly the selected maximum handle.
     let mut session = sbtest1_with_rows();
-    assert!(session
+    session
         .run("UPDATE sbtest1 SET pad = 'W' WHERE id = (SELECT MAX(id) FROM sbtest1)")
-        .is_err());
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT id FROM sbtest1 WHERE pad = 'W' ORDER BY id")),
+        vec![vec!["201".to_owned()]]
+    );
 
     // A `WHERE` on the handle that is not a bound at all: the ranger declines
     // and the statement still reaches every row it names.

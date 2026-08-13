@@ -239,6 +239,21 @@ fn correlated_subqueries() {
         vec![vec![Datum::Int(3)]]
     );
 
+    // Every expression wrapper is traversed by the same Apply extraction and
+    // binding pass. The second scalar subquery puts the outer reference under
+    // BETWEEN, and both scalar subqueries must be chained onto one source row.
+    assert_eq!(
+        run_select_on(
+            "SELECT (SELECT COUNT(*) FROM i WHERE i.id > o.id), \
+                    (SELECT MAX(w) FROM i WHERE i.id BETWEEN o.id AND 4) \
+             FROM o WHERE o.id = 2",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(1), Datum::Int(40)]]
+    );
+
     // Correlated EXISTS / NOT EXISTS, the semi- and anti-join shapes.
     assert_eq!(
         run_select_on(
@@ -474,21 +489,36 @@ fn grouped_correlated_subqueries() {
             ],
         ]
     );
-    // Still REFUSED (documented, not silently wrong), and it is the SHAPE that
-    // refuses, not the placement: `extract_correlated_subquery` does not walk
-    // into a `CASE` arm, so the subquery stays in the aggregate's argument and
-    // `build_agg_func` reports it by name instead of falling through to the
-    // expression rewriter's generic message. Go answers
-    // `<nil>|0;1|30;2|5;3|0`.
-    assert!(matches!(
+    // CASE is not a special traversal boundary: the EXISTS is the same
+    // per-source-row Apply as the scalar aggregate argument above. Captured
+    // from Go: `<nil>|0;1|30;2|5;3|0`.
+    assert_eq!(
         run_select_on(
             "SELECT g, SUM(CASE WHEN EXISTS(SELECT 1 FROM s WHERE s.k = t.g) THEN v ELSE 0 END) \
-             FROM t GROUP BY g",
+             FROM t GROUP BY g ORDER BY g",
             &catalog,
             &crate::StmtContext::for_query()
-        ),
-        Err(DriverError::Unsupported(_))
-    ));
+        )
+        .unwrap(),
+        vec![
+            vec![
+                Datum::Null,
+                Datum::Decimal(tidb_datatype::Decimal::from_int(0))
+            ],
+            vec![
+                Datum::Int(1),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(30))
+            ],
+            vec![
+                Datum::Int(2),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(5))
+            ],
+            vec![
+                Datum::Int(3),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(0))
+            ],
+        ]
+    );
 
     // A HAVING clause referencing a non-grouped, non-aggregated column
     // stays refused even with a correlated subquery alongside it -- the
