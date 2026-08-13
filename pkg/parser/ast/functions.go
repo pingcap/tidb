@@ -377,6 +377,7 @@ const (
 	// FTS functions (tidb extension)
 	FTSMatchWord         = "fts_match_word"
 	FTSMysqlMatchAgainst = "match_against"
+	FTSTokenize          = "fts_tokenize"
 
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"

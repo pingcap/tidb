@@ -983,6 +983,7 @@ var funcs = map[string]functionClass{
 	// fts functions
 	ast.FTSMatchWord:         &ftsMatchWordFunctionClass{baseFunctionClass: baseFunctionClass{ast.FTSMatchWord, 2, 2}},
 	ast.FTSMysqlMatchAgainst: &ftsMysqlMatchAgainstFunctionClass{baseFunctionClass{ast.FTSMysqlMatchAgainst, 2, -1}},
+	ast.FTSTokenize:          &ftsTokenizeFunctionClass{baseFunctionClass{ast.FTSTokenize, 5, 5}},
 
 	// TiDB internal function.
 	ast.TiDBDecodeKey:       &tidbDecodeKeyFunctionClass{baseFunctionClass{ast.TiDBDecodeKey, 1, 1}},

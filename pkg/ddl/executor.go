@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/bdr"
 	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
@@ -4962,6 +4963,19 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		columnarIndexType = model.ColumnarIndexTypeFulltext
 	default:
 		return dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(indexOption.Tp)
+	}
+	if columnarIndexType == model.ColumnarIndexTypeFulltext && !deploymode.IsStarter() {
+		// No columnar engine is available to hold a full-text index here, so
+		// materialise it as a multi-valued index over the tokenized column and
+		// continue down the ordinary index path. IndexKeyTypeNone keeps it
+		// non-unique; the rewritten specification carries an expression, so
+		// createIndex builds the hidden generated column for it as it would for
+		// any other expression index.
+		mvSpecs, err := buildFullTextMVIndexSpec(ctx, indexPartSpecifications, indexOption, tblInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return e.createIndex(ctx, ti, ast.IndexKeyTypeNone, indexName, mvSpecs, nil, ifNotExists)
 	}
 	if columnarIndexType == model.ColumnarIndexTypeFulltext {
 		if err := checkFullTextSupportedInStarter(); err != nil {
