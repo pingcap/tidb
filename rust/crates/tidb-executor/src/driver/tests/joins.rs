@@ -250,6 +250,41 @@ fn distinct_eliminates_an_unread_outer_join_with_a_non_unique_inner_key() {
     );
 }
 
+#[test]
+fn duplicate_agnostic_aggregate_eliminates_an_unread_outer_join() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE al (id BIGINT PRIMARY KEY)", &mut catalog).unwrap();
+    crate::run_create_table_on("CREATE TABLE ar (k BIGINT)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on("INSERT INTO al VALUES (1), (2)", &mut catalog, &ctx).unwrap();
+    run_insert_on("INSERT INTO ar VALUES (1), (1)", &mut catalog, &ctx).unwrap();
+
+    let sql = "SELECT MAX(al.id), MIN(al.id) FROM al LEFT JOIN ar ON al.id = ar.k";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(2), Datum::Int(1)]]
+    );
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    assert!(
+        rows.iter().all(|row| match &row[0] {
+            Datum::Bytes(id) => !String::from_utf8_lossy(id).contains("Join"),
+            _ => true,
+        }),
+        "duplicate-agnostic aggregates must remove the unread outer join, got {rows:?}"
+    );
+}
+
 /// Every leaf of a join is costed, and a leaf whose parents read only the
 /// columns an index covers reads that index instead of the table -- Go's
 /// `findBestTask` recursing into each `DataSource` below a `LogicalJoin`.

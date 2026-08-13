@@ -28,7 +28,7 @@
 //!     duplicate-agnostic (`DISTINCT`, `max`/`min`, ...), so a duplicated
 //!     outer row is unobservable even without the uniqueness.
 //!
-//! The `DISTINCT` subset of (2), together with (1), is implemented here. It
+//! The direct `DISTINCT`/aggregate subset of (2), together with (1), is implemented here. It
 //! closes both of the statements this tier diverges on, `explain_easy`'s
 //!
 //! ```sql
@@ -36,8 +36,8 @@
 //! select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
 //! ```
 //!
-//! -- including the `DISTINCT` form when `t2.a` is NOT unique. Other
-//! duplicate-agnostic aggregates (`MAX`, `MIN`, ...) still need a logical
+//! -- including the `DISTINCT`, `MAX`, and `MIN` forms when `t2.a` is NOT
+//! unique. Grouped and hidden aggregate carriers still need a logical
 //! aggregate-column walk and remain outside this statement-shaped rewrite.
 //!
 //! # Why this runs over the statement rather than a logical plan
@@ -81,7 +81,7 @@
 //!   inherit a nullable unique key's at-most-one-match guarantee (Go excludes
 //!   exactly these from `NullableUK`).
 
-use tidb_ast::{Expr, Join, JoinNode, JoinType, SelectStmt};
+use tidb_ast::{Expr, Join, JoinNode, JoinType, SelectField, SelectStmt};
 
 use super::catalog::{Catalog, TableEntry};
 use super::leaf_demand::LeafDemand;
@@ -147,7 +147,7 @@ pub(crate) fn eliminate(
     // Go carries SELECT DISTINCT as duplicate-agnostic aggregate columns into
     // `tryToEliminateOuterJoin`. Once no inner column survives, duplicate
     // matches cannot alter the result, even when the inner key is not unique.
-    if select.distinct {
+    if select.distinct || direct_duplicate_agnostic_aggregate(select) {
         return Some(candidate);
     }
 
@@ -156,6 +156,29 @@ pub(crate) fn eliminate(
         return None;
     }
     Some(candidate)
+}
+
+/// The direct, ungrouped subset of Go `GetDupAgnosticAggCols`: every output
+/// is `MAX`/`MIN` or carries `DISTINCT`, so multiplying an outer row through
+/// an unread inner relation cannot alter the result.
+fn direct_duplicate_agnostic_aggregate(select: &SelectStmt) -> bool {
+    if !select.group_by.is_empty() || select.having.is_some() || !select.order_by.is_empty() {
+        return false;
+    }
+    let mut has_aggregate = false;
+    for field in select.fields.fields() {
+        let SelectField::Expr { expr, .. } = field else {
+            return false;
+        };
+        let Expr::Aggregate { name, distinct, .. } = expr else {
+            return false;
+        };
+        has_aggregate = true;
+        if !distinct && !name.eq_ignore_ascii_case("MAX") && !name.eq_ignore_ascii_case("MIN") {
+            return false;
+        }
+    }
+    has_aggregate
 }
 
 /// The `FROM`'s real join node, unwrapping the single-relation wrapper the
