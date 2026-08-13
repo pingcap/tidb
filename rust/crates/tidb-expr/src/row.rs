@@ -37,8 +37,8 @@ use crate::coerce::bool_int;
 use crate::ops::eval_binary;
 use crate::{Datum, EvalError};
 
-/// Total order over two scalar datums — Go `types/datum.go` `Datum.Compare`
-/// as used for sorting (`pkg/util/chunk/compare.go` `GetCompareFunc`).
+/// Total order over two same-typed scalar datums, matching Go
+/// `pkg/util/chunk/compare.go` `GetCompareFunc`.
 ///
 /// Semantics are exactly the ones this crate's own `=`/`<` operators use
 /// (the ordering behind `IN`/`BETWEEN`/comparison), plus the sort-side NULL
@@ -77,12 +77,14 @@ pub fn compare_datums_with_collation(
     match eval_binary(BinaryOp::Eq, l.clone(), r.clone())? {
         Datum::Int(1) => return Ok(Ordering::Equal),
         Datum::Int(0) => {}
-        _ => unreachable!("eval_binary(Eq, non-NULL, non-NULL) only ever returns Int(0/1)"),
+        Datum::Null => return Err(EvalError::Unsupported("unordered scalar comparison")),
+        _ => unreachable!("eval_binary(Eq, ...) only ever returns Int or Null"),
     }
     match eval_binary(BinaryOp::Lt, l.clone(), r.clone())? {
         Datum::Int(1) => Ok(Ordering::Less),
         Datum::Int(0) => Ok(Ordering::Greater),
-        _ => unreachable!("eval_binary(Lt, non-NULL, non-NULL) only ever returns Int(0/1)"),
+        Datum::Null => Err(EvalError::Unsupported("unordered scalar comparison")),
+        _ => unreachable!("eval_binary(Lt, ...) only ever returns Int or Null"),
     }
 }
 
@@ -156,5 +158,26 @@ pub(crate) fn row_compare(op: BinaryOp, l: &[Datum], r: &[Datum]) -> Result<Datu
             Ok(bool_int(matches!(op, BinaryOp::Le | BinaryOp::Ge)))
         }
         _ => Err(EvalError::Unsupported("row value comparison operator")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compare_datums_with_collation;
+    use tidb_datatype::{parse_datetime, Collation, Datum};
+
+    #[test]
+    fn invalid_temporal_comparison_returns_an_error_instead_of_panicking() {
+        let time = Datum::new_time(
+            parse_datetime("2026-08-14 12:00:00", &chrono_tz::UTC, true, false)
+                .unwrap()
+                .time,
+        );
+        assert!(compare_datums_with_collation(
+            &time,
+            &Datum::new_string("not-a-time"),
+            Collation::Utf8Mb4Bin,
+        )
+        .is_err());
     }
 }
