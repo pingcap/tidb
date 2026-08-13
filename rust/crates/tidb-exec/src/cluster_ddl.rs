@@ -57,7 +57,7 @@ use std::fmt;
 use tidb_ast::CiString;
 use tidb_ast::{
     AlterTableStmt, CreateIndexStmt, CreateTableStmt, DdlStmt, DropIndexStmt, DropTableStmt,
-    IndexConstraintDefinition, IndexConstraintKind, Stmt,
+    IndexConstraintDefinition, IndexConstraintKind, RenameTableStmt, Stmt,
 };
 use tidb_datatype::new_collation_enabled;
 use tidb_meta::{key, value};
@@ -131,6 +131,18 @@ pub enum DdlStatement {
         table: String,
         /// Whether a missing table is a no-op rather than an error.
         if_exists: bool,
+    },
+    /// `RENAME TABLE [schema.]from TO [schema.]to`, including the single
+    /// action form of `ALTER TABLE ... RENAME TO`.
+    RenameTable {
+        /// The schema which currently owns the table.
+        from_schema: String,
+        /// The current table name.
+        from_table: String,
+        /// The schema which will own the table.
+        to_schema: String,
+        /// The new table name.
+        to_table: String,
     },
     /// `CREATE [UNIQUE] INDEX name ON [schema.]table (columns)`.
     ///
@@ -215,7 +227,8 @@ pub fn lower_ddl_with_context(
         DdlStmt::DropTable(drop) => lower_drop_table(drop, default_schema).map(Some),
         DdlStmt::CreateIndex(create) => lower_create_index(create, default_schema).map(Some),
         DdlStmt::DropIndex(drop) => lower_drop_index(drop, default_schema).map(Some),
-        DdlStmt::AlterTable(alter) => lower_alter_table_index(alter, default_schema),
+        DdlStmt::AlterTable(alter) => lower_alter_table_catalog(alter, default_schema),
+        DdlStmt::RenameTable(rename) => lower_rename_table_stmt(rename, default_schema),
         _ => Ok(None),
     }
 }
@@ -227,7 +240,7 @@ pub fn lower_ddl_with_context(
 /// and backfill ownership in one place.  Multi-action ALTERs stay refused: the
 /// catalog transaction has no representation for their atomic job bundle, so
 /// accepting only its index action would silently half-apply the SQL.
-fn lower_alter_table_index(
+fn lower_alter_table_catalog(
     alter: &AlterTableStmt,
     default_schema: &str,
 ) -> Result<Option<DdlStatement>, DdlAdmissionError> {
@@ -237,6 +250,7 @@ fn lower_alter_table_index(
                 action,
                 tidb_ast::AlterTableAction::AddIndexConstraint(_)
                     | tidb_ast::AlterTableAction::DropIndex { .. }
+                    | tidb_ast::AlterTableAction::RenameTable { .. }
             )
         }) {
             return Err(DdlAdmissionError::unsupported(
@@ -263,8 +277,58 @@ fn lower_alter_table_index(
             default_schema,
         )
         .map(Some),
+        tidb_ast::AlterTableAction::RenameTable { new_name } => {
+            let (from_schema, from_table) =
+                split_name(&alter.name, default_schema, "renamed table")?;
+            let (to_schema, to_table) = split_name(new_name, default_schema, "new table name")?;
+            if from_schema.eq_ignore_ascii_case(&to_schema)
+                && from_table.eq_ignore_ascii_case(&to_table)
+            {
+                return Ok(None);
+            }
+            Ok(Some(DdlStatement::RenameTable {
+                from_schema,
+                from_table,
+                to_schema,
+                to_table,
+            }))
+        }
         _ => Ok(None),
     }
+}
+
+/// Lowers the one-pair top-level `RENAME TABLE` statement.
+///
+/// Go lets one job carry several pairs.  A single catalog write has no
+/// multi-table diff yet, so refusing a multi-pair statement is safer than
+/// publishing just its first pair.  The single-pair path is the same catalog
+/// mutation as `ALTER TABLE ... RENAME TO`.
+fn lower_rename_table_stmt(
+    rename: &RenameTableStmt,
+    default_schema: &str,
+) -> Result<Option<DdlStatement>, DdlAdmissionError> {
+    let [(from, to)] = rename.pairs.as_slice() else {
+        return Err(DdlAdmissionError::unsupported(
+            "RENAME TABLE requires exactly one table pair on this node; \
+             multiple pairs need one atomic multi-table DDL job",
+        ));
+    };
+    lower_rename_table(from, to, default_schema).map(Some)
+}
+
+fn lower_rename_table(
+    from: &[String],
+    to: &[String],
+    default_schema: &str,
+) -> Result<DdlStatement, DdlAdmissionError> {
+    let (from_schema, from_table) = split_name(from, default_schema, "renamed table")?;
+    let (to_schema, to_table) = split_name(to, default_schema, "new table name")?;
+    Ok(DdlStatement::RenameTable {
+        from_schema,
+        from_table,
+        to_schema,
+        to_table,
+    })
 }
 
 fn lower_alter_add_index(
@@ -854,6 +918,55 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_DROP_TABLE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+        }
+        DdlStatement::RenameTable {
+            from_schema,
+            from_table,
+            to_schema,
+            to_table,
+        } => {
+            let (old_db_id, stored) = locate_table(&catalog, from_schema, from_table)?;
+            let Some(new_database) = find_database(&catalog, to_schema) else {
+                return Err(DdlPlanError::UnknownDatabase(to_schema.clone()));
+            };
+            if find_table(new_database, to_table).is_some() {
+                return Err(DdlPlanError::TableExists {
+                    schema: to_schema.clone(),
+                    table: to_table.clone(),
+                });
+            }
+
+            // Go drops the old database-hash field then writes the same table
+            // ID under the new one.  Its allocator remains in the schema
+            // where the table was created, represented by AutoIDSchemaID;
+            // moving that counter would reissue IDs after a cross-schema
+            // rename.
+            let mut info = stored.clone_like_go();
+            if info.auto_id_schema_id == 0 && old_db_id != new_database.info.id {
+                info.auto_id_schema_id = old_db_id;
+            } else if new_database.info.id == info.auto_id_schema_id {
+                // A table renamed back to its original schema no longer needs
+                // an override (Go `checkAndRenameTables`).
+                info.auto_id_schema_id = 0;
+            }
+            info.name = CiString::new(to_table.clone());
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            if old_db_id != new_database.info.id {
+                writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
+                    old_db_id, table_id,
+                ))?);
+            }
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(new_database.info.id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_RENAME_TABLE;
+            diff.schema_id = new_database.info.id;
+            diff.table_id = table_id;
+            diff.old_schema_id = old_db_id;
         }
         DdlStatement::CreateIndex {
             schema,

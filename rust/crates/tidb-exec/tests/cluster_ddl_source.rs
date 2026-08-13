@@ -897,6 +897,74 @@ fn alter_table_index_actions_share_the_catalog_backfill_path() {
     );
 }
 
+/// Go's single-table rename job keeps the table ID and its auto-ID authority,
+/// while moving the metadata field to the destination schema.  `ALTER TABLE
+/// ... RENAME TO` uses that same job rather than a distinct local-only path.
+#[test]
+fn alter_table_rename_moves_catalog_metadata_without_reissuing_ids() {
+    let mut store = bootstrapped();
+    let archive = plan(&mut store, "CREATE DATABASE archive", 470_000_100);
+    apply(&mut store, &archive);
+    let created = plan(
+        &mut store,
+        "CREATE TABLE u6.made (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)",
+        470_000_101,
+    );
+    let table_id = created.created_id.expect("a table id");
+    apply(&mut store, &created);
+
+    let renamed = plan(
+        &mut store,
+        "ALTER TABLE u6.made RENAME TO archive.renamed",
+        470_000_102,
+    );
+    assert_eq!(renamed.diff.action_type.0, 14, "ActionRenameTable");
+    assert_eq!(renamed.diff.old_schema_id, 112);
+    assert!(renamed
+        .mutations
+        .iter()
+        .any(|mutation| mutation.kind() == OptimisticMutationKind::MetaDelete
+            && mutation.key() == key::table_kv_key(112, table_id)));
+    apply(&mut store, &renamed);
+    let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut store)
+        .expect("the renamed catalog loads");
+    assert!(catalog.find_table("u6", "made").is_none());
+    let (database, table) = catalog
+        .find_table("archive", "renamed")
+        .expect("the renamed table");
+    assert_eq!(table.id, table_id);
+    assert_eq!(table.auto_id_schema_id, 112);
+    assert_ne!(database.id, 112);
+
+    let returned = plan(
+        &mut store,
+        "ALTER TABLE archive.renamed RENAME TO u6.made_again",
+        470_000_103,
+    );
+    apply(&mut store, &returned);
+    let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut store)
+        .expect("the returned catalog loads");
+    let (_, table) = catalog
+        .find_table("u6", "made_again")
+        .expect("the returned table");
+    assert_eq!(table.id, table_id);
+    assert_eq!(table.auto_id_schema_id, 0);
+
+    let identity = tidb_parser::parse("ALTER TABLE u6.made_again RENAME TO u6.made_again")
+        .expect("the identity spelling parses");
+    assert!(
+        lower_ddl(&identity, "u6")
+            .expect("an identity ALTER rename is accepted")
+            .is_none(),
+        "Go does not spend a DDL job on an identity ALTER rename"
+    );
+
+    let pairs = tidb_parser::parse("RENAME TABLE u6.made_again TO u6.a, u6.a TO u6.b")
+        .expect("the multi-pair spelling parses");
+    let error = lower_ddl(&pairs, "u6").expect_err("a partial multi-table rename is refused");
+    assert!(error.reason.contains("exactly one table pair"));
+}
+
 #[test]
 fn an_unqualified_name_resolves_against_the_sessions_default_schema() {
     let parsed = tidb_parser::parse("CREATE TABLE t (id BIGINT PRIMARY KEY)").expect("parses");

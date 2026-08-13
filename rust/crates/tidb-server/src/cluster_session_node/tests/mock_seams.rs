@@ -163,6 +163,42 @@ impl ClusterDdl for MockDdl {
                     }
                 }
             }
+            DdlStatement::RenameTable {
+                from_schema,
+                from_table,
+                to_schema,
+                to_table,
+            } => {
+                let source_at = find(&mut next.databases, from_schema).ok_or_else(|| {
+                    SqlQueryError::unknown(format!("Unknown database '{from_schema}'"))
+                })?;
+                let target_at = find(&mut next.databases, to_schema).ok_or_else(|| {
+                    SqlQueryError::unknown(format!("Unknown database '{to_schema}'"))
+                })?;
+                let source_name = from_table.to_lowercase();
+                let source_table = next.databases[source_at]
+                    .tables
+                    .iter()
+                    .position(|stored| stored.name.lowercase() == source_name)
+                    .ok_or_else(|| {
+                        SqlQueryError::unknown(format!(
+                            "Unknown table '{from_schema}.{from_table}'"
+                        ))
+                    })?;
+                let target_name = to_table.to_lowercase();
+                if next.databases[target_at]
+                    .tables
+                    .iter()
+                    .any(|stored| stored.name.lowercase() == target_name)
+                {
+                    return Err(SqlQueryError::unknown(format!(
+                        "Table '{to_schema}.{to_table}' already exists"
+                    )));
+                }
+                let mut table = next.databases[source_at].tables.remove(source_table);
+                table.name = CiString::new(to_table.clone());
+                next.databases[target_at].tables.push(table);
+            }
             // An index change is the one catalog change whose correctness is
             // not finished by the metadata: it also owes the existing rows
             // their entries, and this mock has no rows to walk. Modelling only

@@ -215,6 +215,28 @@ fn drop_table_removes_it_from_the_connections_own_catalog() {
     assert!(rows(&mut session, "SELECT id FROM g").is_empty());
 }
 
+/// `ALTER TABLE ... RENAME TO` must take the same cluster catalog route as
+/// the Go rename job: existing rows stay under the stable table ID, while the
+/// next statement resolves only the new name.
+#[test]
+fn alter_table_rename_rebuilds_the_connection_catalog_without_losing_rows() {
+    let (mut session, node) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed the table before renaming it");
+    session
+        .execute_write("ALTER TABLE t RENAME TO renamed")
+        .expect("the rename runs through the catalog writer");
+    assert_eq!(node.ddl.applied.load(Ordering::Acquire), 1);
+    assert_eq!(node.catalog.load().schema_version, 12);
+    assert!(session.execute("SELECT id FROM t").is_err());
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM renamed"),
+        vec![vec![Datum::Int(1), Datum::Int(10)]],
+        "a rename changes metadata, not the table's physical identity"
+    );
+}
+
 /// A second connection, opened before the DDL, notices it at its next
 /// statement: the node's catalog moved, so the connection rebuilds its
 /// tables rather than serving the schema it opened with.
