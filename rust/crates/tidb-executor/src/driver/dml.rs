@@ -1257,9 +1257,10 @@ pub(crate) fn substitute_values_references(
 /// Multi-table `UPDATE` lives in `multi_dml`, which reads a joined row
 /// source carrying each target's row identity.
 ///
-/// DEFERRED (documented): `IGNORE`, generated and
-/// `ON UPDATE CURRENT_TIMESTAMP` columns. A changed primary-key handle moves
-/// the row and rewrites its secondary-index entries. Single-table
+/// DEFERRED (documented): generated and `ON UPDATE CURRENT_TIMESTAMP`
+/// columns, plus `IGNORE`'s duplicate-key and foreign-key per-row handling.
+/// A changed primary-key handle moves the row and rewrites its secondary-index
+/// entries. Single-table
 /// `ORDER BY`/`LIMIT` is supported (see `order_rows_for_dml`,
 /// `dml_row_limit`).
 pub fn run_update_on(
@@ -1320,12 +1321,9 @@ pub(crate) fn run_update_traced(
 ) -> Result<u64, DriverError> {
     let zone = ctx.session_zone();
     // A `RETURNING` clause is parsed and silently ignored, matching Go: the
-    // planner and executor never read `UpdateStmt.Returning`.
-    if update.ignore {
-        return Err(DriverError::unsupported(
-            "UPDATE IGNORE is not supported yet",
-        ));
-    }
+    // planner and executor never read `UpdateStmt.Returning`. `StmtContext`
+    // already carries `IgnoreErr`, so casts, bad NULLs, and other value-level
+    // write checks use the same warning-and-coercion path as INSERT IGNORE.
     let table_ref = match &update.kind {
         tidb_ast::UpdateKind::Single(table_ref) => table_ref,
         // A multi-table write reads a joined row source that carries every

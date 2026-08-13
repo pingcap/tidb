@@ -531,6 +531,41 @@ fn insert_ignore_downgrades_a_value_error_to_a_warning() {
     ));
 }
 
+/// `UPDATE IGNORE` takes the same value-conversion path as `INSERT IGNORE`:
+/// it stores the coerced value and records a warning even under the default
+/// strict SQL mode. A plain UPDATE remains an error.
+#[test]
+fn update_ignore_downgrades_a_value_error_to_a_warning() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE update_ignore (id INT PRIMARY KEY, v VARCHAR(2))")
+        .unwrap();
+    session
+        .run("INSERT INTO update_ignore VALUES (1, 'ok')")
+        .unwrap();
+
+    assert_eq!(
+        session
+            .run("UPDATE IGNORE update_ignore SET v = 'abcd' WHERE id = 1")
+            .unwrap(),
+        StmtResult::Affected(1)
+    );
+    assert_eq!(session.warnings().len(), 1);
+    assert_eq!(session.warnings()[0].code, 1406);
+    assert_eq!(
+        session.warnings()[0].message,
+        "Data too long for column 'v' at row 1"
+    );
+    assert_eq!(
+        row_text(session.run("SELECT v FROM update_ignore WHERE id = 1")),
+        [["ab"]]
+    );
+    assert!(matches!(
+        session.run("UPDATE update_ignore SET v = 'abcdef' WHERE id = 1"),
+        Err(DriverError::DataTooLong { .. })
+    ));
+}
+
 /// Go `convertToMysqlBit` returns `ErrDataTooLong` -- NOT the generic
 /// "Incorrect bit value" -- when a value does not fit the declared width,
 /// after clamping it to `(1<<flen)-1`.
