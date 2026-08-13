@@ -172,6 +172,20 @@ impl LeafDemand {
         demand
     }
 
+    /// The columns referenced above this SELECT's `FROM`, excluding the
+    /// relations' own definitions and join predicates. Outer-join elimination
+    /// uses this after removing the join: a column read inside the surviving
+    /// outer derived table is not a read of an equally named eliminated inner
+    /// column.
+    pub(crate) fn of_select_parent_clauses(select: &SelectStmt) -> Self {
+        let mut demand = LeafDemand::default();
+        if demand.reject_select_shape(select) {
+            return demand;
+        }
+        demand.add_select_parent_clauses(select);
+        demand
+    }
+
     /// The offsets of `columns` this leaf must still produce, given that it is
     /// visible under the name `visible`.
     ///
@@ -233,22 +247,32 @@ impl LeafDemand {
         // A CTE introduces relation names this walk cannot tell apart from
         // the leaves below it, and `VALUES`/`WITH ROLLUP`/a `WINDOW` clause
         // each name columns through machinery outside the expression tree.
-        if select.with.is_some()
-            || !select.values.is_empty()
-            || !select.windows.is_empty()
-            || select.rollup
-        {
-            self.all = true;
+        if self.reject_select_shape(select) {
             return;
         }
+        self.add_select_parent_clauses(select);
+        if let Some(join) = &select.from {
+            self.add_join(join);
+        }
+    }
+
+    fn reject_select_shape(&mut self, select: &SelectStmt) -> bool {
+        let rejected = select.with.is_some()
+            || !select.values.is_empty()
+            || !select.windows.is_empty()
+            || select.rollup;
+        if rejected {
+            self.all = true;
+        }
+        rejected
+    }
+
+    fn add_select_parent_clauses(&mut self, select: &SelectStmt) {
         for field in select.fields.fields() {
             match field {
                 SelectField::Wildcard(path) => self.add_wildcard(path),
                 SelectField::Expr { expr, alias: _ } => self.add_expr(expr),
             }
-        }
-        if let Some(join) = &select.from {
-            self.add_join(join);
         }
         for predicate in [select.where_clause.as_ref(), select.having.as_ref()]
             .into_iter()

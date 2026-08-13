@@ -235,6 +235,44 @@ fn set_operations() {
     ));
 }
 
+/// Go's outer-join eliminator receives the duplicate-agnostic columns from a
+/// UNION DISTINCT's HashAgg, so an unread non-unique inner side disappears
+/// from that operand. UNION ALL must retain it because its duplicate rows are
+/// observable.
+#[test]
+fn union_distinct_propagates_duplicate_agnostic_outer_join_elimination() {
+    use crate::explain::{explain_set_opr_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE ul (id BIGINT PRIMARY KEY)", &mut catalog).unwrap();
+    crate::run_create_table_on("CREATE TABLE ur (k BIGINT)", &mut catalog).unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on("INSERT INTO ul VALUES (1),(2)", &mut catalog, &ctx).unwrap();
+    run_insert_on("INSERT INTO ur VALUES (1),(1)", &mut catalog, &ctx).unwrap();
+
+    let plan_mentions_inner = |sql: &str| {
+        let Stmt::Query(query) = tidb_parser::parse(sql).unwrap() else {
+            panic!("not a query")
+        };
+        let QueryStmt::SetOpr(set_opr) = &*query else {
+            panic!("not a set operation")
+        };
+        let (_, rows) =
+            explain_set_opr_stmt(set_opr, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+        rows.iter().flatten().any(|value| match value {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).contains("table:ur"),
+            _ => false,
+        })
+    };
+
+    assert!(!plan_mentions_inner(
+        "SELECT id FROM ul UNION SELECT ul.id FROM ul LEFT JOIN ur ON ul.id = ur.k"
+    ));
+    assert!(plan_mentions_inner(
+        "SELECT id FROM ul UNION ALL SELECT ul.id FROM ul LEFT JOIN ur ON ul.id = ur.k"
+    ));
+}
+
 /// A `UNION DISTINCT` fixpoint deduplicates against ONE accumulating hash
 /// table (Go `cteProducer.hashTbl`), not by re-deduplicating the whole result
 /// every round. Re-deduplicating is quadratic, and this recursion -- straight

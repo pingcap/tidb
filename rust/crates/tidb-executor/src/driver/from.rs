@@ -845,7 +845,7 @@ pub(crate) fn derived_source_relation<'a>(
     };
     let (columns, rows) = match subquery {
         QueryStmt::Select(select) => {
-            run_select_traced(select, catalog, current_db, ctx, trace, required)?
+            run_select_traced(select, catalog, current_db, ctx, trace, required, false)?
         }
         QueryStmt::SetOpr(set_opr) => {
             // A set operation has no traced builder: `run_set_opr_stmt` runs

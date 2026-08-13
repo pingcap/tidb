@@ -53,14 +53,12 @@
 //!
 //! # What proves the inner side is unread
 //!
-//! Not a second reference walk: the CANDIDATE statement -- the one whose
-//! `FROM` no longer has the inner table and whose `ON` is gone with it -- is
-//! handed to [`super::leaf_demand::LeafDemand`], the same walk the access
-//! path costing already trusts, and the inner table is eliminable only when
-//! that demand asks it for NO column. `LeafDemand` over-approximates (a bare
-//! `c` is charged to every leaf owning a `c`, and a construct it cannot see
-//! through charges everything), and here the over-approximation lands on the
-//! safe side: it refuses eliminations Go would make, never the reverse.
+//! Not a second reference walk: the candidate statement's clauses above the
+//! `FROM` are handed to [`super::leaf_demand::LeafDemand`], the same walk the
+//! access-path costing trusts. The surviving outer relation's own definition
+//! is excluded: an `id` read inside that derived table is not a read of an
+//! equally named eliminated inner column. The inner table is eliminable only
+//! when the parent-clause demand asks it for no column.
 //!
 //! # Refusals
 //!
@@ -92,6 +90,7 @@ pub(crate) fn eliminate(
     select: &SelectStmt,
     catalog: &Catalog,
     current_db: &str,
+    parent_duplicate_agnostic: bool,
 ) -> Option<SelectStmt> {
     // A hint names tables by the shape the statement was written in, and this
     // rewrite changes that shape.
@@ -138,7 +137,7 @@ pub(crate) fn eliminate(
         natural: false,
         explicit_parens: false,
     });
-    if !LeafDemand::of_select(&candidate)
+    if !LeafDemand::of_select_parent_clauses(&candidate)
         .needed(&visible, &entry.column_types())
         .is_empty()
     {
@@ -147,7 +146,7 @@ pub(crate) fn eliminate(
     // Go carries SELECT DISTINCT as duplicate-agnostic aggregate columns into
     // `tryToEliminateOuterJoin`. Once no inner column survives, duplicate
     // matches cannot alter the result, even when the inner key is not unique.
-    if select.distinct || direct_duplicate_agnostic_aggregate(select) {
+    if parent_duplicate_agnostic || select.distinct || direct_duplicate_agnostic_aggregate(select) {
         return Some(candidate);
     }
 

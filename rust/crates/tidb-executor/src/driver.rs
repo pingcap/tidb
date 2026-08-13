@@ -600,6 +600,7 @@ fn run_select_stmt(
         ctx,
         None,
         &tidb_planner::physical_property::PhysicalProperty::default(),
+        false,
     )
 }
 
@@ -624,6 +625,7 @@ pub(crate) fn run_select_traced(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
     required: &tidb_planner::physical_property::PhysicalProperty,
+    parent_duplicate_agnostic: bool,
 ) -> Result<SelectMeta, DriverError> {
     // The statement as written, which the plan text is rendered from: the
     // rewrites below (CTE materialization, subquery folding, window
@@ -680,7 +682,12 @@ pub(crate) fn run_select_traced(
     // `driver::outer_join_elimination` for the half of Go's rule this
     // implements and for every shape it refuses.
     let unjoined;
-    let select = match outer_join_elimination::eliminate(select, catalog, current_db) {
+    let select = match outer_join_elimination::eliminate(
+        select,
+        catalog,
+        current_db,
+        parent_duplicate_agnostic,
+    ) {
         Some(rewritten) => {
             unjoined = rewritten;
             &unjoined

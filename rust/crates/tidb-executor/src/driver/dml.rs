@@ -238,6 +238,7 @@ pub(crate) fn run_insert_traced(
                     ctx,
                     trace.as_deref_mut(),
                     &tidb_planner::physical_property::PhysicalProperty::default(),
+                    false,
                 )?
                 .1
             }

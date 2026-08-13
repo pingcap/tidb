@@ -145,8 +145,8 @@ pub(crate) fn run_set_opr_traced(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut crate::plan_trace::PlanTrace>,
 ) -> Result<SelectMeta, DriverError> {
-    let trace_shape = trace.as_ref().and_then(|_| traced_set_opr(stmt));
-    if trace.is_some() && trace_shape.is_none() {
+    let union_shape = traced_set_opr(stmt);
+    if trace.is_some() && union_shape.is_none() {
         return Err(DriverError::unsupported(
             "EXPLAIN ANALYZE of this set operation is not supported yet",
         ));
@@ -167,9 +167,20 @@ pub(crate) fn run_set_opr_traced(
     // them pairwise and only then builds the per-branch casts
     // (`buildProjection4Union`). Folding as each term arrived would have to
     // commit to a type before the later terms had been seen.
+    let distinct_terms = match union_shape {
+        Some(TracedSetOpr::UnionWithDistinctPrefix { distinct_terms }) => Some(distinct_terms),
+        Some(TracedSetOpr::UnionAll) | None => None,
+    };
     let mut terms: Vec<SelectMeta> = Vec::with_capacity(stmt.terms.len());
-    for term in &stmt.terms {
-        let term_meta = run_set_opr_term(term, catalog, current_db, ctx, trace.as_deref_mut())?;
+    for (index, term) in stmt.terms.iter().enumerate() {
+        let term_meta = run_set_opr_term(
+            term,
+            catalog,
+            current_db,
+            ctx,
+            trace.as_deref_mut(),
+            distinct_terms.is_some_and(|count| index < count),
+        )?;
         // Go raises ErrWrongNumberOfColumnsInSelect for a term whose width
         // differs.
         if let Some((first_columns, _)) = terms.first() {
@@ -202,10 +213,6 @@ pub(crate) fn run_set_opr_traced(
 
     let mut term_iter = terms.into_iter();
     let mut accumulated = term_iter.next().map(|(_, rows)| rows).unwrap_or_default();
-    let distinct_terms = match trace_shape {
-        Some(TracedSetOpr::UnionWithDistinctPrefix { distinct_terms }) => Some(distinct_terms),
-        Some(TracedSetOpr::UnionAll) | None => None,
-    };
     let distinct_input_rows = distinct_terms.map(|count| term_row_counts[..count].iter().sum());
     let mut distinct_output_rows = None;
     for (index, (term, (_, term_rows))) in stmt.terms.iter().skip(1).zip(term_iter).enumerate() {
@@ -233,7 +240,7 @@ pub(crate) fn run_set_opr_traced(
         accumulated = accumulated.into_iter().skip(offset).take(count).collect();
     }
     if let Some(trace) = trace {
-        match trace_shape.expect("a traced set operation was validated above") {
+        match union_shape.expect("a traced set operation was validated above") {
             TracedSetOpr::UnionAll => trace.union_all(stmt.terms.len(), accumulated.len() as u64),
             TracedSetOpr::UnionWithDistinctPrefix { distinct_terms } => {
                 trace.union_distinct_prefix(
@@ -358,6 +365,7 @@ fn run_set_opr_term(
     current_db: &str,
     ctx: &crate::StmtContext,
     trace: Option<&mut crate::plan_trace::PlanTrace>,
+    parent_duplicate_agnostic: bool,
 ) -> Result<SelectMeta, DriverError> {
     match &term.body {
         tidb_ast::SetOprTermBody::Select(select) => run_select_traced(
@@ -367,6 +375,7 @@ fn run_set_opr_term(
             ctx,
             trace,
             &tidb_planner::physical_property::PhysicalProperty::default(),
+            parent_duplicate_agnostic,
         ),
         tidb_ast::SetOprTermBody::Nested(nested) => {
             run_set_opr_stmt(nested, catalog, current_db, ctx)

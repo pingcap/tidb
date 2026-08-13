@@ -250,6 +250,7 @@ pub fn explain_select_stmt(
         ctx,
         Some(&mut trace),
         &tidb_planner::physical_property::PhysicalProperty::default(),
+        false,
     )?;
     Ok(render(recorded(trace)?, format))
 }
@@ -292,6 +293,7 @@ pub fn explain_analyze_select_stmt(
         ctx,
         Some(&mut trace),
         &tidb_planner::physical_property::PhysicalProperty::default(),
+        false,
     )?;
     Ok(render_analyze(recorded(trace)?, format))
 }

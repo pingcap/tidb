@@ -591,9 +591,9 @@ pub const TOPICS: &[(&str, &str)] = &[
     ),
     (
         "planner/core/rule_constant_propagation",
-        "55 of 57 match; one nested UNION plan scans `s` twice where TiDB scans it \
-     once, and one multi-table UPDATE EXPLAIN remains unsupported. The correlated \
-     scalar assignment now writes the same value as TiDB",
+        "56 of 57 match with zero divergences; only a multi-table UPDATE EXPLAIN is \
+     rejected by Rust. Correlated scalar assignments and UNION DISTINCT's \
+     duplicate-agnostic outer-join elimination now match TiDB",
     ),
     (
         "planner/core/rule_result_reorder",
