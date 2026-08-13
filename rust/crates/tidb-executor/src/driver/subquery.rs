@@ -914,12 +914,10 @@ fn fold_subqueries(
         subquery: query, ..
     } = expr
     {
-        if let tidb_ast::QueryStmt::Select(select) = &**query {
-            let mut columns = Vec::new();
-            collect_correlated_columns(select, outer, catalog, current_db, &mut columns, ctx);
-            if !columns.is_empty() {
-                return Ok(expr.clone());
-            }
+        let mut columns = Vec::new();
+        collect_correlated_columns_query(query, outer, catalog, current_db, &mut columns, ctx);
+        if !columns.is_empty() {
+            return Ok(expr.clone());
         }
     }
     Ok(match expr {
@@ -1074,7 +1072,7 @@ fn fold_subqueries(
     })
 }
 
-/// Runs a subquery against the catalog, rejecting the correlated case.
+/// Runs an uncorrelated subquery against the catalog.
 ///
 /// A correlated subquery references a column of the OUTER query, which this
 /// resolver cannot see -- so it fails to resolve here and the error surfaces
@@ -1085,15 +1083,7 @@ fn run_subquery(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
-    let tidb_ast::QueryStmt::Select(_) = query else {
-        return Err(DriverError::unsupported(
-            "set-operation subqueries are not supported yet",
-        ));
-    };
-    let tidb_ast::QueryStmt::Select(select) = query else {
-        unreachable!("the set-operation case is rejected above")
-    };
-    run_select_stmt(select, catalog, current_db, ctx).map(|(_, rows)| rows)
+    run_query_stmt(query, catalog, current_db, ctx).map(|(_, rows)| rows)
 }
 
 /// Where one select field of an aggregate query reads its value from.

@@ -734,3 +734,30 @@ fn a_scalar_subquery_beside_an_aggregate_over_an_empty_outer_is_null() {
     )
     .is_empty());
 }
+
+/// A set operation is a query expression, so an uncorrelated subquery folds
+/// through the same executor path as a top-level `UNION`/`EXCEPT`/`INTERSECT`.
+/// Go's `expressionRewriter.buildSubquery` accepts all query-statement forms;
+/// rejecting only this nested form made otherwise supported set operations
+/// unusable in scalar, EXISTS, IN, and quantified predicates.
+#[test]
+fn uncorrelated_set_operation_subqueries_fold_like_top_level_queries() {
+    let mut session = Session::new();
+
+    assert_eq!(
+        row_text(session.run("SELECT (SELECT 2 UNION SELECT 1 ORDER BY 1 LIMIT 1)")),
+        [["1"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT EXISTS(SELECT 1 INTERSECT SELECT 1)")),
+        [["1"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT 2 IN (SELECT 1 EXCEPT SELECT 2)")),
+        [["0"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT 2 > ALL (SELECT 1 UNION SELECT 0)")),
+        [["1"]]
+    );
+}
