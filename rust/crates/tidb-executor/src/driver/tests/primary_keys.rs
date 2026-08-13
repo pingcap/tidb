@@ -339,6 +339,113 @@ fn clustered_common_handle() {
     );
 }
 
+/// Go represents a common-handle table path with the PRIMARY index metadata:
+/// `fillContentForTablePath` sets `IsCommonHandlePath` and `Index`, then
+/// `deriveCommonHandleTablePathStats` derives the path over those key parts.
+/// The read is still the table's clustered row storage, but EXPLAIN names the
+/// physical key walk `IndexFullScan ... index:PRIMARY(...)`.
+fn explain_plan(sql: &str, catalog: &Catalog) -> Vec<String> {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) = explain_select_stmt(
+        select,
+        catalog,
+        "test",
+        &crate::StmtContext::for_query(),
+        ExplainFormat::Row,
+    )
+    .unwrap();
+    rows.iter()
+        .map(|row| {
+            row.iter()
+                .map(|value| match value {
+                    Datum::Bytes(text) => String::from_utf8_lossy(text).into_owned(),
+                    Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join("\t")
+        })
+        .collect()
+}
+
+#[test]
+fn a_common_handle_table_path_is_the_primary_index_scan() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE ch (id VARCHAR(50) NOT NULL, part BIGINT NOT NULL, created DATE NOT NULL, \
+         PRIMARY KEY (id, part, created)) \
+         PARTITION BY RANGE COLUMNS(part, created) (\
+           PARTITION p0 VALUES LESS THAN (200000, '2023-01-01'), \
+           PARTITION p1 VALUES LESS THAN (300000, '2023-01-01'))",
+        &mut catalog,
+    )
+    .unwrap();
+    let plan = explain_plan("SELECT * FROM ch WHERE part > 199999", &catalog);
+    assert!(
+        plan.iter().any(|line| {
+            line.contains("IndexFullScan") && line.contains("index:PRIMARY(id, part, created)")
+        }),
+        "the common-handle table path must be displayed as its PRIMARY key scan, got {plan:?}"
+    );
+}
+
+#[test]
+fn a_covering_nonclustered_primary_key_beats_the_table_scan() {
+    let mut catalog = Catalog::default();
+    create_with_mode(
+        "CREATE TABLE np (id VARCHAR(50) NOT NULL, part BIGINT NOT NULL, created DATE NOT NULL, \
+         PRIMARY KEY (id, part, created)) \
+         PARTITION BY RANGE COLUMNS(part, created) (\
+           PARTITION p0 VALUES LESS THAN (200000, '2023-01-01'), \
+           PARTITION p1 VALUES LESS THAN (300000, '2023-01-01'))",
+        tidb_vardef::modes::ClusteredIndexDefMode::INT_ONLY,
+        &mut catalog,
+    )
+    .unwrap();
+    assert!(has_primary_index(&catalog, "np"));
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO np VALUES ('1', 200000, '2022-12-29'), ('2', 200000, '2023-01-01')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let (table_id, statistics) = {
+        let TableEntry::Kv(table) = catalog
+            .table_mut_in(crate::driver::DEFAULT_DATABASE, "np")
+            .expect("np exists")
+        else {
+            panic!("np is not a KV table");
+        };
+        (
+            table.table_id,
+            crate::analyze::kv::analyze_kv_table(
+                table,
+                &crate::analyze::AnalyzeOptions::default(),
+                None,
+                &ctx,
+            )
+            .unwrap(),
+        )
+    };
+    catalog.set_table_statistics(table_id, std::sync::Arc::new(statistics));
+    let plan = explain_plan("SELECT * FROM np WHERE part > 199999", &catalog);
+    assert!(
+        plan.iter().any(|line| {
+            line.contains("IndexFullScan") && line.contains("index:PRIMARY(id, part, created)")
+        }),
+        "the covering PRIMARY index must win the full-range read, got {plan:?}"
+    );
+}
+
 /// A handle stores its columns FLAT -- a `bit` as an integer, a `datetime` as
 /// its packed `uint64` -- so reading one back without Go's `Unflatten` hands
 /// the engine a datum whose kind disagrees with the column's declared type. Go

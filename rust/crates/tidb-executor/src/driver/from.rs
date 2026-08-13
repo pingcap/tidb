@@ -526,7 +526,26 @@ pub(crate) fn build_from(
                 if crate::infoschema_meta::is_information_schema(database) {
                     trace.mem_table_scan(&declared_table_name(entry, name));
                 } else {
-                    trace.table_full_scan(&visible, full_scan_estimate(catalog, entry), keep_order);
+                    match entry {
+                        TableEntry::Kv(kv) if !kv.common_handle_offsets().is_empty() => {
+                            let primary_columns: Vec<&str> = kv
+                                .common_handle_offsets()
+                                .iter()
+                                .map(|offset| kv.columns[*offset].name.as_str())
+                                .collect();
+                            trace.common_handle_full_scan(
+                                &visible,
+                                &primary_columns,
+                                full_scan_estimate(catalog, entry),
+                                keep_order,
+                            );
+                        }
+                        _ => trace.table_full_scan(
+                            &visible,
+                            full_scan_estimate(catalog, entry),
+                            keep_order,
+                        ),
+                    }
                 }
             }
             if let TableEntry::View(view) = entry {

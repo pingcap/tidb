@@ -144,9 +144,10 @@ use tidb_planner::cardinality::row_count_estimator::{
     EstimatorOptions, IndexRangeDatums, IndexStats,
 };
 use tidb_planner::cardinality::row_size::{
-    get_index_avg_row_size, get_table_avg_row_size, RowSizeColumn, RowSizeColumnStats,
-    RowSizeStore, RowSizeType,
+    get_avg_row_size, get_table_avg_row_size, RowSizeColumn, RowSizeColumnStats, RowSizeStore,
+    RowSizeType,
 };
+use tidb_planner::plan_cost_ver2::plan_avg_row_size;
 use tidb_planner::selectivity_greedy::{
     combine_selectivity, ConditionKind, SelectivityDefaults, StatsNode, StatsNodeType,
 };
@@ -674,10 +675,10 @@ pub(crate) fn enumerate_paths(
     let handle_ranges = handle.as_ref().map(|built| built.ranges.clone());
     let table_scan = table_scan_path(
         table,
+        needed_columns,
         where_clause,
         resolver,
         stats,
-        realtime,
         handle_ranges.as_deref(),
         // Go's `hasFullRangeScan`: only a table path the ranger narrowed
         // NOTHING on is penalized -- with a handle bound the path carries its
@@ -1018,29 +1019,38 @@ fn split_index_filter_conditions<'a>(
 /// which are one number for a table path.
 fn table_scan_path(
     table: &KvTable,
+    needed_columns: &[usize],
     where_clause: Option<&tidb_ast::Expr>,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
-    realtime: f64,
     ranges: Option<&[IndexRange]>,
     // Go `getTableScanPenalty`'s answer, computed by the caller because the
     // hint and partition facts it reads are the caller's. Always `0.0` for a
     // NARROWED table path -- Go gates the penalty on `hasFullRangeScan`.
     penalty_rows: f64,
 ) -> AccessPath {
-    let row_columns: Vec<RowSizeColumn> = table
+    let realtime = realtime_row_count(stats);
+    // Cost model v2 prices two different physical schemas here. The scan's
+    // `TblCols` contains every stored table column plus `_tidb_rowid` on a
+    // non-clustered table, while the reader transfers only the statement's
+    // output columns. Both use `getAvgRowSize` (`DataInDiskByRows`), not the
+    // encoded-record-size helper used by cost model v1.
+    let mut scan_columns: Vec<RowSizeColumn> = table
         .columns
         .iter()
         .map(|column| row_size_column(column, stats))
         .collect();
-    let row_size = get_table_avg_row_size(
-        &row_columns,
-        is_pseudo(stats),
-        realtime as i64,
-        RowSizeStore::TiKv,
-        table.pk_handle_offset().is_some(),
-        false,
-    );
+    if table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty() {
+        scan_columns.push(RowSizeColumn::without_stats(8.0));
+    }
+    let output_columns: Vec<RowSizeColumn> = needed_columns
+        .iter()
+        .filter_map(|offset| table.columns.get(*offset))
+        .map(|column| row_size_column(column, stats))
+        .collect();
+    let hist_coll = Some((is_pseudo(stats), realtime as i64));
+    let scan_row_size = plan_avg_row_size(&scan_columns, hist_coll);
+    let output_row_size = plan_avg_row_size(&output_columns, hist_coll);
     // Go `deriveTablePathStats`: with no access condition the range is the
     // full one and `CountAfterAccess` is the realtime count, taken without
     // consulting the estimator at all ("Skip the expensive
@@ -1053,9 +1063,9 @@ fn table_scan_path(
     // Go costs the scan at the rows it READS and the reader's net transfer at
     // the rows that leave the cop task, which is after the pushed Selection.
     let scan_rows = count_after_access.max(MIN_NUM_ROWS);
-    let scanned = scan_cost(scan_rows + penalty_rows, row_size.max(MIN_ROW_SIZE));
+    let scanned = scan_cost(scan_rows + penalty_rows, scan_row_size.max(MIN_ROW_SIZE));
     let after_filter = source_row_count(table, where_clause, resolver, stats, realtime);
-    let transferred = net_cost(after_filter, row_size.max(MIN_ROW_SIZE));
+    let transferred = net_cost(after_filter, output_row_size.max(MIN_ROW_SIZE));
     AccessPath {
         index: None,
         table_ranges: ranges.map(<[IndexRange]>::to_vec),
@@ -1167,20 +1177,43 @@ fn index_path(
         }
         _ => estimated,
     };
-    let index_row_columns: Vec<RowSizeColumn> = index
-        .column_offsets
+    let covering = is_covering(index, table, needed_columns);
+    let mut physical_offsets = index.column_offsets.clone();
+    // `PhysicalIndexScan.InitSchema` carries common handles on every index
+    // path. A non-unique integer-handle index carries its appended handle key
+    // part, and a double read must return whichever handle addresses the row.
+    for offset in table.common_handle_offsets() {
+        if !physical_offsets.contains(offset) {
+            physical_offsets.push(*offset);
+        }
+    }
+    if let Some((_, offset)) = appended_handle_column(index, table) {
+        if !physical_offsets.contains(&offset) {
+            physical_offsets.push(offset);
+        }
+    }
+    if let Some(offset) = table.pk_handle_offset() {
+        if (!covering || needed_columns.contains(&offset)) && !physical_offsets.contains(&offset) {
+            physical_offsets.push(offset);
+        }
+    }
+    let mut index_row_columns: Vec<RowSizeColumn> = physical_offsets
         .iter()
         .filter_map(|offset| table.columns.get(*offset))
         .map(|column| row_size_column(column, stats))
         .collect();
-    let index_row_size = get_index_avg_row_size(
-        &index_row_columns,
-        is_pseudo(stats),
-        realtime as i64,
-        index.unique,
-        false,
-    );
-    let index_scan = scan_cost(rows.max(MIN_NUM_ROWS), index_row_size)
+    if !covering && table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty() {
+        index_row_columns.push(RowSizeColumn::without_stats(8.0));
+    }
+    let output_row_columns: Vec<RowSizeColumn> = needed_columns
+        .iter()
+        .filter_map(|offset| table.columns.get(*offset))
+        .map(|column| row_size_column(column, stats))
+        .collect();
+    let hist_coll = Some((is_pseudo(stats), realtime as i64));
+    let index_scan_row_size = plan_avg_row_size(&index_row_columns, hist_coll);
+    let output_row_size = plan_avg_row_size(&output_row_columns, hist_coll);
+    let index_scan = scan_cost(rows.max(MIN_NUM_ROWS), index_scan_row_size)
         // Go's deterministic tie-breaker between two indexes that cost the
         // same, from the last two digits of the index ID.
         + (index.id % 100) as f64 / 1_000_000.0;
@@ -1190,30 +1223,54 @@ fn index_path(
     // there is one. That is the same rule [`table_scan_path`] applies with its
     // own `after_filter`; applying it to only one of the two made an index
     // that filters look no cheaper to ship than one that does not.
-    let index_net = net_cost(after_index.min(rows), index_row_size);
+    let index_net_row_size = if covering {
+        output_row_size
+    } else {
+        // `PhysicalIndexLookUpReader` ships the index plan's encoded-key
+        // schema to TiDB, not the final table row. Chunk RPC is enabled by
+        // this server just as it is in TiDB's default session.
+        get_avg_row_size(
+            &index_row_columns,
+            is_pseudo(stats),
+            realtime as i64,
+            true,
+            false,
+            true,
+        )
+    };
+    let index_net = net_cost(after_index.min(rows), index_net_row_size);
     let index_side = (index_scan + index_net) / DIST_SQL_SCAN_CONCURRENCY;
 
-    let covering = is_covering(index, table, needed_columns);
     let cost = if covering {
         index_side
     } else {
-        let table_row_columns: Vec<RowSizeColumn> = needed_columns
+        let mut table_scan_columns: Vec<RowSizeColumn> = table
+            .columns
+            .iter()
+            .map(|column| row_size_column(column, stats))
+            .collect();
+        if table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty() {
+            table_scan_columns.push(RowSizeColumn::without_stats(8.0));
+        }
+        let table_output_columns: Vec<RowSizeColumn> = needed_columns
             .iter()
             .filter_map(|offset| table.columns.get(*offset))
             .map(|column| row_size_column(column, stats))
             .collect();
-        let table_row_size = get_table_avg_row_size(
-            &table_row_columns,
+        let table_scan_row_size =
+            plan_avg_row_size(&table_scan_columns, hist_coll).max(MIN_ROW_SIZE);
+        let table_net_row_size = get_avg_row_size(
+            &table_output_columns,
             is_pseudo(stats),
             realtime as i64,
-            RowSizeStore::TiKv,
-            table.pk_handle_offset().is_some(),
             false,
+            false,
+            true,
         )
         .max(MIN_ROW_SIZE);
         // The table side reads one row per index row it looked up.
-        let table_scan = scan_cost(rows.max(MIN_NUM_ROWS), table_row_size);
-        let table_net = net_cost(rows, table_row_size);
+        let table_scan = scan_cost(rows.max(MIN_NUM_ROWS), table_scan_row_size);
+        let table_net = net_cost(rows, table_net_row_size);
         let table_side = (table_scan + table_net) / DIST_SQL_SCAN_CONCURRENCY;
         let double_read_cpu = rows * TIKV_CPU_FACTOR;
         let double_read_tasks = rows * DOUBLE_READ_REQUESTS_PER_ROW;
@@ -2090,7 +2147,8 @@ mod tests {
         // ever in the index path's favour. Excluding it is what keeps this
         // test measuring the term it names. The penalized scan is asserted
         // separately below.
-        let scan = table_scan_path(&table, None, &NoResolver, None, realtime, None, 0.0);
+        let all_columns: Vec<usize> = (0..table.columns.len()).collect();
+        let scan = table_scan_path(&table, &all_columns, None, &NoResolver, None, None, 0.0);
         assert!(
             non_covering.cost < scan.cost,
             "a one-row lookup must beat a {realtime}-row scan: index {} vs \
@@ -2143,10 +2201,10 @@ mod tests {
         // risky path cheaper would be backwards.
         let penalized = table_scan_path(
             &table,
+            &all_columns,
             None,
             &NoResolver,
             None,
-            realtime,
             None,
             table_scan_penalty_rows(None, realtime, false, false),
         );

@@ -662,6 +662,32 @@ impl PlanTrace {
         );
     }
 
+    /// A whole-table read whose row key is a clustered common handle.
+    ///
+    /// Go's table path carries `IsCommonHandlePath` plus the PRIMARY index
+    /// metadata. It executes the clustered row-store read directly, but its
+    /// physical scan and access object are printed as the PRIMARY index walk.
+    pub(crate) fn common_handle_full_scan(
+        &mut self,
+        visible: &str,
+        index_columns: &[&str],
+        estimate: ScanEstimate,
+        keep_order: bool,
+    ) {
+        self.push(
+            PlanNode::new(
+                "IndexFullScan",
+                Some(estimate.rows),
+                format!(
+                    "table:{visible}, index:PRIMARY({})",
+                    index_columns.join(", ")
+                ),
+                format!("keep order:{keep_order}{}", pseudo_suffix(estimate)),
+            )
+            .with_pseudo_ndv(estimate),
+        );
+    }
+
     /// A read of a bounded stretch of the CLUSTERED HANDLE, which REPLACES
     /// the whole-table read above.
     ///
