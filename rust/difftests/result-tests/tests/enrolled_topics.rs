@@ -486,13 +486,7 @@ pub const TOPICS: &[(&str, &str)] = &[
      `_bin`-collated index restores the PADDED key bytes (` A B C`) instead of \
      the stored value (`abc`) when the index answers the column",
     ),
-    (
-        "ddl/serial",
-        "25 of 77 with 2 divergences: a partitioned table's rows survive a `TRUNCATE \
-     PARTITION` this tier refused (11 rows against TiDB's 0), and \
-     `auto_random(5, 31)` is accepted where TiDB raises 8216 for a range below \
-     32 bits",
-    ),
+    ("ddl/serial", "28 of 77 with no divergences"),
     (
         "ddl/table_modify",
         "17 of 47 with 2 divergences: a database-level `COLLATE utf8_general_ci` is \

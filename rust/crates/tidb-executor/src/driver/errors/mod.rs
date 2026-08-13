@@ -1240,6 +1240,11 @@ impl DriverError {
              subpartitioning"
                 .to_owned(),
         ),
+        DriverError::PartitionManagementOnNonpartitioned => MysqlError::new(
+            1505,
+            *b"HY000",
+            "Partition management on a not partitioned table is not possible".to_owned(),
+        ),
         DriverError::PartitionUniqueKeyNeedAllFields(kind) => MysqlError::new(
             1503,
             *b"HY000",
@@ -1566,6 +1571,11 @@ impl DriverError {
             "Failed to read auto-increment value from storage engine".to_owned(),
         ),
         DriverError::AutoIdUnavailable(detail) => MysqlError::unknown(detail),
+        DriverError::InvalidAutoRandom(reason) => MysqlError::new(
+            8216,
+            *b"HY000",
+            format!("Invalid auto random: {reason}"),
+        ),
         DriverError::CatalogPoisoned => {
             MysqlError::unknown("the shared catalog is unusable after a failed statement")
         }

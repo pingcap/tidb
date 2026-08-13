@@ -40,6 +40,7 @@ mod auto_id;
 mod auto_increment;
 mod column_deps;
 mod index_entries;
+mod partition_maintenance;
 mod row_decoder;
 mod table_meta;
 mod table_scan;

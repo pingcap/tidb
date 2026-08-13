@@ -66,6 +66,8 @@ pub enum DriverError {
     /// not land. Go surfaces the underlying storage failure instead, which is
     /// what the carried text is.
     AutoIdUnavailable(String),
+    /// TiDB `ErrInvalidAutoRandom` (8216), carrying its reason text.
+    InvalidAutoRandom(String),
     /// Go `ErrDupFieldName` (1060).
     DuplicateColumnName(String),
     /// Go `ErrDupKeyName` (1061).
@@ -410,6 +412,8 @@ pub enum DriverError {
     /// Go `ast.ErrSubpartition` (1500): `SUBPARTITION BY` under a method
     /// that cannot carry it.
     PartitionSubpartition,
+    /// Go `ErrPartitionMgmtOnNonpartitioned` (1505).
+    PartitionManagementOnNonpartitioned,
     /// Go `dbterror.ErrUniqueKeyNeedAllFieldsInPf` (1503), carrying the kind
     /// of key Go names (`CLUSTERED INDEX`).
     PartitionUniqueKeyNeedAllFields(String),

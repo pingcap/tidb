@@ -336,6 +336,84 @@ impl HandleKind {
     }
 }
 
+fn validate_auto_random(
+    create: &tidb_ast::CreateTableStmt,
+    columns: &[ColumnInfo],
+    handle: &HandleKind,
+) -> Result<(), DriverError> {
+    for (offset, definition) in create.columns.iter().enumerate() {
+        let Some(option) = definition.options.iter().find_map(|option| match option {
+            tidb_ast::ColumnOption::AutoRandom(option) => Some(option),
+            _ => None,
+        }) else {
+            continue;
+        };
+        if columns[offset].field_type.code() != FieldTypeCode::LongLong {
+            return Err(DriverError::InvalidAutoRandom(format!(
+                "auto_random option must be defined on `bigint` column, but not on `{}` column",
+                columns[offset].field_type.compact_str(false)
+            )));
+        }
+        if handle.offsets().first().copied() != Some(offset) {
+            return Err(DriverError::InvalidAutoRandom(match handle {
+                HandleKind::RowId => {
+                    "auto_random is only supported on the tables with clustered primary key"
+                        .to_owned()
+                }
+                _ => format!(
+                    "column '{}' must be the first column in primary key",
+                    definition.name
+                ),
+            }));
+        }
+        if definition
+            .options
+            .iter()
+            .any(|option| matches!(option, tidb_ast::ColumnOption::AutoIncrement))
+        {
+            return Err(DriverError::InvalidAutoRandom(
+                "auto_random is incompatible with auto_increment".to_owned(),
+            ));
+        }
+        if definition
+            .options
+            .iter()
+            .any(|option| matches!(option, tidb_ast::ColumnOption::Default(_)))
+        {
+            return Err(DriverError::InvalidAutoRandom(
+                "auto_random is incompatible with default".to_owned(),
+            ));
+        }
+
+        let shard_bits = option.shard_bits.unwrap_or(5);
+        if shard_bits == 0 {
+            return Err(DriverError::InvalidAutoRandom(
+                "the value of auto_random should be positive".to_owned(),
+            ));
+        }
+        if shard_bits > 15 {
+            return Err(DriverError::InvalidAutoRandom(format!(
+                "max allowed auto_random shard bits is 15, but got {shard_bits} on column `{}`",
+                definition.name
+            )));
+        }
+        let range_bits = option.range_bits.unwrap_or(64);
+        if !(32..=64).contains(&range_bits) {
+            return Err(DriverError::InvalidAutoRandom(format!(
+                "auto_random range bits must be between 32 and 64, but got {range_bits}"
+            )));
+        }
+        let sign_bits = u64::from(!columns[offset].field_type.is_unsigned());
+        if range_bits - shard_bits - sign_bits < 27 {
+            return Err(DriverError::InvalidAutoRandom(
+                "auto_random ID space is too small, please decrease the shard bits or increase the range bits"
+                    .to_owned(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The `AUTO_INCREMENT [=] n` table option's value, if the list carries one.
 ///
 /// Go reads the same option at CREATE (seeding the allocator) and at ALTER
@@ -829,6 +907,7 @@ pub fn run_create_table_in(
         &pk_offsets,
         &columns,
     );
+    validate_auto_random(create, &columns, &handle)?;
     for offset in &pk_offsets {
         // Go `checkIndexColumn` reaches a primary key too, and a clustered
         // primary key never becomes an entry in `table_indexes` (its

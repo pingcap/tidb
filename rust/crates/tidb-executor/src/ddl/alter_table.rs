@@ -47,10 +47,9 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 /// unknown column is 1091, dropping the last column is 1090, and dropping an
 /// integer primary key is TiDB's own 8200.
 ///
-/// DEFERRED (documented): every ALTER action this match does not name --
-/// partition changes above all -- is rejected rather than silently accepted,
-/// and dropping a column an index uses is rejected rather than leaving the
-/// index addressing a column that is gone.
+/// Every ALTER action this match does not name is rejected rather than
+/// silently accepted, and dropping a column an index uses is rejected rather
+/// than leaving the index addressing a column that is gone.
 pub fn run_alter_table_in(
     sql: &str,
     catalog: &mut Catalog,
@@ -232,6 +231,10 @@ pub fn run_alter_table_in(
             tidb_ast::AlterTableAction::SetTableOptions { options } => {
                 set_table_options_action(catalog, &database, &name, options, ctx)?;
             }
+            tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Truncate {
+                all,
+                names,
+            }) => truncate_partition_action(catalog, &database, &name, *all, names, ctx)?,
             // The four metadata-only actions: a name or a flag changes while
             // every column id, column offset and index entry stays put. See
             // the `alter_metadata` module doc for why they belong together.
@@ -308,6 +311,59 @@ pub fn run_alter_table_in(
         }
     }
     Ok(())
+}
+
+fn truncate_partition_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    all: bool,
+    names: &[String],
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let ordinals = {
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+            return Err(DriverError::unsupported(
+                "ALTER TABLE ... TRUNCATE PARTITION needs a storage-backed table",
+            ));
+        };
+        let Some(partition) = table.partition() else {
+            return Err(DriverError::PartitionManagementOnNonpartitioned);
+        };
+        if all {
+            (0..partition.definitions.len()).collect::<Vec<_>>()
+        } else {
+            let mut ordinals = Vec::with_capacity(names.len());
+            for name in names {
+                let Some(ordinal) = partition
+                    .definitions
+                    .iter()
+                    .position(|definition| definition.name.eq_ignore_ascii_case(name))
+                else {
+                    return Err(DriverError::UnknownPartition {
+                        partition: name.clone(),
+                        table: table_name.to_owned(),
+                    });
+                };
+                // MySQL accepts duplicate names in TRUNCATE PARTITION and
+                // truncates that physical partition once.
+                if !ordinals.contains(&ordinal) {
+                    ordinals.push(ordinal);
+                }
+            }
+            ordinals
+        }
+    };
+    let replacement_ids = ordinals
+        .iter()
+        .map(|_| catalog.allocate_table_id())
+        .collect::<Vec<_>>();
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        unreachable!("the table was resolved before allocating replacement IDs")
+    };
+    table
+        .truncate_partitions(&ordinals, &replacement_ids, ctx)
+        .map_err(|error| crate::driver::kv_read_error("truncate partition", error))
 }
 
 /// Adds one ordinary or unique index from either spelling Go accepts:

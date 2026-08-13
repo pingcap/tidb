@@ -1770,3 +1770,85 @@ fn the_blob_default_rule_reaches_every_alter_entry_point() {
         assert_eq!(error.code, 1101, "{sql}");
     }
 }
+
+#[test]
+fn truncate_partition_replaces_only_the_selected_physical_tables() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE pt (id BIGINT PRIMARY KEY, v BIGINT, UNIQUE KEY uv (id, v)) \
+             PARTITION BY HASH(id) PARTITIONS 3",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO pt VALUES (0, 10), (1, 11), (2, 12), (4, 14)")
+        .unwrap();
+
+    let physical_ids = |session: &Session| {
+        let catalog = session.shared_catalog();
+        let catalog = catalog.lock().unwrap();
+        let tidb_executor::TableEntry::Kv(table) = catalog.get_table_for_test("pt").unwrap() else {
+            panic!("pt should remain a storage-backed table");
+        };
+        table.partition().unwrap().physical_ids()
+    };
+    let before = physical_ids(&session);
+
+    session.run("ALTER TABLE pt TRUNCATE PARTITION p1").unwrap();
+    assert_eq!(
+        session.run("SELECT id, v FROM pt ORDER BY id").unwrap(),
+        StmtResult::Rows(vec![
+            vec![Datum::Int(0), Datum::Int(10)],
+            vec![Datum::Int(2), Datum::Int(12)],
+        ])
+    );
+    let after_one = physical_ids(&session);
+    assert_eq!(after_one[0], before[0]);
+    assert_ne!(after_one[1], before[1]);
+    assert_eq!(after_one[2], before[2]);
+
+    // The old logical index entries are gone too: both rows can be inserted
+    // again under the replacement physical partition.
+    session
+        .run("INSERT INTO pt VALUES (1, 11), (4, 14)")
+        .unwrap();
+    session
+        .run("ALTER TABLE pt TRUNCATE PARTITION ALL")
+        .unwrap();
+    assert_eq!(
+        session.run("SELECT COUNT(*) FROM pt").unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(0)]])
+    );
+    let after_all = physical_ids(&session);
+    assert!(after_all
+        .iter()
+        .zip(after_one.iter())
+        .all(|(new, old)| new != old));
+    session.run("INSERT INTO pt VALUES (1, 11)").unwrap();
+}
+
+#[test]
+fn auto_random_validates_range_and_incremental_bits_before_create() {
+    let mut session = Session::new();
+    for range in [31, 65] {
+        let error = session
+            .run(&format!(
+                "CREATE TABLE ar{range} (a BIGINT AUTO_RANDOM(5, {range}) PRIMARY KEY)"
+            ))
+            .unwrap_err()
+            .to_mysql_error();
+        assert_eq!(error.code, 8216, "range={range}");
+    }
+    let error = session
+        .run("CREATE TABLE ar_small (a BIGINT AUTO_RANDOM(15, 32) PRIMARY KEY)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8216);
+
+    session
+        .run("CREATE TABLE ar32 (a BIGINT UNSIGNED AUTO_RANDOM(5, 32) PRIMARY KEY)")
+        .unwrap();
+    session
+        .run("CREATE TABLE ar64 (a BIGINT AUTO_RANDOM(5, 64) PRIMARY KEY)")
+        .unwrap();
+}

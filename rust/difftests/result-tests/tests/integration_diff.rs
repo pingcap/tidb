@@ -1683,7 +1683,9 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // scalar UPDATE assignment against each source row (70 -> 69).
     // Its remaining UNION DISTINCT plan now carries duplicate-agnostic parent
     // demand into each operand and eliminates the unread outer join (69 -> 68).
-    const KNOWN_DIVERGENCES: usize = 68;
+    // `ddl/serial` now truncates physical partitions and validates AUTO_RANDOM
+    // ranges before creating a table (68 -> 66).
+    const KNOWN_DIVERGENCES: usize = 66;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
