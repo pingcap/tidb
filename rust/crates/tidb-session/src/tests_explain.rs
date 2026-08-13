@@ -667,6 +667,71 @@ fn explain_union_all_records_each_term_without_execution() {
     );
 }
 
+/// Go's `buildUnion` (`pkg/planner/core/logical_plan_builder.go`) builds a
+/// `Union` of the distinct operands and places `HashAgg` above it to remove
+/// duplicates.  Plain EXPLAIN must record that physical shape without
+/// draining either operand.
+#[test]
+fn explain_union_distinct_records_its_hash_aggregation() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1),(2),(3),(4)").unwrap();
+
+    let rows = row_text(
+        session.run("EXPLAIN (SELECT a FROM t WHERE a <= 2) UNION (SELECT a FROM t WHERE a >= 2)"),
+    );
+    assert_eq!(rows.len(), 8);
+    assert!(rows[0][0].starts_with("HashAgg_"));
+    assert_eq!(rows[0][2], "root");
+    assert!(rows[1][0].contains("Union_"));
+    assert_eq!(rows[1][2], "root");
+    assert_eq!(
+        rows.iter()
+            .skip(2)
+            .map(|row| row[2].as_str())
+            .collect::<Vec<_>>(),
+        vec!["root", "root", "root", "root", "root", "root"]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a FROM t ORDER BY a")),
+        vec![
+            vec!["1".to_owned()],
+            vec!["2".to_owned()],
+            vec!["3".to_owned()],
+            vec!["4".to_owned()],
+        ]
+    );
+}
+
+/// `EXPLAIN ANALYZE` meters the two physical stages separately: the `Union`
+/// receives every branch row, while the `HashAgg` emits only unique rows.
+#[test]
+fn explain_analyze_union_distinct_separates_input_and_output_rows() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1),(2),(3),(4)").unwrap();
+
+    let rows = row_text(session.run(
+        "EXPLAIN ANALYZE (SELECT a FROM t WHERE a <= 2) UNION (SELECT a FROM t WHERE a >= 2)",
+    ));
+    assert_eq!(rows.len(), 8);
+    assert!(rows[0][0].starts_with("HashAgg_"));
+    assert_eq!(rows[0][2], "4");
+    assert!(rows[1][0].contains("Union_"));
+    assert_eq!(rows[1][2], "5");
+    assert_eq!(
+        rows.iter()
+            .skip(2)
+            .map(|row| row[2].as_str())
+            .collect::<Vec<_>>(),
+        vec!["2", "2", "2", "3", "3", "3"]
+    );
+}
+
 /// EXPLAIN still refuses forms this tier cannot plan honestly and format names
 /// Go itself does not recognize.
 #[test]
@@ -676,11 +741,10 @@ fn explain_refuses_what_it_cannot_plan() {
         .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
         .unwrap();
 
-    // UNION DISTINCT/INTERSECT/EXCEPT need their own Go physical shapes
-    // (`HashAgg`/join-like set executors), so this seed keeps refusing them
-    // rather than printing a dishonest `Union` tree.
+    // INTERSECT/EXCEPT use join-like physical plans in Go and still need their
+    // own trace constructors; only UNION DISTINCT is handled above.
     assert!(matches!(
-        session.run("EXPLAIN ANALYZE (SELECT a FROM t) UNION (SELECT a FROM t)"),
+        session.run("EXPLAIN ANALYZE (SELECT a FROM t) INTERSECT (SELECT a FROM t)"),
         Err(DriverError::Unsupported(reason)) if reason == "EXPLAIN ANALYZE of this set operation is not supported yet"
     ));
     assert!(matches!(

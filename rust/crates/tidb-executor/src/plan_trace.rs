@@ -387,6 +387,51 @@ impl PlanTrace {
         self.stack.push(union);
     }
 
+    /// Go's `buildUnion` for a direct `UNION DISTINCT`: first a physical
+    /// `Union` combines the operand pipelines, then `buildDistinct` places a
+    /// root `HashAgg` above it.  Keeping both nodes here mirrors that plan
+    /// shape instead of representing deduplication as a property of Union.
+    pub(crate) fn union_distinct(
+        &mut self,
+        terms: usize,
+        columns: usize,
+        input_rows: u64,
+        output_rows: u64,
+    ) {
+        if terms < 2 || columns == 0 || self.stack.len() < terms {
+            self.refuse("EXPLAIN recorded an incomplete UNION DISTINCT plan");
+            return;
+        }
+        let first_term = self.stack.len() - terms;
+        let children = self.stack.split_off(first_term);
+        let union_estimate = children
+            .iter()
+            .try_fold(0.0, |sum, child| child.est_rows.map(|rows| sum + rows));
+        let mut union = PlanNode::new("Union", union_estimate, String::new(), String::new());
+        if self.counting {
+            union.act_rows = Some(Rc::new(Cell::new(input_rows)));
+        }
+        union.children = children;
+
+        let groups = std::iter::repeat_n("Column", columns)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let first_rows = std::iter::repeat_n("firstrow(Column)->Column", columns)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut distinct = PlanNode::new(
+            "HashAgg",
+            union_estimate.map(|rows| rows * DISTINCT_FACTOR),
+            String::new(),
+            format!("group by:{groups}, funcs:{first_rows}"),
+        );
+        if self.counting {
+            distinct.act_rows = Some(Rc::new(Cell::new(output_rows)));
+        }
+        distinct.children.push(union);
+        self.stack.push(distinct);
+    }
+
     fn wrap(&mut self, name: &'static str, est: Est, info: String) {
         let est_rows = est.apply(self.top_est());
         let child = self.stack.pop();

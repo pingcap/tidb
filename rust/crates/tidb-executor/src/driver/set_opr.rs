@@ -79,9 +79,41 @@ pub(crate) fn is_unordered_union_all(stmt: &tidb_ast::SetOprStmt) -> bool {
         })
 }
 
-/// [`run_set_opr_stmt`] while retaining every direct `UNION ALL` operand in
-/// the plan trace. This is used by `EXPLAIN ANALYZE`; ordinary execution has
-/// no trace and remains allocation-free.
+/// The direct `UNION DISTINCT` shape Go builds as `HashAgg(Union(...))`.
+/// Mixed `UNION ALL`/`UNION DISTINCT` has a different grouping boundary in
+/// `buildUnion`, and `INTERSECT`/`EXCEPT` use semi-join-like plans, so each
+/// stays outside this focused trace until its physical shape is recorded.
+fn is_unordered_union_distinct(stmt: &tidb_ast::SetOprStmt) -> bool {
+    stmt.with.is_none()
+        && stmt.order_by.is_empty()
+        && stmt.limit.is_none()
+        && stmt.terms.len() > 1
+        && stmt.terms.iter().skip(1).all(|term| {
+            matches!(term.op, Some(tidb_ast::SetOp::Union { all: false }))
+                && matches!(term.body, tidb_ast::SetOprTermBody::Select(_))
+        })
+}
+
+#[derive(Clone, Copy)]
+enum TracedSetOpr {
+    UnionAll,
+    UnionDistinct,
+}
+
+fn traced_set_opr(stmt: &tidb_ast::SetOprStmt) -> Option<TracedSetOpr> {
+    if is_unordered_union_all(stmt) {
+        Some(TracedSetOpr::UnionAll)
+    } else if is_unordered_union_distinct(stmt) {
+        Some(TracedSetOpr::UnionDistinct)
+    } else {
+        None
+    }
+}
+
+/// [`run_set_opr_stmt`] while retaining every direct `UNION ALL` or `UNION
+/// DISTINCT` operand in the plan trace. This is used by `EXPLAIN` and
+/// `EXPLAIN ANALYZE`; ordinary execution has no trace and remains
+/// allocation-free.
 pub(crate) fn run_set_opr_traced(
     stmt: &tidb_ast::SetOprStmt,
     catalog: &Catalog,
@@ -89,7 +121,8 @@ pub(crate) fn run_set_opr_traced(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut crate::plan_trace::PlanTrace>,
 ) -> Result<SelectMeta, DriverError> {
-    if trace.is_some() && !is_unordered_union_all(stmt) {
+    let trace_shape = trace.as_ref().and_then(|_| traced_set_opr(stmt));
+    if trace.is_some() && trace_shape.is_none() {
         return Err(DriverError::unsupported(
             "EXPLAIN ANALYZE of this set operation is not supported yet",
         ));
@@ -135,6 +168,8 @@ pub(crate) fn run_set_opr_traced(
         }
     }
 
+    let input_rows = terms.iter().map(|(_, rows)| rows.len() as u64).sum();
+
     // Each branch is then cast to the merged type, which is what makes an
     // INT branch united with a DECIMAL one read `1.0` rather than `1`.
     for (_, rows) in &mut terms {
@@ -165,7 +200,15 @@ pub(crate) fn run_set_opr_traced(
         accumulated = accumulated.into_iter().skip(offset).take(count).collect();
     }
     if let Some(trace) = trace {
-        trace.union_all(stmt.terms.len(), accumulated.len() as u64);
+        match trace_shape.expect("a traced set operation was validated above") {
+            TracedSetOpr::UnionAll => trace.union_all(stmt.terms.len(), accumulated.len() as u64),
+            TracedSetOpr::UnionDistinct => trace.union_distinct(
+                stmt.terms.len(),
+                columns.len(),
+                input_rows,
+                accumulated.len() as u64,
+            ),
+        }
     }
     Ok((columns, accumulated))
 }
