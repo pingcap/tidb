@@ -35,36 +35,22 @@
 //!    `JoinType.String()` reports. `CARTESIAN` is a physical annotation Go's
 //!    logical `JoinType` does not carry, so the comparison strips it.
 //!
-//! # The gaps this measured, each pinned twice
+//! # Remaining gaps
 //!
-//! Rows agree everywhere. The plan does not, in five ways, and each is an
-//! `#[ignore]`d test carrying Go's answer PLUS a running test pinning today's
-//! behavior so the ignored one cannot go stale unnoticed:
+//! Rows agree everywhere. Outer-to-inner conversion now matches all eight Go
+//! cases. Three independent plan gaps remain:
 //!
-//! * **No outer-to-inner conversion.** Go's `rule_outer_to_inner_join.go` has
-//!   no counterpart on the live path at all. There WAS a
-//!   `tidb_planner/src/outer_to_inner_join.rs` on disk, but it was never
-//!   declared in `lib.rs` and so never compiled, and it held only the Go
-//!   wrapper's delegation to `LogicalPlan.ConvertOuterToInnerJoin` -- not the
-//!   null-rejection analysis, which is where the rule actually lives. It was
-//!   deleted rather than left standing as evidence of coverage that did not
-//!   exist. The 4 cases of `TestSimplifyOuterJoin` whose `WHERE` rejects a
-//!   NULL-extended row therefore keep their `left outer join`.
 //! * **No predicate reaches either scan.** In all 38 cases every condition
 //!   stays at the join or in the `Selection` above it; no `DataSource`-level
 //!   `PushedDownConds` equivalent exists, which is what all 30 `Left`/`Right`
 //!   expectations of the other three tests are about.
 //! * **`<=>` is not an equal key.** Go joins on `nulleq`; here it lands in
 //!   `other cond` and the join goes CARTESIAN.
-//! * **A `WHERE` equality is not promoted to a join key** (case 4 of
-//!   `TestSimplifyOuterJoin`): Go rebuilds `t1.c = t2.c` into the join
-//!   condition; here it stays in the `Selection` above a CARTESIAN join.
 //! * **`NOT EXISTS` is not an anti semi join.** Go's
 //!   `TestDeriveNotNullConds` row 12 plans one; here it runs as a correlated
 //!   `Selection` with no join operator at all.
 //!
-//! None of the five changes a result. All five are orders of magnitude of
-//! work the store does not need to do.
+//! None changes a result; each changes how much work the store performs.
 
 #![cfg(test)]
 
@@ -227,16 +213,12 @@ fn conditions_below_join(session: &mut Session, sql: &str) -> Vec<(String, Strin
 // ---------------------------------------------------------------------------
 
 /// The 8 cases, each with the join type Go's `logicalOptimize` leaves after
-/// `FlagConvertOuterToInnerJoin`, and the join type this tier reports.
-///
-/// Go converts whenever the `WHERE` is null-rejecting for the inner side.
-/// This tier never converts, so the four `inner join`s below are the gap.
-const SIMPLIFY_OUTER_JOIN: &[(&str, &str, &str, &[Pair])] = &[
+/// `FlagConvertOuterToInnerJoin`.
+const SIMPLIFY_OUTER_JOIN: &[(&str, &str, &[Pair])] = &[
     // Go: an OR over both sides is not null-rejecting -- one disjunct can be
     // satisfied by the outer row alone -- so the outer join stands.
     (
         "select * from t t1 left join t t2 on t1.b = t2.b where t1.c > 1 or t2.c > 1",
-        "left outer join",
         "left outer join",
         &[
             (Some(1), Some(2)),
@@ -248,25 +230,21 @@ const SIMPLIFY_OUTER_JOIN: &[(&str, &str, &str, &[Pair])] = &[
             (Some(5), Some(5)),
         ],
     ),
-    // `t2.c > 1` on a NULL-extended row is NULL, so the AND rejects it: Go
-    // converts. THIS TIER DOES NOT (see the module doc).
+    // `t2.c > 1` on a NULL-extended row is NULL, so the AND rejects it.
     (
         "select * from t t1 left join t t2 on t1.b = t2.b where t1.c > 1 and t2.c > 1",
         "inner join",
-        "left outer join",
         &[(Some(2), Some(2)), (Some(3), Some(3)), (Some(5), Some(5))],
     ),
     // `not (A or B)` is `not A and not B` -- null-rejecting again.
     (
         "select * from t t1 left join t t2 on t1.b = t2.b where not (t1.c > 1 or t2.c > 1)",
         "inner join",
-        "left outer join",
         &[(Some(1), Some(1)), (Some(4), Some(4))],
     ),
     // `not (A and B)` is an OR: not null-rejecting, outer join stands.
     (
         "select * from t t1 left join t t2 on t1.b = t2.b where not (t1.c > 1 and t2.c > 1)",
-        "left outer join",
         "left outer join",
         &[
             (Some(1), Some(1)),
@@ -278,13 +256,11 @@ const SIMPLIFY_OUTER_JOIN: &[(&str, &str, &str, &[Pair])] = &[
         ],
     ),
     // The ON references only the outer side; the null-rejecting equality is
-    // in the WHERE. Go converts AND promotes `t1.c = t2.c` to a join key
-    // (`IndexHashJoin ... equal cond:eq(test.t.c, test.t.c)`); here it stays
-    // in the Selection over a CARTESIAN join.
+    // in the WHERE. Conversion promotes `t1.c = t2.c` to a join key
+    // (`IndexHashJoin ... equal cond:eq(test.t.c, test.t.c)`).
     (
         "select * from t t1 left join t t2 on t1.b > 1 where t1.c = t2.c",
         "inner join",
-        "left outer join",
         &[
             (Some(3), Some(3)),
             (Some(4), Some(4)),
@@ -295,7 +271,6 @@ const SIMPLIFY_OUTER_JOIN: &[(&str, &str, &str, &[Pair])] = &[
     // `<=>` is true for two NULLs, so it does NOT reject a NULL-extended row.
     (
         "select * from t t1 left join t t2 on true where t1.b <=> t2.b",
-        "left outer join",
         "left outer join",
         &[
             (Some(1), Some(1)),
@@ -314,7 +289,6 @@ const SIMPLIFY_OUTER_JOIN: &[(&str, &str, &str, &[Pair])] = &[
     (
         "select * from t t1 left join t t2 on t1.b = t2.b where not(0+(t1.c=1 and t2.c=2))",
         "left outer join",
-        "left outer join",
         &[
             (Some(1), Some(1)),
             (Some(2), Some(1)),
@@ -331,7 +305,6 @@ const SIMPLIFY_OUTER_JOIN: &[(&str, &str, &str, &[Pair])] = &[
     (
         "select * from t t1 left join t t2 on t1.b = t2.b where not(t1.c) and not(t2.c)",
         "inner join",
-        "left outer join",
         &[(Some(4), Some(4))],
     ),
 ];
@@ -340,51 +313,43 @@ const SIMPLIFY_OUTER_JOIN: &[(&str, &str, &str, &[Pair])] = &[
 #[test]
 fn simplify_outer_join_returns_tidbs_rows() {
     let mut session = signed_table_session();
-    for (sql, _, _, pairs) in SIMPLIFY_OUTER_JOIN {
+    for (sql, _, pairs) in SIMPLIFY_OUTER_JOIN {
         check(&mut session, sql, pairs);
     }
 }
 
-/// RUNNING GUARD for the gap below: today every one of the 8 cases keeps the
-/// join type it was written with. When the conversion rule starts running,
-/// this test fails and
-/// [`simplify_outer_join_converts_a_null_rejecting_where_to_inner`] becomes
-/// the live one.
 #[test]
-fn simplify_outer_join_does_not_convert_any_outer_join_today() {
-    let mut session = signed_table_session();
-    for (sql, _, ours, _) in SIMPLIFY_OUTER_JOIN {
-        assert_eq!(
-            join_type(&mut session, sql).as_deref(),
-            Some(*ours),
-            "join type of `{sql}`"
-        );
-    }
-    // The gap in one number: 4 of the 8 cases disagree with Go.
-    assert_eq!(
-        SIMPLIFY_OUTER_JOIN
-            .iter()
-            .filter(|(_, go, ours, _)| go != ours)
-            .count(),
-        4
-    );
-}
-
-/// Go's answer, asserted as Go gives it. Blocked on the outer-to-inner rule
-/// (`pkg/planner/core/rule_outer_to_inner_join.go`) actually running over a
-/// plan in this tier. Nothing in `tidb_planner` implements it; the file that
-/// once looked like it did was never compiled (see this module's own doc).
-#[test]
-#[ignore = "no outer-to-inner join conversion runs in this tier; Go's join type asserted"]
 fn simplify_outer_join_converts_a_null_rejecting_where_to_inner() {
     let mut session = signed_table_session();
-    for (sql, go, _, _) in SIMPLIFY_OUTER_JOIN {
+    for (sql, go, _) in SIMPLIFY_OUTER_JOIN {
         assert_eq!(
             join_type(&mut session, sql).as_deref(),
             Some(*go),
             "Go's join type for `{sql}`"
         );
     }
+
+    let right = "select * from t t1 right join t t2 on t1.b = t2.b where t1.c > 1";
+    assert_eq!(
+        join_type(&mut session, right).as_deref(),
+        Some("inner join")
+    );
+    check(
+        &mut session,
+        right,
+        &[
+            (Some(2), Some(1)),
+            (Some(2), Some(2)),
+            (Some(3), Some(3)),
+            (Some(3), Some(4)),
+            (Some(5), Some(5)),
+        ],
+    );
+
+    let promoted = "select * from t t1 left join t t2 on t1.b > 1 where t1.c = t2.c";
+    let info = join_info(&mut session, promoted);
+    assert!(!info.contains("CARTESIAN"), "{info}");
+    assert!(info.contains("equal:[eq("), "{info}");
 }
 
 // ---------------------------------------------------------------------------
@@ -899,11 +864,6 @@ fn the_join_shapes_this_tier_builds_where_tidb_builds_a_better_one() {
             "expected a CARTESIAN join for `{sql}`"
         );
     }
-
-    // A WHERE equality is not promoted into the join condition: TiDB plans
-    // `IndexHashJoin ... equal cond:eq(test.t.c, test.t.c)`.
-    let sql = "select * from t t1 left join t t2 on t1.b > 1 where t1.c = t2.c";
-    assert!(join_info(&mut session, sql).contains("CARTESIAN"));
 
     // A repeated conjunct is kept twice; TiDB pushes it once.
     let sql = "select * from t t1 join t t2 on t1.a > 1 and t1.a > 1";

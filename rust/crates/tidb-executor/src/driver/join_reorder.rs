@@ -422,10 +422,10 @@ pub(crate) fn reorder(
         match classify(conjunct, &leaves, *outer)? {
             Classified::Edge(edge) => edges.push(edge),
             Classified::Single(leaf) => {
-                // A single-relation predicate over a null-extended relation is
-                // Go's `simplifyOuterJoin` case -- the outer join becomes an
-                // INNER one before reorder ever runs -- which this module does
-                // not model.
+                // Null-rejecting predicates have already converted the outer
+                // join before reorder. A surviving predicate over its
+                // null-extended relation (for example `inner.a IS NULL`) must
+                // remain above that join, so this group is not reorderable.
                 if extended.contains(&leaf) {
                     return None;
                 }

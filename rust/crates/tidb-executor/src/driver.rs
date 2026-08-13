@@ -307,6 +307,7 @@ pub(crate) mod merge_decision;
 mod multi_dml;
 mod only_full_group_by;
 mod outer_join_elimination;
+pub(crate) mod outer_join_simplify;
 mod params;
 mod point_get_key;
 mod predicate_push_down;
@@ -716,6 +717,13 @@ pub(crate) fn run_select_traced(
             // over the whole join tree, is what makes it independent of which
             // table that turns out to be.
             crate::index_hints::validate_join_index_hints(join, catalog, current_db)?;
+            let simplified = outer_join_simplify::simplify(
+                join,
+                select.where_clause.as_ref(),
+                catalog,
+                current_db,
+            );
+            let logical_join = simplified.as_ref().unwrap_or(join);
             // Go's `rule_predicate_push_down`: the `WHERE` equalities are
             // offered to the joins below, so a comma join does not have to
             // build the cross product the filter would then throw away. See
@@ -737,7 +745,7 @@ pub(crate) fn run_select_traced(
             // group as WRITTEN -- and NOT off `PlanTrace`, which exists only
             // under `EXPLAIN`. See `driver::join_search`.
             let row_source = join_reorder::row_source(
-                join,
+                logical_join,
                 select.where_clause.as_ref(),
                 catalog,
                 current_db,
@@ -759,14 +767,14 @@ pub(crate) fn run_select_traced(
             // `tidb_opt_join_reorder_threshold`; see
             // `driver::join_reorder`'s module doc for why that bounds it.
             let reordered = join_reorder::reorder(
-                join,
+                logical_join,
                 select,
                 select.where_clause.as_ref(),
                 catalog,
                 current_db,
                 ctx,
             );
-            let planned = reordered.as_ref().map_or(join, |plan| &plan.join);
+            let planned = reordered.as_ref().map_or(logical_join, |plan| &plan.join);
             let (exec, mut scope, _) = build_join(
                 planned,
                 catalog,

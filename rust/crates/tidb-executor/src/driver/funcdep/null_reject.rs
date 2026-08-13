@@ -55,29 +55,37 @@ impl Proof {
 /// Whether `predicate` rejects every row in which the column at `offset` is
 /// NULL, where `resolve` maps a written column path to its scope offset.
 ///
-/// Go `IsNullRejected`, with Go's `PushDownNot` normalization not needed here:
-/// the written AST still carries `IS NOT NULL` and `IS NOT TRUE` as their own
-/// nodes, which [`prove`] classifies directly rather than after a rewrite.
+/// Go `IsNullRejected`; [`prove_not`] supplies the observable part of Go's
+/// `PushDownNot` normalization without rebuilding the expression tree.
 pub(crate) fn is_null_rejected(
     predicate: &tidb_ast::Expr,
     offset: usize,
     resolve: &dyn Fn(&[String]) -> Option<usize>,
 ) -> bool {
-    prove(predicate, offset, resolve).non_true
+    is_null_rejected_by(predicate, &|path| resolve(path) == Some(offset))
+}
+
+/// Whether `predicate` rejects a row after every column selected by
+/// `nullified` becomes SQL NULL.
+///
+/// A UNIQUE-key proof nullifies one column; outer-join simplification
+/// nullifies a whole child schema. Keeping that distinction in the selector
+/// avoids pretending a multi-column child is one synthetic column.
+pub(crate) fn is_null_rejected_by(
+    predicate: &tidb_ast::Expr,
+    nullified: &dyn Fn(&[String]) -> bool,
+) -> bool {
+    prove(predicate, nullified).non_true
 }
 
 /// The two proof bits for `expr` with the target column read as NULL.
-fn prove(
-    expr: &tidb_ast::Expr,
-    offset: usize,
-    resolve: &dyn Fn(&[String]) -> Option<usize>,
-) -> Proof {
+fn prove(expr: &tidb_ast::Expr, nullified: &dyn Fn(&[String]) -> bool) -> Proof {
     match expr {
-        tidb_ast::Expr::Paren(inner) => prove(inner, offset, resolve),
+        tidb_ast::Expr::Paren(inner) => prove(inner, nullified),
         // The target column reads as NULL; any other column is an unknown
         // value, which proves nothing.
         tidb_ast::Expr::Column(path) => {
-            if resolve(path) == Some(offset) {
+            if nullified(path) {
                 Proof::null()
             } else {
                 Proof::default()
@@ -95,8 +103,8 @@ fn prove(
         },
 
         tidb_ast::Expr::Binary(op, lhs, rhs) => {
-            let left = prove(lhs, offset, resolve);
-            let right = prove(rhs, offset, resolve);
+            let left = prove(lhs, nullified);
+            let right = prove(rhs, nullified);
             match op {
                 // AND is TRUE only if both are, so one non-TRUE side is
                 // enough; it is NULL only if both are.
@@ -121,25 +129,10 @@ fn prove(
         // NULL either. A general `NOT` needs its child to be NULL, since
         // `NOT FALSE` is TRUE.
         tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, inner) => {
-            if let tidb_ast::Expr::Is {
-                expr,
-                target: tidb_ast::IsTarget::Null,
-                not: false,
-            } = strip_parens(inner)
-            {
-                return Proof {
-                    non_true: prove(expr, offset, resolve).must_null,
-                    must_null: false,
-                };
-            }
-            let child = prove(inner, offset, resolve);
-            Proof {
-                non_true: child.must_null,
-                must_null: child.must_null,
-            }
+            prove_not(inner, nullified)
         }
         tidb_ast::Expr::Unary(_, inner) => {
-            let child = prove(inner, offset, resolve);
+            let child = prove(inner, nullified);
             if child.must_null {
                 Proof::null()
             } else {
@@ -157,7 +150,7 @@ fn prove(
         // TRUE is TRUE, so the predicate survives a NULL `x` and rejects
         // nothing, and `WHERE a IS NOT TRUE GROUP BY a,b` stays 1055.
         tidb_ast::Expr::Is { expr, target, not } => {
-            let child = prove(expr, offset, resolve);
+            let child = prove(expr, nullified);
             match (target, not) {
                 (tidb_ast::IsTarget::Null, false) => Proof::default(),
                 (tidb_ast::IsTarget::Null, true)
@@ -179,13 +172,10 @@ fn prove(
         // Go `proveNullRejectedIn`: `IN` answers NULL for a NULL value, and
         // for a value with an all-NULL list.
         tidb_ast::Expr::In { expr, list, .. } => {
-            if prove(expr, offset, resolve).must_null {
+            if prove(expr, nullified).must_null {
                 return Proof::null();
             }
-            if list
-                .iter()
-                .all(|item| prove(item, offset, resolve).must_null)
-            {
+            if list.iter().all(|item| prove(item, nullified).must_null) {
                 return Proof::null();
             }
             Proof::default()
@@ -193,7 +183,7 @@ fn prove(
         // `a IN (SELECT ...)` compares `a` against the subquery's rows, and a
         // NULL `a` matches nothing and answers NULL.
         tidb_ast::Expr::InSubquery { expr, .. } => {
-            if prove(expr, offset, resolve).must_null {
+            if prove(expr, nullified).must_null {
                 Proof::null()
             } else {
                 Proof::default()
@@ -207,7 +197,7 @@ fn prove(
         } => {
             if [expr, low, high]
                 .into_iter()
-                .any(|part| prove(part, offset, resolve).must_null)
+                .any(|part| prove(part, nullified).must_null)
             {
                 Proof::null()
             } else {
@@ -217,14 +207,14 @@ fn prove(
 
         // `LIKE` / `REGEXP` answer NULL for a NULL operand.
         tidb_ast::Expr::Like { expr, pattern, .. } => {
-            if prove(expr, offset, resolve).must_null || prove(pattern, offset, resolve).must_null {
+            if prove(expr, nullified).must_null || prove(pattern, nullified).must_null {
                 Proof::null()
             } else {
                 Proof::default()
             }
         }
         tidb_ast::Expr::Regexp { expr, pattern, .. } => {
-            if prove(expr, offset, resolve).must_null || prove(pattern, offset, resolve).must_null {
+            if prove(expr, nullified).must_null || prove(pattern, nullified).must_null {
                 Proof::null()
             } else {
                 Proof::default()
@@ -236,6 +226,55 @@ fn prove(
         // nothing only costs a refusal this tier already makes, while a wrong
         // proof would ACCEPT a query TiDB refuses.
         _ => Proof::default(),
+    }
+}
+
+/// Proof for `NOT expr` after Go's `PushDownNot` normalization.
+fn prove_not(expr: &tidb_ast::Expr, nullified: &dyn Fn(&[String]) -> bool) -> Proof {
+    match strip_parens(expr) {
+        // De Morgan is observable for outer joins: `NOT (outer OR inner)` is
+        // rejected when the inner disjunct becomes NULL, while
+        // `NOT (outer AND inner)` is not.
+        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, lhs, rhs) => {
+            let left = prove_not(lhs, nullified);
+            let right = prove_not(rhs, nullified);
+            Proof {
+                non_true: left.non_true || right.non_true,
+                must_null: left.must_null && right.must_null,
+            }
+        }
+        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, lhs, rhs) => {
+            let left = prove_not(lhs, nullified);
+            let right = prove_not(rhs, nullified);
+            Proof {
+                non_true: left.non_true && right.non_true,
+                must_null: left.must_null && right.must_null,
+            }
+        }
+        tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, inner) => {
+            prove(inner, nullified)
+        }
+        tidb_ast::Expr::Is { expr, target, not } => {
+            let child = prove(expr, nullified);
+            let rejects = match (target, not) {
+                // NOT(IS NULL/UNKNOWN) becomes IS NOT NULL/UNKNOWN.
+                (tidb_ast::IsTarget::Null | tidb_ast::IsTarget::Unknown, false) => child.must_null,
+                // NOT(IS NOT TRUE/FALSE) becomes IS TRUE/FALSE.
+                (tidb_ast::IsTarget::True | tidb_ast::IsTarget::False, true) => child.must_null,
+                _ => false,
+            };
+            Proof {
+                non_true: rejects,
+                must_null: false,
+            }
+        }
+        other => {
+            let child = prove(other, nullified);
+            Proof {
+                non_true: child.must_null,
+                must_null: child.must_null,
+            }
+        }
     }
 }
 
