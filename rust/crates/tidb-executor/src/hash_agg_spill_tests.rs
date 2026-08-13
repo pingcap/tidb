@@ -288,9 +288,14 @@ fn test_get_correct_result() {
     let mut got = BTreeMap::new();
     let mut saw_spill_file = false;
     let mut req = exec.new_chunk();
+    let required_rows = [1_usize, 5, 3, 10, 32];
+    let mut request = 0;
     loop {
+        let wanted = required_rows[request % required_rows.len()];
+        req.set_required_rows(wanted as isize, exec.max_chunk_size());
         exec.next(&mut req)
             .expect("a spilling aggregation must not fail");
+        assert_eq!(req.num_rows(), wanted.min(expected.len() - got.len()));
         if req.num_rows() == 0 {
             break;
         }
@@ -305,6 +310,7 @@ fn test_get_correct_result() {
                 row.get_int64(0)
             );
         }
+        request += 1;
     }
 
     assert!(

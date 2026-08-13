@@ -200,8 +200,7 @@ impl<C: Columns> StreamAggExec<C> {
 
     fn next_stream(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
-        let batch = self.meta.max_chunk_size();
-        while !self.executed && req.num_rows() < batch {
+        while !self.executed && !req.is_full() {
             if self.row_cursor >= self.child_chunk.num_rows() && !self.source_drained {
                 self.load_child_chunk()?;
                 continue;
@@ -466,6 +465,36 @@ mod tests {
             ]
         );
         assert!(!exec.agg_tree_input_empty());
+    }
+
+    #[test]
+    fn stream_agg_honors_each_output_chunks_required_rows() {
+        let types = [long()];
+        let mut exec = StreamAggExec::new(
+            output_meta(&types, 32),
+            vec![column(0, long())],
+            vec![AggFunc::new(AggKind::FirstRow, Some(column(0, long())))],
+            source(&[
+                &[(0, Some(0)), (1, Some(1))],
+                &[(2, Some(2)), (3, Some(3))],
+                &[(4, Some(4)), (5, Some(5))],
+                &[(6, Some(6)), (7, Some(7))],
+                &[(8, Some(8)), (9, Some(9))],
+            ]),
+            NoColumns,
+            StatementMemory::default(),
+        );
+        exec.open().unwrap();
+        let mut req = exec.new_chunk();
+        let mut output = Vec::new();
+        for expected in [1_usize, 2, 3, 4] {
+            req.set_required_rows(expected as isize, exec.max_chunk_size());
+            exec.next(&mut req).unwrap();
+            assert_eq!(req.num_rows(), expected);
+            output.extend((0..req.num_rows()).map(|row| req.get_row(row).get_int64(0)));
+        }
+        assert_eq!(output, (0..10).collect::<Vec<_>>());
+        exec.close().unwrap();
     }
 
     #[test]
