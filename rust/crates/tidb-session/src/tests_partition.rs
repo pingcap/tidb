@@ -660,6 +660,36 @@ fn range_pruning_reads_only_the_partitions_that_can_match() {
     }
 }
 
+/// LIST pruning is value ownership, not a range-bound approximation. Point,
+/// IN, NULL, and impossible-value predicates must touch exactly the physical
+/// partitions that can own a matching row.
+#[test]
+fn scalar_list_pruning_reads_only_matching_owners() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE lpr (a int, b int) PARTITION BY LIST(a) (PARTITION p0 VALUES IN \
+             (1,3,7), PARTITION p1 VALUES IN (NULL,5,9))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO lpr VALUES (1,1),(3,3),(7,7),(NULL,0),(5,5),(9,9)")
+        .unwrap();
+    for (predicate, read, returned) in [
+        ("a = 1", "3", "1"),
+        ("a IN (1,5)", "6", "2"),
+        ("a IS NULL", "3", "1"),
+        ("a = 2", "0", "0"),
+    ] {
+        let rows = tests_support::row_text(session.run(&format!(
+            "EXPLAIN ANALYZE SELECT b FROM lpr WHERE {predicate}"
+        )));
+        let scan = rows.last().expect("a plan has a source row");
+        assert_eq!(scan[2], read, "records read for `{predicate}`: {}", scan[0]);
+        assert_eq!(rows[0][2], returned, "rows returned for `{predicate}`");
+    }
+}
+
 /// HASH pruning must narrow the physical scan, not merely leave the WHERE to
 /// discard rows after all partitions were read. Each partition holds three
 /// rows, so the source `actRows` makes the distinction observable.

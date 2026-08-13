@@ -113,11 +113,136 @@ pub fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64
             less_than,
             unsigned,
         } => Some(prune_range_ids(spec, ranges, less_than, *unsigned)),
-        // Scalar LIST has exact-value routing but no list-aware range algebra
-        // in this tier yet. Reading every partition is the safe answer: it
-        // cannot omit a matching row.
-        PartitionKind::List { .. } => None,
+        PartitionKind::List {
+            values,
+            null_partition,
+            default_partition,
+            unsigned,
+        } => Some(prune_list_ids(
+            spec,
+            ranges,
+            values,
+            *null_partition,
+            *default_partition,
+            *unsigned,
+        )),
     }
+}
+
+/// Go `ForListPruning.LocatePartitionByRange`: retain the definitions owning
+/// values inside any ranger interval. A DEFAULT definition is always retained
+/// because an interval can include values that have no explicit owner.
+fn prune_list_ids(
+    spec: &PartitionSpec,
+    ranges: &[IndexRange],
+    values: &[(i64, usize)],
+    null_partition: Option<usize>,
+    default_partition: Option<usize>,
+    unsigned: bool,
+) -> Vec<i64> {
+    let mut used = vec![false; spec.definitions.len()];
+    for range in ranges {
+        if interval_is_null_point(range) {
+            if let Some(ordinal) = null_partition.filter(|ordinal| *ordinal < used.len()) {
+                used[ordinal] = true;
+            }
+            continue;
+        }
+        let Some((low, high)) = scalar_interval(range) else {
+            return spec
+                .definitions
+                .iter()
+                .map(|definition| definition.id)
+                .collect();
+        };
+        for (value, ordinal) in values {
+            if *ordinal < used.len() && scalar_in_interval(*value, low, high, unsigned) {
+                used[*ordinal] = true;
+            }
+        }
+        if interval_includes_null(range) {
+            if let Some(ordinal) = null_partition.filter(|ordinal| *ordinal < used.len()) {
+                used[ordinal] = true;
+            }
+        }
+    }
+    if let Some(ordinal) = default_partition.filter(|ordinal| *ordinal < used.len()) {
+        used[ordinal] = true;
+    }
+    spec.definitions
+        .iter()
+        .zip(used)
+        .filter_map(|(definition, used)| used.then_some(definition.id))
+        .collect()
+}
+
+type ScalarRangeEndpoint = (Option<i64>, bool);
+type ScalarInterval = (ScalarRangeEndpoint, ScalarRangeEndpoint);
+
+/// One scalar ranger interval. `None` means an endpoint has a type that the
+/// partition expression cannot compare, so its safe pruning answer is every
+/// partition.
+fn scalar_interval(range: &IndexRange) -> Option<ScalarInterval> {
+    fn endpoint(value: Option<&Datum>) -> Option<Option<i64>> {
+        match value? {
+            Datum::Int(value) => Some(Some(*value)),
+            Datum::UInt(value) => Some(Some(*value as i64)),
+            Datum::Null | Datum::MinNotNull | Datum::MaxValue => Some(None),
+            _ => None,
+        }
+    }
+    let low = endpoint(range.low.first())?;
+    let high = endpoint(range.high.first())?;
+    Some(((low, range.low_exclusive), (high, range.high_exclusive)))
+}
+
+fn scalar_in_interval(
+    value: i64,
+    low: ScalarRangeEndpoint,
+    high: ScalarRangeEndpoint,
+    unsigned: bool,
+) -> bool {
+    let lower_ok = low.0.is_none_or(|bound| {
+        if unsigned {
+            if low.1 {
+                (value as u64) > (bound as u64)
+            } else {
+                (value as u64) >= (bound as u64)
+            }
+        } else if low.1 {
+            value > bound
+        } else {
+            value >= bound
+        }
+    });
+    let upper_ok = high.0.is_none_or(|bound| {
+        if unsigned {
+            if high.1 {
+                (value as u64) < (bound as u64)
+            } else {
+                (value as u64) <= (bound as u64)
+            }
+        } else if high.1 {
+            value < bound
+        } else {
+            value <= bound
+        }
+    });
+    lower_ok && upper_ok
+}
+
+/// `NULL` is selected when the range starts at inclusive `NULL`: this covers
+/// both the `IS NULL` point and `IndexRange::full()`. Ordinary comparisons
+/// start at `MinNotNull` and therefore cannot select it.
+fn interval_includes_null(range: &IndexRange) -> bool {
+    matches!(range.low.first(), Some(Datum::Null)) && !range.low_exclusive
+}
+
+fn interval_is_null_point(range: &IndexRange) -> bool {
+    matches!(range.low.first(), Some(Datum::Null))
+        && !range.low_exclusive
+        && matches!(range.high.first(), Some(Datum::Null))
+        && !range.high_exclusive
 }
 
 fn prune_range_ids(
@@ -361,6 +486,39 @@ mod tests {
         }
     }
 
+    fn list_table() -> PartitionSpec {
+        PartitionSpec {
+            kind: PartitionKind::List {
+                values: vec![(1, 0), (3, 0), (5, 1)],
+                null_partition: Some(1),
+                default_partition: Some(2),
+                unsigned: false,
+            },
+            expr_text: "`a`".to_owned(),
+            expr: tidb_expr::expression::Expression::Constant(
+                tidb_expr::expression::Constant::new(
+                    Datum::Int(0),
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                ),
+            ),
+            dependencies: vec!["a".to_owned()],
+            definitions: vec![
+                PartitionDef {
+                    id: 201,
+                    name: "p0".to_owned(),
+                },
+                PartitionDef {
+                    id: 202,
+                    name: "pn".to_owned(),
+                },
+                PartitionDef {
+                    id: 203,
+                    name: "pd".to_owned(),
+                },
+            ],
+        }
+    }
+
     fn interval(low: Datum, low_exclusive: bool, high: Datum, high_exclusive: bool) -> IndexRange {
         IndexRange {
             low: vec![low],
@@ -424,6 +582,44 @@ mod tests {
                 "a = {value}"
             );
         }
+    }
+
+    /// LIST keeps exact owners for points/ranges, keeps its NULL owner only
+    /// for an `IS NULL` range, and always retains DEFAULT for a possible gap.
+    #[test]
+    fn list_pruning_matches_gos_explicit_and_default_owners() {
+        let spec = list_table();
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(1), false, Datum::Int(1), false)]
+            ),
+            Some(vec![201, 203])
+        );
+        assert_eq!(
+            pruned_ids(
+                &spec,
+                &[interval(Datum::Int(2), false, Datum::Int(3), false)]
+            ),
+            Some(vec![201, 203])
+        );
+        assert_eq!(
+            pruned_ids(&spec, &[interval(Datum::Null, false, Datum::Null, false)]),
+            Some(vec![202, 203])
+        );
+
+        let mut without_default = spec.clone();
+        if let PartitionKind::List {
+            default_partition, ..
+        } = &mut without_default.kind
+        {
+            *default_partition = None;
+        }
+        assert_eq!(
+            pruned_ids(&without_default, &[IndexRange::full()]),
+            Some(vec![201, 202]),
+            "a full range must retain the explicit NULL owner"
+        );
     }
 
     /// An endpoint this tier cannot compare against a bound prunes nothing
