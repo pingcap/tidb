@@ -48,6 +48,10 @@ struct AggPipelineState {
     /// and which `HAVING`/`ORDER BY` may reference even when the select list
     /// does not project them.
     group_by_names: Vec<String>,
+    /// Canonical forms of the resolved GROUP BY expressions. Go's Expand
+    /// stage matches GROUPING() arguments against this expression set, not
+    /// merely against source-column names.
+    group_by_exprs: Vec<String>,
     /// `FIRST_ROW` outputs whose source expression is a `GROUP BY` item.
     /// `WITH ROLLUP` replaces these derived grouping values with NULL for a
     /// subtotal, without nulling the raw columns the expression read.
@@ -169,8 +173,10 @@ pub(crate) fn run_aggregate_select(
     // runs in `buildSelect`, `checkOrderByInDistinct` later in `buildSort`.
     super::only_full_group_by::check_order_by_in_distinct(select, resolver.scope, ctx)?;
 
+    let group_by_exprs = group_by_expression_texts(select, resolver);
     let mut state = AggPipelineState {
         group_by_names: group_by_display_names(select, resolver),
+        group_by_exprs,
         ..AggPipelineState::default()
     };
 
@@ -335,6 +341,25 @@ fn group_by_display_names(
                 tidb_ast::Expr::Column(path) => path.last().cloned(),
                 _ => None,
             }
+        })
+        .collect()
+}
+
+/// The resolved `GROUP BY` expressions in the same canonical spelling used
+/// when matching `GROUPING(...)` arguments. This is the expression-level
+/// counterpart to [`group_by_display_names`], whose column names remain the
+/// public names `HAVING` and `ORDER BY` can resolve.
+fn group_by_expression_texts(
+    select: &tidb_ast::SelectStmt,
+    resolver: &ScopeResolver<'_>,
+) -> Vec<String> {
+    select
+        .group_by
+        .iter()
+        .filter_map(|item| {
+            resolve_group_by_item(&item.expr, &select.fields, resolver)
+                .ok()
+                .map(|expr| expr.restore())
         })
         .collect()
 }
@@ -665,7 +690,7 @@ fn hoist_window_calls(
             &mut hoist_names,
             &mut hoist_types,
             &mut hoist_specs,
-            &state.group_by_names,
+            &state.group_by_exprs,
             resolver,
             tidb_expr::Columns::div_precision_increment(ctx),
         )
@@ -746,7 +771,7 @@ fn lower_select_fields(
                 &mut state.names,
                 &mut state.types,
                 &mut state.grouping_specs,
-                &state.group_by_names,
+                &state.group_by_exprs,
                 resolver,
                 tidb_expr::Columns::div_precision_increment(ctx),
             )?;
@@ -772,7 +797,7 @@ fn lower_select_fields(
             &mut state.names,
             &mut state.types,
             &mut state.grouping_specs,
-            &state.group_by_names,
+            &state.group_by_exprs,
             resolver,
             ctx,
         )?;
@@ -811,7 +836,7 @@ fn lower_select_fields(
                     &mut state.names,
                     &mut state.types,
                     &mut state.grouping_specs,
-                    &state.group_by_names,
+                    &state.group_by_exprs,
                 )?;
                 // The call text may already have a column -- hoisted out of a
                 // window's PARTITION BY, or written twice -- in which case the
@@ -831,7 +856,7 @@ fn lower_select_fields(
                     &mut state.names,
                     &mut state.types,
                     &mut state.grouping_specs,
-                    &state.group_by_names,
+                    &state.group_by_exprs,
                     resolver,
                     tidb_expr::Columns::div_precision_increment(ctx),
                 )?;
@@ -857,7 +882,7 @@ fn lower_select_fields(
                     &mut state.names,
                     &mut state.types,
                     &mut state.grouping_specs,
-                    &state.group_by_names,
+                    &state.group_by_exprs,
                     resolver,
                     tidb_expr::Columns::div_precision_increment(ctx),
                 )?;
@@ -1107,7 +1132,7 @@ fn hoist_having_and_order_by(
                 &mut state.names,
                 &mut state.types,
                 &mut state.grouping_specs,
-                &state.group_by_names,
+                &state.group_by_exprs,
                 resolver,
                 ctx,
             )?;
@@ -1124,7 +1149,7 @@ fn hoist_having_and_order_by(
                     &mut state.names,
                     &mut state.types,
                     &mut state.grouping_specs,
-                    &state.group_by_names,
+                    &state.group_by_exprs,
                     resolver,
                     tidb_expr::Columns::div_precision_increment(ctx),
                 )?
@@ -1154,7 +1179,7 @@ fn hoist_having_and_order_by(
             &mut state.names,
             &mut state.types,
             &mut state.grouping_specs,
-            &state.group_by_names,
+            &state.group_by_exprs,
             resolver,
             ctx,
         )?;
@@ -1167,7 +1192,7 @@ fn hoist_having_and_order_by(
                 &mut state.names,
                 &mut state.types,
                 &mut state.grouping_specs,
-                &state.group_by_names,
+                &state.group_by_exprs,
                 resolver,
                 tidb_expr::Columns::div_precision_increment(ctx),
             )?

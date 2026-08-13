@@ -550,7 +550,7 @@ struct AggregateSubstitutor<'a, 'r> {
     names: &'a mut Vec<String>,
     types: &'a mut Vec<FieldType>,
     grouping_specs: &'a mut Vec<GroupingSpec>,
-    group_by_names: &'a [String],
+    group_by_exprs: &'a [String],
     resolver: &'a ScopeResolver<'r>,
     div_precision_increment: u32,
     /// The first failure, which stops the walk.
@@ -574,7 +574,7 @@ impl AggregateSubstitutor<'_, '_> {
                 self.names,
                 self.types,
                 self.grouping_specs,
-                self.group_by_names,
+                self.group_by_exprs,
             )?;
             *expr = Expr::Column(vec![name]);
             return Ok(false);
@@ -708,7 +708,7 @@ pub(crate) fn substitute_aggregates(
     names: &mut Vec<String>,
     types: &mut Vec<FieldType>,
     grouping_specs: &mut Vec<GroupingSpec>,
-    group_by_names: &[String],
+    group_by_exprs: &[String],
     resolver: &ScopeResolver<'_>,
     div_precision_increment: u32,
 ) -> Result<tidb_ast::Expr, DriverError> {
@@ -718,7 +718,7 @@ pub(crate) fn substitute_aggregates(
         names,
         types,
         grouping_specs,
-        group_by_names,
+        group_by_exprs,
         resolver,
         div_precision_increment,
         error: None,

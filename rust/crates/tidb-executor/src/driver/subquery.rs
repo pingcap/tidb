@@ -1132,7 +1132,7 @@ pub(crate) fn extract_and_hoist_subquery(
     names: &mut Vec<String>,
     types: &mut Vec<FieldType>,
     grouping_specs: &mut Vec<GroupingSpec>,
-    group_by_names: &[String],
+    group_by_exprs: &[String],
     resolver: &ScopeResolver<'_>,
     ctx: &crate::StmtContext,
 ) -> Result<(tidb_ast::Expr, bool), DriverError> {
@@ -1165,7 +1165,7 @@ pub(crate) fn extract_and_hoist_subquery(
         names,
         types,
         grouping_specs,
-        group_by_names,
+        group_by_exprs,
         resolver,
         tidb_expr::Columns::div_precision_increment(ctx),
     )?;

@@ -120,17 +120,14 @@ fn grouping_result_type() -> FieldType {
 /// (3602), naming the argument's 0-based position.
 fn grouping_arg_positions(
     args: &[tidb_ast::Expr],
-    group_by_names: &[String],
+    group_by_exprs: &[String],
 ) -> Result<Vec<usize>, DriverError> {
     let mut positions = Vec::with_capacity(args.len());
     for (arg, expr) in args.iter().enumerate() {
-        let tidb_ast::Expr::Column(path) = expr else {
-            return Err(DriverError::FieldInGroupingNotGroupBy(arg));
-        };
-        let name = path.last().cloned().unwrap_or_default();
-        let position = group_by_names
+        let expression = expr.restore();
+        let position = group_by_exprs
             .iter()
-            .position(|candidate| candidate.eq_ignore_ascii_case(&name))
+            .position(|candidate| candidate.eq_ignore_ascii_case(&expression))
             .ok_or(DriverError::FieldInGroupingNotGroupBy(arg))?;
         positions.push(position);
     }
@@ -154,7 +151,7 @@ pub(crate) fn add_grouping_column(
     names: &mut Vec<String>,
     types: &mut Vec<FieldType>,
     grouping_specs: &mut Vec<GroupingSpec>,
-    group_by_names: &[String],
+    group_by_exprs: &[String],
 ) -> Result<(String, usize), DriverError> {
     if let Some(index) = names
         .iter()
@@ -164,7 +161,7 @@ pub(crate) fn add_grouping_column(
             return Ok((display, index));
         }
     }
-    let group_positions = grouping_arg_positions(args, group_by_names)?;
+    let group_positions = grouping_arg_positions(args, group_by_exprs)?;
     let placeholder = Expression::Constant(tidb_expr::constant::Constant::new(
         Datum::Int(0),
         FieldType::new(FieldTypeCode::LongLong),

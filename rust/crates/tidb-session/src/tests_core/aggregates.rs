@@ -883,6 +883,23 @@ fn grouping_with_rollup() {
         Err(DriverError::FieldInGroupingNotGroupBy(0))
     ));
 
+    // Expand gives every GROUP BY expression its own carrier, so GROUPING()
+    // may name that expression rather than only a base column.
+    let mut grouping_expression =
+        row_text(session.run("SELECT a+1, GROUPING(a+1), SUM(c) FROM t GROUP BY a+1 WITH ROLLUP"));
+    grouping_expression.sort();
+    assert_eq!(
+        grouping_expression,
+        [["2", "0", "60"], ["3", "0", "40"], ["NULL", "1", "100"]]
+    );
+    assert_eq!(
+        row_text(
+            session
+                .run("SELECT a+1, SUM(c) FROM t GROUP BY a+1 WITH ROLLUP HAVING GROUPING(a+1) = 0")
+        ),
+        [["2", "60"], ["3", "40"]]
+    );
+
     // Go evaluates expressions around GROUPING() in the projection above the
     // aggregation. The six full/subtotal rows have grouping(a)=0; only the
     // grand total has grouping(a)=1.
