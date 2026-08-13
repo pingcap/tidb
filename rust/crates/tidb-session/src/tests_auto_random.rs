@@ -170,3 +170,106 @@ fn auto_random_base_seeds_rebases_reports_and_validates_the_counter() {
         .to_mysql_error();
     assert_eq!(error.code, 8216);
 }
+
+#[test]
+fn modify_column_increases_auto_random_bits_and_converts_auto_increment() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE ar_bits (id BIGINT AUTO_RANDOM(5) PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("ALTER TABLE ar_bits MODIFY COLUMN id BIGINT AUTO_RANDOM(8)")
+        .unwrap();
+    let shown = rows(&mut session, "SHOW CREATE TABLE ar_bits")[0][1].clone();
+    assert!(shown.contains("AUTO_RANDOM(8)"));
+    session.run("INSERT INTO ar_bits (v) VALUES (1)").unwrap();
+    let first = rows(&mut session, "SELECT id FROM ar_bits")[0][0]
+        .parse::<i64>()
+        .unwrap();
+    assert_eq!(first & ((1_i64 << 55) - 1), 2);
+
+    let error = session
+        .run("ALTER TABLE ar_bits MODIFY COLUMN id BIGINT AUTO_RANDOM(7)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8216);
+    assert_eq!(
+        error.message,
+        "Invalid auto random: decreasing auto_random shard bits is not supported"
+    );
+
+    let error = session
+        .run("ALTER TABLE ar_bits MODIFY COLUMN id BIGINT")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8216);
+    assert_eq!(
+        error.message,
+        "Invalid auto random: adding/dropping/modifying auto_random is not supported"
+    );
+
+    let error = session
+        .run("ALTER TABLE ar_bits MODIFY COLUMN id BIGINT AUTO_RANDOM(9, 32)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8216);
+    assert_eq!(
+        error.message,
+        "Invalid auto random: alter the range bits of auto_random column is not supported"
+    );
+
+    session
+        .run("CREATE TABLE ar_overflow (id BIGINT AUTO_RANDOM(5) PRIMARY KEY)")
+        .unwrap();
+    session
+        .run(&format!(
+            "ALTER TABLE ar_overflow FORCE AUTO_RANDOM_BASE={}",
+            1_u64 << 55
+        ))
+        .unwrap();
+    let error = session
+        .run("ALTER TABLE ar_overflow MODIFY COLUMN id BIGINT AUTO_RANDOM(8)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8216);
+    assert_eq!(
+        error.message,
+        "Invalid auto random: max allowed auto_random shard bits is 7, but got 8 on column `id`"
+    );
+
+    session
+        .run("CREATE TABLE plain_to_ar (id BIGINT PRIMARY KEY)")
+        .unwrap();
+    let error = session
+        .run("ALTER TABLE plain_to_ar MODIFY COLUMN id BIGINT AUTO_RANDOM(5)")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8216);
+    assert_eq!(
+        error.message,
+        "Invalid auto random: auto_random can only be converted from auto_increment clustered primary key"
+    );
+
+    session
+        .run("CREATE TABLE ai_to_ar (id BIGINT AUTO_INCREMENT PRIMARY KEY, v INT)")
+        .unwrap();
+    session.run("INSERT INTO ai_to_ar (v) VALUES (1)").unwrap();
+    session
+        .run("ALTER TABLE ai_to_ar MODIFY COLUMN id BIGINT AUTO_RANDOM(5)")
+        .unwrap();
+    let shown = rows(&mut session, "SHOW CREATE TABLE ai_to_ar")[0][1].clone();
+    assert!(shown.contains("AUTO_RANDOM(5)"));
+    assert!(!shown.contains("AUTO_INCREMENT"));
+    session.run("INSERT INTO ai_to_ar (v) VALUES (2)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT COUNT(*) FROM ai_to_ar")[0][0],
+        "2"
+    );
+    let converted = rows(&mut session, "SELECT id FROM ai_to_ar WHERE v=2")[0][0]
+        .parse::<i64>()
+        .unwrap();
+    assert!(
+        converted & ((1_i64 << 58) - 1) > 1,
+        "the migrated random counter must stay above the consumed auto-increment id"
+    );
+}

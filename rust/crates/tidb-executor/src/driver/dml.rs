@@ -681,7 +681,8 @@ pub(crate) fn run_insert_traced(
                             DriverError::AutoIdUnavailable(detail.0)
                         }
                         AutoRandomError::NotApplicable
-                        | AutoRandomError::RebaseOverflow { .. } => {
+                        | AutoRandomError::RebaseOverflow { .. }
+                        | AutoRandomError::InvalidDefinition(_) => {
                             unreachable!("row allocation does not rebase a table option")
                         }
                     })?;

@@ -548,6 +548,27 @@ impl AutoIdAllocator {
             .wrapping_add(1)
     }
 
+    /// Advances the shared counter by one for a DDL validation and discards
+    /// this node's old reservation. Go performs this directly through the
+    /// meta accessor before changing AUTO_RANDOM bits; the next table object
+    /// therefore starts above the new shared high-water mark.
+    pub(crate) fn advance_global_one(&self) -> Result<u64, AutoIdError> {
+        let (base, end) = self
+            .store
+            .reserve(1, self.unsigned)
+            .map_err(AutoIdError::Store)?;
+        if end == base {
+            return Err(AutoIdError::Exhausted);
+        }
+        *self.cache.lock().expect("auto id cache poisoned") = AutoIdRange {
+            base: end,
+            end: 0,
+            step: self.initial_step,
+            last_reserve_at: Instant::now(),
+        };
+        Ok(end)
+    }
+
     /// Go `Allocator.Rebase`: moves the counter so the next id exceeds
     /// `value`. A value the counter is already past is ignored, which is why
     /// an explicit id SMALLER than the counter -- and an `ALTER TABLE ...

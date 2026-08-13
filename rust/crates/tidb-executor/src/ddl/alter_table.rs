@@ -1371,7 +1371,10 @@ fn modify_column_action(
             // Whether the generated-ness is allowed to change is a question
             // about the OLD column, so it is asked below once that column is
             // in hand.
-            | tidb_ast::ColumnOption::Generated { .. } => {}
+            | tidb_ast::ColumnOption::Generated { .. }
+            // The old table definition decides whether this is an allowed bit
+            // increase or AUTO_INCREMENT conversion, so it is checked below.
+            | tidb_ast::ColumnOption::AutoRandom(_) => {}
             _ => {
                 return Err(DriverError::unsupported(
                     "this column option is not supported in ALTER TABLE MODIFY COLUMN",
@@ -1387,6 +1390,10 @@ fn modify_column_action(
         .options
         .iter()
         .any(|option| matches!(option, tidb_ast::ColumnOption::AutoIncrement));
+    let auto_random_option = def.options.iter().find_map(|option| match option {
+        tidb_ast::ColumnOption::AutoRandom(option) => Some(option),
+        _ => None,
+    });
 
     // Phase one reads only, because the foreign-key question below is asked
     // of the WHOLE catalog -- a constraint's other side lives in another table,
@@ -1535,10 +1542,61 @@ fn modify_column_action(
     // check every one of Go's five outright refusals would be silently
     // accepted on an empty table.
     check_type_change_supported(&table.columns[offset].field_type, &field_type)?;
+    let had_auto_random = table
+        .auto_random()
+        .is_some_and(|spec| spec.offset == offset);
+    if (had_auto_random || auto_random_option.is_some())
+        && field_type.code() != FieldTypeCode::LongLong
+    {
+        return Err(DriverError::InvalidAutoRandom(format!(
+            "auto_random option must be defined on `bigint` column, but not on `{}` column",
+            field_type.compact_str(false)
+        )));
+    }
+    if auto_random_option.is_some() && wants_auto_increment {
+        return Err(DriverError::InvalidAutoRandom(
+            "auto_random is incompatible with auto_increment".to_owned(),
+        ));
+    }
+    if auto_random_option.is_some() && default_value.is_some() {
+        return Err(DriverError::InvalidAutoRandom(
+            "auto_random is incompatible with default".to_owned(),
+        ));
+    }
+    let new_auto_random = auto_random_option
+        .map(|option| {
+            let shard_bits = option.shard_bits.unwrap_or(5);
+            if shard_bits == 0 {
+                return Err(DriverError::InvalidAutoRandom(
+                    "the value of auto_random should be positive".to_owned(),
+                ));
+            }
+            if shard_bits > 15 {
+                return Err(DriverError::InvalidAutoRandom(format!(
+                    "max allowed auto_random shard bits is 15, but got {shard_bits} on column `{}`",
+                    def.name
+                )));
+            }
+            let range_bits = option.range_bits.unwrap_or(64);
+            if !(32..=64).contains(&range_bits) {
+                return Err(DriverError::InvalidAutoRandom(format!(
+                    "auto_random range bits must be between 32 and 64, but got {range_bits}"
+                )));
+            }
+            let spec = crate::kv_table::AutoRandomSpec {
+                offset,
+                shard_bits,
+                range_bits,
+                unsigned: field_type.is_unsigned(),
+            };
+            Ok(spec)
+        })
+        .transpose()?;
     // Go, same file: `can't set auto_increment` (8200) for a column that did
     // not have it, and dropping it needs `@@tidb_allow_remove_auto_inc`.
     // Keeping it is the only combination that changes nothing.
     let was_auto_increment = table.auto_increment_offset() == Some(offset);
+    let converting_auto_increment = was_auto_increment && new_auto_random.is_some();
     if wants_auto_increment && !was_auto_increment {
         return Err(DriverError::UnsupportedModifyColumn(
             "can't set auto_increment",
@@ -1547,7 +1605,11 @@ fn modify_column_action(
     if wants_auto_increment && default_value.is_some() {
         return Err(DriverError::InvalidDefault(def.name.clone()));
     }
-    if was_auto_increment && !wants_auto_increment && !allow_remove_auto_inc {
+    if was_auto_increment
+        && !wants_auto_increment
+        && !allow_remove_auto_inc
+        && !converting_auto_increment
+    {
         return Err(DriverError::UnsupportedModifyColumn(
             "can't remove auto_increment without @@tidb_allow_remove_auto_inc enabled",
         ));
@@ -1679,6 +1741,12 @@ fn modify_column_action(
     let stored_default = default_value
         .clone()
         .map(crate::column_default::ColumnDefault::Value);
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        unreachable!("the table was found above and nothing here removes it");
+    };
+    table
+        .alter_auto_random_spec(new_auto_random, &def.name)
+        .map_err(super::auto_random::rebase_error)?;
     // Go `updateFKInfoWhenModifyColumn` +
     // `adjustForeignKeyChildTableInfoAfterModifyColumn`: a CHANGE that also
     // renames carries every constraint over the old name onto the new one,

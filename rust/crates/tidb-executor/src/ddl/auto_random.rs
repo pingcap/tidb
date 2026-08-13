@@ -116,6 +116,7 @@ pub fn rebase_error(error: AutoRandomError) -> DriverError {
                 "alter auto_random_base to {base} overflows the incremental bits, max allowed base is {maximum}"
             ),
         ),
+        AutoRandomError::InvalidDefinition(reason) => DriverError::InvalidAutoRandom(reason),
         AutoRandomError::AutoId(AutoIdError::Exhausted) => DriverError::AutoincReadFailed,
         AutoRandomError::AutoId(AutoIdError::OutOfRange { value, type_name }) => {
             DriverError::ConstantOverflows { value, type_name }

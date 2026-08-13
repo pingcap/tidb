@@ -86,6 +86,8 @@ pub enum AutoRandomError {
         /// The greatest base the layout accepts.
         maximum: u64,
     },
+    /// A schema change violates TiDB's AUTO_RANDOM definition rules.
+    InvalidDefinition(String),
     /// The increasing ID source failed or exhausted its assigned bit range.
     AutoId(AutoIdError),
 }
@@ -147,6 +149,74 @@ impl KvTable {
             });
         }
         Ok(pattern)
+    }
+
+    /// Applies Go's MODIFY COLUMN AUTO_RANDOM transition after the ordinary
+    /// column checks have passed. The shared counter is deliberately advanced
+    /// before the bit-capacity check, matching `checkNewAutoRandomBits`.
+    pub(crate) fn alter_auto_random_spec(
+        &mut self,
+        next: Option<AutoRandomSpec>,
+        column_name: &str,
+    ) -> Result<(), AutoRandomError> {
+        let previous = self.auto_random;
+        let Some(next) = next else {
+            return if previous.is_some() {
+                Err(AutoRandomError::InvalidDefinition(
+                    "adding/dropping/modifying auto_random is not supported".to_owned(),
+                ))
+            } else {
+                Ok(())
+            };
+        };
+
+        let converting = previous.is_none();
+        if converting
+            && (self.auto_increment_offset != Some(next.offset)
+                || self.pk_handle_offset != Some(next.offset))
+        {
+            return Err(AutoRandomError::InvalidDefinition(
+                "auto_random can only be converted from auto_increment clustered primary key"
+                    .to_owned(),
+            ));
+        }
+        if let Some(previous) = previous {
+            if next.shard_bits < previous.shard_bits {
+                return Err(AutoRandomError::InvalidDefinition(
+                    "decreasing auto_random shard bits is not supported".to_owned(),
+                ));
+            }
+            if next.range_bits != previous.range_bits {
+                return Err(AutoRandomError::InvalidDefinition(
+                    "alter the range bits of auto_random column is not supported".to_owned(),
+                ));
+            }
+        }
+
+        let current = if converting {
+            self.auto_id.advance_global_one()
+        } else {
+            self.auto_random_id.advance_global_one()
+        }
+        .map_err(AutoRandomError::AutoId)?;
+        let used_bits = u64::from(u64::BITS - current.leading_zeros());
+        if used_bits > next.incremental_bits() {
+            let overlap = used_bits - next.incremental_bits();
+            let maximum = next.shard_bits.wrapping_sub(overlap);
+            return Err(AutoRandomError::InvalidDefinition(format!(
+                "max allowed auto_random shard bits is {maximum}, but got {} on column `{column_name}`",
+                next.shard_bits
+            )));
+        }
+
+        if converting {
+            self.auto_random_id
+                .rebase(current)
+                .map_err(|error| AutoRandomError::AutoId(AutoIdError::Store(error)))?;
+            self.clear_auto_increment_offset();
+        }
+        self.set_auto_random(next);
+        Ok(())
     }
 
     /// Applies Go's explicit-value, rebase, retry, allocation, and composition
