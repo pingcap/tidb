@@ -569,21 +569,27 @@ fn a_bigint_unsigned_column_keeps_its_ids_above_the_signed_maximum() {
     assert_eq!(error.code, 1467);
 }
 
-/// REFUSED, not silently ignored: under `NO_AUTO_VALUE_ON_ZERO` Go STORES an
-/// explicit `0` (captured: the row is `0` and the next insert gets `1`), while
-/// this tier allocates over it. Writing a different row than Go writes is
-/// worse than failing, so the insert fails while the mode is on.
+/// Under `NO_AUTO_VALUE_ON_ZERO`, Go stores an explicit zero but still
+/// allocates for an omitted value. Turning the mode back off restores zero's
+/// ordinary allocation meaning.
 #[test]
-fn the_no_auto_value_on_zero_sql_mode_is_refused_rather_than_ignored() {
+fn no_auto_value_on_zero_preserves_only_an_explicit_zero() {
     let mut session = table(None);
     session
         .run("SET SESSION sql_mode = 'NO_AUTO_VALUE_ON_ZERO'")
         .unwrap();
-    assert!(session.run("INSERT INTO ai VALUES (0, 1)").is_err());
-    session.run("SET SESSION sql_mode = ''").unwrap();
-    // With the mode off, a zero allocates as it always did.
     session.run("INSERT INTO ai VALUES (0, 1)").unwrap();
-    assert_eq!(one(&mut session, "SELECT id FROM ai"), "1");
+    session.run("INSERT INTO ai (v) VALUES (2)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM ai ORDER BY id"),
+        [["0", "1"], ["1", "2"]]
+    );
+    session.run("SET SESSION sql_mode = ''").unwrap();
+    session.run("INSERT INTO ai VALUES (0, 3)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM ai ORDER BY id"),
+        [["0", "1"], ["1", "2"], ["2", "3"]]
+    );
 }
 
 /// The OK packet's insert id and `LAST_INSERT_ID()` come off the SAME

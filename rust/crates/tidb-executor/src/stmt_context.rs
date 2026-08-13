@@ -1349,9 +1349,6 @@ impl StmtContext {
 
     /// Whether an explicit `0` written to an AUTO_INCREMENT column must be
     /// STORED as zero, which is what `NO_AUTO_VALUE_ON_ZERO` asks for.
-    ///
-    /// This tier always allocates over a zero, so a statement under that mode
-    /// is REFUSED rather than answered with a different row than Go stores.
     #[must_use]
     pub fn auto_increment_zero_is_explicit(&self) -> bool {
         self.auto_increment_zero_is_explicit

@@ -278,16 +278,11 @@ pub(crate) fn run_insert_traced(
             unreachable!("INSERT through a read-only relation is refused above")
         }
     };
-    // REFUSED for the same reason: under `NO_AUTO_VALUE_ON_ZERO` Go STORES an
-    // explicit zero, while this tier allocates over it. Allocating anyway
-    // would write a different row than Go writes, which is worse than an
-    // error the session can see.
-    if auto_increment_offset.is_some() && ctx.auto_increment_zero_is_explicit() {
-        return Err(DriverError::unsupported(
-            "the NO_AUTO_VALUE_ON_ZERO sql_mode is not supported yet",
-        ));
-    }
-    let mut auto_rows: Vec<usize> = Vec::new();
+    // One marker per staged row: after casting, a supplied zero under
+    // NO_AUTO_VALUE_ON_ZERO remains zero while NULL and omitted values still
+    // take an id. Keeping the supplied-ness beside the row distinguishes the
+    // two zero values that the later allocator otherwise cannot tell apart.
+    let mut auto_rows: Vec<(usize, bool)> = Vec::new();
     let mut first_allocated: Option<i64> = None;
 
     let mut inserted = 0u64;
@@ -520,11 +515,12 @@ pub(crate) fn run_insert_traced(
             // An omitted or explicitly NULL auto column becomes the zero
             // marker, which allocation replaces; Go does this before the
             // NOT NULL check, so a NULL here is never a bad-null error.
-            if !assigned[offset] || row[offset] == Datum::Null {
+            let supplied = assigned[offset] && row[offset] != Datum::Null;
+            if !supplied {
                 row[offset] = Datum::Int(0);
             }
             assigned[offset] = true;
-            auto_rows.push(new_rows.len());
+            auto_rows.push((new_rows.len(), supplied));
         }
         // A generated column has a value source of its own, so it is neither
         // defaulted nor NULL-checked here: it counts as supplied, and the
@@ -602,10 +598,19 @@ pub(crate) fn run_insert_traced(
         let TableEntry::Kv(kv) = table else {
             unreachable!("INSERT through a view is refused above")
         };
-        {
+        if let Some(auto_offset) = auto_increment_offset {
             // The allocator lives on the table, so the ids are handed out here
             // rather than while the rows were being built.
-            for index in &auto_rows {
+            for (index, supplied) in &auto_rows {
+                if *supplied
+                    && ctx.auto_increment_zero_is_explicit()
+                    && matches!(
+                        new_rows[*index][auto_offset],
+                        Datum::Int(0) | Datum::UInt(0)
+                    )
+                {
+                    continue;
+                }
                 // A full domain is Go's 1467; a counter whose home could not
                 // be reached is NOT that, and saying 1467 for it would report
                 // a table that has run out of ids when the ids are all still

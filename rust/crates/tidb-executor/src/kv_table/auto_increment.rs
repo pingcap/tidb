@@ -188,9 +188,9 @@ impl KvTable {
     /// (18446744073709551615)` leaves the next insert with no id at all,
     /// `[autoid:1467]`, never with a duplicate).
     ///
-    /// An explicit `0` always allocates here. `NO_AUTO_VALUE_ON_ZERO`, under
-    /// which Go keeps the zero, is REFUSED by the INSERT path rather than
-    /// silently ignored (`StmtContext::auto_increment_zero_is_explicit`).
+    /// The INSERT path does not call this for a supplied zero when
+    /// `NO_AUTO_VALUE_ON_ZERO` is set; every row that reaches this helper
+    /// follows the normal allocation-or-rebase rules.
     ///
     /// `reuse` is Go's `RetryInfo` arm: a statement being RUN AGAIN after a
     /// write conflict is handed the id its losing attempt already assigned to
