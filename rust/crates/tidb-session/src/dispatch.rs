@@ -22,7 +22,7 @@
 //! dispatch over query/DML/DDL.
 
 use tidb_ast::{DdlStmt, DmlStmt, SessionStmt, Stmt};
-use tidb_executor::{DriverError, SchemaErrorKind};
+use tidb_executor::{Catalog, DriverError, SchemaErrorKind};
 
 use crate::warnings::UNSUPPORTED_CREATE_PARTITION_CODE;
 use crate::{infoschema, statement_kind_of, Session, StatementKind, StmtOutput, WarningLevel};
@@ -288,6 +288,23 @@ impl Session {
             return Ok(None);
         }
         let ctx = self.statement_context(false);
+        let scratch = self.materialize_information_schema_catalog(table_names, &ctx)?;
+        let current_db = self.current_db.clone();
+        let (columns, rows) =
+            tidb_executor::run_select_meta_stmt(select, &scratch, &current_db, &ctx)?;
+        self.drain_eval_warnings(&ctx);
+        Ok(Some(StmtOutput::Rows { columns, rows }))
+    }
+
+    /// Clones this statement's real catalog and overlays each referenced
+    /// virtual table with its computed rows.  The result is deliberately a
+    /// normal [`Catalog`]: every query shape then reaches exactly the same
+    /// executor and optimizer paths as stored tables do.
+    fn materialize_information_schema_catalog(
+        &mut self,
+        mut table_names: Vec<String>,
+        ctx: &tidb_executor::StmtContext,
+    ) -> Result<Catalog, DriverError> {
         table_names.sort_unstable_by_key(|name| name.to_ascii_lowercase());
         table_names.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
         let mut materialized = Vec::with_capacity(table_names.len());
@@ -299,8 +316,6 @@ impl Session {
                     table_name
                 ))));
             };
-            // PROCESSLIST and the privilege/deadlock tables draw on session
-            // state. All other virtual rows are computed from the catalog.
             let rows = if table_name.eq_ignore_ascii_case("PROCESSLIST") {
                 self.process_list_table_rows()
             } else if table_name.eq_ignore_ascii_case("DEADLOCKS") {
@@ -314,20 +329,14 @@ impl Session {
                 let visibility = self.schema_visibility();
                 self.with_catalog_mut(|catalog| {
                     Ok(
-                        infoschema::table_rows(&table_name, catalog, &visibility, &ctx)
+                        infoschema::table_rows(&table_name, catalog, &visibility, ctx)
                             .unwrap_or_default(),
                     )
                 })?
             };
             materialized.push((table_name, columns, rows));
         }
-
-        // Virtual rows need the same query's real base tables and other
-        // virtual sources. Clone the statement-visible catalog and overlay
-        // just their computed contents; the normal planner then owns every
-        // join, predicate, aggregate and ordering decision.
-        let current_db = self.current_db.clone();
-        let (columns, rows) = self.with_catalog_mut(|catalog| {
+        self.with_catalog_mut(|catalog| {
             let mut scratch = catalog.clone();
             for (table_name, columns, rows) in materialized {
                 scratch.register_mem_in(
@@ -336,10 +345,8 @@ impl Session {
                     tidb_executor::MemTable { columns, rows },
                 );
             }
-            tidb_executor::run_select_meta_stmt(select, &scratch, &current_db, &ctx)
-        })?;
-        self.drain_eval_warnings(&ctx);
-        Ok(Some(StmtOutput::Rows { columns, rows }))
+            Ok(scratch)
+        })
     }
 
     pub(crate) fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
@@ -482,9 +489,17 @@ impl Session {
                     };
                     let current_db = self.current_db.clone();
                     let ctx = self.statement_context(false);
-                    let (columns, rows) = self.with_catalog_mut(|catalog| {
-                        tidb_executor::run_set_opr_stmt(set_opr, catalog, &current_db, &ctx)
-                    })?;
+                    let mut table_names = Vec::new();
+                    information_schema_tables_in_query(query, &current_db, &mut table_names);
+                    let (columns, rows) = if table_names.is_empty() {
+                        self.with_catalog_mut(|catalog| {
+                            tidb_executor::run_set_opr_stmt(set_opr, catalog, &current_db, &ctx)
+                        })?
+                    } else {
+                        let scratch =
+                            self.materialize_information_schema_catalog(table_names, &ctx)?;
+                        tidb_executor::run_set_opr_stmt(set_opr, &scratch, &current_db, &ctx)?
+                    };
                     self.drain_eval_warnings(&ctx);
                     return Ok(StmtOutput::Rows { columns, rows });
                 };

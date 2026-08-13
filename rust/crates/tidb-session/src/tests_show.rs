@@ -2069,4 +2069,18 @@ fn information_schema_rows_join_stored_tables_on_either_side() {
         vec![vec!["joined_base".to_owned()]],
         "a derived query sees the same materialized virtual source"
     );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT table_name FROM information_schema.tables \
+             WHERE table_name = 'joined_base' \
+             UNION ALL \
+             SELECT table_name FROM information_schema.tables \
+             WHERE table_name = 'joined_base'"
+        )),
+        vec![
+            vec!["joined_base".to_owned()],
+            vec!["joined_base".to_owned()],
+        ],
+        "top-level set-operation terms use the same virtual rows"
+    );
 }
