@@ -332,10 +332,15 @@ pub(crate) struct AggState {
     partial: Partial,
     seen: Option<MemorySet<Vec<u8>>>,
     collation: tidb_datatype::Collation,
+    /// Go's non-ordered, non-DISTINCT GROUP_CONCAT retains only the result
+    /// prefix while it scans. The other forms need their rows for DISTINCT or
+    /// ORDER BY and therefore keep their own state.
+    group_concat_limit: Option<usize>,
+    group_concat_was_truncated: bool,
 }
 
 impl AggState {
-    pub(crate) fn new(func: &AggFunc) -> AggState {
+    pub(crate) fn new(func: &AggFunc, group_concat_max_len: u64) -> AggState {
         let collation = func
             .arg
             .as_ref()
@@ -344,6 +349,11 @@ impl AggState {
             partial: Partial::new(&func.kind),
             seen: func.distinct.then(MemorySet::new),
             collation,
+            group_concat_limit: matches!(func.kind, AggKind::GroupConcat { .. })
+                .then(|| usize::try_from(group_concat_max_len).unwrap_or(usize::MAX))
+                .filter(|limit| *limit > 0)
+                .filter(|_| !func.distinct && func.order_by.is_empty()),
+            group_concat_was_truncated: false,
         }
     }
 
@@ -388,9 +398,22 @@ impl AggState {
                 delta += key_bytes + map_delta;
             }
         }
-        delta += self.partial.retained_row_bytes(value.as_ref());
+        let bounded_group_concat = self.group_concat_limit.is_some() && sort_key.is_empty();
+        let retained_before = if bounded_group_concat {
+            self.partial.group_concat_memory_bytes()
+        } else {
+            0
+        };
+        if !bounded_group_concat {
+            delta += self.partial.retained_row_bytes(value.as_ref());
+        }
         self.partial
             .update(value, extra, sort_key, self.collation)?;
+        if let Some(limit) = self.group_concat_limit {
+            let (retained_after, truncated) = self.partial.compact_group_concat(limit);
+            delta += retained_after.saturating_sub(retained_before);
+            self.group_concat_was_truncated |= truncated;
+        }
         Ok(delta)
     }
 
@@ -403,6 +426,11 @@ impl AggState {
         ctx: &C,
         truncated: &mut bool,
     ) -> Result<Datum, ExecError> {
+        if self.group_concat_was_truncated && !*truncated {
+            *truncated = true;
+            let text = group_concat_arg_text(func);
+            ctx.append_warning(1260, &format!("Some rows were cut by GROUPCONCAT({text})"));
+        }
         let mut value = self
             .partial
             .finish(&func.order_by, ctx.div_precision_increment())?;
@@ -470,7 +498,7 @@ pub(crate) fn group_key_part(collation: &tidb_datatype::Collation, datum: &Datum
 }
 
 /// Go `SessionVars.GroupConcatMaxLen` as this statement sees it.
-fn group_concat_max_len<C: Columns>(ctx: &C) -> u64 {
+pub(crate) fn group_concat_max_len<C: Columns>(ctx: &C) -> u64 {
     match ctx.sysvar(None, "group_concat_max_len") {
         Some(Datum::UInt(value)) => value,
         Some(Datum::Int(value)) if value >= 0 => value as u64,
@@ -507,6 +535,19 @@ fn group_concat_bytes(value: &Datum, field_type: Option<&FieldType>) -> Result<V
     value.sql_bytes().map_err(|_| {
         ExecError::unsupported("GROUP_CONCAT over this datum kind is not yet supported")
     })
+}
+
+fn append_group_concat_prefix(
+    output: &mut Vec<u8>,
+    input: &[u8],
+    max_len: usize,
+    truncated: &mut bool,
+) {
+    let remaining = max_len.saturating_sub(output.len());
+    if input.len() > remaining {
+        *truncated = true;
+    }
+    output.extend_from_slice(&input[..input.len().min(remaining)]);
 }
 
 /// The value Go's real aggregate implementations consume.
@@ -908,6 +949,65 @@ impl Partial {
         Ok(())
     }
 
+    /// Bytes retained by the ordinary GROUP_CONCAT row buffer. This is kept
+    /// separate from [`Self::retained_row_bytes`] because a bounded buffer may
+    /// release old row allocations after the update.
+    fn group_concat_memory_bytes(&self) -> i64 {
+        let Partial::GroupConcat { values, .. } = self else {
+            return 0;
+        };
+        let value_bytes = values.iter().fold(0usize, |bytes, (value, key)| {
+            bytes
+                .saturating_add(value.capacity())
+                .saturating_add(key.capacity())
+        });
+        values
+            .capacity()
+            .saturating_mul(std::mem::size_of::<(Vec<u8>, Vec<Datum>)>())
+            .saturating_add(value_bytes)
+            .try_into()
+            .unwrap_or(i64::MAX)
+    }
+
+    /// Replaces a non-ordered GROUP_CONCAT's row list with Go's bounded
+    /// partial buffer. Once the prefix is complete, later rows cannot affect
+    /// its bytes, so retaining them only changes memory/quota behavior.
+    fn compact_group_concat(&mut self, max_len: usize) -> (i64, bool) {
+        let Partial::GroupConcat { values, separator } = self else {
+            return (0, false);
+        };
+        if values.is_empty() {
+            return (0, false);
+        }
+        let mut compact = Vec::with_capacity(
+            max_len.min(
+                values
+                    .iter()
+                    .map(|(value, _)| value.len())
+                    .sum::<usize>()
+                    .saturating_add(
+                        separator
+                            .len()
+                            .saturating_mul(values.len().saturating_sub(1)),
+                    ),
+            ),
+        );
+        let mut truncated = false;
+        for (index, (value, _)) in values.iter().enumerate() {
+            if index > 0 {
+                append_group_concat_prefix(
+                    &mut compact,
+                    separator.as_bytes(),
+                    max_len,
+                    &mut truncated,
+                );
+            }
+            append_group_concat_prefix(&mut compact, value, max_len, &mut truncated);
+        }
+        *values = vec![(compact, Vec::new())];
+        (self.group_concat_memory_bytes(), truncated)
+    }
+
     /// The bytes this partial GROWS BY when it takes one more row, which is
     /// the aggregate half of Go's `memDelta`.
     ///
@@ -1288,8 +1388,12 @@ impl<C: Columns> HashAggExec<C> {
                     self.tracker
                         .consume(new_group_bytes(key.len(), self.agg_funcs.len()));
                     self.groups.insert(key, idx);
-                    self.ordered
-                        .push(self.agg_funcs.iter().map(AggState::new).collect());
+                    self.ordered.push(
+                        self.agg_funcs
+                            .iter()
+                            .map(|func| AggState::new(func, group_concat_max_len(&self.ctx)))
+                            .collect(),
+                    );
                     idx
                 }
             };
@@ -1419,8 +1523,12 @@ impl<C: Columns> Executor for HashAggExec<C> {
             self.execute()?;
             // No group-by and no data: one empty group, so a global COUNT is 0.
             if self.ordered.is_empty() && self.group_by.is_empty() {
-                self.ordered
-                    .push(self.agg_funcs.iter().map(AggState::new).collect());
+                self.ordered.push(
+                    self.agg_funcs
+                        .iter()
+                        .map(|func| AggState::new(func, group_concat_max_len(&self.ctx)))
+                        .collect(),
+                );
             }
             self.prepared = true;
         }
@@ -1943,6 +2051,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn group_concat_keeps_only_the_bounded_result_prefix() {
+        let func = AggFunc::new(
+            AggKind::GroupConcat {
+                separator: ",".to_owned(),
+            },
+            Some(col(1)),
+        );
+        let mut state = AggState::new(&func, 4);
+        for _ in 0..128 {
+            state
+                .update(Some(Datum::Bytes(vec![b'x'; 128])), &[], Vec::new(), None)
+                .unwrap();
+        }
+        assert!(state.group_concat_was_truncated);
+        assert!(
+            state.partial.group_concat_memory_bytes() <= 128,
+            "the partial state must not grow with rows beyond group_concat_max_len"
+        );
+        assert_eq!(
+            state.partial.finish(&[], 4).unwrap(),
+            Datum::Bytes(b"xxxx".to_vec())
+        );
+    }
+
     /// DISTINCT folds repeated inputs once per group, and the de-duplication
     /// is per group, not global.
     #[test]
@@ -1989,7 +2122,7 @@ mod tests {
     fn distinct_memory_delta_includes_value_set_growth() {
         let mut count = AggFunc::new(AggKind::Count, None);
         count.distinct = true;
-        let mut state = AggState::new(&count);
+        let mut state = AggState::new(&count, 1024);
         let mut retained_key_bytes = 0_i64;
         let mut total_delta = 0_i64;
         for byte in 0..128_u8 {

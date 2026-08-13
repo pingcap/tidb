@@ -29,7 +29,9 @@ use tidb_expr::Columns;
 use tidb_util::memory::Tracker;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::hash_agg::{eval_agg_input, expr_collation, group_key_part, AggFunc, AggState};
+use crate::hash_agg::{
+    eval_agg_input, expr_collation, group_concat_max_len, group_key_part, AggFunc, AggState,
+};
 use crate::mem_quota::StatementMemory;
 
 /// Ordered-input counterpart to HashAggExec.
@@ -99,7 +101,11 @@ impl<C: Columns> StreamAggExec<C> {
         self.tracker
             .consume(i64::try_from(bytes).unwrap_or(i64::MAX));
         self.current_key = Some(key);
-        self.states = self.agg_funcs.iter().map(AggState::new).collect();
+        self.states = self
+            .agg_funcs
+            .iter()
+            .map(|func| AggState::new(func, group_concat_max_len(&self.ctx)))
+            .collect();
     }
 
     fn load_child_chunk(&mut self) -> Result<(), ExecError> {
