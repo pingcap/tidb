@@ -591,9 +591,9 @@ pub const TOPICS: &[(&str, &str)] = &[
     ),
     (
         "planner/core/rule_constant_propagation",
-        "52 of 57 with ONE divergence, and 18 of its matches are access PROPERTIES: \
-     an `UPDATE` driven by a propagated constant leaves `value = 0` where TiDB \
-     writes 3",
+        "55 of 57 match; one nested UNION plan scans `s` twice where TiDB scans it \
+     once, and one multi-table UPDATE EXPLAIN remains unsupported. The correlated \
+     scalar assignment now writes the same value as TiDB",
     ),
     (
         "planner/core/rule_result_reorder",

@@ -25,10 +25,21 @@ pub(super) struct DmlExpression {
 impl DmlExpression {
     pub(super) fn build(
         expr: &tidb_ast::Expr,
+        scope: FromScope,
+        catalog: &Catalog,
+        current_db: &str,
+        ctx: &crate::StmtContext,
+    ) -> Result<Self, DriverError> {
+        Self::build_with_prepared_defaults(expr, scope, catalog, current_db, ctx, &[])
+    }
+
+    pub(super) fn build_with_prepared_defaults(
+        expr: &tidb_ast::Expr,
         mut scope: FromScope,
         catalog: &Catalog,
         current_db: &str,
         ctx: &crate::StmtContext,
+        defaults: &[super::defaults::PreparedNamedDefault],
     ) -> Result<Self, DriverError> {
         let mut rewritten = fold_subqueries(expr, &scope, catalog, current_db, ctx)?;
         let mut applies = Vec::new();
@@ -56,8 +67,8 @@ impl DmlExpression {
                 func_deps: Default::default(),
             });
         }
-        let expression = rewrite_expr_resolved(&rewritten, &ScopeResolver { scope: &scope })
-            .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
+        let expression =
+            rewrite_with_prepared_defaults(&rewritten, &ScopeResolver { scope: &scope }, defaults)?;
         let field_types = scope
             .column_list()
             .into_iter()
@@ -88,6 +99,37 @@ impl DmlExpression {
         self.expression
             .eval(ctx, chunk.get_row(0))
             .map_err(|error| DriverError::Exec(ExecError::Eval(error)))
+    }
+}
+
+pub(super) enum UpdateExpression {
+    Scalar(Expression),
+    Applied(DmlExpression),
+}
+
+impl UpdateExpression {
+    pub(super) fn scalar(expression: Expression) -> Self {
+        Self::Scalar(expression)
+    }
+
+    pub(super) fn applied(expression: DmlExpression) -> Self {
+        Self::Applied(expression)
+    }
+
+    pub(super) fn eval(
+        &self,
+        row: &[Datum],
+        scalar_row: tidb_chunk::row::Row<'_>,
+        catalog: &Catalog,
+        current_db: &str,
+        ctx: &crate::StmtContext,
+    ) -> Result<Datum, DriverError> {
+        match self {
+            Self::Scalar(expression) => expression
+                .eval(ctx, scalar_row)
+                .map_err(|error| DriverError::Exec(ExecError::Eval(error))),
+            Self::Applied(expression) => expression.eval(row, catalog, current_db, ctx),
+        }
     }
 }
 

@@ -24,7 +24,7 @@ use crate::kv_table::{AutoIdError, AutoIncrement};
 mod correlated;
 mod defaults;
 
-use correlated::{dml_table_scope, DmlExpression};
+use correlated::{dml_table_scope, DmlExpression, UpdateExpression};
 
 pub(crate) use defaults::{
     column_default, column_metadata, materialize_column_default, prepare_named_defaults,
@@ -1426,10 +1426,11 @@ pub(crate) fn run_update_traced(
         }
         assignments.push((offset, assignment.value.clone()));
     }
+    let dml_scope = dml_table_scope(table_ref, &database, &name, column_list.clone(), ctx);
     let predicate = match &update.where_clause {
         Some(expr) => Some(DmlExpression::build(
             expr,
-            dml_table_scope(table_ref, &database, &name, column_list.clone(), ctx),
+            dml_scope.clone(),
             catalog,
             current_db,
             ctx,
@@ -1455,10 +1456,10 @@ pub(crate) fn run_update_traced(
                     ctx,
                     default_row.get_row(0),
                 )?;
-                Expression::Constant(tidb_expr::constant::Constant::new(
+                UpdateExpression::scalar(Expression::Constant(tidb_expr::constant::Constant::new(
                     value,
                     column_meta[*offset].field_type.clone(),
-                ))
+                )))
             }
             _ => {
                 let defaults = prepare_named_defaults(
@@ -1479,7 +1480,20 @@ pub(crate) fn run_update_traced(
                         })
                     },
                 )?;
-                rewrite_with_prepared_defaults(value, &resolver, &defaults)?
+                if expr_has_subquery(value) {
+                    UpdateExpression::applied(DmlExpression::build_with_prepared_defaults(
+                        value,
+                        dml_scope.clone(),
+                        catalog,
+                        current_db,
+                        ctx,
+                        &defaults,
+                    )?)
+                } else {
+                    UpdateExpression::scalar(rewrite_with_prepared_defaults(
+                        value, &resolver, &defaults,
+                    )?)
+                }
             }
         };
         set_exprs.push((*offset, expression));
@@ -1757,7 +1771,7 @@ struct UpdateRowEvaluator<'a> {
     field_types: &'a [FieldType],
     column_names: &'a [String],
     predicate: &'a Option<DmlExpression>,
-    set_exprs: &'a [(usize, Expression)],
+    set_exprs: &'a [(usize, UpdateExpression)],
     catalog: &'a Catalog,
     current_db: &'a str,
     ctx: &'a crate::StmtContext,
@@ -1789,9 +1803,13 @@ impl UpdateRowEvaluator<'_> {
         // is, rather than a rule the loop has to re-establish per assignment.
         let mut new_row = row.to_vec();
         for (offset, expr) in self.set_exprs {
-            let value = expr
-                .eval(self.ctx, chunk.get_row(0))
-                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            let value = expr.eval(
+                row,
+                chunk.get_row(0),
+                self.catalog,
+                self.current_db,
+                self.ctx,
+            )?;
             // Go casts an assigned value to its column's type here too, which is
             // what stores `SET d = 9.87654` in a DECIMAL(10,3) column as 9.877.
             new_row[*offset] = cast_value_for_update_assignment(

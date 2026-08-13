@@ -352,6 +352,37 @@ fn correlated_subqueries_drive_dml_source_rows() {
     );
 }
 
+/// Go `buildUpdateLists` rewrites a correlated scalar subquery in a SET value
+/// against the UPDATE source plan, appending its per-row Apply result before
+/// `UpdateExec` builds the replacement row.
+#[test]
+fn correlated_subqueries_drive_update_assignments() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t1 (id INT, value INT)").unwrap();
+    session.run("CREATE TABLE t2 (id INT, value INT)").unwrap();
+    session
+        .run("INSERT INTO t1 VALUES (10,0),(20,0),(30,0)")
+        .unwrap();
+    session
+        .run("INSERT INTO t2 VALUES (10,100),(10,200),(10,300),(20,400),(30,500)")
+        .unwrap();
+
+    assert_eq!(
+        session
+            .run(
+                "UPDATE t1 SET value = \
+                 (SELECT COUNT(*) FROM t2 WHERE t1.id = t2.id) \
+                 WHERE t1.id = 10"
+            )
+            .unwrap(),
+        StmtResult::Affected(1)
+    );
+    assert_eq!(
+        row_text(session.run("SELECT * FROM t1 ORDER BY id")),
+        [["10", "3"], ["20", "0"], ["30", "0"]]
+    );
+}
+
 /// Go `buildValuesListOfInsert`: `INSERT t VALUES ()` is a row of nothing
 /// but defaults, legal only while BOTH the column list and the first value
 /// list are empty.

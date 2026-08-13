@@ -1516,23 +1516,8 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // all. Nothing else moved: `executor/cte` goes 3 divergences -> 2 and
     // every other topic's triple is identical.
     //
-    // The other five wrong-rows statements are attributed and NOT fixed here,
-    // because both causes are a capability rather than a bug:
-    //
-    //  * FOUR are one missing capability: a CORRELATED SUBQUERY inside a
-    //    DML's own clauses. `update t1 set value = (select count(*) from t2
-    //    where t1.id = t2.id) where t1.id = 10` is refused outright with
-    //    "expression form is not yet supported by the rewriter" -- the SELECT
-    //    form of the same subquery answers correctly (3, 1, 1), so the gap is
-    //    only that `driver::dml` rewrites its `WHERE` and its `SET` against a
-    //    plain row resolver with no Apply. `planner/core/rule_constant_
-    //    propagation` carries one and `executor/parallel_apply` three (its
-    //    DELETE, UPDATE and REPLACE cases). Wiring it is not local: the KV
-    //    arms of `run_update_traced`/`run_delete_traced` hold `catalog
-    //    .get_mut_in` across the row loop, and a per-row subquery needs the
-    //    catalog READABLE inside it, so the rows must be fetched and their
-    //    inner values computed before the mutable borrow is taken.
-    //  * ONE is `ddl/serial`'s `alter table partition_table truncate
+    // The remaining wrong-row statement in that original census is
+    // `ddl/serial`'s `alter table partition_table truncate
     //    partition all`, which this tier REFUSES: `AlterTableAction::
     //    Partition` reaches `alter_table`'s catch-all. Partition MAINTENANCE
     //    is unwired as a whole (`AlterPartitionAction` is parse-and-restore
@@ -1694,7 +1679,9 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // NULL (77 -> 73).
     // `executor/parallel_apply` reached zero: its three wrong DML row sets now
     // evaluate correlated subqueries before staging the write (73 -> 70).
-    const KNOWN_DIVERGENCES: usize = 70;
+    // `planner/core/rule_constant_propagation` now evaluates the correlated
+    // scalar UPDATE assignment against each source row (70 -> 69).
+    const KNOWN_DIVERGENCES: usize = 69;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path
