@@ -70,10 +70,18 @@ pub fn get_tidb_info(info: &VersionInfo) -> String {
 
 /// Writes the structured startup identity and effective configuration.
 pub fn print_tidb_info(info: &VersionInfo, config_json: &[u8]) {
-    print_tidb_info_to(&tidb_log::l(), info, config_json);
+    let logger = crate::logutil::bg_logger();
+    logger.info("Welcome to TiDB.", &tidb_info_fields(info));
+    logger.info(
+        "loaded config",
+        &[Field::new(
+            "config",
+            Value::ByteString(config_json.to_vec()),
+        )],
+    );
 }
 
-fn print_tidb_info_to(logger: &tidb_log::Logger, info: &VersionInfo, config_json: &[u8]) {
+fn tidb_info_fields(info: &VersionInfo) -> Vec<Field> {
     let (release_version, component_version) = release_versions_for_display(info);
     let mut fields = vec![
         Field::new("Release Version", Value::Str(release_version)),
@@ -114,14 +122,7 @@ fn print_tidb_info_to(logger: &tidb_log::Logger, info: &VersionInfo, config_json
             Value::Str(info.enterprise_extension_git_hash.clone()),
         ));
     }
-    logger.info("Welcome to TiDB.", &fields);
-    logger.info(
-        "loaded config",
-        &[Field::new(
-            "config",
-            Value::ByteString(config_json.to_vec()),
-        )],
-    );
+    fields
 }
 
 /// Formats byte-preserving Go strings as TiDB's ASCII table.
@@ -186,9 +187,19 @@ pub fn get_print_result(columns: &[String], rows: &[Vec<String>]) -> Option<Stri
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
+
+    fn string_field<'a>(fields: &'a [Field], key: &str) -> Option<&'a str> {
+        fields.iter().find_map(|field| {
+            if field.key != key {
+                return None;
+            }
+            match &field.value {
+                Value::Str(value) => Some(value.as_str()),
+                _ => None,
+            }
+        })
+    }
 
     #[test]
     fn print_result_matches_source_boundaries() {
@@ -238,53 +249,36 @@ mod tests {
         };
         assert!(get_tidb_info(&next_gen).contains("Release Version: CLOUD.202603.0"));
 
-        let sink = Arc::new(tidb_log::MemorySink::default());
-        let log_config = tidb_log::Config {
-            level: "info".to_owned(),
-            disable_timestamp: true,
-            ..tidb_log::Config::default()
-        };
-        let (logger, _) =
-            tidb_log::init_test_logger(sink.clone(), &log_config).expect("test logger");
-        print_tidb_info_to(&logger, &next_gen, br#"{"store":"tikv"}"#);
-        let output = sink.string();
-        assert!(output.contains("Welcome to TiDB."));
-        assert!(output.contains("[\"TiDB Component Version\"=v26.3.0]"));
-        assert!(output.contains("[\"Deploy Mode\"=starter]"));
-        assert!(output.contains("loaded config"));
-        assert!(output.contains(r#"{\"store\":\"tikv\"}"#));
+        let fields = tidb_info_fields(&next_gen);
+        assert_eq!(
+            string_field(&fields, "TiDB Component Version"),
+            Some("v26.3.0")
+        );
+        assert_eq!(string_field(&fields, "Deploy Mode"), Some("starter"));
     }
 
     #[test]
     fn deploy_mode_field_is_owned_by_next_generation_kernel() {
-        let sink = Arc::new(tidb_log::MemorySink::default());
-        let log_config = tidb_log::Config {
-            level: "info".to_owned(),
-            disable_timestamp: true,
-            ..tidb_log::Config::default()
-        };
-        let (logger, _) =
-            tidb_log::init_test_logger(sink.clone(), &log_config).expect("test logger");
-
         let classic = VersionInfo::build_default().with_runtime_environment(
             false,
             "tikv",
             "Classic",
             Some("starter".to_owned()),
         );
-        print_tidb_info_to(&logger, &classic, b"{}");
-        assert!(!sink.string().contains("Deploy Mode"));
+        assert_eq!(
+            string_field(&tidb_info_fields(&classic), "Deploy Mode"),
+            None
+        );
 
-        let sink = Arc::new(tidb_log::MemorySink::default());
-        let (logger, _) =
-            tidb_log::init_test_logger(sink.clone(), &log_config).expect("test logger");
         let next_gen = VersionInfo::build_default().with_runtime_environment(
             false,
             "tikv",
             "Next Generation",
             None,
         );
-        print_tidb_info_to(&logger, &next_gen, b"{}");
-        assert!(sink.string().contains("[\"Deploy Mode\"=premium]"));
+        assert_eq!(
+            string_field(&tidb_info_fields(&next_gen), "Deploy Mode"),
+            Some("premium")
+        );
     }
 }

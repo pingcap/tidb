@@ -14,7 +14,25 @@
 
 //! Public byte-string contract for Go `pkg/util/printer`.
 
-use tidb_util::printer::get_print_result_bytes;
+use tidb_util::logutil::{init_logger, new_log_config, FileLogConfig, DEFAULT_LOG_FORMAT};
+use tidb_util::printer::{get_print_result_bytes, print_tidb_info};
+use tidb_util::versioninfo::VersionInfo;
+
+struct RestoreStdoutLogger;
+
+impl Drop for RestoreStdoutLogger {
+    fn drop(&mut self) {
+        let config = new_log_config(
+            "info",
+            DEFAULT_LOG_FORMAT,
+            "",
+            "",
+            FileLogConfig::default(),
+            false,
+        );
+        let _ = init_logger(&config);
+    }
+}
 
 #[test]
 fn table_rendering_preserves_go_string_bytes_and_byte_widths() {
@@ -25,4 +43,30 @@ fn table_rendering_preserves_go_string_bytes_and_byte_widths() {
         get_print_result_bytes(&columns, &rows).as_deref(),
         Some(&b"+----+----+\n| a\xff | b  |\n+----+----+\n| x  | y\xfe |\n+----+----+\n"[..])
     );
+}
+
+#[test]
+fn startup_identity_uses_the_logutil_global_logger() {
+    let directory = tempfile::tempdir().expect("log directory");
+    let filename = directory.path().join("printer.log");
+    let config = new_log_config(
+        "info",
+        DEFAULT_LOG_FORMAT,
+        "",
+        "",
+        FileLogConfig {
+            filename: filename.to_string_lossy().into_owned(),
+            max_size: 4096,
+            ..FileLogConfig::default()
+        },
+        true,
+    );
+    init_logger(&config).expect("install the logger owned by pkg/util/logutil");
+    let _restore = RestoreStdoutLogger;
+
+    print_tidb_info(&VersionInfo::build_default(), br#"{"store":"tikv"}"#);
+
+    let output = std::fs::read_to_string(filename).expect("read startup logs");
+    assert!(output.contains("Welcome to TiDB."), "{output}");
+    assert!(output.contains("loaded config"), "{output}");
 }
