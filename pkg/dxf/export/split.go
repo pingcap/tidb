@@ -48,7 +48,7 @@ func splitTableSet(ctx context.Context, store kv.Storage, meta *TaskMeta, nodeCn
 	var chunks []Chunk
 	var totalSize int64
 	for tableIdx := range meta.Tables {
-		tableChunks, err := chunkTable(ctx, store, meta, tableIdx)
+		tableChunks, err := splitTable(ctx, store, meta, tableIdx)
 		if err != nil {
 			return nil, err
 		}
@@ -60,11 +60,9 @@ func splitTableSet(ctx context.Context, store kv.Storage, meta *TaskMeta, nodeCn
 	return packSubtasks(chunks, totalSize, nodeCnt)
 }
 
-// chunkTable carves one table into key-ordered chunks. The chunk count comes
-// from the table's real byte size, the boundaries from the region cache, and a
-// running table-local ordinal spans all partitions so file names never collide
-// within the table.
-func chunkTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx int) ([]Chunk, error) {
+// splitTable carves one table into ~chunkSize key-ordered chunks, with a
+// table-local ordinal spanning its partitions so file names stay unique.
+func splitTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx int) ([]Chunk, error) {
 	tblInfo := meta.Tables[tableIdx].TableInfo
 	var chunks []Chunk
 	ordinal := 0
