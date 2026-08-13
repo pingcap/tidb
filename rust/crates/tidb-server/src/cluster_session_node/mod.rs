@@ -100,7 +100,8 @@
 //! # DDL: the one stored-schema change this node performs
 //!
 //! `CREATE TABLE`, `DROP TABLE`, `CREATE DATABASE`, `DROP DATABASE`,
-//! `CREATE INDEX` and `DROP INDEX` are not run by the session driver against
+//! `CREATE INDEX`, `DROP INDEX`, and their single-action `ALTER TABLE`
+//! spellings are not run by the session driver against
 //! its own in-memory catalog -- that copy is a *read* of the cluster's schema,
 //! so changing it alone would be a silently wrong answer. They are routed to
 //! the [`ClusterDdl`] seam, which publishes the meta-key mutations through the
@@ -1102,7 +1103,8 @@ impl ClusterServerSession {
                     Ok(Some(statement)) => Ok(StatementRoute::Ddl(statement)),
                     Ok(None) => Err(SqlQueryError::unknown(
                         "this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, \
-                         CREATE DATABASE, DROP DATABASE, CREATE INDEX and DROP INDEX only; run \
+                         CREATE DATABASE, DROP DATABASE, index changes, and single-action ALTER \
+                         INDEX changes only; run \
                          this statement on a TiDB server",
                     )),
                     // The refusal carries Go's own errno where it has one

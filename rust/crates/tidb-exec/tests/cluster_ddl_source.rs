@@ -852,12 +852,7 @@ fn a_statement_this_module_does_not_own_is_left_to_its_own_path() {
     for sql in [
         "SELECT 1",
         "INSERT INTO u6.t VALUES (1, 2)",
-        // `ALTER TABLE ... ADD INDEX` reaches Go's `ActionAddIndex` too, but
-        // this module admits only the `CREATE INDEX` spelling: an `ALTER` may
-        // carry several actions in one statement, and half-applying them is
-        // not something one meta transaction can take back.
         "ALTER TABLE u6.t ADD COLUMN c BIGINT NOT NULL",
-        "ALTER TABLE u6.t ADD INDEX i (v)",
     ] {
         let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
         assert!(
@@ -865,6 +860,41 @@ fn a_statement_this_module_does_not_own_is_left_to_its_own_path() {
             "`{sql}` is not a catalog change this module owns"
         );
     }
+}
+
+/// Go routes the single-action ALTER spelling through the same add/drop-index
+/// job as standalone `CREATE INDEX`/`DROP INDEX`. The cluster catalog does the
+/// same, so both spellings publish the metadata mutation and row backfill.
+#[test]
+fn alter_table_index_actions_share_the_catalog_backfill_path() {
+    let mut store = bootstrapped();
+    let table_id = table_with_two_columns(&mut store);
+
+    let added = plan(
+        &mut store,
+        "ALTER TABLE u6.minimal ADD UNIQUE INDEX vi (v)",
+        470_000_000,
+    );
+    assert_eq!(added.diff.action_type.0, 7, "ActionAddIndex");
+    let backfill = added.backfill.as_ref().expect("the index owes entries");
+    assert!(backfill.add);
+    assert!(backfill.index.read().unique);
+    assert_eq!(stored_table(&added, table_id)["index_info"][0]["idx_name"]["O"], "vi");
+    apply(&mut store, &added);
+
+    let dropped = plan(
+        &mut store,
+        "ALTER TABLE u6.minimal DROP INDEX vi",
+        470_000_001,
+    );
+    assert_eq!(dropped.diff.action_type.0, 8, "ActionDropIndex");
+    assert!(!dropped.backfill.as_ref().expect("entries are removed").add);
+
+    let multiple = refusal("ALTER TABLE u6.minimal ADD INDEX vi (v), DROP INDEX vi");
+    assert!(
+        multiple.contains("exactly one action"),
+        "multi-action ALTER must fail before a partial catalog change: {multiple}"
+    );
 }
 
 #[test]

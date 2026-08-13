@@ -55,7 +55,10 @@
 use std::fmt;
 
 use tidb_ast::CiString;
-use tidb_ast::{CreateIndexStmt, CreateTableStmt, DdlStmt, DropIndexStmt, DropTableStmt, Stmt};
+use tidb_ast::{
+    AlterTableStmt, CreateIndexStmt, CreateTableStmt, DdlStmt, DropIndexStmt, DropTableStmt,
+    IndexConstraintDefinition, IndexConstraintKind, Stmt,
+};
 use tidb_datatype::new_collation_enabled;
 use tidb_meta::{key, value};
 use tidb_metadef::MAX_USER_GLOBAL_ID;
@@ -162,7 +165,7 @@ pub enum DdlStatement {
 /// Admits one parsed statement as a catalog change, or explains why not.
 ///
 /// `None` means the statement is not a DDL this module owns at all, so the
-/// caller runs it down its ordinary path. `Err` means it *is* one of the four
+/// caller runs it down its ordinary path. `Err` means it *is* one of the
 /// shapes but carries something this node refuses — that refusal is final and
 /// happens before any mutation.
 pub fn lower_ddl(
@@ -212,8 +215,110 @@ pub fn lower_ddl_with_context(
         DdlStmt::DropTable(drop) => lower_drop_table(drop, default_schema).map(Some),
         DdlStmt::CreateIndex(create) => lower_create_index(create, default_schema).map(Some),
         DdlStmt::DropIndex(drop) => lower_drop_index(drop, default_schema).map(Some),
+        DdlStmt::AlterTable(alter) => lower_alter_table_index(alter, default_schema),
         _ => Ok(None),
     }
+}
+
+/// Admits the single-action `ALTER TABLE` spelling of an index change.
+///
+/// Go lowers these actions to the same add/drop-index jobs as their standalone
+/// statements.  Reusing the existing lowered statement keeps catalog changes
+/// and backfill ownership in one place.  Multi-action ALTERs stay refused: the
+/// catalog transaction has no representation for their atomic job bundle, so
+/// accepting only its index action would silently half-apply the SQL.
+fn lower_alter_table_index(
+    alter: &AlterTableStmt,
+    default_schema: &str,
+) -> Result<Option<DdlStatement>, DdlAdmissionError> {
+    let [action] = alter.actions.as_slice() else {
+        if alter.actions.iter().any(|action| {
+            matches!(
+                action,
+                tidb_ast::AlterTableAction::AddIndexConstraint(_)
+                    | tidb_ast::AlterTableAction::DropIndex { .. }
+            )
+        }) {
+            return Err(DdlAdmissionError::unsupported(
+                "ALTER TABLE index changes require exactly one action on this node; \
+                 multiple actions need one atomic multi-schema DDL job",
+            ));
+        }
+        return Ok(None);
+    };
+
+    match action {
+        tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
+            lower_alter_add_index(alter, index, default_schema).map(Some)
+        }
+        tidb_ast::AlterTableAction::DropIndex { if_exists, name } => lower_drop_index(
+            &DropIndexStmt {
+                is_hypo: false,
+                if_exists: *if_exists,
+                name: name.clone(),
+                table: alter.name.clone(),
+                algorithm: None,
+                lock: None,
+            },
+            default_schema,
+        )
+        .map(Some),
+        _ => Ok(None),
+    }
+}
+
+fn lower_alter_add_index(
+    alter: &AlterTableStmt,
+    index: &IndexConstraintDefinition,
+    default_schema: &str,
+) -> Result<DdlStatement, DdlAdmissionError> {
+    let kind = match index.kind {
+        IndexConstraintKind::Key | IndexConstraintKind::Index => tidb_ast::IndexKind::Ordinary,
+        IndexConstraintKind::Unique
+        | IndexConstraintKind::UniqueKey
+        | IndexConstraintKind::UniqueIndex => tidb_ast::IndexKind::Unique,
+        IndexConstraintKind::PrimaryKey => {
+            return Err(DdlAdmissionError::unsupported(
+                "ALTER TABLE ADD PRIMARY KEY is not supported by this node",
+            ))
+        }
+        IndexConstraintKind::Fulltext => {
+            return Err(DdlAdmissionError::unsupported(
+                "ALTER TABLE ADD FULLTEXT is not supported by this node",
+            ))
+        }
+        IndexConstraintKind::Vector => {
+            return Err(DdlAdmissionError::unsupported(
+                "ALTER TABLE ADD VECTOR INDEX is not supported by this node",
+            ))
+        }
+        IndexConstraintKind::Columnar => {
+            return Err(DdlAdmissionError::unsupported(
+                "ALTER TABLE ADD COLUMNAR INDEX is not supported by this node",
+            ))
+        }
+    };
+    let Some(name) = index.name.as_ref().filter(|name| !name.is_empty()) else {
+        // Go resolves anonymous names only after it has loaded the current
+        // table and can avoid an existing name. This catalog lowerer is
+        // intentionally stateless, so admitting it here would create a
+        // different collision contract from standalone CREATE INDEX.
+        return Err(DdlAdmissionError::unsupported(
+            "ALTER TABLE ADD INDEX needs an explicit index name on this node",
+        ));
+    };
+    lower_create_index(
+        &CreateIndexStmt {
+            kind,
+            if_not_exists: index.if_not_exists,
+            name: name.clone(),
+            table: alter.name.clone(),
+            parts: index.parts.clone(),
+            options: index.options.clone(),
+            online: Default::default(),
+        },
+        default_schema,
+    )
 }
 
 /// Splits a written name path into `(schema, object)`, defaulting the schema.

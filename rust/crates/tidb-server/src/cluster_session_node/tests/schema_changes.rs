@@ -81,10 +81,6 @@ fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
             "CREATE TABLE, DROP TABLE",
         ),
         ("TRUNCATE TABLE t", "CREATE TABLE, DROP TABLE"),
-        // `CREATE INDEX` IS expressible now; the `ALTER` spelling of the same
-        // action is not, because an `ALTER` may carry several actions at once
-        // and half of them is not something one meta transaction can take back.
-        ("ALTER TABLE t ADD INDEX i (v)", "CREATE TABLE, DROP TABLE"),
         (
             "CREATE TABLE fk (id BIGINT PRIMARY KEY, other BIGINT, \
              FOREIGN KEY (other) REFERENCES t (id))",
@@ -104,21 +100,26 @@ fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
             "unexpected refusal for {sql}: {message}"
         );
     }
-    // A `CREATE INDEX` is routed to the catalog writer rather than refused
-    // here; this mock has no rows to walk and says so, which is the shape of
-    // the routing being asserted. What the entries themselves must satisfy is
-    // proved where rows are real -- `run-sysbench-ladder.sh`'s `ADMIN CHECK
-    // TABLE` on a Go server.
-    let routed = session
-        .execute_write("CREATE INDEX i ON t (v)")
-        .expect_err("the mock writer holds no rows");
-    assert!(
-        routed
-            .message
-            .contains("cannot model an index change's backfill"),
-        "a CREATE INDEX must reach the catalog writer: {}",
-        routed.message
-    );
+    // Go gives standalone and single-action ALTER index changes the same DDL
+    // job. Both spellings must therefore reach the catalog writer rather than
+    // the generic unsupported route. This mock has no rows to walk, so its
+    // source-shaped backfill refusal is the routing witness.
+    for sql in [
+        "CREATE INDEX i ON t (v)",
+        "ALTER TABLE t ADD INDEX i (v)",
+        "ALTER TABLE t DROP INDEX i",
+    ] {
+        let routed = session
+            .execute_write(sql)
+            .expect_err("the mock writer holds no rows");
+        assert!(
+            routed
+                .message
+                .contains("cannot model an index change's backfill"),
+            "{sql} must reach the catalog writer: {}",
+            routed.message
+        );
+    }
     // Nothing was published: a refusal happens before the writer commits
     // anything at all.
     assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
