@@ -37,6 +37,44 @@ fn select_with_where() {
     );
 }
 
+#[test]
+fn an_explicit_case_insensitive_collation_controls_comparison() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE collated (a VARCHAR(10) COLLATE utf8mb4_bin) \
+         PARTITION BY RANGE COLUMNS(a) (\
+           PARTITION p_upper VALUES LESS THAN ('a'), \
+           PARTITION p_lower VALUES LESS THAN (MAXVALUE))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO collated VALUES ('AA'), ('aa'), ('AAA'), ('aaa')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let values = |sql: &str| {
+        let mut values: Vec<String> = run_select_on(sql, &catalog, &ctx)
+            .unwrap()
+            .iter()
+            .map(|row| datum_text_for_test(&row[0]))
+            .collect();
+        values.sort();
+        values
+    };
+    assert_eq!(
+        values("SELECT a FROM collated WHERE a = 'AA' COLLATE utf8mb4_general_ci"),
+        ["AA", "aa"],
+    );
+    assert_eq!(
+        values("SELECT a FROM collated WHERE a IN ('AAA' COLLATE utf8mb4_general_ci, 'aa')",),
+        ["AA", "AAA", "aa", "aaa"],
+    );
+}
+
 /// Row-valued `IN` is the predicate shape go-tpc uses to lock stock rows.
 /// Go lowers each tuple equality column by column, preserving SQL's
 /// three-valued NULL behavior, then joins the candidates with `OR`.
