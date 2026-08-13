@@ -161,8 +161,6 @@ func subtaskCntFor(chunkCnt, nodeCnt int) int {
 	return max(cnt, minCnt, 1)
 }
 
-// physicalIDs returns one id per partition for a partitioned table, otherwise
-// the table id.
 func physicalIDs(tblInfo *model.TableInfo) []int64 {
 	if pi := tblInfo.GetPartitionInfo(); pi != nil {
 		ids := make([]int64, 0, len(pi.Definitions))
@@ -174,9 +172,9 @@ func physicalIDs(tblInfo *model.TableInfo) []int64 {
 	return []int64{tblInfo.ID}
 }
 
-// physicalTableRange returns the record-key range of one physical table. For
-// int-handle tables the start must be a well-formed record key, since TiKV
-// returns nothing for a bare "t<id>_r" prefix start.
+// physicalTableRange returns the record-key range of one physical table. The
+// int-handle start is a MinInt64 record key, not a bare "t<id>_r" prefix, which
+// TiKV returns nothing for.
 func physicalTableRange(tblInfo *model.TableInfo, pid int64) (start, end kv.Key) {
 	prefix := tablecodec.GenTableRecordPrefix(pid)
 	if tblInfo.IsCommonHandle {
@@ -185,9 +183,8 @@ func physicalTableRange(tblInfo *model.TableInfo, pid int64) (start, end kv.Key)
 	return tablecodec.EncodeRowKeyWithHandle(pid, kv.IntHandle(math.MinInt64)), prefix.PrefixNext()
 }
 
-// loadRegionBoundaries returns the sorted region boundaries covering [start, end),
-// with result[0] == start and result[len-1] == end, retrying with backoff while
-// the regions are not yet continuous.
+// loadRegionBoundaries returns the sorted boundaries spanning [start, end] (both
+// included), retrying with backoff while the regions are not continuous.
 func loadRegionBoundaries(ctx context.Context, store kv.Storage, start, end kv.Key) ([]kv.Key, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
