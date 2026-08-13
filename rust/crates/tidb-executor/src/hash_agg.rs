@@ -332,11 +332,16 @@ pub(crate) struct AggState {
     partial: Partial,
     seen: Option<MemorySet<Vec<u8>>>,
     collation: tidb_datatype::Collation,
-    /// Go's non-ordered, non-DISTINCT GROUP_CONCAT retains only the result
-    /// prefix while it scans. The other forms need their rows for DISTINCT or
-    /// ORDER BY and therefore keep their own state.
+    /// Go's non-DISTINCT GROUP_CONCAT retains only rows that can still affect
+    /// its bounded result. Ordered input uses the same byte budget through a
+    /// per-group TopN; DISTINCT must retain its value set separately.
     group_concat_limit: Option<usize>,
+    /// The aggregate-local ORDER BY comparison, empty for arrival order.
+    group_concat_order: Vec<(tidb_datatype::Collation, bool)>,
     group_concat_was_truncated: bool,
+    /// Go `topNRows.isSepTruncated`: dropping a whole least-preferred row
+    /// leaves the separator byte prefix that still fits the result budget.
+    group_concat_separator_truncated: bool,
 }
 
 impl AggState {
@@ -352,8 +357,14 @@ impl AggState {
             group_concat_limit: matches!(func.kind, AggKind::GroupConcat { .. })
                 .then(|| usize::try_from(group_concat_max_len).unwrap_or(usize::MAX))
                 .filter(|limit| *limit > 0)
-                .filter(|_| !func.distinct && func.order_by.is_empty()),
+                .filter(|_| !func.distinct),
+            group_concat_order: func
+                .order_by
+                .iter()
+                .map(|(expr, desc)| (expr_collation(expr), *desc))
+                .collect(),
             group_concat_was_truncated: false,
+            group_concat_separator_truncated: false,
         }
     }
 
@@ -398,7 +409,7 @@ impl AggState {
                 delta += key_bytes + map_delta;
             }
         }
-        let bounded_group_concat = self.group_concat_limit.is_some() && sort_key.is_empty();
+        let bounded_group_concat = self.group_concat_limit.is_some();
         let retained_before = if bounded_group_concat {
             self.partial.group_concat_memory_bytes()
         } else {
@@ -410,9 +421,12 @@ impl AggState {
         self.partial
             .update(value, extra, sort_key, self.collation)?;
         if let Some(limit) = self.group_concat_limit {
-            let (retained_after, truncated) = self.partial.compact_group_concat(limit);
+            let (retained_after, truncated, separator_truncated) = self
+                .partial
+                .compact_group_concat(limit, &self.group_concat_order);
             delta += retained_after.saturating_sub(retained_before);
             self.group_concat_was_truncated |= truncated;
+            self.group_concat_separator_truncated |= separator_truncated;
         }
         Ok(delta)
     }
@@ -455,6 +469,11 @@ impl AggState {
         }
         if let Datum::Bytes(joined) = &mut value {
             let max_len = group_concat_max_len(ctx);
+            if self.group_concat_separator_truncated {
+                if let AggKind::GroupConcat { separator } = &func.kind {
+                    joined.extend_from_slice(separator.as_bytes());
+                }
+            }
             if matches!(func.kind, AggKind::GroupConcat { .. })
                 && max_len > 0
                 && joined.len() as u64 > max_len
@@ -548,6 +567,42 @@ fn append_group_concat_prefix(
         *truncated = true;
     }
     output.extend_from_slice(&input[..input.len().min(remaining)]);
+}
+
+fn group_concat_size(values: &[(Vec<u8>, Vec<Datum>)], separator_len: usize) -> usize {
+    values
+        .iter()
+        .fold(0usize, |size, (value, _)| size.saturating_add(value.len()))
+        .saturating_add(separator_len.saturating_mul(values.len().saturating_sub(1)))
+}
+
+/// Put GROUP_CONCAT candidates in their final aggregate-local order.  The
+/// last element is exactly the TopN row Go removes when it needs to release
+/// bytes, so an ordinary stable sort gives this vector the same ownership
+/// direction as Go's heap.
+fn sort_group_concat_values(
+    values: &mut [(Vec<u8>, Vec<Datum>)],
+    order: &[(tidb_datatype::Collation, bool)],
+) {
+    values.sort_by(|left, right| group_concat_row_order(left, right, order));
+}
+
+fn group_concat_row_order(
+    left: &(Vec<u8>, Vec<Datum>),
+    right: &(Vec<u8>, Vec<Datum>),
+    order: &[(tidb_datatype::Collation, bool)],
+) -> Ordering {
+    for (position, (collation, desc)) in order.iter().enumerate() {
+        let (Some(a), Some(b)) = (left.1.get(position), right.1.get(position)) else {
+            continue;
+        };
+        let ordering =
+            tidb_expr::compare_datums_with_collation(a, b, *collation).unwrap_or(Ordering::Equal);
+        if ordering != Ordering::Equal {
+            return if *desc { ordering.reverse() } else { ordering };
+        }
+    }
+    Ordering::Equal
 }
 
 /// The value Go's real aggregate implementations consume.
@@ -969,15 +1024,48 @@ impl Partial {
             .unwrap_or(i64::MAX)
     }
 
-    /// Replaces a non-ordered GROUP_CONCAT's row list with Go's bounded
-    /// partial buffer. Once the prefix is complete, later rows cannot affect
-    /// its bytes, so retaining them only changes memory/quota behavior.
-    fn compact_group_concat(&mut self, max_len: usize) -> (i64, bool) {
+    /// Keeps only the GROUP_CONCAT state that can affect a bounded result.
+    ///
+    /// Without aggregate-local ordering, Go's buffer is already a prefix and
+    /// can collapse to one byte vector. With ordering, Go's `topNRows`
+    /// repeatedly discards its least-preferred row (or trims it when it is
+    /// the last partial contribution). The Vec implementation uses the same
+    /// ordering and byte accounting directly; the candidate set is bounded
+    /// by the output budget rather than by input cardinality.
+    fn compact_group_concat(
+        &mut self,
+        max_len: usize,
+        order: &[(tidb_datatype::Collation, bool)],
+    ) -> (i64, bool, bool) {
         let Partial::GroupConcat { values, separator } = self else {
-            return (0, false);
+            return (0, false, false);
         };
         if values.is_empty() {
-            return (0, false);
+            return (0, false, false);
+        }
+        if !order.is_empty() {
+            let mut total = group_concat_size(values, separator.len());
+            let truncated = total > max_len;
+            let mut separator_truncated = false;
+            while total > max_len && !values.is_empty() {
+                sort_group_concat_values(values, order);
+                let worst = values.len() - 1;
+                let debt = total - max_len;
+                if values[worst].0.len() > debt {
+                    let new_len = values[worst].0.len() - debt;
+                    values[worst].0.truncate(new_len);
+                    total -= debt;
+                } else {
+                    total -= values[worst].0.len().saturating_add(separator.len());
+                    values.pop();
+                    separator_truncated = true;
+                }
+            }
+            return (
+                self.group_concat_memory_bytes(),
+                truncated,
+                separator_truncated,
+            );
         }
         let mut compact = Vec::with_capacity(
             max_len.min(
@@ -1005,7 +1093,7 @@ impl Partial {
             append_group_concat_prefix(&mut compact, value, max_len, &mut truncated);
         }
         *values = vec![(compact, Vec::new())];
-        (self.group_concat_memory_bytes(), truncated)
+        (self.group_concat_memory_bytes(), truncated, false)
     }
 
     /// The bytes this partial GROWS BY when it takes one more row, which is
@@ -1092,25 +1180,20 @@ impl Partial {
                         .iter()
                         .map(|(expr, _)| expr_collation(expr))
                         .collect();
-                    values.sort_by(|left, right| {
-                        for (position, (_, desc)) in order_by.iter().enumerate() {
-                            let (Some(a), Some(b)) = (left.1.get(position), right.1.get(position))
-                            else {
-                                continue;
-                            };
-                            let collation = collations
-                                .get(position)
-                                .copied()
-                                .unwrap_or(tidb_datatype::Collation::DEFAULT);
-                            let ordering =
-                                tidb_expr::compare_datums_with_collation(a, b, collation)
-                                    .unwrap_or(Ordering::Equal);
-                            if ordering != Ordering::Equal {
-                                return if *desc { ordering.reverse() } else { ordering };
-                            }
-                        }
-                        Ordering::Equal
-                    });
+                    let order = order_by
+                        .iter()
+                        .enumerate()
+                        .map(|(position, (_, desc))| {
+                            (
+                                collations
+                                    .get(position)
+                                    .copied()
+                                    .unwrap_or(tidb_datatype::Collation::DEFAULT),
+                                *desc,
+                            )
+                        })
+                        .collect::<Vec<_>>();
+                    sort_group_concat_values(&mut values, &order);
                 }
                 let mut joined = Vec::new();
                 for (index, (value, _)) in values.iter().enumerate() {
@@ -2073,6 +2156,37 @@ mod tests {
         assert_eq!(
             state.partial.finish(&[], 4).unwrap(),
             Datum::Bytes(b"xxxx".to_vec())
+        );
+    }
+
+    #[test]
+    fn ordered_group_concat_keeps_only_the_best_bounded_candidates() {
+        let mut func = AggFunc::new(
+            AggKind::GroupConcat {
+                separator: ",".to_owned(),
+            },
+            Some(col(1)),
+        );
+        func.order_by = vec![(col(1), false)];
+        let mut state = AggState::new(&func, 4);
+        for key in (0..128).rev() {
+            state
+                .update(
+                    Some(Datum::Bytes(vec![b'x'; 128])),
+                    &[],
+                    vec![Datum::Int(key)],
+                    None,
+                )
+                .unwrap();
+        }
+        assert!(state.group_concat_was_truncated);
+        assert!(
+            state.partial.group_concat_memory_bytes() <= 512,
+            "ordered state must retain candidates, not every input row"
+        );
+        assert_eq!(
+            state.partial.finish(&func.order_by, 4).unwrap(),
+            Datum::Bytes(vec![b'x'; 4])
         );
     }
 
