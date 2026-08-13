@@ -31,6 +31,13 @@ const (
 	// System is the keyspace name for SYSTEM keyspace.
 	// see doc.go for more detail.
 	System = "SYSTEM"
+	// KeyspaceConfigColumnarStorageEnabled is the keyspace config key indicating whether
+	// columnar storage (TiFlash on-demand deployment) is enabled for the keyspace.
+	// The value is "true" or "false", and is written by the TiDB Cloud control plane;
+	// the TiDB kernel only reads it. It is part of the cross-repo contract between
+	// TiDB and the control plane, see the design doc
+	// docs/design/2026-08-11-tiflash-on-demand-ddl-gate.md.
+	KeyspaceConfigColumnarStorageEnabled = "columnar_storage_enabled"
 	// tidbKeyspaceEtcdPathPrefix is the keyspace prefix for etcd namespace
 	tidbKeyspaceEtcdPathPrefix = "/keyspaces/tidb/"
 )

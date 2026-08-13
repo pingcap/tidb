@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -591,7 +592,7 @@ func TestSetTiFlashReplicaColumnarStorageGate(t *testing.T) {
 			State: keyspacepb.KeyspaceState_ENABLED,
 		}
 		if flagVal != "" {
-			meta.Config = map[string]string{infosync.KeyspaceConfigColumnarStorageEnabled: flagVal}
+			meta.Config = map[string]string{keyspace.KeyspaceConfigColumnarStorageEnabled: flagVal}
 		}
 		return testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease, mockstore.WithCurrentKeyspaceMeta(meta))
 	}

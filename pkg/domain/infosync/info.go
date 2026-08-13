@@ -338,12 +338,6 @@ func GetServerInfoByID(ctx context.Context, id string) (*serverinfo.ServerInfo, 
 	return is.svrInfoSyncer.GetServerInfoByID(ctx, id)
 }
 
-// KeyspaceConfigColumnarStorageEnabled is the keyspace config key indicating whether
-// TiDB X columnar storage is enabled for the keyspace. The value is "true" or "false", the TiDB kernel only reads it.
-// It is part of the cross-repo contract between
-// TiDB and the control plane
-const KeyspaceConfigColumnarStorageEnabled = "columnar_storage_enabled"
-
 // SetKeyspaceConfig patches the keyspace config in merge style.
 func SetKeyspaceConfig(ctx context.Context, keyspaceName string, config pdhttp.UpdateKeyspaceConfigParams) error {
 	is, err := getGlobalInfoSyncer()

@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"go.uber.org/zap"
@@ -35,10 +35,8 @@ import (
 //
 // Behavior:
 //   - flag is "false": returns ErrTiFlashColumnarStorageNotEnabled;
-//   - flag is "true" or missing: allowed (missing defaults to allowed for backward
-//     compatibility);
-//   - keyspace meta cannot be loaded from PD: fail-closed, returns
-//     ErrTiFlashColumnarStorageCheckFailed.
+//   - flag is "true" or missing: allowed (missing defaults to allowed for backward compatibility);
+//   - keyspace meta cannot be loaded from PD: fail-closed, returns ErrTiFlashColumnarStorageCheckFailed.
 func checkColumnarStorageEnabled(store kv.Storage) error {
 	if !config.GetGlobalConfig().CSE.IsColumnarStoreEnabled() {
 		return nil
@@ -66,7 +64,7 @@ func checkColumnarStorageEnabled(store kv.Storage) error {
 	if err != nil {
 		// PD is the ground truth of keyspace info. When the enabled status cannot be
 		// verified, reject the DDL instead of allowing the optimizer to route queries
-		// to a non-existent tiflash-cn later.
+		// to a non-existent tiflash compute node later.
 		logutil.DDLLogger().Error("failed to load keyspace meta for columnar storage check",
 			zap.String("keyspace", store.GetKeyspace()), zap.Error(err))
 		return dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(store.GetKeyspace())
@@ -74,14 +72,13 @@ func checkColumnarStorageEnabled(store kv.Storage) error {
 	if meta == nil || meta.Config == nil {
 		return nil
 	}
-	if val, ok := meta.Config[infosync.KeyspaceConfigColumnarStorageEnabled]; ok {
+	if val, ok := meta.Config[keyspace.KeyspaceConfigColumnarStorageEnabled]; ok {
 		if strings.EqualFold(val, "false") {
 			return dbterror.ErrTiFlashColumnarStorageNotEnabled.GenWithStackByArgs(store.GetKeyspace())
 		}
 		return nil
 	}
-	// Flag missing: default to enabled (backward compatible), but log a warning so
-	// control-plane write gaps are discoverable.
+	// Flag missing: default to enabled for backward compatibility. Log a warning so gaps are discoverable.
 	logutil.DDLLogger().Warn("columnar storage enabled flag is missing in keyspace meta, default to enabled",
 		zap.String("keyspace", store.GetKeyspace()))
 	return nil

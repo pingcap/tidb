@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
@@ -72,7 +72,7 @@ func TestCheckColumnarStorageEnabled(t *testing.T) {
 	flagMeta := func(v string) *keyspacepb.KeyspaceMeta {
 		return &keyspacepb.KeyspaceMeta{
 			Name:   "testks",
-			Config: map[string]string{infosync.KeyspaceConfigColumnarStorageEnabled: v},
+			Config: map[string]string{keyspace.KeyspaceConfigColumnarStorageEnabled: v},
 		}
 	}
 
