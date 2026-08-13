@@ -34,7 +34,9 @@ pub(crate) use defaults::{
 ///
 /// The write half of the in-memory gateway. It supports the normal insert
 /// forms, including `REPLACE`, `IGNORE`, `ON DUPLICATE KEY UPDATE`, `SET`
-/// syntax, and query sources. Partition-qualified targets remain rejected.
+/// syntax, and query sources. A partition-qualified INSERT remains rejected:
+/// unlike an UPDATE/DELETE read restriction, it must validate that each new
+/// row routes to the named partition.
 /// A `RETURNING` clause is parsed and silently ignored: Go's hand-written
 /// parser stores it on the AST but the planner and executor never read it, so
 /// the write runs normally and answers with a plain OK packet. Columns not
@@ -1342,6 +1344,12 @@ pub(crate) fn run_update_traced(
     let table = catalog
         .get_in(&database, &name)
         .ok_or(DriverError::unsupported("unknown table"))?;
+    if !table_ref.partitions.is_empty() && !matches!(table, TableEntry::Kv(_)) {
+        return Err(DriverError::UnknownPartition {
+            partition: table_ref.partitions[0].clone(),
+            table: name.clone(),
+        });
+    }
     let column_list = table.column_list();
     let column_meta = column_metadata(table);
 
@@ -1525,7 +1533,12 @@ pub(crate) fn run_update_traced(
             }
         }
         TableEntry::Kv(kv) => {
-            let mut rows = fetch_write_rows(kv, read_path.as_ref(), &zone)?;
+            // The physical table still owns each staged rewrite, but the
+            // source handle narrows which rows this statement may reach.
+            // `TableHandle` preserves the physical partition id, so applying
+            // the later write through `kv` cannot widen the restriction.
+            let mut source = restricted_to_partitions(kv, &table_ref.partitions, &name)?;
+            let mut rows = fetch_write_rows(&mut source, read_path.as_ref(), &zone)?;
             order_rows_for_dml(
                 &mut rows,
                 &update.order_by,
@@ -1854,6 +1867,14 @@ pub(crate) fn run_delete_traced(
         .get_in(&database, &name)
         .ok_or(DriverError::unsupported("unknown table"))?
         .column_list();
+    if !table_ref.partitions.is_empty()
+        && !matches!(catalog.get_in(&database, &name), Some(TableEntry::Kv(_)))
+    {
+        return Err(DriverError::UnknownPartition {
+            partition: table_ref.partitions[0].clone(),
+            table: name.clone(),
+        });
+    }
     // As in UPDATE: `DELETE FROM u AS y WHERE y.id = 1` resolves and
     // `WHERE u.id = 1` does not.
     let resolver = TableResolver {
@@ -1930,7 +1951,8 @@ pub(crate) fn run_delete_traced(
             mem.rows = kept;
         }
         TableEntry::Kv(kv) => {
-            let mut rows = fetch_write_rows(kv, read_path.as_ref(), &zone)?;
+            let mut source = restricted_to_partitions(kv, &table_ref.partitions, &name)?;
+            let mut rows = fetch_write_rows(&mut source, read_path.as_ref(), &zone)?;
             order_rows_for_dml(
                 &mut rows,
                 &delete.order_by,

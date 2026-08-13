@@ -985,30 +985,44 @@ fn a_partition_selection_reads_only_those_partitions() {
     );
 }
 
-/// `UPDATE`/`DELETE`/`INSERT ... PARTITION (p)` are still REFUSED.
-///
-/// Each of them RESTRICTS WHICH ROWS the statement writes, and none of the
-/// three narrowings is the read narrowing above: `INSERT ... PARTITION (p)`
-/// is 1526 when the row routes elsewhere rather than a restriction at all.
-/// Answering them by ignoring the clause would modify rows the statement
-/// excluded, so they refuse until the write path honours them.
+/// `UPDATE`/`DELETE ... PARTITION (p)` restrict which existing rows the
+/// statement reaches. `INSERT ... PARTITION (p)` remains a distinct routing
+/// contract and is still refused until that write path can validate the row's
+/// destination rather than treating the clause as a read restriction.
 #[test]
-fn a_write_restricted_to_partitions_is_refused_rather_than_ignored() {
+fn updates_and_deletes_restricted_to_partitions_do_not_escape_the_named_set() {
     let mut session = Session::new();
     session
         .run("CREATE TABLE h (a int, b int) PARTITION BY HASH(a) PARTITIONS 4")
         .unwrap();
-    session.run("INSERT INTO h VALUES (1,1),(2,2)").unwrap();
-    assert!(session.run("DELETE FROM h PARTITION (p0)").is_err());
-    assert!(session.run("UPDATE h PARTITION (p0) SET b = 9").is_err());
+    session
+        .run("INSERT INTO h VALUES (1,1),(2,2),(4,4)")
+        .unwrap();
+    assert_eq!(
+        session.run("UPDATE h PARTITION (p0) SET b = 9").unwrap(),
+        StmtResult::Affected(1)
+    );
+    assert_eq!(
+        session.run("DELETE FROM h PARTITION (p1)").unwrap(),
+        StmtResult::Affected(1)
+    );
     assert!(session
         .run("INSERT INTO h PARTITION (p0) VALUES (4, 4)")
         .is_err());
-    // Nothing was modified by any of them.
     assert_eq!(
-        tests_support::row_text(session.run("SELECT count(*) FROM h")),
-        vec![vec!["2".to_owned()]]
+        tests_support::row_text(session.run("SELECT a, b FROM h ORDER BY a")),
+        vec![
+            vec!["2".to_owned(), "2".to_owned()],
+            vec!["4".to_owned(), "9".to_owned()],
+        ]
     );
+    session.run("CREATE TABLE q (a int)").unwrap();
+    let error = session
+        .run("UPDATE q PARTITION (p0) SET a = 1")
+        .expect_err("an unpartitioned target has no named partition")
+        .to_mysql_error();
+    assert_eq!(error.code, 1735);
+    assert_eq!(error.message, "Unknown partition 'p0' in table 'q'");
 }
 
 /// The partition expression is keyed by the NAMES it reads, so an
