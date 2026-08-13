@@ -113,49 +113,46 @@ func TestPackSubtasks(t *testing.T) {
 	require.Nil(t, empty)
 }
 
-func TestChunkCntFor(t *testing.T) {
+func TestBuildChunks(t *testing.T) {
 	const oneGiB = 1024 * 1024 * 1024
-	// One chunk per ≈ chunkSize of data.
-	require.Equal(t, 4, chunkCntFor(4*oneGiB, 100))
-	// Rounded up.
-	require.Equal(t, 5, chunkCntFor(4*oneGiB+1, 100))
-	// Never more chunks than regions.
-	require.Equal(t, 3, chunkCntFor(10*oneGiB, 3))
-	// At least one.
-	require.Equal(t, 1, chunkCntFor(0, 5))
-	require.Equal(t, 1, chunkCntFor(1, 10))
-}
+	// 4 regions, 8 GiB → 8 chunks wanted but capped at 4 regions, so 4 chunks.
+	require.Len(t, mustChunks(buildChunks(0, 1, keys("a", "b", "c", "d", "e"), 8*oneGiB, 0)), 4)
+	// One chunk per ~chunkSize, rounded up, never more than the region count.
+	require.Len(t, mustChunks(buildChunks(0, 1, keys("a", "b", "c", "d", "e"), 2*oneGiB, 0)), 2)
+	require.Len(t, mustChunks(buildChunks(0, 1, keys("a", "b", "c", "d", "e"), 2*oneGiB+1, 0)), 3)
+	// Zero size still yields one chunk covering the whole span.
+	require.Len(t, mustChunks(buildChunks(0, 1, keys("a", "b", "c", "d", "e"), 0, 0)), 1)
 
-func TestAssembleChunks(t *testing.T) {
-	const size = 8 * 1024 * 1024 * 1024
-	b := keys("a", "b", "c", "d", "e") // 4 regions
+	const size = 8 * oneGiB
+	b := keys("a", "b", "c", "d", "e") // 4 regions → 4 chunks
 
-	chunks, next := assembleChunks(2, 100, b, 2, size, 0)
-	require.Len(t, chunks, 2)
-	require.Equal(t, 2, next)
+	chunks, next := buildChunks(2, 100, b, size, 0)
+	require.Len(t, chunks, 4)
+	require.Equal(t, 4, next)
 
 	// Cover [a, e) with no gap or overlap, in key order.
 	require.Equal(t, []byte("a"), chunks[0].Start)
 	require.Equal(t, chunks[0].End, chunks[1].Start)
-	require.Equal(t, []byte("e"), chunks[1].End)
+	require.Equal(t, []byte("e"), chunks[len(chunks)-1].End)
 	// Table-local ordinals and metadata.
 	require.Equal(t, 0, chunks[0].Ordinal)
-	require.Equal(t, 1, chunks[1].Ordinal)
 	require.Equal(t, 2, chunks[0].TableIdx)
 	require.Equal(t, int64(100), chunks[0].PhysicalID)
-	// Size apportioned by region count (2 of 4 regions each).
-	require.Equal(t, int64(size)*2/4, chunks[0].Size)
+	// Size apportioned by region count (1 of 4 regions each).
+	require.Equal(t, int64(size)*1/4, chunks[0].Size)
 
 	// Deterministic.
-	again, _ := assembleChunks(2, 100, b, 2, size, 0)
+	again, _ := buildChunks(2, 100, b, size, 0)
 	require.Equal(t, chunks, again)
 
 	// Ordinal continues across partitions of the same table.
-	more, next2 := assembleChunks(2, 200, keys("a", "z"), 1, size, next)
-	require.Equal(t, 2, more[0].Ordinal)
+	more, next2 := buildChunks(2, 200, keys("a", "z"), size, next)
+	require.Equal(t, 4, more[0].Ordinal)
 	require.Equal(t, int64(200), more[0].PhysicalID)
-	require.Equal(t, 3, next2)
+	require.Equal(t, 5, next2)
 }
+
+func mustChunks(chunks []Chunk, _ int) []Chunk { return chunks }
 
 func TestPhysicalTableRange(t *testing.T) {
 	const pid = 100

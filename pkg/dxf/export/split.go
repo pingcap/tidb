@@ -79,19 +79,21 @@ func splitTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx 
 			return nil, err
 		}
 		regionCnt := len(boundaries) - 1
-		totalSize := estimatePhysicalSize(ctx, store, pid, regionCnt)
+		totalSize := estimatePhysicalSize(ctx, store, start, end, regionCnt)
 		var tableChunks []Chunk
-		tableChunks, ordinal = assembleChunks(tableIdx, pid, boundaries, chunkCntFor(totalSize, regionCnt), totalSize, ordinal)
+		tableChunks, ordinal = buildChunks(tableIdx, pid, boundaries, totalSize, ordinal)
 		chunks = append(chunks, tableChunks...)
 	}
 	return chunks, nil
 }
 
-// assembleChunks groups one physical table's boundaries into chunkCnt key-ordered
-// chunks, apportioning totalSize by region count and continuing the table-local
-// ordinal from startOrdinal. It returns the chunks and the next ordinal.
-func assembleChunks(tableIdx int, pid int64, boundaries []kv.Key, chunkCnt int, totalSize int64, startOrdinal int) ([]Chunk, int) {
+// buildChunks groups one physical table's boundaries into key-ordered chunks, one
+// chunk per ~chunkSize of data (never more than the region count), apportioning
+// totalSize by region count and continuing the table-local ordinal from
+// startOrdinal. It returns the chunks and the next ordinal.
+func buildChunks(tableIdx int, pid int64, boundaries []kv.Key, totalSize int64, startOrdinal int) ([]Chunk, int) {
 	regionCnt := len(boundaries) - 1
+	chunkCnt := max(1, min(int((totalSize+chunkSize-1)/chunkSize), regionCnt))
 	ord := startOrdinal
 	chunks := make([]Chunk, 0, chunkCnt)
 	for _, g := range groupBoundaries(boundaries, chunkCnt) {
@@ -109,22 +111,25 @@ func assembleChunks(tableIdx int, pid int64, boundaries []kv.Key, chunkCnt int, 
 	return chunks, ord
 }
 
-// estimatePhysicalSize returns a physical table's byte size from PD region stats,
-// falling back to region count × defaultRegionSize when PD is unavailable.
-func estimatePhysicalSize(ctx context.Context, store kv.Storage, pid int64, regionCnt int) int64 {
-	if hStore, ok := store.(helper.Storage); ok {
-		h := helper.NewHelper(hStore)
-		if stats, err := h.GetPDRegionStats(ctx, pid, true); err == nil && stats.StorageSize > 0 {
-			return stats.StorageSize * 1024 * 1024
-		}
+// estimatePhysicalSize returns a physical table's byte size over its record range
+// from PD's per-region approximate sizes, falling back to region count ×
+// defaultRegionSize when PD is unavailable.
+func estimatePhysicalSize(ctx context.Context, store kv.Storage, start, end kv.Key, regionCnt int) int64 {
+	fallback := int64(regionCnt) * defaultRegionSize
+	hStore, ok := store.(helper.Storage)
+	if !ok {
+		return fallback
 	}
-	return int64(regionCnt) * defaultRegionSize
-}
-
-// chunkCntFor is one chunk per ~chunkSize of data, never more than the region count.
-func chunkCntFor(totalSize int64, regionCnt int) int {
-	n := int((totalSize + chunkSize - 1) / chunkSize)
-	return max(1, min(n, regionCnt))
+	h := helper.NewHelper(hStore)
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		return fallback
+	}
+	size, err := h.EstimateKeyRangeSize(ctx, pdCli, start, end)
+	if err != nil || size == 0 {
+		return fallback
+	}
+	return size
 }
 
 // packSubtasks groups chunks into subtasks in key order so each holds a similar
