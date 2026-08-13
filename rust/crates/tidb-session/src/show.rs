@@ -244,37 +244,41 @@ fn show_create_table_text(
         if not_null {
             clause.push_str(" NOT NULL");
         }
-        // Go prints nothing for a column carrying NoDefaultValueFlag, which is
-        // a NOT NULL column with no DEFAULT clause; a nullable column with no
-        // DEFAULT reports DEFAULT NULL, as MySQL does.
-        match &column.default_value {
-            Some(tidb_executor::column_default::ColumnDefault::Value(Datum::Null)) => {
-                clause.push_str(" DEFAULT NULL")
+        // Go prints nothing for a column carrying NoDefaultValueFlag; absent
+        // that flag, a nullable column with no stored default reports NULL.
+        if !column
+            .field_type
+            .has_flag(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE)
+        {
+            match &column.default_value {
+                Some(tidb_executor::column_default::ColumnDefault::Value(Datum::Null)) => {
+                    clause.push_str(" DEFAULT NULL")
+                }
+                Some(default) => {
+                    // Go quotes every non-bit LITERAL default, integers included,
+                    // and prints the computed forms unquoted -- see
+                    // `ColumnDefault::show_create_clause` for which is which.
+                    let literal = match default {
+                        tidb_executor::column_default::ColumnDefault::Value(value) => {
+                            literal_column_default_text(
+                                value,
+                                column,
+                                ctx.show_default_conversion_flags(),
+                                &ctx.session_zone(),
+                            )
+                            .map_err(|_| DriverError::FieldGetDefaultFailed(column.name.clone()))?
+                            .unwrap_or_default()
+                        }
+                        _ => String::new(),
+                    };
+                    clause.push_str(&format!(
+                        " DEFAULT {}",
+                        default.show_create_clause(&column.field_type, &literal)
+                    ));
+                }
+                None if !not_null => clause.push_str(" DEFAULT NULL"),
+                None => {}
             }
-            Some(default) => {
-                // Go quotes every non-bit LITERAL default, integers included,
-                // and prints the computed forms unquoted -- see
-                // `ColumnDefault::show_create_clause` for which is which.
-                let literal = match default {
-                    tidb_executor::column_default::ColumnDefault::Value(value) => {
-                        literal_column_default_text(
-                            value,
-                            column,
-                            ctx.show_default_conversion_flags(),
-                            &ctx.session_zone(),
-                        )
-                        .map_err(|_| DriverError::FieldGetDefaultFailed(column.name.clone()))?
-                        .unwrap_or_default()
-                    }
-                    _ => String::new(),
-                };
-                clause.push_str(&format!(
-                    " DEFAULT {}",
-                    default.show_create_clause(&column.field_type, &literal)
-                ));
-            }
-            None if !not_null => clause.push_str(" DEFAULT NULL"),
-            None => {}
         }
         clauses.push(clause);
     }

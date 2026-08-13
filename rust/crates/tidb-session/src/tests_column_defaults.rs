@@ -1114,62 +1114,48 @@ fn a_fixed_width_binary_default_is_padded_to_the_columns_width() {
     );
 }
 
-/// PINS A REFUSAL. `ALTER TABLE ... ALTER COLUMN c DROP DEFAULT` is REFUSED by
-/// this tier rather than approximated, and this test exists so that the refusal
-/// cannot be forgotten: when the gap closes it FAILS, and the Go answers it
-/// carries -- captured, and asserted nowhere yet -- become its assertions.
-///
-/// Go's `DROP DEFAULT` is not "clear the default". `AlterColumn` sets
-/// `mysql.NoDefaultValueFlag`, and that flag is what a later `INSERT` reads:
-/// omitting the column is 1364 "Field 'a' doesn't have a default value" even on
-/// a NULLABLE column that would otherwise have taken NULL, and
-/// `SHOW CREATE TABLE` prints the column with NO `DEFAULT` clause at all rather
-/// than `DEFAULT NULL`. This tier models a default as "written or not written"
-/// with no such flag, so clearing it would silently answer NULL where TiDB
-/// raises 1364 -- a wrong answer in place of an error.
-///
-/// Captured from real TiDB through `rust/difftests/gorun`, verbatim:
-///
-/// ```text
-/// create table ti (a int)
-/// alter table ti alter column a drop default        OK
-/// insert into ti values ()                          ERR   (1364)
-/// show create table ti
-///   `a` int(11)                                     -- no DEFAULT clause
-///
-/// create table te (a enum('a','b'))
-/// alter table te alter column a drop default        OK
-/// insert into te values ()                          OK
-/// select * from te                                  ->  <nil>
-///
-/// create table te2 (a enum('a','b') not null)
-/// alter table te2 alter column a drop default       OK
-/// insert into te2 values ()                         OK
-/// select * from te2                                 ->  a
-/// ```
-///
-/// The 1364 is `errno.ErrNoDefaultForField`, named by the Go test itself.
 #[test]
-fn drop_default_is_refused_rather_than_approximated() {
+fn drop_default_preserves_the_no_default_column_state() {
     let mut session = Session::new();
     session.run("CREATE TABLE ti (a INT)").unwrap();
-    let error = session
-        .run("ALTER TABLE ti ALTER COLUMN a DROP DEFAULT")
-        .expect_err(
-            "DROP DEFAULT now succeeds: replace this test with the captured Go answers above -- \
-             `INSERT INTO ti VALUES ()` must be 1364 and SHOW CREATE must print `a` with no \
-             DEFAULT clause",
-        );
     assert!(
-        format!("{error:?}").contains("NoDefaultValueFlag"),
-        "refused for an unexpected reason: {error:?}"
+        session
+            .run("ALTER TABLE ti ALTER COLUMN a DROP DEFAULT")
+            .is_ok(),
+        "DROP DEFAULT must install the no-default flag"
     );
-    // The CONTROL: a default that was never written still behaves, so the
-    // refusal above is about DROP DEFAULT and not about the column.
+    assert_eq!(code(&mut session, "INSERT INTO ti VALUES ()"), Some(1364));
+    let create = show_create(&mut session, "ti");
+    assert!(create.contains("`a` int\n"), "{create}");
+    session
+        .run("ALTER TABLE ti ALTER COLUMN a SET DEFAULT 7")
+        .unwrap();
     session.run("INSERT INTO ti VALUES ()").unwrap();
     assert_eq!(
         rows(&mut session, "SELECT a FROM ti"),
+        vec![vec!["7".to_owned()]]
+    );
+
+    session.run("CREATE TABLE te (a ENUM('a','b'))").unwrap();
+    session
+        .run("ALTER TABLE te ALTER COLUMN a DROP DEFAULT")
+        .unwrap();
+    session.run("INSERT INTO te VALUES ()").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT a FROM te"),
         vec![vec!["NULL".to_owned()]]
+    );
+
+    session
+        .run("CREATE TABLE te2 (a ENUM('a','b') NOT NULL)")
+        .unwrap();
+    session
+        .run("ALTER TABLE te2 ALTER COLUMN a DROP DEFAULT")
+        .unwrap();
+    session.run("INSERT INTO te2 VALUES ()").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT a FROM te2"),
+        vec![vec!["a".to_owned()]]
     );
 }
 

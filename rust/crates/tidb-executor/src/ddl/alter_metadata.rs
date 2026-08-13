@@ -251,14 +251,6 @@ fn primary_key_index(table: &crate::kv_table::KvTable) -> Option<&str> {
 /// type, id, offset and every stored row are untouched, and rows already
 /// written keep whatever they hold. A column the table does not have is 1054.
 ///
-/// DEFERRED, and refused rather than approximated: `DROP DEFAULT`, and a
-/// DEFAULT that is an expression. Go's `DROP DEFAULT` does not merely clear
-/// the default -- it sets `mysql.NoDefaultValueFlag`, which turns a later
-/// `INSERT` that omits the column into 1364 "Field 'c1' doesn't have a
-/// default value" even for a NULLABLE column that would otherwise take NULL
-/// (recorded in `ddl/default_as_expression.result`). This tier models a
-/// column's default as "written or not written" with no such flag, so
-/// clearing it here would silently answer NULL where TiDB raises 1364.
 pub(crate) fn alter_column_default_action(
     catalog: &mut Catalog,
     database: &str,
@@ -281,16 +273,17 @@ pub(crate) fn alter_column_default_action(
             table: table_name.to_owned(),
         });
     };
+    let Some(expr) = default_value else {
+        let column = &mut table.columns[offset];
+        column.default_value = None;
+        column
+            .field_type
+            .add_flags(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE);
+        return Ok(());
+    };
     let field_type = table.columns[offset].field_type.clone();
     let column_info_version = table.columns[offset].column_info_version;
-
     let zone = &ctx.session_zone();
-    let Some(expr) = default_value else {
-        return Err(DriverError::unsupported(
-            "ALTER COLUMN ... DROP DEFAULT is not supported yet: it sets Go's \
-             NoDefaultValueFlag, which this tier does not model",
-        ));
-    };
     let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
         expr,
         &tidb_expr::rewriter::ZonedNoResolver(zone.clone()),
@@ -348,8 +341,10 @@ pub(crate) fn alter_column_default_action(
     )?;
     let KvColumn {
         default_value: stored,
+        field_type,
         ..
     } = &mut table.columns[offset];
     *stored = Some(crate::column_default::ColumnDefault::Value(prepared.stored));
+    field_type.del_flags(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE);
     Ok(())
 }
