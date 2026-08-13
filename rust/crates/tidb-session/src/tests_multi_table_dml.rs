@@ -585,25 +585,6 @@ fn multi_table_dml_keeps_view_sources_read_only() {
         1
     );
 
-    // `LATERAL` is refused BY NAME, not merely refused. Go RUNS both of these
-    // (`affected=1` each, measured through `mockstore`), so the gap is real
-    // and has to stay legible: an UNCORRELATED lateral subquery would run as
-    // an ordinary derived table if the refusal were dropped, and a
-    // CORRELATED one would come back as an unknown-column error instead --
-    // which an `is_err()` assertion cannot tell apart from this refusal.
-    for sql in [
-        "UPDATE r1 JOIN LATERAL (SELECT id FROM r2 WHERE id = r1.id) d ON 1=1 SET r1.v = 2",
-        "DELETE r1 FROM r1 JOIN LATERAL (SELECT id FROM r2 WHERE id = r1.id) d ON 1=1",
-        "UPDATE r1 JOIN LATERAL (SELECT 1 AS id) d ON 1=1 SET r1.v = 2",
-    ] {
-        let error = session.run(sql).unwrap_err().to_mysql_error();
-        assert_eq!(
-            error.message, "a LATERAL derived table is not supported in multi-table DML",
-            "{sql}"
-        );
-    }
-
-    // Nothing was half-applied.
     assert!(column(&mut session, "SELECT id, v FROM r1").is_empty());
 }
 
@@ -670,6 +651,40 @@ fn multi_table_dml_keeps_using_and_natural_join_rows_writable() {
         column(&mut session, "SELECT id, right_v FROM ur2 ORDER BY id"),
         ["1|7", "2|9"]
     );
+}
+
+/// Go turns a multi-table DML's `JOIN LATERAL` into an Apply: the derived
+/// query is evaluated against each outer row, but only the outer base table
+/// has a row identity that UPDATE or DELETE may target.
+#[test]
+fn multi_table_dml_rebinds_lateral_sources_for_every_outer_row() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE la (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session.run("CREATE TABLE lb (id INT PRIMARY KEY)").unwrap();
+    session.run("INSERT INTO la VALUES (1,10),(2,20)").unwrap();
+    session.run("INSERT INTO lb VALUES (1)").unwrap();
+
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE la t1 JOIN LATERAL (SELECT id FROM lb WHERE id = t1.id) d ON 1=1 SET t1.v = t1.v + 1"
+        ),
+        1
+    );
+    assert_eq!(
+        column(&mut session, "SELECT id, v FROM la ORDER BY id"),
+        ["1|11", "2|20"]
+    );
+    assert_eq!(
+        affected(
+            &mut session,
+            "DELETE t1 FROM la t1 JOIN LATERAL (SELECT id FROM lb WHERE id = t1.id) d ON 1=1"
+        ),
+        1
+    );
+    assert_eq!(column(&mut session, "SELECT id FROM la"), ["2"]);
 }
 
 /// A derived table is a READ source of a multi-table write, and the base

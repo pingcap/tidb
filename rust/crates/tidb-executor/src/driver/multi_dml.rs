@@ -86,15 +86,10 @@
 //! for the write phase. Go likewise restores the full child schema for
 //! `UPDATE`/`DELETE` after building the coalesced join condition.
 //!
-//! DEFERRED (documented, and refused rather than approximated): a `LATERAL`
-//! source anywhere in a multi-table DML's `FROM`.
-//!
-//! `LATERAL` is a MEASURED deferral rather than an assumed one: Go runs
-//! `UPDATE w t1 JOIN LATERAL (SELECT a, b FROM w WHERE a = t1.a - 10) t2 ON
-//! 1=1 SET t1.b = t2.b` and reports 3, and the matching `DELETE` likewise.
-//! Nothing in `tests/integrationtest` writes through a `LATERAL` source, and
-//! a correlated per-outer-row re-read is a different read from the one
-//! [`join_sources`] performs, so the refusal is loud and named instead.
+//! `LATERAL` derived sources are an Apply: their query is rebound and run for
+//! every left-row snapshot before the ordinary join/write logic consumes the
+//! resulting rows. The derived side remains read-only because it has no base
+//! row identity.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -116,6 +111,7 @@ enum RowId {
 /// it. This is Go's `updatableTableListResolver`/`collectTableName` decision,
 /// which both make by the same test -- `x.Source.(*ast.TableName)` -- and
 /// which is settled once here rather than at each write site.
+#[derive(Clone)]
 enum SourceOrigin {
     /// A base table, identified for writing back by schema and stored name.
     Base {
@@ -130,6 +126,7 @@ enum SourceOrigin {
 }
 
 /// One source participating in a multi-table DML statement's `FROM`.
+#[derive(Clone)]
 struct SourceTable {
     /// The name the statement qualifies it with: the alias when it has one.
     visible: String,
@@ -243,6 +240,24 @@ fn build_multi_source(
         // The single-relation wrapper the parser always produces.
         return Ok(left);
     };
+    if let tidb_ast::JoinNode::Derived {
+        subquery,
+        alias,
+        lateral: true,
+        column_names,
+    } = right_node
+    {
+        return join_lateral_source(
+            left,
+            join,
+            subquery,
+            alias.as_deref(),
+            column_names,
+            catalog,
+            current_db,
+            ctx,
+        );
+    }
     let right = build_multi_node(right_node, catalog, current_db, ctx)?;
     join_sources(left, right, join, ctx)
 }
@@ -343,6 +358,155 @@ fn scan_derived_table(
         }],
         rows: rows.into_iter().map(|row| (vec![None], row)).collect(),
     })
+}
+
+/// Applies a `LATERAL` derived table to every row of `left` before joining it
+/// into the full DML row. This is the value/identity analogue of
+/// [`super::from::build_lateral_join`]: the same correlation collector and
+/// binder are used, while [`join_sources`] keeps the outer base-row identity
+/// beside the values for a later UPDATE/DELETE.
+#[allow(clippy::too_many_arguments)]
+fn join_lateral_source(
+    left: MultiSource,
+    join: &tidb_ast::Join,
+    subquery: &tidb_ast::QueryStmt,
+    alias: Option<&str>,
+    column_names: &[String],
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<MultiSource, DriverError> {
+    // Keep Go `buildLateralJoin`'s accepted/rejected join shapes aligned with
+    // the SELECT path. A lateral source is an Apply, not an outer join.
+    if join.natural {
+        return Err(DriverError::InvalidLateralJoin(
+            "NATURAL JOIN is not supported with LATERAL",
+        ));
+    }
+    if !join.using.is_empty() {
+        return Err(DriverError::InvalidLateralJoin(
+            "USING clause is not supported with LATERAL",
+        ));
+    }
+    match join.tp {
+        tidb_ast::JoinType::Left => {
+            return Err(DriverError::InvalidLateralJoin(
+                "LEFT JOIN is not supported with LATERAL",
+            ))
+        }
+        tidb_ast::JoinType::Right => {
+            return Err(DriverError::InvalidLateralJoin(
+                "RIGHT JOIN is not supported with LATERAL",
+            ))
+        }
+        tidb_ast::JoinType::Cross => {}
+    }
+    let alias = alias.filter(|alias| !alias.is_empty());
+    let Some(alias) = alias else {
+        return Err(DriverError::DerivedMustHaveAlias);
+    };
+
+    let left_scope = left.scope();
+    let mut correlated = Vec::new();
+    collect_correlated_columns_query(
+        subquery,
+        &left_scope,
+        catalog,
+        current_db,
+        &mut correlated,
+        ctx,
+    );
+    let probe_resolver = ScopeResolver { scope: &left_scope };
+    let probes: Vec<(Vec<String>, Datum)> = correlated
+        .iter()
+        .map(|path| {
+            let datum = probe_resolver
+                .resolve(path)
+                .map_or(Datum::Null, |(_, field_type, _)| {
+                    super::from::probe_datum(&field_type)
+                });
+            (path.clone(), datum)
+        })
+        .collect();
+    let typed = bind_subquery_columns_query(subquery, &probes)?;
+    let (probe_columns, _) = run_query_stmt(&typed, catalog, current_db, ctx)?;
+    let mut columns = match super::from::derived_field_names_query(subquery) {
+        Some(names) if names.len() == probe_columns.len() => names
+            .into_iter()
+            .zip(&probe_columns)
+            .map(|(name, (_, field_type))| (name, field_type.clone()))
+            .collect(),
+        _ => probe_columns,
+    };
+    for (index, (name, _)) in columns.iter().enumerate() {
+        if columns[..index]
+            .iter()
+            .any(|(earlier, _)| earlier.eq_ignore_ascii_case(name))
+        {
+            return Err(DriverError::DuplicateColumnName(name.clone()));
+        }
+    }
+    super::from::rename_derived_columns(&mut columns, column_names)?;
+    let correlated_indices = correlated_path_indices(&correlated, &left_scope)?;
+
+    let derived = SourceTable {
+        visible: alias.to_owned(),
+        qualifiable_db: None,
+        origin: SourceOrigin::Derived,
+        columns,
+        default_meta: Vec::new(),
+        offset: 0,
+    };
+    let MultiSource {
+        tables: left_tables,
+        rows: left_rows,
+        zone,
+        tidb_info_len,
+        coalesced,
+        star,
+    } = left;
+    let new_left = |rows| MultiSource {
+        tables: left_tables.clone(),
+        rows,
+        zone: zone.clone(),
+        tidb_info_len,
+        coalesced: coalesced.clone(),
+        star: star.clone(),
+    };
+    let new_right = |rows| MultiSource {
+        tables: vec![derived.clone()],
+        rows,
+        zone: zone.clone(),
+        tidb_info_len,
+        coalesced: Vec::new(),
+        star: Vec::new(),
+    };
+
+    // Build the joined scope once even if the outer relation is empty. Each
+    // row below uses the same physical layout and conditions, but receives a
+    // freshly bound inner relation as Go's Apply does.
+    let mut result = join_sources(new_left(Vec::new()), new_right(Vec::new()), join, ctx)?;
+    for (left_ids, left_values) in left_rows {
+        let mut bindings = Vec::with_capacity(correlated.len());
+        for (path, index) in correlated.iter().zip(&correlated_indices) {
+            let value = left_values
+                .get(*index)
+                .cloned()
+                .ok_or(DriverError::unsupported("correlated column out of range"))?;
+            bindings.push((path.clone(), value));
+        }
+        let bound = bind_subquery_columns_query(subquery, &bindings)?;
+        let (_, rows) = run_query_stmt(&bound, catalog, current_db, ctx)?;
+        let right_rows = rows.into_iter().map(|row| (vec![None], row)).collect();
+        let joined = join_sources(
+            new_left(vec![(left_ids, left_values)]),
+            new_right(right_rows),
+            join,
+            ctx,
+        )?;
+        result.rows.extend(joined.rows);
+    }
+    Ok(result)
 }
 
 /// Reads one base table's rows together with their handles.
