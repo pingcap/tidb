@@ -47,12 +47,10 @@
 //!   join even over a unique `n2.a`, because NULL matches NULL there and two
 //!   NULL inner rows duplicate the outer one -- captured as four rows where
 //!   `=` gives three. This tier refuses it too, so the shapes agree.
-//! * **Duplicate-agnostic elimination is not ported.** `select distinct` over
-//!   a NON-unique join key is eliminated by TiDB (Go's second ground,
-//!   `GetDupAgnosticAggCols`) and is not here. The rows are identical either
-//!   way -- `DISTINCT` removes the duplicates the join created -- so this is
-//!   a plan gap only, pinned by [`distinct_over_a_non_unique_key_is_a_plan_gap`]
-//!   with TiDB's own answer recorded next to this tier's.
+//! * **Duplicate-agnostic elimination remains bounded.** `SELECT DISTINCT`
+//!   over a non-unique join key now takes Go's second ground and removes the
+//!   inner table. Grouped and hidden aggregate carriers still need the full
+//!   logical aggregate-column walk.
 
 #![cfg(test)]
 
@@ -209,16 +207,14 @@ fn a_referenced_inner_column_keeps_the_join() {
 }
 
 #[test]
-fn distinct_over_a_non_unique_key_is_a_plan_gap() {
+fn distinct_over_a_non_unique_key_eliminates_the_inner_table() {
     let mut session = duplicating_session();
-    // gorun: RS:1|1;2|2;<nil>|3, and TiDB's plan reads d1 ONLY -- Go's SECOND
-    // ground, duplicate-agnostic elimination, which is not ported. The ROWS
-    // agree because `DISTINCT` removes what the join duplicated; the plan
-    // does not, and this pins today's answer so the gap cannot go stale
-    // unnoticed.
+    // gorun: RS:1|1;2|2;<nil>|3, and TiDB's plan reads d1 ONLY -- Go's
+    // duplicate-agnostic outer-join ground. DISTINCT removes the duplicates
+    // the join would create, so the inner table is not observable.
     let sql = "select distinct d1.a, d1.b from d1 left outer join d2 on d1.a = d2.a";
     assert_eq!(rows(&mut session, sql), ["1|1", "2|2", "NULL|3"]);
-    assert_eq!(tables_read(&mut session, sql), ["d1", "d2"]);
+    assert_eq!(tables_read(&mut session, sql), ["d1"]);
 }
 
 /// The IN-subquery verdict this batch measured but did NOT change, kept as a
