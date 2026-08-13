@@ -961,13 +961,8 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // boolean.
         // `ast.Like` and `ast.Regexp` are in Go's `booleanFunctions` map, so
         // these operator forms are boolean-flagged. (`ilike` is not a Go boolean
-        // function but is a pre-existing alias of `like`.) `ast.RegexpLike` is a
-        // Go boolean function too, but the NAMED `REGEXP_LIKE(...)` call has no
-        // evaluator here (only the `REGEXP` operator does), so -- like
-        // `json_schema_valid` above -- it keeps no result-type arm and refuses at
-        // the rewrite door instead of gaining a ScalarFunction an expression
-        // index could accept unpopulated.
-        "like" | "ilike" | "regexp" => {
+        // function but is a pre-existing alias of `like`.)
+        "like" | "ilike" | "regexp" | "regexp_like" => {
             let mut ft = int();
             ft.set_flen(1);
             ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);

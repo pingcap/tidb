@@ -161,6 +161,41 @@ pub(crate) fn eval_func(
         }
         return Ok(Datum::Null);
     }
+    if name == "REGEXP_LIKE" && matches!(args.len(), 2 | 3) {
+        let string_arg = |index: usize| -> Result<Option<String>, EvalError> {
+            let value = eval_in(&args[index], cols)?;
+            let value = crate::cast::cast_arg_as_string(&value, None, cols)?;
+            if value.is_null() {
+                return Ok(None);
+            }
+            value
+                .sql_string()
+                .map(Some)
+                .map_err(|_| EvalError::Unsupported("invalid UTF-8 REGEXP_LIKE argument"))
+        };
+        let Some(text) = string_arg(0)? else {
+            return Ok(Datum::Null);
+        };
+        let Some(pattern) = string_arg(1)? else {
+            return Ok(Datum::Null);
+        };
+        let match_type = if args.len() == 3 {
+            let Some(match_type) = string_arg(2)? else {
+                return Ok(Datum::Null);
+            };
+            match_type
+        } else {
+            String::new()
+        };
+        return Ok(Datum::Int(i64::from(
+            crate::regexp::regexp_like_with_collation(
+                &text,
+                &pattern,
+                &match_type,
+                crate::ops::DERIVATION_FREE_COLLATION,
+            )?,
+        )));
+    }
     let vals: Vec<Datum> = args
         .iter()
         .map(|a| eval_in(a, cols))

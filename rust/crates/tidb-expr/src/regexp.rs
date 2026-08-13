@@ -15,8 +15,7 @@
 //! external dependency, the `regex` crate (see the workspace
 //! `Cargo.toml`'s own doc comment for why it's a high-fidelity match
 //! for real TiDB's own Go-`regexp`-package-based implementation, not
-//! an arbitrary choice). Called directly from `crate::eval_in`'s
-//! `Expr::Regexp` arm.
+//! an arbitrary choice). Shared by the operator and named-function evaluators.
 
 use regex::{Regex, RegexBuilder};
 
@@ -99,6 +98,23 @@ pub(crate) fn regexp_match_with_collation(
         ""
     };
     regexp_like(text, pattern, match_type)
+}
+
+/// `REGEXP_LIKE` applies the expression's derived collation before its
+/// user-supplied match type. A later `c`/`i` therefore wins, as Go's
+/// `getRegexpMatchType` requires.
+pub(crate) fn regexp_like_with_collation(
+    text: &str,
+    pattern: &str,
+    match_type: &str,
+    collation: tidb_datatype::Collation,
+) -> Result<bool, EvalError> {
+    let initial = if tidb_datatype::is_ci_collation(collation.name()) {
+        "i"
+    } else {
+        ""
+    };
+    regexp_like(text, pattern, &format!("{initial}{match_type}"))
 }
 
 #[cfg(test)]
