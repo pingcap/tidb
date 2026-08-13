@@ -88,24 +88,21 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // Its persisted boot image was installed synchronously above, before this
     // reloader and, crucially, before bind. This is independent of
     // privilege-cache policy.
-    // Statistics for every table this convergence node's boot catalog holds.
-    // Read before `spawn_catalog_reloader` consumes `startup`, so the boot
-    // load sees the exact table set the node is about to serve. Held in the
-    // `run_with_process_shutdown` tuple below so its reload thread stops
-    // before the authority's shutdown drain, the same discipline every other
-    // reloader here follows.
-    let (stats, stats_reloader) = crate::real_tikv_node::spawn_node_stats(
-        &startup,
-        &authority,
-        config.schema_lease,
-        CONTROL_PLANE_TIMEOUT,
-    )
-    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     let (catalog, reloader) =
         spawn_catalog_reloader(startup, authority.transaction_opener(), config.schema_lease)
             .map_err(|error| {
                 RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
             })?;
+    // Statistics always resolve targets from this published catalog, so the
+    // reload loop follows DDL-added tables and changed column types instead of
+    // freezing the boot image.
+    let (stats, stats_reloader) = crate::real_tikv_node::spawn_node_stats(
+        Arc::clone(&catalog),
+        &authority,
+        config.schema_lease,
+        CONTROL_PLANE_TIMEOUT,
+    )
+    .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
     // The watch only makes the reload *prompt*; the tick above is what makes
     // it correct. It is listed before the reloader in the tuple below so it is
     // dropped first: a watch may not outlive the thread it nudges.

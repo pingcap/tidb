@@ -307,17 +307,17 @@ impl RealTiKvSessionFactory {
         let schema_notifier = connect_schema_notifier(config);
         let (catalog, watcher, reloader, stats, stats_reloader) = match loaded {
             Some(catalog) => {
-                let (stats, stats_reloader) = spawn_node_stats(
-                    &catalog,
-                    &authority,
-                    config.schema_lease,
-                    PRODUCTION_CONTROL_PLANE_TIMEOUT,
-                )
-                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                 let (catalog, reloader) = spawn_catalog_reloader(
                     catalog,
                     authority.transaction_opener(),
                     config.schema_lease,
+                )
+                .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                let (stats, stats_reloader) = spawn_node_stats(
+                    Arc::clone(&catalog),
+                    &authority,
+                    config.schema_lease,
+                    PRODUCTION_CONTROL_PLANE_TIMEOUT,
                 )
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                 let watcher = spawn_schema_version_watch(config, &reloader);
@@ -1641,17 +1641,17 @@ pub(crate) fn connect_loaded_catalog_authority(
             // `--read-table` (no `--load-table` was given at all).
             let (catalog, watcher, reloader, stats, stats_reloader) = match loaded {
                 Some(catalog) => {
-                    let (stats, stats_reloader) = spawn_node_stats(
-                        &catalog,
-                        &authority,
-                        config.schema_lease,
-                        PRODUCTION_CONTROL_PLANE_TIMEOUT,
-                    )
-                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                     let (catalog, reloader) = spawn_catalog_reloader(
                         catalog,
                         authority.transaction_opener(),
                         config.schema_lease,
+                    )
+                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+                    let (stats, stats_reloader) = spawn_node_stats(
+                        Arc::clone(&catalog),
+                        &authority,
+                        config.schema_lease,
+                        PRODUCTION_CONTROL_PLANE_TIMEOUT,
                     )
                     .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                     let watcher = spawn_schema_version_watch(config, &reloader);

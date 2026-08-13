@@ -162,6 +162,20 @@ fn stats_targets(
         .collect()
 }
 
+/// Resolves the reload target set from the catalog currently published by the
+/// schema follower. Go's statistics handle does the equivalent on every
+/// cache update: a DDL must not leave a newly added table, or a changed column
+/// type, outside later `mysql.stats_*` reads.
+fn current_stats_targets(
+    catalog: &SharedCatalog,
+) -> Vec<(
+    i64,
+    std::collections::BTreeMap<i64, tidb_datatype::FieldType>,
+)> {
+    let current = catalog.load();
+    stats_targets(&current)
+}
+
 /// Boot-loads every table a loaded catalog holds and starts following the
 /// cluster's `mysql.stats_*` for them.
 ///
@@ -182,12 +196,12 @@ fn stats_targets(
 /// is no watch to keep prompt the way the catalog's `lease/2` tick is backed
 /// by an etcd watch: Go's own stats refresh has no such key either).
 pub(crate) fn spawn_node_stats(
-    catalog: &ClusterCatalog,
+    catalog: Arc<SharedCatalog>,
     authority: &ProductionReadProcessAuthority,
     schema_lease: Duration,
     timeout: Duration,
 ) -> Result<(Arc<SharedStats>, StatsReloader), StatsReloadError> {
-    let targets = stats_targets(catalog);
+    let targets = current_stats_targets(&catalog);
     let snapshot =
         load_stats_snapshot_from_cluster(&authority.transaction_opener(), timeout, &targets)
             .map_err(|error| StatsReloadError::Spawn(std::io::Error::other(error.to_string())))?;
@@ -202,6 +216,7 @@ pub(crate) fn spawn_node_stats(
         Arc::clone(&shared),
         schema_lease,
         Box::new(move || {
+            let targets = current_stats_targets(&catalog);
             load_stats_snapshot_from_cluster(&opener, timeout, &targets)
                 .map_err(|error| error.to_string())
         }),
@@ -246,4 +261,56 @@ pub(crate) fn spawn_catalog_reloader(
         }),
     )?;
     Ok((catalog, reloader))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_exec::cluster_catalog::LoadedDatabase;
+    use tidb_model::column::ColumnInfo;
+    use tidb_model::db::DBInfo;
+    use tidb_model::table_info::TableInfo;
+
+    fn catalog(table_id: i64, column_id: i64) -> ClusterCatalog {
+        let column = ColumnInfo::new(
+            column_id,
+            "value",
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        );
+        ClusterCatalog {
+            schema_version: table_id,
+            databases: vec![LoadedDatabase {
+                info: DBInfo::default(),
+                tables: vec![TableInfo {
+                    id: table_id,
+                    columns: vec![column].into(),
+                    ..TableInfo::default()
+                }],
+            }],
+        }
+    }
+
+    #[test]
+    fn statistics_reload_targets_follow_the_current_catalog() {
+        let shared = SharedCatalog::new(catalog(11, 101));
+        assert_eq!(
+            current_stats_targets(&shared)
+                .into_iter()
+                .map(|(table_id, columns)| (table_id, columns.into_keys().collect::<Vec<_>>()))
+                .collect::<Vec<_>>(),
+            vec![(11, vec![101])]
+        );
+
+        // A DDL publication must affect the next stats pass. The old path
+        // captured the first target vector and would have kept reading table
+        // 11 with its old type map forever.
+        shared.store(catalog(22, 202));
+        assert_eq!(
+            current_stats_targets(&shared)
+                .into_iter()
+                .map(|(table_id, columns)| (table_id, columns.into_keys().collect::<Vec<_>>()))
+                .collect::<Vec<_>>(),
+            vec![(22, vec![202])]
+        );
+    }
 }
