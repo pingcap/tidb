@@ -138,8 +138,8 @@
 //!
 //! The driver executes more than this recorder has ever printed: derived
 //! tables, lateral joins, `WITH` clauses, and set operations other than the
-//! direct `UNION ALL`/`UNION DISTINCT` shapes. Those build sites mark the
-//! trace refused rather
+//! direct sequences of `UNION ALL` and `UNION DISTINCT`. Those build sites
+//! mark the trace refused rather
 //! than inventing a node. Operators the driver builds but the recorder has
 //! never printed (an Apply for a correlated subquery, the window stage, an
 //! aggregate query's HAVING and final projection) record no node at all.
@@ -254,10 +254,10 @@ pub fn explain_select_stmt(
     Ok(render(recorded(trace)?, format))
 }
 
-/// Plain `EXPLAIN` over the direct `UNION ALL` and `UNION DISTINCT` shapes.
-/// The planning trace records every operand subtree but stops before the
-/// materialized set result is drained, matching Go `ExplainExec`'s build-only
-/// path.
+/// Plain `EXPLAIN` over a direct sequence of `UNION ALL` and `UNION
+/// DISTINCT`. The planning trace records every operand subtree but stops
+/// before the materialized set result is drained, matching Go `ExplainExec`'s
+/// build-only path.
 pub fn explain_set_opr_stmt(
     set_opr: &tidb_ast::SetOprStmt,
     catalog: &Catalog,
@@ -296,10 +296,10 @@ pub fn explain_analyze_select_stmt(
     Ok(render_analyze(recorded(trace)?, format))
 }
 
-/// `EXPLAIN ANALYZE` over the direct `UNION ALL` and `UNION DISTINCT` shapes.
-/// Go's generic Explain plan wraps a set-operation target just as it wraps a
-/// plain select; this tier records each already-built operand subtree and
-/// joins them under its
+/// `EXPLAIN ANALYZE` over a direct sequence of `UNION ALL` and `UNION
+/// DISTINCT`. Go's generic Explain plan wraps a set-operation target just as
+/// it wraps a plain select; this tier records each already-built operand
+/// subtree and joins them under its
 /// real `Union` root. Other set operations remain refused by
 /// [`run_set_opr_traced`] until their distinct physical operators land.
 pub fn explain_analyze_set_opr_stmt(

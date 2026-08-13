@@ -732,6 +732,40 @@ fn explain_analyze_union_distinct_separates_input_and_output_rows() {
     );
 }
 
+/// Go treats a DISTINCT union as a boundary: in `a UNION b UNION ALL c`, the
+/// first two terms feed `HashAgg(Union(...))`, then a second `Union` appends
+/// `c`. `buildUnion` deliberately preserves this order when it divides the
+/// terms into a distinct prefix and an ALL suffix.
+#[test]
+fn explain_analyze_mixed_union_keeps_the_distinct_prefix_separate() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1),(2),(3),(4)").unwrap();
+
+    let rows = row_text(session.run(
+        "EXPLAIN ANALYZE \
+         (SELECT a FROM t WHERE a <= 2) UNION \
+         (SELECT a FROM t WHERE a >= 2 AND a <= 3) UNION ALL \
+         (SELECT a FROM t WHERE a = 4)",
+    ));
+    assert_eq!(rows.len(), 12);
+    assert!(rows[0][0].starts_with("Union_"));
+    assert_eq!(rows[0][2], "4");
+    assert!(rows[1][0].contains("HashAgg_"));
+    assert_eq!(rows[1][2], "3");
+    assert!(rows[2][0].contains("Union_"));
+    assert_eq!(rows[2][2], "4");
+    assert_eq!(
+        rows.iter()
+            .skip(3)
+            .map(|row| row[2].as_str())
+            .collect::<Vec<_>>(),
+        vec!["2", "2", "2", "2", "2", "2", "1", "1", "1"]
+    );
+}
+
 /// EXPLAIN still refuses forms this tier cannot plan honestly and format names
 /// Go itself does not recognize.
 #[test]

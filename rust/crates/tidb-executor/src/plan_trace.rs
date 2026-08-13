@@ -391,19 +391,27 @@ impl PlanTrace {
     /// `Union` combines the operand pipelines, then `buildDistinct` places a
     /// root `HashAgg` above it.  Keeping both nodes here mirrors that plan
     /// shape instead of representing deduplication as a property of Union.
-    pub(crate) fn union_distinct(
+    pub(crate) fn union_distinct_prefix(
         &mut self,
-        terms: usize,
+        total_terms: usize,
+        distinct_terms: usize,
         columns: usize,
         input_rows: u64,
         output_rows: u64,
     ) {
-        if terms < 2 || columns == 0 || self.stack.len() < terms {
+        if distinct_terms < 2
+            || distinct_terms > total_terms
+            || columns == 0
+            || self.stack.len() < total_terms
+        {
             self.refuse("EXPLAIN recorded an incomplete UNION DISTINCT plan");
             return;
         }
-        let first_term = self.stack.len() - terms;
-        let children = self.stack.split_off(first_term);
+        let first_term = self.stack.len() - total_terms;
+        let children = self
+            .stack
+            .drain(first_term..first_term + distinct_terms)
+            .collect::<Vec<_>>();
         let union_estimate = children
             .iter()
             .try_fold(0.0, |sum, child| child.est_rows.map(|rows| sum + rows));
@@ -429,7 +437,7 @@ impl PlanTrace {
             distinct.act_rows = Some(Rc::new(Cell::new(output_rows)));
         }
         distinct.children.push(union);
-        self.stack.push(distinct);
+        self.stack.insert(first_term, distinct);
     }
 
     fn wrap(&mut self, name: &'static str, est: Est, info: String) {

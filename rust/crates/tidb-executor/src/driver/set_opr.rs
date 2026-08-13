@@ -63,11 +63,11 @@ pub fn run_set_opr_stmt(
     run_set_opr_traced(stmt, catalog, current_db, ctx, None)
 }
 
-/// The `UNION ALL` shape this trace can describe exactly: Go's
-/// `PhysicalUnionAll` has one independently planned child per term. Distinct
-/// union, EXCEPT, and INTERSECT require their own physical operators, so the
-/// EXPLAIN entry point keeps refusing those rather than rendering a false
-/// `Union` tree.
+/// The direct `UNION` forms this trace can describe exactly. Go's
+/// `buildUnion` splits the direct operand list into a DISTINCT prefix and an
+/// optional ALL suffix; the prefix becomes `HashAgg(Union(...))`, then a
+/// second `Union` appends the suffix. `INTERSECT` and `EXCEPT` need their own
+/// semi-join-like physical plans and remain refused.
 pub(crate) fn is_unordered_union_all(stmt: &tidb_ast::SetOprStmt) -> bool {
     stmt.with.is_none()
         && stmt.order_by.is_empty()
@@ -79,41 +79,65 @@ pub(crate) fn is_unordered_union_all(stmt: &tidb_ast::SetOprStmt) -> bool {
         })
 }
 
-/// The direct `UNION DISTINCT` shape Go builds as `HashAgg(Union(...))`.
-/// Mixed `UNION ALL`/`UNION DISTINCT` has a different grouping boundary in
-/// `buildUnion`, and `INTERSECT`/`EXCEPT` use semi-join-like plans, so each
-/// stays outside this focused trace until its physical shape is recorded.
-fn is_unordered_union_distinct(stmt: &tidb_ast::SetOprStmt) -> bool {
+fn direct_unordered_union(stmt: &tidb_ast::SetOprStmt) -> bool {
     stmt.with.is_none()
         && stmt.order_by.is_empty()
         && stmt.limit.is_none()
         && stmt.terms.len() > 1
-        && stmt.terms.iter().skip(1).all(|term| {
-            matches!(term.op, Some(tidb_ast::SetOp::Union { all: false }))
-                && matches!(term.body, tidb_ast::SetOprTermBody::Select(_))
-        })
+        && stmt
+            .terms
+            .iter()
+            .all(|term| matches!(term.body, tidb_ast::SetOprTermBody::Select(_)))
+        && stmt
+            .terms
+            .iter()
+            .skip(1)
+            .all(|term| matches!(term.op, Some(tidb_ast::SetOp::Union { .. })))
 }
 
 #[derive(Clone, Copy)]
 enum TracedSetOpr {
     UnionAll,
-    UnionDistinct,
+    /// Go's `firstUnionAllIdx`: the first term that stays OUTSIDE the
+    /// distinct prefix, after scanning the operators from right to left.
+    /// `terms.len()` is the pure DISTINCT form.
+    UnionWithDistinctPrefix {
+        distinct_terms: usize,
+    },
 }
 
 fn traced_set_opr(stmt: &tidb_ast::SetOprStmt) -> Option<TracedSetOpr> {
-    if is_unordered_union_all(stmt) {
-        Some(TracedSetOpr::UnionAll)
-    } else if is_unordered_union_distinct(stmt) {
-        Some(TracedSetOpr::UnionDistinct)
-    } else {
-        None
+    if !direct_unordered_union(stmt) {
+        return None;
     }
+    if is_unordered_union_all(stmt) {
+        return Some(TracedSetOpr::UnionAll);
+    }
+
+    // Exact `divideUnionSelectPlans` loop from Go's buildUnion: a DISTINCT
+    // operator makes every operand to its LEFT part of the distinct group;
+    // a later ALL suffix is appended after that group is deduplicated.
+    let mut first_union_all = 0;
+    for index in (1..stmt.terms.len()).rev() {
+        if first_union_all == 0
+            && !matches!(
+                stmt.terms[index].op,
+                Some(tidb_ast::SetOp::Union { all: true })
+            )
+        {
+            first_union_all = index + 1;
+        }
+    }
+    debug_assert!(first_union_all > 0);
+    Some(TracedSetOpr::UnionWithDistinctPrefix {
+        distinct_terms: first_union_all,
+    })
 }
 
-/// [`run_set_opr_stmt`] while retaining every direct `UNION ALL` or `UNION
-/// DISTINCT` operand in the plan trace. This is used by `EXPLAIN` and
-/// `EXPLAIN ANALYZE`; ordinary execution has no trace and remains
-/// allocation-free.
+/// [`run_set_opr_stmt`] while retaining every direct sequence of `UNION ALL`
+/// and `UNION DISTINCT` operands in the plan trace. This is used by
+/// `EXPLAIN` and `EXPLAIN ANALYZE`; ordinary execution has no trace and
+/// remains allocation-free.
 pub(crate) fn run_set_opr_traced(
     stmt: &tidb_ast::SetOprStmt,
     catalog: &Catalog,
@@ -168,7 +192,7 @@ pub(crate) fn run_set_opr_traced(
         }
     }
 
-    let input_rows = terms.iter().map(|(_, rows)| rows.len() as u64).sum();
+    let term_row_counts: Vec<u64> = terms.iter().map(|(_, rows)| rows.len() as u64).collect();
 
     // Each branch is then cast to the merged type, which is what makes an
     // INT branch united with a DECIMAL one read `1.0` rather than `1`.
@@ -178,13 +202,22 @@ pub(crate) fn run_set_opr_traced(
 
     let mut term_iter = terms.into_iter();
     let mut accumulated = term_iter.next().map(|(_, rows)| rows).unwrap_or_default();
-    for (term, (_, term_rows)) in stmt.terms.iter().skip(1).zip(term_iter) {
+    let distinct_terms = match trace_shape {
+        Some(TracedSetOpr::UnionWithDistinctPrefix { distinct_terms }) => Some(distinct_terms),
+        Some(TracedSetOpr::UnionAll) | None => None,
+    };
+    let distinct_input_rows = distinct_terms.map(|count| term_row_counts[..count].iter().sum());
+    let mut distinct_output_rows = None;
+    for (index, (term, (_, term_rows))) in stmt.terms.iter().skip(1).zip(term_iter).enumerate() {
         let Some(op) = term.op else {
             return Err(DriverError::unsupported(
                 "a set-operation term after the first needs an operator",
             ));
         };
         accumulated = combine_set_opr(op, accumulated, term_rows)?;
+        if distinct_terms == Some(index + 2) {
+            distinct_output_rows = Some(accumulated.len() as u64);
+        }
     }
 
     // The statement-level ORDER BY and LIMIT apply to the folded result.
@@ -202,12 +235,19 @@ pub(crate) fn run_set_opr_traced(
     if let Some(trace) = trace {
         match trace_shape.expect("a traced set operation was validated above") {
             TracedSetOpr::UnionAll => trace.union_all(stmt.terms.len(), accumulated.len() as u64),
-            TracedSetOpr::UnionDistinct => trace.union_distinct(
-                stmt.terms.len(),
-                columns.len(),
-                input_rows,
-                accumulated.len() as u64,
-            ),
+            TracedSetOpr::UnionWithDistinctPrefix { distinct_terms } => {
+                trace.union_distinct_prefix(
+                    stmt.terms.len(),
+                    distinct_terms,
+                    columns.len(),
+                    distinct_input_rows.expect("a distinct prefix has input rows"),
+                    distinct_output_rows.expect("a distinct prefix was folded"),
+                );
+                let all_terms = stmt.terms.len() - distinct_terms;
+                if all_terms > 0 {
+                    trace.union_all(all_terms + 1, accumulated.len() as u64);
+                }
+            }
         }
     }
     Ok((columns, accumulated))
