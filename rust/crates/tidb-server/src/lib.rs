@@ -200,8 +200,13 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
     tidb_util::printer::print_tidb_info(&config.version_info, &config.startup_config_json());
     let _system_time_monitor = start_system_time_monitor();
     let spill_storage = open_spill_storage(&config)?;
+    let memory_arbitrator = MemoryArbitratorAuthority::open(&config)?;
     if config.cluster_session {
-        return run_cluster_session_node_with_spill(config, spill_storage);
+        return run_cluster_session_node_with_spill(
+            config,
+            spill_storage,
+            memory_arbitrator.arbitrator(),
+        );
     }
     if !config.load_tables.is_empty() {
         return match connect_loaded_catalog_authority(&config)
@@ -215,6 +220,7 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
                     authority,
                     users,
                     Arc::clone(&spill_storage),
+                    memory_arbitrator.arbitrator(),
                     privilege_reloader,
                 )
             }
@@ -226,6 +232,7 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
                     authority,
                     users,
                     Arc::clone(&spill_storage),
+                    memory_arbitrator.arbitrator(),
                     privilege_reloader,
                 )
             }
@@ -242,8 +249,12 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
         )));
     }
     match config.read_tables.len() {
-        1 => run_configured_node_with_spill(config, spill_storage),
-        2 => run_configured_multi_node_with_spill(config, spill_storage),
+        1 => run_configured_node_with_spill(config, spill_storage, memory_arbitrator.arbitrator()),
+        2 => run_configured_multi_node_with_spill(
+            config,
+            spill_storage,
+            memory_arbitrator.arbitrator(),
+        ),
         count => Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
             format!("configured SQL node requires one or two tables, got {count}"),
         ))),
@@ -279,9 +290,139 @@ fn open_spill_storage(
         .map_err(RunConfiguredNodeError::Spill)
 }
 
+fn source_memory_limit(text: &str, total: Option<u64>) -> Result<i64, String> {
+    let parsed = if let Some(percent) = text.strip_suffix('%') {
+        let percent = percent
+            .parse::<u64>()
+            .map_err(|_| format!("invalid tidb_server_memory_limit {text:?}"))?;
+        if !(1..100).contains(&percent) {
+            return Err(format!("invalid tidb_server_memory_limit {text:?}"));
+        }
+        total
+            .ok_or_else(|| "host memory is required for a percentage limit".to_owned())?
+            .saturating_mul(percent)
+            / 100
+    } else {
+        let suffixes = [
+            ("KiB", 1_u64 << 10),
+            ("MiB", 1_u64 << 20),
+            ("GiB", 1_u64 << 30),
+            ("TiB", 1_u64 << 40),
+            ("KB", 1_u64 << 10),
+            ("MB", 1_u64 << 20),
+            ("GB", 1_u64 << 30),
+            ("TB", 1_u64 << 40),
+        ];
+        let (digits, scale) = suffixes
+            .iter()
+            .find_map(|(suffix, scale)| text.strip_suffix(suffix).map(|digits| (digits, *scale)))
+            .unwrap_or((text, 1));
+        digits
+            .parse::<u64>()
+            .ok()
+            .and_then(|value| value.checked_mul(scale))
+            .ok_or_else(|| format!("invalid tidb_server_memory_limit {text:?}"))?
+    };
+    let parsed = if parsed == 0 {
+        total.ok_or_else(|| "host memory is required for a zero limit".to_owned())?
+    } else {
+        parsed.max(512 << 20)
+    };
+    i64::try_from(parsed).map_err(|_| format!("tidb_server_memory_limit is too large: {text:?}"))
+}
+
+fn open_memory_arbitrator(
+    config: &NodeConfig,
+) -> Result<Option<Arc<tidb_util::memory::MemArbitrator>>, RunConfiguredNodeError> {
+    let mode = tidb_util::memory::parse_work_mode_text(&config.memory_arbitrator.mode);
+    if mode == tidb_util::memory::ArbitratorWorkMode::Disable {
+        return Ok(None);
+    }
+    let configured_limit = &config.memory_arbitrator.server_memory_limit;
+    let total = (configured_limit.ends_with('%') || configured_limit == "0")
+        .then(tidb_util::cgroup::effective_memory_limit)
+        .transpose()
+        .map_err(|error| {
+            RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
+        })?;
+    let limit = source_memory_limit(configured_limit, total)
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    let (soft_bytes, soft_ratio, soft_mode) =
+        tidb_util::memory::parse_soft_limit_text(&config.memory_arbitrator.soft_limit);
+    let state_dir = config.spill_storage.path.join("mem-arbitrator");
+    let arbitrator = tidb_util::memory::MemArbitrator::new(
+        limit,
+        tidb_util::memory::DEF_POOL_STATUS_SHARDS,
+        tidb_util::memory::DEF_POOL_QUOTA_SHARDS,
+        64 << 10,
+        Box::new(tidb_util::memory::RuntimeMemStateRecorder::new(&state_dir)),
+    );
+    arbitrator.set_soft_limit(soft_bytes, soft_ratio, soft_mode);
+    if !arbitrator.auto_run(
+        tidb_util::memory::MemArbitratorActions::default(),
+        tidb_util::memory::DEF_AWAIT_FREE_POOL_ALLOC_ALIGN_SIZE,
+        tidb_util::memory::DEF_AWAIT_FREE_POOL_SHARD_NUM,
+        tidb_util::memory::DEF_TASK_TICK_DUR,
+    ) {
+        return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
+            "failed to start global memory arbitrator".to_owned(),
+        )));
+    }
+    arbitrator.set_work_mode(mode);
+    Ok(Some(arbitrator))
+}
+
+pub(crate) struct MemoryArbitratorAuthority(Option<Arc<tidb_util::memory::MemArbitrator>>);
+
+impl MemoryArbitratorAuthority {
+    pub(crate) fn open(config: &NodeConfig) -> Result<Self, RunConfiguredNodeError> {
+        open_memory_arbitrator(config).map(Self)
+    }
+
+    pub(crate) fn arbitrator(&self) -> Option<Arc<tidb_util::memory::MemArbitrator>> {
+        self.0.as_ref().map(Arc::clone)
+    }
+}
+
+impl Drop for MemoryArbitratorAuthority {
+    fn drop(&mut self) {
+        if let Some(arbitrator) = self.0.as_ref() {
+            let _ = arbitrator.stop();
+        }
+    }
+}
+
 #[cfg(test)]
 mod skip_grant_startup_tests {
     use super::*;
+
+    #[test]
+    fn enabled_startup_memory_policy_builds_one_running_process_arbitrator() {
+        let mut config = NodeConfig::parse([
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--load-table",
+            "test.rows",
+            "--auth-file",
+            "/tmp/users.tsv",
+        ])
+        .unwrap();
+        config.memory_arbitrator.server_memory_limit = "1GiB".to_owned();
+        config.memory_arbitrator.mode = "priority".to_owned();
+        config.memory_arbitrator.soft_limit = "0.75".to_owned();
+
+        let arbitrator = open_memory_arbitrator(&config)
+            .unwrap()
+            .expect("an enabled policy starts a process controller");
+        assert_eq!(
+            arbitrator.work_mode(),
+            tidb_util::memory::ArbitratorWorkMode::Priority
+        );
+        assert_eq!(arbitrator.limit_u64(), 1 << 30);
+        assert_eq!(arbitrator.soft_limit(), 3 << 28);
+        assert!(arbitrator.stop());
+    }
 
     #[test]
     fn skip_grant_table_ignores_a_command_line_privilege_source_without_cluster_tables() {

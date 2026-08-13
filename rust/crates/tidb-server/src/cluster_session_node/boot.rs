@@ -43,12 +43,14 @@ use super::{
 /// accounts, served on the MySQL port.
 pub fn run_cluster_session_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     let spill_storage = crate::open_spill_storage(&config)?;
-    run_cluster_session_node_with_spill(config, spill_storage)
+    let memory_arbitrator = crate::MemoryArbitratorAuthority::open(&config)?;
+    run_cluster_session_node_with_spill(config, spill_storage, memory_arbitrator.arbitrator())
 }
 
 pub(crate) fn run_cluster_session_node_with_spill(
     config: NodeConfig,
     spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     let mut loaded = None;
     let authority = ProductionReadProcessAuthority::connect_with_catalog(
@@ -134,51 +136,54 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // reader.
     let cop_scans: Arc<dyn PushdownScanner> =
         Arc::new(CopScanSource::new(authority.transport_factory()));
-    let factory = Arc::new(
-        ClusterSessionFactory::new(
-            Arc::new(RealClusterTransactions::new(
-                authority.transaction_opener(),
-                CONTROL_PLANE_TIMEOUT,
-            )),
-            Arc::new(RealClusterDdl::new(
-                authority.transaction_opener(),
-                Arc::clone(&catalog),
-                CONTROL_PLANE_TIMEOUT,
-                crate::real_tikv_node::connect_schema_notifier(&config),
-            )),
-            Arc::new(RealClusterAccountWriter::new(
-                Arc::new(authority.transaction_opener()),
-                users.accounts(),
-                CONTROL_PLANE_TIMEOUT,
-                crate::real_tikv_node::connect_schema_notifier(&config),
-            )),
-            Arc::new(RealClusterSysvarWriter::new(
-                Arc::new(authority.transaction_opener()),
-                users.global_vars(),
-                CONTROL_PLANE_TIMEOUT,
-                crate::real_tikv_node::connect_schema_notifier(&config),
-                sysvar_publication_fence,
-            )),
-            Arc::new(RealClusterAnalyze::new(
-                Arc::new(authority.transaction_opener()),
-                Arc::clone(&stats),
-                CONTROL_PLANE_TIMEOUT,
-            )),
-            catalog,
+    let factory = ClusterSessionFactory::new(
+        Arc::new(RealClusterTransactions::new(
+            authority.transaction_opener(),
+            CONTROL_PLANE_TIMEOUT,
+        )),
+        Arc::new(RealClusterDdl::new(
+            authority.transaction_opener(),
+            Arc::clone(&catalog),
+            CONTROL_PLANE_TIMEOUT,
+            crate::real_tikv_node::connect_schema_notifier(&config),
+        )),
+        Arc::new(RealClusterAccountWriter::new(
+            Arc::new(authority.transaction_opener()),
             users.accounts(),
+            CONTROL_PLANE_TIMEOUT,
+            crate::real_tikv_node::connect_schema_notifier(&config),
+        )),
+        Arc::new(RealClusterSysvarWriter::new(
+            Arc::new(authority.transaction_opener()),
             users.global_vars(),
+            CONTROL_PLANE_TIMEOUT,
+            crate::real_tikv_node::connect_schema_notifier(&config),
+            sysvar_publication_fence,
+        )),
+        Arc::new(RealClusterAnalyze::new(
+            Arc::new(authority.transaction_opener()),
             Arc::clone(&stats),
-            // One registry for the whole node, so every connection inserting
-            // into a table allocates from the one range this node reserved --
-            // Go's per-`tidb-server` allocator, not a per-session one.
-            Arc::new(crate::cluster_auto_id_seam::ClusterTableAutoIds::new(
-                authority.transaction_opener(),
-                CONTROL_PLANE_TIMEOUT,
-            )),
-        )
-        .with_cop_scans(cop_scans)
-        .with_spill_storage(spill_storage),
-    );
+            CONTROL_PLANE_TIMEOUT,
+        )),
+        catalog,
+        users.accounts(),
+        users.global_vars(),
+        Arc::clone(&stats),
+        // One registry for the whole node, so every connection inserting
+        // into a table allocates from the one range this node reserved --
+        // Go's per-`tidb-server` allocator, not a per-session one.
+        Arc::new(crate::cluster_auto_id_seam::ClusterTableAutoIds::new(
+            authority.transaction_opener(),
+            CONTROL_PLANE_TIMEOUT,
+        )),
+    )
+    .with_cop_scans(cop_scans)
+    .with_spill_storage(spill_storage);
+    let factory = match memory_arbitrator {
+        Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
+        None => factory,
+    };
+    let factory = Arc::new(factory);
     let skipped = render_skipped(factory.boot_skipped_tables());
     let stats_receipt = stats.receipt();
 

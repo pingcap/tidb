@@ -1023,18 +1023,28 @@ fn emit_multi_query_transport_publication(
 /// Starts the existing listener/lifecycle against the two-relation factory.
 pub fn run_configured_multi_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     let spill_storage = crate::open_spill_storage(&config)?;
-    run_configured_multi_node_with_spill(config, spill_storage)
+    let memory_arbitrator = crate::MemoryArbitratorAuthority::open(&config)?;
+    run_configured_multi_node_with_spill(config, spill_storage, memory_arbitrator.arbitrator())
 }
 
 pub(crate) fn run_configured_multi_node_with_spill(
     config: NodeConfig,
     spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), RunConfiguredNodeError> {
     let users = crate::real_tikv_node::configured_account_store(&config)?;
     let (factory, authority) =
         RealTiKvMultiSessionFactory::connect(&config).map_err(RunConfiguredNodeError::Engine)?;
     let users = Arc::new(users);
-    run_bound_multi_node(config, factory, authority, users, spill_storage, None)
+    run_bound_multi_node(
+        config,
+        factory,
+        authority,
+        users,
+        spill_storage,
+        memory_arbitrator,
+        None,
+    )
 }
 
 /// Starts the same listener/lifecycle over an already-connected two-table
@@ -1050,11 +1060,17 @@ pub(crate) fn run_bound_multi_node(
     authority: ProductionReadProcessAuthority,
     users: Arc<ConfiguredUserStore>,
     spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
     privilege_reloader: Option<PrivilegeReloader>,
 ) -> Result<(), RunConfiguredNodeError> {
     let sysvar_reloader =
         crate::real_tikv_node::prepare_cluster_sysvar_runtime(&config, &users, &authority);
-    let factory = Arc::new(factory.with_spill_storage(spill_storage));
+    let factory = factory.with_spill_storage(spill_storage);
+    let factory = match memory_arbitrator {
+        Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
+        None => factory,
+    };
+    let factory = Arc::new(factory);
     let cluster_id = factory.cluster_id();
     let authority_id = factory.authority_id();
     let read_authority_id = factory.read_authority_id();
