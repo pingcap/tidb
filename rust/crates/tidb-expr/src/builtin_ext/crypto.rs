@@ -28,20 +28,6 @@
 //! inverse functions belong to the statement context and are not fabricated
 //! by this value-only dispatch.
 //!
-//! Deliberately not yet ported from `builtin_encryption.go` because their
-//! required session or binary-value contracts are not present:
-//! - `PASSWORD` (`builtinPasswordSig`): the value contract is ported below;
-//!   its deprecation warning remains a statement-context boundary because
-//!   this value-only family dispatch has no warning channel.
-//! - `VALIDATE_PASSWORD_STRENGTH` (`builtinValidatePasswordStrengthSig`):
-//!   ported below through the statement's current-user and GLOBAL sysvar
-//!   snapshot.
-//! - `ENCODE`/`DECODE` (`builtinEncodeSig`/`builtinDecodeSig`): deprecated
-//!   password-keyed stream crypt (`encrypt.SQLEncode`/`SQLDecode`) now has
-//!   its UTF-8/default-charset scalar value contract below; connection
-//!   charset/session warning behavior and arbitrary typed collation metadata
-//!   remain explicit boundaries.
-
 use std::io::{Read, Write};
 
 use flate2::read::ZlibDecoder;
