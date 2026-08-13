@@ -99,7 +99,7 @@ fn typed_getters_preserve_presence_and_use_defaults_only_when_needed() {
     assert_eq!(controls.get_bool(100), Some(true));
     assert_eq!(controls.get_bool(101), Some(true));
     assert_eq!(controls.get_bool(102), Some(false));
-    assert_eq!(controls.get_bool_with_default(999, true), true);
+    assert!(controls.get_bool_with_default(999, true));
     assert_eq!(controls.get_int(103), (-10, true, None));
     assert!(controls.get_int(104).2.is_some());
     assert_eq!(controls.get_int_with_default(104, 12345), 12345);
