@@ -134,13 +134,10 @@ fn agg_output_resolver(state: &AggPipelineState, ctx: &crate::StmtContext) -> Ag
 /// Runs an aggregate `SELECT` (`GROUP BY` and/or aggregate select fields)
 /// through [`HashAggExec`].
 ///
-/// Faithful scope (deferred items documented): `COUNT`/`SUM` (Go models
-/// `COUNT(*)` as the literal-`1` argument, which counts every row identically);
-/// any non-aggregate select field becomes a `FIRST_ROW` carrier (Go's planner
-/// does the same, once [`super::only_full_group_by`] has established the
-/// group determines a value for it); `DISTINCT`
-/// and other aggregate functions are rejected as unsupported. `WITH ROLLUP`
-/// runs through [`run_rollup_aggregate`].
+/// Aggregate functions lower through [`build_agg_func`]. Any non-aggregate
+/// select field becomes a `FIRST_ROW` carrier once
+/// [`super::only_full_group_by`] has established that its group determines a
+/// value. `WITH ROLLUP` runs through [`run_rollup_aggregate`].
 /// `HAVING` and `ORDER BY` run over the aggregation's output, as in Go: an
 /// aggregate appearing only in those clauses is appended as a hidden output
 /// column and trimmed by a final projection. `GROUPING()` rides the same
