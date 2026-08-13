@@ -55,6 +55,12 @@ pub enum EvalError {
     /// Both kinds are carried because the identity of the unhandled kind is
     /// the entire diagnostic value; a fixed string names neither.
     UnsupportedOperandPair(tidb_datatype::DatumKind, tidb_datatype::DatumKind),
+    /// Go `types.VectorFloat32` returns a value-domain error for an invalid
+    /// vector operation (for example unequal dimensions or an elementwise
+    /// overflow). The text is the source operation's diagnostic, which SQL
+    /// exposes as a generic execution error rather than changing it into an
+    /// unrelated arithmetic-overflow class.
+    Vector(String),
     /// An integer literal did not fit the supported integer domain.
     IntOverflow,
     /// A floating-point arithmetic result overflowed to infinity.

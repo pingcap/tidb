@@ -153,6 +153,7 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         EvalError::UnsupportedOperandPair(lhs, rhs) => MysqlError::unknown(format!(
             "a binary operation between a {lhs:?} and a {rhs:?} value is not supported yet"
         )),
+        EvalError::Vector(message) => MysqlError::unknown(message),
     }
 }
 
@@ -285,6 +286,9 @@ mod tests {
                 DatumKind::Float32,
                 DatumKind::Json,
             )),
+            ExecError::Eval(EvalError::Vector(
+                "vectors have different dimensions: 1 and 2".to_owned(),
+            )),
         ] {
             let mysql = rendered(error.clone());
             assert_eq!(mysql.code, 1105, "{error:?}");
@@ -307,6 +311,13 @@ mod tests {
             )))
             .message,
             "a binary operation between a Float32 and a Json value is not supported yet"
+        );
+        assert_eq!(
+            rendered(ExecError::Eval(EvalError::Vector(
+                "vectors have different dimensions: 1 and 2".to_owned(),
+            )))
+            .message,
+            "vectors have different dimensions: 1 and 2"
         );
     }
 

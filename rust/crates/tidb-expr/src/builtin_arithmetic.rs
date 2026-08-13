@@ -264,6 +264,20 @@ pub fn infer_arithmetic_type(name: &str, lhs: &Expression, rhs: &Expression) -> 
     let rhs_tp = numeric_context_result_type(rhs);
     let a = lhs.static_type();
     let b = rhs.static_type();
+    if a.is_some_and(|field_type| field_type.eval_type().is_vector_kind())
+        || b.is_some_and(|field_type| field_type.eval_type().is_vector_kind())
+    {
+        return match name {
+            // Go's function classes select `ETVectorFloat32` for BOTH
+            // arguments and the result as soon as either operand is vector.
+            "plus" | "minus" | "mul" => Some(
+                FieldTypeBuilder::new()
+                    .with_code(FieldTypeCode::VectorFloat32)
+                    .build(),
+            ),
+            _ => None,
+        };
+    }
     let real_or_decimal = |is_multiply: bool| -> FieldType {
         if lhs_tp == EvalType::Real || rhs_tp == EvalType::Real {
             let mut ret = new_return_field_type(EvalType::Real);
@@ -370,6 +384,7 @@ pub fn infer_arithmetic_type(name: &str, lhs: &Expression, rhs: &Expression) -> 
 mod tests {
     use super::*;
     use crate::constant::Constant;
+    use tidb_datatype::VectorFloat32;
 
     fn int_expr(v: i64) -> Expression {
         Expression::Constant(Constant::new(
@@ -391,6 +406,30 @@ mod tests {
                 .decimal_set(UNSPECIFIED_LENGTH)
                 .build(),
         ))
+    }
+
+    fn vector_expr(v: Vec<f32>) -> Expression {
+        Expression::Constant(Constant::new(
+            Datum::new_vector_float32(VectorFloat32::must_create(v)),
+            FieldTypeBuilder::new()
+                .with_code(FieldTypeCode::VectorFloat32)
+                .build(),
+        ))
+    }
+
+    #[test]
+    fn vector_arithmetic_keeps_the_vector_return_type() {
+        for name in ["plus", "minus", "mul"] {
+            assert_eq!(
+                infer_arithmetic_type(name, &vector_expr(vec![1.0]), &int_expr(1))
+                    .expect("vector signature"),
+                FieldTypeBuilder::new()
+                    .with_code(FieldTypeCode::VectorFloat32)
+                    .build(),
+                "{name}"
+            );
+        }
+        assert!(infer_arithmetic_type("div", &vector_expr(vec![1.0]), &int_expr(1)).is_none());
     }
 
     // Go TestSetFlenDecimal4RealOrDecimal.

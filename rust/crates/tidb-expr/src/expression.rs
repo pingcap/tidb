@@ -614,7 +614,7 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::collections::{BTreeMap, BTreeSet};
     use tidb_chunk::chunk::Chunk;
-    use tidb_datatype::{BinaryJSON, Datum, FieldType, FieldTypeCode};
+    use tidb_datatype::{BinaryJSON, Datum, FieldType, FieldTypeCode, VectorFloat32};
 
     fn null_reject_column(id: i64, field_type: FieldType) -> Expression {
         Expression::Column(Column::new(id, field_type))
@@ -1226,6 +1226,26 @@ mod tests {
             vec![one(), one()],
         ));
         assert_eq!(plus.eval(&NoColumns, row).unwrap(), Datum::Int(2));
+
+        // The vector arithmetic signatures are regular scalar functions too:
+        // their declared return type and their value stay in the vector
+        // domain all the way through ScalarFunction::eval.
+        let vector_type = FieldType::new(FieldTypeCode::VectorFloat32);
+        let vector = |values| {
+            Expression::Constant(Constant::new(
+                Datum::new_vector_float32(VectorFloat32::must_create(values)),
+                vector_type.clone(),
+            ))
+        };
+        let vector_plus = Expression::ScalarFunction(ScalarFunction::new(
+            tidb_ast::CiString::new("plus"),
+            vector_type.clone(),
+            vec![vector(vec![1.0, 2.0]), vector(vec![3.0, 4.0])],
+        ));
+        assert_eq!(
+            vector_plus.eval(&NoColumns, row).unwrap(),
+            Datum::new_vector_float32(VectorFloat32::must_create(vec![4.0, 6.0]))
+        );
 
         // Nested: (1 + 1) + 1 = 3.
         let nested = Expression::ScalarFunction(ScalarFunction::new(

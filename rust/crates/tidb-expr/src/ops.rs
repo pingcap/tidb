@@ -262,6 +262,41 @@ pub(crate) fn eval_binary_full(
             _ => {}
         }
     }
+    // Go's plus/minus/multiply function classes select their vector signature
+    // as soon as EITHER argument is `ETVectorFloat32`, then cast BOTH inputs
+    // into that domain. That makes a vector plus NULL yield NULL and permits
+    // a vector text operand through the normal vector conversion; every other
+    // operator remains outside the vector arithmetic signature family.
+    if matches!(l, Datum::VectorFloat32(_)) || matches!(r, Datum::VectorFloat32(_)) {
+        if !matches!(op, Plus | Minus | Mul) {
+            return Err(EvalError::UnsupportedOperandPair(l.kind(), r.kind()));
+        }
+        if l == Datum::Null || r == Datum::Null {
+            return Ok(Datum::Null);
+        }
+        let vector_type =
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VectorFloat32);
+        let as_vector = |value: Datum| -> Result<tidb_datatype::VectorFloat32, EvalError> {
+            match value
+                .convert_to(&vector_type, tidb_datatype::ConversionFlags::default())
+                .map_err(|error| EvalError::Vector(error.to_string()))?
+                .value
+            {
+                Datum::VectorFloat32(vector) => Ok(vector),
+                _ => unreachable!("a VectorFloat32 conversion returns a vector datum"),
+            }
+        };
+        let left = as_vector(l)?;
+        let right = as_vector(r)?;
+        let result = match op {
+            Plus => left.add(&right),
+            Minus => left.sub(&right),
+            Mul => left.mul(&right),
+            _ => unreachable!("vector arithmetic operator was guarded"),
+        }
+        .map_err(|error| EvalError::Vector(error.to_string()))?;
+        return Ok(Datum::new_vector_float32(result));
+    }
     // Go builds AND/OR/XOR with ETInt arguments, so each operand first takes
     // MySQL's numeric-prefix truthiness path. This must precede the ordinary
     // string comparison branch: string-vs-string is a binary collation
@@ -1166,6 +1201,47 @@ mod tests {
     };
     use crate::{Datum, Decimal, EvalError};
     use tidb_ast::BinaryOp;
+    use tidb_datatype::VectorFloat32;
+
+    fn vector(values: Vec<f32>) -> Datum {
+        Datum::new_vector_float32(VectorFloat32::must_create(values))
+    }
+
+    #[test]
+    fn vector_arithmetic_uses_the_source_elementwise_signatures() {
+        assert_eq!(
+            eval_binary(
+                BinaryOp::Plus,
+                vector(vec![1.0, 2.0]),
+                vector(vec![3.0, 4.0])
+            ),
+            Ok(vector(vec![4.0, 6.0]))
+        );
+        assert_eq!(
+            eval_binary(
+                BinaryOp::Minus,
+                vector(vec![3.0, 4.0]),
+                vector(vec![1.0, 2.0])
+            ),
+            Ok(vector(vec![2.0, 2.0]))
+        );
+        assert_eq!(
+            eval_binary(
+                BinaryOp::Mul,
+                vector(vec![3.0, 4.0]),
+                vector(vec![2.0, 0.5])
+            ),
+            Ok(vector(vec![6.0, 2.0]))
+        );
+        assert_eq!(
+            eval_binary(BinaryOp::Plus, vector(vec![1.0]), Datum::Null),
+            Ok(Datum::Null)
+        );
+        assert!(matches!(
+            eval_binary(BinaryOp::Plus, vector(vec![1.0]), vector(vec![1.0, 2.0])),
+            Err(EvalError::Vector(message)) if message == "vectors have different dimensions: 1 and 2"
+        ));
+    }
 
     /// A `Columns` resolver that keeps every warning it is handed, so a test
     /// can assert the CODE, the exact MESSAGE, and the COUNT.
@@ -1358,9 +1434,8 @@ mod tests {
     /// The third escape from the same catch-all, closed before it happened.
     ///
     /// `Float32` and `Json` each reached the integer-only residue and aborted
-    /// the PROCESS -- every connection, not just the offending one. `Raw` and
-    /// `VectorFloat32` are the kinds still unclaimed by any dispatch, and
-    /// they were on exactly the same track. What each one hit differed by
+    /// the PROCESS -- every connection, not just the offending one. `Raw`
+    /// remains unclaimed by any dispatch. What each one hit differed by
     /// operator, which is why the guard is one check rather than several:
     /// `Div`/`Decimal` panicked inside `to_decimal`'s `.expect`, a
     /// string comparison silently substituted `0.0` and returned a WRONG
@@ -1373,35 +1448,57 @@ mod tests {
     fn unclaimed_datum_kinds_report_an_error_instead_of_aborting_or_guessing() {
         use tidb_datatype::{DatumKind, VectorFloat32};
         let raw = || Datum::Raw(vec![0x08, 0x02]);
-        let vector = || Datum::VectorFloat32(VectorFloat32::must_create(vec![1.0, 2.0]));
-        for (name, operand, kind) in [
-            ("raw", raw as fn() -> Datum, DatumKind::Raw),
-            ("vector", vector as fn() -> Datum, DatumKind::VectorFloat32),
+        for op in [
+            BinaryOp::Eq,
+            BinaryOp::Lt,
+            BinaryOp::Plus,
+            BinaryOp::Div,
+            BinaryOp::Mul,
         ] {
-            for op in [
-                BinaryOp::Eq,
-                BinaryOp::Lt,
-                BinaryOp::Plus,
-                BinaryOp::Div,
-                BinaryOp::Mul,
-            ] {
-                assert_eq!(
-                    eval_binary(op, operand(), Datum::Int(1)),
-                    Err(EvalError::UnsupportedOperandPair(kind, DatumKind::Int)),
-                    "{name} {op:?} int"
-                );
-                assert_eq!(
-                    eval_binary(op, Datum::Decimal(Decimal::from_int(3)), operand()),
-                    Err(EvalError::UnsupportedOperandPair(DatumKind::Decimal, kind)),
-                    "decimal {op:?} {name}"
-                );
-            }
+            assert_eq!(
+                eval_binary(op, raw(), Datum::Int(1)),
+                Err(EvalError::UnsupportedOperandPair(
+                    DatumKind::Raw,
+                    DatumKind::Int
+                )),
+                "raw {op:?} int"
+            );
+            assert_eq!(
+                eval_binary(op, Datum::Decimal(Decimal::from_int(3)), raw()),
+                Err(EvalError::UnsupportedOperandPair(
+                    DatumKind::Decimal,
+                    DatumKind::Raw
+                )),
+                "decimal {op:?} raw"
+            );
+        }
+
+        let vector_datum = Datum::VectorFloat32(VectorFloat32::must_create(vec![1.0, 2.0]));
+        for op in [BinaryOp::Eq, BinaryOp::Lt, BinaryOp::Div] {
+            assert_eq!(
+                eval_binary(op, vector_datum.clone(), Datum::Int(1)),
+                Err(EvalError::UnsupportedOperandPair(
+                    DatumKind::VectorFloat32,
+                    DatumKind::Int
+                )),
+                "vector {op:?} int"
+            );
+        }
+        for op in [BinaryOp::Plus, BinaryOp::Mul] {
+            assert!(matches!(
+                eval_binary(op, vector_datum.clone(), Datum::Int(1)),
+                Err(EvalError::Vector(_))
+            ));
         }
         // A vector compared with a STRING is the silent-wrong-answer case:
         // `to_f64_with_mysql_string` used to read the vector as `0.0`, so
         // `vector = '0'` answered TRUE. It is an error now.
         assert_eq!(
-            eval_binary(BinaryOp::Eq, vector(), Datum::Bytes(b"0".to_vec()),),
+            eval_binary(
+                BinaryOp::Eq,
+                vector(vec![1.0, 2.0]),
+                Datum::Bytes(b"0".to_vec()),
+            ),
             Err(EvalError::UnsupportedOperandPair(
                 DatumKind::VectorFloat32,
                 DatumKind::Bytes
