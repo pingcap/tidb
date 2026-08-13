@@ -252,8 +252,8 @@ impl LeafDemand {
     /// Adds every column reference of one `SELECT`, its `FROM` included.
     fn add_select(&mut self, select: &SelectStmt) {
         // A CTE introduces relation names this walk cannot tell apart from
-        // the leaves below it, and `VALUES`/`WITH ROLLUP` each name columns
-        // through machinery outside the expression tree.
+        // the leaves below it, and `VALUES` names columns through machinery
+        // outside the expression tree.
         if self.reject_select_shape(select) {
             return;
         }
@@ -266,7 +266,7 @@ impl LeafDemand {
     }
 
     fn reject_select_shape(&mut self, select: &SelectStmt) -> bool {
-        let rejected = select.with.is_some() || !select.values.is_empty() || select.rollup;
+        let rejected = select.with.is_some() || !select.values.is_empty();
         if rejected {
             self.all = true;
         }
@@ -684,6 +684,18 @@ mod tests {
             vec![2],
             "the other side of `t1.*` is still charged only its ON column"
         );
+    }
+
+    #[test]
+    fn rollup_charges_only_grouping_and_aggregate_inputs() {
+        let sql = "select t1.a, dt.key_a, dt.sum_b from t1 join (\
+            select t2.a as key_a, sum(t3.b) as sum_b \
+            from t2 join t3 on t2.a = t3.a \
+            group by t2.a with rollup\
+          ) dt on t1.a = dt.key_a";
+        assert_eq!(needed_of(sql, "t1", &["a", "b", "c"]), vec![0]);
+        assert_eq!(needed_of(sql, "t2", &["a", "b", "c"]), vec![0]);
+        assert_eq!(needed_of(sql, "t3", &["a", "b", "c"]), vec![0, 1]);
     }
 
     /// A correlated reference lives inside a subquery, and it names a column
