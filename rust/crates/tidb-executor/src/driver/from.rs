@@ -443,9 +443,6 @@ fn leaf_can_keep_order(
 /// A `LATERAL` derived table on the right of a join is not a join at all but
 /// an Apply, so it leaves this path early -- see `build_lateral_join`.
 ///
-/// DEFERRED (documented): `USING`, `NATURAL`, and `STRAIGHT_JOIN`'s ordering
-/// guarantee.
-///
 /// `trace` records the operator each branch commits to, so `EXPLAIN` prints
 /// the FROM clause the driver actually built rather than a second guess at
 /// it. A shape the recorder has never printed (a derived table, a lateral
