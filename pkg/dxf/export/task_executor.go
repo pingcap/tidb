@@ -46,9 +46,8 @@ func NewExportTaskExecutor(ctx context.Context, task *proto.Task, param taskexec
 	return e
 }
 
-// IsIdempotent implements taskexecutor.Extension. A subtask's chunks have fixed
-// key ranges and file names at a fixed snapshot, so a retry overwrites the same
-// files.
+// IsIdempotent implements taskexecutor.Extension. Chunk file names are fixed at
+// split, so a retry overwrites the same files.
 func (*exportTaskExecutor) IsIdempotent(*proto.Subtask) bool {
 	return true
 }
@@ -98,10 +97,9 @@ func (e *dumpStepExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-// RunSubtask implements execute.StepExecutor. It runs a worker pool that pulls
-// the subtask's chunks from a queue and exports each, mirroring IMPORT INTO:
-// the concurrency is the subtask's allocated CPU capacity, and because a chunk's
-// file names are fixed at split time the worker count never affects the output.
+// RunSubtask implements execute.StepExecutor. A worker pool (sized to the
+// subtask's CPU capacity, like IMPORT INTO) pulls the subtask's chunks from a
+// queue and exports each.
 func (e *dumpStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	stMeta := &SubtaskMeta{}

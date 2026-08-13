@@ -15,11 +15,14 @@
 package export
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/dumpformat/csvfile"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -55,27 +58,77 @@ func TestFieldKinds(t *testing.T) {
 
 func TestRowEncoder(t *testing.T) {
 	vt := types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).SetCharset("utf8mb4").SetCollate("utf8mb4_bin").Build()
-	tps := []*types.FieldType{
-		types.NewFieldType(mysql.TypeLong),
-		&vt,
-	}
+	dt := types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(10).SetDecimal(2).Build()
+	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLong), &vt, &dt}
 	colInfos := []*model.ColumnInfo{
 		{Name: ast.NewCIStr("a"), FieldType: *tps[0]},
 		{Name: ast.NewCIStr("b"), FieldType: *tps[1]},
+		{Name: ast.NewCIStr("c"), FieldType: *tps[2]},
 	}
+	dec := new(types.MyDecimal)
+	require.NoError(t, dec.FromString([]byte("3.14")))
+
 	c := chunk.NewChunkWithCapacity(tps, 2)
 	c.AppendInt64(0, 123)
 	c.AppendString(1, `a"b`) // raw value; csvfile does the escaping, the encoder does not
+	c.AppendMyDecimal(2, dec)
 	c.AppendInt64(0, 456)
 	c.AppendNull(1)
+	c.AppendMyDecimal(2, dec)
 
 	enc := newRowEncoder("tbl", colInfos)
 
 	got, err := enc.encode(c.GetRow(0))
 	require.NoError(t, err)
-	require.Equal(t, []sql.RawBytes{sql.RawBytes("123"), sql.RawBytes(`a"b`)}, got)
+	require.Equal(t, []sql.RawBytes{sql.RawBytes("123"), sql.RawBytes(`a"b`), sql.RawBytes("3.14")}, got)
 
 	got, err = enc.encode(c.GetRow(1))
 	require.NoError(t, err)
-	require.Equal(t, []sql.RawBytes{sql.RawBytes("456"), nil}, got) // NULL -> nil
+	require.Equal(t, []sql.RawBytes{sql.RawBytes("456"), nil, sql.RawBytes("3.14")}, got) // NULL -> nil
+}
+
+func TestChunkWriterRotation(t *testing.T) {
+	ctx := context.Background()
+	store := objstore.NewMemStorage()
+	w := &chunkWriter{
+		ctx: ctx, objStore: store, fileSize: 20,
+		db: "db", table: "t", ordinal: 5,
+		kinds: []csvfile.FieldKind{csvfile.KindNumber},
+	}
+	// Each row is "1234567\n" (8 bytes); FileSize 20 cuts a new file after every
+	// third row.
+	for range 9 {
+		require.NoError(t, w.writeRow([]sql.RawBytes{sql.RawBytes("1234567")}))
+	}
+	require.NoError(t, w.close())
+
+	names := map[string]int64{}
+	var total int64
+	require.NoError(t, store.WalkDir(ctx, &storeapi.WalkOption{}, func(p string, sz int64) error {
+		names[p] = sz
+		total += sz
+		return nil
+	}))
+	require.Greater(t, len(names), 1)                  // rotated across files
+	require.Contains(t, names, "db.t.00000050000.csv") // ordinal 5, file 0
+	require.Contains(t, names, "db.t.00000050001.csv") // file 1
+	require.Equal(t, w.written, total)                 // tracked bytes == sum of file sizes
+}
+
+func TestChunkWriterEmpty(t *testing.T) {
+	ctx := context.Background()
+	store := objstore.NewMemStorage()
+	w := &chunkWriter{
+		ctx: ctx, objStore: store, fileSize: 20,
+		db: "db", table: "t", ordinal: 0,
+		kinds: []csvfile.FieldKind{csvfile.KindNumber},
+	}
+	require.NoError(t, w.close()) // no rows written
+
+	cnt := 0
+	require.NoError(t, store.WalkDir(ctx, &storeapi.WalkOption{}, func(string, int64) error {
+		cnt++
+		return nil
+	}))
+	require.Equal(t, 0, cnt) // empty chunk writes no file
 }

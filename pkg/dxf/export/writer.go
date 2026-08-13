@@ -31,11 +31,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
+// Per-file multipart upload: a cross-region write is per-connection RTT-bound,
+// so a file needs many parts in flight to use the bandwidth.
 const (
-	// uploadConcurrency and uploadPartSize configure each output file's
-	// concurrent multipart upload. A cross-region object-store write is
-	// per-connection RTT-bound, so a single file needs many parts in flight to
-	// use the bandwidth.
 	uploadConcurrency = 16
 	uploadPartSize    = 8 * 1024 * 1024
 )
@@ -81,9 +79,8 @@ func fileName(db, table string, ordinal, file int) string {
 }
 
 // rowEncoder turns a chunk.Row into the per-column raw byte values csvfile
-// expects. FormatValueText's result is backed by the encoder's shared buffer
-// and overwritten on the next call, so values are copied into a stable row
-// buffer before being sliced.
+// expects. FormatValueText reuses a shared buffer, so each value is copied into
+// a stable row buffer before the row is sliced out of it.
 type rowEncoder struct {
 	cols  []textrow.ColumnInfo
 	enc   *textrow.ResultEncoder
@@ -203,8 +200,7 @@ func (w *chunkWriter) close() error {
 	return w.closeFile()
 }
 
-// wrappedWriter adapts a context-carrying objectio.Writer to a plain io.Writer
-// so csvfile (which is stdlib-only) can write to the object store.
+// wrappedWriter adapts a context-carrying objectio.Writer to io.Writer for csvfile.
 type wrappedWriter struct {
 	ctx context.Context
 	w   objectio.Writer
