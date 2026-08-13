@@ -1870,6 +1870,10 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: WaitTimeout, Value: strconv.FormatInt(DefWaitTimeout, 10), Type: TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear},
 	{Scope: ScopeGlobal | ScopeSession, Name: InteractiveTimeout, Value: "28800", Type: TypeUnsigned, MinValue: 1, MaxValue: secondsPerYear},
+	{Scope: ScopeGlobal | ScopeSession, Name: InnodbFtEnableStopword, Value: On, Type: TypeBool, AutoConvertNegativeBool: true},
+	{Scope: ScopeGlobal, Name: InnodbFtMaxTokenSize, Value: "84", Type: TypeUnsigned, MinValue: 10, MaxValue: 84},
+	{Scope: ScopeGlobal, Name: InnodbFtMinTokenSize, Value: "3", Type: TypeUnsigned, MinValue: 0, MaxValue: 16},
+	{Scope: ScopeGlobal, Name: NgramTokenSize, Value: "2", Type: TypeUnsigned, MinValue: 1, MaxValue: 10},
 	{Scope: ScopeGlobal | ScopeSession, Name: InnodbLockWaitTimeout, Value: strconv.FormatInt(DefInnodbLockWaitTimeout, 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 3600, SetSession: func(s *SessionVars, val string) error {
 		lockWaitSec := TidbOptInt64(val, DefInnodbLockWaitTimeout)
 		s.LockWaitTimeout = lockWaitSec * 1000
@@ -4005,6 +4009,12 @@ const (
 	InnodbAdaptiveHashIndex = "innodb_adaptive_hash_index"
 	// InnodbFtEnableStopword is the name for 'innodb_ft_enable_stopword' system variable.
 	InnodbFtEnableStopword = "innodb_ft_enable_stopword" // #nosec G101
+	// InnodbFtMaxTokenSize is the name for 'innodb_ft_max_token_size' system variable.
+	InnodbFtMaxTokenSize = "innodb_ft_max_token_size" // #nosec G101
+	// InnodbFtMinTokenSize is the name for 'innodb_ft_min_token_size' system variable.
+	InnodbFtMinTokenSize = "innodb_ft_min_token_size" // #nosec G101
+	// NgramTokenSize is the name for 'ngram_token_size' system variable.
+	NgramTokenSize = "ngram_token_size" // #nosec G101
 	// InnodbSupportXA is the name for 'innodb_support_xa' system variable.
 	InnodbSupportXA = "innodb_support_xa"
 	// InnodbOptimizeFullTextOnly is the name for 'innodb_optimize_fulltext_only' system variable.
