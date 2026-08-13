@@ -566,6 +566,63 @@ fn update_ignore_downgrades_a_value_error_to_a_warning() {
     ));
 }
 
+/// A duplicate reached by `UPDATE IGNORE` is a warning and skips only that
+/// row. This differs from the value-coercion path above: the stored row must
+/// remain unchanged rather than receiving any converted replacement.
+#[test]
+fn update_ignore_downgrades_a_duplicate_key_to_a_warning() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE update_ignore_key (id INT PRIMARY KEY, u INT UNIQUE)")
+        .unwrap();
+    session
+        .run("INSERT INTO update_ignore_key VALUES (1, 1), (2, 2)")
+        .unwrap();
+
+    assert_eq!(
+        session
+            .run("UPDATE IGNORE update_ignore_key SET u = 2 WHERE id = 1")
+            .unwrap(),
+        StmtResult::Affected(0)
+    );
+    assert_eq!(session.warnings().len(), 1);
+    assert_eq!(session.warnings()[0].code, 1062);
+    assert_eq!(
+        row_text(session.run("SELECT id,u FROM update_ignore_key ORDER BY id")),
+        [["1", "1"], ["2", "2"]]
+    );
+    assert!(matches!(
+        session.run("UPDATE update_ignore_key SET u = 2 WHERE id = 1"),
+        Err(DriverError::DuplicateEntry { .. })
+    ));
+}
+
+/// Duplicate detection is ordered with the write stream. Moving the higher
+/// key first frees it for the lower row, so this `UPDATE IGNORE` changes both
+/// rows without manufacturing a warning from the pre-update table image.
+#[test]
+fn update_ignore_applies_key_moves_in_order() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE update_ignore_order (id INT PRIMARY KEY, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO update_ignore_order VALUES (1, 10), (2, 20)")
+        .unwrap();
+
+    assert_eq!(
+        session
+            .run("UPDATE IGNORE update_ignore_order SET id = id + 1 ORDER BY id DESC")
+            .unwrap(),
+        StmtResult::Affected(2)
+    );
+    assert!(session.warnings().is_empty());
+    assert_eq!(
+        row_text(session.run("SELECT id,v FROM update_ignore_order ORDER BY id")),
+        [["2", "10"], ["3", "20"]]
+    );
+}
+
 /// Go `convertToMysqlBit` returns `ErrDataTooLong` -- NOT the generic
 /// "Incorrect bit value" -- when a value does not fit the declared width,
 /// after clamping it to `(1<<flen)-1`.

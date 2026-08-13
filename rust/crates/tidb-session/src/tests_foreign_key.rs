@@ -254,6 +254,33 @@ fn insert_ignore_skips_only_the_violating_rows() {
     );
 }
 
+/// `UPDATE IGNORE` applies the same per-row foreign-key rule: the violating
+/// replacement is skipped, reported as a warning, and leaves the child row as
+/// it was.
+#[test]
+fn update_ignore_skips_a_child_foreign_key_violation() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE p (id INT PRIMARY KEY)").unwrap();
+    session
+        .run("CREATE TABLE c (id INT PRIMARY KEY, pid INT, FOREIGN KEY (pid) REFERENCES p(id))")
+        .unwrap();
+    session.run("INSERT INTO p VALUES (1)").unwrap();
+    session.run("INSERT INTO c VALUES (10, 1)").unwrap();
+
+    assert_eq!(
+        session
+            .run("UPDATE IGNORE c SET pid = 2 WHERE id = 10")
+            .unwrap(),
+        StmtResult::Affected(0)
+    );
+    assert_eq!(session.warnings().len(), 1);
+    assert_eq!(session.warnings()[0].code, 1452);
+    assert_eq!(
+        rows(&mut session, "SELECT id,pid FROM c"),
+        vec![vec!["10", "1"]]
+    );
+}
+
 /// `DELETE IGNORE` downgrades the parent side the same way: a restricted row
 /// is left in place and the rest of the statement still runs.
 #[test]

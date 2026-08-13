@@ -1258,9 +1258,8 @@ pub(crate) fn substitute_values_references(
 /// source carrying each target's row identity.
 ///
 /// DEFERRED (documented): generated and `ON UPDATE CURRENT_TIMESTAMP`
-/// columns, plus `IGNORE`'s duplicate-key and foreign-key per-row handling.
-/// A changed primary-key handle moves the row and rewrites its secondary-index
-/// entries. Single-table
+/// columns. A changed primary-key handle moves the row and rewrites its
+/// secondary-index entries. Single-table
 /// `ORDER BY`/`LIMIT` is supported (see `order_rows_for_dml`,
 /// `dml_row_limit`).
 pub fn run_update_on(
@@ -1589,30 +1588,96 @@ pub(crate) fn run_update_traced(
         }
     }
     if !rewrites.is_empty() {
-        if ctx.foreign_key_checks() {
-            let new_rows: Vec<Vec<Datum>> = rewrites
-                .iter()
-                .map(|(_, _, new_row)| new_row.clone())
-                .collect();
-            crate::foreign_key::require_child_rows(catalog, &database, &name, &new_rows, &zone)?;
-            let changes: Vec<crate::foreign_key::ParentChange<'_>> = rewrites
-                .iter()
-                .map(
-                    |(_, old, new_row)| crate::foreign_key::ParentChange::Update {
-                        old,
-                        new: new_row,
-                    },
-                )
-                .collect();
-            crate::foreign_key::cascade_parent_changes(catalog, &database, &name, &changes, ctx)?;
-        }
-        let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
-            unreachable!("only a byte-backed table stages rewrites")
-        };
-        for (handle, _, new_row) in &rewrites {
-            kv.update_row(handle, new_row, ctx)
-                .map_err(kv_write_error)?;
-            changed += 1;
+        if update.ignore {
+            // Go's IGNORE path resolves each write in statement order. A key
+            // moved by an earlier row is consequently free for a later row,
+            // while any row that still conflicts becomes one warning and no
+            // write. Checking all staged replacements against the original
+            // table would reject that valid ordered move.
+            for (handle, old_row, new_row) in rewrites {
+                let duplicate = {
+                    let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
+                        unreachable!("only a byte-backed table stages rewrites")
+                    };
+                    kv.conflicting_handles(&new_row, &zone)
+                        .map_err(|error| kv_read_error("conflict lookup failed", error))?
+                        .iter()
+                        .any(|conflict| conflict != &handle)
+                };
+                if duplicate {
+                    let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
+                        unreachable!("only a byte-backed table stages rewrites")
+                    };
+                    let error = kv
+                        .duplicate_entry_error(&new_row, &zone)
+                        .map_err(|error| kv_read_error("conflict lookup failed", error))?;
+                    let warning = kv_write_error(error).to_mysql_error();
+                    ctx.append_warning_parts(warning.code, &warning.message);
+                    continue;
+                }
+                if ctx.foreign_key_checks() {
+                    let rows = [new_row.clone()];
+                    if let Err(error) = crate::foreign_key::require_child_rows(
+                        catalog, &database, &name, &rows, &zone,
+                    ) {
+                        let warning = error.to_mysql_error();
+                        ctx.append_warning_parts(warning.code, &warning.message);
+                        continue;
+                    }
+                    let changes = [crate::foreign_key::ParentChange::Update {
+                        old: &old_row,
+                        new: &new_row,
+                    }];
+                    if let Err(error) = crate::foreign_key::cascade_parent_changes(
+                        catalog, &database, &name, &changes, ctx,
+                    ) {
+                        let warning = error.to_mysql_error();
+                        ctx.append_warning_parts(warning.code, &warning.message);
+                        continue;
+                    }
+                }
+                let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
+                    unreachable!("only a byte-backed table stages rewrites")
+                };
+                match kv.update_row(&handle, &new_row, ctx) {
+                    Ok(()) => changed += 1,
+                    Err(crate::kv_table::KvTableError::DuplicateEntry { value, key }) => {
+                        let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
+                        ctx.append_warning_parts(warning.code, &warning.message);
+                    }
+                    Err(error) => return Err(kv_write_error(error)),
+                }
+            }
+        } else {
+            if ctx.foreign_key_checks() {
+                let new_rows: Vec<Vec<Datum>> = rewrites
+                    .iter()
+                    .map(|(_, _, new_row)| new_row.clone())
+                    .collect();
+                crate::foreign_key::require_child_rows(
+                    catalog, &database, &name, &new_rows, &zone,
+                )?;
+                let changes: Vec<crate::foreign_key::ParentChange<'_>> = rewrites
+                    .iter()
+                    .map(
+                        |(_, old, new_row)| crate::foreign_key::ParentChange::Update {
+                            old,
+                            new: new_row,
+                        },
+                    )
+                    .collect();
+                crate::foreign_key::cascade_parent_changes(
+                    catalog, &database, &name, &changes, ctx,
+                )?;
+            }
+            let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
+                unreachable!("only a byte-backed table stages rewrites")
+            };
+            for (handle, _, new_row) in &rewrites {
+                kv.update_row(handle, new_row, ctx)
+                    .map_err(kv_write_error)?;
+                changed += 1;
+            }
         }
     }
     if let Some(trace) = trace {
