@@ -43,6 +43,34 @@ use crate::storage::StorageError;
 use super::{datum_text, KvIndex, KvTable, KvTableError, TableHandle};
 
 impl KvTable {
+    /// Swaps the stored values of two raw keys without changing either key.
+    ///
+    /// This constructs the unique-index corruption where both expected keys
+    /// exist but each names the other row. Ordinary writes cannot create that
+    /// state because index maintenance updates keys and values atomically.
+    pub fn swap_raw_values_for_test(
+        &mut self,
+        left: &[u8],
+        right: &[u8],
+    ) -> Result<(), KvTableError> {
+        let left_key = tidb_txnkv::Key::from_bytes(left.to_vec());
+        let right_key = tidb_txnkv::Key::from_bytes(right.to_vec());
+        let left_value = self
+            .store
+            .get(&left_key)
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        let right_value = self
+            .store
+            .get(&right_key)
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        self.store
+            .set(left_key, right_value)
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+        self.store
+            .set(right_key, left_value)
+            .map_err(|e| KvTableError::Storage(format!("{e:?}")))
+    }
+
     /// The values one index entry is built from: the indexed columns of
     /// `row`, each CUT to its key part's declared prefix (Go
     /// `tablecodec.TruncateIndexValues`, which `GenIndexKey` calls first).

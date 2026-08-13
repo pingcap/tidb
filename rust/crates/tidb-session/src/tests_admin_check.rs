@@ -363,6 +363,53 @@ fn an_orphaned_index_entry_is_caught() {
     assert!(message.contains("index: idx_b"), "{message}");
 }
 
+/// Go `admin.CheckRecordAndIndex` asks a UNIQUE index for the handle stored at
+/// each row's expected key. If that key names another row, it reports the
+/// expected row handle and preserves both record identities in the 8223
+/// detail. Merely checking that the key exists loses that contract.
+#[test]
+fn a_unique_index_entry_naming_the_wrong_row_reports_both_records() {
+    let mut session = Session::new();
+    session.run("drop table if exists t").unwrap();
+    session
+        .run("create table t (a int primary key, b varchar(10), unique index idx_b(b))")
+        .unwrap();
+    session
+        .run("insert into t values (1, 'aa'), (2, 'bb')")
+        .unwrap();
+
+    session
+        .with_catalog_mut(|catalog| {
+            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_mut_in("test", "t")
+            else {
+                panic!("t is not stored as bytes");
+            };
+            let index = table
+                .index_list_for_check()
+                .into_iter()
+                .find(|index| index.name.eq_ignore_ascii_case("idx_b"))
+                .expect("idx_b");
+            let entries = table.index_entries_for_check(index.id).expect("entries");
+            assert_eq!(entries.len(), 2);
+            table
+                .swap_raw_values_for_test(&entries[0].0, &entries[1].0)
+                .expect("swap the unique-index handles");
+            Ok(())
+        })
+        .unwrap();
+
+    let (code, message) = error_of(&mut session, "admin check table t");
+    assert_eq!(code, 8223, "{message}");
+    assert!(
+        message.contains("handle: 1, index-values:handle: 2, values:"),
+        "{message}"
+    );
+    assert!(
+        message.contains("record-values:handle: 1, values:"),
+        "{message}"
+    );
+}
+
 /// `ADMIN CHECK INDEX` naming an index the table does not have reaches Go's
 /// generic error boundary because the planner returns a plain `errors.Errorf`.
 #[test]

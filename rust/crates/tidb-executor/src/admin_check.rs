@@ -127,6 +127,16 @@ fn render_values(values: &[Datum]) -> String {
     out
 }
 
+/// Go `consistency.RecordData.String`: both the handle and the indexed
+/// values belong to one side of an inconsistency report.
+fn render_record(handle: &TableHandle, values: &[Datum]) -> String {
+    format!(
+        "handle: {}, values: {}",
+        render_handle(handle),
+        render_values(values)
+    )
+}
+
 /// How Go prints a row handle in the inconsistency message: an integer handle
 /// is its number, a clustered handle its encoded bytes.
 fn render_handle(handle: &TableHandle) -> String {
@@ -215,19 +225,34 @@ pub fn check_table(
         let stored_keys: BTreeMap<Vec<u8>, TableHandle> = stored.into_iter().collect();
 
         for (key, (handle, row)) in &expected {
-            if !stored_keys.contains_key(key) {
-                let indexed: Vec<Datum> = index
-                    .column_offsets
-                    .iter()
-                    .map(|offset| row.get(*offset).cloned().unwrap_or(Datum::Null))
-                    .collect();
-                return Err(AdminCheckError::Inconsistent {
-                    table: table_name.clone(),
-                    index: index.name.clone(),
-                    handle: render_handle(handle),
-                    index_values: String::new(),
-                    record_values: render_values(&indexed),
-                });
+            let indexed: Vec<Datum> = index
+                .column_offsets
+                .iter()
+                .map(|offset| row.get(*offset).cloned().unwrap_or(Datum::Null))
+                .collect();
+            match stored_keys.get(key) {
+                Some(stored_handle) if stored_handle == handle => {}
+                // Go `idx.Exist` returns `kv.ErrKeyExists` here. Its reporter
+                // names the row being checked and preserves the independently
+                // stored handle on the index side.
+                Some(stored_handle) => {
+                    return Err(AdminCheckError::Inconsistent {
+                        table: table_name.clone(),
+                        index: index.name.clone(),
+                        handle: render_handle(handle),
+                        index_values: render_record(stored_handle, &indexed),
+                        record_values: render_record(handle, &indexed),
+                    });
+                }
+                None => {
+                    return Err(AdminCheckError::Inconsistent {
+                        table: table_name.clone(),
+                        index: index.name.clone(),
+                        handle: render_handle(handle),
+                        index_values: String::new(),
+                        record_values: render_record(handle, &indexed),
+                    });
+                }
             }
         }
 
@@ -237,24 +262,9 @@ pub fn check_table(
         for (key, handle) in &stored_keys {
             match expected.get(key) {
                 Some((expected_handle, _)) if expected_handle == handle => {}
-                // The entry is filed under a key some row does produce, but it
-                // names a different row: a unique index whose stored handle
-                // moved. Go reaches this through `idx.Exist` returning
-                // `ErrKeyExists` with the other handle.
-                Some((_, row)) => {
-                    let indexed: Vec<Datum> = index
-                        .column_offsets
-                        .iter()
-                        .map(|offset| row.get(*offset).cloned().unwrap_or(Datum::Null))
-                        .collect();
-                    return Err(AdminCheckError::Inconsistent {
-                        table: table_name.clone(),
-                        index: index.name.clone(),
-                        handle: render_handle(handle),
-                        index_values: render_values(&indexed),
-                        record_values: render_values(&indexed),
-                    });
-                }
+                // A mismatched handle at an expected key was already reported
+                // by the row -> index pass above, matching Go's check order.
+                Some(_) => unreachable!("row-to-index check accepted a mismatched handle"),
                 None => {
                     return Err(AdminCheckError::Inconsistent {
                         table: table_name.clone(),
