@@ -47,8 +47,7 @@ type Chunk struct {
 	Ordinal    int    `json:"ordinal"`
 }
 
-// SubtaskMeta is the Dump-step subtask meta: a batch of chunks its worker pool
-// exports concurrently.
+// SubtaskMeta is the Dump-step subtask meta: a batch of chunks.
 type SubtaskMeta struct {
 	Chunks []Chunk `json:"chunks"`
 }
