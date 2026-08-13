@@ -1691,7 +1691,9 @@ impl std::error::Error for SqlNodeError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::node_config::{ConfiguredReadColumn, ConfiguredReadColumnKind, ConfiguredReadTable};
+    use crate::node_config::{
+        ConfiguredReadColumn, ConfiguredReadColumnKind, ConfiguredReadTable, MemoryArbitratorConfig,
+    };
     use std::io::Read;
     use std::net::{IpAddr, Ipv4Addr};
     use std::path::PathBuf;
@@ -1756,6 +1758,11 @@ mod tests {
                 path: std::env::temp_dir().join("tidb-sql-node-unit-spill"),
                 quota_bytes: -1,
                 encryption: tidb_util::disk::SpillEncryptionMethod::Plaintext,
+            },
+            memory_arbitrator: MemoryArbitratorConfig {
+                server_memory_limit: "80%".to_owned(),
+                mode: "disable".to_owned(),
+                soft_limit: "0".to_owned(),
             },
             version_info: VersionInfo::build_default(),
         }

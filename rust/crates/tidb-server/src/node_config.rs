@@ -115,6 +115,17 @@ pub struct LoadedTableName {
     pub table: String,
 }
 
+/// Process-wide memory-controller values from TiDB's `[instance]` section.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MemoryArbitratorConfig {
+    /// Source `tidb_server_memory_limit` text.
+    pub server_memory_limit: String,
+    /// Source `tidb_mem_arbitrator_mode` text.
+    pub mode: String,
+    /// Source `tidb_mem_arbitrator_soft_limit` text.
+    pub soft_limit: String,
+}
+
 /// Complete startup input consumed by the concurrent SQL node.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeConfig {
@@ -214,6 +225,8 @@ pub struct NodeConfig {
     /// Fully resolved process spill policy. Startup acquires the directory
     /// lease and validates capacity before opening any SQL listener.
     pub spill_storage: SpillStorageSpec,
+    /// Process-wide global-memory controller policy.
+    pub memory_arbitrator: MemoryArbitratorConfig,
     /// Coherent build identity plus the optional startup edition override.
     pub version_info: VersionInfo,
 }
@@ -292,6 +305,9 @@ impl std::error::Error for NodeConfigError {}
 const SUPPORTED_CONFIG_LEAVES: &[&str] = &[
     "host",
     "instance.max_connections",
+    "instance.tidb_mem_arbitrator_mode",
+    "instance.tidb_mem_arbitrator_soft_limit",
+    "instance.tidb_server_memory_limit",
     "lease",
     "max-allowed-packet",
     "path",
@@ -588,6 +604,11 @@ impl NodeConfig {
         let mut file_auto_tls = None;
         let mut file_disconnect_on_expired_password = None;
         let mut sem_enabled = false;
+        let mut memory_arbitrator = MemoryArbitratorConfig {
+            server_memory_limit: "80%".to_owned(),
+            mode: "disable".to_owned(),
+            soft_limit: "0".to_owned(),
+        };
         let defaults = SourceConfig::default();
         let mut deadlock_history_capacity =
             usize::try_from(defaults.pessimistic_txn.deadlock_history_capacity)
@@ -614,6 +635,15 @@ impl NodeConfig {
             }
             if max_connections.is_none() && loaded.is_defined("instance.max_connections") {
                 max_connections = Some(config.instance.max_connections.to_string());
+            }
+            if loaded.is_defined("instance.tidb_server_memory_limit") {
+                memory_arbitrator.server_memory_limit = config.instance.server_memory_limit.clone();
+            }
+            if loaded.is_defined("instance.tidb_mem_arbitrator_mode") {
+                memory_arbitrator.mode = config.instance.mem_arbitrator_mode.clone();
+            }
+            if loaded.is_defined("instance.tidb_mem_arbitrator_soft_limit") {
+                memory_arbitrator.soft_limit = config.instance.mem_arbitrator_soft_limit.clone();
             }
             if schema_lease_ms.is_none() && loaded.is_defined("lease") {
                 file_schema_lease = Some(parse_file_schema_lease(&config.lease)?);
@@ -789,6 +819,9 @@ impl NodeConfig {
             config.max_allowed_packet = u64::try_from(max_allowed_packet).unwrap_or(u64::MAX);
             config.instance.max_connections =
                 u32::try_from(max_connections).expect("bounded worker count fits u32");
+            config.instance.server_memory_limit = memory_arbitrator.server_memory_limit.clone();
+            config.instance.mem_arbitrator_mode = memory_arbitrator.mode.clone();
+            config.instance.mem_arbitrator_soft_limit = memory_arbitrator.soft_limit.clone();
             if let Some(value) = schema_lease_ms.as_deref() {
                 config.lease = format!("{value}ms");
             }
@@ -857,6 +890,7 @@ impl NodeConfig {
             skip_grant_table: file_skip_grant_table,
             cluster_security,
             spill_storage,
+            memory_arbitrator,
             version_info,
         })
     }
@@ -916,7 +950,12 @@ impl NodeConfig {
             "path": self.pd_endpoints.join(","),
             "store": &self.version_info.store,
             "max-allowed-packet": self.max_allowed_packet,
-            "instance": { "max_connections": self.max_connections },
+            "instance": {
+                "max_connections": self.max_connections,
+                "tidb_server_memory_limit": self.memory_arbitrator.server_memory_limit,
+                "tidb_mem_arbitrator_mode": self.memory_arbitrator.mode,
+                "tidb_mem_arbitrator_soft_limit": self.memory_arbitrator.soft_limit,
+            },
             "lease-ms": u64::try_from(self.schema_lease.as_millis()).unwrap_or(u64::MAX),
             "cluster-session": self.cluster_session,
             "load-privileges": self.load_privileges,
@@ -1709,6 +1748,40 @@ mod tests {
         ])
         .expect("ordinary config");
         assert!(!ordinary.skip_grant_table);
+    }
+
+    #[test]
+    fn instance_memory_arbitrator_settings_are_admitted_as_one_startup_policy() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("wall clock after epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "tidb-memory-arbitrator-{}-{nonce}.toml",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            "[instance]\ntidb_server_memory_limit = '1GiB'\ntidb_mem_arbitrator_mode = 'priority'\ntidb_mem_arbitrator_soft_limit = '0.75'\n",
+        )
+        .expect("write source config");
+        let path_text = path.to_string_lossy().into_owned();
+        let parsed = NodeConfig::parse([
+            "tidb-server",
+            "--config",
+            &path_text,
+            "--path",
+            "127.0.0.1:2379",
+            "--load-table",
+            "test.rows",
+            "--auth-file",
+            "/tmp/users.tsv",
+        ])
+        .expect("the three source memory settings are one admitted policy");
+        assert_eq!(parsed.memory_arbitrator.server_memory_limit, "1GiB");
+        assert_eq!(parsed.memory_arbitrator.mode, "priority");
+        assert_eq!(parsed.memory_arbitrator.soft_limit, "0.75");
+        fs::remove_file(path).expect("remove source config");
     }
 
     /// Go `cmd/tidb-server/main.go` around line 1067 stores the INVERSE of
