@@ -20,10 +20,14 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering::SeqCst};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use super::action::ArcAction;
 use crate::sqlkiller::SqlKiller;
+
+fn lock_unpoison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Consumption is buffered until it exceeds this (Go `TrackMemWhenExceeds`,
 /// 100MB).
@@ -91,18 +95,15 @@ struct ActionSlot {
 impl ActionSlot {
     /// Go's `tryAction`: drop finished links, then fire.
     fn try_action(&self, tracker: &Arc<Tracker>) {
-        let action = {
-            let mut slot = self.action.lock().unwrap();
-            while let Some(a) = slot.clone() {
-                if !a.is_finished() {
-                    break;
-                }
-                *slot = a.get_fallback();
+        let mut slot = lock_unpoison(&self.action);
+        while let Some(action) = slot.clone() {
+            if !action.is_finished() {
+                break;
             }
-            slot.clone()
-        };
-        if let Some(a) = action {
-            a.action(tracker);
+            *slot = action.get_fallback();
+        }
+        if let Some(action) = slot.as_ref() {
+            action.action(tracker);
         }
     }
 }
@@ -189,25 +190,25 @@ impl Tracker {
 
     /// Sets the hard-limit action (Go `SetActionOnExceed`).
     pub fn set_action_on_exceed(&self, a: Option<ArcAction>) {
-        *self.action_for_hard_limit.action.lock().unwrap() = a;
+        *lock_unpoison(&self.action_for_hard_limit.action) = a;
     }
 
     /// Sets a new hard-limit action with the old one as fallback, merged by
     /// priority (Go `FallbackOldAndSetNewAction`).
     pub fn fallback_old_and_set_new_action(&self, a: ArcAction) {
-        let mut slot = self.action_for_hard_limit.action.lock().unwrap();
+        let mut slot = lock_unpoison(&self.action_for_hard_limit.action);
         *slot = rearrange_fallback(Some(a), slot.take());
     }
 
     /// The soft-limit variant (Go `FallbackOldAndSetNewActionForSoftLimit`).
     pub fn fallback_old_and_set_new_action_for_soft_limit(&self, a: ArcAction) {
-        let mut slot = self.action_for_soft_limit.action.lock().unwrap();
+        let mut slot = lock_unpoison(&self.action_for_soft_limit.action);
         *slot = rearrange_fallback(Some(a), slot.take());
     }
 
     /// Go `GetFallbackForTest`.
     pub fn get_fallback_for_test(&self, ignore_finished: bool) -> Option<ArcAction> {
-        let mut slot = self.action_for_hard_limit.action.lock().unwrap();
+        let mut slot = lock_unpoison(&self.action_for_hard_limit.action);
         if let Some(a) = slot.clone() {
             if a.is_finished() && ignore_finished {
                 *slot = a.get_fallback();
@@ -218,14 +219,14 @@ impl Tracker {
 
     /// Unbinds both actions (Go `UnbindActions`).
     pub fn unbind_actions(&self) {
-        *self.action_for_soft_limit.action.lock().unwrap() = None;
-        *self.action_for_hard_limit.action.lock().unwrap() = None;
+        *lock_unpoison(&self.action_for_soft_limit.action) = None;
+        *lock_unpoison(&self.action_for_hard_limit.action) = None;
     }
 
     /// Removes one action from the hard-limit chain by identity (Go
     /// `UnbindActionFromHardLimit`).
     pub fn unbind_action_from_hard_limit(&self, to_unbind: &ArcAction) {
-        let mut slot = self.action_for_hard_limit.action.lock().unwrap();
+        let mut slot = lock_unpoison(&self.action_for_hard_limit.action);
         let mut prev: Option<ArcAction> = None;
         let mut current = slot.clone();
         while let Some(a) = current {
@@ -700,8 +701,11 @@ fn byte_unit(b: i64) -> (i64, &'static str) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
     use super::super::action::{
-        ActionOnExceed, ActionWithPriority, ArcAction, BaseOomAction,
+        ActionOnExceed, ActionWithPriority, ArcAction, BaseOomAction, LogOnExceed,
         DEF_CURSOR_FETCH_SPILL_PRIORITY, DEF_PANIC_PRIORITY, DEF_SPILL_PRIORITY,
     };
     use super::*;
@@ -749,6 +753,41 @@ mod tests {
         fn set_finished(&self) {
             self.base.set_finished();
         }
+        fn is_finished(&self) -> bool {
+            self.base.is_finished()
+        }
+    }
+
+    struct BlockingAction {
+        base: BaseOomAction,
+        entered: Mutex<Option<mpsc::Sender<()>>>,
+        release: Mutex<mpsc::Receiver<()>>,
+    }
+
+    impl ActionOnExceed for BlockingAction {
+        fn action(&self, _tracker: &Arc<Tracker>) {
+            if let Some(entered) = self.entered.lock().unwrap().take() {
+                entered.send(()).unwrap();
+            }
+            self.release.lock().unwrap().recv().unwrap();
+        }
+
+        fn set_fallback(&self, action: Option<ArcAction>) {
+            self.base.set_fallback(action);
+        }
+
+        fn get_fallback(&self) -> Option<ArcAction> {
+            self.base.get_fallback()
+        }
+
+        fn get_priority(&self) -> i64 {
+            DEF_SPILL_PRIORITY
+        }
+
+        fn set_finished(&self) {
+            self.base.set_finished();
+        }
+
         fn is_finished(&self) -> bool {
             self.base.is_finished()
         }
@@ -1174,5 +1213,57 @@ mod tests {
 
         wrapped.set_finished();
         assert!(inner.is_finished());
+    }
+
+    /// Go `Tracker.Consume` holds `actionMuForHardLimit` through `Action`, so
+    /// removing an action cannot return while that action is still running.
+    #[test]
+    fn unbind_waits_for_the_running_hard_limit_action() {
+        let tracker = Tracker::new(1, 1);
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let action: ArcAction = Arc::new(BlockingAction {
+            base: BaseOomAction::default(),
+            entered: Mutex::new(Some(entered_tx)),
+            release: Mutex::new(release_rx),
+        });
+        tracker.set_action_on_exceed(Some(Arc::clone(&action)));
+
+        let consuming_tracker = Arc::clone(&tracker);
+        let consume = std::thread::spawn(move || consuming_tracker.consume(1));
+        entered_rx.recv().unwrap();
+
+        let unbinding_tracker = Arc::clone(&tracker);
+        let unbinding_action = Arc::clone(&action);
+        let (unbound_tx, unbound_rx) = mpsc::channel();
+        let unbind = std::thread::spawn(move || {
+            unbinding_tracker.unbind_action_from_hard_limit(&unbinding_action);
+            unbound_tx.send(()).unwrap();
+        });
+
+        assert!(unbound_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        release_tx.send(()).unwrap();
+        consume.join().unwrap();
+        unbound_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        unbind.join().unwrap();
+        assert!(tracker.get_fallback_for_test(false).is_none());
+    }
+
+    /// Go's deferred action-slot unlock keeps the tracker usable when an
+    /// action callback panics and its caller recovers.
+    #[test]
+    fn hard_limit_action_slot_recovers_after_action_panic() {
+        let tracker = Tracker::new(1, 1);
+        let action = Arc::new(LogOnExceed::default());
+        action.set_log_hook(Box::new(|_| panic!("injected action panic")));
+        tracker.set_action_on_exceed(Some(action));
+
+        assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            tracker.consume(1);
+        }))
+        .is_err());
+        tracker.consume(1);
+        tracker.unbind_actions();
+        assert!(tracker.get_fallback_for_test(false).is_none());
     }
 }
