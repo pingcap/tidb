@@ -102,6 +102,49 @@ type VectorIndexInfo struct {
 	DistanceMetric DistanceMetric `json:"distance_metric"`
 }
 
+// FullTextParserType is the tokenizer kind.
+// Note: Must use UPPER_UNDER_SCORE naming convention.
+type FullTextParserType string
+
+const (
+	// FullTextParserTypeInvalid is the invalid tokenizer.
+	FullTextParserTypeInvalid FullTextParserType = "INVALID"
+	// FullTextParserTypeStandardV1 is the standard parser, for English texts.
+	FullTextParserTypeStandardV1 FullTextParserType = "STANDARD_V1"
+	// FullTextParserTypeMultilingualV1 is a parser for multilingual texts.
+	FullTextParserTypeMultilingualV1 FullTextParserType = "MULTILINGUAL_V1"
+	// FullTextParserTypeNgramV1 is the ngram parser.
+	FullTextParserTypeNgramV1 FullTextParserType = "NGRAM_V1"
+)
+
+// SQLName returns the SQL keyword name of the fulltext parser.
+func (t FullTextParserType) SQLName() string {
+	switch t {
+	case FullTextParserTypeStandardV1:
+		return "STANDARD"
+	case FullTextParserTypeMultilingualV1:
+		return "MULTILINGUAL"
+	case FullTextParserTypeNgramV1:
+		return "NGRAM"
+	default:
+		return "INVALID"
+	}
+}
+
+// GetFullTextParserTypeBySQLName returns the FullTextParserType by a SQL name.
+func GetFullTextParserTypeBySQLName(name string) FullTextParserType {
+	switch strings.ToUpper(name) {
+	case "STANDARD":
+		return FullTextParserTypeStandardV1
+	case "MULTILINGUAL":
+		return FullTextParserTypeMultilingualV1
+	case "NGRAM":
+		return FullTextParserTypeNgramV1
+	default:
+		return FullTextParserTypeInvalid
+	}
+}
+
 // IndexInfo provides meta data describing a DB index.
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
