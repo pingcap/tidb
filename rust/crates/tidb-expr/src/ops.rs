@@ -262,15 +262,17 @@ pub(crate) fn eval_binary_full(
             _ => {}
         }
     }
-    // Go's plus/minus/multiply function classes select their vector signature
-    // as soon as EITHER argument is `ETVectorFloat32`, then cast BOTH inputs
-    // into that domain. That makes a vector plus NULL yield NULL and permits
-    // a vector text operand through the normal vector conversion; every other
-    // operator remains outside the vector arithmetic signature family.
-    if matches!(l, Datum::VectorFloat32(_)) || matches!(r, Datum::VectorFloat32(_)) {
-        if !matches!(op, Plus | Minus | Mul) {
-            return Err(EvalError::UnsupportedOperandPair(l.kind(), r.kind()));
-        }
+    // Go selects a vector signature for the arithmetic and comparison
+    // families as soon as EITHER argument is `ETVectorFloat32`, then casts
+    // BOTH inputs into that domain. Vector text is therefore an ordinary
+    // operand, while a non-vector text/integer conversion reports the source
+    // value-domain error instead of falling through to numeric comparison.
+    if (matches!(l, Datum::VectorFloat32(_)) || matches!(r, Datum::VectorFloat32(_)))
+        && matches!(
+            op,
+            Plus | Minus | Mul | Eq | Ne | Lt | Le | Gt | Ge | NullEq
+        )
+    {
         if l == Datum::Null || r == Datum::Null {
             return Ok(Datum::Null);
         }
@@ -288,14 +290,22 @@ pub(crate) fn eval_binary_full(
         };
         let left = as_vector(l)?;
         let right = as_vector(r)?;
-        let result = match op {
-            Plus => left.add(&right),
-            Minus => left.sub(&right),
-            Mul => left.mul(&right),
-            _ => unreachable!("vector arithmetic operator was guarded"),
-        }
-        .map_err(|error| EvalError::Vector(error.to_string()))?;
-        return Ok(Datum::new_vector_float32(result));
+        return match op {
+            Plus => left
+                .add(&right)
+                .map(Datum::new_vector_float32)
+                .map_err(|error| EvalError::Vector(error.to_string())),
+            Minus => left
+                .sub(&right)
+                .map(Datum::new_vector_float32)
+                .map_err(|error| EvalError::Vector(error.to_string())),
+            Mul => left
+                .mul(&right)
+                .map(Datum::new_vector_float32)
+                .map_err(|error| EvalError::Vector(error.to_string())),
+            Eq | Ne | Lt | Le | Gt | Ge | NullEq => Ok(ordering_to_bool(op, left.compare(&right))),
+            _ => unreachable!("vector signature operator was guarded"),
+        };
     }
     // Go builds AND/OR/XOR with ETInt arguments, so each operand first takes
     // MySQL's numeric-prefix truthiness path. This must precede the ordinary
@@ -1243,6 +1253,30 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn vector_comparisons_use_the_vector_signature_and_text_cast() {
+        assert_eq!(
+            eval_binary(
+                BinaryOp::Eq,
+                vector(vec![1.0, 2.0]),
+                Datum::new_string("[1,2]")
+            ),
+            Ok(Datum::Int(1))
+        );
+        assert_eq!(
+            eval_binary(BinaryOp::Lt, vector(vec![1.0, 2.0]), vector(vec![1.0, 3.0])),
+            Ok(Datum::Int(1))
+        );
+        assert_eq!(
+            eval_binary(BinaryOp::Eq, vector(vec![1.0]), Datum::Null),
+            Ok(Datum::Null)
+        );
+        assert_eq!(
+            eval_binary(BinaryOp::NullEq, vector(vec![1.0]), Datum::Null),
+            Ok(Datum::Int(0))
+        );
+    }
+
     /// A `Columns` resolver that keeps every warning it is handed, so a test
     /// can assert the CODE, the exact MESSAGE, and the COUNT.
     #[derive(Default)]
@@ -1474,36 +1508,30 @@ mod tests {
         }
 
         let vector_datum = Datum::VectorFloat32(VectorFloat32::must_create(vec![1.0, 2.0]));
-        for op in [BinaryOp::Eq, BinaryOp::Lt, BinaryOp::Div] {
-            assert_eq!(
-                eval_binary(op, vector_datum.clone(), Datum::Int(1)),
-                Err(EvalError::UnsupportedOperandPair(
-                    DatumKind::VectorFloat32,
-                    DatumKind::Int
-                )),
-                "vector {op:?} int"
-            );
-        }
-        for op in [BinaryOp::Plus, BinaryOp::Mul] {
+        assert_eq!(
+            eval_binary(BinaryOp::Div, vector_datum.clone(), Datum::Int(1)),
+            Err(EvalError::UnsupportedOperandPair(
+                DatumKind::VectorFloat32,
+                DatumKind::Int
+            )),
+            "vector Div int"
+        );
+        for op in [BinaryOp::Plus, BinaryOp::Mul, BinaryOp::Eq, BinaryOp::Lt] {
             assert!(matches!(
                 eval_binary(op, vector_datum.clone(), Datum::Int(1)),
                 Err(EvalError::Vector(_))
             ));
         }
-        // A vector compared with a STRING is the silent-wrong-answer case:
-        // `to_f64_with_mysql_string` used to read the vector as `0.0`, so
-        // `vector = '0'` answered TRUE. It is an error now.
-        assert_eq!(
+        // A vector compared with an invalid vector text is a vector cast
+        // error; the old numeric fallback silently read the vector as 0.0.
+        assert!(matches!(
             eval_binary(
                 BinaryOp::Eq,
                 vector(vec![1.0, 2.0]),
                 Datum::Bytes(b"0".to_vec()),
             ),
-            Err(EvalError::UnsupportedOperandPair(
-                DatumKind::VectorFloat32,
-                DatumKind::Bytes
-            ))
-        );
+            Err(EvalError::Vector(_))
+        ));
         // CONTROL: `Raw` keeps the byte semantics `as_raw_bytes` gives it, so
         // raw-vs-raw and raw-vs-string comparisons must be unaffected by the
         // guard above them.
