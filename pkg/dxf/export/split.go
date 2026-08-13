@@ -51,7 +51,7 @@ const (
 // splitTables carves every table into ~chunkSize chunks, then packs the chunks
 // into subtasks sized to the worker concurrency.
 func splitTables(ctx context.Context, store kv.Storage, meta *TaskMeta, concurrency int) ([][]byte, error) {
-	var chunks []Chunk
+	chunks := make([]Chunk, 0, len(meta.Tables))
 	for tableIdx := range meta.Tables {
 		tableChunks, err := splitTable(ctx, store, meta, tableIdx)
 		if err != nil {
@@ -66,9 +66,10 @@ func splitTables(ctx context.Context, store kv.Storage, meta *TaskMeta, concurre
 // table-local ordinal spanning its partitions so file names stay unique.
 func splitTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx int) ([]Chunk, error) {
 	tblInfo := meta.Tables[tableIdx].TableInfo
-	var chunks []Chunk
+	pids := physicalIDs(tblInfo)
+	chunks := make([]Chunk, 0, len(pids))
 	ordinal := 0
-	for _, pid := range physicalIDs(tblInfo) {
+	for _, pid := range pids {
 		start, end := physicalTableRange(tblInfo, pid)
 		var tableChunks []Chunk
 		if endKeys, sizes, ok := regionChunks(ctx, store, start, end); ok {
@@ -112,7 +113,7 @@ func regionChunks(ctx context.Context, store kv.Storage, start, end kv.Key) (end
 // chunkSize, so each chunk holds ~chunkSize of real data. endKeys[i] is region
 // i's end; the final chunk ends at end.
 func chunksBySize(tableIdx int, pid int64, start, end kv.Key, endKeys []kv.Key, sizes []int64, startOrdinal int) ([]Chunk, int) {
-	var chunks []Chunk
+	chunks := make([]Chunk, 0, len(sizes))
 	ord := startOrdinal
 	chunkStart := start
 	var acc int64
@@ -181,7 +182,7 @@ func packSubtasks(chunks []Chunk, concurrency int) ([][]byte, error) {
 		subtasks = append(subtasks, bs)
 		return nil
 	}
-	var batch []Chunk
+	batch := make([]Chunk, 0, chunksPerWorker*max(concurrency, 1))
 	var acc int64
 	for _, c := range chunks {
 		batch = append(batch, c)
