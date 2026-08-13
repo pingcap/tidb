@@ -130,9 +130,10 @@ func preSplitPhysicalTableByShardBits(ctx context.Context, store kv.SplittableSt
 	// 4611686018427387904 ~ 6917529027641081856
 	// 6917529027641081856 ~ 9223372036854775807 ( (1 << 63) - 1 )
 	//
-	// And the max _tidb_rowid is 9223372036854775807, it won't be negative number.
+	// This example assumes a signed BIGINT. NewShardIDFormat adjusts IncrementalBits
+	// for unsigned AUTO_RANDOM columns.
 
-	// Split table region.
+	// Select the field type that determines the shard-bit layout.
 	var ft *types.FieldType
 	if tbInfo.IsCommonHandle {
 		primaryKey := tbInfo.GetPrimaryKey()
