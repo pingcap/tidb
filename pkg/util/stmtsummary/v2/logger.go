@@ -46,9 +46,6 @@ func newStmtLogStorage(cfg *log.Config) (*stmtLogStorage, error) {
 	// Create the stmt logger
 	logger, prop, err := log.InitLogger(cfg)
 	if err != nil {
-		// Keep the contextual log so operators can see why initialization failed
-		// even though the global state is being rejected.
-		logutil.BgLogger().Error("failed to init statement summary logger", zap.Error(err))
 		return nil, fmt.Errorf("stmtsummary: init statement summary logger: %w", err)
 	}
 	// Replace 2018-12-19-unified-log-format text encoder with statements encoder

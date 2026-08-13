@@ -470,6 +470,7 @@ func TestSetupDisablesPersistentOnLoggerInitError(t *testing.T) {
 		Filename: config.GetGlobalConfig().Instance.StmtSummaryFilename,
 	})
 	require.Error(t, err, "Setup must surface the logger init error")
+	require.ErrorContains(t, err, "stmtsummary v2 persistent mode disabled; falling back to v1 in-memory aggregation")
 
 	// NewStmtSummary returned (nil, error); GlobalStmtSummary must not be
 	// left overwriting a previously good instance, and must NOT be the

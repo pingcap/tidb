@@ -17,6 +17,7 @@ package stmtsummary
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -73,9 +74,8 @@ var (
 // loop. To avoid that half-initialized state Setup explicitly switches
 // persistent mode off on init failure, so the proxies fall back to the
 // always-available in-memory v1 aggregation (stmtsummary.StmtSummaryByDigestMap).
-// The error is still returned so the caller can surface it; the explicit
-// config flip and the error log make the degraded state visible rather than
-// silent.
+// The error is returned with fallback context so the caller can emit one
+// actionable log entry rather than logging the same failure at every layer.
 func Setup(cfg *Config) (err error) {
 	GlobalStmtSummary, err = NewStmtSummary(cfg)
 	if err != nil {
@@ -85,13 +85,12 @@ func Setup(cfg *Config) (err error) {
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.Instance.StmtSummaryEnablePersistent = false
 		})
-		logutil.BgLogger().Error(
-			"stmtsummary v2 persistent mode disabled: falling back to v1 "+
-				"in-memory aggregation after logger init failure",
-			zap.Error(err),
+		return fmt.Errorf(
+			"stmtsummary v2 persistent mode disabled; falling back to v1 in-memory aggregation: %w",
+			err,
 		)
 	}
-	return
+	return nil
 }
 
 // Close closes the GlobalStmtSummary.
