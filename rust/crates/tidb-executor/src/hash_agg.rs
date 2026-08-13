@@ -452,6 +452,23 @@ fn group_concat_bytes(value: &Datum, field_type: Option<&FieldType>) -> Result<V
     })
 }
 
+/// The temporal value Go's real aggregate implementations consume.
+///
+/// `WrapCastForAggArgs` chooses `EvalReal` whenever `SUM`/`AVG` inferred a
+/// DOUBLE result.  That includes temporal and duration arguments, not merely
+/// FLOAT columns.  Keep the conversion at the aggregate boundary so every
+/// serial and spill round uses the same rule.
+fn temporal_real_aggregate_value(value: &Datum, function: &'static str) -> Result<f64, ExecError> {
+    value
+        .to_f64()
+        .map(|converted| converted.value)
+        .map_err(|_| {
+            ExecError::unsupported(format!(
+                "{function} over this datum kind is not yet supported"
+            ))
+        })
+}
+
 /// One `APPROX_COUNT_DISTINCT` argument's contribution to the hashed tuple,
 /// Go `func_count_distinct.go`'s `evalAndEncode`: each argument type has its
 /// own raw encoding (a fixed-width native-endian copy of the scalar for
@@ -672,31 +689,47 @@ impl Partial {
                 return Err(ExecError::unsupported("SUM requires an argument"))
             }
             (Partial::SumDecimal(_) | Partial::SumReal(_), Some(Datum::Null)) => {}
-            (this @ Partial::SumDecimal(None), Some(Datum::Real(v) | Datum::Float32(v))) => {
-                // First non-NULL input is real: the sum's domain is real.
-                *this = Partial::SumReal(Some(v));
+            (
+                this @ Partial::SumDecimal(None),
+                Some(input @ (Datum::Time(_) | Datum::Duration(_))),
+            ) => {
+                *this = Partial::SumReal(Some(temporal_real_aggregate_value(&input, "SUM")?));
             }
-            (Partial::SumDecimal(acc), Some(input)) => {
-                let addend = match input {
-                    Datum::Int(v) => Decimal::from_int(v),
-                    Datum::UInt(v) => Decimal::from_uint(v),
-                    Datum::Decimal(d) => d,
-                    _ => {
-                        return Err(ExecError::unsupported(
-                            "SUM over this datum kind is not yet supported",
-                        ))
-                    }
-                };
-                *acc = Some(match acc.take() {
-                    Some(sum) => sum.add(&addend),
-                    None => addend,
-                });
-            }
+            (Partial::SumDecimal(acc), Some(input)) => match input {
+                Datum::Int(v) => {
+                    let addend = Decimal::from_int(v);
+                    *acc = Some(match acc.take() {
+                        Some(sum) => sum.add(&addend),
+                        None => addend,
+                    });
+                }
+                Datum::UInt(v) => {
+                    let addend = Decimal::from_uint(v);
+                    *acc = Some(match acc.take() {
+                        Some(sum) => sum.add(&addend),
+                        None => addend,
+                    });
+                }
+                Datum::Decimal(addend) => {
+                    *acc = Some(match acc.take() {
+                        Some(sum) => sum.add(&addend),
+                        None => addend,
+                    });
+                }
+                _ => {
+                    return Err(ExecError::unsupported(
+                        "SUM over this datum kind is not yet supported",
+                    ))
+                }
+            },
             (Partial::SumReal(acc), Some(Datum::Real(v) | Datum::Float32(v))) => {
                 *acc = Some(acc.unwrap_or(0.0) + v);
             }
             (Partial::SumReal(acc), Some(Datum::Int(v))) => {
                 *acc = Some(acc.unwrap_or(0.0) + v as f64);
+            }
+            (Partial::SumReal(acc), Some(input @ (Datum::Time(_) | Datum::Duration(_)))) => {
+                *acc = Some(acc.unwrap_or(0.0) + temporal_real_aggregate_value(&input, "SUM")?);
             }
             (Partial::SumReal(_), Some(_)) => {
                 return Err(ExecError::unsupported(
@@ -742,28 +775,34 @@ impl Partial {
                 return Err(ExecError::unsupported("AVG requires an argument"))
             }
             (Partial::AvgDecimal { .. } | Partial::AvgReal { .. }, Some(Datum::Null)) => {}
-            (this @ Partial::AvgDecimal { .. }, Some(Datum::Real(v) | Datum::Float32(v))) => {
-                // First non-NULL input is real: Go's return type is DOUBLE.
-                let Partial::AvgDecimal { count, .. } = this else {
-                    unreachable!()
+            (
+                this @ Partial::AvgDecimal { count: 0, .. },
+                Some(input @ (Datum::Time(_) | Datum::Duration(_))),
+            ) => {
+                *this = Partial::AvgReal {
+                    sum: temporal_real_aggregate_value(&input, "AVG")?,
+                    count: 1,
                 };
-                debug_assert_eq!(*count, 0, "the domain is fixed by the first input");
-                *this = Partial::AvgReal { sum: v, count: 1 };
             }
-            (Partial::AvgDecimal { sum, count }, Some(input)) => {
-                let addend = match input {
-                    Datum::Int(v) => Decimal::from_int(v),
-                    Datum::UInt(v) => Decimal::from_uint(v),
-                    Datum::Decimal(d) => d,
-                    _ => {
-                        return Err(ExecError::unsupported(
-                            "AVG over this datum kind is not yet supported",
-                        ))
-                    }
-                };
-                *sum = sum.add(&addend);
-                *count += 1;
-            }
+            (Partial::AvgDecimal { sum, count }, Some(input)) => match input {
+                Datum::Int(v) => {
+                    *sum = sum.add(&Decimal::from_int(v));
+                    *count += 1;
+                }
+                Datum::UInt(v) => {
+                    *sum = sum.add(&Decimal::from_uint(v));
+                    *count += 1;
+                }
+                Datum::Decimal(addend) => {
+                    *sum = sum.add(&addend);
+                    *count += 1;
+                }
+                _ => {
+                    return Err(ExecError::unsupported(
+                        "AVG over this datum kind is not yet supported",
+                    ))
+                }
+            },
             // Go's bit functions cast the argument to `UNSIGNED BIGINT` and
             // skip NULL, so an all-NULL group keeps the identity.
             (Partial::Bit { .. }, None) => {
@@ -815,6 +854,9 @@ impl Partial {
                 let addend = match input {
                     Datum::Real(v) | Datum::Float32(v) => v,
                     Datum::Int(v) => v as f64,
+                    input @ (Datum::Time(_) | Datum::Duration(_)) => {
+                        temporal_real_aggregate_value(&input, "AVG")?
+                    }
                     _ => {
                         return Err(ExecError::unsupported(
                             "AVG over this datum kind is not yet supported",
@@ -1622,6 +1664,20 @@ mod tests {
         })
     }
 
+    fn datum_source(values: &[Datum], field_type: &FieldType) -> Box<dyn Executor> {
+        let mut data =
+            Chunk::new_with_capacity(std::slice::from_ref(field_type), values.len().max(1));
+        for value in values {
+            data.append_datum(0, value);
+        }
+        let mut column = Column::new(1, field_type.clone());
+        column.index = 0;
+        Box::new(OneChunkSource {
+            meta: ExecutorMeta::new(Schema::new(vec![column]), 0, values.len().max(1), 1024),
+            data: Some(data),
+        })
+    }
+
     fn out_meta(n: usize) -> ExecutorMeta {
         let mut cols = Vec::new();
         for i in 0..n {
@@ -1771,6 +1827,76 @@ mod tests {
             StatementMemory::default(),
         );
         assert_eq!(run_typed(agg, &types), vec![vec![Datum::Null]]);
+    }
+
+    /// Go infers DOUBLE and calls `EvalReal` for temporal/duration SUM and
+    /// AVG. They therefore use the numeric date/duration spelling rather than
+    /// failing after the values reach the aggregate.
+    #[test]
+    fn real_aggregates_accept_temporal_and_duration_inputs() {
+        use tidb_datatype::{CoreTime, MySqlDuration, Time, TimeType};
+
+        let date_type = FieldType::new(FieldTypeCode::Date);
+        let mut date_column = Column::new(1, date_type.clone());
+        date_column.index = 0;
+        let dates = [
+            Datum::Time(
+                Time::new(
+                    CoreTime::from_date(2020, 1, 2, 0, 0, 0, 0),
+                    TimeType::Date,
+                    0,
+                )
+                .unwrap(),
+            ),
+            Datum::Time(
+                Time::new(
+                    CoreTime::from_date(2020, 1, 3, 0, 0, 0, 0),
+                    TimeType::Date,
+                    0,
+                )
+                .unwrap(),
+            ),
+        ];
+        let real = FieldType::new(FieldTypeCode::Double);
+        let sum = HashAggExec::new(
+            out_meta_typed(std::slice::from_ref(&real)),
+            vec![],
+            vec![AggFunc::new(
+                AggKind::Sum,
+                Some(Expression::Column(date_column)),
+            )],
+            datum_source(&dates, &date_type),
+            NoColumns,
+            StatementMemory::default(),
+        );
+        assert_eq!(
+            run_typed(sum, std::slice::from_ref(&real)),
+            vec![vec![Datum::Real(40_400_205.0)]]
+        );
+
+        let mut duration_type = FieldType::new(FieldTypeCode::Duration);
+        duration_type.set_decimal(0);
+        let mut duration_column = Column::new(1, duration_type.clone());
+        duration_column.index = 0;
+        let hours = [
+            Datum::Duration(MySqlDuration::from_nanoseconds(3_600_000_000_000, 0).unwrap()),
+            Datum::Duration(MySqlDuration::from_nanoseconds(10_800_000_000_000, 0).unwrap()),
+        ];
+        let avg = HashAggExec::new(
+            out_meta_typed(std::slice::from_ref(&real)),
+            vec![],
+            vec![AggFunc::new(
+                AggKind::Avg,
+                Some(Expression::Column(duration_column)),
+            )],
+            datum_source(&hours, &duration_type),
+            NoColumns,
+            StatementMemory::default(),
+        );
+        assert_eq!(
+            run_typed(avg, std::slice::from_ref(&real)),
+            vec![vec![Datum::Real(20_000.0)]]
+        );
     }
 
     #[test]
