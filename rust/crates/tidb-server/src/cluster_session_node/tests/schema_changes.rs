@@ -237,6 +237,66 @@ fn alter_table_rename_rebuilds_the_connection_catalog_without_losing_rows() {
     );
 }
 
+/// Go treats every pair in one `RENAME TABLE` statement as one DDL job: it
+/// validates the full sequence, publishes one schema version, then exposes
+/// every renamed table together.  The cluster session must not reject the
+/// second pair merely because its catalog writer used to model only a
+/// single-table diff.
+#[test]
+fn rename_table_multiple_pairs_publish_one_catalog_change() {
+    let (mut session, node) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed the first table");
+    session
+        .execute_write("INSERT INTO g (id, grp) VALUES (2, 20)")
+        .expect("seed the second table");
+
+    session
+        .execute_write("RENAME TABLE t TO t_renamed, g TO g_renamed")
+        .expect("one multi-pair rename DDL job runs");
+
+    assert_eq!(node.ddl.applied.load(Ordering::Acquire), 1);
+    assert_eq!(node.catalog.load().schema_version, 12);
+    assert!(session.execute("SELECT id FROM t").is_err());
+    assert!(session.execute("SELECT id FROM g").is_err());
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM t_renamed"),
+        vec![vec![Datum::Int(1), Datum::Int(10)]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT id, grp FROM g_renamed"),
+        vec![vec![Datum::Int(2), Datum::Int(20)]]
+    );
+}
+
+#[test]
+fn rename_table_later_pair_failure_leaves_every_prior_pair_unpublished() {
+    let (mut session, node) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed the first table");
+    session
+        .execute_write("INSERT INTO g (id, grp) VALUES (2, 20)")
+        .expect("seed the second table");
+
+    let error = session
+        .execute_write("RENAME TABLE t TO t_renamed, g TO t_renamed")
+        .expect_err("the occupied second target rejects the complete DDL job");
+    assert!(error.message.contains("already exists"), "{error:?}");
+    assert_eq!(node.ddl.applied.load(Ordering::Acquire), 0);
+    assert_eq!(node.catalog.load().schema_version, 11);
+    assert_eq!(
+        rows(&mut session, "SELECT id, v FROM t"),
+        vec![vec![Datum::Int(1), Datum::Int(10)]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT id, grp FROM g"),
+        vec![vec![Datum::Int(2), Datum::Int(20)]]
+    );
+    assert!(session.execute("SELECT id FROM t_renamed").is_err());
+}
+
 /// A second connection, opened before the DDL, notices it at its next
 /// statement: the node's catalog moved, so the connection rebuilds its
 /// tables rather than serving the schema it opened with.

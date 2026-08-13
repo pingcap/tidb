@@ -49,6 +49,48 @@ impl MockDdl {
     }
 }
 
+fn mock_rename_table(
+    catalog: &mut ClusterCatalog,
+    from_schema: &str,
+    from_table: &str,
+    to_schema: &str,
+    to_table: &str,
+) -> Result<(), SqlQueryError> {
+    let database_index = |name: &str| {
+        let name = name.to_lowercase();
+        catalog
+            .databases
+            .iter()
+            .position(|database| database.info.name.lowercase() == name)
+    };
+    let source_at = database_index(from_schema)
+        .ok_or_else(|| SqlQueryError::unknown(format!("Unknown database '{from_schema}'")))?;
+    let target_at = database_index(to_schema)
+        .ok_or_else(|| SqlQueryError::unknown(format!("Unknown database '{to_schema}'")))?;
+    let source_name = from_table.to_lowercase();
+    let source_table = catalog.databases[source_at]
+        .tables
+        .iter()
+        .position(|stored| stored.name.lowercase() == source_name)
+        .ok_or_else(|| {
+            SqlQueryError::unknown(format!("Unknown table '{from_schema}.{from_table}'"))
+        })?;
+    let target_name = to_table.to_lowercase();
+    if catalog.databases[target_at]
+        .tables
+        .iter()
+        .any(|stored| stored.name.lowercase() == target_name)
+    {
+        return Err(SqlQueryError::unknown(format!(
+            "Table '{to_schema}.{to_table}' already exists"
+        )));
+    }
+    let mut table = catalog.databases[source_at].tables.remove(source_table);
+    table.name = CiString::new(to_table.to_owned());
+    catalog.databases[target_at].tables.push(table);
+    Ok(())
+}
+
 impl ClusterDdl for MockDdl {
     fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError> {
         let current = self.catalog.load();
@@ -168,36 +210,17 @@ impl ClusterDdl for MockDdl {
                 from_table,
                 to_schema,
                 to_table,
-            } => {
-                let source_at = find(&mut next.databases, from_schema).ok_or_else(|| {
-                    SqlQueryError::unknown(format!("Unknown database '{from_schema}'"))
-                })?;
-                let target_at = find(&mut next.databases, to_schema).ok_or_else(|| {
-                    SqlQueryError::unknown(format!("Unknown database '{to_schema}'"))
-                })?;
-                let source_name = from_table.to_lowercase();
-                let source_table = next.databases[source_at]
-                    .tables
-                    .iter()
-                    .position(|stored| stored.name.lowercase() == source_name)
-                    .ok_or_else(|| {
-                        SqlQueryError::unknown(format!(
-                            "Unknown table '{from_schema}.{from_table}'"
-                        ))
-                    })?;
-                let target_name = to_table.to_lowercase();
-                if next.databases[target_at]
-                    .tables
-                    .iter()
-                    .any(|stored| stored.name.lowercase() == target_name)
-                {
-                    return Err(SqlQueryError::unknown(format!(
-                        "Table '{to_schema}.{to_table}' already exists"
-                    )));
+            } => mock_rename_table(&mut next, from_schema, from_table, to_schema, to_table)?,
+            DdlStatement::RenameTables { pairs } => {
+                for pair in pairs {
+                    mock_rename_table(
+                        &mut next,
+                        &pair.from_schema,
+                        &pair.from_table,
+                        &pair.to_schema,
+                        &pair.to_table,
+                    )?;
                 }
-                let mut table = next.databases[source_at].tables.remove(source_table);
-                table.name = CiString::new(to_table.clone());
-                next.databases[target_at].tables.push(table);
             }
             // An index change is the one catalog change whose correctness is
             // not finished by the metadata: it also owes the existing rows

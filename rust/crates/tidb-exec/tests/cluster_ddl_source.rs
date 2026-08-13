@@ -961,8 +961,30 @@ fn alter_table_rename_moves_catalog_metadata_without_reissuing_ids() {
 
     let pairs = tidb_parser::parse("RENAME TABLE u6.made_again TO u6.a, u6.a TO u6.b")
         .expect("the multi-pair spelling parses");
-    let error = lower_ddl(&pairs, "u6").expect_err("a partial multi-table rename is refused");
-    assert!(error.reason.contains("exactly one table pair"));
+    let lowered = lower_ddl(&pairs, "u6")
+        .expect("the full multi-table rename is admitted")
+        .expect("a catalog change");
+    let DdlStatement::RenameTables { pairs } = lowered else {
+        panic!("the multi-pair spelling retains every pair");
+    };
+    assert_eq!(pairs.len(), 2);
+    let renamed_twice = match plan_ddl(&mut store, &DdlStatement::RenameTables { pairs }, 470_000_104)
+        .expect("one atomic multi-table rename plans")
+    {
+        DdlPlan::Write(write) => *write,
+        DdlPlan::AlreadySatisfied { detail } => panic!("expected a write, got {detail}"),
+    };
+    assert_eq!(renamed_twice.diff.action_type.0, 47, "ActionRenameTables");
+    assert_eq!(renamed_twice.diff.affected_options.len(), 1);
+    apply(&mut store, &renamed_twice);
+    let catalog = tidb_exec::cluster_catalog::load_cluster_catalog(&mut store)
+        .expect("the multi-renamed catalog loads");
+    assert!(catalog.find_table("u6", "made_again").is_none());
+    assert!(catalog.find_table("u6", "a").is_none());
+    let (_, table) = catalog
+        .find_table("u6", "b")
+        .expect("the second pair sees the first pair's namespace");
+    assert_eq!(table.id, table_id);
 }
 
 #[test]

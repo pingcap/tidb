@@ -52,6 +52,7 @@
 //!   admitted, and every refusal happens in [`lower_ddl`], before a timestamp is
 //!   spent or a single byte is written.
 
+use std::collections::BTreeMap;
 use std::fmt;
 
 use tidb_ast::CiString;
@@ -65,7 +66,7 @@ use tidb_metadef::MAX_USER_GLOBAL_ID;
 use tidb_model::action_type::ActionType;
 use tidb_model::db::DBInfo;
 use tidb_model::index::{IndexColumn, IndexInfo};
-use tidb_model::schema_diff::SchemaDiff;
+use tidb_model::schema_diff::{AffectedOption, SchemaDiff};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
 use tidb_model::GoShared;
@@ -144,6 +145,16 @@ pub enum DdlStatement {
         /// The new table name.
         to_table: String,
     },
+    /// `RENAME TABLE from1 TO to1, from2 TO to2, ...`.
+    ///
+    /// Go validates and publishes every pair in one catalog job. Keeping the
+    /// pairs together is what prevents a later conflict from leaving earlier
+    /// renames visible.
+    RenameTables {
+        /// Pairs in SQL order, including the transient namespace changes a
+        /// later pair observes.
+        pairs: Vec<RenameTablePair>,
+    },
     /// `CREATE [UNIQUE] INDEX name ON [schema.]table (columns)`.
     ///
     /// Unlike the other four, this one changes DATA as well as metadata: the
@@ -172,6 +183,19 @@ pub enum DdlStatement {
         /// Whether a missing index is a no-op rather than an error.
         if_exists: bool,
     },
+}
+
+/// One source/destination pair in [`DdlStatement::RenameTables`].
+#[derive(Clone, Debug)]
+pub struct RenameTablePair {
+    /// The schema which currently owns the table.
+    pub from_schema: String,
+    /// The current table name.
+    pub from_table: String,
+    /// The schema which will own the table.
+    pub to_schema: String,
+    /// The new table name.
+    pub to_table: String,
 }
 
 /// Admits one parsed statement as a catalog change, or explains why not.
@@ -297,33 +321,40 @@ fn lower_alter_table_catalog(
     }
 }
 
-/// Lowers the one-pair top-level `RENAME TABLE` statement.
+/// Lowers a top-level `RENAME TABLE` statement.
 ///
-/// Go lets one job carry several pairs.  A single catalog write has no
-/// multi-table diff yet, so refusing a multi-pair statement is safer than
-/// publishing just its first pair.  The single-pair path is the same catalog
-/// mutation as `ALTER TABLE ... RENAME TO`.
+/// Go validates every pair before it publishes the one multi-table job. The
+/// planner keeps that complete sequence and resolves its transient namespace
+/// against one snapshot before it emits any mutation.
 fn lower_rename_table_stmt(
     rename: &RenameTableStmt,
     default_schema: &str,
 ) -> Result<Option<DdlStatement>, DdlAdmissionError> {
-    let [(from, to)] = rename.pairs.as_slice() else {
-        return Err(DdlAdmissionError::unsupported(
-            "RENAME TABLE requires exactly one table pair on this node; \
-             multiple pairs need one atomic multi-table DDL job",
-        ));
-    };
-    lower_rename_table(from, to, default_schema).map(Some)
+    let pairs = rename
+        .pairs
+        .iter()
+        .map(|(from, to)| lower_rename_table_pair(from, to, default_schema))
+        .collect::<Result<Vec<_>, _>>()?;
+    match pairs.as_slice() {
+        [] => Err(DdlAdmissionError::new("RENAME TABLE names no table")),
+        [pair] => Ok(Some(DdlStatement::RenameTable {
+            from_schema: pair.from_schema.clone(),
+            from_table: pair.from_table.clone(),
+            to_schema: pair.to_schema.clone(),
+            to_table: pair.to_table.clone(),
+        })),
+        _ => Ok(Some(DdlStatement::RenameTables { pairs })),
+    }
 }
 
-fn lower_rename_table(
+fn lower_rename_table_pair(
     from: &[String],
     to: &[String],
     default_schema: &str,
-) -> Result<DdlStatement, DdlAdmissionError> {
+) -> Result<RenameTablePair, DdlAdmissionError> {
     let (from_schema, from_table) = split_name(from, default_schema, "renamed table")?;
     let (to_schema, to_table) = split_name(to, default_schema, "new table name")?;
-    Ok(DdlStatement::RenameTable {
+    Ok(RenameTablePair {
         from_schema,
         from_table,
         to_schema,
@@ -925,48 +956,22 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             to_schema,
             to_table,
         } => {
-            let (old_db_id, stored) = locate_table(&catalog, from_schema, from_table)?;
-            let Some(new_database) = find_database(&catalog, to_schema) else {
-                return Err(DdlPlanError::UnknownDatabase(to_schema.clone()));
+            let pair = RenameTablePair {
+                from_schema: from_schema.clone(),
+                from_table: from_table.clone(),
+                to_schema: to_schema.clone(),
+                to_table: to_table.clone(),
             };
-            if find_table(new_database, to_table).is_some() {
-                return Err(DdlPlanError::TableExists {
-                    schema: to_schema.clone(),
-                    table: to_table.clone(),
-                });
-            }
-
-            // Go drops the old database-hash field then writes the same table
-            // ID under the new one.  Its allocator remains in the schema
-            // where the table was created, represented by AutoIDSchemaID;
-            // moving that counter would reissue IDs after a cross-schema
-            // rename.
-            let mut info = stored.clone_like_go();
-            if info.auto_id_schema_id == 0 && old_db_id != new_database.info.id {
-                info.auto_id_schema_id = old_db_id;
-            } else if new_database.info.id == info.auto_id_schema_id {
-                // A table renamed back to its original schema no longer needs
-                // an override (Go `checkAndRenameTables`).
-                info.auto_id_schema_id = 0;
-            }
-            info.name = CiString::new(to_table.clone());
-            info.update_ts = start_ts;
-            let table_id = info.id;
-            let encoded = value::serialize_table_info(&info)
-                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            if old_db_id != new_database.info.id {
-                writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
-                    old_db_id, table_id,
-                ))?);
-            }
-            writes.push(OptimisticMutation::meta_put(
-                key::table_kv_key(new_database.info.id, table_id),
-                encoded,
-            )?);
-            diff.action_type = ActionType::ACTION_RENAME_TABLE;
-            diff.schema_id = new_database.info.id;
-            diff.table_id = table_id;
-            diff.old_schema_id = old_db_id;
+            plan_rename_tables(
+                &catalog,
+                std::slice::from_ref(&pair),
+                start_ts,
+                &mut writes,
+                &mut diff,
+            )?;
+        }
+        DdlStatement::RenameTables { pairs } => {
+            plan_rename_tables(&catalog, pairs, start_ts, &mut writes, &mut diff)?;
         }
         DdlStatement::CreateIndex {
             schema,
@@ -1114,6 +1119,149 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
 
 fn already(detail: String) -> DdlPlan {
     DdlPlan::AlreadySatisfied { detail }
+}
+
+#[derive(Clone)]
+struct RenameState {
+    original_schema_id: i64,
+    current_schema_id: i64,
+    table: TableInfo,
+}
+
+#[derive(Clone, Copy)]
+struct RenamePairResult {
+    table_id: i64,
+    old_schema_id: i64,
+    new_schema_id: i64,
+}
+
+/// Plans all of a top-level `RENAME TABLE` statement against one mutable
+/// namespace snapshot, then emits only the final metadata location for each
+/// table. This is the catalog transaction equivalent of Go's `ExtractTblInfos`
+/// preflight followed by its one `ActionRenameTables` job.
+fn plan_rename_tables(
+    catalog: &ClusterCatalog,
+    pairs: &[RenameTablePair],
+    start_ts: u64,
+    writes: &mut Vec<OptimisticMutation>,
+    diff: &mut SchemaDiff,
+) -> Result<(), DdlPlanError> {
+    let database_ids = catalog
+        .databases
+        .iter()
+        .map(|database| (database.info.name.lowercase().to_owned(), database.info.id))
+        .collect::<BTreeMap<_, _>>();
+    let mut namespace = BTreeMap::new();
+    for database in &catalog.databases {
+        for table in &database.tables {
+            namespace.insert(
+                table_name_key(database.info.name.lowercase(), table.name.lowercase()),
+                RenameState {
+                    original_schema_id: database.info.id,
+                    current_schema_id: database.info.id,
+                    table: table.clone_like_go(),
+                },
+            );
+        }
+    }
+
+    let mut changed = BTreeMap::new();
+    let mut results = Vec::with_capacity(pairs.len());
+    for pair in pairs {
+        let from_schema = pair.from_schema.to_lowercase();
+        let to_schema = pair.to_schema.to_lowercase();
+        if !database_ids.contains_key(&from_schema) {
+            return Err(DdlPlanError::UnknownDatabase(pair.from_schema.clone()));
+        }
+        let from_key = table_name_key(&from_schema, &pair.from_table.to_lowercase());
+        let Some(state) = namespace.get(&from_key) else {
+            return Err(DdlPlanError::UnknownTable {
+                schema: pair.from_schema.clone(),
+                table: pair.from_table.clone(),
+            });
+        };
+        let Some(&new_schema_id) = database_ids.get(&to_schema) else {
+            return Err(DdlPlanError::UnknownDatabase(pair.to_schema.clone()));
+        };
+        let to_key = table_name_key(&to_schema, &pair.to_table.to_lowercase());
+        if namespace.contains_key(&to_key) {
+            return Err(DdlPlanError::TableExists {
+                schema: pair.to_schema.clone(),
+                table: pair.to_table.clone(),
+            });
+        }
+
+        let mut state = state.clone();
+        namespace.remove(&from_key);
+        let old_schema_id = state.current_schema_id;
+        if state.table.auto_id_schema_id == 0 && old_schema_id != new_schema_id {
+            state.table.auto_id_schema_id = old_schema_id;
+        } else if new_schema_id == state.table.auto_id_schema_id {
+            state.table.auto_id_schema_id = 0;
+        }
+        state.current_schema_id = new_schema_id;
+        state.table.name = CiString::new(pair.to_table.clone());
+        state.table.update_ts = start_ts;
+        let table_id = state.table.id;
+        results.push(RenamePairResult {
+            table_id,
+            old_schema_id,
+            new_schema_id,
+        });
+        changed.insert(table_id, state.clone());
+        namespace.insert(to_key, state);
+    }
+
+    for state in changed.values() {
+        let table_id = state.table.id;
+        if state.original_schema_id != state.current_schema_id {
+            writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
+                state.original_schema_id,
+                table_id,
+            ))?);
+        }
+        let encoded = value::serialize_table_info(&state.table)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+        writes.push(OptimisticMutation::meta_put(
+            key::table_kv_key(state.current_schema_id, table_id),
+            encoded,
+        )?);
+    }
+
+    let first = results
+        .first()
+        .expect("a lowered RENAME TABLE has at least one pair");
+    if results.len() == 1 {
+        diff.action_type = ActionType::ACTION_RENAME_TABLE;
+        diff.schema_id = first.new_schema_id;
+        diff.table_id = first.table_id;
+        diff.old_schema_id = first.old_schema_id;
+        return Ok(());
+    }
+
+    // Go's RenameTables completion has already moved every table before it
+    // writes the diff, so `OldSchemaIDForSchemaDiff` is the new schema for
+    // each pair. The first pair lives in the diff header; the remaining pairs
+    // are the affected options in source order.
+    diff.action_type = ActionType::ACTION_RENAME_TABLES;
+    diff.schema_id = first.new_schema_id;
+    diff.table_id = first.table_id;
+    diff.old_schema_id = first.new_schema_id;
+    diff.affected_options = results[1..]
+        .iter()
+        .map(|result| AffectedOption {
+            schema_id: result.new_schema_id,
+            table_id: result.table_id,
+            old_table_id: result.table_id,
+            old_schema_id: result.new_schema_id,
+        })
+        .collect::<Vec<_>>()
+        .into();
+    Ok(())
+}
+
+fn table_name_key(schema: &str, table: &str) -> String {
+    format!("{schema}\0{table}")
 }
 
 /// Resolves `schema`.`table` to its database ID and stored `TableInfo`.
