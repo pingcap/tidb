@@ -191,6 +191,13 @@ pub struct LogicalJoin {
     /// how `getEnforcedMergeJoin` remains buildable when neither access path
     /// already provides the join-key order.
     pub force_merge: bool,
+    /// `p.StatsInfo().RowCount`, derived before physical enumeration.
+    ///
+    /// The join cost formula mostly reads child rows, but the chosen task's
+    /// cardinality is what its parent must price. `None` keeps standalone
+    /// structural tests independent of the statistics layer; live callers
+    /// provide the logical statistic.
+    pub output_rows: Option<f64>,
 }
 
 /// A node of the logical tree the search runs over.
@@ -268,6 +275,13 @@ pub enum DecisionTree {
         strategy: JoinStrategy,
         /// Logical left child, then logical right child.
         children: [Box<DecisionTree>; 2],
+    },
+    /// `EnforceProperty`: a Sort inserted above the child decision.
+    Sort {
+        /// The order enforced by the Sort.
+        property: PhysicalProperty,
+        /// The decision below the Sort.
+        child: Box<DecisionTree>,
     },
 }
 
@@ -753,7 +767,10 @@ fn enumerate(
             continue;
         };
         let order = provided_order(&candidate.strategy, [&left, &right]);
-        let costed = candidate_cost::evaluate(&plan, env, CostTaskType::Root);
+        let mut costed = candidate_cost::evaluate(&plan, env, CostTaskType::Root);
+        if let Some(output_rows) = join.output_rows {
+            costed.rows = output_rows;
+        }
         let task = Task {
             plan,
             order,
@@ -792,7 +809,10 @@ fn enforce(
         plan,
         order: prop.sort_items.clone(),
         costed,
-        decision: task.decision.clone(),
+        decision: DecisionTree::Sort {
+            property: prop.clone(),
+            child: Box::new(task.decision.clone()),
+        },
     })
 }
 

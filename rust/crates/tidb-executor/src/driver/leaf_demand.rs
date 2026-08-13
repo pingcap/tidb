@@ -118,6 +118,9 @@ pub(crate) struct FromDemand<'a> {
     /// site reads it before it decides a merge join; see
     /// [`crate::driver::join_method_hints`].
     pub(crate) join_hints: Option<&'a crate::driver::join_method_hints::JoinMethodHints>,
+    /// The recursively costed physical strategy for every join of this
+    /// `FROM`, when the whole tree was representable by the native planner.
+    pub(crate) join_guide: Option<&'a crate::driver::join_search::RecursiveGuide>,
 }
 
 impl FromDemand<'_> {
@@ -129,6 +132,7 @@ impl FromDemand<'_> {
             columns: None,
             rows: None,
             join_hints: None,
+            join_guide: None,
         }
     }
 }

@@ -148,6 +148,35 @@ fn apply_cache_quota_reaches_query_and_dml_statement_contexts() {
     );
 }
 
+#[test]
+fn optimizer_cost_variables_reach_the_statement_snapshot() {
+    let mut session = Session::new();
+    for (name, value) in [
+        ("tidb_executor_concurrency", "13"),
+        ("tidb_hash_join_concurrency", "-1"),
+        ("tidb_projection_concurrency", "-1"),
+        ("tidb_index_lookup_join_concurrency", "7"),
+        ("tidb_distsql_scan_concurrency", "19"),
+        ("tidb_index_join_batch_size", "123"),
+        ("tidb_opt_hash_join_cost_factor", "2.5"),
+        ("tidb_opt_merge_join_cost_factor", "0.5"),
+        ("tidb_opt_sort_cost_factor", "3.25"),
+    ] {
+        session.vars.set_system(name, value.to_owned()).unwrap();
+    }
+
+    let ctx = session.statement_context(false);
+    let env = ctx.optimizer_cost_env();
+    assert_eq!(ctx.hash_join_concurrency(), 13.0);
+    assert_eq!(env.session.projection_concurrency, 13.0);
+    assert_eq!(env.session.index_lookup_join_concurrency, 7.0);
+    assert_eq!(env.session.distsql_scan_concurrency, 19.0);
+    assert_eq!(env.session.index_join_batch_size, 123.0);
+    assert_eq!(env.cost_factors.hash_join, 2.5);
+    assert_eq!(env.cost_factors.merge_join, 0.5);
+    assert_eq!(env.cost_factors.sort, 3.25);
+}
+
 /// A whole session lifecycle from SQL strings alone: DDL, writes, reads.
 #[test]
 fn session_runs_a_sql_lifecycle() {

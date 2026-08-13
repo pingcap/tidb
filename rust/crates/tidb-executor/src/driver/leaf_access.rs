@@ -238,7 +238,7 @@ pub(crate) fn leaf_index_path(
 /// The same answer [`crate::merge_join_plan::table_scan_order`] gives, read
 /// through the leaf's column list so it can be compared with
 /// [`leaf_index_order`] on one numbering.
-fn leaf_handle_order(table: &KvTable, columns: &[(String, FieldType)]) -> Vec<usize> {
+pub(crate) fn leaf_handle_order(table: &KvTable, columns: &[(String, FieldType)]) -> Vec<usize> {
     crate::merge_join_plan::table_scan_order(table)
         .into_iter()
         .next()
@@ -263,7 +263,7 @@ fn leaf_handle_order(table: &KvTable, columns: &[(String, FieldType)]) -> Vec<us
 /// same one [`crate::driver::merge_decision`] does: an expression index's
 /// hidden column is a column of the TABLE that no query row carries, so it
 /// truncates the order rather than pointing at the wrong offset.
-fn leaf_index_order(
+pub(crate) fn leaf_index_order(
     table: &KvTable,
     index: &crate::kv_table::KvIndex,
     columns: &[(String, FieldType)],
@@ -282,6 +282,126 @@ fn leaf_index_order(
         order.push(at);
     }
     order
+}
+
+/// Every access-path task a recursive join search may choose for one table.
+///
+/// This is the same condition-blind leaf enumeration [`leaf_index_path`]
+/// consumes, stopped after skyline pruning rather than after choosing one
+/// path. Orders are translated to the caller's stable column identities so a
+/// parent property can select a dearer ordered path when that makes the whole
+/// join tree cheaper.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn leaf_alternatives(
+    table: &KvTable,
+    table_ref: &tidb_ast::TableRef,
+    visible: &str,
+    columns: &[(String, FieldType)],
+    demand: &crate::driver::leaf_demand::LeafDemand,
+    catalog: &Catalog,
+    zone: &tidb_datatype::SessionTimeZone,
+    column_ids: &[i64],
+) -> Option<Vec<tidb_planner::find_best_task::LeafAlternative>> {
+    // The recursive model currently has an exact clustered-handle probe but
+    // no source-shaped secondary-index double-read probe. Decline the whole
+    // tree when one exists; ordinary access planning still handles it.
+    if table.partition().is_some()
+        || !table.indexes().is_empty()
+        || columns.len() != column_ids.len()
+    {
+        return None;
+    }
+    let hints = crate::index_hints::table_ref_hints(table_ref, table).ok()?;
+    let needed = demand.needed(visible, columns);
+    let resolver = TableResolver {
+        table_name: visible,
+        columns,
+        zone: zone.clone(),
+    };
+    let stats = catalog.table_statistics(table.table_id);
+    let stats = stats.as_ref().map(AsRef::as_ref);
+    let paths = crate::access_cost::pruned_access_paths(
+        crate::access_cost::enumerate_paths(
+            table,
+            columns,
+            None,
+            &needed,
+            &resolver,
+            None,
+            stats,
+            &hints,
+            false,
+            false,
+            demand.statement_forces_an_index(),
+        ),
+        stats,
+        false,
+    );
+    let row_size = crate::access_cost::schema_avg_row_size(
+        &needed
+            .iter()
+            .filter_map(|offset| columns.get(*offset).map(|(_, ty)| ty.clone()))
+            .collect::<Vec<_>>(),
+    );
+    let mut alternatives = Vec::with_capacity(paths.len() + 1);
+    for path in paths {
+        let (order, num_ranges) = match &path.index {
+            Some((index_id, ranges)) => {
+                let index = table.indexes().iter().find(|index| index.id == *index_id)?;
+                (leaf_index_order(table, index, columns), ranges.len())
+            }
+            None => (
+                leaf_handle_order(table, columns),
+                path.table_ranges.as_ref().map_or(1, Vec::len),
+            ),
+        };
+        alternatives.push(tidb_planner::find_best_task::LeafAlternative {
+            plan: tidb_planner::candidate_cost::Candidate::CostedAccess {
+                rows: path.estimate.rows,
+                row_size,
+                cost: path.cost,
+                num_ranges,
+            },
+            order: order
+                .into_iter()
+                .filter_map(|offset| column_ids.get(offset).copied())
+                .map(|col| tidb_planner::physical_property::SortItem::new(col, false))
+                .collect(),
+            role: tidb_planner::find_best_task::LeafRole::Plain,
+        });
+    }
+
+    // `buildDataSource2TableScanByIndexJoinProp`: one clustered-handle range
+    // lookup per outer key. A secondary-index lookup has a different
+    // double-read tree and is deliberately not fabricated here.
+    if table.pk_handle_offset().is_some() {
+        let rows = 1.0;
+        let scan = tidb_planner::candidate_cost::Candidate::TableScan {
+            rows,
+            row_size: tidb_planner::candidate_cost::RowSize::Fixed(row_size),
+            is_child_of_inl: Some(true),
+            has_full_range_scan: false,
+            penalty: tidb_planner::plan_cost_ver2::TableScanPenaltyInput {
+                has_range_info: true,
+                ..Default::default()
+            },
+            num_ranges: 1,
+            desc: false,
+        };
+        alternatives.push(tidb_planner::find_best_task::LeafAlternative {
+            plan: tidb_planner::candidate_cost::Candidate::Reader {
+                child: Box::new(scan),
+                rows,
+                row_size: tidb_planner::candidate_cost::RowSize::Fixed(row_size),
+                kind: tidb_planner::candidate_cost::ReaderKind::Table,
+            },
+            order: Vec::new(),
+            role: tidb_planner::find_best_task::LeafRole::IndexJoinProbe {
+                table_range_scan: true,
+            },
+        });
+    }
+    (!alternatives.is_empty()).then_some(alternatives)
 }
 
 /// The whole-index path a join leaf committed to: what

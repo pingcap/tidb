@@ -370,6 +370,10 @@ pub struct StmtContext {
     /// the same value that the session writer validated, including a
     /// statement-local `SET_VAR(tidb_opt_fix_control=...)` overlay.
     optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl,
+    /// The statement snapshot of every session value read by cost model v2.
+    optimizer_cost_env: tidb_planner::candidate_cost::CostEnv,
+    /// Resolved `tidb_hash_join_concurrency` for physical hash-join costing.
+    hash_join_concurrency: f64,
     /// Go `SessionVars.TiDBOptJoinReorderThroughProj`
     /// (`@@tidb_opt_join_reorder_through_proj`, default `OFF`): whether
     /// `extractJoinGroup` may look THROUGH a `Projection` sitting on a join
@@ -576,6 +580,8 @@ impl StmtContext {
             join_reorder_threshold: tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD
                 as i32,
             optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
+            optimizer_cost_env: tidb_planner::candidate_cost::CostEnv::default(),
+            hash_join_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as f64,
             // Go `vardef.DefTiDBOptJoinReorderThroughProj`.
             join_reorder_through_proj: false,
             // Go `vardef.DefTiDBOptJoinReorderThroughSel`.
@@ -910,6 +916,30 @@ impl StmtContext {
     #[must_use]
     pub const fn optimizer_fix_control(&self) -> &tidb_planner::fix_control::OptimizerFixControl {
         &self.optimizer_fix_control
+    }
+
+    /// Attaches the resolved statement snapshot used by cost model v2.
+    #[must_use]
+    pub fn with_optimizer_cost_env(
+        mut self,
+        env: tidb_planner::candidate_cost::CostEnv,
+        hash_join_concurrency: f64,
+    ) -> Self {
+        self.optimizer_cost_env = env;
+        self.hash_join_concurrency = hash_join_concurrency;
+        self
+    }
+
+    /// The statement's cost-model-v2 environment.
+    #[must_use]
+    pub const fn optimizer_cost_env(&self) -> &tidb_planner::candidate_cost::CostEnv {
+        &self.optimizer_cost_env
+    }
+
+    /// Resolved `tidb_hash_join_concurrency`.
+    #[must_use]
+    pub const fn hash_join_concurrency(&self) -> f64 {
+        self.hash_join_concurrency
     }
 
     /// Go `SessionVars.TiDBOptJoinReorderThreshold`. Non-positive -- and `0`

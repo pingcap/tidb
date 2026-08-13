@@ -275,6 +275,17 @@ pub fn zero_cost_ver2() -> CostVer2 {
     new_zero_cost_ver2(false)
 }
 
+/// Wraps a cost already computed by a source-equivalent operator subtree.
+///
+/// This is for planner composition boundaries where the child subsystem owns
+/// the complete cost formula and the parent only needs its total. It carries
+/// no trace because reconstructing a formula after the fact would be false
+/// provenance.
+#[must_use]
+pub fn fixed_cost_ver2(cost: f64) -> CostVer2 {
+    CostVer2 { cost, trace: None }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

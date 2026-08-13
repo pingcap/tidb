@@ -57,7 +57,6 @@ use tidb_expr::builtin_compare::refine_comparisons;
 use tidb_expr::column::Column;
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::{rewrite_expr_resolved, ColumnResolver};
-use tidb_expr::Columns as _;
 
 /// The name an unaliased field takes: a column reference keeps its column
 /// name, anything else keeps the text it was WRITTEN with -- Go's
@@ -772,12 +771,13 @@ pub(crate) fn run_select_traced(
             // hints, which decide at some sites which physical families are
             // enumerated AT ALL. See `driver::join_method_hints`.
             let join_hints = join_method_hints::JoinMethodHints::of_select(select);
-            let demand = leaf_demand::FromDemand {
+            let mut demand = leaf_demand::FromDemand {
                 offered: &offered,
                 pushdown: Some(&pushdown),
                 columns: wanted.as_ref(),
                 rows: row_source.as_ref(),
                 join_hints: (!join_hints.is_empty()).then_some(&join_hints),
+                join_guide: None,
             };
             // Go's `join_reorder` rule, which runs on the logical plan
             // between predicate pushdown and physical planning. It only ever
@@ -793,6 +793,18 @@ pub(crate) fn run_select_traced(
                 ctx,
             );
             let planned = reordered.as_ref().map_or(logical_join, |plan| &plan.join);
+            let from_required = merge_decision::from_required_prop(
+                select, planned, required, catalog, current_db, &offered,
+            );
+            let recursive_guide = join_search::recursive_guide(
+                planned,
+                catalog,
+                current_db,
+                ctx,
+                demand,
+                &from_required,
+            );
+            demand.join_guide = recursive_guide.as_ref();
             let (exec, mut scope, _) = build_join(
                 planned,
                 catalog,
@@ -805,9 +817,7 @@ pub(crate) fn run_select_traced(
                 // onto the `FROM` it is projected from -- read off `planned`
                 // rather than the written join, because a reorder renumbers
                 // the leaves and the offsets are the reordered ones.
-                &merge_decision::from_required_prop(
-                    select, planned, required, catalog, current_db, &offered,
-                ),
+                &from_required,
             )?;
             // Go's `restoreSchemaIfChanged`: the reordered join's schema is
             // the new leaf order, and the statement's output must stay the

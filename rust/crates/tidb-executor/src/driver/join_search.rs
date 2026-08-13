@@ -61,13 +61,17 @@
 //! make `EXPLAIN` print a strategy the bare statement does not run. See
 //! `crate::tests_join_search`.
 
-use tidb_ast::{Join, JoinNode};
+use std::collections::BTreeMap;
+
+use tidb_ast::{Join, JoinNode, JoinType, QueryStmt, SelectField};
 use tidb_planner::find_best_task::{
-    exhaust_join, JoinStrategy, LogicalJoin, LogicalJoinType, LogicalNode,
+    exhaust_join, DecisionTree, JoinCostModel, JoinStrategy, LeafAlternative, LeafRole,
+    LogicalJoin, LogicalJoinType, LogicalNode, Task,
 };
-use tidb_planner::physical_property::PhysicalProperty;
+use tidb_planner::physical_property::{PhysicalProperty, SortItem};
 
 use crate::driver::join_reorder::RowSource;
+use crate::driver::{Catalog, TableEntry};
 use crate::hash_join::EquiKey;
 
 /// What the enumeration leaves standing at one join site.
@@ -135,6 +139,546 @@ pub(crate) struct SearchInput<'a> {
     pub(crate) required: &'a PhysicalProperty,
     /// The estimate owner, or `None` when this `FROM` has none.
     pub(crate) rows: Option<&'a RowSource>,
+}
+
+/// The recursively costed strategy chosen for each logical join subtree.
+///
+/// A key is the sorted set of visible relation names under the join. The
+/// builder already refuses ambiguous unaliased self joins, so this is stable
+/// across physical build/probe reversals while remaining independent of AST
+/// allocation addresses.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RecursiveGuide {
+    sites: BTreeMap<Vec<String>, JoinStrategy>,
+}
+
+impl RecursiveGuide {
+    /// The strategy chosen for this exact logical subtree.
+    pub(crate) fn strategy_for(&self, join: &Join) -> Option<&JoinStrategy> {
+        self.sites.get(&join_key(join)?)
+    }
+}
+
+struct LogicalBuild {
+    node: LogicalNode,
+    schema: Vec<i64>,
+    names: Vec<String>,
+}
+
+/// Runs Go's recursive `findBestTask` rule over the executor driver's live
+/// logical join tree.
+///
+/// Unsupported leaf shapes return `None` and preserve the existing planner;
+/// no partial tree is allowed to steer only some joins. The supported shape
+/// is deliberately dependency-closed: TiKV tables, order-preserving
+/// projections over them, and their ordinary inner/outer join nodes.
+pub(crate) fn recursive_guide(
+    join: &Join,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    demand: crate::driver::leaf_demand::FromDemand<'_>,
+    required: &PhysicalProperty,
+) -> Option<RecursiveGuide> {
+    let hints = demand.join_hints?;
+    if !tree_has_forced_merge(join, hints) {
+        // The current integration closes the recursive-hint seam. Unhinted
+        // trees keep the existing chooser until every index-probe leaf shape
+        // is represented, so a partial access-path model cannot perturb them.
+        return None;
+    }
+    let rows = demand.rows?;
+    let columns = demand.columns?;
+    let mut next_column = 1_i64;
+    let built = build_logical_node(
+        &JoinNode::Join(Box::new(join.clone())),
+        catalog,
+        current_db,
+        ctx,
+        demand,
+        columns,
+        rows,
+        &mut next_column,
+    )?;
+    let model = LiveJoinCostModel {
+        hash_concurrency: ctx.hash_join_concurrency(),
+    };
+    let task = tidb_planner::find_best_task::find_best_task(
+        &built.node,
+        required,
+        LeafRole::Plain,
+        &model,
+        ctx.optimizer_cost_env(),
+    )?;
+    let mut guide = RecursiveGuide::default();
+    collect_decisions(
+        &JoinNode::Join(Box::new(join.clone())),
+        &task.decision,
+        &mut guide,
+    )?;
+    Some(guide)
+}
+
+fn tree_has_forced_merge(
+    join: &Join,
+    hints: &crate::driver::join_method_hints::JoinMethodHints,
+) -> bool {
+    let sides = crate::driver::join_method_hints::side_aliases(join);
+    if hints.forces_merge((sides.0.as_deref(), sides.1.as_deref())) {
+        return true;
+    }
+    let nested = |node: &JoinNode| match node {
+        JoinNode::Join(child) => tree_has_forced_merge(child, hints),
+        _ => false,
+    };
+    nested(&join.left) || join.right.as_ref().is_some_and(nested)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_logical_node(
+    node: &JoinNode,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    demand: crate::driver::leaf_demand::FromDemand<'_>,
+    columns: &crate::driver::leaf_demand::LeafDemand,
+    rows: &RowSource,
+    next_column: &mut i64,
+) -> Option<LogicalBuild> {
+    match node {
+        JoinNode::Table(table_ref) => {
+            let (database, name) =
+                crate::driver::split_table_path(&table_ref.name, current_db).ok()?;
+            let entry = catalog.get_in(database, name)?;
+            let TableEntry::Kv(table) = entry else {
+                return None;
+            };
+            let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
+            let table_columns = entry.column_list();
+            let schema = allocate_columns(table_columns.len(), next_column);
+            let alternatives = crate::driver::leaf_access::leaf_alternatives(
+                table,
+                table_ref,
+                &visible,
+                &table_columns,
+                columns,
+                catalog,
+                &ctx.session_zone(),
+                &schema,
+            )?;
+            Some(LogicalBuild {
+                node: LogicalNode::Leaf(alternatives),
+                schema,
+                names: vec![visible],
+            })
+        }
+        JoinNode::Derived {
+            subquery,
+            alias,
+            lateral: false,
+            column_names,
+        } => build_projection(
+            subquery,
+            alias.as_deref()?,
+            column_names,
+            catalog,
+            current_db,
+            ctx,
+            demand,
+            columns,
+            rows,
+            next_column,
+        ),
+        JoinNode::Derived { .. } => None,
+        JoinNode::Join(join) => {
+            let Some(right_node) = &join.right else {
+                return build_logical_node(
+                    &join.left,
+                    catalog,
+                    current_db,
+                    ctx,
+                    demand,
+                    columns,
+                    rows,
+                    next_column,
+                );
+            };
+            if join.natural || !join.using.is_empty() {
+                return None;
+            }
+            let left = build_logical_node(
+                &join.left,
+                catalog,
+                current_db,
+                ctx,
+                demand,
+                columns,
+                rows,
+                next_column,
+            )?;
+            let right = build_logical_node(
+                right_node,
+                catalog,
+                current_db,
+                ctx,
+                demand,
+                columns,
+                rows,
+                next_column,
+            )?;
+            let left_props = crate::driver::merge_decision::possible_properties(
+                &join.left,
+                catalog,
+                current_db,
+                demand.offered,
+            )?;
+            let right_props = crate::driver::merge_decision::possible_properties(
+                right_node,
+                catalog,
+                current_db,
+                demand.offered,
+            )?;
+            if left_props.width != left.schema.len() || right_props.width != right.schema.len() {
+                return None;
+            }
+            let empty = PhysicalProperty::default();
+            let keys = crate::driver::merge_decision::enforced_merge_join_decision(
+                join,
+                catalog,
+                current_db,
+                &empty,
+                demand.offered,
+            );
+            let left_keys = keys
+                .as_ref()
+                .map(|decision| {
+                    decision
+                        .plan
+                        .keys
+                        .iter()
+                        .filter_map(|key| left.schema.get(key.left).copied())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let right_keys = keys
+                .as_ref()
+                .map(|decision| {
+                    decision
+                        .plan
+                        .keys
+                        .iter()
+                        .filter_map(|key| right.schema.get(key.right).copied())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            if left_keys.len() != right_keys.len() {
+                return None;
+            }
+            let counts = rows.rows_of_join(&left.names, &right.names);
+            let output_rows = counts.map(|count| count.joined).or_else(|| {
+                Some(rows.rows_of_relations(&left.names)? * rows.rows_of_relations(&right.names)?)
+            });
+            let hinted_sides = crate::driver::join_method_hints::side_aliases(join);
+            let force_merge = demand.join_hints.is_some_and(|hints| {
+                hints.forces_merge((hinted_sides.0.as_deref(), hinted_sides.1.as_deref()))
+            });
+            let mut schema = left.schema.clone();
+            schema.extend_from_slice(&right.schema);
+            let mut names = left.names.clone();
+            names.extend(right.names.clone());
+            Some(LogicalBuild {
+                node: LogicalNode::Join(Box::new(LogicalJoin {
+                    join_type: logical_join_type(join.tp),
+                    left: Box::new(left.node),
+                    right: Box::new(right.node),
+                    left_keys,
+                    right_keys,
+                    left_schema: left.schema,
+                    right_schema: right.schema,
+                    left_properties: map_orders(&left_props.orders, &schema[..left_props.width]),
+                    right_properties: map_orders(&right_props.orders, &schema[left_props.width..]),
+                    force_merge,
+                    output_rows,
+                })),
+                schema,
+                names,
+            })
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_projection(
+    subquery: &QueryStmt,
+    alias: &str,
+    column_names: &[String],
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    demand: crate::driver::leaf_demand::FromDemand<'_>,
+    columns: &crate::driver::leaf_demand::LeafDemand,
+    rows: &RowSource,
+    next_column: &mut i64,
+) -> Option<LogicalBuild> {
+    let QueryStmt::Select(select) = subquery else {
+        return None;
+    };
+    if select.distinct
+        || select.from.is_none()
+        || select.where_clause.is_some()
+        || !select.group_by.is_empty()
+        || select.having.is_some()
+        || !select.windows.is_empty()
+        || !select.order_by.is_empty()
+        || select.limit.is_some()
+    {
+        return None;
+    }
+    let child_join = select.from.as_ref()?;
+    let child = build_logical_node(
+        &JoinNode::Join(Box::new(child_join.clone())),
+        catalog,
+        current_db,
+        ctx,
+        demand,
+        columns,
+        rows,
+        next_column,
+    )?;
+    let fields: Vec<&tidb_ast::Expr> = select
+        .fields
+        .fields()
+        .iter()
+        .map(|field| match field {
+            SelectField::Expr { expr, .. } => Some(expr),
+            SelectField::Wildcard(_) => None,
+        })
+        .collect::<Option<Vec<_>>>()?;
+    if !column_names.is_empty() && column_names.len() != fields.len() {
+        return None;
+    }
+    let inner_props = crate::driver::merge_decision::possible_properties(
+        &JoinNode::Join(Box::new(child_join.clone())),
+        catalog,
+        current_db,
+        demand.offered,
+    )?;
+    let sources: Vec<Option<usize>> = fields
+        .iter()
+        .map(|expr| match expr {
+            tidb_ast::Expr::Column(path) => inner_props.offset_of(path),
+            _ => None,
+        })
+        .collect();
+    let schema = allocate_columns(fields.len(), next_column);
+    let LogicalNode::Leaf(child_alternatives) = child.node else {
+        return None;
+    };
+    let env = ctx.optimizer_cost_env();
+    let alternatives = child_alternatives
+        .into_iter()
+        .filter(|alternative| alternative.role == LeafRole::Plain)
+        .map(|alternative| {
+            let input_rows = tidb_planner::candidate_cost::evaluate(
+                &alternative.plan,
+                env,
+                tidb_planner::task_type::TaskType::Root,
+            )
+            .rows;
+            let order = project_order(&alternative.order, &child.schema, &sources, &schema);
+            LeafAlternative {
+                plan: tidb_planner::candidate_cost::Candidate::Projection {
+                    child: Box::new(alternative.plan),
+                    input_rows,
+                    exprs: fields
+                        .iter()
+                        .map(|expr| !matches!(expr, tidb_ast::Expr::Column(_)))
+                        .collect(),
+                },
+                order,
+                role: LeafRole::Plain,
+            }
+        })
+        .collect::<Vec<_>>();
+    (!alternatives.is_empty()).then_some(LogicalBuild {
+        node: LogicalNode::Leaf(alternatives),
+        schema,
+        names: vec![alias.to_owned()],
+    })
+}
+
+fn project_order(
+    order: &[SortItem],
+    child_schema: &[i64],
+    sources: &[Option<usize>],
+    schema: &[i64],
+) -> Vec<SortItem> {
+    let mut projected = Vec::new();
+    for item in order {
+        let Some(child_at) = child_schema.iter().position(|column| *column == item.col) else {
+            break;
+        };
+        let Some(output_at) = sources.iter().position(|source| *source == Some(child_at)) else {
+            break;
+        };
+        projected.push(SortItem::new(schema[output_at], item.desc));
+    }
+    projected
+}
+
+fn allocate_columns(width: usize, next: &mut i64) -> Vec<i64> {
+    (0..width)
+        .map(|_| {
+            let id = *next;
+            *next += 1;
+            id
+        })
+        .collect()
+}
+
+fn map_orders(orders: &[Vec<usize>], schema: &[i64]) -> Vec<Vec<i64>> {
+    orders
+        .iter()
+        .map(|order| {
+            order
+                .iter()
+                .filter_map(|offset| schema.get(*offset).copied())
+                .collect()
+        })
+        .collect()
+}
+
+fn logical_join_type(join_type: JoinType) -> LogicalJoinType {
+    match join_type {
+        JoinType::Cross => LogicalJoinType::Inner,
+        JoinType::Left => LogicalJoinType::LeftOuter,
+        JoinType::Right => LogicalJoinType::RightOuter,
+    }
+}
+
+struct LiveJoinCostModel {
+    hash_concurrency: f64,
+}
+
+impl JoinCostModel for LiveJoinCostModel {
+    fn attach(
+        &self,
+        join: &LogicalJoin,
+        strategy: &JoinStrategy,
+        children: [&Task; 2],
+    ) -> Option<tidb_planner::candidate_cost::Candidate> {
+        use tidb_planner::candidate_cost::Candidate;
+        use tidb_planner::plan_cost_ver2::{HashJoinInput, IndexJoinInput};
+        match strategy {
+            JoinStrategy::Hash(shape) => {
+                let build_at = if shape.use_outer_to_build {
+                    1 - shape.inner_idx
+                } else {
+                    shape.inner_idx
+                };
+                let probe_at = 1 - build_at;
+                Some(Candidate::HashJoin {
+                    build: Box::new(children[build_at].plan.clone()),
+                    probe: Box::new(children[probe_at].plan.clone()),
+                    input: HashJoinInput {
+                        build_rows: children[build_at].costed.rows,
+                        probe_rows: children[probe_at].costed.rows,
+                        build_row_size: children[build_at].costed.row_size,
+                        num_build_keys: join.left_keys.len(),
+                        num_probe_keys: join.right_keys.len(),
+                        tidb_concurrency: self.hash_concurrency,
+                    },
+                    build_filters: Vec::new(),
+                    probe_filters: Vec::new(),
+                })
+            }
+            JoinStrategy::Merge {
+                left_keys,
+                right_keys,
+                ..
+            } => Some(Candidate::MergeJoin {
+                left: Box::new(children[0].plan.clone()),
+                right: Box::new(children[1].plan.clone()),
+                child_rows: (children[0].costed.rows, children[1].costed.rows),
+                left_conditions: Vec::new(),
+                right_conditions: Vec::new(),
+                other_conditions: Vec::new(),
+                num_join_keys: (left_keys.len(), right_keys.len()),
+            }),
+            JoinStrategy::Index {
+                outer_idx, kind, ..
+            } => {
+                let probe_idx = 1 - *outer_idx;
+                Some(Candidate::IndexJoin {
+                    build: Box::new(children[*outer_idx].plan.clone()),
+                    probe: Box::new(children[probe_idx].plan.clone()),
+                    input: IndexJoinInput {
+                        build_rows: children[*outer_idx].costed.rows,
+                        build_row_size: children[*outer_idx].costed.row_size,
+                        probe_rows_one: children[probe_idx].costed.rows,
+                        probe_row_size: children[probe_idx].costed.row_size,
+                        num_right_join_keys: join.right_keys.len(),
+                        num_left_join_keys: join.left_keys.len(),
+                        num_ranges: 0.0,
+                        is_semi_join: matches!(
+                            join.join_type,
+                            LogicalJoinType::Semi
+                                | LogicalJoinType::AntiSemi
+                                | LogicalJoinType::LeftOuterSemi
+                                | LogicalJoinType::AntiLeftOuterSemi
+                        ),
+                        kind: *kind,
+                    },
+                    build_filters: Vec::new(),
+                    probe_filters: Vec::new(),
+                })
+            }
+        }
+    }
+
+    fn enforce(
+        &self,
+        prop: &PhysicalProperty,
+        task: &Task,
+    ) -> Option<tidb_planner::candidate_cost::Candidate> {
+        Some(tidb_planner::candidate_cost::Candidate::Sort {
+            child: Box::new(task.plan.clone()),
+            rows: task.costed.rows,
+            row_size: tidb_planner::candidate_cost::RowSize::Fixed(task.costed.row_size),
+            by_items: vec![false; prop.sort_items.len()],
+        })
+    }
+}
+
+fn collect_decisions(
+    node: &JoinNode,
+    decision: &DecisionTree,
+    guide: &mut RecursiveGuide,
+) -> Option<()> {
+    let decision = match decision {
+        DecisionTree::Sort { child, .. } => child.as_ref(),
+        decision => decision,
+    };
+    match (node, decision) {
+        (JoinNode::Join(join), decision) if join.right.is_none() => {
+            collect_decisions(&join.left, decision, guide)
+        }
+        (JoinNode::Join(join), DecisionTree::Join { strategy, children }) => {
+            guide.sites.insert(join_key(join)?, strategy.clone());
+            collect_decisions(&join.left, &children[0], guide)?;
+            collect_decisions(join.right.as_ref()?, &children[1], guide)
+        }
+        (JoinNode::Table(_) | JoinNode::Derived { .. }, DecisionTree::Leaf) => Some(()),
+        _ => None,
+    }
+}
+
+fn join_key(join: &Join) -> Option<Vec<String>> {
+    let (mut left, right) = side_names(join)?;
+    left.extend(right);
+    left.iter_mut().for_each(|name| name.make_ascii_lowercase());
+    left.sort();
+    Some(left)
 }
 
 // Every site this chooser answered for, in the order it was asked. The
@@ -308,6 +852,7 @@ fn logical_join(input: &SearchInput<'_>, orders: (&[Vec<usize>], &[Vec<usize>]))
             .map(|order| order.iter().map(|at| *at as i64 + shift).collect())
             .collect(),
         force_merge: false,
+        output_rows: None,
     }
 }
 

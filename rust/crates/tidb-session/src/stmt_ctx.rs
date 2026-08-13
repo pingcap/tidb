@@ -27,6 +27,79 @@ use std::rc::Rc;
 use crate::{DriverError, Session, StatementKind, StmtOutput};
 
 impl Session {
+    fn optimizer_cost_env(
+        &self,
+        mem_quota: i64,
+        tmp_storage_on_oom: bool,
+    ) -> (tidb_planner::candidate_cost::CostEnv, f64) {
+        let number = |name: &str, default: f64| {
+            self.vars
+                .get_system(name)
+                .ok()
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(default)
+        };
+        let enabled = |name: &str, default: bool| {
+            self.vars
+                .get_system(name)
+                .ok()
+                .map(|value| value.eq_ignore_ascii_case("on") || value == "1")
+                .unwrap_or(default)
+        };
+        let executor_concurrency = number(
+            tidb_vardef::tidb_vars::TIDB_EXECUTOR_CONCURRENCY,
+            tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as f64,
+        );
+        let resolved_concurrency = |name: &str| {
+            let value = number(name, -1.0);
+            if value > 0.0 {
+                value
+            } else {
+                executor_concurrency
+            }
+        };
+
+        let mut env = tidb_planner::candidate_cost::CostEnv::default();
+        env.session.distsql_scan_concurrency = number("tidb_distsql_scan_concurrency", 15.0);
+        env.session.index_lookup_concurrency =
+            resolved_concurrency("tidb_index_lookup_concurrency");
+        env.session.index_lookup_join_concurrency =
+            resolved_concurrency("tidb_index_lookup_join_concurrency");
+        env.session.projection_concurrency = resolved_concurrency("tidb_projection_concurrency");
+        env.session.hashagg_final_concurrency =
+            resolved_concurrency("tidb_hashagg_final_concurrency");
+        env.session.union_concurrency = executor_concurrency;
+        env.session.index_lookup_size = number("tidb_index_lookup_size", 20_000.0);
+        env.session.index_join_batch_size = number("tidb_index_join_batch_size", 25_000.0);
+        env.session.index_join_double_read_penalty_cost_rate =
+            number("tidb_index_join_double_read_penalty_cost_rate", 0.0);
+        env.session.enable_tmp_storage_on_oom = tmp_storage_on_oom;
+        env.session.mem_quota = mem_quota;
+        env.session.enable_paging = enabled("tidb_enable_paging", true);
+        env.session.mpp_enforced = enabled("tidb_enforce_mpp", false);
+
+        env.cost_factors.index_scan = number("tidb_opt_index_scan_cost_factor", 1.0);
+        env.cost_factors.table_row_id_scan = number("tidb_opt_table_rowid_scan_cost_factor", 1.0);
+        env.cost_factors.table_range_scan = number("tidb_opt_table_range_scan_cost_factor", 1.0);
+        env.cost_factors.table_full_scan = number("tidb_opt_table_full_scan_cost_factor", 1.0);
+        env.cost_factors.table_tiflash_scan =
+            number("tidb_opt_table_tiflash_scan_cost_factor", 1.0);
+        env.cost_factors.index_reader = number("tidb_opt_index_reader_cost_factor", 1.0);
+        env.cost_factors.table_reader = number("tidb_opt_table_reader_cost_factor", 1.0);
+        env.cost_factors.index_lookup = number("tidb_opt_index_lookup_cost_factor", 1.0);
+        env.cost_factors.index_merge = number("tidb_opt_index_merge_cost_factor", 1.0);
+        env.cost_factors.limit = number("tidb_opt_limit_cost_factor", 1.0);
+        env.cost_factors.sort = number("tidb_opt_sort_cost_factor", 1.0);
+        env.cost_factors.topn = number("tidb_opt_topn_cost_factor", 1.0);
+        env.cost_factors.stream_agg = number("tidb_opt_stream_agg_cost_factor", 1.0);
+        env.cost_factors.hash_agg = number("tidb_opt_hash_agg_cost_factor", 1.0);
+        env.cost_factors.merge_join = number("tidb_opt_merge_join_cost_factor", 1.0);
+        env.cost_factors.hash_join = number("tidb_opt_hash_join_cost_factor", 1.0);
+        env.cost_factors.index_join = number("tidb_opt_index_join_cost_factor", 1.0);
+
+        (env, resolved_concurrency("tidb_hash_join_concurrency"))
+    }
+
     /// Go `timeutil.ParseTimeZone`: `SYSTEM` is the host zone, a named zone
     /// comes from the zone database, and a `+HH:MM`/`-HH:MM` string is a
     /// fixed offset bounded to `[-12:59, +14:00]`.
@@ -412,6 +485,8 @@ impl Session {
                 .unwrap_or_default();
             !(value.eq_ignore_ascii_case("off") || value == "0")
         };
+        let (optimizer_cost_env, hash_join_concurrency) =
+            self.optimizer_cost_env(mem_quota, tmp_storage_on_oom);
         let oom_action = tidb_executor::OomAction::parse(
             &self
                 .vars
@@ -460,6 +535,7 @@ impl Session {
                 .with_cte_max_recursion_depth(cte_depth)
                 .with_join_reorder_threshold(join_reorder_threshold)
                 .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
+                .with_optimizer_cost_env(optimizer_cost_env.clone(), hash_join_concurrency)
                 .with_join_reorder_through_proj(join_reorder_through_proj)
                 .with_join_reorder_through_sel(join_reorder_through_sel)
                 .with_outer_join_reorder(outer_join_reorder)
@@ -535,6 +611,7 @@ impl Session {
         .with_cte_max_recursion_depth(cte_depth)
         .with_join_reorder_threshold(join_reorder_threshold)
         .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
+        .with_optimizer_cost_env(optimizer_cost_env, hash_join_concurrency)
         .with_join_reorder_through_proj(join_reorder_through_proj)
         .with_join_reorder_through_sel(join_reorder_through_sel)
         .with_outer_join_reorder(outer_join_reorder)

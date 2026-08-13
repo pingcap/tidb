@@ -1541,6 +1541,10 @@ pub(crate) fn build_join(
             );
         }
     }
+    let guided_strategy = demand
+        .join_guide
+        .and_then(|guide| guide.strategy_for(join))
+        .cloned();
     // Go's `GetMergeJoin` reads its children's PROVIDED orders and then hands
     // each child a required property over its own join keys
     // (`tryToGetChildReqProp`). Both halves happen here, BEFORE the children
@@ -1556,29 +1560,39 @@ pub(crate) fn build_join(
     let forced_merge = demand.join_hints.is_some_and(|hints| {
         hints.forces_merge((hinted_sides.0.as_deref(), hinted_sides.1.as_deref()))
     });
-    let ordinary_merge = crate::driver::merge_decision::merge_join_decision(
-        join,
-        catalog,
-        current_db,
-        required,
-        demand.offered,
-    )
-    // `GetMergeJoin` succeeding structurally is NECESSARY but not SUFFICIENT.
-    // Before any cost is compared, `exhaustPhysicalPlans4LogicalJoin` reads
-    // the statement's join-method hints and three of its arms settle the whole
-    // candidate list: a forced hash join returns before a merge candidate is
-    // built, a forced index join returns the index candidates alone, and a
-    // `NO_MERGE_JOIN` deletes the family outright. That gate is Go's, and it
-    // is what separates the FIVE `topn_push_down` statements that differ only
-    // by their hint. See `driver::join_method_hints`.
-    .filter(|_| {
-        demand.join_hints.is_none_or(|hints| {
-            hints.merge_join_allowed(
-                (hinted_sides.0.as_deref(), hinted_sides.1.as_deref()),
-                required.is_sort_item_empty(),
+    let guide_allows_merge = guided_strategy.as_ref().is_none_or(|strategy| {
+        matches!(
+            strategy,
+            tidb_planner::find_best_task::JoinStrategy::Merge { .. }
+        )
+    });
+    let ordinary_merge = guide_allows_merge
+        .then(|| {
+            crate::driver::merge_decision::merge_join_decision(
+                join,
+                catalog,
+                current_db,
+                required,
+                demand.offered,
             )
         })
-    });
+        .flatten()
+        // `GetMergeJoin` succeeding structurally is NECESSARY but not SUFFICIENT.
+        // Before any cost is compared, `exhaustPhysicalPlans4LogicalJoin` reads
+        // the statement's join-method hints and three of its arms settle the whole
+        // candidate list: a forced hash join returns before a merge candidate is
+        // built, a forced index join returns the index candidates alone, and a
+        // `NO_MERGE_JOIN` deletes the family outright. That gate is Go's, and it
+        // is what separates the FIVE `topn_push_down` statements that differ only
+        // by their hint. See `driver::join_method_hints`.
+        .filter(|_| {
+            demand.join_hints.is_none_or(|hints| {
+                hints.merge_join_allowed(
+                    (hinted_sides.0.as_deref(), hinted_sides.1.as_deref()),
+                    required.is_sort_item_empty(),
+                )
+            })
+        });
     let merge = ordinary_merge.or_else(|| {
         forced_merge.then(|| {
             crate::driver::merge_decision::enforced_merge_join_decision(
@@ -1613,10 +1627,10 @@ pub(crate) fn build_join(
     let search_orders = sides
         .as_ref()
         .map(|(left, right)| (left.orders.clone(), right.orders.clone()));
-    let (left_required, right_required) = match &merge {
+    let (left_required, right_required) = match (&guided_strategy, &merge) {
         // `tryToGetChildReqProp`: each child is required to produce ITS OWN
         // join keys' order, in the direction the parent asked for.
-        Some(decision) => (
+        (_, Some(decision)) => (
             crate::driver::merge_decision::child_required_prop(
                 decision.plan.keys.iter().map(|key| key.left),
                 decision.plan.desc,
@@ -1629,7 +1643,7 @@ pub(crate) fn build_join(
         // The parser's single-relation wrapper is not a join at all: it
         // passes its one child the property it was itself asked for, which is
         // how a `FROM a, b` node reaches the table under it.
-        None if join.right.is_none() => (
+        (_, None) if join.right.is_none() => (
             required.clone(),
             tidb_planner::physical_property::PhysicalProperty::default(),
         ),
@@ -1653,7 +1667,26 @@ pub(crate) fn build_join(
         // decision finally looks up is settled after the children are built;
         // if it turns out not to be an index join at all, the request is
         // unsaid again (`PlanTrace::retract_child_keep_order`).
-        None => index_join_child_props(required, sides.as_ref().map(|(left, _)| left.width)),
+        (Some(tidb_planner::find_best_task::JoinStrategy::Index { outer_idx, .. }), None) => {
+            let mut props = [
+                tidb_planner::physical_property::PhysicalProperty::default(),
+                tidb_planner::physical_property::PhysicalProperty::default(),
+            ];
+            props[*outer_idx] = required.clone();
+            (props[0].clone(), props[1].clone())
+        }
+        (Some(tidb_planner::find_best_task::JoinStrategy::Hash(_)), None) => (
+            tidb_planner::physical_property::PhysicalProperty::default(),
+            tidb_planner::physical_property::PhysicalProperty::default(),
+        ),
+        (Some(tidb_planner::find_best_task::JoinStrategy::Merge { .. }), None) => {
+            return Err(DriverError::unsupported(
+                "the recursively selected merge join could not be materialized",
+            ));
+        }
+        (None, None) => {
+            index_join_child_props(required, sides.as_ref().map(|(left, _)| left.width))
+        }
     };
     let (mut left_exec, left_scope, mut left_delivered) = build_from(
         &join.left,
@@ -2042,6 +2075,15 @@ pub(crate) fn build_join(
                 .any(|equi| equi.left == key.left && equi.right == key.right)
         })
     });
+    if matches!(
+        guided_strategy,
+        Some(tidb_planner::find_best_task::JoinStrategy::Merge { .. })
+    ) && merged.is_none()
+    {
+        return Err(DriverError::unsupported(
+            "the recursively selected merge join lost its required child order",
+        ));
+    }
     if let Some(plan) = merged.clone() {
         join_exec.set_merge_plan(plan);
     }
@@ -2072,22 +2114,40 @@ pub(crate) fn build_join(
         required,
         rows: demand.rows,
     };
-    let chosen = crate::driver::join_search::choose(&search_input);
-    let positive_concurrency = |value| match value {
-        Some(Datum::Int(value)) if value > 0 => Some(value as f64),
-        Some(Datum::UInt(value)) if value > 0 => Some(value as f64),
-        _ => None,
+    // Keep the one-site enumeration observable in tests and diagnostics even
+    // when the recursive search owns the final choice. Both read the same
+    // property; the recursive answer merely adds whole-subtree costing.
+    let local_choice = crate::driver::join_search::choose(&search_input);
+    let chosen = match &guided_strategy {
+        Some(tidb_planner::find_best_task::JoinStrategy::Index { .. }) => {
+            crate::driver::join_search::Chosen::Index
+        }
+        Some(_) => crate::driver::join_search::Chosen::Refused(
+            crate::driver::join_search::Refusal::NoIndexCandidate,
+        ),
+        None => local_choice,
     };
-    let hash_join_concurrency =
-        positive_concurrency(ctx.sysvar(None, "tidb_hash_join_concurrency"))
-            .or_else(|| positive_concurrency(ctx.sysvar(None, "tidb_executor_concurrency")))
-            .unwrap_or(tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as f64);
-    join_exec.set_cartesian_build_side(crate::driver::join_search::cartesian_build_is_left(
-        &search_input,
-        crate::access_cost::schema_avg_row_size(&left_types),
-        crate::access_cost::schema_avg_row_size(&right_types),
-        hash_join_concurrency,
-    ));
+    let hash_join_concurrency = ctx.hash_join_concurrency();
+    let guided_hash_build_is_left = guided_strategy.as_ref().and_then(|strategy| {
+        let tidb_planner::find_best_task::JoinStrategy::Hash(shape) = strategy else {
+            return None;
+        };
+        Some(if shape.use_outer_to_build {
+            1 - shape.inner_idx == 0
+        } else {
+            shape.inner_idx == 0
+        })
+    });
+    if let Some(build_is_left) = guided_hash_build_is_left {
+        join_exec.set_planned_hash_build_side(build_is_left);
+    } else {
+        join_exec.set_cartesian_build_side(crate::driver::join_search::cartesian_build_is_left(
+            &search_input,
+            crate::access_cost::schema_avg_row_size(&left_types),
+            crate::access_cost::schema_avg_row_size(&right_types),
+            hash_join_concurrency,
+        ));
+    }
     let index_join = (!coalescing && chosen == crate::driver::join_search::Chosen::Index)
         .then(|| {
             let (left_side, right_side) = crate::driver::index_join_decision::join_sides(

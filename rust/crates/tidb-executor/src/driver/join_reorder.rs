@@ -1947,6 +1947,12 @@ pub(crate) fn row_source(
 }
 
 impl RowSource {
+    /// The cardinality of one logical subtree identified by its visible
+    /// relation names.
+    pub(crate) fn rows_of_relations(&self, names: &[String]) -> Option<f64> {
+        self.model_of(names).map(|(rows, _, _)| rows)
+    }
+
     /// The rows of a joined pair, and of each side, in one walk: the three
     /// counts a join-strategy comparison reads.
     pub(crate) fn rows_of_join(&self, left: &[String], right: &[String]) -> Option<JoinRows> {

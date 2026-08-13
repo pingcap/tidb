@@ -392,6 +392,67 @@ fn a_leading_hint_declines_the_dissolve() {
     );
 }
 
+/// The accepted Go `Hint Compatibility` case: the hint starts in the
+/// dissolved query block, follows `t2` through expression injection, and
+/// forces only that lower join; recursive costing keeps the parent hashed.
+#[test]
+fn a_nested_merge_hint_does_not_force_the_reordered_parent() {
+    let mut catalog = Catalog::default();
+    for name in ["t1", "t2", "t3"] {
+        crate::run_create_table_on(
+            &format!("CREATE TABLE {name} (a INT, b INT, PRIMARY KEY (a))"),
+            &mut catalog,
+        )
+        .unwrap();
+    }
+    for (name, values) in [
+        ("t1", "(1, 10), (2, 20), (3, 30)"),
+        ("t2", "(1, 100), (2, 200), (3, 300)"),
+        ("t3", "(1, 1000), (2, 2000), (3, 3000)"),
+    ] {
+        crate::run_insert_on(
+            &format!("INSERT INTO {name} VALUES {values}"),
+            &mut catalog,
+            &StmtContext::for_dml(false, true, false),
+        )
+        .unwrap();
+    }
+    let sql = "SELECT t1.a, dt.a2 FROM t1 JOIN ( \
+        SELECT /*+ merge_join(t2) */ t2.a AS a2, t2.b * 2 AS doubled_b, t3.a AS a3 \
+        FROM t2 JOIN t3 ON t2.a = t3.a \
+        ) dt ON t1.b = dt.doubled_b";
+    let actual = plan(sql, &catalog, &ctx(true, 0));
+    assert!(
+        actual.get(1).is_some_and(|node| node.contains("HashJoin")),
+        "the unhinted reordered parent must remain a HashJoin: {actual:#?}"
+    );
+    assert_eq!(
+        actual
+            .iter()
+            .filter(|node| node.contains("MergeJoin"))
+            .count(),
+        1,
+        "the hint must force exactly the join over t2's injected projection: {actual:#?}",
+    );
+    assert_eq!(
+        actual.iter().filter(|node| node.contains("Sort")).count(),
+        2,
+        "both unordered merge inputs need Go's Sort enforcers: {actual:#?}",
+    );
+    assert_eq!(
+        actual
+            .iter()
+            .filter(|node| node.contains("TableFullScan"))
+            .count(),
+        3,
+        "the source schema has only clustered handles: {actual:#?}",
+    );
+    assert!(
+        actual.iter().all(|node| !node.contains("Index")),
+        "the source schema has no secondary-index plan: {actual:#?}",
+    );
+}
+
 /// A NON-DETERMINISTIC projection expression is not dissolved:
 /// `canInlineProjectionBasic` rejects `unFoldableFunctions`, because join
 /// reorder may move or duplicate where the expression is evaluated.

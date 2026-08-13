@@ -1895,6 +1895,25 @@ pub(crate) fn choose_access_path(
     stats: Option<&TableStatistics>,
     has_limit: bool,
 ) -> Option<AccessPath> {
+    let mut best: Option<AccessPath> = None;
+    for path in pruned_access_paths(candidates, stats, has_limit) {
+        let better = best.as_ref().is_none_or(|current| path.cost < current.cost);
+        if better {
+            best = Some(path);
+        }
+    }
+    best
+}
+
+/// The access paths that survive Go's skyline pruning, before cost chooses
+/// one. A recursive parent planner needs the whole survivor set because a
+/// required order can make a non-cheapest leaf path the cheapest complete
+/// join tree.
+pub(crate) fn pruned_access_paths(
+    candidates: Vec<Candidate<AccessPath>>,
+    stats: Option<&TableStatistics>,
+    has_limit: bool,
+) -> Vec<AccessPath> {
     let context = PruningContext {
         table_pseudo: is_pseudo(stats),
         row_count: realtime_row_count(stats),
@@ -1903,15 +1922,10 @@ pub(crate) fn choose_access_path(
         prefer_range: true,
         has_limit,
     };
-    let mut best: Option<AccessPath> = None;
-    for candidate in skyline_pruning(candidates, &context) {
-        let path = candidate.path;
-        let better = best.as_ref().is_none_or(|current| path.cost < current.cost);
-        if better {
-            best = Some(path);
-        }
-    }
-    best
+    skyline_pruning(candidates, &context)
+        .into_iter()
+        .map(|candidate| candidate.path)
+        .collect()
 }
 
 #[cfg(test)]

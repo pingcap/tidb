@@ -130,6 +130,21 @@ pub enum ReaderKind {
 /// than approximated.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Candidate {
+    /// An access-path subtree already priced by its owning scan/reader model.
+    ///
+    /// The join search needs the subtree's total, cardinality, width, and
+    /// range count. Keeping those exact values avoids duplicating the access
+    /// planner's table/index/lookup branching in this crate.
+    CostedAccess {
+        /// `getCardinality(reader)`.
+        rows: f64,
+        /// `getAvgRowSize(reader.StatsInfo(), reader.Schema().Columns)`.
+        row_size: f64,
+        /// `GetPlanCostVer2(reader)`.
+        cost: f64,
+        /// `getNumberOfRanges(reader)`.
+        num_ranges: usize,
+    },
     /// `PhysicalTableScan` on TiKV.
     TableScan {
         /// `getCardinality(p)`.
@@ -296,6 +311,7 @@ impl CostedNode {
 #[must_use]
 pub fn number_of_ranges(node: &Candidate) -> usize {
     match node {
+        Candidate::CostedAccess { num_ranges, .. } => *num_ranges,
         Candidate::TableScan { num_ranges, .. } | Candidate::IndexScan { num_ranges, .. } => {
             *num_ranges
         }
@@ -333,6 +349,12 @@ pub fn evaluate_traced(
     option: Option<&PlanCostOption>,
 ) -> CostedNode {
     match node {
+        Candidate::CostedAccess {
+            rows,
+            row_size,
+            cost,
+            ..
+        } => leaf(*rows, *row_size, crate::cost_usage::fixed_cost_ver2(*cost)),
         Candidate::TableScan {
             rows,
             row_size,
@@ -602,6 +624,21 @@ mod tests {
 
     fn env() -> CostEnv {
         CostEnv::default()
+    }
+
+    #[test]
+    fn a_costed_access_path_preserves_its_owner_computed_total() {
+        let path = Candidate::CostedAccess {
+            rows: 12.5,
+            row_size: 48.0,
+            cost: 345.75,
+            num_ranges: 3,
+        };
+        let costed = evaluate(&path, &env(), TaskType::Root);
+        assert_eq!(costed.rows, 12.5);
+        assert_eq!(costed.row_size, 48.0);
+        assert_eq!(costed.est_cost(), 345.75);
+        assert_eq!(number_of_ranges(&path), 3);
     }
 
     /// `EXPLAIN` prints two decimals, so agreement is asserted at the printed

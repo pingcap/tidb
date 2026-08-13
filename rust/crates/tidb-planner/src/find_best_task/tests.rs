@@ -183,6 +183,7 @@ fn join_1042() -> LogicalJoin {
         left_properties: vec![vec![T2_A]],
         right_properties: vec![vec![T1_A]],
         force_merge: false,
+        output_rows: None,
     }
 }
 
@@ -516,6 +517,7 @@ fn forced_merge_subtree() -> LogicalNode {
         left_properties: Vec::new(),
         right_properties: Vec::new(),
         force_merge: true,
+        output_rows: None,
     }))
 }
 
@@ -537,6 +539,31 @@ fn a_merge_hint_retries_below_an_incompatible_property_then_sorts_the_result() {
         );
     };
     assert!(matches!(*child, Candidate::MergeJoin { .. }));
+    assert!(matches!(
+        best.decision,
+        DecisionTree::Sort {
+            child,
+            ..
+        } if matches!(*child, DecisionTree::Join {
+            strategy: JoinStrategy::Merge { .. },
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_logical_join_exports_its_derived_cardinality_to_its_parent() {
+    let mut join = join_1042();
+    join.output_rows = Some(37.5);
+    let best = find_best_task(
+        &LogicalNode::Join(Box::new(join)),
+        &PhysicalProperty::default(),
+        LeafRole::Plain,
+        &Model1042,
+        &env(),
+    )
+    .expect("the join is buildable");
+    assert_eq!(best.costed.rows, 37.5);
 }
 
 #[test]
@@ -555,6 +582,7 @@ fn a_child_merge_hint_does_not_force_the_parent_join_method() {
         left_properties: vec![vec![T2_A]],
         right_properties: vec![vec![T3_A]],
         force_merge: false,
+        output_rows: None,
     }));
 
     let best = find_best_task(
@@ -801,6 +829,7 @@ fn join_1169() -> LogicalJoin {
         left_properties: vec![vec![T2_A]],
         right_properties: vec![vec![T1_A]],
         force_merge: false,
+        output_rows: None,
     }
 }
 

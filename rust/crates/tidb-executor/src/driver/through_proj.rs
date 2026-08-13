@@ -120,7 +120,7 @@
 use std::collections::BTreeMap;
 
 use tidb_ast::{
-    BinaryOp, Expr, GroupByItem, Join, JoinNode, JoinType, OrderItem, QueryStmt, SelectField,
+    BinaryOp, Expr, GroupByItem, Hint, Join, JoinNode, JoinType, OrderItem, QueryStmt, SelectField,
     SelectStmt,
 };
 use tidb_planner::join_reorder_projection_inline::{
@@ -145,6 +145,10 @@ struct Splice {
     /// under the projection; here they join the outer `WHERE`, which is sound
     /// because every join in the dissolved subtree is an inner join.
     lifted: Vec<Expr>,
+    /// Join-method hints owned by a projection that dissolved into this query
+    /// block. Go moves their preferred-join bits with the logical joins; the
+    /// rewritten AST must therefore carry the same hint authority upward.
+    hints: Vec<Hint>,
     /// The visible name of every relation now in the spliced scope, in order.
     visible: Vec<String>,
 }
@@ -250,6 +254,7 @@ pub(crate) fn inline(
 
     let mut rewritten = select.clone();
     rewritten.from = Some(rewritten_from);
+    rewritten.hints.extend(splice.hints.iter().cloned());
 
     let mut fields = Vec::new();
     for (index, field) in select.fields.fields().iter().enumerate() {
@@ -1004,14 +1009,38 @@ fn dissolve(
         lifted.push(substitute(where_clause, &inner)?);
     }
 
+    let mut lifted_hints = inner.hints;
+    lifted_hints.extend(
+        select
+            .hints
+            .iter()
+            .filter(|hint| is_join_method_hint(&hint.name))
+            .cloned(),
+    );
     splice.dissolved.extend(inner.dissolved);
     splice.dissolved.push(Dissolved {
         alias: alias.to_owned(),
         fields,
     });
     splice.lifted.extend(lifted);
+    splice.hints.extend(lifted_hints);
     splice.visible.extend(inner.visible);
     Some(JoinNode::Join(Box::new(spliced_from)))
+}
+
+fn is_join_method_hint(name: &str) -> bool {
+    matches!(
+        name.to_ascii_lowercase().as_str(),
+        "merge_join"
+            | "tidb_smj"
+            | "no_merge_join"
+            | "hash_join"
+            | "tidb_hj"
+            | "inl_join"
+            | "tidb_inlj"
+            | "inl_hash_join"
+            | "inl_merge_join"
+    )
 }
 
 /// Every leaf of a spliced subtree, in order.

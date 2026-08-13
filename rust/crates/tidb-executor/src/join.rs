@@ -467,6 +467,9 @@ pub struct JoinExec<C: Columns> {
     /// Which side Go's Cartesian hash join costed as its build input. This is
     /// consulted only for an inner join with no hash keys.
     cartesian_build_is_left: bool,
+    /// The recursively costed build side for an ordinary inner hash join.
+    /// `None` preserves the historical non-preserved/right-side choice.
+    planned_hash_build_is_left: Option<bool>,
     /// Nested loop only: whether its single all-at-once batch was emitted.
     emitted: bool,
     hash: Option<HashState>,
@@ -553,6 +556,7 @@ impl<C: Columns> JoinExec<C> {
             keys,
             cartesian_build_order,
             cartesian_build_is_left: false,
+            planned_hash_build_is_left: None,
             emitted: false,
             hash: None,
             merge: None,
@@ -632,10 +636,20 @@ impl<C: Columns> JoinExec<C> {
         self.cartesian_build_is_left = build_is_left;
     }
 
+    /// Applies the build/probe orientation selected by recursive planning.
+    pub(crate) fn set_planned_hash_build_side(&mut self, build_is_left: bool) {
+        self.planned_hash_build_is_left = Some(build_is_left);
+    }
+
     /// The outer side is the one whose unmatched rows survive; the inner
     /// side is the other, and is the one the hash path builds its table on.
     /// `true` means the LEFT child is the outer one.
     fn outer_is_left(&self) -> bool {
+        if self.kind == JoinKind::Inner {
+            if let Some(build_is_left) = self.planned_hash_build_is_left {
+                return !build_is_left;
+            }
+        }
         if self.kind == JoinKind::Inner && self.cartesian_build_order {
             return !self.cartesian_build_is_left;
         }
