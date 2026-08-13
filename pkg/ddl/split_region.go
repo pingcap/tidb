@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -133,7 +134,10 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 
 	// Split table region.
 	var ft *types.FieldType
-	if pkCol := tbInfo.GetPkColInfo(); pkCol != nil {
+	if tbInfo.IsCommonHandle {
+		primaryKey := tbInfo.GetPrimaryKey()
+		ft = &tbInfo.Columns[primaryKey.Columns[0].Offset].FieldType
+	} else if pkCol := tbInfo.GetPkColInfo(); pkCol != nil {
 		ft = &pkCol.FieldType
 	} else {
 		ft = types.NewFieldType(mysql.TypeLonglong)
@@ -146,7 +150,13 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 	for p := step; p < maxv; p += step {
 		recordID := p << shardFmt.IncrementalBits
 		recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
-		key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
+		handle, err := buildPreSplitRecordHandle(tbInfo, ft, recordID)
+		if err != nil {
+			logutil.DDLLogger().Warn("build pre-split record handle failed",
+				zap.Stringer("table", tbInfo.Name), zap.Int64("record ID", recordID), zap.Error(err))
+			continue
+		}
+		key := tablecodec.EncodeRecordKey(recordPrefix, handle)
 		splitTableKeys = append(splitTableKeys, key)
 	}
 	scatter, tableID := getScatterConfig(scatterScope, tbInfo.ID)
@@ -157,6 +167,24 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 	}
 	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, physicalID)...)
 	return regionIDs
+}
+
+func buildPreSplitRecordHandle(tbInfo *model.TableInfo, ft *types.FieldType, recordID int64) (kv.Handle, error) {
+	if !tbInfo.IsCommonHandle {
+		return kv.IntHandle(recordID), nil
+	}
+
+	// AUTO_RANDOM must be the first primary-key column, so its encoded value is a
+	// valid prefix of the common handle used as a region boundary.
+	datum := types.NewIntDatum(recordID)
+	if mysql.HasUnsignedFlag(ft.GetFlag()) {
+		datum = types.NewUintDatum(uint64(recordID))
+	}
+	encoded, err := codec.EncodeKey(nil, nil, datum)
+	if err != nil {
+		return nil, err
+	}
+	return kv.NewCommonHandle(encoded)
 }
 
 // SplitRecordRegion is to split region in store by table prefix.
