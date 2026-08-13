@@ -26,9 +26,10 @@ use tidb_ast::{DmlStmt, Expr, Stmt};
 use tidb_planner::{
     configured_catalog::ConfiguredCatalog,
     prepared_dml::{
-        lower_prepared_write, lower_text_write, ConfiguredAssignment, ConfiguredPreparedWrite,
-        ConfiguredPreparedWriteTemplate, PreparedBindValue, PreparedWriteBindError,
-        PreparedWritePlanError, UnsupportedPreparedWrite, MAX_PREPARED_INSERT_ROWS,
+        lower_prepared_write, lower_text_write, ConfiguredAssignment,
+        ConfiguredOnDuplicateValue, ConfiguredPreparedWrite, ConfiguredPreparedWriteTemplate,
+        PreparedBindValue, PreparedWriteBindError, PreparedWritePlanError,
+        UnsupportedPreparedWrite, MAX_PREPARED_INSERT_ROWS,
     },
     read_only_scan::{ConfiguredColumn, ConfiguredTable},
 };
@@ -235,8 +236,15 @@ fn insert_rows_stay_inside_the_checked_process_limit() {
 #[test]
 fn unsupported_insert_forms_are_rejected_before_a_handle_exists() {
     assert_eq!(
-        unsupported(
+        rejection(
             "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?) \
+             ON DUPLICATE KEY UPDATE balance = id"
+        ),
+        PreparedWritePlanError::OnDuplicateAssignmentShape
+    );
+    assert_eq!(
+        unsupported(
+            "INSERT IGNORE INTO campaign28.accounts (id, balance) VALUES (?, ?) \
              ON DUPLICATE KEY UPDATE balance = ?"
         ),
         UnsupportedPreparedWrite::OnDuplicateKey
@@ -267,6 +275,43 @@ fn unsupported_insert_forms_are_rejected_before_a_handle_exists() {
             "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?) AS new_row"
         ),
         UnsupportedPreparedWrite::InsertRowAlias
+    );
+}
+
+#[test]
+fn insert_on_duplicate_binds_candidate_and_left_to_right_assignment_values() {
+    let candidate_template = template(
+        "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?) \
+         ON DUPLICATE KEY UPDATE balance = VALUES(balance)",
+    );
+    assert_eq!(candidate_template.parameter_count(), 2);
+    let ConfiguredPreparedWrite::InsertOnDuplicateRows {
+        rows, assignments, ..
+    } = candidate_template.bind(&ints(&[10, 100])).expect("bind must succeed")
+    else {
+        panic!("expected an INSERT ON DUPLICATE KEY command");
+    };
+    assert_eq!(rows[0].values(), int_pairs(&[(0, 10), (1, 100)]).as_slice());
+    assert_eq!(assignments.len(), 1);
+    assert_eq!(assignments[0].column_index(), 1);
+    assert_eq!(
+        assignments[0].value(),
+        &ConfiguredOnDuplicateValue::CandidateColumn(1)
+    );
+
+    let template = template(
+        "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?) \
+         ON DUPLICATE KEY UPDATE balance = balance + ?",
+    );
+    assert_eq!(template.parameter_count(), 3);
+    let ConfiguredPreparedWrite::InsertOnDuplicateRows { assignments, .. } =
+        template.bind(&ints(&[10, 100, 7])).expect("bind must succeed")
+    else {
+        panic!("expected an INSERT ON DUPLICATE KEY command");
+    };
+    assert_eq!(
+        assignments[0].value(),
+        &ConfiguredOnDuplicateValue::Add(PreparedBindValue::Int(7))
     );
 }
 

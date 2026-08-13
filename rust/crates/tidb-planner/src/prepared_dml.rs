@@ -118,6 +118,9 @@ pub enum PreparedWritePlanError {
     UpdateClusteredHandle(String),
     /// The `SET` expression is neither a value nor `<same column> + <value>`.
     UpdateAssignmentShape,
+    /// An `ON DUPLICATE KEY UPDATE` assignment is outside the configured
+    /// write program this planner can lower without an expression engine.
+    OnDuplicateAssignmentShape,
     /// A point UPDATE/DELETE requires exactly one clustered-primary-key
     /// equality in `WHERE`, against this protocol's own value.
     PointHandlePredicate,
@@ -179,6 +182,9 @@ impl fmt::Display for PreparedWritePlanError {
             ),
             Self::UpdateAssignmentShape => formatter.write_str(
                 "UPDATE assigns either a value or the same column plus a value to a stored column",
+            ),
+            Self::OnDuplicateAssignmentShape => formatter.write_str(
+                "ON DUPLICATE KEY UPDATE assigns VALUES(column), a value, or the same column plus a value to an unindexed stored column",
             ),
             Self::PointHandlePredicate => formatter
                 .write_str("a point write requires exactly one clustered primary-key equality"),
@@ -503,6 +509,9 @@ pub struct ConfiguredPreparedInsertTemplate {
     rows: usize,
     /// One value slot per `(row, column)`, in left-to-right source order.
     values: Vec<TemplateValue>,
+    /// The duplicate-update program, resolved against the configured table but
+    /// with its bindable values still in source order.
+    on_duplicate: Vec<PreparedOnDuplicateAssignment>,
 }
 
 impl ConfiguredPreparedInsertTemplate {
@@ -510,6 +519,12 @@ impl ConfiguredPreparedInsertTemplate {
     #[must_use]
     pub fn parameter_count(&self) -> usize {
         marker_count(&self.values)
+            + self
+                .on_duplicate
+                .iter()
+                .filter_map(PreparedOnDuplicateAssignment::value)
+                .filter(|value| matches!(value, TemplateValue::Marker))
+                .count()
     }
 
     /// Number of `VALUES` rows this template inserts.
@@ -528,8 +543,16 @@ impl ConfiguredPreparedInsertTemplate {
         &self,
         params: &[PreparedBindValue],
     ) -> Result<ConfiguredPreparedWrite, PreparedWriteBindError> {
-        let values = resolve_values(&self.values, params)?;
-        let rows = values
+        let mut slots = self.values.clone();
+        slots.extend(
+            self.on_duplicate
+                .iter()
+                .filter_map(PreparedOnDuplicateAssignment::value)
+                .cloned(),
+        );
+        let values = resolve_values(&slots, params)?;
+        let (insert_values, duplicate_values) = values.split_at(self.values.len());
+        let rows = insert_values
             .chunks_exact(self.columns.len())
             .map(|values| ConfiguredInsertRow {
                 values: self
@@ -540,7 +563,20 @@ impl ConfiguredPreparedInsertTemplate {
                     .collect(),
             })
             .collect();
-        if self.replace {
+        if !self.on_duplicate.is_empty() {
+            let mut bound_values = duplicate_values.iter();
+            let assignments = self
+                .on_duplicate
+                .iter()
+                .map(|assignment| assignment.bind(&mut bound_values))
+                .collect::<Vec<_>>();
+            debug_assert!(bound_values.next().is_none());
+            Ok(ConfiguredPreparedWrite::InsertOnDuplicateRows {
+                table: self.table.clone(),
+                rows,
+                assignments,
+            })
+        } else if self.replace {
             Ok(ConfiguredPreparedWrite::ReplaceRows {
                 table: self.table.clone(),
                 rows,
@@ -557,6 +593,90 @@ impl ConfiguredPreparedInsertTemplate {
             })
         }
     }
+}
+
+/// A configured `ON DUPLICATE KEY UPDATE` assignment after its parameter
+/// markers have been bound.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ConfiguredOnDuplicateAssignment {
+    column_index: usize,
+    value: ConfiguredOnDuplicateValue,
+}
+
+impl ConfiguredOnDuplicateAssignment {
+    /// Configured index of the stored target column.
+    #[must_use]
+    pub const fn column_index(&self) -> usize {
+        self.column_index
+    }
+
+    /// The source of this assignment's replacement value.
+    #[must_use]
+    pub const fn value(&self) -> &ConfiguredOnDuplicateValue {
+        &self.value
+    }
+}
+
+/// Value program for one configured duplicate-update assignment.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ConfiguredOnDuplicateValue {
+    /// `column = VALUES(other_column)` reads the typed candidate value.
+    CandidateColumn(usize),
+    /// `column = value` replaces the stored value after normal column coercion.
+    Set(PreparedBindValue),
+    /// `column = column + value` reads this assignment's current stored value.
+    Add(PreparedBindValue),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PreparedOnDuplicateAssignment {
+    column_index: usize,
+    value: PreparedOnDuplicateValue,
+}
+
+impl PreparedOnDuplicateAssignment {
+    fn value(&self) -> Option<&TemplateValue> {
+        match &self.value {
+            PreparedOnDuplicateValue::CandidateColumn(_) => None,
+            PreparedOnDuplicateValue::Set(value) | PreparedOnDuplicateValue::Add(value) => {
+                Some(value)
+            }
+        }
+    }
+
+    fn bind<'a>(
+        &self,
+        values: &mut impl Iterator<Item = &'a PreparedBindValue>,
+    ) -> ConfiguredOnDuplicateAssignment {
+        let value = match &self.value {
+            PreparedOnDuplicateValue::CandidateColumn(column_index) => {
+                ConfiguredOnDuplicateValue::CandidateColumn(*column_index)
+            }
+            PreparedOnDuplicateValue::Set(_) => ConfiguredOnDuplicateValue::Set(
+                values
+                    .next()
+                    .expect("one bound value for every duplicate-update value slot")
+                    .clone(),
+            ),
+            PreparedOnDuplicateValue::Add(_) => ConfiguredOnDuplicateValue::Add(
+                values
+                    .next()
+                    .expect("one bound value for every duplicate-update value slot")
+                    .clone(),
+            ),
+        };
+        ConfiguredOnDuplicateAssignment {
+            column_index: self.column_index,
+            value,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum PreparedOnDuplicateValue {
+    CandidateColumn(usize),
+    Set(TemplateValue),
+    Add(TemplateValue),
 }
 
 /// A validated point UPDATE template against the clustered handle.
@@ -715,6 +835,16 @@ pub enum ConfiguredPreparedWrite {
         /// Bound rows in statement order.
         rows: Vec<ConfiguredInsertRow>,
     },
+    /// Insert complete rows, updating a conflicting row with the configured
+    /// duplicate-update program instead of failing the statement.
+    InsertOnDuplicateRows {
+        /// Resolved target table.
+        table: ConfiguredTable,
+        /// Bound candidate rows in statement order.
+        rows: Vec<ConfiguredInsertRow>,
+        /// Assignments evaluated left-to-right against a conflicting row.
+        assignments: Vec<ConfiguredOnDuplicateAssignment>,
+    },
     /// Replace one or more complete configured rows after removing every
     /// conflicting clustered or unique-index row.
     ReplaceRows {
@@ -815,7 +945,7 @@ fn lower_insert(
     catalog: &ConfiguredCatalog,
     mode: ValueMode,
 ) -> Result<ConfiguredPreparedInsertTemplate, PreparedWritePlanError> {
-    if !statement.on_duplicate.is_empty() {
+    if (statement.replace || statement.ignore) && !statement.on_duplicate.is_empty() {
         return Err(unsupported(UnsupportedPreparedWrite::OnDuplicateKey));
     }
     if statement.set_syntax || !statement.set_columns.is_empty() {
@@ -866,6 +996,9 @@ fn lower_insert(
         }
     }
 
+    let on_duplicate =
+        lower_on_duplicate_assignments(&statement.on_duplicate, table, values.len(), mode)?;
+
     Ok(ConfiguredPreparedInsertTemplate {
         table: table.clone(),
         replace: statement.replace,
@@ -873,7 +1006,95 @@ fn lower_insert(
         columns,
         rows,
         values,
+        on_duplicate,
     })
+}
+
+/// Lowers the storage-neutral subset of `ON DUPLICATE KEY UPDATE` that the
+/// configured real-TiKV write path can execute with its existing typed update
+/// machinery.  The generic expression evaluator remains the owner of richer
+/// assignment expressions; this boundary refuses them rather than inventing
+/// value semantics in the planner.
+fn lower_on_duplicate_assignments(
+    assignments: &[tidb_ast::Assignment],
+    table: &ConfiguredTable,
+    first_value_position: usize,
+    mode: ValueMode,
+) -> Result<Vec<PreparedOnDuplicateAssignment>, PreparedWritePlanError> {
+    let mut position = first_value_position;
+    let mut lowered = Vec::with_capacity(assignments.len());
+    for assignment in assignments {
+        let [column_name] = assignment.col.as_slice() else {
+            return Err(PreparedWritePlanError::OnDuplicateAssignmentShape);
+        };
+        let column_index = configured_column_index(column_name, table)?;
+        let column = &table.columns()[column_index];
+        if column.kind() != ConfiguredColumnKind::Stored
+            || table
+                .indexes()
+                .iter()
+                .any(|index| index.column_id() == column.id())
+        {
+            return Err(PreparedWritePlanError::OnDuplicateAssignmentShape);
+        }
+
+        let value = match &assignment.value {
+            Expr::Func { name, args, .. } if name.eq_ignore_ascii_case("values") => {
+                let [Expr::Column(path)] = args.as_slice() else {
+                    return Err(PreparedWritePlanError::OnDuplicateAssignmentShape);
+                };
+                let [candidate_name] = path.as_slice() else {
+                    return Err(PreparedWritePlanError::OnDuplicateAssignmentShape);
+                };
+                let candidate_index = configured_column_index(candidate_name, table)?;
+                if candidate_index != column_index {
+                    return Err(PreparedWritePlanError::OnDuplicateAssignmentShape);
+                }
+                PreparedOnDuplicateValue::CandidateColumn(candidate_index)
+            }
+            Expr::Binary(BinaryOp::Plus, left, right) => {
+                let Expr::Column(path) = left.as_ref() else {
+                    return Err(PreparedWritePlanError::OnDuplicateAssignmentShape);
+                };
+                let [left_name] = path.as_slice() else {
+                    return Err(PreparedWritePlanError::OnDuplicateAssignmentShape);
+                };
+                if configured_column_index(left_name, table)? != column_index
+                    || !supports_typed_add(column.scalar_type())
+                {
+                    return Err(PreparedWritePlanError::OnDuplicateAssignmentShape);
+                }
+                let value = admit_on_duplicate_value(right, position, mode)?;
+                position += 1;
+                PreparedOnDuplicateValue::Add(value)
+            }
+            value => {
+                let value = admit_on_duplicate_value(value, position, mode)?;
+                position += 1;
+                PreparedOnDuplicateValue::Set(value)
+            }
+        };
+        lowered.push(PreparedOnDuplicateAssignment {
+            column_index,
+            value,
+        });
+    }
+    Ok(lowered)
+}
+
+fn admit_on_duplicate_value(
+    expr: &Expr,
+    position: usize,
+    mode: ValueMode,
+) -> Result<TemplateValue, PreparedWritePlanError> {
+    match admit_value(expr, position, mode) {
+        Ok(value) => Ok(value),
+        Err(
+            PreparedWritePlanError::MarkerPosition { found: None, .. }
+            | PreparedWritePlanError::TextValueShape { .. },
+        ) => Err(PreparedWritePlanError::OnDuplicateAssignmentShape),
+        Err(error) => Err(error),
+    }
 }
 
 /// Lowers a parsed UPDATE into one configured prepared point template.

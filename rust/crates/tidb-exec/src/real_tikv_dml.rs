@@ -47,8 +47,8 @@ use tidb_datatype::{
 use tidb_planner::{
     prepared_dml::{
         lower_prepared_write, lower_text_write, ConfiguredAssignment, ConfiguredInsertRow,
-        ConfiguredPreparedWrite, ConfiguredPreparedWriteTemplate, PreparedBindValue,
-        PreparedWritePlanError,
+        ConfiguredOnDuplicateAssignment, ConfiguredOnDuplicateValue, ConfiguredPreparedWrite,
+        ConfiguredPreparedWriteTemplate, PreparedBindValue, PreparedWritePlanError,
     },
     read_only_scan::{
         configured_catalog::ConfiguredCatalog, ConfiguredColumn, ConfiguredColumnKind,
@@ -770,6 +770,177 @@ pub fn plan_update(
     })
 }
 
+/// Plans the update half of an `INSERT ... ON DUPLICATE KEY UPDATE` after the
+/// configured conflict lookup selected one stored record.
+///
+/// The configured planner admits only unindexed stored targets, so the record
+/// rewrite cannot move an index entry.  That is deliberately narrower than
+/// the native in-memory executor's generic expression program, but it uses
+/// the same candidate-row and left-to-right assignment semantics for every
+/// admitted form.
+fn plan_on_duplicate_update(
+    table: &ConfiguredTable,
+    handle: i64,
+    candidate: &[(i64, Datum)],
+    assignments: &[ConfiguredOnDuplicateAssignment],
+    stored: &[u8],
+    session_tz: &SessionTimeZone,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    let stored_row = decode_stored_row(table, stored)?;
+    let mut updated = stored_row.clone();
+    for assignment in assignments {
+        let column = &table.columns()[assignment.column_index()];
+        let current = updated.get(&column.id()).cloned().ok_or_else(|| {
+            ConfiguredWriteError::RowRead(format!(
+                "configured row is missing column ID {}",
+                column.id()
+            ))
+        })?;
+        let value = match assignment.value() {
+            ConfiguredOnDuplicateValue::CandidateColumn(candidate_index) => {
+                let candidate_column = &table.columns()[*candidate_index];
+                debug_assert_eq!(candidate_column.id(), column.id());
+                candidate
+                    .iter()
+                    .find(|(id, _)| *id == candidate_column.id())
+                    .map(|(_, value)| value.clone())
+                    .ok_or_else(|| {
+                        ConfiguredWriteError::RowRead(format!(
+                            "configured candidate is missing column ID {}",
+                            candidate_column.id()
+                        ))
+                    })?
+            }
+            ConfiguredOnDuplicateValue::Set(value) => {
+                configured_stored_value(column, value, session_tz)?
+            }
+            ConfiguredOnDuplicateValue::Add(value) => plan_typed_add(column, &current, value)?,
+        };
+        updated.insert(column.id(), value);
+    }
+    if updated == stored_row {
+        return Ok(ConfiguredWritePlan::NoWrite {
+            reason: NoWriteReason::UnchangedRow,
+            affected_rows: 0,
+        });
+    }
+    let mut columns = Vec::new();
+    for column in table.columns() {
+        if column.kind() == ConfiguredColumnKind::Stored {
+            columns.push((
+                column.id(),
+                updated.get(&column.id()).cloned().ok_or_else(|| {
+                    ConfiguredWriteError::RowRead(format!(
+                        "configured row is missing column ID {}",
+                        column.id()
+                    ))
+                })?,
+            ));
+        }
+    }
+    columns.sort_by_key(|(id, _)| *id);
+    let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
+    Ok(ConfiguredWritePlan::Write {
+        mutations: vec![OptimisticMutation::put_existing(
+            key,
+            encode_row_value(&columns)?,
+        )?],
+        // Go's duplicate-update path reports two affected rows only when it
+        // changes the conflicting record.
+        affected_rows: 2,
+    })
+}
+
+/// Plans one configured candidate row against its first visible duplicate.
+fn plan_on_duplicate_row<S: WritePlanningSnapshot>(
+    snapshot: &mut S,
+    staged: &TransactionMutationBuffer,
+    table: &ConfiguredTable,
+    row: &ConfiguredInsertRow,
+    assignments: &[ConfiguredOnDuplicateAssignment],
+    call: &UnaryCallContext,
+    session_tz: &SessionTimeZone,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    let (handle, columns) = split_row(table, row, session_tz)?;
+    let record_key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
+    if let Some(stored) = staged_or_snapshot(snapshot, staged, &record_key, call)? {
+        return plan_on_duplicate_update(table, handle, &columns, assignments, &stored, session_tz);
+    }
+    for index in table.indexes().iter().filter(|index| index.is_unique()) {
+        let value = indexed_insert_value(index, &columns)?;
+        let index_key = unique_index_key(table.table_id(), index.index_id(), value)?;
+        let Some(index_value) = staged_or_snapshot(snapshot, staged, &index_key, call)? else {
+            continue;
+        };
+        let conflict_handle = decode_unique_index_handle(&index_value)?;
+        let conflict_key =
+            encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(conflict_handle));
+        let stored =
+            staged_or_snapshot(snapshot, staged, &conflict_key, call)?.ok_or_else(|| {
+                ConfiguredWriteError::RowRead(
+                    "unique index points at a missing configured record".to_owned(),
+                )
+            })?;
+        return plan_on_duplicate_update(
+            table,
+            conflict_handle,
+            &columns,
+            assignments,
+            &stored,
+            session_tz,
+        );
+    }
+    plan_insert(table, std::slice::from_ref(row), session_tz)
+}
+
+/// Plans all rows of a configured duplicate-update INSERT through one
+/// transaction-local write buffer so later VALUES rows observe the earlier
+/// row's insert or update.
+pub fn plan_insert_on_duplicate<S: WritePlanningSnapshot>(
+    snapshot: &mut S,
+    table: &ConfiguredTable,
+    rows: &[ConfiguredInsertRow],
+    assignments: &[ConfiguredOnDuplicateAssignment],
+    call: &UnaryCallContext,
+    session_tz: &SessionTimeZone,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    let mut staged = TransactionMutationBuffer::new();
+    let mut affected_rows = 0;
+    for row in rows {
+        match plan_on_duplicate_row(snapshot, &staged, table, row, assignments, call, session_tz)? {
+            ConfiguredWritePlan::Write {
+                mutations,
+                affected_rows: row_affected,
+            } => {
+                for mutation in mutations {
+                    staged
+                        .stage(mutation)
+                        .map_err(ConfiguredWriteError::Staging)?;
+                }
+                affected_rows += row_affected;
+            }
+            ConfiguredWritePlan::NoWrite {
+                affected_rows: row_affected,
+                ..
+            } => affected_rows += row_affected,
+            ConfiguredWritePlan::Ignore { .. } => {
+                unreachable!("duplicate-update rows never produce INSERT IGNORE plans")
+            }
+        }
+    }
+    if staged.is_empty() {
+        Ok(ConfiguredWritePlan::NoWrite {
+            reason: NoWriteReason::UnchangedRow,
+            affected_rows,
+        })
+    } else {
+        Ok(ConfiguredWritePlan::Write {
+            mutations: staged.into_mutations(),
+            affected_rows,
+        })
+    }
+}
+
 /// Plans a point DELETE. If the clustered handle's row exists at `start_ts`, one
 /// delete mutation removes its record key; otherwise no write is published.
 /// Mirrors Go `pkg/executor/delete.go`'s single-table point delete, which
@@ -1478,6 +1649,12 @@ pub fn planned_publication_bounds(
         ConfiguredPreparedWrite::ReplaceRows { .. } => {
             Ok((MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES))
         }
+        ConfiguredPreparedWrite::InsertOnDuplicateRows { .. } => {
+            // Every candidate can conflict with a different row and each
+            // changed duplicate becomes a full-row rewrite.  The exact set is
+            // snapshot-dependent, so use the coordinator's checked maximum.
+            Ok((MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES))
+        }
         ConfiguredPreparedWrite::UpdatePoint { table, handle, .. } => {
             let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(*handle));
             // At most one index (the one on the assigned column) moves its entry
@@ -1747,6 +1924,11 @@ pub fn plan_configured_write<S: WritePlanningSnapshot>(
         ConfiguredPreparedWrite::ReplaceRows { table, rows } => {
             plan_replace(snapshot, table, rows, call, session_tz)
         }
+        ConfiguredPreparedWrite::InsertOnDuplicateRows {
+            table,
+            rows,
+            assignments,
+        } => plan_insert_on_duplicate(snapshot, table, rows, assignments, call, session_tz),
         ConfiguredPreparedWrite::UpdatePoint {
             table,
             handle,

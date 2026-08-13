@@ -502,8 +502,9 @@ impl MultiStatementTransaction {
     ) -> Result<ConfiguredWriteReport, TransactionStatementError> {
         let plan = if self.mode.is_pessimistic() {
             match write {
-                ConfiguredPreparedWrite::ReplaceRows { .. } => {
-                    self.plan_pessimistic_replace(write, session_tz)?
+                ConfiguredPreparedWrite::ReplaceRows { .. }
+                | ConfiguredPreparedWrite::InsertOnDuplicateRows { .. } => {
+                    self.plan_pessimistic_conflict_write(write, session_tz)?
                 }
                 _ => {
                     let handles = written_handles(write);
@@ -567,7 +568,8 @@ impl MultiStatementTransaction {
         }
     }
 
-    /// Plans a pessimistic `REPLACE` until every key it might change is locked.
+    /// Plans a pessimistic conflict-resolving write until every key it might
+    /// change is locked.
     ///
     /// Go runs the replace executor, locks its resulting MemBuffer write set,
     /// then retries the statement after a lock conflict. A primary or unique
@@ -576,7 +578,7 @@ impl MultiStatementTransaction {
     /// entries that REPLACE deletes. Every re-plan runs at the current
     /// `for_update_ts`; once all emitted mutation keys are held, no concurrent
     /// writer can add another conflicting version to the candidate key set.
-    fn plan_pessimistic_replace(
+    fn plan_pessimistic_conflict_write(
         &mut self,
         write: &ConfiguredPreparedWrite,
         session_tz: &SessionTimeZone,
@@ -590,7 +592,7 @@ impl MultiStatementTransaction {
                     .into_iter()
                     .collect::<BTreeSet<_>>(),
                 OpenTransaction::Optimistic(_) => unreachable!(
-                    "plan_pessimistic_replace is called only for a pessimistic transaction"
+                    "conflict-write planning is called only for a pessimistic transaction"
                 ),
             };
             let missing = planned_mutation_keys(&plan)
@@ -1023,7 +1025,8 @@ fn written_handles(write: &ConfiguredPreparedWrite) -> Vec<i64> {
     match write {
         ConfiguredPreparedWrite::InsertRows { .. }
         | ConfiguredPreparedWrite::InsertIgnoreRows { .. }
-        | ConfiguredPreparedWrite::ReplaceRows { .. } => {
+        | ConfiguredPreparedWrite::ReplaceRows { .. }
+        | ConfiguredPreparedWrite::InsertOnDuplicateRows { .. } => {
             // An INSERT's row is new, so there is no existing row to lock; TiKV
             // enforces its absence through the Insert operation's assertion.
             Vec::new()

@@ -833,6 +833,83 @@ fn insert_ignore_reports_the_configured_unique_index_name() {
 }
 
 #[test]
+fn insert_on_duplicate_updates_the_visible_row_and_stages_later_values_rows() {
+    let write = bound_write(
+        "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?) \
+         ON DUPLICATE KEY UPDATE balance = VALUES(balance)",
+        &[10, 200],
+    );
+    let record_key = encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10));
+    let mut snapshot = ReplaceSnapshot::with([(record_key.clone(), stored_row(100))]);
+    let ConfiguredWritePlan::Write {
+        mutations,
+        affected_rows,
+    } = plan_configured_write(&mut snapshot, &write, &call(), 0)
+        .expect("duplicate update must plan")
+    else {
+        panic!("a changed duplicate update publishes");
+    };
+    assert_eq!(affected_rows, 2);
+    assert_eq!(mutations.len(), 1);
+    assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
+    assert_eq!(mutations[0].key(), record_key);
+    assert_eq!(mutations[0].value(), stored_row(200));
+
+    let write = bound_write(
+        "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?) \
+         ON DUPLICATE KEY UPDATE balance = ?",
+        &[10, 200, 250],
+    );
+    let mut snapshot = ReplaceSnapshot::with([(
+        encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10)),
+        stored_row(100),
+    )]);
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        plan_configured_write(&mut snapshot, &write, &call(), 0)
+            .expect("bound duplicate replacement must plan")
+    else {
+        panic!("a bound duplicate replacement publishes");
+    };
+    assert_eq!(mutations[0].value(), stored_row(250));
+
+    let write = bound_write(
+        "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?) \
+         ON DUPLICATE KEY UPDATE balance = balance + ?, balance = balance + ?",
+        &[10, 200, 7, 8],
+    );
+    let mut snapshot = ReplaceSnapshot::with([(
+        encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10)),
+        stored_row(100),
+    )]);
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        plan_configured_write(&mut snapshot, &write, &call(), 0)
+            .expect("duplicate assignments must run left to right")
+    else {
+        panic!("a changed duplicate update publishes");
+    };
+    assert_eq!(mutations[0].value(), stored_row(115));
+
+    let write = bound_write(
+        "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?), (?, ?) \
+         ON DUPLICATE KEY UPDATE balance = balance + ?",
+        &[11, 200, 11, 300, 7],
+    );
+    let mut snapshot = ReplaceSnapshot::default();
+    let ConfiguredWritePlan::Write {
+        mutations,
+        affected_rows,
+    } = plan_configured_write(&mut snapshot, &write, &call(), 0)
+        .expect("later VALUES rows observe their staged predecessor")
+    else {
+        panic!("the final duplicate update publishes");
+    };
+    assert_eq!(affected_rows, 3);
+    assert_eq!(mutations.len(), 1);
+    assert_eq!(mutations[0].kind(), OptimisticMutationKind::Insert);
+    assert_eq!(mutations[0].value(), stored_row(207));
+}
+
+#[test]
 fn insert_adds_one_non_unique_index_entry_beside_the_record() {
     let catalog = ConfiguredCatalog::new([indexed_table()]).expect("catalog must validate");
     let ConfiguredPreparedWrite::InsertRows { table, rows } = lower_prepared_write(
