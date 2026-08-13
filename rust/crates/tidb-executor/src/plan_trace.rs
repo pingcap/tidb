@@ -363,6 +363,30 @@ impl PlanTrace {
         self.stack.push(union);
     }
 
+    /// Go's root `PhysicalUnionAll`: the completed operand subtrees are
+    /// siblings, and the real execution emits their rows in term order.
+    ///
+    /// This is intentionally separate from `partition_union`: partition
+    /// branches describe one scan split by storage partition, whereas a SQL
+    /// `UNION ALL` has independently planned query operands.
+    pub(crate) fn union_all(&mut self, terms: usize, output_rows: u64) {
+        if terms < 2 || self.stack.len() < terms {
+            self.refuse("EXPLAIN ANALYZE recorded an incomplete UNION ALL plan");
+            return;
+        }
+        let first_term = self.stack.len() - terms;
+        let children = self.stack.split_off(first_term);
+        let estimated_rows = children
+            .iter()
+            .try_fold(0.0, |sum, child| child.est_rows.map(|rows| sum + rows));
+        let mut union = PlanNode::new("Union", estimated_rows, String::new(), String::new());
+        if self.counting {
+            union.act_rows = Some(Rc::new(Cell::new(output_rows)));
+        }
+        union.children = children;
+        self.stack.push(union);
+    }
+
     fn wrap(&mut self, name: &'static str, est: Est, info: String) {
         let est_rows = est.apply(self.top_est());
         let child = self.stack.pop();

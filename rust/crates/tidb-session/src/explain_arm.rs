@@ -69,13 +69,8 @@ impl Session {
         ));
         if explain.analyze {
             let (columns, rows) = match target {
-                Stmt::Query(query) => {
-                    let tidb_ast::QueryStmt::Select(select) = &**query else {
-                        return Err(DriverError::unsupported(
-                            "EXPLAIN ANALYZE of a set operation is not supported yet",
-                        ));
-                    };
-                    self.with_catalog_mut(|catalog| {
+                Stmt::Query(query) => self.with_catalog_mut(|catalog| match &**query {
+                    tidb_ast::QueryStmt::Select(select) => {
                         tidb_executor::explain_analyze_select_stmt(
                             select,
                             catalog,
@@ -83,8 +78,17 @@ impl Session {
                             &ctx,
                             format,
                         )
-                    })?
-                }
+                    }
+                    tidb_ast::QueryStmt::SetOpr(set_opr) => {
+                        tidb_executor::explain_analyze_set_opr_stmt(
+                            set_opr,
+                            catalog,
+                            &current_db,
+                            &ctx,
+                            format,
+                        )
+                    }
+                })?,
                 Stmt::Dml(dml) => match &**dml {
                     tidb_ast::DmlStmt::Insert(insert) => self.with_catalog_mut(|catalog| {
                         tidb_executor::explain_analyze_insert_stmt(

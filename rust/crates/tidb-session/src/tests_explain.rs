@@ -603,10 +603,35 @@ fn explain_brief_format_strips_operator_ids() {
     );
 }
 
-/// EXPLAIN still refuses the forms this tier cannot plan honestly:
-/// ANALYZE (Go executes the statement to gather runtime counters this
-/// tier does not collect, captured) and any format name Go itself does
-/// not recognize.
+/// `EXPLAIN ANALYZE` builds and executes the physical `Union` tree for a
+/// `UNION ALL`: each branch retains its own source counters and the union
+/// reports the rows it emits. Go's generic `buildExplain` builds the target
+/// plan regardless of whether the query is a SELECT or a set operation.
+#[test]
+fn explain_analyze_union_all_executes_and_meters_each_term() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
+        .unwrap();
+    session.run("INSERT INTO t VALUES (1),(2),(3),(4)").unwrap();
+
+    let rows = row_text(session.run(
+        "EXPLAIN ANALYZE (SELECT a FROM t WHERE a <= 2) UNION ALL (SELECT a FROM t WHERE a >= 3)",
+    ));
+    assert_eq!(rows.len(), 7);
+    assert!(rows[0][0].starts_with("Union_"));
+    assert_eq!(rows[0][2], "4");
+    assert_eq!(
+        rows.iter()
+            .skip(1)
+            .map(|row| row[2].as_str())
+            .collect::<Vec<_>>(),
+        vec!["2", "2", "2", "2", "2", "2"]
+    );
+}
+
+/// EXPLAIN still refuses forms this tier cannot plan honestly and format names
+/// Go itself does not recognize.
 #[test]
 fn explain_refuses_what_it_cannot_plan() {
     let mut session = Session::new();
@@ -614,13 +639,12 @@ fn explain_refuses_what_it_cannot_plan() {
         .run("CREATE TABLE t (a BIGINT PRIMARY KEY)")
         .unwrap();
 
-    // `EXPLAIN ANALYZE` of a `SELECT`/`INSERT`/`UPDATE`/`DELETE` really
-    // runs (see `explain_analyze_select`/`explain_analyze_insert_executes`/
-    // `explain_analyze_update_executes`/`explain_analyze_delete_executes`);
-    // only a set-operation query is refused.
+    // UNION DISTINCT/INTERSECT/EXCEPT need their own Go physical shapes
+    // (`HashAgg`/join-like set executors), so this seed keeps refusing them
+    // rather than printing a dishonest `Union` tree.
     assert!(matches!(
         session.run("EXPLAIN ANALYZE (SELECT a FROM t) UNION (SELECT a FROM t)"),
-        Err(DriverError::Unsupported(reason)) if reason == "EXPLAIN ANALYZE of a set operation is not supported yet"
+        Err(DriverError::Unsupported(reason)) if reason == "EXPLAIN ANALYZE of this set operation is not supported yet"
     ));
     assert!(matches!(
         session.run("EXPLAIN FORMAT = 'bogus' SELECT * FROM t"),

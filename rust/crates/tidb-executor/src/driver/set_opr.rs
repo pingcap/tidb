@@ -60,6 +60,40 @@ pub fn run_set_opr_stmt(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<SelectMeta, DriverError> {
+    run_set_opr_traced(stmt, catalog, current_db, ctx, None)
+}
+
+/// The `UNION ALL` shape this trace can describe exactly: Go's
+/// `PhysicalUnionAll` has one independently planned child per term. Distinct
+/// union, EXCEPT, and INTERSECT require their own physical operators, so the
+/// EXPLAIN entry point keeps refusing those rather than rendering a false
+/// `Union` tree.
+pub(crate) fn is_unordered_union_all(stmt: &tidb_ast::SetOprStmt) -> bool {
+    stmt.with.is_none()
+        && stmt.order_by.is_empty()
+        && stmt.limit.is_none()
+        && stmt.terms.len() > 1
+        && stmt.terms.iter().skip(1).all(|term| {
+            matches!(term.op, Some(tidb_ast::SetOp::Union { all: true }))
+                && matches!(term.body, tidb_ast::SetOprTermBody::Select(_))
+        })
+}
+
+/// [`run_set_opr_stmt`] while retaining every direct `UNION ALL` operand in
+/// the plan trace. This is used by `EXPLAIN ANALYZE`; ordinary execution has
+/// no trace and remains allocation-free.
+pub(crate) fn run_set_opr_traced(
+    stmt: &tidb_ast::SetOprStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    mut trace: Option<&mut crate::plan_trace::PlanTrace>,
+) -> Result<SelectMeta, DriverError> {
+    if trace.is_some() && !is_unordered_union_all(stmt) {
+        return Err(DriverError::unsupported(
+            "EXPLAIN ANALYZE of this set operation is not supported yet",
+        ));
+    }
     // A CTE prefix belongs to the whole statement, so it is materialized once
     // and every term sees it.
     let with_catalog;
@@ -78,7 +112,7 @@ pub fn run_set_opr_stmt(
     // commit to a type before the later terms had been seen.
     let mut terms: Vec<SelectMeta> = Vec::with_capacity(stmt.terms.len());
     for term in &stmt.terms {
-        let term_meta = run_set_opr_term(term, catalog, current_db, ctx)?;
+        let term_meta = run_set_opr_term(term, catalog, current_db, ctx, trace.as_deref_mut())?;
         // Go raises ErrWrongNumberOfColumnsInSelect for a term whose width
         // differs.
         if let Some((first_columns, _)) = terms.first() {
@@ -129,6 +163,9 @@ pub fn run_set_opr_stmt(
             None => 0,
         };
         accumulated = accumulated.into_iter().skip(offset).take(count).collect();
+    }
+    if let Some(trace) = trace {
+        trace.union_all(stmt.terms.len(), accumulated.len() as u64);
     }
     Ok((columns, accumulated))
 }
@@ -237,11 +274,17 @@ fn run_set_opr_term(
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
+    trace: Option<&mut crate::plan_trace::PlanTrace>,
 ) -> Result<SelectMeta, DriverError> {
     match &term.body {
-        tidb_ast::SetOprTermBody::Select(select) => {
-            run_select_stmt(select, catalog, current_db, ctx)
-        }
+        tidb_ast::SetOprTermBody::Select(select) => run_select_traced(
+            select,
+            catalog,
+            current_db,
+            ctx,
+            trace,
+            &tidb_planner::physical_property::PhysicalProperty::default(),
+        ),
         tidb_ast::SetOprTermBody::Nested(nested) => {
             run_set_opr_stmt(nested, catalog, current_db, ctx)
         }

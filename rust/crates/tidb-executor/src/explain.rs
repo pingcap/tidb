@@ -137,14 +137,11 @@
 //! # Shapes EXPLAIN refuses
 //!
 //! The driver executes more than this recorder has ever printed: derived
-//! tables, lateral joins, `WITH` clauses, set operations. Those build sites
-//! mark the trace refused rather than inventing a node, and the entry points
-//! below answer with the refusal they have always answered with -- the
-//! surface EXPLAIN describes is unchanged by the fact that the trace now
-//! rides the real driver. Operators the driver builds but the recorder has
+//! tables, lateral joins, `WITH` clauses, and set operations other than the
+//! direct `UNION ALL` shape. Those build sites mark the trace refused rather
+//! than inventing a node. Operators the driver builds but the recorder has
 //! never printed (an Apply for a correlated subquery, the window stage, an
-//! aggregate query's HAVING and final projection) record no node at all,
-//! which is exactly the plan text this tier has always produced for them.
+//! aggregate query's HAVING and final projection) record no node at all.
 //!
 //! # Where the estRows numbers come from
 //!
@@ -174,8 +171,8 @@ use std::rc::Rc;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 use crate::driver::{
-    run_delete_traced, run_insert_traced, run_select_traced, run_update_traced, Catalog,
-    DriverError, SelectMeta,
+    run_delete_traced, run_insert_traced, run_select_traced, run_set_opr_traced, run_update_traced,
+    Catalog, DriverError, SelectMeta,
 };
 use crate::plan_trace::{PlanNode, PlanTrace};
 
@@ -279,6 +276,23 @@ pub fn explain_analyze_select_stmt(
         Some(&mut trace),
         &tidb_planner::physical_property::PhysicalProperty::default(),
     )?;
+    Ok(render_analyze(recorded(trace)?, format))
+}
+
+/// `EXPLAIN ANALYZE` over the direct `UNION ALL` shape. Go's generic Explain
+/// plan wraps a set-operation target just as it wraps a plain select; this
+/// tier records each already-built operand subtree and joins them under its
+/// real `Union` root. Other set operations remain refused by
+/// [`run_set_opr_traced`] until their distinct physical operators land.
+pub fn explain_analyze_set_opr_stmt(
+    set_opr: &tidb_ast::SetOprStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    format: ExplainFormat,
+) -> Result<SelectMeta, DriverError> {
+    let mut trace = PlanTrace::analyzing();
+    run_set_opr_traced(set_opr, catalog, current_db, ctx, Some(&mut trace))?;
     Ok(render_analyze(recorded(trace)?, format))
 }
 
