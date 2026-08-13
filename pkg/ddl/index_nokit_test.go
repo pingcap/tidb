@@ -26,11 +26,53 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+// ExecuteDistTaskForCloudStorageTest runs executeDistTask with the minimum
+// internal DDL state needed by the cloud-storage URI regression test.
+func ExecuteDistTaskForCloudStorageTest(
+	d DDL,
+	job *model.Job,
+	mergeTempIndex bool,
+	cachedURI string,
+) (string, error) {
+	impl := d.(*ddl)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	w := newWorker(ctx, addIdxWorker, impl.sessPool, impl.delRangeMgr, impl.ddlCtx)
+	jc := NewReorgContext()
+	jc.cloudStorageURI = cachedURI
+	impl.jobCtx.Lock()
+	impl.jobCtx.jobCtxMap[job.ID] = jc
+	impl.jobCtx.Unlock()
+	impl.newReorgCtx(job.ID, 0)
+	defer func() {
+		impl.removeReorgCtx(job.ID)
+		impl.jobCtx.Lock()
+		delete(impl.jobCtx.jobCtxMap, job.ID)
+		impl.jobCtx.Unlock()
+	}()
+	reorgInfo := &reorgInfo{
+		Job:           job,
+		mergingTmpIdx: mergeTempIndex,
+		currElement: &meta.Element{
+			ID:      1,
+			TypeKey: meta.IndexElementKey,
+		},
+	}
+	err := w.executeDistTask(&jobContext{stepCtx: ctx}, nil, reorgInfo)
+	return jc.cloudStorageURI, err
+}
+
+// IsRetryableJobErrorForTest exposes the DDL retry classification to external tests.
+func IsRetryableJobErrorForTest(err error, jobErrCnt int64) bool {
+	return isRetryableJobError(err, jobErrCnt)
+}
 
 func TestShouldAutoPauseExistingKVDiskFullTask(t *testing.T) {
 	task := &proto.Task{

@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -28,6 +29,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
+
+func propagateUseCloudStorageMode(parentJob, proxyJob *model.Job) {
+	if parentJob.ReorgMeta != nil && proxyJob.ReorgMeta != nil && proxyJob.ReorgMeta.UseCloudStorage {
+		parentJob.ReorgMeta.UseCloudStorage = true
+	}
+}
 
 func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	jobCtx.inInnerRunOneJobStep = true
@@ -46,6 +53,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				}
 				proxyJob := sub.ToProxyJob(job, i)
 				ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
+				propagateUseCloudStorageMode(job, &proxyJob)
 				err = handleRollbackException(err, proxyJob.Error)
 				if err != nil {
 					return ver, err
@@ -71,6 +79,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 			prevSubState := sub.State
 			proxyJob := sub.ToProxyJob(job, i)
 			ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
+			propagateUseCloudStorageMode(job, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
 			job.ResumeReason = proxyJob.ResumeReason
 			if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {
@@ -108,6 +117,9 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
 			proxyJobVer, _, err := w.runOneJobStep(jobCtx, &proxyJob)
+			failpoint.InjectCall("beforeBatchedMultiSchemaCloudModePropagation", job, &proxyJob)
+			propagateUseCloudStorageMode(job, &proxyJob)
+			failpoint.InjectCall("afterBatchedMultiSchemaCloudModePropagation", job, &proxyJob)
 			if !schemaVersionGenerated && proxyJobVer != 0 {
 				schemaVersionGenerated = true
 				ver = proxyJobVer
@@ -162,6 +174,7 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 		prevSubState := sub.State
 		proxyJob := sub.ToProxyJob(job, i)
 		ver, _, err = w.runOneJobStep(jobCtx, &proxyJob)
+		propagateUseCloudStorageMode(job, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
 		job.ResumeReason = proxyJob.ResumeReason
 		if promoteProxyKVDiskFullPause(job, sub, prevSubState, &proxyJob) {

@@ -887,6 +887,91 @@ func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
 	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
 }
 
+func TestMultiSchemaChangePersistsCloudStorageMode(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	originalCloudStorageURI := vardef.CloudStorageURI.Load()
+	originalEnableDistTask := vardef.EnableDistTask.Load()
+	originalEnableFastReorg := vardef.EnableFastReorg.Load()
+	t.Cleanup(func() {
+		vardef.CloudStorageURI.Store(originalCloudStorageURI)
+		vardef.EnableDistTask.Store(originalEnableDistTask)
+		vardef.EnableFastReorg.Store(originalEnableFastReorg)
+	})
+	vardef.CloudStorageURI.Store("s3://bucket")
+	vardef.EnableDistTask.Store(true)
+	vardef.EnableFastReorg.Store(true)
+
+	tk.MustExec("create table t (a int)")
+
+	var (
+		observationMu              sync.Mutex
+		ordinaryRevertibleObserved bool
+		ordinaryParentCloud        bool
+		ordinaryNextProxyCloud     bool
+		batchedBeforeObserved      bool
+		batchedAfterObserved       bool
+		batchedParentCloud         bool
+		batchedNextProxyCloud      bool
+	)
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+		if job.Type != model.ActionMultiSchemaChange || job.MultiSchemaInfo == nil || job.ReorgMeta == nil {
+			return
+		}
+		for i, subJob := range job.MultiSchemaInfo.SubJobs {
+			if subJob.Type != model.ActionAddIndex || subJob.SchemaState != model.StateDeleteOnly {
+				continue
+			}
+			nextProxy := subJob.ToProxyJob(job, i)
+			observationMu.Lock()
+			ordinaryRevertibleObserved = true
+			ordinaryParentCloud = job.ReorgMeta.UseCloudStorage
+			ordinaryNextProxyCloud = nextProxy.ReorgMeta != nil && nextProxy.ReorgMeta.UseCloudStorage
+			observationMu.Unlock()
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeBatchedMultiSchemaCloudModePropagation", func(parentJob, proxyJob *model.Job) {
+		if proxyJob.Type != model.ActionAddIndex || parentJob.ReorgMeta == nil || proxyJob.ReorgMeta == nil {
+			return
+		}
+		observationMu.Lock()
+		defer observationMu.Unlock()
+		batchedBeforeObserved = true
+		parentJob.ReorgMeta.UseCloudStorage = false
+		proxyJob.ReorgMeta.UseCloudStorage = true
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterBatchedMultiSchemaCloudModePropagation", func(parentJob, proxyJob *model.Job) {
+		if proxyJob.Type != model.ActionAddIndex || parentJob.ReorgMeta == nil || proxyJob.MultiSchemaInfo == nil {
+			return
+		}
+		observationMu.Lock()
+		defer observationMu.Unlock()
+		if !batchedBeforeObserved {
+			return
+		}
+		batchedAfterObserved = true
+		batchedParentCloud = parentJob.ReorgMeta.UseCloudStorage
+		seq := int(proxyJob.MultiSchemaInfo.Seq)
+		nextProxy := parentJob.MultiSchemaInfo.SubJobs[seq].ToProxyJob(parentJob, seq)
+		batchedNextProxyCloud = nextProxy.ReorgMeta != nil && nextProxy.ReorgMeta.UseCloudStorage
+	})
+
+	tk.MustExec("alter table t add column b int, add index idx_a(a)")
+
+	observationMu.Lock()
+	defer observationMu.Unlock()
+	require.True(t, ordinaryRevertibleObserved)
+	require.True(t, ordinaryParentCloud)
+	require.True(t, ordinaryNextProxyCloud)
+	require.True(t, batchedBeforeObserved)
+	require.True(t, batchedAfterObserved)
+	require.True(t, batchedParentCloud)
+	require.True(t, batchedNextProxyCloud)
+}
+
 func TestMultiSchemaChangePollJobCount(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("add-index always runs on DXF with ingest mode in nextgen")
