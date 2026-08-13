@@ -44,17 +44,19 @@
 //! value until then. A pessimistic transaction does take locks earlier, but a
 //! TiKV pessimistic lock blocks writers, not readers.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
 use tidb_codec::table_key::{decode_record_key, encode_row_key_with_handle, RecordHandle};
 use tidb_datatype::{Datum, SessionTimeZone};
 use tidb_executor::deadlock_history::record_deadlock;
+use tidb_planner::physical_selection::{ComparisonOp, ComparisonOperand, PhysicalSelectionPlan};
 use tidb_planner::prepared_dml::ConfiguredPreparedWrite;
 use tidb_planner::read_only_scan::{
-    ConfiguredColumnKind, ConfiguredTable, ReadLockWait, ResolvedProjectionColumn,
+    ConfiguredColumnKind, ConfiguredTable, ReadLockWait, ReadOnlyScanPlan, ResolvedProjectionColumn,
 };
 use tidb_planner::signed_bigint_ranger::SignedBigIntRange;
+use tidb_planner::tikv_scan_spec::ScanColumnInfo;
 use tidb_planner::txn_mode::SessionTxnMode;
 use tidb_tablecodec::decode_table_row_to_map;
 use tidb_txnkv::rpc::UnaryCallContext;
@@ -431,6 +433,65 @@ impl MultiStatementTransaction {
         Ok(overlay)
     }
 
+    /// The transaction's staged read overlay for one lowered scan, including
+    /// the residual Selection the snapshot reader applies at TiKV.
+    ///
+    /// Go's `UnionScanExec` evaluates its conditions over both the snapshot
+    /// reader and the `MemBuffer` rows it merges in. The real-TiKV reader has
+    /// already applied this Selection to the snapshot half, so only staged
+    /// rows need the local pass here.
+    pub fn read_overlay_for_plan(
+        &self,
+        plan: &ReadOnlyScanPlan,
+    ) -> Result<StagedRowOverlay, TransactionStatementError> {
+        let selection = plan.selection();
+        let scan_columns = &plan.table_scan().pushdown().columns;
+        let mut overlay = Vec::new();
+        for staged in self.buffer.staged_entries() {
+            let Ok((table_id, RecordHandle::Int(handle))) = decode_record_key(staged.key()) else {
+                continue;
+            };
+            if table_id != self.table.table_id()
+                || !plan
+                    .handle_ranges()
+                    .iter()
+                    .any(|range| range.start() <= handle && handle <= range.end())
+            {
+                continue;
+            }
+            let row = match staged.kind() {
+                OptimisticMutationKind::Delete => None,
+                OptimisticMutationKind::Insert | OptimisticMutationKind::PutExisting => {
+                    if let Some(selection) = selection {
+                        let scan_row = decode_staged_scan_columns(
+                            &self.table,
+                            scan_columns,
+                            handle,
+                            staged.value(),
+                        )
+                        .map_err(|error| TransactionStatementError::write(&error))?;
+                        if !selection_matches_staged_row(selection, &scan_row)
+                            .map_err(|error| TransactionStatementError::write(&error))?
+                        {
+                            continue;
+                        }
+                    }
+                    Some(
+                        decode_staged_projection(plan.projected_columns(), handle, staged.value())
+                            .map_err(|error| TransactionStatementError::write(&error))?,
+                    )
+                }
+                OptimisticMutationKind::IndexPut
+                | OptimisticMutationKind::IndexDelete
+                | OptimisticMutationKind::MetaPut
+                | OptimisticMutationKind::MetaDelete
+                | OptimisticMutationKind::LockOnly => continue,
+            };
+            overlay.push((handle, row));
+        }
+        Ok(overlay)
+    }
+
     /// Plans one bound write against this transaction and buffers its mutations.
     ///
     /// Nothing reaches TiKV here. The write is planned over the read-your-own-
@@ -755,6 +816,99 @@ fn decode_staged_projection(
         .collect()
 }
 
+/// Decodes exactly the source columns a residual physical Selection reads.
+/// The scan's column order is the Selection's input-offset authority; the
+/// ordinary projection can omit all of them.
+fn decode_staged_scan_columns(
+    table: &ConfiguredTable,
+    scan_columns: &[ScanColumnInfo],
+    handle: i64,
+    row: &[u8],
+) -> Result<Vec<Datum>, ConfiguredWriteError> {
+    let mut field_types = BTreeMap::new();
+    for scan_column in scan_columns {
+        let column = table
+            .columns()
+            .iter()
+            .find(|column| column.id() == scan_column.column_id)
+            .ok_or_else(|| {
+                ConfiguredWriteError::RowRead(format!(
+                    "scan requested unknown configured column ID {}",
+                    scan_column.column_id
+                ))
+            })?;
+        if column.kind() != ConfiguredColumnKind::ClusteredPrimaryKey {
+            field_types.insert(
+                scan_column.column_id,
+                column.scalar_type().chunk_field_type(),
+            );
+        }
+    }
+    let decoded = decode_table_row_to_map(row, &field_types, None)
+        .map_err(|error| ConfiguredWriteError::RowRead(error.to_string()))?;
+    scan_columns
+        .iter()
+        .map(|scan_column| {
+            let column = table
+                .columns()
+                .iter()
+                .find(|column| column.id() == scan_column.column_id)
+                .expect("column identity was checked before staged-row decode");
+            match column.kind() {
+                ConfiguredColumnKind::ClusteredPrimaryKey => Ok(Datum::new_int(handle)),
+                ConfiguredColumnKind::Stored => {
+                    decoded.get(&scan_column.column_id).cloned().ok_or_else(|| {
+                        ConfiguredWriteError::RowRead(format!(
+                            "configured row is missing column ID {}",
+                            scan_column.column_id
+                        ))
+                    })
+                }
+            }
+        })
+        .collect()
+}
+
+/// Applies the exact lowered residual comparison conjunction to one staged
+/// scan row. A NULL comparison is not true and therefore cannot pass a SQL
+/// `WHERE`, matching `expression.EvalBool` in Go's UnionScan.
+fn selection_matches_staged_row(
+    selection: &PhysicalSelectionPlan,
+    row: &[Datum],
+) -> Result<bool, ConfiguredWriteError> {
+    for condition in selection.conditions() {
+        let operand = |operand: ComparisonOperand| match operand {
+            ComparisonOperand::Int(value) => Ok(Datum::new_int(value)),
+            ComparisonOperand::InputOffset(offset) => {
+                row.get(offset as usize).cloned().ok_or_else(|| {
+                    ConfiguredWriteError::RowRead(format!(
+                        "selection reads scan offset {offset}, but staged row has only {} columns",
+                        row.len()
+                    ))
+                })
+            }
+        };
+        let left = operand(condition.lhs())?;
+        let right = operand(condition.rhs())?;
+        let op = match condition.op() {
+            ComparisonOp::Lt => tidb_ast::BinaryOp::Lt,
+            ComparisonOp::Le => tidb_ast::BinaryOp::Le,
+            ComparisonOp::Gt => tidb_ast::BinaryOp::Gt,
+            ComparisonOp::Ge => tidb_ast::BinaryOp::Ge,
+            ComparisonOp::Eq => tidb_ast::BinaryOp::Eq,
+            ComparisonOp::Ne => tidb_ast::BinaryOp::Ne,
+        };
+        if !matches!(
+            tidb_expr::apply_binary(op, left, right)
+                .map_err(|error| ConfiguredWriteError::RowRead(format!("{error:?}")))?,
+            Datum::Int(1)
+        ) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// The clustered handles one bound write touches, which are the rows a
 /// pessimistic transaction locks before it plans the statement.
 fn written_handles(write: &ConfiguredPreparedWrite) -> Vec<i64> {
@@ -793,11 +947,14 @@ mod tests {
     use std::sync::Mutex;
 
     use super::{
-        classify_commit_outcome, record_lock_failure, written_handles, Duration,
-        MultiStatementTransaction, TransactionStatementError, UnaryCallContext,
-        TRANSACTION_END_TIMEOUT,
+        classify_commit_outcome, record_lock_failure, selection_matches_staged_row,
+        written_handles, Duration, MultiStatementTransaction, TransactionStatementError,
+        UnaryCallContext, TRANSACTION_END_TIMEOUT,
     };
     use crate::pessimistic_lock_error::{transaction_cause_to_sql_error, ERR_WRITE_CONFLICT};
+    use tidb_planner::physical_selection::{
+        BigIntComparison, ComparisonOp, ComparisonOperand, PhysicalSelectionPlan,
+    };
     use tidb_planner::prepared_dml::{
         ConfiguredAssignment, ConfiguredPreparedWrite, PreparedBindValue,
     };
@@ -808,6 +965,7 @@ mod tests {
         TransactionCause,
     };
 
+    use tidb_datatype::Datum;
     use tidb_executor::deadlock_history::{
         configure_global_deadlock_history, global_deadlock_history,
     };
@@ -1027,6 +1185,28 @@ mod tests {
         assert!(
             MultiStatementTransaction::transaction_end_call().timeout() > Duration::from_secs(19),
             "commit, rollback and cleanup take the store's budget, not the statement's"
+        );
+    }
+
+    #[test]
+    fn a_staged_row_uses_the_snapshot_selections_sql_comparison_semantics() {
+        let selection = PhysicalSelectionPlan::from_bigint_conditions(vec![BigIntComparison::new(
+            ComparisonOp::Gt,
+            ComparisonOperand::InputOffset(1),
+            ComparisonOperand::Int(10),
+        )
+        .unwrap()])
+        .unwrap();
+
+        assert!(
+            selection_matches_staged_row(&selection, &[Datum::Int(7), Datum::Int(11)]).unwrap()
+        );
+        assert!(
+            !selection_matches_staged_row(&selection, &[Datum::Int(7), Datum::Int(10)]).unwrap()
+        );
+        assert!(
+            !selection_matches_staged_row(&selection, &[Datum::Int(7), Datum::Null]).unwrap(),
+            "a NULL WHERE comparison is not true"
         );
     }
 }

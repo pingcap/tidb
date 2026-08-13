@@ -748,9 +748,8 @@ fn point_handles(plan: &ReadOnlyScanPlan) -> Vec<i64> {
 /// or `None` when the transaction has staged nothing this read could observe.
 ///
 /// A read whose staged rows exist but whose rows cannot be identified — because
-/// neither the clustered key nor a single point handle pins them down — or whose
-/// predicate TiKV evaluates for us and this node cannot evaluate over a staged
-/// row, is refused. Returning the snapshot's pre-transaction rows instead would
+/// neither the clustered key nor a single point handle pins them down — is
+/// refused. Returning the snapshot's pre-transaction rows instead would
 /// silently break read-your-own-writes.
 fn resolve_overlay(
     transaction: &MultiStatementTransaction,
@@ -761,16 +760,10 @@ fn resolve_overlay(
         return Ok(None);
     }
     let rows = transaction
-        .read_overlay(plan.projected_columns(), plan.handle_ranges())
+        .read_overlay_for_plan(plan)
         .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
     if rows.is_empty() {
         return Ok(None);
-    }
-    if plan.selection().is_some() {
-        return Err(SqlQueryError::unknown(
-            "a read inside a transaction that wrote rows cannot apply a pushed-down \
-             predicate to its own uncommitted rows yet",
-        ));
     }
     let projected_key = plan
         .projected_columns()
