@@ -500,13 +500,13 @@ fn group_concat_bytes(value: &Datum, field_type: Option<&FieldType>) -> Result<V
     })
 }
 
-/// The temporal value Go's real aggregate implementations consume.
+/// The value Go's real aggregate implementations consume.
 ///
 /// `WrapCastForAggArgs` chooses `EvalReal` whenever `SUM`/`AVG` inferred a
-/// DOUBLE result.  That includes temporal and duration arguments, not merely
-/// FLOAT columns.  Keep the conversion at the aggregate boundary so every
-/// serial and spill round uses the same rule.
-fn temporal_real_aggregate_value(value: &Datum, function: &'static str) -> Result<f64, ExecError> {
+/// DOUBLE result. That includes character, temporal, and duration arguments,
+/// not merely FLOAT columns. Keep the conversion at the aggregate boundary so
+/// every serial and spill round uses the same rule.
+fn real_aggregate_value(value: &Datum, function: &'static str) -> Result<f64, ExecError> {
     value
         .to_f64()
         .map(|converted| converted.value)
@@ -737,18 +737,13 @@ impl Partial {
                 return Err(ExecError::unsupported("SUM requires an argument"))
             }
             (Partial::SumDecimal(_) | Partial::SumReal(_), Some(Datum::Null)) => {}
-            (
-                this @ Partial::SumDecimal(None),
-                Some(input @ (Datum::Time(_) | Datum::Duration(_))),
-            ) => {
-                *this = Partial::SumReal(Some(temporal_real_aggregate_value(&input, "SUM")?));
-            }
             // `calculateSum` selects DOUBLE for every non-integer/non-decimal
-            // input. In particular, a FLOAT/DOUBLE argument reaches the
-            // aggregate as a real datum; it must not be rejected while this
-            // lazily initialized state still has the decimal shape.
-            (this @ Partial::SumDecimal(None), Some(Datum::Real(v) | Datum::Float32(v))) => {
-                *this = Partial::SumReal(Some(v));
+            // input. The lazy state therefore promotes when the first actual
+            // value has that source domain.
+            (this @ Partial::SumDecimal(None), Some(input))
+                if !matches!(input, Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_)) =>
+            {
+                *this = Partial::SumReal(Some(real_aggregate_value(&input, "SUM")?));
             }
             (Partial::SumDecimal(acc), Some(input)) => match input {
                 Datum::Int(v) => {
@@ -777,19 +772,8 @@ impl Partial {
                     ))
                 }
             },
-            (Partial::SumReal(acc), Some(Datum::Real(v) | Datum::Float32(v))) => {
-                *acc = Some(acc.unwrap_or(0.0) + v);
-            }
-            (Partial::SumReal(acc), Some(Datum::Int(v))) => {
-                *acc = Some(acc.unwrap_or(0.0) + v as f64);
-            }
-            (Partial::SumReal(acc), Some(input @ (Datum::Time(_) | Datum::Duration(_)))) => {
-                *acc = Some(acc.unwrap_or(0.0) + temporal_real_aggregate_value(&input, "SUM")?);
-            }
-            (Partial::SumReal(_), Some(_)) => {
-                return Err(ExecError::unsupported(
-                    "SUM over this datum kind is not yet supported",
-                ))
+            (Partial::SumReal(acc), Some(input)) => {
+                *acc = Some(acc.unwrap_or(0.0) + real_aggregate_value(&input, "SUM")?);
             }
             // Go `builtinGroupConcat`: a NULL input contributes nothing at
             // all, and every other value is stringified before it is joined.
@@ -830,23 +814,16 @@ impl Partial {
                 return Err(ExecError::unsupported("AVG requires an argument"))
             }
             (Partial::AvgDecimal { .. } | Partial::AvgReal { .. }, Some(Datum::Null)) => {}
-            (
-                this @ Partial::AvgDecimal { count: 0, .. },
-                Some(input @ (Datum::Time(_) | Datum::Duration(_))),
-            ) => {
+            // `calculateSum` returns a float datum for every non-integer/
+            // non-decimal input, and AVG keeps that domain through its final
+            // division.
+            (this @ Partial::AvgDecimal { count: 0, .. }, Some(input))
+                if !matches!(input, Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_)) =>
+            {
                 *this = Partial::AvgReal {
-                    sum: temporal_real_aggregate_value(&input, "AVG")?,
+                    sum: real_aggregate_value(&input, "AVG")?,
                     count: 1,
                 };
-            }
-            // See the corresponding SUM transition above. Go's
-            // `calculateSum` returns a float datum for real inputs, and AVG
-            // keeps that domain through its final division.
-            (
-                this @ Partial::AvgDecimal { count: 0, .. },
-                Some(Datum::Real(v) | Datum::Float32(v)),
-            ) => {
-                *this = Partial::AvgReal { sum: v, count: 1 };
             }
             (Partial::AvgDecimal { sum, count }, Some(input)) => match input {
                 Datum::Int(v) => {
@@ -915,19 +892,7 @@ impl Partial {
                 }
             }
             (Partial::AvgReal { sum, count }, Some(input)) => {
-                let addend = match input {
-                    Datum::Real(v) | Datum::Float32(v) => v,
-                    Datum::Int(v) => v as f64,
-                    input @ (Datum::Time(_) | Datum::Duration(_)) => {
-                        temporal_real_aggregate_value(&input, "AVG")?
-                    }
-                    _ => {
-                        return Err(ExecError::unsupported(
-                            "AVG over this datum kind is not yet supported",
-                        ))
-                    }
-                };
-                *sum += addend;
+                *sum += real_aggregate_value(&input, "AVG")?;
                 *count += 1;
             }
         }

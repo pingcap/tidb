@@ -140,6 +140,12 @@ fn aggregates_over_numeric_domains() {
         row_text(session.run("SELECT /*+ STREAM_AGG() */ SUM(r), AVG(r) FROM t")),
         [["7.5", "2.5"]]
     );
+    // `pkg/expression/typeinfer_test.go` pins character arguments to the
+    // DOUBLE aggregate domain as well.
+    assert_eq!(
+        row_text(session.run("SELECT SUM(CAST(r AS CHAR)), AVG(CAST(r AS CHAR)) FROM t")),
+        [["7.5", "2.5"]]
+    );
     // Captured: an empty SUM is NULL, not zero.
     assert_eq!(
         row_text(session.run("SELECT SUM(a) FROM t WHERE a > 100")),
