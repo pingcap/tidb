@@ -1250,18 +1250,18 @@ pub(crate) fn substitute_values_references(
 /// counted (that capability is not modelled here, so the count is always the
 /// changed-row count).
 ///
-/// Assignments are evaluated against the row's ORIGINAL values, left to right,
-/// with each assignment seeing the effects of the previous ones -- Go's
-/// `composeNewRow` order.
+/// Assignments are evaluated against the row's ORIGINAL values. Go constructs
+/// the complete replacement row before it writes any assignment, so one `SET`
+/// item cannot observe a previous item's new value.
 ///
 /// Multi-table `UPDATE` lives in `multi_dml`, which reads a joined row
 /// source carrying each target's row identity.
 ///
 /// DEFERRED (documented): `IGNORE`, generated and
-/// `ON UPDATE CURRENT_TIMESTAMP` columns, and the handle-changed path (a row
-/// whose primary-key handle column is assigned is deleted and re-inserted in
-/// Go; this seed rejects it). Single-table `ORDER BY`/`LIMIT` IS supported
-/// (see `order_rows_for_dml`, `dml_row_limit`).
+/// `ON UPDATE CURRENT_TIMESTAMP` columns. A changed primary-key handle moves
+/// the row and rewrites its secondary-index entries. Single-table
+/// `ORDER BY`/`LIMIT` is supported (see `order_rows_for_dml`,
+/// `dml_row_limit`).
 pub fn run_update_on(
     sql: &str,
     catalog: &mut Catalog,
