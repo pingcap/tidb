@@ -27,6 +27,14 @@ use tidb_datatype::GoString;
 
 /// CONCAT: `NULL` if any argument is `NULL`, else the concatenation.
 pub(crate) fn concat(vals: &[Datum]) -> Result<Datum, EvalError> {
+    concat_with_context(vals, &crate::context::NoColumns)
+}
+
+/// Value-evaluated CONCAT with the statement packet limit applied.
+pub(crate) fn concat_with_context(
+    vals: &[Datum],
+    ctx: &dyn crate::context::Columns,
+) -> Result<Datum, EvalError> {
     if vals.is_empty() {
         return Err(EvalError::Unsupported(
             "CONCAT requires at least one argument",
@@ -35,7 +43,13 @@ pub(crate) fn concat(vals: &[Datum]) -> Result<Datum, EvalError> {
     let mut out = Vec::new();
     for v in vals {
         match coerce_str_bytes(v)? {
-            Some(s) => out.extend_from_slice(&s),
+            Some(s) => {
+                if out.len().saturating_add(s.len()) as u64 > ctx.max_allowed_packet() {
+                    ctx.handle_allowed_packet_overflowed("concat")?;
+                    return Ok(Datum::Null);
+                }
+                out.extend_from_slice(&s);
+            }
             None => return Ok(Datum::Null),
         }
     }
@@ -908,7 +922,16 @@ pub(crate) fn elt(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// `CONCAT_WS(sep, a, b, ...)`: joins the non-`NULL` arguments with `sep`.
 /// Unlike `CONCAT`, a `NULL` argument is SKIPPED (not propagated); only a
 /// `NULL` separator yields `NULL` (confirmed via `gorun`).
+#[cfg(test)]
 pub(crate) fn concat_ws(vals: &[Datum]) -> Result<Datum, EvalError> {
+    concat_ws_with_context(vals, &crate::context::NoColumns)
+}
+
+/// Value-evaluated CONCAT_WS with the statement packet limit applied.
+pub(crate) fn concat_ws_with_context(
+    vals: &[Datum],
+    ctx: &dyn crate::context::Columns,
+) -> Result<Datum, EvalError> {
     if vals.len() < 2 {
         return Err(EvalError::Unsupported(
             "CONCAT_WS requires at least two arguments",
@@ -919,10 +942,19 @@ pub(crate) fn concat_ws(vals: &[Datum]) -> Result<Datum, EvalError> {
     };
     let mut out = Vec::new();
     let mut have_part = false;
-    for value in &vals[1..] {
+    let mut target_len = 0_u64;
+    for (index, value) in vals[1..].iter().enumerate() {
         let Some(value) = coerce_str_bytes(value)? else {
             continue;
         };
+        target_len = target_len.saturating_add(value.len() as u64);
+        if index > 0 {
+            target_len = target_len.saturating_add(sep.len() as u64);
+        }
+        if target_len > ctx.max_allowed_packet() {
+            ctx.handle_allowed_packet_overflowed("concat_ws")?;
+            return Ok(Datum::Null);
+        }
         if have_part {
             out.extend_from_slice(&sep);
         }

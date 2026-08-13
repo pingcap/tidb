@@ -21,14 +21,11 @@
 //! dispatch (the `builtinFunc` `eval*` methods, keyed by `tipb.ScalarFuncSig`)
 //! is a separate, larger unit built on `EvalContext`/`chunk.Row`.
 //!
-//! Ported: the struct and its argument-structural, context-free methods
-//! (static type, args, correlation, the common `ReHashCode` path), and `Eval`
-//! for the binary- and unary-operator functions (reusing the shared Datum
-//! operator semantics). DEFERRED (documented): `Eval` for the non-operator
-//! builtins (cast, if/case, string/date functions, ...);
-//! `Equal` (Go's
-//! compares through the function's `equal(ctx, ...)`); `ConstLevel` (needs the
-//! `unFoldableFunctions` catalog and extension-func detection); the `Grouping`
+//! Ported: the struct and its argument-structural methods, const-level rules,
+//! the common `ReHashCode` path, and evaluation for operators plus the builtin
+//! families owned by the shared dispatch modules. Unknown builtin names fail
+//! explicitly. Remaining structural gaps are `Equal` (Go's
+//! compares through the function's `equal(ctx, ...)`); the `Grouping`
 //! branch of `ReHashCode` (needs `BuiltinGroupingImplSig`); `CanonicalHashCode`;
 //! per-signature collation; and `MemoryUsage`.
 
@@ -142,6 +139,33 @@ fn unary_op_for_name(name: &str) -> Option<UnaryOp> {
     })
 }
 
+/// Go `unFoldableFunctions`: calls whose result cannot be frozen during
+/// constant folding even when every argument is a strict literal.
+fn is_unfoldable_function(name: &str) -> bool {
+    name.starts_with("getvar_")
+        || matches!(
+            name,
+            "sysdate"
+                | "found_rows"
+                | "rand"
+                | "uuid"
+                | "uuid_v4"
+                | "uuid_v7"
+                | "sleep"
+                | "row"
+                | "values"
+                | "setvar"
+                | "getvar"
+                | "getparam"
+                | "benchmark"
+                | "dayname"
+                | "nextval"
+                | "lastval"
+                | "setval"
+                | "any_value"
+        )
+}
+
 /// The Go scalar-function name for a binary operator (inverse of
 /// [`binary_op_for_name`]); used when building a [`ScalarFunction`] from an AST
 /// operator.
@@ -244,16 +268,16 @@ impl ScalarFunction {
     }
 
     /// Go `ConstLevel`.
-    ///
-    /// DEFERRED to a conservative `ConstNone`: the faithful result needs the
-    /// `unFoldableFunctions` catalog (non-deterministic builtins) and
-    /// extension-function detection, then the min over argument levels. Reporting
-    /// `ConstNone` is safe -- it only forgoes constant folding, never mis-folds a
-    /// non-deterministic call -- until that catalog is ported. No wired consumer
-    /// depends on scalar-function const-level yet.
     #[must_use]
     pub fn const_level(&self) -> ConstLevel {
-        ConstLevel::NONE
+        if is_unfoldable_function(self.func_name.lowercase()) {
+            return ConstLevel::NONE;
+        }
+        self.args
+            .iter()
+            .map(Expression::const_level)
+            .min()
+            .unwrap_or(ConstLevel::STRICT)
     }
 
     /// THE guarantee Go's `ScalarFunction.Eval` provides and this tier must
@@ -429,6 +453,64 @@ impl ScalarFunction {
                 }
             }
             return Ok(Datum::Null);
+        }
+        // Go's CONCAT signatures capture max_allowed_packet at build time and
+        // evaluate left-to-right. Crossing the limit returns NULL immediately,
+        // so a later argument (including one that would error) is unreachable.
+        if name == "concat" && !self.args.is_empty() {
+            let mut output = Vec::new();
+            for arg in &self.args {
+                let value = arg.eval(ctx, row)?;
+                let Some(bytes) = crate::coerce::coerce_str_bytes(&value)? else {
+                    return Ok(Datum::Null);
+                };
+                let next_len = output.len().saturating_add(bytes.len()) as u64;
+                if next_len > ctx.max_allowed_packet() {
+                    ctx.handle_allowed_packet_overflowed("concat")?;
+                    return Ok(Datum::Null);
+                }
+                output.extend_from_slice(&bytes);
+            }
+            return Ok(Datum::new_string(output));
+        }
+        if name == "concat_ws" && self.args.len() >= 2 {
+            let separator = self.args[0].eval(ctx, row)?;
+            let Some(separator) = crate::coerce::coerce_str_bytes(&separator)? else {
+                return Ok(Datum::Null);
+            };
+            let mut parts = Vec::new();
+            let mut target_len = 0_u64;
+            for (index, arg) in self.args[1..].iter().enumerate() {
+                let value = arg.eval(ctx, row)?;
+                let Some(bytes) = crate::coerce::coerce_str_bytes(&value)? else {
+                    continue;
+                };
+                target_len = target_len.saturating_add(bytes.len() as u64);
+                if index > 0 {
+                    target_len = target_len.saturating_add(separator.len() as u64);
+                }
+                if target_len > ctx.max_allowed_packet() {
+                    ctx.handle_allowed_packet_overflowed("concat_ws")?;
+                    return Ok(Datum::Null);
+                }
+                parts.push(bytes);
+            }
+            let output_len = parts
+                .iter()
+                .fold(0_usize, |length, part| length.saturating_add(part.len()))
+                .saturating_add(
+                    separator
+                        .len()
+                        .saturating_mul(parts.len().saturating_sub(1)),
+                );
+            let mut output = Vec::with_capacity(output_len);
+            for (index, part) in parts.iter().enumerate() {
+                if index > 0 {
+                    output.extend_from_slice(&separator);
+                }
+                output.extend_from_slice(part);
+            }
+            return Ok(Datum::new_string(output));
         }
         // Go `builtinLikeSig`: both operands are stringified, NULL in either
         // propagates, and the third argument is the escape byte.
@@ -1050,6 +1132,8 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use super::*;
     use crate::column::Column;
     use crate::constant::Constant;
@@ -1142,6 +1226,77 @@ mod tests {
             .expect("session information builtin must evaluate")
     }
 
+    struct PacketColumns {
+        limit: u64,
+        warnings: RefCell<Vec<(u16, String)>>,
+    }
+
+    impl Columns for PacketColumns {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn max_allowed_packet(&self) -> u64 {
+            self.limit
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.warnings.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    #[test]
+    fn concat_family_stops_at_the_packet_limit_before_later_arguments() {
+        let ctx = PacketColumns {
+            limit: 3,
+            warnings: RefCell::new(Vec::new()),
+        };
+        let string =
+            |value: &[u8]| Expression::Constant(Constant::new(Datum::new_string(value), text_ft()));
+        let unsupported = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("not_a_function"),
+            text_ft(),
+            vec![],
+        ));
+        let concat = ScalarFunction::new(
+            CiString::new("concat"),
+            text_ft(),
+            vec![string(b"abcd"), unsupported],
+        );
+        assert_eq!(
+            concat.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap(),
+            Datum::Null
+        );
+        assert_eq!(ctx.warnings.borrow()[0].0, 1301);
+        assert!(ctx.warnings.borrow()[0].1.contains("concat()"));
+
+        ctx.warnings.borrow_mut().clear();
+        let concat_ws = ScalarFunction::new(
+            CiString::new("concat_ws"),
+            text_ft(),
+            vec![string(b"--"), string(b"a"), string(b"b")],
+        );
+        assert_eq!(
+            concat_ws.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap(),
+            Datum::Null
+        );
+        assert_eq!(ctx.warnings.borrow()[0].0, 1301);
+        assert!(ctx.warnings.borrow()[0].1.contains("concat_ws()"));
+
+        ctx.warnings.borrow_mut().clear();
+        assert_eq!(
+            crate::func::eval_func_values_in(
+                "CONCAT",
+                &[Datum::new_string("abcd"), Datum::new_string("x")],
+                &ctx,
+            )
+            .unwrap()
+            .unwrap(),
+            Datum::Null
+        );
+        assert_eq!(ctx.warnings.borrow()[0].0, 1301);
+    }
+
     // Go TestCurrentUser.
     #[test]
     fn test_current_user() {
@@ -1217,7 +1372,58 @@ mod tests {
         ]);
         assert_eq!(sf.get_args().len(), 2);
         assert!(sf.get_static_type().is_some());
-        assert_eq!(sf.const_level(), ConstLevel::NONE);
+        assert_eq!(sf.const_level(), ConstLevel::STRICT);
+    }
+
+    #[test]
+    fn const_level_matches_the_source_function_and_argument_rules() {
+        let literal = || Expression::Constant(Constant::new(Datum::Int(1), ft()));
+        let parameter = || {
+            let mut constant = Constant::new(Datum::Int(1), ft());
+            constant.param_marker = Some(crate::constant::ParamMarker { order: 0 });
+            Expression::Constant(constant)
+        };
+        let call = |name: &str, args| ScalarFunction::new(CiString::new(name), ft(), args);
+
+        assert_eq!(
+            call("abs", vec![literal()]).const_level(),
+            ConstLevel::STRICT
+        );
+        assert_eq!(
+            plus(vec![literal(), parameter()]).const_level(),
+            ConstLevel::ONLY_IN_CONTEXT
+        );
+        assert_eq!(
+            plus(vec![literal(), Expression::Column(Column::new(1, ft()))]).const_level(),
+            ConstLevel::NONE
+        );
+        for name in [
+            "sysdate",
+            "found_rows",
+            "rand",
+            "uuid",
+            "uuid_v4",
+            "uuid_v7",
+            "sleep",
+            "row",
+            "values",
+            "setvar",
+            "getvar",
+            "getvar_string",
+            "getparam",
+            "benchmark",
+            "dayname",
+            "nextval",
+            "lastval",
+            "setval",
+            "any_value",
+        ] {
+            assert_eq!(
+                call(name, vec![literal()]).const_level(),
+                ConstLevel::NONE,
+                "{name}"
+            );
+        }
     }
 
     #[test]
