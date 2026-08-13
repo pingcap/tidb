@@ -1258,9 +1258,9 @@ pub(crate) fn view_source_relation(
 
 /// One common column of a `NATURAL`/`USING` join: the row offset that stays
 /// visible under the shared name, and the one that is coalesced away.
-struct CommonColumn {
-    visible: usize,
-    redundant: usize,
+pub(crate) struct CommonColumn {
+    pub(crate) visible: usize,
+    pub(crate) redundant: usize,
 }
 
 /// Go `PlanBuilder.coalesceCommonColumns`, as the naming half of a join.
@@ -1285,7 +1285,7 @@ struct CommonColumn {
 ///   side, whose value is never the NULL-padded one.
 ///
 /// `using` empty means `NATURAL`: every common name participates.
-fn coalesce_common_columns(
+pub(crate) fn coalesce_common_columns(
     scope: &mut FromScope,
     left_visible: Vec<(usize, String, FieldType)>,
     right_visible: Vec<(usize, String, FieldType)>,

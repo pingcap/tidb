@@ -607,6 +607,71 @@ fn multi_table_dml_keeps_view_sources_read_only() {
     assert!(column(&mut session, "SELECT id, v FROM r1").is_empty());
 }
 
+/// Go's `PlanBuilder.buildUsingClause` and `buildNaturalJoin` construct the
+/// common-column equality, then restore the full child schema when the
+/// statement is an `UPDATE` or `DELETE`. The common name is consequently
+/// usable without a qualifier, while both base rows retain write identity.
+#[test]
+fn multi_table_dml_keeps_using_and_natural_join_rows_writable() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE uj1 (id INT PRIMARY KEY, left_v INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE uj2 (id INT PRIMARY KEY, right_v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO uj1 VALUES (1,10),(2,20),(3,30)")
+        .unwrap();
+    session.run("INSERT INTO uj2 VALUES (1,7),(2,8)").unwrap();
+
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE uj1 JOIN uj2 USING (id) SET uj1.left_v = uj1.left_v + uj2.right_v WHERE id = 1"
+        ),
+        1
+    );
+    assert_eq!(
+        column(&mut session, "SELECT id, left_v FROM uj1 ORDER BY id"),
+        ["1|17", "2|20", "3|30"]
+    );
+
+    assert_eq!(
+        affected(
+            &mut session,
+            "DELETE uj1 FROM uj1 NATURAL JOIN uj2 WHERE id = 2"
+        ),
+        1
+    );
+    assert_eq!(
+        column(&mut session, "SELECT id, left_v FROM uj1 ORDER BY id"),
+        ["1|17", "3|30"]
+    );
+
+    // A RIGHT join keeps the right copy as the unqualified common column.
+    // The unmatched row is still a valid target on that preserved side.
+    session
+        .run("CREATE TABLE ur1 (id INT PRIMARY KEY, left_v INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE ur2 (id INT PRIMARY KEY, right_v INT)")
+        .unwrap();
+    session.run("INSERT INTO ur1 VALUES (1,10)").unwrap();
+    session.run("INSERT INTO ur2 VALUES (1,7),(2,8)").unwrap();
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE ur1 RIGHT JOIN ur2 USING (id) SET ur2.right_v = ur2.right_v + 1 WHERE id = 2"
+        ),
+        1
+    );
+    assert_eq!(
+        column(&mut session, "SELECT id, right_v FROM ur2 ORDER BY id"),
+        ["1|7", "2|9"]
+    );
+}
+
 /// A derived table is a READ source of a multi-table write, and the base
 /// table joined against it IS written.
 ///

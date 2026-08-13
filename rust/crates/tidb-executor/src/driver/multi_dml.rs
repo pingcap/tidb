@@ -81,10 +81,13 @@
 //!   SET t1.b = t2.b` WRITES, and only a `SET`/`DELETE` target naming `t2`
 //!   is refused.
 //!
-//! DEFERRED (documented, and refused rather than approximated): `NATURAL`/
-//! `USING` join or `LATERAL` source anywhere in a multi-table DML's `FROM`.
-//! A silently half-applied multi-table write is a wrong answer no reader
-//! would notice, so each of these returns an error naming itself.
+//! A `NATURAL`/`USING` join uses the same equality and naming rules as the
+//! query path, while retaining both physical columns and their row identities
+//! for the write phase. Go likewise restores the full child schema for
+//! `UPDATE`/`DELETE` after building the coalesced join condition.
+//!
+//! DEFERRED (documented, and refused rather than approximated): a `LATERAL`
+//! source anywhere in a multi-table DML's `FROM`.
 //!
 //! `LATERAL` is a MEASURED deferral rather than an assumed one: Go runs
 //! `UPDATE w t1 JOIN LATERAL (SELECT a, b FROM w WHERE a = t1.a - 10) t2 ON
@@ -170,6 +173,11 @@ struct MultiSource {
     /// literals in the session's zone (see [`FromScope::zone`]).
     zone: tidb_expr::SessionTimeZone,
     tidb_info_len: usize,
+    /// The output naming state of a child `NATURAL`/`USING` join. The row
+    /// remains full-width for writes, just as Go resets the join schema for
+    /// DML after using the coalesced names to construct its equality.
+    coalesced: Vec<usize>,
+    star: Vec<usize>,
 }
 
 impl MultiSource {
@@ -194,6 +202,8 @@ impl MultiSource {
                 .collect(),
             zone: self.zone.clone(),
             tidb_info_len: self.tidb_info_len,
+            coalesced: self.coalesced.clone(),
+            star: self.star.clone(),
             ..FromScope::default()
         }
     }
@@ -228,11 +238,6 @@ fn build_multi_source(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<MultiSource, DriverError> {
-    if join.natural || !join.using.is_empty() {
-        return Err(DriverError::unsupported(
-            "a NATURAL or USING join is not supported in multi-table DML",
-        ));
-    }
     let left = build_multi_node(&join.left, catalog, current_db, ctx)?;
     let Some(right_node) = &join.right else {
         // The single-relation wrapper the parser always produces.
@@ -325,6 +330,8 @@ fn scan_derived_table(
     Ok(MultiSource {
         zone: ctx.session_zone(),
         tidb_info_len: ctx.tidb_info_len(),
+        coalesced: Vec::new(),
+        star: Vec::new(),
         tables: vec![SourceTable {
             visible: alias.to_owned(),
             // An alias is the only qualifier a derived table answers to.
@@ -394,6 +401,8 @@ fn scan_base_table(
             return Ok(MultiSource {
                 zone: ctx.session_zone(),
                 tidb_info_len: ctx.tidb_info_len(),
+                coalesced: Vec::new(),
+                star: Vec::new(),
                 tables: vec![SourceTable {
                     visible,
                     qualifiable_db: table_ref.alias.is_none().then(|| database.to_owned()),
@@ -416,6 +425,8 @@ fn scan_base_table(
     Ok(MultiSource {
         zone: ctx.session_zone(),
         tidb_info_len: ctx.tidb_info_len(),
+        coalesced: Vec::new(),
+        star: Vec::new(),
         tables: vec![SourceTable {
             visible,
             qualifiable_db: table_ref.alias.is_none().then(|| database.to_owned()),
@@ -443,6 +454,10 @@ fn join_sources(
     let right_width = right.width();
     let left_tables = left.tables.len();
     let right_tables = right.tables.len();
+    // Capture the child naming state before moving their physical table
+    // slots into the full DML row below.
+    let left_scope = left.scope();
+    let right_scope = right.scope();
     let mut tables = left.tables;
     for table in right.tables {
         tables.push(SourceTable {
@@ -450,23 +465,93 @@ fn join_sources(
             ..table
         });
     }
+    // Build the same full physical row that `UPDATE`/`DELETE` use in Go.
+    // The scope carries the separate NATURAL/USING display state: it affects
+    // name resolution and supplies the synthesized equality, never the row
+    // identities that the write phase needs.
+    let left_visible = left_scope.star_columns();
+    let right_visible: Vec<(usize, String, FieldType)> = right_scope
+        .star_columns()
+        .into_iter()
+        .map(|(offset, name, field_type)| (offset + left_width, name, field_type))
+        .collect();
+    let child_coalesced = !left_scope.star.is_empty() || !right_scope.star.is_empty();
+    let mut scope = left_scope;
+    scope.coalesced.extend(
+        right_scope
+            .coalesced
+            .iter()
+            .map(|offset| offset + left_width),
+    );
+    if !join.natural && join.using.is_empty() && child_coalesced {
+        scope.star = left_visible
+            .iter()
+            .chain(&right_visible)
+            .map(|(offset, ..)| *offset)
+            .collect();
+    }
+
     let joined = MultiSource {
         tables,
         rows: Vec::new(),
         zone: ctx.session_zone(),
         tidb_info_len: ctx.tidb_info_len(),
+        coalesced: Vec::new(),
+        star: Vec::new(),
     };
+    for table in &joined.tables[left_tables..] {
+        // `scope` still has the left tables at their original offsets. The
+        // right tables are appended here exactly once under their full-row
+        // offsets; their identity stays independent of display coalescing.
+        scope.tables.push(FromTable {
+            name: table.visible.clone(),
+            database: table.qualifiable_db.clone(),
+            columns: table.columns.clone(),
+            offset: table.offset,
+            func_deps: Default::default(),
+        });
+    }
+    let mut coalesced_conditions = Vec::new();
+    if join.natural || !join.using.is_empty() {
+        let common = super::from::coalesce_common_columns(
+            &mut scope,
+            left_visible,
+            right_visible,
+            join.tp,
+            &join.using,
+        )?;
+        let resolver = ScopeResolver { scope: &scope };
+        for pair in common {
+            let (Some(visible), Some(redundant)) = (
+                scope.qualified_path(pair.visible),
+                scope.qualified_path(pair.redundant),
+            ) else {
+                return Err(DriverError::unsupported(
+                    "a coalesced join column has no table to name it",
+                ));
+            };
+            let equality = tidb_ast::Expr::Binary(
+                tidb_ast::BinaryOp::Eq,
+                Box::new(tidb_ast::Expr::Column(visible)),
+                Box::new(tidb_ast::Expr::Column(redundant)),
+            );
+            coalesced_conditions.push(
+                rewrite_expr_resolved(&equality, &resolver)
+                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
+            );
+        }
+    }
     let field_types = joined.field_types();
-    let condition = match &join.on {
+    let mut conditions = match &join.on {
         Some(expr) => {
-            let scope = joined.scope();
-            Some(
+            vec![
                 rewrite_expr_resolved(expr, &ScopeResolver { scope: &scope })
                     .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?,
-            )
+            ]
         }
-        None => None,
+        None => Vec::new(),
     };
+    conditions.append(&mut coalesced_conditions);
 
     let mut rows = Vec::new();
     let mut right_matched = vec![false; right.rows.len()];
@@ -475,14 +560,19 @@ fn join_sources(
         for (right_index, (right_ids, right_values)) in right.rows.iter().enumerate() {
             let mut values = left_values.clone();
             values.extend_from_slice(right_values);
-            if let Some(condition) = &condition {
+            let mut joins = true;
+            for condition in &conditions {
                 let chunk = row_chunk(&values, &field_types)?;
                 let selected = condition
                     .eval(ctx, chunk.get_row(0))
                     .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
                 if !datum_is_true(&selected) {
-                    continue;
+                    joins = false;
+                    break;
                 }
+            }
+            if !joins {
+                continue;
             }
             matched = true;
             right_matched[right_index] = true;
@@ -510,7 +600,12 @@ fn join_sources(
             rows.push((ids, values));
         }
     }
-    Ok(MultiSource { rows, ..joined })
+    Ok(MultiSource {
+        rows,
+        coalesced: scope.coalesced,
+        star: scope.star,
+        ..joined
+    })
 }
 
 /// The joined rows a multi-table write acts on: the `FROM` joined, the
