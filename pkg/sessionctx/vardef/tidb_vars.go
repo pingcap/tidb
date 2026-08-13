@@ -1145,17 +1145,17 @@ const (
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
 
-	// TiDBDisableTxnFile is used to control whether to disable file-based transaction feature.
-	TiDBDisableTxnFile = "tidb_disable_txn_file"
-
-	// TiDBTxnFileMinMutationSize is the minimum mutation size for using file-based transactions.
-	TiDBTxnFileMinMutationSize = "tidb_txn_file_min_mutation_size"
-
 	// TiDBAccelerateUserCreationUpdate decides whether tidb will load & update the whole user's data in-memory.
 	TiDBAccelerateUserCreationUpdate = "tidb_accelerate_user_creation_update"
 
 	// TiDBEnableCachePrepareStmt indicates whether to support cache prepare stmt in plan cache.
 	TiDBEnableCachePrepareStmt = "tidb_enable_cache_prepare_stmt"
+
+	// TiDBDisableTxnFile is used to control whether to disable file-based transaction feature.
+	TiDBDisableTxnFile = "tidb_disable_txn_file"
+
+	// TiDBTxnFileMinMutationSize is the minimum mutation size for using file-based transactions.
+	TiDBTxnFileMinMutationSize = "tidb_txn_file_min_mutation_size"
 )
 
 // TiDB vars that have only global scope
@@ -1867,9 +1867,6 @@ const (
 	DefTiDBEnableLazyCursorFetch                      = false
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
-	DefTiDBDisableTxnFile                             = false
-	DefTiDBTxnFileMinMutationSize                     = 0
-	MinTiDBTxnFileMinMutationSize                     = 1 << 20 // 1 MiB
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
 	DefTiDBAccelerateUserCreationUpdate               = false
@@ -1887,6 +1884,15 @@ const (
 	// This corresponds to performance_schema_session_connect_attrs_size. In TiDB, -1 means no limit up to 64KB.
 	DefConnectAttrsSize             int64 = 4096
 	DefTiDBEnableConnectionEventLog       = false
+	// DefTiDBDisableTxnFile is the default value of `tidb_disable_txn_file`.
+	// The default must remain false for backward compatibility.
+	// Leaving `tikv-client.txn-chunk-writer-addr` empty disables file-based transactions for this TiDB instance.
+	// Apply it to every TiDB instance to disable the feature cluster-wide.
+	DefTiDBDisableTxnFile = false
+	// DefTiDBTxnFileMinMutationSize is 0, so the threshold defaults to `tikv-client.txn-file-min-mutation-size`.
+	DefTiDBTxnFileMinMutationSize = 0
+	// MinTiDBTxnFileMinMutationSize is the minimum valid nonzero value for `tidb_txn_file_min_mutation_size`.
+	MinTiDBTxnFileMinMutationSize = 1 << 20 // 1 MiB
 )
 
 const (
