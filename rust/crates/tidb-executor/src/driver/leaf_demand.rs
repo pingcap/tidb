@@ -83,7 +83,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tidb_ast::{Expr, Join, JoinNode, QueryStmt, SelectField, SelectStmt};
+use tidb_ast::{
+    Expr, Join, JoinNode, QueryStmt, SelectField, SelectStmt, WindowDef, WindowOver, WindowSpec,
+};
 use tidb_datatype::FieldType;
 
 /// What an enclosing `SELECT` hands down to every relation of its `FROM`:
@@ -162,6 +164,9 @@ pub(crate) struct LeafDemand {
     /// does not force; `USE INDEX ()` does, because Go forces the table path
     /// itself there.
     forces_index: bool,
+    /// Named windows visible in each SELECT currently being walked. Nested
+    /// queries push their own scope.
+    window_scopes: Vec<Vec<(String, WindowDef)>>,
 }
 
 impl LeafDemand {
@@ -182,7 +187,9 @@ impl LeafDemand {
         if demand.reject_select_shape(select) {
             return demand;
         }
+        demand.window_scopes.push(select.windows.clone());
         demand.add_select_parent_clauses(select);
+        demand.window_scopes.pop();
         demand
     }
 
@@ -245,22 +252,21 @@ impl LeafDemand {
     /// Adds every column reference of one `SELECT`, its `FROM` included.
     fn add_select(&mut self, select: &SelectStmt) {
         // A CTE introduces relation names this walk cannot tell apart from
-        // the leaves below it, and `VALUES`/`WITH ROLLUP`/a `WINDOW` clause
-        // each name columns through machinery outside the expression tree.
+        // the leaves below it, and `VALUES`/`WITH ROLLUP` each name columns
+        // through machinery outside the expression tree.
         if self.reject_select_shape(select) {
             return;
         }
+        self.window_scopes.push(select.windows.clone());
         self.add_select_parent_clauses(select);
         if let Some(join) = &select.from {
             self.add_join(join);
         }
+        self.window_scopes.pop();
     }
 
     fn reject_select_shape(&mut self, select: &SelectStmt) -> bool {
-        let rejected = select.with.is_some()
-            || !select.values.is_empty()
-            || !select.windows.is_empty()
-            || select.rollup;
+        let rejected = select.with.is_some() || !select.values.is_empty() || select.rollup;
         if rejected {
             self.all = true;
         }
@@ -346,6 +352,53 @@ impl LeafDemand {
         }
     }
 
+    fn add_window_over(&mut self, over: &WindowOver) {
+        match over {
+            WindowOver::Name(name) => {
+                let Some(def) = self.named_window(name) else {
+                    self.all = true;
+                    return;
+                };
+                self.add_window_def(&def, &mut vec![name.to_ascii_lowercase()]);
+            }
+            WindowOver::Def(def) => self.add_window_def(def, &mut Vec::new()),
+        }
+    }
+
+    fn add_window_def(&mut self, def: &WindowDef, seen: &mut Vec<String>) {
+        if let Some(base) = &def.base {
+            let key = base.to_ascii_lowercase();
+            if seen.contains(&key) {
+                self.all = true;
+                return;
+            }
+            let Some(base_def) = self.named_window(base) else {
+                self.all = true;
+                return;
+            };
+            seen.push(key);
+            self.add_window_def(&base_def, seen);
+            seen.pop();
+        }
+        self.add_window_spec(&def.spec);
+    }
+
+    fn named_window(&self, name: &str) -> Option<WindowDef> {
+        self.window_scopes
+            .last()?
+            .iter()
+            .find_map(|(candidate, def)| candidate.eq_ignore_ascii_case(name).then(|| def.clone()))
+    }
+
+    fn add_window_spec(&mut self, spec: &WindowSpec) {
+        for expr in &spec.partition_by {
+            self.add_expr(expr);
+        }
+        for item in &spec.order_by {
+            self.add_expr(&item.expr);
+        }
+    }
+
     /// Adds every column reference inside one expression.
     ///
     /// Exhaustive with no wildcard arm on purpose: see the module doc.
@@ -380,9 +433,14 @@ impl LeafDemand {
             | Expr::UserVar(_)
             | Expr::SysVar { .. } => {}
 
-            // A window function's frame and partition live in a `WindowOver`
-            // this walk does not model, so the whole statement falls back.
-            Expr::Window { .. } => self.all = true,
+            // Go `LogicalWindow.extractUsedCols`: the call arguments plus
+            // PARTITION BY / ORDER BY columns are the child's demand.
+            Expr::Window { args, over, .. } => {
+                for arg in args {
+                    self.add_expr(arg);
+                }
+                self.add_window_over(over);
+            }
 
             // Nested queries: a correlated reference inside one names a
             // column of the leaves this demand is computed for.
@@ -658,18 +716,40 @@ mod tests {
         );
     }
 
-    /// An unwalkable construct falls back to the demand that names
-    /// everything, never to a narrower one.
+    /// Go's logical window passes only its arguments and ordering columns to
+    /// its child. That is what lets `idx(a)` cover `sum(a) over ()` without
+    /// pretending the query reads the rest of the table row.
     #[test]
-    fn an_unwalkable_construct_falls_back_to_everything() {
+    fn a_window_charges_only_its_arguments_partition_and_order_columns() {
         assert_eq!(
             needed_of(
                 "select row_number() over (partition by t1.b) from t1 join t2 on t1.c = t2.c",
                 "t1",
                 &["a", "b", "c"]
             ),
+            vec![1, 2],
+        );
+        assert_eq!(
+            needed_of(
+                "select sum(t1.a) over (partition by t1.b order by t1.c) \
+                 from t1 join t2 on t1.a = t2.a",
+                "t1",
+                &["a", "b", "c", "unused"]
+            ),
             vec![0, 1, 2],
-            "a window function's OVER clause is not walked, so nothing is pruned"
+        );
+    }
+
+    #[test]
+    fn a_named_window_resolves_its_base_chain_in_the_current_select() {
+        assert_eq!(
+            needed_of(
+                "select sum(t1.a) over w2 from t1 join t2 on t1.a = t2.a \
+                 window w1 as (partition by t1.b), w2 as (w1 order by t1.c)",
+                "t1",
+                &["a", "b", "c", "unused"]
+            ),
+            vec![0, 1, 2],
         );
     }
 
