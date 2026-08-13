@@ -248,6 +248,27 @@ pub struct Task {
     pub order: Vec<SortItem>,
     /// `GetPlanCostVer2` over `plan`, per node.
     pub costed: CostedNode,
+    /// The chosen physical strategy in logical left/right order.
+    pub decision: DecisionTree,
+}
+
+/// The reusable output of the recursive search.
+///
+/// [`Candidate`] follows physical build/probe order for hash and index joins,
+/// which may reverse the logical children. The executor builder needs logical
+/// position instead, so the search carries that identity explicitly rather
+/// than attempting to reconstruct it from a cost tree after the choice.
+#[derive(Clone, Debug, PartialEq)]
+pub enum DecisionTree {
+    /// One already-physicalized leaf.
+    Leaf,
+    /// One logical join and the decisions selected for its children.
+    Join {
+        /// The physical strategy chosen at this join.
+        strategy: JoinStrategy,
+        /// Logical left child, then logical right child.
+        children: [Box<DecisionTree>; 2],
+    },
 }
 
 impl Task {
@@ -636,6 +657,7 @@ fn best_leaf(
             plan: alternative.plan.clone(),
             order: alternative.order.clone(),
             costed,
+            decision: DecisionTree::Leaf,
         };
         keep_cheaper(&mut best, task);
     }
@@ -736,6 +758,13 @@ fn enumerate(
             plan,
             order,
             costed,
+            decision: DecisionTree::Join {
+                strategy: candidate.strategy.clone(),
+                children: [
+                    Box::new(left.decision.clone()),
+                    Box::new(right.decision.clone()),
+                ],
+            },
         };
         let task = if add_enforcer {
             match enforce(model, prop, &task, env) {
@@ -763,6 +792,7 @@ fn enforce(
         plan,
         order: prop.sort_items.clone(),
         costed,
+        decision: task.decision.clone(),
     })
 }
 

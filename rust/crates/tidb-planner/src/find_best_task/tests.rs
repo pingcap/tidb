@@ -549,9 +549,10 @@ fn a_child_merge_hint_does_not_force_the_parent_join_method() {
         right_keys: vec![T3_A],
         left_schema: vec![T2_A, T1_A],
         right_schema: vec![T3_A],
-        // The hinted child is ordered by its own join key (`t2.b`), not by
-        // the different `t2.a` key its parent joins on.
-        left_properties: vec![vec![T2_B]],
+        // The logical subtree can be sorted on the parent's `t2.a` key, but
+        // satisfying that property requires a Sort above its forced
+        // `MERGE_JOIN(t2.b = t1.a)` plan.
+        left_properties: vec![vec![T2_A]],
         right_properties: vec![vec![T3_A]],
         force_merge: false,
     }));
@@ -576,6 +577,36 @@ fn a_child_merge_hint_does_not_force_the_parent_join_method() {
             || matches!(*probe, Candidate::MergeJoin { .. }),
         "the child hint must still select its own MergeJoin"
     );
+    assert!(matches!(
+        &best.decision,
+        DecisionTree::Join {
+            strategy: JoinStrategy::Hash(_),
+            children: [left, _],
+        } if matches!(
+            **left,
+            DecisionTree::Join {
+                strategy: JoinStrategy::Merge { .. },
+                ..
+            }
+        )
+    ));
+    let DecisionTree::Join { children, .. } = best.decision else {
+        unreachable!()
+    };
+    let DecisionTree::Join {
+        strategy:
+            JoinStrategy::Merge {
+                left_keys,
+                right_keys,
+                ..
+            },
+        ..
+    } = *children[0].clone()
+    else {
+        unreachable!()
+    };
+    assert_eq!(left_keys, vec![T2_B]);
+    assert_eq!(right_keys, vec![T1_A]);
 }
 
 /// The enumeration order breaks exact ties, because `compareTaskCost` replaces
@@ -989,6 +1020,13 @@ fn dropping_the_property_on_the_outer_child_changes_both_cost_and_order() {
             plan,
             order,
             costed,
+            decision: DecisionTree::Join {
+                strategy: candidate.strategy.clone(),
+                children: [
+                    Box::new(left.decision.clone()),
+                    Box::new(right.decision.clone()),
+                ],
+            },
         };
         let better = cheapest
             .as_ref()
