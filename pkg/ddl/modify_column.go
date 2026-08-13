@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -848,10 +849,6 @@ func checkModifyColumnData(
 	return true, nil
 }
 
-func quoteSQLIdentifier(identifier string) string {
-	return "`" + strings.ReplaceAll(identifier, "`", "``") + "`"
-}
-
 // buildCheckSQLFromModifyColumn builds the SQL to check whether the data
 // is valid after modifying to new type.
 func buildCheckSQLFromModifyColumn(
@@ -864,8 +861,8 @@ func buildCheckSQLFromModifyColumn(
 
 	var conditions []string
 	template := "SELECT %s FROM %s WHERE %s LIMIT 1"
-	checkColName := quoteSQLIdentifier(oldCol.Name.O)
-	tableName := fmt.Sprintf("%s.%s", quoteSQLIdentifier(dbName.O), quoteSQLIdentifier(tblName.O))
+	checkColName := dbutil.ColumnName(oldCol.Name.O)
+	tableName := dbutil.TableName(dbName.O, tblName.O)
 
 	if checkValueRange {
 		if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
@@ -897,7 +894,7 @@ func buildCheckRangeForIntegerTypes(oldCol, changingCol *model.ColumnInfo) strin
 	changingTp := changingCol.GetType()
 	changingUnsigned := mysql.HasUnsignedFlag(changingCol.GetFlag())
 
-	columnName := quoteSQLIdentifier(oldCol.Name.O)
+	columnName := dbutil.ColumnName(oldCol.Name.O)
 
 	if changingUnsigned {
 		upperBound := types.IntegerUnsignedUpperBound(changingTp)
