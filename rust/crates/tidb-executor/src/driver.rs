@@ -702,6 +702,7 @@ pub(crate) fn run_select_traced(
                 FromScope {
                     zone: ctx.session_zone(),
                     tidb_info_len: ctx.tidb_info_len(),
+                    like_default_escape: ctx.like_default_escape(),
                     ..FromScope::default()
                 },
             )

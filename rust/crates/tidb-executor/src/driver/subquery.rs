@@ -756,6 +756,7 @@ pub(crate) fn select_outer_scope(
     let empty = || FromScope {
         zone: ctx.session_zone(),
         tidb_info_len: ctx.tidb_info_len(),
+        like_default_escape: ctx.like_default_escape(),
         ..FromScope::default()
     };
     match &select.from {

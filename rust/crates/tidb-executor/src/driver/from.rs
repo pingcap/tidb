@@ -44,6 +44,10 @@ pub(crate) struct FromScope {
     pub(crate) zone: tidb_expr::SessionTimeZone,
     /// Result width of this statement's configured `TIDB_VERSION()` value.
     pub(crate) tidb_info_len: usize,
+    /// The implicit `LIKE` escape captured from the statement context. It is
+    /// scope state because every expression rewrite beneath this `FROM`
+    /// receives only its resolver.
+    pub(crate) like_default_escape: u8,
     /// The row offsets a `NATURAL`/`USING` join coalesced AWAY: the inner
     /// side's copy of each common column, which stays reachable through its
     /// own table's qualifier (`SELECT u2.id`) but is invisible to `*` and to
@@ -113,6 +117,7 @@ impl Default for FromScope {
                 &tidb_util::versioninfo::VersionInfo::build_default(),
             )
             .len(),
+            like_default_escape: b'\\',
         }
     }
 }
@@ -216,6 +221,10 @@ impl ColumnResolver for ScopeResolver<'_> {
 
     fn tidb_info_len(&self) -> usize {
         self.scope.tidb_info_len
+    }
+
+    fn like_default_escape(&self) -> u8 {
+        self.scope.like_default_escape
     }
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
@@ -657,6 +666,7 @@ pub(crate) fn build_from(
                 }],
                 zone: ctx.session_zone(),
                 tidb_info_len: ctx.tidb_info_len(),
+                like_default_escape: ctx.like_default_escape(),
                 ..FromScope::default()
             };
             // What this leaf DELIVERS -- read off the branch that RAN, which
@@ -800,6 +810,7 @@ pub(crate) fn build_derived_source(
         }],
         zone: ctx.session_zone(),
         tidb_info_len: ctx.tidb_info_len(),
+        like_default_escape: ctx.like_default_escape(),
         ..FromScope::default()
     };
     Ok((exec, scope))
@@ -1220,6 +1231,7 @@ pub(crate) fn build_view_source(
         }],
         zone: ctx.session_zone(),
         tidb_info_len: ctx.tidb_info_len(),
+        like_default_escape: ctx.like_default_escape(),
         ..FromScope::default()
     };
     Ok((exec, scope))

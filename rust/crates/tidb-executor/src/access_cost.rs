@@ -781,10 +781,11 @@ pub(crate) fn enumerate_paths(
             range_offsets.push(handle.1);
         }
         let built = range_clause.and_then(|range_clause| {
-            crate::index_range::detach_cond_and_build_range_for_index(
+            crate::index_range::detach_cond_and_build_range_for_index_with_like_default_escape(
                 &index_columns,
                 range_clause,
                 &resolver.time_zone(),
+                resolver.like_default_escape(),
             )
         });
         let Some(built) = built else {

@@ -790,8 +790,9 @@ fn points_for_condition(
     condition: &Expr,
     column: &RangeColumn,
     zone: &tidb_datatype::SessionTimeZone,
+    like_default_escape: u8,
 ) -> Option<ColumnPoints> {
-    let mut column_points = points_on_column(condition, column, zone)?;
+    let mut column_points = points_on_column(condition, column, zone, like_default_escape)?;
     cut_prefix_for_points(&mut column_points.points, column);
     // Go's `conditionChecker` rejects a condition that bounds nothing --- a
     // LIKE with no literal prefix, an IS NOT NULL --- and `points.go` signals
@@ -845,10 +846,11 @@ fn points_on_column(
     condition: &Expr,
     column: &RangeColumn,
     zone: &tidb_datatype::SessionTimeZone,
+    like_default_escape: u8,
 ) -> Option<ColumnPoints> {
     let name = column.name.as_str();
     match condition {
-        Expr::Paren(inner) => points_on_column(inner, column, zone),
+        Expr::Paren(inner) => points_on_column(inner, column, zone, like_default_escape),
         // Go `buildFromScalarFunc`'s `ast.LogicAnd` / `ast.LogicOr` arms. A
         // boolean connective over ONE index column is still a point set on
         // that column: `b = 1 OR b = 2` is the union of the two, and
@@ -862,8 +864,8 @@ fn points_on_column(
         // is not merely a lost opportunity but a WRONG range -- keeping only
         // the side that parsed would exclude rows the other side admits.
         Expr::Binary(op @ (BinaryOp::LogicAnd | BinaryOp::LogicOr), lhs, rhs) => {
-            let lhs = points_on_column(lhs, column, zone)?;
-            let rhs = points_on_column(rhs, column, zone)?;
+            let lhs = points_on_column(lhs, column, zone, like_default_escape)?;
+            let rhs = points_on_column(rhs, column, zone, like_default_escape)?;
             let points = if matches!(op, BinaryOp::LogicAnd) {
                 intersection(&lhs.points, &rhs.points)
             } else {
@@ -991,7 +993,12 @@ fn points_on_column(
             let collation = column.field_type.collation();
             let pattern = String::from_utf8(bytes).ok()?;
             Some(ColumnPoints {
-                points: points_from_like(&pattern, escape.unwrap_or(b'\\'), collation, column),
+                points: points_from_like(
+                    &pattern,
+                    escape.unwrap_or(like_default_escape),
+                    collation,
+                    column,
+                ),
                 eq_or_in: false,
             })
         }
@@ -1062,6 +1069,7 @@ fn build_cnf_ranges<'a>(
     index_columns: &[RangeColumn],
     conditions: &[&'a Expr],
     zone: &tidb_datatype::SessionTimeZone,
+    like_default_escape: u8,
 ) -> IndexRanges<'a> {
     let mut consumed = vec![false; conditions.len()];
     let mut eq_in_points: Vec<Vec<Point>> = Vec::new();
@@ -1075,7 +1083,8 @@ fn build_cnf_ranges<'a>(
             if consumed[i] {
                 continue;
             }
-            let Some(column) = points_for_condition(condition, key_part, zone) else {
+            let Some(column) = points_for_condition(condition, key_part, zone, like_default_escape)
+            else {
                 continue;
             };
             if !column.eq_or_in {
@@ -1104,7 +1113,8 @@ fn build_cnf_ranges<'a>(
             if consumed[i] {
                 continue;
             }
-            let Some(column) = points_for_condition(condition, key_part, zone) else {
+            let Some(column) = points_for_condition(condition, key_part, zone, like_default_escape)
+            else {
                 continue;
             };
             tail = Some(intersection(
@@ -1215,6 +1225,7 @@ fn build_dnf_ranges<'a>(
     index_columns: &[RangeColumn],
     disjunct: &'a Expr,
     zone: &tidb_datatype::SessionTimeZone,
+    like_default_escape: u8,
 ) -> Option<IndexRanges<'a>> {
     let mut branches = Vec::new();
     collect_disjuncts(disjunct, &mut branches);
@@ -1229,7 +1240,7 @@ fn build_dnf_ranges<'a>(
     for branch in branches {
         let mut conjuncts = Vec::new();
         collect_conjuncts(branch, &mut conjuncts);
-        let built = build_cnf_ranges(index_columns, &conjuncts, zone);
+        let built = build_cnf_ranges(index_columns, &conjuncts, zone, like_default_escape);
         // A branch that constrains nothing, or that keeps a residual of its
         // own, makes the disjunction unusable for access.
         if built.access_count == 0 || built.access_count != conjuncts.len() {
@@ -1298,7 +1309,7 @@ pub(crate) fn detach_conds_for_column<'a>(
     for condition in conditions {
         // Go `ExtractAccessConditionsForColumn`: a condition belongs to the
         // column exactly when the point builder can turn it into points.
-        match points_for_condition(condition, column, zone) {
+        match points_for_condition(condition, column, zone, b'\\') {
             Some(column_points) => {
                 points = intersection(&points, &column_points.points);
                 access_count += 1;
@@ -1341,6 +1352,23 @@ pub(crate) fn detach_cond_and_build_range_for_index<'a>(
     where_clause: &'a Expr,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<IndexRanges<'a>> {
+    detach_cond_and_build_range_for_index_with_like_default_escape(
+        index_columns,
+        where_clause,
+        zone,
+        b'\\',
+    )
+}
+
+/// The statement-aware form of [`detach_cond_and_build_range_for_index`].
+/// It keeps `LIKE` range derivation aligned with the residual evaluator when
+/// SQL omitted an `ESCAPE` clause.
+pub(crate) fn detach_cond_and_build_range_for_index_with_like_default_escape<'a>(
+    index_columns: &[RangeColumn],
+    where_clause: &'a Expr,
+    zone: &tidb_datatype::SessionTimeZone,
+    like_default_escape: u8,
+) -> Option<IndexRanges<'a>> {
     let mut conjuncts = Vec::new();
     collect_conjuncts(where_clause, &mut conjuncts);
 
@@ -1349,11 +1377,11 @@ pub(crate) fn detach_cond_and_build_range_for_index<'a>(
     // deferred, so a mixed AND/OR reaches the CNF walk, where the OR simply
     // stays a filter.
     if conjuncts.len() == 1 && is_or(conjuncts[0]) {
-        let built = build_dnf_ranges(index_columns, conjuncts[0], zone)?;
+        let built = build_dnf_ranges(index_columns, conjuncts[0], zone, like_default_escape)?;
         return (built.column_count > 0).then_some(built);
     }
 
-    let built = build_cnf_ranges(index_columns, &conjuncts, zone);
+    let built = build_cnf_ranges(index_columns, &conjuncts, zone, like_default_escape);
     (built.access_count > 0).then_some(built)
 }
 
@@ -1441,7 +1469,7 @@ fn simple_comparison_points(
         Expr::Binary(
             BinaryOp::Eq | BinaryOp::Ne | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge,
             ..,
-        ) => points_on_column(condition, column, zone),
+        ) => points_on_column(condition, column, zone, b'\\'),
         _ => None,
     }
 }

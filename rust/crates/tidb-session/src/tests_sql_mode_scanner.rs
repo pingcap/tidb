@@ -202,6 +202,55 @@ fn the_mode_that_counts_is_the_one_current_at_parse_time() {
     assert_eq!(one(&mut session, r"SELECT LENGTH('a\nb')"), "3");
 }
 
+/// Go `expression_rewriter` stops supplying the implicit backslash escape
+/// under `NO_BACKSLASH_ESCAPES` when this session switch is enabled.  The
+/// scanner already preserves the backslash in both literals; the expression
+/// builder must make the same decision for the omitted `ESCAPE` clause.
+#[test]
+fn no_backslash_escapes_changes_like_default_escape_only_when_enabled() {
+    let mut session = Session::new();
+    session.run("SET sql_mode='NO_BACKSLASH_ESCAPES'").unwrap();
+
+    assert_eq!(one(&mut session, r"SELECT 'a\b' LIKE 'a\b'"), "1");
+
+    session
+        .run("SET tidb_enable_no_backslash_escapes_in_like = OFF")
+        .unwrap();
+    assert_eq!(one(&mut session, r"SELECT 'a\b' LIKE 'a\b'"), "0");
+}
+
+/// The same statement snapshot reaches a table-backed `WHERE`, whose
+/// expression resolver is built from `FromScope` rather than from the
+/// table-dual path above.
+#[test]
+fn no_backslash_escapes_like_default_reaches_a_table_filter() {
+    let mut session = Session::new();
+    session.run("SET sql_mode='NO_BACKSLASH_ESCAPES'").unwrap();
+    session
+        .run("CREATE TABLE l (s VARCHAR(20), KEY s (s))")
+        .unwrap();
+    session.run(r"INSERT INTO l VALUES ('a\b')").unwrap();
+
+    assert_eq!(
+        one(
+            &mut session,
+            r"SELECT COUNT(*) FROM l FORCE INDEX (s) WHERE s LIKE 'a\b'",
+        ),
+        "1"
+    );
+
+    session
+        .run("SET tidb_enable_no_backslash_escapes_in_like = OFF")
+        .unwrap();
+    assert_eq!(
+        one(
+            &mut session,
+            r"SELECT COUNT(*) FROM l FORCE INDEX (s) WHERE s LIKE 'a\b'",
+        ),
+        "0"
+    );
+}
+
 /// A generated column and a DEFAULT written under `NO_BACKSLASH_ESCAPES` keep
 /// their meaning after the mode is cleared, because the DDL stores the parsed
 /// expression rather than the text. Captured from TiDB, where `SHOW CREATE

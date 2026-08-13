@@ -247,6 +247,21 @@ impl Session {
             .unwrap_or_default()
             .to_ascii_uppercase();
         let has = |flag: &str| mode.split(',').any(|part| part.trim() == flag);
+        // Go `expression_rewriter` uses no implicit escape when BOTH
+        // `NO_BACKSLASH_ESCAPES` and this session switch are active. Capture
+        // the choice with the rest of the statement state so every planner
+        // rewrite sees one stable answer.
+        let like_default_escape = if has("NO_BACKSLASH_ESCAPES")
+            && !matches!(
+                self.vars
+                    .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_NO_BACKSLASH_ESCAPES_IN_LIKE)
+                    .as_deref(),
+                Ok("OFF" | "off" | "0")
+            ) {
+            0
+        } else {
+            b'\\'
+        };
         // Go `GetDefaultWeekFormatMode` treats an unset or empty value as
         // "0"; `GetDivPrecisionIncrement` falls back to the default of 4.
         let week_format = self
@@ -462,6 +477,7 @@ impl Session {
                 .with_block_encryption_mode(block_encryption_mode)
                 .with_sequences(self.sequence_snapshot())
                 .with_sql_mode(scanner_sql_mode_of(&mode))
+                .with_like_default_escape(like_default_escape)
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_clock(clock, zone);
             return ctx;
@@ -497,6 +513,7 @@ impl Session {
         .with_sysdate_is_now(sysdate_is_now)
         .with_clock(clock, zone)
         .with_sql_mode(scanner_sql_mode_of(&mode))
+        .with_like_default_escape(like_default_escape)
         .with_auto_increment_step(increment, offset)
         .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))
         .with_foreign_key_checks(self.foreign_key_checks())

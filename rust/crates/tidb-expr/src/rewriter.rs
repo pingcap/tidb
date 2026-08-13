@@ -88,6 +88,12 @@ pub trait ColumnResolver {
         tidb_util::printer::get_tidb_info(&tidb_util::versioninfo::VersionInfo::build_default())
             .len()
     }
+
+    /// The third argument Go supplies to `like()` when SQL omitted `ESCAPE`.
+    /// Session-aware resolvers override this for `NO_BACKSLASH_ESCAPES`.
+    fn like_default_escape(&self) -> u8 {
+        b'\\'
+    }
 }
 
 /// A resolver that knows no columns but folds in a REAL session zone: what
@@ -798,9 +804,12 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             let args = vec![
                 rewrite_expr_resolved(expr, resolver)?,
                 rewrite_expr_resolved(pattern, resolver)?,
-                // Go defaults the escape to `\\` when none was written.
+                // Go supplies the session-selected implicit escape when none
+                // was written. Explicit `ESCAPE` always wins.
                 constant(
-                    Datum::Int(i64::from(escape.unwrap_or(b'\\'))),
+                    Datum::Int(i64::from(
+                        escape.unwrap_or_else(|| resolver.like_default_escape()),
+                    )),
                     FieldTypeCode::LongLong,
                 ),
             ];

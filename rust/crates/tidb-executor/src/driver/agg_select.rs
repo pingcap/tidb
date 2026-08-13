@@ -1477,6 +1477,7 @@ fn build_apply_chain(
             }],
             zone: ctx.session_zone(),
             tidb_info_len: ctx.tidb_info_len(),
+            like_default_escape: ctx.like_default_escape(),
             ..FromScope::default()
         };
         state.types.push(value_type);
@@ -1592,6 +1593,7 @@ fn build_window_stage(
             }],
             zone: ctx.session_zone(),
             tidb_info_len: ctx.tidb_info_len(),
+            like_default_escape: ctx.like_default_escape(),
             ..FromScope::default()
         };
         let rows = drain_executor_rows(root, &state.types)?;

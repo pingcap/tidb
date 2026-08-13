@@ -361,6 +361,10 @@ pub struct StmtContext {
     /// The all-false default is TiDB's default `sql_mode` for these flags, so
     /// a context with no session behind it lexes exactly as before.
     sql_mode: tidb_parser::SqlMode,
+    /// The implicit escape byte `LIKE` receives when the syntax omitted an
+    /// `ESCAPE` clause. Go derives this from both `sql_mode` and
+    /// `tidb_enable_no_backslash_escapes_in_like` while building expressions.
+    like_default_escape: u8,
     /// The validated statement snapshot of `@@block_encryption_mode`.
     block_encryption_mode: tidb_expr::BlockEncryptionMode,
     /// `@@max_allowed_packet`, which the result-sizing string builtins read.
@@ -521,6 +525,7 @@ impl StmtContext {
             sequences: Rc::default(),
             memory: StatementMemory::default(),
             sql_mode: tidb_parser::SqlMode::default(),
+            like_default_escape: b'\\',
             block_encryption_mode: tidb_expr::BlockEncryptionMode::default(),
             // Go `vardef.DefMaxAllowedPacket`, the value a default server runs
             // with and the one the `Columns` trait default already used.
@@ -687,6 +692,14 @@ impl StmtContext {
         self
     }
 
+    /// Attaches the statement-time implicit `LIKE` escape selected by the
+    /// session's SQL mode and `tidb_enable_no_backslash_escapes_in_like`.
+    #[must_use]
+    pub fn with_like_default_escape(mut self, escape: u8) -> Self {
+        self.like_default_escape = escape;
+        self
+    }
+
     /// Attaches the AES mode selected by this session for the statement.
     #[must_use]
     pub fn with_block_encryption_mode(mut self, mode: tidb_expr::BlockEncryptionMode) -> Self {
@@ -698,6 +711,12 @@ impl StmtContext {
     #[must_use]
     pub fn sql_mode(&self) -> tidb_parser::SqlMode {
         self.sql_mode
+    }
+
+    /// The implicit `LIKE` escape for expressions built in this statement.
+    #[must_use]
+    pub fn like_default_escape(&self) -> u8 {
+        self.like_default_escape
     }
 
     /// Re-parses this statement's own text under its `sql_mode`. Every entry
