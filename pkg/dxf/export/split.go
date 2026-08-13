@@ -38,19 +38,20 @@ const (
 	loadRegionMaxRetry    = 8
 	scanRegionBackoffBase = 200 * time.Millisecond
 	scanRegionBackoffMax  = 2 * time.Second
-	defaultRegionSize     = 96 * 1024 * 1024
 	// chunkSize is the work granularity, deliberately larger than FileSize (the
 	// within-chunk file-cut size), so fewer, larger chunks mean fewer partial
 	// tail files.
 	chunkSize = 1024 * 1024 * 1024
-	// maxChunksPerSubtask caps chunks per subtask so a schema of many small
-	// tables still spreads across subtasks.
+	// maxChunksPerSubtask caps the chunk count (not bytes) per subtask; the byte
+	// balance is engineSize in packSubtasks. It only bites when chunks are far
+	// smaller than engineSize, e.g. a schema of many tiny tables, keeping one
+	// subtask's chunk list and its meta from growing unbounded.
 	maxChunksPerSubtask = 4000
 )
 
-// splitTableSet carves every table into ~chunkSize chunks, then packs the chunks
+// splitTables carves every table into ~chunkSize chunks, then packs the chunks
 // into size-balanced subtasks. Deterministic given the same region layout.
-func splitTableSet(ctx context.Context, store kv.Storage, meta *TaskMeta, nodeCnt int) ([][]byte, error) {
+func splitTables(ctx context.Context, store kv.Storage, meta *TaskMeta, nodeCnt int) ([][]byte, error) {
 	var chunks []Chunk
 	var totalSize int64
 	for tableIdx := range meta.Tables {
@@ -78,10 +79,8 @@ func splitTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx 
 		if err != nil {
 			return nil, err
 		}
-		regionCnt := len(boundaries) - 1
-		totalSize := estimatePhysicalSize(ctx, store, start, end, regionCnt)
 		var tableChunks []Chunk
-		tableChunks, ordinal = buildChunks(tableIdx, pid, boundaries, totalSize, ordinal)
+		tableChunks, ordinal = buildChunks(tableIdx, pid, boundaries, meta.PhysicalSizes[pid], ordinal)
 		chunks = append(chunks, tableChunks...)
 	}
 	return chunks, nil
@@ -110,27 +109,6 @@ func buildChunks(tableIdx int, pid int64, boundaries []kv.Key, totalSize int64, 
 		ord++
 	}
 	return chunks, ord
-}
-
-// estimatePhysicalSize returns a physical table's byte size over its record range
-// from PD's per-region approximate sizes, falling back to region count ×
-// defaultRegionSize when PD is unavailable.
-func estimatePhysicalSize(ctx context.Context, store kv.Storage, start, end kv.Key, regionCnt int) int64 {
-	fallback := int64(regionCnt) * defaultRegionSize
-	hStore, ok := store.(helper.Storage)
-	if !ok {
-		return fallback
-	}
-	h := helper.NewHelper(hStore)
-	pdCli, err := h.TryGetPDHTTPClient()
-	if err != nil {
-		return fallback
-	}
-	size, err := h.EstimateKeyRangeSize(ctx, pdCli, start, end)
-	if err != nil || size == 0 {
-		return fallback
-	}
-	return size
 }
 
 // packSubtasks groups chunks into subtasks in key order so each holds a similar

@@ -91,7 +91,7 @@ func (s *exportScheduler) OnNextSubtasksBatch(
 			// node count.
 			nodeCnt = max(task.MaxNodeCount, 1)
 		}
-		metas, err := splitTableSet(ctx, s.store, s.taskMeta, nodeCnt)
+		metas, err := splitTables(ctx, s.store, s.taskMeta, nodeCnt)
 		if err != nil {
 			return nil, err
 		}
