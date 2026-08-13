@@ -187,6 +187,8 @@ pub struct GeneratedColumn {
     /// The session `time_zone` [`Self::expr`] was built in -- the one zone
     /// the cache is valid for.
     pub build_zone: tidb_datatype::SessionTimeZone,
+    /// The implicit `LIKE` escape that built the cached expression.
+    pub build_like_default_escape: u8,
     /// Whether building [`Self::expr`] CONSULTED the zone -- reported by the
     /// resolver that was asked rather than guessed from the expression's
     /// shape, so a new zone-reading fold in the rewriter is covered the day
@@ -196,6 +198,8 @@ pub struct GeneratedColumn {
     /// that never asked for a zone builds identically in every session, so
     /// its cache is valid everywhere.
     pub zone_sensitive: bool,
+    /// Whether the cached rewrite consulted the omitted-escape policy.
+    pub like_default_escape_sensitive: bool,
 }
 
 impl GeneratedColumn {
@@ -208,8 +212,12 @@ impl GeneratedColumn {
         &self,
         columns: &[S],
         zone: &tidb_datatype::SessionTimeZone,
+        like_default_escape: u8,
     ) -> Result<std::borrow::Cow<'_, Expression>, ()> {
-        if !self.zone_sensitive || *zone == self.build_zone {
+        if (!self.zone_sensitive || *zone == self.build_zone)
+            && (!self.like_default_escape_sensitive
+                || like_default_escape == self.build_like_default_escape)
+        {
             return Ok(std::borrow::Cow::Borrowed(&self.expr));
         }
         let names: Vec<String> = columns
@@ -220,7 +228,12 @@ impl GeneratedColumn {
             .iter()
             .map(|column| column.column_type().clone())
             .collect();
-        let resolver = TableColumnResolver::new(&names, &types, zone.clone());
+        let resolver = TableColumnResolver::with_like_default_escape(
+            &names,
+            &types,
+            zone.clone(),
+            like_default_escape,
+        );
         // The dependency namespace is derived from the EXPRESSION's first-seen
         // order, so re-resolving the same AST reproduces the same one and the
         // rebuilt `Column` indexes stay the ones `dependencies` names.
@@ -355,7 +368,7 @@ pub(crate) fn materialize_with_conversion_flags<S: GeneratedColumnSlot>(
         // which is this same rule, applied at the moment the write's own
         // context is the current one, not a second rule.
         let expr = generated
-            .expression_in(columns, &ctx.time_zone())
+            .expression_in(columns, &ctx.time_zone(), ctx.like_default_escape())
             .map_err(|()| GenerationError {
                 column: columns[offset].column_name().to_owned(),
                 detail: "the generated expression does not build in this session".to_owned(),
@@ -485,6 +498,18 @@ pub fn build_generated_columns(
     types: &[FieldType],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<Option<GeneratedColumn>>, GeneratedDdlError> {
+    build_generated_columns_with_like_default_escape(defs, names, types, zone, b'\\')
+}
+
+/// Statement-aware generated-column builder. The implicit `LIKE` escape is
+/// captured with the DDL statement and retained by its expression cache.
+pub fn build_generated_columns_with_like_default_escape(
+    defs: &[tidb_ast::ColumnDef],
+    names: &[String],
+    types: &[FieldType],
+    zone: &tidb_datatype::SessionTimeZone,
+    like_default_escape: u8,
+) -> Result<Vec<Option<GeneratedColumn>>, GeneratedDdlError> {
     // Which columns are generated has to be known before any expression is
     // validated, because the 3107 check asks about the column it READS.
     let generated_at: Vec<bool> = defs
@@ -508,7 +533,12 @@ pub fn build_generated_columns(
             built.push(None);
             continue;
         };
-        let resolver = TableColumnResolver::new(names, types, zone.clone());
+        let resolver = TableColumnResolver::with_like_default_escape(
+            names,
+            types,
+            zone.clone(),
+            like_default_escape,
+        );
         let expr = match tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver) {
             Ok(expr) => expr,
             Err(_) => {
@@ -545,7 +575,9 @@ pub fn build_generated_columns(
             dependencies: resolver.dependency_names(),
             source: expression.clone(),
             build_zone: zone.clone(),
+            build_like_default_escape: like_default_escape,
             zone_sensitive: resolver.zone_was_read(),
+            like_default_escape_sensitive: resolver.like_default_escape_was_read(),
         }));
     }
     Ok(built)
@@ -571,7 +603,26 @@ pub fn build_added_generated_column(
     types: &[FieldType],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<GeneratedColumn, GeneratedDdlError> {
-    let resolver = TableColumnResolver::new(names, types, zone.clone());
+    build_added_generated_column_with_like_default_escape(
+        expression, stored, names, types, zone, b'\\',
+    )
+}
+
+/// Statement-aware form of [`build_added_generated_column`].
+pub fn build_added_generated_column_with_like_default_escape(
+    expression: &tidb_ast::Expr,
+    stored: bool,
+    names: &[String],
+    types: &[FieldType],
+    zone: &tidb_datatype::SessionTimeZone,
+    like_default_escape: u8,
+) -> Result<GeneratedColumn, GeneratedDdlError> {
+    let resolver = TableColumnResolver::with_like_default_escape(
+        names,
+        types,
+        zone.clone(),
+        like_default_escape,
+    );
     let expr = match tidb_expr::rewriter::rewrite_expr_resolved(expression, &resolver) {
         Ok(expr) => expr,
         Err(_) => {
@@ -593,7 +644,9 @@ pub fn build_added_generated_column(
         dependencies: resolver.dependency_names(),
         source: expression.clone(),
         build_zone: zone.clone(),
+        build_like_default_escape: like_default_escape,
         zone_sensitive: resolver.zone_was_read(),
+        like_default_escape_sensitive: resolver.like_default_escape_was_read(),
     })
 }
 
@@ -630,6 +683,7 @@ pub struct TableColumnResolver<'a> {
     /// `BuildContext` down every expression-building DDL path), which the
     /// rewriter reads while folding temporal literals in the expression.
     zone: tidb_datatype::SessionTimeZone,
+    like_default_escape: u8,
     /// The columns successfully resolved, in first-seen order, as (offset,
     /// name). This order IS the namespace the built expression indexes: a
     /// `Column` node's `index` is a position in this list, never a position
@@ -642,6 +696,7 @@ pub struct TableColumnResolver<'a> {
     /// fold differently in another session". Recorded here rather than
     /// derived from the AST so it cannot fall behind the rewriter.
     zone_read: Cell<bool>,
+    like_default_escape_read: Cell<bool>,
 }
 
 impl<'a> TableColumnResolver<'a> {
@@ -655,10 +710,25 @@ impl<'a> TableColumnResolver<'a> {
             names,
             types,
             zone,
+            like_default_escape: b'\\',
             seen: RefCell::new(Vec::new()),
             missing: RefCell::new(None),
             zone_read: Cell::new(false),
+            like_default_escape_read: Cell::new(false),
         }
+    }
+
+    /// A resolver over table columns using this statement's implicit `LIKE`
+    /// escape for an omitted `ESCAPE` clause.
+    pub fn with_like_default_escape(
+        names: &'a [String],
+        types: &'a [FieldType],
+        zone: tidb_datatype::SessionTimeZone,
+        like_default_escape: u8,
+    ) -> Self {
+        let mut resolver = Self::new(names, types, zone);
+        resolver.like_default_escape = like_default_escape;
+        resolver
     }
 
     /// The column offsets the expression referenced, in the table the
@@ -690,12 +760,22 @@ impl<'a> TableColumnResolver<'a> {
     pub fn zone_was_read(&self) -> bool {
         self.zone_read.get()
     }
+
+    /// Whether the expression used the resolver's implicit `LIKE` escape.
+    pub fn like_default_escape_was_read(&self) -> bool {
+        self.like_default_escape_read.get()
+    }
 }
 
 impl ColumnResolver for TableColumnResolver<'_> {
     fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
         self.zone_read.set(true);
         self.zone.clone()
+    }
+
+    fn like_default_escape(&self) -> u8 {
+        self.like_default_escape_read.set(true);
+        self.like_default_escape
     }
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
@@ -792,7 +872,9 @@ mod tests {
                 dependencies: resolver.dependency_names(),
                 source: expr,
                 build_zone: tidb_datatype::SessionTimeZone::utc(),
+                build_like_default_escape: b'\\',
                 zone_sensitive: resolver.zone_was_read(),
+                like_default_escape_sensitive: resolver.like_default_escape_was_read(),
             }
         };
         vec![

@@ -251,6 +251,42 @@ fn no_backslash_escapes_like_default_reaches_a_table_filter() {
     );
 }
 
+/// Generated expressions are rewritten while DDL is admitted, so they must
+/// capture the same omitted-escape policy as ordinary query expressions.
+#[test]
+fn no_backslash_escapes_like_default_reaches_a_generated_expression() {
+    let mut session = Session::new();
+    session.run("SET sql_mode='NO_BACKSLASH_ESCAPES'").unwrap();
+    session
+        .run(r"CREATE TABLE g_like (s VARCHAR(20), m TINYINT AS (s LIKE 'a\b') STORED)")
+        .unwrap();
+    session
+        .run(r"INSERT INTO g_like (s) VALUES ('a\b')")
+        .unwrap();
+
+    assert_eq!(one(&mut session, "SELECT m FROM g_like"), "1");
+}
+
+/// A virtual generated expression is rebuilt in the reading statement's
+/// context, so changing the enabled session policy changes its result.
+#[test]
+fn no_backslash_escapes_like_default_rebuilds_virtual_generated_expressions() {
+    let mut session = Session::new();
+    session.run("SET sql_mode='NO_BACKSLASH_ESCAPES'").unwrap();
+    session
+        .run(r"CREATE TABLE v_like (s VARCHAR(20), m TINYINT AS (s LIKE 'a\b') VIRTUAL)")
+        .unwrap();
+    session
+        .run(r"INSERT INTO v_like (s) VALUES ('a\b')")
+        .unwrap();
+
+    assert_eq!(one(&mut session, "SELECT m FROM v_like"), "1");
+    session
+        .run("SET @@tidb_enable_no_backslash_escapes_in_like = 0")
+        .unwrap();
+    assert_eq!(one(&mut session, "SELECT m FROM v_like"), "0");
+}
+
 /// A generated column and a DEFAULT written under `NO_BACKSLASH_ESCAPES` keep
 /// their meaning after the mode is cleared, because the DDL stores the parsed
 /// expression rather than the text. Captured from TiDB, where `SHOW CREATE

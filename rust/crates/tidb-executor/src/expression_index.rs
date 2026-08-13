@@ -592,6 +592,18 @@ pub fn build_hidden_columns(
     types: &[FieldType],
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<Vec<(usize, HiddenIndexColumn)>, DriverError> {
+    build_hidden_columns_with_like_default_escape(index_name, parts, names, types, zone, b'\\')
+}
+
+/// Statement-aware form of [`build_hidden_columns`].
+pub fn build_hidden_columns_with_like_default_escape(
+    index_name: &str,
+    parts: &[IndexPart],
+    names: &[String],
+    types: &[FieldType],
+    zone: &tidb_datatype::SessionTimeZone,
+    like_default_escape: u8,
+) -> Result<Vec<(usize, HiddenIndexColumn)>, DriverError> {
     let mut built = Vec::new();
     for (position, part) in parts.iter().enumerate() {
         let IndexPart::Expr { expr, .. } = part else {
@@ -611,7 +623,12 @@ pub fn build_hidden_columns(
             return Err(DriverError::DuplicateColumnName(name));
         }
 
-        let resolver = TableColumnResolver::new(names, types, zone.clone());
+        let resolver = TableColumnResolver::with_like_default_escape(
+            names,
+            types,
+            zone.clone(),
+            like_default_escape,
+        );
         let built_expr = match tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver) {
             Ok(built_expr) => built_expr,
             Err(_) => {
@@ -715,11 +732,12 @@ pub fn build_hidden_columns(
                     expr: built_expr,
                     source: expr.clone(),
                     build_zone: zone.clone(),
-                    // Unreachable by the refusal above, and stated rather than
-                    // assumed: an index whose hidden column re-folded per
-                    // session would read back rows its stored key no longer
-                    // matches.
+                    build_like_default_escape: like_default_escape,
+                    // Unreachable by the refusal above: an index whose hidden
+                    // column re-folded a temporal literal per session would
+                    // read back rows its stored key no longer matches.
                     zone_sensitive: false,
+                    like_default_escape_sensitive: resolver.like_default_escape_was_read(),
                 },
             },
         ));

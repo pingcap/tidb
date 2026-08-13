@@ -228,12 +228,13 @@ pub(crate) fn table_indexes(
                 },
             },
         };
-        let built = crate::expression_index::build_hidden_columns(
+        let built = crate::expression_index::build_hidden_columns_with_like_default_escape(
             &name,
             &index.parts,
             &column_names,
             &column_types,
             zone,
+            ctx.like_default_escape(),
         )?;
         let mut offsets = Vec::with_capacity(index.parts.len());
         let mut prefix_lengths = Vec::with_capacity(index.parts.len());

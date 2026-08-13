@@ -100,7 +100,32 @@ pub trait ColumnResolver {
 /// [`NoResolver`] should be wherever the caller has a statement context to
 /// take the zone from. `resolve` answering `None` is the constant test the
 /// callers rely on; only the zone differs.
-pub struct ZonedNoResolver(pub tidb_datatype::SessionTimeZone);
+pub struct ZonedNoResolver {
+    zone: tidb_datatype::SessionTimeZone,
+    like_default_escape: u8,
+}
+
+impl ZonedNoResolver {
+    /// Builds a no-column resolver with the historic implicit backslash
+    /// `LIKE` escape.
+    #[must_use]
+    pub fn new(zone: tidb_datatype::SessionTimeZone) -> Self {
+        Self {
+            zone,
+            like_default_escape: b'\\',
+        }
+    }
+
+    /// Builds a no-column resolver from the live statement's zone and
+    /// implicit `LIKE` escape.
+    #[must_use]
+    pub fn with_like_default_escape(zone: tidb_datatype::SessionTimeZone, escape: u8) -> Self {
+        Self {
+            zone,
+            like_default_escape: escape,
+        }
+    }
+}
 
 impl ColumnResolver for ZonedNoResolver {
     fn resolve(&self, _path: &[String]) -> Option<(usize, FieldType, i64)> {
@@ -108,7 +133,11 @@ impl ColumnResolver for ZonedNoResolver {
     }
 
     fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
-        self.0.clone()
+        self.zone.clone()
+    }
+
+    fn like_default_escape(&self) -> u8 {
+        self.like_default_escape
     }
 }
 

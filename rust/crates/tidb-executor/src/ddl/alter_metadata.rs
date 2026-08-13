@@ -286,7 +286,10 @@ pub(crate) fn alter_column_default_action(
     let zone = &ctx.session_zone();
     let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
         expr,
-        &tidb_expr::rewriter::ZonedNoResolver(zone.clone()),
+        &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
+            zone.clone(),
+            ctx.like_default_escape(),
+        ),
     )
     .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
     let tidb_expr::expression::Expression::Constant(constant) = rewritten else {

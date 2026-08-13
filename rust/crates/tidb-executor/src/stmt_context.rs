@@ -1506,6 +1506,10 @@ impl Columns for StmtContext {
             })
     }
 
+    fn like_default_escape(&self) -> u8 {
+        self.like_default_escape
+    }
+
     fn current_user(&self) -> Option<String> {
         self.current_user.clone()
     }

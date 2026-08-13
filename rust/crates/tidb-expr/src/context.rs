@@ -597,6 +597,16 @@ pub trait Columns {
             offset_secs: 11 * 3600,
         }
     }
+
+    /// The statement's implicit `LIKE` escape when `ESCAPE` is omitted.
+    ///
+    /// Ordinary contexts keep MySQL's historical backslash. A live session
+    /// overrides this when both `NO_BACKSLASH_ESCAPES` and
+    /// `tidb_enable_no_backslash_escapes_in_like` apply.
+    fn like_default_escape(&self) -> u8 {
+        b'\\'
+    }
+
     /// TiDB's session `default_week_format`.
     fn default_week_format(&self) -> i64 {
         0

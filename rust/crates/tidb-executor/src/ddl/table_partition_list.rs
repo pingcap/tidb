@@ -132,7 +132,10 @@ pub(super) fn fold_column_value(
 ) -> Result<Datum, DriverError> {
     let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
         expr,
-        &tidb_expr::rewriter::ZonedNoResolver(ctx.session_zone()),
+        &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
+            ctx.session_zone(),
+            ctx.like_default_escape(),
+        ),
     )
     .map_err(|_| DriverError::PartitionColumnValueWrongType)?;
     let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
@@ -249,7 +252,10 @@ fn fold_list_value(
 ) -> Result<Option<i64>, DriverError> {
     let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
         expr,
-        &tidb_expr::rewriter::ZonedNoResolver(ctx.session_zone()),
+        &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
+            ctx.session_zone(),
+            ctx.like_default_escape(),
+        ),
     )
     .map_err(|_| DriverError::PartitionValuesNotInt(partition.to_owned()))?;
     let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);

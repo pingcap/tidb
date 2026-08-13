@@ -520,7 +520,10 @@ fn is_column(expr: &Expr, name: &str) -> bool {
 
 /// A constant expression's value, when it is one.
 fn constant_value(expr: &Expr, zone: &tidb_datatype::SessionTimeZone) -> Option<Datum> {
-    match rewrite_expr_resolved(expr, &tidb_expr::rewriter::ZonedNoResolver(zone.clone())) {
+    match rewrite_expr_resolved(
+        expr,
+        &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
+    ) {
         Ok(Expression::Constant(constant)) => constant.eval().ok(),
         // The rewriter only folds a bare literal into a `Constant`; anything
         // built out of literals -- `-100` is `unaryminus(100)`, and Go folds it

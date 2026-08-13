@@ -1155,7 +1155,10 @@ fn stage_column_default(
     let built = tidb_executor::column_default::build(expr, field_type, |expr| {
         let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
             expr,
-            &tidb_expr::rewriter::ZonedNoResolver(context.session_zone()),
+            &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
+                context.session_zone(),
+                context.like_default_escape(),
+            ),
         )
         .map_err(|_| {
             tidb_executor::column_default::DefaultError::Unsupported(

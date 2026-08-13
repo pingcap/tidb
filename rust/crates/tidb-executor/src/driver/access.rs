@@ -1731,9 +1731,10 @@ fn constant_value(expr: &tidb_ast::Expr, zone: &tidb_datatype::SessionTimeZone) 
             // byte with the residual predicate's own fold, or a conjunct
             // consumed into a scan key would probe a different instant than
             // the filter it replaced would have accepted.
-            let Ok(Expression::Constant(constant)) =
-                rewrite_expr_resolved(expr, &tidb_expr::rewriter::ZonedNoResolver(zone.clone()))
-            else {
+            let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(
+                expr,
+                &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
+            ) else {
                 return None;
             };
             constant.eval().ok()
@@ -1902,9 +1903,10 @@ pub(crate) fn try_batch_point_get(
     // Every list element must be a constant, or this is not a point plan.
     let mut values = Vec::with_capacity(list.len());
     for item in list {
-        let Ok(Expression::Constant(constant)) =
-            rewrite_expr_resolved(item, &tidb_expr::rewriter::ZonedNoResolver(zone.clone()))
-        else {
+        let Ok(Expression::Constant(constant)) = rewrite_expr_resolved(
+            item,
+            &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
+        ) else {
             return Ok(None);
         };
         let Ok(value) = constant.eval() else {
@@ -2052,9 +2054,10 @@ pub(crate) fn name_value_pairs(
             };
             // Only a literal qualifies; anything needing evaluation against a
             // row is not a point-get key.
-            let Ok(value) =
-                rewrite_expr_resolved(value, &tidb_expr::rewriter::ZonedNoResolver(zone.clone()))
-            else {
+            let Ok(value) = rewrite_expr_resolved(
+                value,
+                &tidb_expr::rewriter::ZonedNoResolver::new(zone.clone()),
+            ) else {
                 return false;
             };
             let Expression::Constant(constant) = value else {

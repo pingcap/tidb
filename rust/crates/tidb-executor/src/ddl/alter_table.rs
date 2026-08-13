@@ -1260,7 +1260,10 @@ fn modify_column_action(
             tidb_ast::ColumnOption::Default(expr) => {
                 let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
                     expr,
-                    &tidb_expr::rewriter::ZonedNoResolver(zone.clone()),
+                    &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
+                        zone.clone(),
+                        ctx.like_default_escape(),
+                    ),
                 )
                 .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
                 let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
@@ -1659,7 +1662,10 @@ fn add_column_action(
             tidb_ast::ColumnOption::Default(expr) => {
                 let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
                     expr,
-                    &tidb_expr::rewriter::ZonedNoResolver(zone.clone()),
+                    &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
+                        zone.clone(),
+                        ctx.like_default_escape(),
+                    ),
                 )
                 .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
                 let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
@@ -1768,8 +1774,13 @@ fn add_column_action(
                 .map(|column| column.field_type.clone())
                 .collect();
             Some(
-                crate::generated_column::build_added_generated_column(
-                    expression, false, &names, &types, zone,
+                crate::generated_column::build_added_generated_column_with_like_default_escape(
+                    expression,
+                    false,
+                    &names,
+                    &types,
+                    zone,
+                    ctx.like_default_escape(),
                 )
                 .map_err(crate::ddl::generated_column_error)?,
             )

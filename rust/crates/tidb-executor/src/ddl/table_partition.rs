@@ -282,8 +282,13 @@ pub fn build_table_partitioning(
         ));
     }
 
-    let (expr_text, built, dependencies, dependency_offsets) =
-        build_partition_expression(expr, names, types, &ctx.session_zone())?;
+    let (expr_text, built, dependencies, dependency_offsets) = build_partition_expression(
+        expr,
+        names,
+        types,
+        &ctx.session_zone(),
+        ctx.like_default_escape(),
+    )?;
     // Go `checkPartitionFuncType`: the partition expression must evaluate to
     // an integer.
     check_partition_expression_type(expr, names, types)?;
@@ -470,6 +475,7 @@ fn build_partition_expression(
     names: &[String],
     types: &[FieldType],
     zone: &tidb_datatype::SessionTimeZone,
+    like_default_escape: u8,
 ) -> Result<
     (
         String,
@@ -480,7 +486,12 @@ fn build_partition_expression(
     DriverError,
 > {
     check_partition_expression_allowed(expr)?;
-    let resolver = TableColumnResolver::new(names, types, zone.clone());
+    let resolver = TableColumnResolver::with_like_default_escape(
+        names,
+        types,
+        zone.clone(),
+        like_default_escape,
+    );
     let built =
         tidb_expr::rewriter::rewrite_expr_resolved(expr, &resolver).map_err(|_| match resolver
             .missing_name()

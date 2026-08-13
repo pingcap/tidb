@@ -863,7 +863,10 @@ pub fn run_create_table_in(
                     let built = crate::column_default::build(expr, &field_type, |expr| {
                         let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
                             expr,
-                            &tidb_expr::rewriter::ZonedNoResolver(ctx.session_zone()),
+                            &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
+                                ctx.session_zone(),
+                                ctx.like_default_escape(),
+                            ),
                         )
                         .map_err(|_| {
                             crate::column_default::DefaultError::Unsupported(
@@ -986,11 +989,12 @@ pub fn run_create_table_in(
         .collect();
     let column_types: Vec<tidb_datatype::FieldType> =
         columns.iter().map(|c| c.field_type.clone()).collect();
-    let generated = crate::generated_column::build_generated_columns(
+    let generated = crate::generated_column::build_generated_columns_with_like_default_escape(
         &create.columns,
         &column_names,
         &column_types,
         &ctx.session_zone(),
+        ctx.like_default_escape(),
     )
     .map_err(generated_column_error)?;
     // Go `ErrUnsupportedOnGeneratedColumn`: a VIRTUAL generated column cannot
