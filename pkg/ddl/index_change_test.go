@@ -17,6 +17,7 @@ package ddl_test
 import (
 	"context"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,6 +25,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -35,6 +38,150 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCloudStorageURIForNewBackfillTask(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
+	taskMgr, err := storage.GetDXFSvcTaskMgr()
+	require.NoError(t, err)
+
+	originalURI := vardef.CloudStorageURI.Load()
+	t.Cleanup(func() {
+		vardef.CloudStorageURI.Store(originalURI)
+	})
+
+	var (
+		metaMu         sync.Mutex
+		capturedMetas  []*ddl.BackfillTaskMeta
+		preSubmitCalls atomic.Int32
+	)
+	resetCaptured := func() {
+		metaMu.Lock()
+		capturedMetas = nil
+		metaMu.Unlock()
+		preSubmitCalls.Store(0)
+	}
+	getCaptured := func() []*ddl.BackfillTaskMeta {
+		metaMu.Lock()
+		defer metaMu.Unlock()
+		return append([]*ddl.BackfillTaskMeta(nil), capturedMetas...)
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterNewBackfillTaskMeta", func(taskMeta *ddl.BackfillTaskMeta) {
+		captured := *taskMeta
+		captured.Job = *taskMeta.Job.Clone()
+		metaMu.Lock()
+		capturedMetas = append(capturedMetas, &captured)
+		metaMu.Unlock()
+	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/returnAfterNewBackfillTaskMeta", "return(true)")
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeSubmitNewBackfillTask", func() {
+		preSubmitCalls.Add(1)
+	})
+
+	const firstJobID int64 = 900001
+	newJob := func(id int64, useCloudStorage bool) *model.Job {
+		return &model.Job{
+			ID: id,
+			ReorgMeta: &model.DDLReorgMeta{
+				UseCloudStorage: useCloudStorage,
+			},
+		}
+	}
+	execute := func(job *model.Job, mergeTempIndex bool, cachedURI string) (string, error) {
+		return ddl.ExecuteDistTaskForCloudStorageTest(dom.DDL(), job, mergeTempIndex, cachedURI)
+	}
+	requireStoppedAfterConstruction := func(err error) {
+		require.ErrorContains(t, err, "stopped after constructing new backfill task meta")
+		require.Zero(t, preSubmitCalls.Load())
+	}
+
+	t.Run("empty configured URI fails before submission", func(t *testing.T) {
+		resetCaptured()
+		vardef.CloudStorageURI.Store("")
+		job := newJob(firstJobID, true)
+		_, err := execute(job, false, "")
+		require.ErrorContains(t, err, "cloud storage URI is empty for add-index job 900001 with cloud storage enabled")
+		require.True(t, ddl.IsRetryableJobErrorForTest(err, 0))
+		require.Empty(t, getCaptured())
+		require.Zero(t, preSubmitCalls.Load())
+	})
+
+	t.Run("configured URI recovers retry", func(t *testing.T) {
+		resetCaptured()
+		vardef.CloudStorageURI.Store("s3://bucket")
+		job := newJob(firstJobID+1, true)
+		cachedURI, err := execute(job, false, "")
+		requireStoppedAfterConstruction(err)
+		metas := getCaptured()
+		require.Len(t, metas, 1)
+		require.Equal(t, "s3://bucket/dxf/", metas[0].CloudStorageURI)
+		require.True(t, metas[0].Job.ReorgMeta.UseCloudStorage)
+		require.Equal(t, "s3://bucket/dxf/", cachedURI)
+	})
+
+	t.Run("local sort permits empty URI", func(t *testing.T) {
+		resetCaptured()
+		vardef.CloudStorageURI.Store("")
+		job := newJob(firstJobID+2, false)
+		_, err := execute(job, false, "")
+		requireStoppedAfterConstruction(err)
+		metas := getCaptured()
+		require.Len(t, metas, 1)
+		require.Empty(t, metas[0].CloudStorageURI)
+		require.False(t, metas[0].Job.ReorgMeta.UseCloudStorage)
+	})
+
+	t.Run("cached URI wins over changed configuration", func(t *testing.T) {
+		resetCaptured()
+		vardef.CloudStorageURI.Store("s3://new-bucket")
+		job := newJob(firstJobID+3, true)
+		_, err := execute(job, false, "s3://cached-bucket/dxf/")
+		requireStoppedAfterConstruction(err)
+		metas := getCaptured()
+		require.Len(t, metas, 1)
+		require.Equal(t, "s3://cached-bucket/dxf/", metas[0].CloudStorageURI)
+	})
+
+	t.Run("merge temp index does not require cloud storage", func(t *testing.T) {
+		resetCaptured()
+		vardef.CloudStorageURI.Store("")
+		job := newJob(firstJobID+4, true)
+		_, err := execute(job, true, "")
+		requireStoppedAfterConstruction(err)
+		metas := getCaptured()
+		require.Len(t, metas, 1)
+		require.Empty(t, metas[0].CloudStorageURI)
+		require.True(t, metas[0].MergeTempIndex)
+	})
+
+	t.Run("succeeded existing task bypasses new task URI resolution", func(t *testing.T) {
+		resetCaptured()
+		vardef.CloudStorageURI.Store("")
+		job := newJob(firstJobID+5, true)
+		taskKey := ddl.NewTaskKeyBuilder().Build(job.ID)
+		taskID, err := taskMgr.CreateTask(ctx, taskKey, proto.Backfill, store.GetKeyspace(),
+			0, "", 0, proto.ExtraParams{}, nil)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, cleanupErr := taskMgr.ExecuteSQLWithNewSession(ctx,
+				"delete from mysql.tidb_global_task where task_key = %?", taskKey)
+			require.NoError(t, cleanupErr)
+			_, cleanupErr = taskMgr.ExecuteSQLWithNewSession(ctx,
+				"delete from mysql.tidb_global_task_history where task_key = %?", taskKey)
+			require.NoError(t, cleanupErr)
+		})
+		task, err := taskMgr.GetTaskByID(ctx, taskID)
+		require.NoError(t, err)
+		require.NoError(t, taskMgr.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
+		require.NoError(t, taskMgr.SucceedTask(ctx, taskID))
+
+		cachedURI, err := execute(job, false, "")
+		require.NoError(t, err)
+		require.Empty(t, cachedURI)
+		require.Empty(t, getCaptured())
+		require.Zero(t, preSubmitCalls.Load())
+	})
+}
 
 func TestIndexChange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
