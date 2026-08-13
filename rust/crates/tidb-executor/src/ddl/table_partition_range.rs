@@ -28,18 +28,23 @@
 //! Captured: `VALUES LESS THAN (5+20)` is stored and printed as `25`. So a
 //! bound cannot depend on a row, and the routing compares integers.
 //!
-//! # RANGE COLUMNS is a different method and is NOT here
+//! # RANGE COLUMNS is a typed tuple method
 //!
-//! `PARTITION BY RANGE COLUMNS (a, b)` compares TUPLES with each column's own
+//! `PARTITION BY RANGE COLUMNS (a, b)` compares tuples with each column's own
 //! type and collation (Go's `locateRangeColumnPartition` over
-//! `UpperBounds`), not a folded integer. It is refused by
-//! [`super::table_partition`] rather than approximated here.
+//! `UpperBounds`), so its bounds live alongside the scalar integer bounds but
+//! are represented separately below.
 
-use tidb_ast::{Expr, PartitionDefinitionClause, PartitionValue};
+use std::cmp::Ordering;
+
+use tidb_ast::{Expr, PartitionDefinition, PartitionDefinitionClause, PartitionValue};
 use tidb_datatype::{Datum, FieldType};
 
-use crate::partition_routing::RangeBound;
+use crate::partition_routing::{RangeBound, RangeColumnBound};
 use crate::DriverError;
+
+/// The DDL-owned metadata that becomes one routed `RANGE COLUMNS` spec.
+pub(super) type RangeColumnsMetadata = (Vec<String>, Vec<FieldType>, Vec<Vec<RangeColumnBound>>);
 
 /// The exclusive upper bounds of a RANGE table's partitions, in definition
 /// order, and whether they compare as unsigned.
@@ -110,6 +115,115 @@ pub(super) fn build_range_bounds(
     }
     check_strictly_increasing(&bounds, unsigned)?;
     Ok((bounds, unsigned))
+}
+
+/// Builds `RANGE COLUMNS`' typed, lexicographic upper-bound tuples.
+///
+/// Go folds each written bound through the declared column type during DDL,
+/// then compares the tuples left-to-right with that column's collation.  The
+/// stored model retains `MAXVALUE` as a sentinel, so `(2, MAXVALUE)` is an
+/// ordinary lexicographic upper bound rather than a fabricated string or
+/// integer maximum.
+pub(super) fn build_range_columns_bounds(
+    columns: &[Vec<String>],
+    definitions: &[PartitionDefinition],
+    names: &[String],
+    types: &[FieldType],
+    ctx: &crate::StmtContext,
+) -> Result<RangeColumnsMetadata, DriverError> {
+    if columns.is_empty() || definitions.is_empty() {
+        return Err(DriverError::PartitionsMustBeDefined("RANGE"));
+    }
+    let mut dependency_names = Vec::with_capacity(columns.len());
+    let mut field_types = Vec::with_capacity(columns.len());
+    for path in columns {
+        let name = path
+            .last()
+            .ok_or(DriverError::PartitionColumnValueWrongType)?;
+        if dependency_names
+            .iter()
+            .any(|candidate: &String| candidate.eq_ignore_ascii_case(name))
+        {
+            return Err(DriverError::PartitionDuplicateField(name.clone()));
+        }
+        let offset = names
+            .iter()
+            .position(|candidate| candidate.eq_ignore_ascii_case(name))
+            .ok_or_else(|| DriverError::UnknownColumnInClause {
+                column: name.clone(),
+                clause: "partition function".to_owned(),
+            })?;
+        let field_type = types[offset].clone();
+        if !super::table_partition_list::list_columns_type_allowed(&field_type) {
+            return Err(DriverError::PartitionFieldTypeNotAllowed(name.clone()));
+        }
+        dependency_names.push(name.clone());
+        field_types.push(field_type);
+    }
+
+    let mut less_than = Vec::with_capacity(definitions.len());
+    for definition in definitions {
+        let PartitionDefinitionClause::LessThan(values) = &definition.clause else {
+            return match &definition.clause {
+                PartitionDefinitionClause::In(_) => Err(DriverError::PartitionWrongValues {
+                    method: "LIST",
+                    clause: "VALUES IN",
+                }),
+                _ => Err(DriverError::PartitionsMustBeDefined("RANGE")),
+            };
+        };
+        if values.len() != field_types.len() {
+            return Err(DriverError::PartitionColumnValueWrongType);
+        }
+        let bound = values
+            .iter()
+            .zip(&field_types)
+            .map(|(value, field_type)| match value {
+                PartitionValue::MaxValue => Ok(RangeColumnBound::MaxValue),
+                PartitionValue::Expr(expr) => {
+                    super::table_partition_list::fold_column_value(expr, field_type, ctx)
+                        .map(RangeColumnBound::Value)
+                }
+                PartitionValue::Default | PartitionValue::Tuple(_) => {
+                    Err(DriverError::PartitionColumnValueWrongType)
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        less_than.push(bound);
+    }
+    for pair in less_than.windows(2) {
+        if !range_columns_bound_increases(&pair[0], &pair[1], &field_types)? {
+            return Err(DriverError::PartitionRangeNotIncreasing);
+        }
+    }
+    Ok((dependency_names, field_types, less_than))
+}
+
+fn range_columns_bound_increases(
+    previous: &[RangeColumnBound],
+    current: &[RangeColumnBound],
+    field_types: &[FieldType],
+) -> Result<bool, DriverError> {
+    for ((previous, current), field_type) in previous.iter().zip(current).zip(field_types) {
+        match (previous, current) {
+            (RangeColumnBound::MaxValue, _) => return Ok(false),
+            (_, RangeColumnBound::MaxValue) => return Ok(true),
+            (RangeColumnBound::Value(previous), RangeColumnBound::Value(current)) => {
+                let order = tidb_expr::compare_datums_with_collation(
+                    current,
+                    previous,
+                    field_type.collation(),
+                )
+                .map_err(|_| DriverError::PartitionColumnValueWrongType)?;
+                match order {
+                    Ordering::Greater => return Ok(true),
+                    Ordering::Less => return Ok(false),
+                    Ordering::Equal => {}
+                }
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// Go `checkPartitionValuesIsInt` plus the `EvalSimpleAst` fold: one bound as
@@ -264,6 +378,43 @@ pub fn range_definitions_text(
             "PARTITION `{}` VALUES LESS THAN ({bound})",
             definition.name
         ));
+    }
+    out.push(')');
+    out
+}
+
+/// `SHOW CREATE TABLE`'s typed `RANGE COLUMNS` definition list.
+#[must_use]
+pub fn range_columns_definitions_text(
+    definitions: &[crate::partition_routing::PartitionDef],
+    less_than: &[Vec<RangeColumnBound>],
+) -> String {
+    let mut out = String::from("\n(");
+    for (index, definition) in definitions.iter().enumerate() {
+        if index > 0 {
+            out.push_str(",\n ");
+        }
+        out.push_str(&format!(
+            "PARTITION `{}` VALUES LESS THAN (",
+            definition.name
+        ));
+        if let Some(bound) = less_than.get(index) {
+            for (component, value) in bound.iter().enumerate() {
+                if component > 0 {
+                    out.push(',');
+                }
+                match value {
+                    RangeColumnBound::MaxValue => out.push_str("MAXVALUE"),
+                    RangeColumnBound::Value(value) => {
+                        let rendered = value
+                            .restore_value_expr()
+                            .expect("RANGE COLUMNS metadata contains restorable values");
+                        out.push_str(&String::from_utf8_lossy(&rendered));
+                    }
+                }
+            }
+        }
+        out.push(')');
     }
     out.push(')');
     out

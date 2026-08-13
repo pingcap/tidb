@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `CREATE TABLE ... PARTITION BY HASH`, `BY RANGE`, and scalar `BY LIST` are
-//! REAL; the remaining methods are refused, and the refusal is still a
+//! `CREATE TABLE ... PARTITION BY HASH`, `BY RANGE`, `BY RANGE COLUMNS`, and
+//! scalar `BY LIST` are REAL; unsupported methods remain refused as a
 //! tripwire.
 //!
 //! This node stores a `PartitionSpec` (Go `model.PartitionInfo`; see
@@ -23,8 +23,7 @@
 //! `pkg/planner/core/rule/rule_partition_processor.go`), answers
 //! `... PARTITION (p)` from the named partitions alone, and prints the clause
 //! back through `SHOW CREATE TABLE`. What it still has no answer for is
-//! KEY and `RANGE COLUMNS` routing, so those methods are refused rather than
-//! answered wrongly.
+//! KEY routing, so that method is refused rather than answered wrongly.
 //!
 //! # The captures these tests are written against
 //!
@@ -57,11 +56,6 @@ const GO_RANGE: &str = "CREATE TABLE `r1` (\n  `a` int DEFAULT NULL,\n  `b` int 
 
 /// Go's `SHOW CREATE TABLE l1` for a two-way LIST table.
 const GO_LIST: &str = "CREATE TABLE `l1` (\n  `a` int DEFAULT NULL,\n  `b` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY LIST (`a`)\n(PARTITION `p0` VALUES IN (1,2,3),\n PARTITION `p1` VALUES IN (4,5,6))";
-
-/// Go's `SHOW CREATE TABLE rc1` for a two-column `RANGE COLUMNS` table.
-/// Note that Go prints `COLUMNS(` with NO space and the bounds with no space
-/// after the comma -- a different spelling from the expression form.
-const GO_RANGE_COLUMNS: &str = "CREATE TABLE `rc1` (\n  `a` int DEFAULT NULL,\n  `b` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY RANGE COLUMNS(`a`,`b`)\n(PARTITION `p0` VALUES LESS THAN (10,10),\n PARTITION `p1` VALUES LESS THAN (MAXVALUE,MAXVALUE))";
 
 /// Go's `SHOW CREATE TABLE lc1` for a two-column `LIST COLUMNS` table.
 const GO_LIST_COLUMNS: &str = "CREATE TABLE `lc1` (\n  `a` int DEFAULT NULL,\n  `b` int DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY LIST COLUMNS(`a`,`b`)\n(PARTITION `p0` VALUES IN ((1,1),(2,2)))";
@@ -434,6 +428,53 @@ fn list_columns_partitioning_routes_typed_tuples() {
         )
         .unwrap();
     assert_eq!(show_create(&mut session, "lc1"), GO_LIST_COLUMNS);
+}
+
+/// RANGE COLUMNS compares the declared typed tuple lexicographically.  The
+/// boundary belongs to the first partition whose `VALUES LESS THAN` tuple is
+/// greater; `MAXVALUE` ends the search and NULL remains in the first
+/// partition, as it does for scalar RANGE.
+#[test]
+fn range_columns_partitioning_routes_typed_tuples() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE rc (a int, b varchar(8), c int) PARTITION BY RANGE COLUMNS(a,b) (\
+             PARTITION p0 VALUES LESS THAN (2,'m'), \
+             PARTITION p1 VALUES LESS THAN (4,'z'), \
+             PARTITION pm VALUES LESS THAN (MAXVALUE,MAXVALUE))",
+        )
+        .expect("RANGE COLUMNS must create a routed table");
+    for ((a, b), expected) in [
+        (("1", "'z'"), "p0"),
+        (("2", "'a'"), "p0"),
+        (("2", "'m'"), "p1"),
+        (("4", "'z'"), "pm"),
+        (("NULL", "'z'"), "p0"),
+    ] {
+        session
+            .run(&format!("INSERT INTO rc VALUES ({a},{b},1)"))
+            .unwrap();
+        assert_eq!(
+            sole_holder(&mut session, "rc"),
+            expected,
+            "RANGE COLUMNS({a},{b})"
+        );
+        session.run("DELETE FROM rc").unwrap();
+    }
+    let shown = show_create(&mut session, "rc");
+    assert!(
+        shown.contains("PARTITION BY RANGE COLUMNS(`a`,`b`)"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("PARTITION `p0` VALUES LESS THAN (2,'m')"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("PARTITION `pm` VALUES LESS THAN (MAXVALUE,MAXVALUE)"),
+        "{shown}"
+    );
 }
 
 /// LIST COLUMNS validates the typed tuple set during DDL and refuses an
@@ -819,6 +860,37 @@ fn list_columns_pruning_reads_matching_tuple_owners() {
     }
 }
 
+/// A full tuple point is one RANGE COLUMNS destination; a leading-column
+/// predicate is not enough information to discard a lexicographic neighbor.
+#[test]
+fn range_columns_pruning_reads_the_matching_tuple_partition() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE rcpr (a int, b int, c int) PARTITION BY RANGE COLUMNS(a,b) (\
+             PARTITION p0 VALUES LESS THAN (2,0), \
+             PARTITION p1 VALUES LESS THAN (4,0), \
+             PARTITION pm VALUES LESS THAN (MAXVALUE,MAXVALUE))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO rcpr VALUES (1,1,11),(1,9,19),(2,1,21),(3,9,39),(4,1,41),(9,9,99)")
+        .unwrap();
+    for (predicate, read, returned) in [
+        ("a = 2 AND b = 1", "2", "1"),
+        ("a = 1 AND b = 9", "2", "1"),
+        ("a = 9 AND b = 9", "2", "1"),
+        ("a = 1", "6", "2"),
+    ] {
+        let rows = tests_support::row_text(session.run(&format!(
+            "EXPLAIN ANALYZE SELECT c FROM rcpr WHERE {predicate}"
+        )));
+        let scan = rows.last().expect("a plan has a source row");
+        assert_eq!(scan[2], read, "records read for `{predicate}`: {}", scan[0]);
+        assert_eq!(rows[0][2], returned, "rows returned for `{predicate}`");
+    }
+}
+
 /// HASH pruning must narrow the physical scan, not merely leave the WHERE to
 /// discard rows after all partitions were read. Each partition holds three
 /// rows, so the source `actRows` makes the distinction observable.
@@ -879,40 +951,30 @@ fn an_update_across_a_range_boundary_moves_the_row() {
     session.run("ADMIN CHECK TABLE r").expect("admin check");
 }
 
-/// The methods still without routing are REFUSED, and the refusal names
-/// the method. The `GO_*` text each row carries is what this must answer
-/// instead once that method lands.
+/// The method still without routing is REFUSED, and the refusal names it.
 #[test]
-fn key_and_columns_partitioning_are_still_refused() {
-    for (sql, table, go) in [
-        (
-            "CREATE TABLE k1 (a int PRIMARY KEY, b int) PARTITION BY KEY(a) PARTITIONS 3",
-            "k1",
-            GO_KEY,
-        ),
-        (
-            "CREATE TABLE rc1 (a int, b int) PARTITION BY RANGE COLUMNS (a, b) (PARTITION p0 VALUES LESS THAN (10, 10), PARTITION p1 VALUES LESS THAN (MAXVALUE, MAXVALUE))",
-            "rc1",
-            GO_RANGE_COLUMNS,
-        ),
-    ] {
-        let mut session = Session::new();
-        let error = session
-            .run(sql)
-            .expect_err("a method without routing must not report success");
-        let text = format!("{error:?}");
-        assert!(
-            text.contains("PARTITION BY"),
-            "the refusal must name the clause it refused, got {text}"
-        );
-        // The refusal is total: nothing was created under that name, so a
-        // later statement cannot read a table this node built wrongly.
-        assert!(
-            session.run(&format!("SHOW CREATE TABLE {table}")).is_err(),
-            "a refused CREATE TABLE must leave no table behind"
-        );
-        assert!(go.contains("PARTITION BY"), "capture sanity");
-    }
+fn key_partitioning_is_still_refused() {
+    let (sql, table, go) = (
+        "CREATE TABLE k1 (a int PRIMARY KEY, b int) PARTITION BY KEY(a) PARTITIONS 3",
+        "k1",
+        GO_KEY,
+    );
+    let mut session = Session::new();
+    let error = session
+        .run(sql)
+        .expect_err("a method without routing must not report success");
+    let text = format!("{error:?}");
+    assert!(
+        text.contains("PARTITION BY"),
+        "the refusal must name the clause it refused, got {text}"
+    );
+    // The refusal is total: nothing was created under that name, so a later
+    // statement cannot read a table this node built wrongly.
+    assert!(
+        session.run(&format!("SHOW CREATE TABLE {table}")).is_err(),
+        "a refused CREATE TABLE must leave no table behind"
+    );
+    assert!(go.contains("PARTITION BY"), "capture sanity");
 }
 
 /// The partitioning is scoped to the clause alone: the SAME table without it
@@ -966,6 +1028,18 @@ const GO_REJECTED: &[(&str, u16, &str, bool)] = &[
         "CREATE TABLE e3 (a int) PARTITION BY RANGE(a) (PARTITION p0 VALUES LESS THAN (10), PARTITION p1 VALUES LESS THAN (5))",
         1493,
         "VALUES LESS THAN value must be strictly increasing for each partition",
+        true,
+    ),
+    (
+        "CREATE TABLE e3c (a int, b int) PARTITION BY RANGE COLUMNS(a,b) (PARTITION p0 VALUES LESS THAN (2,9), PARTITION p1 VALUES LESS THAN (2,8))",
+        1493,
+        "VALUES LESS THAN value must be strictly increasing for each partition",
+        true,
+    ),
+    (
+        "CREATE TABLE e3d (a int) PARTITION BY RANGE COLUMNS(a,a) (PARTITION p0 VALUES LESS THAN (2,9))",
+        1652,
+        "Duplicate partition field name 'a'",
         true,
     ),
     (

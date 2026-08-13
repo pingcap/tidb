@@ -435,6 +435,17 @@ fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
                 *unsigned
             )
         ),
+        tidb_executor::PartitionKind::RangeColumns {
+            less_than,
+            field_types: _,
+        } => format!(
+            "\nPARTITION BY RANGE COLUMNS({}){}",
+            partition.expr_text,
+            tidb_executor::ddl::table_partition_range::range_columns_definitions_text(
+                &partition.definitions,
+                less_than,
+            )
+        ),
         tidb_executor::PartitionKind::List {
             values,
             null_partition,

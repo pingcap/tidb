@@ -745,16 +745,19 @@ fn pruned_partition_ids(
 ) -> Option<Vec<i64>> {
     let partition = table.partition()?;
     let where_clause = select.where_clause.as_ref()?;
-    let list_columns = matches!(partition.kind, crate::PartitionKind::ListColumns { .. });
+    let tuple_partitioning = matches!(
+        partition.kind,
+        crate::PartitionKind::ListColumns { .. } | crate::PartitionKind::RangeColumns { .. }
+    );
     // A bare column is the one scalar partition expression whose own value a
-    // range over a column is. LIST COLUMNS instead owns its named tuple.
+    // range over a column is. Tuple partitioning owns its named tuple.
     let mut range_columns = Vec::with_capacity(partition.dependencies.len());
     for dependency in &partition.dependencies {
         let column = table
             .columns
             .iter()
             .find(|column| column.name.eq_ignore_ascii_case(dependency))?;
-        if !list_columns && partition.expr_text != format!("`{}`", column.name) {
+        if !tuple_partitioning && partition.expr_text != format!("`{}`", column.name) {
             return None;
         }
         range_columns.push(crate::index_range::RangeColumn::whole(

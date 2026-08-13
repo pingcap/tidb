@@ -125,7 +125,7 @@ fn set_default_partition(slot: &mut Option<usize>, ordinal: usize) -> Result<(),
     }
 }
 
-fn fold_column_value(
+pub(super) fn fold_column_value(
     expr: &Expr,
     field_type: &FieldType,
     ctx: &crate::StmtContext,
@@ -153,7 +153,7 @@ fn fold_column_value(
     Ok(converted.value)
 }
 
-fn list_columns_type_allowed(field_type: &FieldType) -> bool {
+pub(super) fn list_columns_type_allowed(field_type: &FieldType) -> bool {
     use tidb_datatype::FieldTypeCode;
     matches!(
         field_type.code(),

@@ -24,18 +24,15 @@
 //!
 //! # What is accepted
 //!
-//! HASH, RANGE, and scalar LIST. `PARTITION BY HASH (expr) PARTITIONS n`,
-//! `PARTITION BY RANGE (expr) (PARTITION p VALUES LESS THAN (v), ...)` are
+//! HASH, scalar RANGE, RANGE COLUMNS, scalar LIST, and LIST COLUMNS. They are
 //! routed by [`crate::partition_routing`], stored as one physical key prefix
 //! per partition, pruned by [`crate::partition_pruning`], and printed back by
 //! `SHOW CREATE TABLE`.
 //!
-//! KEY and `RANGE COLUMNS` are REFUSED -- this tier can
-//! neither route nor prune them, and accepting the clause would build an
-//! ordinary unpartitioned table that answers every partition-aware query
-//! wrongly while reporting success. That refusal is the same one HASH and
-//! RANGE carried before their routing landed, kept for the methods still
-//! missing rather than deleted wholesale.
+//! KEY is REFUSED: this tier cannot yet route it without building an ordinary
+//! table that answers partition-aware queries wrongly while reporting
+//! success. RANGE COLUMNS is routed as a typed tuple, alongside scalar RANGE
+//! and LIST COLUMNS.
 //!
 //! # Why "accept and ignore" is never the answer
 //!
@@ -183,10 +180,56 @@ pub fn build_table_partitioning(
         }));
     }
 
+    if method.kind == PartitionType::RANGE && method.expr.is_none() {
+        let (dependencies, field_types, less_than) =
+            super::table_partition_range::build_range_columns_bounds(
+                &method.columns,
+                &partitioning.definitions,
+                names,
+                types,
+                ctx,
+            )?;
+        let definitions = build_named_partition_definitions(create, allocate_id);
+        check_partition_name_unique(&definitions)?;
+        if definitions.len() as u64 > MAX_PARTITIONS {
+            return Err(DriverError::PartitionTooMany);
+        }
+        let dependency_offsets = dependencies
+            .iter()
+            .map(|name| {
+                names
+                    .iter()
+                    .position(|candidate| candidate.eq_ignore_ascii_case(name))
+                    .expect("RANGE COLUMNS names resolved above")
+            })
+            .collect::<Vec<_>>();
+        check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
+        return Ok(Some(PartitionSpec {
+            kind: PartitionKind::RangeColumns {
+                less_than,
+                field_types,
+            },
+            expr_text: method
+                .columns
+                .iter()
+                .filter_map(|path| path.last())
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(","),
+            expr: tidb_expr::expression::Expression::Constant(
+                tidb_expr::expression::Constant::new(
+                    tidb_datatype::Datum::Null,
+                    FieldType::new(FieldTypeCode::LongLong),
+                ),
+            ),
+            dependencies,
+            definitions,
+        }));
+    }
+
     let Some(expr) = &method.expr else {
         // A column list rather than an expression is Go's KEY-shaped path
-        // (`HASH COLUMNS`) or its `RANGE COLUMNS` tuple comparison, neither
-        // of which this tier routes.
+        // (`HASH COLUMNS`), which this tier does not route.
         let name = method.kind.sql();
         return Err(DriverError::unsupported(format!(
             "CREATE TABLE ... PARTITION BY {name} COLUMNS is not supported by this node"

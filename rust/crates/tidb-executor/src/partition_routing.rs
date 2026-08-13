@@ -33,13 +33,14 @@
 //!
 //! # NOT MODELLED here (each refused at DDL, see [`crate::ddl::table_partition`])
 //!
-//! KEY partitioning, RANGE COLUMNS, subpartitioning, and every `ALTER TABLE
-//! ... PARTITION` action. HASH, RANGE, scalar LIST, and LIST COLUMNS are
-//! routed, so those four are accepted and the rest are refused.
+//! KEY partitioning, subpartitioning, and every `ALTER TABLE ... PARTITION`
+//! action. HASH, scalar RANGE, RANGE COLUMNS, scalar LIST, and LIST COLUMNS
+//! are routed; the rest are refused.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use tidb_datatype::Datum;
+use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 
 /// One partition's exclusive upper bound under RANGE: Go
@@ -55,6 +56,20 @@ pub enum RangeBound {
     /// as signed or unsigned is [`PartitionKind::Range`]'s `unsigned`.
     Value(i64),
     /// `MAXVALUE`, which only the LAST partition may carry (1481).
+    MaxValue,
+}
+
+/// One component of a `RANGE COLUMNS` upper-bound tuple.
+///
+/// `MAXVALUE` is an ordered sentinel rather than an integer stand-in: the
+/// tuple `(2, MAXVALUE)` admits every `(2, x)` while `(MAXVALUE, anything)`
+/// admits every row.  Keeping it in the value model makes DDL validation,
+/// routing and pruning use the same lexicographic comparison.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RangeColumnBound {
+    /// A folded bound value, converted to its declared column type at DDL.
+    Value(Datum),
+    /// Go's `MAXVALUE`, above every concrete value in this tuple position.
     MaxValue,
 }
 
@@ -77,6 +92,14 @@ pub enum PartitionKind {
         /// Whether the partition expression's type is unsigned, which is
         /// Go's `isPartExprUnsigned` and decides how a bound compares.
         unsigned: bool,
+    },
+    /// Go `PARTITION BY RANGE COLUMNS`: typed lexicographic upper bounds.
+    RangeColumns {
+        /// One exclusive upper-bound tuple per partition, in definition
+        /// order. `MAXVALUE` is represented per component, not as a datum.
+        less_than: Vec<Vec<RangeColumnBound>>,
+        /// The declared type and collation for each tuple component.
+        field_types: Vec<FieldType>,
     },
     /// Go `ast.PartitionTypeList` without `COLUMNS`.
     List {
@@ -111,6 +134,7 @@ impl PartitionKind {
         match self {
             PartitionKind::Hash => "HASH",
             PartitionKind::Range { .. } => "RANGE",
+            PartitionKind::RangeColumns { .. } => "RANGE",
             PartitionKind::List { .. } => "LIST",
             PartitionKind::ListColumns { .. } => "LIST",
         }
@@ -247,6 +271,17 @@ impl PartitionSpec {
         ctx: &impl tidb_expr::Columns,
     ) -> Result<usize, RoutingError> {
         match &self.kind {
+            PartitionKind::RangeColumns {
+                less_than,
+                field_types,
+            } => range_columns_partition_index(
+                row,
+                columns,
+                &self.dependencies,
+                field_types,
+                less_than,
+                ctx,
+            ),
             PartitionKind::ListColumns {
                 keys,
                 default_partition,
@@ -276,6 +311,7 @@ impl PartitionSpec {
                         less_than,
                         unsigned,
                     } => range_partition_index(&value, less_than, *unsigned),
+                    PartitionKind::RangeColumns { .. } => unreachable!("matched above"),
                     PartitionKind::List {
                         values,
                         null_partition,
@@ -295,15 +331,29 @@ impl PartitionSpec {
     }
 }
 
-fn list_columns_partition_index<S: crate::generated_column::GeneratedColumnSlot>(
+fn range_columns_partition_index<S: crate::generated_column::GeneratedColumnSlot>(
     row: &[Datum],
     columns: &[S],
     names: &[String],
-    field_types: &[tidb_datatype::FieldType],
-    keys: &HashMap<Vec<u8>, usize>,
-    default_partition: Option<usize>,
+    field_types: &[FieldType],
+    less_than: &[Vec<RangeColumnBound>],
     ctx: &impl tidb_expr::Columns,
 ) -> Result<usize, RoutingError> {
+    let tuple = partition_column_tuple(row, columns, names, field_types, ctx)?;
+    range_columns_partition_index_for_tuple(&tuple, less_than, field_types)
+}
+
+/// The one conversion boundary shared by LIST COLUMNS and RANGE COLUMNS.
+/// A stored table row reaches this through the same declared types that DDL
+/// used to fold its definition values, so the comparison never mixes an
+/// untyped literal with a stored column datum.
+fn partition_column_tuple<S: crate::generated_column::GeneratedColumnSlot>(
+    row: &[Datum],
+    columns: &[S],
+    names: &[String],
+    field_types: &[FieldType],
+    ctx: &impl tidb_expr::Columns,
+) -> Result<Vec<Datum>, RoutingError> {
     let mut tuple = Vec::with_capacity(names.len());
     for (name, field_type) in names.iter().zip(field_types) {
         let offset = crate::generated_column::offset_of(columns, name).ok_or_else(|| {
@@ -325,6 +375,65 @@ fn list_columns_partition_index<S: crate::generated_column::GeneratedColumnSlot>
         }
         tuple.push(converted.value);
     }
+    Ok(tuple)
+}
+
+pub(crate) fn range_columns_partition_index_for_tuple(
+    tuple: &[Datum],
+    less_than: &[Vec<RangeColumnBound>],
+    field_types: &[FieldType],
+) -> Result<usize, RoutingError> {
+    // Go's upper-bound expression returns SQL NULL for a NULL partition
+    // value; locateRangeColumnPartition treats that as the lowest partition.
+    if tuple.iter().any(Datum::is_null) {
+        return Ok(0);
+    }
+    for (ordinal, bound) in less_than.iter().enumerate() {
+        if range_columns_tuple_cmp(tuple, bound, field_types)? == Ordering::Less {
+            return Ok(ordinal);
+        }
+    }
+    Err(RoutingError::NoPartitionForValue(
+        "from column_list".to_owned(),
+    ))
+}
+
+pub(crate) fn range_columns_tuple_cmp(
+    tuple: &[Datum],
+    bound: &[RangeColumnBound],
+    field_types: &[FieldType],
+) -> Result<Ordering, RoutingError> {
+    if tuple.len() != bound.len() || tuple.len() != field_types.len() {
+        return Err(RoutingError::Conversion(
+            "RANGE COLUMNS tuple arity changed".to_owned(),
+        ));
+    }
+    for ((value, bound), field_type) in tuple.iter().zip(bound).zip(field_types) {
+        match bound {
+            RangeColumnBound::MaxValue => return Ok(Ordering::Less),
+            RangeColumnBound::Value(bound) => {
+                let order =
+                    tidb_expr::compare_datums_with_collation(value, bound, field_type.collation())
+                        .map_err(RoutingError::Eval)?;
+                if order != Ordering::Equal {
+                    return Ok(order);
+                }
+            }
+        }
+    }
+    Ok(Ordering::Equal)
+}
+
+fn list_columns_partition_index<S: crate::generated_column::GeneratedColumnSlot>(
+    row: &[Datum],
+    columns: &[S],
+    names: &[String],
+    field_types: &[tidb_datatype::FieldType],
+    keys: &HashMap<Vec<u8>, usize>,
+    default_partition: Option<usize>,
+    ctx: &impl tidb_expr::Columns,
+) -> Result<usize, RoutingError> {
+    let tuple = partition_column_tuple(row, columns, names, field_types, ctx)?;
     let key = tidb_codec::encode_key_in_timezone(&ctx.time_zone(), &tuple)
         .map_err(|error| RoutingError::Conversion(error.to_string()))?;
     if let Some(ordinal) = keys.get(&key) {

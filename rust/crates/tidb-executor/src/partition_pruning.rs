@@ -113,6 +113,15 @@ pub fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64
             less_than,
             unsigned,
         } => Some(prune_range_ids(spec, ranges, less_than, *unsigned)),
+        PartitionKind::RangeColumns {
+            less_than,
+            field_types,
+        } => Some(prune_range_columns_ids(
+            spec,
+            ranges,
+            less_than,
+            field_types,
+        )),
         PartitionKind::List {
             values,
             null_partition,
@@ -137,6 +146,47 @@ pub fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64
             *default_partition,
         )),
     }
+}
+
+/// A typed ranger point has one exact RANGE COLUMNS destination, so retain
+/// only that partition.  More complex tuple intervals remain a full scan
+/// until the ranger exposes enough normalized endpoint information to prove
+/// their intersection without risking a false negative.
+fn prune_range_columns_ids(
+    spec: &PartitionSpec,
+    ranges: &[IndexRange],
+    less_than: &[Vec<crate::partition_routing::RangeColumnBound>],
+    field_types: &[tidb_datatype::FieldType],
+) -> Vec<i64> {
+    let mut used = vec![false; spec.definitions.len()];
+    for range in ranges {
+        if !range.is_point(true) || range.low.len() != field_types.len() {
+            return spec
+                .definitions
+                .iter()
+                .map(|definition| definition.id)
+                .collect();
+        }
+        let Ok(ordinal) = crate::partition_routing::range_columns_partition_index_for_tuple(
+            &range.low,
+            less_than,
+            field_types,
+        ) else {
+            return spec
+                .definitions
+                .iter()
+                .map(|definition| definition.id)
+                .collect();
+        };
+        if let Some(slot) = used.get_mut(ordinal) {
+            *slot = true;
+        }
+    }
+    spec.definitions
+        .iter()
+        .zip(used)
+        .filter_map(|(definition, used)| used.then_some(definition.id))
+        .collect()
 }
 
 /// Go `ForListColumnPruning.LocateRanges`: a tuple belongs when its prefix

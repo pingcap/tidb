@@ -64,7 +64,7 @@
 //! copies disagreed: the `TableInfo` builder validated nothing at all. See
 //! that module for the evidence and for what it deliberately does not decide.
 //!
-//! # `PARTITION BY HASH` and `BY RANGE` are REAL here; the rest are REFUSED
+//! # `PARTITION BY HASH`, `BY RANGE`, and `BY RANGE COLUMNS` are REAL here
 //!
 //! This builder once skipped `CreateTableStmt::partitioning` entirely, so a
 //! partitioned `CREATE TABLE` SUCCEEDED and produced an UNPARTITIONED table --
@@ -77,7 +77,7 @@
 //! (see [`crate::partition_pruning`]), and `SHOW CREATE TABLE` prints the
 //! clause back verbatim.
 //!
-//! LIST, KEY, `RANGE COLUMNS` and `LIST COLUMNS` are still refused, because
+//! KEY is still refused, because
 //! this tier can neither route a row into one of their partitions nor prune
 //! them, and each carries validation of its own that would start silently
 //! passing the moment the clause was accepted. See [`table_partition`]'s
@@ -85,8 +85,7 @@
 //!
 //! Refusing was itself a cascade decision, taken deliberately: it moved
 //! `table not found in catalog` up sharply, because those tables honestly did
-//! not exist. Accepting HASH and RANGE gives that back for those tables,
-//! which is the point of this direction.
+//! not exist. Accepting routed methods gives that back for those tables.
 //!
 //! # What folds at DDL time, and what therefore needs the session's context
 //!
