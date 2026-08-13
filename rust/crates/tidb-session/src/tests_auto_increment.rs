@@ -398,15 +398,44 @@ fn a_step_does_not_lift_the_allocators_exhaustion_rule() {
     assert!(session.run("INSERT INTO big (v) VALUES (2)").is_err());
 }
 
-/// REFUSED: `FORCE AUTO_INCREMENT`, the TiDB extension that lets the counter
-/// move DOWN, is rejected instead of being read as the plain form.
+/// `FORCE AUTO_INCREMENT` resets the next allocation even when the ordinary
+/// `AUTO_INCREMENT=` rebase would leave a higher counter in place.
 #[test]
-fn force_auto_increment_is_refused() {
+fn force_auto_increment_resets_the_next_allocation() {
     let mut session = table(None);
     session.run("INSERT INTO ai (v) VALUES (1),(2)").unwrap();
-    assert!(session
-        .run("ALTER TABLE ai FORCE AUTO_INCREMENT = 1")
-        .is_err());
+    session.run("DELETE FROM ai WHERE id = 2").unwrap();
+    session
+        .run("ALTER TABLE ai FORCE AUTO_INCREMENT = 2")
+        .unwrap();
+    session.run("INSERT INTO ai (v) VALUES (3)").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id,v FROM ai ORDER BY id"),
+        [["1", "1"], ["2", "3"]]
+    );
+
+    let error = session
+        .run("ALTER TABLE ai FORCE AUTO_INCREMENT = 0")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1467);
+
+    // The same counter owns an implicit `_tidb_rowid`, even on a table with
+    // no AUTO_INCREMENT column. Rewinding it can therefore collide with an
+    // existing hidden handle just as Go's FORCE extension does.
+    session.run("CREATE TABLE heap_force (v INT)").unwrap();
+    session
+        .run("ALTER TABLE heap_force FORCE AUTO_INCREMENT = 1")
+        .unwrap();
+    session.run("INSERT INTO heap_force VALUES (1)").unwrap();
+    session
+        .run("ALTER TABLE heap_force FORCE AUTO_INCREMENT = 1")
+        .unwrap();
+    let collision = session.run("INSERT INTO heap_force VALUES (2)");
+    assert!(
+        matches!(collision, Err(DriverError::DuplicateEntry { .. })),
+        "expected hidden-handle duplicate, got {collision:?}"
+    );
 }
 
 /// The signed domain ENDS in an error, never in a wrapped or repeated id.

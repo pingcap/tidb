@@ -112,6 +112,12 @@ pub trait AutoIdStore: fmt::Debug + Send + Sync {
     /// no-op on every tier.
     fn rebase(&self, required: u64, unsigned: bool) -> Result<(), AutoIdStoreError>;
 
+    /// Go `Allocator.Rebase` with `allocIDs == true`: replace the stored
+    /// counter even when that moves it down. `FORCE AUTO_INCREMENT` needs one
+    /// atomic store operation; spelling it as reset followed by rebase would
+    /// let another allocator reserve an overlapping range between the two.
+    fn force_rebase(&self, required: u64, unsigned: bool) -> Result<(), AutoIdStoreError>;
+
     /// Starts the counter over, so the next id is 1 again.
     ///
     /// Go reaches this by REPLACING the table -- TRUNCATE builds a new table
@@ -226,6 +232,11 @@ impl AutoIdStore for LocalAutoIdStore {
                 Err(observed) => last = observed,
             }
         }
+        Ok(())
+    }
+
+    fn force_rebase(&self, required: u64, _unsigned: bool) -> Result<(), AutoIdStoreError> {
+        self.last.store(required, Ordering::SeqCst);
         Ok(())
     }
 
@@ -575,6 +586,35 @@ impl AutoIdAllocator {
         }
     }
 
+    /// Go `ALTER TABLE ... FORCE AUTO_INCREMENT = n`: discard any local
+    /// reservation and replace the global base so the next allocation is
+    /// exactly `n`, even when that moves the counter backwards.
+    pub(crate) fn force_rebase_to_next(&self, next: u64) -> Result<(), AutoIdError> {
+        if next == 0 {
+            return Err(AutoIdError::Exhausted);
+        }
+        let base = if self.unsigned {
+            next - 1
+        } else {
+            (next as i64).checked_sub(1).ok_or(AutoIdError::Exhausted)? as u64
+        };
+        let mut cache = self.cache.lock().expect("auto id cache poisoned");
+        self.store
+            .force_rebase(base, self.unsigned)
+            .map_err(AutoIdError::Store)?;
+        *cache = AutoIdRange {
+            base,
+            // An empty reservation is deliberately encoded with end == 0,
+            // even when `base` is nonzero: the next allocation must take the
+            // normal initial-size reservation from the forced global base,
+            // not adapt a fresh cache as though it had just consumed a range.
+            end: 0,
+            step: self.initial_step,
+            last_reserve_at: Instant::now(),
+        };
+        Ok(())
+    }
+
     /// Starts the counter over, so the next id is 1 again.
     ///
     /// Go reaches this by replacing the table (TRUNCATE builds a new table id
@@ -801,6 +841,10 @@ mod tests {
             Err(AutoIdStoreError("injected".to_owned()))
         }
 
+        fn force_rebase(&self, _required: u64, _unsigned: bool) -> Result<(), AutoIdStoreError> {
+            Err(AutoIdStoreError("injected".to_owned()))
+        }
+
         fn reset(&self) -> Result<(), AutoIdStoreError> {
             Err(AutoIdStoreError("injected".to_owned()))
         }
@@ -825,6 +869,23 @@ mod tests {
         );
         let cache = allocator.cache.lock().unwrap();
         assert_eq!((cache.base, cache.end), (0, 0));
+    }
+
+    #[test]
+    fn force_rebase_discards_the_reserved_range() {
+        let (store, allocator) = allocator(false);
+        assert_eq!(allocator.alloc(1, 1), Ok(1));
+        assert_eq!(allocator.alloc(1, 1), Ok(2));
+        // The dynamic allocator has already reserved a range past 2. FORCE
+        // must replace both that cache and the shared home, or a later insert
+        // would keep handing out the stale reserved ids instead of 2.
+        allocator.force_rebase_to_next(2).unwrap();
+        assert_eq!(allocator.alloc(1, 1), Ok(2));
+        assert_eq!(store.last.load(Ordering::SeqCst), DEFAULT_AUTO_ID_STEP + 1);
+        assert_eq!(
+            allocator.force_rebase_to_next(0),
+            Err(AutoIdError::Exhausted)
+        );
     }
 
     /// Source: `pkg/meta/autoid/autoid_test.go::TestIssue40584`.

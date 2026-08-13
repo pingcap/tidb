@@ -550,6 +550,16 @@ impl AutoIdStore for ClusterAutoIdStore {
         })
     }
 
+    fn force_rebase(&self, required: u64, _unsigned: bool) -> Result<(), AutoIdStoreError> {
+        self.transact(|current| {
+            if current == required {
+                (None, ())
+            } else {
+                (Some(required), ())
+            }
+        })
+    }
+
     fn reset(&self) -> Result<(), AutoIdStoreError> {
         self.transact(|current| {
             if current == 0 {

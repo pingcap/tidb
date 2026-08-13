@@ -1776,12 +1776,23 @@ impl KvTable {
             row
         };
         let value = self.encode_row_value(row, &zone)?;
-        // Go `addRecord`: a clustered key IS the handle, so a repeat collides.
+        // Go `addRecord`: every record key is unique. A clustered key derives
+        // it from visible columns; a heap table derives it from `_tidb_rowid`,
+        // which `FORCE AUTO_INCREMENT` can intentionally rewind.
         let handle = self.handle_of_row(row, &zone)?;
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
-        if clustered && self.row_exists(&handle)? {
+        if self.row_exists(&handle)? {
             return Err(KvTableError::DuplicateEntry {
-                value: clustered_key_text(self, row),
+                value: if clustered {
+                    clustered_key_text(self, row)
+                } else {
+                    match &handle {
+                        TableHandle::Int(value) => value.to_string(),
+                        TableHandle::Common(_) => {
+                            unreachable!("a heap table has an integer handle")
+                        }
+                    }
+                },
                 key: self.qualified_key("PRIMARY"),
             });
         }

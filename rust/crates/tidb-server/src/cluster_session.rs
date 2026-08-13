@@ -165,6 +165,14 @@ impl tidb_executor::kv_table::AutoIdStore for UnavailableAutoIdStore {
         Err(unavailable_counter())
     }
 
+    fn force_rebase(
+        &self,
+        _required: u64,
+        _unsigned: bool,
+    ) -> Result<(), tidb_executor::kv_table::AutoIdStoreError> {
+        Err(unavailable_counter())
+    }
+
     fn reset(&self) -> Result<(), tidb_executor::kv_table::AutoIdStoreError> {
         Err(unavailable_counter())
     }

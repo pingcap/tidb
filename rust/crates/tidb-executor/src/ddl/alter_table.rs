@@ -525,9 +525,9 @@ fn drop_foreign_key_action(
 
 /// One `ALTER TABLE ... <table options>`.
 ///
-/// Only `AUTO_INCREMENT=` is carried: Go rebases the allocator, which moves
-/// the counter up to the named value and leaves it alone when it has already
-/// run past. Any other option is refused rather than silently accepted.
+/// `AUTO_INCREMENT=` raises the allocator's next value, while TiDB's
+/// `FORCE AUTO_INCREMENT=` replaces it even when that moves it down. Any
+/// other option is refused rather than silently accepted.
 fn set_table_options_action(
     catalog: &mut Catalog,
     database: &str,
@@ -558,10 +558,21 @@ fn set_table_options_action(
             tidb_ast::TableOption::Comment(comment) => {
                 table.set_comment(super::normalize_table_comment(comment, name, ctx)?);
             }
-            tidb_ast::TableOption::ForceAutoIncrement(_) => {
-                return Err(DriverError::unsupported(
-                    "FORCE AUTO_INCREMENT is not supported yet",
-                ));
+            tidb_ast::TableOption::ForceAutoIncrement(value) => {
+                let next = value.parse::<u64>().map_err(|_| {
+                    DriverError::unsupported("FORCE AUTO_INCREMENT needs an integer value")
+                })? as i64;
+                table
+                    .force_rebase_auto_increment(next)
+                    .map_err(|error| match error {
+                        crate::kv_table::AutoIdError::Exhausted => DriverError::AutoincReadFailed,
+                        crate::kv_table::AutoIdError::OutOfRange { value, type_name } => {
+                            DriverError::ConstantOverflows { value, type_name }
+                        }
+                        crate::kv_table::AutoIdError::Store(detail) => {
+                            DriverError::AutoIdUnavailable(detail.0)
+                        }
+                    })?;
             }
             _ => {
                 return Err(DriverError::unsupported(

@@ -172,6 +172,13 @@ impl KvTable {
         self.auto_id.rebase_to_next(next_id as u64)
     }
 
+    /// Go `ALTER TABLE ... FORCE AUTO_INCREMENT = n`: unlike the ordinary
+    /// table option, this deliberately moves the shared counter down and
+    /// drops any allocator range already reserved by this table.
+    pub fn force_rebase_auto_increment(&mut self, next_id: i64) -> Result<(), AutoIdError> {
+        self.auto_id.force_rebase_to_next(next_id as u64)
+    }
+
     /// Go `adjustAutoIncrementDatum`: fills the auto-increment column.
     ///
     /// An omitted, NULL or zero value takes the next allocated id; an explicit
