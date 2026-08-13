@@ -7,4 +7,5 @@ filters:
       - sig-community-approvers
   ".*":
     approvers:
-      - sig-approvers-executor-import
+      - sig-approvers-br
+      - sig-approvers-lightning
