@@ -1062,7 +1062,7 @@ fn explain_hash_join_operator_info_matches_go() {
             "EXPLAIN FORMAT='brief' SELECT * FROM hj1 RIGHT JOIN hj2 ON hj1.a = hj2.a"
         ),
         vec![
-            "right outer join, left side:TableFullScan, equal:[eq(test.hj1.a, test.hj2.a)]",
+            "right outer join, left side:Selection, equal:[eq(test.hj1.a, test.hj2.a)]",
             "(Build) table:hj1",
             "(Probe) table:hj2",
         ]
@@ -1446,28 +1446,30 @@ fn explain_est_rows_for_a_join() {
         "100000000.00"
     );
 
-    // DIVERGENCE, 0.1%, and only this: TiDB rewrites an inner equi-join's
-    // sides with `not(isnull(k))` before estimating, so it divides
-    // 9990 * 9990 by 7992 (= 12487.50) where this divides 10000 * 10000 by
-    // 8000. The arithmetic between those inputs is identical.
+    // TiDB rewrites an equi-join's nullable keys with `not(isnull(k))`
+    // before estimating: one key leaves 9990 rows on each side.
     for equi in [
         "SELECT * FROM j1 JOIN j2 ON j1.a = j2.a",
         "SELECT * FROM j1 LEFT JOIN j2 ON j1.a = j2.a",
-        // TWO keys, same answer: `EstimateColsNDVWithMatchedLen`'s default
-        // arm is the MAXIMUM over the keys' column NDVs, not their product,
-        // and every column of a pseudo side has the same NDV. TiDB prints
-        // 12475.01, again its own 9980.01-row inputs.
-        "SELECT * FROM j1 JOIN j2 ON j1.a = j2.a AND j1.b = j2.b",
     ] {
-        assert_eq!(join_est(&mut session, equi), "12500.00", "{equi}");
+        assert_eq!(join_est(&mut session, equi), "12487.50", "{equi}");
     }
+    // TWO nullable keys leave 9980.01 rows per side; the join NDV remains the
+    // maximum over the keys rather than their product.
+    assert_eq!(
+        join_est(
+            &mut session,
+            "SELECT * FROM j1 JOIN j2 ON j1.a = j2.a AND j1.b = j2.b"
+        ),
+        "12475.01"
+    );
 
     // A non-equality `ON` is a CARTESIAN join with an `other cond:`, so it
     // takes the product arm. TiDB prints 99800100.00 = 9990 * 9990: `gt`
     // rejects nulls, so its rewrite fires here too.
     assert_eq!(
         join_est(&mut session, "SELECT * FROM j1 JOIN j2 ON j1.a > j2.a"),
-        "100000000.00"
+        "99800100.00"
     );
 
     // An ANALYZEd side has real per-column histogram NDVs, which this tier

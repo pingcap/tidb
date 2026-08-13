@@ -457,6 +457,56 @@ impl PlanTrace {
         self.stack.push(node);
     }
 
+    fn wrap_child(&mut self, from_top: usize, name: &'static str, est: Est, info: String) {
+        let index = self.stack.len() - 1 - from_top;
+        let child = self.stack.remove(index);
+        let mut node = PlanNode::new(name, est.apply(child.est_rows), child.access.clone(), info);
+        node.key_ndv_ratio = match est {
+            Est::Inherit | Est::Scale(_) => child.key_ndv_ratio,
+            Est::Fixed(_) | Est::CapAt(_) => None,
+        };
+        node.children.push(child);
+        self.stack.insert(index, node);
+    }
+
+    /// Records a pushed selection over one of the two completed join children.
+    pub(crate) fn pushed_selection(
+        &mut self,
+        from_top: usize,
+        predicate: &tidb_ast::Expr,
+        built: &[Expression],
+        qualify: &Qualifier<'_>,
+        rate: Option<f64>,
+    ) {
+        let info = qualify
+            .expressions(built)
+            .unwrap_or_else(|| qualify.expr(predicate));
+        self.wrap_child(
+            from_top,
+            "Selection",
+            Est::Scale(rate.unwrap_or_else(|| pseudo_selectivity(predicate))),
+            info,
+        );
+    }
+
+    /// Meters an executor corresponding to one completed join child.
+    pub(crate) fn meter_child(
+        &mut self,
+        from_top: usize,
+        exec: Box<dyn Executor>,
+    ) -> Box<dyn Executor> {
+        if !self.counting {
+            return exec;
+        }
+        let counter = Rc::new(Cell::new(0));
+        let index = self.stack.len() - 1 - from_top;
+        self.stack[index].act_rows = Some(Rc::clone(&counter));
+        Box::new(CountExec {
+            child: exec,
+            counter,
+        })
+    }
+
     /// Meters the executor built for the node on top of the stack: outside
     /// `EXPLAIN ANALYZE` this hands the executor straight back.
     pub(crate) fn meter(&mut self, exec: Box<dyn Executor>) -> Box<dyn Executor> {

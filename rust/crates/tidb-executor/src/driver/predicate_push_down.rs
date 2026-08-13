@@ -58,9 +58,19 @@
 //! non-deterministic expression, which Go screens for by name
 //! (`expression.IsMutableEffectsExpr`, `CheckNonDeterministic`).
 
-use tidb_ast::{BinaryOp, Expr};
+use std::collections::{BTreeMap, BTreeSet};
 
-use super::from::{FromScope, ScopeResolver};
+use tidb_ast::{
+    BinaryOp, Expr, Join, JoinNode, JoinType, TableRef, FLAG_HAS_AGGREGATE_FUNC, FLAG_HAS_SUBQUERY,
+    FLAG_HAS_VARIABLE, FLAG_HAS_WINDOW_FUNC,
+};
+use tidb_datatype::FieldType;
+
+use super::{
+    catalog::split_table_path,
+    from::{FromScope, ScopeResolver},
+    Catalog,
+};
 use tidb_expr::rewriter::ColumnResolver;
 
 /// The `WHERE` conjuncts an enclosing `SELECT` offers to the joins below it.
@@ -68,6 +78,547 @@ use tidb_expr::rewriter::ColumnResolver;
 /// Empty for every caller that has no `WHERE` to offer -- a subquery built
 /// through [`super::from::build_join`] directly, or a `FROM` with no filter.
 pub(crate) type Offered<'a> = &'a [&'a Expr];
+
+/// Predicates each base-table leaf may evaluate before its parent join.
+#[derive(Default)]
+pub(crate) struct Plan {
+    filters: BTreeMap<String, Vec<Expr>>,
+}
+
+impl Plan {
+    pub(crate) fn filters_for(&self, table: &TableRef) -> &[Expr] {
+        let qualifier = table
+            .alias
+            .as_ref()
+            .or_else(|| table.name.last())
+            .map(|name| name.to_ascii_lowercase());
+        qualifier
+            .as_ref()
+            .and_then(|name| self.filters.get(name))
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
+}
+
+#[derive(Clone)]
+struct Binding {
+    qualifier: String,
+    columns: Vec<(String, FieldType)>,
+}
+
+/// Builds Go's child-condition distribution for the join tree.
+pub(crate) fn plan(
+    join: &Join,
+    where_clause: Option<&Expr>,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Plan {
+    let Some(bindings) = bindings(&JoinNode::Join(Box::new(join.clone())), catalog, current_db)
+    else {
+        return Plan::default();
+    };
+    let mut inherited = Vec::new();
+    if let Some(predicate) = where_clause {
+        collect_conjuncts(predicate, &mut inherited);
+    }
+    let mut plan = Plan::default();
+    distribute_join(join, &inherited, &bindings, catalog, current_db, &mut plan);
+    plan
+}
+
+fn distribute_join(
+    join: &Join,
+    inherited: &[Expr],
+    bindings: &[Binding],
+    catalog: &Catalog,
+    current_db: &str,
+    plan: &mut Plan,
+) {
+    if join.right.is_none() && join.on.is_none() && join.using.is_empty() && !join.natural {
+        if let JoinNode::Join(inner) = &join.left {
+            distribute_join(inner, inherited, bindings, catalog, current_db, plan);
+        }
+        return;
+    }
+    let Some(right) = &join.right else {
+        return;
+    };
+    let Some(left_names) = relation_names(&join.left, catalog, current_db) else {
+        return;
+    };
+    let Some(right_names) = relation_names(right, catalog, current_db) else {
+        return;
+    };
+    let mut left = Vec::new();
+    let mut right_filters = Vec::new();
+    let mut on = Vec::new();
+    if let Some(condition) = &join.on {
+        collect_conjuncts(condition, &mut on);
+    }
+
+    match join.tp {
+        JoinType::Cross => {
+            for condition in inherited.iter().chain(&on) {
+                derive_for_sides(
+                    condition,
+                    &left_names,
+                    &right_names,
+                    bindings,
+                    true,
+                    true,
+                    &mut left,
+                    &mut right_filters,
+                );
+            }
+        }
+        JoinType::Left => {
+            for condition in inherited {
+                derive_for_sides(
+                    condition,
+                    &left_names,
+                    &right_names,
+                    bindings,
+                    true,
+                    false,
+                    &mut left,
+                    &mut right_filters,
+                );
+            }
+            for condition in &on {
+                derive_for_sides(
+                    condition,
+                    &left_names,
+                    &right_names,
+                    bindings,
+                    false,
+                    true,
+                    &mut left,
+                    &mut right_filters,
+                );
+            }
+        }
+        JoinType::Right => {
+            for condition in inherited {
+                derive_for_sides(
+                    condition,
+                    &left_names,
+                    &right_names,
+                    bindings,
+                    false,
+                    true,
+                    &mut left,
+                    &mut right_filters,
+                );
+            }
+            for condition in &on {
+                derive_for_sides(
+                    condition,
+                    &left_names,
+                    &right_names,
+                    bindings,
+                    true,
+                    false,
+                    &mut left,
+                    &mut right_filters,
+                );
+            }
+        }
+    }
+    dedup(&mut left);
+    dedup(&mut right_filters);
+    distribute_node(&join.left, &left, bindings, catalog, current_db, plan);
+    distribute_node(right, &right_filters, bindings, catalog, current_db, plan);
+}
+
+fn distribute_node(
+    node: &JoinNode,
+    inherited: &[Expr],
+    bindings: &[Binding],
+    catalog: &Catalog,
+    current_db: &str,
+    plan: &mut Plan,
+) {
+    match node {
+        JoinNode::Table(table) => {
+            let qualifier = table
+                .alias
+                .as_ref()
+                .or_else(|| table.name.last())
+                .map(|name| name.to_ascii_lowercase());
+            if let Some(qualifier) = qualifier {
+                let filters = plan.filters.entry(qualifier).or_default();
+                filters.extend_from_slice(inherited);
+                dedup(filters);
+            }
+        }
+        JoinNode::Join(join) => {
+            distribute_join(join, inherited, bindings, catalog, current_db, plan)
+        }
+        // Pushing through a projection requires rewriting its output columns
+        // to defining expressions. Leave that separate rule at its boundary.
+        JoinNode::Derived { .. } => {}
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn derive_for_sides(
+    condition: &Expr,
+    left_names: &BTreeSet<String>,
+    right_names: &BTreeSet<String>,
+    bindings: &[Binding],
+    derive_left: bool,
+    derive_right: bool,
+    left: &mut Vec<Expr>,
+    right: &mut Vec<Expr>,
+) {
+    if !safe_to_duplicate(condition) {
+        return;
+    }
+    let side = expression_side(condition, left_names, right_names, bindings);
+    match side {
+        Side::Left if derive_left => left.push(condition.clone()),
+        Side::Right if derive_right => right.push(condition.clone()),
+        Side::Both => {
+            if derive_left {
+                if let Some(filter) = relaxed_dnf(condition, left_names, bindings) {
+                    left.push(filter);
+                }
+                derive_not_null(condition, left_names, bindings, left);
+            }
+            if derive_right {
+                if let Some(filter) = relaxed_dnf(condition, right_names, bindings) {
+                    right.push(filter);
+                }
+                derive_not_null(condition, right_names, bindings, right);
+            }
+        }
+        Side::Left | Side::Right | Side::Foreign => {}
+    }
+}
+
+/// Whether copying a predicate below a join preserves its observable value.
+///
+/// Go refuses mutable-effects and non-deterministic scalar functions before
+/// predicate distribution. Variables and subqueries are rejected at the AST
+/// boundary as well: they can change between evaluations or own execution
+/// state, so evaluating the original predicate plus a pushed copy is unsound.
+fn safe_to_duplicate(expr: &Expr) -> bool {
+    const UNSAFE_FLAGS: u64 =
+        FLAG_HAS_AGGREGATE_FUNC | FLAG_HAS_SUBQUERY | FLAG_HAS_VARIABLE | FLAG_HAS_WINDOW_FUNC;
+    if expr.flags() & UNSAFE_FLAGS != 0 {
+        return false;
+    }
+
+    struct MutableCall(bool);
+    impl tidb_ast::Visitor for MutableCall {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(expr) = node.downcast_ref::<Expr>() {
+                match expr {
+                    Expr::Func { name, .. } => {
+                        let name = name.to_ascii_lowercase();
+                        self.0 |= super::through_proj::is_mutable_effects(&name)
+                            || super::through_proj::is_unfoldable(&name);
+                    }
+                    // A schema-qualified function has no builtin purity
+                    // contract in this tier, so fail closed.
+                    Expr::GenericFuncCall { .. } => self.0 = true,
+                    _ => {}
+                }
+            }
+            self.0
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            !self.0
+        }
+    }
+
+    let mut check = MutableCall(false);
+    let mut owned = expr.clone();
+    tidb_ast::Visitable::accept(&mut owned, &mut check);
+    !check.0
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Left,
+    Right,
+    Both,
+    Foreign,
+}
+
+fn expression_side(
+    expr: &Expr,
+    left: &BTreeSet<String>,
+    right: &BTreeSet<String>,
+    bindings: &[Binding],
+) -> Side {
+    let paths = column_paths(expr);
+    if paths.is_empty() {
+        return Side::Foreign;
+    }
+    let mut in_left = false;
+    let mut in_right = false;
+    for path in paths {
+        let Some(binding) = resolve_binding(&path, bindings) else {
+            return Side::Foreign;
+        };
+        in_left |= left.contains(&binding.qualifier.to_ascii_lowercase());
+        in_right |= right.contains(&binding.qualifier.to_ascii_lowercase());
+    }
+    match (in_left, in_right) {
+        (true, false) => Side::Left,
+        (false, true) => Side::Right,
+        (true, true) => Side::Both,
+        _ => Side::Foreign,
+    }
+}
+
+fn relaxed_dnf(expr: &Expr, target: &BTreeSet<String>, bindings: &[Binding]) -> Option<Expr> {
+    let mut terms = Vec::new();
+    flatten(expr, BinaryOp::LogicOr, &mut terms);
+    if terms.len() < 2 {
+        return None;
+    }
+    let mut relaxed_terms = Vec::new();
+    for term in terms {
+        let mut conjuncts = Vec::new();
+        flatten(term, BinaryOp::LogicAnd, &mut conjuncts);
+        let mut kept = Vec::new();
+        for conjunct in conjuncts {
+            let mut nested = Vec::new();
+            flatten(conjunct, BinaryOp::LogicOr, &mut nested);
+            if nested.len() > 1 {
+                if let Some(relaxed) = relaxed_dnf(conjunct, target, bindings) {
+                    kept.push(relaxed);
+                }
+            } else if expression_in(conjunct, target, bindings) {
+                kept.push(conjunct.clone());
+            }
+        }
+        if kept.is_empty() {
+            return None;
+        }
+        if kept.len() == 1 {
+            let only = kept.pop().expect("one relaxed conjunct");
+            let mut nested_terms = Vec::new();
+            flatten(&only, BinaryOp::LogicOr, &mut nested_terms);
+            if nested_terms.len() > 1 {
+                relaxed_terms.extend(nested_terms.into_iter().cloned());
+            } else {
+                relaxed_terms.push(only);
+            }
+        } else {
+            relaxed_terms.push(compose(BinaryOp::LogicAnd, kept));
+        }
+    }
+    Some(compose(BinaryOp::LogicOr, relaxed_terms))
+}
+
+fn expression_in(expr: &Expr, target: &BTreeSet<String>, bindings: &[Binding]) -> bool {
+    let paths = column_paths(expr);
+    !paths.is_empty()
+        && paths.iter().all(|path| {
+            resolve_binding(path, bindings)
+                .is_some_and(|binding| target.contains(&binding.qualifier.to_ascii_lowercase()))
+        })
+}
+
+fn derive_not_null(
+    condition: &Expr,
+    target: &BTreeSet<String>,
+    bindings: &[Binding],
+    out: &mut Vec<Expr>,
+) {
+    let Expr::Binary(_, lhs, rhs) = strip_parens(condition) else {
+        return;
+    };
+    let (Expr::Column(left), Expr::Column(right)) = (strip_parens(lhs), strip_parens(rhs)) else {
+        return;
+    };
+    if !super::funcdep::null_reject::is_null_rejected_by(condition, &|path| {
+        resolve_binding(path, bindings)
+            .is_some_and(|binding| target.contains(&binding.qualifier.to_ascii_lowercase()))
+    }) {
+        return;
+    }
+    for path in [left, right] {
+        let Some(binding) = resolve_binding(path, bindings) else {
+            continue;
+        };
+        if !target.contains(&binding.qualifier.to_ascii_lowercase()) {
+            continue;
+        }
+        let Some(column) = path.last() else { continue };
+        let nullable = binding.columns.iter().any(|(name, field_type)| {
+            name.eq_ignore_ascii_case(column) && field_type.flags() & 1 == 0
+        });
+        if nullable {
+            out.push(Expr::Is {
+                expr: Box::new(Expr::Column(path.clone())),
+                target: tidb_ast::IsTarget::Null,
+                not: true,
+            });
+        }
+    }
+}
+
+fn relation_names(
+    node: &JoinNode,
+    catalog: &Catalog,
+    current_db: &str,
+) -> Option<BTreeSet<String>> {
+    Some(
+        bindings(node, catalog, current_db)?
+            .into_iter()
+            .map(|binding| binding.qualifier.to_ascii_lowercase())
+            .collect(),
+    )
+}
+
+fn bindings(node: &JoinNode, catalog: &Catalog, current_db: &str) -> Option<Vec<Binding>> {
+    match node {
+        JoinNode::Table(table) => {
+            let (database, name) = split_table_path(&table.name, current_db).ok()?;
+            Some(vec![Binding {
+                qualifier: table.alias.clone().unwrap_or_else(|| name.to_owned()),
+                columns: catalog.get_in(database, name)?.column_list(),
+            }])
+        }
+        JoinNode::Join(join) => {
+            let mut result = bindings(&join.left, catalog, current_db)?;
+            if let Some(right) = &join.right {
+                result.extend(bindings(right, catalog, current_db)?);
+            }
+            Some(result)
+        }
+        JoinNode::Derived { .. } => None,
+    }
+}
+
+fn resolve_binding<'a>(path: &[String], bindings: &'a [Binding]) -> Option<&'a Binding> {
+    let column = path.last()?;
+    let candidates: Vec<&Binding> = if path.len() >= 2 {
+        let qualifier = &path[path.len() - 2];
+        bindings
+            .iter()
+            .filter(|binding| {
+                binding.qualifier.eq_ignore_ascii_case(qualifier)
+                    && binding
+                        .columns
+                        .iter()
+                        .any(|(name, _)| name.eq_ignore_ascii_case(column))
+            })
+            .collect()
+    } else {
+        bindings
+            .iter()
+            .filter(|binding| {
+                binding
+                    .columns
+                    .iter()
+                    .any(|(name, _)| name.eq_ignore_ascii_case(column))
+            })
+            .collect()
+    };
+    if candidates.len() == 1 {
+        Some(candidates[0])
+    } else {
+        None
+    }
+}
+
+fn column_paths(expr: &Expr) -> Vec<Vec<String>> {
+    struct Collect(Vec<Vec<String>>);
+    impl tidb_ast::Visitor for Collect {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            if let Some(Expr::Column(path)) = node.downcast_ref::<Expr>() {
+                self.0.push(path.clone());
+            }
+            false
+        }
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+    let mut collect = Collect(Vec::new());
+    let mut owned = expr.clone();
+    tidb_ast::Visitable::accept(&mut owned, &mut collect);
+    collect.0
+}
+
+fn collect_conjuncts(expr: &Expr, out: &mut Vec<Expr>) {
+    let mut borrowed = Vec::new();
+    flatten(expr, BinaryOp::LogicAnd, &mut borrowed);
+    out.extend(borrowed.into_iter().cloned());
+}
+
+fn flatten<'a>(expr: &'a Expr, op: BinaryOp, out: &mut Vec<&'a Expr>) {
+    match strip_parens(expr) {
+        Expr::Binary(found, left, right) if *found == op => {
+            flatten(left, op, out);
+            flatten(right, op, out);
+        }
+        other => out.push(other),
+    }
+}
+
+fn compose(op: BinaryOp, expressions: Vec<Expr>) -> Expr {
+    fn balanced(op: BinaryOp, expressions: &[Expr]) -> Expr {
+        match expressions {
+            [only] => only.clone(),
+            many => {
+                let middle = many.len() / 2;
+                Expr::Binary(
+                    op,
+                    Box::new(balanced(op, &many[..middle])),
+                    Box::new(balanced(op, &many[middle..])),
+                )
+            }
+        }
+    }
+    assert!(!expressions.is_empty(), "a derived predicate is nonempty");
+    balanced(op, &expressions)
+}
+
+/// One display/selectivity expression for a leaf's condition list.
+pub(crate) fn combined(expressions: &[Expr]) -> Option<Expr> {
+    (!expressions.is_empty()).then(|| compose(BinaryOp::LogicAnd, expressions.to_vec()))
+}
+
+/// Exact pseudo-row factor for a list containing only derived `IS NOT NULL`
+/// filters. Go's range estimate removes one pseudo-equal bucket per nullable
+/// key, rather than applying the generic selection factor.
+pub(crate) fn derived_not_null_rate(expressions: &[Expr]) -> Option<f64> {
+    let all_not_null = expressions.iter().all(|expression| {
+        matches!(
+            strip_parens(expression),
+            Expr::Is {
+                target: tidb_ast::IsTarget::Null,
+                not: true,
+                ..
+            }
+        )
+    });
+    all_not_null.then(|| (1.0 - 1.0 / 1000.0_f64).powi(expressions.len() as i32))
+}
+
+fn strip_parens(expr: &Expr) -> &Expr {
+    match expr {
+        Expr::Paren(inner) => strip_parens(inner),
+        other => other,
+    }
+}
+
+fn dedup(expressions: &mut Vec<Expr>) {
+    let mut unique = Vec::with_capacity(expressions.len());
+    for expression in expressions.drain(..) {
+        if !unique.contains(&expression) {
+            unique.push(expression);
+        }
+    }
+    *expressions = unique;
+}
 
 /// Splits `select`'s `WHERE` into the conjuncts eligible for pushdown.
 pub(crate) fn offered_conjuncts(where_clause: Option<&Expr>) -> Vec<&Expr> {

@@ -1405,6 +1405,78 @@ pub(crate) fn coalesce_common_columns(
 // name the demand without changing what travels; the sibling builders in this
 // module carry the same allow.
 #[allow(clippy::too_many_arguments)]
+fn apply_pushed_leaf_filters(
+    node: &JoinNode,
+    mut exec: Box<dyn Executor>,
+    scope: &FromScope,
+    demand: crate::driver::leaf_demand::FromDemand<'_>,
+    ctx: &crate::StmtContext,
+    trace: Option<&mut PlanTrace>,
+    trace_from_top: usize,
+    current_db: &str,
+) -> Result<Box<dyn Executor>, DriverError> {
+    let mut relation = node;
+    while let JoinNode::Join(join) = relation {
+        if join.right.is_some() || join.on.is_some() || !join.using.is_empty() || join.natural {
+            return Ok(exec);
+        }
+        relation = &join.left;
+    }
+    let JoinNode::Table(table) = relation else {
+        return Ok(exec);
+    };
+    let Some(filters) = demand
+        .pushdown
+        .map(|pushdown| pushdown.filters_for(table))
+        .filter(|filters| !filters.is_empty())
+    else {
+        return Ok(exec);
+    };
+    let resolver = ScopeResolver { scope };
+    let mut built = Vec::with_capacity(filters.len());
+    for filter in filters {
+        let mut expression = rewrite_expr_resolved(filter, &resolver)
+            .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
+        tidb_expr::builtin_compare::refine_comparisons(&mut expression, ctx);
+        built.push(expression);
+    }
+    let schema = Schema::new(
+        exec.ret_field_types()
+            .iter()
+            .enumerate()
+            .map(|(index, field_type)| {
+                let mut column = Column::new((index + 1) as i64, field_type.clone());
+                column.index = index as i64;
+                column
+            })
+            .collect(),
+    );
+    exec = Box::new(SelectionExec::new(
+        ExecutorMeta::new(schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
+        built.clone(),
+        exec,
+        ctx.clone(),
+        ctx.statement_memory(),
+    ));
+    if let (Some(trace), Some(written)) =
+        (trace, crate::driver::predicate_push_down::combined(filters))
+    {
+        trace.pushed_selection(
+            trace_from_top,
+            &written,
+            &built,
+            &crate::plan_trace::Qualifier {
+                db: current_db,
+                scope,
+            },
+            crate::driver::predicate_push_down::derived_not_null_rate(filters),
+        );
+        exec = trace.meter_child(trace_from_top, exec);
+    }
+    Ok(exec)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_join(
     join: &tidb_ast::Join,
     catalog: &Catalog,
@@ -1573,6 +1645,8 @@ pub(crate) fn build_join(
         demand,
         &right_required,
     )?;
+    let mut left_filter_scope = left_scope.clone();
+    let mut right_filter_scope = right_scope.clone();
 
     // VERIFY -- the second half of the promise/verify contract (see
     // `merge_decision`'s module doc). `merge` was formed from the PROMISE:
@@ -1697,6 +1771,12 @@ pub(crate) fn build_join(
             &mut right_exec,
         ) {
             pruned = true;
+            if left_filter_scope.tables.len() == 1 {
+                left_filter_scope.tables[0].columns = left_columns.clone();
+            }
+            if right_filter_scope.tables.len() == 1 {
+                right_filter_scope.tables[0].columns = right_columns.clone();
+            }
             left_width = left_columns.len();
             scope.tables[0].columns = left_columns;
             scope.tables[0].offset = 0;
@@ -1704,6 +1784,27 @@ pub(crate) fn build_join(
             scope.tables[1].offset = left_width;
         }
     }
+
+    left_exec = apply_pushed_leaf_filters(
+        &join.left,
+        left_exec,
+        &left_filter_scope,
+        demand,
+        ctx,
+        trace.as_deref_mut(),
+        1,
+        current_db,
+    )?;
+    right_exec = apply_pushed_leaf_filters(
+        right_node,
+        right_exec,
+        &right_filter_scope,
+        demand,
+        ctx,
+        trace.as_deref_mut(),
+        0,
+        current_db,
+    )?;
 
     let column_list = scope.column_list();
     let schema_columns: Vec<Column> = column_list

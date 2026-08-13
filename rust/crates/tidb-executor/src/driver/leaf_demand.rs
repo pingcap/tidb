@@ -99,6 +99,8 @@ pub(crate) struct FromDemand<'a> {
     /// The `WHERE` equalities offered to the joins below; see
     /// [`crate::driver::predicate_push_down`].
     pub(crate) offered: crate::driver::predicate_push_down::Offered<'a>,
+    /// Per-relation predicates derived by Go's join predicate-pushdown rule.
+    pub(crate) pushdown: Option<&'a crate::driver::predicate_push_down::Plan>,
     /// The columns each base-table leaf must still produce, or `None` when
     /// the caller has no statement to compute them from -- which every leaf
     /// reads as "every column", the answer it gave before this existed.
@@ -121,6 +123,7 @@ impl FromDemand<'_> {
     pub(crate) fn none() -> Self {
         FromDemand {
             offered: &[],
+            pushdown: None,
             columns: None,
             rows: None,
             join_hints: None,

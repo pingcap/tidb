@@ -1117,7 +1117,7 @@ fn shape_of(expr: &Expr) -> ProjectionInlineExpr {
 }
 
 /// Go `unFoldableFunctions` (`pkg/expression/function_traits.go:48`).
-fn is_unfoldable(name: &str) -> bool {
+pub(crate) fn is_unfoldable(name: &str) -> bool {
     matches!(
         name,
         "sysdate"
@@ -1142,7 +1142,7 @@ fn is_unfoldable(name: &str) -> bool {
 }
 
 /// Go `mutableEffectsFunctions` (`pkg/expression/function_traits.go:224`).
-fn is_mutable_effects(name: &str) -> bool {
+pub(crate) fn is_mutable_effects(name: &str) -> bool {
     matches!(
         name,
         "now"

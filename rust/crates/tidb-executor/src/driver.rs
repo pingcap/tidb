@@ -729,6 +729,12 @@ pub(crate) fn run_select_traced(
             // build the cross product the filter would then throw away. See
             // `driver::predicate_push_down`.
             let offered = predicate_push_down::offered_conjuncts(select.where_clause.as_ref());
+            let pushdown = predicate_push_down::plan(
+                logical_join,
+                select.where_clause.as_ref(),
+                catalog,
+                current_db,
+            );
             // Go's `rule_column_pruning`: what every `DataSource` below still
             // has to produce, which is the input its access-path costing
             // needs (`isCoveringIndex`). A `FROM` of ONE base table is
@@ -757,6 +763,7 @@ pub(crate) fn run_select_traced(
             let join_hints = join_method_hints::JoinMethodHints::of_select(select);
             let demand = leaf_demand::FromDemand {
                 offered: &offered,
+                pushdown: Some(&pushdown),
                 columns: wanted.as_ref(),
                 rows: row_source.as_ref(),
                 join_hints: (!join_hints.is_empty()).then_some(&join_hints),

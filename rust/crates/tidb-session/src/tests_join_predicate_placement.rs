@@ -40,10 +40,6 @@
 //! Rows agree everywhere. Outer-to-inner conversion now matches all eight Go
 //! cases. Three independent plan gaps remain:
 //!
-//! * **No predicate reaches either scan.** In all 38 cases every condition
-//!   stays at the join or in the `Selection` above it; no `DataSource`-level
-//!   `PushedDownConds` equivalent exists, which is what all 30 `Left`/`Right`
-//!   expectations of the other three tests are about.
 //! * **`<=>` is not an equal key.** Go joins on `nulleq`; here it lands in
 //!   `other cond` and the join goes CARTESIAN.
 //! * **`NOT EXISTS` is not an anti semi join.** Go's
@@ -155,7 +151,10 @@ fn check(session: &mut Session, sql: &str, pairs: &[Pair]) {
 /// annotation stripped so it is comparable to Go's logical
 /// `JoinType.String()`. `None` when the plan has no join operator at all.
 fn join_type(session: &mut Session, sql: &str) -> Option<String> {
-    let plan = match session.run(&format!("EXPLAIN {sql}")).unwrap() {
+    let plan = match session
+        .run(&format!("EXPLAIN {sql}"))
+        .unwrap_or_else(|error| panic!("EXPLAIN failed for `{sql}`: {error:?}"))
+    {
         StmtResult::Rows(rows) => rows,
         other => panic!("expected rows from EXPLAIN, got {other:?}"),
     };
@@ -179,7 +178,10 @@ fn join_type(session: &mut Session, sql: &str) -> Option<String> {
 /// or a `Selection` beneath the join, exactly as Go's own `EXPLAIN` shows the
 /// pushed cases as `cop[tikv]` selections under each `TableReader`.
 fn conditions_below_join(session: &mut Session, sql: &str) -> Vec<(String, String)> {
-    let plan = match session.run(&format!("EXPLAIN {sql}")).unwrap() {
+    let plan = match session
+        .run(&format!("EXPLAIN {sql}"))
+        .unwrap_or_else(|error| panic!("EXPLAIN failed for `{sql}`: {error:?}"))
+    {
         StmtResult::Rows(rows) => rows,
         other => panic!("expected rows from EXPLAIN, got {other:?}"),
     };
@@ -765,60 +767,32 @@ fn derive_not_null_conds_returns_tidbs_rows() {
     assert_eq!(rows(&mut session, sql), anti_semi_expected(pairs), "{sql}");
 }
 
-/// RUNNING GUARD for the push-down gap: in all 30 cases of the three tables
-/// nothing below the join carries a predicate. Every condition is either a
-/// join `equal:`/`other cond:` or a `Selection` above the join.
-///
-/// When a predicate does start reaching a scan, this fails and the three
-/// `#[ignore]`d tests below become the live ones.
-#[test]
-fn no_predicate_reaches_either_side_of_a_join_today() {
-    let mut session = signed_table_session();
-    let all = OUTER_WHERE_PREDICATE_PUSH_DOWN
-        .iter()
-        .chain(JOIN_PREDICATE_PUSH_DOWN)
-        .chain(DERIVE_NOT_NULL_CONDS);
-    let mut cases = 0;
-    for (sql, _, _, _) in all {
-        assert_eq!(
-            conditions_below_join(&mut session, sql),
-            Vec::new(),
-            "conditions below the join of `{sql}`"
-        );
-        cases += 1;
-    }
-    assert_eq!(cases, 30);
-    // Go pushes something to at least one side in 19 of the 30 -- the size of
-    // the gap the ignored tests carry.
-    assert_eq!(
-        OUTER_WHERE_PREDICATE_PUSH_DOWN
-            .iter()
-            .chain(JOIN_PREDICATE_PUSH_DOWN)
-            .chain(DERIVE_NOT_NULL_CONDS)
-            .filter(|(_, left, right, _)| *left != "[]" || *right != "[]")
-            .count(),
-        19
-    );
-}
-
 /// Go's `Left`/`Right` for `TestOuterWherePredicatePushDown`, asserted as Go
 /// gives them, against the nearest observable this tier has.
 #[test]
-#[ignore = "no predicate reaches a scan in this tier; Go's per-side conditions asserted"]
 fn outer_where_predicate_push_down_derives_a_left_side_condition() {
     assert_pushed_conditions(OUTER_WHERE_PREDICATE_PUSH_DOWN);
 }
 
 #[test]
-#[ignore = "no predicate reaches a scan in this tier; Go's per-side conditions asserted"]
 fn join_predicate_push_down_derives_per_side_conditions() {
     assert_pushed_conditions(JOIN_PREDICATE_PUSH_DOWN);
 }
 
 #[test]
-#[ignore = "no predicate reaches a scan in this tier; Go's per-side conditions asserted"]
 fn derive_not_null_conds_pushes_not_null_to_every_unpreserved_side() {
     assert_pushed_conditions(DERIVE_NOT_NULL_CONDS);
+}
+
+#[test]
+fn mutable_predicates_are_not_duplicated_below_a_join() {
+    let mut session = signed_table_session();
+    let sql = "select * from t t1 left join t t2 on t1.e = t2.e where t1.a > rand()";
+    let below = conditions_below_join(&mut session, sql);
+    assert!(
+        below.iter().all(|(_, info)| !info.contains("rand")),
+        "RAND() must remain above the join: {below:?}"
+    );
 }
 
 /// Asserts each side of the join carries exactly Go's condition list.
@@ -832,16 +806,46 @@ fn assert_pushed_conditions(cases: &[PushDownCase]) {
     let mut session = signed_table_session();
     for (sql, left, right, _) in cases {
         let below = conditions_below_join(&mut session, sql);
-        let found: Vec<&str> = below.iter().map(|(_, info)| info.as_str()).collect();
-        let mut want: Vec<&str> = Vec::new();
+        let found: Vec<String> = below
+            .iter()
+            .map(|(_, info)| {
+                logical_condition_list(
+                    &info
+                        .replace("test.t1.", "test.t.")
+                        .replace("test.t2.", "test.t."),
+                )
+            })
+            .collect();
+        let mut want: Vec<String> = Vec::new();
         if *right != "[]" {
-            want.push(right);
+            want.push((*right).to_owned());
         }
         if *left != "[]" {
-            want.push(left);
+            want.push((*left).to_owned());
         }
         assert_eq!(found, want, "pushed conditions of `{sql}`");
     }
+}
+
+fn logical_condition_list(info: &str) -> String {
+    let mut out = String::from("[");
+    let mut depth = 0usize;
+    let mut chars = info.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 && chars.peek() == Some(&' ') => {
+                chars.next();
+                out.push(' ');
+                continue;
+            }
+            _ => {}
+        }
+        out.push(ch);
+    }
+    out.push(']');
+    out
 }
 
 /// The three remaining plan-shape gaps this table exposed, pinned as they are
