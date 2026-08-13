@@ -81,28 +81,29 @@ func TestPackSubtasks(t *testing.T) {
 }
 
 func TestChunksBySize(t *testing.T) {
-	b := keys("a", "b", "c", "d", "e") // 4 regions
+	start, end := kv.Key("a"), kv.Key("e")
+	ends := keys("b", "c", "d", "e") // 4 regions over [a, e)
 	half := int64(chunkSize / 2)
 	// Two regions per chunk reach chunkSize → 2 chunks, real accumulated size.
-	chunks, next := chunksBySize(2, 100, b, []int64{half, half, half, half}, 0)
+	chunks, next := chunksBySize(2, 100, start, end, ends, []int64{half, half, half, half}, 0)
 	require.Len(t, chunks, 2)
 	require.Equal(t, 2, next)
-	require.Equal(t, kv.Key("a"), kv.Key(chunks[0].Start))
+	require.Equal(t, start, kv.Key(chunks[0].Start))
 	require.Equal(t, chunks[0].End, chunks[1].Start)
-	require.Equal(t, kv.Key("e"), kv.Key(chunks[len(chunks)-1].End))
+	require.Equal(t, end, kv.Key(chunks[len(chunks)-1].End))
 	require.Equal(t, int64(chunkSize), chunks[0].Size)
 	require.Equal(t, 0, chunks[0].Ordinal)
 	require.Equal(t, 2, chunks[0].TableIdx)
 	require.Equal(t, int64(100), chunks[0].PhysicalID)
 
 	// A region past the limit is its own chunk; the sub-limit tail still flushes.
-	c2, _ := chunksBySize(0, 1, keys("a", "b", "c"), []int64{2 * chunkSize, 1}, 0)
+	c2, _ := chunksBySize(0, 1, kv.Key("a"), kv.Key("c"), keys("b", "c"), []int64{2 * chunkSize, 1}, 0)
 	require.Len(t, c2, 2)
 	require.Equal(t, int64(2*chunkSize), c2[0].Size)
 	require.Equal(t, int64(1), c2[1].Size)
 
 	// Ordinal continues from startOrdinal.
-	_, n := chunksBySize(0, 1, keys("a", "b"), []int64{1}, 5)
+	_, n := chunksBySize(0, 1, kv.Key("a"), kv.Key("b"), keys("b"), []int64{1}, 5)
 	require.Equal(t, 6, n)
 }
 

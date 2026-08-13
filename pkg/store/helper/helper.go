@@ -849,13 +849,10 @@ func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexSta
 	return pdCli.GetRegionStatusByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), false)
 }
 
-// RegionApproximateSizes returns, for each region over the logical range
-// [startKey, endKey) via PD in key order, its raw end key and its byte size
-// (max(ApproximateSize, ApproximateKvSize)). endKeys and sizes are aligned. It
-// prefers ApproximateKvSize because it tracks logical data size better than the
-// compressed on-disk ApproximateSize; max() covers TiKV not reporting the KV
-// size. PD returns region keys in the codec-encoded keyspace, so they are decoded
-// back to the raw keyspace.
+// RegionApproximateSizes returns each region's raw end key and byte size
+// (max(ApproximateSize, ApproximateKvSize), preferring the logical KV size) over
+// [startKey, endKey) via PD, in key order. PD keys are decoded from the codec
+// keyspace back to raw.
 func (h *Helper) RegionApproximateSizes(ctx context.Context, pdCli pd.Client, startKey, endKey kv.Key) (endKeys []kv.Key, sizes []int64, err error) {
 	codec := h.Store.GetCodec()
 	cur, end := codec.EncodeRegionRange(startKey, endKey)

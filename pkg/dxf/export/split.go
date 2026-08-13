@@ -38,21 +38,18 @@ const (
 	loadRegionMaxRetry    = 8
 	scanRegionBackoffBase = 200 * time.Millisecond
 	scanRegionBackoffMax  = 2 * time.Second
-	// chunkSize is the per-chunk work granularity, kept well above FileSize (the
-	// within-chunk file-cut size) so each chunk leaves at most one partial tail
-	// file: fewer, larger chunks mean fewer partial files.
+	// chunkSize is the per-chunk work granularity, kept above FileSize so each
+	// chunk leaves at most one partial tail file.
 	chunkSize = 10 * 1024 * 1024 * 1024
 	// chunksPerWorker is how many chunks a subtask holds per worker slot.
 	chunksPerWorker = 2
 	// maxChunksPerSubtask is a hard ceiling on the chunk count per subtask (the
-	// usual bound is the byte size in packSubtasks); it only bites for a schema of
-	// many tiny tables, keeping a subtask's chunk list and its meta bounded.
+	// usual bound is byte size), so a schema of many tiny tables stays bounded.
 	maxChunksPerSubtask = 4000
 )
 
 // splitTables carves every table into ~chunkSize chunks, then packs the chunks
-// into subtasks sized to the worker concurrency. Deterministic given the same
-// region layout.
+// into subtasks sized to the worker concurrency.
 func splitTables(ctx context.Context, store kv.Storage, meta *TaskMeta, concurrency int) ([][]byte, error) {
 	var chunks []Chunk
 	for tableIdx := range meta.Tables {
@@ -74,8 +71,8 @@ func splitTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx 
 	for _, pid := range physicalIDs(tblInfo) {
 		start, end := physicalTableRange(tblInfo, pid)
 		var tableChunks []Chunk
-		if boundaries, sizes, ok := regionChunks(ctx, store, start, end); ok {
-			tableChunks, ordinal = chunksBySize(tableIdx, pid, boundaries, sizes, ordinal)
+		if endKeys, sizes, ok := regionChunks(ctx, store, start, end); ok {
+			tableChunks, ordinal = chunksBySize(tableIdx, pid, start, end, endKeys, sizes, ordinal)
 		} else {
 			boundaries, err := loadRegionBoundaries(ctx, store, start, end)
 			if err != nil {
@@ -88,12 +85,9 @@ func splitTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx 
 	return chunks, nil
 }
 
-// regionChunks returns the region boundaries covering [start, end) together with
-// each region's byte size, from a fresh PD estimate retried on transient error.
-// The boundaries and sizes come from the same scan, so they are aligned by
-// construction. ok is false when PD is unavailable, so the caller falls back to
-// the region cache and count-based splitting.
-func regionChunks(ctx context.Context, store kv.Storage, start, end kv.Key) (boundaries []kv.Key, sizes []int64, ok bool) {
+// regionChunks returns each region's end key and byte size over [start, end) from
+// PD, retried. ok is false when PD is unavailable.
+func regionChunks(ctx context.Context, store kv.Storage, start, end kv.Key) (endKeys []kv.Key, sizes []int64, ok bool) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
 		return nil, nil, false
@@ -103,7 +97,6 @@ func regionChunks(ctx context.Context, store kv.Storage, start, end kv.Key) (bou
 	if err != nil {
 		return nil, nil, false
 	}
-	var endKeys []kv.Key
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err = handle.RunWithRetry(ctx, loadRegionMaxRetry, backoffer, logutil.BgLogger(), func(context.Context) (bool, error) {
 		endKeys, sizes, err = h.RegionApproximateSizes(ctx, pdCli, start, end)
@@ -112,46 +105,43 @@ func regionChunks(ctx context.Context, store kv.Storage, start, end kv.Key) (bou
 	if err != nil || len(sizes) == 0 {
 		return nil, nil, false
 	}
-	// Chain the interior region end keys between start and end; the last region's
-	// end is clamped to end so the chunks tile [start, end) exactly.
-	boundaries = make([]kv.Key, 0, len(endKeys)+1)
-	boundaries = append(boundaries, start)
-	boundaries = append(boundaries, endKeys[:len(endKeys)-1]...)
-	boundaries = append(boundaries, end)
-	return boundaries, sizes, true
+	return endKeys, sizes, true
 }
 
-// chunksBySize walks one physical table's regions in key order and starts a new
-// chunk once the accumulated region size reaches chunkSize, so each chunk holds
-// ~chunkSize of real data. boundaries has len(sizes)+1 entries. It continues the
-// table-local ordinal from startOrdinal and returns the chunks and next ordinal.
-func chunksBySize(tableIdx int, pid int64, boundaries []kv.Key, sizes []int64, startOrdinal int) ([]Chunk, int) {
+// chunksBySize starts a new chunk each time the accumulated region size reaches
+// chunkSize, so each chunk holds ~chunkSize of real data. endKeys[i] is region
+// i's end; the final chunk ends at end.
+func chunksBySize(tableIdx int, pid int64, start, end kv.Key, endKeys []kv.Key, sizes []int64, startOrdinal int) ([]Chunk, int) {
 	var chunks []Chunk
-	ord, lo := startOrdinal, 0
+	ord := startOrdinal
+	chunkStart := start
 	var acc int64
 	for i, s := range sizes {
 		acc += s
-		if acc >= chunkSize || i == len(sizes)-1 {
-			chunks = append(chunks, Chunk{
-				TableIdx:   tableIdx,
-				PhysicalID: pid,
-				Start:      boundaries[lo],
-				End:        boundaries[i+1],
-				Size:       acc,
-				Ordinal:    ord,
-			})
-			ord++
-			lo = i + 1
-			acc = 0
+		if acc < chunkSize && i < len(sizes)-1 {
+			continue
 		}
+		chunkEnd := end
+		if i < len(sizes)-1 {
+			chunkEnd = endKeys[i]
+		}
+		chunks = append(chunks, Chunk{
+			TableIdx:   tableIdx,
+			PhysicalID: pid,
+			Start:      chunkStart,
+			End:        chunkEnd,
+			Size:       acc,
+			Ordinal:    ord,
+		})
+		ord++
+		chunkStart = chunkEnd
+		acc = 0
 	}
 	return chunks, ord
 }
 
-// chunksByCount is the fallback split when per-region sizes are unavailable: it
-// divides the regions into equal-count groups (one chunk per ~chunkSize of the
-// total), apportioning totalSize by region count. It continues the table-local
-// ordinal from startOrdinal and returns the chunks and next ordinal.
+// chunksByCount is the fallback when per-region sizes are unavailable: equal
+// region-count groups, apportioning totalSize by region count.
 func chunksByCount(tableIdx int, pid int64, boundaries []kv.Key, totalSize int64, startOrdinal int) ([]Chunk, int) {
 	regionCnt := len(boundaries) - 1
 	chunkCnt := max(1, min(int((totalSize+chunkSize-1)/chunkSize), regionCnt))
@@ -173,10 +163,9 @@ func chunksByCount(tableIdx int, pid int64, boundaries []kv.Key, totalSize int64
 	return chunks, ord
 }
 
-// packSubtasks groups chunks into key-ordered subtasks, cutting a new subtask
-// once it reaches chunksPerWorker*concurrency chunks worth of bytes (so a subtask
-// fills a node's worker pool a few times over yet keeps the failover redo cost
-// bounded), or the maxChunksPerSubtask ceiling.
+// packSubtasks cuts a new subtask once it reaches chunksPerWorker*concurrency
+// chunks worth of bytes (bounding failover redo), or the maxChunksPerSubtask
+// ceiling.
 func packSubtasks(chunks []Chunk, concurrency int) ([][]byte, error) {
 	if len(chunks) == 0 {
 		return nil, nil
