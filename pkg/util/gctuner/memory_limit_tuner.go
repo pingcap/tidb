@@ -17,6 +17,7 @@ package gctuner
 import (
 	"math"
 	"runtime/debug"
+	"sync"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -43,6 +44,7 @@ type memoryLimitTuner struct {
 	// The flag to disable memory limit adjust. There might be many tasks need to activate it in future,
 	// so it is integer type.
 	adjustDisabled atomicutil.Int64
+	tuningLock     sync.Mutex
 }
 
 // fallbackPercentage indicates the fallback memory limit percentage when turning.
@@ -74,9 +76,13 @@ func (t *memoryLimitTuner) EnableAdjustMemoryLimit() {
 // tuning check the memory nextGC and judge whether this GC is trigger by memory limit.
 // Go runtime ensure that it will be called serially.
 func (t *memoryLimitTuner) tuning() {
+	t.tuningLock.Lock()
+	defer t.tuningLock.Unlock()
+
 	if !t.isValidValueSet.Load() {
 		return
 	}
+
 	r := memory.ForceReadMemStats()
 	gogc := util.GetGOGC()
 	ratio := float64(100+gogc) / 100
@@ -156,6 +162,9 @@ func (t *memoryLimitTuner) GetPercentage() float64 {
 // UpdateMemoryLimit updates the memory limit.
 // This function should be called when `tidb_server_memory_limit` or `tidb_server_memory_limit_gc_trigger` is modified.
 func (t *memoryLimitTuner) UpdateMemoryLimit() {
+	t.tuningLock.Lock()
+	defer t.tuningLock.Unlock()
+
 	if t.adjustPercentageInProgress.Load() {
 		if t.serverMemLimitBeforeAdjust.Load() == memory.ServerMemoryLimit.Load() && t.percentageBeforeAdjust.Load() == t.GetPercentage() {
 			return
@@ -174,6 +183,9 @@ func (t *memoryLimitTuner) UpdateMemoryLimit() {
 func (t *memoryLimitTuner) calcMemoryLimit(percentage float64) int64 {
 	if t.adjustDisabled.Load() > 0 {
 		return initGOMemoryLimitValue
+	}
+	if memory.UsingGlobalMemArbitration() {
+		percentage = min(1, percentage)
 	}
 	memoryLimit := int64(float64(memory.ServerMemoryLimit.Load()) * percentage) // `tidb_server_memory_limit` * `tidb_server_memory_limit_gc_trigger`
 	if memoryLimit == 0 {

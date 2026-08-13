@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"go.uber.org/zap"
 )
@@ -35,7 +35,7 @@ import (
 // Split the pitr_id_map data into 512 KiB chunks to avoid one kv entry size too large.
 const PITRIdMapBlockSize int = 524288
 
-func pitrIDMapsFilename(clusterID, restoredTS uint64) string {
+func PitrIDMapsFilename(clusterID, restoredTS uint64) string {
 	return fmt.Sprintf("pitr_id_maps/pitr_id_map.cluster_id:%d.restored_ts:%d", clusterID, restoredTS)
 }
 
@@ -49,7 +49,7 @@ func (rc *LogClient) pitrIDMapHasRestoreIDColumn() bool {
 
 func (rc *LogClient) tryGetCheckpointStorage(
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) storage.ExternalStorage {
+) storeapi.Storage {
 	if !rc.useCheckpoint {
 		return nil
 	}
@@ -92,11 +92,11 @@ func (rc *LogClient) saveIDMap(
 
 func (rc *LogClient) saveIDMap2Storage(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	dbMaps []*backuppb.PitrDBMap,
 ) error {
 	clusterID := rc.GetClusterID(ctx)
-	metaFileName := pitrIDMapsFilename(clusterID, rc.restoreTS)
+	metaFileName := PitrIDMapsFilename(clusterID, rc.restoreTS)
 	metaWriter := metautil.NewMetaWriter(storage, metautil.MetaFileSize, false, metaFileName, nil)
 	metaWriter.Update(func(m *backuppb.BackupMeta) {
 		m.ClusterId = clusterID
@@ -106,7 +106,10 @@ func (rc *LogClient) saveIDMap2Storage(
 }
 
 func (rc *LogClient) saveIDMap2Table(ctx context.Context, dbMaps []*backuppb.PitrDBMap) error {
-	backupmeta := &backuppb.BackupMeta{DbMaps: dbMaps}
+	backupmeta := &backuppb.BackupMeta{
+		BackupSchemaVersion: backuppb.BackupSchemaVersion,
+		DbMaps:              dbMaps,
+	}
 	data, err := proto.Marshal(backupmeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -172,13 +175,27 @@ func (rc *LogClient) loadSchemasMap(
 	return dbMaps, errors.Trace(err)
 }
 
+func (rc *LogClient) loadPITRIDMapBackupMeta(metaData []byte) (*backuppb.BackupMeta, error) {
+	backupMeta := &backuppb.BackupMeta{}
+	if err := backupMeta.Unmarshal(metaData); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if err := metautil.CheckBackupMetaCompatibilityFromBytes(metaData, backupMeta); err != nil {
+		if rc.checkRequirements {
+			return nil, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", zap.Error(err))
+	}
+	return backupMeta, nil
+}
+
 func (rc *LogClient) loadSchemasMapFromStorage(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	restoredTS uint64,
 ) ([]*backuppb.PitrDBMap, error) {
 	clusterID := rc.GetClusterID(ctx)
-	metaFileName := pitrIDMapsFilename(clusterID, restoredTS)
+	metaFileName := PitrIDMapsFilename(clusterID, restoredTS)
 	exist, err := storage.FileExists(ctx, metaFileName)
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to check filename:%s ", metaFileName)
@@ -192,9 +209,9 @@ func (rc *LogClient) loadSchemasMapFromStorage(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	backupMeta := &backuppb.BackupMeta{}
-	if err := backupMeta.Unmarshal(metaData); err != nil {
-		return nil, errors.Trace(err)
+	backupMeta, err := rc.loadPITRIDMapBackupMeta(metaData)
+	if err != nil {
+		return nil, err
 	}
 	return backupMeta.GetDbMaps(), nil
 }
@@ -245,9 +262,9 @@ func (rc *LogClient) loadSchemasMapFromTable(
 		}
 		metaData = append(metaData, d...)
 	}
-	backupMeta := &backuppb.BackupMeta{}
-	if err := backupMeta.Unmarshal(metaData); err != nil {
-		return nil, errors.Trace(err)
+	backupMeta, err := rc.loadPITRIDMapBackupMeta(metaData)
+	if err != nil {
+		return nil, err
 	}
 
 	return backupMeta.GetDbMaps(), nil

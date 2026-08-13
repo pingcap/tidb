@@ -1,0 +1,29 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "client",
+    srcs = ["client.go"],
+    importpath = "github.com/pingcap/tidb/pkg/extworkload/client",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/externalworkloadpb",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials",
+        "@org_golang_google_grpc//credentials/insecure",
+    ],
+)
+
+go_test(
+    name = "client_test",
+    timeout = "short",
+    srcs = ["client_test.go"],
+    embed = [":client"],
+    flaky = True,
+    shard_count = 6,
+    deps = [
+        "@com_github_pingcap_kvproto//pkg/externalworkloadpb",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+    ],
+)

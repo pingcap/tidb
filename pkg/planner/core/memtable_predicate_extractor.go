@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -182,7 +183,7 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 	ctx base.PlanContext,
 	extractCols map[int64]*types.FieldName,
 	expr *expression.ScalarFunction,
-) (string, []types.Datum) {
+) (string, []types.Datum, bool) {
 	args := expr.GetArgs()
 	var col *expression.Column
 	var colIdx int
@@ -202,12 +203,12 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 		col, colIdx = innerCol, innerColIdx
 	}
 	if col == nil {
-		return "", nil
+		return "", nil, false
 	}
 
 	name, found := extractCols[col.UniqueID]
 	if !found {
-		return "", nil
+		return "", nil, false
 	}
 
 	// The `lhs/rhs` of EQ expression must be a constant
@@ -215,7 +216,7 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 	// SELECT * FROM t1 WHERE 'lhs'=c
 	constant, ok := args[1-colIdx].(*expression.Constant)
 	if !ok || constant.DeferredExpr != nil {
-		return "", nil
+		return "", nil, false
 	}
 	v := constant.Value
 	if constant.ParamMarker != nil {
@@ -224,10 +225,10 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 		intest.AssertNoError(err, "fail to get param")
 		if err != nil {
 			logutil.BgLogger().Warn("fail to get param", zap.Error(err))
-			return "", nil
+			return "", nil, false
 		}
 	}
-	return name.ColName.L, []types.Datum{v}
+	return name.ColName.L, []types.Datum{v}, colIdx == 0
 }
 
 // extract the OR expression, e.g:
@@ -246,7 +247,8 @@ func (helper *extractHelper) extractColOrExpr(ctx base.PlanContext, extractCols 
 	var extract = func(extractCols map[int64]*types.FieldName, fn *expression.ScalarFunction) (string, []types.Datum) {
 		switch helper.getStringFunctionName(fn) {
 		case ast.EQ:
-			return helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+			colName, datums, _ := helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+			return colName, datums
 		case ast.LogicOr:
 			return helper.extractColOrExpr(ctx, extractCols, fn)
 		case ast.In:
@@ -318,7 +320,7 @@ func (helper *extractHelper) extractCol(
 		switch helper.getStringFunctionName(fn) {
 		case ast.EQ:
 			helper.enableScalarPushDown = true
-			colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+			colName, datums, _ = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 			if colName == extractColName {
 				helper.setColumnPushedDownFn(colName, extractCols, fn)
 			}
@@ -381,22 +383,25 @@ func (helper *extractHelper) extractLikePatternCol(
 			continue
 		}
 
-		var canBuildPattern bool
+		var canBuildPattern, isPrefilter bool
 		var pattern string
 		// We use '|' to combine DNF regular expression: .*a.*|.*b.*
 		// e.g:
 		// SELECT * FROM t WHERE c LIKE '%a%' OR c LIKE '%b%'
 		if fn.FuncName.L == ast.LogicOr && !toLower {
-			canBuildPattern, pattern = helper.extractOrLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+			canBuildPattern, pattern, isPrefilter = helper.extractOrLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		} else {
-			canBuildPattern, pattern = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+			canBuildPattern, pattern, isPrefilter = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		}
 		if canBuildPattern && toLower {
 			pattern = strings.ToLower(pattern)
 		}
 		if canBuildPattern {
 			patterns = append(patterns, pattern)
-		} else {
+		}
+		// A prefilter narrows the scan but is not exactly equivalent to the
+		// predicate, so it is pushed down *and* kept for a scalar recheck.
+		if !canBuildPattern || isPrefilter {
 			remained = append(remained, expr)
 		}
 	}
@@ -409,63 +414,115 @@ func (helper extractHelper) extractOrLikePattern(
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
 	needLike2Regexp bool,
+	toLower bool,
 ) (
 	ok bool,
 	pattern string,
+	isPrefilter bool,
 ) {
 	predicates := expression.SplitDNFItems(orFunc)
 	if len(predicates) == 0 {
-		return false, ""
+		return false, "", false
 	}
 
 	patternBuilder := make([]string, 0, len(predicates))
 	for _, predicate := range predicates {
 		fn, ok := predicate.(*expression.ScalarFunction)
 		if !ok {
-			return false, ""
+			return false, "", false
 		}
 
-		ok, partPattern := helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp)
+		ok, partPattern, partIsPrefilter := helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		if !ok {
-			return false, ""
+			return false, "", false
 		}
+		// One inexact branch makes the whole disjunction inexact.
+		isPrefilter = isPrefilter || partIsPrefilter
 		patternBuilder = append(patternBuilder, partPattern)
 	}
-	return true, strings.Join(patternBuilder, "|")
+	return true, strings.Join(patternBuilder, "|"), isPrefilter
 }
 
+// extractLikePattern builds the pushed-down pattern for a single predicate.
+// toLower reports whether the caller folds case on both the pattern and the
+// scanned value, which decides how a case-insensitive ILIKE is represented.
+// isPrefilter reports that the pattern only narrows the scan and is not exactly
+// equivalent to the predicate, so the caller must keep a scalar recheck.
 func (helper extractHelper) extractLikePattern(
 	ctx base.PlanContext,
 	fn *expression.ScalarFunction,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
 	needLike2Regexp bool,
+	toLower bool,
 ) (
 	ok bool,
 	pattern string,
+	isPrefilter bool,
 ) {
 	var colName string
 	var datums []types.Datum
 	switch fn.FuncName.L {
 	case ast.EQ, ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
-		colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+		colName, datums, _ = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 	}
 	if colName != extractColName {
-		return false, ""
+		return false, "", false
 	}
 	switch fn.FuncName.L {
 	case ast.EQ:
-		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
+		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$", false
 	case ast.Like, ast.Ilike:
-		if needLike2Regexp {
-			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
+		// The pushed-down pattern must honour the LIKE ESCAPE so it does not
+		// diverge from the original predicate (issue #69653). The escape has to
+		// be resolvable at plan time: for a constant escape (including the
+		// default '\' and the empty escape of NO_BACKSLASH_ESCAPES) we compile
+		// the regexp with it; a non-constant/deferred escape can't be resolved
+		// here, so we skip extraction and let the scalar predicate be rechecked.
+		escape, ok := likeEscapeConst(fn)
+		if !ok {
+			return false, "", false
 		}
-		return true, datums[0].GetString()
+		if !needLike2Regexp {
+			return true, datums[0].GetString(), false
+		}
+		pattern = stringutil.CompileLike2Regexp(datums[0].GetString(), escape)
+		// ILIKE matches case-insensitively while the pattern above is
+		// case-sensitive. Callers that fold case (toLower) lower both the pattern
+		// and the scanned value, so it stays equivalent there. Callers that do
+		// not -- the cluster log path sends the pattern verbatim in
+		// SearchLogRequest.Patterns -- get a case-insensitive group instead, so
+		// an "ERROR" line still matches `message ILIKE '%error%'`. The scoped
+		// (?i:...) form keeps the flag from leaking across a '|' when several
+		// patterns are combined into one disjunction. Case folding there is the
+		// regexp engine's rather than ILIKE's, so it is only a prefilter and the
+		// predicate is rechecked.
+		if fn.FuncName.L == ast.Ilike && !toLower {
+			return true, "(?i:" + pattern + ")", true
+		}
+		return true, pattern, false
 	case ast.Regexp, ast.RegexpLike:
-		return true, datums[0].GetString()
+		return true, datums[0].GetString(), false
 	default:
-		return false, ""
+		return false, "", false
 	}
+}
+
+// likeEscapeConst returns the ESCAPE byte of a LIKE/ILIKE ScalarFunction when
+// it is a plan-time constant (ok=true). The escape must be constant so the
+// pushed-down pattern can be compiled to match the predicate exactly (issue
+// #69653); a non-constant, deferred, or parameterized escape returns ok=false,
+// telling the caller to skip pushdown and keep a scalar recheck.
+func likeEscapeConst(fn *expression.ScalarFunction) (byte, bool) {
+	args := fn.GetArgs()
+	if len(args) < 3 {
+		return 0, false
+	}
+	escape, ok := args[2].(*expression.Constant)
+	if !ok || escape.DeferredExpr != nil || escape.ParamMarker != nil {
+		return 0, false
+	}
+	return byte(escape.Value.GetInt64()), true
 }
 
 func (extractHelper) findColumn(schema *expression.Schema, names []*types.FieldName, colName string) map[int64]*types.FieldName {
@@ -532,8 +589,7 @@ func (helper extractHelper) extractTimeRange(
 	timezone *time.Location,
 ) (
 	remained []expression.Expression,
-	// unix timestamp in nanoseconds
-	startTime int64,
+	startTime int64, // unix timestamp in nanoseconds
 	endTime int64,
 ) {
 	remained = make([]expression.Expression, 0, len(predicates))
@@ -551,13 +607,27 @@ func (helper extractHelper) extractTimeRange(
 
 		var colName string
 		var datums []types.Datum
+		var colOnLeft bool
 		fnName := helper.getTimeFunctionName(fn)
 		switch fnName {
 		case ast.GT, ast.GE, ast.LT, ast.LE, ast.EQ:
-			colName, datums = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+			colName, datums, colOnLeft = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
 		}
 
 		if colName == extractColName {
+			if !colOnLeft {
+				switch fnName {
+				case ast.GT:
+					fnName = ast.LT
+				case ast.GE:
+					fnName = ast.LE
+				case ast.LT:
+					fnName = ast.GT
+				case ast.LE:
+					fnName = ast.GE
+				}
+			}
+
 			timeType := types.NewFieldType(mysql.TypeDatetime)
 			timeType.SetDecimal(6)
 			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), timeType)
@@ -819,7 +889,7 @@ func (e *ClusterLogTableExtractor) Extract(ctx base.PlanContext,
 
 // ExplainInfo implements base.MemTablePredicateExtractor interface.
 func (e *ClusterLogTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -955,7 +1025,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(ctx base.PlanContext,
 
 // ExplainInfo implements the base.MemTablePredicateExtractor interface.
 func (e *HotRegionsHistoryTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1071,7 +1141,7 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (startTime, endTim
 
 // ExplainInfo implements the base.MemTablePredicateExtractor interface.
 func (e *MetricTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1283,12 +1353,31 @@ type SlowQueryExtractor struct {
 	// current slow-log file.
 	Enable bool
 	Desc   bool
+	// Limit is a hint for early-exit optimizations when scanning slow log files.
+	// It is usually derived from a pushed down LIMIT/TopN (offset+count).
+	// A value of 0 means "no limit hint".
+	Limit uint64
 }
 
 // TimeRange is used to check whether a given log should be extracted.
 type TimeRange struct {
 	StartTime time.Time
 	EndTime   time.Time
+}
+
+// SetRowLimitHint implements base.MemTableRowLimitHintSetter.
+func (e *SlowQueryExtractor) SetRowLimitHint(limit uint64) {
+	if limit == 0 {
+		return
+	}
+	if e.Limit == 0 || limit < e.Limit {
+		e.Limit = limit
+	}
+}
+
+// SetDesc implements base.MemTableDescHintSetter.
+func (e *SlowQueryExtractor) SetDesc(desc bool) {
+	e.Desc = desc
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -1431,7 +1520,7 @@ func (e *TableStorageStatsExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 
 // ExplainInfo implements the base.MemTablePredicateExtractor interface.
 func (e *SlowQueryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1558,7 +1647,7 @@ func (e *StatementsSummaryExtractor) Extract(sctx base.PlanContext,
 
 // ExplainInfo implements base.MemTablePredicateExtractor interface.
 func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*PhysicalMemTable)
+	p := pp.(*physicalop.PhysicalMemTable)
 	if e.SkipRequest {
 		return "skip_request: true"
 	}

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"runtime/trace"
 	"slices"
 
@@ -29,7 +30,7 @@ import (
 	mmodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -57,8 +58,8 @@ type UpdateExec struct {
 
 	matched uint64 // a counter of matched rows during update
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
-	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
-	tblColPosInfos            plannercore.TblColPosInfoSlice
+	// the columns ordinals is present in ordinal range format, @see physicalop.TblColPosInfos
+	tblColPosInfos            physicalop.TblColPosInfoSlice
 	assignFlag                []int
 	evalBuffer                chunk.MutRow
 	allAssignmentsAreConstant bool
@@ -90,6 +91,16 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 	e.changed = e.changed[:0]
 	e.matches = e.matches[:0]
 	for _, content := range e.tblColPosInfos {
+		// Partitioned tables can have duplicate _tidb_rowid between different partitions
+		// due to EXCHANGE PARTITION, if so, do not optimize skipping rows with multiple changes
+		skipMultipleChangesOnSameRow := true
+		tbl := e.tblID2table[content.TblID]
+		if _, ok := tbl.(table.PartitionedTable); ok {
+			if !tbl.Meta().HasClusteredIndex() {
+				skipMultipleChangesOnSameRow = false
+			}
+		}
+
 		if e.updatedRowKeys[content.Start] == nil {
 			e.updatedRowKeys[content.Start] = kv.NewMemAwareHandleMap[bool]()
 		}
@@ -114,7 +125,7 @@ func (e *UpdateExec) prepare(row []types.Datum) (err error) {
 
 		changed, ok := e.updatedRowKeys[content.Start].Get(handle)
 		if ok {
-			e.changed = append(e.changed, changed)
+			e.changed = append(e.changed, changed && skipMultipleChangesOnSameRow)
 			e.matches = append(e.matches, false)
 		} else {
 			e.changed = append(e.changed, false)
@@ -342,7 +353,7 @@ func (e *UpdateExec) exec(
 // the inner handle field is filled with a NULL value.
 //
 // This fixes: https://github.com/pingcap/tidb/issues/7176.
-func unmatchedOuterRow(tblPos plannercore.TblColPosInfo, waitUpdateRow []types.Datum) bool {
+func unmatchedOuterRow(tblPos physicalop.TblColPosInfo, waitUpdateRow []types.Datum) bool {
 	firstHandleIdx := tblPos.HandleCols.GetCol(0)
 	return waitUpdateRow[firstHandleIdx.Index].IsNull()
 }
@@ -354,21 +365,35 @@ func (e *UpdateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		if e.collectRuntimeStatsEnabled() {
 			ctx = context.WithValue(ctx, autoid.AllocatorRuntimeStatsCtxKey, e.stats.AllocatorRuntimeStats)
 		}
-		numRows, err := e.updateRows(ctx)
+		numRows, rowsColMultiply, err := e.updateRows(ctx)
 		if err != nil {
 			return err
 		}
 		e.drained = true
 		e.Ctx().GetSessionVars().StmtCtx.AddRecordRows(uint64(numRows))
+		recordDMLRowsColMultiply2Metrics(e.Ctx().GetSessionVars(), rowsColMultiply, 1)
 	}
 	return nil
 }
 
-func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
+func (e *UpdateExec) rowsColMultiplyForPreparedRow() int64 {
+	var columnCount int64
+	for i, content := range e.tblColPosInfos {
+		if i >= len(e.tableUpdatable) || !e.tableUpdatable[i] || i >= len(e.changed) || e.changed[i] {
+			continue
+		}
+		if content.End > content.Start {
+			columnCount += int64(content.End - content.Start)
+		}
+	}
+	return columnCount
+}
+
+func (e *UpdateExec) updateRows(ctx context.Context) (int, int64, error) {
 	fields := exec.RetTypes(e.Children(0))
-	colsInfo := plannercore.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
+	colsInfo := physicalop.GetUpdateColumnsInfo(e.tblID2table, e.tblColPosInfos, len(fields))
 	globalRowIdx := 0
-	chk := exec.TryNewCacheChunk(e.Children(0))
+	chk := newDMLChildChunk(e, fields, e.Children(0).InitCap())
 	if !e.allAssignmentsAreConstant {
 		e.evalBuffer = chunk.MutRowFromTypes(fields)
 	}
@@ -381,8 +406,9 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
+	var rowsColMultiply int64
 
 	if e.virtualAssignmentsOffset < len(e.OrderedList) {
 		e.assignmentsPerTable = make(map[int][]*expression.Assignment, 0)
@@ -403,7 +429,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 		e.memTracker.Consume(-memUsageOfChk)
 		err := exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 
 		if chk.NumRows() == 0 {
@@ -430,16 +456,22 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 			datumRow := chunkRow.GetDatumRow(fields)
 			// precomputes handles
 			if err := e.prepare(datumRow); err != nil {
-				return 0, err
+				return 0, 0, err
+			}
+			rowColMultiply := e.rowsColMultiplyForPreparedRow()
+			if rowsColMultiply > math.MaxInt64-rowColMultiply {
+				rowsColMultiply = math.MaxInt64
+			} else {
+				rowsColMultiply += rowColMultiply
 			}
 			// compose non-generated columns
 			newRow, err := composeFunc(globalRowIdx, datumRow, colsInfo)
 			if err != nil {
-				return 0, err
+				return 0, 0, err
 			}
 			// merge non-generated columns
 			if err := e.mergeNonGenerated(datumRow, newRow); err != nil {
-				return 0, err
+				return 0, 0, err
 			}
 
 			if e.virtualAssignmentsOffset < len(e.OrderedList) {
@@ -449,14 +481,14 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 			if err := e.exec(
 				ctx, e.Children(0).Schema(),
 				globalRowIdx, datumRow, newRow, dupKeyCheck); err != nil {
-				return 0, err
+				return 0, 0, err
 			}
 			globalRowIdx++
 		}
 		totalNumRows += chk.NumRows()
 		chk = chunk.Renew(chk, e.MaxChunkSize())
 	}
-	return totalNumRows, nil
+	return totalNumRows, rowsColMultiply, nil
 }
 
 func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *mmodel.ColumnInfo, rowIdx int, err error) error {

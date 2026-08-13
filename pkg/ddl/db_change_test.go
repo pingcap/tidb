@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -210,6 +210,7 @@ func TestTwoStates(t *testing.T) {
 	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')"
 	testInfo.sqlInfos[3].cases[4].expectedCompileErr = "[planner:1136]Column count doesn't match value count at row 1"
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
+	probeTableSQL := "create table t_states_failpoint_probe (a int)"
 	tk.MustExec(`create table t (
 		c1 int,
 		c2 varchar(64),
@@ -223,12 +224,22 @@ func TestTwoStates(t *testing.T) {
 
 	times := 0
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
+	afterWaitSchemaSyncedHookAvailable := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(*model.Job) {
+		afterWaitSchemaSyncedHookAvailable = true
+	})
+	tk.MustExec(probeTableSQL)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+	tk.MustExec("drop table t_states_failpoint_probe")
+	runStateChecks := func(state model.SchemaState) {
+		if state == prevState || checkErr != nil || times >= 3 {
 			return
 		}
+		// The same schema state can be observed more than once; only count the
+		// first visit to each intermediate add-column state.
+		prevState = state
 		times++
-		switch job.SchemaState {
+		switch state {
 		case model.StateDeleteOnly:
 			// This state we execute every sqlInfo one time using the first session and other information.
 			err := testInfo.compileSQL(0)
@@ -270,8 +281,36 @@ func TestTwoStates(t *testing.T) {
 				checkErr = err
 			}
 		}
-	})
-	tk.MustExec(alterTableSQL)
+	}
+	runWithFailpointHook := func() {
+		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+			runStateChecks(job.SchemaState)
+		})
+		tk.MustExec(alterTableSQL)
+		require.Equal(t, 3, times, "TestTwoStates requires failpoint-go-test.sh so afterWaitSchemaSynced is rewritten and the three intermediate add-column states are observable")
+	}
+	runWithoutFailpointHook := func() {
+		// Plain `go test` without failpoint source rewriting leaves InjectCall as
+		// a marker stub, so it cannot observe the internal
+		// delete-only/write-only/write-reorg transitions directly.
+		// For add-column SQL semantics, those intermediate states all share the
+		// same old-schema contract until the column becomes public, so we verify
+		// that contract once before the DDL completes and keep the final public
+		// state checks unchanged below.
+		require.NoError(t, testInfo.compileSQL(0))
+		require.NoError(t, testInfo.execSQL(0))
+		require.NoError(t, testInfo.compileSQL(1))
+		require.NoError(t, testInfo.compileSQL(2))
+		require.NoError(t, testInfo.execSQL(2))
+		require.NoError(t, testInfo.execSQL(1))
+		require.NoError(t, testInfo.compileSQL(3))
+		tk.MustExec(alterTableSQL)
+	}
+	if afterWaitSchemaSyncedHookAvailable {
+		runWithFailpointHook()
+	} else {
+		runWithoutFailpointHook()
+	}
 	require.NoError(t, testInfo.compileSQL(4))
 	require.NoError(t, testInfo.execSQL(4))
 	// Mock the server is in `write reorg` state.
@@ -280,7 +319,7 @@ func TestTwoStates(t *testing.T) {
 }
 
 type stateCase struct {
-	session            sessiontypes.Session
+	session            sessionapi.Session
 	rawStmt            ast.StmtNode
 	stmt               sqlexec.Statement
 	expectedExecErr    string
@@ -347,7 +386,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		compiler := executor.Compiler{Ctx: c.session}
 		se := c.session
 		ctx := context.TODO()
-		if err = se.PrepareTxnCtx(ctx); err != nil {
+		if err = se.PrepareTxnCtx(ctx, nil); err != nil {
 			return err
 		}
 		sctx := se.(sessionctx.Context)
@@ -841,6 +880,8 @@ func TestShowIndex(t *testing.T) {
 		}
 		switch job.SchemaState {
 		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test_db_state")
 			result, err1 := tk.Exec(showIndexSQL)
 			if err1 != nil {
 				checkErr = err1
@@ -898,6 +939,31 @@ func TestShowIndex(t *testing.T) {
 	tk.MustExec("create table tr(id char(100) primary key nonclustered, v int, key vv(v))")
 	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY NO", "vv NO"))
+}
+
+// Regression test for issue 70049. Ordinary indexes with an underscore-delimited
+// suffix must not be mistaken for temporary indexes created by modify column.
+func TestAlterIndexVisibility(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	query := `select key_name, is_visible from information_schema.tidb_indexes
+		where table_schema = 'test' and table_name = '%s' order by key_name`
+	tk.MustExec("create table t_invisible (k int, key idx_k(k), key idx_k_1(k), key idx_k_copy(k))")
+	tk.MustExec("alter table t_invisible alter index idx_k invisible")
+	tk.MustQuery(fmt.Sprintf(query, "t_invisible")).Check(testkit.Rows(
+		"idx_k NO",
+		"idx_k_1 YES",
+		"idx_k_copy YES",
+	))
+
+	tk.MustExec("create table t_visible (k int, key idx_k(k) invisible, key idx_k_1(k) invisible, key idx_k_copy(k) invisible)")
+	tk.MustExec("alter table t_visible alter index idx_k visible")
+	tk.MustQuery(fmt.Sprintf(query, "t_visible")).Check(testkit.Rows(
+		"idx_k YES",
+		"idx_k_1 NO",
+		"idx_k_copy NO",
+	))
 }
 
 func TestParallelAlterIndex(t *testing.T) {
@@ -1062,7 +1128,7 @@ func TestParallelAddGeneratedColumnAndAlterModifyColumn(t *testing.T) {
 	tk.MustExec("use test_db_state")
 
 	sql1 := "ALTER TABLE t ADD COLUMN f INT GENERATED ALWAYS AS(a+1);"
-	sql2 := "ALTER TABLE t MODIFY COLUMN a tinyint;"
+	sql2 := "ALTER TABLE t MODIFY COLUMN a char(16);"
 
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)

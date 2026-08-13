@@ -184,7 +184,7 @@ func TestConstantPropagation(t *testing.T) {
 			for _, cd := range tt.conditions {
 				conds = append(conds, FoldConstant(ctx, cd))
 			}
-			newConds := solver.PropagateConstant(ctx, conds)
+			newConds := solver.PropagateConstant(ctx, false, nil, nil, nil, conds)
 			var result []string
 			for _, v := range newConds {
 				result = append(result, v.StringWithCtx(ctx, errors.RedactLogDisable))
@@ -244,6 +244,18 @@ func TestConstantFolding(t *testing.T) {
 			},
 			nullRejectCheck: true,
 			result:          "concat_ws(cast(Column#0, var_string(20)), <nil>)",
+		},
+		{
+			condition: func(ctx BuildContext) Expression {
+				expr := newFunction(ctx, ast.Field,
+					newColumn(0),
+					&Constant{Value: types.NewFloat64Datum(0), RetType: types.NewFieldType(mysql.TypeDouble)},
+					NewNull(),
+				)
+				return expr
+			},
+			nullRejectCheck: true,
+			result:          "field(cast(Column#0, double BINARY), 0, <nil>)",
 		},
 	}
 	for _, tt := range tests {

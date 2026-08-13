@@ -31,6 +31,7 @@ for BACKEND in local tidb; do
     run_sql 'CREATE DATABASE test'
     run_sql "source $CUR/db.sql;" -D test
 
+    export GO_FAILPOINTS="github.com/pingcap/tidb/pkg/lightning/mydump/mockParquetRowCount=return(10)"
     run_lightning --backend $BACKEND
 
     check_row_count customer 20
@@ -43,6 +44,7 @@ for BACKEND in local tidb; do
     check_row_count stock 50
     check_row_count warehouse 1
     check_row_count special_col_name 1
+    check_row_count sbtest 100
 
     run_sql 'select sum(c_id) from test.customer;'
     check_contains "sum(c_id): 210"

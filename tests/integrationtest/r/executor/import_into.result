@@ -72,6 +72,10 @@ import into t from '/file.csv' with skip_rows=-1;
 Error 8164 (HY000): Invalid option value for skip_rows
 import into t from '/file.csv' with skip_rows=true;
 Error 8164 (HY000): Invalid option value for skip_rows
+import into t from '/file.csv' with group_key = "invalid@";
+Error 8164 (HY000): Invalid option value for group_key
+import into t from '/file.csv' with group_key;
+Error 8164 (HY000): Invalid option value for group_key
 import into t from '/file.csv' with split_file='aa';
 Error 8164 (HY000): Invalid option value for split_file
 import into t from '/file.csv' with split_file;
@@ -116,6 +120,16 @@ import into t from '/file.csv' with checksum_table=false;
 Error 8164 (HY000): Invalid option value for checksum_table
 import into t from '/file.csv' with checksum_table=null;
 Error 8164 (HY000): Invalid option value for checksum_table
+import into t from '/file.csv' with on_duplicate_key;
+Error 8164 (HY000): Invalid option value for on_duplicate_key
+import into t from '/file.csv' with on_duplicate_key=1;
+Error 8164 (HY000): Invalid option value for on_duplicate_key
+import into t from '/file.csv' with on_duplicate_key=true;
+Error 8164 (HY000): Invalid option value for on_duplicate_key
+import into t from '/file.csv' with on_duplicate_key='';
+Error 8164 (HY000): Invalid option value for on_duplicate_key
+import into t from '/file.csv' with on_duplicate_key='unknown';
+Error 8164 (HY000): Invalid option value for on_duplicate_key
 import into t from '/file.csv' with record_errors='aa';
 Error 8164 (HY000): Invalid option value for record_errors
 import into t from '/file.csv' with record_errors='111aa';
@@ -183,3 +197,9 @@ create table cachetbl (id int);
 alter table cachetbl cache;
 import into cachetbl from '/file.csv';
 Error 1105 (HY000): IMPORT INTO does not support cached table
+drop table if exists import_into_ttl_precheck_source, import_into_ttl_precheck_target;
+create table import_into_ttl_precheck_source (id int primary key, created_at datetime);
+create table import_into_ttl_precheck_target (id int primary key, created_at datetime) TTL = `created_at` + INTERVAL 1 DAY;
+IMPORT INTO import_into_ttl_precheck_target FROM SELECT * FROM import_into_ttl_precheck_source WITH DISABLE_PRECHECK;
+Error 8173 (HY000): PreCheck failed: target table has TTL enabled, please disable TTL before IMPORT INTO
+drop table if exists import_into_ttl_precheck_source, import_into_ttl_precheck_target;

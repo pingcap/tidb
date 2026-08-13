@@ -17,13 +17,14 @@ package executor
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -40,8 +41,10 @@ import (
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
+	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
 	"github.com/tikv/client-go/v2/oracle/oracles"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
@@ -136,6 +139,14 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		}
 	}
 
+	// Check read-only system variables in SEM mode.
+	if semv2.IsEnabled() && semv2.IsReadOnlyVariable(v.Name) {
+		pm := privilege.GetPrivilegeManager(e.Ctx())
+		if !pm.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
+		}
+	}
+
 	if sysVar.IsNoop && !vardef.EnableNoopVariables.Load() {
 		// The variable is a noop. For compatibility we allow it to still
 		// be changed, but we append a warning since users might be expecting
@@ -143,47 +154,62 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrSettingNoopVariable.FastGenByArgs(sysVar.Name))
 	}
 	if sysVar.HasInstanceScope() && !v.IsGlobal && sessionVars.EnableLegacyInstanceScope {
-		// For backward compatibility we will change the v.IsGlobal to true,
+		// For backward compatibility we will change the v.IsInstance to true,
 		// and append a warning saying this will not be supported in future.
-		v.IsGlobal = true
+		v.IsInstance = true
 		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrInstanceScope.FastGenByArgs(sysVar.Name))
 	}
 
-	if v.IsGlobal {
+	if v.IsGlobal || v.IsInstance {
 		valStr, err := e.getVarValue(ctx, v, sysVar)
 		if err != nil {
 			return err
 		}
-		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(ctx, name, valStr)
-		if err != nil {
-			return err
+		if v.IsGlobal {
+			err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(ctx, name, valStr)
+			if err != nil {
+				return err
+			}
+		} else if v.IsInstance {
+			err = sessionVars.GlobalVarsAccessor.SetInstanceSysVar(ctx, name, valStr)
+			if err != nil {
+				return err
+			}
 		}
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			auditPlugin := plugin.DeclareAuditManifest(p.Manifest)
 			if auditPlugin.OnGlobalVariableEvent != nil {
-				auditPlugin.OnGlobalVariableEvent(context.Background(), e.Ctx().GetSessionVars(), name, valStr)
+				auditPlugin.OnGlobalVariableEvent(
+					context.Background(),
+					e.Ctx().GetSessionVars(),
+					name,
+					redactSysVarValue(name, valStr),
+				)
 			}
 			return nil
 		})
-		showValStr := valStr
-		if name == vardef.TiDBCloudStorageURI {
-			showValStr = ast.RedactURL(showValStr)
+		showValStr := redactSysVarValue(name, valStr)
+		logstr := "set global var"
+		if v.IsInstance {
+			logstr = "set instance var"
 		}
-		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
+		logutil.BgLogger().Info(logstr, zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
+		if v.IsGlobal && name == vardef.TiDBGCLifetime {
+			notifyExternalWorkloadGCLifeTime(ctx, e.Ctx(), showValStr)
+		}
 		if name == vardef.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
-			oldConfig := config.GetGlobalConfig()
-			if oldConfig.Instance.TiDBServiceScope != valStr {
-				newConfig := *oldConfig
-				newConfig.Instance.TiDBServiceScope = valStr
-				config.StoreGlobalConfig(&newConfig)
-			}
+			// SetInstanceSysVar has already updated vardef.ServiceScope in the sysvar hook.
+			// Read it here so InitMetaSession uses the latest canonical (case-insensitive) value.
+			serviceScope := vardef.ServiceScope.Load()
 			serverID := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
 			taskMgr, err := storage.GetTaskManager()
 			if err != nil {
 				return err
 			}
-			return taskMgr.InitMetaSession(ctx, e.Ctx(), serverID, valStr)
+			return taskMgr.WithNewSession(func(se sessionctx.Context) error {
+				return taskMgr.InitMetaSession(ctx, se, serverID, serviceScope)
+			})
 		}
 		return err
 	}
@@ -255,6 +281,59 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	// autocommit, timezone, etc
 	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	return nil
+}
+
+func redactSysVarValue(name, value string) string {
+	switch strings.ToLower(name) {
+	case vardef.TiDBCloudStorageURI:
+		return ast.RedactURL(value)
+	case vardef.TiDBExpEmbedJinaAIAPIKey,
+		vardef.TiDBExpEmbedOpenAIAPIKey,
+		vardef.TiDBExpEmbedCohereAPIKey,
+		vardef.TiDBExpEmbedHuggingFaceAPIKey,
+		vardef.TiDBExpEmbedNvidiaNIMAPIKey,
+		vardef.TiDBExpEmbedGeminiAPIKey:
+		return redactAPIKey(value)
+	default:
+		return value
+	}
+}
+
+func redactAPIKey(value string) string {
+	if value == "" {
+		return ""
+	}
+	return "******"
+}
+
+func notifyExternalWorkloadGCLifeTime(ctx context.Context, sctx sessionctx.Context, setValue string) {
+	mgr := extworkload.GetManagerFromStore(sctx.GetStore())
+	if !extworkload.IsEnabled(mgr) || !pd.IsKeyspaceUsingKeyspaceLevelGC(mgr.Meta()) {
+		return
+	}
+
+	gcLifeTimeVal, err := variable.GetSysVar(vardef.TiDBGCLifetime).GetGlobalFromHook(ctx, sctx.GetSessionVars())
+	if err != nil {
+		logutil.BgLogger().Warn("failed to load effective external workload GC life time",
+			zap.String("name", vardef.TiDBGCLifetime),
+			zap.String("val", setValue),
+			zap.Error(err))
+		return
+	}
+	gcLifeTime, err := time.ParseDuration(gcLifeTimeVal)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to parse effective external workload GC life time",
+			zap.String("name", vardef.TiDBGCLifetime),
+			zap.String("val", gcLifeTimeVal),
+			zap.Error(err))
+		return
+	}
+	if err := mgr.UpdateGCLifeTime(ctx, gcLifeTime); err != nil {
+		logutil.BgLogger().Warn("failed to update external workload GC life time",
+			zap.String("name", vardef.TiDBGCLifetime),
+			zap.String("val", gcLifeTimeVal),
+			zap.Error(err))
+	}
 }
 
 func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {

@@ -24,10 +24,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
 	tikv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
-	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -41,9 +41,6 @@ import (
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
-
-// MockDMLExecutionStateBeforeImport is a failpoint to mock the DML execution state before import.
-var MockDMLExecutionStateBeforeImport func()
 
 // BackendCtx is the backend context for one add index reorg task.
 type BackendCtx interface {
@@ -69,9 +66,9 @@ type BackendCtx interface {
 
 	CheckpointOperator
 
-	// GetLocalBackend exposes local.Backend. It's only used in global sort based
+	// GetLocalBackend exposes ingestctrl.Backend. It's only used in global sort based
 	// ingest.
-	GetLocalBackend() *local.Backend
+	GetLocalBackend() *ingestctrl.Backend
 	// CollectRemoteDuplicateRows collects duplicate entry error for given index as
 	// the supplement of Ingest.
 	//
@@ -103,15 +100,15 @@ type litBackendCtx struct {
 	jobID   int64
 	tbl     table.Table
 	// litBackendCtx doesn't manage the lifecycle of backend, caller should do it.
-	backend *local.Backend
+	backend *ingestctrl.Backend
 	ctx     context.Context
-	cfg     *local.BackendConfig
+	cfg     *ingestctrl.BackendConfig
 	sysVars map[string]string
 
 	flushing        atomic.Bool
 	timeOfLastFlush atomicutil.Time
 	updateInterval  time.Duration
-	checkpointMgr   *CheckpointManager
+	checkpointMgr   CheckpointOperator
 	etcdClient      *clientv3.Client
 	initTS          uint64
 	importTS        uint64
@@ -160,7 +157,10 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 }
 
 func (bc *litBackendCtx) collectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
-	dupeController := bc.backend.GetDupeController(bc.cfg.WorkerConcurrency, nil)
+	dupeController, err := bc.backend.GetDupeController(bc.ctx, bc.cfg.GetWorkerConcurrency(), nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
 		SQLMode:     mysql.ModeStrictAllTables,
 		SysVars:     bc.sysVars,
@@ -220,11 +220,7 @@ func (bc *litBackendCtx) Ingest(ctx context.Context) error {
 		defer release()
 	}
 
-	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
-		if MockDMLExecutionStateBeforeImport != nil {
-			MockDMLExecutionStateBeforeImport()
-		}
-	})
+	failpoint.InjectCall("beforeBackendIngest")
 
 	err = bc.unsafeImportAndResetAllEngines(ctx)
 	if err != nil {
@@ -277,7 +273,7 @@ func (bc *litBackendCtx) unsafeImportAndResetAllEngines(ctx context.Context) err
 }
 
 func (bc *litBackendCtx) unsafeImportAndReset(ctx context.Context, ei *engineInfo) error {
-	logger := log.FromContext(bc.ctx).With(
+	logger := log.Wrap(logutil.Logger(bc.ctx)).With(
 		zap.Stringer("engineUUID", ei.uuid),
 	)
 	logger.Info(LitInfoUnsafeImport,
@@ -345,13 +341,13 @@ func (bc *litBackendCtx) checkFlush() (shouldFlush bool, shouldImport bool) {
 }
 
 // GetLocalBackend returns the local backend.
-func (bc *litBackendCtx) GetLocalBackend() *local.Backend {
+func (bc *litBackendCtx) GetLocalBackend() *ingestctrl.Backend {
 	return bc.backend
 }
 
 // GetDiskUsage returns current disk usage of underlying backend.
 func (bc *litBackendCtx) GetDiskUsage() uint64 {
-	_, _, bcDiskUsed, _ := local.CheckDiskQuota(bc.backend, math.MaxInt64)
+	_, _, bcDiskUsed, _ := ingestctrl.CheckDiskQuota(bc.backend, math.MaxInt64)
 	return uint64(bcDiskUsed)
 }
 
@@ -367,7 +363,7 @@ func (bc *litBackendCtx) Close() {
 // NextStartKey implements CheckpointOperator interface.
 func (bc *litBackendCtx) NextStartKey() tikv.Key {
 	if bc.checkpointMgr != nil {
-		return bc.checkpointMgr.NextKeyToProcess()
+		return bc.checkpointMgr.NextStartKey()
 	}
 	return nil
 }
@@ -383,34 +379,39 @@ func (bc *litBackendCtx) TotalKeyCount() int {
 // AddChunk implements CheckpointOperator interface.
 func (bc *litBackendCtx) AddChunk(id int, endKey tikv.Key) {
 	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.Register(id, endKey)
+		bc.checkpointMgr.AddChunk(id, endKey)
 	}
 }
 
 // UpdateChunk implements CheckpointOperator interface.
 func (bc *litBackendCtx) UpdateChunk(id int, count int, done bool) {
 	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.UpdateTotalKeys(id, count, done)
+		bc.checkpointMgr.UpdateChunk(id, count, done)
 	}
 }
 
 // FinishChunk implements CheckpointOperator interface.
 func (bc *litBackendCtx) FinishChunk(id int, count int) {
 	if bc.checkpointMgr != nil {
-		bc.checkpointMgr.UpdateWrittenKeys(id, count)
+		bc.checkpointMgr.FinishChunk(id, count)
 	}
 }
 
 // GetImportTS implements CheckpointOperator interface.
 func (bc *litBackendCtx) GetImportTS() uint64 {
 	if bc.checkpointMgr != nil {
-		return bc.checkpointMgr.GetTS()
+		return bc.checkpointMgr.GetImportTS()
 	}
 	return bc.importTS
 }
 
 // AdvanceWatermark implements CheckpointOperator interface.
-func (bc *litBackendCtx) AdvanceWatermark(imported bool) error {
+func (bc *litBackendCtx) AdvanceWatermark(imported bool) (err error) {
+	failpoint.Inject("ddlIngestFailOnceBeforeCheckpointUpdated", func() {
+		if imported {
+			failpoint.Return(errors.New("failpoint: ddlIngestFailOnceBeforeCheckpointUpdated"))
+		}
+	})
 	if bc.checkpointMgr != nil {
 		return bc.checkpointMgr.AdvanceWatermark(imported)
 	}

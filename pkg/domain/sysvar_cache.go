@@ -18,7 +18,10 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"strconv"
 
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -100,6 +103,12 @@ func (*Domain) fetchTableValues(sctx sessionctx.Context) (map[string]string, err
 	return tableContents, nil
 }
 
+func (*Domain) overrideSysVarWithConfig(tableContent map[string]string) {
+	if _, exist := tableContent[vardef.MaxAllowedPacket]; exist {
+		tableContent[vardef.MaxAllowedPacket] = strconv.FormatUint(config.GetMaxAllowedPacket(), 10)
+	}
+}
+
 // rebuildSysVarCache rebuilds the sysvar cache both globally and for session vars.
 // It needs to be called when sysvars are added or removed.
 func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
@@ -122,9 +131,14 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 		return err
 	}
 
+	if deploymode.IsStarter() {
+		do.overrideSysVarWithConfig(tableContents)
+	}
+
 	for _, sv := range variable.GetSysVars() {
 		sVal := sv.Value
-		if _, ok := tableContents[sv.Name]; ok {
+		// NOTE: instance variable use values stored in this instance
+		if _, ok := tableContents[sv.Name]; ok && !sv.IsInitedFromConfig {
 			sVal = tableContents[sv.Name]
 		}
 		// session cache stores non-skippable variables, which essentially means session scope.

@@ -15,6 +15,7 @@
 package tikv
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -130,8 +131,7 @@ func TestSortAndDedupHashVals(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Make a copy to avoid modifying the original test data
-			input := make([]uint64, len(tt.input))
-			copy(input, tt.input)
+			input := slices.Clone(tt.input)
 
 			result := sortAndDedupHashVals(input)
 			assert.Equal(t, tt.expected, result)
@@ -182,8 +182,7 @@ func TestSafeCopy(t *testing.T) {
 			// Check that it's a different slice (not the same memory)
 			if len(tt.input) > 0 {
 				// Modify the original to ensure copy is independent
-				original := make([]byte, len(tt.input))
-				copy(original, tt.input)
+				original := slices.Clone(tt.input)
 				tt.input[0] = 255 // Modify original
 
 				// The copy should still match the expected value

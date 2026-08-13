@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
-	ddllogutil "github.com/pingcap/tidb/pkg/ddl/logutil"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"go.uber.org/zap"
 )
 
 // backfillExecutor is used to manage the lifetime of backfill workers.
@@ -122,17 +121,12 @@ func (b *txnBackfillExecutor) resultChan() <-chan *backfillResult {
 
 // NewReorgCopContext creates a CopContext for reorg
 func NewReorgCopContext(
-	store kv.Storage,
 	reorgMeta *model.DDLReorgMeta,
 	tblInfo *model.TableInfo,
 	allIdxInfo []*model.IndexInfo,
 	requestSource string,
 ) (copr.CopContext, error) {
 	warnHandler := contextutil.NewStaticWarnHandler(0)
-	distSQLCtx, err := newReorgDistSQLCtxWithReorgMeta(store.GetClient(), reorgMeta, warnHandler)
-	if err != nil {
-		return nil, err
-	}
 
 	exprCtx, err := newReorgExprCtxWithReorgMeta(reorgMeta, warnHandler)
 	if err != nil {
@@ -145,11 +139,11 @@ func NewReorgCopContext(
 
 	return copr.NewCopContext(
 		exprCtx,
-		distSQLCtx,
 		pushDownFlags,
 		tblInfo,
 		allIdxInfo,
 		requestSource,
+		reorgMeta.GetUseNewCollateOrDefault(collate.NewCollationEnabled()),
 	)
 }
 
@@ -181,6 +175,7 @@ func newDefaultReorgDistSQLCtx(kvClient kv.Client, warnHandler contextutil.WarnA
 		TiFlashHashJoinVersion:               vardef.DefTiFlashHashJoinVersion,
 		ResourceGroupName:                    resourcegroup.DefaultResourceGroupName,
 		ExecDetails:                          &execDetails,
+		RuntimeStatsColl:                     execdetails.NewRuntimeStatsColl(nil),
 	}
 }
 
@@ -226,7 +221,7 @@ func initSessCtx(sessCtx sessionctx.Context, reorgMeta *model.DDLReorgMeta) erro
 }
 
 func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context) {
-	sv := sessCtx.GetSessionVars()
+	sv := sessCtx.GetSessionVars() //nolint:forbidigo
 	rowEncoder := sv.RowEncoder.Enable
 	sqlMode := sv.SQLMode
 	var timezone *time.Location
@@ -239,7 +234,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	errLevels := sv.StmtCtx.ErrLevels()
 	resGroupName := sv.StmtCtx.ResourceGroupName
 	return func(usedSessCtx sessionctx.Context) {
-		uv := usedSessCtx.GetSessionVars()
+		uv := usedSessCtx.GetSessionVars() //nolint:forbidigo
 		uv.RowEncoder.Enable = rowEncoder
 		uv.SQLMode = sqlMode
 		uv.TimeZone = timezone
@@ -262,9 +257,6 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
 	jc := b.jobCtx
-	if err := loadDDLReorgVars(b.ctx, b.sessPool); err != nil {
-		ddllogutil.DDLLogger().Error("load DDL reorganization variable failed", zap.Error(err))
-	}
 	workerCnt := b.expectedWorkerSize()
 	// Increase the worker.
 	for i := len(b.workers); i < workerCnt; i++ {
@@ -280,7 +272,7 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 			}
 
 			idxWorker, err := newAddIndexTxnWorker(b.decodeColMap, b.tbl, backfillCtx,
-				job.ID, reorgInfo.elements, reorgInfo.currElement.TypeKey)
+				job, reorgInfo.elements, reorgInfo.currElement)
 			if err != nil {
 				return err
 			}
@@ -291,7 +283,10 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 			if err != nil {
 				return err
 			}
-			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.elements)
+			tmpIdxWorker, err := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.elements)
+			if err != nil {
+				return err
+			}
 			runner = newBackfillWorker(b.ctx, tmpIdxWorker)
 			worker = tmpIdxWorker
 		case typeUpdateColumnWorker:
@@ -331,7 +326,7 @@ func (b *txnBackfillExecutor) adjustWorkerSize() error {
 		b.workers = b.workers[:workerCnt]
 		closeBackfillWorkers(workers)
 	}
-	return injectCheckBackfillWorkerNum(len(b.workers), b.tp == typeAddIndexMergeTmpWorker)
+	return nil
 }
 
 func (b *txnBackfillExecutor) close(force bool) {
@@ -347,8 +342,14 @@ func (b *txnBackfillExecutor) close(force bool) {
 	close(b.resultCh)
 }
 
-func expectedIngestWorkerCnt(concurrency, avgRowSize int) (readerCnt, writerCnt int) {
+func expectedIngestWorkerCnt(concurrency, avgRowSize int, useGlobalSort bool) (readerCnt, writerCnt int) {
 	workerCnt := concurrency
+	// Testing showed that in a global sort environment,
+	// reader ration does not significantly impact the performance of add indexes.
+	// We disable this ration in global sort for better memory management.
+	if useGlobalSort {
+		return workerCnt, workerCnt
+	}
 	if avgRowSize == 0 {
 		// Statistic data not exist, use default concurrency.
 		readerCnt = min(workerCnt/2, maxBackfillWorkerSize)

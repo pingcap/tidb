@@ -88,7 +88,7 @@ ut run --race
 ut run --short
 
 // test with long flag
-// when the '--long' flag is set, ut will only run the long tests and have different strategies for concurreny to make them stabler.
+// when the '--long' flag is set, ut will only run the long tests and have different strategies for concurrency to make them stabler.
 ut run --long`
 
 	fmt.Println(msg)
@@ -938,7 +938,7 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 		args = append(args, []string{"-test.timeout", "30m"}...)
 	}
 
-	// session.test -test.run TestClusteredPrefixColum
+	// session.test -test.run TestClusteredPrefixColumn
 	args = append(args, "-test.run", "^"+fn+"$")
 
 	return exec.Command(exe, args...)

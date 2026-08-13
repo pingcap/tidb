@@ -1,0 +1,10 @@
+[
+  {
+    "name": "TestNaturalJoinWithCorrelatedSubquery",
+    "cases": [
+      "select /* issue:60602 */ 0 from t t1 where exists (select a2.a from t a1 natural join t a2 where t1.a = (select min(t1.a)))",
+      "select /* issue:60602 */ 0 from t t1 where exists (select a1.a from t a1 natural join t a2 where t1.a = (select min(t1.a)))",
+      "select /* issue:60602 */ 0 from t t1 where exists (select a2.a from t a1 natural left join t a2 where t1.a = (select min(t1.a)))"
+    ]
+  }
+]

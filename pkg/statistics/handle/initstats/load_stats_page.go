@@ -26,6 +26,7 @@ import (
 )
 
 // InitStatsPercentage is the percentage of the table to load stats.
+// This only works for non-lite mode.
 var InitStatsPercentage atomicutil.Float64
 
 var (
@@ -69,20 +70,15 @@ func NewRangeWorker(
 	taskName string,
 	processTask func(task Task) error,
 	concurrency int,
-	maxTid,
-	initStatsStep uint64,
+	totalTaskCnt uint64,
 	totalPercentageStep float64,
 ) *RangeWorker {
-	taskCnt := uint64(1)
-	if maxTid > initStatsStep*2 {
-		taskCnt = maxTid / initStatsStep
-	}
 	worker := &RangeWorker{
 		taskName:            taskName,
 		processTask:         processTask,
 		concurrency:         concurrency,
 		taskChan:            make(chan Task, 1),
-		taskCnt:             taskCnt,
+		taskCnt:             totalTaskCnt,
 		totalPercentage:     InitStatsPercentage.Load(),
 		totalPercentageStep: totalPercentageStep,
 	}

@@ -20,8 +20,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/aws/smithy-go"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -97,11 +96,18 @@ func TestIsContextCanceledError(t *testing.T) {
 	require.True(t, log.IsContextCanceledError(context.Canceled))
 	require.True(t, log.IsContextCanceledError(status.Error(codes.Canceled, "")))
 	require.True(t, log.IsContextCanceledError(errors.Annotate(context.Canceled, "foo")))
-	require.True(t, log.IsContextCanceledError(awserr.New(request.CanceledErrorCode, "", context.Canceled)))
-	require.True(t, log.IsContextCanceledError(awserr.New(
-		"MultipartUpload", "upload multipart failed",
-		awserr.New(request.CanceledErrorCode, "", context.Canceled))))
-	require.True(t, log.IsContextCanceledError(awserr.New(request.ErrCodeRequestError, "", context.Canceled)))
+
+	// Test smithy CanceledError
+	require.True(t, log.IsContextCanceledError(&smithy.CanceledError{
+		Err: context.Canceled,
+	}))
+
+	// Test smithy operation error wrapping context.Canceled
+	require.True(t, log.IsContextCanceledError(&smithy.OperationError{
+		ServiceID:     "TestService",
+		OperationName: "TestOperation",
+		Err:           context.Canceled,
+	}))
 
 	require.False(t, log.IsContextCanceledError(nil))
 }

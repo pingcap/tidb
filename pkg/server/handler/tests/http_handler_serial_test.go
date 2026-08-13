@@ -34,6 +34,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -43,11 +45,14 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/pd/client/clients/gc"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func dummyRecord() *deadlockhistory.DeadlockRecord {
@@ -261,17 +266,18 @@ func TestRegionsFromMeta(t *testing.T) {
 
 func TestTiFlashReplica(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	ts.prepareData(t)
+	ts.startServer(t, mockstore.WithMockTiFlash(2))
 	defer ts.stopServer(t)
 
-	db, err := sql.Open("mysql", ts.GetDSN())
-	require.NoError(t, err)
-	defer func() {
-		err := db.Close()
-		require.NoError(t, err)
-	}()
-	dbt := testkit.NewDBTestKit(t, db)
+	tk := testkit.NewTestKit(t, ts.store)
+	tk.MustExec("create database tidb")
+	tk.MustExec("use tidb")
+	tk.MustExec("create table test (a int auto_increment primary key, b varchar(20))")
+	tk.MustExec(`create table pt (a int primary key, b varchar(20), key idx(a, b))
+partition by range (a)
+(partition p0 values less than (256),
+ partition p1 values less than (512),
+ partition p2 values less than (1024))`)
 
 	defer func(originGC bool) {
 		if originGC {
@@ -290,7 +296,7 @@ func TestTiFlashReplica(t *testing.T) {
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
 	// Set GC safe point and enable GC.
-	dbt.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	resp, err := ts.FetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
@@ -301,13 +307,7 @@ func TestTiFlashReplica(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, 0, len(data))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
-	}()
-
-	dbt.MustExec("use tidb")
-	dbt.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
+	tk.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 
 	resp, err = ts.FetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
@@ -351,7 +351,7 @@ func TestTiFlashReplica(t *testing.T) {
 	require.Equal(t, true, data[0].Available)
 
 	// Should not take effect.
-	dbt.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
+	tk.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 	checkFunc := func() {
 		resp, err := ts.FetchStatus("/tiflash/replica-deprecated")
 		require.NoError(t, err)
@@ -366,20 +366,20 @@ func TestTiFlashReplica(t *testing.T) {
 	}
 
 	// Test for get dropped table tiflash replica info.
-	dbt.MustExec("drop table test")
+	tk.MustExec("drop table test")
 	checkFunc()
 
 	// Test unique table id replica info.
-	dbt.MustExec("flashback table test")
+	tk.MustExec("flashback table test")
 	checkFunc()
-	dbt.MustExec("drop table test")
+	tk.MustExec("drop table test")
 	checkFunc()
-	dbt.MustExec("flashback table test")
+	tk.MustExec("flashback table test")
 	checkFunc()
 
 	// Test for partition table.
-	dbt.MustExec("alter table pt set tiflash replica 2 location labels 'a','b';")
-	dbt.MustExec("alter table test set tiflash replica 0;")
+	tk.MustExec("alter table pt set tiflash replica 2 location labels 'a','b';")
+	tk.MustExec("alter table test set tiflash replica 0;")
 	resp, err = ts.FetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
@@ -436,8 +436,8 @@ func TestTiFlashReplica(t *testing.T) {
 	}
 
 	// Test for get truncated table tiflash replica info.
-	dbt.MustExec("truncate table pt")
-	dbt.MustExec("alter table pt set tiflash replica 0;")
+	tk.MustExec("truncate table pt")
+	tk.MustExec("alter table pt set tiflash replica 0;")
 	checkFunc()
 }
 
@@ -445,6 +445,12 @@ func TestDebugRoutes(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
+	core, recorded := observer.New(zap.InfoLevel)
+	restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
+		Core:  core,
+		Level: zap.NewAtomicLevelAt(zap.InfoLevel),
+	})
+	defer restore()
 
 	debugRoutes := []string{
 		"/debug/pprof/",
@@ -463,12 +469,66 @@ func TestDebugRoutes(t *testing.T) {
 		// "/debug/zip", // this creates unexpected goroutines which will make goleak complain, so we skip it for now
 		"/debug/ballast-object-sz",
 	}
+	expectedProfilingLogs := 0
 	for _, route := range debugRoutes {
+		if strings.HasPrefix(route, "/debug/pprof/") {
+			expectedProfilingLogs++
+		}
 		resp, err := ts.FetchStatus(route)
 		require.NoError(t, err, fmt.Sprintf("GET route %s failed", route))
 		require.Equal(t, http.StatusOK, resp.StatusCode, fmt.Sprintf("GET route %s failed", route))
 		require.NoError(t, resp.Body.Close())
 	}
+
+	profilingLogs := recorded.FilterMessage("profiling request received")
+	require.Len(t, profilingLogs.All(), expectedProfilingLogs)
+	require.Len(t, profilingLogs.FilterField(zap.String("path", "/debug/pprof/goroutine")).
+		FilterField(zap.String("debug", "2")).All(), 1)
+	require.Len(t, profilingLogs.FilterField(zap.String("path", "/debug/pprof/profile")).
+		FilterField(zap.String("seconds", "5")).All(), 1)
+	for _, entry := range profilingLogs.All() {
+		fields := entry.ContextMap()
+		require.Equal(t, http.MethodGet, fields["method"])
+		require.NotEmpty(t, fields["path"])
+		require.NotEmpty(t, fields["remote-addr"])
+	}
+}
+
+func TestAutoIDOwnerRouteRegistration(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		originalMode := deploymode.Get()
+		require.NoError(t, deploymode.Set(deploymode.Premium))
+		defer func() {
+			require.NoError(t, deploymode.Set(originalMode))
+		}()
+	}
+
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	resp, err := ts.FetchStatus("/owner_manager/auto_id_service")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	require.NoError(t, resp.Body.Close())
+	ts.stopServer(t)
+
+	// Starter deploy mode only exists for NextGen. In classic builds, deploymode.IsStarter()
+	// is always false, so only the non-Starter route-registration case applies.
+	if !kerneltype.IsNextGen() {
+		return
+	}
+
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	ts = createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	resp, err = ts.FetchStatus("/owner_manager/auto_id_service")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.JSONEq(t, `{"is_owner": false}`, string(body))
 }
 
 func TestFailpointHandler(t *testing.T) {
@@ -551,31 +611,54 @@ func TestTestHandler(t *testing.T) {
 }
 
 func TestServerInfo(t *testing.T) {
+	originalCfg := *config.GetGlobalConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.ForceInitStats = false
+	})
+	defer config.StoreGlobalConfig(&originalCfg)
+
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
-	resp, err := ts.FetchStatus("/info")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	decoder := json.NewDecoder(resp.Body)
-
-	info := tikvhandler.ServerInfo{}
-	err = decoder.Decode(&info)
-	require.NoError(t, err)
 
 	cfg := config.GetGlobalConfig()
-	require.True(t, info.IsOwner)
+	store := ts.server.NewTikvHandlerTool().Store.(kv.Storage)
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	d := do.DDL()
+
+	fetchInfo := func() (tikvhandler.ServerInfo, error) {
+		resp, err := ts.FetchStatus("/info")
+		if err != nil {
+			return tikvhandler.ServerInfo{}, err
+		}
+		defer func() {
+			_ = resp.Body.Close()
+		}()
+		if resp.StatusCode != http.StatusOK {
+			return tikvhandler.ServerInfo{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
+		}
+
+		info := tikvhandler.ServerInfo{}
+		err = json.NewDecoder(resp.Body).Decode(&info)
+		return info, err
+	}
+
+	var info tikvhandler.ServerInfo
+	require.Eventually(t, func() bool {
+		current, err := fetchInfo()
+		if err != nil {
+			return false
+		}
+		info = current
+		return info.IsOwner
+	}, 3*time.Second, 50*time.Millisecond)
+
 	require.Equal(t, cfg.AdvertiseAddress, info.IP)
 	require.Equal(t, cfg.Status.StatusPort, info.StatusPort)
 	require.Equal(t, cfg.Lease, info.Lease)
 	require.Equal(t, mysql.ServerVersion, info.Version)
 	require.Equal(t, versioninfo.TiDBGitHash, info.GitHash)
-
-	store := ts.server.NewTikvHandlerTool().Store.(kv.Storage)
-	do, err := session.GetDomain(store)
-	require.NoError(t, err)
-	d := do.DDL()
 	require.Equal(t, d.GetID(), info.ID)
 }
 
@@ -640,9 +723,9 @@ func TestTTL(t *testing.T) {
 	dbt.MustExec("create table t1(t timestamp) TTL=`t` + interval 1 day")
 
 	getJobCnt := func(status string) int {
-		selectSQL := "select count(1) from mysql.tidb_ttl_job_history"
+		selectSQL := "select count(1) from mysql.tidb_ttl_job_history where table_schema = 'test_ttl' and table_name = 't1'"
 		if status != "" {
-			selectSQL += " where status = '" + status + "'"
+			selectSQL += " and status = '" + status + "'"
 		}
 
 		rs, err := db.Query(selectSQL)
@@ -669,6 +752,7 @@ func TestTTL(t *testing.T) {
 			if cnt == 0 {
 				return
 			}
+			time.Sleep(200 * time.Millisecond)
 		}
 		require.Fail(t, "timeout for waiting job finished")
 	}
@@ -695,12 +779,12 @@ func TestTTL(t *testing.T) {
 		return obj, nil
 	}
 
-	expectedJobCnt := 1
+	baseJobCnt := getJobCnt("")
+	expectedJobCnt := baseJobCnt + 1
 	obj, err := doTrigger("test_ttl", "t1")
-	require.NoError(t, err)
 	if err != nil {
 		// if error returns, may be a job is running, we should skip it and have a next try when it stopped
-		require.Equal(t, expectedJobCnt, getJobCnt(""))
+		require.Equal(t, baseJobCnt, getJobCnt(""))
 		waitAllJobsFinish()
 		obj, err = doTrigger("test_ttl", "t1")
 		require.NoError(t, err)
@@ -709,10 +793,87 @@ func TestTTL(t *testing.T) {
 
 	_, ok := obj["table_result"]
 	require.True(t, ok)
-	require.Equal(t, expectedJobCnt, getJobCnt(""))
+	require.Eventually(t, func() bool {
+		return getJobCnt("") == expectedJobCnt
+	}, 10*time.Second, 200*time.Millisecond)
 
 	// error case, table not exist
 	obj, err = doTrigger("test_ttl", "t2")
 	require.Nil(t, obj)
 	require.EqualError(t, err, "http status: 400 Bad Request, table test_ttl.t2 not exists")
+}
+
+func TestGC(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	var data url.Values
+	resp, err := ts.FormStatus("/txn-gc-states", data)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+
+	resp, err = ts.FetchStatus("/txn-gc-states")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	// Verify the resp body.
+	decoder := json.NewDecoder(resp.Body)
+	var state gc.GCState
+	err = decoder.Decode(&state)
+	require.NoError(t, err)
+
+	var empty gc.GCState
+	require.NotEqual(t, empty, state)
+}
+
+func TestIngestParam(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+
+	testCases := []struct {
+		url         string
+		defaultVal  any
+		modVal      any
+		expectedVal any
+	}{
+		{"/ingest/max-batch-split-ranges", float64(2048), 1000, float64(1000)},
+		{"/ingest/max-split-ranges-per-sec", float64(0), 2000, float64(2000)},
+		{"/ingest/max-ingest-inflight", float64(0), 1000, float64(1000)},
+		{"/ingest/max-ingest-per-sec", float64(0), 2000, float64(2000)},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.url, func(t *testing.T) {
+			resp, err := ts.FetchStatus(tc.url)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			decoder := json.NewDecoder(resp.Body)
+			var payload struct {
+				Value  float64 `json:"value"`
+				IsNull bool    `json:"is_null"`
+			}
+			err = decoder.Decode(&payload)
+			require.NoError(t, err)
+			require.Equal(t, tc.defaultVal, payload.Value)
+
+			resp, err = ts.PostStatus(tc.url, "", bytes.NewBuffer([]byte(fmt.Sprintf(`{"value": %v}`, tc.modVal))))
+			require.NoError(t, err)
+			require.NotNil(t, resp)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			resp, err = ts.FetchStatus(tc.url)
+			require.NoError(t, err)
+			defer func() { require.NoError(t, resp.Body.Close()) }()
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+			decoder = json.NewDecoder(resp.Body)
+			err = decoder.Decode(&payload)
+			require.NoError(t, err)
+			require.Equal(t, tc.expectedVal, payload.Value)
+		})
+	}
 }

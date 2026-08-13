@@ -29,6 +29,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -40,16 +41,20 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -64,9 +69,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pwdValidator "github.com/pingcap/tidb/pkg/util/password-validation"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -156,7 +162,7 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case *ast.UseStmt:
 		err = e.executeUse(x)
 	case *ast.FlushStmt:
-		err = e.executeFlush(x)
+		err = e.executeFlush(ctx, x)
 	case *ast.AlterInstanceStmt:
 		err = e.executeAlterInstance(x)
 	case *ast.BeginStmt:
@@ -211,30 +217,37 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	return err
 }
 
-func (e *SimpleExec) setDefaultRoleNone(s *ast.SetDefaultRoleStmt) error {
+func (e *SimpleExec) setDefaultRoleNone(ctx context.Context, s *ast.SetDefaultRoleStmt) error {
+	if deploymode.IsStarter() {
+		for _, u := range s.UserList {
+			if _, err := userExistsWithRetryVariants(ctx, e.Ctx(), &u.Username, u.Hostname); err != nil {
+				return err
+			}
+		}
+	}
 	restrictedCtx, err := e.GetSysSession()
 	if err != nil {
 		return err
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	defer e.ReleaseSysSession(ctx, restrictedCtx)
+	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+	defer e.ReleaseSysSession(internalCtx, restrictedCtx)
 	sqlExecutor := restrictedCtx.GetSQLExecutor()
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "begin"); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "begin"); err != nil {
 		return err
 	}
 	sql := new(strings.Builder)
 	for _, u := range s.UserList {
 		sql.Reset()
 		sqlescape.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", u.Username, u.Hostname)
-		if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
+		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
 			logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
-			if _, rollbackErr := sqlExecutor.ExecuteInternal(ctx, "rollback"); rollbackErr != nil {
+			if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 				return rollbackErr
 			}
 			return err
 		}
 	}
-	if _, err := sqlExecutor.ExecuteInternal(ctx, "commit"); err != nil {
+	if _, err := sqlExecutor.ExecuteInternal(internalCtx, "commit"); err != nil {
 		return err
 	}
 	return nil
@@ -242,7 +255,7 @@ func (e *SimpleExec) setDefaultRoleNone(s *ast.SetDefaultRoleStmt) error {
 
 func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaultRoleStmt) error {
 	for _, user := range s.UserList {
-		exists, err := userExists(ctx, e.Ctx(), user.Username, user.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
@@ -251,7 +264,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 		}
 	}
 	for _, role := range s.RoleList {
-		exists, err := userExists(ctx, e.Ctx(), role.Username, role.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &role.Username, role.Hostname)
 		if err != nil {
 			return err
 		}
@@ -309,7 +322,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 
 func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRoleStmt) error {
 	for _, user := range s.UserList {
-		exists, err := userExists(ctx, e.Ctx(), user.Username, user.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
@@ -450,7 +463,7 @@ func (e *SimpleExec) executeSetDefaultRole(ctx context.Context, s *ast.SetDefaul
 	case ast.SetRoleAll:
 		err = e.setDefaultRoleAll(ctx, s)
 	case ast.SetRoleNone:
-		err = e.setDefaultRoleNone(s)
+		err = e.setDefaultRoleNone(ctx, s)
 	case ast.SetRoleRegular:
 		err = e.setDefaultRoleRegular(ctx, s)
 	}
@@ -689,7 +702,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 	e.setCurrentUser(s.Users)
 
 	for _, role := range s.Roles {
-		exists, err := userExists(ctx, e.Ctx(), role.Username, role.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &role.Username, role.Hostname)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -717,7 +730,7 @@ func (e *SimpleExec) executeRevokeRole(ctx context.Context, s *ast.RevokeRoleStm
 		curUser, curHost = user.AuthUsername, user.AuthHostname
 	}
 	for _, user := range s.Users {
-		exists, err := userExists(ctx, e.Ctx(), user.Username, user.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.Username, user.Hostname)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1087,6 +1100,17 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	if err != nil {
 		return err
 	}
+	// MySQL rejects RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD in CREATE USER;
+	// a new user always starts with a single primary password.
+	for _, spec := range s.Specs {
+		retainCurrentPassword, discardOldPassword := dualPasswordOption(spec)
+		if retainCurrentPassword {
+			return errors.Errorf("RETAIN CURRENT PASSWORD clause is not supported in CREATE USER statement")
+		}
+		if discardOldPassword {
+			return errors.Errorf("DISCARD OLD PASSWORD clause is not supported in CREATE USER statement")
+		}
+	}
 	passwordLocking := createUserFailedLoginJSON(plOptions)
 	if s.IsCreateRole {
 		plOptions.lockAccount = "Y"
@@ -1154,6 +1178,9 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 
 	users := make([]*auth.UserIdentity, 0, len(s.Specs))
 	for _, spec := range s.Specs {
+		if err := keyspace.GetUsernamePolicy().ValidateUsername(spec.User.Username); err != nil {
+			return err
+		}
 		if len(spec.User.Username) > auth.UserNameMaxLength {
 			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(spec.User.Username, "user name", auth.UserNameMaxLength)
 		}
@@ -1645,6 +1672,62 @@ func checkPasswordReusePolicy(ctx context.Context, sqlExecutor sqlexec.SQLExecut
 	return nil
 }
 
+func dualPasswordOption(spec *ast.UserSpec) (retainCurrentPassword bool, discardOldPassword bool) {
+	if spec == nil {
+		return false, false
+	}
+	switch spec.DualPasswordOption {
+	case ast.DualPasswordRetainCurrent:
+		return true, false
+	case ast.DualPasswordDiscardOld:
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+func dualPasswordRequested(specs []*ast.UserSpec) bool {
+	for _, spec := range specs {
+		retainCurrentPassword, discardOldPassword := dualPasswordOption(spec)
+		if retainCurrentPassword || discardOldPassword {
+			return true
+		}
+	}
+	return false
+}
+
+// alterUserHasPrivilegedOptions reports whether the ALTER USER statement
+// carries statement-level options beyond the per-spec password /
+// dual-password clauses (TLS requirements, resource limits, password/lock
+// policy, COMMENT/ATTRIBUTE, resource group). Those options mutate account
+// state that plain self-service password authority must not reach, so the
+// self-service dual-password gate in executeAlterUser applies only when this
+// returns false.
+//
+// NOTE: this is an ALLOWLIST of the statement-level option fields on
+// ast.AlterUserStmt and MUST be kept in sync when new option fields are
+// added there — a field missing here would leave the self-service bypass
+// enabled for a statement that also carries the new option. The table test
+// TestAlterUserHasPrivilegedOptions enumerates every current option so a new
+// field shows up as a review-visible gap.
+func alterUserHasPrivilegedOptions(s *ast.AlterUserStmt) bool {
+	return len(s.AuthTokenOrTLSOptions) > 0 ||
+		len(s.ResourceOptions) > 0 ||
+		len(s.PasswordOrLockOptions) > 0 ||
+		s.CommentOrAttributeOption != nil ||
+		s.ResourceGroupNameOption != nil
+}
+
+func authenticatedUserNameAndHost(user *auth.UserIdentity) (username string, hostname string) {
+	if user == nil {
+		return "", ""
+	}
+	if user.AuthUsername != "" && user.AuthHostname != "" {
+		return user.AuthUsername, user.AuthHostname
+	}
+	return user.Username, user.Hostname
+}
+
 func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt) error {
 	disableSandBoxMode := false
 	var err error
@@ -1655,17 +1738,31 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		disableSandBoxMode = true
 	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
-	if s.CurrentAuth != nil {
+	if s.CurrentAuth != nil || s.CurrentDualPasswordOption != 0 {
 		user := e.Ctx().GetSessionVars().User
 		if user == nil {
 			return errors.New("Session user is empty")
 		}
-		// Use AuthHostname to search the user record, set Hostname as AuthHostname.
+		// USER() resolves to the AUTHENTICATED account, so key the synthetic
+		// spec on AuthUsername/AuthHostname rather than the claimed
+		// Username/Hostname. For a proxy/mapped login where the two diverge,
+		// using the claimed Username would target the wrong mysql.user row (see
+		// pingcap/tidb#68937). Some tests and legacy code paths construct
+		// UserIdentity manually without AuthUsername/AuthHostname; fall back to
+		// Username/Hostname in that case.
 		userCopy := *user
-		userCopy.Hostname = userCopy.AuthHostname
+		userCopy.Username, userCopy.Hostname = authenticatedUserNameAndHost(user)
+		// Propagate the per-statement USER() dual-password clause onto the
+		// synthetic UserSpec so the per-spec loop below only needs to inspect
+		// spec.DualPasswordOption. Covers both
+		//   ALTER USER USER() IDENTIFIED BY '...' RETAIN CURRENT PASSWORD
+		// and the standalone
+		//   ALTER USER USER() DISCARD OLD PASSWORD
+		// form (where CurrentAuth is nil).
 		spec := &ast.UserSpec{
-			User:    &userCopy,
-			AuthOpt: s.CurrentAuth,
+			User:               &userCopy,
+			AuthOpt:            s.CurrentAuth,
+			DualPasswordOption: s.CurrentDualPasswordOption,
 		}
 		s.Specs = []*ast.UserSpec{spec}
 	}
@@ -1700,6 +1797,16 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		return err
 	}
 
+	// Resolve default_authentication_plugin once per statement. Used by
+	// effectiveAuthPlugin() when an existing mysql.user row has an empty
+	// `plugin` column, matching how the privilege cache resolves it. An
+	// error here is non-fatal: effectiveAuthPlugin falls back to
+	// mysql_native_password when the sysvar is unreadable.
+	defaultAuthPlugin, err := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
+	if err != nil {
+		defaultAuthPlugin = ""
+	}
+
 	privData, err := tlsOption2GlobalPriv(s.AuthTokenOrTLSOptions)
 	if err != nil {
 		return err
@@ -1716,6 +1823,14 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	hasSystemUserPriv := checker.RequestDynamicVerification(activeRoles, "SYSTEM_USER", false)
 	hasRestrictedUserPriv := checker.RequestDynamicVerification(activeRoles, "RESTRICTED_USER_ADMIN", false)
 	hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv)
+	// Defer the APPLICATION_PASSWORD_ADMIN lookup until we know the statement
+	// actually carries RETAIN CURRENT PASSWORD or DISCARD OLD PASSWORD. This
+	// keeps the privilege-call count unchanged for the common ALTER USER path
+	// (and for the mock-based pkg/extension auth tests).
+	hasApplicationPasswordAdminPriv := false
+	if dualPasswordRequested(s.Specs) {
+		hasApplicationPasswordAdminPriv = checker.RequestDynamicVerification(activeRoles, "APPLICATION_PASSWORD_ADMIN", false)
+	}
 
 	var authTokenOptions []*ast.AuthTokenOrTLSOption
 	for _, authTokenOrTLSOption := range s.AuthTokenOrTLSOptions {
@@ -1743,18 +1858,71 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 	}
 
 	for _, spec := range s.Specs {
+		specRetainCurrentPassword, specDiscardOldPassword := dualPasswordOption(spec)
+		specDualPwdRequested := specRetainCurrentPassword || specDiscardOldPassword
+
 		user := e.Ctx().GetSessionVars().User
-		alterCurrentUser := spec.User.CurrentUser || ((user != nil) && (user.Username == spec.User.Username) && (user.AuthHostname == spec.User.Hostname))
-		alterPassword := false
-		if spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin == "" {
-			if len(s.AuthTokenOrTLSOptions) == 0 && len(s.ResourceOptions) == 0 && len(s.PasswordOrLockOptions) == 0 {
-				alterPassword = true
-			}
+		// Self-classification keys on the AUTHENTICATED identity
+		// (AuthUsername/AuthHostname), so an explicit `ALTER USER 'auth'@'host'`
+		// that names the caller's authenticated account is treated as
+		// self-service even for a proxy/mapped login where the claimed Username
+		// differs (pingcap/tidb#68937). If the authenticated identity is not
+		// populated, fall back to Username/Hostname.
+		currentUserName, currentUserHost := "", ""
+		if user != nil {
+			currentUserName, currentUserHost = authenticatedUserNameAndHost(user)
 		}
-		if alterCurrentUser && alterPassword {
-			spec.User.Username = user.Username
-			spec.User.Hostname = user.AuthHostname
-		} else {
+		alterCurrentUser := spec.User.CurrentUser || ((user != nil) && (currentUserName == spec.User.Username) && (currentUserHost == spec.User.Hostname))
+		// alterPassword: a bare self password change (IDENTIFIED BY with no
+		// plugin change and no statement-level options), which MySQL allows
+		// without CREATE USER. It reuses the same option allowlist as the
+		// dual-password gate: the previous inline list here predated
+		// COMMENT/ATTRIBUTE and RESOURCE GROUP, so those options could
+		// piggy-back on the implicit self-password privilege and be applied
+		// without CREATE USER.
+		alterPassword := spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin == "" &&
+			!alterUserHasPrivilegedOptions(s)
+		if alterCurrentUser && (alterPassword || specDualPwdRequested) {
+			spec.User.Username = currentUserName
+			spec.User.Hostname = currentUserHost
+		}
+		// MySQL dual-password privilege model
+		// (https://dev.mysql.com/doc/refman/8.0/en/password-management.html#password-management-dual-password):
+		//   - A RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD that targets your
+		//     OWN account requires APPLICATION_PASSWORD_ADMIN (CREATE USER /
+		//     UPDATE-mysql also suffice, being a superset of self authority).
+		//     An explicit IDENTIFIED WITH is accepted on this path only when it
+		//     resolves to the account's current plugin — i.e. no plugin change —
+		//     so equivalent self-service syntax has identical privilege
+		//     behavior. A real plugin change keeps requiring admin authority.
+		//   - The same clause targeting ANOTHER account requires the normal
+		//     ALTER USER authority (CREATE USER, or UPDATE on the mysql schema).
+		//     APPLICATION_PASSWORD_ADMIN is NOT a substitute for that authority —
+		//     it never grants power over other accounts.
+		//
+		// hasOtherStmtOptions: the statement carries options beyond the password
+		// / dual-password clause, so it is not a pure self-service password
+		// change and must go through the standard admin check. See the
+		// allowlist note on alterUserHasPrivilegedOptions.
+		hasOtherStmtOptions := alterUserHasPrivilegedOptions(s)
+		// Read the target row (inside this transaction) BEFORE the privilege
+		// gate: classifying an explicit IDENTIFIED WITH as "no plugin change"
+		// needs the account's current plugin. The "user does not exist" outcome
+		// is still handled only after the privilege checks below, so an
+		// unprivileged caller cannot probe account existence.
+		exists, currentAuthPlugin, currentAuthString, err := userExistsInternalWithRetryVariants(ctx, sqlExecutor, &spec.User.Username, spec.User.Hostname)
+		if err != nil {
+			return err
+		}
+		// selfServiceDualPwd: a dual-password change to the current user's own
+		// account that carries no other privileged options (the new password for
+		// RETAIN is allowed) and no plugin change. Such a statement is governed
+		// by APPLICATION_PASSWORD_ADMIN, not the CREATE USER admin check.
+		sameOrUnspecifiedPlugin := spec.AuthOpt == nil || spec.AuthOpt.AuthPlugin == "" ||
+			effectiveAuthPlugin(spec.AuthOpt.AuthPlugin, defaultAuthPlugin) == effectiveAuthPlugin(currentAuthPlugin, defaultAuthPlugin)
+		selfServiceDualPwd := alterCurrentUser && specDualPwdRequested && !hasOtherStmtOptions && sameOrUnspecifiedPlugin
+		needAdminPrivCheck := !(alterCurrentUser && alterPassword) && !selfServiceDualPwd
+		if needAdminPrivCheck {
 			// The user executing the query (user) does not match the user specified (spec.User)
 			// The MySQL manual states:
 			// "In most cases, ALTER USER requires the global CREATE USER privilege, or the UPDATE privilege for the mysql system schema"
@@ -1770,10 +1938,23 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			// any user with only CREATE USER can not modify the properties of users with SUPER privilege.
 			// We extend this in TiDB with SEM, where SUPER users can not modify users with RESTRICTED_USER_ADMIN.
 			// For simplicity: RESTRICTED_USER_ADMIN also counts for SYSTEM_USER here.
-
 			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
+		}
+		// Self-service dual-password additionally requires APPLICATION_PASSWORD_ADMIN
+		// (CREATE USER / UPDATE-mysql holders already passed needAdminPrivCheck or
+		// are accepted here as a superset).
+		if selfServiceDualPwd && !(hasCreateUserPriv || hasSystemSchemaPriv || hasApplicationPasswordAdminPriv) {
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("APPLICATION_PASSWORD_ADMIN")
+		}
+
+		if !exists {
+			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
+			failedUsers = append(failedUsers, user)
+			continue
+		}
+		if needAdminPrivCheck {
 			if !(hasSystemUserPriv || hasRestrictedUserPriv) && checker.RequestDynamicVerificationWithUser(ctx, "SYSTEM_USER", false, spec.User) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 			}
@@ -1782,14 +1963,33 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			}
 		}
 
-		exists, currentAuthPlugin, err := userExistsInternal(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
-		if err != nil {
-			return err
+		// MySQL-compatible dual password: RETAIN CURRENT PASSWORD validation.
+		// https://dev.mysql.com/doc/refman/8.0/en/password-management.html#password-management-dual-password
+		// Only RETAIN is gated on plugin capability: a secondary password can
+		// only be retained for password-based plugins. DISCARD OLD PASSWORD is
+		// a harmless removal that MySQL treats as a no-op regardless of plugin,
+		// so it is not gated here (the JSON_REMOVE below is a no-op when no
+		// secondary exists). Resolve the empty-plugin legacy case via
+		// default_authentication_plugin so an LDAP-default deployment is
+		// correctly rejected for RETAIN.
+		if specRetainCurrentPassword {
+			resolvedPlugin := effectiveAuthPlugin(currentAuthPlugin, defaultAuthPlugin)
+			if !isDualPasswordCapablePlugin(resolvedPlugin) {
+				return errors.Errorf("Dual password is not supported for users authenticating with plugin '%s'", resolvedPlugin)
+			}
 		}
-		if !exists {
-			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
-			failedUsers = append(failedUsers, user)
-			continue
+		if specRetainCurrentPassword {
+			// RETAIN requires a new password to be set, with the same plugin, and the new password must be non-empty.
+			if spec.AuthOpt == nil || !(spec.AuthOpt.ByAuthString || spec.AuthOpt.ByHashString) {
+				return exeerrors.ErrCurrentPasswordCannotBeRetained.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
+			}
+			if spec.AuthOpt.AuthPlugin != "" && effectiveAuthPlugin(spec.AuthOpt.AuthPlugin, defaultAuthPlugin) != effectiveAuthPlugin(currentAuthPlugin, defaultAuthPlugin) {
+				return exeerrors.ErrPasswordCannotBeRetainedOnPluginChange.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
+			}
+			if (spec.AuthOpt.ByAuthString && spec.AuthOpt.AuthString == "") ||
+				(spec.AuthOpt.ByHashString && spec.AuthOpt.HashString == "") {
+				return exeerrors.ErrCurrentPasswordCannotBeRetained.GenWithStackByArgs(spec.User.Username, spec.User.Hostname)
+			}
 		}
 
 		type AuthTokenOptionHandler int
@@ -1837,7 +2037,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 				}
 			}
 			// changing the auth method prunes history.
-			if spec.AuthOpt.AuthPlugin != currentAuthPlugin {
+			if effectiveAuthPlugin(spec.AuthOpt.AuthPlugin, defaultAuthPlugin) != effectiveAuthPlugin(currentAuthPlugin, defaultAuthPlugin) {
 				// delete password history from mysql.password_history.
 				sql := new(strings.Builder)
 				sqlescape.MustFormatSQL(sql, `DELETE FROM %n.%n WHERE Host = %? and User = %?;`, mysql.SystemDB, mysql.PasswordHistoryTable, spec.User.Hostname, spec.User.Username)
@@ -1852,8 +2052,15 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					return err
 				}
 			}
-			// we have assigned the currentAuthPlugin to spec.AuthOpt.AuthPlugin if the latter is empty, so keep the incomming argument defaultPlugin empty is ok.
-			pwd, ok := encodePasswordWithPlugin(*spec, authPluginImpl, "")
+			// spec.AuthOpt.AuthPlugin was backfilled from currentAuthPlugin above,
+			// but a legacy mysql.user row can have an EMPTY plugin column. The
+			// privilege cache resolves such rows via default_authentication_plugin,
+			// so pass that default here too: otherwise the new password would be
+			// encoded as mysql_native_password even when authentication resolves
+			// the account as caching_sha2_password / tidb_sm3_password, leaving an
+			// unverifiable hash. The plugin column itself is intentionally NOT
+			// rewritten for legacy rows (see the AuthPlugin != "" guard below).
+			pwd, ok := encodePasswordWithPlugin(*spec, authPluginImpl, defaultAuthPlugin)
 			if !ok {
 				return errors.Trace(exeerrors.ErrPasswordFormat)
 			}
@@ -1868,7 +2075,9 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					pwd:        pwd,
 					authString: spec.AuthOpt.AuthString,
 				}
-				err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.Ctx(), spec.AuthOpt.AuthPlugin, authPlugins)
+				// Use the resolved plugin so history comparisons hash the same
+				// way the password was encoded (legacy empty-plugin rows).
+				err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.Ctx(), effectiveAuthPlugin(spec.AuthOpt.AuthPlugin, defaultAuthPlugin), authPlugins)
 				if err != nil {
 					return err
 				}
@@ -1962,12 +2171,48 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if passwordLockingStr != "" {
 			newAttributes = append(newAttributes, passwordLockingStr)
 		}
-		if length := len(newAttributes); length > 0 {
-			if length > 1 || passwordLockingStr == "" {
+		// MySQL-compatible dual password: if RETAIN CURRENT PASSWORD is requested,
+		// capture the current authentication_string as the secondary password before
+		// overwriting it in this UPDATE.
+		if specRetainCurrentPassword {
+			entry, err := buildAdditionalPasswordEntry(currentAuthString, spec.User.Username, spec.User.Hostname)
+			if err != nil {
+				return err
+			}
+			newAttributes = append(newAttributes, entry)
+		}
+		// DISCARD OLD PASSWORD removes the secondary password.
+		// MySQL also silently drops the secondary when the auth plugin is changed.
+		dropSecondary := specDiscardOldPassword ||
+			(spec.AuthOpt != nil && spec.AuthOpt.AuthPlugin != "" && effectiveAuthPlugin(spec.AuthOpt.AuthPlugin, defaultAuthPlugin) != effectiveAuthPlugin(currentAuthPlugin, defaultAuthPlugin))
+		// RETAIN always writes a fresh secondary, so any pending drop is moot.
+		if specRetainCurrentPassword {
+			dropSecondary = false
+		}
+
+		// Emit a single user_attributes assignment so the merge-then-remove
+		// pipeline is expressed in one SQL expression rather than relying on
+		// MySQL's left-to-right evaluation of same-row SET assignments.
+		hasNewAttributes := len(newAttributes) > 0
+		if hasNewAttributes {
+			if len(newAttributes) > 1 || passwordLockingStr == "" {
 				passwordLockingInfo.containsNoOthers = false
 			}
+		}
+		switch {
+		case hasNewAttributes && dropSecondary:
+			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
+			fields = append(fields, alterField{"user_attributes=json_remove(json_merge_patch(coalesce(user_attributes, '{}'), %?), '$.additional_password')", newAttributesStr})
+		case hasNewAttributes:
 			newAttributesStr := fmt.Sprintf("{%s}", strings.Join(newAttributes, ","))
 			fields = append(fields, alterField{"user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?)", newAttributesStr})
+		case dropSecondary:
+			// NULLIF collapses a now-empty object back to NULL so DISCARD on a
+			// row whose only attribute was additional_password (or a row that
+			// never had user_attributes) leaves NULL rather than a literal '{}',
+			// matching MySQL and the NULL-preserving behavior in
+			// deletePasswordLockingAttribute.
+			fields = append(fields, alterField{"user_attributes=nullif(json_remove(coalesce(user_attributes, '{}'), '$.additional_password'), cast('{}' as json))", nil})
 		}
 
 		switch authTokenOptionHandler {
@@ -2072,7 +2317,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 	e.setCurrentUser(s.Users)
 
 	for _, role := range s.Roles {
-		exists, err := userExists(ctx, e.Ctx(), role.Username, role.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &role.Username, role.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2081,7 +2326,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 		}
 	}
 	for _, user := range s.Users {
-		exists, err := userExists(ctx, e.Ctx(), user.Username, user.Hostname)
+		exists, err := userExistsWithRetryVariants(ctx, e.Ctx(), &user.Username, user.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2139,13 +2384,16 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 	}
 	for _, userToUser := range s.UserToUsers {
 		oldUser, newUser := userToUser.OldUser, userToUser.NewUser
+		if err := keyspace.GetUsernamePolicy().ValidateUsername(newUser.Username); err != nil {
+			return err
+		}
 		if len(newUser.Username) > auth.UserNameMaxLength {
 			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(newUser.Username, "user name", auth.UserNameMaxLength)
 		}
 		if len(newUser.Hostname) > auth.HostNameMaxLength {
 			return exeerrors.ErrWrongStringLength.GenWithStackByArgs(newUser.Hostname, "host name", auth.HostNameMaxLength)
 		}
-		exists, _, err := userExistsInternal(ctx, sqlExecutor, oldUser.Username, oldUser.Hostname)
+		exists, _, _, err := userExistsInternal(ctx, sqlExecutor, oldUser.Username, oldUser.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2154,7 +2402,7 @@ func (e *SimpleExec) executeRenameUser(s *ast.RenameUserStmt) error {
 			break
 		}
 
-		exists, _, err = userExistsInternal(ctx, sqlExecutor, newUser.Username, newUser.Hostname)
+		exists, _, _, err = userExistsInternal(ctx, sqlExecutor, newUser.Username, newUser.Hostname)
 		if err != nil {
 			return err
 		}
@@ -2452,13 +2700,123 @@ func userExists(ctx context.Context, sctx sessionctx.Context, name string, host 
 	return len(rows) > 0, nil
 }
 
-// use the same internal executor to read within the same transaction, otherwise same as userExists
-func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string) (bool, string, error) {
+// userExistsWithRetryVariants reports whether (*name, host) exists in mysql.user.
+// If a username policy variant matches, it rewrites *name to the resolved variant.
+func userExistsWithRetryVariants(ctx context.Context, sctx sessionctx.Context, name *string, host string) (bool, error) {
+	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(*name) {
+		exists, err := userExists(ctx, sctx, variant, host)
+		if err != nil {
+			return false, err
+		}
+		if exists {
+			*name = variant
+			return true, nil
+		}
+	}
+	if skipExactUsernameLookup(*name) {
+		return false, nil
+	}
+	return userExists(ctx, sctx, *name, host)
+}
+
+// userExistsInternalWithRetryVariants behaves like userExistsWithRetryVariants
+// but reads through the supplied SQL executor (so the lookup happens inside
+// the caller's transaction) and, like userExistsInternal, also returns the
+// account's auth plugin and authentication_string.
+func userExistsInternalWithRetryVariants(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name *string, host string) (exists bool, authPlugin string, authString string, err error) {
+	for _, variant := range keyspace.GetUsernamePolicy().GetUsernameVariants(*name) {
+		exists, authPlugin, authString, err := userExistsInternal(ctx, sqlExecutor, variant, host)
+		if err != nil {
+			return false, "", "", err
+		}
+		if exists {
+			*name = variant
+			return true, authPlugin, authString, nil
+		}
+	}
+	if skipExactUsernameLookup(*name) {
+		return false, "", "", nil
+	}
+	return userExistsInternal(ctx, sqlExecutor, *name, host)
+}
+
+func skipExactUsernameLookup(name string) bool {
+	policy := keyspace.GetUsernamePolicy()
+	return policy.ValidateUsername(name) != nil && policy.ValidateUsernameFormat(name)
+}
+
+// isDualPasswordCapablePlugin reports whether a user whose plugin is `plugin` is
+// eligible to hold a secondary ("additional") password. Dual passwords are only
+// meaningful for password-based plugins. LDAP / socket / token plugins are excluded,
+// matching MySQL 8.0 behavior.
+//
+// It delegates to mysql.IsAuthPluginClearText, the canonical predicate for
+// "the plugin derives a server-side hash from a clear-text password"
+// (mysql_native_password / caching_sha2_password / tidb_sm3_password): those
+// are exactly the plugins that can hold a second stored hash. If the two sets
+// ever need to diverge, split this back into its own list and document the
+// difference.
+//
+// Callers MUST pass the resolved plugin (see effectiveAuthPlugin): an empty
+// `plugin` column on a legacy mysql.user row could resolve to anything via
+// `default_authentication_plugin`, and treating "" as natively capable would
+// wrongly allow RETAIN on an LDAP-default deployment.
+func isDualPasswordCapablePlugin(plugin string) bool {
+	return mysql.IsAuthPluginClearText(plugin)
+}
+
+// effectiveAuthPlugin normalizes an auth-plugin name for equality comparisons.
+// Legacy mysql.user rows can have an empty `plugin` column, and the privilege
+// cache resolves them via the `default_authentication_plugin` session
+// variable (see privileges.MySQLPrivilege.decodeUserTableRow). The default
+// itself defaults to mysql_native_password but operators can set it to
+// caching_sha2_password / tidb_sm3_password.  Use the resolved default when
+// normalizing so plugin-change checks behave consistently with the cache.
+//
+// The defaultPlugin argument is the value returned by `GetGlobalSysVar(
+// vardef.DefaultAuthPlugin)`. Callers SHOULD resolve it once per statement.
+// An empty defaultPlugin (sysvar not set or unreadable) falls back to
+// mysql_native_password, matching the cache's behavior.
+func effectiveAuthPlugin(plugin, defaultPlugin string) string {
+	if plugin != "" {
+		return plugin
+	}
+	if defaultPlugin == "" {
+		return mysql.AuthNativePassword
+	}
+	return defaultPlugin
+}
+
+// buildAdditionalPasswordEntry turns the user's current authentication_string
+// (already read by the caller from the same FOR UPDATE'd row) into a JSON
+// key/value fragment `"additional_password": "<hash>"` suitable for embedding
+// inside a user_attributes JSON object (e.g. via JSON_MERGE_PATCH). The caller
+// composes the surrounding object.
+// It fails when the current primary password is empty — MySQL rejects RETAIN
+// CURRENT PASSWORD in that situation.
+func buildAdditionalPasswordEntry(oldPwd, name, host string) (string, error) {
+	if oldPwd == "" {
+		return "", exeerrors.ErrSecondPasswordCannotBeEmpty.GenWithStackByArgs(name, host)
+	}
+	encoded, err := json.Marshal(oldPwd)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf(`"additional_password": %s`, encoded), nil
+}
+
+// userExistsInternal reports whether the (name, host) account exists and returns
+// its current plugin and authentication_string. It reads through the supplied
+// SQL executor so the row is fetched (and FOR UPDATE locked) inside the
+// caller's transaction. The authentication_string is returned so RETAIN
+// CURRENT PASSWORD can capture the pre-change primary hash from the row
+// already read here instead of issuing a second locking read.
+func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, name string, host string) (exists bool, authPlugin string, authString string, err error) {
 	sql := new(strings.Builder)
 	sqlescape.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? FOR UPDATE;`, mysql.SystemDB, mysql.UserTable, name, strings.ToLower(host))
 	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
-		return false, "", err
+		return false, "", "", err
 	}
 	req := recordSet.NewChunk(nil)
 	err = recordSet.Next(ctx, req)
@@ -2467,11 +2825,13 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 		rows = req.NumRows()
 	}
 
-	var authPlugin string
-	colIdx := -1
+	pluginColIdx, authStringColIdx := -1, -1
 	for i, f := range recordSet.Fields() {
-		if f.ColumnAsName.L == "plugin" {
-			colIdx = i
+		switch f.ColumnAsName.L {
+		case "plugin":
+			pluginColIdx = i
+		case "authentication_string":
+			authStringColIdx = i
 		}
 	}
 	if rows == 1 {
@@ -2479,14 +2839,19 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 		// When user + host does not exist, the rows is 0
 		// When user + host exists, the rows is 1 because user + host is primary key of the table.
 		row := req.GetRow(0)
-		authPlugin = row.GetString(colIdx)
+		if pluginColIdx >= 0 {
+			authPlugin = row.GetString(pluginColIdx)
+		}
+		if authStringColIdx >= 0 {
+			authString = row.GetString(authStringColIdx)
+		}
 	}
 
 	errClose := recordSet.Close()
 	if errClose != nil {
-		return false, "", errClose
+		return false, "", "", errClose
 	}
-	return rows > 0, authPlugin, err
+	return rows > 0, authPlugin, authString, err
 }
 
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
@@ -2512,33 +2877,83 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 
 	var u, h string
 	disableSandboxMode := false
-	if s.User == nil || s.User.CurrentUser {
-		if e.Ctx().GetSessionVars().User == nil {
+	sessUser := e.Ctx().GetSessionVars().User
+	checker := privilege.GetPrivilegeManager(e.Ctx())
+	activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+	// setPwdForSelf treats an explicit `FOR 'self'@'host'` that names the
+	// caller as self-service. Match on the AUTHENTICATED identity
+	// (AuthUsername/AuthHostname), not the claimed Username: for a proxy/mapped
+	// login the two differ, and the self path operates on the authenticated
+	// account, so matching on AuthUsername keeps the self-classification
+	// consistent with the row actually modified. If the authenticated identity
+	// is not populated, fall back to Username/Hostname.
+	sessUserName, sessUserHost := "", ""
+	if sessUser != nil {
+		sessUserName, sessUserHost = authenticatedUserNameAndHost(sessUser)
+	}
+	setPwdForSelf := s.User == nil || s.User.CurrentUser ||
+		(sessUser != nil && sessUserName == s.User.Username && sessUserHost == s.User.Hostname)
+	if setPwdForSelf {
+		if sessUser == nil {
 			return errors.New("Session error is empty")
 		}
-		u = e.Ctx().GetSessionVars().User.AuthUsername
-		h = e.Ctx().GetSessionVars().User.AuthHostname
+		u = sessUserName
+		h = sessUserHost
 	} else {
 		u = s.User.Username
 		h = s.User.Hostname
 
-		checker := privilege.GetPrivilegeManager(e.Ctx())
-		activeRoles := e.Ctx().GetSessionVars().ActiveRoles
+		// Changing ANOTHER account's password requires TiDB's long-standing
+		// cross-user SET PASSWORD authority: SUPER. (MySQL also accepts UPDATE
+		// on the mysql schema — a pre-existing compatibility gap independent
+		// of dual passwords.) APPLICATION_PASSWORD_ADMIN covers only
+		// self-account secondary passwords, so RETAIN must not relax this check.
 		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
-			currUser := e.Ctx().GetSessionVars().User
+			currUser := sessUser
 			return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(currUser.Username, currUser.Hostname, "mysql")
 		}
 	}
-	exists, authplugin, err := userExistsInternal(ctx, sqlExecutor, u, h)
+	// Self-service SET PASSWORD ... RETAIN CURRENT PASSWORD requires
+	// APPLICATION_PASSWORD_ADMIN (CREATE USER or the UPDATE privilege on the
+	// mysql schema also suffice as a superset), matching MySQL's self-account
+	// dual-password rule and executeAlterUser's needAdminPrivCheck.
+	if setPwdForSelf && s.RetainCurrentPassword && checker != nil {
+		hasCreateUserPriv := checker.RequestVerification(activeRoles, "", "", "", mysql.CreateUserPriv)
+		hasApplicationPasswordAdminPriv := checker.RequestDynamicVerification(activeRoles, "APPLICATION_PASSWORD_ADMIN", false)
+		hasSystemSchemaPriv := checker.RequestVerification(activeRoles, mysql.SystemDB, mysql.UserTable, "", mysql.UpdatePriv)
+		if !(hasCreateUserPriv || hasApplicationPasswordAdminPriv || hasSystemSchemaPriv) {
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("APPLICATION_PASSWORD_ADMIN")
+		}
+	}
+	exists, authplugin, currentAuthString, err := userExistsInternal(ctx, sqlExecutor, u, h)
 	if err != nil {
 		return err
 	}
 	if !exists {
 		return errors.Trace(exeerrors.ErrPasswordNoMatch)
 	}
+	// Resolve the empty-plugin legacy case via default_authentication_plugin.
+	// The resolved plugin drives BOTH the RETAIN capability check and the
+	// password encoding below: the privilege cache authenticates legacy rows
+	// as the resolved default, so encoding by the raw (empty) plugin would
+	// store a mysql_native hash that can never verify under a
+	// caching_sha2/sm3 default.
+	defaultAuthPlugin, derr := e.Ctx().GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultAuthPlugin)
+	if derr != nil {
+		defaultAuthPlugin = ""
+	}
+	resolvedAuthPlugin := effectiveAuthPlugin(authplugin, defaultAuthPlugin)
+	if s.RetainCurrentPassword {
+		if !isDualPasswordCapablePlugin(resolvedAuthPlugin) {
+			return errors.Errorf("Dual password is not supported for users authenticating with plugin '%s'", resolvedAuthPlugin)
+		}
+		if s.Password == "" {
+			return exeerrors.ErrCurrentPasswordCannotBeRetained.GenWithStackByArgs(u, h)
+		}
+	}
 	if e.Ctx().InSandBoxMode() {
 		if !(s.User == nil || s.User.CurrentUser ||
-			e.Ctx().GetSessionVars().User.AuthUsername == u && e.Ctx().GetSessionVars().User.AuthHostname == strings.ToLower(h)) {
+			sessUserName == u && sessUserHost == strings.ToLower(h)) {
 			return exeerrors.ErrMustChangePassword.GenWithStackByArgs()
 		}
 		disableSandboxMode = true
@@ -2555,14 +2970,17 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	}
 	authPlugins := extensions.GetAuthPlugins()
 	var pwd string
-	switch authplugin {
+	// Switch on the RESOLVED plugin (not the raw column value) so legacy
+	// empty-plugin rows are encoded in the hash format the privilege cache
+	// will verify them with. The plugin column itself is left untouched.
+	switch resolvedAuthPlugin {
 	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
-		pwd = auth.NewHashPassword(s.Password, authplugin)
+		pwd = auth.NewHashPassword(s.Password, resolvedAuthPlugin)
 	case mysql.AuthSocket:
 		e.Ctx().GetSessionVars().StmtCtx.AppendNote(exeerrors.ErrSetPasswordAuthPlugin.FastGenByArgs(u, h))
 		pwd = ""
 	default:
-		if pluginImpl, ok := authPlugins[authplugin]; ok {
+		if pluginImpl, ok := authPlugins[resolvedAuthPlugin]; ok {
 			if pwd, ok = pluginImpl.GenerateAuthString(s.Password); !ok {
 				return exeerrors.ErrPasswordFormat.GenWithStackByArgs()
 			}
@@ -2589,14 +3007,25 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 			pwd:        pwd,
 			authString: s.Password,
 		}
-		err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.Ctx(), authplugin, authPlugins)
+		err := checkPasswordReusePolicy(ctx, sqlExecutor, userDetail, e.Ctx(), resolvedAuthPlugin, authPlugins)
 		if err != nil {
 			return err
 		}
 	}
 	// update mysql.user
 	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp() WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
+	if s.RetainCurrentPassword {
+		// If RETAIN CURRENT PASSWORD is specified, promote the current authentication_string
+		// to user_attributes.$.additional_password as part of this UPDATE.
+		entry, err := buildAdditionalPasswordEntry(currentAuthString, u, h)
+		if err != nil {
+			return err
+		}
+		attr := "{" + entry + "}"
+		sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp(),user_attributes=json_merge_patch(coalesce(user_attributes, '{}'), %?) WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, attr, u, strings.ToLower(h))
+	} else {
+		sqlescape.MustFormatSQL(sql, `UPDATE %n.%n SET authentication_string=%?,password_expired='N',password_last_changed=current_timestamp() WHERE User=%? AND Host=%?;`, mysql.SystemDB, mysql.UserTable, pwd, u, strings.ToLower(h))
+	}
 	_, err = sqlExecutor.ExecuteInternal(ctx, sql.String())
 	if err != nil {
 		return err
@@ -2618,7 +3047,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	if x, ok := s.Expr.(*ast.FuncCallExpr); ok {
 		if x.FnName.L == ast.ConnectionID {
 			sm := e.Ctx().GetSessionManager()
-			sm.Kill(e.Ctx().GetSessionVars().ConnectionID, s.Query, false, false)
+			killBySQLStmt(sm, e.Ctx().GetSessionVars().ConnectionID, s.Query, false)
 			return nil
 		}
 		return errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
@@ -2630,7 +3059,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			if sm == nil {
 				return nil
 			}
-			sm.Kill(s.ConnectionID, s.Query, false, false)
+			killBySQLStmt(sm, s.ConnectionID, s.Query, false)
 		} else {
 			err := errors.NewNoStackError("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
@@ -2645,7 +3074,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	if e.IsFromRemote {
 		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("conn", s.ConnectionID), zap.Bool("query", s.Query),
 			zap.String("sourceAddr", e.Ctx().GetSessionVars().SourceAddr.IP.String()))
-		sm.Kill(s.ConnectionID, s.Query, false, false)
+		killBySQLStmt(sm, s.ConnectionID, s.Query, true)
 		return nil
 	}
 
@@ -2671,10 +3100,21 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err1)
 		}
 	} else {
-		sm.Kill(s.ConnectionID, s.Query, false, false)
+		killBySQLStmt(sm, s.ConnectionID, s.Query, false)
 	}
 
 	return nil
+}
+
+func killBySQLStmt(sm sessmgr.Manager, connectionID uint64, query bool, fromRemote bool) {
+	normalCloseMsg := ""
+	if !query {
+		normalCloseMsg = sessmgr.NormalCloseMsgKillStmt
+		if fromRemote {
+			normalCloseMsg = sessmgr.NormalCloseMsgKillStmtFromRemote
+		}
+	}
+	sessmgr.KillWithNormalCloseMsg(sm, connectionID, query, false, false, normalCloseMsg)
 }
 
 func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalconn.GCID, query bool) error {
@@ -2729,12 +3169,262 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 }
 
 func (e *SimpleExec) executeRefreshStats(ctx context.Context, s *ast.RefreshStatsStmt) error {
+	intest.AssertFunc(func() bool {
+		for _, obj := range s.RefreshObjects {
+			switch obj.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase, ast.StatsObjectScopeTable:
+				if obj.DBName.L == "" {
+					return false
+				}
+			}
+		}
+		return true
+	}, "Refresh stats broadcast requires database-qualified names")
+	// Note: Restore the statement to a SQL string so we can broadcast fully qualified
+	// table names to every instance. For example, `REFRESH STATS tbl` executed in
+	// database `db` must be sent as `REFRESH STATS db.tbl`; otherwise a peer without
+	// that current database would skip the table.
+	sql, err := restoreRefreshStatsSQL(s)
+	if err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to format refresh stats statement", zap.Error(err))
+		return err
+	}
 	if e.IsFromRemote {
-		// TODO: do the real refresh stats
-		statslogutil.StatsLogger().Info("Refresh stats from remote", zap.String("sql", s.Text()))
+		if err := e.executeRefreshStatsOnCurrentInstance(ctx, s); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to refresh stats from remote", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		statslogutil.StatsLogger().Info("Successfully refreshed statistics from remote", zap.String("sql", sql))
 		return nil
 	}
-	return broadcast(ctx, e.Ctx(), s.Text())
+	if s.IsClusterWide {
+		if err := broadcast(ctx, e.Ctx(), sql); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to broadcast refresh stats command", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
+		return nil
+	}
+	if err := e.executeRefreshStatsOnCurrentInstance(ctx, s); err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to refresh stats on the current instance", zap.String("sql", sql), zap.Error(err))
+		return err
+	}
+	statslogutil.StatsLogger().Info("Successfully refreshed statistics on the current instance", zap.String("sql", sql))
+	return nil
+}
+
+func restoreRefreshStatsSQL(s *ast.RefreshStatsStmt) (string, error) {
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	if err := s.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
+
+func restoreFlushStatsDeltaSQL(s *ast.FlushStmt) (string, error) {
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	if err := s.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
+
+func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s *ast.RefreshStatsStmt) error {
+	intest.Assert(len(s.RefreshObjects) > 0, "RefreshObjects should not be empty")
+	intest.AssertFunc(func() bool {
+		origCount := len(s.RefreshObjects)
+		s.Dedup()
+		return origCount == len(s.RefreshObjects)
+	}, "RefreshObjects should be deduplicated in the building phase")
+	tableIDs := make([]int64, 0, len(s.RefreshObjects))
+	isGlobalScope := len(s.RefreshObjects) == 1 && s.RefreshObjects[0].StatsObjectScope == ast.StatsObjectScopeGlobal
+	is := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
+	if !isGlobalScope {
+		for _, refreshObject := range s.RefreshObjects {
+			switch refreshObject.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase:
+				exists := is.SchemaExists(refreshObject.DBName)
+				if !exists {
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(refreshObject.DBName))
+					statslogutil.StatsLogger().Warn("Failed to find database when refreshing stats", zap.String("db", refreshObject.DBName.O))
+					continue
+				}
+				tables, err := is.SchemaTableInfos(ctx, refreshObject.DBName)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if len(tables) == 0 {
+					// Note: We do not warn about databases without tables because we cannot issue a warning
+					// for every such database when refreshing with `REFRESH STATS *.*`.(Technically, we can, but no point to do so.)
+					// Instead, we simply log the information to remain consistent across all cases.
+					statslogutil.StatsLogger().Info("No table in the database when refreshing stats", zap.String("db", refreshObject.DBName.O))
+					continue
+				}
+				for _, table := range tables {
+					tableIDs = append(tableIDs, table.ID)
+				}
+			case ast.StatsObjectScopeTable:
+				table, err := is.TableInfoByName(refreshObject.DBName, refreshObject.TableName)
+				if err != nil {
+					if infoschema.ErrTableNotExists.Equal(err) {
+						e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(refreshObject.DBName, refreshObject.TableName))
+						statslogutil.StatsLogger().Warn("Failed to find table when refreshing stats", zap.String("db", refreshObject.DBName.O), zap.String("table", refreshObject.TableName.O))
+						continue
+					}
+					return errors.Trace(err)
+				}
+				if table == nil {
+					intest.Assert(false, "Table should not be nil here")
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(refreshObject.DBName, refreshObject.TableName))
+					statslogutil.StatsLogger().Warn("Failed to find table when refreshing stats", zap.String("db", refreshObject.DBName.O), zap.String("table", refreshObject.TableName.O))
+					continue
+				}
+				tableIDs = append(tableIDs, table.ID)
+			default:
+				intest.Assert(false, "No other scopes should be here")
+			}
+		}
+		// If all specified databases or tables do not exist, we do nothing.
+		if len(tableIDs) == 0 {
+			statslogutil.StatsLogger().Info("No valid database or table to refresh stats")
+			return nil
+		}
+	}
+	// Note: tableIDs is empty means to refresh all tables.
+	h := domain.GetDomain(e.Ctx()).StatsHandle()
+	if s.RefreshMode != nil {
+		if *s.RefreshMode == ast.RefreshStatsModeLite {
+			return h.InitStatsLite(ctx, is, tableIDs...)
+		}
+		return h.InitStats(ctx, is, tableIDs...)
+	}
+	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
+	if liteInitStats {
+		return h.InitStatsLite(ctx, is, tableIDs...)
+	}
+	return h.InitStats(ctx, is, tableIDs...)
+}
+
+func appendStatsDeltaTargetTableIDs(targetIDs []int64, tableInfo *model.TableInfo) []int64 {
+	targetIDs = append(targetIDs, tableInfo.ID)
+	if partitionInfo := tableInfo.GetPartitionInfo(); partitionInfo != nil {
+		for _, def := range partitionInfo.Definitions {
+			targetIDs = append(targetIDs, def.ID)
+		}
+	}
+	return targetIDs
+}
+
+func (e *SimpleExec) executeFlushStatsDelta(ctx context.Context, s *ast.FlushStmt) error {
+	intest.AssertFunc(func() bool {
+		for _, obj := range s.FlushObjects {
+			switch obj.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase, ast.StatsObjectScopeTable:
+				if obj.DBName.L == "" {
+					return false
+				}
+			}
+		}
+		return true
+	}, "Flush stats delta broadcast requires database-qualified names")
+	// Note: broadcast serializes the statement back to SQL and every peer reparses it
+	// through the broadcast query path, which does not rerun plan building to fill in
+	// the current database for unqualified table names. `FLUSH STATS_DELTA tbl`
+	// executed in database `db` therefore has to be restored as
+	// `FLUSH STATS_DELTA db.tbl`; otherwise a peer without that current database
+	// cannot resolve the target table.
+	sql, err := restoreFlushStatsDeltaSQL(s)
+	if err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to format flush stats delta statement", zap.Error(err))
+		return err
+	}
+	if e.IsFromRemote {
+		if err := e.executeFlushStatsDeltaOnCurrentInstance(ctx, s); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to dump stats delta to KV from remote", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		statslogutil.StatsLogger().Info("Successfully dumped stats delta to KV from remote", zap.String("sql", sql))
+		return nil
+	}
+	if s.IsCluster {
+		if err := broadcast(ctx, e.Ctx(), sql); err != nil {
+			statslogutil.StatsErrVerboseLogger().Error("Failed to broadcast flush stats delta command", zap.String("sql", sql), zap.Error(err))
+			return err
+		}
+		logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
+		return nil
+	}
+	// This is the local, non-CLUSTER path: remote requests are handled above to
+	// avoid rebroadcasting, and without CLUSTER we flush only the current TiDB
+	// instance because pending stats deltas are buffered per instance.
+	if err := e.executeFlushStatsDeltaOnCurrentInstance(ctx, s); err != nil {
+		statslogutil.StatsErrVerboseLogger().Error("Failed to dump stats delta to KV on the current instance", zap.String("sql", sql), zap.Error(err))
+		return err
+	}
+	statslogutil.StatsLogger().Info("Successfully dumped stats delta to KV on the current instance", zap.String("sql", sql))
+	return nil
+}
+
+func (e *SimpleExec) executeFlushStatsDeltaOnCurrentInstance(ctx context.Context, s *ast.FlushStmt) error {
+	intest.Assert(len(s.FlushObjects) > 0, "FlushObjects should not be empty")
+	intest.AssertFunc(func() bool {
+		origCount := len(s.FlushObjects)
+		s.DedupFlushObjects()
+		return origCount == len(s.FlushObjects)
+	}, "FlushObjects should be deduplicated in the building phase")
+
+	targetIDs := make([]int64, 0, len(s.FlushObjects))
+	isGlobalScope := len(s.FlushObjects) == 1 && s.FlushObjects[0].StatsObjectScope == ast.StatsObjectScopeGlobal
+	is := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
+	if !isGlobalScope {
+		for _, flushObject := range s.FlushObjects {
+			switch flushObject.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase:
+				if !is.SchemaExists(flushObject.DBName) {
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(flushObject.DBName))
+					statslogutil.StatsLogger().Warn("Failed to find database when flushing stats delta", zap.String("db", flushObject.DBName.O))
+					continue
+				}
+				tables, err := is.SchemaTableInfos(ctx, flushObject.DBName)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if len(tables) == 0 {
+					statslogutil.StatsLogger().Info("No table in the database when flushing stats delta", zap.String("db", flushObject.DBName.O))
+					continue
+				}
+				for _, tableInfo := range tables {
+					targetIDs = appendStatsDeltaTargetTableIDs(targetIDs, tableInfo)
+				}
+			case ast.StatsObjectScopeTable:
+				tableInfo, err := is.TableInfoByName(flushObject.DBName, flushObject.TableName)
+				if err != nil {
+					if infoschema.ErrTableNotExists.Equal(err) {
+						e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(flushObject.DBName, flushObject.TableName))
+						statslogutil.StatsLogger().Warn("Failed to find table when flushing stats delta", zap.String("db", flushObject.DBName.O), zap.String("table", flushObject.TableName.O))
+						continue
+					}
+					return errors.Trace(err)
+				}
+				if tableInfo == nil {
+					intest.Assert(false, "Table should not be nil here")
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(flushObject.DBName, flushObject.TableName))
+					statslogutil.StatsLogger().Warn("Failed to find table when flushing stats delta", zap.String("db", flushObject.DBName.O), zap.String("table", flushObject.TableName.O))
+					continue
+				}
+				targetIDs = appendStatsDeltaTargetTableIDs(targetIDs, tableInfo)
+			default:
+				intest.Assert(false, "No other scopes should be here")
+			}
+		}
+		if len(targetIDs) == 0 {
+			statslogutil.StatsLogger().Info("No valid database or table to flush stats delta")
+			return nil
+		}
+	}
+	return domain.GetDomain(e.Ctx()).StatsHandle().DumpStatsDeltaToKV(true, targetIDs...)
 }
 
 func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
@@ -2777,15 +3467,20 @@ func broadcast(ctx context.Context, sctx sessionctx.Context, sql string) error {
 	defer func() {
 		_ = resp.Close()
 	}()
-	if _, err := resp.Next(ctx); err != nil {
-		return errors.Trace(err)
+	for {
+		subset, err := resp.Next(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if subset == nil {
+			break // all remote tasks finished cleanly
+		}
 	}
 
-	logutil.BgLogger().Info("Successfully broadcast query", zap.String("sql", sql))
 	return nil
 }
 
-func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
+func (e *SimpleExec) executeFlush(ctx context.Context, s *ast.FlushStmt) error {
 	switch s.Tp {
 	case ast.FlushTables:
 		if s.ReadLock {
@@ -2802,8 +3497,12 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 				return err
 			}
 		}
+	case ast.FlushStatus:
+		e.Ctx().GetSessionVars().KeysExamined = 0
 	case ast.FlushClientErrorsSummary:
 		errno.FlushStats()
+	case ast.FlushStatsDelta:
+		return e.executeFlushStatsDelta(ctx, s)
 	}
 	return nil
 }
@@ -2929,13 +3628,13 @@ func (e *SimpleExec) executeSetSessionStates(ctx context.Context, s *ast.SetSess
 	if err := decoder.Decode(&sessionStates); err != nil {
 		return errors.Trace(err)
 	}
-	return e.Ctx().DecodeSessionStates(ctx, e.Ctx(), &sessionStates)
+	return e.Ctx().DecodeStates(ctx, &sessionStates)
 }
 
 func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 	switch s.Tp {
 	case ast.AdminReloadStatistics:
-		return e.executeAdminReloadStatistics(s)
+		return e.executeAdminReloadStatistics()
 	case ast.AdminFlushPlanCache:
 		return e.executeAdminFlushPlanCache(s)
 	case ast.AdminSetBDRRole:
@@ -2946,14 +3645,8 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 	return nil
 }
 
-func (e *SimpleExec) executeAdminReloadStatistics(s *ast.AdminStmt) error {
-	if s.Tp != ast.AdminReloadStatistics {
-		return errors.New("This AdminStmt is not ADMIN RELOAD STATS_EXTENDED")
-	}
-	if !e.Ctx().GetSessionVars().EnableExtendedStats {
-		return errors.New("Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF")
-	}
-	return domain.GetDomain(e.Ctx()).StatsHandle().ReloadExtendedStatistics()
+func (*SimpleExec) executeAdminReloadStatistics() error {
+	return errors.New("Extended statistics feature has been removed")
 }
 
 func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {

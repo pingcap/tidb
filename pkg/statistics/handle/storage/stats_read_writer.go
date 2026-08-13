@@ -24,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -253,45 +252,6 @@ func (s *statsReadWriter) SaveMetaToStorage(
 	return
 }
 
-// InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
-func (s *statsReadWriter) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
-	var statsVer uint64
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		statsVer, err = InsertExtendedStats(sctx, s.statsHandler, statsName, colIDs, tp, tableID, ifNotExists)
-		return err
-	}, util.FlagWrapTxn)
-	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(statsVer, "extended stats", false, tableID)
-	}
-	return
-}
-
-// MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
-func (s *statsReadWriter) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
-	var statsVer uint64
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		statsVer, err = MarkExtendedStatsDeleted(sctx, s.statsHandler, statsName, tableID, ifExists)
-		return err
-	}, util.FlagWrapTxn)
-	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(statsVer, "extended stats", false, tableID)
-	}
-	return
-}
-
-// SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
-func (s *statsReadWriter) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error) {
-	var statsVer uint64
-	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		statsVer, err = SaveExtendedStatsToStorage(sctx, tableID, extStats, isLoad)
-		return err
-	}, util.FlagWrapTxn)
-	if err == nil && statsVer != 0 {
-		s.statsHandler.RecordHistoricalStatsMeta(statsVer, "extended stats", false, tableID)
-	}
-	return
-}
-
 func (s *statsReadWriter) LoadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
 	var partitionStats *statistics.Table
 	partitionStats, err := s.TableStatsFromStorage(tableInfo, partitionDef.ID, true, 0)
@@ -310,28 +270,9 @@ func (s *statsReadWriter) LoadTablePartitionStats(tableInfo *model.TableInfo, pa
 // LoadNeededHistograms will load histograms for those needed columns/indices.
 func (s *statsReadWriter) LoadNeededHistograms(is infoschema.InfoSchema) (err error) {
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
-		return LoadNeededHistograms(sctx, is, s.statsHandler, loadFMSketch)
+		return LoadNeededHistograms(sctx, is, s.statsHandler)
 	}, util.FlagWrapTxn)
 	return err
-}
-
-// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
-func (s *statsReadWriter) ReloadExtendedStatistics() error {
-	return util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		tables := make([]*statistics.Table, 0, s.statsHandler.Len())
-		for _, tbl := range s.statsHandler.Values() {
-			t, err := ExtendedStatsFromStorage(sctx, tbl.Copy(), tbl.PhysicalID, true)
-			if err != nil {
-				return err
-			}
-			tables = append(tables, t)
-		}
-		s.statsHandler.UpdateStatsCache(statstypes.CacheUpdate{
-			Updated: tables,
-		})
-		return nil
-	}, util.FlagWrapTxn)
 }
 
 // DumpStatsToJSON dumps statistic to json.
@@ -697,10 +638,6 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 	})
 	if outerErr != nil {
 		return outerErr
-	}
-	err = s.SaveExtendedStatsToStorage(tbl.PhysicalID, tbl.ExtendedStats, true)
-	if err != nil {
-		return errors.Trace(err)
 	}
 	err = s.SaveColumnStatsUsageToStorage(tbl.PhysicalID, jsonTbl.PredicateColumns)
 	if err != nil {

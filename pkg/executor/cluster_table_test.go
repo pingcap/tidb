@@ -20,26 +20,31 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
 
 func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
+	t.Cleanup(config.RestoreFunc())
+
 	sm := &testkit.MockSessionManager{}
-	sm.PS = append(sm.PS, &util.ProcessInfo{
+	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
@@ -48,18 +53,32 @@ func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
+	host, port, err := net.SplitHostPort(lis.Addr().String())
+	require.NoError(t, err)
+	portNum, err := strconv.Atoi(port)
+	require.NoError(t, err)
 
 	srv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
-	port := lis.Addr().(*net.TCPAddr).Port
 	go func() {
 		err = srv.Serve(lis)
 		require.NoError(t, err)
 	}()
 
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Status.StatusPort = uint(port)
+		conf.Status.StatusPort = uint(portNum)
+		conf.AdvertiseAddress = host
 	})
 
+	// Wait for server to be ready using require.Eventually
+	addr := lis.Addr().String()
+	require.Eventually(t, func() bool {
+		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if err == nil {
+			conn.Close()
+			return true
+		}
+		return false
+	}, 10*time.Second, 100*time.Millisecond, "RPC server failed to start")
 	return srv
 }
 
@@ -181,6 +200,23 @@ select 7;`
 		sql = fmt.Sprintf(cas.sql, "cluster_slow_query")
 		tk.MustQuery(sql).Check(testkit.RowsWithSep("|", cas.result...))
 	}
+
+	executor.DashboardSlowLogReadBlockCnt4Test = 0
+	// 2020-02-16T00:00:00.000000+08:00
+	unixTimeStart := time.Date(2020, 2, 16, 0, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	// 2020-02-17T00:00:00.000000+08:00
+	unixTimeEnd := time.Date(2020, 2, 17, 0, 0, 0, 0, time.FixedZone("CST", 8*3600))
+	// check dashboard query pattern. Only reduce limit to check if it works.
+	sql := fmt.Sprintf(`SELECT Digest, Query, Conn_ID, (UNIX_TIMESTAMP(Time) + 0E0) AS timestamp, Query_time, Mem_max
+				FROM INFORMATION_SCHEMA.CLUSTER_SLOW_QUERY
+                WHERE Time BETWEEN FROM_UNIXTIME(%d) AND FROM_UNIXTIME(%d)
+                ORDER BY Time DESC LIMIT 2`, unixTimeStart.Unix(), unixTimeEnd.Unix())
+	rows := tk.MustQuery(sql).Rows()
+	require.Equal(t, 2, len(rows))
+	require.Equal(t, "select 5;", rows[0][1])
+	require.Equal(t, "select 4;", rows[1][1])
+	// 3 means we read 2 blocks of logData3, and last block of logData2
+	require.EqualValues(t, 3, executor.DashboardSlowLogReadBlockCnt4Test)
 }
 
 func TestIssue20236(t *testing.T) {
@@ -223,73 +259,75 @@ select 10;`
 		conf.Log.SlowQueryFile = fileName4
 	})
 	for k := range 2 {
-		// k = 0 for normal files
-		// k = 1 for compressed files
-		var fileNames []string
-		if k == 0 {
-			fileNames = []string{fileName0, fileName1, fileName2, fileName3, fileName4}
-		} else {
-			fileNames = []string{fileName0 + ".gz", fileName1 + ".gz", fileName2 + ".gz", fileName3 + ".gz", fileName4}
-		}
-		prepareLogs(t, logData, fileNames)
-		tk := testkit.NewTestKit(t, store)
-		loc, err := time.LoadLocation("Asia/Shanghai")
-		require.NoError(t, err)
-		tk.Session().GetSessionVars().TimeZone = loc
-		tk.MustExec("use information_schema")
-		cases := []struct {
-			prepareSQL string
-			sql        string
-			result     []string
-		}{
-			{
-				prepareSQL: "set @@time_zone = '+08:00'",
-				sql:        "select time from cluster_slow_query where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000'",
-				result:     []string{"2020-02-17 18:00:05.000000", "2020-02-17 19:00:00.000000", "2020-05-14 19:03:54.314615"},
-			},
-			{
-				prepareSQL: "set @@time_zone = '+08:00'",
-				sql:        "select time from cluster_slow_query where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
-				result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
-			},
-			{
-				prepareSQL: "set @@time_zone = '+08:00'",
-				sql:        "select time from cluster_slow_query where (time > '2020-02-15 18:00:00' and time < '2020-02-15 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-14 20:00:00') order by time",
-				result:     []string{"2020-02-15 18:00:01.000000", "2020-02-15 19:00:05.000000", "2020-02-17 18:00:05.000000", "2020-02-17 19:00:00.000000", "2020-05-14 19:03:54.314615"},
-			},
-			{
-				prepareSQL: "set @@time_zone = '+08:00'",
-				sql:        "select time from cluster_slow_query where (time > '2020-02-15 18:00:00' and time < '2020-02-15 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-14 20:00:00') order by time desc",
-				result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000", "2020-02-15 19:00:05.000000", "2020-02-15 18:00:01.000000"},
-			},
-			{
-				prepareSQL: "set @@time_zone = '+08:00'",
-				sql:        "select count(*) from cluster_slow_query where time > '2020-02-15 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
-				result:     []string{"9"},
-			},
-			{
-				prepareSQL: "set @@time_zone = '+08:00'",
-				sql:        "select count(*) from cluster_slow_query where (time > '2020-02-16 18:00:00' and time < '2020-05-14 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-17 20:00:00')",
-				result:     []string{"6"},
-			},
-			{
-				prepareSQL: "set @@time_zone = '+08:00'",
-				sql:        "select count(*) from cluster_slow_query where time > '2020-02-16 18:00:00.000000' and time < '2020-02-17 20:00:00.000000' order by time desc",
-				result:     []string{"5"},
-			},
-			{
-				prepareSQL: "set @@time_zone = '+08:00'",
-				sql:        "select time from cluster_slow_query where time > '2020-02-16 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc limit 3",
-				result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
-			},
-		}
-		for _, cas := range cases {
-			if len(cas.prepareSQL) > 0 {
-				tk.MustExec(cas.prepareSQL)
+		func() {
+			// k = 0 for normal files
+			// k = 1 for compressed files
+			var fileNames []string
+			if k == 0 {
+				fileNames = []string{fileName0, fileName1, fileName2, fileName3, fileName4}
+			} else {
+				fileNames = []string{fileName0 + ".gz", fileName1 + ".gz", fileName2 + ".gz", fileName3 + ".gz", fileName4}
 			}
-			tk.MustQuery(cas.sql).Check(testkit.RowsWithSep("|", cas.result...))
-		}
-		removeFiles(t, fileNames)
+			prepareLogs(t, logData, fileNames)
+			defer removeFiles(t, fileNames)
+			tk := testkit.NewTestKit(t, store)
+			loc, err := time.LoadLocation("Asia/Shanghai")
+			require.NoError(t, err)
+			tk.Session().GetSessionVars().TimeZone = loc
+			tk.MustExec("use information_schema")
+			cases := []struct {
+				prepareSQL string
+				sql        string
+				result     []string
+			}{
+				{
+					prepareSQL: "set @@time_zone = '+08:00'",
+					sql:        "select time from cluster_slow_query where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000'",
+					result:     []string{"2020-02-17 18:00:05.000000", "2020-02-17 19:00:00.000000", "2020-05-14 19:03:54.314615"},
+				},
+				{
+					prepareSQL: "set @@time_zone = '+08:00'",
+					sql:        "select time from cluster_slow_query where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
+					result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
+				},
+				{
+					prepareSQL: "set @@time_zone = '+08:00'",
+					sql:        "select time from cluster_slow_query where (time > '2020-02-15 18:00:00' and time < '2020-02-15 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-14 20:00:00') order by time",
+					result:     []string{"2020-02-15 18:00:01.000000", "2020-02-15 19:00:05.000000", "2020-02-17 18:00:05.000000", "2020-02-17 19:00:00.000000", "2020-05-14 19:03:54.314615"},
+				},
+				{
+					prepareSQL: "set @@time_zone = '+08:00'",
+					sql:        "select time from cluster_slow_query where (time > '2020-02-15 18:00:00' and time < '2020-02-15 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-14 20:00:00') order by time desc",
+					result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000", "2020-02-15 19:00:05.000000", "2020-02-15 18:00:01.000000"},
+				},
+				{
+					prepareSQL: "set @@time_zone = '+08:00'",
+					sql:        "select count(*) from cluster_slow_query where time > '2020-02-15 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
+					result:     []string{"9"},
+				},
+				{
+					prepareSQL: "set @@time_zone = '+08:00'",
+					sql:        "select count(*) from cluster_slow_query where (time > '2020-02-16 18:00:00' and time < '2020-05-14 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-17 20:00:00')",
+					result:     []string{"6"},
+				},
+				{
+					prepareSQL: "set @@time_zone = '+08:00'",
+					sql:        "select count(*) from cluster_slow_query where time > '2020-02-16 18:00:00.000000' and time < '2020-02-17 20:00:00.000000' order by time desc",
+					result:     []string{"5"},
+				},
+				{
+					prepareSQL: "set @@time_zone = '+08:00'",
+					sql:        "select time from cluster_slow_query where time > '2020-02-16 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc limit 3",
+					result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
+				},
+			}
+			for _, cas := range cases {
+				if len(cas.prepareSQL) > 0 {
+					tk.MustExec(cas.prepareSQL)
+				}
+				tk.MustQuery(cas.sql).Check(testkit.RowsWithSep("|", cas.result...))
+			}
+		}()
 	}
 }
 
@@ -353,4 +391,39 @@ func removeFiles(t *testing.T, fileNames []string) {
 	for _, fileName := range fileNames {
 		require.NoError(t, os.Remove(fileName))
 	}
+}
+
+func TestClusterTableSlowQuerySessionConnectAttrs(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := createRPCServer(t, dom)
+	defer srv.Stop()
+
+	logData := `
+# Time: 2024-01-15T10:00:00.000000+08:00
+# Txn_start_ts: 123456789
+# User@Host: root[root] @ localhost [127.0.0.1]
+# Query_time: 0.5
+# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
+# Is_internal: false
+# Succ: true
+` + testutil.DefaultSessionConnectAttrsSlowLogLine() + `
+select * from t;`
+	fileName := "tidb-slow-query-attrs.log"
+	prepareLogs(t, []string{logData}, []string{fileName})
+	defer removeFiles(t, []string{fileName})
+
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.SlowQueryFile = fileName
+	})
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use information_schema")
+
+	// Verify Session_connect_attrs column is present in cluster_slow_query as well.
+	clusterRows := tk.MustQuery("select Session_connect_attrs from information_schema.cluster_slow_query " +
+		"where time > '2024-01-01 00:00:00' and query = 'select * from t;'").Rows()
+	require.Len(t, clusterRows, 1)
+	clusterAttrsStr := clusterRows[0][0].(string)
+	testutil.RequireContainsDefaultSessionConnectAttrs(t, clusterAttrsStr)
 }

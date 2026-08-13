@@ -50,8 +50,13 @@ const (
 	Fix44830 uint64 = 44830
 	// Fix44823 controls the maximum number of parameters for a query that can be cached in the Plan Cache.
 	Fix44823 uint64 = 44823
-	// Fix44855 controls whether to use a more accurate upper bound when estimating row count of index
-	// range scan under inner side of index join.
+	// Fix44855 controls the row count estimation of the inner side of an index join:
+	//   - When ON (default OFF for this part), the estimated row count of an inner index scan is
+	//     clamped to the upper bound (total row count / NDV of the probed join key columns).
+	//   - When not explicitly OFF (default ON for this part), the estimated row count of the inner
+	//     scan is raised to (total row count / NDV of the used key prefix) when the chosen path can
+	//     only build ranges from a subset of the join keys, since the remaining equality conditions
+	//     are evaluated at the join rather than at the scan (see #69974).
 	Fix44855 uint64 = 44855
 	// Fix45132 controls whether to use access range row count to determine access path on the Skyline pruning.
 	Fix45132 uint64 = 45132
@@ -62,6 +67,7 @@ const (
 	// Fix46177 controls whether to explore enforced plans for DataSource if it has already found an unenforced plan.
 	Fix46177 uint64 = 46177
 	// Fix47400 controls whether to allow a rowEst below 1
+	// Deprecated: This fix control has been deprecated
 	Fix47400 uint64 = 47400
 	// Fix49736 controls whether to force the optimizer to use plan cache even if there is risky optimization.
 	// This fix-control is test-only.

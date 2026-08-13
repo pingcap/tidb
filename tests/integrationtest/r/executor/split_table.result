@@ -113,3 +113,254 @@ CREATE TABLE t (`id` varchar(10) NOT NULL, primary key (`id`) CLUSTERED);
 split table t index `primary` between (0) and (1000) regions 2;
 Error 1176 (42000): unable to split clustered index, please split table instead.
 set tidb_enable_clustered_index=default;
+set tidb_scatter_region='global';
+drop table if exists t;
+create table t (
+id bigint primary key nonclustered,
+user_id bigint,
+status varchar(10),
+index idx_user_id (user_id)
+);
+insert into t values (0,0,'');
+alter table t split primary key between (0) and (1000000) regions 4;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` bigint NOT NULL,
+  `user_id` bigint DEFAULT NULL,
+  `status` varchar(10) DEFAULT NULL,
+  KEY `idx_user_id` (`user_id`),
+  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+/*T![region_split] SPLIT PRIMARY KEY `PRIMARY` BETWEEN (0) AND (1000000) REGIONS 4 */
+alter table t split index idx_user_id between (1000) and (100000) regions 3;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` bigint NOT NULL,
+  `user_id` bigint DEFAULT NULL,
+  `status` varchar(10) DEFAULT NULL,
+  KEY `idx_user_id` (`user_id`),
+  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+/*T![region_split] SPLIT INDEX `idx_user_id` BETWEEN (1000) AND (100000) REGIONS 3 */
+/*T![region_split] SPLIT PRIMARY KEY `PRIMARY` BETWEEN (0) AND (1000000) REGIONS 4 */
+drop table if exists t;
+create table t (
+id bigint primary key nonclustered,
+user_id bigint,
+status varchar(10),
+index idx_user_id (user_id)
+)
+split primary key between (-10000) and (1000000) regions 4
+split index idx_user_id between (-1000) and (100000) regions 3;
+insert into t values (0,0,'');
+select *, _tidb_rowid from t;
+id	user_id	status	_tidb_rowid
+0	0		1
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` bigint NOT NULL,
+  `user_id` bigint DEFAULT NULL,
+  `status` varchar(10) DEFAULT NULL,
+  KEY `idx_user_id` (`user_id`),
+  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+/*T![region_split] SPLIT INDEX `idx_user_id` BETWEEN (-1000) AND (100000) REGIONS 3 */
+/*T![region_split] SPLIT PRIMARY KEY `PRIMARY` BETWEEN (-10000) AND (1000000) REGIONS 4 */
+set tidb_enable_clustered_index=ON;
+drop table if exists t;
+create table t (
+id bigint,
+user_id bigint,
+status varchar(10),
+primary key (id) clustered,
+index idx_user_id (user_id)
+);
+alter table t split primary key between (0) and (1000000) regions 4;
+Error 8267 (HY000): SPLIT PRIMARY is only for non-clustered table is forbidden
+alter table t split index idx_user_id between (1000) and (100000) regions 3;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` bigint NOT NULL,
+  `user_id` bigint DEFAULT NULL,
+  `status` varchar(10) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `idx_user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+/*T![region_split] SPLIT INDEX `idx_user_id` BETWEEN (1000) AND (100000) REGIONS 3 */
+drop table if exists t;
+create table t (
+a int,
+b int,
+c varchar(100),
+primary key (a, b) clustered,
+index idx_c (c)
+);
+alter table t split primary key between (0, 0) and (100000, 100000) regions 4;
+Error 8267 (HY000): SPLIT PRIMARY is only for non-clustered table is forbidden
+alter table t split index idx_c between ('a') and ('z') regions 3;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int NOT NULL,
+  `b` int NOT NULL,
+  `c` varchar(100) DEFAULT NULL,
+  PRIMARY KEY (`a`,`b`) /*T![clustered_index] CLUSTERED */,
+  KEY `idx_c` (`c`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+/*T![region_split] SPLIT INDEX `idx_c` BETWEEN ('a') AND ('z') REGIONS 3 */
+drop table if exists t1;
+create table t1 (
+a int,
+b varchar(100),
+c int,
+primary key (a, b) clustered,
+index idx_c (c)
+)
+split primary key between (0, 'a') and (100000, 'z') regions 4
+split index idx_c between (0) and (10000) regions 3;
+Error 8267 (HY000): SPLIT PRIMARY is only for non-clustered table is forbidden
+drop table if exists t;
+create table t (
+a int,
+b varchar(50),
+c int,
+d varchar(100),
+primary key (a, b, c) clustered,
+index idx_d (d)
+);
+alter table t split primary key between (0, 'a', 0) and (100000, 'z', 100000) regions 5;
+Error 8267 (HY000): SPLIT PRIMARY is only for non-clustered table is forbidden
+alter table t split index idx_d between ('a') and ('z') regions 3;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int NOT NULL,
+  `b` varchar(50) NOT NULL,
+  `c` int NOT NULL,
+  `d` varchar(100) DEFAULT NULL,
+  PRIMARY KEY (`a`,`b`,`c`) /*T![clustered_index] CLUSTERED */,
+  KEY `idx_d` (`d`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+/*T![region_split] SPLIT INDEX `idx_d` BETWEEN ('a') AND ('z') REGIONS 3 */
+set tidb_enable_clustered_index=OFF;
+drop table if exists t;
+create table t (id bigint primary key, val bigint);
+alter table t split index `PRIMARY` between (0) and (1000000) regions 4;
+set tidb_enable_clustered_index=ON;
+drop table if exists t;
+create table t (
+id bigint,
+name varchar(100),
+primary key (id) clustered
+)
+split primary key between (0) and (1000000) regions 4
+split between (0) and (1000000) regions 4;
+Error 8267 (HY000): SPLIT PRIMARY is only for non-clustered table is forbidden
+set tidb_enable_clustered_index=OFF;
+drop table if exists t;
+create table t (id bigint, val bigint);
+alter table t split primary key between (0) and (1000000) regions 4;
+Error 1280 (42000): Incorrect index name 'primary'
+drop table if exists t;
+create table t (id bigint primary key, val bigint);
+alter table t split index idx_nonexist between (0) and (1000000) regions 4;
+Error 1280 (42000): Incorrect index name 'idx_nonexist'
+drop table if exists t;
+create table t (
+id bigint primary key,
+user_id bigint,
+status varchar(10),
+index idx_user_id (user_id),
+index idx_status (status)
+)
+partition by range (id) (
+partition p0 values less than (100000),
+partition p1 values less than (200000),
+partition pmax values less than (maxvalue)
+)
+split primary key between (0) and (1000000) regions 4
+split index idx_user_id between (1000) and (100000) regions 3
+split index idx_status between ('a') and ('z') regions 2;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` bigint NOT NULL,
+  `user_id` bigint DEFAULT NULL,
+  `status` varchar(10) DEFAULT NULL,
+  KEY `idx_user_id` (`user_id`),
+  KEY `idx_status` (`status`),
+  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+/*T![region_split] SPLIT INDEX `idx_user_id` BETWEEN (1000) AND (100000) REGIONS 3 */
+/*T![region_split] SPLIT INDEX `idx_status` BETWEEN ('a') AND ('z') REGIONS 2 */
+/*T![region_split] SPLIT PRIMARY KEY `PRIMARY` BETWEEN (0) AND (1000000) REGIONS 4 */
+PARTITION BY RANGE (`id`)
+(PARTITION `p0` VALUES LESS THAN (100000),
+ PARTITION `p1` VALUES LESS THAN (200000),
+ PARTITION `pmax` VALUES LESS THAN (MAXVALUE))
+drop table if exists t;
+create table t (
+id bigint primary key,
+val bigint,
+index idx_val (val)
+) partition by range (id) (
+partition p0 values less than (1000),
+partition p1 values less than (2000)
+);
+alter table t split primary key between (0) and (10000) regions 5;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` bigint NOT NULL,
+  `val` bigint DEFAULT NULL,
+  KEY `idx_val` (`val`),
+  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+/*T![region_split] SPLIT PRIMARY KEY `PRIMARY` BETWEEN (0) AND (10000) REGIONS 5 */
+PARTITION BY RANGE (`id`)
+(PARTITION `p0` VALUES LESS THAN (1000),
+ PARTITION `p1` VALUES LESS THAN (2000))
+alter table t split index idx_val between (0) and (10000) regions 5;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` bigint NOT NULL,
+  `val` bigint DEFAULT NULL,
+  KEY `idx_val` (`val`),
+  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+/*T![region_split] SPLIT INDEX `idx_val` BETWEEN (0) AND (10000) REGIONS 5 */
+/*T![region_split] SPLIT PRIMARY KEY `PRIMARY` BETWEEN (0) AND (10000) REGIONS 5 */
+PARTITION BY RANGE (`id`)
+(PARTITION `p0` VALUES LESS THAN (1000),
+ PARTITION `p1` VALUES LESS THAN (2000))
+drop table if exists t;
+create table t (
+id bigint primary key,
+user_id bigint,
+status varchar(10)
+);
+alter table t add index idx_user_id (user_id);
+alter table t split index idx_user_id between (0) and (10000) regions 5;
+alter table t split index idx_user_id between (0) and (10000) regions 0;
+Error 8267 (HY000): SPLIT REGION number must not be zero or negative is forbidden
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` bigint NOT NULL,
+  `user_id` bigint DEFAULT NULL,
+  `status` varchar(10) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] NONCLUSTERED */,
+  KEY `idx_user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+/*T![region_split] SPLIT INDEX `idx_user_id` BETWEEN (0) AND (10000) REGIONS 5 */
+alter table t add index idx_status (status);
+show warnings;
+Level	Code	Message
+Warning	1105	It is recommended to add a region split strategy to the new index 'idx_status' to avoid write hotspots
+set tidb_enable_clustered_index=default;
+set tidb_scatter_region='';

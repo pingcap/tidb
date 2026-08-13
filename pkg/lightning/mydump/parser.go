@@ -25,17 +25,20 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/dumpformat/parsedef"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"github.com/spkg/bom"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 )
 
 type blockParser struct {
@@ -51,7 +54,7 @@ type blockParser struct {
 	columns []string
 
 	rowPool *zeropool.Pool[[]types.Datum]
-	lastRow Row
+	lastRow parsedef.Row
 	// the reader position we have parsed, if the underlying reader is not
 	// a compressed file, it's the file position we have parsed too.
 	// this value may go backward when failed to read quoted field, but it's
@@ -75,7 +78,7 @@ type blockParser struct {
 }
 
 func makeBlockParser(
-	reader ReadSeekCloser,
+	reader io.ReadSeekCloser,
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 	metrics *metric.Metrics,
@@ -121,24 +124,6 @@ type Chunk struct {
 	Columns []string
 }
 
-// Row is the content of a row.
-type Row struct {
-	// RowID is the row id of the row.
-	// as objects of this struct is reused, this RowID is increased when reading
-	// next row.
-	RowID  int64
-	Row    []types.Datum
-	Length int
-}
-
-// MarshalLogArray implements the zapcore.ArrayMarshaler interface
-func (row Row) MarshalLogArray(encoder zapcore.ArrayEncoder) error {
-	for _, r := range row.Row {
-		encoder.AppendString(r.String())
-	}
-	return nil
-}
-
 type escapeFlavor uint8
 
 const (
@@ -156,12 +141,13 @@ type Parser interface {
 	// TODO: replace pos with a new structure to specify position offset and rows offset
 	Pos() (pos int64, rowID int64)
 	SetPos(pos int64, rowID int64) error
-	// ScannedPos always returns the current file reader pointer's location
+	// ScannedPos returns monotonic source-byte progress. A parser may estimate
+	// this when its physical reads do not correspond directly to parsed rows.
 	ScannedPos() (int64, error)
 	Close() error
 	ReadRow() error
-	LastRow() Row
-	RecycleRow(row Row)
+	LastRow() parsedef.Row
+	RecycleRow(row parsedef.Row)
 
 	// Columns returns the _lower-case_ column names corresponding to values in
 	// the LastRow.
@@ -178,7 +164,7 @@ type Parser interface {
 func NewChunkParser(
 	ctx context.Context,
 	sqlMode mysql.SQLMode,
-	reader ReadSeekCloser,
+	reader io.ReadSeekCloser,
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 ) *ChunkParser {
@@ -188,7 +174,7 @@ func NewChunkParser(
 	}
 	metrics, _ := metric.FromContext(ctx)
 	return &ChunkParser{
-		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.FromContext(ctx)),
+		blockParser: makeBlockParser(reader, blockBufSize, ioWorkers, metrics, log.Wrap(logutil.Logger(ctx))),
 		escFlavor:   escFlavor,
 	}
 }
@@ -314,6 +300,13 @@ func (parser *blockParser) readBlock() error {
 
 	n, err := parser.reader.ReadFull(parser.blockBuf)
 
+	// (n=0, ErrUnexpectedEOF) is only produced when the underlying reader
+	// itself reported truncation (e.g. zstd/gzip frame cut mid-block); a
+	// normal tail short read always carries n>0. Surface it instead of
+	// treating the truncated stream as a clean last chunk.
+	if err == io.ErrUnexpectedEOF && n == 0 {
+		return errors.Trace(err)
+	}
 	switch err {
 	case io.ErrUnexpectedEOF, io.EOF:
 		parser.isLastChunk = true
@@ -600,12 +593,12 @@ func (parser *ChunkParser) ReadRow() error {
 }
 
 // LastRow is the copy of the row parsed by the last call to ReadRow().
-func (parser *blockParser) LastRow() Row {
+func (parser *blockParser) LastRow() parsedef.Row {
 	return parser.lastRow
 }
 
 // RecycleRow places the row object back into the allocation pool.
-func (parser *blockParser) RecycleRow(row Row) {
+func (parser *blockParser) RecycleRow(row parsedef.Row) {
 	// We need farther benchmarking to make sure whether send a pointer
 	// (instead of a slice) here can improve performance.
 	parser.rowPool.Put(row.Row[:0])
@@ -674,20 +667,40 @@ func ReadUntil(parser Parser, pos int64) error {
 func OpenReader(
 	ctx context.Context,
 	fileMeta *SourceFileMeta,
-	store storage.ExternalStorage,
-	decompressCfg storage.DecompressConfig,
-) (reader storage.ReadSeekCloser, err error) {
+	store storeapi.Storage,
+	decompressCfg compressedio.DecompressConfig,
+) (reader io.ReadSeekCloser, err error) {
 	switch {
-	case fileMeta.Type == SourceTypeParquet:
-		reader, err = OpenParquetReader(ctx, store, fileMeta.Path, fileMeta.FileSize)
 	case fileMeta.Compression != CompressionNone:
 		compressType, err2 := ToStorageCompressType(fileMeta.Compression)
 		if err2 != nil {
 			return nil, err2
 		}
-		reader, err = storage.WithCompression(store, compressType, decompressCfg).Open(ctx, fileMeta.Path, nil)
+		reader, err = objstore.WithCompression(store, compressType, decompressCfg).Open(ctx, fileMeta.Path, nil)
 	default:
 		reader, err = store.Open(ctx, fileMeta.Path, nil)
 	}
 	return
+}
+
+// NewReaderOpener returns an opener and eagerly opens non-Parquet files.
+// Parquet parsers may preload the file without opening a reader.
+func NewReaderOpener(
+	ctx context.Context,
+	fileMeta *SourceFileMeta,
+	store storeapi.Storage,
+	decompressCfg compressedio.DecompressConfig,
+) (
+	openFunc func(context.Context) (io.ReadSeekCloser, error),
+	reader io.ReadSeekCloser,
+	err error,
+) {
+	openFunc = func(ctx context.Context) (io.ReadSeekCloser, error) {
+		return OpenReader(ctx, fileMeta, store, decompressCfg)
+	}
+	if fileMeta.Type == SourceTypeParquet {
+		return openFunc, nil, nil
+	}
+	reader, err = openFunc(ctx)
+	return openFunc, reader, err
 }

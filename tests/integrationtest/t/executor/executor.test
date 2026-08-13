@@ -1501,64 +1501,62 @@ create table t3(a int, b decimal(30,10));
 insert into t1 values (1,1),(1,1),(2,2),(3,3),(null,null);
 insert into t2 values (1,'1'),(2,'2'),(null,null),(null,'3');
 insert into t3 values (2,2.1),(3,3);
-explain format = 'brief' select * from t3 union select * from t1;
+explain format = 'plan_tree' select * from t3 union select * from t1;
 --sorted_result
 select * from t3 union select * from t1;
-explain format = 'brief' select * from t2 union all select * from t1;
+explain format = 'plan_tree' select * from t2 union all select * from t1;
 --sorted_result
 select * from t2 union all select * from t1;
-explain format = 'brief' select * from t1 except select * from t3;
+explain format = 'plan_tree' select * from t1 except select * from t3;
 --sorted_result
 select * from t1 except select * from t3;
-explain format = 'brief' select * from t1 intersect select * from t2;
+explain format = 'plan_tree' select * from t1 intersect select * from t2;
 --sorted_result
 select * from t1 intersect select * from t2;
-explain format = 'brief' select * from t1 union all select * from t2 union all select * from t3;
+explain format = 'plan_tree' select * from t1 union all select * from t2 union all select * from t3;
 --sorted_result
 select * from t1 union all select * from t2 union all select * from t3;
-explain format = 'brief' select * from t1 union all select * from t2 except select * from t3;
+explain format = 'plan_tree' select * from t1 union all select * from t2 except select * from t3;
 --sorted_result
 select * from t1 union all select * from t2 except select * from t3;
-explain format = 'brief' select * from t1 intersect select * from t2 intersect select * from t1;
+explain format = 'plan_tree' select * from t1 intersect select * from t2 intersect select * from t1;
 --sorted_result
 select * from t1 intersect select * from t2 intersect select * from t1;
-explain format = 'brief' select * from t1 union all select * from t2 intersect select * from t3;
+explain format = 'plan_tree' select * from t1 union all select * from t2 intersect select * from t3;
 --sorted_result
 select * from t1 union all select * from t2 intersect select * from t3;
-explain format = 'brief' select * from t1 except select * from t2 intersect select * from t3;
+explain format = 'plan_tree' select * from t1 except select * from t2 intersect select * from t3;
 --sorted_result
 select * from t1 except select * from t2 intersect select * from t3;
 
 # TestIndexScanWithYearCol
 # issue-23038: wrong key range of index scan for year column
-set tidb_cost_model_version=2;
 drop table if exists t;
 create table t (c1 year(4), c2 int, key(c1));
 insert into t values(2001, 1);
-explain format = 'brief' select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'plan_tree' select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 --sorted_result
 select t1.c1, t2.c1 from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-explain format = 'brief' select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'plan_tree' select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 --sorted_result
 select * from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-explain format = 'brief' select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'plan_tree' select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 --sorted_result
 select count(*) from t as t1 inner join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-explain format = 'brief' select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'plan_tree' select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 --sorted_result
 select t1.c1, t2.c1 from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-explain format = 'brief' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'plan_tree' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 --sorted_result
 select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-explain format = 'brief' select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
+explain format = 'plan_tree' select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
 --sorted_result
 select count(*) from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 != NULL;
-explain format = 'brief' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL;
+explain format = 'plan_tree' select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL;
 --sorted_result
 select * from t as t1 left join t as t2 on t1.c1 = t2.c1 where t1.c1 is not NULL;
 
 # TestSetOperation
-set tidb_cost_model_version=2;
 drop table if exists t1, t2, t3;
 create table t1(a int);
 create table t2 like t1;
@@ -1566,43 +1564,43 @@ create table t3 like t1;
 insert into t1 values (1),(1),(2),(3),(null);
 insert into t2 values (1),(2),(null),(null);
 insert into t3 values (2),(3);
-explain format='brief' select * from t3 union select * from t1;
+explain format='plan_tree' select * from t3 union select * from t1;
 --sorted_result
 select * from t3 union select * from t1;
-explain format='brief' select * from t2 union all select * from t1;
+explain format='plan_tree' select * from t2 union all select * from t1;
 --sorted_result
 select * from t2 union all select * from t1;
-explain format='brief' select * from t1 except select * from t3;
+explain format='plan_tree' select * from t1 except select * from t3;
 --sorted_result
 select * from t1 except select * from t3;
-explain format='brief' select * from t1 intersect select * from t2;
+explain format='plan_tree' select * from t1 intersect select * from t2;
 --sorted_result
 select * from t1 intersect select * from t2;
-explain format='brief' select * from t1 union all select * from t2 union all select * from t3;
+explain format='plan_tree' select * from t1 union all select * from t2 union all select * from t3;
 --sorted_result
 select * from t1 union all select * from t2 union all select * from t3;
-explain format='brief' select * from t1 union all select * from t2 except select * from t3;
+explain format='plan_tree' select * from t1 union all select * from t2 except select * from t3;
 --sorted_result
 select * from t1 union all select * from t2 except select * from t3;
-explain format='brief' select * from t1 intersect select * from t2 intersect select * from t1;
+explain format='plan_tree' select * from t1 intersect select * from t2 intersect select * from t1;
 --sorted_result
 select * from t1 intersect select * from t2 intersect select * from t1;
-explain format='brief' select * from t1 union all select * from t2 intersect select * from t3;
+explain format='plan_tree' select * from t1 union all select * from t2 intersect select * from t3;
 --sorted_result
 select * from t1 union all select * from t2 intersect select * from t3;
-explain format='brief' select * from t1 except select * from t2 intersect select * from t3;
+explain format='plan_tree' select * from t1 except select * from t2 intersect select * from t3;
 --sorted_result
 select * from t1 except select * from t2 intersect select * from t3;
-explain format='brief' select * from t1 intersect (select * from t2 except (select * from t3));
+explain format='plan_tree' select * from t1 intersect (select * from t2 except (select * from t3));
 --sorted_result
 select * from t1 intersect (select * from t2 except (select * from t3));
-explain format='brief' select * from t1 union all (select * from t2 except select * from t3);
+explain format='plan_tree' select * from t1 union all (select * from t2 except select * from t3);
 --sorted_result
 select * from t1 union all (select * from t2 except select * from t3);
-explain format='brief' select * from t1 union (select * from t2 union all select * from t3);
+explain format='plan_tree' select * from t1 union (select * from t2 union all select * from t3);
 --sorted_result
 select * from t1 union (select * from t2 union all select * from t3);
-explain format='brief' (select * from t1 intersect select * from t1) except (select * from t2 union select * from t3);
+explain format='plan_tree' (select * from t1 intersect select * from t1) except (select * from t2 union select * from t3);
 --sorted_result
 (select * from t1 intersect select * from t1) except (select * from t2 union select * from t3);
 
@@ -1850,7 +1848,7 @@ admin check table b;
 set @@tidb_enable_clustered_index=On;
 drop table if exists t;
 create table t (a int, b int, c int, primary key(a,b));
-explain format = 'brief' select t1.a from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b;
+explain format = 'plan_tree' select t1.a from t t1 left join t t2 on t1.a = t2.a and t1.b = t2.b;
 set @@tidb_enable_clustered_index=default;
 
 # TestExecutorBit
@@ -2432,21 +2430,21 @@ set tidb_track_aggregate_memory_usage = off;
 
 --replace_column 5 <execution_info> 6 <operator_info>
 --replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
-explain analyze select /*+ HASH_AGG() */ sum(a) from t;
+explain analyze format = 'brief' select /*+ HASH_AGG() */ sum(a) from t;
 
 --replace_column 5 <execution_info> 6 <operator_info>
 --replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
-explain analyze select /*+ STREAM_AGG() */ sum(a) from t;
+explain analyze format = 'brief' select /*+ STREAM_AGG() */ sum(a) from t;
 
 set tidb_track_aggregate_memory_usage = on;
 
 --replace_column 5 <execution_info> 6 <operator_info>
 --replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
-explain analyze select /*+ HASH_AGG() */ sum(a) from t;
+explain analyze format = 'brief' select /*+ HASH_AGG() */ sum(a) from t;
 
 --replace_column 5 <execution_info> 6 <operator_info>
 --replace_regex /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
-explain analyze select /*+ STREAM_AGG() */ sum(a) from t;
+explain analyze format = 'brief' select /*+ STREAM_AGG() */ sum(a) from t;
 
 set tidb_track_aggregate_memory_usage = default;
 
@@ -2469,7 +2467,7 @@ drop table if EXISTS t1;
 create table t1(id int primary key, a int, b int, c int, d int, index t1a(a), index t1b(b));
 insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5);
 --replace_regex /.*time:.*loops:.*cop_task:.*/.*time:.*loops:.*cop_task:.*/ /.*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*/.*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*/ /[0-9]+ Bytes/<num> Bytes/ /[.0-9]+ KB/<num> KB/
-explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;
+explain analyze format = 'brief' select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;
 set @@tidb_enable_collect_execution_info=0;
 select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a;
 set @@tidb_enable_collect_execution_info=default;
@@ -2479,14 +2477,14 @@ drop table if exists t1;
 create table t1 (a int, b int, index(a));
 insert into t1 values (1,2),(2,3),(3,4);
 --replace_regex /.*time:.*loops:.*index_task:.*table_task: {total_time.*num.*concurrency.*}.*/.*time:.*loops:.*index_task:.*table_task: {total_time.*num.*concurrency.*}.*/ /.*time:.*loops:.*cop_task:.*/.*time:.*loops:.*cop_task:.*/ /[.0-9]+ KB/<num> KB/ /[0-9]+ Bytes/<num> Bytes/
-explain analyze select * from t1 use index(a) where a > 1;
+explain analyze format = 'brief' select * from t1 use index(a) where a > 1;
 
 # TestHashAggRuntimeStats
 drop table if exists t1;
 create table t1 (a int, b int);
 insert into t1 values (1,2),(2,3),(3,4);
 --replace_regex /.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*/.*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*/ /time:.*loops:.*cop_task.*/time.*loops.*cop_task.*/ /tikv_task:.*/tikv_task:.*/ /[.0-9]+ KB/<num> KB/ /[.0-9]+ Bytes/<num> Bytes/
-explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;
+explain analyze format = 'brief' SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;
 
 # TestSelectForUpdate
 set global tidb_txn_mode='';

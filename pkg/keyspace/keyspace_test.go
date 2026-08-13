@@ -19,7 +19,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,6 +74,42 @@ func TestNoKeyspaceNameSet(t *testing.T) {
 	}
 }
 
+func TestUsernamePolicy(t *testing.T) {
+	restoreConfig := config.RestoreFunc()
+	originalMode := deploymode.Get()
+	t.Cleanup(func() {
+		restoreConfig()
+		if kerneltype.IsNextGen() {
+			require.NoError(t, deploymode.Set(originalMode))
+		}
+	})
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.KeyspaceName = "ks"
+	})
+
+	policy := GetUsernamePolicy()
+	require.NoError(t, policy.ValidateUsername("user"))
+	require.Empty(t, policy.GetUsernameVariants("user"))
+	require.Empty(t, policy.GetOriginalUsername("ks.user"))
+
+	if !kerneltype.IsNextGen() {
+		return
+	}
+
+	require.NoError(t, deploymode.Set(deploymode.Starter))
+	policy = GetUsernamePolicy()
+	require.NoError(t, policy.ValidateUsername("ks.user"))
+	require.True(t, policy.ValidateUsernameFormat("other.user"))
+	require.False(t, policy.ValidateUsernameFormat("other.user.extra"))
+	require.True(t, terror.ErrorEqual(policy.ValidateUsername("user"), exeerrors.ErrUserNameNeedPrefix))
+	require.Equal(t, []string{"ks.user"}, policy.GetUsernameVariants("user"))
+	require.Empty(t, policy.GetUsernameVariants("ks.user"))
+	require.Equal(t, []string{"ks.other.user"}, policy.GetUsernameVariants("other.user"))
+	require.Equal(t, []string{"ks.other.user.extra"}, policy.GetUsernameVariants("other.user.extra"))
+	require.Equal(t, "user", policy.GetOriginalUsername("ks.user"))
+}
+
 func BenchmarkGetKeyspaceNameBytesBySettings(b *testing.B) {
 	if !kerneltype.IsNextGen() {
 		b.Skip("NextGen is not enabled, skipping benchmark")
@@ -90,44 +129,4 @@ func BenchmarkGetKeyspaceNameBytesBySettings(b *testing.B) {
 		result = GetKeyspaceNameBytesBySettings()
 	}
 	_ = result
-}
-
-func TestIsRunningOnUser(t *testing.T) {
-	if kerneltype.IsClassic() {
-		require.False(t, IsRunningOnUser())
-	} else {
-		bak := *config.GetGlobalConfig()
-		t.Cleanup(func() {
-			config.StoreGlobalConfig(&bak)
-		})
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.KeyspaceName = "aa"
-		})
-		require.True(t, IsRunningOnUser())
-
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.KeyspaceName = System
-		})
-		require.False(t, IsRunningOnUser())
-	}
-}
-
-func TestIsRunningOnSystem(t *testing.T) {
-	if kerneltype.IsClassic() {
-		require.False(t, IsRunningOnSystem())
-	} else {
-		bak := *config.GetGlobalConfig()
-		t.Cleanup(func() {
-			config.StoreGlobalConfig(&bak)
-		})
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.KeyspaceName = System
-		})
-		require.True(t, IsRunningOnSystem())
-
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.KeyspaceName = "aa"
-		})
-		require.False(t, IsRunningOnSystem())
-	}
 }

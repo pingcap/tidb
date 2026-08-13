@@ -16,6 +16,7 @@ package expression
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
@@ -63,6 +65,8 @@ type BuildOptions struct {
 	AllowCastArray bool
 	// TargetFieldType indicates to cast the expression to the target field type if it is not nil
 	TargetFieldType *types.FieldType
+	// UseNewCollate whether to use new collate when building expression.
+	UseNewCollate bool
 }
 
 // BuildOption is a function to apply optional settings
@@ -97,6 +101,14 @@ func WithAllowCastArray(allow bool) BuildOption {
 func WithCastExprTo(targetFt *types.FieldType) BuildOption {
 	return func(options *BuildOptions) {
 		options.TargetFieldType = targetFt
+	}
+}
+
+// WithUseNewCollate fixes the collation mode used while building expressions
+// that must stay consistent with table or index encoding created earlier.
+func WithUseNewCollate(useNewCollate bool) BuildOption {
+	return func(options *BuildOptions) {
+		options.UseNewCollate = useNewCollate
 	}
 }
 
@@ -269,6 +281,23 @@ type Expression interface {
 	StringerWithCtx
 }
 
+var expressionSlices = zeropool.New[[]Expression](
+	func() []Expression {
+		return make([]Expression, 0, 4)
+	})
+
+// GetExpressionSlices gets a slice of Expression from pool.
+func GetExpressionSlices(size int) []Expression {
+	result := expressionSlices.Get()
+	return slices.Grow(result, size)
+}
+
+// PutExpressionSlices puts a slice of Expression back to pool.
+func PutExpressionSlices(exprs []Expression) {
+	exprs = exprs[:0]
+	expressionSlices.Put(exprs)
+}
+
 // CNFExprs stands for a CNF expression.
 type CNFExprs []Expression
 
@@ -298,8 +327,7 @@ func IsEQCondFromIn(expr Expression) bool {
 	if !ok || sf.FuncName.L != ast.EQ {
 		return false
 	}
-	cols := make([]*Column, 0, 1)
-	cols = ExtractColumnsFromExpressions(cols, sf.GetArgs(), isColumnInOperand)
+	cols := ExtractColumnsMapFromExpressions(isColumnInOperand, sf.GetArgs()...)
 	return len(cols) > 0
 }
 
@@ -885,6 +913,7 @@ type VarAssignment struct {
 	Expr        Expression
 	IsDefault   bool
 	IsGlobal    bool
+	IsInstance  bool
 	IsSystem    bool
 	ExtendValue *Constant
 }
@@ -1078,6 +1107,18 @@ func TableInfo2SchemaAndNames(ctx BuildContext, dbName ast.CIStr, tbl *model.Tab
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
 func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
+	return ColumnInfos2ColumnsAndNamesWithCollate(ctx, dbName, tblName, colInfos, tblInfo, collate.NewCollationEnabled())
+}
+
+// ColumnInfos2ColumnsAndNamesWithCollate converts the ColumnInfo to the *Column
+// and NameSlice with a fixed collation mode.
+func ColumnInfos2ColumnsAndNamesWithCollate(
+	ctx BuildContext,
+	dbName, tblName ast.CIStr,
+	colInfos []*model.ColumnInfo,
+	tblInfo *model.TableInfo,
+	useNewCollate bool,
+) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
@@ -1118,7 +1159,10 @@ func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName ast.CIStr, co
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			e, err := BuildSimpleExpr(ctx, expr, WithInputSchemaAndNames(mockSchema, names, tblInfo), WithAllowCastArray(true))
+			e, err := BuildSimpleExpr(ctx, expr,
+				WithInputSchemaAndNames(mockSchema, names, tblInfo),
+				WithAllowCastArray(true),
+				WithUseNewCollate(useNewCollate))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -1238,6 +1282,9 @@ func PropagateType(ctx EvalContext, evalType types.EvalType, args ...Expression)
 				newCol := col.Clone()
 				newCol.(*CorrelatedColumn).RetType = col.RetType.Clone()
 				args[0] = newCol
+			}
+			if con, ok := args[0].(*Constant); ok {
+				args[0] = con.Clone()
 			}
 			if args[0].GetType(ctx).GetType() == mysql.TypeNewDecimal {
 				if newDecimal > mysql.MaxDecimalScale {

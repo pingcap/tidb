@@ -12,6 +12,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser/mysql",
+        "//pkg/session/syssession",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
@@ -36,7 +37,7 @@ go_test(
     srcs = ["stats_syncload_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 8,
+    shard_count = 6,
     deps = [
         ":syncload",
         "//pkg/config",

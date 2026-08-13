@@ -31,6 +31,8 @@ import (
 	hints []*ast.TableOptimizerHint
 	table 	ast.HintTable
 	modelIdents []ast.CIStr
+    leadingList *ast.LeadingList
+    leadingElement interface{} // Modified: Represents either *ast.HintTable or *ast.LeadingList
 }
 
 %token	<number>
@@ -49,6 +51,9 @@ import (
 
 	/*yy:token "'%c'" */
 	hintStringLit
+
+	/* SET_VAR-only decimal/float literal. Integer values still use hintIntLit. */
+	hintNumericLit
 
 	/* MySQL 8.0 hint names */
 	hintJoinFixedOrder      "JOIN_FIXED_ORDER"
@@ -84,6 +89,7 @@ import (
 	/* TiDB hint names */
 	hintAggToCop              "AGG_TO_COP"
 	hintIgnorePlanCache       "IGNORE_PLAN_CACHE"
+	hintWriteSlowLog          "WRITE_SLOW_LOG"
 	hintHashAgg               "HASH_AGG"
 	hintMpp1PhaseAgg          "MPP_1PHASE_AGG"
 	hintMpp2PhaseAgg          "MPP_2PHASE_AGG"
@@ -112,6 +118,8 @@ import (
 	hintUseIndex              "USE_INDEX"
 	hintOrderIndex            "ORDER_INDEX"
 	hintNoOrderIndex          "NO_ORDER_INDEX"
+	hintIndexLookUpPushDown   "INDEX_LOOKUP_PUSHDOWN"
+	hintNoIndexLookUpPushDown "NO_INDEX_LOOKUP_PUSHDOWN"
 	hintUsePlanCache          "USE_PLAN_CACHE"
 	hintUseToja               "USE_TOJA"
 	hintTimeRange             "TIME_RANGE"
@@ -185,6 +193,12 @@ import (
 	PartitionList    "partition name list in optimizer hint"
 	PartitionListOpt "optional partition name list in optimizer hint"
 
+%type	<leadingList>
+	LeadingTableList "leading table list"
+
+%type	<leadingElement>
+	LeadingTableElement "leading element (table or list)"
+
 
 %start	Start
 
@@ -240,6 +254,27 @@ TableOptimizerHintOpt:
 	{
 		h := $3
 		h.HintName = ast.NewCIStr($1)
+		$$ = h
+	}
+|	"LEADING" '(' QueryBlockOpt LeadingTableList ')'
+	{
+		h := &ast.TableOptimizerHint{
+			HintName: ast.NewCIStr($1),
+			QBName:   ast.NewCIStr($3),
+			HintData: $4,
+		}
+		// For LEADING hints we need to maintain two views of the tables:
+		// h.HintData:
+		//   - Stores the structured AST node (LeadingList).
+		//   - Preserves the nesting and order information of LEADING(...),
+		//
+		// h.Tables:
+		//   - Stores a flat slice of all HintTable elements inside the LeadingList.
+		//   - Only used for initialization.
+		if leadingList, ok := h.HintData.(*ast.LeadingList); ok {
+			// be compatible with the prior flatten writing style
+			h.Tables = ast.FlattenLeadingList(leadingList)
+		}
 		$$ = h
 	}
 |	UnsupportedIndexLevelOptimizerHintName '(' HintIndexList ')'
@@ -345,6 +380,12 @@ TableOptimizerHintOpt:
 			QBName:   ast.NewCIStr($3),
 		}
 	}
+|	"WRITE_SLOW_LOG"
+	{
+		$$ = &ast.TableOptimizerHint{
+			HintName: ast.NewCIStr($1),
+		}
+	}
 |	"QUERY_TYPE" '(' QueryBlockOpt HintQueryType ')'
 	{
 		$$ = &ast.TableOptimizerHint{
@@ -404,6 +445,28 @@ HintStorageTypeAndTable:
 		h := $3
 		h.HintData = ast.NewCIStr($1)
 		$$ = h
+	}
+
+LeadingTableList:
+	LeadingTableElement
+	{
+		$$ = &ast.LeadingList{Items: []interface{}{$1}}
+	}
+|	LeadingTableList ',' LeadingTableElement
+	{
+		$$ = $1
+		$$.Items = append($$.Items, $3)
+	}
+
+LeadingTableElement:
+	HintTable
+	{
+		tmp := $1
+		$$ = &tmp
+	}
+|	'(' LeadingTableList ')'
+	{
+		$$ = $2
 	}
 
 QueryBlockOpt:
@@ -570,9 +633,18 @@ SubqueryStrategies:
 Value:
 	hintStringLit
 |	Identifier
+|	hintNumericLit
 |	hintIntLit
 	{
 		$$ = strconv.FormatUint($1, 10)
+	}
+|	'+' hintNumericLit
+	{
+		$$ = $2
+	}
+|	'-' hintNumericLit
+	{
+		$$ = "-" + $2
 	}
 |	'+' hintIntLit
 	{
@@ -645,7 +717,6 @@ SupportedTableLevelOptimizerHintName:
 |	"NO_HASH_JOIN"
 |	"HASH_JOIN_BUILD"
 |	"HASH_JOIN_PROBE"
-|	"LEADING"
 |	"HYPO_INDEX"
 
 UnsupportedIndexLevelOptimizerHintName:
@@ -665,6 +736,8 @@ SupportedIndexLevelOptimizerHintName:
 |	"FORCE_INDEX"
 |	"ORDER_INDEX"
 |	"NO_ORDER_INDEX"
+|	"INDEX_LOOKUP_PUSHDOWN"
+|	"NO_INDEX_LOOKUP_PUSHDOWN"
 
 SubqueryOptimizerHintName:
 	"SEMIJOIN"
@@ -739,6 +812,7 @@ Identifier:
 |	"AGG_TO_COP"
 |	"LIMIT_TO_COP"
 |	"IGNORE_PLAN_CACHE"
+|	"WRITE_SLOW_LOG"
 |	"HASH_AGG"
 |	"MPP_1PHASE_AGG"
 |	"MPP_2PHASE_AGG"
@@ -767,6 +841,8 @@ Identifier:
 |	"USE_INDEX"
 |	"ORDER_INDEX"
 |	"NO_ORDER_INDEX"
+|	"INDEX_LOOKUP_PUSHDOWN"
+|	"NO_INDEX_LOOKUP_PUSHDOWN"
 |	"USE_PLAN_CACHE"
 |	"USE_TOJA"
 |	"TIME_RANGE"

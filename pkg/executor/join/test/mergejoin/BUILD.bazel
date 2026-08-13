@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "mergejoin_test",
+    timeout = "short",
+    srcs = ["merge_join_test.go"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//pkg/config",
+        "//pkg/session/sessmgr",
+        "//pkg/sessionctx/vardef",
+        "//pkg/testkit",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

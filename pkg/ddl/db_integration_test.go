@@ -140,6 +140,29 @@ func TestModifyColumnAfterAddIndex(t *testing.T) {
 	tk.MustExec(`insert into city values ("abc"), ("abd");`)
 }
 
+func TestModifyColumnOldColumnIDNotFound(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+	model.SetJobVerInUse(model.JobVersion1)
+	mockOwnerChange := false
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionModifyColumn &&
+			job.SchemaState == model.StateWriteReorganization &&
+			!mockOwnerChange {
+			// Mock the first few phases of this DDL job is executed in old version TiDB.
+			model.UpdateJobArgsForTest(job, func(args []any) []any {
+				return args[:len(args)-1]
+			})
+			mockOwnerChange = true
+		}
+	})
+	tk.MustExec("alter table t modify column a varchar(16);")
+	require.True(t, mockOwnerChange)
+}
+
 func TestIssue2293(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
@@ -1248,14 +1271,17 @@ func TestAlterColumn(t *testing.T) {
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("insert into t1(id) values (1);")
+	// Keep the fractional precision check independent of wall-clock second boundaries.
+	tk.MustExec("set timestamp=12345.123456")
 	tk.MustExec("alter table t1 add column update_time3 datetime(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3);")
 	tk.MustExec("alter table t1 add column update_time6 datetime(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6);")
+	tk.MustExec("set timestamp=default")
 	rows := tk.MustQuery("select * from t1").Rows()
 	require.Equal(t, "1", rows[0][0])
 	updateTime3 := rows[0][1].(string)
-	require.NotEqual(t, "000", updateTime3[len(updateTime3)-3:])
+	require.Equal(t, "123", updateTime3[len(updateTime3)-3:])
 	updateTime6 := rows[0][2].(string)
-	require.NotEqual(t, "000000", updateTime6[len(updateTime6)-6:])
+	require.Equal(t, "123456", updateTime6[len(updateTime6)-6:])
 
 	tk.MustExec("set sql_mode=default")
 	tk.MustExec("drop table if exists t")

@@ -16,17 +16,20 @@ package ddl
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/label"
+	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"go.uber.org/zap"
 )
+
+const dropSchemaTTLRestoreRegistrationsLogKey = "drop_schema_ttl_restore_registrations_failed"
 
 func onCreateSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	schemaID := job.SchemaID
@@ -174,19 +177,24 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 	switch dbInfo.State {
 	case model.StatePublic:
 		// public -> write only
-		dbInfo.State = model.StateWriteOnly
-		err = metaMut.UpdateDatabase(dbInfo)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
 		var tables []*model.TableInfo
 		tables, err = metaMut.ListTables(jobCtx.stepCtx, job.SchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
+		if jobCtx.oldDDLCtx != nil {
+			if err := w.dropSchemaTTLTablesFromExternalWorkload(jobCtx.ctx, job, job.SchemaName, tables); err != nil {
+				return ver, err
+			}
+		}
+		dbInfo.State = model.StateWriteOnly
+		err = metaMut.UpdateDatabase(dbInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 		var ruleIDs []string
 		for _, tblInfo := range tables {
-			rules := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
+			rules := append(getPartitionRuleIDs(jobCtx.store.GetCodec(), job.SchemaName, tblInfo), label.NewRuleID(jobCtx.store.GetCodec(), job.SchemaName, tblInfo.Name.L, ""))
 			ruleIDs = append(ruleIDs, rules...)
 		}
 		patch := label.NewRulePatch([]*label.Rule{}, ruleIDs)
@@ -208,6 +216,20 @@ func (w *worker) onDropSchema(jobCtx *jobContext, job *model.Job) (ver int64, _ 
 		tables, err = metaMut.ListTables(jobCtx.stepCtx, job.SchemaID)
 		if err != nil {
 			return ver, errors.Trace(err)
+		}
+
+		// Best-effort cleanup - log errors but continue with DROP DATABASE
+		if err := batchDeleteTableAffinityGroups(jobCtx, tables); err != nil {
+			logutil.DDLLogger().Warn("failed to delete affinity groups for batch tables, but operation will continue",
+				zap.Error(err),
+				zap.Int64("databaseID", dbInfo.ID))
+		}
+
+		// Clean up masking policies for all tables in the dropped database.
+		if err := w.dropMaskingPoliciesByDBName(jobCtx, job.SchemaName); err != nil {
+			logutil.DDLLogger().Warn("failed to delete masking policies for database, but operation will continue",
+				zap.Error(err),
+				zap.String("dbName", job.SchemaName))
 		}
 
 		err = metaMut.UpdateDatabase(dbInfo)
@@ -353,6 +375,39 @@ func (w *worker) onRecoverSchema(jobCtx *jobContext, job *model.Job) (ver int64,
 		return ver, errors.Errorf("invalid db state %v", schemaInfo.State)
 	}
 	return ver, errors.Trace(err)
+}
+
+func (w *worker) dropSchemaTTLTablesFromExternalWorkload(
+	ctx context.Context,
+	job *model.Job,
+	schemaName string,
+	tables []*model.TableInfo,
+) error {
+	tablesNeedingCompensation := make([]*model.TableInfo, 0, len(tables))
+	for _, tblInfo := range tables {
+		if tblInfo.TTLInfo == nil {
+			continue
+		}
+		if err := w.deleteTTLTableFromExternalWorkload(ctx, tblInfo.ID); err != nil {
+			for i := len(tablesNeedingCompensation) - 1; i >= 0; i-- {
+				restoreTblInfo := tablesNeedingCompensation[i]
+				if compensateErr := w.registerTTLTableToExternalWorkload(ctx, restoreTblInfo); compensateErr != nil {
+					logutil.DDLLogger().Warn("drop schema TTL external workload compensation failed",
+						zap.String("keyword", dropSchemaTTLRestoreRegistrationsLogKey),
+						zap.String("dbName", schemaName),
+						zap.Int64("tableID", restoreTblInfo.ID),
+						zap.String("tableName", restoreTblInfo.Name.O),
+						zap.Error(compensateErr),
+						zap.NamedError("deleteTTLTableErr", err))
+				}
+			}
+			return cancelJobOnExternalTTLWorkloadError(job, err)
+		}
+		if tblInfo.TTLInfo.Enable {
+			tablesNeedingCompensation = append(tablesNeedingCompensation, tblInfo)
+		}
+	}
+	return nil
 }
 
 func checkSchemaExistAndCancelNotExistJob(t *meta.Mutator, job *model.Job) (*model.DBInfo, error) {

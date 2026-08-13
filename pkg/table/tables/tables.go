@@ -72,17 +72,18 @@ type TableCommon struct {
 	fullHiddenColsAndVisibleColumns []*table.Column
 	writableConstraints             []*table.Constraint
 
-	indices                 []table.Index
-	meta                    *model.TableInfo
-	allocs                  autoid.Allocators
-	sequence                *sequenceCommon
-	dependencyColumnOffsets []int
-	Constraints             []*table.Constraint
+	indices     []table.Index
+	meta        *model.TableInfo
+	allocs      autoid.Allocators
+	sequence    *sequenceCommon
+	Constraints []*table.Constraint
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
 	indexPrefix  kv.Key
-
+	// encoder keeps the collation setting captured when the table is initialized.
+	// All row and index writes through this table must use this fixed setting.
+	encoder codec.Encoder
 	// skipAssert is used for partitions that are in WriteOnly/DeleteOnly state.
 	skipAssert bool
 }
@@ -140,8 +141,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 	if err != nil {
 		return nil
 	}
-	var t TableCommon
-	initTableCommon(&t, tblInfo, tblInfo.ID, columns, autoid.NewAllocators(false), constraints)
+	t := newTableCommon(tblInfo, tblInfo.ID, columns, autoid.NewAllocators(false), constraints, collate.NewCollationEnabled())
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		ret, err := newCachedTable(&t)
 		if err != nil {
@@ -150,7 +150,7 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 		return ret
 	}
 	if tblInfo.GetPartitionInfo() == nil {
-		if err := initTableIndices(&t); err != nil {
+		if err := t.initTableIndices(); err != nil {
 			return nil
 		}
 		return &t
@@ -165,6 +165,12 @@ func MockTableFromMeta(tblInfo *model.TableInfo) table.Table {
 
 // TableFromMeta creates a Table instance from model.TableInfo.
 func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
+	return TableFromMetaWithCollate(collate.NewCollationEnabled(), allocs, tblInfo)
+}
+
+// TableFromMetaWithCollate creates a Table instance from model.TableInfo with a
+// fixed new-collation mode for persisted key and expression encoding.
+func TableFromMetaWithCollate(useNewCollate bool, allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error) {
 	if tblInfo.State == model.StateNone {
 		return nil, table.ErrTableStateCantNone.GenWithStackByArgs(tblInfo.Name)
 	}
@@ -214,10 +220,9 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 	if err != nil {
 		return nil, err
 	}
-	var t TableCommon
-	initTableCommon(&t, tblInfo, tblInfo.ID, columns, allocs, constraints)
+	t := newTableCommon(tblInfo, tblInfo.ID, columns, allocs, constraints, useNewCollate)
 	if tblInfo.GetPartitionInfo() == nil {
-		if err := initTableIndices(&t); err != nil {
+		if err := t.initTableIndices(); err != nil {
 			return nil, err
 		}
 		if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
@@ -240,29 +245,27 @@ func buildGeneratedExpr(tblInfo *model.TableInfo, genExpr string) (ast.ExprNode,
 	return expr, nil
 }
 
-// initTableCommon initializes a TableCommon struct.
-func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) {
-	t.tableID = tblInfo.ID
-	t.physicalTableID = physicalTableID
-	t.allocs = allocs
-	t.meta = tblInfo
-	t.Columns = cols
-	t.Constraints = constraints
-	t.recordPrefix = tablecodec.GenTableRecordPrefix(physicalTableID)
-	t.indexPrefix = tablecodec.GenTableIndexPrefix(physicalTableID)
+func newTableCommon(tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint, useNewCollate bool) TableCommon {
+	t := TableCommon{
+		tableID:         tblInfo.ID,
+		physicalTableID: physicalTableID,
+		allocs:          allocs,
+		meta:            tblInfo,
+		Columns:         cols,
+		Constraints:     constraints,
+		recordPrefix:    tablecodec.GenTableRecordPrefix(physicalTableID),
+		indexPrefix:     tablecodec.GenTableIndexPrefix(physicalTableID),
+		encoder:         codec.NewEncoder(useNewCollate),
+	}
 	if tblInfo.IsSequence() {
 		t.sequence = &sequenceCommon{meta: tblInfo.Sequence}
 	}
-	for _, col := range cols {
-		if col.ChangeStateInfo != nil {
-			t.dependencyColumnOffsets = append(t.dependencyColumnOffsets, col.ChangeStateInfo.DependencyColumnOffset)
-		}
-	}
 	t.ResetColumnsCache()
+	return t
 }
 
 // initTableIndices initializes the indices of the TableCommon.
-func initTableIndices(t *TableCommon) error {
+func (t *TableCommon) initTableIndices() error {
 	tblInfo := t.meta
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.State == model.StateNone {
@@ -270,7 +273,10 @@ func initTableIndices(t *TableCommon) error {
 		}
 
 		// Use partition ID for index, because TableCommon may be table or partition.
-		idx := NewIndex(t.physicalTableID, tblInfo, idxInfo)
+		idx, err := NewIndexWithCollate(t.encoder.UseNewCollate(), t.physicalTableID, tblInfo, idxInfo)
+		if err != nil {
+			return err
+		}
 		intest.AssertFunc(func() bool {
 			// `TableCommon.indices` is type of `[]table.Index` to implement interface method `Table.Indices`.
 			// However, we have an assumption that the specific type of each element in it should always be `*index`.
@@ -285,14 +291,29 @@ func initTableIndices(t *TableCommon) error {
 	return nil
 }
 
+// checkDataForModifyColumn checks if the data can be stored in the column with changingType.
+// It's used to prevent illegal data being inserted if we want to skip reorg.
+func checkDataForModifyColumn(row []types.Datum, col *table.Column) error {
+	if col.ChangingFieldType == nil {
+		return nil
+	}
+
+	data := row[col.Offset]
+	value, err := table.CastColumnValueWithStrictMode(data, col.ChangingFieldType)
+	if err != nil {
+		return err
+	}
+
+	// For the case from VARCHAR -> CHAR
+	if col.ChangingFieldType.GetType() == mysql.TypeString && value.GetString() != data.GetString() {
+		return errors.New("data truncation error during modify column")
+	}
+	return nil
+}
+
 // asIndex casts a table.Index to *index which is the actual type of index in TableCommon.
 func asIndex(idx table.Index) *index {
 	return idx.(*index)
-}
-
-func initTableCommonWithIndices(t *TableCommon, tblInfo *model.TableInfo, physicalTableID int64, cols []*table.Column, allocs autoid.Allocators, constraints []*table.Constraint) error {
-	initTableCommon(t, tblInfo, physicalTableID, cols, allocs, constraints)
-	return initTableIndices(t)
 }
 
 // Indices implements table.Table Indices interface.
@@ -447,6 +468,10 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	for _, col := range t.Columns {
 		var value types.Datum
 		var err error
+		if err := checkDataForModifyColumn(newData, col); err != nil {
+			return err
+		}
+
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			if col.ChangeStateInfo != nil {
 				// TODO: Check overflow or ignoreTruncate.
@@ -484,9 +509,8 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		checkRowBuffer.AddColVal(value)
 	}
 	// check data constraint
-	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	if constraints := t.WritableConstraint(); len(constraints) > 0 {
-		if err := table.CheckRowConstraint(evalCtx, constraints, checkRowBuffer.GetRowToCheck()); err != nil {
+		if err := table.CheckRowConstraint(sctx.GetExprCtx(), constraints, checkRowBuffer.GetRowToCheck(), t.Meta()); err != nil {
 			return err
 		}
 	}
@@ -497,8 +521,9 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 	}
 
 	key := t.RecordKey(h)
+	evalCtx := sctx.GetExprCtx().GetEvalCtx()
 	tc, ec := evalCtx.TypeCtx(), evalCtx.ErrCtx()
-	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
+	err = encodeRowBuffer.WriteMemBufferEncoded(t.encoder, sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, h)
 	if err != nil {
 		return err
 	}
@@ -509,16 +534,16 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		// override it.
 		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting not exist on UpdateRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
 		}
 	})
 
 	if t.skipAssert {
-		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.SetAssertExist)
+		err = setAssertion(txn, key, kv.AssertExist)
 	}
 	if err != nil {
 		return err
@@ -553,10 +578,33 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 		if idx.Meta().IsColumnarIndex() {
 			continue
 		}
+
+		oldDataMeetPartialCondition, err := idx.MeetPartialCondition(oldData)
+		if err != nil {
+			return err
+		}
+		if !oldDataMeetPartialCondition {
+			// If the partial index condition is not met, we don't need to delete it because
+			// it has never been written.
+			continue
+		}
+		untouched := true
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
 				continue
 			}
+			untouched = false
+			break
+		}
+		for _, ic := range idx.Meta().AffectColumn {
+			if !touched[ic.Offset] {
+				continue
+			}
+			untouched = false
+			break
+		}
+
+		if !untouched {
 			oldVs, err := idx.FetchValues(oldData, nil)
 			if err != nil {
 				return err
@@ -564,7 +612,6 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			if err = idx.Delete(ctx, txn, oldVs, h); err != nil {
 				return err
 			}
-			break
 		}
 	}
 	createIdxOpt := opt.GetCreateIdxOpt()
@@ -586,9 +633,25 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			untouched = false
 			break
 		}
+		for _, ic := range idx.Meta().AffectColumn {
+			if !touched[ic.Offset] {
+				continue
+			}
+			untouched = false
+			break
+		}
 		if untouched && opt.SkipWriteUntouchedIndices() {
 			continue
 		}
+		newDataMeetPartialCondition, err := idx.MeetPartialCondition(newData)
+		if err != nil {
+			return err
+		}
+		if !newDataMeetPartialCondition {
+			// If the partial index condition is not met, we don't need to build the new index.
+			continue
+		}
+
 		newVs, err := idx.FetchValues(newData, nil)
 		if err != nil {
 			return err
@@ -729,7 +792,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 			}
 			tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
 			var handleBytes []byte
-			handleBytes, err = codec.EncodeKey(tc.Location(), nil, pkDts...)
+			handleBytes, err = t.encoder.EncodeKey(tc.Location(), nil, pkDts...)
 			err = ec.HandleError(err)
 			if err != nil {
 				return
@@ -772,6 +835,10 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	defer memBuffer.Cleanup(sh)
 
 	for _, col := range t.Columns {
+		if err := checkDataForModifyColumn(r, col); err != nil {
+			return nil, err
+		}
+
 		var value types.Datum
 		if col.State == model.StateDeleteOnly || col.State == model.StateDeleteReorganization {
 			continue
@@ -822,8 +889,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 			encodeRowBuffer.AddColVal(col.ID, value)
 		}
 	}
-	// check data constraint
-	if err = table.CheckRowConstraintWithDatum(evalCtx, t.WritableConstraint(), r); err != nil {
+	if err = table.CheckRowConstraintWithDatum(sctx.GetExprCtx(), t.WritableConstraint(), r, t.meta); err != nil {
 		return nil, err
 	}
 	key := t.RecordKey(recordID)
@@ -846,7 +912,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		}
 		if err == nil {
 			// If Global Index and reorganization truncate/drop partition, old partition,
-			// Accept and set Assertion key to kv.SetAssertUnknown for overwrite instead
+			// Accept and set Assertion key to kv.AssertUnknown for overwrite instead
 			dupErr := getDuplicateError(t.Meta(), recordID, r)
 			return recordID, dupErr
 		} else if !kv.ErrNotExist.Equal(err) {
@@ -862,7 +928,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		}
 	}
 
-	err = encodeRowBuffer.WriteMemBufferEncoded(sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, recordID, flags...)
+	err = encodeRowBuffer.WriteMemBufferEncoded(t.encoder, sctx.GetRowEncodingConfig(), tc.Location(), ec, memBuffer, key, recordID, flags...)
 	if err != nil {
 		return nil, err
 	}
@@ -873,15 +939,15 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		// override it.
 		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting exist on AddRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertExist); err != nil {
 				failpoint.Return(nil, err)
 			}
 		}
 	})
 	if setPresume && !txn.IsPessimistic() {
-		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.SetAssertNotExist)
+		err = setAssertion(txn, key, kv.AssertNotExist)
 	}
 	if err != nil {
 		return nil, err
@@ -943,10 +1009,18 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if t.meta.IsCommonHandle && v.Meta().Primary {
 			continue
 		}
-		// We declared `err` here to make sure `indexVals` is assigned with `=` instead of `:=`.
+
+		meetPartialCondition, err := v.MeetPartialCondition(r)
+		if err != nil {
+			return nil, err
+		}
+		if !meetPartialCondition {
+			continue
+		}
+
+		// We should make sure `indexVals` is assigned with `=` instead of `:=`.
 		// The latter one will create a new variable that shadows the outside `indexVals` that makes `indexVals` outside
 		// always nil, and we cannot reuse it.
-		var err error
 		indexVals, err = v.FetchValues(r, indexVals)
 		if err != nil {
 			return nil, err
@@ -961,7 +1035,7 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 			}
 			dupErr = kv.GenKeyExistsErr(colStrVals, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String()))
 		}
-		rsData := TryGetHandleRestoredDataWrapper(t.meta, r, nil, v.Meta())
+		rsData := TryGetHandleRestoredDataWrapper(t, r, nil, v.Meta())
 		if dupHandle, err := asIndex(v).create(sctx, txn, indexVals, recordID, rsData, false, opt); err != nil {
 			if kv.ErrKeyExists.Equal(err) {
 				return dupHandle, dupErr
@@ -982,11 +1056,11 @@ func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*tab
 	if err != nil {
 		return nil, err
 	}
-	value, err := txn.Get(context.TODO(), key)
+	value, err := kv.GetValue(context.TODO(), txn, key)
 	if err != nil {
 		return nil, err
 	}
-	v, _, err := DecodeRawRowData(ctx.GetExprCtx(), t.Meta(), h, cols, value)
+	v, _, err := DecodeRawRowData(ctx.GetExprCtx(), t, h, cols, value)
 	if err != nil {
 		return nil, err
 	}
@@ -1006,8 +1080,10 @@ func containFullColInHandle(meta *model.TableInfo, col *table.Column) (containFu
 }
 
 // DecodeRawRowData decodes raw row data into a datum slice and a (columnID:columnValue) map.
-func DecodeRawRowData(ctx expression.BuildContext, meta *model.TableInfo, h kv.Handle, cols []*table.Column,
+func DecodeRawRowData(ctx expression.BuildContext, tbl table.Table, h kv.Handle, cols []*table.Column,
 	value []byte) ([]types.Datum, map[int64]types.Datum, error) {
+	meta := tbl.Meta()
+	useNewCollate := tbl.UseNewCollate()
 	v := make([]types.Datum, len(cols))
 	colTps := make(map[int64]*types.FieldType, len(cols))
 	prefixCols := make(map[int64]struct{})
@@ -1023,7 +1099,7 @@ func DecodeRawRowData(ctx expression.BuildContext, meta *model.TableInfo, h kv.H
 			}
 			continue
 		}
-		if col.IsCommonHandleColumn(meta) && !types.NeedRestoredData(&col.FieldType) {
+		if col.IsCommonHandleColumn(meta) && !types.NeedRestoredDataWithCollate(&col.FieldType, useNewCollate) {
 			if containFullCol, idxInHandle := containFullColInHandle(meta, col); containFullCol {
 				dtBytes := h.EncodedCol(idxInHandle)
 				_, dt, err := codec.DecodeOne(dtBytes)
@@ -1050,7 +1126,8 @@ func DecodeRawRowData(ctx expression.BuildContext, meta *model.TableInfo, h kv.H
 		if col == nil {
 			continue
 		}
-		if col.IsPKHandleColumn(meta) || (col.IsCommonHandleColumn(meta) && !types.NeedRestoredData(&col.FieldType)) {
+		if col.IsPKHandleColumn(meta) ||
+			(col.IsCommonHandleColumn(meta) && !types.NeedRestoredDataWithCollate(&col.FieldType, useNewCollate)) {
 			if _, isPrefix := prefixCols[col.ID]; !isPrefix {
 				continue
 			}
@@ -1151,6 +1228,7 @@ func (t *TableCommon) removeRecord(ctx table.MutateContext, txn kv.Transaction, 
 	if err = injectMutationError(t, txn, sh); err != nil {
 		return err
 	}
+	failpoint.InjectCall("duringTableCommonRemoveRecord", t.meta)
 
 	tc := ctx.GetExprCtx().GetEvalCtx().TypeCtx()
 	if ctx.EnableMutationChecker() {
@@ -1177,15 +1255,15 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction,
 		// override it.
 		if ctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting not exist on RemoveRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
 		}
 	})
 	if t.skipAssert {
-		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.SetAssertExist)
+		err = setAssertion(txn, key, kv.AssertExist)
 	}
 	if err != nil {
 		return err
@@ -1202,6 +1280,20 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 		if v.Meta().IsColumnarIndex() {
 			continue
 		}
+		intest.AssertFunc(func() bool {
+			// if the index is partial index, it shouldn't have index layout.
+			return !(opt.HasIndexesLayout() && v.Meta().HasCondition())
+		})
+		meetPartialCondition, err := v.MeetPartialCondition(rec)
+		if err != nil {
+			return err
+		}
+		if !meetPartialCondition {
+			// If the partial index condition is not met, we don't need to delete it because
+			// it has never been written.
+			continue
+		}
+
 		var vals []types.Datum
 		if opt.HasIndexesLayout() {
 			vals, err = fetchIndexRow(v.Meta(), rec, nil, opt.GetIndexLayout(v.Meta().ID))
@@ -1225,9 +1317,8 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 	return nil
 }
 
-// buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, vals []types.Datum, newData []types.Datum, idx *index, txn kv.Transaction, untouched bool, opt *table.CreateIdxOpt) error {
-	rsData := TryGetHandleRestoredDataWrapper(t.meta, newData, nil, idx.Meta())
+	rsData := TryGetHandleRestoredDataWrapper(t, newData, nil, idx.Meta())
 	if _, err := idx.create(ctx, txn, vals, h, rsData, untouched, opt); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
@@ -1433,15 +1524,20 @@ func (t *TableCommon) Type() table.Type {
 	return table.NormalTable
 }
 
+// UseNewCollate implements table.Table UseNewCollate interface.
+func (t *TableCommon) UseNewCollate() bool {
+	return t.encoder.UseNewCollate()
+}
+
 func (t *TableCommon) canSkip(col *table.Column, value *types.Datum) bool {
-	return CanSkip(t.Meta(), col, value)
+	return CanSkip(t.encoder.UseNewCollate(), t.Meta(), col, value)
 }
 
 // CanSkip is for these cases, we can skip the columns in encoded row:
 // 1. the column is included in primary key;
 // 2. the column's default value is null, and the value equals to that but has no origin default;
 // 3. the column is virtual generated.
-func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool {
+func CanSkip(useNewCollate bool, info *model.TableInfo, col *table.Column, value *types.Datum) bool {
 	if col.IsPKHandleColumn(info) {
 		return true
 	}
@@ -1452,7 +1548,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 				continue
 			}
 			canSkip := idxCol.Length == types.UnspecifiedLength
-			canSkip = canSkip && !types.NeedRestoredData(&col.FieldType)
+			canSkip = canSkip && !types.NeedRestoredDataWithCollate(&col.FieldType, useNewCollate)
 			return canSkip
 		}
 	}
@@ -1463,11 +1559,6 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 		return true
 	}
 	return false
-}
-
-// canSkipUpdateBinlog checks whether the column can be skipped or not.
-func (t *TableCommon) canSkipUpdateBinlog(col *table.Column) bool {
-	return col.IsVirtualGenerated()
 }
 
 // FindIndexByColName returns a public table index containing only one column named `name`.
@@ -1693,16 +1784,20 @@ func (t *TableCommon) GetSequenceCommon() *sequenceCommon {
 	return t.sequence
 }
 
-// TryGetHandleRestoredDataWrapper tries to get the restored data for handle if needed. The argument can be a slice or a map.
-func TryGetHandleRestoredDataWrapper(tblInfo *model.TableInfo, row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
-	if !collate.NewCollationEnabled() || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
+// TryGetHandleRestoredDataWrapper tries to get the restored data for handle if
+// needed. The argument can be a slice or a map.
+func TryGetHandleRestoredDataWrapper(tbl table.Table,
+	row []types.Datum, rowMap map[int64]types.Datum, idx *model.IndexInfo) []types.Datum {
+	useNewCollate := tbl.UseNewCollate()
+	tblInfo := tbl.Meta()
+	if !useNewCollate || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
 		return nil
 	}
 	rsData := make([]types.Datum, 0, 4)
 	pkIdx := FindPrimaryIndex(tblInfo)
 	for _, pkIdxCol := range pkIdx.Columns {
 		pkCol := tblInfo.Columns[pkIdxCol.Offset]
-		if !types.NeedRestoredData(&pkCol.FieldType) {
+		if !types.NeedRestoredDataWithCollate(&pkCol.FieldType, useNewCollate) {
 			continue
 		}
 		var datum types.Datum
@@ -1780,11 +1875,12 @@ func BuildTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.Co
 }
 
 // BuildPartitionTableScanFromInfos build tipb.PartitonTableScan with *model.TableInfo and *model.ColumnInfo.
+// Currently it's only used for TiFlash.
 func BuildPartitionTableScanFromInfos(tableInfo *model.TableInfo, columnInfos []*model.ColumnInfo, fastScan bool) *tipb.PartitionTableScan {
 	pkColIDs := TryGetCommonPkColumnIds(tableInfo)
 	tsExec := &tipb.PartitionTableScan{
 		TableId:          tableInfo.ID,
-		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false, false),
+		Columns:          util.ColumnsToProto(columnInfos, tableInfo.PKIsHandle, false, true),
 		PrimaryColumnIds: pkColIDs,
 		IsFastScan:       &fastScan,
 	}

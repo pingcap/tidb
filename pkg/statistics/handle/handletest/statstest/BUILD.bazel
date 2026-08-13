@@ -2,16 +2,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
     name = "statstest_test",
-    timeout = "short",
+    timeout = "moderate",
     srcs = [
         "main_test.go",
         "stats_test.go",
     ],
     flaky = True,
     race = "on",
-    shard_count = 14,
+    shard_count = 17,
     deps = [
         "//pkg/config",
+        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/statistics",

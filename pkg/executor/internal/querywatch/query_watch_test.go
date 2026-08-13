@@ -20,16 +20,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
 func TestQueryWatch(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(1)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
@@ -180,12 +182,30 @@ func TestQueryWatch(t *testing.T) {
 	rs, err = tk.Exec("query watch remove 1")
 	require.NoError(t, err)
 	require.Nil(t, rs)
-	time.Sleep(1 * time.Second)
-	tk.MustGetErrCode("select * from test.t1", mysql.ErrResourceGroupQueryRunawayQuarantine)
+	var lastObservedErr any
+	require.Eventuallyf(t, func() bool {
+		err := tk.ExecToErr("select * from test.t1")
+		if err == nil {
+			lastObservedErr = nil
+			return false
+		}
+		originErr := errors.Cause(err)
+		tErr, ok := originErr.(*terror.Error)
+		if !ok {
+			lastObservedErr = originErr
+			return false
+		}
+		sqlErr := terror.ToSQLError(tErr)
+		if int(sqlErr.Code) != mysql.ErrResourceGroupQueryRunawayQuarantine {
+			lastObservedErr = sqlErr
+			return false
+		}
+		return true
+	}, 10*time.Second, tryInterval, "expected quarantine error (%d), last observed: %v", mysql.ErrResourceGroupQueryRunawayQuarantine, lastObservedErr)
 }
 
 func TestQueryWatchIssue56897(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(1)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()

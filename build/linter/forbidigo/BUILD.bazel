@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "forbidigo",
+    srcs = ["analyzer.go"],
+    importpath = "github.com/pingcap/tidb/build/linter/forbidigo",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//build/linter/util",
+        "@com_github_ashanbrown_forbidigo_v2//forbidigo",
+        "@com_github_golangci_golangci_lint_v2//pkg/fsutils",
+        "@org_golang_x_tools//go/analysis",
+    ],
+)

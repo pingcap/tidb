@@ -26,6 +26,7 @@ go_test(
     srcs = ["lock_stats_executor_test.go"],
     embed = [":lockstats"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/infoschema",
         "//pkg/meta/model",

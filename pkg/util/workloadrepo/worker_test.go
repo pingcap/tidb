@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -540,7 +541,7 @@ func TestSettingSQLVariables(t *testing.T) {
 	tk.MustGetDBError("set @@global."+repositoryRetentionDays+" = 'invalid'", variable.ErrWrongTypeForVar)
 
 	// Test that if the strconv.Atoi call fails that the error is correctly handled.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/workloadrepo/FastRunawayGC", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/workloadrepo/FastRunawayGC", `return(1)`))
 	tk.MustGetDBError("set @@global."+repositorySamplingInterval+" = 10", errWrongValueForVar)
 	tk.MustGetDBError("set @@global."+repositorySnapshotInterval+" = 901", errWrongValueForVar)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/workloadrepo/FastRunawayGC"))
@@ -672,6 +673,9 @@ func TestCreatePartition(t *testing.T) {
 	wrk.fillInTableNames()
 
 	now := time.Now()
+	// The test builds date-based partitions with AddDate and TO_DAYS, so anchor at noon to avoid
+	// instability around wall-clock day boundaries.
+	now = time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
 
 	/* Tables without partitions are not currently supported. */
 
@@ -710,7 +714,6 @@ func TestCreatePartition(t *testing.T) {
 	createTableWithParts(ctx, t, tk, getTable(t, "TIDB_STATEMENTS_STATS", wrk), sess, partitions)
 
 	// turn on the repository and see if it creates the remaining tables
-	now = time.Now()
 	wrk.setRepositoryDest(ctx, "table")
 	waitForTables(ctx, t, wrk, now)
 }
@@ -926,7 +929,7 @@ func TestOwnerRandomDown(t *testing.T) {
 		var err error
 		prevSnapID := uint64(0)
 		breakOwnerIdx := -1
-		oldOwnerIdx := -1
+		var oldOwner *worker
 
 		// stop the current owner
 		for idx, wrk := range workers {
@@ -957,30 +960,30 @@ func TestOwnerRandomDown(t *testing.T) {
 					}
 				}
 
-				oldOwnerIdx = idx
+				oldOwner = wrk
 				break
 			}
 		}
 
 		// new owner elected
 		require.Eventually(t, func() bool {
-			return slice.AnyOf(workers, func(i int) bool {
-				workers[i].Lock()
-				defer workers[i].Unlock()
-				return workers[i].cancel != nil &&
-					workers[i].owner.IsOwner() && i != oldOwnerIdx
+			return slices.ContainsFunc(workers, func(wrk *worker) bool {
+				wrk.Lock()
+				defer wrk.Unlock()
+				return wrk.cancel != nil &&
+					wrk.owner.IsOwner() && wrk != oldOwner
 			})
 		}, time.Minute, 100*time.Millisecond)
 
 		// new snapshot taken
 		require.Eventually(t, func() bool {
-			return slice.AnyOf(workers, func(i int) bool {
-				workers[i].Lock()
-				defer workers[i].Unlock()
-				if workers[i].cancel == nil {
+			return slices.ContainsFunc(workers, func(wrk *worker) bool {
+				wrk.Lock()
+				defer wrk.Unlock()
+				if wrk.cancel == nil {
 					return false
 				}
-				newSnapID, err := workers[i].getSnapID(ctx)
+				newSnapID, err := wrk.getSnapID(ctx)
 				return err == nil && newSnapID > prevSnapID
 			})
 		}, time.Minute, 100*time.Millisecond)
@@ -993,11 +996,11 @@ func TestOwnerRandomDown(t *testing.T) {
 			}
 		}
 		require.Eventually(t, func() bool {
-			return slice.AllOf(workers, func(i int) bool {
-				workers[i].Lock()
-				defer workers[i].Unlock()
-				return workers[i].cancel != nil &&
-					workers[i].owner != nil
+			return slice.AllOf(workers, func(wrk *worker) bool {
+				wrk.Lock()
+				defer wrk.Unlock()
+				return wrk.cancel != nil &&
+					wrk.owner != nil
 			})
 		}, time.Minute, 100*time.Millisecond)
 	}

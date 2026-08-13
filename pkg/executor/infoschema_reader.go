@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -78,7 +80,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -125,7 +127,11 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		// Why not just activate the txn here (sctx.Txn(true)) and do it in Open() instead?
 		// Because it could DATA RACE here and in Open() it's safe.
 		if sctx.GetSessionVars().InTxn() {
-			e.is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(sctx.GetSessionVars().TxnCtx.StartTS)
+			ts := sctx.GetSessionVars().TxnCtx.StartTS
+			if sctx.GetSessionVars().SnapshotTS != 0 {
+				ts = sctx.GetSessionVars().SnapshotTS
+			}
+			e.is, err = domain.GetDomain(sctx).GetSnapshotInfoSchema(ts)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -380,6 +386,16 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 	if len(chunkRows) == 0 {
 		return nil
 	}
+	var filter privileges.UserAttrFilter
+	viewer := sctx.GetSessionVars().User
+	if viewer != nil {
+		filter = privileges.NewUserAttrFilter(
+			sctx.GetSessionVars().ActiveRoles,
+			viewer.Username,
+			viewer.Hostname,
+			privilege.GetPrivilegeManager(sctx),
+		)
+	}
 	rows := make([][]types.Datum, 0, len(chunkRows))
 	for _, chunkRow := range chunkRows {
 		if chunkRow.Len() != 3 {
@@ -387,6 +403,9 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 		}
 		user := chunkRow.GetString(0)
 		host := chunkRow.GetString(1)
+		if filter != nil && !filter.Visible(user, host) {
+			continue
+		}
 		// Compatible with results in MySQL
 		var attribute any
 		if attribute = chunkRow.GetString(2); attribute == "" {
@@ -703,6 +722,12 @@ func (e *memtableRetriever) setDataFromOneTable(
 			policyName = table.PlacementPolicyRef.Name.O
 		}
 
+		var affinity any
+		if info := table.Affinity; info != nil {
+			affinity = info.Level
+		}
+		storageClass := table.StorageClassString()
+
 		rowCount, avgRowLength, dataLength, indexLength := cache.TableRowStatsCache.EstimateDataLength(table)
 
 		record := types.MakeDatums(
@@ -732,6 +757,8 @@ func (e *memtableRetriever) setDataFromOneTable(
 			pkType,                // TIDB_PK_TYPE
 			policyName,            // TIDB_PLACEMENT_POLICY_NAME
 			table.Mode.String(),   // TIDB_TABLE_MODE
+			affinity,              // TIDB_AFFINITY
+			storageClass,          // TIDB_STORAGE_CLASS
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -763,6 +790,8 @@ func (e *memtableRetriever) setDataFromOneTable(
 			pkType,                // TIDB_PK_TYPE
 			nil,                   // TIDB_PLACEMENT_POLICY_NAME
 			nil,                   // TIDB_TABLE_MODE
+			nil,                   // TIDB_AFFINITY
+			nil,                   // TIDB_STORAGE_CLASS
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -868,6 +897,8 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					nil,                   // TIDB_PK_TYPE
 					nil,                   // TIDB_PLACEMENT_POLICY_NAME
 					nil,                   // TIDB_TABLE_MODE
+					nil,                   // TIDB_AFFINITY
+					nil,                   // TIDB_STORAGE_CLASS
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
@@ -1068,7 +1099,8 @@ func (e *hugeMemTableRetriever) setDataForColumnsWithOneTable(
 	sctx sessionctx.Context,
 	schema ast.CIStr,
 	table *model.TableInfo,
-	checker privilege.Manager) bool {
+	checker privilege.Manager,
+) bool {
 	hasPrivs := false
 	var priv mysql.PrivilegeType
 	if checker != nil {
@@ -1118,7 +1150,8 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 	sctx sessionctx.Context,
 	schema ast.CIStr,
 	tbl *model.TableInfo,
-	priv mysql.PrivilegeType) {
+	priv mysql.PrivilegeType,
+) {
 	if tbl.IsView() {
 		e.viewMu.Lock()
 		_, ok := e.viewSchemaMap[tbl.ID]
@@ -1145,6 +1178,11 @@ func (e *hugeMemTableRetriever) dataForColumnsInTable(
 
 	cols, ordinalPos := e.extractor.ListColumns(tbl)
 	for i, col := range cols {
+		// Skip non-public columns
+		if col.State != model.StatePublic {
+			continue
+		}
+
 		ft := &(col.FieldType)
 		if tbl.IsView() {
 			e.viewMu.RLock()
@@ -1296,6 +1334,11 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			return errors.Trace(ctx.Err())
 		}
 
+		var affinity any
+		if info := table.Affinity; info != nil {
+			affinity = info.Level
+		}
+
 		var rowCount, dataLength, indexLength uint64
 		if table.GetPartitionInfo() == nil {
 			rowCount = cache.TableRowStatsCache.GetTableRows(table.ID)
@@ -1304,8 +1347,8 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			if rowCount != 0 {
 				avgRowLength = dataLength / rowCount
 			}
-			// If there are any condition on the `PARTITION_NAME` in the extractor, this record should be ignored
-			if ex.HasPartitionPred() {
+			// If there are any conditions on PARTITION_NAME or TIDB_PARTITION_ID in the extractor, this record should be ignored.
+			if ex.HasPartitionPred() || ex.HasPartitionIDPred() {
 				continue
 			}
 			record := types.MakeDatums(
@@ -1336,12 +1379,14 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				nil,                   // TABLESPACE_NAME
 				nil,                   // TIDB_PARTITION_ID
 				nil,                   // TIDB_PLACEMENT_POLICY_NAME
+				affinity,              // TIDB_AFFINITY
+				nil,                   // TIDB_STORAGE_CLASS
 			)
 			rows = append(rows, record)
 			e.recordMemoryConsume(record)
 		} else {
 			for i, pi := range table.GetPartitionInfo().Definitions {
-				if !ex.HasPartition(pi.Name.L) {
+				if !ex.HasPartition(pi.Name.L) || !ex.HasPartitionID(pi.ID) {
 					continue
 				}
 				rowCount = cache.TableRowStatsCache.GetTableRows(pi.ID)
@@ -1402,6 +1447,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				if pi.PlacementPolicyRef != nil {
 					policyName = pi.PlacementPolicyRef.Name.O
 				}
+				storageClass := pi.StorageClassString()
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.O,              // TABLE_SCHEMA
@@ -1430,6 +1476,8 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 					nil,                   // TABLESPACE_NAME
 					pi.ID,                 // TIDB_PARTITION_ID
 					policyName,            // TIDB_PLACEMENT_POLICY_NAME
+					affinity,              // TIDB_AFFINITY
+					storageClass,          // TIDB_STORAGE_CLASS
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
@@ -1469,7 +1517,8 @@ func (e *memtableRetriever) setDataFromIndex(
 	sctx sessionctx.Context,
 	schema ast.CIStr,
 	tb *model.TableInfo,
-	rows [][]types.Datum) ([][]types.Datum, error) {
+	rows [][]types.Datum,
+) ([][]types.Datum, error) {
 	checker := privilege.GetPrivilegeManager(sctx)
 	if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, tb.Name.L, "", mysql.AllPrivMask) {
 		return rows, nil
@@ -1497,6 +1546,7 @@ func (e *memtableRetriever) setDataFromIndex(
 			"YES",        // IS_VISIBLE
 			"YES",        // CLUSTERED
 			0,            // IS_GLOBAL
+			nil,          // PREDICATE
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -1530,6 +1580,12 @@ func (e *memtableRetriever) setDataFromIndex(
 			if idxInfo.Invisible {
 				visible = "NO"
 			}
+
+			var predicate any
+			if idxInfo.ConditionExprString != "" {
+				predicate = idxInfo.ConditionExprString
+			}
+
 			record := types.MakeDatums(
 				schema.O,        // TABLE_SCHEMA
 				tb.Name.O,       // TABLE_NAME
@@ -1544,6 +1600,7 @@ func (e *memtableRetriever) setDataFromIndex(
 				visible,         // IS_VISIBLE
 				isClustered,     // CLUSTERED
 				idxInfo.Global,  // IS_GLOBAL
+				predicate,       // PREDICATE
 			)
 			rows = append(rows, record)
 			e.recordMemoryConsume(record)
@@ -1759,7 +1816,7 @@ func (e *memtableRetriever) setDataFromEngines() {
 
 func (e *memtableRetriever) setDataFromCharacterSets() {
 	charsets := charset.GetSupportedCharsets()
-	var rows = make([][]types.Datum, 0, len(charsets))
+	rows := make([][]types.Datum, 0, len(charsets))
 	for _, charset := range charsets {
 		record := types.MakeDatums(charset.Name, charset.DefaultCollation, charset.Desc, charset.Maxlen)
 		rows = append(rows, record)
@@ -1770,7 +1827,7 @@ func (e *memtableRetriever) setDataFromCharacterSets() {
 
 func (e *memtableRetriever) setDataFromCollations() {
 	collations := collate.GetSupportedCollations()
-	var rows = make([][]types.Datum, 0, len(collations))
+	rows := make([][]types.Datum, 0, len(collations))
 	for _, collation := range collations {
 		isDefault := ""
 		if collation.IsDefault {
@@ -1786,7 +1843,7 @@ func (e *memtableRetriever) setDataFromCollations() {
 
 func (e *memtableRetriever) dataForCollationCharacterSetApplicability() {
 	collations := collate.GetSupportedCollations()
-	var rows = make([][]types.Datum, 0, len(collations))
+	rows := make([][]types.Datum, 0, len(collations))
 	for _, collation := range collations {
 		record := types.MakeDatums(collation.Name, collation.CharsetName)
 		rows = append(rows, record)
@@ -2067,11 +2124,7 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 		}
 	}
 	if !requestByTableRange {
-		pdCli, err := tikvHelper.TryGetPDHTTPClient()
-		if err != nil {
-			return err
-		}
-		allRegionsInfo, err = pdCli.GetRegions(ctx)
+		allRegionsInfo, err = tikvHelper.GetRegions(ctx)
 		if err != nil {
 			return err
 		}
@@ -2111,16 +2164,16 @@ func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helpe
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(tableID)
 	}
 
-	pt := tbl.Meta().GetPartitionInfo()
-	if pt == nil {
-		regionsInfo, err := e.getRegionsInfoForSingleTable(ctx, h, tableID)
-		if err != nil {
-			return nil, err
-		}
-		return regionsInfo, nil
+	allRegionsInfo, err := e.getRegionsInfoForSingleTable(ctx, h, tableID)
+	if err != nil {
+		return nil, err
 	}
 
-	var allRegionsInfo *pd.RegionsInfo
+	pt := tbl.Meta().GetPartitionInfo()
+	if pt == nil {
+		return allRegionsInfo, nil
+	}
+
 	for _, def := range pt.Definitions {
 		regionsInfo, err := e.getRegionsInfoForSingleTable(ctx, h, def.ID)
 		if err != nil {
@@ -2136,24 +2189,11 @@ func (*memtableRetriever) getRegionsInfoForSingleTable(ctx context.Context, help
 	if err != nil {
 		return nil, err
 	}
-	sk, ek := tablecodec.GetTableHandleKeyRange(tableID)
-	sRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, sk))
-	if err != nil {
-		return nil, err
-	}
-	eRegion, err := pdCli.GetRegionByKey(ctx, codec.EncodeBytes(nil, ek))
-	if err != nil {
-		return nil, err
-	}
-	sk, err = hex.DecodeString(sRegion.StartKey)
-	if err != nil {
-		return nil, err
-	}
-	ek, err = hex.DecodeString(eRegion.EndKey)
-	if err != nil {
-		return nil, err
-	}
-	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(sk, ek), -1)
+	// Query the whole table prefix so both record and index regions are covered.
+	sk := tablecodec.EncodeTablePrefix(tableID)
+	ek := sk.PrefixNext()
+	start, end := helper.Store.GetCodec().EncodeRegionRange(sk, ek)
+	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(start, end), -1)
 }
 
 func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *pd.RegionInfo, table *helper.TableInfo) {
@@ -2511,7 +2551,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 	const maxAnalyzeJobs = 30
 	const sql = "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, fail_reason, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?"
 	exec := sctx.GetRestrictedSQLExecutor()
-	kctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	kctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStatsForegroundPriority)
 	chunkRows, _, err := exec.ExecRestrictedSQL(kctx, nil, sql, maxAnalyzeJobs)
 	if err != nil {
 		return nil, err
@@ -2528,11 +2568,15 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 		jobInfo := chunkRow.GetString(3)
 		processedRows := chunkRow.GetInt64(4)
 		var startTime, endTime any
+		// startTime and endTime use the local timezone for displaying.
+		// startTimeUTC is used to calculate the remaining duration of the job.
+		var startTimeUTC *time.Time
 		if !chunkRow.IsNull(5) {
 			t, err := chunkRow.GetTime(5).GoTime(time.UTC)
 			if err != nil {
 				return nil, err
 			}
+			startTimeUTC = &t
 			startTime = types.NewTime(types.FromGoTime(t.In(sctx.GetSessionVars().TimeZone)), mysql.TypeDatetime, 0)
 		}
 		if !chunkRow.IsNull(6) {
@@ -2556,13 +2600,11 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 
 		var remainDurationStr, progressDouble, estimatedRowCntStr any
 		if state == statistics.AnalyzeRunning && !strings.HasPrefix(jobInfo, "merge global stats") {
-			startTime, ok := startTime.(types.Time)
-			if !ok {
+			if startTimeUTC == nil {
 				return nil, errors.New("invalid start time")
 			}
-			remainingDuration, progress, estimatedRowCnt, remainDurationErr :=
-				getRemainDurationForAnalyzeStatusHelper(ctx, sctx, &startTime,
-					dbName, tableName, partitionName, processedRows)
+			remainingDuration, progress, estimatedRowCnt, remainDurationErr := getRemainDurationForAnalyzeStatusHelper(ctx, sctx, startTimeUTC,
+				dbName, tableName, partitionName, processedRows)
 			if remainDurationErr != nil {
 				logutil.BgLogger().Warn("get remaining duration failed", zap.Error(remainDurationErr))
 			}
@@ -2598,15 +2640,13 @@ func dataForAnalyzeStatusHelper(ctx context.Context, e *memtableRetriever, sctx 
 
 func getRemainDurationForAnalyzeStatusHelper(
 	ctx context.Context,
-	sctx sessionctx.Context, startTime *types.Time,
-	dbName, tableName, partitionName string, processedRows int64) (_ *time.Duration, percentage, totalCnt float64, err error) {
+	sctx sessionctx.Context, startTimeUTC *time.Time,
+	dbName, tableName, partitionName string, processedRows int64,
+) (_ *time.Duration, percentage, totalCnt float64, err error) {
 	remainingDuration := time.Duration(0)
-	if startTime != nil {
-		start, err := startTime.GoTime(time.UTC)
-		if err != nil {
-			return nil, percentage, totalCnt, err
-		}
-		duration := time.Now().UTC().Sub(start)
+	if startTimeUTC != nil {
+		// time.Time.Sub uses the actual instant.
+		duration := time.Since(*startTimeUTC)
 		if intest.InTest {
 			if val := ctx.Value(AnalyzeProgressTest); val != nil {
 				remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
@@ -2626,9 +2666,9 @@ func getRemainDurationForAnalyzeStatusHelper(
 			if partitionName != "" {
 				pt := meta.GetPartitionInfo()
 				tid = pt.GetPartitionIDByName(partitionName)
-				statsTbl = statsHandle.GetPartitionStats(meta, tid)
+				statsTbl = statsHandle.GetPhysicalTableStats(tid, meta)
 			} else {
-				statsTbl = statsHandle.GetTableStats(meta)
+				statsTbl = statsHandle.GetPhysicalTableStats(meta.ID, meta)
 				tid = meta.ID
 			}
 			if statsTbl != nil && statsTbl.RealtimeCount != 0 {
@@ -2773,33 +2813,76 @@ func (e *memtableRetriever) setDataFromSequences(ctx context.Context, sctx sessi
 }
 
 // dataForTableTiFlashReplica constructs data for table tiflash replica info.
-func (e *memtableRetriever) dataForTableTiFlashReplica(_ context.Context, sctx sessionctx.Context) error {
+func (e *memtableRetriever) dataForTableTiFlashReplica(ctx context.Context, sctx sessionctx.Context) error {
 	var (
-		checker       = privilege.GetPrivilegeManager(sctx)
-		rows          [][]types.Datum
-		tiFlashStores map[int64]pd.StoreInfo
+		checker = privilege.GetPrivilegeManager(sctx)
+		rows    [][]types.Datum
 	)
 	rs := e.is.ListTablesWithSpecialAttribute(infoschemacontext.TiFlashAttribute)
+	hasTiFlashReplicaTable := false
+	for _, schema := range rs {
+		if len(schema.TableInfos) > 0 {
+			hasTiFlashReplicaTable = true
+			break
+		}
+	}
+	if !hasTiFlashReplicaTable {
+		e.rows = rows
+		return nil
+	}
+	enableColumnarStore := config.GetGlobalConfig().CSE.IsColumnarStoreEnabled()
+	tiFlashStores, tikvStores, storesErr := infosync.GetTiFlashProgressStores(ctx)
+	if storesErr != nil {
+		return storesErr
+	}
+	if !enableColumnarStore {
+		tikvStores = nil
+	}
+	var globalCircuitBreakerTriggered bool
 	for _, schema := range rs {
 		for _, tbl := range schema.TableInfos {
 			if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.DBName.L, tbl.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
 			var progress float64
-			if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-				for _, p := range pi.Definitions {
-					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
-					if err != nil {
-						logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
-					}
-					progress += progressOfPartition
-				}
-				progress = progress / float64(len(pi.Definitions))
+			circuitBreakerProgress := 1.0
+			if !tbl.TiFlashReplica.Available {
+				circuitBreakerProgress = 0.0
+			}
+			// If the circuit breaker is triggered from previous table, set progress of this table directly.
+			if globalCircuitBreakerTriggered {
+				logutil.BgLogger().Info("dataForTableTiFlashReplica circuit breaker triggered", zap.Int64("tableID", tbl.ID))
+				progress = circuitBreakerProgress
 			} else {
-				var err error
-				progress, err = infosync.MustGetTiFlashProgress(tbl.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
-				if err != nil {
-					logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
+				if pi := tbl.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+					for _, p := range pi.Definitions {
+						progressOfPartition, circuitBreakerTriggered, err := infosync.MustGetTiFlashProgressWithCircuitBreaker(ctx, p.ID, tbl.TiFlashReplica.Count, tiFlashStores, tikvStores)
+						if err != nil {
+							logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
+						}
+						progress += progressOfPartition
+						if circuitBreakerTriggered {
+							globalCircuitBreakerTriggered = true
+							// If circuit breaker is triggered, break the loop for partitions.
+							break
+						}
+					}
+					if globalCircuitBreakerTriggered {
+						progress = circuitBreakerProgress
+						logutil.BgLogger().Info("dataForTableTiFlashReplica circuit breaker triggered", zap.Int64("tableID", tbl.ID))
+					} else {
+						progress = progress / float64(len(pi.Definitions))
+					}
+				} else {
+					var err error
+					progress, globalCircuitBreakerTriggered, err = infosync.MustGetTiFlashProgressWithCircuitBreaker(ctx, tbl.ID, tbl.TiFlashReplica.Count, tiFlashStores, tikvStores)
+					if err != nil {
+						logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
+					}
+					if globalCircuitBreakerTriggered {
+						logutil.BgLogger().Info("dataForTableTiFlashReplica circuit breaker triggered", zap.Int64("tableID", tbl.ID))
+						progress = circuitBreakerProgress
+					}
 				}
 			}
 			progressString := types.TruncateFloatToString(progress, 2)
@@ -3094,7 +3177,6 @@ func (e *tidbTrxTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -3126,8 +3208,14 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		r.initialized = true
 		var err error
 		r.lockWaits, err = sctx.GetStore().GetLockWaits()
-		tikvStore, _ := sctx.GetStore().(helper.Storage)
-		r.resolvingLocks = tikvStore.GetLockResolver().Resolving()
+		skipResolvingLocks := false
+		failpoint.Inject("dataLockWaitsSkipResolvingLocks", func() {
+			skipResolvingLocks = true
+		})
+		if !skipResolvingLocks {
+			tikvStore, _ := sctx.GetStore().(helper.Storage)
+			r.resolvingLocks = tikvStore.GetLockResolver().Resolving()
+		}
 		if err != nil {
 			r.retrieved = true
 			return nil, err
@@ -3281,7 +3369,6 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		}
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -3429,7 +3516,6 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 
 		return nil
 	})
-
 	if err != nil {
 		return nil, err
 	}
@@ -3527,19 +3613,18 @@ type tiFlashSQLExecuteResponse struct {
 	Data [][]any                               `json:"data"`
 }
 
-var (
-	tiflashTargetTableName = map[string]string{
-		"tiflash_tables":   "dt_tables",
-		"tiflash_segments": "dt_segments",
-		"tiflash_indexes":  "dt_local_indexes",
-	}
-)
+var tiflashTargetTableName = map[string]string{
+	"tiflash_tables":   "dt_tables",
+	"tiflash_segments": "dt_segments",
+	"tiflash_indexes":  "dt_local_indexes",
+}
 
 func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Context, sctx sessionctx.Context, tidbDatabases string, tidbTables string) ([][]types.Datum, error) {
 	maxCount := 1024
 	targetTable := tiflashTargetTableName[e.table.Name.L]
 
 	var filters []string
+	// Add filter for keyspace_id if tidb is running in the keyspace mode.
 	if keyspace.GetKeyspaceNameBySettings() != "" {
 		keyspaceID := uint32(sctx.GetStore().GetCodec().GetKeyspaceID())
 		filters = append(filters, fmt.Sprintf("keyspace_id=%d", keyspaceID))
@@ -3637,7 +3722,7 @@ func (e *TiFlashSystemTableRetriever) dataForTiFlashSystemTables(ctx context.Con
 
 		// for "tiflash_indexes", set the column_name and index_name according to the TableInfo
 		if e.table.Name.L == "tiflash_indexes" {
-			var logicalTableID = outputRow[outputColIndexMap["table_id"]].GetInt64()
+			logicalTableID := outputRow[outputColIndexMap["table_id"]].GetInt64()
 			if !outputRow[outputColIndexMap["belonging_table_id"]].IsNull() {
 				// Old TiFlash versions may not have this column. In this case we will try to get by the "table_id"
 				belongingTableID := outputRow[outputColIndexMap["belonging_table_id"]].GetInt64()
@@ -3757,7 +3842,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx context.Context, sctx sessi
 		kr := strings.Join(ranges, ", ")
 
 		row := types.MakeDatums(
-			rule.ID,
+			label.RestoreRuleID(rule.ID),
 			rule.RuleType,
 			labels,
 			kr,
@@ -3853,7 +3938,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 	}
 	rows := make([][]types.Datum, 0, len(resourceGroups))
 	for _, group := range resourceGroups {
-		//mode := ""
+		// mode := ""
 		burstable := burstdisableStr
 		priority := ast.PriorityValueToName(uint64(group.Priority))
 		fillrate := unlimitedFillRate
@@ -3950,7 +4035,7 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			rows = append(rows, row)
 			e.recordMemoryConsume(row)
 		default:
-			//mode = "UNKNOWN_MODE"
+			// mode = "UNKNOWN_MODE"
 			row := types.MakeDatums(
 				group.Name,
 				nil,
@@ -4140,10 +4225,23 @@ func checkRule(rule *label.Rule) (dbName, tableName string, partitionName string
 		err = errors.New("the label rule has no data")
 		return
 	}
-	dbName = s[1]
-	tableName = s[2]
-	if len(s) > 3 {
-		partitionName = s[3]
+	idOffset := 0
+	if kerneltype.IsNextGen() && s[0] == label.KeyspacePrefix {
+		if len(s) < 5 {
+			err = errors.Errorf("invalid keyspace label rule ID: %v", rule.ID)
+			return
+		}
+		idOffset = 2
+	}
+	if s[idOffset] != label.IDPrefix || len(s) < idOffset+3 {
+		err = errors.Errorf("invalid label rule ID: %v", rule.ID)
+		return
+	}
+
+	dbName = s[idOffset+1]
+	tableName = s[idOffset+2]
+	if idOffset+3 < len(s) {
+		partitionName = s[idOffset+3]
 	}
 	return
 }

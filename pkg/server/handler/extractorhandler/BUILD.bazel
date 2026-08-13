@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/domain",
+        "//pkg/planner/extstore",
         "//pkg/server/handler",
         "//pkg/types",
         "//pkg/util/logutil",
@@ -24,6 +25,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
+    shard_count = 2,
     deps = [
         ":extractorhandler",
         "//pkg/config",

@@ -76,9 +76,14 @@ var PartitionAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.GetPartitionInfo() != nil
 }
 
+// AffinityAttribute is the Affinity attribute filter used by ListTablesWithSpecialAttribute.
+var AffinityAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
+	return t.Affinity != nil
+}
+
 // HasSpecialAttributes checks if a table has any special attributes.
 func HasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t)
+	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || AffinityAttribute(t)
 }
 
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.
@@ -121,6 +126,8 @@ type SchemaAndTable interface {
 type Misc interface {
 	PolicyByName(name ast.CIStr) (*model.PolicyInfo, bool)
 	ResourceGroupByName(name ast.CIStr) (*model.ResourceGroupInfo, bool)
+	MaskingPolicyByName(name ast.CIStr) (*model.MaskingPolicyInfo, bool)
+	MaskingPolicyByTableColumn(tableID, columnID int64) (*model.MaskingPolicyInfo, bool)
 	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
 	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
 	// AllPlacementBundles is used to get all placement bundles
@@ -129,6 +136,8 @@ type Misc interface {
 	AllPlacementPolicies() []*model.PolicyInfo
 	// ClonePlacementPolicies returns a copy of all placement policies.
 	ClonePlacementPolicies() map[string]*model.PolicyInfo
+	// AllMaskingPolicies returns all masking policies.
+	AllMaskingPolicies() []*model.MaskingPolicyInfo
 	// AllResourceGroups returns all resource groups
 	AllResourceGroups() []*model.ResourceGroupInfo
 	// CloneResourceGroups returns a copy of all resource groups.

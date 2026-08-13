@@ -10,6 +10,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
     ],
 )

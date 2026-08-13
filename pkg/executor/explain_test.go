@@ -186,6 +186,22 @@ func checkActRows(t *testing.T, tk *testkit.TestKit, sql string, expected []stri
 	}
 }
 
+func checkAnalyzeRUFormat(t *testing.T, tk *testkit.TestKit, sql string, expectedActRows []string) {
+	t.Helper()
+	rows := tk.MustQuery("explain analyze format = 'ru' " + sql).Rows()
+	require.Equal(t, len(expectedActRows), len(rows))
+	for id, row := range rows {
+		require.Len(t, row, 7)
+		require.NotEmpty(t, row[0])
+		require.NotEmpty(t, row[1])
+		require.Equal(t, expectedActRows[id], row[2], fmt.Sprintf("error comparing %s", sql))
+		require.Equal(t, "", row[3])
+		require.Equal(t, "", row[4])
+		require.Equal(t, "", row[5])
+		require.Equal(t, "", row[6])
+	}
+}
+
 func TestCheckActRowsWithUnistore(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -195,7 +211,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	// testSuite1 use default mockstore which is unistore
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
+
 	tk.MustExec("drop table if exists t_unistore_act_rows")
 	tk.MustExec("create table t_unistore_act_rows(a int, b int, index(a, b))")
 	tk.MustExec("insert into t_unistore_act_rows values (1, 0), (1, 0), (2, 0), (2, 1)")
@@ -260,6 +276,9 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	for _, test := range tests {
 		checkActRows(t, tk, test.sql, test.expected)
 	}
+
+	checkAnalyzeRUFormat(t, tk, "select * from t_unistore_act_rows", []string{"4", "4"})
+	checkAnalyzeRUFormat(t, tk, "select * from t_unistore_act_rows where b > 0", []string{"1", "1", "4"})
 }
 
 func TestExplainAnalyzeCTEMemoryAndDiskInfo(t *testing.T) {
@@ -496,6 +515,7 @@ func TestExplainFormatInCtx(t *testing.T) {
 		types.ExplainFormatTiDBJSON,
 		types.ExplainFormatCostTrace,
 		types.ExplainFormatPlanCache,
+		types.ExplainFormatRU,
 	}
 
 	tk.MustExec("select * from t")
@@ -527,4 +547,26 @@ func TestExplainImportFromSelect(t *testing.T) {
 	require.Contains(t, rs[0][0], "ImportInto")
 	require.Contains(t, rs[1][0], "TableReader")
 	require.Contains(t, rs[2][0], "TableFullScan")
+}
+
+func TestExplainFormatPlanTree(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, index idx(a))")
+
+	// Test the new plan_tree format
+	rows := testKit.MustQuery("explain format='plan_tree' select * from t where a = 5").Rows()
+
+	// Test that each row has exactly 4 columns
+	for i, row := range rows {
+		require.Equal(t, 4, len(row), "Row %d should have 4 columns", i)
+	}
+
+	// Test that explain analyze format='plan_tree' fails with an error message
+	err := testKit.ExecToErr("explain analyze format='plan_tree' select * from t")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "plan_tree")
 }

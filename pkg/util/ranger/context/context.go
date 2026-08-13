@@ -32,7 +32,6 @@ type RangerContext struct {
 	*contextutil.PlanCacheTracker
 	OptimizerFixControl      map[uint64]string
 	UseCache                 bool
-	InPreparedPlanBuilding   bool
 	RegardNULLAsPoint        bool
 	OptPrefixIndexSingleScan bool
 }

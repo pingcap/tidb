@@ -126,7 +126,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 			return initEvalBuffer(ret)
 		},
 	}
-	if err := initTableIndices(&ret.TableCommon); err != nil {
+	if err := ret.initTableIndices(); err != nil {
 		return nil, errors.Trace(err)
 	}
 	origIndices := ret.meta.Indices
@@ -181,8 +181,8 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		} else {
 			tblInfo.Indices = origIndices
 		}
-		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs, tbl.Constraints)
-		if err != nil {
+		t.TableCommon = newTableCommon(tblInfo, p.ID, tbl.Columns, tbl.allocs, tbl.Constraints, tbl.encoder.UseNewCollate())
+		if err := t.initTableIndices(); err != nil {
 			return nil, errors.Trace(err)
 		}
 		t.table = ret
@@ -273,8 +273,8 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 
 func initPartition(t *partitionedTable, def model.PartitionDefinition) (*partition, error) {
 	var newPart partition
-	err := initTableCommonWithIndices(&newPart.TableCommon, t.meta, def.ID, t.Columns, t.allocs, t.Constraints)
-	if err != nil {
+	newPart.TableCommon = newTableCommon(t.meta, def.ID, t.Columns, t.allocs, t.Constraints, t.encoder.UseNewCollate())
+	if err := newPart.initTableIndices(); err != nil {
 		return nil, err
 	}
 	newPart.table = t
@@ -1675,8 +1675,7 @@ func GetReorganizedPartitionedTable(t table.Table) (table.PartitionedTable, erro
 	if err != nil {
 		return nil, err
 	}
-	var tc TableCommon
-	initTableCommon(&tc, tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil), constraints)
+	tc := newTableCommon(tblInfo, tblInfo.ID, t.Cols(), t.Allocators(nil), constraints, t.UseNewCollate())
 
 	// and rebuild the partitioning structure
 	return newPartitionedTable(&tc, tblInfo)
@@ -1734,8 +1733,7 @@ func checkConstraintForExchangePartition(ctx table.MutateContext, row []types.Da
 		}
 	}
 
-	evalCtx := ctx.GetExprCtx().GetEvalCtx()
-	if err := table.CheckRowConstraintWithDatum(evalCtx, nt.WritableConstraint(), row); err != nil {
+	if err := table.CheckRowConstraintWithDatum(ctx.GetExprCtx(), nt.WritableConstraint(), row, nt.Meta()); err != nil {
 		// TODO: make error include ExchangePartition info.
 		return err
 	}
@@ -2036,7 +2034,7 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		return finishFunc(err, nil)
 	}
 
-	var found map[string][]byte
+	var found map[string]kv.ValueEntry
 	var newFromKey, newToKey kv.Key
 
 	keys := make([]kv.Key, 0, 2)
@@ -2077,12 +2075,12 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		}
 		if len(newFromKey) > 0 {
 			if val, ok := found[string(newFromKey)]; ok {
-				newFromVal = val
+				newFromVal = val.Value
 			}
 		}
 		if len(newToKey) > 0 {
 			if val, ok := found[string(newToKey)]; ok {
-				newToVal = val
+				newToVal = val.Value
 			}
 		}
 	}

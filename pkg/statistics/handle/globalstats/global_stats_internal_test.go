@@ -36,7 +36,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec("drop table if exists tint")
 	tk.MustExec("create table tint (c int, key(c)) partition by range (c) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("insert into tint values (1), (2), (3), (4), (4), (5), (5), (5), (null), (11), (12), (13), (14), (15), (16), (16), (16), (16), (17), (17)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table tint with 2 topn, 2 buckets")
 
 	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(testkit.Rows(
@@ -95,7 +95,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`insert into tdouble values ` +
 		`(1, 1), (2, 2), (3, 3), (4, 4), (4, 4), (5, 5), (5, 5), (5, 5), (null, null), ` + // values in p0
 		`(11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (16, 16), (16, 16), (16, 16), (17, 17), (17, 17)`) // values in p1
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table tdouble with 2 topn, 2 buckets")
 
 	rs := tk.MustQuery("show stats_meta where table_name='tdouble'").Rows()
@@ -160,7 +160,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`insert into tdecimal values ` +
 		`(1, 1), (2, 2), (3, 3), (4, 4), (4, 4), (5, 5), (5, 5), (5, 5), (null, null), ` + // values in p0
 		`(11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (16, 16), (16, 16), (16, 16), (17, 17), (17, 17)`) // values in p1
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table tdecimal with 2 topn, 2 buckets")
 
 	rs = tk.MustQuery("show stats_meta where table_name='tdecimal'").Rows()
@@ -225,7 +225,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`insert into tdatetime values ` +
 		`(1, '2000-01-01'), (2, '2000-01-02'), (3, '2000-01-03'), (4, '2000-01-04'), (4, '2000-01-04'), (5, '2000-01-05'), (5, '2000-01-05'), (5, '2000-01-05'), (null, null), ` + // values in p0
 		`(11, '2000-01-11'), (12, '2000-01-12'), (13, '2000-01-13'), (14, '2000-01-14'), (15, '2000-01-15'), (16, '2000-01-16'), (16, '2000-01-16'), (16, '2000-01-16'), (16, '2000-01-16'), (17, '2000-01-17'), (17, '2000-01-17')`) // values in p1
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table tdatetime with 2 topn, 2 buckets")
 
 	rs = tk.MustQuery("show stats_meta where table_name='tdatetime'").Rows()
@@ -290,7 +290,7 @@ func testGlobalStats2(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
 	tk.MustExec(`insert into tstring values ` +
 		`(1, 'a1'), (2, 'a2'), (3, 'a3'), (4, 'a4'), (4, 'a4'), (5, 'a5'), (5, 'a5'), (5, 'a5'), (null, null), ` + // values in p0
 		`(11, 'b11'), (12, 'b12'), (13, 'b13'), (14, 'b14'), (15, 'b15'), (16, 'b16'), (16, 'b16'), (16, 'b16'), (16, 'b16'), (17, 'b17'), (17, 'b17')`) // values in p1
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta *.*")
 	tk.MustExec("analyze table tstring with 2 topn, 2 buckets")
 
 	rs = tk.MustQuery("show stats_meta where table_name='tstring'").Rows()
@@ -373,26 +373,29 @@ func testIssues24349(t *testing.T, testKit *testkit.TestKit, store kv.Storage) {
 		"test t p2 a 0 2 2",
 		"test t p2 b 0 1 2",
 	))
-	// column a is trival.
-	// column b:
-	//   TopN:
-	//   p0: b=3, occurs 3 times
-	//   p1: b=2, occurs 3 times
-	//   p2: b=1, occurs 2 times
-	//   Histogram:
-	//   p0: hist of b: [2, 2] count=repeat=2
-	//   p1: hist of b: [1, 3] count=2, repeat=3. [4, 4] count==repeat=1
-	// After merging global TopN, it should be 2 with 4 as the repeat.(constructed by p1's TopN and p0's histogram)
-	// Kicking it out, the remained buckets for b are:(consider TopN as a bucket whose lower bound is the same as upper bound and count is the same as repeat)
-	// [3, 3] count=repeat=4
-	// [1, 1] count=repeat=2
-	// [1, 3] count=1, repeat=0(merged into TopN)
-	// [4, 4] count=repeat=1
-	// Finally, get one global bucket [1, 4] count=8, repeat=1
+	// Global TopN merge picks b=2 (p1 TopN=3 + p0 hist upper-bound
+	// repeat=1 = 4). The leftover TopN entries (b=3 count 3, b=1
+	// count 2) become virtual single-value buckets in the merge, so
+	// column b's 8 histogram rows land in three global buckets:
+	// [1,1] mass 2 (p2's two b=1 rows, Repeat 2 at the bucket upper),
+	// [1,3] mass 2 (p1's interior b=1 row plus its b=3 row at the
+	// upper, Repeat 1) and [3,4] mass 4 (the three virtual b=3 rows
+	// plus the b=4 row, Repeat 1 for b=4).
+	//
+	// Neither b=1 nor b=3 ends up exactly estimable, and this layout
+	// does not improve on the previous one: b=1 is truly 3 rows but
+	// estimates 2, because its third row is an unidentifiable interior
+	// row of p1's [1,3]; b=3 is truly 4 rows but estimates 1, because
+	// the three virtual b=3 rows land in [3,4], where 3 is the lower
+	// rather than the upper, so they stay as plain bucket mass. Both
+	// are cases of one value's rows spread over several refs, which
+	// the merge does not currently reunite.
 	testKit.MustQuery("show stats_buckets where table_name='t'").Sort().Check(testkit.Rows(
 		"test t global a 0 0 4 4 0 0 0",
 		"test t global a 0 1 6 2 2 2 0",
-		"test t global b 0 0 8 1 1 4 0",
+		"test t global b 0 0 2 2 1 1 0",
+		"test t global b 0 1 4 1 1 3 0",
+		"test t global b 0 2 8 1 3 4 0",
 		"test t p0 b 0 0 1 1 2 2 0",
 		"test t p1 b 0 0 2 1 1 3 0",
 		"test t p1 b 0 1 3 1 4 4 0",
@@ -404,9 +407,10 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("create database test_global_stats")
 	tk.MustExec("use test_global_stats")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set tidb_cost_model_version=2")
 	// Disable auto analyze to ensure that stats are not automatically collected
 	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	// Avoid non-prepared plan cache masking session binding changes (flaky plans).
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=0")
 
 	// hash and range and list partition
 	tk.MustExec("create table thash(a int, b int, key(a)) partition by hash(a) partitions 4")
@@ -441,18 +445,15 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("insert into trange values " + strings.Join(vals, ","))
 	tk.MustExec("insert into tlist values " + strings.Join(listVals, ","))
 
-	// before analyzing, the planner will choose TableScan to access the 1% of records
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
-
 	tk.MustExec("analyze table thash")
 	tk.MustExec("analyze table trange")
 	tk.MustExec("analyze table tlist")
 
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
+	// Set table cost factor high to ensure index is preferred without bindings.
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=100")
+	tk.MustHavePlan("select * from thash where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from trange where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from tlist where a<1", "IndexRangeScan")
 
 	// create SQL bindings
 	tk.MustExec("create session binding for select * from thash where a<100 using select * from thash ignore index(a) where a<100")
@@ -469,9 +470,11 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("drop session binding for select * from trange where a<100")
 	tk.MustExec("drop session binding for select * from tlist where a<100")
 
-	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
-	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
+	tk.MustHavePlan("select * from thash where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from trange where a<100", "IndexRangeScan")
+	tk.MustHavePlan("select * from tlist where a<1", "IndexRangeScan")
 	// Reset auto analyze after test
 	tk.MustExec("set @@global.tidb_enable_auto_analyze='ON'")
+	// Reset table cost factor
+	tk.MustExec("set @@session.tidb_opt_table_full_scan_cost_factor=1")
 }

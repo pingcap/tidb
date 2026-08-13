@@ -1,6 +1,6 @@
 [dfs]
 prefix = "tikv"
-s3-endpoint = "127.0.0.1:9000"
+s3-endpoint = "http://127.0.0.1:9000"
 s3-key-id = "minioadmin"
 s3-secret-key = "minioadmin"
 s3-bucket = "next-gen-test"

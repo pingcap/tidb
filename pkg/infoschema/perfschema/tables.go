@@ -37,8 +37,10 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/profile"
 	pd "github.com/tikv/pd/client/http"
+	"go.uber.org/zap"
 )
 
 const (
@@ -76,6 +78,7 @@ const (
 	tableNameSessionAccountConnectAttrs      = "session_account_connect_attrs"
 	tableNameSessionConnectAttrs             = "session_connect_attrs"
 	tableNameSessionVariables                = "session_variables"
+	tableNameStatusByConnection              = "status_by_connection"
 )
 
 var tableIDMap = map[string]int64{
@@ -113,6 +116,7 @@ var tableIDMap = map[string]int64{
 	tableNameSessionConnectAttrs:             autoid.PerformanceSchemaDBID + 32,
 	tableNameSessionAccountConnectAttrs:      autoid.PerformanceSchemaDBID + 33,
 	tableNameGlobalVariables:                 autoid.PerformanceSchemaDBID + 34,
+	tableNameStatusByConnection:              autoid.PerformanceSchemaDBID + 35,
 }
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -226,25 +230,49 @@ func initTableIndices(t *perfSchemaTable) error {
 		if idxInfo.State == model.StateNone {
 			return table.ErrIndexStateCantNone.GenWithStackByArgs(idxInfo.Name)
 		}
-		idx := tables.NewIndex(t.meta.ID, tblInfo, idxInfo)
+		idx, err := tables.NewIndex(t.meta.ID, tblInfo, idxInfo)
+		if err != nil {
+			return err
+		}
 		t.indices = append(t.indices, idx)
 	}
 	return nil
 }
 
+func logTiDBProfileRequest(sctx sessionctx.Context, tableName string) {
+	vars := sctx.GetSessionVars()
+	fields := []zap.Field{
+		zap.String("table", "performance_schema."+tableName),
+		zap.Uint64("conn", vars.ConnectionID),
+	}
+	if vars.User != nil {
+		fields = append(fields, zap.String("user", vars.User.LoginString()))
+	}
+	if vars.ConnectionInfo != nil {
+		fields = append(fields, zap.String("client-ip", vars.ConnectionInfo.ClientIP))
+	}
+	logutil.BgLogger().Info("profiling request received", fields...)
+}
+
 func (vt *perfSchemaTable) getRows(ctx context.Context, sctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	switch vt.meta.Name.O {
 	case tableNameTiDBProfileCPU:
+		logTiDBProfileRequest(sctx, tableNameTiDBProfileCPU)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("cpu")
 	case tableNameTiDBProfileMemory:
+		logTiDBProfileRequest(sctx, tableNameTiDBProfileMemory)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("heap")
 	case tableNameTiDBProfileMutex:
+		logTiDBProfileRequest(sctx, tableNameTiDBProfileMutex)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("mutex")
 	case tableNameTiDBProfileAllocs:
+		logTiDBProfileRequest(sctx, tableNameTiDBProfileAllocs)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("allocs")
 	case tableNameTiDBProfileBlock:
+		logTiDBProfileRequest(sctx, tableNameTiDBProfileBlock)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("block")
 	case tableNameTiDBProfileGoroutines:
+		logTiDBProfileRequest(sctx, tableNameTiDBProfileGoroutines)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("goroutine")
 	case tableNameTiKVProfileCPU:
 		interval := fmt.Sprintf("%d", profile.CPUProfileInterval/time.Second)
@@ -267,6 +295,8 @@ func (vt *perfSchemaTable) getRows(ctx context.Context, sctx sessionctx.Context,
 		fullRows, err = infoschema.GetDataFromSessionConnectAttrs(sctx, false)
 	case tableNameSessionAccountConnectAttrs:
 		fullRows, err = infoschema.GetDataFromSessionConnectAttrs(sctx, true)
+	case tableNameStatusByConnection:
+		fullRows, err = infoschema.GetDataFromStatusByConn(sctx)
 	}
 	if err != nil {
 		return

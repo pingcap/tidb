@@ -23,10 +23,12 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spkg/bom"
 	"go.uber.org/zap"
 	"golang.org/x/text/encoding/charmap"
@@ -84,14 +86,14 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 }
 
 // ExportStatement exports the SQL statement in the schema file.
-func ExportStatement(ctx context.Context, store storage.ExternalStorage,
+func ExportStatement(ctx context.Context, store storeapi.Storage,
 	sqlFile FileInfo, characterSet string) ([]byte, error) {
 	if sqlFile.FileMeta.Compression != CompressionNone {
 		compressType, err := ToStorageCompressType(sqlFile.FileMeta.Compression)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		store = storage.WithCompression(store, compressType, storage.DecompressConfig{
+		store = objstore.WithCompression(store, compressType, compressedio.DecompressConfig{
 			ZStdDecodeConcurrency: 1,
 		})
 	}
@@ -132,22 +134,25 @@ func ExportStatement(ctx context.Context, store storage.ExternalStorage,
 		}
 	}
 
+	// require trailing semicolon for any remaining non-comment statement
+	if len(buffer) > 0 {
+		stmtTrimB := bytes.TrimSpace(buffer)
+		// Skip pure block comment like "/* ... */" without semicolon.
+		if len(stmtTrimB) > 0 && !(bytes.HasPrefix(stmtTrimB, []byte("/*")) && bytes.HasSuffix(stmtTrimB, []byte("*/"))) {
+			return nil, errors.Annotatef(errors.New("last SQL statement missing trailing semicolon"), "file: %s", sqlFile.FileMeta.Path)
+		}
+		buffer = buffer[:0]
+	}
+
 	data, err = decodeCharacterSet(data, characterSet)
 	if err != nil {
-		log.FromContext(ctx).Error("cannot decode input file, please convert to target encoding manually",
+		logutil.Logger(ctx).Error("cannot decode input file, please convert to target encoding manually",
 			zap.String("encoding", characterSet),
 			zap.String("Path", sqlFile.FileMeta.Path),
 		)
 		return nil, errors.Annotatef(err, "failed to decode %s as %s", sqlFile.FileMeta.Path, characterSet)
 	}
 	return data, nil
-}
-
-// ReadSeekCloser = Reader + Seeker + Closer
-type ReadSeekCloser interface {
-	io.Reader
-	io.Seeker
-	io.Closer
 }
 
 // StringReader is a wrapper around *strings.Reader with an additional Close() method
@@ -166,12 +171,12 @@ func (StringReader) Close() error {
 // PooledReader is a throttled reader wrapper, where Read() calls have an upper limit of concurrency
 // imposed by the given worker pool.
 type PooledReader struct {
-	reader    ReadSeekCloser
+	reader    io.ReadSeekCloser
 	ioWorkers *worker.Pool
 }
 
 // MakePooledReader constructs a new PooledReader.
-func MakePooledReader(reader ReadSeekCloser, ioWorkers *worker.Pool) PooledReader {
+func MakePooledReader(reader io.ReadSeekCloser, ioWorkers *worker.Pool) PooledReader {
 	return PooledReader{
 		reader:    reader,
 		ioWorkers: ioWorkers,

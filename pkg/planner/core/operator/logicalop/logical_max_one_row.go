@@ -19,8 +19,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -52,9 +50,9 @@ func (p *LogicalMaxOneRow) Schema() *expression.Schema {
 // HashCode inherits BaseLogicalPlan.LogicalPlan.<0th> implementation.
 
 // PredicatePushDown implements base.LogicalPlan.<1st> interface.
-func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression, opt *optimizetrace.LogicalOptimizeOp) ([]expression.Expression, base.LogicalPlan, error) {
+func (p *LogicalMaxOneRow) PredicatePushDown(predicates []expression.Expression) ([]expression.Expression, base.LogicalPlan, error) {
 	// MaxOneRow forbids any condition to push down.
-	_, _, err := p.BaseLogicalPlan.PredicatePushDown(nil, opt)
+	_, _, err := p.BaseLogicalPlan.PredicatePushDown(nil)
 	return predicates, p, err
 }
 
@@ -93,11 +91,6 @@ func (p *LogicalMaxOneRow) DeriveStats(_ []*property.StatsInfo, selfSchema *expr
 
 // PreparePossibleProperties inherits BaseLogicalPlan.LogicalPlan.<13th> implementation.
 
-// ExhaustPhysicalPlans implements base.LogicalPlan.<14th> interface.
-func (p *LogicalMaxOneRow) ExhaustPhysicalPlans(prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
-	return utilfuncp.ExhaustPhysicalPlans4LogicalMaxOneRow(p, prop)
-}
-
 // ExtractCorrelatedCols inherits BaseLogicalPlan.LogicalPlan.<15th> implementation.
 
 // MaxOneRow inherits BaseLogicalPlan.LogicalPlan.<16th> implementation.
@@ -115,8 +108,6 @@ func (p *LogicalMaxOneRow) ExhaustPhysicalPlans(prop *property.PhysicalProperty)
 // ExtractFD inherits BaseLogicalPlan.LogicalPlan.<22nd> implementation.
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
-
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************
 

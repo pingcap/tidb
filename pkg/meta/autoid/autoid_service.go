@@ -16,6 +16,7 @@ package autoid
 
 import (
 	"context"
+	goerrors "errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,7 +44,8 @@ type singlePointAlloc struct {
 	lastAllocated int64
 	isUnsigned    bool
 	*ClientDiscover
-	keyspaceID uint32
+	keyspaceID     uint32
+	rpcRetryPolicy rpcRetryPolicy
 }
 
 // ClientDiscover is used to get the AutoIDAllocClient, it creates the grpc connection with autoid service leader.
@@ -62,10 +64,211 @@ type ClientDiscover struct {
 	version uint64
 }
 
+var rpcRetryRequestSequence atomic.Uint64
+
 const (
 	// AutoIDLeaderPath is etcd key of auto id service leader, exported for test.
 	AutoIDLeaderPath = "tidb/autoid/leader"
+
+	defaultRPCRetryMinErrors   = 10
+	defaultRPCRetryMinDuration = 15 * time.Second
+	rpcRetryAction             = "check AutoID service availability and connectivity, then retry the statement"
 )
+
+type rpcRetryPolicy struct {
+	minErrors   int
+	minDuration time.Duration
+}
+
+type rpcRetryState struct {
+	errorCount int
+	firstError time.Time
+}
+
+type rpcRetryLimitMarker interface {
+	AutoIDRPCRetryLimitReached()
+}
+
+type rpcRetryLimitError struct {
+	cause error
+}
+
+func (e *rpcRetryLimitError) Error() string {
+	return e.cause.Error()
+}
+
+func (e *rpcRetryLimitError) Cause() error {
+	return e.cause
+}
+
+func (e *rpcRetryLimitError) Unwrap() error {
+	return e.cause
+}
+
+func (*rpcRetryLimitError) AutoIDRPCRetryLimitReached() {}
+
+// IsRPCRetryLimitError reports whether err is a terminal AutoID RPC retry-limit error.
+func IsRPCRetryLimitError(err error) bool {
+	var marker rpcRetryLimitMarker
+	return goerrors.As(err, &marker)
+}
+
+func (s *rpcRetryState) observe(now time.Time, policy rpcRetryPolicy) bool {
+	if s.errorCount == 0 {
+		s.firstError = now
+	}
+	s.errorCount++
+	return policy.minErrors > 0 &&
+		s.errorCount >= policy.minErrors &&
+		now.Sub(s.firstError) >= policy.minDuration
+}
+
+type rpcRetryLogState struct {
+	operation       string
+	keyspaceID      uint32
+	dbID            int64
+	tableID         int64
+	requestStarted  time.Time
+	requestID       uint64
+	rpcErrorCount   int
+	active          bool
+	terminalEmitted bool
+}
+
+func newRPCRetryLogState(
+	operation string,
+	keyspaceID uint32,
+	dbID, tableID int64,
+	requestStarted time.Time,
+) rpcRetryLogState {
+	return rpcRetryLogState{
+		operation:      operation,
+		keyspaceID:     keyspaceID,
+		dbID:           dbID,
+		tableID:        tableID,
+		requestStarted: requestStarted,
+	}
+}
+
+func (s *rpcRetryLogState) observeRPCRetry() {
+	s.rpcErrorCount++
+	if s.active {
+		return
+	}
+	s.active = true
+	s.requestID = rpcRetryRequestSequence.Add(1)
+	logutil.BgLogger().Info("autoid request entered RPC retry",
+		zap.String("category", "autoid client"),
+		zap.Uint64("autoid-request-id", s.requestID),
+		zap.String("operation", s.operation),
+		zap.Uint32("keyspace-id", s.keyspaceID),
+		zap.Int64("db-id", s.dbID),
+		zap.Int64("table-id", s.tableID),
+		zap.Duration("request-elapsed", time.Since(s.requestStarted)),
+		zap.Int("rpc-error-count", s.rpcErrorCount))
+}
+
+func (s *rpcRetryLogState) complete(err error) {
+	if !s.active || s.terminalEmitted {
+		return
+	}
+	outcome := "recovered"
+	if err != nil {
+		outcome = "failed"
+		cause := errors.Cause(err)
+		if cause == context.Canceled || cause == context.DeadlineExceeded {
+			outcome = "context-canceled"
+		}
+	}
+	fields := []zap.Field{
+		zap.String("category", "autoid client"),
+		zap.Uint64("autoid-request-id", s.requestID),
+		zap.String("operation", s.operation),
+		zap.Uint32("keyspace-id", s.keyspaceID),
+		zap.Int64("db-id", s.dbID),
+		zap.Int64("table-id", s.tableID),
+		zap.Duration("request-elapsed", time.Since(s.requestStarted)),
+		zap.Int("rpc-error-count", s.rpcErrorCount),
+		zap.String("outcome", outcome),
+	}
+	if err != nil {
+		fields = append(fields, zap.Error(err))
+	}
+	logutil.BgLogger().Info("autoid request completed after RPC retry", fields...)
+}
+
+func (s *rpcRetryLogState) fastFail(state rpcRetryState, elapsed time.Duration, err error) {
+	s.terminalEmitted = true
+	logutil.BgLogger().Warn("autoid request stopped after reaching RPC retry limit",
+		zap.String("category", "autoid client"),
+		zap.Uint64("autoid-request-id", s.requestID),
+		zap.String("operation", s.operation),
+		zap.Uint32("keyspace-id", s.keyspaceID),
+		zap.Int64("db-id", s.dbID),
+		zap.Int64("table-id", s.tableID),
+		zap.Duration("request-elapsed", time.Since(s.requestStarted)),
+		zap.Duration("rpc-retry-elapsed", elapsed),
+		zap.Int("rpc-error-count", state.errorCount),
+		zap.String("outcome", "fast-failed"),
+		zap.String("action", rpcRetryAction),
+		zap.Error(err))
+}
+
+func (sp *singlePointAlloc) effectiveRPCRetryPolicy() rpcRetryPolicy {
+	if sp.rpcRetryPolicy.minErrors > 0 {
+		return sp.rpcRetryPolicy
+	}
+	return rpcRetryPolicy{
+		minErrors:   defaultRPCRetryMinErrors,
+		minDuration: defaultRPCRetryMinDuration,
+	}
+}
+
+func (sp *singlePointAlloc) newRPCRetryLimitError(
+	operation string,
+	state rpcRetryState,
+	now time.Time,
+	rpcErr error,
+) error {
+	elapsed := now.Sub(state.firstError)
+	return errors.AddStack(&rpcRetryLimitError{cause: ErrAutoincReadFailed.FastGen(
+		"autoid %s failed after %d RPC errors over %s; keyspace_id=%d, db_id=%d, table_id=%d; last RPC error: %v; %s",
+		operation,
+		state.errorCount,
+		elapsed.Round(time.Millisecond),
+		sp.keyspaceID,
+		sp.dbID,
+		sp.tblID,
+		rpcErr,
+		rpcRetryAction,
+	)})
+}
+
+func (sp *singlePointAlloc) handleRPCRetryError(
+	ctx context.Context,
+	operation string,
+	version uint64,
+	rpcErr error,
+	state *rpcRetryState,
+	requestLog *rpcRetryLogState,
+) error {
+	if ctx.Err() != nil {
+		return errors.Trace(ctx.Err())
+	}
+	now := time.Now()
+	requestLog.observeRPCRetry()
+	reached := state.observe(now, sp.effectiveRPCRetryPolicy())
+	sp.resetConn(version, rpcErr)
+	if !reached {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return errors.Trace(ctx.Err())
+	}
+	terminalErr := sp.newRPCRetryLimitError(operation, *state, now, rpcErr)
+	requestLog.fastFail(*state, now.Sub(state.firstError), terminalErr)
+	return terminalErr
+}
 
 // NewClientDiscover creates a ClientDiscover object.
 func NewClientDiscover(etcdCli *clientv3.Client) *ClientDiscover {
@@ -97,14 +300,24 @@ func (d *ClientDiscover) GetClient(ctx context.Context, keyspaceID uint32) (auto
 	if d.mu.AutoIDAllocClient != nil {
 		return d.mu.AutoIDAllocClient, atomic.LoadUint64(&d.version), nil
 	}
-
-	resp, err := d.etcdCli.Get(ctx, GetAutoIDServiceLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
+	// write a for loop to retry in case of etcd connection error.
+	var resp *clientv3.GetResponse
+	var err error
+	var bo backoffer
+retry:
+	resp, err = d.etcdCli.Get(ctx, GetAutoIDServiceLeaderEtcdPath(keyspaceID), clientv3.WithFirstCreate()...)
 	if err != nil {
 		return nil, 0, errors.Trace(err)
 	}
 	if len(resp.Kvs) == 0 {
-		return nil, 0, errors.New("autoid service leader not found")
+		// If the key is not found, it means the autoid service leader is not elected yet.
+		// We can retry to get the leader.
+		if err := bo.Backoff(ctx); err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+		goto retry
 	}
+	bo.Reset()
 
 	addr := string(resp.Kvs[0].Value)
 	opt := grpc.WithTransportCredentials(insecure.NewCredentials())
@@ -134,22 +347,30 @@ func (d *ClientDiscover) GetClient(ctx context.Context, keyspaceID uint32) (auto
 // The returned range is (min, max]:
 // case increment=1 & offset=1: you can derive the ids like min+1, min+2... max.
 // case increment=x & offset=y: you firstly need to seek to firstID by `SeekToFirstAutoIDXXX`, then derive the IDs like firstID, firstID + increment * 2... in the caller.
-func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offset int64) (minv, maxv int64, _ error) {
+func (sp *singlePointAlloc) Alloc(ctx context.Context, n uint64, increment, offset int64) (minv, maxv int64, retErr error) {
 	r, ctx := tracing.StartRegionEx(ctx, "autoid.Alloc")
 	defer r.End()
 
+	logutil.BgLogger().Info("alloc autoid",
+		zap.Int64("dbID", sp.dbID))
 	if !validIncrementAndOffset(increment, offset) {
 		return 0, 0, errInvalidIncrementAndOffset.GenWithStackByArgs(increment, offset)
 	}
 
 	var bo backoffer
+	start := time.Now()
+	requestLog := newRPCRetryLogState("alloc", sp.keyspaceID, sp.dbID, sp.tblID, start)
+	defer func() {
+		requestLog.complete(retErr)
+	}()
+	var rpcRetryState rpcRetryState
 retry:
 	cli, ver, err := sp.GetClient(ctx, sp.keyspaceID)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 
-	start := time.Now()
+	clientStart := time.Now()
 	resp, err := cli.AllocAutoID(ctx, &autoid.AutoIDRequest{
 		DbID:       sp.dbID,
 		TblID:      sp.tblID,
@@ -159,11 +380,15 @@ retry:
 		IsUnsigned: sp.isUnsigned,
 		KeyspaceID: sp.keyspaceID,
 	})
-	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
+	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(clientStart).Seconds())
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
-			sp.resetConn(ver, err)
-			bo.Backoff()
+			if terminalErr := sp.handleRPCRetryError(ctx, "alloc", ver, err, &rpcRetryState, &requestLog); terminalErr != nil {
+				return 0, 0, terminalErr
+			}
+			if err := bo.Backoff(ctx); err != nil {
+				return 0, 0, errors.Trace(err)
+			}
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
@@ -179,8 +404,8 @@ retry:
 	return resp.Min, resp.Max, err
 }
 
-const backoffMin = 200 * time.Millisecond
-const backoffMax = 5 * time.Second
+const backoffMin = 5 * time.Millisecond
+const backoffMax = 100 * time.Millisecond
 
 type backoffer struct {
 	time.Duration
@@ -190,7 +415,10 @@ func (b *backoffer) Reset() {
 	b.Duration = backoffMin
 }
 
-func (b *backoffer) Backoff() {
+// Backoff sleeps for the current duration. If ctx is provided and canceled during
+// the sleep, it returns early with the context error. This prevents a canceled
+// context from being blocked by the full backoff duration.
+func (b *backoffer) Backoff(ctx ...context.Context) error {
 	if b.Duration == 0 {
 		b.Duration = backoffMin
 	}
@@ -198,7 +426,18 @@ func (b *backoffer) Backoff() {
 	if b.Duration > backoffMax {
 		b.Duration = backoffMax
 	}
+	if len(ctx) > 0 && ctx[0] != nil {
+		timer := time.NewTimer(b.Duration)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			return nil
+		case <-ctx[0].Done():
+			return ctx[0].Err()
+		}
+	}
 	time.Sleep(b.Duration)
+	return nil
 }
 
 func (d *ClientDiscover) resetConn(version uint64, reason error) {
@@ -237,8 +476,13 @@ func (d *ClientDiscover) ResetConn(reason error) {
 	}
 }
 
-func (*singlePointAlloc) Transfer(_, _ int64) error {
-	return nil
+func (sp *singlePointAlloc) Transfer(databaseID, tableID int64) error {
+	if sp.dbID == databaseID && sp.tblID == tableID {
+		return nil
+	}
+	sp.dbID = databaseID
+	sp.tblID = tableID
+	return sp.Rebase(context.Background(), sp.lastAllocated+1, false)
 }
 
 // AllocSeqCache allocs sequence batch value cached in table level（rather than in alloc), the returned range covering
@@ -261,8 +505,14 @@ func (sp *singlePointAlloc) Rebase(ctx context.Context, newBase int64, _ bool) e
 	return err
 }
 
-func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, force bool) error {
+func (sp *singlePointAlloc) rebase(ctx context.Context, newBase int64, force bool) (retErr error) {
 	var bo backoffer
+	start := time.Now()
+	requestLog := newRPCRetryLogState("rebase", sp.keyspaceID, sp.dbID, sp.tblID, start)
+	defer func() {
+		requestLog.complete(retErr)
+	}()
+	var rpcRetryState rpcRetryState
 retry:
 	cli, ver, err := sp.GetClient(ctx, sp.keyspaceID)
 	if err != nil {
@@ -278,8 +528,12 @@ retry:
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
-			sp.resetConn(ver, err)
-			bo.Backoff()
+			if terminalErr := sp.handleRPCRetryError(ctx, "rebase", ver, err, &rpcRetryState, &requestLog); terminalErr != nil {
+				return terminalErr
+			}
+			if err := bo.Backoff(ctx); err != nil {
+				return errors.Trace(err)
+			}
 			goto retry
 		}
 		return errors.Trace(err)

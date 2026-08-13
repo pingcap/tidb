@@ -31,16 +31,17 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/stretchr/testify/require"
 )
 
 func TestImplGroupZeroCost(t *testing.T) {
 	p := parser.New()
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	stmt, err := p.ParseOneStmt("select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0", "", "")
@@ -63,11 +64,11 @@ func TestImplGroupZeroCost(t *testing.T) {
 
 func TestInitGroupSchema(t *testing.T) {
 	p := parser.New()
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	stmt, err := p.ParseOneStmt("select a from t", "", "")
@@ -89,11 +90,11 @@ func TestInitGroupSchema(t *testing.T) {
 
 func TestFillGroupStats(t *testing.T) {
 	p := parser.New()
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 
 	stmt, err := p.ParseOneStmt("select * from t t1 join t t2 on t1.a = t2.a", "", "")
@@ -114,11 +115,11 @@ func TestFillGroupStats(t *testing.T) {
 
 func TestPreparePossibleProperties(t *testing.T) {
 	p := parser.New()
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 	optimizer := NewOptimizer()
 
@@ -178,18 +179,18 @@ func TestPreparePossibleProperties(t *testing.T) {
 	//   IndexScan_8 table:t, index:f, g
 	// Group#4 Schema:[test.t.a,test.t.f]
 	//   IndexScan_6 table:t, index:f
-	propMap := make(map[*memo.Group][][]*expression.Column)
+	propMap := make(map[*memo.Group]*base.PossiblePropertiesInfo)
 	aggProp := preparePossibleProperties(group, propMap)
 	// We only have one prop for Group0 : f
-	require.Len(t, aggProp, 1)
-	require.True(t, aggProp[0][0].EqualColumn(columnF))
+	require.Len(t, aggProp.Orders, 1)
+	require.True(t, aggProp.Orders[0][0].EqualColumn(columnF))
 
 	gatherGroup := group.Equivalents.Front().Value.(*memo.GroupExpr).Children[0]
 	gatherProp, ok := propMap[gatherGroup]
 	require.True(t, ok)
 	// We have 2 props for Group1: [f], [a]
-	require.Len(t, gatherProp, 2)
-	for _, prop := range gatherProp {
+	require.Len(t, gatherProp.Orders, 2)
+	for _, prop := range gatherProp.Orders {
 		require.Len(t, prop, 1)
 		require.True(t, prop[0].EqualColumn(columnA) || prop[0].EqualColumn(columnF))
 	}
@@ -210,11 +211,11 @@ func (rule *fakeTransformation) OnTransform(old *memo.ExprIter) (newExprs []*mem
 
 func TestAppliedRuleSet(t *testing.T) {
 	p := parser.New()
-	ctx := plannercore.MockContext()
+	ctx := coretestsdk.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable()})
+	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
 	domain.GetDomain(ctx).MockInfoCacheAndLoadInfoSchema(is)
 	optimizer := NewOptimizer()
 

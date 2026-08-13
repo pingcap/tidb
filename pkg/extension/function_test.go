@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
 	"github.com/stretchr/testify/require"
 )
 
@@ -270,9 +270,13 @@ func checkFuncList(t *testing.T, orgList []string, customFuncs ...string) {
 }
 
 func TestExtensionFuncPrivilege(t *testing.T) {
+	testExtensionFuncPrivilege(t, sem.V1)
+	testExtensionFuncPrivilege(t, sem.V2)
+}
+
+func testExtensionFuncPrivilege(t *testing.T, semVer string) {
 	defer func() {
 		extension.Reset()
-		sem.Disable()
 	}()
 
 	extension.Reset()
@@ -403,7 +407,7 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 	tk1.MustQuery("select custom_both_dyn_priv_func()").Check(testkit.Rows("ghi"))
 	tk1.MustQuery("select custom_eval_int_func()").Check(testkit.Rows("1"))
 
-	sem.Enable()
+	defer sem.SwitchToSEMForTest(t, semVer)()
 
 	// root in sem
 	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
@@ -461,7 +465,6 @@ func TestExtensionFuncPrivilege(t *testing.T) {
 func TestShouldNotOptimizeExtensionFunc(t *testing.T) {
 	defer func() {
 		extension.Reset()
-		sem.Disable()
 	}()
 
 	extension.Reset()

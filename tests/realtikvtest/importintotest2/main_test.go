@@ -19,11 +19,11 @@ import (
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -58,6 +58,7 @@ func (s *mockGCSSuite) SetupSuite() {
 		Port:       gcsPort,
 		PublicHost: gcsHost,
 	}
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
 	s.server, err = fakestorage.NewServerWithOptions(opt)
 	s.Require().NoError(err)
 	s.store = realtikvtest.CreateMockStoreAndSetup(s.T())
@@ -81,7 +82,7 @@ func (s *mockGCSSuite) prepareAndUseDB(db string) {
 }
 
 func init() {
-	testutils.UpdateTiDBConfig()
+	realtikvtest.UpdateTiDBConfig()
 }
 
 func TestMain(m *testing.M) {

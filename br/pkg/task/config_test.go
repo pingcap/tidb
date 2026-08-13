@@ -27,9 +27,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	restoresplit "github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -48,6 +49,8 @@ func TestRestoreConfigAdjust(t *testing.T) {
 	require.Equal(t, defaultSwitchInterval, cfg.Config.SwitchModeInterval)
 	require.Equal(t, conn.DefaultMergeRegionKeyCount, cfg.MergeSmallRegionKeyCount.Value)
 	require.Equal(t, conn.DefaultMergeRegionSizeBytes, cfg.MergeSmallRegionSizeBytes.Value)
+	require.Equal(t, restoresplit.DefaultRegionIndexStep, cfg.SplitRegionIndexStep)
+	require.False(t, cfg.CoarseScatter)
 }
 
 type mockPDClient struct {
@@ -74,15 +77,21 @@ func TestConfigureRestoreClient(t *testing.T) {
 		Online: true,
 	}
 	restoreCfg := &RestoreConfig{
-		Config:              cfg,
-		RestoreCommonConfig: restoreComCfg,
-		DdlBatchSize:        128,
+		Config:                cfg,
+		RestoreCommonConfig:   restoreComCfg,
+		DdlBatchSize:          128,
+		RegionScanConcurrency: 3,
+		SplitRegionIndexStep:  7,
+		CoarseScatter:         true,
 	}
 	client := snapclient.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{})
 	ctx := context.Background()
 	err := configureRestoreClient(ctx, client, restoreCfg)
 	require.NoError(t, err)
 	require.Equal(t, uint(128), client.GetBatchDdlSize())
+	require.Equal(t, uint(3), client.GetRegionScanConcurrency())
+	require.Equal(t, uint(7), client.GetSplitRegionIndexStep())
+	require.True(t, client.GetCoarseScatter())
 }
 
 func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {
@@ -205,7 +214,7 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 
 func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) map[string]*metautil.Database {
 	testDir := t.TempDir()
-	store, err := storage.NewLocalStorage(testDir)
+	store, err := objstore.NewLocalStorage(testDir)
 	require.NoError(t, err)
 
 	mockSchemas := make([]*backuppb.Schema, 0)

@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "signal",
     srcs = [
+        "exit.go",
         "signal_posix.go",
         "signal_wasm.go",
         "signal_windows.go",
@@ -12,46 +13,73 @@ go_library(
     deps = select({
         "@io_bazel_rules_go//go/platform:aix": [
             "//pkg/util/logutil",
+            "@com_github_pingcap_log//:log",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:android": [
             "//pkg/util/logutil",
+            "@com_github_pingcap_log//:log",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:darwin": [
             "//pkg/util/logutil",
+            "@com_github_pingcap_log//:log",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:dragonfly": [
             "//pkg/util/logutil",
+            "@com_github_pingcap_log//:log",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:freebsd": [
             "//pkg/util/logutil",
+            "@com_github_pingcap_log//:log",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:illumos": [
             "//pkg/util/logutil",
+            "@com_github_pingcap_log//:log",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:ios": [
             "//pkg/util/logutil",
+            "@com_github_pingcap_log//:log",
+            "@org_uber_go_zap//:zap",
+        ],
+        "@io_bazel_rules_go//go/platform:js": [
+            "@com_github_pingcap_log//:log",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:linux": [
             "//pkg/util/logutil",
+            "@com_github_pingcap_log//:log",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:netbsd": [
             "//pkg/util/logutil",
+            "@com_github_pingcap_log//:log",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:openbsd": [
             "//pkg/util/logutil",
+            "@com_github_pingcap_log//:log",
+            "@org_uber_go_zap//:zap",
+        ],
+        "@io_bazel_rules_go//go/platform:osx": [
+            "@com_github_pingcap_log//:log",
+            "@org_uber_go_zap//:zap",
+        ],
+        "@io_bazel_rules_go//go/platform:plan9": [
+            "@com_github_pingcap_log//:log",
+            "@org_uber_go_zap//:zap",
+        ],
+        "@io_bazel_rules_go//go/platform:qnx": [
+            "@com_github_pingcap_log//:log",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:solaris": [
             "//pkg/util/logutil",
+            "@com_github_pingcap_log//:log",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:windows": [

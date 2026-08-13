@@ -241,14 +241,14 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		ast.Sysdate, /* ast.StrToDate, */
 
 		// encryption functions.
-		ast.MD5, ast.SHA1, ast.UncompressedLength,
+		ast.MD5, ast.SHA1, ast.SHA2, ast.UncompressedLength,
 
 		ast.Cast,
 
 		// misc functions.
 		// TODO(#26942): enable functions below after them are fully tested in TiKV.
 		/*ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6,*/
-		ast.UUID:
+		ast.UUID, ast.UUIDVersion, ast.UUIDTimestamp:
 
 		return true
 	case ast.UnixTimestamp:
@@ -311,7 +311,7 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Power, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
-		ast.JSONLength, ast.JSONDepth, ast.JSONExtract, ast.JSONUnquote, ast.JSONArray, ast.JSONContainsPath, ast.JSONValid, ast.JSONKeys,
+		ast.JSONLength, ast.JSONDepth, ast.JSONExtract, ast.JSONUnquote, ast.JSONObject, ast.JSONArray, ast.JSONContainsPath, ast.JSONValid, ast.JSONKeys,
 		ast.Repeat, ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad,
@@ -452,6 +452,18 @@ func scalarExprSupportedByFlash(ctx EvalContext, function *ScalarFunction) bool 
 		return true
 	case ast.FTSMatchWord:
 		return true
+	case ast.FTSMysqlMatchAgainst:
+		// The tipb pushdown protocol (see distsql_builtin.go) does not
+		// serialize the FTS modifier; TiFlash defaults to natural-language
+		// mode on the reconstructed signature. Pushing a Boolean-mode or
+		// WITH QUERY EXPANSION call down would therefore silently execute
+		// with the modifier dropped. Mark such calls as not Flash-supported
+		// here as a defense in depth — the planner's modifier guard in
+		// matchAgainstToBuiltin already rejects them at plan time, but
+		// keeping pushdown self-consistent guards against any future code
+		// path that builds an FTSMysqlMatchAgainst around the planner.
+		sig, ok := function.Function.(*builtinFtsMysqlMatchAgainstSig)
+		return ok && !sig.modifier.IsBooleanMode() && !sig.modifier.WithQueryExpansion()
 	case ast.Grouping: // grouping function for grouping sets identification.
 		return true
 	}

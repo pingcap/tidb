@@ -81,9 +81,9 @@ select * from tbl use index(idx_a) where a > 10 order by a asc limit 4,1;
 drop table if exists t;
 create table t(a int, b int, index k(b)) PARTITION BY HASH(a) partitions 4;
 insert into t(a, b) values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
-explain format='brief' select b from t use index(k) where b > 2 order by b limit 1 for update;
+explain format='plan_tree' select b from t use index(k) where b > 2 order by b limit 1 for update;
 select b from t use index(k) where b > 2 order by b limit 1 for update;
 analyze table t;
-explain format='brief' select b from t use index(k) where b > 2 order by b limit 1 for update;
+explain format='plan_tree' select b from t use index(k) where b > 2 order by b limit 1 for update;
 select b from t use index(k) where b > 2 order by b limit 1 for update;
 

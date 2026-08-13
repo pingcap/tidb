@@ -8,9 +8,11 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,20 +28,26 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/operation"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/metaservice"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/pkg/caller"
 	"go.etcd.io/etcd/client/pkg/v3/transport"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
+
+var newPDClientWithAPIContext = pd.NewClientWithAPIContext
 
 const (
 	// flagSendCreds specify whether to send credentials to tikv
@@ -181,21 +189,17 @@ func (tls *TLSConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
 }
 
 func dialEtcdWithCfg(ctx context.Context, cfg Config) (*clientv3.Client, error) {
-	var (
-		tlsConfig *tls.Config
-		err       error
-	)
-
+	var tlsConfig *tls.Config
+	var err error
 	if cfg.TLS.IsEnabled() {
 		tlsConfig, err = cfg.TLS.ToTLSConfig()
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	log.Info("trying to connect to etcd", zap.Strings("addr", cfg.PD))
-	etcdCLI, err := clientv3.New(clientv3.Config{
+
+	etcdCfg := clientv3.Config{
 		TLS:              tlsConfig,
-		Endpoints:        cfg.PD,
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
@@ -207,17 +211,21 @@ func dialEtcdWithCfg(ctx context.Context, cfg Config) (*clientv3.Client, error) 
 			grpc.WithBlock(),
 			grpc.WithReturnConnectionError(),
 		},
-		Context: ctx,
-	})
-	if err != nil {
-		return nil, err
 	}
+	etcdCLI, err := metaservice.DialEtcdClient(
+		ctx, cfg.KeyspaceName, cfg.PD, cfg.TLS.ToPDSecurityOption(),
+		newPDClientWithAPIContext, caller.GetComponent(1), nil, etcdCfg,
+	)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	log.Info("connected to etcd", zap.Strings("addr", etcdCLI.Endpoints()))
 	return etcdCLI, nil
 }
 
 // Config is the common configuration for all BRIE tasks.
 type Config struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 
 	Storage             string    `json:"storage" toml:"storage"`
 	PD                  []string  `json:"pd" toml:"pd"`
@@ -230,6 +238,8 @@ type Config struct {
 	SendCreds           bool      `json:"send-credentials-to-tikv" toml:"send-credentials-to-tikv"`
 	// LogProgress is true means the progress bar is printed to the log instead of stdout.
 	LogProgress bool `json:"log-progress" toml:"log-progress"`
+	// OperationContext identifies this command for lock metadata.
+	OperationContext operation.Context `json:"-" toml:"-"`
 
 	// CaseSensitive should not be used.
 	//
@@ -287,6 +297,36 @@ type Config struct {
 
 	// Metadata download batch size, such as metadata for log restore
 	MetadataDownloadBatchSize uint `json:"metadata-download-batch-size" toml:"metadata-download-batch-size"`
+}
+
+// EnsureOperationContext initializes command-scoped operation metadata once.
+func (cfg *Config) EnsureOperationContext(command string) error {
+	if cfg.OperationContext.OperationID != "" {
+		if cfg.OperationContext.StartedAt.IsZero() {
+			return errors.New("operation started time is required")
+		}
+		return nil
+	}
+	if !cfg.OperationContext.StartedAt.IsZero() {
+		return errors.New("operation ID is required")
+	}
+
+	operationContext, err := operation.NewContext(command)
+	if err != nil {
+		return err
+	}
+	cfg.OperationContext = operationContext
+	return nil
+}
+
+const operationHintRestoreID = "restore_id"
+
+func setOperationContextRestoreID(operationContext *operation.Context, restoreID uint64) {
+	if restoreID == 0 {
+		operationContext.SetHintField(operationHintRestoreID, "")
+		return
+	}
+	operationContext.SetHintField(operationHintRestoreID, strconv.FormatUint(restoreID, 10))
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -358,7 +398,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 		"gcp-kms:///projects/{project-id}/locations/{location}/keyRings/{keyring}/cryptoKeys/{key-name}?AUTH=specified&CREDENTIALS={credentials}\"")
 	_ = flags.MarkHidden(flagMetadataDownloadBatchSize)
 
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 }
 
 // HiddenFlagsForStream temporary hidden flags that stream cmd not support.
@@ -379,7 +419,7 @@ func HiddenFlagsForStream(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagMasterKeyConfig)
 	_ = flags.MarkHidden(flagMasterKeyCipherType)
 
-	storage.HiddenFlagsForStream(flags)
+	objstore.HiddenFlagsForStream(flags)
 }
 
 func DefaultConfig() Config {
@@ -631,6 +671,13 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if rateLimitUnit, err = flags.GetUint64(flagRateLimitUnit); err != nil {
 		return errors.Trace(err)
 	}
+	// Check for multiplication overflow when both values are non-zero
+	// This prevents silent wraparound that would cause incorrect rate limiting
+	if rateLimit > 0 && rateLimitUnit > 0 && rateLimit > math.MaxUint64/rateLimitUnit {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"rate limit calculation overflow: %d * %d exceeds uint64 max (consider max ~17PB/s)",
+			rateLimit, rateLimitUnit)
+	}
 	cfg.RateLimit = rateLimit * rateLimitUnit
 
 	cfg.Schemas = make(map[string]struct{})
@@ -739,6 +786,12 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if cfg.MetadataDownloadBatchSize, err = flags.GetUint(flagMetadataDownloadBatchSize); err != nil {
 		return errors.Trace(err)
 	}
+	if flags.Lookup(FlagKeyspaceName) != nil {
+		cfg.KeyspaceName, err = flags.GetString(FlagKeyspaceName)
+		if err != nil {
+			return errors.Annotatef(err, "failed to get flag %s", FlagKeyspaceName)
+		}
+	}
 
 	return cfg.normalizePDURLs()
 }
@@ -795,7 +848,7 @@ func (cfg *Config) OverrideDefaultForBackup() {
 
 // NewMgr creates a new mgr at the given PD address.
 func NewMgr(ctx context.Context,
-	g glue.Glue, pds []string,
+	g glue.Glue, keyspaceName string, pds []string,
 	tlsConfig TLSConfig,
 	keepalive keepalive.ClientParameters,
 	checkRequirements bool,
@@ -823,7 +876,7 @@ func NewMgr(ctx context.Context,
 
 	// Is it necessary to remove `StoreBehavior`?
 	return conn.NewMgr(
-		ctx, g, pds, tlsConf, securityOption, keepalive, util.SkipTiFlash,
+		ctx, g, keyspaceName, pds, tlsConf, securityOption, keepalive, util.SkipTiFlash,
 		checkRequirements, needDomain, versionCheckerType,
 	)
 }
@@ -833,20 +886,20 @@ func GetStorage(
 	ctx context.Context,
 	storageName string,
 	cfg *Config,
-) (*backuppb.StorageBackend, storage.ExternalStorage, error) {
-	u, err := storage.ParseBackend(storageName, &cfg.BackendOptions)
+) (*backuppb.StorageBackend, storeapi.Storage, error) {
+	u, err := objstore.ParseBackend(storageName, &cfg.BackendOptions)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	s, err := storage.New(ctx, u, storageOpts(cfg))
+	s, err := objstore.New(ctx, u, storageOpts(cfg))
 	if err != nil {
 		return nil, nil, errors.Annotate(err, "create storage failed")
 	}
 	return u, s, nil
 }
 
-func storageOpts(cfg *Config) *storage.ExternalStorageOptions {
-	return &storage.ExternalStorageOptions{
+func storageOpts(cfg *Config) *storeapi.Options {
+	return &storeapi.Options{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
@@ -857,7 +910,7 @@ func ReadBackupMeta(
 	ctx context.Context,
 	fileName string,
 	cfg *Config,
-) (*backuppb.StorageBackend, storage.ExternalStorage, *backuppb.BackupMeta, error) {
+) (*backuppb.StorageBackend, storeapi.Storage, *backuppb.BackupMeta, error) {
 	u, s, err := GetStorage(ctx, cfg.Storage, cfg)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -872,7 +925,7 @@ func ReadBackupMeta(
 		newPrefix, file := path.Split(oldPrefix)
 		newFileName := file + fileName
 		u.GetGcs().Prefix = newPrefix
-		s, err = storage.New(ctx, u, storageOpts(cfg))
+		s, err = objstore.New(ctx, u, storageOpts(cfg))
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
@@ -900,6 +953,12 @@ func ReadBackupMeta(
 		return nil, nil, nil, errors.Annotate(err,
 			"parse backupmeta failed because of wrong aes cipher")
 	}
+	if err = metautil.CheckBackupMetaCompatibilityFromBytes(decryptBackupMeta, backupMeta); err != nil {
+		if cfg.CheckRequirements {
+			return nil, nil, nil, errors.Trace(err)
+		}
+		log.Warn("skip backupmeta compatibility check error", zap.Error(err))
+	}
 	return u, s, backupMeta, nil
 }
 
@@ -907,7 +966,7 @@ func ReadBackupMeta(
 // if need to log, return its zap field. Or return a field with hidden value.
 func flagToZapField(f *pflag.Flag) zap.Field {
 	switch f.Name {
-	case flagStorage, FlagStreamFullBackupStorage:
+	case flagStorage, FlagStreamFullBackupStorage, FlagPiTRAddIndexSQLStorage, flagCheckpointStorage:
 		hiddenQuery, err := url.Parse(f.Value.String())
 		if err != nil {
 			return zap.String(f.Name, "<invalid URI>")

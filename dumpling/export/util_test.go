@@ -20,7 +20,7 @@ func TestRepeatableRead(t *testing.T) {
 		{version.ServerTypeTiDB, ConsistencyTypeLock, true},
 	}
 	dec := func(d []any) (version.ServerType, string, bool) {
-		return version.ServerType(d[0].(int)), d[1].(string), d[2].(bool)
+		return d[0].(version.ServerType), d[1].(string), d[2].(bool)
 	}
 	for tag, datum := range data {
 		serverTp, consistency, expectRepeatableRead := dec(datum)

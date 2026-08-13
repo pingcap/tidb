@@ -39,7 +39,7 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 	if codec := do.Store().GetCodec(); codec != nil {
 		keyspaceID = uint32(codec.GetKeyspaceID())
 	}
-	control, err := rmclient.NewResourceGroupController(ctx, uniqueID, pdClient, nil, keyspaceID, rmclient.WithMaxWaitDuration(runaway.MaxWaitDuration))
+	control, err := rmclient.NewResourceGroupController(ctx, uniqueID, pdClient, nil, keyspaceID, newResourceGroupsControllerOptions()...)
 	if err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.
 	serverAddr := net.JoinHostPort(serverInfo.IP, strconv.Itoa(int(serverInfo.Port)))
 	do.runawayManager = runaway.NewRunawayManager(control, serverAddr,
 		do.sysSessionPool, do.exit, do.infoCache, do.ddl)
-	do.resourceGroupsController = control
+	do.SetResourceGroupsController(control)
 	tikv.SetResourceControlInterceptor(control)
 	return nil
 }

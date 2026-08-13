@@ -34,6 +34,7 @@ var (
 	StatementDeadlockDetectDuration    prometheus.Histogram
 	StatementPessimisticRetryCount     prometheus.Histogram
 	StatementLockKeysCount             prometheus.Histogram
+	StatementSharedLockKeysCount       prometheus.Histogram
 	ValidateReadTSFromPDCount          prometheus.Counter
 	NonTransactionalDMLCount           *prometheus.CounterVec
 	TxnStatusEnteringCounter           *prometheus.CounterVec
@@ -163,6 +164,15 @@ func InitSessionMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21), // 1 ~ 1048576
 		})
 
+	StatementSharedLockKeysCount = metricscommon.NewHistogram(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "session",
+			Name:      "statement_shared_lock_keys_count",
+			Help:      "Keys locking for a single statement",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 21), // 1 ~ 1048576
+		})
+
 	ValidateReadTSFromPDCount = metricscommon.NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -256,6 +266,14 @@ const (
 	LblDb             = "db"
 	LblResult         = "result"
 	LblSQLType        = "sql_type"
+	LblSQLTypeDDL     = "ddl"
+	LblSQLTypeRead    = "read"
+	LblSQLTypeWrite   = "write"
+	LblSQLTypeAnalyze = "analyze"
+	LblSQLTypeOther   = "other"
+	LblEngine         = "engine"
+	LblEngineTiKV     = "tikv"
+	LblEngineTiFlash  = "tiflash"
 	LblCoprType       = "copr_type"
 	LblGeneral        = "general"
 	LblInternal       = "internal"
@@ -291,4 +309,7 @@ const (
 	LblFairLockingStmtUsed      = "stmt-used"
 	LblFairLockingStmtEffective = "stmt-effective"
 	LblScope                    = "scope"
+
+	// For TLS
+	LblCipher = "cipher"
 )

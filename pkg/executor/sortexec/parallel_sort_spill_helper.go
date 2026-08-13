@@ -41,17 +41,20 @@ type parallelSortSpillHelper struct {
 
 	bytesConsumed atomic.Int64
 	bytesLimit    atomic.Int64
+
+	fileNamePrefixForTest string
 }
 
-func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}, lessRowFunc func(chunk.Row, chunk.Row) int, errOutputChan chan rowWithError) *parallelSortSpillHelper {
+func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}, lessRowFunc func(chunk.Row, chunk.Row) int, errOutputChan chan rowWithError, fileNamePrefixForTest string) *parallelSortSpillHelper {
 	return &parallelSortSpillHelper{
-		cond:          sync.NewCond(new(sync.Mutex)),
-		spillStatus:   notSpilled,
-		sortExec:      sortExec,
-		lessRowFunc:   lessRowFunc,
-		errOutputChan: errOutputChan,
-		finishCh:      finishCh,
-		fieldTypes:    fieldTypes,
+		cond:                  sync.NewCond(new(sync.Mutex)),
+		spillStatus:           notSpilled,
+		sortExec:              sortExec,
+		lessRowFunc:           lessRowFunc,
+		errOutputChan:         errOutputChan,
+		finishCh:              finishCh,
+		fieldTypes:            fieldTypes,
+		fileNamePrefixForTest: fileNamePrefixForTest,
 	}
 }
 
@@ -195,16 +198,27 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", p.bytesConsumed.Load()), zap.Int64("quota", p.bytesLimit.Load()))
 	p.initForSpill()
 	p.tmpSpillChunk.Reset()
-	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes)
+	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes, p.fileNamePrefixForTest)
 	inDisk.GetDiskTracker().AttachTo(p.sortExec.diskTracker)
+	isInDiskAppended := false
 
 	spilledRowChannel := make(chan chunk.Row, 10000)
 	errChannel := make(chan error, 1)
+	stopCh := make(chan struct{})
+	var stopOnce sync.Once
+	stopProducer := func() {
+		stopOnce.Do(func() { close(stopCh) })
+	}
 
 	// We must wait the finish of the following goroutine,
 	// or we will exit `spillImpl` function in advance and
 	// this will cause data race.
-	defer channel.Clear(spilledRowChannel)
+	defer func() {
+		if !isInDiskAppended && inDisk.NumRows() > 0 {
+			inDisk.Close()
+		}
+		channel.Clear(spilledRowChannel)
+	}()
 
 	wg := &util.WaitGroupWrapper{}
 	wg.RunWithRecover(
@@ -227,12 +241,19 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 				if row.IsEmpty() {
 					break
 				}
-				spilledRowChannel <- row
+				select {
+				case spilledRowChannel <- row:
+				case <-stopCh:
+					return
+				case <-p.finishCh:
+					return
+				}
 			}
 		},
 		func(r any) {
 			if r != nil {
 				errChannel <- util.GetRecoverError(r)
+				stopProducer()
 			}
 		})
 
@@ -260,6 +281,7 @@ OuterLoop:
 
 				if inDisk.NumRows() > 0 {
 					p.sortedRowsInDisk = append(p.sortedRowsInDisk, inDisk)
+					isInDiskAppended = true
 					p.releaseMemory()
 				}
 				break OuterLoop
@@ -270,8 +292,11 @@ OuterLoop:
 		if p.tmpSpillChunk.IsFull() {
 			err = p.spillTmpSpillChunk(inDisk)
 			if err != nil {
+				stopProducer()
 				break
 			}
+
+			injectPanicForIssue63216()
 		}
 	}
 

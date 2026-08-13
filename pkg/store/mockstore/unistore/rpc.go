@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util/async"
 	"google.golang.org/grpc/metadata"
 )
 
@@ -59,6 +60,17 @@ var CheckResourceTagForTopSQLInGoTest bool
 
 // UnistoreRPCClientSendHook exports for test.
 var UnistoreRPCClientSendHook atomic.Pointer[func(*tikvrpc.Request)]
+
+// UnistoreRPCClientResponseHook lets tests inspect or amend a completed local
+// unistore RPC response when the matching failpoint is enabled.
+var UnistoreRPCClientResponseHook atomic.Pointer[func(*tikvrpc.Request, *tikvrpc.Response)]
+
+// SendRequestAsync sends a request to mock cluster asynchronously.
+func (c *RPCClient) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
+	go func() {
+		cb.Schedule(c.SendRequest(ctx, addr, req, tikv.ReadTimeoutMedium))
+	}()
+}
 
 // SendRequest sends a request to mock cluster.
 func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
@@ -345,6 +357,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 	if err != nil {
 		return nil, err
 	}
+	failpoint.Inject("unistoreRPCClientResponseHook", func(val failpoint.Value) {
+		if fn := UnistoreRPCClientResponseHook.Load(); val.(bool) && fn != nil {
+			(*fn)(req, resp)
+		}
+	})
 	var regErr *errorpb.Error
 	if req.Type != tikvrpc.CmdBatchCop && req.Type != tikvrpc.CmdMPPConn && req.Type != tikvrpc.CmdMPPTask && req.Type != tikvrpc.CmdMPPAlive {
 		regErr, err = resp.GetRegionError()

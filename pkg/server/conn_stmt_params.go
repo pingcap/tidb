@@ -26,6 +26,14 @@ import (
 
 var errUnknownFieldType = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
 
+func takeBinaryParamValue(paramValues []byte, pos int, length uint64) ([]byte, int, error) {
+	if pos > len(paramValues) || length > uint64(len(paramValues)-pos) {
+		return nil, pos, mysql.ErrMalformPacket
+	}
+	end := pos + int(length)
+	return paramValues[pos:end], end, nil
+}
+
 // parseBinaryParams decodes the binary params according to the protocol
 func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBitmap, paramTypes, paramValues []byte, enc *util2.InputDecoder) (err error) {
 	pos := 0
@@ -106,21 +114,19 @@ func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBit
 			length = uint64(paramValues[pos])
 			pos++
 		case mysql.TypeNewDecimal, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
-				return
-			}
 			var n int
-			length, isNull, n = util2.ParseLengthEncodedInt(paramValues[pos:])
+			length, isNull, n, err = util2.ParseLengthEncodedInt(paramValues[pos:])
+			if err != nil {
+				return mysql.ErrMalformPacket
+			}
 			pos += n
 		case mysql.TypeUnspecified, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
 			mysql.TypeEnum, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeBit:
-			if len(paramValues) < (pos + 1) {
-				err = mysql.ErrMalformPacket
-				return
-			}
 			var n int
-			length, isNull, n = util2.ParseLengthEncodedInt(paramValues[pos:])
+			length, isNull, n, err = util2.ParseLengthEncodedInt(paramValues[pos:])
+			if err != nil {
+				return mysql.ErrMalformPacket
+			}
 			pos += n
 			decodeWithDecoder = true
 		default:
@@ -128,20 +134,20 @@ func parseBinaryParams(params []param.BinaryParam, boundParams [][]byte, nullBit
 			return
 		}
 
-		if len(paramValues) < (pos + int(length)) {
-			err = mysql.ErrMalformPacket
-			return
+		val, nextPos, err := takeBinaryParamValue(paramValues, pos, length)
+		if err != nil {
+			return err
 		}
 		params[i] = param.BinaryParam{
 			Tp:         tp,
 			IsUnsigned: isUnsigned,
 			IsNull:     isNull,
-			Val:        paramValues[pos : pos+int(length)],
+			Val:        val,
 		}
 		if decodeWithDecoder {
 			params[i].Val = enc.DecodeInput(params[i].Val)
 		}
-		pos += int(length)
+		pos = nextPos
 	}
 	return
 }

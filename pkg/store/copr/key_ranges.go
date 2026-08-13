@@ -146,6 +146,13 @@ func (r *KeyRanges) ToRanges() []kv.KeyRange {
 	return ranges
 }
 
+// Reset replaces the internal representation with the provided ranges.
+func (r *KeyRanges) Reset(newRanges []kv.KeyRange) {
+	r.first = nil
+	r.last = nil
+	r.mid = newRanges
+}
+
 // ToPBRanges converts ranges to wire type.
 func (r *KeyRanges) ToPBRanges() []*coprocessor.KeyRange {
 	ranges := make([]*coprocessor.KeyRange, 0, r.Len())

@@ -78,5 +78,19 @@
     "cases": [
       "explain format= brief with cte(x, y) as (select d + 1, b from t where c > 1) select * from cte where x < 3"
     ]
+  },
+  {
+    "name": "TestStatsAnalyzedInDDL",
+    "cases": [
+      "alter table t add index idx_c(c)",
+      "select * from t use index(idx_c) where c > 1",
+      "alter table t add index idx_bc(b,c)",
+      "select * from t use index(idx_bc) where b=1 and c <2",
+      "alter table t modify column b varchar(20)",
+      "select * from t use index(idx_bc) where b=1 and c <2",
+      "alter table t modify column c varchar(20)",
+      "select * from t use index(idx_c) where c > 1",
+      "select * from t use index(idx_bc) where b=1 and c <2"
+    ]
   }
 ]

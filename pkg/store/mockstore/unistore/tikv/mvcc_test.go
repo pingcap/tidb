@@ -122,7 +122,7 @@ func NewTestStore(dbPrefix string, logPrefix string, t *testing.T) *TestStore {
 	require.NoError(t, err)
 	pdClient := NewMockPD(rm)
 	store := NewMVCCStore(&config.DefaultConf, dbBundle, dbPath, safePoint, writer, pdClient)
-	svr := NewServer(nil, store, nil)
+	svr := NewServer(nil, nil, store, nil)
 
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -414,7 +414,7 @@ func MustPrewritePessimisticPutErr(pk []byte, key []byte, value []byte, startTs 
 func MustCommitKeyPut(key, val []byte, startTs, commitTs uint64, store *TestStore) {
 	err := store.MvccStore.Commit(store.newReqCtx(), [][]byte{key}, startTs, commitTs)
 	require.NoError(store.t, err)
-	getVal, err := store.newReqCtx().getDBReader().Get(key, commitTs)
+	getVal, _, err := store.newReqCtx().getDBReader().Get(key, commitTs)
 	require.NoError(store.t, err)
 	require.Equal(store.t, 0, bytes.Compare(getVal, val))
 }
@@ -524,7 +524,7 @@ func TestBasicOptimistic(t *testing.T) {
 	MustPrewriteOptimistic(key1, key1, val1, 1, ttl, 0, store)
 	MustCommitKeyPut(key1, val1, 1, 2, store)
 	// Read using smaller ts results in nothing
-	getVal, _ := store.newReqCtx().getDBReader().Get(key1, 1)
+	getVal, _, _ := store.newReqCtx().getDBReader().Get(key1, 1)
 	require.Nil(t, getVal)
 }
 
@@ -940,16 +940,16 @@ func TestPrimaryKeyOpLock(t *testing.T) {
 	_, commitTS, _, _ = CheckTxnStatus(pk(), 100, 130, 130, false, store)
 	require.Equal(t, uint64(101), commitTS)
 
-	getVal, err := store.newReqCtx().getDBReader().Get(pk(), 90)
+	getVal, _, err := store.newReqCtx().getDBReader().Get(pk(), 90)
 	require.NoError(t, err)
 	require.Nil(t, getVal)
-	getVal, err = store.newReqCtx().getDBReader().Get(pk(), 110)
+	getVal, _, err = store.newReqCtx().getDBReader().Get(pk(), 110)
 	require.NoError(t, err)
 	require.Nil(t, getVal)
-	getVal, err = store.newReqCtx().getDBReader().Get(pk(), 111)
+	getVal, _, err = store.newReqCtx().getDBReader().Get(pk(), 111)
 	require.NoError(t, err)
 	require.Equal(t, val2, getVal)
-	getVal, err = store.newReqCtx().getDBReader().Get(pk(), 130)
+	getVal, _, err = store.newReqCtx().getDBReader().Get(pk(), 130)
 	require.NoError(t, err)
 	require.Equal(t, val2, getVal)
 }

@@ -141,6 +141,8 @@ insert into tl values (1, repeat('x', 512*1024));
 insert into tl values (1, repeat('x', 512*1024));
 Error 1114 (HY000): The table 'tl' is full
 rollback;
+set @@global.tidb_tmp_table_max_size = default;
+set @@session.tidb_tmp_table_max_size = default;
 drop table if exists g_tmp;
 create global temporary table g_tmp (a int primary key, b int, c int, index i_b(b)) on commit delete rows;
 begin;

@@ -35,7 +35,7 @@ SELECT t0.c0 FROM t0 WHERE t0.c1 OR t0.c0;
 drop table if exists t1;
 create table t1(a int primary key, b int, c int, key(b), key(c));
 INSERT INTO t1 VALUES (10, 10, 10), (11, 11, 11);
-explain format='brief' select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);
+explain format='plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);
 select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);
 
 # TestIssue16910
@@ -50,7 +50,7 @@ select /*+ USE_INDEX_MERGE(t1, a, b) */ * from t1 partition (p0) join t2 partiti
 drop table if exists t;
 set @@tidb_enable_index_merge = 1;
 create table t (a int, b int, c int, primary key(a), key(b));
-explain format='brief' select /*+ inl_join(t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.c = t2.c where t2.a = 1 or t2.b = 1;
+explain format='plan_tree' select /*+ inl_join(t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.c = t2.c where t2.a = 1 or t2.b = 1;
 set @@tidb_enable_index_merge = default;
 
 # TestIndexMergeInTransaction
@@ -256,7 +256,7 @@ SELECT /*+ use_index_merge(tab2) */ pk FROM tab2 WHERE (col4 > 565.89 OR col0 > 
 drop table if exists t;
 create table t(a int, b int, c int, index idx(a, c), index idx2(b, c));
 insert into t values(1, 1, 1), (2, 2, 2);
-explain format='brief' select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a = 1 or b = 1 limit 1;
+explain format='plan_tree' select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a = 1 or b = 1 limit 1;
 select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a = 1 or b = 1 limit 1;
 
 # TestIndexMergeKeepOrderDirtyRead
@@ -278,9 +278,9 @@ rollback;
 drop table if exists t1;
 create table t1(pk varchar(100) primary key, c1 int, c2 int, index idx1(c1), index idx2(c2));
 insert into t1 values('TXwuGSfZfrgVbTksgvQBilqiUXlNEXzyXNqWRTCidzXFbrkpGFJalRMdVGQOAOojditwludthMcitNqNtvirGAudSNBtdIkpJIHQ', 1, 1), ('LSiKhgTNnuyjdBtuKKuRgzrcxbHrIlfxSkEuooaPYwfOBVQfNYAyatHiWvmUWRUvBLvXmpqAJUWRXXHFCLCjuJqFbVxQdUxqRuqW', 1, 1), ('qCOSFbvtmansHENQaAQbnyYOwCTPctlejpbpueHbtzskmPOazrMWdcMLaYjyfxYQUgDDjCnAnnExepNqwYIzHVjNVndlOzFaAOcf', 1, 1), ('qBqdtPyXIqLKynGNHnRlrufuUCZPqhxUYEqIrYERnQdqXRjVWcoYclxYXoqdpQboKydzhOHOWBwtmcXzGwCWQVdbpozvIaXxiBQj', 1, 1), ('TXZlGHnXOiSWGyRafAqworFmxuadHRTHcYyzLqZMzIMGUUBQmgiIJKQOqbHhoPEKbYBgfPDZJwwqgnCbMxZKaZfvGyVRRUOgRhoq', 1, 1), ('SwFEtKDfPDQpsyxTdTruPyNDLvEOLRdQtSttxJmgBuZiVKsflHCDZaGvkLHMqhHqLayfbZFrxUHzWHgfoPFCWCdCHScabWRNCHCL', 1, 1), ('BuZhnsTMGNtMJtrjjdMMrguutSpiLnZNCdgiNkWDPymzIymcujjBtsnKCAVRSErvbzPaOwLTTPWkGmbXltqOJXmkXnSWWlWaaBqe', 1, 1), ('LuJCpJrLUwDJutwBDtGEsGduteBWPHeGLVhmVJYVrmjunKNuplEeWDCMIAxHPoiRmdPnXneQEQWRvJkPBoXOPaGZhhFLFgGraLmH', 1, 1), ('JKJwMlPmymduJWOmKLFBmZyCFrcUvKcGQkzJmzGjuFoZweyCBptswEPHTkaIhWEEBMWzNBawtfYKKAugBNlxcwmpJSfuIAUSIxeG', 1, 1), ('IqQbehKwleoSUnwxrVLKSbzRqlEFfkwQtRtIfaVpEGfESyGjDJeAOWQPRYVQYvlPNPROQEraCqwQTzanPSrsnUvEXHSxcYjUJvzk', 1, 1), ('zNHmiBGCLUUEDgMAeIGuTgNJFPBtePpxcQrQlgnRlvosJfeYbhRfJdfMwXIRlXxVoOowhEvPhMQPlplzkUfjjmzdJKwGATvfDAiT', 1, 1), ('OjQvpfdsHSdZUAmGfmtQaYKYONAFHGNLeLKRYECqshxygiOzfKkqRwSYGgClqqnpHqPMZpqsjIYSalziqSfMbbtmmzxkOVgglVOh', 1, 1), ('dXXZaWDwdfhjIysLTNMSfwvoEBJhWOVpJnfXFofWSWMfMbUlRgAkobxoCxXPXNUWzAQczbQclQpvIvvATHHcQgdXUvwSTHqLXZny', 1, 1), ('haPqYVwFNUkedfIKPOPyUxIvbSkaUbsEWNvnDtXZsQQqafIhDXlajYpuXOSYiOwGJYAMVLUvXfwOIuyHKElzJHpOUdCiQiXRHubI', 1, 1), ('nQzOwSsVBjCpehVVmLeyYwyVEwYGAfkhCtkkaKyiXzYCRPRVZpNVnOXGbuWrQEgTuPEPFPApUaYLdCtyBEQulFEwyHlORrMfIJxr', 1, 1), ('ksGDopwNPvpjeCtAMaTrznDSgCLpRDQoCdsahWSjwumVEJITbNBPAAtkoxHuwmNQsryoILqCPBPiUSxAWjnFEdtxDIgEtqDiFvpO', 1, 1), ('AdWEZYzxCMhfcZseNVmNQpyqJrVKcKaZpKKcwZXfDPeIBMzkLzpJpOenidMBtBPBIbaiqfpSxBnGtRHAksBOgpigQTVomZzJhCFb', 1, 1), ('bVMNkLOAuRHqnCtGvVPLvmVSKihYFotmHTjObiAIARHawZTruAabGpFxeYxYTTFRxteFYyBfkBfiSEIFvOPquDnlVRNUUubssEMz', 1, 1), ('kXmcjqMYzGxvHBRRCovSTWavDnVajKLlxguJgniJeNkWQUxjHjYjBsveLfojybWkbqHBVzrOoqgXFrDnnRJPcybmnuAEUTPUoIjO', 1, 1), ('rVXzZDKudOpWCBuRCoQCpukHxenZnsaptDeJCCFzxMVvNucFwLKIiSceLsqUHHQuEfAIygjQCCkIbfInGthSnoLdNGWbsLDsxnrY', 1, 1);
-explain format='brief' select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024;
+explain format='plan_tree' select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024;
 set global tidb_mem_oom_action='CANCEL';
-set @@tidb_mem_quota_query = 4000;
+set @@tidb_mem_quota_query = 3000;
 -- replace_regex /conn=[-0-9]+/conn=<num>/
 -- error 8175
 select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024;

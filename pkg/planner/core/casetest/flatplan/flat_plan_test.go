@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -37,7 +39,7 @@ type FlatPhysicalOperatorForTest struct {
 	Label          core.OperatorLabel
 	IsRoot         bool
 	StoreType      kv.StoreType
-	ReqType        core.ReadReqType
+	ReqType        physicalop.ReadReqType
 	IsPhysicalPlan bool
 	TextTreeIndent string
 	IsLastChild    bool
@@ -65,42 +67,42 @@ func simplifyFlatPlan(p []*core.FlatOperator) []*FlatPhysicalOperatorForTest {
 }
 
 func TestFlatPhysicalPlan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
 
-	var input []string
-	var output []struct {
-		SQL  string
-		Main []*FlatPhysicalOperatorForTest
-		CTEs [][]*FlatPhysicalOperatorForTest
-	}
-	planSuiteData := GetFlatPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	p := parser.New()
-	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
-
-	for i, test := range input {
-		comment := fmt.Sprintf("case:%v sql:%s", i, test)
-		stmt, err := p.ParseOneStmt(test, "", "")
-		require.NoError(t, err, comment)
-		nodeW := resolve.NewNodeW(stmt)
-		p, _, err := planner.Optimize(context.Background(), tk.Session(), nodeW, is)
-		require.NoError(t, err, comment)
-
-		explained := core.FlattenPhysicalPlan(p, false)
-		main := simplifyFlatPlan(explained.Main)
-		var ctes [][]*FlatPhysicalOperatorForTest
-		for _, cte := range explained.CTEs {
-			ctes = append(ctes, simplifyFlatPlan(cte))
+		var input []string
+		var output []struct {
+			SQL  string
+			Main []*FlatPhysicalOperatorForTest
+			CTEs [][]*FlatPhysicalOperatorForTest
 		}
+		planSuiteData := GetFlatPlanSuiteData()
+		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		p := parser.New()
+		is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
 
-		testdata.OnRecord(func() {
-			output[i].SQL = test
-			output[i].Main = main
-			output[i].CTEs = ctes
-		})
-		require.Equal(t, output[i].Main, main)
-		require.Equal(t, output[i].CTEs, ctes)
-	}
+		for i, test := range input {
+			comment := fmt.Sprintf("case:%v sql:%s", i, test)
+			stmt, err := p.ParseOneStmt(test, "", "")
+			require.NoError(t, err, comment)
+			nodeW := resolve.NewNodeW(stmt)
+			p, _, err := planner.Optimize(context.Background(), testKit.Session(), nodeW, is)
+			require.NoError(t, err, comment)
+
+			explained := core.FlattenPhysicalPlan(p, false)
+			main := simplifyFlatPlan(explained.Main)
+			var ctes [][]*FlatPhysicalOperatorForTest
+			for _, cte := range explained.CTEs {
+				ctes = append(ctes, simplifyFlatPlan(cte))
+			}
+
+			testdata.OnRecord(func() {
+				output[i].SQL = test
+				output[i].Main = main
+				output[i].CTEs = ctes
+			})
+			require.Equal(t, output[i].Main, main)
+			require.Equal(t, output[i].CTEs, ctes)
+		}
+	})
 }

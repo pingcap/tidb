@@ -71,7 +71,7 @@ PARTITION BY RANGE ( id ) (
 	require.NoError(t, err)
 
 	// Check that add record writes to the partition, rather than the table.
-	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid.IntValue()))
+	val, err := kv.GetValue(context.TODO(), txn, tables.PartitionRecordKey(p0.ID, rid.IntValue()))
 	require.NoError(t, err)
 	require.Greater(t, len(val), 0)
 	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
@@ -168,7 +168,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 	require.NoError(t, err)
 
 	// Check that add record writes to the partition, rather than the table.
-	val, err := txn.Get(context.TODO(), tables.PartitionRecordKey(p0.ID, rid.IntValue()))
+	val, err := kv.GetValue(context.TODO(), txn, tables.PartitionRecordKey(p0.ID, rid.IntValue()))
 	require.NoError(t, err)
 	require.Greater(t, len(val), 0)
 	_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
@@ -203,7 +203,7 @@ func TestHashPartitionAddRecord(t *testing.T) {
 		require.NoError(t, err)
 		rid, err = tb.AddRecord(tk.Session().GetTableCtx(), txn, types.MakeDatums(-i))
 		require.NoError(t, err)
-		val, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid.IntValue()))
+		val, err = kv.GetValue(context.TODO(), txn, tables.PartitionRecordKey(tbInfo.Partition.Definitions[i].ID, rid.IntValue()))
 		require.NoError(t, err)
 		require.Greater(t, len(val), 0)
 		_, err = txn.Get(context.TODO(), tables.PartitionRecordKey(tbInfo.ID, rid.IntValue()))
@@ -380,7 +380,6 @@ func TestExchangePartitionStates(t *testing.T) {
 	dbName := "partSchemaVer"
 	tk.MustExec("create database " + dbName)
 	tk.MustExec("use " + dbName)
-	tk.MustExec(`set @@global.tidb_enable_metadata_lock = ON`)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use " + dbName)
 	tk3 := testkit.NewTestKit(t, store)
@@ -674,7 +673,6 @@ func TestAddKeyPartitionStates(t *testing.T) {
 	dbName := "partSchemaVer"
 	tk.MustExec("create database " + dbName)
 	tk.MustExec("use " + dbName)
-	tk.MustExec(`set @@global.tidb_enable_metadata_lock = ON`)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use " + dbName)
 	tk3 := testkit.NewTestKit(t, store)

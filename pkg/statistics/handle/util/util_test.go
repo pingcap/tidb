@@ -15,15 +15,28 @@
 package util_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+type partitionItemLookupForbiddenInfoSchema struct {
+	infoschema.InfoSchema
+	t *testing.T
+}
+
+func (is partitionItemLookupForbiddenInfoSchema) TableItemByPartitionID(partitionID int64) (infoschema.TableItem, bool) {
+	is.t.Fatalf("TableItemByPartitionID should not be called for partition ID %d", partitionID)
+	return infoschema.TableItem{}, false
+}
 
 func TestIsSpecialGlobalIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -69,6 +82,78 @@ func TestCallSCtxFailed(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Equal(t, "simulated error", err.Error())
-	notReleased := infosync.ContainsInternalSessionForTest(sctxWithFailure)
+	notReleased := infosync.ContainsInternalSession(sctxWithFailure)
 	require.False(t, notReleased)
+}
+
+func TestCallWithSCtxSyncsStmtCtxTimeZone(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := dom.StatsHandle().SPool()
+	originTZ := fmt.Sprint(tk.MustQuery("select @@global.time_zone").Rows()[0][0])
+	defer tk.MustExec("set @@global.time_zone='" + originTZ + "'")
+
+	tk.MustExec("set @@global.time_zone='UTC'")
+	var oldStmtTZ string
+	err := util.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
+		// Execute a statement to make StmtCtx pick up the current session time zone (UTC).
+		if _, _, err := util.ExecRows(sctx, "select 1"); err != nil {
+			return err
+		}
+		oldStmtTZ = sctx.GetSessionVars().StmtCtx.TimeZone().String()
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, oldStmtTZ)
+
+	tk.MustExec("set @@global.time_zone='Asia/Shanghai'")
+	var varsTZ string
+	var stmtTZ string
+	err = util.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
+		// No SQL execution here; some stats paths read StmtCtx directly without SQL.
+		// Example: AsyncMergePartitionStats2GlobalStats.MergePartitionStats2GlobalStats
+		// reads sctx.GetSessionVars().StmtCtx.TimeZone() (global_stats_async.go:315)
+		// before any SQL is executed.
+		varsTZ = sctx.GetSessionVars().Location().String()
+		stmtTZ = sctx.GetSessionVars().StmtCtx.TimeZone().String()
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, varsTZ)
+	require.NotEmpty(t, stmtTZ)
+	require.NotEqual(t, oldStmtTZ, varsTZ)
+	require.Equal(t, varsTZ, stmtTZ)
+}
+
+func TestTableItemByIDForInitStatsAvoidsV1PartitionScan(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("create table normal (a int)")
+	tk.MustExec("create table partitioned (a int) partition by hash(a) partitions 2")
+
+	normalInfo := dom.MustGetTableInfo(t, "test", "normal")
+	partitionedInfo := dom.MustGetTableInfo(t, "test", "partitioned")
+	partitionInfo := partitionedInfo.GetPartitionInfo()
+	require.NotNil(t, partitionInfo)
+	require.NotEmpty(t, partitionInfo.Definitions)
+	partitionID := partitionInfo.Definitions[0].ID
+
+	is := partitionItemLookupForbiddenInfoSchema{
+		InfoSchema: infoschema.MockInfoSchemaWithSchemaVer([]*model.TableInfo{normalInfo, partitionedInfo}, 1),
+		t:          t,
+	}
+	getter := util.NewTableInfoGetter()
+
+	item, ok := getter.TableItemByIDForInitStats(is, normalInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, "normal", item.TableName.L)
+
+	item, ok = getter.TableItemByIDForInitStats(is, partitionID)
+	require.True(t, ok)
+	require.Equal(t, "partitioned", item.TableName.L)
+
+	_, ok = getter.TableItemByIDForInitStats(is, 1<<60)
+	require.False(t, ok)
 }

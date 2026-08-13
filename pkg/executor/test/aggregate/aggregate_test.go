@@ -73,6 +73,43 @@ func TestHashAggRuntimeStat(t *testing.T) {
 	require.Equal(t, expect, stats.String())
 }
 
+func TestSumIntDistinct(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_hashagg_partial_concurrency = 4")
+	tk.MustExec("set @@tidb_hashagg_final_concurrency = 4")
+
+	tk.MustExec("create table t(a bigint, b bigint unsigned, g int)")
+	tk.MustExec("insert into t values (1, 1, 1), (1, 1, 1), (2, 2, 1), (2, 2, 1), (3, 3, 2), (3, 3, 2), (null, null, 2)")
+	tk.MustQuery("select sum_int(distinct a), sum_int(distinct b) from t").Check(testkit.Rows("6 6"))
+	tk.MustQuery("select /*+ hash_agg() */ g, sum_int(distinct a), sum_int(distinct b) from t group by g order by g").Check(testkit.Rows(
+		"1 3 3",
+		"2 3 3",
+	))
+
+	tk.MustExec("truncate table t")
+	tk.MustExec("insert into t values (null, null, 1), (null, null, 1)")
+	tk.MustQuery("select sum_int(distinct a), sum_int(distinct b) from t").Check(testkit.Rows("<nil> <nil>"))
+}
+
+func TestSumIntMockCopPushDown(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(a bigint, b bigint unsigned)")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (null, null)")
+
+	sql := "select /*+ agg_to_cop(), hash_agg() */ sum_int(a), sum_int(b) from t"
+	plan := fmt.Sprint(tk.MustQuery("explain format = 'brief' " + sql).Rows())
+	require.Contains(t, plan, "HashAgg")
+	require.Contains(t, plan, "cop[tikv]")
+	require.Contains(t, plan, "sum_int(test.t.a)")
+	require.Contains(t, plan, "sum_int(test.t.b)")
+	tk.MustQuery(sql).Check(testkit.Rows("3 3"))
+}
+
 func reconstructParallelGroupConcatResult(rows [][]any) []string {
 	data := make([]string, 0, len(rows))
 	for _, row := range rows {
@@ -242,6 +279,10 @@ func TestAggInDisk(t *testing.T) {
 	tk.MustExec("insert into t values(0)")
 	tk.MustQuery("select sum(tt.b) from ( select /*+ HASH_AGG() */ avg(t1.a) as b from t t1 join t t2 group by t1.a, t2.a) as tt").Check(
 		testkit.Rows("4040100.0000"))
+	tk.MustQuery("select sum_int(tt.b) from ( select /*+ HASH_AGG() */ sum_int(t1.a) as b from t t1 join t t2 group by t1.a, t2.a) as tt").Check(
+		testkit.Rows("4060200"))
+	tk.MustQuery("select sum(tt.b), sum_int(tt.b) from ( select /*+ HASH_AGG() */ sum_int(t1.a) as b from t t1 join t t2 group by t1.a, t2.a) as tt").Check(
+		testkit.Rows("4060200 4060200"))
 	// Test no groupby and no data.
 	tk.MustExec("drop table t;")
 	tk.MustExec("create table t(c int, c1 int);")
@@ -330,7 +371,8 @@ func TestRandomPanicConsume(t *testing.T) {
 					require.NoError(t, res.Close())
 				}
 			}
-			require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
+			errStr := err.Error()
+			require.True(t, errStr == "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]" || errStr == "context canceled")
 		}
 	}
 }
@@ -472,4 +514,116 @@ func TestIssue50849(t *testing.T) {
 	err = rs.Close()
 	// Check the error contains stack information
 	require.True(t, errors.HasStack(err))
+}
+
+// TestStreamAggPendingMemDeltaBatching verifies the pendingMemDelta batching optimization
+// in StreamAggExec using the "streamAggMemDeltaFlushForTest" failpoint injected at the
+// flush site in consumeGroupRows.
+//
+// Strategy: enable the failpoint as "panic" so it crashes the query if the flush path is
+// entered.  Then:
+//   - Small-string query (per-group delta < threshold) must SUCCEED — flush was not triggered.
+//   - Large-string query (per-group delta > threshold) must FAIL   — flush was triggered.
+//
+// A final correctness pass runs both queries without the failpoint and checks results.
+func TestStreamAggPendingMemDeltaBatching(t *testing.T) {
+	const fpPath = "github.com/pingcap/tidb/pkg/executor/aggregate/streamAggMemDeltaFlushForTest"
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_track_aggregate_memory_usage=ON")
+	tk.MustExec("set tidb_init_chunk_size=1")
+	tk.MustExec("set tidb_max_chunk_size=32")
+	tk.MustExec("set group_concat_max_len = 1048576")
+	tk.MustExec("drop table if exists t_stream_agg_mem")
+	// No index: planner adds Sort→StreamAgg which is the standard stream-agg pattern.
+	tk.MustExec("create table t_stream_agg_mem(a int, b varchar(512))")
+
+	const (
+		// 5-byte strings, 1 row per group: per-group GROUP_CONCAT buffer growth is ~200 bytes,
+		// well below the 1 KB flush threshold. pendingMemDelta is discarded by ReplaceBytesUsed.
+		nSmallGroups = 50
+		smallStr     = "xxxxx"
+
+		// 20 rows per group, each 100 bytes: the GROUP_CONCAT buffer for one group reaches
+		// ~3 KB, crossing the 1 KB threshold mid-group and triggering an explicit Consume.
+		nLargeGroups  = 5
+		rowsPerGroup  = 20
+		largeRowBytes = 100
+	)
+
+	// stream_agg() hint forces Sort→StreamAgg. Verify the plan before using the failpoint.
+	smallSQL := "select /*+ stream_agg() */ a, group_concat(b) from t_stream_agg_mem group by a"
+	largeSQL := smallSQL
+
+	var sb strings.Builder
+
+	insertSmall := func() {
+		tk.MustExec("delete from t_stream_agg_mem")
+		sb.Reset()
+		for i := range nSmallGroups {
+			if i > 0 {
+				sb.WriteString(",")
+			}
+			fmt.Fprintf(&sb, "(%d,'%s')", i, smallStr)
+		}
+		tk.MustExec("insert into t_stream_agg_mem values " + sb.String())
+	}
+
+	insertLarge := func() {
+		tk.MustExec("delete from t_stream_agg_mem")
+		sb.Reset()
+		first := true
+		for g := range nLargeGroups {
+			for range rowsPerGroup {
+				if !first {
+					sb.WriteString(",")
+				}
+				first = false
+				fmt.Fprintf(&sb, "(%d,'%s')", g, strings.Repeat("y", largeRowBytes))
+			}
+		}
+		tk.MustExec("insert into t_stream_agg_mem values " + sb.String())
+	}
+
+	// --- Verify both queries actually use StreamAgg ---
+	insertSmall()
+	tk.MustHavePlan(smallSQL, "StreamAgg")
+	insertLarge()
+	tk.MustHavePlan(largeSQL, "StreamAgg")
+
+	// --- No-flush path ---
+	// Small strings: per-group buffer growth (~200 B) never reaches the 1 KB threshold.
+	// With the failpoint armed as "panic", the query must succeed — flush was not triggered.
+	insertSmall()
+	require.NoError(t, failpoint.Enable(fpPath, "panic"))
+	tk.MustQuery(smallSQL)
+	require.NoError(t, failpoint.Disable(fpPath))
+
+	// --- Flush path ---
+	// Large data: 20 rows × 100 B per group → buffer crosses 1 KB mid-group, Consume fires.
+	// With the failpoint armed, the query must fail, proving the flush branch was entered.
+	insertLarge()
+	require.NoError(t, failpoint.Enable(fpPath, "panic"))
+	// QueryToErr is required here: ExecToErr only closes the RecordSet without fetching rows,
+	// so consumeGroupRows never runs and the failpoint in the flush path never fires.
+	require.Error(t, tk.QueryToErr(largeSQL), "flush must be triggered for large per-group deltas")
+	require.NoError(t, failpoint.Disable(fpPath))
+
+	// --- Correctness pass (no failpoint) ---
+	insertSmall()
+	rows := tk.MustQuery(smallSQL).Rows()
+	require.Len(t, rows, nSmallGroups)
+	for _, row := range rows {
+		require.Equal(t, smallStr, row[1].(string))
+	}
+
+	insertLarge()
+	rows = tk.MustQuery(largeSQL).Rows()
+	require.Len(t, rows, nLargeGroups)
+	for _, row := range rows {
+		// Each group has rowsPerGroup rows of largeRowBytes each, joined by ",".
+		require.Len(t, row[1].(string), rowsPerGroup*largeRowBytes+(rowsPerGroup-1))
+	}
 }

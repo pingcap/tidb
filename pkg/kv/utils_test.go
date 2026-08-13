@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -90,13 +92,13 @@ func (s *mockMap) IterReverse(Key, Key) (Iterator, error) {
 	return nil, nil
 }
 
-func (s *mockMap) Get(_ context.Context, k Key) ([]byte, error) {
+func (s *mockMap) Get(_ context.Context, k Key, _ ...GetOption) (ValueEntry, error) {
 	for i, key := range s.index {
 		if key.Cmp(k) == 0 {
-			return s.value[i], nil
+			return NewValueEntry(s.value[i], 0), nil
 		}
 	}
-	return nil, ErrNotExist
+	return ValueEntry{}, ErrNotExist
 }
 
 func (s *mockMap) Set(k Key, v []byte) error {
@@ -120,4 +122,39 @@ func (s *mockMap) Delete(k Key) error {
 		}
 	}
 	return nil
+}
+
+type keyspaceGetterStore struct {
+	Storage
+	ks string
+}
+
+func (s *keyspaceGetterStore) GetKeyspace() string {
+	return s.ks
+}
+
+func TestIsUserKS(t *testing.T) {
+	if kerneltype.IsClassic() {
+		store := &keyspaceGetterStore{}
+		assert.False(t, IsUserKS(store))
+	} else {
+		store := &keyspaceGetterStore{ks: "user"}
+		assert.True(t, IsUserKS(store))
+
+		store.ks = keyspace.System
+		assert.False(t, IsUserKS(store))
+	}
+}
+
+func TestIsSystemKS(t *testing.T) {
+	if kerneltype.IsClassic() {
+		store := &keyspaceGetterStore{}
+		assert.False(t, IsSystemKS(store))
+	} else {
+		store := &keyspaceGetterStore{ks: "user"}
+		assert.False(t, IsSystemKS(store))
+
+		store.ks = keyspace.System
+		assert.True(t, IsSystemKS(store))
+	}
 }

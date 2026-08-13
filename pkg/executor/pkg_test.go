@@ -25,12 +25,17 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// CancelAndWaitImportJobForTest exposes cancelAndWaitImportJob to external package tests.
+func CancelAndWaitImportJobForTest(ctx context.Context, jobID int64) error {
+	return cancelAndWaitImportJob(ctx, jobID)
+}
 
 func TestNestedLoopApply(t *testing.T) {
 	ctx := context.Background()
@@ -64,7 +69,7 @@ func TestNestedLoopApply(t *testing.T) {
 	innerFilter := outerFilter.Clone()
 	require.True(t, innerFilter.Equal(sctx, outerFilter))
 	otherFilter := expression.NewFunctionInternal(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col1)
-	joiner := join.NewJoiner(sctx, logicalop.InnerJoin, false,
+	joiner := join.NewJoiner(sctx, base.InnerJoin, false,
 		make([]types.Datum, innerExec.Schema().Len()), []expression.Expression{otherFilter},
 		exec.RetTypes(outerExec), exec.RetTypes(innerExec), nil, false)
 	joinSchema := expression.NewSchema(col0, col1)

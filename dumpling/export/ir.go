@@ -10,6 +10,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/version"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
 )
 
 // TableDataIR is table data intermediate representation.
@@ -35,7 +36,11 @@ type TableMeta interface {
 	ShowCreateView() string
 	AvgRowLength() uint64
 	HasImplicitRowID() bool
+	ColumnInfos() []*ColumnInfo
 }
+
+// ColumnInfo is an alias of parquet column metadata used by dumpling.
+type ColumnInfo = parquetfile.ColumnInfo
 
 // SQLRowIter is the iterator on a collection of sql.Row.
 type SQLRowIter interface {
@@ -53,10 +58,10 @@ type RowReceiverStringer interface {
 	Stringer
 }
 
-// Stringer is an interface which represents sql types that support writing to buffer in sql/csv type
+// Stringer is an interface which represents sql types that support writing to buffer.
 type Stringer interface {
 	WriteToBuffer(*bytes.Buffer, bool)
-	WriteToBufferInCsv(*bytes.Buffer, bool, *csvOption)
+	GetRawBytes() []sql.RawBytes
 }
 
 // RowReceiver is an interface which represents sql types that support bind address for *sql.Rows
@@ -99,9 +104,9 @@ func setTableMetaFromRows(serverType version.ServerType, rows *sql.Rows) (TableM
 		nms[i] = wrapBackTicks(nms[i])
 	}
 	return &tableMeta{
-		colTypes:      tps,
-		selectedField: strings.Join(nms, ","),
-		selectedLen:   len(nms),
-		specCmts:      getSpecialComments(serverType),
+		colTypes:       tps,
+		sourceColTypes: tps,
+		selectedField:  strings.Join(nms, ","),
+		specCmts:       getSpecialComments(serverType),
 	}, nil
 }

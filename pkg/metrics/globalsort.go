@@ -32,6 +32,10 @@ var (
 	GlobalSortIngestWorkerCnt *prometheus.GaugeVec
 	// GlobalSortUploadWorkerCount is the gauge of active parallel upload worker count.
 	GlobalSortUploadWorkerCount prometheus.Gauge
+	// MergeSortWriteBytes records the bytes written in merge sort.
+	MergeSortWriteBytes prometheus.Counter
+	// MergeSortReadBytes records the bytes read in merge sort.
+	MergeSortReadBytes prometheus.Counter
 )
 
 // InitGlobalSortMetrics initializes defines global sort metrics.
@@ -81,6 +85,24 @@ func InitGlobalSortMetrics() {
 			Subsystem: "global_sort",
 			Name:      "upload_worker_cnt",
 			Help:      "Gauge of active parallel upload worker count.",
+		},
+	)
+
+	MergeSortWriteBytes = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "global_sort",
+			Name:      "merge_sort_write_bytes",
+			Help:      "Counter of bytes written in merge sort.",
+		},
+	)
+
+	MergeSortReadBytes = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "global_sort",
+			Name:      "merge_sort_read_bytes",
+			Help:      "Counter of bytes read in merge sort.",
 		},
 	)
 }

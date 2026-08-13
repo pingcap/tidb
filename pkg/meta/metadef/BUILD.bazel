@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "db.go",
         "system.go",
+        "system_tables_def.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/meta/metadef",
     visibility = ["//visibility:public"],
@@ -17,9 +18,12 @@ go_library(
 go_test(
     name = "metadef_test",
     timeout = "short",
-    srcs = ["db_test.go"],
+    srcs = [
+        "db_test.go",
+        "system_test.go",
+    ],
     embed = [":metadef"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = ["@com_github_stretchr_testify//require"],
 )

@@ -25,6 +25,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -34,7 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/sem"
+	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
+	tidbtls "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/stretchr/testify/require"
 )
 
@@ -93,6 +96,11 @@ func TestUserVars(t *testing.T) {
 }
 
 func TestSystemVars(t *testing.T) {
+	testSystemVars(t, sem.V1)
+	testSystemVars(t, sem.V2)
+}
+
+func testSystemVars(t *testing.T, semVer string) {
 	store := testkit.CreateMockStore(t)
 
 	tests := []struct {
@@ -198,10 +206,7 @@ func TestSystemVars(t *testing.T) {
 		},
 	}
 
-	if !sem.IsEnabled() {
-		sem.Enable()
-		defer sem.Disable()
-	}
+	defer sem.SwitchToSEMForTest(t, semVer)()
 	for _, tt := range tests {
 		tk1 := testkit.NewTestKit(t, store)
 		for _, stmt := range tt.stmts {
@@ -241,6 +246,11 @@ func TestSystemVars(t *testing.T) {
 }
 
 func TestInvisibleVars(t *testing.T) {
+	testInvisibleVars(t, sem.V1)
+	testInvisibleVars(t, sem.V2)
+}
+
+func testInvisibleVars(t *testing.T, semVer string) {
 	tests := []struct {
 		hasPriv       bool
 		stmt          string
@@ -297,10 +307,7 @@ func TestInvisibleVars(t *testing.T) {
 
 	sessionstates.SetupSigningCertForTest(t)
 	store := testkit.CreateMockStore(t)
-	if !sem.IsEnabled() {
-		sem.Enable()
-		defer sem.Disable()
-	}
+	defer sem.SwitchToSEMForTest(t, semVer)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER u1, u2")
 	tk.MustExec("GRANT RESTRICTED_VARIABLES_ADMIN ON *.* to u1")
@@ -341,12 +348,33 @@ func TestIssue47665(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().TLSConnectionState = &tls.ConnectionState{} // unrelated mock for the test.
-	originSEM := config.GetGlobalConfig().Security.EnableSEM
-	config.GetGlobalConfig().Security.EnableSEM = true
+	originCfg := *config.GetGlobalConfig()
+	originalDeployMode := deploymode.Get()
+	originRequireSecureTransport := tidbtls.RequireSecureTransport.Load()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&originCfg)
+		if kerneltype.IsNextGen() {
+			require.NoError(t, deploymode.Set(originalDeployMode))
+		}
+		tidbtls.RequireSecureTransport.Store(originRequireSecureTransport)
+	})
+	semCfg := originCfg
+	semCfg.Security.EnableSEM = true
+	config.StoreGlobalConfig(&semCfg)
 	tk.MustGetErrMsg("set @@global.require_secure_transport = on", "require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled")
-	config.GetGlobalConfig().Security.EnableSEM = originSEM
+	config.StoreGlobalConfig(&originCfg)
 	tk.MustExec("set @@global.require_secure_transport = on")
 	tk.MustExec("set @@global.require_secure_transport = off") // recover to default value
+	if kerneltype.IsNextGen() {
+		require.NoError(t, deploymode.Set(deploymode.Starter))
+		tk.MustQuery("select @@global.require_secure_transport").Check(testkit.Rows("1"))
+		tk.MustGetErrMsg("set @@global.require_secure_transport = on", "require_secure_transport can not be set in starter mode")
+		tk.MustGetErrMsg("set @@global.require_secure_transport = off", "require_secure_transport can not be set in starter mode")
+		require.NoError(t, deploymode.Set(originalDeployMode))
+	}
+	config.StoreGlobalConfig(&originCfg)
+	// StoreGlobalConfig does not restore the TLS atomic; it is restored by t.Cleanup.
+	tk.MustQuery("select @@global.require_secure_transport").Check(testkit.Rows("0"))
 }
 
 func TestSessionCtx(t *testing.T) {
@@ -579,10 +607,10 @@ func TestSessionCtx(t *testing.T) {
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
-					`TableReader_12 10000.00 root  MppVersion: 3, data:ExchangeSender_11`,
-					`└─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
-					`  └─TableFullScan_10 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(
+					`TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender`,
+					`└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
+					`  └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -594,9 +622,9 @@ func TestSessionCtx(t *testing.T) {
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
-					`TableReader_6 10000.00 root  data:TableFullScan_5`,
-					`└─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(
+					`TableReader 10000.00 root  data:TableFullScan`,
+					`└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -611,8 +639,8 @@ func TestSessionCtx(t *testing.T) {
 					"  `id` int(11) DEFAULT NULL,\n" +
 					"  KEY `hypo_id` (`id`) /* HYPO INDEX */\n" +
 					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`IndexReader_8 10000.00 root  index:IndexFullScan_7`,
-					`└─IndexFullScan_7 10000.00 cop[tikv] table:t1, index:hypo_id(id) keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(`IndexReader 10000.00 root  index:IndexFullScan`,
+					`└─IndexFullScan 10000.00 cop[tikv] table:t1, index:hypo_id(id) keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -627,8 +655,8 @@ func TestSessionCtx(t *testing.T) {
 				tk.MustQuery(`show create table test.t1`).Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 					"  `id` int(11) DEFAULT NULL\n" +
 					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`TableReader_6 10000.00 root  data:TableFullScan_5`,
-					`└─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(`TableReader 10000.00 root  data:TableFullScan`,
+					`└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -684,6 +712,7 @@ func TestStatementCtx(t *testing.T) {
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
+				require.Equal(t, uint64(0), tk.Session().AffectedRows())
 				tk.MustQuery("select row_count()").Check(testkit.Rows("-1"))
 			},
 		},

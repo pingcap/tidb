@@ -154,26 +154,26 @@ a	b	c
 drop table if exists t;
 create table t(a int, b int, index k(b)) PARTITION BY HASH(a) partitions 4;
 insert into t(a, b) values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8);
-explain format='brief' select b from t use index(k) where b > 2 order by b limit 1 for update;
-id	estRows	task	access object	operator info
-Projection	1.00	root		executor__distsql.t.b
-└─SelectLock	1.00	root		for update 0
-  └─Limit	1.00	root		offset:0, count:1
-    └─IndexReader	1.00	root	partition:all	index:Limit
-      └─Limit	1.00	cop[tikv]		offset:0, count:1
-        └─IndexRangeScan	1.00	cop[tikv]	table:t, index:k(b)	range:(2,+inf], keep order:true, stats:pseudo
+explain format='plan_tree' select b from t use index(k) where b > 2 order by b limit 1 for update;
+id	task	access object	operator info
+Projection	root		executor__distsql.t.b
+└─SelectLock	root		for update 0
+  └─Limit	root		offset:0, count:1
+    └─IndexReader	root	partition:all	index:Limit
+      └─Limit	cop[tikv]		offset:0, count:1
+        └─IndexRangeScan	cop[tikv]	table:t, index:k(b)	range:(2,+inf], keep order:true, stats:pseudo
 select b from t use index(k) where b > 2 order by b limit 1 for update;
 b
 3
 analyze table t;
-explain format='brief' select b from t use index(k) where b > 2 order by b limit 1 for update;
-id	estRows	task	access object	operator info
-Projection	1.00	root		executor__distsql.t.b
-└─SelectLock	1.00	root		for update 0
-  └─Limit	1.00	root		offset:0, count:1
-    └─IndexReader	1.00	root	partition:all	index:Limit
-      └─Limit	1.00	cop[tikv]		offset:0, count:1
-        └─IndexRangeScan	1.00	cop[tikv]	table:t, index:k(b)	range:(2,+inf], keep order:true
+explain format='plan_tree' select b from t use index(k) where b > 2 order by b limit 1 for update;
+id	task	access object	operator info
+Projection	root		executor__distsql.t.b
+└─SelectLock	root		for update 0
+  └─Limit	root		offset:0, count:1
+    └─IndexReader	root	partition:all	index:Limit
+      └─Limit	cop[tikv]		offset:0, count:1
+        └─IndexRangeScan	cop[tikv]	table:t, index:k(b)	range:(2,+inf], keep order:true
 select b from t use index(k) where b > 2 order by b limit 1 for update;
 b
 3

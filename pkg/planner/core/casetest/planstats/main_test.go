@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
-	testDataMap.LoadTestSuiteData("testdata", "plan_stats_suite")
+	testDataMap.LoadTestSuiteData("testdata", "plan_stats_suite", true)
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),

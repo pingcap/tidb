@@ -172,19 +172,21 @@ func (ran *Range) IsFullRange(unsignedIntHandle bool) bool {
 		if len(ran.LowVal) != 1 || len(ran.HighVal) != 1 {
 			return false
 		}
-		lowValRawString := formatDatum(ran.LowVal[0], true)
-		highValRawString := formatDatum(ran.HighVal[0], false)
-		return lowValRawString == "0" && highValRawString == "+inf"
+		return isBoundaryValue(ran.LowVal[0], true, true) &&
+			isBoundaryValue(ran.HighVal[0], true, false)
 	}
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
 	}
 	for i := range ran.LowVal {
-		lowValRawString := formatDatum(ran.LowVal[i], true)
-		highValRawString := formatDatum(ran.HighVal[i], false)
-		if ("-inf" != lowValRawString && "NULL" != lowValRawString) ||
-			("+inf" != highValRawString && "NULL" != highValRawString) ||
-			("NULL" == lowValRawString && "NULL" == highValRawString) {
+		leftIsBoundary := isBoundaryValue(ran.LowVal[i], false, true)
+		leftIsNull := ran.LowVal[i].IsNull()
+		rightIsBoundary := isBoundaryValue(ran.HighVal[i], false, false)
+		rightIsNull := ran.HighVal[i].IsNull()
+		// treat [NULL, +inf), (-inf, NULL] as full range
+		if (!leftIsBoundary && !leftIsNull) ||
+			(!rightIsBoundary && !rightIsNull) ||
+			(leftIsNull && rightIsNull) {
 			return false
 		}
 	}
@@ -265,6 +267,33 @@ func (ran *Range) Encode(ec errctx.Context, loc *time.Location, lowBuffer, highB
 	return lowBuffer, highBuffer, nil
 }
 
+// Equal checks if two ranges are equal.
+func (ran *Range) Equal(other *Range) bool {
+	if ran == other {
+		return true
+	}
+	if ran == nil || other == nil {
+		return false
+	}
+	if ran.LowExclude != other.LowExclude || ran.HighExclude != other.HighExclude {
+		return false
+	}
+	if len(ran.LowVal) != len(other.LowVal) || len(ran.HighVal) != len(other.HighVal) {
+		return false
+	}
+	for i := range ran.LowVal {
+		if !ran.LowVal[i].Equals(other.LowVal[i]) {
+			return false
+		}
+	}
+	for i := range ran.HighVal {
+		if !ran.HighVal[i].Equals(other.HighVal[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // PrefixEqualLen tells you how long the prefix of the range is a point.
 // e.g. If this range is (1 2 3, 1 2 +inf), then the return value is 2.
 func (ran *Range) PrefixEqualLen(tc types.Context) (int, error) {
@@ -296,6 +325,26 @@ func (ran *Range) MemUsage() (sum int64) {
 	}
 	// We ignore size of collator currently.
 	return sum
+}
+
+func isBoundaryValue(d types.Datum, unsignedIntHandle, isLeftSide bool) bool {
+	isRightSide := !isLeftSide
+	switch d.Kind() {
+	case types.KindMinNotNull:
+		return isLeftSide // -inf
+	case types.KindMaxValue:
+		return isRightSide // +inf
+	case types.KindInt64:
+		v := d.GetInt64()
+		return (v == math.MinInt64 && isLeftSide) || // -inf
+			(v == math.MaxInt64 && isRightSide) // +inf
+	case types.KindUint64:
+		v := d.GetUint64()
+		return (v == 0 && unsignedIntHandle && isLeftSide) || // 0
+			(v == math.MaxUint64 && isRightSide) // +inf
+	default: // for other types, no concept of boundary value
+		return false
+	}
 }
 
 func formatDatum(d types.Datum, isLeftSide bool) string {

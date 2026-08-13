@@ -67,6 +67,7 @@ type ExecOption struct {
 	TrackSysProcID     uint64
 	IgnoreWarning      bool
 	UseCurSession      bool
+	EnableDDLAnalyze   bool
 }
 
 // OptionFuncAlias is defined for the optional parameter of ExecRestrictedStmt/SQL.
@@ -77,9 +78,9 @@ var ExecOptionIgnoreWarning = func(option *ExecOption) {
 	option.IgnoreWarning = true
 }
 
-// ExecOptionAnalyzeVer1 tells ExecRestrictedStmt/SQL to collect statistics with version1.
-var ExecOptionAnalyzeVer1 = func(option *ExecOption) {
-	option.AnalyzeVer = 1
+// ExecOptionEnableDDLAnalyze tells ExecRestrictedStmt/SQL analyze to include reorg state index.
+var ExecOptionEnableDDLAnalyze = func(option *ExecOption) {
+	option.EnableDDLAnalyze = true
 }
 
 // ExecOptionAnalyzeVer2 tells ExecRestrictedStmt/SQL to collect statistics with version2.

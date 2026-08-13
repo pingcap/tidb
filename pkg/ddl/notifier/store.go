@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 )
 
 // CloseFn is the function to release the resource.
@@ -170,6 +171,8 @@ type listResult struct {
 
 // Read implements ListResult interface.
 func (r *listResult) Read(changes []*SchemaChange) (int, error) {
+	region := tracing.StartRegion(r.ctx, "listResult.Read")
+	defer region.End()
 	if r.maxReturnedDDLJobID == 0 && r.maxReturnedSubJobID == 0 {
 		err := r.se.Begin(r.ctx)
 		if err != nil {

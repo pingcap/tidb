@@ -162,6 +162,8 @@ type MPPDispatchRequest struct {
 	ResourceGroupName      string
 	ConnectionID           uint64
 	ConnectionAlias        string
+	SQLDigest              string
+	PlanDigest             string
 }
 
 // CancelMPPTasksParam represents parameter for MPPClient's CancelMPPTasks
@@ -175,6 +177,7 @@ type EstablishMPPConnsParam struct {
 	Ctx      context.Context
 	Req      *MPPDispatchRequest
 	TaskMeta *mpp.TaskMeta
+	Bo       *tikv.Backoffer
 }
 
 // DispatchMPPTaskParam represents parameter for MPPClient's DispatchMPPTask
@@ -195,7 +198,7 @@ type MPPClient interface {
 	DispatchMPPTask(DispatchMPPTaskParam) (resp *mpp.DispatchTaskResponse, retry bool, err error)
 
 	// EstablishMPPConns build a mpp connection to receive data, return valid response when err is nil.
-	EstablishMPPConns(EstablishMPPConnsParam) (*tikvrpc.MPPStreamResponse, error)
+	EstablishMPPConns(EstablishMPPConnsParam) (resp *tikvrpc.MPPStreamResponse, retry bool, err error)
 
 	// CancelMPPTasks cancels mpp tasks.
 	CancelMPPTasks(CancelMPPTasksParam)
@@ -241,7 +244,7 @@ type MPPBuildTasksRequest struct {
 // ToString returns a string representation of MPPBuildTasksRequest. Used for CacheKey.
 func (req *MPPBuildTasksRequest) ToString() string {
 	sb := strings.Builder{}
-	if req.KeyRanges != nil { // Non-partiton
+	if req.KeyRanges != nil { // Non-partition
 		for i, keyRange := range req.KeyRanges {
 			sb.WriteString("range_id" + strconv.Itoa(i))
 			sb.WriteString(keyRange.StartKey.String())

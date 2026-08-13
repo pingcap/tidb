@@ -123,9 +123,11 @@ func (s *CopiedSST) GetSSTs() []*backuppb.File {
 func (s *CopiedSST) SetSSTs(fs []*backuppb.File) {
 	if len(fs) == 0 {
 		s.File = nil
+		return
 	}
 	if len(fs) == 1 {
 		s.File = fs[0]
+		return
 	}
 	log.Panic("Too many files passed to AddedSSTs.SetSSTs.", zap.Any("input", fs))
 }

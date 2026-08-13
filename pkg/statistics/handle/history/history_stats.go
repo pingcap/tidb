@@ -109,7 +109,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(version uint64, source str
 				return RecordHistoricalStatsMeta(handleutil.StatsCtx, sctx, version, source, tableID)
 			}, handleutil.FlagWrapTxn)
 			if err != nil {
-				statslogutil.StatsLogger().Error("record historical stats meta failed",
+				statslogutil.StatsLogger().Warn("record historical stats meta failed",
 					zap.Uint64("version", version),
 					zap.String("source", source),
 					zap.Int64("tableID", tableID),
@@ -158,7 +158,11 @@ func RecordHistoricalStatsMeta(
 	}
 
 	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
-	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, source, create_time) VALUES (%?, %?, %?, %?, %?, NOW())"
+	// Use NOW(6) to match the datetime(6) precision of the create_time column.
+	// Plain NOW() truncates to seconds, so rows written within the same second
+	// share an indistinguishable create_time. In-tree readers key off `version`,
+	// but full precision keeps create_time usable for ordering and auditing.
+	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, source, create_time) VALUES (%?, %?, %?, %?, %?, NOW(6))"
 	if _, err := handleutil.ExecWithCtx(
 		ctx,
 		sctx,

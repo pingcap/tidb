@@ -568,10 +568,23 @@ func isUnicodeCollation(ch string) bool {
 	return ch == charset.CharsetUTF8 || ch == charset.CharsetUTF8MB4
 }
 
+// isBinCollation checks whether the collation has _bin semantics for coercibility
+// derivation. In MySQL's aggregation rules, when two same-charset collations conflict
+// with equal coercibility, a _bin collation yields to a non-_bin one (e.g. gbk_bin
+// yields to gbk_chinese_ci) instead of degrading to CoercibilityNone.
+//
+// This is DIFFERENT from collate.IsBinCollation which tests "sortkey == raw data"
+// (a storage-level property). The two diverge on:
+//   - gbk_bin: is a _bin collation (listed here) but its Key() does UTF-8→GBK
+//     conversion, so sortkey ≠ data (NOT in collate.IsBinCollation).
+//   - "binary": sortkey == data (in collate.IsBinCollation) but belongs to
+//     charset=bin which takes a different coercibility path (NOT listed here).
+//
+// If you add a new _bin collation here, also check collate.IsBinCollation.
 func isBinCollation(collate string) bool {
 	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
 		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
-		collate == charset.CollationGBKBin
+		collate == charset.CollationGBKBin || collate == charset.CollationUTF8MB40900Bin
 }
 
 // getBinCollation get binary collation by charset
@@ -599,10 +612,10 @@ func illegalMixCollationErr(ctx EvalContext, funcName string, args []Expression)
 
 	switch len(args) {
 	case 2:
-		return collate.ErrIllegalMix2Collation.GenWithStackByArgs(args[0].GetType(ctx).GetCollate(), coerString[args[0].Coercibility()], args[1].GetType(ctx).GetCollate(), coerString[args[1].Coercibility()], funcName)
+		return collate.ErrIllegalMix2Collation.FastGenByArgs(args[0].GetType(ctx).GetCollate(), coerString[args[0].Coercibility()], args[1].GetType(ctx).GetCollate(), coerString[args[1].Coercibility()], funcName)
 	case 3:
-		return collate.ErrIllegalMix3Collation.GenWithStackByArgs(args[0].GetType(ctx).GetCollate(), coerString[args[0].Coercibility()], args[1].GetType(ctx).GetCollate(), coerString[args[1].Coercibility()], args[2].GetType(ctx).GetCollate(), coerString[args[2].Coercibility()], funcName)
+		return collate.ErrIllegalMix3Collation.FastGenByArgs(args[0].GetType(ctx).GetCollate(), coerString[args[0].Coercibility()], args[1].GetType(ctx).GetCollate(), coerString[args[1].Coercibility()], args[2].GetType(ctx).GetCollate(), coerString[args[2].Coercibility()], funcName)
 	default:
-		return collate.ErrIllegalMixCollation.GenWithStackByArgs(funcName)
+		return collate.ErrIllegalMixCollation.FastGenByArgs(funcName)
 	}
 }

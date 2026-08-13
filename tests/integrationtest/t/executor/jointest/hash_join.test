@@ -7,7 +7,7 @@ insert into s values(1), (128);
 set @@tidb_max_chunk_size=32;
 set @@tidb_index_lookup_join_concurrency=1;
 set @@tidb_index_join_batch_size=32;
-desc format = 'brief' select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;
+explain format = 'plan_tree' select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;
 select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;
 
 set @@tidb_max_chunk_size=default;
@@ -23,7 +23,6 @@ insert into t2 values (1, 'xxx', '2003-06-09 10:51:26');
 select ts from t1 inner join t2 where t2.name = 'xxx';
 
 # TestIndexLookupJoin
-set tidb_cost_model_version=2;
 set @@tidb_init_chunk_size=2;
 DROP TABLE IF EXISTS t;
 CREATE TABLE `t` (`a` int, pk integer auto_increment,`b` char (20),primary key (pk));
@@ -124,19 +123,19 @@ insert into t select 0, b + 1 from t;
 insert into s select a, b - 1 from t;
 analyze table t all columns;
 analyze table s all columns;
-desc format = 'brief' select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
+explain format = 'plan_tree' select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 --sorted_result
 select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 set @@tidb_index_lookup_join_concurrency=1;
 --sorted_result
 select /*+ TIDB_INLJ(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
-desc format = 'brief' select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
+explain format = 'plan_tree' select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 --sorted_result
 select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 set @@tidb_index_lookup_join_concurrency=1;
 --sorted_result
 select /*+ INL_MERGE_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
-desc format = 'brief' select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
+explain format = 'plan_tree' select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 --sorted_result
 select /*+ INL_HASH_JOIN(s) */ count(*) from t join s use index(idx) on s.a = t.a and s.b < t.b;
 set @@tidb_index_lookup_join_concurrency=1;
@@ -154,7 +153,6 @@ select /*+ inl_hash_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;
 --sorted_result
 select /*+ inl_merge_join(t1)*/ * from t1 join t2 on t2.b=t1.id and t2.a=t1.id;
 
-set tidb_cost_model_version=default;
 set @@tidb_init_chunk_size=default;
 set @@tidb_index_join_batch_size=default;
 set @@tidb_init_chunk_size=default;

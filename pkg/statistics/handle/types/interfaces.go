@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -66,9 +65,6 @@ type StatsUsage interface {
 	// GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
 	GetPredicateColumns(tableID int64) ([]int64, error)
 
-	// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
-	CollectColumnsInExtendedStats(tableID int64) ([]int64, error)
-
 	IndexUsage
 
 	// TODO: extract these function to a new interface only for delta/stats usage, like `IndexUsage`.
@@ -81,8 +77,9 @@ type StatsUsage interface {
 	// ResetSessionStatsList resets the sessions stats list.
 	ResetSessionStatsList()
 
-	// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
-	DumpStatsDeltaToKV(dumpAll bool) error
+	// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then dumps the selected table deltas to KV.
+	// If tableIDs is empty, it dumps every table that held in the map.
+	DumpStatsDeltaToKV(forceDump bool, tableIDs ...int64) error
 
 	// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 	DumpColStatsUsageToKV() error
@@ -149,8 +146,6 @@ type IndicatorsJSON struct {
 // We need to read all the tables's last_analyze_time, modified_count, and row_count into memory.
 // Because the current auto analyze' scheduling needs the whole information.
 type StatsAnalyze interface {
-	owner.Listener
-
 	// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
 	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
 
@@ -187,11 +182,17 @@ type StatsAnalyze interface {
 	// It also analyzes newly created tables and newly added indexes.
 	HandleAutoAnalyze() (analyzed bool)
 
-	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
-	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
+	// AnalyzeVersionMatchesForTable reports whether the table already matches the requested
+	// session version. For partitioned tables it checks the global stats and every partition;
+	// for non-partitioned tables it checks the table stats alone.
+	AnalyzeVersionMatchesForTable(tblInfo *model.TableInfo, requestedVersion int) bool
 
 	// GetPriorityQueueSnapshot returns the stats priority queue.
 	GetPriorityQueueSnapshot() (PriorityQueueSnapshot, error)
+
+	// ClosePriorityQueue closes the stats priority queue if initialized.
+	// NOTE: This does NOT stop the analyze worker. Only the priority queue is closed.
+	ClosePriorityQueue()
 
 	// Close closes the analyze worker.
 	Close()
@@ -262,6 +263,11 @@ type StatsCache interface {
 
 	// TriggerEvict triggers the cache to evict some items
 	TriggerEvict()
+
+	// WaitForAsyncUpdates blocks until buffered asynchronous cache writes are visible to later Get calls.
+	// Use it after adding new items when following reads depend on them. LFU/Ristretto admits
+	// non-resident items asynchronously; init stats calls this between load phases/chunks.
+	WaitForAsyncUpdates()
 }
 
 // StatsLockTable is the table info of which will be locked.
@@ -346,9 +352,6 @@ type StatsReadWriter interface {
 	// LoadNeededHistograms will load histograms for those needed columns/indices and put them into the cache.
 	LoadNeededHistograms(is infoschema.InfoSchema) (err error)
 
-	// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
-	ReloadExtendedStatistics() error
-
 	// SaveColOrIdxStatsToStorage save the column or index stats to storage.
 	SaveColOrIdxStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
 		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, updateAnalyzeTime bool, source string) (err error)
@@ -427,17 +430,6 @@ type StatsReadWriter interface {
 
 	// LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
 	LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition int) error
-
-	// Methods for extended stast.
-
-	// InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
-	InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error)
-
-	// MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
-	MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error)
-
-	// SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
-	SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error)
 }
 
 // NeededItemTask represents one needed column/indices with expire time.
@@ -507,20 +499,14 @@ type StatsHandle interface {
 	// TableInfoGetter is used to get table meta info.
 	handleutil.TableInfoGetter
 
-	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
+	// GetPhysicalTableStats retrieves the statistics for a physical table from cache or creates a pseudo statistics table.
+	// physicalTableID can be a table ID or partition ID.
+	GetPhysicalTableStats(physicalTableID int64, tblInfo *model.TableInfo) *statistics.Table
 
-	// GetTableStatsForAutoAnalyze retrieves the statistics table from cache, but it will not return pseudo.
-	GetTableStatsForAutoAnalyze(tblInfo *model.TableInfo) *statistics.Table
-
-	// GetPartitionStats retrieves the partition stats from cache.
-	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
-
-	// GetPartitionStatsByID retrieves the partition stats from cache by partition ID.
-	GetPartitionStatsByID(is infoschema.InfoSchema, pid int64) *statistics.Table
-
-	// GetPartitionStatsForAutoAnalyze retrieves the partition stats from cache, but it will not return pseudo.
-	GetPartitionStatsForAutoAnalyze(tblInfo *model.TableInfo, pid int64) *statistics.Table
+	// GetNonPseudoPhysicalTableStats retrieves the statistics for a physical table from cache, but it will not return pseudo.
+	// physicalTableID can be a table ID or partition ID.
+	// Note: this function may return nil if the table is not found in the cache.
+	GetNonPseudoPhysicalTableStats(physicalTableID int64) (*statistics.Table, bool)
 
 	// StatsGC is used to do the GC job.
 	StatsGC

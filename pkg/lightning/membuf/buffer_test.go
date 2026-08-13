@@ -114,6 +114,52 @@ func TestPoolMemLimit(t *testing.T) {
 	// after buf2 is finished, still can allocate memory from pool
 	buf.AllocBytes(2 * 1024 * 1024)
 	buf.Destroy()
+
+	t.Run("try add bytes returns without blocking", func(t *testing.T) {
+		limiter := NewLimiter(1024 + smallObjOverheadBatch)
+		pool := NewPool(
+			WithBlockNum(0),
+			WithBlockSize(1024),
+			WithPoolMemoryLimiter(limiter),
+		)
+		defer pool.Destroy()
+
+		buf := pool.NewBuffer()
+		_, err := buf.TryAddBytes([]byte("a"))
+		require.NoError(t, err)
+
+		buf2 := pool.NewBuffer()
+		_, err = buf2.TryAddBytes([]byte("b"))
+		require.ErrorIs(t, err, ErrCannotAcquireMemory)
+
+		buf.Destroy()
+		_, err = buf2.TryAddBytes([]byte("b"))
+		require.NoError(t, err)
+		buf2.Destroy()
+	})
+
+	t.Run("failed try allocation keeps buffer unchanged", func(t *testing.T) {
+		const blockSize = 1024
+		limiter := NewLimiter(blockSize)
+		pool := NewPool(
+			WithBlockNum(0),
+			WithBlockSize(blockSize),
+			WithPoolMemoryLimiter(limiter),
+		)
+		defer pool.Destroy()
+
+		buf := pool.NewBuffer()
+		_, err := buf.TryAllocBytes(1)
+		require.ErrorIs(t, err, ErrCannotAcquireMemory)
+
+		require.Equal(t, blockSize, limiter.limit)
+		require.Empty(t, buf.blocks)
+		require.Nil(t, buf.curBlock)
+		require.Equal(t, -1, buf.curBlockIdx)
+		require.Zero(t, buf.curIdx)
+		require.Zero(t, buf.smallObjOverhead)
+		require.Zero(t, buf.smallObjOverheadCache)
+	})
 }
 
 func TestBufferIsolation(t *testing.T) {
@@ -183,7 +229,7 @@ const dataNum = 100 * 1024 * 1024
 
 func BenchmarkStoreSlice(b *testing.B) {
 	data := make([][]byte, dataNum)
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		func() {
 			pool := NewPool()
 			defer pool.Destroy()
@@ -199,7 +245,7 @@ func BenchmarkStoreSlice(b *testing.B) {
 
 func BenchmarkStoreLocation(b *testing.B) {
 	data := make([]SliceLocation, dataNum)
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		func() {
 			pool := NewPool()
 			defer pool.Destroy()
@@ -220,7 +266,7 @@ func BenchmarkSortSlice(b *testing.B) {
 	// fixed seed for benchmark
 	rnd := rand2.New(rand2.NewSource(6716))
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		func() {
 			pool := NewPool()
 			defer pool.Destroy()
@@ -243,7 +289,7 @@ func BenchmarkSortLocation(b *testing.B) {
 	// fixed seed for benchmark
 	rnd := rand2.New(rand2.NewSource(6716))
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		func() {
 			pool := NewPool()
 			defer pool.Destroy()
@@ -267,7 +313,7 @@ func BenchmarkSortSliceWithGC(b *testing.B) {
 	// fixed seed for benchmark
 	rnd := rand2.New(rand2.NewSource(6716))
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		func() {
 			pool := NewPool()
 			defer pool.Destroy()
@@ -291,7 +337,7 @@ func BenchmarkSortLocationWithGC(b *testing.B) {
 	// fixed seed for benchmark
 	rnd := rand2.New(rand2.NewSource(6716))
 
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		func() {
 			pool := NewPool()
 			defer pool.Destroy()
@@ -311,8 +357,78 @@ func BenchmarkSortLocationWithGC(b *testing.B) {
 	}
 }
 
+func BenchmarkSortLocationWithEscape(b *testing.B) {
+	data := make([]SliceLocation, sortDataNum)
+	// fixed seed for benchmark
+	rnd := rand2.New(rand2.NewSource(6716))
+
+	for b.Loop() {
+		func() {
+			pool := NewPool()
+			defer pool.Destroy()
+			bytesBuf := pool.NewBuffer()
+			defer bytesBuf.Destroy()
+
+			for j := range data {
+				var buf []byte
+				buf, data[j] = bytesBuf.AllocBytesWithSliceLocation(10)
+				rnd.Read(buf)
+			}
+
+			var (
+				dupFound bool
+				dupLoc   *SliceLocation
+			)
+			slices.SortFunc(data, func(a, b SliceLocation) int {
+				res := bytes.Compare(bytesBuf.GetSlice(&a), bytesBuf.GetSlice(&b))
+				if res == 0 && !dupFound {
+					dupFound = true
+					dupLoc = &a
+				}
+				return res
+			})
+			_ = dupLoc
+		}()
+	}
+}
+
+func BenchmarkSortLocationWithoutEscape(b *testing.B) {
+	data := make([]SliceLocation, sortDataNum)
+	// fixed seed for benchmark
+	rnd := rand2.New(rand2.NewSource(6716))
+
+	for b.Loop() {
+		func() {
+			pool := NewPool()
+			defer pool.Destroy()
+			bytesBuf := pool.NewBuffer()
+			defer bytesBuf.Destroy()
+
+			for j := range data {
+				var buf []byte
+				buf, data[j] = bytesBuf.AllocBytesWithSliceLocation(10)
+				rnd.Read(buf)
+			}
+
+			var (
+				dupFound bool
+				dupLoc   SliceLocation
+			)
+			slices.SortFunc(data, func(a, b SliceLocation) int {
+				res := bytes.Compare(bytesBuf.GetSlice(&a), bytesBuf.GetSlice(&b))
+				if res == 0 && !dupFound {
+					dupFound = true
+					dupLoc = a
+				}
+				return res
+			})
+			_ = dupLoc
+		}()
+	}
+}
+
 func BenchmarkConcurrentAcquire(b *testing.B) {
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		limiter := NewLimiter(512 * 1024 * 1024)
 		pool := NewPool(WithPoolMemoryLimiter(limiter), WithBlockSize(4*1024))
 		// start 1000 clients, each client will acquire 100B for 1000 times.

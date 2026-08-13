@@ -18,8 +18,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
-	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
@@ -48,11 +46,6 @@ func (p LogicalCTETable) Init(ctx base.PlanContext, offset int) *LogicalCTETable
 // PredicatePushDown inherits BaseLogicalPlan.LogicalPlan.<1st> implementation.
 
 // PruneColumns inherits BaseLogicalPlan.LogicalPlan.<2nd> implementation.
-
-// FindBestTask implements the base.LogicalPlan.<3rd> interface.
-func (p *LogicalCTETable) FindBestTask(prop *property.PhysicalProperty, _ *base.PlanCounterTp, _ *optimizetrace.PhysicalOptimizeOp) (t base.Task, cntPlan int64, err error) {
-	return utilfuncp.FindBestTask4LogicalCTETable(p, prop, nil, nil)
-}
 
 // BuildKeyInfo inherits BaseLogicalPlan.LogicalPlan.<4th> implementation.
 
@@ -104,7 +97,5 @@ func (p *LogicalCTETable) DeriveStats(_ []*property.StatsInfo, _ *expression.Sch
 // ExtractFD inherits BaseLogicalPlan.LogicalPlan.<22nd> implementation.
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
-
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
 
 // *************************** end implementation of logicalPlan interface ***************************

@@ -16,19 +16,19 @@ package unistore
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"strings"
+	"slices"
 	"sync"
 	"sync/atomic"
 
-	"github.com/asaskevich/govalidator"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	us "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/router"
@@ -45,29 +45,31 @@ var _ pd.Client = new(pdClient)
 type pdClient struct {
 	*us.MockPD
 	pd.ResourceManagerClient
+	*mockKeyspaceManager
 
 	globalConfig      map[string]string
 	externalTimestamp atomic.Uint64
 
-	// After using PD http client, we should impl mock PD service discovery
-	// which needs PD server HTTP address.
+	// addrs keeps normalized service URLs shared by mock PD member listing and service discovery.
 	addrs []string
 
-	keyspaceMeta *keyspacepb.KeyspaceMeta
+	currentKeyspaceID uint32
 }
 
-func newPDClient(pd *us.MockPD, addrs []string, keyspaceMeta *keyspacepb.KeyspaceMeta) *pdClient {
-	keyspaceID := constants.NullKeyspaceID
-	if keyspaceMeta != nil {
-		keyspaceID = keyspaceMeta.GetId()
+func newPDClient(pd *us.MockPD, addrs []string, currentKeyspaceID uint32, clusterKeyspaces []*keyspacepb.KeyspaceMeta) *pdClient {
+	keyspaceManager, err := newMockKeyspaceManager(clusterKeyspaces)
+	if err != nil {
+		panic(fmt.Sprintf("failed to create mock keyspace manager, err: %+v", err))
 	}
-	return &pdClient{
+	res := &pdClient{
 		MockPD:                pd,
-		ResourceManagerClient: infosync.NewMockResourceManagerClient(keyspaceID),
+		ResourceManagerClient: infosync.NewMockResourceManagerClient(currentKeyspaceID),
+		mockKeyspaceManager:   keyspaceManager,
 		globalConfig:          make(map[string]string),
-		addrs:                 addrs,
-		keyspaceMeta:          keyspaceMeta,
+		addrs:                 normalizeMockPDAddrs(addrs),
+		currentKeyspaceID:     currentKeyspaceID,
 	}
+	return res
 }
 
 func (c *pdClient) LoadGlobalConfig(ctx context.Context, names []string, configPath string) ([]pd.GlobalConfigItem, int64, error) {
@@ -132,9 +134,6 @@ type mockPDServiceClient struct {
 }
 
 func newMockPDServiceClient(addr string) sd.ServiceClient {
-	if !strings.HasPrefix(addr, "http") {
-		addr = fmt.Sprintf("%s://%s", "http", addr)
-	}
 	return &mockPDServiceClient{addr: addr}
 }
 
@@ -173,16 +172,24 @@ type mockPDServiceDiscovery struct {
 
 // NewMockPDServiceDiscovery returns a mock PD ServiceDiscovery
 func NewMockPDServiceDiscovery(addrs []string) sd.ServiceDiscovery {
-	addresses := make([]string, 0)
+	addresses := normalizeMockPDAddrs(addrs)
 	clis := make([]sd.ServiceClient, 0)
-	for _, addr := range addrs {
-		if check := govalidator.IsURL(addr); !check {
-			continue
-		}
-		addresses = append(addresses, addr)
+	for _, addr := range addresses {
 		clis = append(clis, newMockPDServiceClient(addr))
 	}
 	return &mockPDServiceDiscovery{addrs: addresses, clis: clis}
+}
+
+func normalizeMockPDAddrs(addrs []string) []string {
+	normalized := make([]string, 0, len(addrs))
+	for _, addr := range addrs {
+		normalizedAddr, err := util.NormalizeServiceURL(addr, util.URLSchemeHTTP)
+		if err != nil {
+			continue
+		}
+		normalized = append(normalized, normalizedAddr)
+	}
+	return normalized
 }
 
 func (c *mockPDServiceDiscovery) Init() error {
@@ -230,6 +237,8 @@ func (c *mockPDServiceDiscovery) GetOrCreateGRPCConn(addr string) (*grpc.ClientC
 	return nil, nil
 }
 
+func (c *mockPDServiceDiscovery) RemoveClientConn(string) {}
+
 func (c *mockPDServiceDiscovery) ScheduleCheckMemberChanged() {}
 
 func (c *mockPDServiceDiscovery) CheckMemberChanged() error { return nil }
@@ -271,7 +280,18 @@ func (c *pdClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetO
 }
 
 func (c *pdClient) GetAllMembers(ctx context.Context) (*pdpb.GetMembersResponse, error) {
-	return nil, nil
+	resp := &pdpb.GetMembersResponse{}
+	for i, addr := range c.addrs {
+		member := &pdpb.Member{
+			MemberId:   uint64(i + 1),
+			ClientUrls: []string{addr},
+		}
+		resp.Members = append(resp.Members, member)
+		if resp.Leader == nil {
+			resp.Leader = member
+		}
+	}
+	return resp, nil
 }
 
 func (c *pdClient) ScatterRegions(ctx context.Context, regionsID []uint64, opts ...opt.RegionsOption) (*pdpb.ScatterRegionResponse, error) {
@@ -292,30 +312,6 @@ func (c *pdClient) GetRegionFromMember(ctx context.Context, key []byte, memberUR
 
 func (c *pdClient) UpdateOption(option opt.DynamicOption, value any) error {
 	return nil
-}
-
-func (c *pdClient) GetAllKeyspaces(ctx context.Context, startID uint32, limit uint32) ([]*keyspacepb.KeyspaceMeta, error) {
-	return nil, nil
-}
-
-// LoadKeyspace loads and returns target keyspace's metadata.
-func (c *pdClient) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.KeyspaceMeta, error) {
-	if c.keyspaceMeta.Name != name {
-		return nil, errors.New(pdpb.ErrorType_ENTRY_NOT_FOUND.String())
-	}
-	return c.keyspaceMeta, nil
-}
-
-// WatchKeyspaces watches keyspace meta changes.
-// It returns a stream of slices of keyspace metadata.
-// The first message in stream contains all current keyspaceMeta,
-// all subsequent messages contains new put events for all keyspaces.
-func (c *pdClient) WatchKeyspaces(ctx context.Context) (chan []*keyspacepb.KeyspaceMeta, error) {
-	return nil, nil
-}
-
-func (c *pdClient) UpdateKeyspaceState(ctx context.Context, id uint32, state keyspacepb.KeyspaceState) (*keyspacepb.KeyspaceMeta, error) {
-	return nil, nil
 }
 
 func (c *pdClient) AcquireTokenBuckets(ctx context.Context, request *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
@@ -396,4 +392,97 @@ func (c *pdClient) WatchGCSafePointV2(ctx context.Context, revision int64) (chan
 
 func (c *pdClient) WithCallerComponent(component caller.Component) pd.Client {
 	return c
+}
+
+type mockKeyspaceManager struct {
+	mu               sync.RWMutex
+	keyspaces        []*keyspacepb.KeyspaceMeta
+	keyspaceNamesMap map[string]uint32
+}
+
+var _ pd.KeyspaceClient = (*mockKeyspaceManager)(nil)
+
+func newMockKeyspaceManager(keyspaces []*keyspacepb.KeyspaceMeta) (*mockKeyspaceManager, error) {
+	res := &mockKeyspaceManager{
+		keyspaces:        keyspaces,
+		keyspaceNamesMap: make(map[string]uint32, len(keyspaces)),
+	}
+
+	slices.SortFunc(res.keyspaces, func(a, b *keyspacepb.KeyspaceMeta) int {
+		return int(a.Id) - int(b.Id)
+	})
+
+	for i, keyspace := range res.keyspaces {
+		if keyspace.Id > constants.MaxKeyspaceID {
+			return nil, errors.Errorf("invalid keyspace ID (note that null keyspace won't have meta), got keyspace meta: %v", keyspace.String())
+		}
+		if i > 0 && keyspace.Id == res.keyspaces[i-1].Id {
+			return nil, errors.Errorf("keyspace ID %v duplicated: keyspace meta %s, keyspace meta %s", keyspace.Id, keyspace.String(), res.keyspaces[i-1].String())
+		}
+		if anotherID, exists := res.keyspaceNamesMap[keyspace.Name]; exists {
+			return nil, errors.Errorf("keyspace name %v duplicated: keyspace meta %s, keyspace meta %s", keyspace.Name, keyspace.String(), res.keyspaces[anotherID].String())
+		}
+		res.keyspaceNamesMap[keyspace.Name] = keyspace.Id
+	}
+
+	return res, nil
+}
+
+func (m *mockKeyspaceManager) LoadKeyspace(ctx context.Context, name string) (*keyspacepb.KeyspaceMeta, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if id, ok := m.keyspaceNamesMap[name]; ok {
+		index, exists := slices.BinarySearchFunc(m.keyspaces, id, func(k *keyspacepb.KeyspaceMeta, idToSearch uint32) int {
+			return int(k.Id) - int(idToSearch)
+		})
+		if !exists {
+			panic(fmt.Sprintf("keyspace meta list and name map mismatches, id: %v, keyspace meta list: %v, keyspace name map: %v", id, m.keyspaces, m.keyspaceNamesMap))
+		}
+		return m.keyspaces[index], nil
+	}
+
+	return nil, errors.New(pdpb.ErrorType_ENTRY_NOT_FOUND.String())
+}
+
+func (m *mockKeyspaceManager) LoadKeyspaceByID(ctx context.Context, id uint32) (*keyspacepb.KeyspaceMeta, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	index, exists := slices.BinarySearchFunc(m.keyspaces, id, func(k *keyspacepb.KeyspaceMeta, idToSearch uint32) int {
+		return int(k.Id) - int(idToSearch)
+	})
+	if exists {
+		return m.keyspaces[index], nil
+	}
+
+	return nil, errors.New(pdpb.ErrorType_ENTRY_NOT_FOUND.String())
+}
+
+func (m *mockKeyspaceManager) UpdateKeyspaceState(ctx context.Context, id uint32, state keyspacepb.KeyspaceState) (*keyspacepb.KeyspaceMeta, error) {
+	panic("unimplemented")
+}
+
+func (m *mockKeyspaceManager) WatchKeyspaces(ctx context.Context) (chan []*keyspacepb.KeyspaceMeta, error) {
+	panic("unimplemented")
+}
+
+func (m *mockKeyspaceManager) GetAllKeyspaces(ctx context.Context, startID uint32, limit uint32) ([]*keyspacepb.KeyspaceMeta, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	startIndex, _ := slices.BinarySearchFunc(m.keyspaces, startID, func(k *keyspacepb.KeyspaceMeta, idToSearch uint32) int {
+		return int(k.Id) - int(idToSearch)
+	})
+
+	if limit == 0 {
+		limit = uint32(len(m.keyspaces)) - uint32(startIndex)
+	}
+
+	result := make([]*keyspacepb.KeyspaceMeta, 0, limit)
+	for i := startIndex; i < len(m.keyspaces) && uint32(i-startIndex) < limit; i++ {
+		result = append(result, m.keyspaces[i])
+	}
+
+	return result, nil
 }

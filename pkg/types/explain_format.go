@@ -39,6 +39,10 @@ var (
 	ExplainFormatCostTrace = "cost_trace"
 	// ExplainFormatPlanCache prints the reason why can't use non-prepared plan cache by warning
 	ExplainFormatPlanCache = "plan_cache"
+	// ExplainFormatPlanTree displays the plan in a tree structure format
+	ExplainFormatPlanTree = "plan_tree"
+	// ExplainFormatRU is reserved for RU cost output in explain analyze.
+	ExplainFormatRU = "ru"
 
 	// ExplainFormats stores the valid formats for explain statement, used by validator.
 	ExplainFormats = []string{
@@ -54,5 +58,7 @@ var (
 		ExplainFormatTiDBJSON,
 		ExplainFormatCostTrace,
 		ExplainFormatPlanCache,
+		ExplainFormatPlanTree,
+		ExplainFormatRU,
 	}
 )

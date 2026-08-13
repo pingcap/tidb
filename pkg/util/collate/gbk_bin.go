@@ -16,6 +16,7 @@ package collate
 
 import (
 	"bytes"
+	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -67,6 +68,11 @@ func (g *gbkBinCollator) Key(str string) []byte {
 	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
+// ImmutableKey implement Collator interface.
+func (g *gbkBinCollator) ImmutableKey(str string) []byte {
+	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
+}
+
 // KeyWithoutTrimRightSpace implement Collator interface.
 func (g *gbkBinCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str))
@@ -82,6 +88,11 @@ func (g *gbkBinCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	}
 
 	return buf
+}
+
+// MaxKeyLen implements Collator interface.
+func (*gbkBinCollator) MaxKeyLen(s string) int {
+	return utf8.RuneCountInString(s) * 2
 }
 
 // Pattern implements Collator interface.

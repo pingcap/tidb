@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
@@ -65,7 +64,7 @@ func generateORIndexMerge(ds *logicalop.DataSource, filters []expression.Express
 // 2. When orBranches is not nil, it's a container of partial paths, and each element in the slice corresponds to one
 // OR branch in the input expression.
 type unfinishedAccessPath struct {
-	index *model.IndexInfo
+	path *util.AccessPath
 
 	usableFilters []expression.Expression
 
@@ -165,7 +164,7 @@ func initUnfinishedPathsFromExpr(
 		ret = append(ret, &retValues[i])
 	}
 	for i, path := range candidateAccessPaths {
-		ret[i].index = path.Index
+		ret[i].path = path
 		// case 1: try to use the previous logic to handle non-mv index
 		if !isMVIndexPath(path) {
 			partialPath, needSelection := generateNormalIndexPartialPath(
@@ -180,10 +179,14 @@ func initUnfinishedPathsFromExpr(
 				continue
 			}
 		}
-		if path.IsTablePath() {
+		// Skip table path only if it has no Index (e.g. int handle). For common handle (path.Index != nil),
+		// the primary key has index columns, so we use the gradual filter collection below to collect
+		// partial filters (e.g. a=1) and merge with top-level AND conditions (e.g. id=1) later.
+		// This enables IndexMerge with primary key for predicates like id=? and (a=? or b=?).
+		if path.IsTablePath() && (path.Index == nil || !path.Index.Primary) {
 			continue
 		}
-		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(ds.Table.Meta(), path.Index, ds.TblCols, false)
+		idxCols, ok := PrepareIdxColsAndUnwrapArrayType(ds.Table.Meta(), path.Index, ds.TblColsByID, false)
 		if !ok {
 			continue
 		}
@@ -209,21 +212,29 @@ func initUnfinishedPathsFromExpr(
 		// case 3: use the new logic if the previous logic didn't succeed to collect access filters that can build a
 		// valid range directly.
 		ret[i].idxColHasUsableFilter = make([]bool, len(idxCols))
-		ret[i].needKeepFilter = true
+		// If every CNF item in this OR branch is collected as an access filter, the original OR branch does not need
+		// to be rechecked by a Selection, which means we don't need to set the `needKeepFilter` flag if we found that
+		// `collectedCNFItems` does not contain false after the loop.
+		collectedCNFItems := make([]bool, len(cnfItems))
 		for j, col := range idxCols {
-			for _, cnfItem := range cnfItems {
+			for k, cnfItem := range cnfItems {
+				if collectedCNFItems[k] {
+					continue
+				}
 				if ok, tp := checkAccessFilter4IdxCol(ds.SCtx(), cnfItem, col); ok &&
 					// Since we only handle the OR list nested in the AND list, and only generate IndexMerge OR path,
 					// we disable the multiValuesANDOnMVColTp case here.
-					(tp == eqOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
+					(tp == eqOrInOnNonMVColTp || tp == multiValuesOROnMVColTp || tp == singleValueOnMVColTp) {
 					ret[i].usableFilters = append(ret[i].usableFilters, cnfItem)
 					ret[i].idxColHasUsableFilter[j] = true
+					collectedCNFItems[k] = true
 					// Once we find one valid access filter for this column, we directly go to the next column without
 					// looking into other filters.
 					break
 				}
 			}
 		}
+		ret[i].needKeepFilter = ret[i].needKeepFilter || slices.Contains(collectedCNFItems, false)
 	}
 
 	validCnt := 0
@@ -270,7 +281,6 @@ func handleTopLevelANDList(
 	}
 	return buildIntoAccessPath(
 		ds,
-		candidateAccessPaths,
 		unfinishedIndexMergePath,
 		allConds,
 		orListIdxInAllConds,
@@ -332,7 +342,6 @@ func mergeANDItemIntoUnfinishedIndexMergePath(
 
 func buildIntoAccessPath(
 	ds *logicalop.DataSource,
-	originalPaths []*util.AccessPath,
 	indexMergePath *unfinishedAccessPath,
 	allConds []expression.Expression,
 	orListIdxInAllConds int,
@@ -348,18 +357,18 @@ func buildIntoAccessPath(
 		var alternativesForORBranch [][]*util.AccessPath
 
 		// for each alternative of this OR branch
-		for i, unfinishedPath := range orBranch {
+		for _, unfinishedPath := range orBranch {
 			if unfinishedPath == nil {
 				continue
 			}
 			var oneAlternative []*util.AccessPath
 			var needSelection bool
-			if unfinishedPath.index != nil && unfinishedPath.index.MVIndex {
+			if unfinishedPath.path.Index != nil && unfinishedPath.path.Index.MVIndex {
 				// case 1: mv index
 				idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 					ds.Table.Meta(),
-					unfinishedPath.index,
-					ds.TblCols,
+					unfinishedPath.path.Index,
+					ds.TblColsByID,
 					true,
 				)
 				if !ok {
@@ -375,16 +384,18 @@ func buildIntoAccessPath(
 				}
 				var isIntersection bool
 				var err error
-				oneAlternative, isIntersection, ok, err = buildPartialPaths4MVIndex(
+				oneAlternative, isIntersection, ok, err = buildPartialPaths4MVIndexWithPath(
 					ds.SCtx(),
 					accessFilters,
 					idxCols,
-					unfinishedPath.index,
+					unfinishedPath.path,
 					ds.TableStats.HistColl,
 				)
+
 				if err != nil || !ok || (isIntersection && len(oneAlternative) > 1) {
 					continue
 				}
+
 				needSelection = len(remainingFilters) > 0
 			} else {
 				// case 2: non-mv index
@@ -396,7 +407,7 @@ func buildIntoAccessPath(
 						ds.SCtx().GetExprCtx(),
 						unfinishedPath.usableFilters...,
 					),
-					originalPaths[i],
+					unfinishedPath.path,
 				)
 				if path == nil {
 					continue
@@ -549,7 +560,7 @@ func estimateCountAfterAccessForIndexMergeOR(ds *logicalop.DataSource, decidedPa
 		)
 	} else {
 		var err error
-		sel, _, err = cardinality.Selectivity(
+		sel, err = cardinality.Selectivity(
 			ds.SCtx(),
 			ds.TableStats.HistColl,
 			[]expression.Expression{accessDNF},

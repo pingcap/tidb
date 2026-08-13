@@ -18,15 +18,15 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/util/filter"
-	"github.com/pingcap/tidb/pkg/util/slice"
 	"go.uber.org/zap"
 )
 
@@ -88,18 +88,18 @@ const (
 )
 
 // ToStorageCompressType converts Compression to storage.CompressType.
-func ToStorageCompressType(compression Compression) (storage.CompressType, error) {
+func ToStorageCompressType(compression Compression) (compressedio.CompressType, error) {
 	switch compression {
 	case CompressionGZ:
-		return storage.Gzip, nil
+		return compressedio.Gzip, nil
 	case CompressionSnappy:
-		return storage.Snappy, nil
+		return compressedio.Snappy, nil
 	case CompressionZStd:
-		return storage.Zstd, nil
+		return compressedio.Zstd, nil
 	case CompressionNone:
-		return storage.NoCompression, nil
+		return compressedio.NoCompression, nil
 	default:
-		return storage.NoCompression,
+		return compressedio.NoCompression,
 			errors.Errorf("compression %d doesn't have related storage compressType", compression)
 	}
 }
@@ -195,6 +195,10 @@ var defaultFileRouteRules = []*config.FileRouteRule{
 	// view schema create file pattern, matches files like '{schema}.{table}-schema-view.sql[.{compress}]'
 	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)-schema-view\.sql(?:\.(\w*?))?$`,
 		Schema: "$1", Table: "$2", Type: ViewSchema, Compression: "$3", Unescape: true},
+	// parquet source file pattern with parquet internal compression suffix, matches files like
+	// '{schema}.{table}.0001.{snappy|gz|zst|...}.parquet'
+	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*)\.([0-9]+)\.(snappy|gzip|gz|zstd|zst)\.parquet$`,
+		Schema: "$1", Table: "$2", Type: TypeParquet, Key: "$3", Unescape: true},
 	// source file pattern, matches files like '{schema}.{table}.0001.{sql|csv}[.{compress}]'
 	{Pattern: `(?i)^(?:[^/]*/)*([^/.]+)\.(.*?)(?:\.([0-9]+))?\.(sql|csv|parquet)(?:\.(\w+))?$`,
 		Schema: "$1", Table: "$2", Type: "$4", Key: "$3", Compression: "$5", Unescape: true},
@@ -411,10 +415,7 @@ func (regexRouterParser) checkSubPatterns(pat *regexp.Regexp, t string) error {
 			if number > pat.NumSubexp() {
 				return errors.Errorf("sub pattern capture '%s' out of range", subVar)
 			}
-		} else if !slice.AnyOf(pat.SubexpNames(), func(i int) bool {
-			// FIXME: we should use re.SubexpIndex here, but not supported in go1.13 yet
-			return pat.SubexpNames()[i] == tmplName
-		}) {
+		} else if !slices.Contains(pat.SubexpNames(), tmplName) {
 			return errors.Errorf("invalid named capture '%s'", subVar)
 		}
 	}

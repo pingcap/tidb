@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"unsafe"
@@ -278,9 +279,7 @@ func ParseVectorFloat32(s string) (VectorFloat32, error) {
 
 // Clone returns a deep copy of the vector.
 func (v VectorFloat32) Clone() VectorFloat32 {
-	data := make([]byte, len(v.data))
-	copy(data, v.data)
-	return VectorFloat32{data: data}
+	return VectorFloat32{data: slices.Clone(v.data)}
 }
 
 // IsZeroValue returns true if the vector is a zero value (which length is zero).

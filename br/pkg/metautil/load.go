@@ -25,6 +25,16 @@ import (
 type Database struct {
 	Info   *model.DBInfo
 	Tables []*Table
+
+	reusedByPITR bool
+}
+
+func (db *Database) SetReusedByPITR() {
+	db.reusedByPITR = true
+}
+
+func (db *Database) IsReusedByPITR() bool {
+	return db.reusedByPITR
 }
 
 // GetTable returns a table of the database by name.

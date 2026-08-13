@@ -15,14 +15,76 @@
 package set
 
 import (
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
+// StringToStringMapWithMemoryUsage is a string-string map with memory usage.
+type StringToStringMapWithMemoryUsage struct {
+	hack.MemAwareMap[string, string]
+
+	// For tracking large memory usage in time.
+	// If tracker is non-nil, memDelta will track immediately and reset to 0. Otherwise, memDelta will return and lazy track.
+	tracker *memory.Tracker
+}
+
+// NewStringToStringMapWithMemoryUsage builds a string map.
+func NewStringToStringMapWithMemoryUsage() (setWithMemoryUsage StringToStringMapWithMemoryUsage, delta int64) {
+	newMap := make(map[string]string)
+	delta = setWithMemoryUsage.Init(newMap)
+	return setWithMemoryUsage, delta
+}
+
+// Insert inserts `val` into `s` and return delta.
+func (s *StringToStringMapWithMemoryUsage) Insert(key string, val string) (delta int64) {
+	delta = s.Set(key, val)
+	if delta != 0 && s.tracker != nil {
+		s.tracker.Consume(delta)
+		delta = 0
+	}
+	return delta
+}
+
+// SetTracker sets memory tracker for StringToStringMapWithMemoryUsage
+func (s *StringToStringMapWithMemoryUsage) SetTracker(t *memory.Tracker) {
+	s.tracker = t
+}
+
+// StringToDecimalMapWithMemoryUsage is a string-decimal map with memory usage.
+type StringToDecimalMapWithMemoryUsage struct {
+	hack.MemAwareMap[string, *types.MyDecimal]
+
+	// For tracking large memory usage in time.
+	// If tracker is non-nil, memDelta will track immediately and reset to 0. Otherwise, memDelta will return and lazy track.
+	tracker *memory.Tracker
+}
+
+// NewStringToDecimalMapWithMemoryUsage builds a string map.
+func NewStringToDecimalMapWithMemoryUsage() (setWithMemoryUsage StringToDecimalMapWithMemoryUsage, delta int64) {
+	newMap := make(map[string]*types.MyDecimal)
+	delta = setWithMemoryUsage.Init(newMap)
+	return setWithMemoryUsage, delta
+}
+
+// Insert inserts `val` into `s` and return delta.
+func (s *StringToDecimalMapWithMemoryUsage) Insert(key string, val *types.MyDecimal) (delta int64) {
+	delta = s.Set(key, val)
+	if delta != 0 && s.tracker != nil {
+		s.tracker.Consume(delta)
+		delta = 0
+	}
+	return delta
+}
+
+// SetTracker sets memory tracker for StringToDecimalMapWithMemoryUsage
+func (s *StringToDecimalMapWithMemoryUsage) SetTracker(t *memory.Tracker) {
+	s.tracker = t
+}
+
 // StringSetWithMemoryUsage is a string set with memory usage.
 type StringSetWithMemoryUsage struct {
-	StringSet
-	bInMap int64
+	hack.MemAwareMap[string, struct{}]
 
 	// For tracking large memory usage in time.
 	// If tracker is non-nil, memDelta will track immediately and reset to 0. Otherwise, memDelta will return and lazy track.
@@ -32,29 +94,21 @@ type StringSetWithMemoryUsage struct {
 // NewStringSetWithMemoryUsage builds a string set.
 func NewStringSetWithMemoryUsage(ss ...string) (setWithMemoryUsage StringSetWithMemoryUsage, memDelta int64) {
 	set := make(StringSet, len(ss))
-	setWithMemoryUsage = StringSetWithMemoryUsage{
-		StringSet: set,
-		bInMap:    0,
-	}
-	memDelta = hack.DefBucketMemoryUsageForSetString * (1 << setWithMemoryUsage.bInMap)
+	setWithMemoryUsage.Init(set)
 	for _, s := range ss {
-		memDelta += setWithMemoryUsage.Insert(s)
+		setWithMemoryUsage.Insert(s)
 	}
-	return setWithMemoryUsage, memDelta
+	return setWithMemoryUsage, int64(setWithMemoryUsage.Bytes)
 }
 
 // Insert inserts `val` into `s` and return memDelta.
-func (s *StringSetWithMemoryUsage) Insert(val string) (memDelta int64) {
-	s.StringSet.Insert(val)
-	if s.Count() > (1<<s.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-		memDelta = hack.DefBucketMemoryUsageForSetString * (1 << s.bInMap)
-		s.bInMap++
-		if s.tracker != nil {
-			s.tracker.Consume(memDelta)
-			memDelta = 0
-		}
+func (s *StringSetWithMemoryUsage) Insert(val string) int64 {
+	delta := s.Set(val, struct{}{})
+	if delta != 0 && s.tracker != nil {
+		s.tracker.Consume(delta)
+		delta = 0
 	}
-	return memDelta
+	return delta
 }
 
 // SetTracker sets memory tracker for StringSetWithMemoryUsage
@@ -64,60 +118,40 @@ func (s *StringSetWithMemoryUsage) SetTracker(t *memory.Tracker) {
 
 // Float64SetWithMemoryUsage is a float64 set with memory usage.
 type Float64SetWithMemoryUsage struct {
-	Float64Set
-	bInMap int64
+	hack.MemAwareMap[float64, struct{}]
 }
 
 // NewFloat64SetWithMemoryUsage builds a float64 set.
 func NewFloat64SetWithMemoryUsage(ss ...float64) (setWithMemoryUsage Float64SetWithMemoryUsage, memDelta int64) {
 	set := make(Float64Set, len(ss))
-	setWithMemoryUsage = Float64SetWithMemoryUsage{
-		Float64Set: set,
-		bInMap:     0,
-	}
-	memDelta = hack.DefBucketMemoryUsageForSetFloat64 * (1 << setWithMemoryUsage.bInMap)
+	setWithMemoryUsage.Init(set)
 	for _, s := range ss {
-		memDelta += setWithMemoryUsage.Insert(s)
+		setWithMemoryUsage.Insert(s)
 	}
-	return setWithMemoryUsage, memDelta
+	return setWithMemoryUsage, int64(setWithMemoryUsage.Bytes)
 }
 
 // Insert inserts `val` into `s` and return memDelta.
-func (s *Float64SetWithMemoryUsage) Insert(val float64) (memDelta int64) {
-	s.Float64Set.Insert(val)
-	if s.Count() > (1<<s.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-		memDelta = hack.DefBucketMemoryUsageForSetFloat64 * (1 << s.bInMap)
-		s.bInMap++
-	}
-	return memDelta
+func (s *Float64SetWithMemoryUsage) Insert(val float64) int64 {
+	return s.Set(val, struct{}{})
 }
 
 // Int64SetWithMemoryUsage is a int set with memory usage.
 type Int64SetWithMemoryUsage struct {
-	Int64Set
-	bInMap int64
+	hack.MemAwareMap[int64, struct{}]
 }
 
 // NewInt64SetWithMemoryUsage builds an int64 set.
 func NewInt64SetWithMemoryUsage(ss ...int64) (setWithMemoryUsage Int64SetWithMemoryUsage, memDelta int64) {
 	set := make(Int64Set, len(ss))
-	setWithMemoryUsage = Int64SetWithMemoryUsage{
-		Int64Set: set,
-		bInMap:   0,
-	}
-	memDelta = hack.DefBucketMemoryUsageForSetInt64 * (1 << setWithMemoryUsage.bInMap)
+	setWithMemoryUsage.Init(set)
 	for _, s := range ss {
-		memDelta += setWithMemoryUsage.Insert(s)
+		setWithMemoryUsage.Insert(s)
 	}
-	return setWithMemoryUsage, memDelta
+	return setWithMemoryUsage, int64(setWithMemoryUsage.Bytes)
 }
 
 // Insert inserts `val` into `s` and return memDelta.
 func (s *Int64SetWithMemoryUsage) Insert(val int64) (memDelta int64) {
-	s.Int64Set.Insert(val)
-	if s.Count() > (1<<s.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-		memDelta = hack.DefBucketMemoryUsageForSetInt64 * (1 << s.bInMap)
-		s.bInMap++
-	}
-	return memDelta
+	return s.Set(val, struct{}{})
 }

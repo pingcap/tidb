@@ -163,10 +163,12 @@ func hasDependentByGeneratedColumn(tblInfo *model.TableInfo, colName ast.CIStr) 
 }
 
 func isGeneratedRelatedColumn(tblInfo *model.TableInfo, newCol, col *model.ColumnInfo) error {
-	if newCol.IsGenerated() || col.IsGenerated() {
-		// TODO: Make it compatible with MySQL error.
-		msg := fmt.Sprintf("newCol IsGenerated %v, oldCol IsGenerated %v", newCol.IsGenerated(), col.IsGenerated())
-		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(msg)
+	// TODO: Make it compatible with MySQL error.
+	if newCol.IsGenerated() {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("new column is generated")
+	}
+	if col.IsGenerated() {
+		return dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("old column is generated")
 	}
 	if ok, dep, _ := hasDependentByGeneratedColumn(tblInfo, col.Name); ok {
 		msg := fmt.Sprintf("oldCol is a dependent column '%s' for generated column", dep)
@@ -199,8 +201,8 @@ func (c *generatedColumnChecker) Leave(inNode ast.Node) (node ast.Node, ok bool)
 //  5. check if the new column is indexed or stored
 func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName ast.CIStr, tbl table.Table, oldCol, newCol *table.Column, newColDef *ast.ColumnDef, pos *ast.ColumnPosition) error {
 	// rule 1.
-	oldColIsStored := !oldCol.IsGenerated() || oldCol.GeneratedStored
-	newColIsStored := !newCol.IsGenerated() || newCol.GeneratedStored
+	oldColIsStored := !oldCol.IsVirtualGenerated()
+	newColIsStored := !newCol.IsVirtualGenerated()
 	if oldColIsStored != newColIsStored {
 		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Changing the STORED status")
 	}
@@ -255,16 +257,23 @@ func checkModifyGeneratedColumn(sctx sessionctx.Context, schemaName ast.CIStr, t
 		if err := checkIllegalFn4Generated(newCol.Name.L, typeColumn, newCol.GeneratedExpr.Internal()); err != nil {
 			return errors.Trace(err)
 		}
+		if err := checkEmbedTextGeneratedColumn(newCol.Name.L, newCol.GeneratedExpr.Internal(), newCol.GeneratedStored); err != nil {
+			return errors.Trace(err)
+		}
 
 		// rule 4.
 		_, dependColNames, err := findDependedColumnNames(schemaName, tbl.Meta().Name, newColDef)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		//nolint:forbidigo
 		if !sctx.GetSessionVars().EnableAutoIncrementInGenerated {
 			if err := checkAutoIncrementRef(newColDef.Name.Name.L, dependColNames, tbl.Meta()); err != nil {
 				return errors.Trace(err)
 			}
+		}
+		if depCol, ok := findEmbedTextDependency(dependColNames, tbl.Cols()); ok {
+			return embedTextDependencyErr(newCol.Name.L, depCol)
 		}
 
 		// rule 5.
@@ -284,6 +293,7 @@ type illegalFunctionChecker struct {
 	hasCastArrayFunc      bool
 	disallowCastArrayFunc bool
 	otherErr              error
+	allowEmbedText        bool
 }
 
 func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipChildren bool) {
@@ -296,7 +306,7 @@ func (c *illegalFunctionChecker) Enter(inNode ast.Node) (outNode ast.Node, skipC
 		}
 		// Blocked functions & non-builtin functions is not allowed
 		_, isFunctionBlocked := expression.IllegalFunctions4GeneratedColumns[node.FnName.L]
-		if isFunctionBlocked || !expression.IsFunctionSupported(node.FnName.L) {
+		if (isFunctionBlocked && !(c.allowEmbedText && node.FnName.L == ast.EmbedText)) || !expression.IsFunctionSupported(node.FnName.L) {
 			c.hasIllegalFunc = true
 			return inNode, true
 		}
@@ -349,7 +359,10 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 	if expr == nil {
 		return nil
 	}
-	var c illegalFunctionChecker
+	// All generated-column call sites apply checkEmbedTextGeneratedColumn next,
+	// which admits only the dedicated STORED EMBED_TEXT form. Functional
+	// indexes keep EMBED_TEXT blocked by the general illegal-function list.
+	c := illegalFunctionChecker{allowEmbedText: genType == typeColumn}
 	expr.Accept(&c)
 	if c.hasIllegalFunc {
 		switch genType {
@@ -386,20 +399,32 @@ func checkIllegalFn4Generated(name string, genType int, expr ast.ExprNode) error
 }
 
 func checkIndexOrStored(tbl table.Table, oldCol, newCol *table.Column) error {
+	isIndexed := false
+	for _, idx := range tbl.Indices() {
+		for _, col := range idx.Meta().Columns {
+			if col.Name.L == oldCol.Name.L || col.Name.L == newCol.Name.L {
+				isIndexed = true
+				break
+			}
+		}
+		if isIndexed {
+			break
+		}
+	}
+
 	if oldCol.GeneratedExprString == newCol.GeneratedExprString {
-		return nil
+		if oldCol.FieldType.Equal(&newCol.FieldType) || !isIndexed {
+			return nil
+		}
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("Unsupported modification for generated columns covered by an index")
 	}
 
 	if newCol.GeneratedStored {
 		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying a stored column")
 	}
 
-	for _, idx := range tbl.Indices() {
-		for _, col := range idx.Meta().Columns {
-			if col.Name.L == newCol.Name.L {
-				return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("modifying an indexed column")
-			}
-		}
+	if isIndexed {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("Unsupported modification for generated columns covered by an index")
 	}
 	return nil
 }
@@ -425,4 +450,39 @@ func checkExpressionIndexAutoIncrement(name string, dependencies map[string]stru
 		}
 	}
 	return nil
+}
+
+func checkEmbedTextGeneratedColumn(name string, expr ast.ExprNode, isStored bool) error {
+	if !expression.ContainsEmbedTextFunc(expr) {
+		return nil
+	}
+	if err := expression.CheckEmbedTextAllowed(); err != nil {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack(err.Error())
+	}
+	if !expression.IsEmbedTextFuncCall(expr) {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("using EMBED_TEXT() as a nested expression inside other functions or expressions")
+	}
+	if !isStored {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("using EMBED_TEXT() in a virtual generated column")
+	}
+	if _, err := expression.ExtractEmbedTextInfo(expr); err != nil {
+		return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("EMBED_TEXT() usage in generated column '%s': %v", name, err)
+	}
+	return nil
+}
+
+func findEmbedTextDependency(dependColNames map[string]struct{}, cols []*table.Column) (string, bool) {
+	for _, col := range cols {
+		if _, ok := dependColNames[col.Name.L]; !ok {
+			continue
+		}
+		if col.IsGenerated() && expression.IsEmbedTextFuncCall(col.GeneratedExpr.Internal()) {
+			return col.Name.L, true
+		}
+	}
+	return "", false
+}
+
+func embedTextDependencyErr(colName, depCol string) error {
+	return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStack("generated column '%s' depends on generated column '%s' that uses EMBED_TEXT()", colName, depCol)
 }

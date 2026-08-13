@@ -23,14 +23,19 @@ import (
 	"net/http"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -39,7 +44,120 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client"
 )
+
+type setGCLifeTimeManager struct {
+	extworkload.Manager
+	gcLifeTime time.Duration
+	updateCnt  int
+	role       config.ExternalWorkloadRole
+	meta       *keyspacepb.KeyspaceMeta
+}
+
+func (m *setGCLifeTimeManager) Role() config.ExternalWorkloadRole {
+	return m.role
+}
+
+func (m *setGCLifeTimeManager) Meta() *keyspacepb.KeyspaceMeta {
+	return m.meta
+}
+
+func (m *setGCLifeTimeManager) UpdateGCLifeTime(_ context.Context, gcLifeTime time.Duration) error {
+	m.updateCnt++
+	m.gcLifeTime = gcLifeTime
+	return nil
+}
+
+func TestSetGCLifeTimeNotifiesExternalWorkloadWithEffectiveValue(t *testing.T) {
+	keyspaceLevelMeta := &keyspacepb.KeyspaceMeta{Config: map[string]string{
+		pd.KeyspaceConfigGCManagementType: pd.KeyspaceConfigGCManagementTypeKeyspaceLevel,
+	}}
+	cases := []struct {
+		name           string
+		role           config.ExternalWorkloadRole
+		meta           *keyspacepb.KeyspaceMeta
+		setValue       string
+		expectedGlobal time.Duration
+		expectedNotify time.Duration
+		expectedUpdate int
+	}{
+		{name: "master", role: config.RoleMaster, meta: keyspaceLevelMeta, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedNotify: 24 * time.Hour, expectedUpdate: 1},
+		{name: "GCV2 worker", role: config.RoleGCV2Worker, meta: keyspaceLevelMeta, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedNotify: 24 * time.Hour, expectedUpdate: 1},
+		{name: "TTL worker", role: config.RoleTTLTaskWorker, meta: keyspaceLevelMeta, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedNotify: 24 * time.Hour, expectedUpdate: 1},
+		{name: "auto analyze worker", role: config.RoleAutoAnalyzeWorker, meta: keyspaceLevelMeta, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedNotify: 24 * time.Hour, expectedUpdate: 1},
+		{name: "minimum value", role: config.RoleMaster, meta: keyspaceLevelMeta, setValue: "1m", expectedGlobal: 10 * time.Minute, expectedNotify: 10 * time.Minute, expectedUpdate: 1},
+		{name: "unified GC", role: config.RoleMaster, meta: &keyspacepb.KeyspaceMeta{}, setValue: "24h", expectedGlobal: 24 * time.Hour, expectedUpdate: 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := testkit.CreateMockStore(t)
+			mgr := &setGCLifeTimeManager{role: tc.role, meta: tc.meta}
+			extworkload.SetManagerForStore(store, mgr)
+
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec(fmt.Sprintf("set global tidb_gc_life_time = '%s'", tc.setValue))
+			tk.MustQuery("select @@global.tidb_gc_life_time").Check(testkit.Rows(tc.expectedGlobal.String()))
+			require.Equal(t, tc.expectedUpdate, mgr.updateCnt)
+			require.Equal(t, tc.expectedNotify, mgr.gcLifeTime)
+		})
+	}
+}
+
+func TestSetEmbeddingAPIKeyRedactedForAuditPlugin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	receivedValues := make(map[string]string)
+	const pluginName = "audit_embedding_api_key_redaction"
+	require.NoError(t, plugin.StaticPlugins.Add(pluginName, func() *plugin.Manifest {
+		return plugin.ExportManifest(&plugin.AuditManifest{
+			Manifest: plugin.Manifest{
+				Kind:    plugin.Audit,
+				Name:    pluginName,
+				Version: 1,
+				OnInit: func(context.Context, *plugin.Manifest) error {
+					return nil
+				},
+			},
+			OnGlobalVariableEvent: func(_ context.Context, _ *variable.SessionVars, name, value string) {
+				receivedValues[name] = value
+			},
+		})
+	}))
+	t.Cleanup(plugin.StaticPlugins.Clear)
+
+	pluginCfg := plugin.Config{Plugins: []string{pluginName + "-1"}}
+	require.NoError(t, plugin.Load(context.Background(), pluginCfg))
+	require.NoError(t, plugin.Init(context.Background(), pluginCfg))
+	t.Cleanup(func() { plugin.Shutdown(context.Background()) })
+
+	originalVersion := vardef.EmbeddingConfigVersion.Load()
+	t.Cleanup(func() { vardef.EmbeddingConfigVersion.Store(originalVersion) })
+	apiKeys := []struct {
+		name  string
+		load  func() string
+		store func(string)
+	}{
+		{name: vardef.TiDBExpEmbedJinaAIAPIKey, load: vardef.EmbedJinaAPIKey.Load, store: vardef.EmbedJinaAPIKey.Store},
+		{name: vardef.TiDBExpEmbedOpenAIAPIKey, load: vardef.EmbedOpenAIAPIKey.Load, store: vardef.EmbedOpenAIAPIKey.Store},
+		{name: vardef.TiDBExpEmbedCohereAPIKey, load: vardef.EmbedCohereAPIKey.Load, store: vardef.EmbedCohereAPIKey.Store},
+		{name: vardef.TiDBExpEmbedHuggingFaceAPIKey, load: vardef.EmbedHuggingFaceAPIKey.Load, store: vardef.EmbedHuggingFaceAPIKey.Store},
+		{name: vardef.TiDBExpEmbedNvidiaNIMAPIKey, load: vardef.EmbedNvidiaNIMAPIKey.Load, store: vardef.EmbedNvidiaNIMAPIKey.Store},
+		{name: vardef.TiDBExpEmbedGeminiAPIKey, load: vardef.EmbedGeminiAPIKey.Load, store: vardef.EmbedGeminiAPIKey.Store},
+	}
+	for _, apiKey := range apiKeys {
+		originalValue := apiKey.load()
+		t.Cleanup(func() { apiKey.store(originalValue) })
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	for _, apiKey := range apiKeys {
+		tk.MustExec(fmt.Sprintf("SET @@GLOBAL.%s = 'secret-%s'", apiKey.name, apiKey.name))
+		require.Equal(t, "******", receivedValues[apiKey.name])
+	}
+	require.Len(t, receivedValues, len(apiKeys))
+}
 
 func TestSetVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -444,30 +562,36 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect cte_max_recursion_depth value: '-1'"))
 	tk.MustQuery("select @@cte_max_recursion_depth").Check(testkit.Rows("0"))
 
+	// test for instance
+	tk.MustExec("set @@instance.ddl_slow_threshold=1234")
+	tk.MustQuery("select @@instance.ddl_slow_threshold").Check(testkit.Rows("1234"))
+	tk.MustGetErrCode("set @@instance.tidb_redact_log=1", errno.ErrLocalVariable)
+	// set instance variable, but global variable is still the old value
+	tk.MustExec("set @@instance.tidb_stmt_summary_max_stmt_count=1234")
+	tk.MustQuery("select @@global.tidb_stmt_summary_max_stmt_count").Check(testkit.Rows("3000"))
+
 	// test for tidb_redact_log
+	tk.MustGetErrCode(`set @@session.tidb_redact_log=1;`, errno.ErrUnknownSystemVariable)
+	tk.MustGetErrCode(`set @@tidb_redact_log=1;`, errno.ErrUnknownSystemVariable)
+	tk.MustGetErrCode(`set @@tidb_redact_log=1;`, errno.ErrUnknownSystemVariable)
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("OFF"))
 	tk.MustExec("set global tidb_redact_log = 1")
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("ON"))
 	tk.MustExec("set global tidb_redact_log = 0")
 	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("OFF"))
-	tk.MustExec("set session tidb_redact_log = 0")
-	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("OFF"))
-	tk.MustExec("set session tidb_redact_log = 1")
-	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("ON"))
-	tk.MustExec("set session tidb_redact_log = oFf")
-	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("OFF"))
-	tk.MustExec("set session tidb_redact_log = marker")
-	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("MARKER"))
-	tk.MustExec("set session tidb_redact_log = On")
-	tk.MustQuery(`select @@session.tidb_redact_log;`).Check(testkit.Rows("ON"))
+	tk.MustExec("set global tidb_redact_log = marker")
+	tk.MustQuery(`select @@global.tidb_redact_log;`).Check(testkit.Rows("MARKER"))
+	tk.MustExec("set @@session.tidb_dml_batch_size = -120")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '‹-120›'"))
 
+	tk.MustExec("set global tidb_redact_log = 1")
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("0"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = -120")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '?'")) // redacted because of tidb_redact_log = 1 above
 	tk.MustQuery("select @@session.tidb_dml_batch_size").Check(testkit.Rows("0"))
-	tk.MustExec("set session tidb_redact_log = 0")
+	tk.MustExec("set global tidb_redact_log = 0")
 	tk.MustExec("set session tidb_dml_batch_size = -120")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '-120'")) // without redaction
 
@@ -548,15 +672,6 @@ func TestSetVar(t *testing.T) {
 		tk.MustGetErrMsg(fmt.Sprintf("SET @@%s = 46;", v), "Unknown charset 46")
 	}
 
-	tk.MustExec("SET SESSION tidb_enable_extended_stats = on")
-	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("1"))
-	tk.MustExec("SET SESSION tidb_enable_extended_stats = off")
-	tk.MustQuery("select @@session.tidb_enable_extended_stats").Check(testkit.Rows("0"))
-	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = on")
-	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("1"))
-	tk.MustExec("SET GLOBAL tidb_enable_extended_stats = off")
-	tk.MustQuery("select @@global.tidb_enable_extended_stats").Check(testkit.Rows("0"))
-
 	tk.MustExec("SET SESSION tidb_allow_fallback_to_tikv = 'tiflash'")
 	tk.MustQuery("select @@session.tidb_allow_fallback_to_tikv").Check(testkit.Rows("tiflash"))
 	tk.MustExec("SET SESSION tidb_allow_fallback_to_tikv = ''")
@@ -606,16 +721,6 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec(`set tidb_opt_enable_correlation_adjustment=0`)
 	tk.MustQuery(`select @@global.tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("1"))
 	tk.MustQuery(`select @@tidb_opt_enable_correlation_adjustment`).Check(testkit.Rows("0"))
-
-	// test for tidb_opt_limit_push_down_threshold
-	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
-	tk.MustExec(`set global tidb_opt_limit_push_down_threshold = 20`)
-	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
-	tk.MustExec(`set global tidb_opt_limit_push_down_threshold = 100`)
-	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
-	tk.MustExec(`set tidb_opt_limit_push_down_threshold = 20`)
-	tk.MustQuery(`select @@global.tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("100"))
-	tk.MustQuery(`select @@tidb_opt_limit_push_down_threshold`).Check(testkit.Rows("20"))
 
 	tk.MustQuery("select @@tidb_opt_prefer_range_scan").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_opt_prefer_range_scan = 1")
@@ -684,7 +789,7 @@ func TestSetVar(t *testing.T) {
 	require.Error(t, tk.ExecToErr("set global tidb_enable_column_tracking = -1"))
 
 	// test for tidb_analyze_column_options
-	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("PREDICATE"))
+	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
 	tk.MustExec("set global tidb_analyze_column_options = 'ALL'")
 	tk.MustQuery("select @@tidb_analyze_column_options").Check(testkit.Rows("ALL"))
 	tk.MustExec("set global tidb_analyze_column_options = 'predicate'")
@@ -1389,6 +1494,9 @@ func TestValidateSetVar(t *testing.T) {
 	tk.MustExec("set @@global.innodb_lock_wait_timeout = 0")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '0'"))
 
+	tk.MustExec("set @@global.innodb_lock_wait_timeout = 1073741824")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+
 	tk.MustExec("set @@global.innodb_lock_wait_timeout = 1073741825")
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect innodb_lock_wait_timeout value: '1073741825'"))
 
@@ -1471,8 +1579,6 @@ func TestSetConcurrency(t *testing.T) {
 	require.Equal(t, vardef.DefExecutorConcurrency, vars.ProjectionConcurrency())
 	require.Equal(t, vardef.DefDistSQLScanConcurrency, vars.DistSQLScanConcurrency())
 
-	require.Equal(t, vardef.DefIndexSerialScanConcurrency, vars.IndexSerialScanConcurrency())
-
 	// test setting deprecated variables
 	warnTpl := "Warning 1287 '%s' is deprecated and will be removed in a future release. Please use tidb_executor_concurrency instead"
 
@@ -1511,9 +1617,18 @@ func TestSetConcurrency(t *testing.T) {
 	require.Equal(t, 1, vars.DistSQLScanConcurrency())
 
 	tk.MustExec("set @@tidb_index_serial_scan_concurrency=4")
-	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1287 The 'tidb_index_serial_scan_concurrency' variable is deprecated. Sequential scans follow 'tidb_executor_concurrency', and index statistics collection uses 'tidb_analyze_distsql_scan_concurrency'."))
 	tk.MustQuery("select @@tidb_index_serial_scan_concurrency;").Check(testkit.Rows("4"))
-	require.Equal(t, 4, vars.IndexSerialScanConcurrency())
+
+	// tidb_merge_partition_stats_concurrency is deprecated: setting to 1 is silent, other values warn, value always stays 1.
+	tk.MustExec("set @@tidb_merge_partition_stats_concurrency=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows("1"))
+	tk.MustExec("set @@tidb_merge_partition_stats_concurrency=4")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1287 tidb_merge_partition_stats_concurrency is deprecated: the merge no longer runs concurrently, so this setting has no effect. Kept for backward compatibility."))
+	tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows("1"))
+	// Global getter is overridden too, a stale persisted non-1 value must not leak through.
+	tk.MustQuery("select @@global.tidb_merge_partition_stats_concurrency").Check(testkit.Rows("1"))
 
 	// test setting deprecated value unset
 	tk.MustExec("set @@tidb_index_lookup_concurrency=-1;")
@@ -1829,4 +1944,28 @@ func TestDivPrecisionIncrement(t *testing.T) {
 
 	// Test set global.
 	tk.MustExec("set global div_precision_increment = 4")
+}
+
+func TestSetTiDBServiceScopeCaseInsensitive(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	originConfig := config.GetGlobalConfig()
+	originServiceScope := vardef.ServiceScope.Load()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(originConfig)
+		vardef.ServiceScope.Store(originServiceScope)
+	})
+
+	tk.MustExec("set global tidb_service_scope='BaCkGround'")
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+	require.Equal(t, "background", vardef.ServiceScope.Load())
+	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
+	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
+
+	tk.MustExec("set instance tidb_service_scope='BackGround'")
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+	require.Equal(t, "background", vardef.ServiceScope.Load())
+	require.Equal(t, "background", config.GetGlobalConfig().Instance.TiDBServiceScope)
+	tk.MustQuery("select role from mysql.dist_framework_meta where host=':4000'").Check(testkit.Rows("background"))
 }

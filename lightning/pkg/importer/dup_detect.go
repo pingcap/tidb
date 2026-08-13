@@ -21,9 +21,9 @@ import (
 	"slices"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/lightning/pkg/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/duplicate"
@@ -289,6 +289,7 @@ func (d *dupDetector) addKeysByChunk(
 		}
 		kv.ClearRow(row)
 
+		parser.RecycleRow(lastRow)
 		offset, _ = parser.Pos()
 		if err := parser.ReadRow(); err != nil {
 			if errors.Cause(err) == io.EOF {

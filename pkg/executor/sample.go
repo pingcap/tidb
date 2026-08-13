@@ -232,7 +232,7 @@ func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRa
 		if kv.Key(start).Cmp(startKey) < 0 {
 			start = startKey
 		}
-		if end == nil || kv.Key(end).Cmp(endKey) > 0 {
+		if len(end) == 0 || kv.Key(end).Cmp(endKey) > 0 {
 			end = endKey
 		}
 		ranges = append(ranges, kv.KeyRange{StartKey: start, EndKey: end})
@@ -282,11 +282,32 @@ func (s *tableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, m
 		}
 	}
 	// Schema columns contain _tidb_rowid, append extra handle column info.
-	if len(cols) < len(schemaCols) && schemaCols[len(schemaCols)-1].ID == model.ExtraHandleID {
+	hasExtraHandleID := false
+	hasExtraCommitTSID := false
+	for _, c := range schemaCols {
+		if c.ID == model.ExtraHandleID {
+			hasExtraHandleID = true
+			continue
+		}
+		if c.ID == model.ExtraCommitTSID {
+			hasExtraCommitTSID = true
+			continue
+		}
+	}
+	if len(cols) < len(schemaCols) && hasExtraHandleID {
 		extraHandle := model.NewExtraHandleColInfo()
 		extraHandle.Offset = len(cols)
 		tableCol := &table.Column{ColumnInfo: extraHandle}
 		colMap[model.ExtraHandleID] = decoder.Column{
+			Col: tableCol,
+		}
+		cols = append(cols, tableCol)
+	}
+	if len(cols) < len(schemaCols) && hasExtraCommitTSID {
+		extraCommitTS := model.NewExtraCommitTSColInfo()
+		extraCommitTS.Offset = len(cols)
+		tableCol := &table.Column{ColumnInfo: extraCommitTS}
+		colMap[model.ExtraCommitTSID] = decoder.Column{
 			Col: tableCol,
 		}
 		cols = append(cols, tableCol)

@@ -16,12 +16,13 @@ package executor
 
 import (
 	"context"
+	"math"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -43,8 +44,8 @@ type DeleteExec struct {
 	tblID2Table  map[int64]table.Table
 
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
-	// the columns ordinals is present in ordinal range format, @see plannercore.TblColPosInfos
-	tblColPosInfos plannercore.TblColPosInfoSlice
+	// the columns ordinals is present in ordinal range format, @see physicalop.TblColPosInfos
+	tblColPosInfos physicalop.TblColPosInfoSlice
 	memTracker     *memory.Tracker
 	// fkChecks contains the foreign key checkers. the map is tableID -> []*FKCheckExec
 	fkChecks map[int64][]*FKCheckExec
@@ -52,6 +53,16 @@ type DeleteExec struct {
 	fkCascades map[int64][]*FKCascadeExec
 
 	ignoreErr bool
+}
+
+func addDeleteRowsColMultiply(total, delta int64) int64 {
+	if delta <= 0 || total == math.MaxInt64 {
+		return total
+	}
+	if total > math.MaxInt64-delta {
+		return math.MaxInt64
+	}
+	return total + delta
 }
 
 // Next implements the Executor Next interface.
@@ -63,7 +74,7 @@ func (e *DeleteExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return e.deleteSingleTableByChunk(ctx)
 }
 
-func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *plannercore.TblColPosInfo, isExtraHandle bool, row []types.Datum) error {
+func (e *DeleteExec) deleteOneRow(tbl table.Table, colInfo *physicalop.TblColPosInfo, isExtraHandle bool, row []types.Datum) error {
 	end := len(row)
 	if isExtraHandle {
 		end--
@@ -91,7 +102,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		vardef.EnableBatchDML.Load() && batchDMLSize > 0
 	fields := exec.RetTypes(e.Children(0))
 	datumRow := make([]types.Datum, 0, len(fields))
-	chk := exec.TryNewCacheChunk(e.Children(0))
+	chk := newDMLChildChunk(e, fields, e.Children(0).InitCap())
 	columns := e.Children(0).Schema().Columns
 	rowCount := 0
 	if len(columns) != len(fields) {
@@ -102,6 +113,11 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		return errors.New("schema columns and fields mismatch")
 	}
 	memUsageOfChk := int64(0)
+	var rowsColMultiply int64
+	recordRowsColMultiply := func() {
+		recordDMLRowsColMultiply2Metrics(e.Ctx().GetSessionVars(), rowsColMultiply, 1)
+		rowsColMultiply = 0
+	}
 
 	for {
 		e.memTracker.Consume(-memUsageOfChk)
@@ -117,6 +133,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		e.memTracker.Consume(memUsageOfChk)
 		for chunkRow := iter.Begin(); chunkRow != iter.End(); chunkRow = iter.Next() {
 			if batchDelete && rowCount >= batchDMLSize {
+				recordRowsColMultiply()
 				if err := e.doBatchDelete(ctx); err != nil {
 					return err
 				}
@@ -143,10 +160,15 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 					continue
 				}
 			}
+			columnCount := len(datumRow)
+			if isExtraHandle {
+				columnCount--
+			}
 			err = e.deleteOneRow(tbl, colPosInfo, isExtraHandle, datumRow)
 			if err != nil {
 				return err
 			}
+			rowsColMultiply = addDeleteRowsColMultiply(rowsColMultiply, int64(columnCount))
 			rowCount++
 			datumRow = datumRow[:0]
 		}
@@ -158,6 +180,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 		}
 	}
 
+	recordRowsColMultiply()
 	return nil
 }
 
@@ -170,7 +193,7 @@ func (e *DeleteExec) doBatchDelete(ctx context.Context) error {
 	return nil
 }
 
-func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []plannercore.TblColPosInfo, joinedRow []types.Datum) error {
+func (e *DeleteExec) composeTblRowMap(tblRowMap tableRowMapType, colPosInfos []physicalop.TblColPosInfo, joinedRow []types.Datum) error {
 	// iterate all the joined tables, and got the corresponding rows in joinedRow.
 	var totalMemDelta int64
 	for i := range colPosInfos {
@@ -242,6 +265,7 @@ func (e *DeleteExec) deleteMultiTablesByChunk(ctx context.Context) error {
 }
 
 func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableRowMapType) error {
+	var rowsColMultiply int64
 	for id, rowMap := range tblRowMap {
 		var err error
 		rowMap.Range(func(h kv.Handle, val handleInfoPair) bool {
@@ -259,16 +283,21 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 			}
 
 			err = e.removeRow(e.Ctx(), e.tblID2Table[id], h, val.handleVal, val.posInfo)
-			return err == nil
+			if err != nil {
+				return false
+			}
+			rowsColMultiply = addDeleteRowsColMultiply(rowsColMultiply, int64(len(val.handleVal)))
+			return true
 		})
 		if err != nil {
 			return err
 		}
 	}
+	recordDMLRowsColMultiply2Metrics(e.Ctx().GetSessionVars(), rowsColMultiply, 1)
 	return nil
 }
 
-func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *plannercore.TblColPosInfo) error {
+func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *physicalop.TblColPosInfo) error {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return err
@@ -345,7 +374,7 @@ func (e *DeleteExec) HasFKCascades() bool {
 
 type handleInfoPair struct {
 	handleVal []types.Datum
-	posInfo   *plannercore.TblColPosInfo
+	posInfo   *physicalop.TblColPosInfo
 }
 
 // tableRowMapType is a map for unique (Table, Row) pair. key is the tableID.

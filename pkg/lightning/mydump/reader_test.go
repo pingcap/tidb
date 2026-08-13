@@ -22,9 +22,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	mockstorage "github.com/pingcap/tidb/br/pkg/mock/storage"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	. "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/mockobjstore"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -35,7 +35,7 @@ func TestExportStatementNoTrailingNewLine(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(file.Name())
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
 	_, err = file.Write([]byte("CREATE DATABASE whatever;"))
@@ -89,7 +89,7 @@ func exportStatmentShouldBe(t *testing.T, stmt string, expected string) {
 	err = file.Close()
 	require.NoError(t, err)
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
@@ -115,7 +115,7 @@ func TestExportStatementGBK(t *testing.T) {
 	err = file.Close()
 	require.NoError(t, err)
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
@@ -136,7 +136,7 @@ func TestExportStatementGibberishError(t *testing.T) {
 	err = file.Close()
 	require.NoError(t, err)
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
 	f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
@@ -169,7 +169,7 @@ func TestExportStatementHandleNonEOFError(t *testing.T) {
 
 	ctx := context.TODO()
 
-	mockStorage := mockstorage.NewMockExternalStorage(controller)
+	mockStorage := mockobjstore.NewMockStorage(controller)
 	mockStorage.EXPECT().
 		Open(ctx, "no-perm-file", nil).
 		Return(AlwaysErrorReadSeekCloser{}, nil)
@@ -185,7 +185,7 @@ func TestExportStatementCompressed(t *testing.T) {
 	require.NoError(t, err)
 	defer os.Remove(file.Name())
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
 	gzipFile := gzip.NewWriter(file)
@@ -202,4 +202,78 @@ func TestExportStatementCompressed(t *testing.T) {
 	data, err := ExportStatement(context.TODO(), store, f, "auto")
 	require.NoError(t, err)
 	require.Equal(t, []byte("CREATE DATABASE whatever;"), data)
+}
+
+func TestExportStatementMissingTrailingSemicolon(t *testing.T) {
+	cases := []struct {
+		name    string
+		content []byte
+		want    []byte
+		wantErr bool
+		errSub  string
+	}{
+		{
+			name:    "missing_semicolon",
+			content: []byte("CREATE DATABASE whatever"),
+			want:    nil,
+			wantErr: true,
+			errSub:  "last SQL statement missing trailing semicolon",
+		},
+		{
+			name:    "only_pure_block_comment",
+			content: []byte("/* only comment */\n"),
+			want:    []byte{},
+			wantErr: false,
+		},
+		{
+			name:    "trailing_pure_block_comment",
+			content: []byte("CREATE DATABASE whatever;\n/* trailing comment */\n"),
+			want:    []byte("CREATE DATABASE whatever;"),
+			wantErr: false,
+		},
+		{
+			name:    "trailing_line_comment_should_error",
+			content: []byte("CREATE DATABASE whatever;\n-- trailing comment without semicolon"),
+			want:    nil,
+			wantErr: true,
+			errSub:  "last SQL statement missing trailing semicolon",
+		},
+		{
+			name:    "with_bom",
+			content: append([]byte{0xEF, 0xBB, 0xBF}, []byte("CREATE DATABASE whatever;")...),
+			want:    []byte("CREATE DATABASE whatever;"),
+			wantErr: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			file, err := os.Create(filepath.Join(dir, "tidb_lightning_test_reader"))
+			require.NoError(t, err)
+			defer os.Remove(file.Name())
+
+			_, err = file.Write(tc.content)
+			require.NoError(t, err)
+			stat, err := file.Stat()
+			require.NoError(t, err)
+			require.NoError(t, file.Close())
+
+			store, err := objstore.NewLocalStorage(dir)
+			require.NoError(t, err)
+			f := FileInfo{FileMeta: SourceFileMeta{Path: stat.Name(), FileSize: stat.Size()}}
+
+			data, err := ExportStatement(context.TODO(), store, f, "auto")
+			if tc.wantErr {
+				require.Error(t, err)
+				if tc.errSub != "" {
+					require.Contains(t, err.Error(), tc.errSub)
+				}
+				require.Len(t, data, 0)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.want, data)
+		})
+	}
 }
