@@ -1570,6 +1570,11 @@ impl DriverError {
             *b"HY000",
             "Failed to read auto-increment value from storage engine".to_owned(),
         ),
+        DriverError::AutoRandReadFailed => MysqlError::new(
+            8059,
+            *b"HY000",
+            "Failed to read auto-random value from storage engine".to_owned(),
+        ),
         DriverError::AutoIdUnavailable(detail) => MysqlError::unknown(detail),
         DriverError::InvalidAutoRandom(reason) => MysqlError::new(
             8216,

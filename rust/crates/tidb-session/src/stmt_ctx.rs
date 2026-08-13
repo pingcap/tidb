@@ -247,6 +247,16 @@ impl Session {
             .unwrap_or_default()
             .to_ascii_uppercase();
         let has = |flag: &str| mode.split(',').any(|part| part.trim() == flag);
+        let allow_auto_random_explicit_insert = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_ALLOW_AUTO_RAND_EXPLICIT_INSERT)
+            .is_ok_and(|value| value.eq_ignore_ascii_case("on") || value == "1");
+        let shard_allocate_step = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_SHARD_ALLOCATE_STEP)
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(i64::MAX as u64);
         // Go `expression_rewriter` uses no implicit escape when BOTH
         // `NO_BACKSLASH_ESCAPES` and this session switch are active. Capture
         // the choice with the rest of the statement state so every planner
@@ -468,6 +478,8 @@ impl Session {
                 .with_rand_session(Rc::clone(&self.rand))
                 .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
                 .with_retry_auto_ids(Rc::clone(&self.retry_auto_ids))
+                .with_row_id_shards(Rc::clone(&self.row_id_shards))
+                .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
                 .with_user_vars(Rc::clone(&self.user_vars))
                 .with_previous_statement(self.last_insert_id, self.prev_row_count)
                 .with_week_and_division_scale(week_format, div_scale)
@@ -502,6 +514,8 @@ impl Session {
         .with_rand_session(Rc::clone(&self.rand))
         .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
         .with_retry_auto_ids(Rc::clone(&self.retry_auto_ids))
+        .with_row_id_shards(Rc::clone(&self.row_id_shards))
+        .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
         .with_user_vars(Rc::clone(&self.user_vars))
         .with_previous_statement(self.last_insert_id, self.prev_row_count)
         .with_week_and_division_scale(week_format, div_scale)

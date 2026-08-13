@@ -38,6 +38,7 @@
 
 mod auto_id;
 mod auto_increment;
+mod auto_random;
 mod column_deps;
 mod index_entries;
 mod partition_maintenance;
@@ -53,6 +54,7 @@ pub use auto_id::{
 };
 
 pub use auto_increment::{AutoIncrement, TableAutoId};
+pub use auto_random::{AutoRandom, AutoRandomError, AutoRandomSpec};
 
 pub use row_decoder::{DecodedRow, GeneratedColumnSelection, RowDecoder};
 pub use table_meta::{
@@ -423,6 +425,9 @@ pub struct KvTable {
     /// Go's auto-id allocator, shared across the copies a transaction stages
     /// so that a consumed id is never returned (see [`AutoIdAllocator`]).
     auto_id: AutoIdAllocator,
+    /// The `AUTO_RANDOM` handle layout and its distinct TARID allocator.
+    auto_random: Option<AutoRandomSpec>,
+    auto_random_id: AutoIdAllocator,
     /// Go `TableInfo.IsCommonHandle`: the clustered primary key's column
     /// offsets, whose encoding IS the row handle. Empty when the table has no
     /// clustered common handle.
@@ -625,6 +630,8 @@ impl KvTable {
             common_handle_offsets: Vec::new(),
             auto_increment_offset: None,
             auto_id: AutoIdAllocator::new(),
+            auto_random: None,
+            auto_random_id: AutoIdAllocator::new(),
             charset: TableCharset::default(),
             comment: String::new(),
             use_new_collation,
@@ -710,6 +717,10 @@ impl KvTable {
         copy.indexes = self.indexes.clone();
         copy.common_handle_offsets = self.common_handle_offsets.clone();
         copy.auto_increment_offset = self.auto_increment_offset;
+        copy.auto_random = self.auto_random;
+        if let Some(spec) = copy.auto_random {
+            copy.auto_random_id.set_unsigned(spec.unsigned);
+        }
         copy.charset = self.charset;
         copy.comment = self.comment.clone();
         if let Some(partition) = self.partition() {
@@ -1230,7 +1241,8 @@ impl KvTable {
     /// TiDB: after truncating, the next auto-increment insert gets 1 again.
     pub fn truncate(&mut self) -> Result<(), AutoIdStoreError> {
         self.store.clear();
-        self.auto_id.reset()
+        self.auto_id.reset()?;
+        self.auto_random_id.reset()
     }
 
     /// Sets the table's name, used to qualify a duplicate-key error.
@@ -2043,6 +2055,7 @@ impl KvTable {
                 .rebase(assigned)
                 .map_err(|error| KvTableError::Storage(error.0))?;
         }
+        self.rebase_auto_random_from_row(row)?;
         // A clustered primary key IS the row handle, and the record value omits
         // the handle columns entirely, so an UPDATE that assigns to the primary
         // key MOVES the row: it is stored under the handle its new values

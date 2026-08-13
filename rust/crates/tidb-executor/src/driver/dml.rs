@@ -19,7 +19,7 @@
 //! the `executor` package's `InsertExec` / `UpdateExec` / `DeleteExec`.
 
 use super::*;
-use crate::kv_table::{AutoIdError, AutoIncrement};
+use crate::kv_table::{AutoIdError, AutoIncrement, AutoRandom, AutoRandomError};
 
 mod correlated;
 mod defaults;
@@ -72,7 +72,7 @@ pub fn run_insert_reporting(
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<(u64, Option<i64>), DriverError> {
+) -> Result<(u64, Option<u64>), DriverError> {
     let stmt = ctx.parse(sql)?;
 
     let insert = match &stmt {
@@ -95,7 +95,7 @@ pub(crate) fn run_insert_stmt(
     catalog: &mut Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Result<(u64, Option<i64>), DriverError> {
+) -> Result<(u64, Option<u64>), DriverError> {
     run_insert_traced(insert, catalog, current_db, ctx, None)
 }
 
@@ -201,7 +201,7 @@ pub(crate) fn run_insert_traced(
     current_db: &str,
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
-) -> Result<(u64, Option<i64>), DriverError> {
+) -> Result<(u64, Option<u64>), DriverError> {
     if insert.replace && !insert.on_duplicate.is_empty() {
         return Err(DriverError::unsupported("partitions are not supported yet"));
     }
@@ -308,12 +308,20 @@ pub(crate) fn run_insert_traced(
             unreachable!("INSERT through a read-only relation is refused above")
         }
     };
+    let auto_random_offset = match table {
+        TableEntry::Kv(kv) => kv.auto_random().map(|spec| spec.offset),
+        TableEntry::Mem(_) => None,
+        TableEntry::Cte(_) | TableEntry::View(_) | TableEntry::Sequence(_) => {
+            unreachable!("INSERT through a read-only relation is refused above")
+        }
+    };
     // One marker per staged row: after casting, a supplied zero under
     // NO_AUTO_VALUE_ON_ZERO remains zero while NULL and omitted values still
     // take an id. Keeping the supplied-ness beside the row distinguishes the
     // two zero values that the later allocator otherwise cannot tell apart.
     let mut auto_rows: Vec<(usize, bool)> = Vec::new();
-    let mut first_allocated: Option<i64> = None;
+    let mut auto_random_rows: Vec<(usize, bool)> = Vec::new();
+    let mut first_allocated: Option<u64> = None;
 
     let mut inserted = 0u64;
     // A source query supplies already-evaluated values; a VALUES list
@@ -552,6 +560,16 @@ pub(crate) fn run_insert_traced(
             assigned[offset] = true;
             auto_rows.push((new_rows.len(), supplied));
         }
+        // AUTO_RANDOM uses the same NULL/omitted/zero value boundary as Go's
+        // `adjustAutoRandomDatum`, but draws from its own allocator below.
+        if let Some(offset) = auto_random_offset {
+            let supplied = assigned[offset] && row[offset] != Datum::Null;
+            if !supplied {
+                row[offset] = Datum::Int(0);
+            }
+            assigned[offset] = true;
+            auto_random_rows.push((new_rows.len(), supplied));
+        }
         // A generated column has a value source of its own, so it is neither
         // defaulted nor NULL-checked here: it counts as supplied, and the
         // expression fills it below. Without this a `NOT NULL` generated
@@ -628,6 +646,53 @@ pub(crate) fn run_insert_traced(
         let TableEntry::Kv(kv) = table else {
             unreachable!("INSERT through a view is refused above")
         };
+        if let Some(auto_offset) = auto_random_offset {
+            for (index, supplied) in &auto_random_rows {
+                if *supplied
+                    && ctx.auto_increment_zero_is_explicit()
+                    && matches!(
+                        new_rows[*index][auto_offset],
+                        Datum::Int(0) | Datum::UInt(0)
+                    )
+                {
+                    continue;
+                }
+                let outcome = kv
+                    .apply_auto_random(
+                        &mut new_rows[*index],
+                        ctx.auto_increment_step(),
+                        ctx.allow_auto_random_explicit_insert(),
+                        || ctx.reuse_auto_random_id(),
+                        ctx.next_auto_random_shard(1),
+                    )
+                    .map_err(|error| match error {
+                        AutoRandomError::ExplicitInsertDisabled => DriverError::InvalidAutoRandom(
+                            "Explicit insertion on auto_random column is disabled. Try to set @@allow_auto_random_explicit_insert = true."
+                                .to_owned(),
+                        ),
+                        AutoRandomError::AutoId(AutoIdError::Exhausted) => {
+                            DriverError::AutoRandReadFailed
+                        }
+                        AutoRandomError::AutoId(AutoIdError::OutOfRange {
+                            value,
+                            type_name,
+                        }) => DriverError::ConstantOverflows { value, type_name },
+                        AutoRandomError::AutoId(AutoIdError::Store(detail)) => {
+                            DriverError::AutoIdUnavailable(detail.0)
+                        }
+                    })?;
+                if let Some(placed) = outcome.placed() {
+                    ctx.record_auto_random_id(placed);
+                }
+                match outcome {
+                    AutoRandom::Given(given) => ctx.record_given_insert_id(given),
+                    AutoRandom::Allocated(id) if first_allocated.is_none() => {
+                        first_allocated = Some(id);
+                    }
+                    AutoRandom::Absent | AutoRandom::Reused(_) | AutoRandom::Allocated(_) => {}
+                }
+            }
+        }
         if let Some(auto_offset) = auto_increment_offset {
             // The allocator lives on the table, so the ids are handed out here
             // rather than while the rows were being built.
@@ -685,7 +750,7 @@ pub(crate) fn run_insert_traced(
                     // value a client read after the losing attempt is the one
                     // that survives.
                     AutoIncrement::Allocated(id) if first_allocated.is_none() => {
-                        first_allocated = Some(id);
+                        first_allocated = Some(id as u64);
                     }
                     AutoIncrement::Absent
                     | AutoIncrement::Reused(_)
@@ -819,7 +884,7 @@ pub(crate) fn run_insert_traced(
         // and a row redirected into ON DUPLICATE KEY UPDATE never reach here
         // and so publish nothing.
         if let Some(allocated) = first_allocated {
-            ctx.publish_last_insert_id(allocated.max(0) as u64);
+            ctx.publish_last_insert_id(allocated);
         }
         if let Some(partitions) = &insert_partition_ids {
             target(catalog, &database, &table_name)

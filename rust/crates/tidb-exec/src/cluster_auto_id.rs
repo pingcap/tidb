@@ -400,6 +400,12 @@ pub fn auto_id_key_for(db_id: i64, table: &TableInfo) -> Vec<u8> {
     }
 }
 
+/// The meta key holding `table`'s distinct AUTO_RANDOM counter.
+#[must_use]
+pub fn auto_random_id_key_for(db_id: i64, table: &TableInfo) -> Vec<u8> {
+    key::auto_random_table_id_kv_key(db_id, table.id)
+}
+
 /// One table's counter, living in the cluster's meta keys.
 ///
 /// Held by the node and SHARED by every session on it, which is what makes a
@@ -434,9 +440,28 @@ impl ClusterAutoIdStore {
         table: &TableInfo,
         timeout: Duration,
     ) -> Self {
+        Self::over_key(opener, auto_id_key_for(db_id, table), timeout)
+    }
+
+    /// The distinct AUTO_RANDOM counter for `table`.
+    #[must_use]
+    pub fn new_random(
+        opener: RealOptimisticTransactionOpener,
+        db_id: i64,
+        table: &TableInfo,
+        timeout: Duration,
+    ) -> Self {
+        Self::over_key(opener, auto_random_id_key_for(db_id, table), timeout)
+    }
+
+    fn over_key(
+        opener: RealOptimisticTransactionOpener,
+        counter_key: Vec<u8>,
+        timeout: Duration,
+    ) -> Self {
         ClusterAutoIdStore {
             opener,
-            counter_key: auto_id_key_for(db_id, table),
+            counter_key,
             timeout,
         }
     }

@@ -58,6 +58,9 @@ pub enum DriverError {
     /// Go `autoid.ErrAutoincReadFailed` (1467): the AUTO_INCREMENT column has
     /// no id left in its domain, which Go raises rather than reusing one.
     AutoincReadFailed,
+    /// Go `autoid.ErrAutoRandReadFailed` (8059): the increasing portion no
+    /// longer fits the table's persisted AUTO_RANDOM bit layout.
+    AutoRandReadFailed,
     /// The AUTO_INCREMENT counter's home could not be read or written.
     ///
     /// Deliberately NOT `AutoincReadFailed`: Go raises 1467 only for a full

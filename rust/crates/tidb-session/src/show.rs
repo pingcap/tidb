@@ -177,8 +177,7 @@ fn index_part_text(table: &tidb_executor::KvTable, offset: usize, prefix_length:
 /// one, then the indexes, then the closing paren with the engine and charset.
 ///
 /// NOT MODELLED (documented, and each one rejected at DDL time so no table can
-/// carry it): AUTO_RANDOM, ON UPDATE
-/// CURRENT_TIMESTAMP, column and index comments, foreign keys, check
+/// carry it): ON UPDATE CURRENT_TIMESTAMP, column and index comments, foreign keys, check
 /// constraints, temporary tables, views and sequences. Partitioning IS
 /// printed, by [`partition_clause_text`], for the one method the tier
 /// builds.
@@ -280,6 +279,19 @@ fn show_create_table_text(
                     clause.push_str(" DEFAULT NULL");
                 }
                 None => {}
+            }
+        }
+        if let Some(spec) = table.auto_random().filter(|spec| spec.offset == offset) {
+            if spec.range_bits == 64 {
+                clause.push_str(&format!(
+                    " /*T![auto_rand] AUTO_RANDOM({}) */",
+                    spec.shard_bits
+                ));
+            } else {
+                clause.push_str(&format!(
+                    " /*T![auto_rand] AUTO_RANDOM({}, {}) */",
+                    spec.shard_bits, spec.range_bits
+                ));
             }
         }
         clauses.push(clause);

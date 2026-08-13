@@ -49,7 +49,7 @@ use crate::cluster_session::TableAutoIds;
 pub struct ClusterTableAutoIds {
     opener: RealOptimisticTransactionOpener,
     timeout: Duration,
-    allocators: Mutex<HashMap<i64, TableAutoId>>,
+    allocators: Mutex<HashMap<(i64, bool), TableAutoId>>,
 }
 
 impl std::fmt::Debug for ClusterTableAutoIds {
@@ -80,10 +80,25 @@ impl TableAutoIds for ClusterTableAutoIds {
         self.allocators
             .lock()
             .expect("cluster auto id registry poisoned")
-            .entry(table.id)
+            .entry((table.id, false))
             .or_insert_with(|| {
                 TableAutoId::over(
                     ClusterAutoIdStore::new(self.opener.clone(), db_id, table, self.timeout)
+                        .shared(),
+                    DEFAULT_AUTO_ID_STEP,
+                )
+            })
+            .clone()
+    }
+
+    fn random_allocator_for(&self, db_id: i64, table: &TableInfo) -> TableAutoId {
+        self.allocators
+            .lock()
+            .expect("cluster auto id registry poisoned")
+            .entry((table.id, true))
+            .or_insert_with(|| {
+                TableAutoId::over(
+                    ClusterAutoIdStore::new_random(self.opener.clone(), db_id, table, self.timeout)
                         .shared(),
                     DEFAULT_AUTO_ID_STEP,
                 )

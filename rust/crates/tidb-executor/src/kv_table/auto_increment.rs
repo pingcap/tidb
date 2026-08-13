@@ -39,7 +39,7 @@ use tidb_datatype::{
 /// allocator sits on the domain's table cache and the `TableInfo` carries no
 /// counter at all.
 #[derive(Clone, Debug)]
-pub struct TableAutoId(AutoIdAllocator);
+pub struct TableAutoId(pub(super) AutoIdAllocator);
 
 impl TableAutoId {
     /// An allocator over `store`, reserving `step` ids at a time.

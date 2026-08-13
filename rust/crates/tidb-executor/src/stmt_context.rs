@@ -106,15 +106,40 @@ pub enum StatementClass {
 /// for explicit ids too passes it and still drifts on the mixed batch, and a
 /// port that recorded only allocated ids passes it as well.
 #[derive(Debug, Default)]
-pub struct RetryAutoIds {
-    /// What the previous attempt assigned, in order, and how much of it this
-    /// attempt has taken back. Empty on a statement's first attempt, which is
-    /// what makes "reuse if there is one" the whole rule.
+struct RetryIdQueue {
     previous: Vec<u64>,
     taken: usize,
-    /// What this attempt has assigned so far, reused and freshly allocated
-    /// alike. It becomes `previous` if there is another attempt.
     current: Vec<u64>,
+}
+
+impl RetryIdQueue {
+    fn begin_attempt(&mut self) {
+        self.previous = std::mem::take(&mut self.current);
+        self.taken = 0;
+    }
+
+    fn clean(&mut self) {
+        self.previous.clear();
+        self.current.clear();
+        self.taken = 0;
+    }
+
+    fn reuse(&mut self) -> Option<u64> {
+        let id = self.previous.get(self.taken).copied()?;
+        self.taken += 1;
+        Some(id)
+    }
+
+    fn record(&mut self, id: u64) {
+        self.current.push(id);
+    }
+}
+
+#[derive(Debug, Default)]
+/// Session retry state for AUTO_INCREMENT and AUTO_RANDOM assignments.
+pub struct RetryAutoIds {
+    increment: RetryIdQueue,
+    random: RetryIdQueue,
 }
 
 impl RetryAutoIds {
@@ -122,17 +147,16 @@ impl RetryAutoIds {
     /// once per replay pass: the attempt that is starting inherits the ids the
     /// attempt that just failed assigned.
     pub fn begin_attempt(&mut self) {
-        self.previous = std::mem::take(&mut self.current);
-        self.taken = 0;
+        self.increment.begin_attempt();
+        self.random.begin_attempt();
     }
 
     /// Go's `RetryInfo.Clean`, called when the statement is over however it
     /// ended. Ids must never outlive their statement: the next statement's
     /// rows are not these rows.
     pub fn clean(&mut self) {
-        self.previous.clear();
-        self.current.clear();
-        self.taken = 0;
+        self.increment.clean();
+        self.random.clean();
     }
 
     /// Go's `GetCurrAutoIncrementID`: the id the previous attempt gave the
@@ -140,14 +164,48 @@ impl RetryAutoIds {
     /// both the first attempt and a replay that needs MORE ids than the
     /// attempt before it did.
     pub fn reuse(&mut self) -> Option<u64> {
-        let id = self.previous.get(self.taken).copied()?;
-        self.taken += 1;
-        Some(id)
+        self.increment.reuse()
     }
 
     /// Go's `AddAutoIncrementID`: records the id a row was actually given.
     pub fn record(&mut self, id: u64) {
-        self.current.push(id);
+        self.increment.record(id);
+    }
+
+    /// Go `GetCurrAutoRandomID` for the next auto-random row.
+    pub fn reuse_random(&mut self) -> Option<u64> {
+        self.random.reuse()
+    }
+
+    /// Go `AddAutoRandomID` for one completed row assignment.
+    pub fn record_random(&mut self, id: u64) {
+        self.random.record(id);
+    }
+}
+
+/// Session-lived shard selection for row IDs. The random source is
+/// intentionally Rust-native; the observable contract is that one shard is
+/// retained for `@@tidb_shard_allocate_step` IDs and then replaced.
+#[derive(Debug, Default)]
+pub struct RowIdShardGenerator {
+    step: u64,
+    remaining: u64,
+    current: u64,
+}
+
+impl RowIdShardGenerator {
+    fn next(&mut self, step: u64, count: u64) -> u64 {
+        let step = step.max(1);
+        if self.step != step {
+            self.step = step;
+            self.remaining = 0;
+        }
+        if self.remaining == 0 {
+            self.current = u64::from(tidb_util::fastrand::uint32());
+            self.remaining = step;
+        }
+        self.remaining = self.remaining.saturating_sub(count);
+        self.current
     }
 }
 
@@ -262,6 +320,7 @@ pub struct StmtContext {
     /// must cross between them. Timestamps must not -- a replay re-reads at a
     /// new one, which is what keeps the lost update closed.
     retry_auto_ids: Rc<RefCell<RetryAutoIds>>,
+    row_id_shards: Rc<RefCell<RowIdShardGenerator>>,
     /// Go `table.getIncrementAndOffset`'s inputs: `@@auto_increment_increment`
     /// and `@@auto_increment_offset`, which put the allocated ids on an
     /// arithmetic progression. See [`StmtContext::auto_increment_step`].
@@ -271,6 +330,8 @@ pub struct StmtContext {
     /// request for the next id. A statement that would have to honour it is
     /// refused; see [`StmtContext::auto_increment_zero_is_explicit`].
     auto_increment_zero_is_explicit: bool,
+    allow_auto_random_explicit_insert: bool,
+    shard_allocate_step: u64,
     /// Go `SessionVars.SQLMode.HasOnlyFullGroupBy()`: whether a grouped query
     /// must justify every non-aggregated value it reports. `ONLY_FULL_GROUP_BY`
     /// is in TiDB's DEFAULT `sql_mode`, so a session leaves this on; a context
@@ -501,8 +562,11 @@ impl StmtContext {
             prev_row_count: 0,
             given_insert_id: Rc::default(),
             retry_auto_ids: Rc::default(),
+            row_id_shards: Rc::default(),
             auto_increment_step: (1, 1),
             auto_increment_zero_is_explicit: false,
+            allow_auto_random_explicit_insert: false,
+            shard_allocate_step: i64::MAX as u64,
             only_full_group_by: false,
             default_week_format: 0,
             foreign_key_checks: true,
@@ -1335,6 +1399,46 @@ impl StmtContext {
     /// replay of this statement writes the same one.
     pub fn record_auto_increment_id(&self, id: u64) {
         self.retry_auto_ids.borrow_mut().record(id);
+    }
+
+    /// Attaches the session's row-ID shard generator. Its retained shard is
+    /// shared by every statement in the connection, as in Go SessionVars.
+    #[must_use]
+    pub fn with_row_id_shards(mut self, shards: Rc<RefCell<RowIdShardGenerator>>) -> Self {
+        self.row_id_shards = shards;
+        self
+    }
+
+    /// Declares the two session policies used by AUTO_RANDOM insertion.
+    #[must_use]
+    pub fn with_auto_random_policy(mut self, explicit_allowed: bool, shard_step: u64) -> Self {
+        self.allow_auto_random_explicit_insert = explicit_allowed;
+        self.shard_allocate_step = shard_step.max(1);
+        self
+    }
+
+    /// The complete AUTO_RANDOM id assigned to this row by the previous
+    /// retry attempt, if that attempt reached the row.
+    pub fn reuse_auto_random_id(&self) -> Option<u64> {
+        self.retry_auto_ids.borrow_mut().reuse_random()
+    }
+
+    /// Records one complete AUTO_RANDOM id for a possible statement replay.
+    pub fn record_auto_random_id(&self, id: u64) {
+        self.retry_auto_ids.borrow_mut().record_random(id);
+    }
+
+    /// Chooses the shard for the next `count` generated row IDs.
+    pub fn next_auto_random_shard(&self, count: u64) -> u64 {
+        self.row_id_shards
+            .borrow_mut()
+            .next(self.shard_allocate_step, count)
+    }
+
+    /// Whether this session permits a caller-provided AUTO_RANDOM value.
+    #[must_use]
+    pub const fn allow_auto_random_explicit_insert(&self) -> bool {
+        self.allow_auto_random_explicit_insert
     }
 
     /// Attaches what the PRECEDING statement published: Go's

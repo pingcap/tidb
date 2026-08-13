@@ -66,6 +66,9 @@ const PRI_KEY_FLAG: u32 = 1 << 1;
 pub trait TableAutoIds: std::fmt::Debug + Send + Sync {
     /// The live allocator for `table`, which is stored in database `db_id`.
     fn allocator_for(&self, db_id: i64, table: &TableInfo) -> TableAutoId;
+
+    /// The live, distinct AUTO_RANDOM allocator for `table`.
+    fn random_allocator_for(&self, db_id: i64, table: &TableInfo) -> TableAutoId;
 }
 
 /// Counters that live in this process and start at zero, one per table id.
@@ -77,7 +80,7 @@ pub trait TableAutoIds: std::fmt::Debug + Send + Sync {
 /// exist.
 #[derive(Debug, Default)]
 pub struct LocalTableAutoIds {
-    allocators: Mutex<std::collections::HashMap<i64, TableAutoId>>,
+    allocators: Mutex<std::collections::HashMap<(i64, bool), TableAutoId>>,
 }
 
 impl TableAutoIds for LocalTableAutoIds {
@@ -85,7 +88,21 @@ impl TableAutoIds for LocalTableAutoIds {
         self.allocators
             .lock()
             .expect("local auto id map poisoned")
-            .entry(table.id)
+            .entry((table.id, false))
+            .or_insert_with(|| {
+                TableAutoId::over(
+                    Arc::new(tidb_executor::kv_table::LocalAutoIdStore::new()),
+                    1,
+                )
+            })
+            .clone()
+    }
+
+    fn random_allocator_for(&self, _db_id: i64, table: &TableInfo) -> TableAutoId {
+        self.allocators
+            .lock()
+            .expect("local auto id map poisoned")
+            .entry((table.id, true))
             .or_insert_with(|| {
                 TableAutoId::over(
                     Arc::new(tidb_executor::kv_table::LocalAutoIdStore::new()),
@@ -131,6 +148,13 @@ impl AutoIdSource<'_> {
     fn allocator_for(&self, table: &TableInfo) -> TableAutoId {
         match self {
             AutoIdSource::In { db_id, ids } => ids.allocator_for(*db_id, table),
+            AutoIdSource::Unavailable => TableAutoId::over(Arc::new(UnavailableAutoIdStore), 1),
+        }
+    }
+
+    fn random_allocator_for(&self, table: &TableInfo) -> TableAutoId {
+        match self {
+            AutoIdSource::In { db_id, ids } => ids.random_allocator_for(*db_id, table),
             AutoIdSource::Unavailable => TableAutoId::over(Arc::new(UnavailableAutoIdStore), 1),
         }
     }
@@ -401,6 +425,29 @@ pub(crate) fn cluster_table(
     } else if table.is_common_handle {
         let handles = clustered_handle_offsets(table, &columns)?;
         kv_table.set_common_handle_offsets(handles);
+    }
+    if table.contains_auto_random_bits() {
+        let offset = if table.pk_is_handle {
+            kv_table
+                .pk_handle_offset()
+                .expect("an AUTO_RANDOM PKIsHandle table has a handle column")
+        } else {
+            *kv_table
+                .common_handle_offsets()
+                .first()
+                .expect("an AUTO_RANDOM common handle has a first column")
+        };
+        kv_table.set_auto_random(tidb_executor::kv_table::AutoRandomSpec {
+            offset,
+            shard_bits: table.auto_random_bits,
+            range_bits: if table.auto_random_range_bits == 0 {
+                64
+            } else {
+                table.auto_random_range_bits
+            },
+            unsigned: table.is_auto_random_bit_col_unsigned(),
+        });
+        kv_table.set_auto_random_id(auto.random_allocator_for(table));
     }
     for index in table.indices.iter_deref() {
         let index = index.read();
@@ -1064,6 +1111,26 @@ mod tests {
         let first = homes.allocator_for(1, &table);
         let second = homes.allocator_for(1, &table);
         assert!(first.same_allocator_as(&second));
+    }
+
+    #[test]
+    fn auto_random_uses_a_distinct_stable_allocator() {
+        let table = TableInfo {
+            id: 402,
+            name: CiString::new("ar"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            auto_random_bits: 5,
+            auto_random_range_bits: 64,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
+        let homes = LocalTableAutoIds::default();
+        let row = homes.allocator_for(1, &table);
+        let random = homes.random_allocator_for(1, &table);
+        let random_again = homes.random_allocator_for(1, &table);
+        assert!(!row.same_allocator_as(&random));
+        assert!(random.same_allocator_as(&random_again));
     }
 
     /// A table without a primary key uses the hidden `_tidb_rowid`. Separate

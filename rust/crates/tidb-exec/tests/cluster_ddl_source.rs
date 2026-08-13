@@ -1042,6 +1042,23 @@ fn create_table_with_auto_increment_is_admitted_now_the_counter_has_a_home() {
     );
 }
 
+#[test]
+fn create_table_with_auto_random_persists_its_allocator_format() {
+    let parsed = tidb_parser::parse(
+        "CREATE TABLE ar (id BIGINT UNSIGNED AUTO_RANDOM(5, 32) PRIMARY KEY, v INT)",
+    )
+    .expect("the fixture SQL parses");
+    let DdlStatement::CreateTable { template, .. } = lower_ddl(&parsed, "test")
+        .expect("admitted")
+        .expect("a catalog change")
+    else {
+        panic!("a CREATE TABLE");
+    };
+    assert_eq!(template.auto_random_bits, 5);
+    assert_eq!(template.auto_random_range_bits, 32);
+    assert!(template.is_auto_random_bit_col_unsigned());
+}
+
 /// `AUTO_ID_CACHE 1` is Go's `SepAutoInc`, and only then does the counter move
 /// to its own `IID:` key.
 ///

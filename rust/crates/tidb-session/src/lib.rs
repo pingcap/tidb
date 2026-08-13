@@ -396,6 +396,9 @@ pub struct Session {
     /// builds its own `StmtContext`, and this is the one thing that has to
     /// cross between them. See `tidb_executor::RetryAutoIds`.
     retry_auto_ids: Rc<RefCell<tidb_executor::RetryAutoIds>>,
+    /// Go `SessionVars.RowIDShardGenerator`: retains one random shard for
+    /// `@@tidb_shard_allocate_step` generated IDs across statement contexts.
+    row_id_shards: Rc<RefCell<tidb_executor::RowIdShardGenerator>>,
     /// The session's non-prepared plan cache
     /// (`tidb_enable_non_prepared_plan_cache`). See
     /// [`non_prepared_plan_cache`] for what it does and does not store.
@@ -517,6 +520,7 @@ impl Default for Session {
             statement_kind: StatementKind::Other,
             published_last_insert_id: Rc::default(),
             retry_auto_ids: Rc::default(),
+            row_id_shards: Rc::default(),
             non_prepared_plan_cache: non_prepared_plan_cache::NonPreparedPlanCache::default(),
             found_in_plan_cache: false,
             prev_found_in_plan_cache: false,
@@ -944,6 +948,8 @@ mod tests_alter_column;
 mod tests_analyze;
 #[cfg(test)]
 mod tests_auto_increment;
+#[cfg(test)]
+mod tests_auto_random;
 #[cfg(test)]
 mod tests_bad_null;
 #[cfg(test)]

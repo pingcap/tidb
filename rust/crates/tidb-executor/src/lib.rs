@@ -153,7 +153,8 @@ pub use projection::ProjectionExec;
 pub use selection::SelectionExec;
 pub use sort::{SortByItem, SortExec};
 pub use stmt_context::{
-    RetryAutoIds, SequenceSnapshot, StatementClass, StmtContext, MAX_WARNING_COUNT,
+    RetryAutoIds, RowIdShardGenerator, SequenceSnapshot, StatementClass, StmtContext,
+    MAX_WARNING_COUNT,
 };
 pub use stream_agg::StreamAggExec;
 pub use table_access::TableAccess;

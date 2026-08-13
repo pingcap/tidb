@@ -400,6 +400,42 @@ pub fn build_table_info_with_context(
         table_collate,
         clustered_mode,
     )?;
+    let handle_offsets = if table.pk_is_handle {
+        table
+            .columns
+            .iter_deref()
+            .position(|column| column.read().field_type.has_flag(FieldTypeFlags::PRI_KEY))
+            .into_iter()
+            .collect::<Vec<_>>()
+    } else if table.is_common_handle {
+        table
+            .indices
+            .iter_deref()
+            .find_map(|index| {
+                let index = index.read();
+                index.primary.then(|| {
+                    index
+                        .columns
+                        .iter_deref()
+                        .map(|column| column.read().offset as usize)
+                        .collect::<Vec<_>>()
+                })
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let fields = table
+        .columns
+        .iter_deref()
+        .map(|column| column.read().field_type.clone())
+        .collect::<Vec<_>>();
+    if let Some(spec) = tidb_executor::ddl::auto_random::validate(create, &fields, &handle_offsets)
+        .map_err(default_admission_error)?
+    {
+        table.auto_random_bits = spec.shard_bits;
+        table.auto_random_range_bits = spec.range_bits;
+    }
     table.comment = comment;
     table.auto_inc_id = auto_inc_id;
     Ok(table)
@@ -711,6 +747,10 @@ fn build_column(
                 }
                 field_type.add_flags(FieldTypeFlags::AUTO_INCREMENT | FieldTypeFlags::NOT_NULL);
             }
+            // The persisted bit layout is validated and installed after the
+            // clustered handle has been selected, because that decision is
+            // part of the AUTO_RANDOM contract.
+            ColumnOption::AutoRandom(_) => {}
             ColumnOption::Comment(comment) => info.comment = comment.clone(),
             // Already folded into the charset/collation resolution above.
             ColumnOption::Collate(collate) => {
