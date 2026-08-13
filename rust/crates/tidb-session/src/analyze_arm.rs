@@ -134,8 +134,20 @@ impl Session {
         let name = statement.table.clone();
         let ctx = self.statement_context(false);
         self.with_catalog_mut(|catalog| {
-            let table_id = match catalog.table_in(&schema, &name) {
-                Some(TableEntry::Kv(kv)) => kv.table_id,
+            let (table_id, partition_ids, table) = match catalog.table_in(&schema, &name) {
+                Some(TableEntry::Kv(kv)) => (
+                    kv.table_id,
+                    kv.partition()
+                        .map(|partition| {
+                            partition
+                                .definitions
+                                .iter()
+                                .map(|definition| definition.id)
+                                .collect::<Vec<_>>()
+                        })
+                        .unwrap_or_default(),
+                    kv.clone(),
+                ),
                 // Go raises 1146 for a name that is not a table, and
                 // `ErrAnalyzeMissColumn`-adjacent refusals for a view or a
                 // sequence; both are "there is nothing here to analyze", and
@@ -151,25 +163,66 @@ impl Session {
                     )))
                 }
             };
-            // Go's `getAdjustedSampleRate` reads the CURRENT
-            // `mysql.stats_meta.count`, which here is whatever the last
-            // analysis published.
-            let realtime_count = catalog
-                .table_statistics(table_id)
-                .map(|statistics| statistics.row_count);
+            let realtime_count = |physical_id| {
+                // Go's `getAdjustedSampleRate` reads the CURRENT
+                // `mysql.stats_meta.count` of the physical table being
+                // analyzed, which here is whatever its last analysis
+                // published.
+                catalog
+                    .table_statistics(physical_id)
+                    .map(|statistics| statistics.row_count)
+            };
+            let partition_counts = partition_ids
+                .iter()
+                .map(|physical_id| (*physical_id, realtime_count(*physical_id)))
+                .collect::<Vec<_>>();
+            let global_count = realtime_count(table_id);
             recover_analyze_panic(|| {
-                let Some(TableEntry::Kv(table)) = catalog.table_mut_in(&schema, &name) else {
-                    // The lookup above already resolved it; a catalog that
-                    // changed in between is not reachable from one statement.
-                    return Err(DriverError::CatalogPoisoned);
-                };
                 #[cfg(test)]
                 inject_analyze_panic_for_test(AnalyzePanicPhase::Worker);
-                let statistics = analyze_kv_table(table, options, realtime_count, &ctx)
-                    .map_err(|error| DriverError::unsupported(error.to_string()))?;
+
+                if partition_ids.is_empty() {
+                    let mut table = table;
+                    let statistics = analyze_kv_table(&mut table, options, global_count, &ctx)
+                        .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                    #[cfg(test)]
+                    inject_analyze_panic_for_test(AnalyzePanicPhase::Result);
+                    catalog.set_table_statistics(table_id, Arc::new(statistics));
+                    return Ok(());
+                }
+
+                let mut partition_statistics = Vec::with_capacity(partition_counts.len());
+                for (physical_id, realtime_count) in partition_counts {
+                    let mut partition = table.clone();
+                    partition.restrict_read_to_partitions(&[physical_id]);
+                    let statistics =
+                        analyze_kv_table(&mut partition, options, realtime_count, &ctx)
+                            .map_err(|error| DriverError::unsupported(error.to_string()))?;
+                    partition_statistics.push((physical_id, Arc::new(statistics)));
+                }
+
+                // Go's static pruning mode analyzes the physical partitions
+                // and deliberately does not merge a logical-table histogram.
+                // Dynamic pruning performs that merge; analyzing the same
+                // complete row set here gives its planner the same global
+                // distribution without inventing a second statistics store.
+                let global_statistics = if ctx.static_partition_prune() {
+                    None
+                } else {
+                    let mut global = table;
+                    Some(Arc::new(
+                        analyze_kv_table(&mut global, options, global_count, &ctx)
+                            .map_err(|error| DriverError::unsupported(error.to_string()))?,
+                    ))
+                };
                 #[cfg(test)]
                 inject_analyze_panic_for_test(AnalyzePanicPhase::Result);
-                catalog.set_table_statistics(table_id, Arc::new(statistics));
+                for (physical_id, statistics) in partition_statistics {
+                    catalog.set_table_statistics(physical_id, statistics);
+                }
+                if let Some(statistics) = global_statistics {
+                    catalog.set_table_statistics(table_id, statistics);
+                }
                 Ok(())
             })
             .map_err(|error| DriverError::unsupported(error.rendered_message().to_owned()))?

@@ -63,6 +63,11 @@ fn pseudo_suffix(estimate: ScanEstimate) -> &'static str {
         ""
     }
 }
+
+fn scan_info_with_estimate(info: &str, estimate: ScanEstimate) -> String {
+    let info = info.strip_suffix(", stats:pseudo").unwrap_or(info);
+    format!("{info}{}", pseudo_suffix(estimate))
+}
 use crate::executor::{ExecError, Executor};
 use crate::kv_table::TableHandle;
 
@@ -313,6 +318,28 @@ impl PlanTrace {
     /// `p0` is absent because pruning already dropped it -- the fan-out names
     /// what SURVIVED, never every declared partition.
     pub(crate) fn partition_union(&mut self, partitions: &[String]) {
+        self.partition_union_inner(
+            &partitions
+                .iter()
+                .map(|partition| (partition.as_str(), None))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    /// Static pruning plans each physical partition with that partition's
+    /// own statistics. The logical table may intentionally have no global
+    /// statistics, so copying its pseudo estimate into every branch would
+    /// misdescribe an analyzed physical partition and can change path cost.
+    pub(crate) fn partition_union_with_estimates(&mut self, partitions: &[(String, ScanEstimate)]) {
+        self.partition_union_inner(
+            &partitions
+                .iter()
+                .map(|(partition, estimate)| (partition.as_str(), Some(*estimate)))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    fn partition_union_inner(&mut self, partitions: &[(&str, Option<ScanEstimate>)]) {
         // A join leaf is recorded before the parent has predicates to prune,
         // so static mode may have already fanned it out across every declared
         // partition. A later single-table access decision has the exact
@@ -342,37 +369,62 @@ impl PlanTrace {
         // which Go also leaves as a bare `DataSource` rather than a union of
         // one branch.
         if partitions.len() < 2 {
-            if let ([partition], Some(top)) = (partitions, self.stack.last_mut()) {
-                top.access = with_partition(&top.access, partition);
+            if let ([(partition, estimate)], Some(top)) = (partitions, self.stack.last_mut()) {
+                top.access = with_partition(&without_partition(&top.access), partition);
+                if let Some(estimate) = estimate {
+                    top.est_rows = Some(estimate.rows);
+                    top.info = scan_info_with_estimate(&top.info, *estimate);
+                    top.key_ndv_ratio = estimate.pseudo.then_some(DISTINCT_FACTOR);
+                }
             }
             return;
         }
         let Some(leaf) = self.stack.pop() else {
             return;
         };
+        let estimated_rows = partitions.iter().try_fold(0.0, |sum, (_, estimate)| {
+            Some(sum + estimate.map_or(leaf.est_rows?, |estimate| estimate.rows))
+        });
         let mut union = PlanNode::new(
             "PartitionUnion",
-            // Go's `PhysicalUnionAll` sums its children's estimates, and each
-            // branch reads the same partition-blind estimate this tier costed
-            // the one scan with.
-            leaf.est_rows.map(|rows| rows * partitions.len() as f64),
+            // Go's `PhysicalUnionAll` sums the independently planned
+            // physical-partition estimates.
+            estimated_rows,
             String::new(),
             String::new(),
         );
-        union.key_ndv_ratio = leaf.key_ndv_ratio;
+        union.key_ndv_ratio = if partitions.iter().all(|(_, estimate)| estimate.is_some()) {
+            partitions
+                .iter()
+                .all(|(_, estimate)| estimate.is_some_and(|estimate| estimate.pseudo))
+                .then_some(DISTINCT_FACTOR)
+        } else {
+            leaf.key_ndv_ratio
+        };
         // The row counter belongs to the ONE executor underneath, which no
         // fan-out split: attributing it to any single branch would report the
         // whole scan's rows as one partition's. It moves to the union, whose
         // count it really is.
         union.act_rows = leaf.act_rows.clone();
-        for partition in partitions {
-            let mut branch = PlanNode::new(
-                leaf.name,
-                leaf.est_rows,
-                with_partition(&leaf.access, partition),
-                leaf.info.clone(),
-            );
-            branch.key_ndv_ratio = leaf.key_ndv_ratio;
+        for (partition, estimate) in partitions {
+            let mut branch = match estimate {
+                Some(estimate) => PlanNode::new(
+                    leaf.name,
+                    Some(estimate.rows),
+                    with_partition(&leaf.access, partition),
+                    scan_info_with_estimate(&leaf.info, *estimate),
+                )
+                .with_pseudo_ndv(*estimate),
+                None => PlanNode::new(
+                    leaf.name,
+                    leaf.est_rows,
+                    with_partition(&leaf.access, partition),
+                    leaf.info.clone(),
+                ),
+            };
+            if estimate.is_none() {
+                branch.key_ndv_ratio = leaf.key_ndv_ratio;
+            }
             union.children.push(branch);
         }
         self.stack.push(union);
@@ -2116,80 +2168,5 @@ fn binary_func_name(op: tidb_ast::BinaryOp) -> Option<&'static str> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn index_join_text(outer_row_size: f64, inner_row_size: f64) -> IndexJoinText {
-        IndexJoinText {
-            reader: "IndexReader",
-            keys: vec![("a".to_owned(), "b".to_owned())],
-            lookup_is_left: false,
-            outer_row_size,
-            inner_row_size,
-        }
-    }
-
-    /// MUTATION PROBE for the kind ENUMERATION: a rule that always answered
-    /// one name fails one of these two.
-    ///
-    /// The two cases are Go's own two regimes. With MORE than one inner row
-    /// per outer row the index join's hash table is the bigger one -- it is
-    /// built over `probeRowsTot = probeRowsOne * buildRows` -- so
-    /// `IndexHashJoin`, whose table is only `buildRows` tall, is cheaper.
-    /// With exactly ONE inner row per outer row the two tables are the same
-    /// height and only the ROW WIDTH is left, so a wide outer side makes
-    /// `IndexJoin` the cheaper of the two.
-    #[test]
-    fn both_index_join_kinds_are_reachable() {
-        assert_eq!(
-            index_join_operator(Some(10000.0), Some(10.0), &index_join_text(16.0, 16.0), 1),
-            "IndexHashJoin",
-            "ten inner rows per outer row: the index join's table is ten times taller",
-        );
-        assert_eq!(
-            index_join_operator(Some(10000.0), Some(1.0), &index_join_text(400.0, 8.0), 1),
-            "IndexJoin",
-            "one inner row per outer row and a wide outer side",
-        );
-    }
-
-    /// MUTATION PROBE for the per-kind cost TERM: the two `hash_build_cost`
-    /// calls read different sides, and swapping their arguments flips both
-    /// answers above. Pinned as the exact tie Go's enumeration order settles:
-    /// `IndexJoin` is enumerated first and `findBestTask` replaces the
-    /// incumbent only on a STRICT improvement, so equal costs keep it.
-    #[test]
-    fn an_exact_tie_keeps_the_kind_go_enumerates_first() {
-        assert_eq!(
-            index_join_operator(Some(10000.0), Some(1.0), &index_join_text(16.0, 16.0), 1),
-            "IndexJoin",
-        );
-    }
-
-    /// MUTATION PROBE for the RETRACTION's descent: it passes through the
-    /// shapes that do not rely on their child's order and stops at the ones
-    /// that do.
-    #[test]
-    fn a_retraction_walks_past_a_projection_and_stops_at_a_merge_join() {
-        let leaf = || {
-            PlanNode::new(
-                "TableFullScan",
-                Some(1.0),
-                "table:t".to_owned(),
-                "keep order:true, stats:pseudo".to_owned(),
-            )
-        };
-        let mut through = PlanNode::new("Projection", None, String::new(), String::new());
-        through.children.push(leaf());
-        retract_keep_order(&mut through);
-        assert_eq!(through.children[0].info, "keep order:false, stats:pseudo");
-
-        let mut relied_on = PlanNode::new("MergeJoin", None, String::new(), String::new());
-        relied_on.children.push(leaf());
-        retract_keep_order(&mut relied_on);
-        assert_eq!(
-            relied_on.children[0].info, "keep order:true, stats:pseudo",
-            "a merge join RELIES on that order; unsaying it describes a plan that cannot run",
-        );
-    }
-}
+#[path = "plan_trace_tests.rs"]
+mod tests;

@@ -689,7 +689,11 @@ pub(crate) fn build_from(
                                 names.push(definition.name.clone());
                             }
                         }
-                        trace.partition_union(&names);
+                        trace.partition_union_with_estimates(
+                            &crate::driver::access::partition_scan_estimates(
+                                catalog, table, &names,
+                            ),
+                        );
                     }
                 }
             }

@@ -127,6 +127,105 @@ fn analyze_publishes_the_row_count_and_the_distribution() {
     );
 }
 
+/// Go analyzes each physical partition under static pruning and does not
+/// merge a logical-table histogram. Switching that same session back to the
+/// default dynamic pruning therefore sees pseudo global statistics and keeps
+/// the narrowed PRIMARY-index range, while static planning turns each point
+/// range into a partition-local Batch Point Get.
+#[test]
+fn static_partition_analyze_keeps_statistics_on_physical_partitions() {
+    let mut session = Session::new();
+    session
+        .run("SET @@tidb_partition_prune_mode = 'static'")
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE t (a VARCHAR(255), b INT PRIMARY KEY NONCLUSTERED, KEY (a)) \
+             PARTITION BY KEY (b) PARTITIONS 3",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO t VALUES ('Ab',1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6)")
+        .unwrap();
+    session.run("ANALYZE TABLE t").unwrap();
+
+    session
+        .with_catalog_mut(|catalog| {
+            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
+                panic!("t is not stored as table bytes")
+            };
+            assert!(
+                catalog.table_statistics(table.table_id).is_none(),
+                "static ANALYZE must not invent global table statistics"
+            );
+            let primary = table
+                .indexes()
+                .iter()
+                .find(|index| index.name.eq_ignore_ascii_case("primary"))
+                .expect("the nonclustered primary key is an index")
+                .id;
+            for partition in &table.partition().expect("t is partitioned").definitions {
+                let statistics = catalog
+                    .table_statistics(partition.id)
+                    .unwrap_or_else(|| panic!("partition {} was not analyzed", partition.name));
+                assert!(statistics.indexes.contains_key(&primary));
+            }
+            Ok(())
+        })
+        .unwrap();
+
+    let static_plan =
+        row_text(session.run("EXPLAIN SELECT * FROM t WHERE b IN (1,2) AND a LIKE '%a%'"));
+    assert!(
+        static_plan
+            .iter()
+            .flatten()
+            .any(|cell| cell.contains("Batch_Point_Get")),
+        "static partition planning must retain the point ranges: {static_plan:?}"
+    );
+
+    session
+        .run("SET @@tidb_partition_prune_mode = DEFAULT")
+        .unwrap();
+    let dynamic_plan = row_text(session.run("EXPLAIN SELECT * FROM t WHERE b IN (1,2)"));
+    assert!(
+        dynamic_plan
+            .iter()
+            .flatten()
+            .any(|cell| cell.contains("IndexRangeScan")),
+        "dynamic pruning must retain the PRIMARY-index range: {dynamic_plan:?}"
+    );
+    assert!(
+        dynamic_plan
+            .iter()
+            .flatten()
+            .any(|cell| cell.contains("stats:pseudo")),
+        "without merged global statistics Go reports the dynamic path as pseudo: {dynamic_plan:?}"
+    );
+
+    session.run("ANALYZE TABLE t").unwrap();
+    session
+        .with_catalog_mut(|catalog| {
+            let Some(tidb_executor::TableEntry::Kv(table)) = catalog.table_in("test", "t") else {
+                panic!("t is not stored as table bytes")
+            };
+            let statistics = catalog
+                .table_statistics(table.table_id)
+                .expect("dynamic ANALYZE publishes global table statistics");
+            assert_eq!(statistics.row_count, 6);
+            Ok(())
+        })
+        .unwrap();
+    let analyzed_dynamic_plan = row_text(session.run("EXPLAIN SELECT * FROM t WHERE b IN (1,2)"));
+    assert!(
+        analyzed_dynamic_plan
+            .iter()
+            .flatten()
+            .all(|cell| !cell.contains("stats:pseudo")),
+        "dynamic ANALYZE must publish usable global statistics: {analyzed_dynamic_plan:?}"
+    );
+}
+
 /// The row decoder used by `ANALYZE` evaluates generated columns instead of
 /// refusing the table or sampling the stored placeholder for a virtual one.
 #[test]

@@ -770,6 +770,32 @@ pub(crate) fn surviving_partition_names(
         .collect()
 }
 
+/// The static plan branches and the physical-table statistics each branch
+/// owns. Go analyzes and plans partition IDs independently in static mode;
+/// the logical table's optional global statistics are not a substitute.
+pub(crate) fn partition_scan_estimates(
+    catalog: &Catalog,
+    table: &KvTable,
+    names: &[String],
+) -> Vec<(String, crate::access_cost::ScanEstimate)> {
+    let Some(partition) = table.partition() else {
+        return Vec::new();
+    };
+    names
+        .iter()
+        .filter_map(|name| {
+            let definition = partition
+                .definitions
+                .iter()
+                .find(|definition| definition.name.eq_ignore_ascii_case(name))?;
+            Some((
+                definition.name.clone(),
+                scan_estimate(catalog.table_statistics(definition.id)),
+            ))
+        })
+        .collect()
+}
+
 /// Installs a zero-row [`TableDualExec`] for a contradictory `WHERE` and
 /// records the `TableDual rows:0` node in place of the scan `build_from` traced.
 ///
@@ -1394,6 +1420,12 @@ pub(crate) fn full_scan_estimate(
     // even when no histogram was ever analyzed -- and in that state Go prints
     // the real count AND `stats:pseudo`. `realtime_row_count` owns the rule,
     // so this row and the cost that chose it agree by construction.
+    scan_estimate(stats)
+}
+
+fn scan_estimate(
+    stats: Option<&std::sync::Arc<crate::access_cost::TableStatistics>>,
+) -> crate::access_cost::ScanEstimate {
     crate::access_cost::ScanEstimate {
         rows: crate::access_cost::realtime_row_count(stats.map(AsRef::as_ref)),
         pseudo: stats.is_none_or(|stats| stats.pseudo),
