@@ -15,7 +15,7 @@
 //! Transcreation of Go `pkg/util/memory/action.go`.
 
 use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 
 use tidb_error::mysql::FormatArg;
 use tidb_error::terror::TerrorError;
@@ -23,6 +23,10 @@ use tidb_error::tidb::errcode;
 
 use super::Tracker;
 use crate::sqlkiller::{KillSignal, SqlKiller};
+
+fn lock_unpoison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// A shared action handle (Go's `ActionOnExceed` interface value).
 pub type ArcAction = Arc<dyn ActionOnExceed + Send + Sync>;
@@ -111,7 +115,7 @@ pub struct BaseOomAction {
 impl BaseOomAction {
     /// Go `SetFallback`.
     pub fn set_fallback(&self, a: Option<ArcAction>) {
-        *self.fallback.lock().unwrap() = a;
+        *lock_unpoison(&self.fallback) = a;
     }
 
     /// Go `SetFinished`.
@@ -126,7 +130,7 @@ impl BaseOomAction {
 
     /// Go `GetFallback`: drops finished links before returning.
     pub fn get_fallback(&self) -> Option<ArcAction> {
-        let mut fallback = self.fallback.lock().unwrap();
+        let mut fallback = lock_unpoison(&self.fallback);
         while let Some(a) = fallback.clone() {
             if !a.is_finished() {
                 return Some(a);
@@ -163,13 +167,13 @@ struct LogState {
 impl LogOnExceed {
     /// Sets the log hook.
     pub fn set_log_hook(&self, hook: Box<dyn Fn(u64) + Send + Sync>) {
-        self.state.lock().unwrap().log_hook = Some(hook);
+        lock_unpoison(&self.state).log_hook = Some(hook);
     }
 }
 
 impl ActionOnExceed for LogOnExceed {
     fn action(&self, t: &Arc<Tracker>) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = lock_unpoison(&self.state);
         if !state.acted {
             state.acted = true;
             match &state.log_hook {
@@ -223,26 +227,24 @@ impl PanicOnExceed {
 
     /// Sets the log hook.
     pub fn set_log_hook(&self, hook: Box<dyn Fn(u64) + Send + Sync>) {
-        self.state.lock().unwrap().log_hook = Some(hook);
+        lock_unpoison(&self.state).log_hook = Some(hook);
     }
 }
 
 impl ActionOnExceed for PanicOnExceed {
     fn action(&self, t: &Arc<Tracker>) {
-        {
-            let mut state = self.state.lock().unwrap();
-            if !state.acted {
-                match &state.log_hook {
-                    None => tracing::warn!(
-                        conn = t.session_id(),
-                        error = %mem_exceed_error(t),
-                        "memory exceeds quota"
-                    ),
-                    Some(hook) => hook(self.conn_id),
-                }
+        let mut state = lock_unpoison(&self.state);
+        if !state.acted {
+            match &state.log_hook {
+                None => tracing::warn!(
+                    conn = t.session_id(),
+                    error = %mem_exceed_error(t),
+                    "memory exceeds quota"
+                ),
+                Some(hook) => hook(self.conn_id),
             }
-            state.acted = true;
         }
+        state.acted = true;
         self.killer
             .send_kill_signal(KillSignal::QueryMemoryExceeded);
         if let Some(err) = self.killer.handle_signal() {
@@ -284,6 +286,9 @@ fn mem_exceed_error(t: &Arc<Tracker>) -> TerrorError {
 
 #[cfg(test)]
 mod tests {
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
 
     /// Source: `pkg/util/memory/tracker_test.go::TestErrorCode`.
@@ -293,5 +298,40 @@ mod tests {
             ERR_MEM_EXCEED_THRESHOLD.to_sql_error().code,
             errcode::ErrMemExceedThreshold
         );
+    }
+
+    /// Source: `pkg/util/memory/action.go::LogOnExceed.Action` marks `acted`
+    /// before invoking the hook and releases its mutex during panic unwind.
+    #[test]
+    fn log_action_remains_usable_after_hook_panic() {
+        let action = LogOnExceed::default();
+        action.set_log_hook(Box::new(|_| panic!("injected log hook panic")));
+        let tracker = Tracker::new(1, 1);
+
+        assert!(catch_unwind(AssertUnwindSafe(|| action.action(&tracker))).is_err());
+        assert!(catch_unwind(AssertUnwindSafe(|| action.action(&tracker))).is_ok());
+    }
+
+    /// Source: `pkg/util/memory/action.go::PanicOnExceed.Action` leaves
+    /// `acted` false when its hook panics, unlocks during unwind, and retries
+    /// the hook on the next call.
+    #[test]
+    fn panic_action_retries_after_hook_panic() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let action = PanicOnExceed::new(Arc::new(SqlKiller::default()));
+        let hook_calls = Arc::clone(&calls);
+        action.set_log_hook(Box::new(move |_| {
+            if hook_calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                panic!("injected log hook panic");
+            }
+        }));
+        let tracker = Tracker::new(1, 1);
+
+        assert!(catch_unwind(AssertUnwindSafe(|| action.action(&tracker))).is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(catch_unwind(AssertUnwindSafe(|| action.action(&tracker))).is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(catch_unwind(AssertUnwindSafe(|| action.action(&tracker))).is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 }
