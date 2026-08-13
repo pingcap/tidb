@@ -1002,6 +1002,37 @@ fn key_partitioning_routes_crc32_column_tuples() {
         .unwrap();
     session.run("INSERT INTO ki VALUES (1, 1)").unwrap();
     assert_eq!(sole_holder(&mut session, "ki"), "p2", "KEY() uses PRIMARY");
+
+    session
+        .run("CREATE TABLE kh (a int) PARTITION BY KEY() PARTITIONS 3")
+        .unwrap();
+    session.run("INSERT INTO kh VALUES (1)").unwrap();
+    assert_eq!(
+        sole_holder(&mut session, "kh"),
+        "p0",
+        "KEY() without PRIMARY"
+    );
+}
+
+/// Go rejects duplicate KEY columns and the field types it cannot encode as a
+/// partition key before it creates any physical partitions.
+#[test]
+fn key_partitioning_validates_column_identity_and_type() {
+    for (sql, code) in [
+        (
+            "CREATE TABLE kd (a int) PARTITION BY KEY(a,a) PARTITIONS 2",
+            1652,
+        ),
+        (
+            "CREATE TABLE kb (a blob) PARTITION BY KEY(a) PARTITIONS 2",
+            1659,
+        ),
+    ] {
+        let error = Session::new()
+            .run(sql)
+            .expect_err("KEY definition must fail");
+        assert_eq!(error.to_mysql_error().code, code, "{sql}");
+    }
 }
 
 /// The partitioning is scoped to the clause alone: the SAME table without it
