@@ -2263,7 +2263,9 @@ mod tests {
         ])
         .unwrap();
         let catalog = configured_catalog(&config).unwrap();
-        assert!(catalog.tables()[0].indexes()[0].is_unique());
+        let index = &catalog.tables()[0].indexes()[0];
+        assert!(index.is_unique());
+        assert_eq!(index.name(), "k_idx");
     }
 
     struct FactoryEvent(Arc<Mutex<Vec<&'static str>>>);
