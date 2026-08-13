@@ -773,11 +773,11 @@ pub fn plan_update(
 /// Plans the update half of an `INSERT ... ON DUPLICATE KEY UPDATE` after the
 /// configured conflict lookup selected one stored record.
 ///
-/// The configured planner admits only unindexed stored targets, so the record
-/// rewrite cannot move an index entry.  That is deliberately narrower than
-/// the native in-memory executor's generic expression program, but it uses
-/// the same candidate-row and left-to-right assignment semantics for every
-/// admitted form.
+/// The configured planner admits storage-neutral assignment forms, while this
+/// lowerer owns the full record-and-index rewrite.  That is deliberately
+/// narrower than the native in-memory executor's generic expression program,
+/// but it uses the same candidate-row and left-to-right assignment semantics
+/// for every admitted form.
 fn plan_on_duplicate_update(
     table: &ConfiguredTable,
     handle: i64,
@@ -840,11 +840,24 @@ fn plan_on_duplicate_update(
     }
     columns.sort_by_key(|(id, _)| *id);
     let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
+    let mut mutations = vec![OptimisticMutation::put_existing(
+        key,
+        encode_row_value(&columns)?,
+    )?];
+    // `updateRecord` maintains every index whose value changed, even when the
+    // duplicate was found through a different unique key.  The configured
+    // index surface is one integer column per index, so the existing shared
+    // index codec and mutation constructors remain the single owner here.
+    for index in table.indexes() {
+        let old = indexed_stored_value(index, &stored_row)?;
+        let new = indexed_stored_value(index, &updated)?;
+        if old != new {
+            mutations.push(index_delete_mutation(table.table_id(), index, old, handle)?);
+            mutations.push(index_put_mutation(table.table_id(), index, new, handle)?);
+        }
+    }
     Ok(ConfiguredWritePlan::Write {
-        mutations: vec![OptimisticMutation::put_existing(
-            key,
-            encode_row_value(&columns)?,
-        )?],
+        mutations,
         // Go's duplicate-update path reports two affected rows only when it
         // changes the conflicting record.
         affected_rows: 2,

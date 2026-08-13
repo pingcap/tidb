@@ -184,7 +184,7 @@ impl fmt::Display for PreparedWritePlanError {
                 "UPDATE assigns either a value or the same column plus a value to a stored column",
             ),
             Self::OnDuplicateAssignmentShape => formatter.write_str(
-                "ON DUPLICATE KEY UPDATE assigns VALUES(column), a value, or the same column plus a value to an unindexed stored column",
+                "ON DUPLICATE KEY UPDATE assigns VALUES(column), a value, or the same column plus a value to a stored column",
             ),
             Self::PointHandlePredicate => formatter
                 .write_str("a point write requires exactly one clustered primary-key equality"),
@@ -1029,12 +1029,7 @@ fn lower_on_duplicate_assignments(
         };
         let column_index = configured_column_index(column_name, table)?;
         let column = &table.columns()[column_index];
-        if column.kind() != ConfiguredColumnKind::Stored
-            || table
-                .indexes()
-                .iter()
-                .any(|index| index.column_id() == column.id())
-        {
+        if column.kind() != ConfiguredColumnKind::Stored {
             return Err(PreparedWritePlanError::OnDuplicateAssignmentShape);
         }
 

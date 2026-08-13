@@ -872,6 +872,77 @@ fn insert_on_duplicate_updates_the_visible_row_and_stages_later_values_rows() {
     };
     assert_eq!(mutations[0].value(), stored_row(250));
 
+    let catalog = ConfiguredCatalog::new([indexed_table()]).expect("catalog must validate");
+    let write = lower_prepared_write(
+        &tidb_parser::parse(
+            "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?) \
+             ON DUPLICATE KEY UPDATE balance = VALUES(balance)",
+        )
+        .expect("SQL must parse"),
+        &catalog,
+    )
+    .expect("indexed duplicate-update target must lower")
+    .bind(&int_binds(&[10, 200]))
+    .expect("bind must succeed");
+    let mut snapshot = ReplaceSnapshot::with([(
+        encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10)),
+        stored_row(100),
+    )]);
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        plan_configured_write(&mut snapshot, &write, &call(), 0)
+            .expect("indexed duplicate update must plan")
+    else {
+        panic!("a changed duplicate update publishes");
+    };
+    assert_eq!(mutations.len(), 3);
+    assert!(mutations.iter().any(|mutation| {
+        mutation.kind() == OptimisticMutationKind::PutExisting
+            && mutation.key()
+                == encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10))
+    }));
+    assert!(mutations.iter().any(|mutation| {
+        mutation.kind() == OptimisticMutationKind::IndexDelete
+            && mutation.key() == expected_index_entry(100, 10)
+    }));
+    assert!(mutations.iter().any(|mutation| {
+        mutation.kind() == OptimisticMutationKind::IndexPut
+            && mutation.key() == expected_index_entry(200, 10)
+    }));
+
+    let catalog = ConfiguredCatalog::new([unique_indexed_table()])
+        .expect("catalog must validate");
+    let write = lower_prepared_write(
+        &tidb_parser::parse(
+            "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?) \
+             ON DUPLICATE KEY UPDATE balance = VALUES(balance)",
+        )
+        .expect("SQL must parse"),
+        &catalog,
+    )
+    .expect("unique indexed duplicate-update target must lower")
+    .bind(&int_binds(&[10, 200]))
+    .expect("bind must succeed");
+    let mut snapshot = ReplaceSnapshot::with([(
+        encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10)),
+        stored_row(100),
+    )]);
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        plan_configured_write(&mut snapshot, &write, &call(), 0)
+            .expect("unique indexed duplicate update must plan")
+    else {
+        panic!("a changed duplicate update publishes");
+    };
+    assert_eq!(mutations.len(), 3);
+    assert!(mutations.iter().any(|mutation| {
+        mutation.kind() == OptimisticMutationKind::IndexDelete
+            && mutation.key() == expected_unique_index_entry(100)
+    }));
+    assert!(mutations.iter().any(|mutation| {
+        mutation.kind() == OptimisticMutationKind::UniqueIndexInsert
+            && mutation.key() == expected_unique_index_entry(200)
+            && mutation.value() == 10_i64.to_be_bytes()
+    }));
+
     let write = bound_write(
         "INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?) \
          ON DUPLICATE KEY UPDATE balance = balance + ?, balance = balance + ?",
