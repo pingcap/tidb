@@ -1123,11 +1123,22 @@ impl Session {
             tidb_ast::AdminStmt::GrantRole(grant) => Ok(Some(self.grant_role_stmt(grant)?)),
             tidb_ast::AdminStmt::RevokeRole(revoke) => Ok(Some(self.revoke_role_stmt(revoke)?)),
             tidb_ast::AdminStmt::ShowDatabases(show) => {
-                if show.filter.is_some() {
-                    return Err(DriverError::unsupported(
-                        "SHOW DATABASES filters are not supported yet",
-                    ));
-                }
+                let pattern = match &show.filter {
+                    Some(tidb_ast::ShowDatabasesFilter::Like(tidb_ast::Expr::String(text))) => {
+                        Some(text.to_ascii_lowercase())
+                    }
+                    Some(tidb_ast::ShowDatabasesFilter::Like(_)) => {
+                        return Err(DriverError::unsupported(
+                            "SHOW DATABASES LIKE takes a string pattern",
+                        ));
+                    }
+                    Some(tidb_ast::ShowDatabasesFilter::Where(_)) => {
+                        return Err(DriverError::unsupported(
+                            "SHOW DATABASES WHERE is not supported yet",
+                        ));
+                    }
+                    None => None,
+                };
                 let names = self.with_catalog_mut(|catalog| Ok(catalog.database_names()))?;
                 // Go `fetchShowDatabases` (`executor/show.go` around line
                 // 462): one `DBIsVisible` per schema, so an account sees
@@ -1137,6 +1148,16 @@ impl Session {
                 let names = names
                     .into_iter()
                     .filter(|name| self.database_is_visible(name))
+                    .filter(|name| {
+                        pattern.as_ref().is_none_or(|pattern| {
+                            tidb_executor::like_match_with_collation(
+                                name.to_ascii_lowercase(),
+                                pattern,
+                                None,
+                                tidb_datatype::Collation::Utf8Mb4Bin,
+                            )
+                        })
+                    })
                     .collect();
                 Ok(Some(string_column_output("Database", names)))
             }

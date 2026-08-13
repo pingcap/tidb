@@ -55,6 +55,21 @@ fn show_databases_and_tables() {
         other => panic!("expected rows, got {other:?}"),
     }
 
+    // Go `TestShowBasic` / `fetchShowDatabases`: both the schema name and
+    // LIKE pattern are folded before the wildcard match.
+    match session
+        .run_with_columns("SHOW DATABASES LIKE '%SCHEMA'")
+        .unwrap()
+    {
+        StmtOutput::Rows { rows, .. } => assert_eq!(
+            rows.iter()
+                .map(|row| datum_text(&row[0]).unwrap())
+                .collect::<Vec<_>>(),
+            vec!["INFORMATION_SCHEMA"]
+        ),
+        other => panic!("expected rows, got {other:?}"),
+    }
+
     // Go names the column Tables_in_<db> and sorts the table names.
     match session.run_with_columns("SHOW TABLES").unwrap() {
         StmtOutput::Rows { columns, rows } => {
