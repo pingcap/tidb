@@ -4,6 +4,7 @@ go_library(
     name = "export",
     srcs = [
         "block_allow_list.go",
+        "column_filter.go",
         "config.go",
         "conn.go",
         "consistency.go",
@@ -52,6 +53,7 @@ go_library(
         "//pkg/util/dbutil",
         "//pkg/util/promutil",
         "//pkg/util/table-filter",
+        "@com_github_burntsushi_toml//:toml",
         "@com_github_coreos_go_semver//semver",
         "@com_github_docker_go_units//:go-units",
         "@com_github_go_sql_driver_mysql//:mysql",

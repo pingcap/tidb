@@ -116,6 +116,7 @@ func deleteTasks(t *testing.T, store kv.Storage, taskID int64) {
 }
 
 func TestTaskFailInManager(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -128,6 +129,7 @@ func TestTaskFailInManager(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "handle_test")
 
 	schManager, mgr := MockSchedulerManager(store, pool, scheduler.GetTestSchedulerExt(ctrl), nil)
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", handle.GetTargetScope()))
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			mockScheduler := mock.NewMockScheduler(ctrl)

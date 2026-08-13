@@ -118,6 +118,24 @@ func (*varPop4Float64) MergePartialResult(_ AggFuncUpdateContext, src, dst Parti
 	return 0, nil
 }
 
+func (e *varPop4Float64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4VarPopFloat64)(partialResult)
+	chk.AppendBytes(e.ordinal, spillHelper.serializePartialResult4VarPopFloat64(*pr))
+}
+
+func (e *varPop4Float64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *varPop4Float64) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	success := helper.deserializePartialResult4VarPopFloat64((*partialResult4VarPopFloat64)(pr))
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type varPopOriginal4DistinctFloat64 struct {
 	baseVarPopAggFunc
 }
@@ -151,6 +169,26 @@ func (e *varPopOriginal4DistinctFloat64) AppendFinalResult2Chunk(_ AggFuncUpdate
 	}
 	chk.AppendFloat64(e.ordinal, variance/float64(count))
 	return nil
+}
+
+func (e *varPopOriginal4DistinctFloat64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4VarPopDistinctFloat64)(partialResult)
+	resBuf := spillHelper.serializePartialResult4VarPopDistinctFloat64(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *varPopOriginal4DistinctFloat64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *varPopOriginal4DistinctFloat64) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4VarPopDistinctFloat64)(pr)
+	success, dataMemDelta := helper.deserializePartialResult4VarPopDistinctFloat64(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
 }
 
 func (e *varPopOriginal4DistinctFloat64) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {

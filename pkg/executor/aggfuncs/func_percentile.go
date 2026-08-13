@@ -59,6 +59,20 @@ func (*basePercentile) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, Pa
 	return
 }
 
+func (*basePercentile) MergePartialResult(AggFuncUpdateContext, PartialResult, PartialResult) (memDelta int64, err error) {
+	return
+}
+
+func (e *basePercentile) SerializePartialResult(_ PartialResult, chk *chunk.Chunk, _ *SerializeHelper) {
+	// Unsupported input types always produce NULL and have no partial state.
+	// A NULL cell preserves the row count needed by spill restoration.
+	chk.AppendNull(e.ordinal)
+}
+
+func (*basePercentile) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return make([]PartialResult, src.NumRows()), 0
+}
+
 func (e *basePercentile) AppendFinalResult2Chunk(_ AggFuncUpdateContext, _ PartialResult, chk *chunk.Chunk) error {
 	chk.AppendNull(e.ordinal)
 	return nil
@@ -174,6 +188,24 @@ func (e *percentileOriginal4Int) AppendFinalResult2Chunk(_ AggFuncUpdateContext,
 	return nil
 }
 
+func (e *percentileOriginal4Int) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4PercentileInt)(partialResult)
+	chk.AppendBytes(e.ordinal, spillHelper.serializePartialResult4PercentileInt(*pr))
+}
+
+func (e *percentileOriginal4Int) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *percentileOriginal4Int) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	success, dataMemDelta := helper.deserializePartialResult4PercentileInt((*partialResult4PercentileInt)(pr))
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
+}
+
 type percentileOriginal4Real struct {
 	basePercentile
 }
@@ -225,6 +257,24 @@ func (e *percentileOriginal4Real) AppendFinalResult2Chunk(_ AggFuncUpdateContext
 	index := percentile(*p, e.percent)
 	chk.AppendFloat64(e.ordinal, (*p)[index])
 	return nil
+}
+
+func (e *percentileOriginal4Real) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4PercentileReal)(partialResult)
+	chk.AppendBytes(e.ordinal, spillHelper.serializePartialResult4PercentileReal(*pr))
+}
+
+func (e *percentileOriginal4Real) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *percentileOriginal4Real) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	success, dataMemDelta := helper.deserializePartialResult4PercentileReal((*partialResult4PercentileReal)(pr))
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
 }
 
 type percentileOriginal4Decimal struct {
@@ -280,6 +330,24 @@ func (e *percentileOriginal4Decimal) AppendFinalResult2Chunk(_ AggFuncUpdateCont
 	return nil
 }
 
+func (e *percentileOriginal4Decimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4PercentileDecimal)(partialResult)
+	chk.AppendBytes(e.ordinal, spillHelper.serializePartialResult4PercentileDecimal(*pr))
+}
+
+func (e *percentileOriginal4Decimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *percentileOriginal4Decimal) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	success, dataMemDelta := helper.deserializePartialResult4PercentileDecimal((*partialResult4PercentileDecimal)(pr))
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
+}
+
 type percentileOriginal4Time struct {
 	basePercentile
 }
@@ -333,13 +401,31 @@ func (e *percentileOriginal4Time) AppendFinalResult2Chunk(_ AggFuncUpdateContext
 	return nil
 }
 
+func (e *percentileOriginal4Time) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4PercentileTime)(partialResult)
+	chk.AppendBytes(e.ordinal, spillHelper.serializePartialResult4PercentileTime(*pr))
+}
+
+func (e *percentileOriginal4Time) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *percentileOriginal4Time) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	success, dataMemDelta := helper.deserializePartialResult4PercentileTime((*partialResult4PercentileTime)(pr))
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
+}
+
 type percentileOriginal4Duration struct {
 	basePercentile
 }
 
 func (*percentileOriginal4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	// TODO: Preserve appropriate capacity for data
-	pr = PartialResult(&partialResult4PercentileTime{})
+	pr = PartialResult(&partialResult4PercentileDuration{})
 	return pr, DefSliceSize
 }
 
@@ -384,4 +470,22 @@ func (e *percentileOriginal4Duration) AppendFinalResult2Chunk(_ AggFuncUpdateCon
 
 	chk.AppendDuration(e.ordinal, (*p)[index])
 	return nil
+}
+
+func (e *percentileOriginal4Duration) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4PercentileDuration)(partialResult)
+	chk.AppendBytes(e.ordinal, spillHelper.serializePartialResult4PercentileDuration(*pr))
+}
+
+func (e *percentileOriginal4Duration) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *percentileOriginal4Duration) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	success, dataMemDelta := helper.deserializePartialResult4PercentileDuration((*partialResult4PercentileDuration)(pr))
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + dataMemDelta
 }

@@ -206,6 +206,20 @@ func TestParquetParserMultipleRowGroup(t *testing.T) {
 				return data, defLevel
 			},
 		},
+		{
+			Name:      "late_v",
+			Type:      parquet.Types.Int64,
+			Converted: schema.ConvertedTypes.Int64,
+			Gen: func(numRows int) (any, []int16) {
+				defLevel := make([]int16, numRows)
+				data := make([]int64, numRows)
+				for i := range numRows {
+					defLevel[i] = 1
+					data[i] = int64(i * 2)
+				}
+				return data, defLevel
+			},
+		},
 	}
 
 	dir := t.TempDir()
@@ -222,27 +236,91 @@ func TestParquetParserMultipleRowGroup(t *testing.T) {
 	info, err := os.Stat(filepath.Join(dir, fileName))
 	require.NoError(t, err)
 	for _, tc := range []struct {
-		name     string
-		fileSize int64
+		name                  string
+		fileSize              int64
+		stream                bool
+		expectWholeFileLoaded bool
 	}{
 		{name: "row-group-preload"},
-		{name: "whole-file-preload", fileSize: info.Size()},
+		{name: "whole-file-preload", fileSize: info.Size(), expectWholeFileLoaded: true},
+		{name: "per-column-streaming", stream: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.stream {
+				originalThreshold := rowGroupInMemoryThreshold
+				rowGroupInMemoryThreshold = 1
+				defer func() { rowGroupInMemoryThreshold = originalThreshold }()
+			}
+
 			parser := newParquetParserForTest(context.Background(), t, dir, fileName, tc.fileSize, FileMeta{})
 			require.Greater(t, parser.fileMeta.NumRowGroups(), 1)
-			if tc.fileSize > 0 {
+			if tc.expectWholeFileLoaded {
 				require.NotNil(t, parser.preloadBase)
 			}
 
+			previousScannedPos, err := parser.ScannedPos()
+			require.NoError(t, err)
+			require.Zero(t, previousScannedPos)
 			for i := range 50 {
 				require.NoError(t, parser.ReadRow())
 				require.Equal(t, int64(i), parser.LastRow().Row[0].GetInt64())
+				require.Equal(t, int64(i*2), parser.LastRow().Row[1].GetInt64())
+
+				scannedPos, err := parser.ScannedPos()
+				require.NoError(t, err)
+				require.Equal(t, info.Size()*int64(i+1)/50, scannedPos)
+				require.GreaterOrEqual(t, scannedPos, previousScannedPos)
+				require.LessOrEqual(t, scannedPos, info.Size())
+				previousScannedPos = scannedPos
+
 				last := parser.LastRow()
 				parser.RecycleRow(last)
 			}
+			finalScannedPos, err := parser.ScannedPos()
+			require.NoError(t, err)
+			require.Equal(t, info.Size(), finalScannedPos)
 			require.ErrorIs(t, parser.ReadRow(), io.EOF)
 		})
+	}
+}
+
+func TestParquetScannedPosByReadRows(t *testing.T) {
+	fileMeta := &metadata.FileMetaData{}
+	parser := &Parser{fileMeta: fileMeta}
+	for _, tc := range []struct {
+		name      string
+		fileSize  int64
+		readRows  int64
+		totalRows int64
+		expected  int64
+	}{
+		{name: "no-rows-read", fileSize: 101, totalRows: 10, expected: 0},
+		{name: "partial", fileSize: 101, readRows: 4, totalRows: 10, expected: 40},
+		{name: "complete", fileSize: 101, readRows: 10, totalRows: 10, expected: 101},
+		{name: "empty-file", fileSize: 101, totalRows: 0, expected: 101},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fileMeta.SetSourceFileSize(tc.fileSize)
+			parser.totalReadRows = tc.readRows
+			parser.totalRows = tc.totalRows
+
+			pos, err := parser.ScannedPos()
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, pos)
+		})
+	}
+
+	const largeFileSize = int64(10 << 30)
+	fileMeta.SetSourceFileSize(largeFileSize)
+	parser.totalRows = 97
+	previous := int64(0)
+	for readRows := int64(0); readRows <= parser.totalRows; readRows++ {
+		parser.totalReadRows = readRows
+		pos, err := parser.ScannedPos()
+		require.NoError(t, err)
+		require.GreaterOrEqual(t, pos, previous)
+		require.LessOrEqual(t, pos, largeFileSize)
+		previous = pos
 	}
 }
 
@@ -1010,6 +1088,103 @@ func TestParquetVariousTypes(t *testing.T) {
 				s, err = reader.lastRow.Row[1].ToString()
 				require.NoError(t, err)
 				assert.Equal(t, expectValue, s)
+			}
+		}
+	})
+
+	t.Run("dictionary_encoded_decimal", func(t *testing.T) {
+		// Enough repeated rows that the writer keeps the dictionary page instead of
+		// falling back to PLAIN, so every row decodes to the same shared buffer.
+		const rows = 256
+		repeatedByteArray := func(val []byte) func(int) (any, []int16) {
+			return func(numRows int) (any, []int16) {
+				values := make([]parquet.ByteArray, numRows)
+				levels := make([]int16, numRows)
+				for i := range numRows {
+					values[i] = val
+					levels[i] = 1
+				}
+				return values, levels
+			}
+		}
+		repeatedFixedLenByteArray := func(val []byte) func(int) (any, []int16) {
+			return func(numRows int) (any, []int16) {
+				values := make([]parquet.FixedLenByteArray, numRows)
+				levels := make([]int16, numRows)
+				for i := range numRows {
+					values[i] = val
+					levels[i] = 1
+				}
+				return values, levels
+			}
+		}
+
+		pc := []testutils.ParquetColumn{
+			{
+				Name:      "positive",
+				Type:      parquet.Types.ByteArray,
+				Converted: schema.ConvertedTypes.Decimal,
+				Precision: 9,
+				Scale:     2,
+				Gen:       repeatedByteArray([]byte{0x30, 0x39}), // 12345
+			},
+			{
+				Name:      "negative",
+				Type:      parquet.Types.ByteArray,
+				Converted: schema.ConvertedTypes.Decimal,
+				Precision: 9,
+				Scale:     2,
+				Gen:       repeatedByteArray([]byte{0xcf, 0xc7}), // -12345
+			},
+			{
+				Name:      "fixed_len",
+				Type:      parquet.Types.FixedLenByteArray,
+				Converted: schema.ConvertedTypes.Decimal,
+				TypeLen:   4,
+				Precision: 9,
+				Scale:     2,
+				Gen:       repeatedFixedLenByteArray([]byte{0x00, 0x00, 0x30, 0x39}), // 12345
+			},
+			{
+				// maximumDecimalBytes or longer, so this one takes the string
+				// fallback path, which consumes its input in place as well.
+				Name:      "oversized",
+				Type:      parquet.Types.ByteArray,
+				Converted: schema.ConvertedTypes.Decimal,
+				Precision: 75,
+				Scale:     2,
+				Gen:       repeatedByteArray(append([]byte{0x00, 0x01}, make([]byte, 31)...)), // 2^248
+			},
+		}
+
+		dir := t.TempDir()
+		fileName := "test.decimal.dictionary.parquet"
+		require.NoError(t, testutils.WriteParquetFile(dir, fileName, pc, rows))
+
+		rdr, err := file.OpenParquetFile(filepath.Join(dir, fileName), false)
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			require.NoError(t, rdr.Close())
+		})
+		for i := range pc {
+			cc, err := rdr.MetaData().RowGroup(0).ColumnChunk(i)
+			require.NoError(t, err)
+			require.True(t, cc.HasDictionaryPage(), "column %s is not dictionary encoded", pc[i].Name)
+		}
+
+		reader := newParquetParserForTest(context.Background(), t, dir, fileName, 0, FileMeta{})
+
+		expectedValues := []string{
+			"123.45", "-123.45", "123.45",
+			"4523128485832663883733241601901871400518358776001584532791311875309106626.56",
+		}
+		for range rows {
+			require.NoError(t, reader.ReadRow())
+			require.Len(t, reader.lastRow.Row, len(expectedValues))
+			for i, expectValue := range expectedValues {
+				s, err := reader.lastRow.Row[i].ToString()
+				require.NoError(t, err)
+				require.Equal(t, expectValue, s)
 			}
 		}
 	})

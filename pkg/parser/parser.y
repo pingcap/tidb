@@ -6070,6 +6070,7 @@ ExplainFormatType:
 |	"VERBOSE"
 |	"TRUE_CARD_COST"
 |	"TIDB_JSON"
+|	"RU"
 
 SavepointStmt:
 	"SAVEPOINT" Identifier

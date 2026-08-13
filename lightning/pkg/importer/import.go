@@ -56,13 +56,13 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metaservice"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/driver"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -509,8 +509,8 @@ func NewImportControllerWithPauser(
 		return nil, errors.Trace(err)
 	}
 
-	preCheckBuilder := NewPrecheckItemBuilder(
-		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli, db,
+	preCheckBuilder := newPrecheckItemBuilderWithKeyspaceName(
+		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli, db, p.KeyspaceName,
 	)
 
 	rc := &Controller{
@@ -1296,6 +1296,24 @@ func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{
 	return exitCh, nil
 }
 
+func (rc *Controller) newEtcdClientForLocalBackend(ctx context.Context, kvStore tidbkv.Storage) (*clientv3.Client, error) {
+	kvStoreWithPD, ok := kvStore.(tidbkv.StorageWithPD)
+	if !ok {
+		return nil, errors.Errorf("TiKV store does not expose PD client")
+	}
+	callerPDAddrs := strings.Split(rc.cfg.TiDB.PdAddr, ",")
+	return metaservice.NewEtcdClientFromPDClient(
+		ctx,
+		kvStoreWithPD.GetPDClient(),
+		kvStore.GetCodec().GetKeyspaceMeta(),
+		callerPDAddrs,
+		clientv3.Config{
+			AutoSyncInterval: 30 * time.Second,
+			TLS:              rc.tls.TLSConfig(),
+		},
+	)
+}
+
 func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	// output error summary
 	defer rc.outputErrorSummary()
@@ -1405,15 +1423,10 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		if err = kvStoreWithPD.GetPDClient().UpdateOption(opt.EnableRouterClient, false); err != nil {
 			return errors.Trace(err)
 		}
-		etcdCli, err = clientv3.New(clientv3.Config{
-			Endpoints:        urlsWithScheme,
-			AutoSyncInterval: 30 * time.Second,
-			TLS:              rc.tls.TLSConfig(),
-		})
+		etcdCli, err = rc.newEtcdClientForLocalBackend(ctx, kvStore)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
 
 		manager, err := NewChecksumManager(ctx, rc, kvStore)
 		if err != nil {
@@ -1612,7 +1625,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 }
 
 func (rc *Controller) registerTaskToPD(ctx context.Context) (undo func(), _ error) {
-	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg, rc.pdCli.GetServiceDiscovery().GetServiceURLs())
+	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg, rc.pdCli.GetServiceDiscovery().GetServiceURLs(), rc.keyspaceName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

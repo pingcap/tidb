@@ -17,6 +17,7 @@ package aggregate_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"sort"
 	"sync"
@@ -157,12 +158,44 @@ func getRetTypes() []*types.FieldType {
 		types.NewFieldType(mysql.TypeDouble),
 		types.NewFieldType(mysql.TypeDouble),
 		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
 	}
+}
+
+func getDistinctRetTypes() []*types.FieldType {
+	return []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarString),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeLonglong),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeDouble),
+		types.NewFieldType(mysql.TypeLonglong),
+	}
+}
+
+func getDistinctOutputSchema() *expression.Schema {
+	retTypes := getDistinctRetTypes()
+	cols := make([]*expression.Column, 0, len(retTypes))
+	for i, retType := range retTypes {
+		cols = append(cols, &expression.Column{Index: i, RetType: retType})
+	}
+	return expression.NewSchema(cols...)
 }
 
 func getColumns() []*expression.Column {
 	return []*expression.Column{
 		{Index: 0, RetType: types.NewFieldType(mysql.TypeVarString)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
+		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
 		{Index: 1, RetType: types.NewFieldType(mysql.TypeDouble)},
@@ -201,6 +234,11 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	var aggAvg *aggregation.AggFuncDesc
 	var aggMin *aggregation.AggFuncDesc
 	var aggMax *aggregation.AggFuncDesc
+	var aggVarPop *aggregation.AggFuncDesc
+	var aggVarSamp *aggregation.AggFuncDesc
+	var aggStddevPop *aggregation.AggFuncDesc
+	var aggStddevSamp *aggregation.AggFuncDesc
+	var aggApproxPercentile *aggregation.AggFuncDesc
 	aggFirstRow, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{childCols[0]}, false)
 	if err != nil {
 		t.Fatal(err)
@@ -231,7 +269,46 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 		t.Fatal(err)
 	}
 
-	aggFuncs := []*aggregation.AggFuncDesc{aggFirstRow, aggSum, aggCount, aggAvg, aggMin, aggMax}
+	aggVarPop, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncVarPop, []expression.Expression{childCols[1]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggVarSamp, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncVarSamp, []expression.Expression{childCols[1]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggStddevPop, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncStddevPop, []expression.Expression{childCols[1]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggStddevSamp, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncStddevSamp, []expression.Expression{childCols[1]}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	percentile := &expression.Constant{Value: types.NewIntDatum(50), RetType: types.NewFieldType(mysql.TypeLong)}
+	aggApproxPercentile, err = aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncApproxPercentile,
+		[]expression.Expression{childCols[1], percentile}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aggFuncs := []*aggregation.AggFuncDesc{
+		aggFirstRow,
+		aggSum,
+		aggCount,
+		aggAvg,
+		aggMin,
+		aggMax,
+		aggVarPop,
+		aggVarSamp,
+		aggStddevPop,
+		aggStddevSamp,
+		aggApproxPercentile,
+	}
 
 	aggExec := &aggregate.HashAggExec{
 		BaseExecutor:          exec.NewBaseExecutor(ctx, schema, 0, child),
@@ -240,6 +317,75 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 		FinalAggFuncs:         make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
 		GroupByItems:          groupItems,
 		IsUnparallelExec:      false,
+		FileNamePrefixForTest: fileNamePrefixForTest,
+	}
+
+	partialOrdinal := 0
+	for i, aggDesc := range aggFuncs {
+		ordinal := []int{partialOrdinal}
+		partialOrdinal++
+		if aggDesc.Name == ast.AggFuncAvg {
+			ordinal = append(ordinal, partialOrdinal+1)
+			partialOrdinal++
+		}
+		partialAggDesc, finalDesc := aggDesc.Split(ordinal)
+		partialAggFunc := aggfuncs.Build(ctx.GetExprCtx(), partialAggDesc, i)
+		finalAggFunc := aggfuncs.Build(ctx.GetExprCtx(), finalDesc, i)
+		aggExec.PartialAggFuncs = append(aggExec.PartialAggFuncs, partialAggFunc)
+		aggExec.FinalAggFuncs = append(aggExec.FinalAggFuncs, finalAggFunc)
+	}
+
+	aggExec.SetChildren(0, child)
+	return aggExec
+}
+
+func buildDistinctHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Executor, fileNamePrefixForTest string) *aggregate.HashAggExec {
+	if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBHashAggFinalConcurrency, fmt.Sprintf("%v", 5)); err != nil {
+		t.Fatal(err)
+	}
+	if err := ctx.GetSessionVars().SetSystemVar(vardef.TiDBHashAggPartialConcurrency, fmt.Sprintf("%v", 5)); err != nil {
+		t.Fatal(err)
+	}
+
+	childCols := getColumns()
+	groupItems := []expression.Expression{childCols[0]}
+
+	aggFirstRow, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{childCols[0]}, false)
+	require.NoError(t, err)
+	aggCount, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{childCols[1]}, true)
+	require.NoError(t, err)
+	aggCountMultiArgs, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncCount, []expression.Expression{childCols[0], childCols[1]}, true)
+	require.NoError(t, err)
+	aggSum, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncSum, []expression.Expression{childCols[1]}, true)
+	require.NoError(t, err)
+	aggAvg, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncAvg, []expression.Expression{childCols[1]}, true)
+	require.NoError(t, err)
+	aggVarPop, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncVarPop, []expression.Expression{childCols[1]}, true)
+	require.NoError(t, err)
+	aggStddevSamp, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncStddevSamp, []expression.Expression{childCols[1]}, true)
+	require.NoError(t, err)
+	aggApproxCountDistinct, err := aggregation.NewAggFuncDesc(ctx.GetExprCtx(), ast.AggFuncApproxCountDistinct, []expression.Expression{childCols[1]}, false)
+	require.NoError(t, err)
+
+	aggFuncs := []*aggregation.AggFuncDesc{
+		aggFirstRow,
+		aggCount,
+		aggCountMultiArgs,
+		aggSum,
+		aggAvg,
+		aggVarPop,
+		aggStddevSamp,
+		aggApproxCountDistinct,
+	}
+
+	aggExec := &aggregate.HashAggExec{
+		BaseExecutor:          exec.NewBaseExecutor(ctx, getDistinctOutputSchema(), 0, child),
+		Sc:                    ctx.GetSessionVars().StmtCtx,
+		PartialAggFuncs:       make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
+		FinalAggFuncs:         make([]aggfuncs.AggFunc, 0, len(aggFuncs)),
+		GroupByItems:          groupItems,
+		IsUnparallelExec:      false,
+		HasDistinct:           true,
 		FileNamePrefixForTest: fileNamePrefixForTest,
 	}
 
@@ -273,19 +419,157 @@ func initCtx(ctx *mock.Context, newRootExceedAction *testutil.MockActionOnExceed
 	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)
 }
 
-func checkResult(expectResult []chunk.Row, actualResult []chunk.Row, retTypes []*types.FieldType) bool {
+func checkResult(expectResult []chunk.Row, actualResult []chunk.Row, retTypes []*types.FieldType) (bool, string) {
 	if len(expectResult) != len(actualResult) {
-		return false
+		return false, fmt.Sprintf("row count mismatch, expected %d, actual %d", len(expectResult), len(actualResult))
 	}
 
 	rowNum := len(expectResult)
 	for i := range rowNum {
-		if expectResult[i].ToString(retTypes) != actualResult[i].ToString(retTypes) {
-			return false
+		for colIdx := range retTypes {
+			if expectResult[i].IsNull(colIdx) != actualResult[i].IsNull(colIdx) {
+				return false, fmt.Sprintf("row %d column %d null mismatch", i, colIdx)
+			}
+			if expectResult[i].IsNull(colIdx) {
+				continue
+			}
+
+			switch colIdx {
+			case 0:
+				if expectResult[i].GetString(colIdx) != actualResult[i].GetString(colIdx) {
+					return false, fmt.Sprintf("row %d column %d mismatch, expected %q, actual %q",
+						i, colIdx, expectResult[i].GetString(colIdx), actualResult[i].GetString(colIdx))
+				}
+			case 2:
+				if expectResult[i].GetInt64(colIdx) != actualResult[i].GetInt64(colIdx) {
+					return false, fmt.Sprintf("row %d column %d mismatch, expected %d, actual %d",
+						i, colIdx, expectResult[i].GetInt64(colIdx), actualResult[i].GetInt64(colIdx))
+				}
+			default:
+				expected := expectResult[i].GetFloat64(colIdx)
+				actual := actualResult[i].GetFloat64(colIdx)
+				if colIdx >= 6 && colIdx <= 9 {
+					tolerance := 1e-6
+					if absExpected := math.Abs(expected); absExpected > 1 {
+						tolerance = absExpected * 1e-12
+					}
+					if math.Abs(expected-actual) <= tolerance {
+						continue
+					}
+				}
+				if expected != actual {
+					return false, fmt.Sprintf("row %d column %d mismatch, expected %v, actual %v", i, colIdx, expected, actual)
+				}
+			}
 		}
 	}
 
-	return true
+	return true, ""
+}
+
+func checkDistinctResult(expectResult []chunk.Row, actualResult []chunk.Row) (bool, string) {
+	if len(expectResult) != len(actualResult) {
+		return false, fmt.Sprintf("row count mismatch, expected %d, actual %d", len(expectResult), len(actualResult))
+	}
+
+	expectedByKey := make(map[string]chunk.Row, len(expectResult))
+	for _, row := range expectResult {
+		expectedByKey[row.GetString(0)] = row
+	}
+
+	for _, actual := range actualResult {
+		key := actual.GetString(0)
+		expected, ok := expectedByKey[key]
+		if !ok {
+			return false, fmt.Sprintf("unexpected or duplicate group key %q", key)
+		}
+		delete(expectedByKey, key)
+		if expected.GetInt64(1) != actual.GetInt64(1) || expected.GetInt64(2) != actual.GetInt64(2) {
+			return false, fmt.Sprintf("count mismatch for key %q: expected (%d, %d), actual (%d, %d)",
+				key, expected.GetInt64(1), expected.GetInt64(2), actual.GetInt64(1), actual.GetInt64(2))
+		}
+		if expected.GetInt64(7) != actual.GetInt64(7) {
+			return false, fmt.Sprintf("approx count distinct mismatch for key %q: expected %d, actual %d",
+				key, expected.GetInt64(7), actual.GetInt64(7))
+		}
+		for i := 3; i < 7; i++ {
+			if expected.IsNull(i) != actual.IsNull(i) {
+				return false, fmt.Sprintf("null mismatch for key %q col %d", key, i)
+			}
+			if expected.IsNull(i) {
+				continue
+			}
+			expectedValue := expected.GetFloat64(i)
+			actualValue := actual.GetFloat64(i)
+			tolerance := 1e-6
+			if absExpected := math.Abs(expectedValue); absExpected > 1 {
+				tolerance = absExpected * 1e-12
+			}
+			if math.Abs(expectedValue-actualValue) > tolerance {
+				return false, fmt.Sprintf("float mismatch for key %q col %d: expected %v, actual %v",
+					key, i, expectedValue, actualValue)
+			}
+		}
+	}
+	if len(expectedByKey) != 0 {
+		return false, fmt.Sprintf("missing %d expected group keys", len(expectedByKey))
+	}
+	return true, ""
+}
+
+func generateDistinctResult(t *testing.T, ctx *mock.Context, dataSource *testutil.MockDataSource, fileNamePrefixForTest string) []chunk.Row {
+	aggExec := buildDistinctHashAggExecutor(t, ctx, dataSource, fileNamePrefixForTest)
+	dataSource.PrepareChunks()
+	tmpCtx := context.Background()
+	resultRows := make([]chunk.Row, 0)
+	aggExec.Open(tmpCtx)
+	for {
+		chk := exec.NewFirstChunk(aggExec)
+		err := aggExec.Next(tmpCtx, chk)
+		require.NoError(t, err)
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		rowNum := chk.NumRows()
+		for i := range rowNum {
+			resultRows = append(resultRows, chk.GetRow(i))
+		}
+	}
+	require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
+	aggExec.Close()
+
+	require.False(t, aggExec.IsSpillTriggeredForTest())
+	return sortRows(resultRows, getDistinctRetTypes())
+}
+
+func executeDistinctCorrectResultTest(t *testing.T, ctx *mock.Context, dataSource *testutil.MockDataSource, expectResult []chunk.Row, fileNamePrefixForTest string) {
+	aggExec := buildDistinctHashAggExecutor(t, ctx, dataSource, fileNamePrefixForTest)
+	dataSource.PrepareChunks()
+	tmpCtx := context.Background()
+	resultRows := make([]chunk.Row, 0)
+	aggExec.Open(tmpCtx)
+	for {
+		chk := exec.NewFirstChunk(aggExec)
+		err := aggExec.Next(tmpCtx, chk)
+		require.NoError(t, err)
+		if chk.NumRows() == 0 {
+			break
+		}
+
+		rowNum := chk.NumRows()
+		for i := range rowNum {
+			resultRows = append(resultRows, chk.GetRow(i))
+		}
+	}
+	require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
+	aggExec.Close()
+
+	require.True(t, aggExec.IsSpillTriggeredForTest())
+	retTypes := getDistinctRetTypes()
+	resultRows = sortRows(resultRows, retTypes)
+	ok, reason := checkDistinctResult(expectResult, resultRows)
+	require.True(t, ok, reason)
 }
 
 func executeCorrecResultTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggExec, dataSource *testutil.MockDataSource, expectResult []chunk.Row, fileNamePrefixForTest string) {
@@ -315,7 +599,8 @@ func executeCorrecResultTest(t *testing.T, ctx *mock.Context, aggExec *aggregate
 	require.True(t, aggExec.IsSpillTriggeredForTest())
 	retTypes := getRetTypes()
 	resultRows = sortRows(resultRows, retTypes)
-	require.True(t, checkResult(expectResult, resultRows, retTypes))
+	ok, reason := checkResult(expectResult, resultRows, retTypes)
+	require.True(t, ok, reason)
 }
 
 func fallBackActionTest(t *testing.T, fileNamePrefixForTest string) {
@@ -396,7 +681,8 @@ func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggE
 	})
 }
 
-// sql: select col0, sum(col1), count(col1), avg(col1), min(col1), max(col1) from t group by t.col0;
+// sql: select col0, sum(col1), count(col1), avg(col1), min(col1), max(col1), var_pop(col1),
+// var_samp(col1), stddev_pop(col1), stddev_samp(col1), approx_percentile(col1, 50) from t group by t.col0;
 func TestGetCorrectResult(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -445,6 +731,39 @@ func TestGetCorrectResult(t *testing.T) {
 
 	finished.Store(true)
 	wg.Wait()
+	util.CheckNoLeakFiles(t, testFuncName)
+}
+
+// sql: select col0, count(distinct col1), count(distinct col0, col1), sum(distinct col1),
+// avg(distinct col1), var_pop(distinct col1), stddev_samp(distinct col1),
+// approx_count_distinct(col1) from t group by col0;
+func TestDistinctAggGetCorrectResult(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
+	testFuncName := util.GetFunctionName()
+
+	newRootExceedAction := new(testutil.MockActionOnExceed)
+
+	ctx := mock.NewContext()
+	initCtx(ctx, newRootExceedAction, -1, 1024)
+
+	rowNum := 50000
+	ndv := 10000
+	col0, col1 := generateData(rowNum, ndv)
+	opt := getMockDataSourceParameters(ctx)
+	dataSource := buildMockDataSource(opt, col0, col1)
+	result := generateDistinctResult(t, ctx, dataSource, testFuncName)
+
+	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers", `return(true)`)
+	require.NoError(t, err)
+	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers"))
+
+	hardLimitBytesNum := int64(3000000)
+	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 256)
+
+	executeDistinctCorrectResultTest(t, ctx, dataSource, result, testFuncName)
 	util.CheckNoLeakFiles(t, testFuncName)
 }
 
@@ -510,4 +829,52 @@ func TestRandomFail(t *testing.T) {
 	finishChan.Store(true)
 	wg.Wait()
 	util.CheckNoLeakFiles(t, testFuncName)
+}
+
+func TestCheckChunkSpill(t *testing.T) {
+	fieldTypes := []*types.FieldType{types.NewFieldType(mysql.TypeVarString)}
+	newEmptyChunkOverThreshold := func() *chunk.Chunk {
+		memoryUsagePerColumn := chunk.New(fieldTypes, 0, 2).UsedMemoryUsage()
+		columnNum := int64(aggregate.SpillChunkSizeThreshold)/memoryUsagePerColumn + 1
+		wideFieldTypes := make([]*types.FieldType, columnNum)
+		for i := range wideFieldTypes {
+			wideFieldTypes[i] = fieldTypes[0]
+		}
+		return chunk.New(wideFieldTypes, 0, 2)
+	}
+	newChunkOverThreshold := func() *chunk.Chunk {
+		chk := chunk.New(fieldTypes, 0, 2)
+		chk.AppendBytes(0, make([]byte, aggregate.SpillChunkSizeThreshold))
+		return chk
+	}
+
+	t.Run("empty chunk over threshold", func(t *testing.T) {
+		chk := newEmptyChunkOverThreshold()
+		require.GreaterOrEqual(t, chk.UsedMemoryUsage(), int64(aggregate.SpillChunkSizeThreshold))
+		require.Zero(t, chk.NumRows())
+		require.False(t, aggregate.CheckChunkSpill(chk))
+	})
+
+	t.Run("nonempty chunk over threshold", func(t *testing.T) {
+		chk := newChunkOverThreshold()
+		require.Equal(t, 1, chk.NumRows())
+		require.False(t, chk.IsFull())
+		require.True(t, aggregate.CheckChunkSpill(chk))
+	})
+
+	t.Run("full chunk below threshold", func(t *testing.T) {
+		chk := chunk.New(fieldTypes, 1, 1)
+		chk.AppendString(0, "value")
+		require.Less(t, chk.UsedMemoryUsage(), int64(aggregate.SpillChunkSizeThreshold))
+		require.True(t, chk.IsFull())
+		require.True(t, aggregate.CheckChunkSpill(chk))
+	})
+
+	t.Run("non-full chunk below threshold", func(t *testing.T) {
+		chk := chunk.New(fieldTypes, 1, 2)
+		chk.AppendString(0, "value")
+		require.Less(t, chk.UsedMemoryUsage(), int64(aggregate.SpillChunkSizeThreshold))
+		require.False(t, chk.IsFull())
+		require.False(t, aggregate.CheckChunkSpill(chk))
+	})
 }
