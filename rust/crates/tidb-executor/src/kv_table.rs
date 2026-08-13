@@ -551,6 +551,10 @@ pub enum KvTableError {
     /// LIST can (captured: `insert into r2 values (20,0)` on a RANGE table
     /// with no `MAXVALUE` partition is `Table has no partition for value 20`).
     NoPartitionForValue(String),
+    /// Go `table.ErrRowDoesNotMatchGivenPartitionSet` (1748): an
+    /// `INSERT ... PARTITION (...)` row routed to a partition the statement
+    /// did not name.
+    RowDoesNotMatchGivenPartitionSet,
     /// Go `types.ErrOverflow` (1690) raised by `locateHashPartition`'s
     /// `ConvertTo(TypeLonglong)`: the row's partition value has no signed
     /// reading, so the write fails instead of routing by a clamped one.
@@ -794,6 +798,26 @@ impl KvTable {
                     KvTableError::Decode(format!("{error:?}"))
                 }
             })
+    }
+
+    /// Verifies the partition selected for one INSERT row.
+    ///
+    /// Reads may narrow their physical key ranges, but an INSERT must still
+    /// route the completed row normally and then reject it when that route is
+    /// outside the statement's named set.  Keeping this beside
+    /// [`Self::record_physical_id`] gives VALUES and INSERT...SELECT the same
+    /// generated-column-aware decision.
+    pub fn validate_insert_partitions(
+        &self,
+        row: &[Datum],
+        selected: &[i64],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<(), KvTableError> {
+        if selected.contains(&self.record_physical_id(row, ctx)?) {
+            Ok(())
+        } else {
+            Err(KvTableError::RowDoesNotMatchGivenPartitionSet)
+        }
     }
 
     /// Go `BatchPointGetPlan.AccessObject().Partitions`: the partitions a set

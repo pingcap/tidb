@@ -1298,6 +1298,11 @@ impl DriverError {
             *b"HY000",
             format!("Unknown partition '{partition}' in table '{table}'"),
         ),
+        DriverError::RowDoesNotMatchGivenPartitionSet => MysqlError::new(
+            1748,
+            *b"HY000",
+            "Found a row not matching the given partition set".to_owned(),
+        ),
         DriverError::PartitionValuesNotInt(partition) => MysqlError::new(
             1697,
             *b"HY000",

@@ -986,9 +986,8 @@ fn a_partition_selection_reads_only_those_partitions() {
 }
 
 /// `UPDATE`/`DELETE ... PARTITION (p)` restrict which existing rows the
-/// statement reaches. `INSERT ... PARTITION (p)` remains a distinct routing
-/// contract and is still refused until that write path can validate the row's
-/// destination rather than treating the clause as a read restriction.
+/// statement reaches. `INSERT ... PARTITION (p)` instead validates each new
+/// row's routed destination against the selected set.
 #[test]
 fn updates_and_deletes_restricted_to_partitions_do_not_escape_the_named_set() {
     let mut session = Session::new();
@@ -1006,20 +1005,53 @@ fn updates_and_deletes_restricted_to_partitions_do_not_escape_the_named_set() {
         session.run("DELETE FROM h PARTITION (p1)").unwrap(),
         StmtResult::Affected(1)
     );
-    assert!(session
-        .run("INSERT INTO h PARTITION (p0) VALUES (4, 4)")
-        .is_err());
+    assert_eq!(
+        session
+            .run("INSERT INTO h PARTITION (p0) VALUES (4, 4)")
+            .unwrap(),
+        StmtResult::Affected(1)
+    );
+    let error = session
+        .run("INSERT INTO h PARTITION (p0) VALUES (1, 1)")
+        .expect_err("a row outside the named destination set is rejected")
+        .to_mysql_error();
+    assert_eq!(error.code, 1748);
+    assert_eq!(
+        error.message,
+        "Found a row not matching the given partition set"
+    );
+    assert_eq!(
+        session
+            .run("INSERT INTO h PARTITION (p0) SELECT 8, 8")
+            .unwrap(),
+        StmtResult::Affected(1),
+        "VALUES and INSERT ... SELECT share the completed-row routing check"
+    );
+    let error = session
+        .run("INSERT INTO h PARTITION (nosuch) VALUES (4, 4)")
+        .expect_err("a named partition is resolved before the write starts")
+        .to_mysql_error();
+    assert_eq!(error.code, 1735);
+    assert_eq!(error.message, "Unknown partition 'nosuch' in table 'h'");
     assert_eq!(
         tests_support::row_text(session.run("SELECT a, b FROM h ORDER BY a")),
         vec![
             vec!["2".to_owned(), "2".to_owned()],
             vec!["4".to_owned(), "9".to_owned()],
+            vec!["4".to_owned(), "4".to_owned()],
+            vec!["8".to_owned(), "8".to_owned()],
         ]
     );
     session.run("CREATE TABLE q (a int)").unwrap();
     let error = session
         .run("UPDATE q PARTITION (p0) SET a = 1")
         .expect_err("an unpartitioned target has no named partition")
+        .to_mysql_error();
+    assert_eq!(error.code, 1735);
+    assert_eq!(error.message, "Unknown partition 'p0' in table 'q'");
+    let error = session
+        .run("INSERT INTO q PARTITION (p0) VALUES (1)")
+        .expect_err("an unpartitioned INSERT target has no named partition")
         .to_mysql_error();
     assert_eq!(error.code, 1735);
     assert_eq!(error.message, "Unknown partition 'p0' in table 'q'");

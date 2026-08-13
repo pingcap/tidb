@@ -464,6 +464,9 @@ pub enum DriverError {
         /// The table it was written against.
         table: String,
     },
+    /// Go `table.ErrRowDoesNotMatchGivenPartitionSet` (1748): an INSERT row
+    /// routes outside the partitions the statement selected.
+    RowDoesNotMatchGivenPartitionSet,
     /// Go `dbterror.ErrUnsupportedOnGeneratedColumn` (3106), whose argument
     /// names what was attempted.
     UnsupportedOnGeneratedColumn(String),

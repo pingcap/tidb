@@ -34,9 +34,7 @@ pub(crate) use defaults::{
 ///
 /// The write half of the in-memory gateway. It supports the normal insert
 /// forms, including `REPLACE`, `IGNORE`, `ON DUPLICATE KEY UPDATE`, `SET`
-/// syntax, and query sources. A partition-qualified INSERT remains rejected:
-/// unlike an UPDATE/DELETE read restriction, it must validate that each new
-/// row routes to the named partition.
+/// syntax, query sources, and `PARTITION (...)` destination validation.
 /// A `RETURNING` clause is parsed and silently ignored: Go's hand-written
 /// parser stores it on the AST but the planner and executor never read it, so
 /// the write runs normally and answers with a plain OK packet. Columns not
@@ -201,7 +199,7 @@ pub(crate) fn run_insert_traced(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut PlanTrace>,
 ) -> Result<(u64, Option<i64>), DriverError> {
-    if !insert.partitions.is_empty() || (insert.replace && !insert.on_duplicate.is_empty()) {
+    if insert.replace && !insert.on_duplicate.is_empty() {
         return Err(DriverError::unsupported("partitions are not supported yet"));
     }
 
@@ -270,6 +268,34 @@ pub(crate) fn run_insert_traced(
     let table = catalog
         .get_mut_in(&database, &table_name)
         .ok_or(DriverError::unsupported("table not found in catalog"))?;
+
+    // Go's planner wraps a partitioned INSERT target in
+    // `partitionTableWithGivenSets`: names are resolved once, then every
+    // completed row is routed normally and checked against this id set at the
+    // table write boundary.  This is deliberately not a read restriction.
+    let insert_partition_ids = if insert.partitions.is_empty() {
+        None
+    } else {
+        let TableEntry::Kv(kv) = &*table else {
+            return Err(DriverError::UnknownPartition {
+                partition: insert.partitions[0].clone(),
+                table: table_name.clone(),
+            });
+        };
+        let Some(spec) = kv.partition() else {
+            return Err(DriverError::UnknownPartition {
+                partition: insert.partitions[0].clone(),
+                table: table_name.clone(),
+            });
+        };
+        Some(
+            crate::partition_pruning::ids_for_selected_partitions(spec, &insert.partitions)
+                .map_err(|partition| DriverError::UnknownPartition {
+                    partition,
+                    table: table_name.clone(),
+                })?,
+        )
+    };
 
     let auto_increment_offset = match table {
         TableEntry::Kv(kv) => kv.auto_increment_offset(),
@@ -791,6 +817,11 @@ pub(crate) fn run_insert_traced(
         if let Some(allocated) = first_allocated {
             ctx.publish_last_insert_id(allocated.max(0) as u64);
         }
+        if let Some(partitions) = &insert_partition_ids {
+            target(catalog, &database, &table_name)
+                .validate_insert_partitions(row, partitions, ctx)
+                .map_err(kv_write_error)?;
+        }
         target(catalog, &database, &table_name)
             .insert_row(row, ctx)
             .map_err(kv_write_error)?;
@@ -822,6 +853,9 @@ pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverErro
         // than storing it somewhere; 1526 is the code an application sees.
         crate::kv_table::KvTableError::NoPartitionForValue(value) => {
             DriverError::NoPartitionForValue(value)
+        }
+        crate::kv_table::KvTableError::RowDoesNotMatchGivenPartitionSet => {
+            DriverError::RowDoesNotMatchGivenPartitionSet
         }
         // A HASH partition value with no signed reading is Go's own
         // `ConvertTo` error surfacing out of `locateHashPartition`: 1690,
