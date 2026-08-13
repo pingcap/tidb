@@ -19,11 +19,11 @@ import (
 	"context"
 	"encoding/json"
 	"math"
-	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -197,8 +197,8 @@ func physicalTableRange(tblInfo *model.TableInfo, pid int64) (start, end kv.Key)
 }
 
 // loadRegionBoundaries returns the sorted region boundaries covering [start, end),
-// with result[0] == start and result[len-1] == end. It errors when the regions
-// are not continuous, since a gap would silently drop rows.
+// with result[0] == start and result[len-1] == end, retrying while the regions
+// are not yet continuous.
 func loadRegionBoundaries(ctx context.Context, store kv.Storage, start, end kv.Key) ([]kv.Key, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
@@ -209,29 +209,14 @@ func loadRegionBoundaries(ctx context.Context, store kv.Storage, start, end kv.K
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		regionCache := hStore.GetRegionCache()
-		regions, err := regionCache.LoadRegionsInKeyRange(
-			tikv.NewBackofferWithVars(ctx, 20000, nil), start, end)
+		regions, err := copr.LoadSortedContinuousRegions(
+			tikv.NewBackofferWithVars(ctx, 20000, nil), hStore.GetRegionCache(), start, end)
+		if errors.ErrorEqual(err, copr.ErrRegionsNotContinuous) {
+			lastErr = err
+			continue
+		}
 		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		if len(regions) == 0 {
-			lastErr = errors.New("no region loaded for key range")
-			continue
-		}
-		sort.Slice(regions, func(i, j int) bool {
-			return bytes.Compare(regions[i].StartKey(), regions[j].StartKey()) < 0
-		})
-		continuous := true
-		for i := 1; i < len(regions); i++ {
-			if !bytes.Equal(regions[i-1].EndKey(), regions[i].StartKey()) {
-				continuous = false
-				break
-			}
-		}
-		if !continuous {
-			lastErr = errors.New("regions are not continuous")
-			continue
+			return nil, err
 		}
 		boundaries := make([]kv.Key, 0, len(regions)+1)
 		boundaries = append(boundaries, start)

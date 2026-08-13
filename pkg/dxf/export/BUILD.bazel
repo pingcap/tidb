@@ -15,6 +15,7 @@ go_library(
         "//pkg/dxf/framework/storage",
         "//pkg/kv",
         "//pkg/meta/model",
+        "//pkg/store/copr",
         "//pkg/store/helper",
         "//pkg/tablecodec",
         "//pkg/util/logutil",
