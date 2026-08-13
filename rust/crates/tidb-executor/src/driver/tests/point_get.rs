@@ -700,3 +700,56 @@ fn a_single_point_handle_range_with_a_filter_is_a_point_get() {
         vec![vec![Datum::Int(1)]]
     );
 }
+
+/// TiDB pushes a HAVING predicate that names only grouping columns below the
+/// aggregation. On a clustered common handle, the intersection may become a
+/// point access even though the written WHERE alone is a range.
+#[test]
+fn grouped_having_intersection_is_a_common_handle_point_get() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE chg (k VARCHAR(8) PRIMARY KEY CLUSTERED, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO chg VALUES ('a', 1), ('b', 2), ('c', 3), ('d', 4)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT k FROM chg WHERE k BETWEEN 'b' AND 'd' GROUP BY k HAVING k = 'c'";
+    let result = run_select_on(sql, &catalog, &ctx).unwrap();
+    assert_eq!(result.len(), 1);
+    assert_eq!(datum_text_for_test(&result[0][0]), "c");
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let plan = rows
+        .iter()
+        .flat_map(|row| row.iter())
+        .map(|datum| match datum {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            other => format!("{other:?}"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        plan.contains("Point_Get"),
+        "expected point access, got {plan}"
+    );
+    assert!(
+        plan.contains("clustered index:PRIMARY(k)"),
+        "expected the common-handle authority, got {plan}"
+    );
+}

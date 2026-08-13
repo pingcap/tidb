@@ -181,6 +181,47 @@ pub(crate) fn commit_fast_path_source(
             trace.set_scan_act_rows(exec.produced_rows());
         }
         *from_source = Some(Box::new(exec));
+    } else if let Some(decision) = (!disable_point_get
+        && hints.allows_index(crate::index_hints::COMMON_PRIMARY_INDEX_ID))
+    .then(|| {
+        super::common_handle_access::point_ranges(
+            select,
+            &table,
+            &columns,
+            zone,
+            ctx.static_partition_prune(),
+        )
+    })
+    .flatten()
+    {
+        let exec = HandleSourceExec::new_with_context(
+            ExecutorMeta::new(
+                Schema::new(source_schema_columns(&columns)),
+                0,
+                INIT_CAP,
+                MAX_CHUNK_SIZE,
+            ),
+            table.clone(),
+            decision.handles.clone(),
+            crate::kv_table::RowDecodeContext::for_query(ctx),
+        );
+        if let Some(trace) = trace.as_deref_mut() {
+            let partitions = table.handle_partition_names(&decision.handles, zone, ctx);
+            let index = format!("clustered index:PRIMARY({})", decision.columns.join(", "));
+            if decision.handles.len() == 1 {
+                trace.index_point_get(source_table_name(scope, &table.name), &partitions, &index);
+            } else {
+                trace.index_batch_point_get(
+                    source_table_name(scope, &table.name),
+                    decision.handles.len(),
+                    &partitions,
+                    &index,
+                    ctx.static_partition_prune(),
+                );
+            }
+            trace.set_scan_act_rows(exec.produced_rows());
+        }
+        *from_source = Some(Box::new(exec));
     } else
     // An index range scan, when no point get applies: the ranges replace the
     // full scan with the rows the index covers, and the WHERE stays above to

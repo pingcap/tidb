@@ -286,9 +286,11 @@ use tidb_expr::schema::Schema;
 
 pub(crate) mod access;
 mod agg_build;
+mod agg_predicate_pushdown;
 mod agg_select;
 mod catalog;
 mod clause_resolve;
+mod common_handle_access;
 mod decorrelate_exists;
 mod derived_agg_pruning;
 mod dml;
@@ -822,8 +824,10 @@ pub(crate) fn run_select_traced(
     // `driver::access`; `index_order` is set when the committed source emits
     // rows in an index's order, which is what lets a `LIMIT` under a matching
     // `ORDER BY` stop the scan early.
+    let access_select = agg_predicate_pushdown::for_access(select);
+    let access_select = access_select.as_ref().unwrap_or(select);
     let (index_order, fast_path_consumed_where) = commit_fast_path_source(
-        select,
+        access_select,
         catalog,
         current_db,
         &scope,
@@ -842,7 +846,7 @@ pub(crate) fn run_select_traced(
             crate::driver::access::sole_kv_table(&select.from, catalog, current_db),
         ) {
             trace.partition_union(&crate::driver::access::surviving_partition_names(
-                select,
+                access_select,
                 crate::driver::access::sole_table_ref(&select.from),
                 &table,
                 &ctx.session_zone(),
