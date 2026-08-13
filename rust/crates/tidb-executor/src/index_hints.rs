@@ -93,6 +93,14 @@ impl AvailablePaths {
         }
     }
 
+    pub(crate) fn index_merge_only(indexes: Vec<i64>) -> Self {
+        Self {
+            forced_indexes: Some(indexes),
+            table: false,
+            ignored: Vec::new(),
+        }
+    }
+
     /// Whether an index may still become a candidate path.
     pub(crate) fn allows_index(&self, index_id: i64) -> bool {
         if self.ignored.contains(&index_id) {
@@ -500,6 +508,43 @@ pub(crate) fn single_table_scan_hints(
         accumulator.take_comment_hints(select, table_ref, table, current_db, ctx);
     }
     Ok(accumulator.finish())
+}
+
+pub(crate) fn single_table_index_merge_indexes(
+    select: &tidb_ast::SelectStmt,
+    table_ref: Option<&tidb_ast::TableRef>,
+    table: &KvTable,
+    current_db: &str,
+) -> Vec<i64> {
+    let Some(table_ref) = table_ref else {
+        return Vec::new();
+    };
+    let mut indexes = Vec::new();
+    for hint in &select.hints {
+        if !hint.name.eq_ignore_ascii_case("USE_INDEX_MERGE") {
+            continue;
+        }
+        let tidb_ast::HintKind::Index {
+            table: hinted,
+            indexes: names,
+            ..
+        } = &hint.kind
+        else {
+            continue;
+        };
+        let database = hinted.db_name.as_deref().unwrap_or(current_db);
+        if !comment_hint_matches(table_ref, hinted, database, current_db) {
+            continue;
+        }
+        for name in names {
+            if let Some(HintedPath::Index(index_id)) = resolve_index_name(table, name) {
+                if !indexes.contains(&index_id) {
+                    indexes.push(index_id);
+                }
+            }
+        }
+    }
+    indexes
 }
 
 /// Raises Go's 1176 for any index hint in a `FROM` clause naming an index its

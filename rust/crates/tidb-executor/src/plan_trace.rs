@@ -766,6 +766,16 @@ impl PlanTrace {
         self.consumed = true;
     }
 
+    pub(crate) fn index_merge_union(&mut self, visible: &str, indexes: &[String]) {
+        self.replace_top(PlanNode::new(
+            "IndexMerge",
+            None,
+            format!("table:{visible}"),
+            format!("type:union, indexes:{}", indexes.join(", ")),
+        ));
+        self.consumed = true;
+    }
+
     /// Rewrites the inner side's scan node into the range read an index join
     /// decided per outer key: Go's `IndexRangeScan`/`TableRangeScan` with
     /// `range: decided by [...]` instead of a literal interval.

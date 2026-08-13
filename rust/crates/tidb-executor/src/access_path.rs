@@ -53,6 +53,7 @@
 //! with one it reports the truncation, as Go's does.
 
 use std::cell::Cell;
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use tidb_chunk::chunk::Chunk;
@@ -744,6 +745,132 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     fn accept_keep_order(&mut self) -> bool {
         self.can_reorder_handles = false;
         true
+    }
+}
+
+pub(crate) struct IndexMergeSourceExec {
+    meta: ExecutorMeta,
+    table: KvTable,
+    partials: Vec<(i64, Vec<IndexRange>)>,
+    partial_at: usize,
+    range_at: usize,
+    cursor: Option<IndexRangeCursor>,
+    seen: BTreeSet<TableHandle>,
+    produced: Rc<Cell<u64>>,
+    decode_context: crate::kv_table::RowDecodeContext,
+}
+
+impl IndexMergeSourceExec {
+    #[must_use]
+    pub(crate) fn new_with_context(
+        meta: ExecutorMeta,
+        table: KvTable,
+        partials: Vec<(i64, Vec<IndexRange>)>,
+        decode_context: crate::kv_table::RowDecodeContext,
+    ) -> Self {
+        Self {
+            meta,
+            table,
+            partials,
+            partial_at: 0,
+            range_at: 0,
+            cursor: None,
+            seen: BTreeSet::new(),
+            produced: Rc::new(Cell::new(0)),
+            decode_context,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn produced_rows(&self) -> Rc<Cell<u64>> {
+        Rc::clone(&self.produced)
+    }
+
+    fn next_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
+        loop {
+            if let Some(cursor) = self.cursor.as_mut() {
+                let handle = cursor
+                    .next_handle()
+                    .map_err(|_| ExecError::unsupported("index bytes failed to decode"))?;
+                if let Some(handle) = handle {
+                    if self.seen.insert(handle.clone()) {
+                        return Ok(Some(handle));
+                    }
+                    continue;
+                }
+                self.cursor = None;
+            }
+            let Some((index_id, ranges)) = self.partials.get(self.partial_at) else {
+                return Ok(None);
+            };
+            let Some(range) = ranges.get(self.range_at).cloned() else {
+                self.partial_at += 1;
+                self.range_at = 0;
+                continue;
+            };
+            self.range_at += 1;
+            self.cursor = Some(
+                self.table
+                    .index_range_cursor(*index_id, &range, self.decode_context.zone())
+                    .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
+            );
+        }
+    }
+}
+
+impl Executor for IndexMergeSourceExec {
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.partial_at = 0;
+        self.range_at = 0;
+        self.cursor = None;
+        self.seen.clear();
+        self.produced.set(0);
+        Ok(())
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        while req.num_rows() < self.meta.max_chunk_size() {
+            let Some(handle) = self.next_handle()? else {
+                return Ok(());
+            };
+            let row = self
+                .table
+                .get_row_by_handle_with_context(&handle, &self.decode_context)
+                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+            if let Some(row) = row {
+                for (column, value) in visible_of(&self.table, &row).iter().enumerate() {
+                    req.append_datum(column, value);
+                }
+                self.produced.set(self.produced.get() + 1);
+            }
+        }
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        self.cursor = None;
+        Ok(())
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
     }
 }
 

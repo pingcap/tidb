@@ -168,6 +168,26 @@ pub(crate) fn commit_fast_path_source(
         || !hints.allows_table()
         || try_point_get(&PointPlanStmt::of_select(select), &table, &columns, zone)?.is_none()
     {
+        if let Some(partials) = choose_index_merge_union(
+            select,
+            catalog,
+            scope,
+            &table,
+            &columns,
+            partition_scan,
+            current_db,
+        ) {
+            commit_index_merge_source(
+                &table,
+                scope,
+                &columns,
+                partials,
+                from_source,
+                trace.as_deref_mut(),
+                ctx,
+            );
+            return Ok(None);
+        }
         match choose_index_range_path(
             select,
             catalog,
@@ -268,6 +288,107 @@ pub(crate) fn commit_fast_path_source(
         *from_source = Some(Box::new(exec));
     }
     Ok(index_order)
+}
+
+fn choose_index_merge_union(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    scope: &FromScope,
+    table: &KvTable,
+    columns: &[(String, FieldType)],
+    partition_scan: bool,
+    current_db: &str,
+) -> Option<Vec<(i64, Vec<IndexRange>)>> {
+    if table.partition().is_some() {
+        return None;
+    }
+    let index_ids = crate::index_hints::single_table_index_merge_indexes(
+        select,
+        single_table_ref(&select.from),
+        table,
+        current_db,
+    );
+    if index_ids.len() < 2 {
+        return None;
+    }
+    let where_clause = select.where_clause.as_ref()?;
+    let mut branches = Vec::new();
+    collect_index_merge_disjuncts(where_clause, &mut branches);
+    if branches.len() < 2 {
+        return None;
+    }
+    let demand = crate::driver::leaf_demand::LeafDemand::of_select(select);
+    let needed = demand.needed(&scope.tables[0].name, columns);
+    let resolver = ScopeResolver { scope };
+    let stats = catalog.table_statistics(table.table_id);
+    let stats = stats.as_ref().map(AsRef::as_ref);
+    let hints = crate::index_hints::AvailablePaths::index_merge_only(index_ids);
+    let mut partials = Vec::with_capacity(branches.len());
+    for branch in branches {
+        let candidates = crate::access_cost::enumerate_paths(
+            table,
+            columns,
+            Some(branch),
+            &needed,
+            &resolver,
+            None,
+            stats,
+            &hints,
+            false,
+            partition_scan,
+            true,
+        )
+        .into_iter()
+        .filter(|candidate| !candidate.access_columns.is_empty())
+        .collect();
+        let path = crate::access_cost::choose_access_path(candidates, stats, false)?;
+        let (index_id, ranges) = path.index?;
+        partials.push((index_id, ranges));
+    }
+    Some(partials)
+}
+
+fn collect_index_merge_disjuncts<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
+    match expr {
+        tidb_ast::Expr::Paren(inner) => collect_index_merge_disjuncts(inner, out),
+        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, left, right) => {
+            collect_index_merge_disjuncts(left, out);
+            collect_index_merge_disjuncts(right, out);
+        }
+        other => out.push(other),
+    }
+}
+
+fn commit_index_merge_source(
+    table: &KvTable,
+    scope: &FromScope,
+    columns: &[(String, FieldType)],
+    partials: Vec<(i64, Vec<IndexRange>)>,
+    from_source: &mut Option<Box<dyn Executor>>,
+    trace: Option<&mut PlanTrace>,
+    ctx: &crate::StmtContext,
+) {
+    let exec = IndexMergeSourceExec::new_with_context(
+        ExecutorMeta::new(
+            Schema::new(source_schema_columns(columns)),
+            0,
+            INIT_CAP,
+            MAX_CHUNK_SIZE,
+        ),
+        table.clone(),
+        partials.clone(),
+        crate::kv_table::RowDecodeContext::for_query(ctx),
+    );
+    if let Some(trace) = trace {
+        let indexes = partials
+            .iter()
+            .filter_map(|(id, _)| table.indexes().iter().find(|index| index.id == *id))
+            .map(|index| index.name.clone())
+            .collect::<Vec<_>>();
+        trace.index_merge_union(source_table_name(scope, &table.name), &indexes);
+        trace.set_scan_act_rows(exec.produced_rows());
+    }
+    *from_source = Some(Box::new(exec));
 }
 
 /// The partitions a single-table `SELECT` still reads, named as declared and

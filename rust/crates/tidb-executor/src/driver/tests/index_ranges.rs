@@ -171,6 +171,73 @@ fn index_range_scans() {
     );
 }
 
+#[test]
+fn use_index_merge_unions_indexed_or_branches_without_duplicate_rows() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE im (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, KEY ia (a), KEY ib (b))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO im VALUES (1, 1, 2), (2, 1, 0), (3, 0, 2), (4, 0, 0), (5, 1, 9)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT /*+ USE_INDEX_MERGE(im, ia, ib) */ id FROM im WHERE a = 1 OR b = 2";
+    let mut ids: Vec<i64> = run_select_on(sql, &catalog, &ctx)
+        .unwrap()
+        .into_iter()
+        .map(|row| match row[0] {
+            Datum::Int(value) => value,
+            ref other => panic!("expected an integer handle, got {other:?}"),
+        })
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![1, 2, 3, 5]);
+
+    let mut residual_ids: Vec<i64> = run_select_on(
+        "SELECT /*+ USE_INDEX_MERGE(im, ia, ib) */ id FROM im WHERE (a = 1 AND b = 0) OR b = 2",
+        &catalog,
+        &ctx,
+    )
+    .unwrap()
+    .into_iter()
+    .map(|row| match row[0] {
+        Datum::Int(value) => value,
+        ref other => panic!("expected an integer handle, got {other:?}"),
+    })
+    .collect();
+    residual_ids.sort_unstable();
+    assert_eq!(residual_ids, vec![1, 2, 3]);
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let plan: Vec<String> = rows
+        .iter()
+        .map(|row| match &row[0] {
+            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            other => format!("{other:?}"),
+        })
+        .collect();
+    assert!(
+        plan.iter().any(|line| line.contains("IndexMerge")),
+        "USE_INDEX_MERGE must install the multi-index reader, got {plan:?}"
+    );
+}
+
 /// A range scan over a UNIQUE index reads its handles out of the entry
 /// VALUES, not the key, so this covers the other half of the entry format
 /// -- including the NULL entries a unique index stores non-distinctly.
