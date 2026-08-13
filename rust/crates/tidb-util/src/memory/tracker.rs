@@ -148,6 +148,7 @@ struct TrackerArbitration {
     uid: u64,
     helper: Arc<TrackerArbitrationHelper>,
     context: Arc<ArbitrationContext>,
+    reserve_size: i64,
     budget: Mutex<TrackerArbitrationBudget>,
 }
 
@@ -187,6 +188,10 @@ impl TrackerArbitration {
             return false;
         };
         let budget = Arc::new(ConcurrentBudget::new(Arc::clone(entry.pool())));
+        if self.reserve_size > 0 && budget.reserve(self.reserve_size).is_err() {
+            self.helper.stop(ArbitratorStopReason::StandardCancel);
+            return false;
+        }
         if used > 0 && budget.consume_quota(Self::now_unix_sec(), used).is_err() {
             self.helper.stop(ArbitratorStopReason::StandardCancel);
             return false;
@@ -340,6 +345,7 @@ impl Tracker {
             uid,
             helper,
             context,
+            reserve_size: reserve_size.max(0),
             budget: Mutex::new(TrackerArbitrationBudget::Small { used: 0 }),
         });
 

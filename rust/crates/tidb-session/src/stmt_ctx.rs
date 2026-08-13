@@ -386,6 +386,26 @@ impl Session {
                 .get_global("tidb_mem_oom_action")
                 .unwrap_or_default(),
         );
+        // The two session variables are read at the same statement boundary
+        // as Go's `InitMemArbitrator`: `nolimit` opts out entirely, `1`
+        // requests cancellation rather than waiting, and a positive reserved
+        // value starts directly in a root pool.
+        let arbitrator_wait_averse = match self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_WAIT_AVERSE)
+            .unwrap_or_default()
+            .as_str()
+        {
+            "nolimit" => None,
+            "1" => Some(true),
+            _ => Some(false),
+        };
+        let arbitrator_reserved = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_QUERY_RESERVED)
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or_default();
         self.session_memory
             .configure(mem_quota, oom_action, tmp_storage_on_oom);
         // The SAME three bits on both branches: a query reads them for
@@ -418,7 +438,10 @@ impl Session {
                 .with_global_sysvars(password_validation_globals.clone())
                 .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
                 .with_connection_id(self.connection_id)
-                .with_statement_memory(self.session_memory.statement())
+                .with_statement_memory(
+                    self.session_memory
+                        .statement_with_arbitration(arbitrator_wait_averse, arbitrator_reserved),
+                )
                 .with_rand_session(Rc::clone(&self.rand))
                 .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
                 .with_retry_auto_ids(Rc::clone(&self.retry_auto_ids))
@@ -448,7 +471,10 @@ impl Session {
         .with_global_sysvars(password_validation_globals)
         .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
         .with_connection_id(self.connection_id)
-        .with_statement_memory(self.session_memory.statement())
+        .with_statement_memory(
+            self.session_memory
+                .statement_with_arbitration(arbitrator_wait_averse, arbitrator_reserved),
+        )
         .with_rand_session(Rc::clone(&self.rand))
         .with_last_insert_id_channel(Rc::clone(&self.published_last_insert_id))
         .with_retry_auto_ids(Rc::clone(&self.retry_auto_ids))

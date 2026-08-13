@@ -5,6 +5,32 @@ use crate::tests_support::*;
 use crate::*;
 use std::sync::Arc;
 
+#[derive(Default)]
+struct NoopMemStateRecorder;
+
+impl tidb_util::memory::RecordMemState for NoopMemStateRecorder {
+    fn load(&self) -> Result<Option<tidb_util::memory::RuntimeMemStateV1>, String> {
+        Ok(None)
+    }
+
+    fn store(&self, _: &tidb_util::memory::RuntimeMemStateV1) -> Result<(), String> {
+        Ok(())
+    }
+}
+
+fn test_mem_arbitrator() -> Arc<tidb_util::memory::MemArbitrator> {
+    let arbitrator =
+        tidb_util::memory::MemArbitrator::new(1024, 4, 3, 0, Box::new(NoopMemStateRecorder));
+    assert!(arbitrator.auto_run(
+        tidb_util::memory::MemArbitratorActions::default(),
+        tidb_util::memory::DEF_AWAIT_FREE_POOL_ALLOC_ALIGN_SIZE,
+        4,
+        tidb_util::memory::DEF_TASK_TICK_DUR,
+    ));
+    arbitrator.set_work_mode(tidb_util::memory::ArbitratorWorkMode::Standard);
+    arbitrator
+}
+
 #[test]
 fn server_spill_authority_reaches_every_statement_context() {
     let path = std::env::temp_dir().join(format!(
@@ -59,6 +85,46 @@ fn statement_contexts_keep_one_session_memory_root() {
         "a retained result from the preceding statement remains under this connection's quota"
     );
     retained.consume(-128);
+}
+
+#[test]
+fn statement_context_maps_session_arbitrator_variables_to_its_root_pool() {
+    let arbitrator = test_mem_arbitrator();
+    let mut session = Session::new();
+    session.set_connection_id(211);
+    session.set_mem_arbitrator(Arc::clone(&arbitrator));
+    session
+        .vars
+        .set_system(
+            tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_QUERY_RESERVED,
+            "64".to_owned(),
+        )
+        .unwrap();
+
+    let reserved = session.statement_context(false).statement_memory();
+    let pool = arbitrator
+        .find_root_pool(211)
+        .entry
+        .expect("a session statement must reserve an arbitrated root pool");
+    assert!(pool.pool().capacity() >= 64);
+    reserved.finish_statement();
+
+    session
+        .vars
+        .set_system(
+            tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_WAIT_AVERSE,
+            "nolimit".to_owned(),
+        )
+        .unwrap();
+    let bypass = session.statement_context(true).statement_memory();
+    bypass.operator_tracker(11).consume(8);
+    assert_eq!(
+        pool.pool().capacity(),
+        0,
+        "nolimit must not register or reserve a new global-arbitrator budget"
+    );
+    bypass.finish_statement();
+    assert!(arbitrator.stop());
 }
 
 #[test]

@@ -376,6 +376,18 @@ impl SessionMemory {
     /// retaining the connection's accumulated cursor bytes.
     #[must_use]
     pub fn statement(&self) -> StatementMemory {
+        self.statement_with_arbitration(Some(false), 0)
+    }
+
+    /// Starts one statement with its session-local global-memory-arbitration
+    /// policy. `None` is Go's `tidb_mem_arbitrator_wait_averse=nolimit`: the
+    /// statement deliberately bypasses the process arbitrator.
+    #[must_use]
+    pub fn statement_with_arbitration(
+        &self,
+        wait_averse: Option<bool>,
+        reserve_size: i64,
+    ) -> StatementMemory {
         let connection_id = self.session.session_id.load(SeqCst);
         let config = self.config.lock().unwrap().clone();
         let killer = install_oom_action(&self.session, config.oom_action, connection_id);
@@ -388,14 +400,16 @@ impl SessionMemory {
         disk_stmt.session_id.store(connection_id, SeqCst);
         disk_stmt.attach_to(&self.disk_session);
 
-        if let Some(arbitrator) = config.arbitrator.as_ref() {
-            let _ = stmt.init_mem_arbitrator(
-                Arc::clone(arbitrator),
-                Arc::clone(&self.session.killer),
-                tidb_util::memory::ArbitrationPriority::Medium,
-                false,
-                0,
-            );
+        if let (Some(arbitrator), Some(wait_averse)) = (config.arbitrator.as_ref(), wait_averse) {
+            if arbitrator.work_mode() != tidb_util::memory::ArbitratorWorkMode::Disable {
+                let _ = stmt.init_mem_arbitrator(
+                    Arc::clone(arbitrator),
+                    Arc::clone(&self.session.killer),
+                    tidb_util::memory::ArbitrationPriority::Medium,
+                    wait_averse,
+                    reserve_size.max(0),
+                );
+            }
         }
 
         StatementMemory {
@@ -727,6 +741,7 @@ mod tests {
             4,
             tidb_util::memory::DEF_TASK_TICK_DUR,
         ));
+        arbitrator.set_work_mode(tidb_util::memory::ArbitratorWorkMode::Standard);
         arbitrator
     }
 
@@ -761,6 +776,27 @@ mod tests {
 
         statement.finish_statement();
         assert_eq!(pool.pool().capacity(), 0);
+        assert!(arbitrator.stop());
+    }
+
+    #[test]
+    fn nolimit_skips_global_memory_arbitration_but_reserve_promotes_immediately() {
+        let arbitrator = test_mem_arbitrator();
+        let session = SessionMemory::new(4096, OomAction::Cancel, 98)
+            .with_mem_arbitrator(Arc::clone(&arbitrator));
+
+        let bypass = session.statement_with_arbitration(None, 0);
+        bypass.operator_tracker(3).consume(8);
+        assert!(arbitrator.find_root_pool(98).entry.is_none());
+        bypass.finish_statement();
+
+        let reserved = session.statement_with_arbitration(Some(true), 64);
+        let pool = arbitrator
+            .find_root_pool(98)
+            .entry
+            .expect("a reserved statement starts in a root pool");
+        assert!(pool.pool().capacity() >= 64);
+        reserved.finish_statement();
         assert!(arbitrator.stop());
     }
 

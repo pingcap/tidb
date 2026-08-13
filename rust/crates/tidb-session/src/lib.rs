@@ -723,6 +723,12 @@ impl Session {
         self.session_memory.set_spill_storage(storage);
     }
 
+    /// Installs the server-owned process memory arbitrator for statements this
+    /// session starts after the authority becomes available.
+    pub fn set_mem_arbitrator(&mut self, arbitrator: Arc<tidb_util::memory::MemArbitrator>) {
+        self.session_memory.set_mem_arbitrator(arbitrator);
+    }
+
     /// The shared catalog handle, for opening a peer session over the same
     /// schema state.
     #[must_use]
