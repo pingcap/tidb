@@ -81,11 +81,10 @@
 //!   SET t1.b = t2.b` WRITES, and only a `SET`/`DELETE` target naming `t2`
 //!   is refused.
 //!
-//! DEFERRED (documented, and refused rather than approximated): `UPDATE
-//! IGNORE` over a join, and a view, `NATURAL`/`USING` join or `LATERAL`
-//! source anywhere in a multi-table DML's `FROM`. A silently half-applied
-//! multi-table write is a wrong answer no reader would notice, so each of
-//! these returns an error naming itself.
+//! DEFERRED (documented, and refused rather than approximated): `NATURAL`/
+//! `USING` join or `LATERAL` source anywhere in a multi-table DML's `FROM`.
+//! A silently half-applied multi-table write is a wrong answer no reader
+//! would notice, so each of these returns an error naming itself.
 //!
 //! `LATERAL` is a MEASURED deferral rather than an assumed one: Go runs
 //! `UPDATE w t1 JOIN LATERAL (SELECT a, b FROM w WHERE a = t1.a - 10) t2 ON
@@ -250,13 +249,9 @@ fn build_multi_node(
     ctx: &crate::StmtContext,
 ) -> Result<MultiSource, DriverError> {
     match node {
-        tidb_ast::JoinNode::Table(table_ref) => scan_base_table(
-            table_ref,
-            catalog,
-            current_db,
-            &ctx.session_zone(),
-            ctx.tidb_info_len(),
-        ),
+        tidb_ast::JoinNode::Table(table_ref) => {
+            scan_base_table(table_ref, catalog, current_db, ctx)
+        }
         tidb_ast::JoinNode::Join(join) => build_multi_source(join, catalog, current_db, ctx),
         tidb_ast::JoinNode::Derived {
             subquery,
@@ -348,8 +343,7 @@ fn scan_base_table(
     table_ref: &tidb_ast::TableRef,
     catalog: &Catalog,
     current_db: &str,
-    zone: &tidb_datatype::SessionTimeZone,
-    tidb_info_len: usize,
+    ctx: &crate::StmtContext,
 ) -> Result<MultiSource, DriverError> {
     let (database, name) = split_table_path(&table_ref.name, current_db)?;
     let entry = catalog
@@ -366,7 +360,7 @@ fn scan_base_table(
             .collect(),
         TableEntry::Kv(kv) => kv
             .clone()
-            .scan_rows_with_handles(zone)
+            .scan_rows_with_handles(&ctx.session_zone())
             .map_err(|e| DriverError::Parse(format!("row decode failed: {e:?}")))?
             .into_iter()
             .map(|(handle, row)| (vec![Some(RowId::Kv(handle))], row))
@@ -377,12 +371,39 @@ fn scan_base_table(
             .into_iter()
             .map(|row| (vec![None], row))
             .collect(),
-        // A view is not a row source a write can identify rows in, whether
-        // or not it is one of the targets.
-        TableEntry::View(_) => {
-            return Err(DriverError::unsupported(
-                "a view is not supported in multi-table DML",
-            ))
+        // Go expands a view into its stored SELECT before deciding which
+        // sources are writable. Its rows therefore participate in a join,
+        // but carry no base-table identity and cannot be an UPDATE/DELETE
+        // target themselves.
+        TableEntry::View(view) => {
+            let (columns, rows) =
+                super::from::view_source_relation(view, database, name, catalog, ctx)?;
+            let default_meta = columns
+                .iter()
+                .map(|(name, field_type)| super::dml::ColumnDefaultMeta {
+                    default_value: None,
+                    not_null: false,
+                    no_default_value: false,
+                    name: name.clone(),
+                    field_type: field_type.clone(),
+                    column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
+                    generated: false,
+                })
+                .collect();
+            let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
+            return Ok(MultiSource {
+                zone: ctx.session_zone(),
+                tidb_info_len: ctx.tidb_info_len(),
+                tables: vec![SourceTable {
+                    visible,
+                    qualifiable_db: table_ref.alias.is_none().then(|| database.to_owned()),
+                    origin: SourceOrigin::Derived,
+                    columns,
+                    default_meta,
+                    offset: 0,
+                }],
+                rows: rows.into_iter().map(|row| (vec![None], row)).collect(),
+            });
         }
         // A sequence has no rows to identify either.
         TableEntry::Sequence(_) => {
@@ -393,8 +414,8 @@ fn scan_base_table(
     };
     let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
     Ok(MultiSource {
-        zone: zone.clone(),
-        tidb_info_len,
+        zone: ctx.session_zone(),
+        tidb_info_len: ctx.tidb_info_len(),
         tables: vec![SourceTable {
             visible,
             qualifiable_db: table_ref.alias.is_none().then(|| database.to_owned()),

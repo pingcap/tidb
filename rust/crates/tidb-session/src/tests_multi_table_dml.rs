@@ -546,11 +546,10 @@ fn delete_ignore_matches_plain_delete_without_a_failure_to_downgrade() {
     assert_eq!(column(&mut session, "SELECT id FROM i1 ORDER BY id"), ["2"]);
 }
 
-/// Shapes that cannot be given a base row to write back to are REFUSED by
-/// name rather than approximated: a multi-table write that silently misses a
-/// target is a wrong answer no reader would notice.
+/// A view is a readable join source but never a write target: only a source
+/// with an underlying base-row identity can be updated or deleted.
 #[test]
-fn multi_table_dml_refuses_sources_without_a_row_identity() {
+fn multi_table_dml_keeps_view_sources_read_only() {
     let mut session = Session::new();
     session
         .run("CREATE TABLE r1 (id INT PRIMARY KEY, v INT)")
@@ -559,14 +558,32 @@ fn multi_table_dml_refuses_sources_without_a_row_identity() {
     session.run("INSERT INTO r1 VALUES (1,1)").unwrap();
     session.run("INSERT INTO r2 VALUES (1)").unwrap();
     session.run("CREATE VIEW rv AS SELECT * FROM r2").unwrap();
+    assert_eq!(column(&mut session, "SELECT id FROM rv"), ["1"]);
 
-    for sql in [
-        "UPDATE IGNORE r1 JOIN r2 ON r1.id = r2.id SET r1.v = 2",
-        "UPDATE r1 JOIN rv ON r1.id = rv.id SET r1.v = 2",
-        "DELETE r1 FROM r1 JOIN rv ON r1.id = rv.id",
-    ] {
-        assert!(session.run(sql).is_err(), "`{sql}` should be refused");
-    }
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE IGNORE r1 JOIN r2 ON r1.id = r2.id SET r1.v = 2"
+        ),
+        1
+    );
+    assert_eq!(
+        affected(
+            &mut session,
+            "UPDATE r1 JOIN rv ON r1.id = rv.id SET r1.v = 3"
+        ),
+        1
+    );
+    assert!(
+        session
+            .run("UPDATE rv JOIN r1 ON rv.id = r1.id SET rv.id = 2")
+            .is_err(),
+        "a view has no base-row identity to update"
+    );
+    assert_eq!(
+        affected(&mut session, "DELETE r1 FROM r1 JOIN rv ON r1.id = rv.id"),
+        1
+    );
 
     // `LATERAL` is refused BY NAME, not merely refused. Go RUNS both of these
     // (`affected=1` each, measured through `mockstore`), so the gap is real
@@ -587,7 +604,7 @@ fn multi_table_dml_refuses_sources_without_a_row_identity() {
     }
 
     // Nothing was half-applied.
-    assert_eq!(column(&mut session, "SELECT id, v FROM r1"), ["1|1"]);
+    assert!(column(&mut session, "SELECT id, v FROM r1").is_empty());
 }
 
 /// A derived table is a READ source of a multi-table write, and the base

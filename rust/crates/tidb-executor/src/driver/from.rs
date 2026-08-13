@@ -22,6 +22,9 @@
 use super::*;
 use crate::cte_storage::CteTableSourceExec;
 
+/// Materialized output columns and rows for a derived or view source.
+pub(crate) type MaterializedRelation = (Vec<(String, FieldType)>, Vec<Vec<Datum>>);
+
 /// The joined `FROM` scope: every table's columns concatenated left to right,
 /// which is the row layout [`JoinExec`] produces.
 ///
@@ -1193,24 +1196,7 @@ pub(crate) fn build_view_source(
     catalog: &Catalog,
     ctx: &crate::StmtContext,
 ) -> Result<(Box<dyn Executor>, FromScope), DriverError> {
-    let qualified = format!("{database}.{name}");
-    let _guard = ViewDepthGuard::enter(&qualified)?;
-    let invalid = || DriverError::Schema(SchemaErrorKind::ViewInvalid(qualified.clone()));
-    // The definition is stored schema-qualified, so it resolves in the view's
-    // own schema rather than the reader's.
-    let (body_columns, rows) =
-        run_select_meta_in(&view.select_sql, catalog, database, ctx).map_err(|_| invalid())?;
-    if body_columns.len() != view.columns.len() {
-        return Err(invalid());
-    }
-    // The view's own column names win over the body's, which is what a
-    // `CREATE VIEW v (a2) AS SELECT a ...` column list means.
-    let columns: Vec<(String, FieldType)> = view
-        .columns
-        .iter()
-        .zip(&body_columns)
-        .map(|((name, _), (_, ft))| (name.clone(), ft.clone()))
-        .collect();
+    let (columns, rows) = view_source_relation(view, database, name, catalog, ctx)?;
     let schema_columns: Vec<Column> = columns
         .iter()
         .enumerate()
@@ -1237,6 +1223,37 @@ pub(crate) fn build_view_source(
         ..FromScope::default()
     };
     Ok((exec, scope))
+}
+
+/// Materializes a view exactly as a `FROM` source does, without inventing a
+/// writable base-row identity. Multi-table DML uses this for a view that is
+/// only a join input; assigning to the view itself remains non-updatable.
+pub(crate) fn view_source_relation(
+    view: &ViewDef,
+    database: &str,
+    name: &str,
+    catalog: &Catalog,
+    ctx: &crate::StmtContext,
+) -> Result<MaterializedRelation, DriverError> {
+    let qualified = format!("{database}.{name}");
+    let _guard = ViewDepthGuard::enter(&qualified)?;
+    let invalid = || DriverError::Schema(SchemaErrorKind::ViewInvalid(qualified.clone()));
+    // The definition is stored schema-qualified, so it resolves in the view's
+    // own schema rather than the reader's.
+    let (body_columns, rows) =
+        run_select_meta_in(&view.select_sql, catalog, database, ctx).map_err(|_| invalid())?;
+    if body_columns.len() != view.columns.len() {
+        return Err(invalid());
+    }
+    // The view's own column names win over the body's, which is what a
+    // `CREATE VIEW v (a2) AS SELECT a ...` column list means.
+    let columns: Vec<(String, FieldType)> = view
+        .columns
+        .iter()
+        .zip(&body_columns)
+        .map(|((name, _), (_, ft))| (name.clone(), ft.clone()))
+        .collect();
+    Ok((columns, rows))
 }
 
 /// One common column of a `NATURAL`/`USING` join: the row offset that stays
