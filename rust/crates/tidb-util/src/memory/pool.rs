@@ -438,29 +438,22 @@ impl ResourcePool {
     /// Stops the pool, releasing its budget; returns the released quota (Go
     /// `Stop`).
     pub fn stop(self: &Arc<Self>) -> i64 {
-        let (released, parent) = {
-            let mut inner = self.inner.lock().unwrap();
-            inner.stopped = true;
-            if inner.allocated != 0 {
-                let allocated = inner.allocated;
-                Self::do_release(&mut inner, allocated);
-            }
-            let released = inner.budget.cap;
-            // releaseBudget: Clear against the upstream pool.
-            let mut budget = std::mem::take(&mut inner.budget);
-            let parent = budget.pool.clone();
-            drop(inner); // Clear locks the upstream pool.
-            budget.clear();
-            let mut inner = self.inner.lock().unwrap();
-            inner.budget = Budget::default();
-            (released, parent)
-        };
+        let mut inner = self.inner.lock().unwrap();
+        inner.stopped = true;
+        if inner.allocated != 0 {
+            let allocated = inner.allocated;
+            Self::do_release(&mut inner, allocated);
+        }
+        let released = inner.budget.cap;
+        let parent = inner.budget.pool.clone();
+        inner.budget.clear();
         if let Some(parent) = parent {
             let mut p = parent.inner.lock().unwrap();
             if let Some(i) = p.children.iter().position(|c| Arc::ptr_eq(c, self)) {
                 p.children.remove(i);
             }
         }
+        inner.budget.pool = None;
         released
     }
 
@@ -482,17 +475,10 @@ impl ResourcePool {
         }
     }
 
-    /// Explicitly reserves budget (Go `ExplicitReserve`). The internal budget
-    /// reservation allocates from the UPSTREAM pool, so the own lock is not
-    /// held across it (same order as the source's inner calls).
+    /// Explicitly reserves budget (Go `ExplicitReserve`).
     pub fn explicit_reserve(self: &Arc<Self>, request: i64) -> Result<(), PoolError> {
-        let mut budget = {
-            let mut inner = self.inner.lock().unwrap();
-            std::mem::take(&mut inner.budget)
-        };
-        let result = budget.reserve(request);
-        self.inner.lock().unwrap().budget = budget;
-        result
+        let mut inner = self.inner.lock().unwrap();
+        inner.budget.reserve(request)
     }
 
     pub(crate) fn alloc_align_size(&self) -> i64 {
@@ -889,6 +875,56 @@ mod tests {
             }
             pool.stop();
         }
+    }
+
+    #[test]
+    fn explicit_reserve_serializes_the_child_budget_mutation() {
+        use std::sync::Barrier;
+
+        let entered_parent_action = Arc::new(Barrier::new(2));
+        let release_parent_action = Arc::new(Barrier::new(2));
+        let block_first_parent_action = Arc::new(AtomicBool::new(true));
+        let parent = ResourcePool::new_default("parent", 1);
+        parent.start_no_reserved(None);
+
+        let entered = Arc::clone(&entered_parent_action);
+        let release = Arc::clone(&release_parent_action);
+        let block_first = Arc::clone(&block_first_parent_action);
+        parent.set_out_of_capacity_action(Box::new(move |mut args| {
+            if args.pool.name() == "parent" && block_first.swap(false, SeqCst) {
+                entered.wait();
+                release.wait();
+            }
+            args.pool.force_add_cap(args.request);
+            Ok(())
+        }));
+
+        let child = parent.new_inherit_with_limit("child", i64::MAX);
+        child.start_no_reserved(Some(&parent));
+        let mut concurrent_budget = child.create_budget();
+
+        let reserving_child = Arc::clone(&child);
+        let reserve = std::thread::spawn(move || reserving_child.explicit_reserve(1));
+
+        entered_parent_action.wait();
+        let (grown_tx, grown_rx) = std::sync::mpsc::channel();
+        let grow = std::thread::spawn(move || {
+            let result = concurrent_budget.grow(100);
+            grown_tx.send((concurrent_budget, result)).unwrap();
+        });
+        assert!(
+            grown_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "the child budget mutation must wait for explicit reserve"
+        );
+        release_parent_action.wait();
+        reserve.join().unwrap().unwrap();
+        let (_, grow_result) = grown_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        grow_result.unwrap();
+        grow.join().unwrap();
+
+        assert_eq!(child.allocated(), 100);
+        assert_eq!(child.capacity(), 100);
+        assert_eq!(parent.allocated(), 100);
     }
 
     #[test]
