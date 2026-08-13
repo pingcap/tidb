@@ -366,6 +366,9 @@ const (
 	VecFromText             = "vec_from_text"
 	VecAsText               = "vec_as_text"
 
+	// FTS functions (TiDB extension).
+	FTSMysqlMatchAgainst = "match_against"
+
 	// TiDB internal function.
 	TiDBDecodeKey       = "tidb_decode_key"
 	TiDBMVCCInfo        = "tidb_mvcc_info"
