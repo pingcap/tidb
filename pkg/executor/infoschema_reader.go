@@ -630,13 +630,13 @@ func (e *memtableRetriever) setDataFromReferConst(ctx context.Context, sctx sess
 	return nil
 }
 
-// buildTableStatsSizes reads the statistics needed to fill the size-related
+// buildTableSizeStats reads the statistics needed to fill the size-related
 // columns of information_schema.tables and .partitions for the given tables.
 // It returns nil when no such column is requested, in which case the getters
 // report zero and no system table is read. When only TABLE_ROWS is requested it
 // reads just mysql.stats_meta and skips the more expensive mysql.stats_histograms;
 // see https://github.com/pingcap/tidb/issues/69818.
-func (e *memtableRetriever) buildTableStatsSizes(sctx sessionctx.Context, tbls []*model.TableInfo) *statsStorage.TableStatsSizes {
+func (e *memtableRetriever) buildTableSizeStats(sctx sessionctx.Context, tbls []*model.TableInfo) *statsStorage.TableSizeStats {
 	needRowCount := false
 	needColLength := false
 findCols:
@@ -670,7 +670,7 @@ findCols:
 		// For further details, see: https://github.com/pingcap/tidb/issues/54173
 		tableIDs = append(tableIDs, tbl.ID)
 	}
-	statsSizes, err := statsStorage.GetTableStatsSizes(sctx, needColLength, tableIDs...)
+	statsSizes, err := statsStorage.GetTableSizeStats(sctx, needColLength, tableIDs...)
 	if err != nil {
 		// A statistics read failure only affects the size-related columns, so we
 		// keep serving the query with zeroed sizes rather than failing it.
@@ -687,7 +687,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 	checker privilege.Manager,
 	schema ast.CIStr,
 	table *model.TableInfo,
-	statsSizes *statsStorage.TableStatsSizes,
+	statsSizes *statsStorage.TableSizeStats,
 	rows [][]types.Datum,
 ) ([][]types.Datum, error) {
 	collation := table.Collate
@@ -921,7 +921,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 	if err != nil {
 		return errors.Trace(err)
 	}
-	statsSizes := e.buildTableStatsSizes(sctx, tables)
+	statsSizes := e.buildTableSizeStats(sctx, tables)
 	loc := sctx.GetSessionVars().TimeZone
 	if loc == nil {
 		loc = time.Local
@@ -1329,7 +1329,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 	if err != nil {
 		return errors.Trace(err)
 	}
-	statsSizes := e.buildTableStatsSizes(sctx, tables)
+	statsSizes := e.buildTableSizeStats(sctx, tables)
 	for i, table := range tables {
 		schema := schemas[i]
 		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.L, table.Name.L, "", mysql.SelectPriv) {

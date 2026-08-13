@@ -315,10 +315,9 @@ func TestTableRowsOnlySkipsColumnLengthRead(t *testing.T) {
 	h := dom.StatsHandle()
 	tk := testkit.NewTestKit(t, store)
 
-	// Count reads of mysql.stats_histograms performed by the stats table row
-	// cache. The values below are populated by flush stats_delta and analyze,
-	// which write directly to the mysql stats tables the cache queries, so no
-	// stats-handle refresh is needed for the assertions.
+	// Count reads of mysql.stats_histograms. The row counts and column sizes
+	// below are populated by analyze, which writes directly to the mysql stats
+	// tables read here, so no stats-handle refresh is needed for the assertions.
 	var colLengthReads atomic.Int64
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/getColLengthTables",
 		func() { colLengthReads.Add(1) })
@@ -331,7 +330,6 @@ func TestTableRowsOnlySkipsColumnLengthRead(t *testing.T) {
 	require.NoError(t, statstestutil.HandleNextDDLEventWithTxn(h))
 	tk.MustExec(`insert into t_rows values (1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
 	tk.MustExec(`insert into t_rows_part values (1, "a"), (12, "bb")`)
-	tk.MustExec("flush stats_delta *.*")
 	// Analyze so that the varchar columns get a non-zero tot_col_size in
 	// mysql.stats_histograms and the size columns below really depend on it.
 	tk.MustExec("analyze table t_rows all columns")
