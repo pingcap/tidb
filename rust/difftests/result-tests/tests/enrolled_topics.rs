@@ -628,14 +628,10 @@ pub const TOPICS: &[(&str, &str)] = &[
     ),
     (
         "executor/expand",
-        "61 of 71 with 4 ROW divergences of ONE cause: `GROUP BY a, b WITH ROLLUP` \
-     answers NULL for the aggregate on every SUPER-AGGREGATE row where TiDB \
-     answers that group's total (`SELECT a, SUM(b) ... WITH ROLLUP` gives \
-     `1 NULL` for TiDB's `1 4`, and `NULL NULL` for TiDB's `NULL 14`). The \
-     grouping columns and the row COUNT already agree everywhere, so what is \
-     missing is the aggregate's re-accumulation over the rolled-up level, not \
-     the Expand rewrite. Enrolled because it is the only topic on the gate \
-     that replays ROLLUP row results at all",
+        "68 of 71 at zero divergences: the full ROLLUP row surface, including \
+     aggregate arguments that are also grouping keys, derived grouping \
+     expressions, GROUPING(), DISTINCT aggregates, HAVING, and windows over \
+     super-aggregate rows",
     ),
     (
         "session/vars",

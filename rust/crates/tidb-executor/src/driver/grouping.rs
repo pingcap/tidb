@@ -45,12 +45,6 @@ pub(crate) struct GroupingSpec {
     group_positions: Vec<usize>,
 }
 
-/// Output columns whose values the rollup pass fills after aggregation.
-pub(crate) struct RollupOutputMetadata<'a> {
-    pub grouping_specs: &'a [GroupingSpec],
-    pub group_carriers: &'a [(usize, usize)],
-}
-
 impl GroupingSpec {
     /// The bitmask this call reports for a pass that groups by the first `k`
     /// `GROUP BY` expressions, i.e. one where positions `k..` are rolled up.
@@ -62,6 +56,29 @@ impl GroupingSpec {
             .filter(|(_, &position)| position >= k)
             .map(|(arg, _)| 1u64 << (width - 1 - arg))
             .sum()
+    }
+}
+
+/// Go `resolveGroupingTraverseAction.Transform`: outside aggregate arguments,
+/// replace a complete grouping expression first; otherwise descend through a
+/// scalar function and replace the grouped columns it reads.
+fn replace_grouping_expr(
+    expression: &mut Expression,
+    group_hashes: &[Vec<u8>],
+    group_keys: &[Expression],
+) {
+    let mut hashed = expression.clone();
+    if let Some(position) = group_hashes
+        .iter()
+        .position(|candidate| candidate.as_slice() == hashed.hash_code())
+    {
+        *expression = group_keys[position].clone();
+        return;
+    }
+    if let Expression::ScalarFunction(function) = expression {
+        for argument in &mut function.args {
+            replace_grouping_expr(argument, group_hashes, group_keys);
+        }
     }
 }
 
@@ -187,15 +204,12 @@ pub(crate) fn add_grouping_column(
 /// Runs `GROUP BY g1..gn WITH ROLLUP` by materializing the source rows once
 /// and aggregating every grouping-set prefix `(g1..gk)`, `k = n..0`, over
 /// them -- logically what Go's Expand operator does by replicating each input
-/// row once per grouping set. The rolled-up columns are NULLed in the
-/// materialized SOURCE rows, so every expression over them (the `FIRST_ROW`
-/// carriers, `a+1`, a `HAVING` reference) evaluates against NULL exactly as
-/// it does over Expand's replicated rows; a genuinely-NULL data value and a
-/// rollup NULL are then indistinguishable in the output, as in TiDB (captured
-/// from real TiDB: `a=1` rows `(b=1,c=10)`/`(b=NULL,c=20)` yield both
-/// `[1 NULL 20]` and the subtotal `[1 NULL 30]`). `GROUPING()` is what tells
-/// the two apart, and each pass fills its `grouping_specs` columns with the
-/// bitmask for the grouping set that pass computes.
+/// row once per grouping set. Like Go's projection below Expand, this first
+/// appends one column per distinct grouping expression. Each pass NULLs only
+/// those grouping-key copies; aggregate arguments continue reading the
+/// original source columns. That distinction is observable when a column is
+/// both grouped and aggregated: `SUM(b) ... GROUP BY b WITH ROLLUP` must keep
+/// `b` in the grand total.
 ///
 /// Row order: Go's hash aggregation over Expand output emits rollup rows in a
 /// NONDETERMINISTIC order (verified against real TiDB -- the order changes
@@ -210,37 +224,103 @@ pub(crate) fn run_rollup_aggregate(
     agg_funcs: &[AggFunc],
     out_schema: &Schema,
     out_types: &[FieldType],
-    outputs: RollupOutputMetadata<'_>,
+    grouping_specs: &[GroupingSpec],
     ctx: &crate::StmtContext,
 ) -> Result<Box<dyn Executor>, DriverError> {
-    // A source column can be NULLed directly. A derived GROUP BY expression
-    // is represented by its matching FIRST_ROW output carrier instead: Go's
-    // Expand projects that derived value then NULLs the projection, never the
-    // columns the expression happened to read.
-    let mut group_cols = Vec::with_capacity(group_by.len());
-    for expr in group_by {
-        let column = match expr {
-            Expression::Column(col) => Some(usize::try_from(col.index).map_err(|_| {
-                DriverError::Parse("GROUP BY column has no source index".to_string())
-            })?),
-            _ => None,
-        };
-        group_cols.push(column);
-    }
-
     // Materialize the source once; every prefix pass replays these rows.
-    let source_schema = source.schema().clone();
+    let mut source_schema = source.schema().clone();
     let source_types = source.ret_field_types().to_vec();
     let rows = drain_executor_rows(source, &source_types)?;
 
+    // Go `buildExpand` evaluates each distinct GROUP BY expression into a
+    // fresh projection column before Expand. Restore duplicate group items as
+    // repeated references to that one column, rather than evaluating a
+    // side-effecting expression more than once per source row.
+    let source_width = source_types.len();
+    let mut distinct_hashes: Vec<Vec<u8>> = Vec::new();
+    let mut distinct_group_by = Vec::new();
+    let mut group_key_indices = Vec::with_capacity(group_by.len());
+    let mut group_keys = Vec::with_capacity(group_by.len());
+    let mut next_unique_id = source_schema
+        .columns
+        .iter()
+        .map(|column| column.unique_id)
+        .max()
+        .unwrap_or(0);
+    for expression in group_by {
+        let mut hashed = expression.clone();
+        let hash = hashed.hash_code().to_vec();
+        let distinct_index = match distinct_hashes.iter().position(|seen| *seen == hash) {
+            Some(index) => index,
+            None => {
+                let field_type = expression.static_type().cloned().ok_or_else(|| {
+                    DriverError::Parse("GROUP BY expression has no result type".to_string())
+                })?;
+                next_unique_id = next_unique_id.checked_add(1).ok_or_else(|| {
+                    DriverError::Parse("GROUP BY column identity overflow".to_string())
+                })?;
+                let index = distinct_group_by.len();
+                let mut column = Column::new(next_unique_id, field_type.clone());
+                column.index = i64::try_from(source_width + index).map_err(|_| {
+                    DriverError::Parse("GROUP BY column index overflow".to_string())
+                })?;
+                source_schema.append([column]);
+                distinct_hashes.push(hash);
+                distinct_group_by.push(expression.clone());
+                index
+            }
+        };
+        let column = source_schema.columns[source_width + distinct_index].clone();
+        group_key_indices.push(distinct_index);
+        group_keys.push(Expression::Column(column));
+    }
+
+    let group_hashes: Vec<Vec<u8>> = group_key_indices
+        .iter()
+        .map(|index| distinct_hashes[*index].clone())
+        .collect();
+    let mut rollup_agg_funcs = agg_funcs.to_vec();
+    for function in &mut rollup_agg_funcs {
+        // Aggregate arguments keep reading original source columns. FIRST_ROW
+        // represents projection expressions outside aggregates, which Go
+        // rewrites onto Expand's grouping-key copies.
+        if matches!(function.kind, AggKind::FirstRow) {
+            if let Some(argument) = &mut function.arg {
+                replace_grouping_expr(argument, &group_hashes, &group_keys);
+            }
+        }
+    }
+
+    let mut eval_chunk = tidb_chunk::chunk::Chunk::new_with_capacity(&source_types, rows.len());
+    for row in &rows {
+        for (column, value) in row.iter().enumerate() {
+            eval_chunk.append_datum(column, value);
+        }
+    }
+    let mut expanded_rows = Vec::with_capacity(rows.len());
+    for (row_index, mut row) in rows.into_iter().enumerate() {
+        let source_row = eval_chunk.get_row(row_index);
+        for expression in &distinct_group_by {
+            row.push(
+                expression
+                    .eval(ctx, source_row)
+                    .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?,
+            );
+        }
+        expanded_rows.push(row);
+    }
     let mut out_rows: Vec<Vec<Datum>> = Vec::new();
-    if !rows.is_empty() {
-        for k in (0..=group_cols.len()).rev() {
-            let mut pass_rows = rows.clone();
+    if !expanded_rows.is_empty() {
+        for k in (0..=group_keys.len()).rev() {
+            let mut pass_rows = expanded_rows.clone();
+            let mut kept = vec![false; distinct_group_by.len()];
+            for &index in &group_key_indices[..k] {
+                kept[index] = true;
+            }
             for row in &mut pass_rows {
-                for &idx in &group_cols[k..] {
-                    if let Some(idx) = idx {
-                        row[idx] = Datum::Null;
+                for (index, keep) in kept.iter().enumerate() {
+                    if !keep {
+                        row[source_width + index] = Datum::Null;
                     }
                 }
             }
@@ -250,8 +330,8 @@ pub(crate) fn run_rollup_aggregate(
             ));
             let agg = HashAggExec::new(
                 ExecutorMeta::new(out_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
-                group_by[..k].to_vec(),
-                agg_funcs.to_vec(),
+                group_keys[..k].to_vec(),
+                rollup_agg_funcs.clone(),
                 pass_source,
                 ctx.clone(),
                 ctx.statement_memory(),
@@ -260,17 +340,10 @@ pub(crate) fn run_rollup_aggregate(
             // each GROUPING() call reports -- the one thing that distinguishes
             // a subtotal's NULL from a data NULL.
             let mut pass_out = drain_executor_rows(Box::new(agg), out_types)?;
-            for spec in outputs.grouping_specs {
+            for spec in grouping_specs {
                 let mask = Datum::UInt(spec.mask_for_prefix(k));
                 for row in &mut pass_out {
                     row[spec.out_index] = mask.clone();
-                }
-            }
-            for &(output, group_position) in outputs.group_carriers {
-                if group_position >= k {
-                    for row in &mut pass_out {
-                        row[output] = Datum::Null;
-                    }
                 }
             }
             out_rows.extend(pass_out);

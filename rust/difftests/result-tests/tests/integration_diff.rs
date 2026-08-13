@@ -1689,7 +1689,10 @@ fn integrationtest_replay_matches_recorded_tidb_output() {
     // matched / 0 diverged / 19 skipped to 26 / 1 / 16, so the honest global
     // net is 78 -> 77.
     //
-    const KNOWN_DIVERGENCES: usize = 77;
+    // `executor/expand` reached zero: four wrong super-aggregate rows now
+    // preserve aggregate inputs while only the copied grouping keys become
+    // NULL (77 -> 73).
+    const KNOWN_DIVERGENCES: usize = 73;
     //
     //
     // 28 -> 24 (written as 35 -> 31 in batch43's own tree, which branched before batch42), in three unrelated causes, none of them an access-path

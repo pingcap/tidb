@@ -725,6 +725,26 @@ fn with_rollup() {
         [["NULL", "105"], ["1", "35"], ["2", "70"]]
     );
 
+    // Expand keeps aggregate arguments separate from the grouping-key copies
+    // it NULLs for a subtotal. When the same source column is both grouped and
+    // aggregated, every rollup level must therefore keep the original values.
+    assert_eq!(
+        row_text(session.run("SELECT b, SUM(b) FROM t GROUP BY b WITH ROLLUP")),
+        [["1", "3"], ["2", "4"], ["NULL", "7"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a, b, SUM(b) FROM t GROUP BY a, b WITH ROLLUP")),
+        [
+            ["1", "1", "2"],
+            ["1", "2", "2"],
+            ["2", "1", "1"],
+            ["2", "2", "2"],
+            ["1", "NULL", "4"],
+            ["2", "NULL", "3"],
+            ["NULL", "NULL", "7"],
+        ]
+    );
+
     // A genuinely-NULL data value is indistinguishable from a rollup
     // NULL in the output, exactly as in TiDB: a=1 has rows (b=1,c=10)
     // and (b=NULL,c=20), so both the data group [1 NULL 20] and the
