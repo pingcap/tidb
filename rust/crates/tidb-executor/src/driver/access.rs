@@ -209,6 +209,29 @@ pub(crate) fn commit_fast_path_source(
                 );
                 return Ok(None);
             }
+            if ctx.index_merge() {
+                let automatic = AutomaticIndexMergeContext {
+                    catalog,
+                    scope,
+                    table: &table,
+                    columns: &columns,
+                    partition_scan,
+                    hints: &hints,
+                    current_db,
+                };
+                if let Some(plan) = choose_automatic_index_merge_union(select, &automatic) {
+                    commit_index_merge_source(
+                        &table,
+                        scope,
+                        &columns,
+                        plan,
+                        from_source,
+                        trace.as_deref_mut(),
+                        ctx,
+                    );
+                    return Ok(None);
+                }
+            }
         }
         match choose_index_range_path(
             select,
@@ -434,6 +457,113 @@ fn choose_index_merge_intersection(
     }
     (partials.len() >= 2).then_some(IndexMergePlan {
         kind: IndexMergeKind::Intersection,
+        partials,
+    })
+}
+
+/// The non-MV OR shape `generateORIndexMerge` can lower without a hint: a
+/// top-level DNF whose every arm has a real secondary-index range. Go builds
+/// the same partial alternatives from its regular access paths, then lets the
+/// physical IndexMerge reader compete with the normal table/index reader.
+///
+/// This intentionally stops before Go's nested-DNF, MV-index, and
+/// parameter-plan-cache variants. Those require the unfinished-path builder
+/// rather than a second range algebra. The bare OR path below is one complete
+/// source shape: its merged cardinality is the original DNF's selectivity,
+/// and every partial has exactly that arm's access condition.
+struct AutomaticIndexMergeContext<'a> {
+    catalog: &'a Catalog,
+    scope: &'a FromScope,
+    table: &'a KvTable,
+    columns: &'a [(String, FieldType)],
+    partition_scan: bool,
+    hints: &'a crate::index_hints::AvailablePaths,
+    current_db: &'a str,
+}
+
+fn choose_automatic_index_merge_union(
+    select: &tidb_ast::SelectStmt,
+    input: &AutomaticIndexMergeContext<'_>,
+) -> Option<IndexMergePlan> {
+    // A common handle is not carried by every secondary index in this
+    // executor's range cursor, so it cannot yet be the handle-only partial
+    // reader Go's IndexMerge lowers to.
+    let handle = input.table.pk_handle_offset()?;
+    if input.table.partition().is_some() {
+        return None;
+    }
+    // An explicit USE_INDEX_MERGE gets the hint path above. This automatic
+    // path must not turn an inapplicable hint into a different plan.
+    if crate::index_hints::has_single_table_index_merge_hint(
+        select,
+        single_table_ref(&select.from),
+        input.current_db,
+    ) {
+        return None;
+    }
+    let where_clause = select.where_clause.as_ref()?;
+    let mut branches = Vec::new();
+    collect_index_merge_disjuncts(where_clause, &mut branches);
+    if branches.len() < 2 {
+        return None;
+    }
+    let resolver = ScopeResolver { scope: input.scope };
+    let stats = input.catalog.table_statistics(input.table.table_id);
+    let stats = stats.as_ref().map(AsRef::as_ref);
+    let mut paths = Vec::with_capacity(branches.len());
+    for branch in branches {
+        let candidates = crate::access_cost::enumerate_paths(
+            input.table,
+            input.columns,
+            Some(branch),
+            &[handle],
+            &resolver,
+            None,
+            stats,
+            input.hints,
+            false,
+            input.partition_scan,
+            input.hints.has_forced_path(),
+        )
+        .into_iter()
+        .filter(|candidate| {
+            candidate.path.index.is_some()
+                && !candidate.access_columns.is_empty()
+                && candidate.path.index.as_ref().is_some_and(|(index_id, _)| {
+                    crate::access_cost::index_is_covering(input.table, *index_id, &[handle])
+                })
+        })
+        .collect();
+        paths.push(crate::access_cost::choose_access_path(
+            candidates, stats, false,
+        )?);
+    }
+    let index_ids = paths
+        .iter()
+        .filter_map(|path| path.index.as_ref().map(|(index_id, _)| *index_id))
+        .collect::<std::collections::BTreeSet<_>>();
+    if index_ids.len() < 2 {
+        return None;
+    }
+    let (regular, needed) = best_single_table_access_path(
+        select,
+        input.catalog,
+        input.scope,
+        input.table,
+        input.columns,
+        input.hints,
+        input.partition_scan,
+    )?;
+    let rows = crate::access_cost::realtime_row_count(stats)
+        * crate::access_cost::selectivity(where_clause, input.table, &resolver, stats);
+    if crate::access_cost::index_merge_cost(input.table, &needed, stats, rows, &paths)
+        >= regular.cost
+    {
+        return None;
+    }
+    let partials = paths.into_iter().filter_map(|path| path.index).collect();
+    Some(IndexMergePlan {
+        kind: IndexMergeKind::Union,
         partials,
     })
 }
@@ -858,6 +988,41 @@ pub(crate) fn choose_index_range_path(
     // because it is the caller that ran the pruning.
     partition_scan: bool,
 ) -> Option<ChosenPath> {
+    let (best, needed) = best_single_table_access_path(
+        select,
+        catalog,
+        scope,
+        table,
+        columns,
+        hints,
+        partition_scan,
+    )?;
+    let estimate = best.estimate;
+    match (best.index, best.table_ranges) {
+        (Some((index_id, ranges)), _) => {
+            let covering = crate::access_cost::index_is_covering(table, index_id, &needed);
+            Some(ChosenPath::Index(index_id, ranges, estimate, covering))
+        }
+        (None, Some(ranges)) => Some(ChosenPath::HandleRange(ranges, estimate)),
+        // The table path the ranger narrowed nothing on: the whole-table read
+        // `build_from` already installed is the answer, unchanged.
+        (None, None) => None,
+    }
+}
+
+/// The regular access-path candidate and exact projected columns a
+/// single-table `SELECT` costs. Keeping this beneath both normal range
+/// selection and automatic IndexMerge makes the two compete in the same cost
+/// unit and under the same scan hints, limit, order, and skyline rules.
+fn best_single_table_access_path(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    scope: &FromScope,
+    table: &KvTable,
+    columns: &[(String, FieldType)],
+    hints: &crate::index_hints::AvailablePaths,
+    partition_scan: bool,
+) -> Option<(crate::access_cost::AccessPath, Vec<usize>)> {
     // No `WHERE` at all is not a reason to stop: a covering index is still a
     // candidate, and reading the whole of a narrow index beats reading the
     // whole table (Go's `path.IsSingleScan` arm of `keepIndex`).
@@ -922,18 +1087,7 @@ pub(crate) fn choose_index_range_path(
     );
     // Go's `prop.ExpectedCnt != math.MaxFloat64`: a row cap on the required
     // property is what disables Fix45132's row-ratio rule inside pruning.
-    let best = crate::access_cost::choose_access_path(paths, stats, cap.is_some())?;
-    let estimate = best.estimate;
-    match (best.index, best.table_ranges) {
-        (Some((index_id, ranges)), _) => {
-            let covering = crate::access_cost::index_is_covering(table, index_id, &needed);
-            Some(ChosenPath::Index(index_id, ranges, estimate, covering))
-        }
-        (None, Some(ranges)) => Some(ChosenPath::HandleRange(ranges, estimate)),
-        // The table path the ranger narrowed nothing on: the whole-table read
-        // `build_from` already installed is the answer, unchanged.
-        (None, None) => None,
-    }
+    crate::access_cost::choose_access_path(paths, stats, cap.is_some()).map(|best| (best, needed))
 }
 
 /// The partitions a single-table `SELECT`'s `WHERE` proves it has to read,

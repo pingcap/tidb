@@ -324,6 +324,9 @@ pub struct StmtContext {
     /// (`@@tidb_enable_outer_join_reorder`, default `ON`): whether an outer
     /// join carrying equal conditions may join the reorder group at all.
     outer_join_reorder: bool,
+    /// Go `SessionVars.EnableIndexMerge`: whether automatic IndexMerge paths
+    /// participate in this statement's costed access-path selection.
+    index_merge: bool,
     /// Go `SessionVars.PartitionPruneMode == Static`: see
     /// [`StmtContext::static_partition_prune`].
     static_partition_prune: bool,
@@ -511,6 +514,8 @@ impl StmtContext {
             join_reorder_through_sel: false,
             // Go `vardef.DefTiDBEnableOuterJoinReorder = true`.
             outer_join_reorder: true,
+            // Go `vardef.DefTiDBEnableIndexMerge = true`.
+            index_merge: true,
             // Go's shipped `tidb_partition_prune_mode` is `dynamic`.
             static_partition_prune: false,
             sequences: Rc::default(),
@@ -877,6 +882,21 @@ impl StmtContext {
     #[must_use]
     pub fn outer_join_reorder(&self) -> bool {
         self.outer_join_reorder
+    }
+
+    /// Sets `@@tidb_enable_index_merge` for this statement.
+    #[must_use]
+    pub fn with_index_merge(mut self, enabled: bool) -> Self {
+        self.index_merge = enabled;
+        self
+    }
+
+    /// Go `SessionVars.GetEnableIndexMerge`. This controls automatic paths;
+    /// an applicable `USE_INDEX_MERGE` hint remains explicit unless
+    /// `NO_INDEX_MERGE` overrides it.
+    #[must_use]
+    pub fn index_merge(&self) -> bool {
+        self.index_merge
     }
 
     /// Sets `@@tidb_partition_prune_mode` for this statement, as the one bit

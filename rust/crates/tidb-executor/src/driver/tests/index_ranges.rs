@@ -244,6 +244,64 @@ fn use_index_merge_unions_indexed_or_branches_without_duplicate_rows() {
 }
 
 #[test]
+fn automatic_index_merge_costs_a_sparse_or_and_honors_the_session_switch() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE aim (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, KEY ia (a), KEY ib (b))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO aim VALUES (1, 1, 2), (2, 1, 0), (3, 0, 2), (4, 0, 0), (5, 1, 9)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT id FROM aim WHERE a = 1 OR b = 2";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    assert!(
+        rows.iter().any(|row| match &row[0] {
+            Datum::Bytes(id) => String::from_utf8_lossy(id).contains("IndexMerge"),
+            _ => false,
+        }),
+        "a costed automatic OR must use the index-merge reader, got {rows:?}"
+    );
+    let mut ids: Vec<i64> = run_select_on(sql, &catalog, &ctx)
+        .unwrap()
+        .into_iter()
+        .map(|row| match row[0] {
+            Datum::Int(value) => value,
+            ref other => panic!("expected an integer handle, got {other:?}"),
+        })
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![1, 2, 3, 5]);
+
+    let disabled = crate::StmtContext::for_query().with_index_merge(false);
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &disabled, ExplainFormat::Row).unwrap();
+    assert!(
+        rows.iter().all(|row| match &row[0] {
+            Datum::Bytes(id) => !String::from_utf8_lossy(id).contains("IndexMerge"),
+            _ => true,
+        }),
+        "the session switch must suppress automatic paths, got {rows:?}"
+    );
+}
+
+#[test]
 fn use_index_merge_intersects_indexed_and_branches() {
     use crate::explain::{explain_select_stmt, ExplainFormat};
 

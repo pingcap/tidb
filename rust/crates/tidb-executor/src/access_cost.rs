@@ -59,9 +59,12 @@
 //! Go enumerates more paths than this. Each one below is left OUT rather
 //! than costed with a formula this tier cannot honour:
 //!
-//! * **Index merge** (`generateIndexMergePath`): needs a union/intersection
-//!   reader this tier has no executor for, so a costed candidate could be
-//!   chosen and then not run.
+//! * **Index merge variants outside the runnable OR path**
+//!   (`generateIndexMergePath`): the access driver costs the ordinary
+//!   top-level, non-MV OR reader after building its handle-only partials. MV,
+//!   nested-DNF, common-handle, and composed intersection candidates still
+//!   stay out of generic enumeration because their source-shaped partial
+//!   builders are not present yet.
 //! * **Multi-valued indexes** (`generateMVIndexPartialPath`): the JSON path
 //!   extraction and its `IndexMerge`-only lowering are both absent.
 //! * **Partitioned tables**: the session catalog refuses them upstream
@@ -361,6 +364,43 @@ pub(crate) struct AccessPath {
     /// skyline pruning's risk dimension reads these; the cost formula does
     /// not, exactly as in Go.
     pub(crate) risk: RowRisk,
+}
+
+/// Go `GetPlanCostVer24PhysicalIndexMergeReader` for a non-MV, root-level
+/// merge. Each partial is an index-only path over the row handle, so its
+/// already-computed cost is precisely the index-side `(child + net) /
+/// DistSQLScanConcurrency`. The merge performs one table-side read for its
+/// deduplicated handles, priced as `BuildIndexMergeTableScan` does.
+///
+/// The caller owns the merged-row cardinality. For the automatic OR shape it
+/// is the same DNF predicate that Go passes to `cardinality.Selectivity` when
+/// it sets `AccessPath.CountAfterAccess`; this function deliberately does no
+/// second selectivity calculation.
+pub(crate) fn index_merge_cost(
+    table: &KvTable,
+    needed_columns: &[usize],
+    stats: Option<&TableStatistics>,
+    merged_rows: f64,
+    partials: &[AccessPath],
+) -> f64 {
+    let table_columns: Vec<RowSizeColumn> = needed_columns
+        .iter()
+        .filter_map(|offset| table.columns.get(*offset))
+        .map(|column| row_size_column(column, stats))
+        .collect();
+    let row_size = get_table_avg_row_size(
+        &table_columns,
+        is_pseudo(stats),
+        realtime_row_count(stats) as i64,
+        RowSizeStore::TiKv,
+        table.pk_handle_offset().is_some(),
+        false,
+    )
+    .max(MIN_ROW_SIZE);
+    let rows = merged_rows.max(MIN_NUM_ROWS);
+    let table_side =
+        (scan_cost(rows, row_size) + net_cost(rows, row_size)) / DIST_SQL_SCAN_CONCURRENCY;
+    table_side + partials.iter().map(|path| path.cost).sum::<f64>()
 }
 
 /// The bounds around one path's access estimate, Go's `AccessPath`

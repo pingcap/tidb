@@ -304,6 +304,13 @@ impl Session {
                 .as_deref(),
             Ok("OFF" | "off" | "0")
         );
+        // Go `SessionVars.GetEnableIndexMerge`: the session switch controls
+        // automatic candidates; `USE_INDEX_MERGE` is still explicit and
+        // `NO_INDEX_MERGE` still wins when the statement is planned.
+        let index_merge = !matches!(
+            self.vars.get_system("tidb_enable_index_merge").as_deref(),
+            Ok("OFF" | "off" | "0")
+        );
         // Go `SessionVars.PartitionPruneMode`: `static` makes the planner
         // fan a partitioned `DataSource` out into one child per surviving
         // partition under a `PartitionUnion`, which is a PRINTED shape rather
@@ -431,6 +438,7 @@ impl Session {
                 .with_join_reorder_through_proj(join_reorder_through_proj)
                 .with_join_reorder_through_sel(join_reorder_through_sel)
                 .with_outer_join_reorder(outer_join_reorder)
+                .with_index_merge(index_merge)
                 .with_static_partition_prune(static_partition_prune)
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
                 .with_session_state(current_db, version, tidb_info)
@@ -499,6 +507,7 @@ impl Session {
         .with_join_reorder_through_proj(join_reorder_through_proj)
         .with_join_reorder_through_sel(join_reorder_through_sel)
         .with_outer_join_reorder(outer_join_reorder)
+        .with_index_merge(index_merge)
         .with_static_partition_prune(static_partition_prune);
         ctx
     }

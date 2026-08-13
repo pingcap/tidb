@@ -547,6 +547,33 @@ pub(crate) fn single_table_index_merge_indexes(
     indexes
 }
 
+/// Whether this table has an explicit `USE_INDEX_MERGE` comment hint.
+///
+/// Automatic path selection must not reinterpret a hint it cannot lower. In
+/// particular, an empty index list is still an explicit request in Go, even
+/// though the current explicit path needs named indexes. Leave that request
+/// to the hint-specific lowering rather than quietly choosing an automatic
+/// plan with different semantics.
+pub(crate) fn has_single_table_index_merge_hint(
+    select: &tidb_ast::SelectStmt,
+    table_ref: Option<&tidb_ast::TableRef>,
+    current_db: &str,
+) -> bool {
+    let Some(table_ref) = table_ref else {
+        return false;
+    };
+    select.hints.iter().any(|hint| {
+        if !hint.name.eq_ignore_ascii_case("USE_INDEX_MERGE") {
+            return false;
+        }
+        let tidb_ast::HintKind::Index { table: hinted, .. } = &hint.kind else {
+            return false;
+        };
+        let database = hinted.db_name.as_deref().unwrap_or(current_db);
+        comment_hint_matches(table_ref, hinted, database, current_db)
+    })
+}
+
 /// Go `StmtCtx.NoIndexMergeHint`: this statement-level hint wins over both
 /// the session switch and `USE_INDEX_MERGE` candidates.
 pub(crate) fn no_index_merge(select: &tidb_ast::SelectStmt) -> bool {

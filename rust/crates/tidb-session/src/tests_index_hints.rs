@@ -843,3 +843,34 @@ fn index_lookup_pushdown_refuses_a_global_index_with_1815() {
         )]
     );
 }
+
+#[test]
+fn tidb_enable_index_merge_controls_automatic_or_paths() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE im (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, \
+             KEY ia(a), KEY ib(b))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO im VALUES (1,1,2),(2,1,0),(3,0,2),(4,0,0),(5,1,9)")
+        .unwrap();
+    let sql = "EXPLAIN SELECT id FROM im WHERE a = 1 OR b = 2";
+    assert!(
+        row_text(session.run(sql))
+            .iter()
+            .flatten()
+            .any(|cell| cell.contains("IndexMerge")),
+        "the default ON value must cost the automatic OR reader"
+    );
+
+    session.run("SET tidb_enable_index_merge = OFF").unwrap();
+    assert!(
+        row_text(session.run(sql))
+            .iter()
+            .flatten()
+            .all(|cell| !cell.contains("IndexMerge")),
+        "OFF must remove automatic IndexMerge candidates"
+    );
+}
