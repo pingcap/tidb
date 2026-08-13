@@ -434,12 +434,9 @@ pub struct Session {
     /// what `SHOW PROCESSLIST` and `information_schema.PROCESSLIST` let it
     /// see (Go `hasPriv(ctx, mysql.ProcessPriv)`).
     ///
-    /// STUBBED: `GRANT`/`REVOKE` are not implemented yet (see
-    /// `tidb_exec::admin_runtime::AdminStmt::Grant`), so there is no SQL path
-    /// that sets this bit -- only [`Session::set_process_privilege`] does,
-    /// which a front end or test calls directly. This is the minimal
-    /// per-session privilege state needed to make the visibility rule
-    /// testable ahead of a real grant table.
+    /// This is a direct test/front-end override. Normal SQL authorization
+    /// reads the shared [`privilege::PrivilegeRegistry`] below, whose
+    /// `GRANT PROCESS ON *.*` path is shared by every session.
     has_process_priv: bool,
     /// The server's account/global-privilege registry, shared by every
     /// session a front end opens (see [`privilege::PrivilegeRegistry`]).

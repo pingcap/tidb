@@ -336,9 +336,8 @@ impl Session {
 
     /// Grants or revokes this session's `PROCESS` privilege.
     ///
-    /// See the [`Session::has_process_priv`] field doc for why this exists
-    /// as a direct setter rather than a `GRANT PROCESS ON *.* TO ...`
-    /// statement: `GRANT` is not implemented in this tier yet.
+    /// This is a direct test/front-end override. SQL `GRANT PROCESS ON *.*`
+    /// is stored in the shared privilege registry instead.
     pub fn set_process_privilege(&mut self, granted: bool) {
         self.has_process_priv = granted;
     }
