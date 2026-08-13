@@ -15,6 +15,7 @@ use crate::cluster_account_seam::PendingAccountChange;
 use crate::sql_node::SqlQueryError;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use tidb_ast::CiString;
+use tidb_datatype::FieldTypeFlags;
 use tidb_exec::cluster_catalog::{ClusterCatalog, LoadedDatabase};
 use tidb_model::db::DBInfo;
 use tidb_model::TableInfo;
@@ -212,6 +213,45 @@ impl ClusterDdl for MockDdl {
                 } else {
                     (*requested).max(stored.auto_rand_id)
                 };
+            }
+            DdlStatement::AlterAutoRandomBits {
+                schema,
+                table,
+                column,
+                shard_bits,
+                range_bits,
+                ..
+            } => {
+                let at = find(&mut next.databases, schema).ok_or_else(|| {
+                    SqlQueryError::unknown(format!("Unknown database '{schema}'"))
+                })?;
+                let lowered = table.to_lowercase();
+                let stored = next.databases[at]
+                    .tables
+                    .iter_mut()
+                    .find(|stored| stored.name.lowercase() == lowered)
+                    .ok_or_else(|| {
+                        SqlQueryError::unknown(format!("Unknown table '{schema}.{table}'"))
+                    })?;
+                if stored.auto_random_bits > *shard_bits {
+                    return Err(SqlQueryError::new(
+                        8216,
+                        *b"HY000",
+                        "Invalid auto random: decreasing auto_random shard bits is not supported",
+                    ));
+                }
+                let converting = stored.auto_random_bits == 0;
+                let mut updated = stored.clone_like_go();
+                let target = tidb_model::column::find_column_info(&updated.columns, column)
+                    .ok_or_else(|| SqlQueryError::unknown(format!("Unknown column '{column}'")))?;
+                if converting {
+                    target
+                        .write()
+                        .del_flag(u64::from(FieldTypeFlags::AUTO_INCREMENT));
+                }
+                updated.auto_random_bits = *shard_bits;
+                updated.auto_random_range_bits = *range_bits;
+                *stored = updated;
             }
             DdlStatement::DropTable {
                 schema,

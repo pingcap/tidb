@@ -1178,6 +1178,159 @@ fn alter_auto_random_base_updates_table_info_and_the_tarid_counter_together() {
     ));
 }
 
+#[test]
+fn modify_auto_random_bits_updates_table_info_and_the_tarid_counter_together() {
+    let mut store = bootstrapped();
+    let create = plan(
+        &mut store,
+        "CREATE TABLE ar_bits_cluster (id BIGINT AUTO_RANDOM(5) PRIMARY KEY, v INT)",
+        130,
+    );
+    apply(&mut store, &create);
+    store.put(key::schema_version_kv_key(), b"61".to_vec());
+    let table_id = create.created_id.unwrap();
+
+    let alter = plan(
+        &mut store,
+        "ALTER TABLE ar_bits_cluster MODIFY COLUMN id BIGINT AUTO_RANDOM(8)",
+        131,
+    );
+    let table: tidb_model::TableInfo = serde_json::from_slice(stored_value(
+        &alter,
+        &key::table_kv_key(112, table_id),
+    ))
+    .unwrap();
+    assert_eq!(table.auto_random_bits, 8);
+    assert_eq!(table.auto_random_range_bits, 64);
+    assert_eq!(
+        stored_value(
+            &alter,
+            &key::auto_random_table_id_kv_key(112, table_id)
+        ),
+        b"1"
+    );
+    assert_eq!(
+        alter.diff.action_type,
+        tidb_model::ActionType::ACTION_MODIFY_COLUMN
+    );
+
+    apply(&mut store, &alter);
+    store.put(key::schema_version_kv_key(), b"62".to_vec());
+    let decrease = statement(
+        "ALTER TABLE ar_bits_cluster MODIFY COLUMN id BIGINT AUTO_RANDOM(7)",
+    );
+    assert!(matches!(
+        plan_ddl(&mut store, &decrease, 132).unwrap_err(),
+        DdlPlanError::InvalidAutoRandom(reason)
+            if reason == "decreasing auto_random shard bits is not supported"
+    ));
+    let wrong_column = statement(
+        "ALTER TABLE ar_bits_cluster MODIFY COLUMN v BIGINT AUTO_RANDOM(9)",
+    );
+    assert!(matches!(
+        plan_ddl(&mut store, &wrong_column, 133).unwrap_err(),
+        DdlPlanError::InvalidAutoRandom(reason)
+            if reason == "auto_random can only be converted from auto_increment clustered primary key"
+    ));
+
+    let create_ai = plan(
+        &mut store,
+        "CREATE TABLE ai_bits_cluster (id BIGINT AUTO_INCREMENT PRIMARY KEY, v INT)",
+        134,
+    );
+    apply(&mut store, &create_ai);
+    store.put(key::schema_version_kv_key(), b"63".to_vec());
+    let ai_table_id = create_ai.created_id.unwrap();
+    store.put(
+        key::auto_table_id_kv_key(112, ai_table_id),
+        b"100".to_vec(),
+    );
+    let converted = plan(
+        &mut store,
+        "ALTER TABLE ai_bits_cluster MODIFY COLUMN id BIGINT AUTO_RANDOM(5)",
+        135,
+    );
+    let converted_table: tidb_model::TableInfo = serde_json::from_slice(stored_value(
+        &converted,
+        &key::table_kv_key(112, ai_table_id),
+    ))
+    .unwrap();
+    assert_eq!(converted_table.auto_random_bits, 5);
+    assert_eq!(
+        converted_table
+            .get_pk_col_info()
+            .unwrap()
+            .read()
+            .get_flag()
+            & u64::from(tidb_datatype::FieldTypeFlags::AUTO_INCREMENT),
+        0
+    );
+    assert_eq!(
+        stored_value(
+            &converted,
+            &key::auto_random_table_id_kv_key(112, ai_table_id)
+        ),
+        b"101"
+    );
+    assert!(converted.mutations.iter().any(|mutation| {
+        mutation.kind() == OptimisticMutationKind::MetaDelete
+            && mutation.key() == key::auto_table_id_kv_key(112, ai_table_id)
+    }));
+
+    let create_separate = plan(
+        &mut store,
+        "CREATE TABLE ai_separate_cluster (id BIGINT AUTO_INCREMENT PRIMARY KEY)",
+        136,
+    );
+    apply(&mut store, &create_separate);
+    store.put(key::schema_version_kv_key(), b"64".to_vec());
+    let separate_table_id = create_separate.created_id.unwrap();
+    let separate_table_key = key::table_kv_key(112, separate_table_id);
+    let mut separate_info: tidb_model::TableInfo = serde_json::from_slice(
+        store
+            .pairs
+            .get(&separate_table_key)
+            .expect("the committed table metadata exists"),
+    )
+    .unwrap();
+    separate_info.auto_id_cache = 1;
+    store.put(
+        separate_table_key,
+        value::serialize_table_info(&separate_info).unwrap(),
+    );
+    store.put(
+        key::auto_increment_id_kv_key(112, separate_table_id),
+        b"100".to_vec(),
+    );
+    store.put(
+        key::auto_table_id_kv_key(112, separate_table_id),
+        b"40".to_vec(),
+    );
+    let separate = plan(
+        &mut store,
+        "ALTER TABLE ai_separate_cluster MODIFY COLUMN id BIGINT AUTO_RANDOM(5)",
+        137,
+    );
+    assert_eq!(
+        stored_value(
+            &separate,
+            &key::auto_increment_id_kv_key(112, separate_table_id)
+        ),
+        b"101"
+    );
+    assert_eq!(
+        stored_value(
+            &separate,
+            &key::auto_random_table_id_kv_key(112, separate_table_id)
+        ),
+        b"40"
+    );
+    assert!(separate.mutations.iter().any(|mutation| {
+        mutation.kind() == OptimisticMutationKind::MetaDelete
+            && mutation.key() == key::auto_table_id_kv_key(112, separate_table_id)
+    }));
+}
+
 /// `AUTO_ID_CACHE 1` is Go's `SepAutoInc`, and only then does the counter move
 /// to its own `IID:` key.
 ///

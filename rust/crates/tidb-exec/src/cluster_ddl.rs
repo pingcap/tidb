@@ -61,6 +61,7 @@ use tidb_ast::{
     IndexConstraintDefinition, IndexConstraintKind, RenameTableStmt, Stmt,
 };
 use tidb_datatype::new_collation_enabled;
+use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
 use tidb_meta::{key, value};
 use tidb_metadef::MAX_USER_GLOBAL_ID;
 use tidb_model::action_type::ActionType;
@@ -134,6 +135,21 @@ pub enum DdlStatement {
         next: i64,
         /// Whether a lower value replaces rather than preserves the counter.
         force: bool,
+    },
+    /// The AUTO_RANDOM portion of `ALTER TABLE ... MODIFY COLUMN`.
+    AlterAutoRandomBits {
+        /// Database containing the table.
+        schema: String,
+        /// Table whose handle layout changes.
+        table: String,
+        /// Existing handle column named by MODIFY.
+        column: String,
+        /// New random-shard width.
+        shard_bits: u64,
+        /// New integer range width.
+        range_bits: u64,
+        /// Signedness written by the new column definition.
+        unsigned: bool,
     },
     /// `DROP TABLE [IF EXISTS] [schema.]table`.
     DropTable {
@@ -347,6 +363,42 @@ fn lower_alter_table_catalog(
                 table,
                 next,
                 force,
+            }))
+        }
+        tidb_ast::AlterTableAction::ModifyColumn {
+            if_exists,
+            column,
+            position,
+        } => {
+            if *if_exists
+                || !matches!(position, tidb_ast::ColumnPosition::Default)
+                || !column.qualifier.is_empty()
+                || column.ty.name != "BIGINT"
+            {
+                return Ok(None);
+            }
+            let Some(auto_random) = column.options.iter().find_map(|option| match option {
+                tidb_ast::ColumnOption::AutoRandom(option) => Some(option),
+                _ => None,
+            }) else {
+                return Ok(None);
+            };
+            if column.options.iter().any(|option| {
+                !matches!(
+                    option,
+                    tidb_ast::ColumnOption::AutoRandom(_) | tidb_ast::ColumnOption::NotNull
+                )
+            }) {
+                return Ok(None);
+            }
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AlterAutoRandomBits {
+                schema,
+                table,
+                column: column.name.clone(),
+                shard_bits: auto_random.shard_bits.unwrap_or(5),
+                range_bits: auto_random.range_bits.unwrap_or(64),
+                unsigned: column.ty.unsigned,
             }))
         }
         _ => Ok(None),
@@ -1016,6 +1068,184 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 value::encode_int_value(effective as i64 - 1),
             )?);
             diff.action_type = ActionType::ACTION_REBASE_AUTO_RANDOM_BASE;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::AlterAutoRandomBits {
+            schema,
+            table,
+            column,
+            shard_bits,
+            range_bits,
+            unsigned,
+        } => {
+            let Some(database) = find_database(&catalog, schema) else {
+                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            };
+            let Some(stored) = find_table(database, table) else {
+                return Err(DdlPlanError::UnknownTable {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                });
+            };
+            let Some(target) = tidb_model::column::find_column_info(&stored.columns, column) else {
+                return Err(DdlPlanError::InvalidAutoRandom(format!(
+                    "unknown column `{column}`"
+                )));
+            };
+            let target_read = target.read();
+            let target_flags = target_read.get_flag();
+            let target_type = target_read.get_type();
+            let target_unsigned = target_read.field_type.is_unsigned();
+            let target_name = target_read.name.lowercase().to_owned();
+            drop(target_read);
+            if *shard_bits == 0 {
+                return Err(DdlPlanError::InvalidAutoRandom(
+                    "the value of auto_random should be positive".to_owned(),
+                ));
+            }
+            if *shard_bits > 15 {
+                return Err(DdlPlanError::InvalidAutoRandom(format!(
+                    "max allowed auto_random shard bits is 15, but got {shard_bits} on column `{column}`"
+                )));
+            }
+            if !(32..=64).contains(range_bits) {
+                return Err(DdlPlanError::InvalidAutoRandom(format!(
+                    "auto_random range bits must be between 32 and 64, but got {range_bits}"
+                )));
+            }
+            let target_is_clustered_key = if stored.pk_is_handle {
+                target_flags & u64::from(FieldTypeFlags::PRI_KEY) != 0
+            } else if stored.is_common_handle {
+                stored.indices.iter_deref().any(|index| {
+                    let index = index.read();
+                    index.primary
+                        && index
+                            .columns
+                            .iter_deref()
+                            .any(|column| column.read().name.lowercase() == target_name.as_str())
+                })
+            } else {
+                false
+            };
+            let previous_bits = if target_is_clustered_key {
+                stored.auto_random_bits
+            } else {
+                0
+            };
+            let converting = previous_bits == 0;
+            if converting {
+                let auto_increment = target_flags & u64::from(FieldTypeFlags::AUTO_INCREMENT) != 0;
+                let clustered_pk = stored.pk_is_handle && target_is_clustered_key;
+                if !auto_increment || !clustered_pk {
+                    return Err(DdlPlanError::InvalidAutoRandom(
+                        "auto_random can only be converted from auto_increment clustered primary key"
+                            .to_owned(),
+                    ));
+                }
+            } else {
+                if *shard_bits < previous_bits {
+                    return Err(DdlPlanError::InvalidAutoRandom(
+                        "decreasing auto_random shard bits is not supported".to_owned(),
+                    ));
+                }
+            }
+            if target_type != FieldTypeCode::LongLong || target_unsigned != *unsigned {
+                return Err(DdlPlanError::InvalidAutoRandom(
+                    "modifying the auto_random column type is not supported".to_owned(),
+                ));
+            }
+            let previous_range = if stored.auto_random_range_bits == 0 {
+                64
+            } else {
+                stored.auto_random_range_bits
+            };
+            if *range_bits != previous_range {
+                return Err(DdlPlanError::InvalidAutoRandom(
+                    "alter the range bits of auto_random column is not supported".to_owned(),
+                ));
+            }
+
+            let db_id = database.info.id;
+            let table_id = stored.id;
+            let check_key = if converting {
+                crate::cluster_auto_id::auto_id_key_for(db_id, stored)
+            } else {
+                key::auto_random_table_id_kv_key(db_id, table_id)
+            };
+            let previous_counter = snapshot
+                .get(&check_key)?
+                .map(|bytes| value::parse_int_value(&bytes))
+                .transpose()
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+                .unwrap_or(0) as u64;
+            let checked_current = tidb_executor::kv_table::advance(previous_counter, 1, *unsigned);
+            if checked_current == previous_counter {
+                return Err(DdlPlanError::AutoIdReadFailed);
+            }
+            let incremental_bits = range_bits - shard_bits - u64::from(!unsigned);
+            let used_bits = u64::from(u64::BITS - checked_current.leading_zeros());
+            if used_bits > incremental_bits {
+                let maximum = shard_bits.wrapping_sub(used_bits - incremental_bits);
+                return Err(DdlPlanError::InvalidAutoRandom(format!(
+                    "max allowed auto_random shard bits is {maximum}, but got {shard_bits} on column `{column}`"
+                )));
+            }
+
+            let mut info = stored.clone_like_go();
+            info.auto_random_bits = *shard_bits;
+            if converting {
+                let converted = tidb_model::column::find_column_info(&info.columns, column)
+                    .expect("the cloned table retains the target column");
+                converted
+                    .write()
+                    .del_flag(u64::from(FieldTypeFlags::AUTO_INCREMENT));
+            }
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                value::serialize_table_info(&info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            let random_key = key::auto_random_table_id_kv_key(db_id, table_id);
+            let current = if converting && stored.sep_auto_inc() {
+                writes.push(OptimisticMutation::meta_put(
+                    check_key,
+                    value::encode_int_value(checked_current as i64),
+                )?);
+                snapshot
+                    .get(&key::auto_table_id_kv_key(db_id, table_id))?
+                    .map(|bytes| value::parse_int_value(&bytes))
+                    .transpose()
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+                    .unwrap_or(0) as u64
+            } else {
+                checked_current
+            };
+            let previous_random = snapshot
+                .get(&random_key)?
+                .map(|bytes| value::parse_int_value(&bytes))
+                .transpose()
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?
+                .unwrap_or(0) as u64;
+            let rebased_random =
+                if tidb_executor::kv_table::exceeds(current, previous_random, *unsigned) {
+                    current
+                } else {
+                    previous_random
+                };
+            if !converting || rebased_random != previous_random {
+                writes.push(OptimisticMutation::meta_put(
+                    random_key,
+                    value::encode_int_value(rebased_random as i64),
+                )?);
+            }
+            if converting {
+                let row_id_key = key::auto_table_id_kv_key(db_id, table_id);
+                if snapshot.get(&row_id_key)?.is_some() {
+                    writes.push(OptimisticMutation::meta_delete(row_id_key)?);
+                }
+            }
+            diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }

@@ -212,6 +212,28 @@ fn create_table_runs_and_the_same_connection_uses_the_new_table() {
     assert!(rows(&mut session, "SELECT id FROM t").is_empty());
 }
 
+#[test]
+fn modify_auto_random_bits_rebuilds_the_connections_cluster_table() {
+    let (mut session, node) = open_session();
+    session
+        .execute_write("CREATE TABLE ar_cluster (id BIGINT AUTO_RANDOM(5) PRIMARY KEY, v BIGINT)")
+        .expect("create the AUTO_RANDOM table");
+    session
+        .execute_write("ALTER TABLE ar_cluster MODIFY COLUMN id BIGINT AUTO_RANDOM(8)")
+        .expect("increase the persisted shard width");
+    let shown = rows(&mut session, "SHOW CREATE TABLE ar_cluster");
+    let Datum::Bytes(definition) = &shown[0][1] else {
+        panic!("SHOW CREATE TABLE returns text: {:?}", shown[0][1]);
+    };
+    assert!(String::from_utf8_lossy(definition).contains("AUTO_RANDOM(8)"));
+    assert_eq!(node.catalog.load().schema_version, 13);
+
+    let error = session
+        .execute_write("ALTER TABLE ar_cluster MODIFY COLUMN id BIGINT AUTO_RANDOM(7)")
+        .expect_err("decreasing the random width remains invalid");
+    assert_eq!(error.code, 8216);
+}
+
 /// `DROP TABLE` removes the table from the connection's own catalog too,
 /// so the next statement naming it fails as an unknown table rather than
 /// reading a table the cluster no longer has.
