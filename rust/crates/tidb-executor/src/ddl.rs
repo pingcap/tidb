@@ -397,13 +397,17 @@ pub fn discarded_check_constraint_actions(alter: &tidb_ast::AlterTableStmt) -> u
     alter
         .actions
         .iter()
-        .filter(|action| {
-            matches!(
-                action,
-                tidb_ast::AlterTableAction::AddCheck(_) | tidb_ast::AlterTableAction::AlterCheck(_)
-            )
+        .map(|action| match action {
+            tidb_ast::AlterTableAction::AddCheck(_) | tidb_ast::AlterTableAction::AlterCheck(_) => {
+                1
+            }
+            tidb_ast::AlterTableAction::AddColumns { constraints, .. } => constraints
+                .iter()
+                .filter(|constraint| matches!(constraint, tidb_ast::TableConstraint::Check(_)))
+                .count(),
+            _ => 0,
         })
-        .count()
+        .sum()
 }
 
 /// How many of an `ALTER TABLE`'s actions ADD a `CHECK` constraint, which is
@@ -414,8 +418,15 @@ pub fn added_check_constraint_actions(alter: &tidb_ast::AlterTableStmt) -> usize
     alter
         .actions
         .iter()
-        .filter(|action| matches!(action, tidb_ast::AlterTableAction::AddCheck(_)))
-        .count()
+        .map(|action| match action {
+            tidb_ast::AlterTableAction::AddCheck(_) => 1,
+            tidb_ast::AlterTableAction::AddColumns { constraints, .. } => constraints
+                .iter()
+                .filter(|constraint| matches!(constraint, tidb_ast::TableConstraint::Check(_)))
+                .count(),
+            _ => 0,
+        })
+        .sum()
 }
 
 /// How many `CHECK` constraints a `CREATE TABLE` writes, counting both the

@@ -120,11 +120,10 @@ pub fn run_alter_table_in(
                 constraints,
                 ..
             } => {
-                if !constraints.is_empty() {
-                    return Err(DriverError::unsupported(
-                        "adding constraints with ALTER TABLE is not supported yet",
-                    ));
-                }
+                // Go `resolveAlterTableAddColumns` expands the parenthesized
+                // form into all columns first, then all constraints. Keeping
+                // that order lets a grouped key name a column introduced by
+                // the same statement.
                 for column in columns {
                     add_column_action(
                         catalog,
@@ -134,6 +133,19 @@ pub fn run_alter_table_in(
                         &tidb_ast::ColumnPosition::Default,
                         ctx,
                     )?;
+                }
+                for constraint in constraints {
+                    match constraint {
+                        tidb_ast::TableConstraint::Index(index) => {
+                            add_index_constraint_action(catalog, &database, &name, index, ctx)?;
+                        }
+                        tidb_ast::TableConstraint::ForeignKey(definition) => {
+                            add_foreign_key_action(catalog, &database, &name, definition, ctx)?;
+                        }
+                        // The session has already accounted for the warning
+                        // or refusal dictated by tidb_enable_check_constraint.
+                        tidb_ast::TableConstraint::Check(_) => {}
+                    }
                 }
             }
             tidb_ast::AlterTableAction::ModifyColumn {
@@ -181,49 +193,7 @@ pub fn run_alter_table_in(
                 name: column_name,
             } => drop_column_action(catalog, &database, &name, column_name, *if_exists, ctx)?,
             tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
-                let unique = matches!(
-                    index.kind,
-                    tidb_ast::IndexConstraintKind::Unique
-                        | tidb_ast::IndexConstraintKind::UniqueKey
-                        | tidb_ast::IndexConstraintKind::UniqueIndex
-                );
-                match index.kind {
-                    tidb_ast::IndexConstraintKind::Key
-                    | tidb_ast::IndexConstraintKind::Index
-                    | tidb_ast::IndexConstraintKind::Unique
-                    | tidb_ast::IndexConstraintKind::UniqueKey
-                    | tidb_ast::IndexConstraintKind::UniqueIndex => {}
-                    _ => {
-                        return Err(DriverError::unsupported(
-                            "this index kind is not supported yet",
-                        ))
-                    }
-                }
-                crate::ddl::indexes::reject_partial_index(&index.options)?;
-                // Go `GetName4AnonymousIndex`: an unnamed index takes its
-                // first key part's column name, or `expression_index` when
-                // that part is an expression and so has no column name.
-                let index_name = index
-                    .name
-                    .clone()
-                    .unwrap_or_else(|| match index.parts.first() {
-                        Some(tidb_ast::IndexPart::Column { name, .. }) => name.clone(),
-                        Some(tidb_ast::IndexPart::Expr { .. }) => "expression_index".to_owned(),
-                        None => String::new(),
-                    });
-                add_index_to_table(
-                    catalog,
-                    &database,
-                    &name,
-                    super::indexes::IndexSpec {
-                        name: &index_name,
-                        unique,
-                        parts: &index.parts,
-                        visible: is_visible(&index.options),
-                        global: index.options.global,
-                    },
-                    ctx,
-                )?;
+                add_index_constraint_action(catalog, &database, &name, index, ctx)?;
             }
             // `ALTER TABLE x RENAME TO y` is the same operation as
             // `RENAME TABLE x TO y`.
@@ -340,6 +310,59 @@ pub fn run_alter_table_in(
         }
     }
     Ok(())
+}
+
+/// Adds one ordinary or unique index from either spelling Go accepts:
+/// `ADD INDEX ...` and a constraint inside `ADD COLUMN (...)`.
+fn add_index_constraint_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    index: &tidb_ast::IndexConstraintDefinition,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let unique = matches!(
+        index.kind,
+        tidb_ast::IndexConstraintKind::Unique
+            | tidb_ast::IndexConstraintKind::UniqueKey
+            | tidb_ast::IndexConstraintKind::UniqueIndex
+    );
+    match index.kind {
+        tidb_ast::IndexConstraintKind::Key
+        | tidb_ast::IndexConstraintKind::Index
+        | tidb_ast::IndexConstraintKind::Unique
+        | tidb_ast::IndexConstraintKind::UniqueKey
+        | tidb_ast::IndexConstraintKind::UniqueIndex => {}
+        _ => {
+            return Err(DriverError::unsupported(
+                "this index kind is not supported yet",
+            ))
+        }
+    }
+    crate::ddl::indexes::reject_partial_index(&index.options)?;
+    // Go `GetName4AnonymousIndex`: an unnamed index takes its first key
+    // part's column name, or `expression_index` for an expression part.
+    let index_name = index
+        .name
+        .clone()
+        .unwrap_or_else(|| match index.parts.first() {
+            Some(tidb_ast::IndexPart::Column { name, .. }) => name.clone(),
+            Some(tidb_ast::IndexPart::Expr { .. }) => "expression_index".to_owned(),
+            None => String::new(),
+        });
+    add_index_to_table(
+        catalog,
+        database,
+        table_name,
+        super::indexes::IndexSpec {
+            name: &index_name,
+            unique,
+            parts: &index.parts,
+            visible: is_visible(&index.options),
+            global: index.options.global,
+        },
+        ctx,
+    )
 }
 
 /// One `ALTER TABLE ... ADD [CONSTRAINT name] FOREIGN KEY ...`.

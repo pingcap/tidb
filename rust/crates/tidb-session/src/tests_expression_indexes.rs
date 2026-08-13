@@ -1218,3 +1218,26 @@ fn a_string_builtins_argument_width_reaches_the_index_type_gate() {
         );
     }
 }
+
+/// Go expands a parenthesized `ADD COLUMN` list into its column actions
+/// before its constraints. The grouped key may therefore name the newly added
+/// column, and it backfills rows already present in the table.
+#[test]
+fn grouped_add_columns_applies_its_index_after_the_new_column() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE grouped (a INT)").unwrap();
+    session.run("INSERT INTO grouped VALUES (1), (2)").unwrap();
+    session
+        .run("ALTER TABLE grouped ADD (b INT DEFAULT 7, KEY kb(b))")
+        .unwrap();
+
+    assert_eq!(
+        rows(&mut session, "SELECT a, b FROM grouped ORDER BY a"),
+        vec![vec!["1", "7"], vec!["2", "7"]]
+    );
+    admin_check(&mut session, "grouped", "the grouped index backfill");
+    assert!(
+        show_create(&mut session, "grouped").contains("KEY `kb` (`b`)"),
+        "the grouped constraint must be stored in table metadata"
+    );
+}

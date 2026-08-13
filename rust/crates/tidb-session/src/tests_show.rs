@@ -1704,6 +1704,28 @@ fn altering_check_constraints_is_discarded_and_warned_about_while_the_variable_i
     );
 }
 
+/// A grouped `ADD COLUMN (...)` has its own CHECK nodes rather than an
+/// `AddCheck` action, but Go still emits one off-model warning per check.
+#[test]
+fn a_grouped_add_column_check_is_discarded_and_warned_about() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE grouped_check (a INT)").unwrap();
+    session
+        .run("ALTER TABLE grouped_check ADD (b INT, CONSTRAINT cb CHECK (b > 0))")
+        .unwrap();
+    assert_eq!(
+        session
+            .warnings()
+            .iter()
+            .map(|warning| (warning.code, warning.message.as_str()))
+            .collect::<Vec<_>>(),
+        vec![(1105, "tidb_enable_check_constraint is off")]
+    );
+    session
+        .run("INSERT INTO grouped_check VALUES (1, -1)")
+        .unwrap();
+}
+
 /// A system variable whose assignment Go CLAMPS rather than refuses reports
 /// `1292 Truncated incorrect <name> value: '<original>'`, and the value that
 /// lands is the clamped one.
