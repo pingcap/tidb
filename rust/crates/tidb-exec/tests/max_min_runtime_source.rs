@@ -14,7 +14,11 @@
 
 #![allow(missing_docs)]
 
-use tidb_datatype::{Collation, Datum, Decimal};
+use chrono::Utc;
+use tidb_datatype::{
+    parse_time, BinaryJSON, Collation, Datum, Decimal, MysqlEnum, MysqlSet, TimeType,
+    VectorFloat32,
+};
 use tidb_exec::aggregate::runtime::{fold_values, MaxMinState};
 use tidb_planner::aggregation_descriptor::AggregateKind;
 
@@ -59,6 +63,11 @@ fn max_min_update_vectors_cover_the_complete_executor_datum_domain() {
             Datum::Real(0.0),
         ),
         (
+            vec![Datum::Float32(0.0), Datum::Float32(4.5), Datum::Float32(2.5)],
+            Datum::Float32(4.5),
+            Datum::Float32(0.0),
+        ),
+        (
             vec![
                 Datum::Decimal(Decimal::from_int(0)),
                 Datum::Decimal(Decimal::from_int(4)),
@@ -94,6 +103,69 @@ fn max_min_update_vectors_cover_the_complete_executor_datum_domain() {
     }
     assert_update_vector(AggregateKind::Max, &[Datum::Null], Datum::Null);
     assert_update_vector(AggregateKind::Min, &[], Datum::Null);
+}
+
+#[test]
+fn max_min_keeps_the_source_typed_temporal_json_vector_and_hybrid_domains() {
+    let date = |text| {
+        Datum::Time(
+            parse_time(text, TimeType::Date, 0, false, false, false, &Utc)
+                .expect("date")
+                .time,
+        )
+    };
+    let duration = |hour| {
+        Datum::new_duration(
+            tidb_datatype::MySqlDuration::new(hour, 0, 0, 0, 0).expect("duration"),
+        )
+    };
+    let json = |text| Datum::new_json(BinaryJSON::parse(text).expect("json"));
+    let vector = |text| Datum::new_vector_float32(VectorFloat32::parse(text).expect("vector"));
+    let enum_value = |name, value| {
+        Datum::new_enum(MysqlEnum::new(name, value), Collation::Utf8Mb4GeneralCi)
+    };
+    let set_value = |name, value| {
+        Datum::new_set(MysqlSet::new(name, value), Collation::Utf8Mb4GeneralCi)
+    };
+
+    let vectors = [
+        (
+            vec![date("2024-05-06"), date("2024-05-08"), date("2024-05-07")],
+            date("2024-05-08"),
+            date("2024-05-06"),
+        ),
+        (
+            vec![duration(-1), duration(2), duration(1)],
+            duration(2),
+            duration(-1),
+        ),
+        (
+            vec![json("true"), json("1"), json("\"x\"")],
+            json("true"),
+            json("1"),
+        ),
+        (
+            vec![vector("[1,2]"), vector("[1,3]"), vector("[1,2,0]")],
+            vector("[1,3]"),
+            vector("[1,2]"),
+        ),
+        (
+            vec![enum_value("Z", 1), enum_value("a", 2)],
+            enum_value("Z", 1),
+            enum_value("a", 2),
+        ),
+        (
+            vec![set_value("Z", 1), set_value("a", 2)],
+            set_value("Z", 1),
+            set_value("a", 2),
+        ),
+    ];
+    for (values, maximum, minimum) in vectors {
+        assert_update_vector(AggregateKind::Max, &values, maximum.clone());
+        assert_merge_vector(AggregateKind::Max, &values, maximum);
+        assert_update_vector(AggregateKind::Min, &values, minimum.clone());
+        assert_merge_vector(AggregateKind::Min, &values, minimum);
+    }
 }
 
 #[test]

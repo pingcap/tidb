@@ -22,7 +22,7 @@
 
 use std::cmp::Ordering;
 
-use tidb_datatype::Datum;
+use tidb_datatype::{compare_binary_json, Datum};
 
 use crate::ExecError;
 
@@ -51,9 +51,27 @@ pub(super) fn value_cmp(a: &Datum, b: &Datum) -> Result<Ordering, ExecError> {
         }
         (Datum::Bytes(x), Datum::Bytes(y)) => Ok(x.cmp(y)),
         (Datum::Decimal(x), Datum::Decimal(y)) => Ok(x.cmp(y)),
+        (Datum::Float32(x), Datum::Float32(y)) => x
+            .partial_cmp(y)
+            .ok_or(ExecError::Unsupported("MAX/MIN unordered float")),
         (Datum::Real(x), Datum::Real(y)) => x
             .partial_cmp(y)
             .ok_or(ExecError::Unsupported("MAX/MIN unordered real")),
+        (Datum::Time(x), Datum::Time(y)) => Ok(x.compare(*y)),
+        (Datum::Duration(x), Datum::Duration(y)) => Ok(x.compare(*y)),
+        (Datum::Json(x), Datum::Json(y)) => Ok(compare_binary_json(x, y)),
+        (Datum::VectorFloat32(x), Datum::VectorFloat32(y)) => Ok(x.compare(y)),
+        (Datum::Enum(x, collation_x), Datum::Enum(y, collation_y))
+            if collation_x == collation_y =>
+        {
+            Ok(collation_x.compare(x.name_bytes(), y.name_bytes()))
+        }
+        (Datum::Set(x, collation_x), Datum::Set(y, collation_y)) if collation_x == collation_y => {
+            Ok(collation_x.compare(x.name_bytes(), y.name_bytes()))
+        }
+        (Datum::Enum(..), Datum::Enum(..)) | (Datum::Set(..), Datum::Set(..)) => {
+            Err(ExecError::Unsupported("MAX/MIN string collation mismatch"))
+        }
         (Datum::Null, _) | (_, Datum::Null) => {
             Err(ExecError::Unsupported("MAX/MIN NULL comparison"))
         }
