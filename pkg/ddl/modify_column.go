@@ -848,6 +848,10 @@ func checkModifyColumnData(
 	return true, nil
 }
 
+func quoteSQLIdentifier(identifier string) string {
+	return "`" + strings.ReplaceAll(identifier, "`", "``") + "`"
+}
+
 // buildCheckSQLFromModifyColumn builds the SQL to check whether the data
 // is valid after modifying to new type.
 func buildCheckSQLFromModifyColumn(
@@ -860,8 +864,8 @@ func buildCheckSQLFromModifyColumn(
 
 	var conditions []string
 	template := "SELECT %s FROM %s WHERE %s LIMIT 1"
-	checkColName := fmt.Sprintf("`%s`", oldCol.Name.O)
-	tableName := fmt.Sprintf("`%s`.`%s`", dbName.O, tblName.O)
+	checkColName := quoteSQLIdentifier(oldCol.Name.O)
+	tableName := fmt.Sprintf("%s.%s", quoteSQLIdentifier(dbName.O), quoteSQLIdentifier(tblName.O))
 
 	if checkValueRange {
 		if mysql.IsIntegerType(oldTp) && mysql.IsIntegerType(changingTp) {
@@ -877,7 +881,7 @@ func buildCheckSQLFromModifyColumn(
 
 	if isNullToNotNullChange(oldCol, changingCol) {
 		if !(oldTp != mysql.TypeTimestamp && changingTp == mysql.TypeTimestamp) {
-			conditions = append(conditions, fmt.Sprintf("`%s` IS NULL", oldCol.Name.O))
+			conditions = append(conditions, fmt.Sprintf("%s IS NULL", checkColName))
 		}
 	}
 
@@ -893,7 +897,7 @@ func buildCheckRangeForIntegerTypes(oldCol, changingCol *model.ColumnInfo) strin
 	changingTp := changingCol.GetType()
 	changingUnsigned := mysql.HasUnsignedFlag(changingCol.GetFlag())
 
-	columnName := fmt.Sprintf("`%s`", oldCol.Name.O)
+	columnName := quoteSQLIdentifier(oldCol.Name.O)
 
 	if changingUnsigned {
 		upperBound := types.IntegerUnsignedUpperBound(changingTp)
