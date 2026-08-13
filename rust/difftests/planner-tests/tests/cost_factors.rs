@@ -24,7 +24,7 @@ fn source_constants_are_stable() {
     assert_eq!(SELECTION_FACTOR, 0.8);
     assert_eq!(DISTINCT_FACTOR, 0.8);
     assert_eq!(TOLERANCE_FACTOR, 0.00001);
-    assert_eq!(SMALL_SCAN_THRESHOLD, 10_000);
+    assert_eq!(SMALL_SCAN_THRESHOLD, 10_000.0);
     assert_eq!(DEFAULT_AGGREGATION_FACTOR, 1.5);
 }
 

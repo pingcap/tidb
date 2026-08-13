@@ -25,7 +25,9 @@ fn stats(kind: RowSizeType, total_column_size: i64, null_count: i64) -> RowSizeC
 }
 
 fn column(stats: RowSizeColumnStats) -> RowSizeColumn {
-    RowSizeColumn::with_stats(stats, stats.kind.estimate_width(100))
+    // These source-test cases all carry loaded statistics, so the pseudo
+    // `chunk.EstimateTypeWidth` fallback is intentionally not observed here.
+    RowSizeColumn::with_stats(stats, 0.0)
 }
 
 /// Direct translation of `TestAvgColLen`'s analyzed one-row assertions.
