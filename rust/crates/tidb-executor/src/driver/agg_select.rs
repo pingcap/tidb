@@ -187,7 +187,7 @@ pub(crate) fn run_aggregate_select(
     let source_resolver = &widened;
 
     // Stage 1: hoist window calls out of the select list / ORDER BY.
-    let hoisted = hoist_window_calls(select, &mut state, source_resolver)?;
+    let hoisted = hoist_window_calls(select, &mut state, source_resolver, ctx)?;
     let select = hoisted.as_ref().unwrap_or(select);
 
     // Stage 2: lower the select list into the aggregation.
@@ -619,6 +619,7 @@ fn hoist_window_calls(
     select: &tidb_ast::SelectStmt,
     state: &mut AggPipelineState,
     resolver: &ScopeResolver<'_>,
+    ctx: &crate::StmtContext,
 ) -> Result<Option<tidb_ast::SelectStmt>, DriverError> {
     if !crate::window::select_has_window(select) {
         return Ok(None);
@@ -662,6 +663,7 @@ fn hoist_window_calls(
             &mut hoist_specs,
             &state.group_by_names,
             resolver,
+            tidb_expr::Columns::div_precision_increment(ctx),
         )
     })?;
     state.agg_funcs = hoist_funcs;
@@ -742,6 +744,7 @@ fn lower_select_fields(
                 &mut state.grouping_specs,
                 &state.group_by_names,
                 resolver,
+                tidb_expr::Columns::div_precision_increment(ctx),
             )?;
             state
                 .slots
@@ -783,7 +786,11 @@ fn lower_select_fields(
             // Both aggregate shapes lower through the same builder, which
             // knows GROUP_CONCAT's separator and DISTINCT.
             tidb_ast::Expr::Aggregate { .. } | tidb_ast::Expr::GroupConcat { .. } => {
-                let (func, ftype) = build_agg_func(expr, resolver)?;
+                let (func, ftype) = build_agg_func(
+                    expr,
+                    resolver,
+                    tidb_expr::Columns::div_precision_increment(ctx),
+                )?;
                 state.agg_funcs.push(func);
                 state.names.push(display);
                 state.types.push(ftype);
@@ -833,6 +840,7 @@ fn lower_select_fields(
                     &mut state.grouping_specs,
                     &state.group_by_names,
                     resolver,
+                    tidb_expr::Columns::div_precision_increment(ctx),
                 )?;
                 if let Some(slot) = state.slots.last_mut() {
                     *slot = OutputSlot::Expr(state.post_agg_exprs.len());
@@ -1087,6 +1095,7 @@ fn hoist_having_and_order_by(
                     &mut state.grouping_specs,
                     &state.group_by_names,
                     resolver,
+                    tidb_expr::Columns::div_precision_increment(ctx),
                 )?
             };
             Some(expr)
@@ -1129,6 +1138,7 @@ fn hoist_having_and_order_by(
                 &mut state.grouping_specs,
                 &state.group_by_names,
                 resolver,
+                tidb_expr::Columns::div_precision_increment(ctx),
             )?
         };
         order_by_exprs.push((expr, item.desc));

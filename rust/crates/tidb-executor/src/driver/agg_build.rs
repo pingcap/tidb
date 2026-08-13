@@ -29,6 +29,7 @@
 
 use super::*;
 
+#[cfg(test)]
 const DEFAULT_DIV_PRECISION_INCREMENT: i64 = 4;
 
 /// Go `types.SetBinChsClnFlag`: aggregate numeric results use the binary
@@ -157,9 +158,20 @@ pub(crate) fn infer_avg_partial_sum_type(arg: &Expression, avg_ret_type: &FieldT
 
 /// Go `aggregation.NewAggFuncDesc` + `baseFuncDesc.TypeInfer`: the aggregate
 /// kind and the result type inferred for its argument.
+#[cfg(test)]
 pub(crate) fn agg_kind_and_type(
     name: &str,
     args: &[Expression],
+) -> Result<(AggKind, FieldType), DriverError> {
+    agg_kind_and_type_with_div_precision(name, args, DEFAULT_DIV_PRECISION_INCREMENT as u32)
+}
+
+/// As [`agg_kind_and_type`], but infer `AVG` from this statement's session
+/// `div_precision_increment` rather than the default used by isolated callers.
+pub(crate) fn agg_kind_and_type_with_div_precision(
+    name: &str,
+    args: &[Expression],
+    div_precision_increment: u32,
 ) -> Result<(AggKind, FieldType), DriverError> {
     // Every aggregate here reads its FIRST argument for type inference;
     // `APPROX_PERCENTILE` is the only one that also reads a second.
@@ -204,11 +216,11 @@ pub(crate) fn agg_kind_and_type(
             };
             (kind, t)
         }
-        // Go `typeInfer4Avg`, using the source default
-        // `div_precision_increment` of 4.
+        // Go `typeInfer4Avg`, using the statement's
+        // `div_precision_increment`.
         "AVG" => (
             AggKind::Avg,
-            infer_avg_type(arg, DEFAULT_DIV_PRECISION_INCREMENT),
+            infer_avg_type(arg, i64::from(div_precision_increment)),
         ),
         // Go `typeInfer4BitFuncs`: a binary `BIGINT(21) UNSIGNED` that never
         // returns NULL -- an empty (or all-NULL) input folds to the
@@ -540,6 +552,7 @@ struct AggregateSubstitutor<'a, 'r> {
     grouping_specs: &'a mut Vec<GroupingSpec>,
     group_by_names: &'a [String],
     resolver: &'a ScopeResolver<'r>,
+    div_precision_increment: u32,
     /// The first failure, which stops the walk.
     error: Option<DriverError>,
 }
@@ -647,7 +660,8 @@ impl AggregateSubstitutor<'_, '_> {
                     .iter()
                     .any(|name| name.eq_ignore_ascii_case(&text))
                 {
-                    let (func, ftype) = build_agg_func(expr, self.resolver)?;
+                    let (func, ftype) =
+                        build_agg_func(expr, self.resolver, self.div_precision_increment)?;
                     self.agg_funcs.push(func);
                     self.names.push(text.clone());
                     self.types.push(ftype);
@@ -687,6 +701,7 @@ impl tidb_ast::Visitor for AggregateSubstitutor<'_, '_> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn substitute_aggregates(
     expr: &tidb_ast::Expr,
     agg_funcs: &mut Vec<AggFunc>,
@@ -695,6 +710,7 @@ pub(crate) fn substitute_aggregates(
     grouping_specs: &mut Vec<GroupingSpec>,
     group_by_names: &[String],
     resolver: &ScopeResolver<'_>,
+    div_precision_increment: u32,
 ) -> Result<tidb_ast::Expr, DriverError> {
     let mut owned = expr.clone();
     let mut substitutor = AggregateSubstitutor {
@@ -704,6 +720,7 @@ pub(crate) fn substitute_aggregates(
         grouping_specs,
         group_by_names,
         resolver,
+        div_precision_increment,
         error: None,
     };
     tidb_ast::Visitable::accept(&mut owned, &mut substitutor);
@@ -792,6 +809,7 @@ fn cast_float_scalar_arg_to_double(arg: Expression) -> Expression {
 pub(crate) fn build_agg_func(
     expr: &tidb_ast::Expr,
     resolver: &ScopeResolver<'_>,
+    div_precision_increment: u32,
 ) -> Result<(AggFunc, FieldType), DriverError> {
     // GROUP_CONCAT is its own AST shape: it carries a separator and its own
     // row ORDER BY rather than being a one-argument aggregate.
@@ -906,7 +924,8 @@ pub(crate) fn build_agg_func(
     let mut all_args = Vec::with_capacity(1 + extra_args.len());
     all_args.push(arg.clone());
     all_args.extend(extra_args.iter().cloned());
-    let (kind, ftype) = agg_kind_and_type(name, &all_args)?;
+    let (kind, ftype) =
+        agg_kind_and_type_with_div_precision(name, &all_args, div_precision_increment)?;
     // `APPROX_PERCENTILE`'s percentage rides the KIND, not the argument list:
     // it is a plan-time constant Go reads once in `buildApproxPercentile`,
     // never a per-row input.

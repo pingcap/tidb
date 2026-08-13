@@ -1258,15 +1258,23 @@ fn compute_one(
     let arg_exprs: Vec<Expr> = call.kind.value_args().into_iter().cloned().collect();
     let (arg_values, arg_types, rewritten_args) =
         eval_args(&arg_exprs, rows, field_types, resolver, ctx)?;
-    let result_type = call.kind.result_type(&arg_types, &rewritten_args)?;
+    let div_precision_increment = tidb_expr::Columns::div_precision_increment(ctx);
+    let result_type =
+        call.kind
+            .result_type(&arg_types, &rewritten_args, div_precision_increment)?;
     // An aggregate's fold is resolved once, from the same name-and-arguments
     // pair the GROUP BY path uses, so it can never differ between the two
     // surfaces (and `APPROX_PERCENTILE`'s constant percentage is read here,
     // exactly once, rather than per frame).
     let agg_kind = match &call.kind {
-        WindowKind::Agg { name, .. } => {
-            Some(crate::driver::agg_kind_and_type(name, &rewritten_args)?.0)
-        }
+        WindowKind::Agg { name, .. } => Some(
+            crate::driver::agg_kind_and_type_with_div_precision(
+                name,
+                &rewritten_args,
+                div_precision_increment,
+            )?
+            .0,
+        ),
         _ => None,
     };
 
@@ -1405,6 +1413,7 @@ impl WindowKind {
         &self,
         arg_types: &[Option<FieldType>],
         arg_exprs: &[tidb_expr::expression::Expression],
+        div_precision_increment: u32,
     ) -> Result<FieldType, DriverError> {
         // Go `typeInfer4MaxMin` (`aggregation/base_func.go:361-384`), which
         // every window VALUE function shares -- `FIRST_VALUE`, `LAST_VALUE`,
@@ -1495,7 +1504,12 @@ impl WindowKind {
             // all-NULL identity prints `18446744073709551615` when grouped
             // and `-1` in a window (both captured from TiDB).
             WindowKind::Agg { name, .. } => {
-                let mut field_type = crate::driver::agg_kind_and_type(name, arg_exprs)?.1;
+                let mut field_type = crate::driver::agg_kind_and_type_with_div_precision(
+                    name,
+                    arg_exprs,
+                    div_precision_increment,
+                )?
+                .1;
                 if matches!(
                     name.to_ascii_uppercase().as_str(),
                     "COUNT" | "APPROX_COUNT_DISTINCT" | "BIT_AND" | "BIT_OR" | "BIT_XOR"

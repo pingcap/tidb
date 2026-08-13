@@ -16,7 +16,7 @@
 
 #![cfg(test)]
 
-use crate::tests_support::row_text;
+use crate::tests_support::{cell_text, row_text};
 use crate::*;
 
 /// One statement's rows as text, panicking on error.
@@ -351,6 +351,45 @@ fn decimal_division_and_avg_grow_the_scale_by_four() {
         rows(&mut session, "SELECT avg(v), sum(v), max(v), min(v) FROM d"),
         [["2.666667", "8.00", "4.00", "1.50"]]
     );
+}
+
+#[test]
+fn avg_metadata_uses_the_sessions_div_precision_increment() {
+    let mut session = Session::new();
+    session.run("SET @@div_precision_increment = 10").unwrap();
+    session.run("CREATE TABLE d (v DECIMAL(10,2))").unwrap();
+    session.run("INSERT INTO d VALUES (1.50),(2.50)").unwrap();
+
+    for (sql, expected_rows) in [
+        (
+            "SELECT AVG(v) FROM d",
+            vec![vec!["2.000000000000".to_owned()]],
+        ),
+        (
+            "SELECT AVG(v) OVER () FROM d",
+            vec![
+                vec!["2.000000000000".to_owned()],
+                vec!["2.000000000000".to_owned()],
+            ],
+        ),
+    ] {
+        match session.run_with_columns(sql) {
+            Ok(StmtOutput::Rows { columns, rows }) => {
+                assert_eq!(
+                    rows.iter()
+                        .map(|row| row.iter().map(cell_text).collect::<Vec<_>>())
+                        .collect::<Vec<_>>(),
+                    expected_rows,
+                    "rows for {sql}"
+                );
+                for (_, field_type) in columns {
+                    assert_eq!(field_type.code(), tidb_datatype::FieldTypeCode::NewDecimal);
+                    assert_eq!((field_type.flen(), field_type.decimal()), (20, 12));
+                }
+            }
+            other => panic!("AVG query returned {other:?}"),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

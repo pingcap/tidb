@@ -1167,6 +1167,7 @@ pub(crate) fn extract_and_hoist_subquery(
         grouping_specs,
         group_by_names,
         resolver,
+        tidb_expr::Columns::div_precision_increment(ctx),
     )?;
     applies.push((correlated, format!("__apply_{index}"), value_type));
     Ok((hoisted, true))

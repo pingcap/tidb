@@ -101,6 +101,69 @@ fn aggregate_selects() {
 }
 
 #[test]
+fn avg_result_metadata_uses_the_statement_division_scale() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on("CREATE TABLE d (v DECIMAL(10,2))", &mut catalog).unwrap();
+    run_insert_on(
+        "INSERT INTO d VALUES (1.50), (2.50)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+
+    let statement = tidb_parser::parse("SELECT AVG(v) FROM d").unwrap();
+    let tidb_ast::Stmt::Query(query) = statement else {
+        panic!("the probe must parse as a query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+        panic!("the probe must parse as a SELECT");
+    };
+    let ctx = crate::StmtContext::for_query().with_week_and_division_scale(0, 10);
+    let (columns, rows) = crate::driver::run_select_meta_stmt(select, &catalog, "test", &ctx)
+        .expect("AVG query must run");
+
+    assert_eq!(
+        rows,
+        vec![vec![Datum::Decimal(tidb_datatype::Decimal::from_literal(
+            "2.000000000000"
+        ))]]
+    );
+    assert_eq!(
+        columns[0].1.code(),
+        tidb_datatype::FieldTypeCode::NewDecimal
+    );
+    assert_eq!(columns[0].1.flen(), 20);
+    assert_eq!(columns[0].1.decimal(), 12);
+
+    let statement = tidb_parser::parse("SELECT AVG(v) OVER () FROM d").unwrap();
+    let tidb_ast::Stmt::Query(query) = statement else {
+        panic!("the window probe must parse as a query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.as_ref() else {
+        panic!("the window probe must parse as a SELECT");
+    };
+    let (columns, rows) = crate::driver::run_select_meta_stmt(select, &catalog, "test", &ctx)
+        .expect("window AVG query must run");
+    assert_eq!(
+        rows,
+        vec![
+            vec![Datum::Decimal(tidb_datatype::Decimal::from_literal(
+                "2.000000000000"
+            ))],
+            vec![Datum::Decimal(tidb_datatype::Decimal::from_literal(
+                "2.000000000000"
+            ))],
+        ]
+    );
+    assert_eq!(
+        columns[0].1.code(),
+        tidb_datatype::FieldTypeCode::NewDecimal
+    );
+    assert_eq!(columns[0].1.flen(), 20);
+    assert_eq!(columns[0].1.decimal(), 12);
+}
+
+#[test]
 fn group_concat_casts_duration_inputs_to_strings() {
     let mut catalog = Catalog::default();
     crate::run_create_table_on("CREATE TABLE d (v TIME(6))", &mut catalog).unwrap();
