@@ -109,6 +109,7 @@ pub fn ids_for_selected_partitions(
 pub fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64>> {
     match &spec.kind {
         PartitionKind::Hash => prune_hash_ids(spec, ranges),
+        PartitionKind::Key => Some(prune_key_ids(spec, ranges)),
         PartitionKind::Range {
             less_than,
             unsigned,
@@ -146,6 +147,37 @@ pub fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64
             *default_partition,
         )),
     }
+}
+
+/// Go's KEY pruner can use an exact range only when every partition column is
+/// constrained.  A partial key predicate may hash into every partition, so it
+/// remains a full scan.
+fn prune_key_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Vec<i64> {
+    let mut used = vec![false; spec.definitions.len()];
+    for range in ranges {
+        if !range.is_point(true) || range.low.len() != spec.dependencies.len() {
+            return spec
+                .definitions
+                .iter()
+                .map(|definition| definition.id)
+                .collect();
+        }
+        let Ok(ordinal) =
+            crate::partition_routing::key_partition_index_for_tuple(&range.low, spec.num())
+        else {
+            return spec
+                .definitions
+                .iter()
+                .map(|definition| definition.id)
+                .collect();
+        };
+        used[ordinal] = true;
+    }
+    spec.definitions
+        .iter()
+        .zip(used)
+        .filter_map(|(definition, used)| used.then_some(definition.id))
+        .collect()
 }
 
 /// A typed ranger point has one exact RANGE COLUMNS destination, so retain

@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `CREATE TABLE ... PARTITION BY HASH`, `BY RANGE`, `BY RANGE COLUMNS`, and
-//! scalar `BY LIST` are REAL; unsupported methods remain refused as a
-//! tripwire.
+//! `CREATE TABLE ... PARTITION BY HASH`, `BY KEY`, `BY RANGE`, `BY RANGE
+//! COLUMNS`, and scalar `BY LIST` are REAL; unsupported methods remain
+//! refused as a tripwire.
 //!
 //! This node stores a `PartitionSpec` (Go `model.PartitionInfo`; see
 //! `tidb_executor::partition_routing`), routes each row into one of N
@@ -22,8 +22,7 @@
 //! of them a `WHERE` reads (`tidb_executor::partition_pruning`, Go
 //! `pkg/planner/core/rule/rule_partition_processor.go`), answers
 //! `... PARTITION (p)` from the named partitions alone, and prints the clause
-//! back through `SHOW CREATE TABLE`. What it still has no answer for is
-//! KEY routing, so that method is refused rather than answered wrongly.
+//! back through `SHOW CREATE TABLE`.
 //!
 //! # The captures these tests are written against
 //!
@@ -925,6 +924,26 @@ fn hash_pruning_reads_only_the_partitions_that_can_match() {
     }
 }
 
+/// A complete KEY tuple point has exactly one CRC32 destination. This is a
+/// physical scan assertion: all three partitions contain one row, so reading
+/// one rather than filtering three after the scan proves the pruning path is
+/// wired to the same router as INSERT.
+#[test]
+fn key_partition_pruning_reads_the_matching_crc32_partition() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE kpr (a int, b int) PARTITION BY KEY(a) PARTITIONS 3")
+        .unwrap();
+    session
+        .run("INSERT INTO kpr VALUES (1,11),(2,22),(7,77)")
+        .unwrap();
+    let rows =
+        tests_support::row_text(session.run("EXPLAIN ANALYZE SELECT b FROM kpr WHERE a = 7"));
+    let scan = rows.last().expect("a plan has a source row");
+    assert_eq!(scan[2], "1", "one KEY partition must be read: {}", scan[0]);
+    assert_eq!(rows[0][2], "1", "the point result survives pruning");
+}
+
 /// An UPDATE that moves a row across a RANGE boundary moves its storage too,
 /// and leaves no copy behind.
 #[test]
@@ -951,30 +970,38 @@ fn an_update_across_a_range_boundary_moves_the_row() {
     session.run("ADMIN CHECK TABLE r").expect("admin check");
 }
 
-/// The method still without routing is REFUSED, and the refusal names it.
+/// KEY hashes the ordered `Datum.ToHashKey` values with IEEE CRC32. The
+/// captured `a=1` destination is p2 (`CRC32("1") % 3 == 2`); a NULL key adds
+/// one zero byte and reaches p1. The independent partition selections make
+/// both routing and physical read placement observable.
 #[test]
-fn key_partitioning_is_still_refused() {
-    let (sql, table, go) = (
+fn key_partitioning_routes_crc32_column_tuples() {
+    let (sql, table) = (
         "CREATE TABLE k1 (a int PRIMARY KEY, b int) PARTITION BY KEY(a) PARTITIONS 3",
         "k1",
-        GO_KEY,
     );
     let mut session = Session::new();
-    let error = session
-        .run(sql)
-        .expect_err("a method without routing must not report success");
-    let text = format!("{error:?}");
-    assert!(
-        text.contains("PARTITION BY"),
-        "the refusal must name the clause it refused, got {text}"
-    );
-    // The refusal is total: nothing was created under that name, so a later
-    // statement cannot read a table this node built wrongly.
-    assert!(
-        session.run(&format!("SHOW CREATE TABLE {table}")).is_err(),
-        "a refused CREATE TABLE must leave no table behind"
-    );
-    assert!(go.contains("PARTITION BY"), "capture sanity");
+    session.run(sql).expect("KEY must create a routed table");
+    for (value, partition) in [("1", "p2"), ("2", "p1")] {
+        session
+            .run(&format!("INSERT INTO {table} VALUES ({value}, 1)"))
+            .unwrap();
+        assert_eq!(sole_holder(&mut session, table), partition, "KEY({value})");
+        session.run(&format!("DELETE FROM {table}")).unwrap();
+    }
+    assert_eq!(show_create(&mut session, table), GO_KEY);
+
+    session
+        .run("CREATE TABLE kn (a int, b int) PARTITION BY KEY(a) PARTITIONS 3")
+        .unwrap();
+    session.run("INSERT INTO kn VALUES (NULL, 1)").unwrap();
+    assert_eq!(sole_holder(&mut session, "kn"), "p1", "KEY(NULL)");
+
+    session
+        .run("CREATE TABLE ki (a int PRIMARY KEY, b int) PARTITION BY KEY() PARTITIONS 3")
+        .unwrap();
+    session.run("INSERT INTO ki VALUES (1, 1)").unwrap();
+    assert_eq!(sole_holder(&mut session, "ki"), "p2", "KEY() uses PRIMARY");
 }
 
 /// The partitioning is scoped to the clause alone: the SAME table without it

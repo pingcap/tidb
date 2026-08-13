@@ -424,6 +424,7 @@ fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
     );
     match &partition.kind {
         tidb_executor::PartitionKind::Hash => format!("{head} PARTITIONS {}", partition.num()),
+        tidb_executor::PartitionKind::Key => format!("{head} PARTITIONS {}", partition.num()),
         tidb_executor::PartitionKind::Range {
             less_than,
             unsigned,

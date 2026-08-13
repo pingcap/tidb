@@ -10,6 +10,7 @@ description = "TiDB executor: the wired execution engine spine (Executor trait +
 [dependencies]
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
+crc32fast = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tidb-ast = { path = "../tidb-ast" }

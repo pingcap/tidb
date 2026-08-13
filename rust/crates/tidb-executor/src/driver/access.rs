@@ -747,7 +747,9 @@ fn pruned_partition_ids(
     let where_clause = select.where_clause.as_ref()?;
     let tuple_partitioning = matches!(
         partition.kind,
-        crate::PartitionKind::ListColumns { .. } | crate::PartitionKind::RangeColumns { .. }
+        crate::PartitionKind::Key
+            | crate::PartitionKind::ListColumns { .. }
+            | crate::PartitionKind::RangeColumns { .. }
     );
     // A bare column is the one scalar partition expression whose own value a
     // range over a column is. Tuple partitioning owns its named tuple.

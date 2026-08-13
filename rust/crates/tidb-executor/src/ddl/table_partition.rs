@@ -24,14 +24,12 @@
 //!
 //! # What is accepted
 //!
-//! HASH, scalar RANGE, RANGE COLUMNS, scalar LIST, and LIST COLUMNS. They are
+//! HASH, KEY, scalar RANGE, RANGE COLUMNS, scalar LIST, and LIST COLUMNS. They are
 //! routed by [`crate::partition_routing`], stored as one physical key prefix
 //! per partition, pruned by [`crate::partition_pruning`], and printed back by
 //! `SHOW CREATE TABLE`.
 //!
-//! KEY is REFUSED: this tier cannot yet route it without building an ordinary
-//! table that answers partition-aware queries wrongly while reporting
-//! success. RANGE COLUMNS is routed as a typed tuple, alongside scalar RANGE
+//! KEY and RANGE COLUMNS are routed as typed tuples, alongside scalar RANGE
 //! and LIST COLUMNS.
 //!
 //! # Why "accept and ignore" is never the answer
@@ -108,7 +106,7 @@ pub fn build_table_partitioning(
     let method = &partitioning.method;
     if !matches!(
         method.kind,
-        PartitionType::HASH | PartitionType::RANGE | PartitionType::LIST
+        PartitionType::HASH | PartitionType::KEY | PartitionType::RANGE | PartitionType::LIST
     ) {
         // The method name is Go's own spelling, so the refusal reads like the
         // clause the user wrote rather than like a Rust variant.
@@ -127,7 +125,7 @@ pub fn build_table_partitioning(
     // clause and ignoring the subpartitioning is the discard this module
     // exists to prevent.
     if partitioning.subpartition.is_some() {
-        if method.kind == PartitionType::HASH {
+        if matches!(method.kind, PartitionType::HASH | PartitionType::KEY) {
             return Err(DriverError::PartitionSubpartition);
         }
         return Err(DriverError::unsupported(format!(
@@ -135,6 +133,45 @@ pub fn build_table_partitioning(
                  node",
             method.kind.sql()
         )));
+    }
+
+    if method.kind == PartitionType::KEY {
+        let dependencies =
+            build_key_partition_columns(&method.columns, names, types, handle_offsets)?;
+        let definitions = build_hash_partition_definitions(create, method.count, allocate_id)?;
+        check_partition_name_unique(&definitions)?;
+        if definitions.len() as u64 > MAX_PARTITIONS {
+            return Err(DriverError::PartitionTooMany);
+        }
+        if definitions.is_empty() {
+            return Err(DriverError::PartitionNoParts("partitions"));
+        }
+        let dependency_offsets = dependencies
+            .iter()
+            .map(|name| {
+                names
+                    .iter()
+                    .position(|candidate| candidate.eq_ignore_ascii_case(name))
+                    .expect("KEY names resolved above")
+            })
+            .collect::<Vec<_>>();
+        check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
+        return Ok(Some(PartitionSpec {
+            kind: PartitionKind::Key,
+            expr_text: dependencies
+                .iter()
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(","),
+            expr: tidb_expr::expression::Expression::Constant(
+                tidb_expr::expression::Constant::new(
+                    tidb_datatype::Datum::Null,
+                    FieldType::new(FieldTypeCode::LongLong),
+                ),
+            ),
+            dependencies,
+            definitions,
+        }));
     }
 
     if method.kind == PartitionType::LIST && method.expr.is_none() {
@@ -306,6 +343,68 @@ pub fn build_table_partitioning(
         dependencies,
         definitions,
     }))
+}
+
+/// Resolve Go `PARTITION BY KEY` columns.  An empty list means the table's
+/// primary key; a heap table therefore hashes the empty byte stream, exactly
+/// as Go's `ForKeyPruning` does when `PartitionInfo.Columns` remains empty.
+fn build_key_partition_columns(
+    columns: &[Vec<String>],
+    names: &[String],
+    types: &[FieldType],
+    handle_offsets: &[usize],
+) -> Result<Vec<String>, DriverError> {
+    let selected: Vec<String> = if columns.is_empty() {
+        handle_offsets
+            .iter()
+            .filter_map(|offset| names.get(*offset).cloned())
+            .collect()
+    } else {
+        columns
+            .iter()
+            .map(|path| {
+                path.last()
+                    .cloned()
+                    .ok_or(DriverError::PartitionColumnValueWrongType)
+            })
+            .collect::<Result<_, _>>()?
+    };
+    let mut dependencies = Vec::with_capacity(selected.len());
+    for name in selected {
+        if dependencies
+            .iter()
+            .any(|candidate: &String| candidate.eq_ignore_ascii_case(&name))
+        {
+            return Err(DriverError::PartitionDuplicateField(name));
+        }
+        let offset = names
+            .iter()
+            .position(|candidate| candidate.eq_ignore_ascii_case(&name))
+            .ok_or_else(|| DriverError::UnknownColumnInClause {
+                column: name.clone(),
+                clause: "partition function".to_owned(),
+            })?;
+        if !key_partition_type_allowed(&types[offset]) {
+            return Err(DriverError::PartitionFieldTypeNotAllowed(name));
+        }
+        dependencies.push(name);
+    }
+    Ok(dependencies)
+}
+
+/// Go `isValidKeyPartitionColType`: only LOB/JSON/geometry/vector columns are
+/// rejected.  Character and temporal values hash through their datum keys.
+fn key_partition_type_allowed(field_type: &FieldType) -> bool {
+    !matches!(
+        field_type.code(),
+        FieldTypeCode::TinyBlob
+            | FieldTypeCode::Blob
+            | FieldTypeCode::MediumBlob
+            | FieldTypeCode::LongBlob
+            | FieldTypeCode::Json
+            | FieldTypeCode::Geometry
+            | FieldTypeCode::VectorFloat32
+    )
 }
 
 /// The partitions of a method whose definitions are all WRITTEN, which is

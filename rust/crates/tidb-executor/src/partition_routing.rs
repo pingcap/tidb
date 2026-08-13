@@ -33,9 +33,9 @@
 //!
 //! # NOT MODELLED here (each refused at DDL, see [`crate::ddl::table_partition`])
 //!
-//! KEY partitioning, subpartitioning, and every `ALTER TABLE ... PARTITION`
-//! action. HASH, scalar RANGE, RANGE COLUMNS, scalar LIST, and LIST COLUMNS
-//! are routed; the rest are refused.
+//! Subpartitioning and every `ALTER TABLE ... PARTITION` action. HASH, KEY,
+//! scalar RANGE, RANGE COLUMNS, scalar LIST, and LIST COLUMNS are routed; the
+//! rest are refused.
 
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -75,12 +75,15 @@ pub enum RangeColumnBound {
 
 /// The partition method a table was created with.
 ///
-/// Go's `ast.PartitionType` has six values; this tier stores the three it can
-/// route. The rest never reach a `PartitionSpec` because DDL refuses them.
+/// Go's `ast.PartitionType` has six values; this tier stores the methods it
+/// can route. The rest never reach a `PartitionSpec` because DDL refuses them.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PartitionKind {
     /// Go `ast.PartitionTypeHash`: `PARTITION BY HASH (expr) PARTITIONS n`.
     Hash,
+    /// Go `ast.PartitionTypeKey`: the ordered partition columns are encoded
+    /// through `Datum.ToHashKey` and fed to IEEE CRC32.
+    Key,
     /// Go `ast.PartitionTypeRange` without `COLUMNS`:
     /// `PARTITION BY RANGE (expr) (PARTITION p VALUES LESS THAN (v), ...)`.
     Range {
@@ -133,6 +136,7 @@ impl PartitionKind {
     pub const fn sql(&self) -> &'static str {
         match self {
             PartitionKind::Hash => "HASH",
+            PartitionKind::Key => "KEY",
             PartitionKind::Range { .. } => "RANGE",
             PartitionKind::RangeColumns { .. } => "RANGE",
             PartitionKind::List { .. } => "LIST",
@@ -271,6 +275,7 @@ impl PartitionSpec {
         ctx: &impl tidb_expr::Columns,
     ) -> Result<usize, RoutingError> {
         match &self.kind {
+            PartitionKind::Key => key_partition_index(row, columns, &self.dependencies, self.num()),
             PartitionKind::RangeColumns {
                 less_than,
                 field_types,
@@ -307,6 +312,7 @@ impl PartitionSpec {
                 .map_err(RoutingError::Eval)?;
                 match kind {
                     PartitionKind::Hash => hash_partition_index(&value, self.num()),
+                    PartitionKind::Key => unreachable!("matched above"),
                     PartitionKind::Range {
                         less_than,
                         unsigned,
@@ -329,6 +335,46 @@ impl PartitionSpec {
             }
         }
     }
+}
+
+/// Go `ForKeyPruning.LocateKeyPartition`: hash the stored values in partition
+/// column order.  This intentionally does not run `convert_to_in`; Go hashes
+/// the row datum after normal table coercion, so converting a second time can
+/// change a collation key or turn a stored value into a warning.
+fn key_partition_index<S: crate::generated_column::GeneratedColumnSlot>(
+    row: &[Datum],
+    columns: &[S],
+    names: &[String],
+    num: u64,
+) -> Result<usize, RoutingError> {
+    let mut tuple = Vec::with_capacity(names.len());
+    for name in names {
+        let offset = crate::generated_column::offset_of(columns, name).ok_or_else(|| {
+            RoutingError::Conversion(format!("partition column '{name}' no longer exists"))
+        })?;
+        tuple.push(row.get(offset).cloned().unwrap_or(Datum::Null));
+    }
+    key_partition_index_for_tuple(&tuple, num)
+}
+
+/// The pure KEY router is shared by write routing and exact point pruning.
+pub(crate) fn key_partition_index_for_tuple(
+    tuple: &[Datum],
+    num: u64,
+) -> Result<usize, RoutingError> {
+    debug_assert!(num > 0, "DDL rejects PARTITIONS 0 before routing");
+    let mut hash = crc32fast::Hasher::new();
+    for value in tuple {
+        if value.is_null() {
+            hash.update(&[0]);
+        } else {
+            let key = value
+                .to_hash_key()
+                .map_err(|error| RoutingError::Conversion(error.to_string()))?;
+            hash.update(&key);
+        }
+    }
+    Ok((hash.finalize() as u64 % num) as usize)
 }
 
 fn range_columns_partition_index<S: crate::generated_column::GeneratedColumnSlot>(
