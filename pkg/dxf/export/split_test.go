@@ -153,7 +153,7 @@ func TestPhysicalTableRange(t *testing.T) {
 
 	// Common handle: start is the bare record prefix.
 	cs, ce := physicalTableRange(&model.TableInfo{IsCommonHandle: true}, pid)
-	require.Equal(t, kv.Key(prefix), cs)
+	require.Equal(t, prefix, cs)
 	require.Equal(t, end, ce)
 
 	// Int handle: start is a well-formed MinInt64 record key under the table's
