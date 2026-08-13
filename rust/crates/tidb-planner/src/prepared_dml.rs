@@ -202,8 +202,6 @@ impl Error for PreparedWritePlanError {
 /// A parsed DML feature with no owner in the configured write boundary.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UnsupportedPreparedWrite {
-    /// `REPLACE INTO`.
-    Replace,
     /// `INSERT IGNORE` / `UPDATE IGNORE`.
     Ignore,
     /// `ON DUPLICATE KEY UPDATE`.
@@ -317,6 +315,8 @@ impl Error for PreparedWriteBindError {}
 pub enum ConfiguredPreparedWriteTemplate {
     /// `INSERT INTO t (<all configured columns>) VALUES (?, ...)[, (?, ...)]`.
     Insert(ConfiguredPreparedInsertTemplate),
+    /// `REPLACE INTO t (<all configured columns>) VALUES (?, ...)[, (?, ...)]`.
+    Replace(ConfiguredPreparedInsertTemplate),
     /// `UPDATE t SET <stored column> = ? | <same column> + ? WHERE <handle> = ?`.
     Update(ConfiguredPreparedUpdateTemplate),
     /// `DELETE FROM t WHERE <handle> = ?`.
@@ -329,6 +329,7 @@ impl ConfiguredPreparedWriteTemplate {
     pub fn parameter_count(&self) -> usize {
         match self {
             Self::Insert(template) => template.parameter_count(),
+            Self::Replace(template) => template.parameter_count(),
             Self::Update(template) => template.parameter_count(),
             Self::Delete(template) => template.parameter_count(),
         }
@@ -339,6 +340,7 @@ impl ConfiguredPreparedWriteTemplate {
     pub const fn table(&self) -> &ConfiguredTable {
         match self {
             Self::Insert(template) => &template.table,
+            Self::Replace(template) => &template.table,
             Self::Update(template) => &template.table,
             Self::Delete(template) => &template.table,
         }
@@ -354,6 +356,7 @@ impl ConfiguredPreparedWriteTemplate {
     ) -> Result<ConfiguredPreparedWrite, PreparedWriteBindError> {
         match self {
             Self::Insert(template) => template.bind(params),
+            Self::Replace(template) => template.bind(params),
             Self::Update(template) => template.bind(params),
             Self::Delete(template) => template.bind(params),
         }
@@ -493,6 +496,7 @@ fn parse_unsigned_integer(expr: &Expr) -> Option<u64> {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ConfiguredPreparedInsertTemplate {
     table: ConfiguredTable,
+    replace: bool,
     /// Configured column index for each named INSERT column, in source order.
     columns: Vec<usize>,
     rows: usize,
@@ -535,10 +539,17 @@ impl ConfiguredPreparedInsertTemplate {
                     .collect(),
             })
             .collect();
-        Ok(ConfiguredPreparedWrite::InsertRows {
-            table: self.table.clone(),
-            rows,
-        })
+        if self.replace {
+            Ok(ConfiguredPreparedWrite::ReplaceRows {
+                table: self.table.clone(),
+                rows,
+            })
+        } else {
+            Ok(ConfiguredPreparedWrite::InsertRows {
+                table: self.table.clone(),
+                rows,
+            })
+        }
     }
 }
 
@@ -690,6 +701,14 @@ pub enum ConfiguredPreparedWrite {
         /// Bound rows in statement order.
         rows: Vec<ConfiguredInsertRow>,
     },
+    /// Replace one or more complete configured rows after removing every
+    /// conflicting clustered or unique-index row.
+    ReplaceRows {
+        /// Resolved target table.
+        table: ConfiguredTable,
+        /// Bound rows in statement order.
+        rows: Vec<ConfiguredInsertRow>,
+    },
     /// Update one stored column of exactly one clustered handle.
     UpdatePoint {
         /// Resolved target table.
@@ -745,9 +764,13 @@ fn lower_write(
         return Err(unsupported(UnsupportedPreparedWrite::NonDmlStatement));
     };
     match dml.as_ref() {
-        DmlStmt::Insert(insert) => {
-            lower_insert(insert, catalog, mode).map(ConfiguredPreparedWriteTemplate::Insert)
-        }
+        DmlStmt::Insert(insert) => lower_insert(insert, catalog, mode).map(|template| {
+            if insert.replace {
+                ConfiguredPreparedWriteTemplate::Replace(template)
+            } else {
+                ConfiguredPreparedWriteTemplate::Insert(template)
+            }
+        }),
         DmlStmt::Update(update) => {
             lower_update(update, catalog, mode).map(ConfiguredPreparedWriteTemplate::Update)
         }
@@ -778,9 +801,6 @@ fn lower_insert(
     catalog: &ConfiguredCatalog,
     mode: ValueMode,
 ) -> Result<ConfiguredPreparedInsertTemplate, PreparedWritePlanError> {
-    if statement.replace {
-        return Err(unsupported(UnsupportedPreparedWrite::Replace));
-    }
     if statement.ignore {
         return Err(unsupported(UnsupportedPreparedWrite::Ignore));
     }
@@ -837,6 +857,7 @@ fn lower_insert(
 
     Ok(ConfiguredPreparedInsertTemplate {
         table: table.clone(),
+        replace: statement.replace,
         columns,
         rows,
         values,

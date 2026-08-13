@@ -222,10 +222,6 @@ fn insert_rows_stay_inside_the_checked_process_limit() {
 #[test]
 fn unsupported_insert_forms_are_rejected_before_a_handle_exists() {
     assert_eq!(
-        unsupported("REPLACE INTO campaign28.accounts (id, balance) VALUES (?, ?)"),
-        UnsupportedPreparedWrite::Replace
-    );
-    assert_eq!(
         unsupported("INSERT IGNORE INTO campaign28.accounts (id, balance) VALUES (?, ?)"),
         UnsupportedPreparedWrite::Ignore
     );
@@ -263,6 +259,22 @@ fn unsupported_insert_forms_are_rejected_before_a_handle_exists() {
         ),
         UnsupportedPreparedWrite::InsertRowAlias
     );
+}
+
+#[test]
+fn replace_binds_the_same_complete_rows_as_insert_but_keeps_its_mode() {
+    let template = template("REPLACE INTO campaign28.accounts (id, balance) VALUES (?, ?), (?, ?)");
+    assert_eq!(template.parameter_count(), 4);
+    let ConfiguredPreparedWrite::ReplaceRows { table, rows } = template
+        .bind(&ints(&[1, 10, 2, 20]))
+        .expect("REPLACE must bind")
+    else {
+        panic!("expected a REPLACE command");
+    };
+    assert_eq!(table, catalog().tables()[0]);
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].values(), int_pairs(&[(0, 1), (1, 10)]));
+    assert_eq!(rows[1].values(), int_pairs(&[(0, 2), (1, 20)]));
 }
 
 // -----------------------------------------------------------------------------
@@ -659,10 +671,6 @@ fn text_writes_refuse_every_shape_the_prepared_path_refuses() {
             "INSERT INTO campaign28.accounts (id) VALUES (?)",
         ),
         (
-            "REPLACE INTO campaign28.accounts (id, balance) VALUES (10, 1)",
-            "REPLACE INTO campaign28.accounts (id, balance) VALUES (?, ?)",
-        ),
-        (
             "UPDATE campaign28.accounts SET id = 10 WHERE id = 11",
             "UPDATE campaign28.accounts SET id = ? WHERE id = ?",
         ),
@@ -850,7 +858,6 @@ fn prepared_write_refusal_set_is_pinned_in_both_directions() {
     assert_eq!(
         variants,
         [
-            "Replace",
             "Ignore",
             "OnDuplicateKey",
             "SetSyntax",

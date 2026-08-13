@@ -536,8 +536,11 @@ impl MultiStatementTransaction {
                     no_write: None,
                 })
             }
-            ConfiguredWritePlan::NoWrite { reason } => Ok(ConfiguredWriteReport {
-                affected_rows: 0,
+            ConfiguredWritePlan::NoWrite {
+                reason,
+                affected_rows,
+            } => Ok(ConfiguredWriteReport {
+                affected_rows,
                 no_write: Some(reason),
             }),
         }
@@ -917,7 +920,8 @@ fn selection_matches_staged_row(
 /// pessimistic transaction locks before it plans the statement.
 fn written_handles(write: &ConfiguredPreparedWrite) -> Vec<i64> {
     match write {
-        ConfiguredPreparedWrite::InsertRows { .. } => {
+        ConfiguredPreparedWrite::InsertRows { .. }
+        | ConfiguredPreparedWrite::ReplaceRows { .. } => {
             // An INSERT's row is new, so there is no existing row to lock; TiKV
             // enforces its absence through the Insert operation's assertion.
             Vec::new()

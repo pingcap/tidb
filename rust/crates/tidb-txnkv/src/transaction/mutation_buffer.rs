@@ -29,9 +29,7 @@
 //! optimistic node actually produces and that is verified against the Go source.
 //! Every other same-key transition fails closed ([`MutationBufferError::
 //! UnsupportedCoalesce`]) rather than silently committing a possibly-clobbering
-//! value — the memdb flag bookkeeping for insert-then-delete
-//! (`Op_CheckNotExists`) and same-key index rewrites are later slices, not
-//! silently-wrong behavior here.
+//! value.
 //!
 //! The buffer is also the transaction's own read source: [`Self::staged`] hands
 //! back the entry a key currently carries, which is what makes read-your-own-
@@ -48,8 +46,7 @@ use super::mutation::{OptimisticMutation, OptimisticMutationKind};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum MutationBufferError {
     /// Two mutations target one key in a combination beyond the verified
-    /// coalescing set. Only a row `DELETE` followed by an `INSERT` of the same
-    /// key is coalesced; anything else fails closed so a transaction never
+    /// coalescing set. Anything else fails closed so a transaction never
     /// commits a value whose correctness this buffer cannot vouch for.
     UnsupportedCoalesce {
         /// The encoded key already carrying an incompatible staged mutation.
@@ -185,6 +182,10 @@ impl TransactionMutationBuffer {
 ///   `start_ts`, so both writes cancel before commit.
 /// * a unique-index delete then insert — the key existed at `start_ts`, so the
 ///   final value is a `PutExisting`, retaining the original existence check.
+/// * a fresh row or non-unique index entry then its delete — neither key
+///   existed at `start_ts`, so both mutations cancel before commit.
+/// * a non-unique index delete then put — the final unasserted put replaces the
+///   source entry.
 fn coalesce(existing: &OptimisticMutation, next: &OptimisticMutation) -> Option<CoalescedMutation> {
     match (existing.kind(), next.kind()) {
         (OptimisticMutationKind::Delete, OptimisticMutationKind::Insert) => {
@@ -207,12 +208,19 @@ fn coalesce(existing: &OptimisticMutation, next: &OptimisticMutation) -> Option<
         (OptimisticMutationKind::UniqueIndexInsert, OptimisticMutationKind::IndexDelete) => {
             Some(CoalescedMutation::Remove)
         }
+        (OptimisticMutationKind::Insert, OptimisticMutationKind::Delete)
+        | (OptimisticMutationKind::IndexPut, OptimisticMutationKind::IndexDelete) => {
+            Some(CoalescedMutation::Remove)
+        }
         (OptimisticMutationKind::IndexDelete, OptimisticMutationKind::UniqueIndexInsert) => {
             OptimisticMutation::put_existing(next.key().to_vec(), next.value().to_vec())
                 .ok()
                 .map(CoalescedMutation::Keep)
         }
         (OptimisticMutationKind::PutExisting, OptimisticMutationKind::IndexDelete) => {
+            Some(CoalescedMutation::Keep(next.clone()))
+        }
+        (OptimisticMutationKind::IndexDelete, OptimisticMutationKind::IndexPut) => {
             Some(CoalescedMutation::Keep(next.clone()))
         }
         _ => None,
@@ -366,37 +374,29 @@ mod tests {
     }
 
     #[test]
-    fn insert_then_delete_same_key_fails_closed() {
-        // Insert-then-delete of a fresh key becomes Op_CheckNotExists in TiDB
-        // (flagPresumeKeyNotExists on a now-empty value); that memdb flag state
-        // is a later slice, so it fails closed rather than emitting a plain Del.
+    fn a_fresh_row_then_delete_cancels_before_commit() {
         let mut buffer = TransactionMutationBuffer::new();
         buffer
             .stage(OptimisticMutation::insert(b"row".to_vec(), b"v".to_vec()).unwrap())
             .unwrap();
-        assert_eq!(
-            buffer.stage(OptimisticMutation::delete(b"row".to_vec()).unwrap()),
-            Err(MutationBufferError::UnsupportedCoalesce {
-                key: b"row".to_vec()
-            })
-        );
+        buffer
+            .stage(OptimisticMutation::delete(b"row".to_vec()).unwrap())
+            .unwrap();
+        assert!(buffer.is_empty());
     }
 
     #[test]
-    fn same_key_index_rewrite_fails_closed() {
-        // A DELETE+INSERT that leaves an indexed value unchanged would rewrite one
-        // index key (IndexDelete then IndexPut). That coalescing is faithful but
-        // unverified here, so it fails closed for now instead of guessing.
+    fn a_non_unique_index_rewrite_keeps_its_final_put() {
         let mut buffer = TransactionMutationBuffer::new();
         buffer
             .stage(OptimisticMutation::index_delete(b"idx".to_vec()).unwrap())
             .unwrap();
-        assert_eq!(
-            buffer.stage(OptimisticMutation::index_put(b"idx".to_vec(), b"0".to_vec()).unwrap()),
-            Err(MutationBufferError::UnsupportedCoalesce {
-                key: b"idx".to_vec()
-            })
-        );
+        buffer
+            .stage(OptimisticMutation::index_put(b"idx".to_vec(), b"0".to_vec()).unwrap())
+            .unwrap();
+        let mutation = buffer.into_mutations().pop().unwrap();
+        assert_eq!(mutation.kind(), OptimisticMutationKind::IndexPut);
+        assert_eq!(mutation.value(), b"0");
     }
 
     #[test]

@@ -31,6 +31,7 @@
 //!   does not negotiate).
 //! * A missing UPDATE row matches nothing and publishes nothing.
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::time::Duration;
 
@@ -60,9 +61,10 @@ use tidb_txnkv::{
     region::RegionRecoveryLoader,
     rpc::UnaryCallContext,
     transaction::{
-        MutationSetError, OptimisticCommitOutcome, OptimisticCoordinatorError, OptimisticMutation,
-        ReadOnlyTransaction, RealOptimisticTransaction, RealOptimisticTransactionOpener,
-        TransactionCommandClient,
+        MutationBufferError, MutationSetError, OptimisticCommitOutcome, OptimisticCoordinatorError,
+        OptimisticMutation, OptimisticMutationKind, ReadOnlyTransaction, RealOptimisticTransaction,
+        RealOptimisticTransactionOpener, TransactionCommandClient, TransactionMutationBuffer,
+        MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
     },
 };
 
@@ -104,6 +106,8 @@ pub enum ConfiguredWriteError {
     DuplicateHandle(i64),
     /// The transaction rejected the assembled mutation set.
     Mutations(MutationSetError),
+    /// Statement-local coalescing rejected two writes to one key.
+    Staging(MutationBufferError),
     /// The real transaction coordinator failed before or during publication.
     Transaction(OptimisticCoordinatorError),
     /// The statement is not admitted SQL for the configured write boundary.
@@ -220,6 +224,7 @@ impl fmt::Display for ConfiguredWriteError {
                 "configured write repeats clustered handle {handle}"
             ),
             Self::Mutations(error) => write!(formatter, "configured write mutations: {error}"),
+            Self::Staging(error) => write!(formatter, "configured write staging: {error}"),
             Self::Transaction(error) => write!(formatter, "configured write transaction: {error}"),
             Self::Plan(error) => write!(formatter, "{error}"),
             Self::Parse(message) => write!(formatter, "SQL parse error: {message}"),
@@ -287,6 +292,7 @@ impl std::error::Error for ConfiguredWriteError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Mutations(error) => Some(error),
+            Self::Staging(error) => Some(error),
             Self::Transaction(error) => Some(error),
             Self::Plan(error) => Some(error),
             Self::RowWrite(_)
@@ -331,7 +337,8 @@ impl From<OptimisticCoordinatorError> for ConfiguredWriteError {
 /// What a bound statement publishes and reports.
 ///
 /// `NoWrite` is not an error: a point UPDATE whose row is missing or already
-/// holds the assigned value publishes nothing and reports zero affected rows.
+/// holds the assigned value publishes nothing. An identical `REPLACE` also
+/// publishes nothing but reports one affected row.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ConfiguredWritePlan {
     /// Publish these mutations and report `affected_rows` after a determinate
@@ -342,10 +349,12 @@ pub enum ConfiguredWritePlan {
         /// Rows to report in the MySQL OK packet.
         affected_rows: u64,
     },
-    /// Publish nothing and report zero affected rows.
+    /// Publish nothing and report the source-defined affected-row count.
     NoWrite {
         /// Why nothing is published, for the receipt.
         reason: NoWriteReason,
+        /// Rows to report in the MySQL OK packet.
+        affected_rows: u64,
     },
 }
 
@@ -399,6 +408,164 @@ pub fn plan_insert(
     })
 }
 
+/// Plans `REPLACE` against one transaction snapshot.
+///
+/// Go tries the row insert, removes every clustered or unique-index conflict,
+/// then retries it. The configured path reads those same conflict keys before
+/// assembling the equivalent final mutation set. A transaction-local buffer is
+/// necessary even for one statement because a later VALUES row observes and
+/// can replace an earlier row from that statement.
+pub fn plan_replace<S: WritePlanningSnapshot>(
+    snapshot: &mut S,
+    table: &ConfiguredTable,
+    rows: &[ConfiguredInsertRow],
+    call: &UnaryCallContext,
+    session_tz: &SessionTimeZone,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    let mut staged = TransactionMutationBuffer::new();
+    let mut affected_rows = 0;
+    for row in rows {
+        let plan = plan_replace_row(snapshot, &staged, table, row, call, session_tz)?;
+        match plan {
+            ConfiguredWritePlan::Write {
+                mutations,
+                affected_rows: row_affected,
+            } => {
+                for mutation in mutations {
+                    staged
+                        .stage(mutation)
+                        .map_err(ConfiguredWriteError::Staging)?;
+                }
+                affected_rows += row_affected;
+            }
+            ConfiguredWritePlan::NoWrite {
+                affected_rows: row_affected,
+                ..
+            } => affected_rows += row_affected,
+        }
+    }
+    if staged.is_empty() {
+        Ok(ConfiguredWritePlan::NoWrite {
+            reason: NoWriteReason::UnchangedRow,
+            affected_rows,
+        })
+    } else {
+        Ok(ConfiguredWritePlan::Write {
+            mutations: staged.into_mutations(),
+            affected_rows,
+        })
+    }
+}
+
+fn plan_replace_row<S: WritePlanningSnapshot>(
+    snapshot: &mut S,
+    staged: &TransactionMutationBuffer,
+    table: &ConfiguredTable,
+    row: &ConfiguredInsertRow,
+    call: &UnaryCallContext,
+    session_tz: &SessionTimeZone,
+) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
+    let (handle, columns) = split_row(table, row, session_tz)?;
+    let record_key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
+    let mut conflicts = BTreeMap::new();
+    if let Some(stored) = staged_or_snapshot(snapshot, staged, &record_key, call)? {
+        if replacement_matches_stored(table, &stored, &columns)? {
+            return Ok(ConfiguredWritePlan::NoWrite {
+                reason: NoWriteReason::UnchangedRow,
+                affected_rows: 1,
+            });
+        }
+        conflicts.insert(handle, stored);
+    }
+
+    for index in table.indexes().iter().filter(|index| index.is_unique()) {
+        let value = indexed_insert_value(index, &columns)?;
+        let index_key = unique_index_key(table.table_id(), index.index_id(), value)?;
+        let Some(index_value) = staged_or_snapshot(snapshot, staged, &index_key, call)? else {
+            continue;
+        };
+        let conflict_handle = decode_unique_index_handle(&index_value)?;
+        if conflicts.contains_key(&conflict_handle) {
+            continue;
+        }
+        let conflict_key =
+            encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(conflict_handle));
+        let stored =
+            staged_or_snapshot(snapshot, staged, &conflict_key, call)?.ok_or_else(|| {
+                ConfiguredWriteError::RowRead(
+                    "unique index points at a missing configured record".to_owned(),
+                )
+            })?;
+        conflicts.insert(conflict_handle, stored);
+    }
+
+    let conflict_count = conflicts.len() as u64;
+    let mut mutations = Vec::new();
+    for (conflict_handle, stored) in conflicts {
+        let ConfiguredWritePlan::Write {
+            mutations: deletes, ..
+        } = plan_delete(table, conflict_handle, Some(&stored))?
+        else {
+            unreachable!("a supplied replacement conflict always deletes");
+        };
+        mutations.extend(deletes);
+    }
+    let ConfiguredWritePlan::Write {
+        mutations: inserts, ..
+    } = plan_insert(table, std::slice::from_ref(row), session_tz)?
+    else {
+        unreachable!("a replacement INSERT always publishes");
+    };
+    mutations.extend(inserts);
+    Ok(ConfiguredWritePlan::Write {
+        mutations,
+        affected_rows: conflict_count.saturating_add(1),
+    })
+}
+
+fn staged_or_snapshot<S: WritePlanningSnapshot>(
+    snapshot: &mut S,
+    staged: &TransactionMutationBuffer,
+    key: &[u8],
+    call: &UnaryCallContext,
+) -> Result<Option<Vec<u8>>, ConfiguredWriteError> {
+    let Some(mutation) = staged.staged(key) else {
+        return snapshot.read_at_snapshot(key, call);
+    };
+    match mutation.kind() {
+        OptimisticMutationKind::Delete
+        | OptimisticMutationKind::IndexDelete
+        | OptimisticMutationKind::MetaDelete => Ok(None),
+        OptimisticMutationKind::LockOnly => snapshot.read_at_snapshot(key, call),
+        OptimisticMutationKind::Insert
+        | OptimisticMutationKind::PutExisting
+        | OptimisticMutationKind::IndexPut
+        | OptimisticMutationKind::UniqueIndexInsert
+        | OptimisticMutationKind::MetaPut => Ok(Some(mutation.value().to_vec())),
+    }
+}
+
+fn replacement_matches_stored(
+    table: &ConfiguredTable,
+    stored: &[u8],
+    replacement: &[(i64, Datum)],
+) -> Result<bool, ConfiguredWriteError> {
+    let stored = decode_stored_row(table, stored)?;
+    Ok(replacement.len() == stored.len()
+        && replacement
+            .iter()
+            .all(|(id, value)| stored.get(id) == Some(value)))
+}
+
+fn decode_unique_index_handle(value: &[u8]) -> Result<i64, ConfiguredWriteError> {
+    let bytes: [u8; 8] = value.try_into().map_err(|_| {
+        ConfiguredWriteError::RowRead(
+            "unique index value does not encode an integer handle".to_owned(),
+        )
+    })?;
+    Ok(i64::from_be_bytes(bytes))
+}
+
 /// Decides one point UPDATE from the row observed at the transaction's own
 /// start timestamp.
 ///
@@ -415,6 +582,7 @@ pub fn plan_update(
     let Some(stored) = stored else {
         return Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::MissingRow,
+            affected_rows: 0,
         });
     };
     let assigned = &table.columns()[column_index];
@@ -446,6 +614,7 @@ pub fn plan_update(
     if new_value == stored_value {
         return Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::UnchangedRow,
+            affected_rows: 0,
         });
     }
 
@@ -522,6 +691,7 @@ pub fn plan_delete(
     let Some(stored) = stored else {
         return Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::MissingRow,
+            affected_rows: 0,
         });
     };
     let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(handle));
@@ -1209,6 +1379,13 @@ pub fn planned_publication_bounds(
                 .unwrap_or(usize::MAX);
             Ok((mutations.len(), bytes))
         }
+        // The conflicting rows are read at the transaction start timestamp, so
+        // the exact mutation set does not exist before opening the transaction.
+        // Admit the coordinator's own checked maximum here; commit still
+        // validates the actual set before any RPC publishes it.
+        ConfiguredPreparedWrite::ReplaceRows { .. } => {
+            Ok((MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES))
+        }
         ConfiguredPreparedWrite::UpdatePoint { table, handle, .. } => {
             let key = encode_row_key_with_handle(table.table_id(), &RecordHandle::Int(*handle));
             // At most one index (the one on the assigned column) moves its entry
@@ -1301,12 +1478,14 @@ pub enum ConfiguredWriteOutcome {
         /// Rows this statement would report on a determinate commit.
         affected_rows: u64,
     },
-    /// Nothing was published; the statement reports zero affected rows.
+    /// Nothing was published; the statement still has an affected-row count.
     NoPublication {
         /// The read-only transaction that observed the row.
         transaction: ReadOnlyTransaction,
         /// Why nothing was published.
         reason: NoWriteReason,
+        /// Rows to report in the MySQL OK packet.
+        affected_rows: u64,
     },
 }
 
@@ -1390,8 +1569,12 @@ pub fn commit_configured_write(
                 no_write: None,
             })
         }
-        ConfiguredWriteOutcome::NoPublication { reason, .. } => Ok(ConfiguredWriteReport {
-            affected_rows: 0,
+        ConfiguredWriteOutcome::NoPublication {
+            reason,
+            affected_rows,
+            ..
+        } => Ok(ConfiguredWriteReport {
+            affected_rows,
             no_write: Some(reason),
         }),
     }
@@ -1456,6 +1639,9 @@ pub fn plan_configured_write<S: WritePlanningSnapshot>(
 ) -> Result<ConfiguredWritePlan, ConfiguredWriteError> {
     match write {
         ConfiguredPreparedWrite::InsertRows { table, rows } => plan_insert(table, rows, session_tz),
+        ConfiguredPreparedWrite::ReplaceRows { table, rows } => {
+            plan_replace(snapshot, table, rows, call, session_tz)
+        }
         ConfiguredPreparedWrite::UpdatePoint {
             table,
             handle,
@@ -1506,9 +1692,13 @@ where
             outcome: Box::new(transaction.commit(mutations, call)?),
             affected_rows,
         }),
-        ConfiguredWritePlan::NoWrite { reason } => Ok(ConfiguredWriteOutcome::NoPublication {
+        ConfiguredWritePlan::NoWrite {
+            reason,
+            affected_rows,
+        } => Ok(ConfiguredWriteOutcome::NoPublication {
             transaction: transaction.finish_without_writes()?,
             reason,
+            affected_rows,
         }),
     }
 }

@@ -24,6 +24,8 @@
 //! PD/TiKV by the dependent live slice; nothing here substitutes a mock
 //! transport, mock catalog, or in-memory database for that proof.
 
+use std::collections::BTreeMap;
+
 use tidb_codec::table_key::{
     encode_index_seek_key, encode_non_unique_index_key, encode_row_key_with_handle,
     non_unique_index_value, RecordHandle,
@@ -363,6 +365,7 @@ fn an_unchanged_row_publishes_nothing_without_client_found_rows() {
         0),
         Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::UnchangedRow,
+            affected_rows: 0,
         })
     );
     // Adding zero is the same unchanged row through the arithmetic shape.
@@ -376,6 +379,7 @@ fn an_unchanged_row_publishes_nothing_without_client_found_rows() {
         0),
         Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::UnchangedRow,
+            affected_rows: 0,
         })
     );
 }
@@ -404,6 +408,7 @@ fn a_delete_of_a_missing_row_publishes_nothing() {
         plan_delete(&table(), 10, None),
         Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::MissingRow,
+            affected_rows: 0,
         })
     );
 }
@@ -420,6 +425,7 @@ fn a_missing_row_matches_nothing_and_publishes_nothing() {
         0),
         Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::MissingRow,
+            affected_rows: 0,
         })
     );
 }
@@ -851,6 +857,7 @@ fn a_missing_delete_touches_no_index() {
         plan_delete(&indexed_table(), 10, None),
         Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::MissingRow,
+            affected_rows: 0,
         })
     );
 }
@@ -895,6 +902,111 @@ fn updating_the_unique_indexed_column_moves_its_entry_atomically() {
     assert_eq!(mutations[2].kind(), OptimisticMutationKind::UniqueIndexInsert);
     assert_eq!(mutations[2].key(), expected_unique_index_entry(250));
     assert_eq!(mutations[2].value(), 10_i64.to_be_bytes());
+}
+
+#[test]
+fn replace_deletes_a_conflicting_primary_row_then_reuses_its_record_key() {
+    let write = bound_write("REPLACE INTO campaign28.accounts (id, balance) VALUES (?, ?)", &[10, 200]);
+    let record_key = encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10));
+    let mut snapshot = ReplaceSnapshot::with([(record_key.clone(), stored_row(100))]);
+    let ConfiguredWritePlan::Write {
+        mutations,
+        affected_rows,
+    } = plan_configured_write(&mut snapshot, &write, &call(), 0).expect("REPLACE must plan")
+    else {
+        panic!("a changed replacement publishes");
+    };
+    assert_eq!(affected_rows, 2);
+    assert_eq!(mutations.len(), 1);
+    assert_eq!(mutations[0].kind(), OptimisticMutationKind::PutExisting);
+    assert_eq!(mutations[0].key(), record_key);
+    assert_eq!(snapshot.reads, vec![record_key]);
+}
+
+#[test]
+fn replace_reads_a_unique_conflict_and_moves_its_handle() {
+    let catalog = ConfiguredCatalog::new([unique_indexed_table()]).expect("catalog must validate");
+    let write = lower_prepared_write(
+        &tidb_parser::parse("REPLACE INTO campaign28.accounts (id, balance) VALUES (?, ?)")
+            .expect("SQL must parse"),
+        &catalog,
+    )
+    .expect("REPLACE must lower")
+    .bind(&int_binds(&[20, 100]))
+    .expect("REPLACE must bind");
+    let record_key = encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10));
+    let unique_key = expected_unique_index_entry(100);
+    let mut snapshot = ReplaceSnapshot::with([
+        (unique_key.clone(), 10_i64.to_be_bytes().to_vec()),
+        (record_key.clone(), stored_row(100)),
+    ]);
+    let ConfiguredWritePlan::Write {
+        mutations,
+        affected_rows,
+    } = plan_configured_write(&mut snapshot, &write, &call(), 0).expect("REPLACE must plan")
+    else {
+        panic!("a replacement with a unique conflict publishes");
+    };
+    assert_eq!(affected_rows, 2);
+    assert!(mutations.iter().any(|mutation| {
+        mutation.kind() == OptimisticMutationKind::Delete && mutation.key() == record_key
+    }));
+    assert!(mutations.iter().any(|mutation| {
+        mutation.kind() == OptimisticMutationKind::PutExisting
+            && mutation.key() == unique_key
+            && mutation.value() == 20_i64.to_be_bytes()
+    }));
+    assert!(mutations.iter().any(|mutation| {
+        mutation.kind() == OptimisticMutationKind::Insert
+            && mutation.key() == encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(20))
+    }));
+}
+
+#[test]
+fn replacing_an_identical_primary_row_reports_one_affected_row_without_mutation() {
+    let write = bound_write("REPLACE INTO campaign28.accounts (id, balance) VALUES (?, ?)", &[10, 100]);
+    let record_key = encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10));
+    let mut snapshot = ReplaceSnapshot::with([(record_key, stored_row(100))]);
+    assert_eq!(
+        plan_configured_write(&mut snapshot, &write, &call(), 0),
+        Ok(ConfiguredWritePlan::NoWrite {
+            reason: NoWriteReason::UnchangedRow,
+            affected_rows: 1,
+        })
+    );
+}
+
+#[test]
+fn multiple_replace_rows_observe_the_statement_local_replacement() {
+    let catalog = ConfiguredCatalog::new([unique_indexed_table()]).expect("catalog must validate");
+    let write = lower_prepared_write(
+        &tidb_parser::parse(
+            "REPLACE INTO campaign28.accounts (id, balance) VALUES (?, ?), (?, ?)",
+        )
+        .expect("SQL must parse"),
+        &catalog,
+    )
+    .expect("REPLACE must lower")
+    .bind(&int_binds(&[10, 100, 10, 200]))
+    .expect("REPLACE must bind");
+    let mut snapshot = ReplaceSnapshot::default();
+    let ConfiguredWritePlan::Write {
+        mutations,
+        affected_rows,
+    } = plan_configured_write(&mut snapshot, &write, &call(), 0).expect("REPLACE must plan")
+    else {
+        panic!("the final replacement publishes");
+    };
+    assert_eq!(affected_rows, 3);
+    assert_eq!(mutations.len(), 2);
+    assert!(mutations.iter().any(|mutation| {
+        mutation.kind() == OptimisticMutationKind::Insert
+            && mutation.key() == encode_row_key_with_handle(TABLE_ID, &RecordHandle::Int(10))
+    }));
+    assert!(mutations.iter().any(|mutation| {
+        mutation.kind() == OptimisticMutationKind::UniqueIndexInsert
+            && mutation.key() == expected_unique_index_entry(200)
+    }));
 }
 
 #[test]
@@ -1111,6 +1223,7 @@ fn setting_a_char_column_to_its_current_value_writes_nothing() {
         0),
         Ok(ConfiguredWritePlan::NoWrite {
             reason: NoWriteReason::UnchangedRow,
+            affected_rows: 0,
         })
     );
 }
@@ -1289,6 +1402,32 @@ struct MockSnapshot {
     reads: Vec<Vec<u8>>,
 }
 
+#[derive(Default)]
+struct ReplaceSnapshot {
+    values: BTreeMap<Vec<u8>, Vec<u8>>,
+    reads: Vec<Vec<u8>>,
+}
+
+impl ReplaceSnapshot {
+    fn with(values: impl IntoIterator<Item = (Vec<u8>, Vec<u8>)>) -> Self {
+        Self {
+            values: values.into_iter().collect(),
+            reads: Vec::new(),
+        }
+    }
+}
+
+impl WritePlanningSnapshot for ReplaceSnapshot {
+    fn read_at_snapshot(
+        &mut self,
+        key: &[u8],
+        _call: &UnaryCallContext,
+    ) -> Result<Option<Vec<u8>>, ConfiguredWriteError> {
+        self.reads.push(key.to_vec());
+        Ok(self.values.get(key).cloned())
+    }
+}
+
 impl WritePlanningSnapshot for MockSnapshot {
     fn read_at_snapshot(
         &mut self,
@@ -1375,7 +1514,8 @@ fn plan_configured_write_reads_then_reports_no_write_for_a_missing_delete() {
     assert_eq!(
         plan,
         ConfiguredWritePlan::NoWrite {
-            reason: NoWriteReason::MissingRow
+            reason: NoWriteReason::MissingRow,
+            affected_rows: 0,
         }
     );
 }
