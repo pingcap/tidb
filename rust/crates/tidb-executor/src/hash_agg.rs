@@ -324,14 +324,14 @@ enum Partial {
 /// value set encodes under the same collator). It is not the column's
 /// collation: a computed argument such as `UPPER(s)` derives its own, which
 /// is why the aggregate cannot re-read the datum and has to be told.
-struct AggState {
+pub(crate) struct AggState {
     partial: Partial,
     seen: Option<MemorySet<Vec<u8>>>,
     collation: tidb_datatype::Collation,
 }
 
 impl AggState {
-    fn new(func: &AggFunc) -> AggState {
+    pub(crate) fn new(func: &AggFunc) -> AggState {
         let collation = func
             .arg
             .as_ref()
@@ -355,7 +355,7 @@ impl AggState {
     /// Returns the bytes this row ADDED to the group's state, which the
     /// aggregation reports to its memory tracker (Go's `UpdatePartialResult`
     /// returns the same `memDelta`).
-    fn update(
+    pub(crate) fn update(
         &mut self,
         value: Option<Datum>,
         extra: &[Datum],
@@ -384,12 +384,60 @@ impl AggState {
             .update(value, extra, sort_key, self.collation)?;
         Ok(delta)
     }
+
+    /// Finalizes one aggregate's current group with the exact output shaping
+    /// shared by hash and stream aggregation.
+    pub(crate) fn finish<C: Columns>(
+        &mut self,
+        func: &AggFunc,
+        field_type: &FieldType,
+        ctx: &C,
+        truncated: &mut bool,
+    ) -> Result<Datum, ExecError> {
+        let mut value = self
+            .partial
+            .finish(&func.order_by, ctx.div_precision_increment())?;
+        if matches!(func.kind, AggKind::Avg) {
+            value = match value {
+                Datum::Decimal(decimal) => {
+                    let declared_scale = field_type.decimal();
+                    let result_scale = if declared_scale == UNSPECIFIED_LENGTH {
+                        MAX_DECIMAL_SCALE
+                    } else {
+                        declared_scale
+                    };
+                    Datum::Decimal(
+                        decimal.round_to_scale(
+                            i32::try_from(result_scale)
+                                .expect("AVG result scale must fit MySQL decimal metadata"),
+                        ),
+                    )
+                }
+                other => other,
+            };
+        }
+        if let Datum::Bytes(joined) = &mut value {
+            let max_len = group_concat_max_len(ctx);
+            if matches!(func.kind, AggKind::GroupConcat { .. })
+                && max_len > 0
+                && joined.len() as u64 > max_len
+            {
+                joined.truncate(max_len as usize);
+                if !*truncated {
+                    *truncated = true;
+                    let text = group_concat_arg_text(func);
+                    ctx.append_warning(1260, &format!("Some rows were cut by GROUPCONCAT({text})"));
+                }
+            }
+        }
+        Ok(value)
+    }
 }
 
 /// The bytes one `GROUP_CONCAT` input contributes, which Go produces by
 /// casting the argument to a string.
 /// The derived collation of a group-by expression.
-fn expr_collation(expr: &Expression) -> tidb_datatype::Collation {
+pub(crate) fn expr_collation(expr: &Expression) -> tidb_datatype::Collation {
     tidb_expr::collation_derive::collation_of_node(expr)
 }
 
@@ -1284,62 +1332,15 @@ impl<C: Columns> HashAggExec<C> {
     }
 
     /// Appends group `idx`'s final values to `req`.
-    fn emit_group(
-        &mut self,
-        idx: usize,
-        req: &mut Chunk,
-        max_len: u64,
-        div_precision_increment: u32,
-    ) -> Result<(), ExecError> {
+    fn emit_group(&mut self, idx: usize, req: &mut Chunk) -> Result<(), ExecError> {
         for c in 0..self.ordered[idx].len() {
-            let order_by = self
-                .agg_funcs
-                .get(c)
-                .map_or(&[][..], |func| func.order_by.as_slice());
-            let mut value = self.ordered[idx][c]
-                .partial
-                .finish(order_by, div_precision_increment)?;
-            if matches!(
-                self.agg_funcs.get(c).map(|func| &func.kind),
-                Some(AggKind::Avg)
-            ) {
-                value = match value {
-                    Datum::Decimal(decimal) => {
-                        let declared_scale = self.meta.ret_field_types()[c].decimal();
-                        let result_scale = if declared_scale == UNSPECIFIED_LENGTH {
-                            MAX_DECIMAL_SCALE
-                        } else {
-                            declared_scale
-                        };
-                        Datum::Decimal(
-                            decimal.round_to_scale(
-                                i32::try_from(result_scale)
-                                    .expect("AVG result scale must fit MySQL decimal metadata"),
-                            ),
-                        )
-                    }
-                    other => other,
-                };
-            }
-            if let (Some(func), Datum::Bytes(joined)) = (self.agg_funcs.get(c), &mut value) {
-                if matches!(func.kind, AggKind::GroupConcat { .. })
-                    && max_len > 0
-                    && joined.len() as u64 > max_len
-                {
-                    // Go `bytes.Buffer.Truncate(int(e.maxLen))`: a BYTE cut, so
-                    // it lands mid-character or mid-separator (captured:
-                    // max_len 4 over 'ccc','bbb' -> `ccc,`).
-                    joined.truncate(max_len as usize);
-                    if !self.truncated[c] {
-                        self.truncated[c] = true;
-                        let text = group_concat_arg_text(func);
-                        self.ctx.append_warning(
-                            1260,
-                            &format!("Some rows were cut by GROUPCONCAT({text})"),
-                        );
-                    }
-                }
-            }
+            let func = self.agg_funcs[c].clone();
+            let value = self.ordered[idx][c].finish(
+                &func,
+                &self.meta.ret_field_types()[c],
+                &self.ctx,
+                &mut self.truncated[c],
+            )?;
             req.append_datum(c, &value);
         }
         Ok(())
@@ -1400,8 +1401,6 @@ impl<C: Columns> Executor for HashAggExec<C> {
     /// full, and when they run out, run the next round.
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
-        let max_len = group_concat_max_len(&self.ctx);
-        let div_precision_increment = self.ctx.div_precision_increment();
         let batch = self.meta.max_chunk_size();
         loop {
             if self.prepared {
@@ -1411,7 +1410,7 @@ impl<C: Columns> Executor for HashAggExec<C> {
                         // group with no aggregate columns is still a row.
                         req.set_num_virtual_rows(req.num_rows() + 1);
                     }
-                    self.emit_group(self.cursor, req, max_len, div_precision_increment)?;
+                    self.emit_group(self.cursor, req)?;
                     self.cursor += 1;
                     if req.num_rows() >= batch {
                         return Ok(());
@@ -1471,7 +1470,7 @@ impl<C: Columns> Executor for HashAggExec<C> {
 /// values it keeps separate. Go evaluates these inside
 /// `UpdatePartialResult`, per function; this port evaluates them once at the
 /// call site and hands the result to [`AggState::update`].
-fn eval_agg_input<C: Columns>(
+pub(crate) fn eval_agg_input<C: Columns>(
     f: &AggFunc,
     ctx: &C,
     row: tidb_chunk::row::Row<'_>,

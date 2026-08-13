@@ -99,6 +99,7 @@ pub mod sort_partition;
 pub mod statement_pushdown;
 mod stmt_context;
 pub mod storage;
+pub mod stream_agg;
 pub mod table_access;
 pub mod table_dual;
 #[cfg(test)]
@@ -153,6 +154,7 @@ pub use sort::{SortByItem, SortExec};
 pub use stmt_context::{
     RetryAutoIds, SequenceSnapshot, StatementClass, StmtContext, MAX_WARNING_COUNT,
 };
+pub use stream_agg::StreamAggExec;
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
 /// The level a statement warning carries -- Go's three `contextutil` levels,
