@@ -1283,6 +1283,11 @@ impl DriverError {
             *b"HY000",
             "VALUES LESS THAN value must be strictly increasing for each partition".to_owned(),
         ),
+        DriverError::PartitionDuplicateListValue => MysqlError::new(
+            1495,
+            *b"HY000",
+            "Multiple definition of same constant in list partitioning".to_owned(),
+        ),
         DriverError::NoPartitionForValue(value) => MysqlError::new(
             1526,
             *b"HY000",

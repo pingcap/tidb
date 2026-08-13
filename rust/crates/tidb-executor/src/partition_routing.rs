@@ -33,9 +33,9 @@
 //!
 //! # NOT MODELLED here (each refused at DDL, see [`crate::ddl::table_partition`])
 //!
-//! LIST and KEY partitioning, RANGE COLUMNS, subpartitioning, and every
-//! `ALTER TABLE ... PARTITION` action. HASH and RANGE are routed, so those
-//! two are accepted and the rest are refused.
+//! KEY partitioning, RANGE COLUMNS, LIST COLUMNS, subpartitioning, and every
+//! `ALTER TABLE ... PARTITION` action. HASH, RANGE, and scalar LIST are
+//! routed, so those three are accepted and the rest are refused.
 
 use tidb_datatype::Datum;
 use tidb_expr::expression::Expression;
@@ -58,7 +58,7 @@ pub enum RangeBound {
 
 /// The partition method a table was created with.
 ///
-/// Go's `ast.PartitionType` has six values; this tier stores the two it can
+/// Go's `ast.PartitionType` has six values; this tier stores the three it can
 /// route. The rest never reach a `PartitionSpec` because DDL refuses them.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PartitionKind {
@@ -76,6 +76,17 @@ pub enum PartitionKind {
         /// Go's `isPartExprUnsigned` and decides how a bound compares.
         unsigned: bool,
     },
+    /// Go `ast.PartitionTypeList` without `COLUMNS`.
+    List {
+        /// Folded non-NULL values and their owning partition ordinals.
+        values: Vec<(i64, usize)>,
+        /// The partition that explicitly owns `NULL`, if any.
+        null_partition: Option<usize>,
+        /// The `DEFAULT` partition, if any.
+        default_partition: Option<usize>,
+        /// Whether the partition expression is unsigned.
+        unsigned: bool,
+    },
 }
 
 impl PartitionKind {
@@ -86,6 +97,7 @@ impl PartitionKind {
         match self {
             PartitionKind::Hash => "HASH",
             PartitionKind::Range { .. } => "RANGE",
+            PartitionKind::List { .. } => "LIST",
         }
     }
 }
@@ -230,8 +242,51 @@ impl PartitionSpec {
                 less_than,
                 unsigned,
             } => range_partition_index(&value, less_than, *unsigned),
+            PartitionKind::List {
+                values,
+                null_partition,
+                default_partition,
+                unsigned,
+            } => list_partition_index(
+                &value,
+                values,
+                *null_partition,
+                *default_partition,
+                *unsigned,
+            ),
         }
     }
+}
+
+/// Go `ForListPruning.LocatePartition`: an exact folded-value match, then
+/// `NULL`/`DEFAULT`, otherwise 1526.
+fn list_partition_index(
+    value: &Datum,
+    values: &[(i64, usize)],
+    null_partition: Option<usize>,
+    default_partition: Option<usize>,
+    unsigned: bool,
+) -> Result<usize, RoutingError> {
+    let bits = match value {
+        Datum::Int(value) => *value,
+        Datum::UInt(value) => *value as i64,
+        Datum::Null => {
+            return null_partition
+                .or(default_partition)
+                .ok_or_else(|| RoutingError::NoPartitionForValue("NULL".to_owned()))
+        }
+        other => return Err(RoutingError::NoPartitionForValue(format!("{other:?}"))),
+    };
+    if let Some((_, ordinal)) = values.iter().find(|(candidate, _)| *candidate == bits) {
+        return Ok(*ordinal);
+    }
+    default_partition.ok_or_else(|| {
+        RoutingError::NoPartitionForValue(if unsigned {
+            format!("{}", bits as u64)
+        } else {
+            format!("{bits}")
+        })
+    })
 }
 
 /// Go `locateRangePartition`: the ordinal a range-partitioned row lands in.

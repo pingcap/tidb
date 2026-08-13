@@ -443,6 +443,8 @@ pub enum DriverError {
     /// Go `dbterror.ErrRangeNotIncreasing` (1493): `VALUES LESS THAN` bounds
     /// that do not strictly increase.
     PartitionRangeNotIncreasing,
+    /// Go `dbterror.ErrMultipleDefConstInListPart` (1495).
+    PartitionDuplicateListValue,
     /// Go `ast.ErrPartitionsMustBeDefined` (1492), carrying the method: a
     /// RANGE or LIST table with no partition definitions at all.
     PartitionsMustBeDefined(&'static str),

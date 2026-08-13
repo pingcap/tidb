@@ -119,7 +119,7 @@ pub(super) fn build_range_bounds(
 /// `1.5`) is 1697 naming the PARTITION, while a `NULL` bound is 1659 naming
 /// the field as the literal text `NULL` -- which reads oddly and is exactly
 /// what real TiDB prints.
-fn fold_range_bound(
+pub(super) fn fold_range_bound(
     expr: &Expr,
     partition: &str,
     unsigned: bool,
@@ -194,7 +194,7 @@ fn check_strictly_increasing(bounds: &[RangeBound], unsigned: bool) -> Result<()
 /// unsigned column rather than guessing which of MySQL's promotion rules
 /// applies. Guessing would put a row in the wrong partition silently, which
 /// is the failure this whole module exists to prevent.
-fn range_expression_is_unsigned(
+pub(super) fn range_expression_is_unsigned(
     expr: &Expr,
     names: &[String],
     types: &[FieldType],

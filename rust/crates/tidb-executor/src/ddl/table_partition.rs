@@ -24,13 +24,13 @@
 //!
 //! # What is accepted
 //!
-//! HASH and RANGE. `PARTITION BY HASH (expr) PARTITIONS n` and
+//! HASH, RANGE, and scalar LIST. `PARTITION BY HASH (expr) PARTITIONS n`,
 //! `PARTITION BY RANGE (expr) (PARTITION p VALUES LESS THAN (v), ...)` are
 //! routed by [`crate::partition_routing`], stored as one physical key prefix
 //! per partition, pruned by [`crate::partition_pruning`], and printed back by
 //! `SHOW CREATE TABLE`.
 //!
-//! LIST, KEY, `RANGE COLUMNS` and `LIST COLUMNS` are REFUSED -- this tier can
+//! KEY, `RANGE COLUMNS` and `LIST COLUMNS` are REFUSED -- this tier can
 //! neither route nor prune them, and accepting the clause would build an
 //! ordinary unpartitioned table that answers every partition-aware query
 //! wrongly while reporting success. That refusal is the same one HASH and
@@ -109,7 +109,10 @@ pub fn build_table_partitioning(
         return Ok(None);
     };
     let method = &partitioning.method;
-    if !matches!(method.kind, PartitionType::HASH | PartitionType::RANGE) {
+    if !matches!(
+        method.kind,
+        PartitionType::HASH | PartitionType::RANGE | PartitionType::LIST
+    ) {
         // The method name is Go's own spelling, so the refusal reads like the
         // clause the user wrote rather than like a Rust variant.
         let name = method.kind.sql();
@@ -130,11 +133,11 @@ pub fn build_table_partitioning(
         if method.kind == PartitionType::HASH {
             return Err(DriverError::PartitionSubpartition);
         }
-        return Err(DriverError::unsupported(
-            "CREATE TABLE ... PARTITION BY RANGE ... SUBPARTITION BY is not supported by this \
-             node"
-                .to_owned(),
-        ));
+        return Err(DriverError::unsupported(format!(
+            "CREATE TABLE ... PARTITION BY {} ... SUBPARTITION BY is not supported by this \
+                 node",
+            method.kind.sql()
+        )));
     }
 
     let Some(expr) = &method.expr else {
@@ -180,6 +183,18 @@ pub fn build_table_partitioning(
                 },
                 definitions,
             )
+        }
+        PartitionType::LIST => {
+            let kind = super::table_partition_list::build_list_values(
+                expr,
+                &partitioning.definitions,
+                names,
+                types,
+                &dependency_offsets,
+                ctx,
+            )?;
+            let definitions = build_named_partition_definitions(create, allocate_id);
+            (kind, definitions)
         }
         _ => (
             PartitionKind::Hash,

@@ -435,6 +435,21 @@ fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
                 *unsigned
             )
         ),
+        tidb_executor::PartitionKind::List {
+            values,
+            null_partition,
+            default_partition,
+            unsigned,
+        } => format!(
+            "{head}{}",
+            tidb_executor::ddl::table_partition_list::list_definitions_text(
+                &partition.definitions,
+                values,
+                *null_partition,
+                *default_partition,
+                *unsigned
+            )
+        ),
     }
 }
 

@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! `CREATE TABLE ... PARTITION BY HASH` and `BY RANGE` are REAL; the other
-//! methods are refused, and the refusal is still a tripwire.
+//! `CREATE TABLE ... PARTITION BY HASH`, `BY RANGE`, and scalar `BY LIST` are
+//! REAL; the remaining methods are refused, and the refusal is still a
+//! tripwire.
 //!
 //! This node stores a `PartitionSpec` (Go `model.PartitionInfo`; see
 //! `tidb_executor::partition_routing`), routes each row into one of N
@@ -22,8 +23,8 @@
 //! `pkg/planner/core/rule/rule_partition_processor.go`), answers
 //! `... PARTITION (p)` from the named partitions alone, and prints the clause
 //! back through `SHOW CREATE TABLE`. What it still has no answer for is
-//! LIST, KEY, `RANGE COLUMNS` and `LIST COLUMNS` routing, so those methods
-//! are refused rather than answered wrongly.
+//! KEY, `RANGE COLUMNS`, and `LIST COLUMNS` routing, so those methods are
+//! refused rather than answered wrongly.
 //!
 //! # The captures these tests are written against
 //!
@@ -344,6 +345,46 @@ fn range_partitioning_round_trips_gos_show_create_table() {
         )
         .expect("a RANGE-partitioned CREATE TABLE is accepted");
     assert_eq!(show_create(&mut session, "r1"), GO_RANGE);
+}
+
+/// Scalar LIST folds its values at CREATE, routes by exact integer value, and
+/// keeps the `NULL` and `DEFAULT` fallbacks distinct. These are Go's
+/// `ForListPruning.LocatePartition` branches, exercised through physical
+/// partition reads rather than an implementation-local routing helper.
+#[test]
+fn scalar_list_partitioning_routes_and_round_trips() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE l1 (a int, b int) PARTITION BY LIST(a) (PARTITION p0 VALUES IN \
+             (1,2,3), PARTITION p1 VALUES IN (4,5,6))",
+        )
+        .expect("scalar LIST is routed");
+    assert_eq!(show_create(&mut session, "l1"), GO_LIST);
+
+    session
+        .run(
+            "CREATE TABLE ld (a int) PARTITION BY LIST(a) (PARTITION p0 VALUES IN (1), \
+             PARTITION pn VALUES IN (NULL), PARTITION pd DEFAULT)",
+        )
+        .expect("NULL and DEFAULT are real LIST partition definitions");
+    for (value, expected) in [("1", "p0"), ("NULL", "pn"), ("7", "pd")] {
+        session
+            .run(&format!("INSERT INTO ld VALUES ({value})"))
+            .unwrap();
+        assert_eq!(sole_holder(&mut session, "ld"), expected, "LIST({value})");
+        session.run("DELETE FROM ld").unwrap();
+    }
+
+    session
+        .run("CREATE TABLE ln (a int) PARTITION BY LIST(a) (PARTITION p0 VALUES IN (1))")
+        .unwrap();
+    let error = session
+        .run("INSERT INTO ln VALUES (2)")
+        .expect_err("no LIST partition accepts 2")
+        .to_mysql_error();
+    assert_eq!(error.code, 1526);
+    assert_eq!(error.message, "Table has no partition for value 2");
 }
 
 /// A `VALUES LESS THAN` bound is EVALUATED at `CREATE` and stored as the
@@ -683,13 +724,8 @@ fn an_update_across_a_range_boundary_moves_the_row() {
 /// the method. The `GO_*` text each row carries is what this must answer
 /// instead once that method lands.
 #[test]
-fn list_key_and_columns_partitioning_are_still_refused() {
+fn key_and_columns_partitioning_are_still_refused() {
     for (sql, table, go) in [
-        (
-            "CREATE TABLE l1 (a int, b int) PARTITION BY LIST(a) (PARTITION p0 VALUES IN (1,2,3), PARTITION p1 VALUES IN (4,5,6))",
-            "l1",
-            GO_LIST,
-        ),
         (
             "CREATE TABLE k1 (a int PRIMARY KEY, b int) PARTITION BY KEY(a) PARTITIONS 3",
             "k1",
@@ -794,7 +830,7 @@ const GO_REJECTED: &[(&str, u16, &str, bool)] = &[
         "CREATE TABLE e5 (a int) PARTITION BY LIST(a) (PARTITION p0 VALUES IN (1), PARTITION p1 VALUES IN (1))",
         1495,
         "Multiple definition of same constant in list partitioning",
-        false,
+        true,
     ),
     (
         "CREATE TABLE e6 (a int) PARTITION BY HASH(a) PARTITIONS 0",

@@ -225,6 +225,7 @@ mod indexes;
 mod table_constraints;
 mod table_lifecycle;
 pub mod table_partition;
+pub mod table_partition_list;
 pub mod table_partition_range;
 
 pub use alter_table::{

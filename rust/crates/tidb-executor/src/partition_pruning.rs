@@ -113,6 +113,10 @@ pub fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64
             less_than,
             unsigned,
         } => Some(prune_range_ids(spec, ranges, less_than, *unsigned)),
+        // Scalar LIST has exact-value routing but no list-aware range algebra
+        // in this tier yet. Reading every partition is the safe answer: it
+        // cannot omit a matching row.
+        PartitionKind::List { .. } => None,
     }
 }
 
