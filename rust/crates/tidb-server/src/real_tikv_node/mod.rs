@@ -1135,12 +1135,13 @@ pub(crate) fn configured_table(table: &ConfiguredReadTable) -> ConfiguredTable {
             }
         })
         .collect();
-    // Every declared index is a non-unique single-column index; the write path
-    // maintains its entries and fails closed on any shape it does not model.
-    let indexes = table
-        .indexes
-        .iter()
-        .map(|index| ConfiguredIndex::non_unique(index.index_id, index.column_id));
+    let indexes = table.indexes.iter().map(|index| {
+        if index.unique {
+            ConfiguredIndex::unique(index.index_id, index.column_id)
+        } else {
+            ConfiguredIndex::non_unique(index.index_id, index.column_id)
+        }
+    });
     ConfiguredTable::new(&table.database, &table.table, table.table_id, columns)
         .with_indexes(indexes)
 }
@@ -2229,6 +2230,29 @@ mod tests {
         assert_eq!(indexes[0].index_id(), 5);
         assert_eq!(indexes[0].column_id(), 2);
         assert!(!indexes[0].is_unique(), "declared indexes are non-unique");
+    }
+
+    #[test]
+    fn a_declared_unique_index_maps_into_the_planner_catalog_table() {
+        let config = NodeConfig::parse([
+            "tidb-server",
+            "--path",
+            "127.0.0.1:2379",
+            "--read-table",
+            "sbtest",
+            "sbtest1",
+            "900",
+            "2",
+            "id:1:clustered-pk",
+            "k:2:stored-int-not-null",
+            "1",
+            "k_idx:5:2:unique",
+            "--auth-file",
+            "/tmp/campaign30-users.tsv",
+        ])
+        .unwrap();
+        let catalog = configured_catalog(&config).unwrap();
+        assert!(catalog.tables()[0].indexes()[0].is_unique());
     }
 
     struct FactoryEvent(Arc<Mutex<Vec<&'static str>>>);

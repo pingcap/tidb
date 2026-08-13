@@ -747,10 +747,9 @@ impl ConfiguredColumn {
 
 /// One configured secondary index over a single stored column.
 ///
-/// Scoped to the non-unique single-column shape the deployable node maintains
-/// today (sysbench's `k` index). A unique index (whose handle lives in the value
-/// and whose write path enforces distinctness) and a multi-column index are
-/// deliberately not represented; the write path fails closed on `unique`.
+/// Scoped to a single stored column. The configured write path distinguishes a
+/// non-unique key, which carries its handle in the key, from a unique key,
+/// which carries its handle in the value and is inserted atomically.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ConfiguredIndex {
     index_id: i64,
@@ -769,6 +768,16 @@ impl ConfiguredIndex {
         }
     }
 
+    /// Configures one unique secondary index over the column `column_id`.
+    #[must_use]
+    pub const fn unique(index_id: i64, column_id: i64) -> Self {
+        Self {
+            index_id,
+            column_id,
+            unique: true,
+        }
+    }
+
     /// Returns the physical index ID used in TiKV index keys.
     #[must_use]
     pub const fn index_id(&self) -> i64 {
@@ -781,7 +790,7 @@ impl ConfiguredIndex {
         self.column_id
     }
 
-    /// Returns whether the index enforces uniqueness (never true yet).
+    /// Returns whether the index enforces uniqueness.
     #[must_use]
     pub const fn is_unique(&self) -> bool {
         self.unique

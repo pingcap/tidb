@@ -79,7 +79,7 @@ pub struct ConfiguredReadColumn {
     pub kind: ConfiguredReadColumnKind,
 }
 
-/// One non-unique secondary index descriptor over a single stored column.
+/// One configured secondary index descriptor over a single stored column.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfiguredReadIndex {
     /// Index-visible name, retained for diagnostics.
@@ -88,6 +88,8 @@ pub struct ConfiguredReadIndex {
     pub index_id: i64,
     /// Stable identifier of the single indexed column.
     pub column_id: i64,
+    /// Whether the index key enforces uniqueness.
+    pub unique: bool,
 }
 
 /// One table shape admitted by the deployable read-only node.
@@ -101,8 +103,8 @@ pub struct ConfiguredReadTable {
     pub table_id: i64,
     /// Checked columns in configured order.
     pub columns: Vec<ConfiguredReadColumn>,
-    /// Non-unique secondary indexes maintained by the write path, in configured
-    /// order. Empty for a table without any declared index.
+    /// Secondary indexes maintained by the write path, in configured order.
+    /// Empty for a table without any declared index.
     pub indexes: Vec<ConfiguredReadIndex>,
 }
 
@@ -1064,7 +1066,9 @@ where
 /// The section is backward compatible: a table with no index simply omits it,
 /// so parsing stops as soon as the next token is another option or the end of
 /// the arguments. When present, one count precedes that many
-/// `name:index_id:column_id` descriptors, each over an existing column.
+/// `name:index_id:column_id[:unique]` descriptors, each over an existing
+/// column. The optional `unique` suffix is explicit so existing command lines
+/// retain their non-unique meaning.
 fn parse_optional_indexes<I>(
     option: &str,
     arguments: &mut std::iter::Peekable<I>,
@@ -1092,22 +1096,26 @@ where
     Ok(indexes)
 }
 
-/// Parses one `name:index_id:column_id` non-unique index descriptor.
+/// Parses one `name:index_id:column_id[:unique]` index descriptor.
 fn parse_index_descriptor(
     option: &str,
     value: String,
     columns: &[ConfiguredReadColumn],
 ) -> Result<ConfiguredReadIndex, NodeConfigError> {
     let fields: Vec<&str> = value.split(':').collect();
-    let [name, index_id, column_id] = fields.as_slice() else {
-        return Err(invalid(
-            option,
-            "index descriptor must be name:index_id:column_id",
-        ));
+    let (name, index_id, column_id, unique) = match fields.as_slice() {
+        [name, index_id, column_id] => (*name, *index_id, *column_id, false),
+        [name, index_id, column_id, "unique"] => (*name, *index_id, *column_id, true),
+        _ => {
+            return Err(invalid(
+                option,
+                "index descriptor must be name:index_id:column_id[:unique]",
+            ));
+        }
     };
-    let name = parse_identifier(option, (*name).to_owned())?;
-    let index_id = parse_positive_id(option, (*index_id).to_owned())?;
-    let column_id = parse_positive_id(option, (*column_id).to_owned())?;
+    let name = parse_identifier(option, name.to_owned())?;
+    let index_id = parse_positive_id(option, index_id.to_owned())?;
+    let column_id = parse_positive_id(option, column_id.to_owned())?;
     if !columns.iter().any(|column| column.id == column_id) {
         return Err(invalid(
             option,
@@ -1118,6 +1126,7 @@ fn parse_index_descriptor(
         name,
         index_id,
         column_id,
+        unique,
     })
 }
 

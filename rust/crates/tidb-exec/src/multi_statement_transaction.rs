@@ -375,6 +375,7 @@ impl MultiStatementTransaction {
             // Index keys are never record keys, and a meta key lives in the `m`
             // namespace, so neither can carry one.
             OptimisticMutationKind::IndexPut
+            | OptimisticMutationKind::UniqueIndexInsert
             | OptimisticMutationKind::IndexDelete
             | OptimisticMutationKind::MetaPut
             | OptimisticMutationKind::MetaDelete => None,
@@ -422,6 +423,7 @@ impl MultiStatementTransaction {
                         .map_err(|error| TransactionStatementError::write(&error))?,
                 ),
                 OptimisticMutationKind::IndexPut
+                | OptimisticMutationKind::UniqueIndexInsert
                 | OptimisticMutationKind::IndexDelete
                 | OptimisticMutationKind::MetaPut
                 | OptimisticMutationKind::MetaDelete
@@ -482,6 +484,7 @@ impl MultiStatementTransaction {
                     )
                 }
                 OptimisticMutationKind::IndexPut
+                | OptimisticMutationKind::UniqueIndexInsert
                 | OptimisticMutationKind::IndexDelete
                 | OptimisticMutationKind::MetaPut
                 | OptimisticMutationKind::MetaDelete
@@ -764,6 +767,7 @@ impl WritePlanningSnapshot for MultiStatementTransaction {
                 OptimisticMutationKind::Insert
                 | OptimisticMutationKind::PutExisting
                 | OptimisticMutationKind::IndexPut
+                | OptimisticMutationKind::UniqueIndexInsert
                 | OptimisticMutationKind::MetaPut => Some(staged.value().to_vec()),
                 OptimisticMutationKind::LockOnly => unreachable!("filtered above"),
             });

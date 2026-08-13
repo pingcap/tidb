@@ -33,6 +33,10 @@ pub enum OptimisticMutationKind {
     /// unresolved (`kv.AssertUnknown` -> proto `None`): the index key already
     /// carries the row handle, so a new row's entry cannot collide.
     IndexPut,
+    /// Create a unique secondary index entry and assert its key did not exist.
+    /// The index key omits the row handle, so a plain put would permit a
+    /// concurrent duplicate to overwrite the original entry.
+    UniqueIndexInsert,
     /// Delete a non-unique secondary index entry. Go `tables.index.Delete` does a
     /// plain `MemBuffer.Delete` (`Op_Del`) with an unresolved assertion
     /// (`None`), unlike the row delete's `Exist`.
@@ -99,6 +103,18 @@ impl OptimisticMutation {
         Self::new(OptimisticMutationKind::IndexPut, key.into(), value.into())
     }
 
+    /// Creates a unique secondary index entry (`Op_Insert`, `NotExist`).
+    pub fn unique_index_insert(
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+    ) -> Result<Self, MutationSetError> {
+        Self::new(
+            OptimisticMutationKind::UniqueIndexInsert,
+            key.into(),
+            value.into(),
+        )
+    }
+
     /// Creates a non-unique secondary index entry delete (`Op_Del`, no
     /// assertion). A delete carries no value.
     pub fn index_delete(key: impl Into<Vec<u8>>) -> Result<Self, MutationSetError> {
@@ -160,6 +176,9 @@ impl OptimisticMutation {
             OptimisticMutationKind::PutExisting => (KvrpcOp::Put, KvrpcAssertion::Exist),
             OptimisticMutationKind::Delete => (KvrpcOp::Del, KvrpcAssertion::Exist),
             OptimisticMutationKind::IndexPut => (KvrpcOp::Put, KvrpcAssertion::None),
+            OptimisticMutationKind::UniqueIndexInsert => {
+                (KvrpcOp::Insert, KvrpcAssertion::NotExist)
+            }
             OptimisticMutationKind::IndexDelete => (KvrpcOp::Del, KvrpcAssertion::None),
             OptimisticMutationKind::MetaPut => (KvrpcOp::Put, KvrpcAssertion::None),
             OptimisticMutationKind::MetaDelete => (KvrpcOp::Del, KvrpcAssertion::None),
@@ -463,5 +482,15 @@ mod tests {
         let delete = delete.to_proto();
         assert_eq!(delete.op, KvrpcOp::Del as i32);
         assert_eq!(delete.assertion, KvrpcAssertion::None as i32);
+    }
+
+    #[test]
+    fn unique_index_entry_is_an_absence_asserted_insert() {
+        let mutation = OptimisticMutation::unique_index_insert(b"idx".to_vec(), b"h".to_vec())
+            .unwrap()
+            .to_proto();
+        assert_eq!(mutation.op, KvrpcOp::Insert as i32);
+        assert_eq!(mutation.assertion, KvrpcAssertion::NotExist as i32);
+        assert_eq!(mutation.value, b"h");
     }
 }

@@ -34,8 +34,10 @@
 use std::fmt;
 use std::time::Duration;
 
+use tidb_codec::encode_key;
 use tidb_codec::table_key::{
-    encode_non_unique_index_key, encode_row_key_with_handle, non_unique_index_value, RecordHandle,
+    encode_index_seek_key, encode_non_unique_index_key, encode_row_key_with_handle,
+    non_unique_index_value, RecordHandle,
 };
 use tidb_datatype::{
     add_integer, add_uint64, parse_duration, parse_time, produce_char_value, Datum, Decimal,
@@ -478,11 +480,6 @@ pub fn plan_update(
     // index path maintains integer columns only, so a moved entry over a CHAR
     // column, or a NULL value, fails closed rather than writing a malformed key.
     for index in table.indexes() {
-        if index.is_unique() {
-            return Err(ConfiguredWriteError::UnsupportedIndex {
-                reason: "unique index",
-            });
-        }
         if index.column_id() == assigned.id() {
             match (&stored_value, &new_value) {
                 (Datum::Int(old), Datum::Int(new)) => {
@@ -765,20 +762,14 @@ fn decode_stored_row(
         .map_err(|error| ConfiguredWriteError::RowRead(error.to_string()))
 }
 
-/// Resolves a non-unique integer index's column value for a newly inserted row.
+/// Resolves an integer index's column value for a newly inserted row.
 ///
-/// Fails closed on the index shapes this path does not maintain: a unique
-/// index, an index over a non-integer or nullable column, or an index whose
-/// column is not a stored column of the row.
+/// The configured write path supports the one-column signed integer shape. It
+/// fails closed on nullable, non-integer, and absent indexed columns.
 fn indexed_insert_value(
     index: &ConfiguredIndex,
     columns: &[(i64, Datum)],
 ) -> Result<i64, ConfiguredWriteError> {
-    if index.is_unique() {
-        return Err(ConfiguredWriteError::UnsupportedIndex {
-            reason: "unique index",
-        });
-    }
     match columns.iter().find(|(id, _)| *id == index.column_id()) {
         Some((_, Datum::Int(value))) => Ok(*value),
         Some((_, Datum::Null)) => Err(ConfiguredWriteError::UnsupportedIndex {
@@ -793,17 +784,12 @@ fn indexed_insert_value(
     }
 }
 
-/// Resolves a non-unique integer index's column value from a decoded stored
-/// row (the pre-image for a delete or an update).
+/// Resolves an integer index's column value from a decoded stored row (the
+/// pre-image for a delete or an update).
 fn indexed_stored_value(
     index: &ConfiguredIndex,
     stored_row: &std::collections::BTreeMap<i64, Datum>,
 ) -> Result<i64, ConfiguredWriteError> {
-    if index.is_unique() {
-        return Err(ConfiguredWriteError::UnsupportedIndex {
-            reason: "unique index",
-        });
-    }
     match stored_row.get(&index.column_id()) {
         Some(Datum::Int(value)) => Ok(*value),
         Some(Datum::Null) => Err(ConfiguredWriteError::UnsupportedIndex {
@@ -818,13 +804,18 @@ fn indexed_stored_value(
     }
 }
 
-/// Builds the PUT mutation adding a non-unique index entry for `(value, handle)`.
+/// Builds the mutation adding an index entry for `(value, handle)`.
 fn index_put_mutation(
     table_id: i64,
     index: &ConfiguredIndex,
     value: i64,
     handle: i64,
 ) -> Result<OptimisticMutation, ConfiguredWriteError> {
+    if index.is_unique() {
+        let key = unique_index_key(table_id, index.index_id(), value)?;
+        return OptimisticMutation::unique_index_insert(key, handle.to_be_bytes().to_vec())
+            .map_err(ConfiguredWriteError::Mutations);
+    }
     let key =
         encode_non_unique_index_key(table_id, index.index_id(), &[Datum::new_int(value)], handle)
             .map_err(|_| ConfiguredWriteError::UnsupportedIndex {
@@ -834,20 +825,35 @@ fn index_put_mutation(
         .map_err(ConfiguredWriteError::Mutations)
 }
 
-/// Builds the DELETE mutation removing the non-unique index entry for
-/// `(value, handle)`.
+/// Builds the DELETE mutation removing an index entry for `(value, handle)`.
 fn index_delete_mutation(
     table_id: i64,
     index: &ConfiguredIndex,
     value: i64,
     handle: i64,
 ) -> Result<OptimisticMutation, ConfiguredWriteError> {
-    let key =
+    let key = if index.is_unique() {
+        unique_index_key(table_id, index.index_id(), value)?
+    } else {
         encode_non_unique_index_key(table_id, index.index_id(), &[Datum::new_int(value)], handle)
             .map_err(|_| ConfiguredWriteError::UnsupportedIndex {
-            reason: "index column value is not encodable",
-        })?;
+                reason: "index column value is not encodable",
+            })?
+    };
     OptimisticMutation::index_delete(key).map_err(ConfiguredWriteError::Mutations)
+}
+
+fn unique_index_key(
+    table_id: i64,
+    index_id: i64,
+    value: i64,
+) -> Result<Vec<u8>, ConfiguredWriteError> {
+    let encoded = encode_key(&[Datum::new_int(value)]).map_err(|_| {
+        ConfiguredWriteError::UnsupportedIndex {
+            reason: "index column value is not encodable",
+        }
+    })?;
+    Ok(encode_index_seek_key(table_id, index_id, &encoded))
 }
 
 /// Splits a bound INSERT row into its clustered handle and stored columns.

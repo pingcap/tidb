@@ -125,7 +125,14 @@ impl TransactionMutationBuffer {
                         key: mutation.key().to_vec(),
                     }
                 })?;
-                self.staged.insert(mutation.key().to_vec(), coalesced);
+                match coalesced {
+                    CoalescedMutation::Keep(mutation) => {
+                        self.staged.insert(mutation.key().to_vec(), mutation);
+                    }
+                    CoalescedMutation::Remove => {
+                        self.staged.remove(mutation.key());
+                    }
+                }
                 Ok(())
             }
         }
@@ -174,26 +181,47 @@ impl TransactionMutationBuffer {
 /// * `UPDATE` then `DELETE` — the row existed at `start_ts`, so the final entry
 ///   is the plain row delete (`Op_Del` + `Exist`), discarding the intermediate
 ///   value that was never published.
-fn coalesce(
-    existing: &OptimisticMutation,
-    next: &OptimisticMutation,
-) -> Option<OptimisticMutation> {
+/// * a new unique-index entry then its delete — the key did not exist at
+///   `start_ts`, so both writes cancel before commit.
+/// * a unique-index delete then insert — the key existed at `start_ts`, so the
+///   final value is a `PutExisting`, retaining the original existence check.
+fn coalesce(existing: &OptimisticMutation, next: &OptimisticMutation) -> Option<CoalescedMutation> {
     match (existing.kind(), next.kind()) {
         (OptimisticMutationKind::Delete, OptimisticMutationKind::Insert) => {
             // `next` is a validated Insert, so the same key/value is a valid
             // PutExisting; a validation error here can only mean an unmodeled
             // input, which fails closed like any other unsupported combination.
-            OptimisticMutation::put_existing(next.key().to_vec(), next.value().to_vec()).ok()
+            OptimisticMutation::put_existing(next.key().to_vec(), next.value().to_vec())
+                .ok()
+                .map(CoalescedMutation::Keep)
         }
         (OptimisticMutationKind::PutExisting, OptimisticMutationKind::PutExisting)
         | (OptimisticMutationKind::PutExisting, OptimisticMutationKind::Delete) => {
-            Some(next.clone())
+            Some(CoalescedMutation::Keep(next.clone()))
         }
         (OptimisticMutationKind::Insert, OptimisticMutationKind::PutExisting) => {
-            OptimisticMutation::insert(next.key().to_vec(), next.value().to_vec()).ok()
+            OptimisticMutation::insert(next.key().to_vec(), next.value().to_vec())
+                .ok()
+                .map(CoalescedMutation::Keep)
+        }
+        (OptimisticMutationKind::UniqueIndexInsert, OptimisticMutationKind::IndexDelete) => {
+            Some(CoalescedMutation::Remove)
+        }
+        (OptimisticMutationKind::IndexDelete, OptimisticMutationKind::UniqueIndexInsert) => {
+            OptimisticMutation::put_existing(next.key().to_vec(), next.value().to_vec())
+                .ok()
+                .map(CoalescedMutation::Keep)
+        }
+        (OptimisticMutationKind::PutExisting, OptimisticMutationKind::IndexDelete) => {
+            Some(CoalescedMutation::Keep(next.clone()))
         }
         _ => None,
     }
+}
+
+enum CoalescedMutation {
+    Keep(OptimisticMutation),
+    Remove,
 }
 
 #[cfg(test)]
@@ -369,6 +397,37 @@ mod tests {
                 key: b"idx".to_vec()
             })
         );
+    }
+
+    #[test]
+    fn a_new_unique_index_entry_then_delete_cancels_before_commit() {
+        let mut buffer = TransactionMutationBuffer::new();
+        buffer
+            .stage(OptimisticMutation::unique_index_insert(b"idx".to_vec(), b"h".to_vec()).unwrap())
+            .unwrap();
+        buffer
+            .stage(OptimisticMutation::index_delete(b"idx".to_vec()).unwrap())
+            .unwrap();
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn replacing_a_deleted_unique_index_entry_retains_its_existence_assertion() {
+        let mut buffer = TransactionMutationBuffer::new();
+        buffer
+            .stage(OptimisticMutation::index_delete(b"idx".to_vec()).unwrap())
+            .unwrap();
+        buffer
+            .stage(
+                OptimisticMutation::unique_index_insert(b"idx".to_vec(), b"new-h".to_vec())
+                    .unwrap(),
+            )
+            .unwrap();
+
+        let mutation = buffer.into_mutations().pop().unwrap();
+        assert_eq!(mutation.kind(), OptimisticMutationKind::PutExisting);
+        assert_eq!(mutation.value(), b"new-h");
+        assert_eq!(mutation.to_proto().assertion, KvrpcAssertion::Exist as i32);
     }
 
     #[test]

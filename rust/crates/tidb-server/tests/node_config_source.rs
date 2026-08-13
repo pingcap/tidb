@@ -387,6 +387,16 @@ fn a_trailing_index_section_declares_a_non_unique_secondary_index() {
     assert_eq!(table.indexes[0].name, "k_idx");
     assert_eq!(table.indexes[0].index_id, 5);
     assert_eq!(table.indexes[0].column_id, 2);
+    assert!(!table.indexes[0].unique);
+}
+
+#[test]
+fn a_trailing_index_section_can_declare_a_unique_secondary_index() {
+    let mut args = indexed_table_args();
+    let position = args.iter().position(|arg| *arg == "k_idx:5:2").unwrap();
+    args[position] = "k_idx:5:2:unique";
+    let config = NodeConfig::parse(args).unwrap();
+    assert!(config.read_tables[0].indexes[0].unique);
 }
 
 #[test]

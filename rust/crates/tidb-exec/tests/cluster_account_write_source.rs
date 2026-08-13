@@ -99,7 +99,9 @@ impl MetaStore {
                 OptimisticMutationKind::IndexDelete | OptimisticMutationKind::MetaDelete => {
                     self.pairs.remove(mutation.key());
                 }
-                OptimisticMutationKind::IndexPut | OptimisticMutationKind::MetaPut => {
+                OptimisticMutationKind::IndexPut
+                | OptimisticMutationKind::UniqueIndexInsert
+                | OptimisticMutationKind::MetaPut => {
                     self.pairs
                         .insert(mutation.key().to_vec(), mutation.value().to_vec());
                 }

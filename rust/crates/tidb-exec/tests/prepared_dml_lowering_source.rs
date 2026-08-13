@@ -25,8 +25,10 @@
 //! transport, mock catalog, or in-memory database for that proof.
 
 use tidb_codec::table_key::{
-    encode_non_unique_index_key, encode_row_key_with_handle, non_unique_index_value, RecordHandle,
+    encode_index_seek_key, encode_non_unique_index_key, encode_row_key_with_handle,
+    non_unique_index_value, RecordHandle,
 };
+use tidb_codec::encode_key;
 use tidb_datatype::{Datum, SessionTimeZone};
 use tidb_tablecodec::encode_table_row;
 use tidb_exec::real_tikv_dml::{
@@ -750,6 +752,18 @@ fn expected_index_entry(balance: i64, handle: i64) -> Vec<u8> {
     .expect("index key encodes")
 }
 
+fn unique_indexed_table() -> ConfiguredTable {
+    table().with_indexes([ConfiguredIndex::unique(BALANCE_INDEX_ID, BALANCE_COLUMN)])
+}
+
+fn expected_unique_index_entry(balance: i64) -> Vec<u8> {
+    encode_index_seek_key(
+        TABLE_ID,
+        BALANCE_INDEX_ID,
+        &encode_key(&[Datum::new_int(balance)]).expect("index value encodes"),
+    )
+}
+
 #[test]
 fn insert_adds_one_non_unique_index_entry_beside_the_record() {
     let catalog = ConfiguredCatalog::new([indexed_table()]).expect("catalog must validate");
@@ -781,6 +795,31 @@ fn insert_adds_one_non_unique_index_entry_beside_the_record() {
 }
 
 #[test]
+fn insert_adds_an_absence_asserted_unique_index_entry_beside_the_record() {
+    let catalog = ConfiguredCatalog::new([unique_indexed_table()]).expect("catalog must validate");
+    let ConfiguredPreparedWrite::InsertRows { table, rows } = lower_prepared_write(
+        &tidb_parser::parse("INSERT INTO campaign28.accounts (id, balance) VALUES (?, ?)")
+            .expect("SQL must parse"),
+        &catalog,
+    )
+    .expect("prepared write must lower")
+    .bind(&int_binds(&[10, 100]))
+    .expect("bind must succeed") else {
+        panic!("expected an INSERT command");
+    };
+    let ConfiguredWritePlan::Write { mutations, .. } = plan_insert(&table, &rows, 0)
+        .expect("insert must plan")
+    else {
+        panic!("an INSERT always publishes");
+    };
+    assert_eq!(mutations.len(), 2);
+    assert_eq!(mutations[0].kind(), OptimisticMutationKind::Insert);
+    assert_eq!(mutations[1].kind(), OptimisticMutationKind::UniqueIndexInsert);
+    assert_eq!(mutations[1].key(), expected_unique_index_entry(100));
+    assert_eq!(mutations[1].value(), 10_i64.to_be_bytes());
+}
+
+#[test]
 fn delete_removes_the_index_entry_for_the_stored_value() {
     let ConfiguredWritePlan::Write { mutations, .. } =
         plan_delete(&indexed_table(), 10, Some(&stored_row(100))).expect("delete must plan")
@@ -792,6 +831,18 @@ fn delete_removes_the_index_entry_for_the_stored_value() {
     assert_eq!(mutations[1].kind(), OptimisticMutationKind::IndexDelete);
     assert_eq!(mutations[1].key(), expected_index_entry(100, 10));
     assert!(mutations[1].value().is_empty());
+}
+
+#[test]
+fn delete_removes_the_unique_index_entry_for_the_stored_value() {
+    let ConfiguredWritePlan::Write { mutations, .. } =
+        plan_delete(&unique_indexed_table(), 10, Some(&stored_row(100))).expect("delete must plan")
+    else {
+        panic!("an existing row deletes");
+    };
+    assert_eq!(mutations.len(), 2);
+    assert_eq!(mutations[1].kind(), OptimisticMutationKind::IndexDelete);
+    assert_eq!(mutations[1].key(), expected_unique_index_entry(100));
 }
 
 #[test]
@@ -823,6 +874,27 @@ fn updating_the_indexed_column_moves_its_entry_from_old_to_new() {
     assert_eq!(mutations[1].key(), expected_index_entry(100, 10));
     assert_eq!(mutations[2].kind(), OptimisticMutationKind::IndexPut);
     assert_eq!(mutations[2].key(), expected_index_entry(250, 10));
+}
+
+#[test]
+fn updating_the_unique_indexed_column_moves_its_entry_atomically() {
+    let ConfiguredWritePlan::Write { mutations, .. } = plan_update(
+        &unique_indexed_table(),
+        10,
+        BALANCE_INDEX,
+        ConfiguredAssignment::Set(PreparedBindValue::Int(250)),
+        Some(&stored_row(100)),
+        0,
+    )
+    .expect("update must plan") else {
+        panic!("a changed row publishes");
+    };
+    assert_eq!(mutations.len(), 3);
+    assert_eq!(mutations[1].kind(), OptimisticMutationKind::IndexDelete);
+    assert_eq!(mutations[1].key(), expected_unique_index_entry(100));
+    assert_eq!(mutations[2].kind(), OptimisticMutationKind::UniqueIndexInsert);
+    assert_eq!(mutations[2].key(), expected_unique_index_entry(250));
+    assert_eq!(mutations[2].value(), 10_i64.to_be_bytes());
 }
 
 #[test]
