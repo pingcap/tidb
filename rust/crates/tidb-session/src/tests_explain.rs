@@ -53,18 +53,148 @@ fn explain_select() {
         ]
     );
 
-    // Same shape, same reason. The Batch_Point_Get row itself matches the
-    // capture byte for byte:
+    // Go's batch fast plan consumes the exact key-only IN, so unlike the
+    // single point seed above there is no duplicate Selection. The
+    // Batch_Point_Get row itself matches the capture byte for byte:
     //   Batch_Point_Get_1 | 3.00 | root | table:t |
     //     handle:[1 2 3], keep order:false, desc:false
+    let plan = row_text(session.run("EXPLAIN SELECT * FROM t WHERE a IN (1,2,3)"));
     assert_eq!(
-        row_text(session.run("EXPLAIN SELECT * FROM t WHERE a IN (1,2,3)"))[2],
-        vec![
-            "  └─Batch_Point_Get_1".to_owned(),
+        plan.iter()
+            .find(|row| row[0].contains("Batch_Point_Get"))
+            .expect("batch point row"),
+        &vec![
+            "└─Batch_Point_Get_1".to_owned(),
             "3.00".to_owned(),
             "root".to_owned(),
             "table:t".to_owned(),
             "handle:[1 2 3], keep order:false, desc:false".to_owned(),
+        ]
+    );
+
+    session
+        .run(
+            "CREATE TABLE composite_point (id BIGINT PRIMARY KEY, a BIGINT, b VARCHAR(8), \
+             UNIQUE KEY ab (a, b))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO composite_point VALUES (1, 10, 'x'), (2, 20, 'y')")
+        .unwrap();
+    let plan = row_text(
+        session
+            .run("EXPLAIN SELECT id FROM composite_point WHERE (b, a) IN (('y', 20), ('x', 10))"),
+    );
+    let batch = plan
+        .iter()
+        .find(|row| row[0].contains("Batch_Point_Get"))
+        .unwrap_or_else(|| panic!("the composite key must reach the batch-point path: {plan:?}"));
+    assert_eq!(
+        &batch[3..],
+        [
+            "table:composite_point, index:ab(a, b)",
+            "keep order:false, desc:false"
+        ]
+    );
+    let forced_table = row_text(session.run(
+        "EXPLAIN SELECT id FROM composite_point USE INDEX () \
+         WHERE (a, b) IN ((10, 'x'), (20, 'y'))",
+    ));
+    assert!(
+        forced_table
+            .iter()
+            .all(|row| !row[0].contains("Batch_Point_Get")),
+        "Go's index hint removes the composite index fast path: {forced_table:?}"
+    );
+    let mut forced_ids = row_text(session.run(
+        "SELECT id FROM composite_point USE INDEX () \
+         WHERE (a, b) IN ((10, 'x'), (20, 'y'))",
+    ));
+    forced_ids.sort();
+    assert_eq!(forced_ids, [vec!["1".to_owned()], vec!["2".to_owned()]]);
+    let mut ids =
+        row_text(session.run(
+            "SELECT id FROM composite_point WHERE (b, a) IN (('y', 20), ('x', 10), ('y', 20))",
+        ));
+    ids.sort();
+    assert_eq!(ids, [vec!["1".to_owned()], vec!["2".to_owned()]]);
+    session
+        .run(
+            "CREATE TABLE common_point (a BIGINT, b VARCHAR(8), v BIGINT, \
+             PRIMARY KEY (a, b))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO common_point VALUES (10, 'x', 1), (20, 'y', 2)")
+        .unwrap();
+    let plan = row_text(
+        session.run("EXPLAIN SELECT v FROM common_point WHERE (b, a) IN (('y', 20), ('x', 10))"),
+    );
+    let batch = plan
+        .iter()
+        .find(|row| row[0].contains("Batch_Point_Get"))
+        .unwrap_or_else(|| panic!("the common key must reach the batch-point path: {plan:?}"));
+    assert_eq!(
+        &batch[3..],
+        [
+            "table:common_point, clustered index:PRIMARY(a, b)",
+            "keep order:false, desc:false"
+        ]
+    );
+    let mut common_values = row_text(session.run(
+        "SELECT v FROM common_point USE INDEX (PRIMARY) \
+             WHERE (b, a) IN (('y', 20), ('x', 10), ('y', 20))",
+    ));
+    common_values.sort();
+    assert_eq!(common_values, [vec!["1".to_owned()], vec!["2".to_owned()]]);
+    let no_common_primary = row_text(session.run(
+        "EXPLAIN SELECT v FROM common_point USE INDEX () \
+         WHERE (b, a) IN (('y', 20), ('x', 10))",
+    ));
+    assert!(
+        no_common_primary
+            .iter()
+            .all(|row| !row[0].contains("Batch_Point_Get")),
+        "USE INDEX() must remove the clustered primary path: {no_common_primary:?}"
+    );
+
+    // `tryWhereIn2BatchPointGet` itself declines any generated column, but
+    // Go's ordinary optimizer recovers the exact query as BatchPointGet. Its
+    // checked-in generated_columns.result pins this final plan, so Rust's one
+    // access-path decision must do the same rather than exposing the helper's
+    // temporary refusal.
+    session
+        .run(
+            "CREATE TABLE generated_point (a BIGINT, b BIGINT, \
+             c BIGINT GENERATED ALWAYS AS (a + b) VIRTUAL, UNIQUE KEY uk(c))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO generated_point (a, b) VALUES (1, 2), (4, 5)")
+        .unwrap();
+    let generated_plan =
+        row_text(session.run("EXPLAIN SELECT a, c FROM generated_point WHERE c IN (3, 9, 3)"));
+    let generated_batch = generated_plan
+        .iter()
+        .find(|row| row[0].contains("Batch_Point_Get"))
+        .unwrap_or_else(|| {
+            panic!("generated unique key must use batch point get: {generated_plan:?}")
+        });
+    assert_eq!(
+        &generated_batch[3..],
+        [
+            "table:generated_point, index:uk(c)",
+            "keep order:false, desc:false"
+        ]
+    );
+    let mut generated_rows =
+        row_text(session.run("SELECT a, c FROM generated_point WHERE c IN (3, 9, 3)"));
+    generated_rows.sort();
+    assert_eq!(
+        generated_rows,
+        [
+            vec!["1".to_owned(), "3".to_owned()],
+            vec!["4".to_owned(), "9".to_owned()]
         ]
     );
 
@@ -359,13 +489,11 @@ fn explain_analyze_delete_executes() {
 }
 
 /// `EXPLAIN ANALYZE` of a `Point_Get`/`Batch_Point_Get`/`IndexRangeScan`
-/// access path: real `actRows`, not `N/A` (divergence 7: the point get
-/// keeps its `Selection`/`Projection` above it here, so the access-path
-/// row is the LAST one, at the bottom of the tree). `Point_Get_1`'s
-/// `actRows` is `1` for a hit and `0` for a miss, `Batch_Point_Get_1`'s
-/// is the number of handles actually found, and `IndexRangeScan`'s is
-/// the real number of rows the range covers -- all confirmed by
-/// capture against `testkit.CreateMockStore`.
+/// access path: real `actRows`, not `N/A`. The single point/range seeds keep
+/// their `Selection`/`Projection` above them, while the exact batch fast plan
+/// consumes its key predicate like Go and keeps only the projection. A point
+/// hit is `1` and a miss `0`; BatchPointGet reports the handles found; the
+/// index range reports the rows it covers.
 #[test]
 fn explain_analyze_fast_paths_real_act_rows() {
     let mut session = Session::new();
@@ -385,8 +513,8 @@ fn explain_analyze_fast_paths_real_act_rows() {
     assert_eq!(rows[2][2], "0");
 
     let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM pg WHERE a IN (1,2,3)"));
-    assert_eq!(rows[2][0], "  └─Batch_Point_Get_1");
-    assert_eq!(rows[2][2], "3");
+    assert_eq!(rows[1][0], "└─Batch_Point_Get_1");
+    assert_eq!(rows[1][2], "3");
 
     let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM pg WHERE b > 15 AND b < 35"));
     assert_eq!(rows[2][0], "  └─IndexRangeScan_1");

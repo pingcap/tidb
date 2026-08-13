@@ -1120,20 +1120,7 @@ impl KvTable {
                 .iter()
                 .map(|offset| row.get(*offset).cloned().unwrap_or(Datum::Null))
                 .collect();
-            let encoded = tidb_codec::Encoder::new(self.use_new_collation)
-                .encode_key_in_timezone(zone, &values)
-                .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-            // Go `kv.NewCommonHandle` pads a short encoding out to nine bytes,
-            // and so does the record-key codec this handle is about to be
-            // written through -- so a handle that skips the padding is one the
-            // READ side (which recovers it from the record key) never produces.
-            // Padding here, at the one place a row's handle is born, is what
-            // makes the write's index entries and the delete's index entries
-            // the same keys. A DECIMAL primary key is the short case: `5`
-            // encodes to four bytes.
-            let padded = tidb_txnkv::CommonHandle::new(encoded)
-                .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-            return Ok(TableHandle::Common(padded.encoded().to_vec()));
+            return self.common_handle_from_values(&values, zone);
         }
         match self.pk_handle_offset {
             Some(offset) => match row.get(offset) {
@@ -1157,6 +1144,39 @@ impl KvTable {
                 Ok(TableHandle::Int(handle as i64))
             }
         }
+    }
+
+    /// Builds the clustered handle named by primary-key values in primary-key
+    /// order.
+    ///
+    /// Go's `BatchPointGetPlan.PrunePartitionsAndValues` takes the values of a
+    /// row-valued `IN` over a common primary key through
+    /// `EncodeUniqueIndexValuesForKey` and `kv.NewCommonHandle`.  Keeping the
+    /// encoding beside [`Self::handle_of_row`] ensures a planned read and a
+    /// write produce byte-identical record keys, including the short-key
+    /// padding required by `kv.NewCommonHandle`.
+    pub(crate) fn common_handle_from_values(
+        &self,
+        values: &[Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<TableHandle, KvTableError> {
+        if values.len() != self.common_handle_offsets.len() {
+            return Err(KvTableError::Encode(format!(
+                "a common handle needs {} values, got {}",
+                self.common_handle_offsets.len(),
+                values.len()
+            )));
+        }
+        let encoded = tidb_codec::Encoder::new(self.use_new_collation)
+            .encode_key_in_timezone(zone, values)
+            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+        // Go `kv.NewCommonHandle` pads a short encoding out to nine bytes,
+        // and so does the record-key codec this handle is about to be written
+        // through. A DECIMAL primary key is the short case: `5` encodes to
+        // four bytes.
+        let padded = tidb_txnkv::CommonHandle::new(encoded)
+            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+        Ok(TableHandle::Common(padded.encoded().to_vec()))
     }
 
     /// The row value bytes, omitting the columns the handle already carries.

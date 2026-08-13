@@ -400,8 +400,10 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
             table,
             &columns,
             &tidb_datatype::SessionTimeZone::utc(),
+            &crate::index_hints::AvailablePaths::unrestricted(),
         )
         .unwrap()
+        .map(|decision| decision.handles)
     };
 
     assert_eq!(
@@ -410,9 +412,19 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
         "the handle path does not probe, as the single point get does not"
     );
     assert_eq!(
+        decides("SELECT v FROM bd WHERE id IN (2, 1, 2)"),
+        Some(vec![TableHandle::Int(2), TableHandle::Int(1)]),
+        "Go deduplicates repeated handles while retaining first-seen order"
+    );
+    assert_eq!(
         decides("SELECT v FROM bd WHERE code IN ('a', 'zz')"),
         Some(vec![TableHandle::Int(1)]),
         "the index path probes, so a missing key yields no handle"
+    );
+    assert_eq!(
+        decides("SELECT v FROM bd WHERE code IN ('a', 'a')"),
+        Some(vec![TableHandle::Int(1)]),
+        "Go deduplicates repeated unique-index keys"
     );
     // Rejected shapes.
     assert_eq!(decides("SELECT v FROM bd WHERE id NOT IN (1)"), None);
@@ -422,6 +434,133 @@ fn batch_point_get_is_chosen_only_for_the_shapes_go_accepts() {
     assert_eq!(decides("SELECT v FROM bd WHERE id IN (1) LIMIT 1"), None);
     assert_eq!(decides("SELECT DISTINCT v FROM bd WHERE id IN (1)"), None);
     assert_eq!(decides("SELECT v FROM bd WHERE id = 1"), None);
+}
+
+/// Go `tryWhereIn2BatchPointGet` accepts a row constructor when its columns
+/// cover one whole unique index.  The WHERE's column order need not be the
+/// index order; `newBatchPointGetPlan` records a permutation and converts each
+/// literal in the domain of the column it was written against.
+#[test]
+fn row_batch_point_get_covers_a_composite_unique_key() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE br (id BIGINT PRIMARY KEY, a BIGINT, b VARCHAR(8), \
+         UNIQUE KEY ab (a, b))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO br VALUES (1, 10, 'x'), (2, 20, 'y'), (3, 30, 'z')",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let Some(TableEntry::Kv(table)) = catalog.get_table_for_test("br") else {
+        panic!("expected a kv table");
+    };
+    let columns = table
+        .columns
+        .iter()
+        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .collect::<Vec<_>>();
+    let decides = |sql: &str| {
+        let stmt = tidb_parser::parse(sql).unwrap();
+        let Stmt::Query(query) = &stmt else {
+            panic!("not a query")
+        };
+        let QueryStmt::Select(select) = &**query else {
+            panic!("not a select")
+        };
+        try_batch_point_get(
+            select,
+            table,
+            &columns,
+            &tidb_datatype::SessionTimeZone::utc(),
+            &crate::index_hints::AvailablePaths::unrestricted(),
+        )
+        .unwrap()
+        .map(|decision| decision.handles)
+    };
+
+    assert_eq!(
+        decides("SELECT id FROM br WHERE (b, a) IN (('y', 20), ('x', 10), ('y', 20))"),
+        Some(vec![TableHandle::Int(2), TableHandle::Int(1)]),
+        "the row is reordered into index order and duplicate keys are read once"
+    );
+    assert_eq!(
+        decides("SELECT id FROM br WHERE (a, b) IN ((10, 'x'), (NULL, 'y'))"),
+        Some(vec![TableHandle::Int(1)]),
+        "a NULL index tuple is filtered without declining the whole fast plan"
+    );
+    assert_eq!(
+        decides("SELECT id FROM br WHERE (a, b) IN ((10, 'x'), 20)"),
+        None,
+        "every right-hand row must have the left-hand arity"
+    );
+    assert_eq!(
+        decides("SELECT id FROM br WHERE (a, id) IN ((10, 1))"),
+        None,
+        "a row that does not cover one unique index is not a batch point get"
+    );
+    assert_eq!(
+        decides("SELECT id FROM br WHERE (a, b) IN ((10, 'x')) WINDOW w AS ()"),
+        None,
+        "Go refuses the fast path when the SELECT declares a window"
+    );
+
+    crate::run_create_table_on(
+        "CREATE TABLE ch (a BIGINT, b VARCHAR(8), v BIGINT, PRIMARY KEY (a, b))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO ch VALUES (1, 'x', 10), (2, 'y', 20)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let Some(TableEntry::Kv(common)) = catalog.get_table_for_test("ch") else {
+        panic!("expected a common-handle table");
+    };
+    let common_columns = common
+        .columns
+        .iter()
+        .map(|column| (column.name.clone(), column.field_type.clone()))
+        .collect::<Vec<_>>();
+    let stmt =
+        tidb_parser::parse("SELECT v FROM ch WHERE (b, a) IN (('y', 2), ('x', 1), ('y', 2))")
+            .unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query")
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a select")
+    };
+    let handles = try_batch_point_get(
+        select,
+        common,
+        &common_columns,
+        &tidb_datatype::SessionTimeZone::utc(),
+        &crate::index_hints::AvailablePaths::unrestricted(),
+    )
+    .unwrap()
+    .expect("the common primary key is the unique access path")
+    .handles;
+    assert_eq!(handles.len(), 2, "repeated common handles are deduplicated");
+    let mut table = common.clone();
+    assert_eq!(
+        handles
+            .iter()
+            .map(|handle| {
+                table
+                    .get_row_by_handle(handle, &tidb_datatype::SessionTimeZone::utc())
+                    .unwrap()
+                    .unwrap()[2]
+                    .clone()
+            })
+            .collect::<Vec<_>>(),
+        vec![Datum::Int(20), Datum::Int(10)]
+    );
 }
 
 /// A constant a point plan keys by must first be moved into the COLUMN's

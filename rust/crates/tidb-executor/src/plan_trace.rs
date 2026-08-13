@@ -667,16 +667,23 @@ impl PlanTrace {
         visible: &str,
         handles: &[TableHandle],
         partitions: &[String],
+        index: Option<&str>,
     ) {
         let printed: Vec<String> = handles.iter().map(handle_text).collect();
-        self.replace_top(PlanNode::new(
-            "Batch_Point_Get",
-            Some(handles.len() as f64),
-            format!("table:{visible}{}", partition_object(partitions)),
+        let index = index.map_or_else(String::new, |index| format!(", {index}"));
+        let info = if index.is_empty() {
             format!(
                 "handle:[{}], keep order:false, desc:false",
                 printed.join(" ")
-            ),
+            )
+        } else {
+            "keep order:false, desc:false".to_owned()
+        };
+        self.replace_top(PlanNode::new(
+            "Batch_Point_Get",
+            Some(handles.len() as f64),
+            format!("table:{visible}{}{index}", partition_object(partitions)),
+            info,
         ));
         self.consumed = true;
     }

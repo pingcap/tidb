@@ -66,6 +66,11 @@ use crate::driver::DriverError;
 use crate::kv_table::KvTable;
 use tidb_ast::{IndexHint, IndexHintKind, IndexHintScope};
 
+/// The clustered primary index has no duplicate [`crate::kv_table::KvIndex`]
+/// in Rust because its bytes are the row handle itself. Index hints still
+/// need one stable identity for Go's `IndexInfo`-shaped decision.
+pub(crate) const COMMON_PRIMARY_INDEX_ID: i64 = 0;
+
 /// Which access paths over one table its index hints leave available --
 /// Go's `available` slice, in the two states it can be in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -471,6 +476,9 @@ fn resolve_index_name(table: &KvTable, name: &str) -> Option<HintedPath> {
     }
     if name.eq_ignore_ascii_case("primary") && table.pk_handle_offset().is_some() {
         return Some(HintedPath::Table);
+    }
+    if name.eq_ignore_ascii_case("primary") && !table.common_handle_offsets().is_empty() {
+        return Some(HintedPath::Index(COMMON_PRIMARY_INDEX_ID));
     }
     None
 }

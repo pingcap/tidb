@@ -313,8 +313,7 @@ impl Executor for HandleSourceExec {
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
-        let cap = self.meta.max_chunk_size();
-        while req.num_rows() < cap {
+        while !req.is_full() {
             let Some(handle) = self.handles.get(self.cursor) else {
                 return Ok(());
             };
@@ -1316,6 +1315,39 @@ mod tests {
     }
 
     const ROWS: i64 = 5000;
+
+    /// Go `BatchPointGetExec.Next` stops when the caller's chunk is full,
+    /// which means `required_rows`, not the executor's maximum chunk size.
+    #[test]
+    fn a_handle_source_honors_each_output_chunks_required_rows() {
+        let (catalog, _, _) = table_of(4, false);
+        let table = match catalog.get_table_for_test("t").unwrap() {
+            crate::driver::TableEntry::Kv(table) => table.clone(),
+            _ => panic!("expected a kv table"),
+        };
+        let columns = (0..3)
+            .map(|offset| {
+                let mut column = tidb_expr::column::Column::new(offset + 1, long());
+                column.index = offset;
+                column
+            })
+            .collect();
+        let mut exec = HandleSourceExec::new_with_context(
+            ExecutorMeta::new(Schema::new(columns), 0, 4, 4),
+            table,
+            (1..=4).map(TableHandle::Int).collect(),
+            crate::RowDecodeContext::for_test_query_utc(),
+        );
+        exec.open().unwrap();
+        let mut req = exec.new_chunk();
+        for expected in [1, 2, 1] {
+            req.set_required_rows(expected, exec.max_chunk_size());
+            exec.next(&mut req).unwrap();
+            assert_eq!(req.num_rows(), expected as usize);
+        }
+        exec.next(&mut req).unwrap();
+        assert_eq!(req.num_rows(), 0);
+    }
 
     /// A full scan under a `LIMIT` stops at the cap: the rows past it are
     /// never advanced past, let alone decoded into memory.

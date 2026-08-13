@@ -799,7 +799,7 @@ pub(crate) fn run_select_traced(
     // `driver::access`; `index_order` is set when the committed source emits
     // rows in an index's order, which is what lets a `LIMIT` under a matching
     // `ORDER BY` stop the scan early.
-    let index_order = commit_fast_path_source(
+    let (index_order, fast_path_consumed_where) = commit_fast_path_source(
         select,
         catalog,
         current_db,
@@ -915,8 +915,11 @@ pub(crate) fn run_select_traced(
     let mut current_scope = scope.clone();
     // Predicate push-down: over a single base table, offer the source the
     // conjuncts it can apply itself; only the residual needs a `Selection`.
-    let (executed_where, pushed_where) =
-        negotiate_scan_filter(select, &scope, &mut source, ctx, trace.as_deref_mut());
+    let (executed_where, pushed_where) = if fast_path_consumed_where {
+        (None, Vec::new())
+    } else {
+        negotiate_scan_filter(select, &scope, &mut source, ctx, trace.as_deref_mut())
+    };
     // LIMIT push-down: offer the source the row cap, when nothing between it
     // and the `LimitExec` can add, drop or reorder a row.
     offer_scan_limit(
@@ -933,7 +936,7 @@ pub(crate) fn run_select_traced(
     // A `WHERE` whose conjuncts all moved into the scan still records its
     // `Selection`, using the built predicates the scan accepted, and meters
     // the filtered rows the scan now emits.
-    if executed_where.is_none() && select.where_clause.is_some() {
+    if !fast_path_consumed_where && executed_where.is_none() && select.where_clause.is_some() {
         if let Some(trace) = trace.as_deref_mut() {
             if let Some(written) = &traced_select.where_clause {
                 trace.selection(
