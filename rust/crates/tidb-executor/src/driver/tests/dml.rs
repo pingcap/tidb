@@ -381,20 +381,23 @@ fn update_and_delete_rows() {
             "kv={kv}"
         );
 
-        // ORDER BY and LIMIT are supported now (see the session's
-        // `insert_select_and_ordered_dml`); an unknown SET column and
-        // the IGNORE form still fail closed.
+        // ORDER BY, LIMIT, and UPDATE IGNORE are supported. IGNORE changes
+        // only value-error handling; a conflict-free row still updates.
         assert!(run_update_on(
             "UPDATE w SET zzz = 1",
             &mut catalog,
             &crate::StmtContext::for_query()
         )
         .is_err());
-        assert!(run_update_on(
-            "UPDATE IGNORE w SET a = 1",
-            &mut catalog,
-            &crate::StmtContext::for_query()
-        )
-        .is_err());
+        assert_eq!(
+            run_update_on(
+                "UPDATE IGNORE w SET a = 1",
+                &mut catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            1,
+            "kv={kv}"
+        );
     }
 }
