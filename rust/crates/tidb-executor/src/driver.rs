@@ -29,7 +29,9 @@
 //! the rewriter does not yet handle. The real storage-backed `TableReaderExec`
 //! replaces [`MemTableSourceExec`] when storage/tablecodec integration lands.
 
-use crate::access_path::{HandleSourceExec, IndexMergeSourceExec, IndexRangeSourceExec};
+use crate::access_path::{
+    HandleSourceExec, IndexMergeKind, IndexMergeSourceExec, IndexRangeSourceExec,
+};
 use crate::executor::{ExecError, Executor, ExecutorMeta};
 use crate::hash_agg::{AggFunc, AggKind, HashAggExec};
 use crate::join::{JoinExec, JoinKind};

@@ -227,14 +227,71 @@ fn use_index_merge_unions_indexed_or_branches_without_duplicate_rows() {
         explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
     let plan: Vec<String> = rows
         .iter()
-        .map(|row| match &row[0] {
-            Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-            other => format!("{other:?}"),
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join(" | ")
         })
         .collect();
     assert!(
         plan.iter().any(|line| line.contains("IndexMerge")),
         "USE_INDEX_MERGE must install the multi-index reader, got {plan:?}"
+    );
+}
+
+#[test]
+fn use_index_merge_intersects_indexed_and_branches() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE imi (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, KEY ia (a), KEY ib (b))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO imi VALUES (1, 1, 2), (2, 1, 0), (3, 0, 2), (4, 0, 0)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT /*+ USE_INDEX_MERGE(imi, ia, ib) */ id FROM imi WHERE a = 1 AND b = 2";
+    assert_eq!(
+        run_select_on(sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1)]]
+    );
+
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    let plan: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|datum| match datum {
+                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>()
+                .join(" | ")
+        })
+        .collect();
+    assert!(
+        plan.iter()
+            .any(|line| line.contains("IndexMerge") && line.contains("intersection")),
+        "USE_INDEX_MERGE must install the intersection reader, got {plan:?}"
     );
 }
 

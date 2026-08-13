@@ -168,7 +168,7 @@ pub(crate) fn commit_fast_path_source(
         || !hints.allows_table()
         || try_point_get(&PointPlanStmt::of_select(select), &table, &columns, zone)?.is_none()
     {
-        if let Some(partials) = choose_index_merge_union(
+        if let Some(plan) = choose_index_merge_union(
             select,
             catalog,
             scope,
@@ -181,7 +181,27 @@ pub(crate) fn commit_fast_path_source(
                 &table,
                 scope,
                 &columns,
-                partials,
+                plan,
+                from_source,
+                trace.as_deref_mut(),
+                ctx,
+            );
+            return Ok(None);
+        }
+        if let Some(plan) = choose_index_merge_intersection(
+            select,
+            catalog,
+            scope,
+            &table,
+            &columns,
+            partition_scan,
+            current_db,
+        ) {
+            commit_index_merge_source(
+                &table,
+                scope,
+                &columns,
+                plan,
                 from_source,
                 trace.as_deref_mut(),
                 ctx,
@@ -290,6 +310,11 @@ pub(crate) fn commit_fast_path_source(
     Ok(index_order)
 }
 
+struct IndexMergePlan {
+    kind: IndexMergeKind,
+    partials: Vec<(i64, Vec<IndexRange>)>,
+}
+
 fn choose_index_merge_union(
     select: &tidb_ast::SelectStmt,
     catalog: &Catalog,
@@ -298,7 +323,7 @@ fn choose_index_merge_union(
     columns: &[(String, FieldType)],
     partition_scan: bool,
     current_db: &str,
-) -> Option<Vec<(i64, Vec<IndexRange>)>> {
+) -> Option<IndexMergePlan> {
     if table.partition().is_some() {
         return None;
     }
@@ -345,7 +370,70 @@ fn choose_index_merge_union(
         let (index_id, ranges) = path.index?;
         partials.push((index_id, ranges));
     }
-    Some(partials)
+    Some(IndexMergePlan {
+        kind: IndexMergeKind::Union,
+        partials,
+    })
+}
+
+fn choose_index_merge_intersection(
+    select: &tidb_ast::SelectStmt,
+    catalog: &Catalog,
+    scope: &FromScope,
+    table: &KvTable,
+    columns: &[(String, FieldType)],
+    partition_scan: bool,
+    current_db: &str,
+) -> Option<IndexMergePlan> {
+    if table.partition().is_some() {
+        return None;
+    }
+    let index_ids = crate::index_hints::single_table_index_merge_indexes(
+        select,
+        single_table_ref(&select.from),
+        table,
+        current_db,
+    );
+    if index_ids.len() < 2 {
+        return None;
+    }
+    let where_clause = select.where_clause.as_ref()?;
+    let demand = crate::driver::leaf_demand::LeafDemand::of_select(select);
+    let needed = demand.needed(&scope.tables[0].name, columns);
+    let resolver = ScopeResolver { scope };
+    let stats = catalog.table_statistics(table.table_id);
+    let stats = stats.as_ref().map(AsRef::as_ref);
+    let mut partials = Vec::new();
+    for index_id in index_ids {
+        let hints = crate::index_hints::AvailablePaths::index_merge_only(vec![index_id]);
+        let candidates = crate::access_cost::enumerate_paths(
+            table,
+            columns,
+            Some(where_clause),
+            &needed,
+            &resolver,
+            None,
+            stats,
+            &hints,
+            false,
+            partition_scan,
+            true,
+        )
+        .into_iter()
+        .filter(|candidate| !candidate.access_columns.is_empty())
+        .collect();
+        let Some(path) = crate::access_cost::choose_access_path(candidates, stats, false) else {
+            continue;
+        };
+        let Some((index_id, ranges)) = path.index else {
+            continue;
+        };
+        partials.push((index_id, ranges));
+    }
+    (partials.len() >= 2).then_some(IndexMergePlan {
+        kind: IndexMergeKind::Intersection,
+        partials,
+    })
 }
 
 fn collect_index_merge_disjuncts<'a>(expr: &'a tidb_ast::Expr, out: &mut Vec<&'a tidb_ast::Expr>) {
@@ -363,7 +451,7 @@ fn commit_index_merge_source(
     table: &KvTable,
     scope: &FromScope,
     columns: &[(String, FieldType)],
-    partials: Vec<(i64, Vec<IndexRange>)>,
+    plan: IndexMergePlan,
     from_source: &mut Option<Box<dyn Executor>>,
     trace: Option<&mut PlanTrace>,
     ctx: &crate::StmtContext,
@@ -376,16 +464,22 @@ fn commit_index_merge_source(
             MAX_CHUNK_SIZE,
         ),
         table.clone(),
-        partials.clone(),
+        plan.kind,
+        plan.partials.clone(),
         crate::kv_table::RowDecodeContext::for_query(ctx),
     );
     if let Some(trace) = trace {
-        let indexes = partials
+        let indexes = plan
+            .partials
             .iter()
             .filter_map(|(id, _)| table.indexes().iter().find(|index| index.id == *id))
             .map(|index| index.name.clone())
             .collect::<Vec<_>>();
-        trace.index_merge_union(source_table_name(scope, &table.name), &indexes);
+        trace.index_merge(
+            source_table_name(scope, &table.name),
+            &indexes,
+            matches!(plan.kind, IndexMergeKind::Intersection),
+        );
         trace.set_scan_act_rows(exec.produced_rows());
     }
     *from_source = Some(Box::new(exec));

@@ -53,7 +53,7 @@
 //! with one it reports the truncation, as Go's does.
 
 use std::cell::Cell;
-use std::collections::BTreeSet;
+use std::collections::{btree_set, BTreeSet};
 use std::rc::Rc;
 
 use tidb_chunk::chunk::Chunk;
@@ -748,14 +748,22 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum IndexMergeKind {
+    Union,
+    Intersection,
+}
+
 pub(crate) struct IndexMergeSourceExec {
     meta: ExecutorMeta,
     table: KvTable,
+    kind: IndexMergeKind,
     partials: Vec<(i64, Vec<IndexRange>)>,
     partial_at: usize,
     range_at: usize,
     cursor: Option<IndexRangeCursor>,
     seen: BTreeSet<TableHandle>,
+    intersection: Option<btree_set::IntoIter<TableHandle>>,
     produced: Rc<Cell<u64>>,
     decode_context: crate::kv_table::RowDecodeContext,
 }
@@ -765,17 +773,20 @@ impl IndexMergeSourceExec {
     pub(crate) fn new_with_context(
         meta: ExecutorMeta,
         table: KvTable,
+        kind: IndexMergeKind,
         partials: Vec<(i64, Vec<IndexRange>)>,
         decode_context: crate::kv_table::RowDecodeContext,
     ) -> Self {
         Self {
             meta,
             table,
+            kind,
             partials,
             partial_at: 0,
             range_at: 0,
             cursor: None,
             seen: BTreeSet::new(),
+            intersection: None,
             produced: Rc::new(Cell::new(0)),
             decode_context,
         }
@@ -786,7 +797,7 @@ impl IndexMergeSourceExec {
         Rc::clone(&self.produced)
     }
 
-    fn next_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
+    fn next_union_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
         loop {
             if let Some(cursor) = self.cursor.as_mut() {
                 let handle = cursor
@@ -816,6 +827,57 @@ impl IndexMergeSourceExec {
             );
         }
     }
+
+    fn partial_handles(
+        &mut self,
+        index_id: i64,
+        ranges: &[IndexRange],
+    ) -> Result<BTreeSet<TableHandle>, ExecError> {
+        let mut handles = BTreeSet::new();
+        for range in ranges {
+            let mut cursor = self
+                .table
+                .index_range_cursor(index_id, range, self.decode_context.zone())
+                .map_err(|_| ExecError::unsupported("index range is not scannable"))?;
+            while let Some(handle) = cursor
+                .next_handle()
+                .map_err(|_| ExecError::unsupported("index bytes failed to decode"))?
+            {
+                handles.insert(handle);
+            }
+        }
+        Ok(handles)
+    }
+
+    fn next_intersection_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
+        if self.intersection.is_none() {
+            let partials = self.partials.clone();
+            let mut partials = partials.into_iter();
+            let Some((index_id, ranges)) = partials.next() else {
+                return Ok(None);
+            };
+            let mut handles = self.partial_handles(index_id, &ranges)?;
+            for (index_id, ranges) in partials {
+                let right = self.partial_handles(index_id, &ranges)?;
+                handles.retain(|handle| right.contains(handle));
+                if handles.is_empty() {
+                    break;
+                }
+            }
+            self.intersection = Some(handles.into_iter());
+        }
+        Ok(self
+            .intersection
+            .as_mut()
+            .and_then(std::iter::Iterator::next))
+    }
+
+    fn next_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
+        match self.kind {
+            IndexMergeKind::Union => self.next_union_handle(),
+            IndexMergeKind::Intersection => self.next_intersection_handle(),
+        }
+    }
 }
 
 impl Executor for IndexMergeSourceExec {
@@ -824,6 +886,7 @@ impl Executor for IndexMergeSourceExec {
         self.range_at = 0;
         self.cursor = None;
         self.seen.clear();
+        self.intersection = None;
         self.produced.set(0);
         Ok(())
     }

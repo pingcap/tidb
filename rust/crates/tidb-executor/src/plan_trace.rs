@@ -766,12 +766,20 @@ impl PlanTrace {
         self.consumed = true;
     }
 
-    pub(crate) fn index_merge_union(&mut self, visible: &str, indexes: &[String]) {
+    pub(crate) fn index_merge(&mut self, visible: &str, indexes: &[String], intersection: bool) {
         self.replace_top(PlanNode::new(
             "IndexMerge",
             None,
             format!("table:{visible}"),
-            format!("type:union, indexes:{}", indexes.join(", ")),
+            format!(
+                "type:{}, indexes:{}",
+                if intersection {
+                    "intersection"
+                } else {
+                    "union"
+                },
+                indexes.join(", ")
+            ),
         ));
         self.consumed = true;
     }
