@@ -613,11 +613,10 @@ impl<C: Columns> TopNExec<C> {
     /// handful of runs a spill produces. Ties resolve to the earlier run in
     /// both.
     fn next_merged(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
-        let batch = self.meta.max_chunk_size();
         let limit = self.total_limit;
         let mut runs = std::mem::take(&mut self.runs);
         let result = (|| -> Result<(), ExecError> {
-            while req.num_rows() < batch && self.merged < limit {
+            while !req.is_full() && self.merged < limit {
                 for run in &mut runs {
                     run.load_head(&self.by_items, &self.ctx)?;
                 }
@@ -707,7 +706,7 @@ impl<C: Columns> Executor for TopNExec<C> {
             return self.next_merged(req);
         }
         let remaining = self.row_ptrs.len().saturating_sub(self.idx);
-        let batch = self.meta.max_chunk_size().min(remaining);
+        let batch = req.required_rows().min(remaining);
         for _ in 0..batch {
             let (c, r) = self.row_ptrs[self.idx];
             req.append_row(self.chunks[c].get_row(r));
@@ -1049,6 +1048,31 @@ mod tests {
         let rows: Vec<Vec<Option<i64>>> = (0..5).map(|v| vec![Some(v), Some(0)]).collect();
         let mut exec = topn_over(&rows, 2, 2, &[(0, false)], 0, 0, StatementMemory::default());
         assert!(drain(&mut exec).is_empty());
+    }
+
+    #[test]
+    fn topn_honors_each_output_chunks_required_rows() {
+        let rows: Vec<Vec<Option<i64>>> = (0..10).rev().map(|value| vec![Some(value)]).collect();
+        let mut exec = topn_over(
+            &rows,
+            1,
+            3,
+            &[(0, false)],
+            0,
+            10,
+            StatementMemory::default(),
+        );
+        exec.open().unwrap();
+        let mut req = exec.new_chunk();
+        let mut output = Vec::new();
+        for (requested, expected) in [(1_usize, 1_usize), (1, 1), (1, 1), (1, 1), (10, 6)] {
+            req.set_required_rows(requested as isize, exec.max_chunk_size());
+            exec.next(&mut req).unwrap();
+            assert_eq!(req.num_rows(), expected);
+            output.extend((0..req.num_rows()).map(|row| req.get_row(row).get_int64(0)));
+        }
+        assert_eq!(output, (0..10).collect::<Vec<_>>());
+        exec.close().unwrap();
     }
 
     /// The point of the operator: a `TopN` over many rows holds `offset +
@@ -1469,8 +1493,13 @@ mod spill_tests {
         let mut got = Vec::new();
         let mut saw_spill_file = false;
         let mut req = exec.new_chunk();
+        let required_rows = [1_usize, 5, 3, 10, 32];
+        let mut request = 0;
         loop {
+            let wanted = required_rows[request % required_rows.len()];
+            req.set_required_rows(wanted as isize, exec.max_chunk_size());
             exec.next(&mut req).expect("a spilling TopN must not fail");
+            assert_eq!(req.num_rows(), wanted.min(expected.len() - got.len()));
             if req.num_rows() == 0 {
                 break;
             }
@@ -1479,6 +1508,7 @@ mod spill_tests {
                 let row = req.get_row(r);
                 got.push(vec![Some(row.get_int64(0)), Some(row.get_int64(1))]);
             }
+            request += 1;
         }
 
         assert!(
