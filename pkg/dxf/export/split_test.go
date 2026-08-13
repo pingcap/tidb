@@ -34,33 +34,6 @@ func keys(ss ...string) []kv.Key {
 	return ks
 }
 
-func TestGroupBoundaries(t *testing.T) {
-	b := keys("a", "b", "c", "d", "e") // 4 ranges
-
-	// Two groups: contiguous, in key order, endpoints preserved, span-joined.
-	groups := groupBoundaries(b, 2)
-	require.Len(t, groups, 2)
-	require.Equal(t, keys("a", "b", "c"), groups[0])
-	require.Equal(t, keys("c", "d", "e"), groups[1])
-	require.Equal(t, kv.Key("a"), groups[0][0])
-	require.Equal(t, kv.Key("e"), groups[len(groups)-1][len(groups[len(groups)-1])-1])
-
-	// Deterministic across calls.
-	require.Equal(t, groups, groupBoundaries(b, 2))
-
-	// One group covers the whole span.
-	one := groupBoundaries(b, 1)
-	require.Len(t, one, 1)
-	require.Equal(t, b, one[0])
-
-	// More groups than ranges: at most one range per group, none empty.
-	many := groupBoundaries(b, 10)
-	require.Len(t, many, 4)
-	for _, g := range many {
-		require.Len(t, g, 2)
-	}
-}
-
 func TestSubtaskCntFor(t *testing.T) {
 	// About one subtask per node.
 	require.Equal(t, 4, subtaskCntFor(100, 4))

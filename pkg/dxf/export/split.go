@@ -94,18 +94,19 @@ func splitTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx 
 func buildChunks(tableIdx int, pid int64, boundaries []kv.Key, totalSize int64, startOrdinal int) ([]Chunk, int) {
 	regionCnt := len(boundaries) - 1
 	chunkCnt := max(1, min(int((totalSize+chunkSize-1)/chunkSize), regionCnt))
-	ord := startOrdinal
-	chunks := make([]Chunk, 0, chunkCnt)
-	for _, g := range groupBoundaries(boundaries, chunkCnt) {
-		chunkRegions := len(g) - 1
+	sizes := mathutil.Divide2Batches(regionCnt, chunkCnt)
+	chunks := make([]Chunk, 0, len(sizes))
+	ord, lo := startOrdinal, 0
+	for _, n := range sizes {
 		chunks = append(chunks, Chunk{
 			TableIdx:   tableIdx,
 			PhysicalID: pid,
-			Start:      g[0],
-			End:        g[len(g)-1],
-			Size:       totalSize * int64(chunkRegions) / int64(regionCnt),
+			Start:      boundaries[lo],
+			End:        boundaries[lo+n],
+			Size:       totalSize * int64(n) / int64(regionCnt),
 			Ordinal:    ord,
 		})
+		lo += n
 		ord++
 	}
 	return chunks, ord
@@ -133,8 +134,8 @@ func estimatePhysicalSize(ctx context.Context, store kv.Storage, start, end kv.K
 }
 
 // packSubtasks groups chunks into subtasks in key order so each holds a similar
-// amount of data, following IMPORT INTO's adjusted-engine-size approach:
-// engineSize = ceil(totalSize/subtaskCnt), accumulate until a subtask reaches it.
+// amount of data: engineSize = ceil(totalSize/subtaskCnt), accumulate chunks
+// until a subtask reaches it.
 func packSubtasks(chunks []Chunk, totalSize int64, nodeCnt int) ([][]byte, error) {
 	if len(chunks) == 0 {
 		return nil, nil
@@ -196,9 +197,8 @@ func physicalIDs(tblInfo *model.TableInfo) []int64 {
 }
 
 // physicalTableRange returns the record-key range of one physical table. For
-// int-handle tables the start must be a well-formed record key (TiKV returns
-// nothing for a bare "t<id>_r" prefix start), mirroring the table reader's
-// FullIntRange.
+// int-handle tables the start must be a well-formed record key, since TiKV
+// returns nothing for a bare "t<id>_r" prefix start.
 func physicalTableRange(tblInfo *model.TableInfo, pid int64) (start, end kv.Key) {
 	prefix := tablecodec.GenTableRecordPrefix(pid)
 	if tblInfo.IsCommonHandle {
@@ -209,7 +209,7 @@ func physicalTableRange(tblInfo *model.TableInfo, pid int64) (start, end kv.Key)
 
 // loadRegionBoundaries returns the sorted region boundaries covering [start, end),
 // with result[0] == start and result[len-1] == end, retrying with backoff while
-// the regions are not yet continuous (mirrors add-index).
+// the regions are not yet continuous.
 func loadRegionBoundaries(ctx context.Context, store kv.Storage, start, end kv.Key) ([]kv.Key, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
@@ -238,19 +238,4 @@ func loadRegionBoundaries(ctx context.Context, store kv.Storage, start, end kv.K
 		return false, nil
 	})
 	return boundaries, err
-}
-
-// groupBoundaries splits the boundary list into at most groupCnt contiguous
-// groups of roughly equal region count, each group's first and last element
-// being its span endpoints.
-func groupBoundaries(boundaries []kv.Key, groupCnt int) [][]kv.Key {
-	rangeCnt := len(boundaries) - 1
-	sizes := mathutil.Divide2Batches(rangeCnt, max(groupCnt, 1))
-	groups := make([][]kv.Key, 0, len(sizes))
-	lo := 0
-	for _, size := range sizes {
-		groups = append(groups, boundaries[lo:lo+size+1])
-		lo += size
-	}
-	return groups
 }
