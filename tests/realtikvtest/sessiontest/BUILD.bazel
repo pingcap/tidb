@@ -21,6 +21,7 @@ go_test(
         "//pkg/infoschema",
         "//pkg/keyspace",
         "//pkg/meta",
+        "//pkg/metrics",
         "//pkg/parser/ast",
         "//pkg/session",
         "//pkg/sessionctx/vardef",
@@ -30,6 +31,7 @@ go_test(
         "//pkg/util/sqlkiller",
         "//tests/realtikvtest",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_prometheus_client_golang//prometheus/testutil",
         "@com_github_stretchr_testify//require",
     ],
 )

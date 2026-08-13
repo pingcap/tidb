@@ -102,7 +102,7 @@ func (a *ExecStmt) abortStatementRU() {
 // chunk. A successful statement does not imply this: a caller can
 // close a RecordSet cleanly before consuming all rows, for example when writing
 // rows to the client fails. Publishing that partial work as the statement's RU
-// would undercount, so the narrow ResultOnly path requires this independent bit.
+// would undercount, so RU v3 metric publication requires this independent bit.
 func (a *ExecStmt) recordStatementRURootEOF() {
 	owner := a.statementRUOwner
 	if owner == nil {

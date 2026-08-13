@@ -15,13 +15,11 @@
 package executor
 
 import (
-	"context"
 	"math"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 )
 
 // These deliberately uncalibrated weights keep the first ResultOnly path
@@ -210,7 +208,7 @@ func publishStatementRUFinalizedSnapshot(
 	finalized statementRUFinalizedSnapshot,
 ) {
 	if finalized.hasResult {
-		publishStatementRUResultSafely(stmt, finalized.result)
+		publishStatementRUMetricsSafely(finalized)
 	}
 	if finalized.calibrationState != statementRUCalibrationUnknown {
 		publishStatementRUCalibrationSafely(stmt, statementRUCalibrationSnapshot{
@@ -220,26 +218,21 @@ func publishStatementRUFinalizedSnapshot(
 	}
 }
 
-func publishStatementRUResultSafely(stmt *ExecStmt, result statementRUResultOnly) {
+// publishStatementRUMetricsSafely projects one immutable finalized snapshot to
+// the RU v3 counters. The supported slice is read-only and TiKV-only. The
+// engine counter excludes frontend compilation because that work belongs to
+// TiDB rather than the storage engine.
+func publishStatementRUMetricsSafely(finalized statementRUFinalizedSnapshot) {
 	defer func() {
 		_ = recover()
 	}()
-	connectionID := uint64(0)
-	loggerContext := context.Background()
-	if stmt != nil {
-		if stmt.GoCtx != nil {
-			loggerContext = stmt.GoCtx
-		}
-		if stmt.Ctx != nil && stmt.Ctx.GetSessionVars() != nil {
-			connectionID = stmt.Ctx.GetSessionVars().ConnectionID
-		}
-	}
-	logger := logutil.Logger(loggerContext)
-	if checkedEntry := logger.Check(zap.DebugLevel, "uncalibrated statement RU result"); checkedEntry != nil {
-		checkedEntry.Write(zap.Float64("total_ru", result.TotalRU))
-	}
-	// Test observation is independent of the configured log level.
-	failpoint.InjectCall("observeStatementRUResultForTest", connectionID, result.TotalRU)
+	totalRU := finalized.result.TotalRU
+	metrics.RUV3Total.Add(totalRU)
+	metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead).Add(totalRU)
+	metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV).Add(
+		statementRUScanByteWeight*finalized.units.ScanBytes +
+			statementRUNetByteWeight*finalized.units.NetBytes,
+	)
 }
 
 func publishStatementRUCalibrationSafely(

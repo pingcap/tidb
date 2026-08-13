@@ -19,27 +19,26 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 )
 
 const (
 	statementRUCalibrationUnitsFailpoint = "github.com/pingcap/tidb/pkg/executor/observeStatementRUCalibrationUnitsForTest"
-	statementRUResultFailpoint           = "github.com/pingcap/tidb/pkg/executor/observeStatementRUResultForTest"
 )
 
 type statementRURealTiKVObservation struct {
 	sync.Mutex
-	resultPublications int
-	calibrationUnits   int
-	totalRU            float64
-	state              uint8
-	scanBytes          float64
-	netBytes           float64
-	frontendBytes      float64
+	calibrationUnits int
+	state            uint8
+	scanBytes        float64
+	netBytes         float64
+	frontendBytes    float64
 }
 
 func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
@@ -57,6 +56,9 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 
 	connectionID := tk.Session().GetSessionVars().ConnectionID
 	observation := &statementRURealTiKVObservation{}
+	totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+	readBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))
+	tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))
 	testfailpoint.EnableCall(t, statementRUCalibrationUnitsFailpoint, func(
 		observedConnectionID uint64,
 		state uint8,
@@ -73,15 +75,6 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 		observation.netBytes = netBytes
 		observation.frontendBytes = frontendCompileBytes
 	})
-	testfailpoint.EnableCall(t, statementRUResultFailpoint, func(observedConnectionID uint64, totalRU float64) {
-		if observedConnectionID != connectionID {
-			return
-		}
-		observation.Lock()
-		defer observation.Unlock()
-		observation.resultPublications++
-		observation.totalRU = totalRU
-	})
 	const query = "select * from t"
 	rs, err := tk.ExecWithContext(context.Background(), query)
 	require.NoError(t, err)
@@ -97,23 +90,29 @@ func TestStatementRUSimpleSelectRealTiKV(t *testing.T) {
 	require.NoError(t, finisher.Finish())
 	require.NoError(t, finisher.Finish())
 	observation.Lock()
-	require.Zero(t, observation.resultPublications)
 	require.Zero(t, observation.calibrationUnits)
 	observation.Unlock()
+	require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
+	require.Equal(t, readBefore, testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead)))
+	require.Equal(t, tikvBefore, testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV)))
 
 	require.NoError(t, rs.Close())
 	require.NoError(t, rs.Close())
 	observation.Lock()
 	defer observation.Unlock()
-	t.Logf("statement RU observation: results=%d calibration=%d state=%d scan=%v net=%v frontend=%v",
-		observation.resultPublications, observation.calibrationUnits,
+	t.Logf("statement RU observation: calibration=%d state=%d scan=%v net=%v frontend=%v",
+		observation.calibrationUnits,
 		observation.state, observation.scanBytes, observation.netBytes, observation.frontendBytes)
 	require.Equal(t, 1, observation.calibrationUnits)
 	require.Equal(t, uint8(1), observation.state)
 	require.Positive(t, observation.scanBytes)
 	require.Positive(t, observation.netBytes)
 	require.Equal(t, float64(len(query)), observation.frontendBytes)
-	require.Equal(t, 1, observation.resultPublications)
-	require.InDelta(t, observation.scanBytes+observation.netBytes+observation.frontendBytes, observation.totalRU, 1e-9)
+	require.InDelta(t, observation.scanBytes+observation.netBytes+observation.frontendBytes,
+		testutil.ToFloat64(metrics.RUV3Total)-totalBefore, 1e-9)
+	require.InDelta(t, observation.scanBytes+observation.netBytes+observation.frontendBytes,
+		testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))-readBefore, 1e-9)
+	require.InDelta(t, observation.scanBytes+observation.netBytes,
+		testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))-tikvBefore, 1e-9)
 	require.Equal(t, observation.netBytes, float64(tk.Session().GetSessionVars().RUV2Metrics.TiKVCoprocessorResponseBytes()))
 }

@@ -20,13 +20,14 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -94,16 +95,14 @@ func (observation *StatementRUOwnerObservationForTest) RecordedSuccessForTest() 
 
 func TestStatementRUCalculationTraversal(t *testing.T) {
 	requireNoPublication := func(t *testing.T, fixture statementRUSimpleSelectFixture) {
-		var resultCount, calibrationCount atomic.Int64
-		testfailpoint.EnableCall(t, statementRUResultFailpointForTest, func(uint64, float64) {
-			resultCount.Add(1)
-		})
+		var calibrationCount atomic.Int64
 		observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) {
 			calibrationCount.Add(1)
 		})
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
-		require.Zero(t, resultCount.Load())
+		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
 		require.Zero(t, calibrationCount.Load())
 	}
 
@@ -116,17 +115,14 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 			ProcessedKeys:     100,
 			ProcessedKeysSize: 10000,
 		})
-		var resultCount atomic.Int64
 		var snapshot statementRUCalibrationSnapshot
-		testfailpoint.EnableCall(t, statementRUResultFailpointForTest, func(uint64, float64) {
-			resultCount.Add(1)
-		})
 		observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
 			snapshot = published
 		})
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
-		require.Equal(t, int64(1), resultCount.Load())
+		require.Equal(t, float64(45), testutil.ToFloat64(metrics.RUV3Total)-totalBefore)
 		require.Equal(t, statementRURawUnits{
 			ScanBytes:            10,
 			NetBytes:             20,
@@ -146,19 +142,17 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 		fixture.recordReaderScanDetail(reader, 1, 1, 10)
 		fixture.stmt.Ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(reader, false))
 
-		var resultCount, calibrationCount atomic.Int64
+		var calibrationCount atomic.Int64
 		var snapshot statementRUCalibrationSnapshot
-		testfailpoint.EnableCall(t, statementRUResultFailpointForTest, func(uint64, float64) {
-			resultCount.Add(1)
-		})
 		observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
 			calibrationCount.Add(1)
 			snapshot = published
 		})
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
 		fixture.stmt.finishStatementRUForTest(nil)
-		require.Equal(t, int64(1), resultCount.Load())
+		require.Equal(t, float64(45), testutil.ToFloat64(metrics.RUV3Total)-totalBefore)
 		require.Equal(t, int64(1), calibrationCount.Load())
 		require.Equal(t, statementRUCalibrationComplete, snapshot.State)
 		require.Equal(t, float64(10), snapshot.Units.ScanBytes)

@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -30,13 +31,13 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
 
 const (
 	statementRUSimpleSelectSQLForTest      = "select * from t"
-	statementRUResultFailpointForTest      = "github.com/pingcap/tidb/pkg/executor/observeStatementRUResultForTest"
 	statementRUCalibrationFailpointForTest = "github.com/pingcap/tidb/pkg/executor/observeStatementRUCalibrationUnitsForTest"
 )
 
@@ -144,23 +145,15 @@ func observeStatementRUCalibrationForTest(
 
 func TestStatementRUResultFinalizationAndPublication(t *testing.T) {
 	fixture := newStatementRUSimpleSelectFixture(t)
-	var resultCount, calibrationCount atomic.Int64
-	var result statementRUResultOnly
+	var calibrationCount atomic.Int64
 	var snapshot statementRUCalibrationSnapshot
-	testfailpoint.EnableCall(t, statementRUResultFailpointForTest, func(_ uint64, totalRU float64) {
-		resultCount.Add(1)
-		result = statementRUResultOnly{TotalRU: totalRU}
-		// ResultOnly is published first. Change both live evidence sources before
-		// calibration is published to prove that neither consumer recalculates or
-		// rereads statement state after the single value-only finalization.
-		fixture.recordReaderScanDetail(fixture.stmt.Plan.(*physicalop.PhysicalTableReader), 0, 0, 990)
-		fixture.stmt.Ctx.GetSessionVars().RUV2Metrics.AddTiKVCoprocessorResponseBytes(1000)
-		fixture.stmt.finishStatementRUForTest(nil)
-	})
 	observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
 		calibrationCount.Add(1)
 		snapshot = published
 	})
+	totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+	readBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))
+	tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))
 
 	fixture.stmt.RecordStatementRUFinalOutcome(true)
 	const callers = 32
@@ -174,7 +167,6 @@ func TestStatementRUResultFinalizationAndPublication(t *testing.T) {
 	}
 	wg.Wait()
 
-	require.Equal(t, int64(1), resultCount.Load())
 	require.Equal(t, int64(1), calibrationCount.Load())
 	require.Equal(t, statementRUCalibrationComplete, snapshot.State)
 	require.Equal(t, statementRURawUnits{
@@ -182,12 +174,21 @@ func TestStatementRUResultFinalizationAndPublication(t *testing.T) {
 		NetBytes:             20,
 		FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
 	}, snapshot.Units)
-	require.Equal(t, calculateStatementRUResultOnly(snapshot.Units), result)
+	expectedResult := calculateStatementRUResultOnly(snapshot.Units)
+	require.Equal(t, expectedResult.TotalRU, testutil.ToFloat64(metrics.RUV3Total)-totalBefore)
+	require.Equal(t, expectedResult.TotalRU,
+		testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))-readBefore)
+	require.Equal(t, snapshot.Units.ScanBytes+snapshot.Units.NetBytes,
+		testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))-tikvBefore)
 	require.Zero(t, fixture.owner.calculationSetup)
 
 	fixture.stmt.finishStatementRUForTest(nil)
-	require.Equal(t, int64(1), resultCount.Load())
 	require.Equal(t, int64(1), calibrationCount.Load())
+	require.Equal(t, expectedResult.TotalRU, testutil.ToFloat64(metrics.RUV3Total)-totalBefore)
+	require.Equal(t, expectedResult.TotalRU,
+		testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))-readBefore)
+	require.Equal(t, snapshot.Units.ScanBytes+snapshot.Units.NetBytes,
+		testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))-tikvBefore)
 	require.Equal(t, float64(10), snapshot.Units.ScanBytes)
 	require.Equal(t, float64(20), snapshot.Units.NetBytes)
 }
@@ -204,62 +205,54 @@ func TestStatementRUResultProjectionCompleteness(t *testing.T) {
 		require.Zero(t, finalized.units.FrontendCompileBytes)
 	})
 
-	t.Run("scan missing suppresses ResultOnly", func(t *testing.T) {
+	t.Run("scan missing suppresses RU v3 metrics", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
-		var resultCount atomic.Int64
 		var snapshot statementRUCalibrationSnapshot
-		testfailpoint.EnableCall(t, statementRUResultFailpointForTest, func(uint64, float64) {
-			resultCount.Add(1)
-		})
 		observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
 			snapshot = published
 		})
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
-		require.Zero(t, resultCount.Load())
+		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
 		require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
 		require.Zero(t, snapshot.Units.ScanBytes)
 		require.Equal(t, float64(20), snapshot.Units.NetBytes)
 	})
 
-	t.Run("net missing suppresses ResultOnly", func(t *testing.T) {
+	t.Run("net missing suppresses RU v3 metrics", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		fixture.stmt.Ctx.GetSessionVars().RUV2Metrics = execdetails.NewRUV2Metrics()
-		var resultCount atomic.Int64
 		var snapshot statementRUCalibrationSnapshot
-		testfailpoint.EnableCall(t, statementRUResultFailpointForTest, func(uint64, float64) {
-			resultCount.Add(1)
-		})
 		observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
 			snapshot = published
 		})
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
-		require.Zero(t, resultCount.Load())
+		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
 		require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
 		require.Equal(t, float64(10), snapshot.Units.ScanBytes)
 		require.Zero(t, snapshot.Units.NetBytes)
 	})
 
-	t.Run("early close suppresses ResultOnly", func(t *testing.T) {
+	t.Run("early close suppresses RU v3 metrics", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		fixture.owner.rootEOF.Store(false)
-		var resultCount, calibrationCount atomic.Int64
+		var calibrationCount atomic.Int64
 		var snapshot statementRUCalibrationSnapshot
-		testfailpoint.EnableCall(t, statementRUResultFailpointForTest, func(uint64, float64) {
-			resultCount.Add(1)
-		})
 		observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
 			calibrationCount.Add(1)
 			snapshot = published
 		})
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
 
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
 		fixture.stmt.finishStatementRUForTest(nil)
 
-		require.Zero(t, resultCount.Load())
+		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
 		require.Equal(t, int64(1), calibrationCount.Load())
 		require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
 		require.Equal(t, statementRURawUnits{
@@ -272,19 +265,17 @@ func TestStatementRUResultProjectionCompleteness(t *testing.T) {
 	t.Run("invalid evidence suppresses both publications", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		fixture.recordReaderScanDetail(fixture.stmt.Plan.(*physicalop.PhysicalTableReader), 0, 0, -11)
-		var resultCount, calibrationCount atomic.Int64
-		testfailpoint.EnableCall(t, statementRUResultFailpointForTest, func(uint64, float64) {
-			resultCount.Add(1)
-		})
+		var calibrationCount atomic.Int64
 		observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) {
 			calibrationCount.Add(1)
 		})
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
 
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
 		fixture.stmt.finishStatementRUForTest(nil)
 
-		require.Zero(t, resultCount.Load())
+		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
 		require.Zero(t, calibrationCount.Load())
 		require.Zero(t, fixture.owner.calculationSetup)
 	})
@@ -295,9 +286,11 @@ func TestStatementRUResultProjectionCompleteness(t *testing.T) {
 		observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) {
 			calibrationCount.Add(1)
 		})
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(context.Canceled)
 		fixture.stmt.finishStatementRUForTest(nil)
+		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
 		require.Zero(t, calibrationCount.Load())
 		require.Zero(t, fixture.owner.calculationSetup)
 	})
@@ -309,33 +302,17 @@ func TestStatementRUResultProjectionCompleteness(t *testing.T) {
 		observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) {
 			calibrationCount.Add(1)
 		})
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		require.NotPanics(t, func() { fixture.stmt.finishStatementRUForTest(nil) })
 		fixture.stmt.finishStatementRUForTest(nil)
+		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
 		require.Zero(t, calibrationCount.Load())
 		require.Zero(t, fixture.owner.calculationSetup)
 	})
 }
 
 func TestStatementRUPublisherIsolation(t *testing.T) {
-	t.Run("result panic does not block calibration", func(t *testing.T) {
-		fixture := newStatementRUSimpleSelectFixture(t)
-		finalized := (statementRUCalculator{units: statementRURawUnits{
-			ScanBytes:            10,
-			NetBytes:             20,
-			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
-		}}).finalize(true)
-		var calibrationCount atomic.Int64
-		testfailpoint.EnableCall(t, statementRUResultFailpointForTest, func(uint64, float64) {
-			panic("result observer")
-		})
-		observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) {
-			calibrationCount.Add(1)
-		})
-		require.NotPanics(t, func() { publishStatementRUFinalizedSnapshot(fixture.stmt, finalized) })
-		require.Equal(t, int64(1), calibrationCount.Load())
-	})
-
 	t.Run("calibration panic is isolated", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) {

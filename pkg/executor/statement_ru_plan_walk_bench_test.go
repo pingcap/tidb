@@ -130,11 +130,15 @@ func BenchmarkStatementRUComponents(b *testing.B) {
 		}
 	})
 
-	b.Run("result-publication/current-logger", func(b *testing.B) {
-		result := statementRUResultOnly{TotalRU: 45}
+	b.Run("result-publication/ruv3-metrics", func(b *testing.B) {
+		finalized := statementRUFinalizedSnapshot{
+			units:     statementRURawUnits{ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15},
+			result:    statementRUResultOnly{TotalRU: 45},
+			hasResult: true,
+		}
 		b.ReportAllocs()
 		for b.Loop() {
-			publishStatementRUResultSafely(fixture.stmt, result)
+			publishStatementRUMetricsSafely(finalized)
 		}
 	})
 
@@ -157,7 +161,7 @@ func BenchmarkStatementRUSyntheticFinalization(b *testing.B) {
 	flat := stmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
 
 	// This timer starts before the production owner installer and ends after
-	// ResultOnly and the dormant calibration boundary. It manually invokes
+	// RU v3 metric publication and the dormant calibration boundary. It manually invokes
 	// lifecycle hooks against one reused synthetic ExecStmt; it excludes compile,
 	// executor Next/Close, session completion, and RUv2/network finalization, so it
 	// must not be reported as end-to-end SELECT latency.
