@@ -308,7 +308,8 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // width passed straight through. `TRANSLATE` (`translateFunctionClass`)
         // is the same rule and joins them here.
         "upper" | "ucase" | "lower" | "lcase" | "reverse" | "ltrim" | "rtrim" | "left" | "right"
-        | "substring" | "substr" | "mid" | "substring_index" | "translate" => {
+        | "substring" | "substr" | "mid" | "substring_index" | "translate"
+        | "regexp_substr" | "regexp_replace" => {
             ft_with_flen(text(), str_arg_flen(args, 0))
         }
         // `trimFunctionClass` is the same rule for the ONE- and THREE-argument
@@ -957,6 +958,9 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "instr" => ft_with_flen(int(), 11),
         "strcmp" => ft_with_flen(int(), 2),
         "char_length" | "character_length" | "locate" | "position" | "field" => int(),
+        // `regexpInStrFunctionClass` fixes the integer result width to
+        // `mysql.MaxIntWidth`.
+        "regexp_instr" => ft_with_flen(int(), 20),
         // Go `likeFunctionClass`/`regexpLikeFunctionClass`: a one-digit
         // boolean.
         // `ast.Like` and `ast.Regexp` are in Go's `booleanFunctions` map, so

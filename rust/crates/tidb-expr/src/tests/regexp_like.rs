@@ -36,3 +36,21 @@ fn regexp_like_source_vectors_reach_the_rewritten_evaluator() {
 
     assert!(chunk_e("regexp_like('abc', 'abc', 'p')").contains("Invalid match type"));
 }
+
+/// Positional regexp functions from `pkg/expression/builtin_regexp_test.go`.
+/// Their scalar implementations already share the Go algorithms; this test
+/// proves the rewritten SQL path reaches them with the source argument casts.
+#[test]
+fn positional_regexp_source_vectors_reach_the_rewritten_evaluator() {
+    for (expr, want) in [
+        ("regexp_substr('abc abd abe', 'ab.', 1, 2)", "STR:abd"),
+        ("regexp_substr('你好啊', '好', 2)", "STR:好"),
+        ("regexp_instr('abc abd abe', 'ab.', 3, 2)", "INT:9"),
+        ("regexp_instr('你好啊', '好', 2)", "INT:2"),
+        ("regexp_replace('abc abd', 'ab.', 'X')", "STR:X X"),
+        ("regexp_replace('abc abd', 'ab.', 'X', 1, 2)", "STR:abc X"),
+    ] {
+        assert_eq!(e(expr), want, "AST: {expr}");
+        assert_eq!(chunk_e(expr), want, "rewritten: {expr}");
+    }
+}

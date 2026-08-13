@@ -208,6 +208,11 @@ pub(crate) const fn int_arg_mask(name: &str) -> ArgMask {
         // append(argTps, types.ETInt) }` (locateFunctionClass) -- the
         // three-argument form's start position.
         b"LOCATE" => 1 << 2,
+        // `builtin_regexp.go`: position, occurrence, and return option are
+        // the integer tail of the positional regexp signatures.
+        b"REGEXP_SUBSTR" => (1 << 2) | (1 << 3),
+        b"REGEXP_INSTR" => (1 << 2) | (1 << 3) | (1 << 4),
+        b"REGEXP_REPLACE" => (1 << 3) | (1 << 4),
         _ => 0,
     }
 }
@@ -325,6 +330,12 @@ const fn string_arg_mask(name: &str) -> ArgMask {
         // `builtin_string.go:2029` `types.ETString, types.ETString`
         // (lTrimFunctionClass) and `:2098` the same for `rTrimFunctionClass`.
         b"LTRIM" | b"RTRIM" => 1 << 0,
+        // `builtin_regexp.go`: subject/pattern are strings in every member;
+        // match_type and replacement occupy their source-specific tails.
+        b"REGEXP_LIKE" => (1 << 0) | (1 << 1) | (1 << 2),
+        b"REGEXP_SUBSTR" => (1 << 0) | (1 << 1) | (1 << 4),
+        b"REGEXP_INSTR" => (1 << 0) | (1 << 1) | (1 << 5),
+        b"REGEXP_REPLACE" => (1 << 0) | (1 << 1) | (1 << 2) | (1 << 5),
         _ => 0,
     }
 }
