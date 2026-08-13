@@ -27,6 +27,8 @@
 //!   [`PoolCallbackCtx`] handle over the already-locked state exposing
 //!   exactly those non-locking operations — the same reachable behavior,
 //!   made sound.
+//! - Go function values are copied into inherited pools while retaining their
+//!   captured state. Rust stores callbacks in `Arc`s for the same ownership.
 //! - Go's nil-`*Budget` receiver no-ops (`TestNilBudget`) are a Go idiom;
 //!   Rust callers hold a `Budget` value, so there is no nil receiver to
 //!   emulate.
@@ -116,13 +118,15 @@ impl PoolCallbackCtx<'_, '_> {
     }
 }
 
-type OutOfCapacityCb =
-    Box<dyn for<'a, 'g> Fn(OutOfCapacityActionArgs<'a, 'g>) -> Result<(), PoolError> + Send + Sync>;
-type OutOfLimitCb =
-    Box<dyn for<'a, 'g> Fn(PoolCallbackCtx<'a, 'g>) -> Result<(), PoolError> + Send + Sync>;
+type OutOfCapacityCallback =
+    dyn for<'a, 'g> Fn(OutOfCapacityActionArgs<'a, 'g>) -> Result<(), PoolError> + Send + Sync;
+type OutOfLimitCallback =
+    dyn for<'a, 'g> Fn(PoolCallbackCtx<'a, 'g>) -> Result<(), PoolError> + Send + Sync;
+type OutOfCapacityCb = Arc<OutOfCapacityCallback>;
+type OutOfLimitCb = Arc<OutOfLimitCallback>;
 
 /// Actions taken when the pool meets certain conditions (Go `PoolActions`).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct PoolActions {
     /// Called when the pool is out of capacity.
     pub out_of_capacity: Option<OutOfCapacityCb>,
@@ -345,22 +349,18 @@ impl ResourcePool {
         })
     }
 
-    /// Creates a child-configured pool inheriting align/blocks (Go
-    /// `NewResourcePoolInheritWithLimit`; actions do not transfer here since
-    /// Go copies the parent's struct — install them via the setters).
+    /// Creates a child-configured pool inheriting actions, alignment, and the
+    /// unused-block threshold (Go `NewResourcePoolInheritWithLimit`).
     pub fn new_inherit_with_limit(self: &Arc<Self>, name: &str, limit: i64) -> Arc<ResourcePool> {
-        let (align, blocks) = {
+        let (align, blocks, actions) = {
             let inner = self.inner.lock().unwrap();
-            (inner.alloc_align_size, inner.max_unused_blocks)
+            (
+                inner.alloc_align_size,
+                inner.max_unused_blocks,
+                inner.actions.clone(),
+            )
         };
-        Self::new(
-            new_pool_uid(),
-            name,
-            limit,
-            align,
-            blocks,
-            PoolActions::default(),
-        )
+        Self::new(new_pool_uid(), name, limit, align, blocks, actions)
     }
 
     /// Starts with no reserved quota (Go `StartNoReserved`).
@@ -528,9 +528,8 @@ impl ResourcePool {
                     inner.limit,
                 ));
             }
-            let cb = inner.actions.out_of_limit.take().unwrap();
+            let cb = Arc::clone(inner.actions.out_of_limit.as_ref().unwrap());
             let result = cb(PoolCallbackCtx { pool: self, inner });
-            inner.actions.out_of_limit = Some(cb);
             result?;
         }
 
@@ -561,12 +560,11 @@ impl ResourcePool {
                 return Ok(());
             }
             if inner.actions.out_of_capacity.is_some() {
-                let cb = inner.actions.out_of_capacity.take().unwrap();
+                let cb = Arc::clone(inner.actions.out_of_capacity.as_ref().unwrap());
                 let result = cb(OutOfCapacityActionArgs {
                     pool: PoolCallbackCtx { pool: self, inner },
                     request: need,
                 });
-                inner.actions.out_of_capacity = Some(cb);
                 result?;
                 inner.budget.used += request;
                 return Ok(());
@@ -678,13 +676,13 @@ impl ResourcePool {
     }
 
     /// Sets the out-of-capacity action (Go `SetOutOfCapacityAction`).
-    pub fn set_out_of_capacity_action(&self, f: OutOfCapacityCb) {
-        self.inner.lock().unwrap().actions.out_of_capacity = Some(f);
+    pub fn set_out_of_capacity_action(&self, f: Box<OutOfCapacityCallback>) {
+        self.inner.lock().unwrap().actions.out_of_capacity = Some(Arc::from(f));
     }
 
     /// Sets the out-of-limit action (Go `SetOutOfLimitAction`).
-    pub fn set_out_of_limit_action(&self, f: OutOfLimitCb) {
-        self.inner.lock().unwrap().actions.out_of_limit = Some(f);
+    pub fn set_out_of_limit_action(&self, f: Box<OutOfLimitCallback>) {
+        self.inner.lock().unwrap().actions.out_of_limit = Some(Arc::from(f));
     }
 
     /// Adjusts the budget (Go `AdjustBudget`).
@@ -1004,6 +1002,35 @@ mod tests {
         acc.grow(100).unwrap();
 
         assert_eq!(min_allocation, parent.allocated());
+    }
+
+    #[test]
+    fn inherited_pool_keeps_parent_actions() {
+        let capacity_calls = Arc::new(AtomicI64::new(0));
+        let limit_calls = Arc::new(AtomicI64::new(0));
+        let parent = ResourcePool::new_default("parent", 1);
+
+        let calls = Arc::clone(&capacity_calls);
+        parent.set_out_of_capacity_action(Box::new(move |mut args| {
+            calls.fetch_add(1, SeqCst);
+            args.pool.force_add_cap(args.request);
+            Ok(())
+        }));
+        let calls = Arc::clone(&limit_calls);
+        parent.set_out_of_limit_action(Box::new(move |_pool| {
+            calls.fetch_add(1, SeqCst);
+            Err(PoolError("inherited limit action".to_string()))
+        }));
+
+        let child = parent.new_inherit_with_limit("child", 1);
+        child.start_no_reserved(None);
+        let mut budget = child.create_budget();
+
+        budget.grow(1).expect("inherited capacity action");
+        assert_eq!(capacity_calls.load(SeqCst), 1);
+        let err = budget.grow(1).expect_err("inherited limit action");
+        assert_eq!(err.0, "inherited limit action");
+        assert_eq!(limit_calls.load(SeqCst), 1);
     }
 
     #[test]
