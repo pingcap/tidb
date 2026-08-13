@@ -2083,4 +2083,14 @@ fn information_schema_rows_join_stored_tables_on_either_side() {
         ],
         "top-level set-operation terms use the same virtual rows"
     );
+    assert_eq!(
+        row_text(session.run(
+            "WITH named_virtual AS ( \
+             SELECT table_name FROM information_schema.tables \
+             WHERE table_schema = 'test' ) \
+             SELECT table_name FROM named_virtual WHERE table_name = 'joined_base'"
+        )),
+        vec![vec!["joined_base".to_owned()]],
+        "CTE bodies see the same statement-scoped virtual rows"
+    );
 }

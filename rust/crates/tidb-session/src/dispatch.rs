@@ -65,6 +65,11 @@ fn information_schema_tables_in_query(
 ) {
     match query {
         tidb_ast::QueryStmt::Select(select) => {
+            if let Some(with) = &select.with {
+                for cte in &with.ctes {
+                    information_schema_tables_in_query(&cte.query, current_db, out);
+                }
+            }
             if let Some(join) = &select.from {
                 information_schema_tables_in_join(&join.left, current_db, out);
                 if let Some(right) = &join.right {
@@ -73,6 +78,11 @@ fn information_schema_tables_in_query(
             }
         }
         tidb_ast::QueryStmt::SetOpr(set_opr) => {
+            if let Some(with) = &set_opr.with {
+                for cte in &with.ctes {
+                    information_schema_tables_in_query(&cte.query, current_db, out);
+                }
+            }
             for term in &set_opr.terms {
                 match &term.body {
                     tidb_ast::SetOprTermBody::Select(select) => {
@@ -277,9 +287,30 @@ impl Session {
         select: &tidb_ast::SelectStmt,
     ) -> Result<Option<StmtOutput>, DriverError> {
         let Some(join) = &select.from else {
-            return Ok(None);
+            let Some(with) = &select.with else {
+                return Ok(None);
+            };
+            let mut table_names = Vec::new();
+            for cte in &with.ctes {
+                information_schema_tables_in_query(&cte.query, &self.current_db, &mut table_names);
+            }
+            if table_names.is_empty() {
+                return Ok(None);
+            }
+            let ctx = self.statement_context(false);
+            let scratch = self.materialize_information_schema_catalog(table_names, &ctx)?;
+            let current_db = self.current_db.clone();
+            let (columns, rows) =
+                tidb_executor::run_select_meta_stmt(select, &scratch, &current_db, &ctx)?;
+            self.drain_eval_warnings(&ctx);
+            return Ok(Some(StmtOutput::Rows { columns, rows }));
         };
         let mut table_names = Vec::new();
+        if let Some(with) = &select.with {
+            for cte in &with.ctes {
+                information_schema_tables_in_query(&cte.query, &self.current_db, &mut table_names);
+            }
+        }
         information_schema_tables_in_join(&join.left, &self.current_db, &mut table_names);
         if let Some(right) = &join.right {
             information_schema_tables_in_join(right, &self.current_db, &mut table_names);
