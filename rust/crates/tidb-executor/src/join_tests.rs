@@ -130,8 +130,13 @@ pub(super) fn join_with_memory(
     width: usize,
     memory: StatementMemory,
 ) -> JoinExec<NoColumns> {
+    let output_width = if matches!(kind, JoinKind::Semi | JoinKind::AntiSemi) {
+        width
+    } else {
+        2 * width
+    };
     JoinExec::new(
-        ExecutorMeta::new(schema_of(2 * width), 1, CHUNK, CHUNK),
+        ExecutorMeta::new(schema_of(output_width), 1, CHUNK, CHUNK),
         kind,
         conditions,
         Box::new(RowSource::new(left, width)),
@@ -198,7 +203,13 @@ fn fixture(n: i64, modulus: i64) -> Vec<Vec<Datum>> {
 /// wrong is exactly the failure a bucket-based key can introduce.
 #[test]
 fn hash_path_matches_the_nested_loop_row_for_row() {
-    for kind in [JoinKind::Inner, JoinKind::Left, JoinKind::Right] {
+    for kind in [
+        JoinKind::Inner,
+        JoinKind::Left,
+        JoinKind::Right,
+        JoinKind::Semi,
+        JoinKind::AntiSemi,
+    ] {
         let left = fixture(200, 7);
         let right = fixture(200, 5);
         let mut hashed = join_of(kind, vec![eq_on(0, 0, 2)], left.clone(), right.clone(), 2);

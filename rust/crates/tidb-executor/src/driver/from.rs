@@ -1953,6 +1953,8 @@ pub(crate) fn build_join(
             JoinKind::Inner => tidb_planner::find_best_task::LogicalJoinType::Inner,
             JoinKind::Left => tidb_planner::find_best_task::LogicalJoinType::LeftOuter,
             JoinKind::Right => tidb_planner::find_best_task::LogicalJoinType::RightOuter,
+            JoinKind::Semi => tidb_planner::find_best_task::LogicalJoinType::Semi,
+            JoinKind::AntiSemi => tidb_planner::find_best_task::LogicalJoinType::AntiSemi,
         },
         keys: &split.keys,
         left_width,

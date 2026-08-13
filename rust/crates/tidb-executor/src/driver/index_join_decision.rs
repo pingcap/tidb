@@ -491,6 +491,7 @@ pub(crate) fn index_join_decision(
         crate::join::JoinKind::Inner => &[false, true],
         crate::join::JoinKind::Left => &[false],
         crate::join::JoinKind::Right => &[true],
+        crate::join::JoinKind::Semi | crate::join::JoinKind::AntiSemi => &[],
     };
     for lookup_is_left in sides.iter().copied() {
         let (inner, outer) = if lookup_is_left {

@@ -176,6 +176,10 @@ pub enum JoinKind {
     Left,
     /// `RIGHT [OUTER] JOIN`: every right row survives, padded with NULLs.
     Right,
+    /// `EXISTS`: emit the left row once when at least one right row matches.
+    Semi,
+    /// `NOT EXISTS`: emit the left row once when no right row matches.
+    AntiSemi,
 }
 
 /// The hash path's live state; absent until the first `next()`, and never
@@ -448,6 +452,9 @@ pub struct JoinExec<C: Columns> {
     meta: ExecutorMeta,
     kind: JoinKind,
     conditions: Vec<Expression>,
+    /// The joined left-then-right row types the conditions read. Semi joins
+    /// return only their left child, so this cannot be derived from `meta`.
+    condition_types: Vec<FieldType>,
     left: Box<dyn Executor>,
     right: Box<dyn Executor>,
     ctx: C,
@@ -512,12 +519,19 @@ impl<C: Columns> JoinExec<C> {
         memory: StatementMemory,
     ) -> Self {
         let keys = crate::hash_join::split_equi(&conditions, left.ret_field_types().len()).keys;
+        let condition_types = left
+            .ret_field_types()
+            .iter()
+            .chain(right.ret_field_types())
+            .cloned()
+            .collect();
         let tracker = memory.operator_tracker(meta.id());
         let disk_tracker = memory.operator_disk_tracker(meta.id());
         JoinExec {
             meta,
             kind,
             conditions,
+            condition_types,
             left,
             right,
             ctx,
@@ -651,8 +665,7 @@ impl<C: Columns> JoinExec<C> {
             return Ok(true);
         }
         self.condition_evals.set(self.condition_evals.get() + 1);
-        let types = self.meta.ret_field_types().to_vec();
-        let mut chunk = Chunk::new_with_capacity(&types, 1);
+        let mut chunk = Chunk::new_with_capacity(&self.condition_types, 1);
         for (i, value) in joined.iter().enumerate() {
             chunk.append_datum(i, value);
         }
@@ -714,10 +727,25 @@ impl<C: Columns> JoinExec<C> {
                 continue;
             }
             matched = true;
-            Self::append(req, &joined);
+            match self.kind {
+                JoinKind::Inner | JoinKind::Left | JoinKind::Right => {
+                    Self::append(req, &joined);
+                }
+                JoinKind::Semi => {
+                    Self::append(req, outer_row);
+                    break;
+                }
+                JoinKind::AntiSemi => break,
+            }
         }
-        if !matched && self.kind != JoinKind::Inner {
-            Self::append(req, &self.padded_row(outer_row));
+        if !matched {
+            match self.kind {
+                JoinKind::Left | JoinKind::Right => {
+                    Self::append(req, &self.padded_row(outer_row));
+                }
+                JoinKind::AntiSemi => Self::append(req, outer_row),
+                JoinKind::Inner | JoinKind::Semi => {}
+            }
         }
         Ok(())
     }
@@ -728,7 +756,12 @@ impl<C: Columns> JoinExec<C> {
     /// `driver::index_join_decision` makes it, and only after checking that
     /// the probed object's key columns ARE the join's own equality columns.
     pub(crate) fn set_index_lookup_plan(&mut self, plan: IndexLookupPlan) {
-        self.index_lookup = Some(plan);
+        if matches!(
+            self.kind,
+            JoinKind::Inner | JoinKind::Left | JoinKind::Right
+        ) {
+            self.index_lookup = Some(plan);
+        }
     }
 
     /// Whether this join looks its inner side up per outer batch.
@@ -981,7 +1014,12 @@ impl<C: Columns> JoinExec<C> {
     /// both sides' access paths ALREADY provide the order. A wrong promise
     /// here loses rows silently, which is why nothing else may make it.
     pub(crate) fn set_merge_plan(&mut self, plan: crate::merge_join_plan::MergeJoinPlan) {
-        self.merge = Some(plan);
+        if matches!(
+            self.kind,
+            JoinKind::Inner | JoinKind::Left | JoinKind::Right
+        ) {
+            self.merge = Some(plan);
+        }
     }
 
     /// Whether this join merges its two sorted children.

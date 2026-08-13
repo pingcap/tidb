@@ -260,6 +260,18 @@ fn collect_outer_columns(
     }
 }
 
+/// Correlated columns referenced by one expression, using the same lexical
+/// inner-then-outer resolution as [`collect_correlated_columns_query`].
+pub(crate) fn collect_correlated_columns_expr(
+    expr: &tidb_ast::Expr,
+    inner: &FromScope,
+    outer: &FromScope,
+) -> Vec<Vec<String>> {
+    let mut found = Vec::new();
+    collect_outer_columns(expr, inner, outer, &mut found);
+    found
+}
+
 /// Replaces each correlated column reference with the literal for the outer
 /// row's value, which is this port's equivalent of Go's apply loop writing
 /// `*col.Data` before re-running the inner plan.

@@ -1320,6 +1320,70 @@ impl PlanTrace {
         Ok(())
     }
 
+    /// Go's decorrelated `SemiJoin` / `AntiSemiJoin`: the right child is
+    /// built once and the left child is emitted at most once per row.
+    pub(crate) fn semi_join(
+        &mut self,
+        conditions: &[&tidb_ast::Expr],
+        scope: &FromScope,
+        current_db: &str,
+        equal_mask: &[bool],
+        anti: bool,
+    ) -> Result<(), ()> {
+        if conditions.len() != equal_mask.len() {
+            return Err(());
+        }
+        let qualify = Qualifier {
+            db: current_db,
+            scope,
+        };
+        let mut equal = Vec::new();
+        let mut other = Vec::new();
+        for (condition, is_equal) in conditions.iter().zip(equal_mask) {
+            let rendered = qualify.expr(condition);
+            if *is_equal {
+                equal.push(rendered);
+            } else {
+                other.push(rendered);
+            }
+        }
+        other.sort();
+        let mut info = String::new();
+        if equal.is_empty() {
+            info.push_str("CARTESIAN ");
+        }
+        info.push_str(if anti { "anti semi join" } else { "semi join" });
+        if !equal.is_empty() {
+            info.push_str(", equal:[");
+            info.push_str(&equal.join(" "));
+            info.push(']');
+        }
+        if !other.is_empty() {
+            info.push_str(", other cond:");
+            info.push_str(&other.join(", "));
+        }
+
+        let (Some(mut right), Some(mut left)) = (self.stack.pop(), self.stack.pop()) else {
+            return Err(());
+        };
+        right.label = "(Build)";
+        left.label = "(Probe)";
+        let est_rows = left.est_rows.map(|rows| rows * SELECTIVITY_FACTOR);
+        self.stack.push(PlanNode {
+            name: "HashJoin",
+            est_rows,
+            access: String::new(),
+            info,
+            left_side_child: None,
+            info_tail: String::new(),
+            label: "",
+            children: vec![right, left],
+            act_rows: None,
+            key_ndv_ratio: None,
+        });
+        Ok(())
+    }
+
     /// The write operator itself (`Insert`/`Update`/`Delete`), over the read
     /// subtree already on the stack (if any).
     ///

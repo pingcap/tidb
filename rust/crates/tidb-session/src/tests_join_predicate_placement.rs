@@ -38,15 +38,12 @@
 //! # Remaining gaps
 //!
 //! Rows agree everywhere. Outer-to-inner conversion now matches all eight Go
-//! cases. Two independent plan gaps remain:
+//! cases. One independent plan gap remains:
 //!
 //! * A repeated single-side join conjunct is not deduplicated before it is
 //!   left as a residual condition.
-//! * **`NOT EXISTS` is not an anti semi join.** Go's
-//!   `TestDeriveNotNullConds` row 12 plans one; here it runs as a correlated
-//!   `Selection` with no join operator at all.
 //!
-//! None changes a result; each changes how much work the store performs.
+//! It changes no result, but it changes how much work the store performs.
 
 #![cfg(test)]
 
@@ -882,8 +879,8 @@ fn mixed_ordinary_and_null_safe_hash_keys_keep_their_own_null_rules() {
     );
 }
 
-/// The remaining plan-shape gaps this table exposed, pinned until their
-/// owning planner rules land.
+/// The remaining plan-shape gap this table exposed, pinned until its owning
+/// planner rule lands.
 #[test]
 fn the_join_shapes_this_tier_builds_where_tidb_builds_a_better_one() {
     let mut session = signed_table_session();
@@ -894,11 +891,80 @@ fn the_join_shapes_this_tier_builds_where_tidb_builds_a_better_one() {
         join_info(&mut session, sql),
         "CARTESIAN inner join, other cond:gt(test.t1.a, 1), gt(test.t1.a, 1)"
     );
+}
 
-    // `NOT EXISTS` runs as a correlated Selection: no join operator at all,
-    // where TiDB plans `anti semi join, equal:[eq(test.t.e, test.t.e)]`.
+/// Go's `rule_decorrelate` moves the correlated inner Selection into an anti
+/// semi join, so the inner table is built once instead of re-run for every
+/// outer row.
+#[test]
+fn correlated_not_exists_is_an_anti_semi_hash_join() {
+    let mut session = signed_table_session();
     let sql = "select * from t t1 where not exists (select * from t t2 where t2.e = t1.e)";
+    assert_eq!(
+        join_type(&mut session, sql),
+        Some("anti semi join".to_owned())
+    );
+    let info = join_info(&mut session, sql);
+    assert!(
+        !info.contains("CARTESIAN") && info.contains("equal:[eq("),
+        "expected a correlated equality hash key, got {info}"
+    );
+}
+
+#[test]
+fn decorrelated_exists_keeps_semijoin_row_and_condition_semantics() {
+    let mut session = signed_table_session();
+    let cases = [
+        (
+            "select t1.a from t t1 where exists \
+             (select 1 from t t2 where t2.e = t1.e)",
+            &["1", "3", "5"][..],
+        ),
+        (
+            "select t1.a from t t1 where exists \
+             (select 1 from t t2 where t2.b = t1.b)",
+            &["1", "2", "3", "4", "5"][..],
+        ),
+        (
+            "select t1.a from t t1 where exists \
+             (select 1 from t t2 where t2.a < t1.a)",
+            &["2", "3", "4", "5"][..],
+        ),
+        (
+            "select t1.a from t t1 where exists \
+             (select 1 from t t2 where t2.e = t1.e and t2.a = 3)",
+            &["3"][..],
+        ),
+        (
+            "select t1.a from t t1 where t1.a > 1 and exists \
+             (select 1 from t t2 where t2.e = t1.e) and exists \
+             (select 1 from t t3 where t3.a < t1.a)",
+            &["3", "5"][..],
+        ),
+    ];
+    for (sql, expected) in cases {
+        let actual: Vec<String> = rows(&mut session, sql)
+            .into_iter()
+            .map(|row| row[0].clone())
+            .collect();
+        assert_eq!(actual, expected, "rows of `{sql}`");
+    }
+}
+
+#[test]
+fn no_decorrelate_hint_keeps_the_correlated_apply() {
+    let mut session = signed_table_session();
+    let sql = "select t1.a from t t1 where exists \
+               (select /*+ NO_DECORRELATE() */ 1 from t t2 where t2.e = t1.e)";
     assert_eq!(join_type(&mut session, sql), None);
+    assert_eq!(
+        rows(&mut session, sql),
+        [
+            vec!["1".to_owned()],
+            vec!["3".to_owned()],
+            vec!["5".to_owned()]
+        ]
+    );
 }
 
 /// A repeated conjunct survives twice in the join's `other cond`, which is

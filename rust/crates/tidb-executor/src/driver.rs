@@ -289,6 +289,7 @@ mod agg_build;
 mod agg_select;
 mod catalog;
 mod clause_resolve;
+mod decorrelate_exists;
 mod derived_agg_pruning;
 mod dml;
 mod errors;
@@ -965,60 +966,72 @@ pub(crate) fn run_select_traced(
         }
     }
     if let Some(predicate) = &executed_where {
-        let mut predicate = predicate.clone();
-        let mut source_schema = source_schema;
-        loop {
-            let mut correlated = None;
-            predicate = extract_correlated_subquery(
-                &predicate,
-                &current_scope,
-                catalog,
-                current_db,
-                current_scope.width(),
-                &mut correlated,
-                ctx,
-            )?;
-            let Some(correlated) = correlated else { break };
-            (source, current_scope, source_schema) = append_correlated_apply(
-                source,
-                &current_scope,
-                correlated,
-                catalog,
-                current_db,
-                ctx,
-            )?;
-        }
-        let predicate_resolver = ScopeResolver {
-            scope: &current_scope,
-        };
-        let mut pred = rewrite_expr_resolved(&predicate, &predicate_resolver)
-            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-        refine_comparisons(&mut pred, ctx);
-        let explained_where = trace.is_some().then(|| {
-            let mut predicates = pushed_where;
-            predicates.push(pred.clone());
-            predicates
-        });
-        source = Box::new(SelectionExec::new(
-            ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
-            vec![pred],
+        let decorrelated = decorrelate_exists::decorrelate_where(
             source,
-            ctx.clone(),
-            ctx.statement_memory(),
-        ));
-        if let Some(trace) = trace.as_deref_mut() {
-            // An Apply below this selection (a correlated subquery in the
-            // WHERE) adds an executor the recorder has never printed, so it
-            // stays out of the trace rather than changing the shape EXPLAIN
-            // reports.
-            if let Some(written) = &traced_select.where_clause {
-                trace.selection(
-                    written,
-                    explained_where.as_deref(),
-                    &qualify,
-                    select_stats_selectivity(select, catalog, current_db, &scope),
-                );
-                source = trace.meter(source);
+            &current_scope,
+            predicate,
+            catalog,
+            current_db,
+            ctx,
+            trace.as_deref_mut(),
+        )?;
+        source = decorrelated.source;
+        if let Some(mut predicate) = decorrelated.residual {
+            let selection_written = predicate.clone();
+            let mut source_schema = source_schema;
+            loop {
+                let mut correlated = None;
+                predicate = extract_correlated_subquery(
+                    &predicate,
+                    &current_scope,
+                    catalog,
+                    current_db,
+                    current_scope.width(),
+                    &mut correlated,
+                    ctx,
+                )?;
+                let Some(correlated) = correlated else { break };
+                (source, current_scope, source_schema) = append_correlated_apply(
+                    source,
+                    &current_scope,
+                    correlated,
+                    catalog,
+                    current_db,
+                    ctx,
+                )?;
+            }
+            let predicate_resolver = ScopeResolver {
+                scope: &current_scope,
+            };
+            let mut pred = rewrite_expr_resolved(&predicate, &predicate_resolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            refine_comparisons(&mut pred, ctx);
+            let explained_where = trace.is_some().then(|| {
+                let mut predicates = pushed_where;
+                predicates.push(pred.clone());
+                predicates
+            });
+            source = Box::new(SelectionExec::new(
+                ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
+                vec![pred],
+                source,
+                ctx.clone(),
+                ctx.statement_memory(),
+            ));
+            if let Some(trace) = trace.as_deref_mut() {
+                // An Apply below this selection (a correlated subquery in the
+                // WHERE) adds an executor the recorder has never printed, so it
+                // stays out of the trace rather than changing the shape EXPLAIN
+                // reports.
+                if traced_select.where_clause.is_some() {
+                    trace.selection(
+                        &selection_written,
+                        explained_where.as_deref(),
+                        &qualify,
+                        select_stats_selectivity(select, catalog, current_db, &scope),
+                    );
+                    source = trace.meter(source);
+                }
             }
         }
     }
