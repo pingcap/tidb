@@ -740,6 +740,107 @@ pub(crate) fn merge_join_decision(
     decide(join, &left, &right, &joined, required, offered)
 }
 
+/// Go `getEnforcedMergeJoin`: the merge plan a `MERGE_JOIN` hint admits even
+/// when neither child already has a matching access order.
+///
+/// Unlike [`merge_join_decision`], this does not consult the children'
+/// possible orders. It resolves every column equality, moves the keys named
+/// by the parent's required property to the front, and lets the caller add a
+/// root `Sort` for whichever child does not deliver that order naturally.
+pub(crate) fn enforced_merge_join_decision(
+    join: &Join,
+    catalog: &Catalog,
+    current_db: &str,
+    required: &tidb_planner::physical_property::PhysicalProperty,
+    offered: Offered<'_>,
+) -> Option<MergeDecision> {
+    let right_node = join.right.as_ref()?;
+    if join.natural || !join.using.is_empty() {
+        return None;
+    }
+    let left = possible_properties(&join.left, catalog, current_db, offered)?;
+    let right = possible_properties(right_node, catalog, current_db, offered)?;
+    let joined = SideProperties::concat(&left, &right)?;
+
+    let mut conjuncts = Vec::new();
+    if let Some(on) = join.on.as_ref() {
+        crate::plan_trace::collect_and(on, &mut conjuncts);
+    }
+    if join.tp == JoinType::Cross {
+        let repeated: Vec<&Expr> = offered
+            .iter()
+            .copied()
+            .filter(|conjunct| !conjuncts.contains(conjunct))
+            .collect();
+        conjuncts.extend(repeated);
+    }
+    let mut keys = Vec::new();
+    for conjunct in conjuncts {
+        let Expr::Binary(tidb_ast::BinaryOp::Eq, lhs, rhs) = conjunct else {
+            continue;
+        };
+        let (Expr::Column(left_path), Expr::Column(right_path)) = (&**lhs, &**rhs) else {
+            continue;
+        };
+        let pair = match (left.offset_of(left_path), right.offset_of(right_path)) {
+            (Some(l), Some(r)) => Some((l, r)),
+            _ => match (left.offset_of(right_path), right.offset_of(left_path)) {
+                (Some(l), Some(r)) => Some((l, r)),
+                _ => None,
+            },
+        };
+        if let Some((l, r)) = pair {
+            keys.push(MergeJoinKey { left: l, right: r });
+        }
+    }
+    if keys.is_empty() {
+        return None;
+    }
+
+    let (all_same, desc) = required.all_same_order();
+    if !all_same {
+        return None;
+    }
+    let mut front = Vec::new();
+    for item in &required.sort_items {
+        let col = item.col as usize;
+        let at = keys
+            .iter()
+            .position(|key| key.left == col || key.right + left.width == col)?;
+        if !front.contains(&at) {
+            front.push(at);
+        }
+        if (join.tp == JoinType::Left && keys[at].right + left.width == col)
+            || (join.tp == JoinType::Right && keys[at].left == col)
+        {
+            return None;
+        }
+    }
+    let mut ordered = Vec::with_capacity(keys.len());
+    ordered.extend(front.iter().map(|at| keys[*at]));
+    ordered.extend(
+        keys.into_iter()
+            .enumerate()
+            .filter_map(|(at, key)| (!front.contains(&at)).then_some(key)),
+    );
+    let names = ordered
+        .iter()
+        .map(|key| {
+            Some((
+                joined.column_at(key.left)?,
+                joined.column_at(key.right + left.width)?,
+            ))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(MergeDecision {
+        plan: MergeJoinPlan {
+            keys: ordered,
+            desc,
+        },
+        names,
+    })
+}
+
 /// The property a `SELECT`'s own `FROM` must satisfy so that the `SELECT`'s
 /// OUTPUT carries `required` -- the DOWNWARD half of the projection rule
 /// [`derived_properties`] already ports upward.

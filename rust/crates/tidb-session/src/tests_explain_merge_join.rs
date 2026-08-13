@@ -287,6 +287,54 @@ fn a_join_over_a_derived_merge_join_merges_and_all_three_scans_keep_order() {
     );
 }
 
+/// A `MERGE_JOIN` hint admits Go's enforced merge candidate when neither
+/// child has to use an ordered access path. The two root Sorts satisfy the
+/// merge keys; both scans remain unordered.
+#[test]
+fn a_merge_hint_enforces_child_sorts_without_ordered_scans() {
+    let mut session = Session::new();
+    for name in ["m1", "m2"] {
+        session
+            .run(&format!("create table {name}(a int, b varchar(32))"))
+            .unwrap();
+        session
+            .run(&format!("insert into {name} values(1,'x'),(2,'y')"))
+            .unwrap();
+    }
+    let joined = plan(
+        &mut session,
+        "explain select /*+ merge_join(m1, m2) */ * \
+         from m1 join m2 on m1.b = m2.b",
+    )
+    .join("\n");
+    assert_eq!(
+        joined.matches("MergeJoin").count(),
+        1,
+        "the hinted inner join must use the enforced merge candidate:\n{joined}"
+    );
+    assert_eq!(
+        joined.matches("Sort").count(),
+        2,
+        "each unordered child needs one root Sort:\n{joined}"
+    );
+    assert_eq!(
+        joined.matches("keep order:true").count(),
+        0,
+        "enforcement must not claim an ordered table scan:\n{joined}"
+    );
+    assert_eq!(
+        row_text(session.run(
+            "select /*+ merge_join(m1, m2) */ m1.a, m2.a \
+             from m1 join m2 on m1.b = m2.b order by m1.a"
+        )),
+        vec![
+            vec!["1".to_owned(), "1".to_owned()],
+            vec!["2".to_owned(), "2".to_owned()],
+        ],
+        "the enforced order must be consumed by the merge executor"
+    );
+}
+
 /// The rows that plan returns, pinned against the recording's OWN row block
 /// (`r/planner/core/join_reorder_through_projection.result:28`, over that
 /// suite's data). A merge join promises order it must actually be given; this

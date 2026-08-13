@@ -200,6 +200,17 @@ impl JoinMethodHints {
         // index join is available.
         !Self::matches(&self.index, sides)
     }
+
+    /// Whether this site is named by a `MERGE_JOIN` / `TIDB_SMJ` hint.
+    ///
+    /// This is deliberately separate from [`Self::merge_join_allowed`]. The
+    /// latter answers whether the ordinary merge candidates remain in the
+    /// enumeration; this answer is what makes `GetMergeJoin` append
+    /// `getEnforcedMergeJoin`, whose children may satisfy the key order with
+    /// root `Sort` enforcers instead of an ordered access path.
+    pub(crate) fn forces_merge(&self, sides: (Option<&str>, Option<&str>)) -> bool {
+        Self::matches(&self.merge, sides)
+    }
 }
 
 /// Go's `util.ExtractTableAlias` for both children of `join`.

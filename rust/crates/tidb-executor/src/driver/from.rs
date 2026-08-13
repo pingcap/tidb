@@ -1552,7 +1552,11 @@ pub(crate) fn build_join(
     // The required property this join is itself asked for is the empty one:
     // no caller demands an order from a join yet, and the empty property's
     // `AllSameOrder` is Go's ascending answer.
-    let merge = crate::driver::merge_decision::merge_join_decision(
+    let hinted_sides = crate::driver::join_method_hints::side_aliases(join);
+    let forced_merge = demand.join_hints.is_some_and(|hints| {
+        hints.forces_merge((hinted_sides.0.as_deref(), hinted_sides.1.as_deref()))
+    });
+    let ordinary_merge = crate::driver::merge_decision::merge_join_decision(
         join,
         catalog,
         current_db,
@@ -1569,12 +1573,22 @@ pub(crate) fn build_join(
     // by their hint. See `driver::join_method_hints`.
     .filter(|_| {
         demand.join_hints.is_none_or(|hints| {
-            let (left, right) = crate::driver::join_method_hints::side_aliases(join);
             hints.merge_join_allowed(
-                (left.as_deref(), right.as_deref()),
+                (hinted_sides.0.as_deref(), hinted_sides.1.as_deref()),
                 required.is_sort_item_empty(),
             )
         })
+    });
+    let merge = ordinary_merge.or_else(|| {
+        forced_merge.then(|| {
+            crate::driver::merge_decision::enforced_merge_join_decision(
+                join,
+                catalog,
+                current_db,
+                required,
+                demand.offered,
+            )
+        })?
     });
     // The same walk's other answer: the orders each side's output already
     // carries, which is Go's `p.LeftProperties` / `p.RightProperties` and the
@@ -1641,7 +1655,7 @@ pub(crate) fn build_join(
         // unsaid again (`PlanTrace::retract_child_keep_order`).
         None => index_join_child_props(required, sides.as_ref().map(|(left, _)| left.width)),
     };
-    let (mut left_exec, left_scope, left_delivered) = build_from(
+    let (mut left_exec, left_scope, mut left_delivered) = build_from(
         &join.left,
         catalog,
         current_db,
@@ -1650,6 +1664,27 @@ pub(crate) fn build_join(
         demand,
         &left_required,
     )?;
+    if forced_merge {
+        if let Some(decision) = &merge {
+            let keys: Vec<usize> = decision.plan.keys.iter().map(|key| key.left).collect();
+            if !crate::driver::merge_decision::delivers(&left_delivered, &keys) {
+                let names = decision
+                    .names
+                    .iter()
+                    .map(|(left, _)| enforced_merge_key_name(left, current_db))
+                    .collect::<Vec<_>>();
+                left_exec = enforced_merge_sort(
+                    left_exec,
+                    &keys,
+                    decision.plan.desc,
+                    &names,
+                    ctx,
+                    trace.as_deref_mut(),
+                );
+                left_delivered = vec![keys];
+            }
+        }
+    }
     let Some(right_node) = &join.right else {
         // The single-table wrapper the parser always produces: it delivers
         // exactly what its one child does.
@@ -1679,7 +1714,7 @@ pub(crate) fn build_join(
         );
     }
     let coalescing = join.natural || !join.using.is_empty();
-    let (mut right_exec, right_scope, right_delivered) = build_from(
+    let (mut right_exec, right_scope, mut right_delivered) = build_from(
         right_node,
         catalog,
         current_db,
@@ -1688,6 +1723,27 @@ pub(crate) fn build_join(
         demand,
         &right_required,
     )?;
+    if forced_merge {
+        if let Some(decision) = &merge {
+            let keys: Vec<usize> = decision.plan.keys.iter().map(|key| key.right).collect();
+            if !crate::driver::merge_decision::delivers(&right_delivered, &keys) {
+                let names = decision
+                    .names
+                    .iter()
+                    .map(|(_, right)| enforced_merge_key_name(right, current_db))
+                    .collect::<Vec<_>>();
+                right_exec = enforced_merge_sort(
+                    right_exec,
+                    &keys,
+                    decision.plan.desc,
+                    &names,
+                    ctx,
+                    trace.as_deref_mut(),
+                );
+                right_delivered = vec![keys];
+            }
+        }
+    }
     let mut left_filter_scope = left_scope.clone();
     let mut right_filter_scope = right_scope.clone();
 
@@ -2259,6 +2315,52 @@ pub(crate) fn build_join(
     // [`FromScope::qualified_star_is_output_only`].
     scope.qualified_star_is_output_only = join.tp == tidb_ast::JoinType::Cross && join.on.is_some();
     Ok((meter(exec, trace), scope, delivered))
+}
+
+fn enforced_merge_key_name(
+    key: &crate::driver::merge_decision::RelColumn,
+    current_db: &str,
+) -> String {
+    if key.column.starts_with("_inject_") {
+        "Column".to_owned()
+    } else {
+        format!("{current_db}.{}.{}", key.relation, key.column)
+    }
+}
+
+fn enforced_merge_sort(
+    exec: Box<dyn Executor>,
+    keys: &[usize],
+    desc: bool,
+    names: &[String],
+    ctx: &crate::StmtContext,
+    trace: Option<&mut PlanTrace>,
+) -> Box<dyn Executor> {
+    let types = exec.ret_field_types();
+    let by_items = keys
+        .iter()
+        .map(|at| {
+            let mut column = Column::new((*at + 1) as i64, types[*at].clone());
+            column.index = *at as i64;
+            SortByItem {
+                expr: tidb_expr::expression::Expression::Column(column),
+                desc,
+            }
+        })
+        .collect();
+    let schema = exec.schema().clone();
+    let mut sorted: Box<dyn Executor> = Box::new(SortExec::new(
+        ExecutorMeta::new(schema, 3, INIT_CAP, MAX_CHUNK_SIZE),
+        by_items,
+        exec,
+        ctx.clone(),
+        ctx.statement_memory(),
+    ));
+    if let Some(trace) = trace {
+        trace.enforced_merge_sort(names, desc);
+        sorted = trace.meter(sorted);
+    }
+    sorted
 }
 
 /// `kv` with any `PARTITION (p, ...)` restriction on the reference applied,

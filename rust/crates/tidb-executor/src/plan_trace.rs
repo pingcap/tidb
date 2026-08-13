@@ -1205,6 +1205,24 @@ impl PlanTrace {
         self.wrap("Sort", Est::Inherit, Self::by_items_text(order_by, qualify));
     }
 
+    /// The root `Sort` inserted by Go `getEnforcedMergeJoin` when a
+    /// `MERGE_JOIN` hint names a site whose child access path does not already
+    /// provide the join-key order.
+    pub(crate) fn enforced_merge_sort(&mut self, keys: &[String], desc: bool) {
+        let info = keys
+            .iter()
+            .map(|key| {
+                if desc {
+                    format!("{key}:desc")
+                } else {
+                    key.clone()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.wrap("Sort", Est::Inherit, info);
+    }
+
     /// `ORDER BY` + `LIMIT` fused into Go's `TopN`
     /// (`pkg/planner/core/rule_topn_push_down.go`).
     ///
