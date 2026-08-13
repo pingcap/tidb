@@ -858,9 +858,8 @@ impl<C: Columns> JoinExec<C> {
             .min(INDEX_JOIN_BATCH_SIZE);
 
         // 2. The batch's distinct probe tuples. A NULL key part contributes
-        //    no probe: `key_part` refuses NULL too, so such an outer row
-        //    matches nothing either way -- Go's `constructDatumLookupKey`
-        //    returning nil.
+        //    no probe for ordinary equality, while `<=>` carries NULL through
+        //    to the point range and match map -- Go's `HashIsNullEQ` branch.
         //
         //    Go DEDUPES by sorting (`sortAndDedupLookUpContents`); this
         //    dedupes by the same encoding the match map is keyed on and
@@ -877,6 +876,7 @@ impl<C: Columns> JoinExec<C> {
                 left: at,
                 right: at,
                 class: keys[*key].class,
+                null_safe: keys[*key].null_safe,
             })
             .collect();
         let mut seen = std::collections::HashSet::new();
@@ -887,7 +887,7 @@ impl<C: Columns> JoinExec<C> {
                 .iter()
                 .map(|at| {
                     let value = row[outer_offset(&keys[*at])].clone();
-                    (!matches!(value, Datum::Null)).then_some(value)
+                    (!matches!(value, Datum::Null) || keys[*at].null_safe).then_some(value)
                 })
                 .collect();
             let Some(probe) = probe else {
@@ -1593,8 +1593,9 @@ impl<C: Columns> JoinExec<C> {
             }
             let probe_row = datum_row(&hash.probe_chunk, hash.probe_row, &probe_types);
             let key = row_key(&self.keys, &probe_row, offset).map_err(key_error)?;
-            // A probe row whose key holds a NULL matches nothing, so it never
-            // touches the table -- and, on an outer join, pads immediately.
+            // A probe row whose ordinary equality key holds NULL matches
+            // nothing and, on an outer join, pads immediately. NULL-safe key
+            // parts have a real bucket identity and take the normal path.
             //
             // Go `GetMatchedRowsAndPtrs`: walk the bucket's pointers in order
             // and dereference each one through the container, which is where

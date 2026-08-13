@@ -122,7 +122,8 @@ impl KeyClass {
     }
 }
 
-/// One `probe.col = build.col` conjunct the hash table indexes.
+/// One `probe.col = build.col` or `probe.col <=> build.col` conjunct the hash
+/// table indexes.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EquiKey {
     /// The key column's offset inside a LEFT-child row.
@@ -131,6 +132,9 @@ pub(crate) struct EquiKey {
     pub(crate) right: usize,
     /// The domain both offsets are encoded in.
     pub(crate) class: KeyClass,
+    /// Whether NULL is a matchable key value (`<=>`) instead of an
+    /// unmatchable row (`=`). Go carries this as `PhysicalHashJoin.IsNullEQ`.
+    pub(crate) null_safe: bool,
 }
 
 /// The `ON` clause split the way Go's planner splits `LogicalJoin`:
@@ -175,11 +179,12 @@ fn push_conjuncts<'a>(expr: &'a Expression, out: &mut Vec<&'a Expression>) {
 /// whose index is below `left_width` belongs to the left child and any other
 /// to the right.
 ///
-/// A conjunct becomes a key only when it is literally `eq(<col>, <col>)`
-/// with one column from each side. A cast, a computed expression, or two
-/// columns from the SAME side is left in the residual set: the first two
-/// would need the key to be built from an evaluated expression (Go does
-/// that; this unit does not), and the third is a filter, not a join key.
+/// A conjunct becomes a key only when it is literally `eq(<col>, <col>)` or
+/// `nulleq(<col>, <col>)` with one column from each side. A cast, a computed
+/// expression, or two columns from the SAME side is left in the residual set:
+/// the first two would need the key to be built from an evaluated expression
+/// (Go does that; this unit does not), and the third is a filter, not a join
+/// key.
 pub(crate) fn split_equi(conditions: &[Expression], left_width: usize) -> EquiSplit {
     let mut keys = Vec::new();
     let mut equal_mask = Vec::new();
@@ -197,7 +202,15 @@ fn equi_key(conjunct: &Expression, left_width: usize) -> Option<EquiKey> {
     let Expression::ScalarFunction(f) = conjunct else {
         return None;
     };
-    if f.func_name.lowercase() != "eq" || f.args.len() != 2 {
+    let name = f.func_name.lowercase();
+    let null_safe = if name == "eq" {
+        false
+    } else if name == "nulleq" {
+        true
+    } else {
+        return None;
+    };
+    if f.args.len() != 2 {
         return None;
     }
     let (Expression::Column(a), Expression::Column(b)) = (&f.args[0], &f.args[1]) else {
@@ -219,7 +232,12 @@ fn equi_key(conjunct: &Expression, left_width: usize) -> Option<EquiKey> {
         right_col.ret_type.as_ref()?,
         f.derived_collation(),
     )?;
-    Some(EquiKey { left, right, class })
+    Some(EquiKey {
+        left,
+        right,
+        class,
+        null_safe,
+    })
 }
 
 /// Encodes one key column of one row, or `None` when the value can never
@@ -303,7 +321,15 @@ pub(crate) fn row_key(
 ) -> Result<Option<Vec<u8>>, KeyError> {
     let mut encoded = Vec::new();
     for key in keys {
-        let Some(part) = key_part(key.class, &row[offset(key)])? else {
+        let datum = &row[offset(key)];
+        if matches!(datum, Datum::Null) && key.null_safe {
+            // A real part length can never be u64::MAX. This gives NULL one
+            // collision-free key identity without inventing a value in any
+            // SQL comparison domain.
+            encoded.extend_from_slice(&u64::MAX.to_be_bytes());
+            continue;
+        }
+        let Some(part) = key_part(key.class, datum)? else {
             return Ok(None);
         };
         encoded.extend_from_slice(&(part.len() as u64).to_be_bytes());
@@ -374,11 +400,10 @@ impl BuildTable {
         for row_idx in 0..chunk.num_rows() {
             let chunk_row = chunk.get_row(row_idx);
             let row = chunk_row.get_datum_row(types);
-            // A row whose key holds a NULL matches nothing, so it is simply
-            // not indexed -- but it IS still stored, because Go stores the
-            // whole chunk and only the hash-table entry is skipped. The build
-            // side is always the NON-preserved one, so no outer-join row is
-            // lost by leaving it unindexed.
+            // An ordinary equality key containing NULL is not indexed. A
+            // NULL-safe key is indexed under row_key's dedicated NULL
+            // identity, matching Go's `ignoreNulls[keyIdx]` path. Every row
+            // is still stored because the container owns the build data.
             if let Some(key) = row_key(keys, &row, offset).map_err(|_| BuildError::Key)? {
                 let row_idx = u32::try_from(row_idx).map_err(|_| BuildError::Key)?;
                 self.buckets
@@ -491,6 +516,36 @@ mod tests {
         assert!(key_part(KeyClass::Decimal, &Datum::Null).unwrap().is_none());
     }
 
+    #[test]
+    fn null_safe_row_key_gives_null_one_matchable_identity() {
+        let mut key = EquiKey {
+            left: 0,
+            right: 0,
+            class: KeyClass::Int,
+            null_safe: true,
+        };
+        let null = row_key(&[key], &[Datum::Null], |key| key.left)
+            .unwrap()
+            .expect("NULL is a key under <=>");
+        assert_eq!(
+            null,
+            row_key(&[key], &[Datum::Null], |key| key.left)
+                .unwrap()
+                .unwrap()
+        );
+        assert_ne!(
+            null,
+            row_key(&[key], &[Datum::Int(0)], |key| key.left)
+                .unwrap()
+                .unwrap()
+        );
+
+        key.null_safe = false;
+        assert!(row_key(&[key], &[Datum::Null], |key| key.left)
+            .unwrap()
+            .is_none());
+    }
+
     /// `NaN = NaN` is FALSE, and `-0.0 = 0.0` is TRUE.
     #[test]
     fn real_key_follows_float_equality() {
@@ -559,11 +614,13 @@ mod tests {
                 left: 0,
                 right: 0,
                 class: KeyClass::Str(Collation::Utf8Mb4Bin),
+                null_safe: false,
             },
             EquiKey {
                 left: 1,
                 right: 1,
                 class: KeyClass::Str(Collation::Utf8Mb4Bin),
+                null_safe: false,
             },
         ];
         let offset = |key: &EquiKey| key.left;

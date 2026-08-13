@@ -38,10 +38,10 @@
 //! # Remaining gaps
 //!
 //! Rows agree everywhere. Outer-to-inner conversion now matches all eight Go
-//! cases. Three independent plan gaps remain:
+//! cases. Two independent plan gaps remain:
 //!
-//! * **`<=>` is not an equal key.** Go joins on `nulleq`; here it lands in
-//!   `other cond` and the join goes CARTESIAN.
+//! * A repeated single-side join conjunct is not deduplicated before it is
+//!   left as a residual condition.
 //! * **`NOT EXISTS` is not an anti semi join.** Go's
 //!   `TestDeriveNotNullConds` row 12 plans one; here it runs as a correlated
 //!   `Selection` with no join operator at all.
@@ -848,26 +848,45 @@ fn logical_condition_list(info: &str) -> String {
     out
 }
 
-/// The three remaining plan-shape gaps this table exposed, pinned as they are
-/// today so that closing one is visible.
-///
-/// Each is row-correct and cost-wrong: a CARTESIAN join where TiDB uses a
-/// key, or a correlated re-scan where TiDB uses one hash pass.
 #[test]
-fn the_join_shapes_this_tier_builds_where_tidb_builds_a_better_one() {
+fn null_safe_equality_is_a_hash_join_key() {
     let mut session = signed_table_session();
-
-    // `<=>` is an equal key for TiDB (`equal:[nulleq(test.t.e, test.t.e)]`);
-    // here it is `other cond` over a CARTESIAN product.
     for sql in [
         "select * from t t1 inner join t t2 on t1.e <=> t2.e",
         "select * from t t1 left join t t2 on t1.e <=> t2.e",
+        "select * from t t1 right join t t2 on t1.e <=> t2.e",
     ] {
+        let info = join_info(&mut session, sql);
         assert!(
-            join_info(&mut session, sql).contains("CARTESIAN"),
-            "expected a CARTESIAN join for `{sql}`"
+            !info.contains("CARTESIAN") && info.contains("equal:[nulleq("),
+            "expected a NULL-safe equality key for `{sql}`, got {info}"
         );
     }
+}
+
+#[test]
+fn mixed_ordinary_and_null_safe_hash_keys_keep_their_own_null_rules() {
+    let mut session = signed_table_session();
+    assert_eq!(
+        rows(
+            &mut session,
+            "select t1.a, t2.a from t t1 join t t2 \
+             on t1.e <=> t2.e and t1.h = t2.h",
+        ),
+        [
+            vec!["1".to_owned(), "1".to_owned()],
+            vec!["3".to_owned(), "3".to_owned()],
+            vec!["4".to_owned(), "4".to_owned()],
+            vec!["5".to_owned(), "5".to_owned()],
+        ]
+    );
+}
+
+/// The remaining plan-shape gaps this table exposed, pinned until their
+/// owning planner rules land.
+#[test]
+fn the_join_shapes_this_tier_builds_where_tidb_builds_a_better_one() {
+    let mut session = signed_table_session();
 
     // A repeated conjunct is kept twice; TiDB pushes it once.
     let sql = "select * from t t1 join t t2 on t1.a > 1 and t1.a > 1";

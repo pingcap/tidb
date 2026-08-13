@@ -79,6 +79,15 @@ fn schema_of(width: usize) -> Schema {
 /// rows is the case a probe that stopped at the first entry, or a lookup map
 /// that kept one row per key, would answer wrongly.
 fn inner_table(rows: &[(i64, i64)]) -> KvTable {
+    inner_table_datums(
+        &rows
+            .iter()
+            .map(|(a, b)| vec![Datum::Int(*a), Datum::Int(*b)])
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn inner_table_datums(rows: &[Vec<Datum>]) -> KvTable {
     let mut table = KvTable::new(91, vec![column("a", 1), column("b", 2)]);
     table
         .create_index_with_context(
@@ -94,10 +103,8 @@ fn inner_table(rows: &[(i64, i64)]) -> KvTable {
             &crate::StmtContext::for_query(),
         )
         .unwrap();
-    for (a, b) in rows {
-        table
-            .insert_row(&[Datum::Int(*a), Datum::Int(*b)], &tidb_expr::NoColumns)
-            .unwrap();
+    for row in rows {
+        table.insert_row(row, &tidb_expr::NoColumns).unwrap();
     }
     table
 }
@@ -136,13 +143,17 @@ fn lookup_source(table: &KvTable, object: LookupObject, width: usize) -> IndexJo
 /// `outer.<outer_key> = inner.<inner_key>` over the joined row, with the
 /// outer side on the LEFT.
 fn equality(outer_key: usize, inner_key: usize, outer_width: usize) -> Expression {
+    comparison("eq", outer_key, inner_key, outer_width)
+}
+
+fn comparison(name: &str, outer_key: usize, inner_key: usize, outer_width: usize) -> Expression {
     let column = |index: usize| {
         let mut column = Column::new(index as i64 + 1, long());
         column.index = index as i64;
         Expression::Column(column)
     };
     Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new("eq"),
+        CiString::new(name),
         long(),
         vec![column(outer_key), column(outer_width + inner_key)],
     ))
@@ -181,10 +192,31 @@ fn both_ways(
     inner_key: usize,
     probe_keys: Vec<usize>,
 ) -> (Vec<Vec<Datum>>, Vec<Vec<Datum>>) {
+    both_ways_with_comparison(
+        "eq", kind, outer_rows, table, object, outer_key, inner_key, probe_keys,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn both_ways_with_comparison(
+    comparison_name: &str,
+    kind: JoinKind,
+    outer_rows: &[Vec<Datum>],
+    table: &KvTable,
+    object: LookupObject,
+    outer_key: usize,
+    inner_key: usize,
+    probe_keys: Vec<usize>,
+) -> (Vec<Vec<Datum>>, Vec<Vec<Datum>>) {
     let outer_width = outer_rows[0].len();
     let inner_width = table.visible_column_count();
     let types: Vec<FieldType> = std::iter::repeat_n(long(), outer_width + inner_width).collect();
-    let conditions = vec![equality(outer_key, inner_key, outer_width)];
+    let conditions = vec![comparison(
+        comparison_name,
+        outer_key,
+        inner_key,
+        outer_width,
+    )];
     let meta = || ExecutorMeta::new(schema_of(outer_width + inner_width), 0, INIT_CAP, CHUNK);
     let memory = crate::StmtContext::for_query().statement_memory();
 
@@ -304,6 +336,42 @@ fn a_null_outer_key_matches_nothing() {
     assert_eq!(index_rows, hash_rows);
     assert_eq!(index_rows.len(), 3);
     assert_eq!(index_rows[1][3], Datum::Null);
+}
+
+/// Go `TestIndexJoinNullEQ`: a NULL probe reaches every NULL entry in the
+/// inner index, while an ordinary equality probe would have been omitted.
+#[test]
+fn a_null_safe_index_probe_matches_null_index_entries() {
+    let table = inner_table_datums(&[
+        vec![Datum::Int(20), Datum::Int(1)],
+        vec![Datum::Int(21), Datum::Null],
+        vec![Datum::Int(22), Datum::Null],
+        vec![Datum::Int(23), Datum::Int(3)],
+    ]);
+    let outer = vec![
+        vec![Datum::Int(10), Datum::Int(1)],
+        vec![Datum::Int(11), Datum::Null],
+        vec![Datum::Int(12), Datum::Int(2)],
+    ];
+    let (hash_rows, index_rows) = both_ways_with_comparison(
+        "nulleq",
+        JoinKind::Inner,
+        &outer,
+        &table,
+        LookupObject::Index(1),
+        1,
+        1,
+        vec![0],
+    );
+    assert_eq!(index_rows, hash_rows);
+    assert_eq!(
+        index_rows,
+        [
+            vec![Datum::Int(10), Datum::Int(1), Datum::Int(20), Datum::Int(1),],
+            vec![Datum::Int(11), Datum::Null, Datum::Int(21), Datum::Null,],
+            vec![Datum::Int(11), Datum::Null, Datum::Int(22), Datum::Null,],
+        ]
+    );
 }
 
 /// The clustered-handle object: one probe reads exactly one row, and the
@@ -438,6 +506,7 @@ mod decision {
             left: 1,
             right: 1,
             class: crate::hash_join::KeyClass::Int,
+            null_safe: false,
         }]
     }
 
