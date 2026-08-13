@@ -898,6 +898,114 @@ fn only_full_group_by_pins_by_name_by_where_equality_and_by_candidate_key() {
     );
 }
 
+/// Join equalities participate in the same functional-dependency graph as
+/// table keys. These are the seven source cases from
+/// `planner/funcdep/only_full_group_by`: the spelling of the equality and the
+/// direction of an outer join do not change the fact that `t1.pk` determines
+/// the matching `t2` row. A non-key equality must not gain that property.
+#[test]
+fn only_full_group_by_uses_join_functional_dependencies() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE fd_shift (unused INT, pk INT PRIMARY KEY, payload INT)")
+        .unwrap();
+    // Column pruning moves `pk` from physical offset 1 to output offset 0;
+    // the candidate-key metadata must move with it.
+    session
+        .run("SELECT payload FROM fd_shift GROUP BY pk")
+        .unwrap();
+    session
+        .run("CREATE TABLE fd_l (pk INT PRIMARY KEY, a INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE fd_r (pk INT PRIMARY KEY, b INT)")
+        .unwrap();
+
+    for sql in [
+        "SELECT fd_l.pk, fd_r.b FROM fd_l JOIN fd_r ON fd_l.pk=fd_r.pk GROUP BY fd_l.pk",
+        "SELECT fd_l.pk, fd_r.b FROM fd_l JOIN fd_r USING(pk) GROUP BY fd_l.pk",
+        "SELECT fd_l.pk, fd_r.b FROM fd_l NATURAL JOIN fd_r GROUP BY fd_l.pk",
+        "SELECT fd_l.pk, fd_r.b FROM fd_l LEFT JOIN fd_r USING(pk) GROUP BY fd_l.pk",
+        "SELECT fd_l.pk, fd_r.b FROM fd_l NATURAL LEFT JOIN fd_r GROUP BY fd_l.pk",
+        "SELECT fd_l.pk, fd_r.b FROM fd_r RIGHT JOIN fd_l USING(pk) GROUP BY fd_l.pk",
+        "SELECT fd_l.pk, fd_r.b FROM fd_r NATURAL RIGHT JOIN fd_l GROUP BY fd_l.pk",
+    ] {
+        session
+            .run(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+
+    let error = session
+        .run("SELECT fd_r.pk FROM fd_l LEFT JOIN fd_r ON fd_l.a=fd_r.b GROUP BY fd_l.a")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1055, "{error:?}");
+
+    // Go rule 3.3.1 combines all cross-side equalities before asking whether
+    // the nullable side's key is covered. A residual touching only those
+    // equality columns does not invalidate the dependency.
+    session
+        .run(
+            "CREATE TABLE fd_u1 (a INT, b INT NOT NULL, c INT NOT NULL, d INT, \
+             UNIQUE KEY(b,c), UNIQUE KEY(b,d))",
+        )
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE fd_u2 (a INT, b INT NOT NULL, c INT NOT NULL, d INT, \
+             UNIQUE KEY(b,c), UNIQUE KEY(b,d))",
+        )
+        .unwrap();
+    for sql in [
+        "SELECT fd_u1.a,fd_u2.c FROM fd_u1 LEFT JOIN fd_u2 \
+         ON fd_u1.a=fd_u2.c AND cos(fd_u2.c+fd_u2.b)>0.5 \
+         AND sin(fd_u1.a+fd_u2.d)<0.9 GROUP BY fd_u1.a",
+        "SELECT fd_u1.a,fd_u2.d FROM fd_u1 LEFT JOIN fd_u2 \
+         ON fd_u1.a=fd_u2.c AND fd_u1.d=fd_u2.b \
+         AND cos(fd_u2.c+fd_u2.b)>0.5 AND sin(fd_u1.a+fd_u2.d)<0.9 \
+         GROUP BY fd_u1.a,fd_u1.d",
+        "SELECT fd_l.a,count(*) FROM fd_l LEFT JOIN fd_r ON fd_l.a=fd_r.b \
+         WHERE fd_r.pk IN (7,9) GROUP BY fd_r.b",
+    ] {
+        session
+            .run(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+
+    // The three nested-outer-join cases in the source table distinguish a
+    // constant on an inner side that survives from one that is erased by
+    // NULL extension, and a mixed-side residual that prevents it surviving.
+    session.run("CREATE TABLE fd_n1 (a INT, b INT)").unwrap();
+    session.run("CREATE TABLE fd_n2 (c INT, d INT)").unwrap();
+    let nested = [
+        (
+            "SELECT n4.d FROM fd_n1 LEFT JOIN \
+             (fd_n2 AS n3 JOIN fd_n2 AS n4 ON n4.d=3) ON fd_n1.a=10 GROUP BY ''",
+            false,
+        ),
+        (
+            "SELECT n4.d FROM fd_n1 JOIN \
+             (fd_n2 AS n3 LEFT JOIN fd_n2 AS n4 ON n4.d=3) ON fd_n1.a=10 GROUP BY ''",
+            true,
+        ),
+        (
+            "SELECT n4.d FROM fd_n1 JOIN \
+             (fd_n2 AS n3 LEFT JOIN fd_n2 AS n4 ON n4.d=3 AND n4.c+n3.c=2) \
+             ON fd_n1.a=10 GROUP BY ''",
+            false,
+        ),
+    ];
+    for (sql, permitted) in nested {
+        let result = session.run(sql);
+        if permitted {
+            result.unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+        } else {
+            let error = result.unwrap_err().to_mysql_error();
+            assert_eq!(error.code, 1055, "{sql}: {error:?}");
+        }
+    }
+}
+
 /// `SELECT DISTINCT` may only order by something its own result carries
 /// (Go's `checkOrderByInDistinct`, MySQL #12442).
 ///

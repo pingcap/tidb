@@ -21,30 +21,20 @@
 //!
 //! [`scope_fd_set`] plays the role Go's `ExtractFD` methods play on the
 //! logical plan tree. Go builds the set bottom-up over `DataSource`,
-//! `Selection`, `LogicalJoin` and so on; this tier's `ONLY_FULL_GROUP_BY`
-//! check runs on the WRITTEN AST over a flat [`FromScope`], so the same
-//! contributions are read straight off the scope and the `WHERE`:
+//! `LogicalJoin`, and `Selection`; this tier walks the written join tree while
+//! using [`FromScope`] for the already-resolved column identities:
 //!
 //!  * DATASOURCE -- each base table's keys and its generated columns.
-//!  * CARTESIAN PRODUCT -- the `FROM` list's tables are independent.
+//!  * JOIN -- child sets combine recursively and `ON`/`USING`/`NATURAL`
+//!    predicates add the same inner- or outer-join dependencies Go records.
 //!  * SELECTION -- what the `WHERE` proves NOT NULL, fixes to a constant, or
 //!    equates.
-//!
-//! The JOIN contribution is NOT here. Go's `LogicalJoin.ExtractFD` splits into
-//! inner and outer forms, and the outer one (`FDSet.MakeOuterJoin`) has to
-//! model null-extended rows: a strict dependency from the null-supplying side
-//! weakens to a lax one, constants and equivalences from that side are lost,
-//! and an equivalence across the join survives only under conditions on which
-//! side the other filters touch. It also needs the deferred `ncEdges` this
-//! port omits. That is its own unit, and until it lands an `ON` condition
-//! contributes nothing here -- which refuses queries TiDB answers, and never
-//! answers one TiDB refuses.
 
 pub(crate) mod fd_graph;
 pub(crate) mod null_reject;
 
 use super::{FromScope, FromTable};
-use fd_graph::FdSet;
+use fd_graph::{FdSet, OuterJoinOptions};
 pub(crate) use tidb_util::intset::FastIntSet as ColSet;
 
 /// The dependencies a base table contributes on its own, as column offsets
@@ -68,18 +58,296 @@ pub(crate) struct TableFuncDeps {
     pub(crate) not_null: Vec<usize>,
 }
 
-/// The functional dependencies holding over a `FROM` scope filtered by
-/// `where_clause`, with each column identified by its offset in the scope.
-pub(crate) fn scope_fd_set(scope: &FromScope, where_clause: Option<&tidb_ast::Expr>) -> FdSet {
-    let mut fds = FdSet::new();
-    for table in &scope.tables {
-        let one = table_fd_set(table);
-        fds.make_cartesian_product(&one);
-    }
+/// The functional dependencies holding over a `FROM` join tree filtered by
+/// `where_clause`, with each column identified by its offset in `scope`.
+pub(crate) fn scope_fd_set(
+    scope: &FromScope,
+    from: Option<&tidb_ast::Join>,
+    where_clause: Option<&tidb_ast::Expr>,
+) -> FdSet {
+    let mut next_table = 0usize;
+    let built = from.and_then(|join| build_join_fds(join, scope, &mut next_table));
+    let mut fds = match built.filter(|_| next_table == scope.tables.len()) {
+        Some(relation) => relation.fds,
+        None => flat_scope_fds(scope),
+    };
     if let Some(where_clause) = where_clause {
         apply_selection(&mut fds, scope, where_clause);
     }
     fds
+}
+
+fn flat_scope_fds(scope: &FromScope) -> FdSet {
+    let mut fds = FdSet::new();
+    for table in &scope.tables {
+        fds.make_cartesian_product(&table_fd_set(table));
+    }
+    fds
+}
+
+#[derive(Debug)]
+struct RelationFds {
+    fds: FdSet,
+    cols: ColSet,
+    /// Columns visible to this node's parent, in display order. Coalesced
+    /// copies stay in `cols` but not here.
+    visible: Vec<(usize, String)>,
+}
+
+type ColumnEquality = (usize, usize);
+type VisibleColumn = (usize, String);
+
+fn build_node_fds(
+    node: &tidb_ast::JoinNode,
+    scope: &FromScope,
+    next_table: &mut usize,
+) -> Option<RelationFds> {
+    match node {
+        tidb_ast::JoinNode::Join(join) => build_join_fds(join, scope, next_table),
+        tidb_ast::JoinNode::Table(_) | tidb_ast::JoinNode::Derived { .. } => {
+            let table = scope.tables.get(*next_table)?;
+            *next_table += 1;
+            let cols = ColSet::of((0..table.columns.len()).map(|local| {
+                i64::try_from(table.offset + local).expect("scope column offset fits source int")
+            }));
+            let visible = table
+                .columns
+                .iter()
+                .enumerate()
+                .map(|(local, (name, _))| (table.offset + local, name.clone()))
+                .collect();
+            Some(RelationFds {
+                fds: table_fd_set(table),
+                cols,
+                visible,
+            })
+        }
+    }
+}
+
+fn build_join_fds(
+    join: &tidb_ast::Join,
+    scope: &FromScope,
+    next_table: &mut usize,
+) -> Option<RelationFds> {
+    let left = build_node_fds(&join.left, scope, next_table)?;
+    let Some(right_node) = &join.right else {
+        return Some(left);
+    };
+    let right = build_node_fds(right_node, scope, next_table)?;
+    let (common, visible) = coalesced_columns(join, &left.visible, &right.visible);
+
+    match join.tp {
+        tidb_ast::JoinType::Cross => {
+            let mut fds = left.fds;
+            fds.make_cartesian_product(&right.fds);
+            if let Some(on) = &join.on {
+                apply_selection(&mut fds, scope, on);
+            }
+            apply_column_equalities(&mut fds, &common);
+            Some(RelationFds {
+                fds,
+                cols: left.cols.union(&right.cols),
+                visible,
+            })
+        }
+        tidb_ast::JoinType::Left | tidb_ast::JoinType::Right => {
+            let (mut outer, inner) = if join.tp == tidb_ast::JoinType::Left {
+                (left, right)
+            } else {
+                (right, left)
+            };
+            let mut filter = FdSet::new();
+            if let Some(on) = &join.on {
+                apply_selection(&mut filter, scope, on);
+            }
+            apply_column_equalities(&mut filter, &common);
+            let options =
+                outer_join_options(join.on.as_ref(), &common, scope, &outer.cols, &inner.cols);
+            outer
+                .fds
+                .make_outer_join(&inner.fds, &filter, &outer.cols, &inner.cols, options);
+            Some(RelationFds {
+                fds: outer.fds,
+                cols: outer.cols.union(&inner.cols),
+                visible,
+            })
+        }
+    }
+}
+
+/// The equality pairs and display columns introduced by `NATURAL`/`USING`.
+/// `from::coalesce_common_columns` has already validated ambiguity/missing
+/// names while building the scope; this read-only twin only reconstructs the
+/// pairs needed by the FD graph.
+fn coalesced_columns(
+    join: &tidb_ast::Join,
+    left: &[VisibleColumn],
+    right: &[VisibleColumn],
+) -> (Vec<ColumnEquality>, Vec<VisibleColumn>) {
+    if !join.natural && join.using.is_empty() {
+        return (Vec::new(), left.iter().chain(right).cloned().collect());
+    }
+    let (outer, inner) = if join.tp == tidb_ast::JoinType::Right {
+        (right, left)
+    } else {
+        (left, right)
+    };
+    let named = |name: &str| {
+        join.using.is_empty()
+            || join
+                .using
+                .iter()
+                .any(|candidate| candidate.eq_ignore_ascii_case(name))
+    };
+    let mut common = Vec::new();
+    for (outer_offset, name) in outer {
+        if !named(name)
+            || common.iter().any(|(seen, _)| {
+                outer
+                    .iter()
+                    .find(|(offset, _)| offset == seen)
+                    .is_some_and(|(_, seen_name)| seen_name.eq_ignore_ascii_case(name))
+            })
+        {
+            continue;
+        }
+        if let Some((inner_offset, _)) = inner
+            .iter()
+            .find(|(_, candidate)| candidate.eq_ignore_ascii_case(name))
+        {
+            common.push((*outer_offset, *inner_offset));
+        }
+    }
+    let is_common = |offset: usize| {
+        common
+            .iter()
+            .any(|(visible, redundant)| *visible == offset || *redundant == offset)
+    };
+    let mut visible: Vec<VisibleColumn> = common
+        .iter()
+        .filter_map(|(offset, _)| outer.iter().find(|(candidate, _)| candidate == offset))
+        .cloned()
+        .collect();
+    visible.extend(
+        outer
+            .iter()
+            .filter(|(offset, _)| !is_common(*offset))
+            .cloned(),
+    );
+    visible.extend(
+        inner
+            .iter()
+            .filter(|(offset, _)| !is_common(*offset))
+            .cloned(),
+    );
+    (common, visible)
+}
+
+fn apply_column_equalities(fds: &mut FdSet, equalities: &[(usize, usize)]) {
+    for &(left, right) in equalities {
+        let cols = ColSet::of([
+            i64::try_from(left).expect("scope column offset fits source int"),
+            i64::try_from(right).expect("scope column offset fits source int"),
+        ]);
+        fds.make_not_null(cols.clone());
+        fds.add_equivalence(
+            ColSet::of([i64::try_from(left).expect("scope column offset fits source int")]),
+            ColSet::of([i64::try_from(right).expect("scope column offset fits source int")]),
+        );
+    }
+}
+
+fn outer_join_options(
+    on: Option<&tidb_ast::Expr>,
+    common: &[(usize, usize)],
+    scope: &FromScope,
+    outer_cols: &ColSet,
+    inner_cols: &ColSet,
+) -> OuterJoinOptions {
+    let resolver = super::ScopeResolver { scope };
+    let resolve = |path: &[String]| {
+        use crate::driver::ColumnResolver;
+        resolver.resolve(path).map(|(offset, _, _)| {
+            i64::try_from(offset).expect("scope column offset fits source int")
+        })
+    };
+    let mut outer_equiv = ColSet::default();
+    let mut cross_equivalences = common.len();
+    for &(visible, redundant) in common {
+        let visible = i64::try_from(visible).expect("scope column offset fits source int");
+        let redundant = i64::try_from(redundant).expect("scope column offset fits source int");
+        if outer_cols.has(visible) {
+            outer_equiv.insert(visible);
+        } else if outer_cols.has(redundant) {
+            outer_equiv.insert(redundant);
+        }
+    }
+
+    let mut outer_or_other_cols = ColSet::default();
+    let mut has_outer_condition = false;
+    let mut has_other_condition = false;
+    let mut inner_is_false = false;
+    for condition in on.into_iter().flat_map(conjuncts) {
+        let refs = ColSet::of(
+            super::only_full_group_by::bare_columns(condition)
+                .into_iter()
+                .filter_map(|path| resolve(&path)),
+        );
+        let cross_equality = equality_offsets(condition, &resolve).is_some_and(|(left, right)| {
+            let spans = (outer_cols.has(left) && inner_cols.has(right))
+                || (outer_cols.has(right) && inner_cols.has(left));
+            if spans {
+                outer_equiv.insert(if outer_cols.has(left) { left } else { right });
+            }
+            spans
+        });
+        if cross_equality {
+            cross_equivalences += 1;
+            continue;
+        }
+        if refs.subset_of(outer_cols) && !refs.is_empty() {
+            has_outer_condition = true;
+            outer_or_other_cols.union_with(&refs);
+        } else if refs.subset_of(inner_cols) {
+            inner_is_false |= refs.is_empty() && literal_is_false(condition);
+        } else {
+            has_other_condition = true;
+            outer_or_other_cols.union_with(&refs.intersection(outer_cols));
+        }
+    }
+
+    let mut outer_non_equiv = outer_cols.clone();
+    outer_non_equiv.difference_with(&outer_equiv);
+    OuterJoinOptions {
+        skip_rule_331: cross_equivalences == 0 || outer_or_other_cols.intersects(&outer_non_equiv),
+        only_inner_filter: cross_equivalences == 0 && !has_outer_condition && !has_other_condition,
+        inner_is_false,
+    }
+}
+
+fn equality_offsets(
+    expr: &tidb_ast::Expr,
+    resolve: &impl Fn(&[String]) -> Option<i64>,
+) -> Option<(i64, i64)> {
+    let tidb_ast::Expr::Binary(tidb_ast::BinaryOp::Eq, lhs, rhs) = strip(expr) else {
+        return None;
+    };
+    let tidb_ast::Expr::Column(left) = strip(lhs) else {
+        return None;
+    };
+    let tidb_ast::Expr::Column(right) = strip(rhs) else {
+        return None;
+    };
+    Some((resolve(left)?, resolve(right)?))
+}
+
+fn literal_is_false(expr: &tidb_ast::Expr) -> bool {
+    match strip(expr) {
+        tidb_ast::Expr::Bool(value) => !value,
+        tidb_ast::Expr::Int(value) => value.parse::<i128>().is_ok_and(|value| value == 0),
+        _ => false,
+    }
 }
 
 /// Go `DataSource.ExtractFD` for one source, translated to scope offsets.

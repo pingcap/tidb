@@ -55,6 +55,16 @@ struct FdEdge {
     equiv: bool,
 }
 
+/// A dependency hidden by an outer join until a later predicate rejects the
+/// NULL-extended rows. This is Go `FDSet.ncEdges`: the dependency itself is
+/// ordinary, but it becomes visible only when `condition` contains a column
+/// proved non-null above the join.
+#[derive(Clone, Debug)]
+struct ConditionalFd {
+    edge: FdEdge,
+    condition: ColSet,
+}
+
 impl FdEdge {
     /// Go `fdEdge.isConstant`: `{} --> {...}`.
     fn is_constant(&self) -> bool {
@@ -126,9 +136,18 @@ impl std::fmt::Display for FdEdge {
 #[derive(Clone, Default, Debug)]
 pub(crate) struct FdSet {
     edges: Vec<FdEdge>,
+    conditional_edges: Vec<ConditionalFd>,
     /// Go `FDSet.NotNullCols`: the columns known never to be NULL, kept so a
     /// lax edge added LATER can still be promoted.
     not_null_cols: ColSet,
+}
+
+/// The three source decisions consumed by Go `FDSet.MakeOuterJoin`.
+#[derive(Clone, Copy, Default, Debug)]
+pub(crate) struct OuterJoinOptions {
+    pub(crate) skip_rule_331: bool,
+    pub(crate) only_inner_filter: bool,
+    pub(crate) inner_is_false: bool,
 }
 
 impl FdSet {
@@ -444,7 +463,36 @@ impl FdSet {
     pub(crate) fn make_not_null(&mut self, not_null_cols: ColSet) {
         let mut not_null_cols = not_null_cols;
         not_null_cols.union_with(&self.not_null_cols);
-        let not_null_set = self.closure_of_equivalence(&not_null_cols);
+        let mut not_null_set = self.closure_of_equivalence(&not_null_cols);
+
+        // Go `ncEdges`: an outer join hides a constant/equivalence until an
+        // upper predicate rejects at least one NULL-extended column. Waking
+        // an equivalence can widen the not-null class and wake another edge,
+        // so restart after every such widening.
+        let mut index = 0usize;
+        while index < self.conditional_edges.len() {
+            if !self.conditional_edges[index]
+                .condition
+                .intersects(&not_null_set)
+            {
+                index += 1;
+                continue;
+            }
+            let conditional = self.conditional_edges.remove(index);
+            let edge = conditional.edge;
+            if edge.is_constant() {
+                self.add_constants(edge.to);
+            } else if edge.equiv {
+                self.add_equivalence(edge.from, edge.to);
+                let widened = self.closure_of_equivalence(&not_null_set);
+                if widened != not_null_set {
+                    not_null_set = widened;
+                    index = 0;
+                }
+            } else {
+                self.add_functional_dependency(edge.from, edge.to, edge.strict, false);
+            }
+        }
 
         let mut index = 0usize;
         while index < self.edges.len() {
@@ -479,7 +527,178 @@ impl FdSet {
                 self.edges.push(edge.clone());
             }
         }
+        self.conditional_edges
+            .extend(rhs.conditional_edges.iter().cloned());
         self.not_null_cols.union_with(&rhs.not_null_cols);
+    }
+
+    /// Every column named by an ordinary edge. This mirrors Go `AllCols`;
+    /// equivalence edges name their set once, while all other edges contribute
+    /// both sides.
+    fn all_cols(&self) -> ColSet {
+        let mut cols = ColSet::default();
+        for edge in &self.edges {
+            cols.union_with(&edge.from);
+            if !edge.equiv {
+                cols.union_with(&edge.to);
+            }
+        }
+        cols
+    }
+
+    /// Go `FindPrimaryKey`: a strict determinant whose closure covers every
+    /// column currently represented by the relation.
+    fn primary_key(&self) -> Option<ColSet> {
+        let all_cols = self.all_cols();
+        self.edges
+            .iter()
+            .filter(|edge| edge.strict && !edge.equiv)
+            .find(|edge| all_cols.subset_of(&self.closure_of_strict(&edge.from)))
+            .map(|edge| edge.from.clone())
+    }
+
+    fn add_conditional(
+        &mut self,
+        from: ColSet,
+        to: ColSet,
+        condition: ColSet,
+        strict: bool,
+        equiv: bool,
+    ) {
+        self.conditional_edges.push(ConditionalFd {
+            edge: FdEdge {
+                from,
+                to,
+                strict,
+                equiv,
+            },
+            condition,
+        });
+    }
+
+    /// Go `FDSet.MakeOuterJoin`, with `self` as the row-preserving side and
+    /// `inner` as the NULL-supplying side.
+    ///
+    /// The shape is deliberately the source algebra rather than a list of
+    /// query exceptions: preserved-side dependencies survive; nullable-side
+    /// strict dependencies weaken unless their determinant contains a
+    /// declared non-null column; join equivalences become directional; and
+    /// dependencies requiring NULL rejection stay hidden until a later
+    /// selection wakes them.
+    pub(crate) fn make_outer_join(
+        &mut self,
+        inner: &FdSet,
+        filter: &FdSet,
+        outer_cols: &ColSet,
+        inner_cols: &ColSet,
+        options: OuterJoinOptions,
+    ) {
+        let left_key = self.primary_key();
+        let right_key = inner.primary_key();
+        let original_left = self.clone();
+        let original_right = inner.clone();
+
+        for edge in &inner.edges {
+            if edge.is_constant() || edge.equiv {
+                continue;
+            }
+            if !edge.strict || edge.from.intersects(&inner.not_null_cols) {
+                self.add_functional_dependency(
+                    edge.from.clone(),
+                    edge.to.clone(),
+                    edge.strict,
+                    false,
+                );
+            } else {
+                self.add_lax(edge.from.clone(), edge.to.clone());
+            }
+        }
+        self.conditional_edges
+            .extend(inner.conditional_edges.iter().cloned());
+
+        let mut combined_from = ColSet::default();
+        let mut combined_to = ColSet::default();
+        for edge in &filter.edges {
+            if edge.is_constant() {
+                self.add_conditional(
+                    edge.from.clone(),
+                    edge.to.clone(),
+                    inner_cols.clone(),
+                    edge.strict,
+                    edge.equiv,
+                );
+                continue;
+            }
+            if !edge.equiv {
+                // An outer-join filter does not create an unconditional
+                // strict/lax dependency of its own.
+                continue;
+            }
+
+            let right_equiv = edge.from.intersection(inner_cols);
+            let left_equiv = edge.from.intersection(outer_cols);
+
+            if !options.skip_rule_331 && !left_equiv.is_empty() && !right_equiv.is_empty() {
+                combined_from.union_with(&left_equiv);
+                combined_to.union_with(&right_equiv);
+            }
+
+            let right_all = original_right.all_cols();
+            let left_all = original_left.all_cols();
+            if right_all.subset_of(&original_right.closure_of_strict(&right_equiv))
+                && left_all.subset_of(&original_left.closure_of_strict(&left_equiv))
+            {
+                self.add_strict(
+                    original_left.reduce_cols(&left_equiv),
+                    right_all.union(&left_all),
+                );
+            }
+
+            // The NULL-supplying value still laxly determines the preserved
+            // value one column at a time.
+            for right in right_equiv.iter() {
+                for left in left_equiv.iter() {
+                    self.add_lax(ColSet::of([right]), ColSet::of([left]));
+                }
+            }
+            self.add_conditional(left_equiv, right_equiv, inner_cols.clone(), true, true);
+        }
+
+        if !options.skip_rule_331 {
+            self.add_strict(combined_from, combined_to);
+        }
+
+        if let (Some(left), Some(right)) = (left_key, right_key) {
+            self.add_strict(left.union(&right), outer_cols.union(inner_cols));
+        }
+
+        if options.only_inner_filter {
+            if options.inner_is_false {
+                self.add_constants(inner_cols.clone());
+            } else {
+                for edge in &filter.edges {
+                    if edge.strict && (edge.equiv || edge.is_constant()) {
+                        self.add_functional_dependency(
+                            edge.from.clone(),
+                            edge.to.clone(),
+                            edge.strict,
+                            edge.equiv,
+                        );
+                    }
+                }
+                for edge in &inner.edges {
+                    self.add_functional_dependency(
+                        edge.from.clone(),
+                        edge.to.clone(),
+                        edge.strict,
+                        edge.equiv,
+                    );
+                }
+            }
+        }
+
+        self.not_null_cols.union_with(&filter.not_null_cols);
+        self.not_null_cols.difference_with(inner_cols);
     }
 }
 

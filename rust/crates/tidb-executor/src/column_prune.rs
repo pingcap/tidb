@@ -234,6 +234,13 @@ fn prunable_join_columns(
 /// [`FromTable::columns`] holds.
 type JoinSideColumns = Vec<(String, FieldType)>;
 
+pub(crate) struct PrunedJoinSides {
+    pub(crate) left_columns: JoinSideColumns,
+    pub(crate) right_columns: JoinSideColumns,
+    pub(crate) left_func_deps: crate::driver::funcdep::TableFuncDeps,
+    pub(crate) right_func_deps: crate::driver::funcdep::TableFuncDeps,
+}
+
 /// Offers each side of a two-table join the columns that side actually
 /// contributes, and reports the narrowed `(left, right)` column lists when a
 /// side took the offer.
@@ -261,7 +268,7 @@ pub(crate) fn prune_join_sides(
     scope: &FromScope,
     left: &mut Box<dyn crate::executor::Executor>,
     right: &mut Box<dyn crate::executor::Executor>,
-) -> Option<(JoinSideColumns, JoinSideColumns)> {
+) -> Option<PrunedJoinSides> {
     let keep = prunable_join_columns(select, join, scope)?;
     let left_columns = &scope.tables[0].columns;
     let right_columns = &scope.tables[1].columns;
@@ -285,10 +292,48 @@ pub(crate) fn prune_join_sides(
     if !left_pruned && !right_pruned {
         return None;
     }
-    Some((
-        narrowed(left_columns, &left_keep, left_pruned),
-        narrowed(right_columns, &right_keep, right_pruned),
-    ))
+    Some(PrunedJoinSides {
+        left_columns: narrowed(left_columns, &left_keep, left_pruned),
+        right_columns: narrowed(right_columns, &right_keep, right_pruned),
+        left_func_deps: remap_func_deps(&scope.tables[0].func_deps, &left_keep, left_pruned),
+        right_func_deps: remap_func_deps(&scope.tables[1].func_deps, &right_keep, right_pruned),
+    })
+}
+
+fn remap_func_deps(
+    deps: &crate::driver::funcdep::TableFuncDeps,
+    keep: &[usize],
+    pruned: bool,
+) -> crate::driver::funcdep::TableFuncDeps {
+    if !pruned {
+        return deps.clone();
+    }
+    let remap = |old: usize| keep.iter().position(|kept| *kept == old);
+    let key = |source: &[usize]| {
+        source
+            .iter()
+            .copied()
+            .map(&remap)
+            .collect::<Option<Vec<_>>>()
+    };
+    crate::driver::funcdep::TableFuncDeps {
+        strict_keys: deps
+            .strict_keys
+            .iter()
+            .filter_map(|source| key(source))
+            .collect(),
+        lax_keys: deps
+            .lax_keys
+            .iter()
+            .filter_map(|source| key(source))
+            .collect(),
+        generated: deps
+            .generated
+            .iter()
+            .filter_map(|(sources, generated)| Some((key(sources)?, remap(*generated)?)))
+            .collect(),
+        not_null: deps.not_null.iter().filter_map(|old| remap(*old)).collect(),
+    }
 }
 
 /// `columns` narrowed to `keep` when the side took the prune, unchanged
@@ -372,7 +417,7 @@ pub(crate) fn pruned_scope(scope: &FromScope, keep: &[usize]) -> FromScope {
                 .map(|offset| table.columns[*offset].clone())
                 .collect(),
             offset: 0,
-            func_deps: table.func_deps.clone(),
+            func_deps: remap_func_deps(&table.func_deps, keep, true),
         }],
         zone: scope.zone.clone(),
         ..FromScope::default()

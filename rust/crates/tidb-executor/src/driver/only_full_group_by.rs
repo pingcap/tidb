@@ -85,17 +85,6 @@ struct Offender {
 ///    legal. `a > 3`, `a = 3`, `a BETWEEN 3 AND 6`, `a IN (...)`, `a IS TRUE`
 ///    and `a LIKE ...` all prove it; `a <=> NULL` and `a IS NOT TRUE` do not,
 ///    and stay 1055. [`super::funcdep::null_reject`] is that proof.
-///
-/// STILL DEFERRED: the dependency an equality ACROSS A JOIN carries, which
-/// costs 24 statements of `tests/integrationtest`'s
-/// `planner/funcdep/only_full_group_by` a spurious 1055 (the integration
-/// ratchet counts a refusal as SKIPPED, not as a divergence, so the number
-/// does not show them). Grouping by one side's key should justify the other
-/// side's columns: `select t1.pk, t2.b from t1 join t2 on t1.pk=t2.pk group by
-/// t1.pk`. It is its own unit because the outer-join form is not the inner
-/// one -- see [`super::funcdep`]'s module doc for what
-/// `FDSet.MakeOuterJoin` has to model. Being narrower than Go here never
-/// permits what Go rejects, so it costs no wrong answers.
 pub(crate) fn check_only_full_group_by(
     select: &tidb_ast::SelectStmt,
     scope: &FromScope,
@@ -231,7 +220,8 @@ pub(crate) fn check_only_full_group_by(
     // The closure must be the STRICT one. The lax closure would reach a
     // nullable UNIQUE key's dependents without the proof, which is exactly
     // what the recording refuses with 1055.
-    let dependencies = super::funcdep::scope_fd_set(scope, select.where_clause.as_ref());
+    let dependencies =
+        super::funcdep::scope_fd_set(scope, select.from.as_ref(), select.where_clause.as_ref());
     let determined = dependencies.closure_of_strict(&super::funcdep::ColSet::of(
         pinned
             .iter()

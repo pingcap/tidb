@@ -1763,13 +1763,19 @@ pub(crate) fn build_join(
     // reported are no longer the offsets of its row.
     let mut pruned = false;
     if let Some(select) = prune.filter(|_| !coalescing) {
-        if let Some((left_columns, right_columns)) = crate::column_prune::prune_join_sides(
+        if let Some(pruned_sides) = crate::column_prune::prune_join_sides(
             select,
             join,
             &scope,
             &mut left_exec,
             &mut right_exec,
         ) {
+            let crate::column_prune::PrunedJoinSides {
+                left_columns,
+                right_columns,
+                left_func_deps,
+                right_func_deps,
+            } = pruned_sides;
             pruned = true;
             if left_filter_scope.tables.len() == 1 {
                 left_filter_scope.tables[0].columns = left_columns.clone();
@@ -1780,8 +1786,10 @@ pub(crate) fn build_join(
             left_width = left_columns.len();
             scope.tables[0].columns = left_columns;
             scope.tables[0].offset = 0;
+            scope.tables[0].func_deps = left_func_deps;
             scope.tables[1].columns = right_columns;
             scope.tables[1].offset = left_width;
+            scope.tables[1].func_deps = right_func_deps;
         }
     }
 
