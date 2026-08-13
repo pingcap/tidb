@@ -822,3 +822,46 @@ fn multiple_correlated_subqueries_share_the_outer_row() {
         [["1"], ["2"]]
     );
 }
+
+/// Above aggregation, Go chains one Apply per correlated expression over the
+/// grouped output row. This exercises the separate aggregate SELECT hoister,
+/// not the source-row Apply chain used by a correlated aggregate argument.
+#[test]
+fn grouped_select_chains_correlated_subqueries() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE outer_rows (a INT)").unwrap();
+    session
+        .run("CREATE TABLE inner_rows (k INT, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO outer_rows VALUES (1),(2)")
+        .unwrap();
+    session
+        .run("INSERT INTO inner_rows VALUES (1,10),(2,20)")
+        .unwrap();
+
+    assert_eq!(
+        row_text(session.run(
+            "SELECT a, (SELECT v FROM inner_rows WHERE k = outer_rows.a) + \
+             (SELECT 1 FROM inner_rows WHERE k = outer_rows.a) AS total \
+             FROM outer_rows GROUP BY a ORDER BY a"
+        )),
+        [["1", "11"], ["2", "21"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT a FROM outer_rows GROUP BY a HAVING \
+             (SELECT v FROM inner_rows WHERE k = outer_rows.a) > 0 AND \
+             EXISTS(SELECT 1 FROM inner_rows WHERE k = outer_rows.a) ORDER BY a"
+        )),
+        [["1"], ["2"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT a FROM outer_rows GROUP BY a ORDER BY \
+             (SELECT v FROM inner_rows WHERE k = outer_rows.a) + \
+             (SELECT 1 FROM inner_rows WHERE k = outer_rows.a) DESC"
+        )),
+        [["2"], ["1"]]
+    );
+}

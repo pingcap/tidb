@@ -1132,22 +1132,31 @@ pub(crate) fn extract_and_hoist_subquery(
     if !expr_has_subquery(expr) {
         return Ok((expr.clone(), false));
     }
-    let index = applies.len();
-    let mut found = None;
-    let rewritten =
-        extract_correlated_subquery(expr, outer, catalog, current_db, index, &mut found, ctx)?;
-    let Some(correlated) = found else {
-        // Uncorrelated, or no subquery reachable through this expression
-        // shape: left for the caller / the fold pass / the rewriter's own
-        // error.
+    let mut rewritten = expr.clone();
+    let mut found_any = false;
+    while expr_has_subquery(&rewritten) {
+        let index = applies.len();
+        let mut found = None;
+        rewritten = extract_correlated_subquery(
+            &rewritten, outer, catalog, current_db, index, &mut found, ctx,
+        )?;
+        let Some(correlated) = found else {
+            // Uncorrelated, or a shape the extraction does not own: leave it
+            // to the fold pass or its existing named refusal.
+            break;
+        };
+        let value_type = if matches!(correlated.kind, SubqueryKind::Scalar) {
+            subquery_result_type(&correlated, outer, catalog, current_db, ctx)
+                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
+        } else {
+            FieldType::new(FieldTypeCode::LongLong)
+        };
+        applies.push((correlated, format!("__apply_{index}"), value_type));
+        found_any = true;
+    }
+    if !found_any {
         return Ok((rewritten, false));
-    };
-    let value_type = if matches!(correlated.kind, SubqueryKind::Scalar) {
-        subquery_result_type(&correlated, outer, catalog, current_db, ctx)
-            .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong))
-    } else {
-        FieldType::new(FieldTypeCode::LongLong)
-    };
+    }
     let hoisted = substitute_aggregates(
         &rewritten,
         agg_funcs,
@@ -1158,6 +1167,5 @@ pub(crate) fn extract_and_hoist_subquery(
         resolver,
         tidb_expr::Columns::div_precision_increment(ctx),
     )?;
-    applies.push((correlated, format!("__apply_{index}"), value_type));
     Ok((hoisted, true))
 }
