@@ -295,6 +295,43 @@ fn use_index_merge_intersects_indexed_and_branches() {
     );
 }
 
+#[test]
+fn no_index_merge_overrides_a_use_index_merge_hint() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE imn (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, KEY ia (a), KEY ib (b))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO imn VALUES (1, 1, 2), (2, 1, 0), (3, 0, 2)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    let sql = "SELECT /*+ USE_INDEX_MERGE(imn, ia, ib) NO_INDEX_MERGE() */ id FROM imn WHERE a = 1 OR b = 2";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
+    assert!(
+        rows.iter().all(|row| match &row[0] {
+            Datum::Bytes(id) => !String::from_utf8_lossy(id).contains("IndexMerge"),
+            _ => true,
+        }),
+        "NO_INDEX_MERGE must suppress the reader, got {rows:?}"
+    );
+}
+
 /// A range scan over a UNIQUE index reads its handles out of the entry
 /// VALUES, not the key, so this covers the other half of the entry format
 /// -- including the NULL entries a unique index stores non-distinctly.

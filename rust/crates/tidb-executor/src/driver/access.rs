@@ -168,45 +168,47 @@ pub(crate) fn commit_fast_path_source(
         || !hints.allows_table()
         || try_point_get(&PointPlanStmt::of_select(select), &table, &columns, zone)?.is_none()
     {
-        if let Some(plan) = choose_index_merge_union(
-            select,
-            catalog,
-            scope,
-            &table,
-            &columns,
-            partition_scan,
-            current_db,
-        ) {
-            commit_index_merge_source(
-                &table,
+        if !crate::index_hints::no_index_merge(select) {
+            if let Some(plan) = choose_index_merge_union(
+                select,
+                catalog,
                 scope,
-                &columns,
-                plan,
-                from_source,
-                trace.as_deref_mut(),
-                ctx,
-            );
-            return Ok(None);
-        }
-        if let Some(plan) = choose_index_merge_intersection(
-            select,
-            catalog,
-            scope,
-            &table,
-            &columns,
-            partition_scan,
-            current_db,
-        ) {
-            commit_index_merge_source(
                 &table,
-                scope,
                 &columns,
-                plan,
-                from_source,
-                trace.as_deref_mut(),
-                ctx,
-            );
-            return Ok(None);
+                partition_scan,
+                current_db,
+            ) {
+                commit_index_merge_source(
+                    &table,
+                    scope,
+                    &columns,
+                    plan,
+                    from_source,
+                    trace.as_deref_mut(),
+                    ctx,
+                );
+                return Ok(None);
+            }
+            if let Some(plan) = choose_index_merge_intersection(
+                select,
+                catalog,
+                scope,
+                &table,
+                &columns,
+                partition_scan,
+                current_db,
+            ) {
+                commit_index_merge_source(
+                    &table,
+                    scope,
+                    &columns,
+                    plan,
+                    from_source,
+                    trace.as_deref_mut(),
+                    ctx,
+                );
+                return Ok(None);
+            }
         }
         match choose_index_range_path(
             select,

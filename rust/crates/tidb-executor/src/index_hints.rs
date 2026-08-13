@@ -547,6 +547,15 @@ pub(crate) fn single_table_index_merge_indexes(
     indexes
 }
 
+/// Go `StmtCtx.NoIndexMergeHint`: this statement-level hint wins over both
+/// the session switch and `USE_INDEX_MERGE` candidates.
+pub(crate) fn no_index_merge(select: &tidb_ast::SelectStmt) -> bool {
+    select
+        .hints
+        .iter()
+        .any(|hint| hint.name.eq_ignore_ascii_case("NO_INDEX_MERGE"))
+}
+
 /// Raises Go's 1176 for any index hint in a `FROM` clause naming an index its
 /// table does not have, over EVERY table of a join rather than only the one
 /// the fast path costs.
