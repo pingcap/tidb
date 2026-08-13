@@ -817,12 +817,27 @@ fn lower_select_fields(
                 }
             }
             other if expr_has_grouping(other) => {
-                // Go evaluates `GROUPING(a) + 1` over the projection above the
-                // aggregation; this seed has no such projection for select
-                // fields, so only a bare GROUPING() field is supported.
-                return Err(DriverError::unsupported(
-                    "GROUPING() nested inside a larger select expression is not supported yet",
-                ));
+                // Go evaluates expressions around GROUPING() in the
+                // projection above aggregation. The same aggregate
+                // substitution used for `AVG(a) / 2` makes the grouping
+                // column an ordinary input to that projection.
+                let hoisted = substitute_aggregates(
+                    other,
+                    &mut state.agg_funcs,
+                    &mut state.names,
+                    &mut state.types,
+                    &mut state.grouping_specs,
+                    &state.group_by_names,
+                    resolver,
+                    tidb_expr::Columns::div_precision_increment(ctx),
+                )?;
+                if let Some(slot) = state.slots.last_mut() {
+                    *slot = OutputSlot::Expr(state.post_agg_exprs.len());
+                }
+                if let Some(name) = state.slot_names.last_mut() {
+                    *name = Some(display);
+                }
+                state.post_agg_exprs.push(hoisted);
             }
             // An aggregate inside a LARGER expression (`IF(1=1, COUNT(*), 0)`,
             // `AVG(a) / 2`, `CASE WHEN COUNT(*) > 2 ...`): Go's

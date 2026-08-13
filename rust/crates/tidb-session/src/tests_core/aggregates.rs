@@ -870,12 +870,13 @@ fn grouping_with_rollup() {
         Err(DriverError::FieldInGroupingNotGroupBy(0))
     ));
 
-    // Deferred: Go evaluates `GROUPING(a) + 1` in the projection above
-    // the aggregation, which this tier does not build for select fields.
-    assert!(matches!(
-        session.run("SELECT GROUPING(a) + 1 FROM t GROUP BY a, b WITH ROLLUP"),
-        Err(DriverError::Unsupported(_))
-    ));
+    // Go evaluates expressions around GROUPING() in the projection above the
+    // aggregation. The six full/subtotal rows have grouping(a)=0; only the
+    // grand total has grouping(a)=1.
+    assert_eq!(
+        row_text(session.run("SELECT GROUPING(a) + 1 FROM t GROUP BY a, b WITH ROLLUP ORDER BY 1")),
+        [["1"], ["1"], ["1"], ["1"], ["1"], ["1"], ["2"]]
+    );
 }
 
 /// `group_concat_max_len` truncates the JOINED buffer by BYTES and warns
