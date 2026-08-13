@@ -39,6 +39,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering::SeqCst};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
+use crossbeam_channel::{bounded, Receiver, Sender};
 use tidb_error::mysql::FormatArg;
 use tidb_error::terror::TerrorError;
 
@@ -95,6 +96,9 @@ struct KillEventState {
 struct KillEventShared {
     state: Mutex<KillEventState>,
     ready: Condvar,
+    /// One-shot receivers used by resource pools that must interrupt a
+    /// blocking allocation as soon as this statement is killed or reset.
+    waiters: Mutex<Vec<Sender<()>>>,
 }
 
 /// A stable receiver for one Go kill-event channel generation.
@@ -175,6 +179,22 @@ impl SqlKiller {
         }
     }
 
+    /// Subscribes to the current kill-event generation through a receiver.
+    ///
+    /// The memory arbitrator selects on this receiver while a root pool waits
+    /// for capacity. A kill or the next statement's reset closes the Go
+    /// channel, so both must wake the blocked allocation.
+    pub fn subscribe_kill_event(&self) -> Receiver<()> {
+        let (tx, rx) = bounded(1);
+        let state = lock_unpoison(&self.kill_event.state);
+        if state.triggered {
+            let _ = tx.send(());
+        } else {
+            lock_unpoison(&self.kill_event.waiters).push(tx);
+        }
+        rx
+    }
+
     /// Whether the kill event has been triggered (a closed Go channel).
     pub fn kill_event_triggered(&self) -> bool {
         lock_unpoison(&self.kill_event.state).triggered
@@ -191,6 +211,9 @@ impl SqlKiller {
             return;
         }
         state.triggered = true;
+        for waiter in lock_unpoison(&self.kill_event.waiters).drain(..) {
+            let _ = waiter.send(());
+        }
         self.kill_event.ready.notify_all();
     }
 
@@ -199,6 +222,9 @@ impl SqlKiller {
         state.generation = state.generation.wrapping_add(1);
         state.triggered = false;
         state.desc.clear();
+        for waiter in lock_unpoison(&self.kill_event.waiters).drain(..) {
+            let _ = waiter.send(());
+        }
         self.kill_event.ready.notify_all();
     }
 
@@ -410,6 +436,19 @@ mod tests {
         killer.reset();
         assert_eq!(killer.get_kill_signal(), None);
         assert!(!killer.kill_event_triggered());
+    }
+
+    #[test]
+    fn receiver_subscribers_wake_for_kill_and_statement_reset() {
+        let killer = SqlKiller::default();
+        let killed = killer.subscribe_kill_event();
+        killer.send_kill_signal(KillSignal::QueryInterrupted);
+        assert!(killed.recv_timeout(Duration::from_millis(10)).is_ok());
+
+        killer.reset();
+        let reset = killer.subscribe_kill_event();
+        killer.reset();
+        assert!(reset.recv_timeout(Duration::from_millis(10)).is_ok());
     }
 
     #[test]

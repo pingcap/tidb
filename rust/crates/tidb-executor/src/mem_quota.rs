@@ -237,6 +237,7 @@ pub struct SessionMemory {
 #[derive(Clone)]
 struct SessionMemoryConfig {
     spill_storage: Option<Arc<SpillStorage>>,
+    arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
     tmp_storage_on_oom: bool,
     oom_action: OomAction,
 }
@@ -252,6 +253,7 @@ impl StatementLifetime {
         if self.finished.swap(true, SeqCst) {
             return;
         }
+        self.stmt.detach_mem_arbitrator(false);
         self.stmt.detach();
         self.disk_stmt.detach();
     }
@@ -281,6 +283,7 @@ impl SessionMemory {
             disk_session,
             config: Arc::new(Mutex::new(SessionMemoryConfig {
                 spill_storage: None,
+                arbitrator: None,
                 tmp_storage_on_oom: true,
                 oom_action,
             })),
@@ -299,6 +302,16 @@ impl SessionMemory {
     #[must_use]
     pub fn with_spill_storage(self, storage: Arc<SpillStorage>) -> Self {
         self.set_spill_storage(storage);
+        self
+    }
+
+    /// Installs the server-owned memory arbitrator for subsequently created
+    /// statement roots. Existing statements retain their own registration
+    /// until they finish, just as Go keeps the tracker chosen at execution
+    /// start.
+    #[must_use]
+    pub fn with_mem_arbitrator(self, arbitrator: Arc<tidb_util::memory::MemArbitrator>) -> Self {
+        self.set_mem_arbitrator(arbitrator);
         self
     }
 
@@ -344,6 +357,12 @@ impl SessionMemory {
         refresh_global_disk_attachment(&self.disk_session, tmp_storage_on_oom, storage.as_ref());
     }
 
+    /// Replaces the global arbitrator used by future statements without
+    /// moving this connection's persistent tracker roots.
+    pub fn set_mem_arbitrator(&self, arbitrator: Arc<tidb_util::memory::MemArbitrator>) {
+        self.config.lock().unwrap().arbitrator = Some(arbitrator);
+    }
+
     /// Updates only the future-statement spill decision.
     pub fn set_tmp_storage_on_oom(&self, enabled: bool) {
         let mut config = self.config.lock().unwrap();
@@ -368,6 +387,16 @@ impl SessionMemory {
         let disk_stmt = Tracker::new(LABEL_FOR_SQL_TEXT, -1);
         disk_stmt.session_id.store(connection_id, SeqCst);
         disk_stmt.attach_to(&self.disk_session);
+
+        if let Some(arbitrator) = config.arbitrator.as_ref() {
+            let _ = stmt.init_mem_arbitrator(
+                Arc::clone(arbitrator),
+                Arc::clone(&self.session.killer),
+                tidb_util::memory::ArbitrationPriority::Medium,
+                false,
+                0,
+            );
+        }
 
         StatementMemory {
             lifetime: Arc::new(StatementLifetime {
@@ -676,6 +705,31 @@ impl WriteMemory {
 mod tests {
     use super::*;
 
+    #[derive(Default)]
+    struct NoopMemStateRecorder;
+
+    impl tidb_util::memory::RecordMemState for NoopMemStateRecorder {
+        fn load(&self) -> Result<Option<tidb_util::memory::RuntimeMemStateV1>, String> {
+            Ok(None)
+        }
+
+        fn store(&self, _: &tidb_util::memory::RuntimeMemStateV1) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn test_mem_arbitrator() -> Arc<tidb_util::memory::MemArbitrator> {
+        let arbitrator =
+            tidb_util::memory::MemArbitrator::new(1024, 4, 3, 0, Box::new(NoopMemStateRecorder));
+        assert!(arbitrator.auto_run(
+            tidb_util::memory::MemArbitratorActions::default(),
+            tidb_util::memory::DEF_AWAIT_FREE_POOL_ALLOC_ALIGN_SIZE,
+            4,
+            tidb_util::memory::DEF_TASK_TICK_DUR,
+        ));
+        arbitrator
+    }
+
     fn test_spill_storage(name: &str) -> Arc<SpillStorage> {
         Arc::new(
             SpillStorage::open(SpillStorageSpec {
@@ -686,6 +740,28 @@ mod tests {
             })
             .unwrap(),
         )
+    }
+
+    #[test]
+    fn a_statement_root_registers_and_releases_its_global_arbitrator_pool() {
+        let arbitrator = test_mem_arbitrator();
+        let session = SessionMemory::new(4096, OomAction::Cancel, 97)
+            .with_mem_arbitrator(Arc::clone(&arbitrator));
+        let statement = session.statement();
+        let operator = statement.operator_tracker(3);
+
+        // `1024 / 1000 == 1`, so this crosses the source small-budget
+        // threshold and must promote the statement into a root pool.
+        operator.consume(2);
+        let pool = arbitrator
+            .find_root_pool(97)
+            .entry
+            .expect("statement must reach the process arbitrator");
+        assert!(pool.pool().capacity() > 0);
+
+        statement.finish_statement();
+        assert_eq!(pool.pool().capacity(), 0);
+        assert!(arbitrator.stop());
     }
 
     #[test]

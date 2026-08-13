@@ -14,8 +14,8 @@
 
 //! Transcreation of Go `pkg/util/memory/tracker.go`'s tracker core. See the
 //! module doc for the in-progress package scope and documented deferrals
-//! (arbitrator hook, metrics gauges, GC-aware release, the
-//! `MemUsageTop1Tracker` global that belongs to the arbitrator tier).
+//! (metrics gauges, GC-aware release, the `MemUsageTop1Tracker` global that
+//! belongs to the arbitrator tier).
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -23,7 +23,11 @@ use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use super::action::ArcAction;
-use crate::sqlkiller::SqlKiller;
+use super::{
+    ArbitrateHelper, ArbitrationContext, ArbitrationPriority, ArbitratorStopReason, CancelChannel,
+    ConcurrentBudget, MemArbitrator,
+};
+use crate::sqlkiller::{KillSignal, SqlKiller};
 
 fn lock_unpoison<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
@@ -108,6 +112,140 @@ impl ActionSlot {
     }
 }
 
+struct TrackerArbitrationHelper {
+    killer: Arc<SqlKiller>,
+    heap_inuse: AtomicI64,
+}
+
+impl ArbitrateHelper for TrackerArbitrationHelper {
+    fn stop(&self, reason: ArbitratorStopReason) -> bool {
+        self.killer
+            .send_kill_signal_with_reason(KillSignal::KilledByMemArbitrator, reason.as_str());
+        true
+    }
+
+    fn heap_inuse(&self) -> i64 {
+        self.heap_inuse.load(SeqCst)
+    }
+
+    fn finish(&self) {}
+}
+
+enum TrackerArbitrationBudget {
+    Small { used: i64 },
+    Big { budget: Arc<ConcurrentBudget> },
+}
+
+/// One statement's registration in the process memory arbitrator.
+///
+/// Go keeps the fast small-budget path until a statement becomes material,
+/// then moves its current usage into a private root pool. The mutex is local
+/// to one statement and only active while the arbitrator is enabled; it keeps
+/// that state transition atomic without exposing Go's racy intermediate
+/// `intoBigBudget` state to Rust callers.
+struct TrackerArbitration {
+    arbitrator: Arc<MemArbitrator>,
+    uid: u64,
+    helper: Arc<TrackerArbitrationHelper>,
+    context: Arc<ArbitrationContext>,
+    budget: Mutex<TrackerArbitrationBudget>,
+}
+
+impl TrackerArbitration {
+    fn now_unix_sec() -> i64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .try_into()
+            .unwrap_or(i64::MAX)
+    }
+
+    fn transition_to_big(&self, state: &mut TrackerArbitrationBudget) -> bool {
+        let TrackerArbitrationBudget::Small { used } = state else {
+            return true;
+        };
+        let used = (*used).max(0);
+        self.arbitrator.with_await_free_budget(self.uid, |small| {
+            small.report_heap_inuse(-used);
+            let _ = small.budget.consume_quota(Self::now_unix_sec(), -used);
+        });
+
+        let Ok(pool) = self.arbitrator.emplace_root_pool(self.uid) else {
+            self.helper.stop(ArbitratorStopReason::StandardCancel);
+            return false;
+        };
+        if !self
+            .arbitrator
+            .restart_entry_by_context(pool.clone(), Some(Arc::clone(&self.context)))
+        {
+            self.helper.stop(ArbitratorStopReason::StandardCancel);
+            return false;
+        }
+        let Some(entry) = pool.entry else {
+            self.helper.stop(ArbitratorStopReason::StandardCancel);
+            return false;
+        };
+        let budget = Arc::new(ConcurrentBudget::new(Arc::clone(entry.pool())));
+        if used > 0 && budget.consume_quota(Self::now_unix_sec(), used).is_err() {
+            self.helper.stop(ArbitratorStopReason::StandardCancel);
+            return false;
+        }
+        self.helper.heap_inuse.store(used, SeqCst);
+        *state = TrackerArbitrationBudget::Big { budget };
+        true
+    }
+
+    fn consume(&self, delta: i64) {
+        let mut state = lock_unpoison(&self.budget);
+        match &mut *state {
+            TrackerArbitrationBudget::Small { used } => {
+                *used += delta;
+                let mut exhausted = self.arbitrator.with_await_free_budget(self.uid, |small| {
+                    small.report_heap_inuse(delta);
+                    small
+                        .budget
+                        .consume_quota(Self::now_unix_sec(), delta)
+                        .is_err()
+                });
+                if *used > self.arbitrator.pool_alloc_profile().small_pool_limit
+                    || exhausted.take().unwrap_or(true)
+                {
+                    let _ = self.transition_to_big(&mut state);
+                }
+            }
+            TrackerArbitrationBudget::Big { budget } => {
+                if budget.consume_quota(Self::now_unix_sec(), delta).is_err() {
+                    self.helper.stop(ArbitratorStopReason::StandardCancel);
+                }
+                self.helper
+                    .heap_inuse
+                    .store(budget.used.load(SeqCst), SeqCst);
+            }
+        }
+    }
+
+    fn finish(&self, exception: bool, max_consumed: i64) {
+        let mut state = lock_unpoison(&self.budget);
+        match &mut *state {
+            TrackerArbitrationBudget::Small { used } => {
+                let used = *used;
+                self.arbitrator.with_await_free_budget(self.uid, |small| {
+                    small.report_heap_inuse(-used);
+                    let _ = small.budget.consume_quota(Self::now_unix_sec(), -used);
+                });
+            }
+            TrackerArbitrationBudget::Big { budget } => {
+                budget.stop();
+                self.arbitrator
+                    .reset_root_pool_by_id(self.uid, max_consumed, !exception);
+            }
+        }
+        self.context.set_helper(None);
+        self.helper.heap_inuse.store(0, SeqCst);
+    }
+}
+
 /// The hierarchical memory tracker (Go `Tracker`). Always used behind an
 /// [`Arc`], mirroring Go's `*Tracker`.
 pub struct Tracker {
@@ -127,6 +265,7 @@ pub struct Tracker {
     is_global: bool,
     /// The query killer polled during consumption (Go `Killer`).
     pub killer: Arc<SqlKiller>,
+    arbitration: Mutex<Option<Arc<TrackerArbitration>>>,
 }
 
 impl Tracker {
@@ -164,7 +303,66 @@ impl Tracker {
             is_root_tracker_of_sess: AtomicBool::new(false),
             is_global,
             killer: Arc::new(SqlKiller::default()),
+            arbitration: Mutex::new(None),
         })
+    }
+
+    /// Registers this statement root with the server-owned global memory
+    /// arbitrator. The caller supplies the session-root killer because that is
+    /// the signal every operator below this statement observes.
+    pub fn init_mem_arbitrator(
+        self: &Arc<Self>,
+        arbitrator: Arc<MemArbitrator>,
+        killer: Arc<SqlKiller>,
+        priority: ArbitrationPriority,
+        wait_averse: bool,
+        reserve_size: i64,
+    ) -> bool {
+        let uid = self.session_id();
+        if uid == 0 {
+            return false;
+        }
+        let helper = Arc::new(TrackerArbitrationHelper {
+            killer: Arc::clone(&killer),
+            heap_inuse: AtomicI64::new(0),
+        });
+        let context = ArbitrationContext::new(
+            Some(CancelChannel::from_kill_event(
+                killer.subscribe_kill_event(),
+            )),
+            Some(helper.clone()),
+            priority,
+            wait_averse,
+            true,
+        );
+        let registration = Arc::new(TrackerArbitration {
+            arbitrator,
+            uid,
+            helper,
+            context,
+            budget: Mutex::new(TrackerArbitrationBudget::Small { used: 0 }),
+        });
+
+        let previous = lock_unpoison(&self.arbitration).replace(Arc::clone(&registration));
+        if let Some(previous) = previous {
+            previous.finish(true, 0);
+        }
+        if reserve_size > 0 {
+            let mut state = lock_unpoison(&registration.budget);
+            let _ = registration.transition_to_big(&mut state);
+        }
+        true
+    }
+
+    /// Releases this statement's arbitrator budget before the tracker leaves
+    /// the session tree.
+    pub fn detach_mem_arbitrator(&self, exception: bool) -> bool {
+        let registration = lock_unpoison(&self.arbitration).take();
+        let Some(registration) = registration else {
+            return false;
+        };
+        registration.finish(exception, self.max_consumed());
+        true
     }
 
     /// Go `CheckBytesLimit` (test helper).
@@ -376,6 +574,9 @@ impl Tracker {
 
         let mut cursor = Some(Arc::clone(self));
         while let Some(tracker) = cursor {
+            if let Some(arbitration) = lock_unpoison(&tracker.arbitration).clone() {
+                arbitration.consume(bs);
+            }
             if tracker.is_root_tracker_of_sess.load(SeqCst) {
                 session_root = Some(Arc::clone(&tracker));
             }
