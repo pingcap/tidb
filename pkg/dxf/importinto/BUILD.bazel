@@ -38,6 +38,7 @@ go_library(
         "//pkg/dxf/framework/taskexecutor",
         "//pkg/dxf/framework/taskexecutor/execute",
         "//pkg/dxf/importinto/conflictedkv",
+        "//pkg/dxf/importinto/conflictrows",
         "//pkg/dxf/importinto/taskkey",
         "//pkg/dxf/operator",
         "//pkg/executor/importer",
