@@ -30,7 +30,7 @@
 //! per partition, pruned by [`crate::partition_pruning`], and printed back by
 //! `SHOW CREATE TABLE`.
 //!
-//! KEY, `RANGE COLUMNS` and `LIST COLUMNS` are REFUSED -- this tier can
+//! KEY and `RANGE COLUMNS` are REFUSED -- this tier can
 //! neither route nor prune them, and accepting the clause would build an
 //! ordinary unpartitioned table that answers every partition-aware query
 //! wrongly while reporting success. That refusal is the same one HASH and
@@ -140,10 +140,53 @@ pub fn build_table_partitioning(
         )));
     }
 
+    if method.kind == PartitionType::LIST && method.expr.is_none() {
+        let (dependencies, kind) = super::table_partition_list::build_list_columns_values(
+            &method.columns,
+            &partitioning.definitions,
+            names,
+            types,
+            ctx,
+        )?;
+        let definitions = build_named_partition_definitions(create, allocate_id);
+        check_partition_name_unique(&definitions)?;
+        if definitions.len() as u64 > MAX_PARTITIONS {
+            return Err(DriverError::PartitionTooMany);
+        }
+        let dependency_offsets = dependencies
+            .iter()
+            .map(|name| {
+                names
+                    .iter()
+                    .position(|candidate| candidate.eq_ignore_ascii_case(name))
+                    .expect("LIST COLUMNS names resolved above")
+            })
+            .collect::<Vec<_>>();
+        check_unique_keys_include_partition_columns(indexes, handle_offsets, &dependency_offsets)?;
+        return Ok(Some(PartitionSpec {
+            kind,
+            expr_text: method
+                .columns
+                .iter()
+                .filter_map(|path| path.last())
+                .map(|name| format!("`{name}`"))
+                .collect::<Vec<_>>()
+                .join(","),
+            expr: tidb_expr::expression::Expression::Constant(
+                tidb_expr::expression::Constant::new(
+                    tidb_datatype::Datum::Null,
+                    FieldType::new(FieldTypeCode::LongLong),
+                ),
+            ),
+            dependencies,
+            definitions,
+        }));
+    }
+
     let Some(expr) = &method.expr else {
         // A column list rather than an expression is Go's KEY-shaped path
-        // (`HASH COLUMNS`) or its `RANGE COLUMNS`/`LIST COLUMNS` tuple
-        // comparison, neither of which this tier routes.
+        // (`HASH COLUMNS`) or its `RANGE COLUMNS` tuple comparison, neither
+        // of which this tier routes.
         let name = method.kind.sql();
         return Err(DriverError::unsupported(format!(
             "CREATE TABLE ... PARTITION BY {name} COLUMNS is not supported by this node"

@@ -424,6 +424,10 @@ pub enum DriverError {
     /// Go `dbterror.ErrNotAllowedTypeInPartition` (1659), carrying the column
     /// whose type the partition expression may not read.
     PartitionFieldTypeNotAllowed(String),
+    /// Go `dbterror.ErrSameNamePartitionField` (1652).
+    PartitionDuplicateField(String),
+    /// Go `dbterror.ErrWrongTypeColumnValue` (1654).
+    PartitionColumnValueWrongType,
     /// Go `dbterror.ErrGlobalIndexNotExplicitlySet` (8264), carrying the
     /// index name: a unique index that does not include every partitioning
     /// column, without `GLOBAL`.

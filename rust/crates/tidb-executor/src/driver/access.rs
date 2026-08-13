@@ -745,23 +745,28 @@ fn pruned_partition_ids(
 ) -> Option<Vec<i64>> {
     let partition = table.partition()?;
     let where_clause = select.where_clause.as_ref()?;
-    // A bare column is the one partition expression whose own value a range
-    // over a column IS.
-    let [dependency] = partition.dependencies.as_slice() else {
-        return None;
-    };
-    let column = table
-        .columns
-        .iter()
-        .find(|column| column.name.eq_ignore_ascii_case(dependency))?;
-    if partition.expr_text != format!("`{}`", column.name) {
+    let list_columns = matches!(partition.kind, crate::PartitionKind::ListColumns { .. });
+    // A bare column is the one scalar partition expression whose own value a
+    // range over a column is. LIST COLUMNS instead owns its named tuple.
+    let mut range_columns = Vec::with_capacity(partition.dependencies.len());
+    for dependency in &partition.dependencies {
+        let column = table
+            .columns
+            .iter()
+            .find(|column| column.name.eq_ignore_ascii_case(dependency))?;
+        if !list_columns && partition.expr_text != format!("`{}`", column.name) {
+            return None;
+        }
+        range_columns.push(crate::index_range::RangeColumn::whole(
+            column.name.clone(),
+            column.field_type.clone(),
+        ));
+    }
+    if range_columns.is_empty() {
         return None;
     }
     let built = crate::index_range::detach_cond_and_build_range_for_index(
-        &[crate::index_range::RangeColumn::whole(
-            column.name.clone(),
-            column.field_type.clone(),
-        )],
+        &range_columns,
         where_clause,
         zone,
     )?;

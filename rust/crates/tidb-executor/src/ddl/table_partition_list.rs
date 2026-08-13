@@ -15,15 +15,160 @@
 //! Scalar `PARTITION BY LIST (expr)` definition folding and validation.
 //!
 //! Scalar LIST folds one integer expression, while LIST COLUMNS compares typed
-//! tuples and collations. Only the former belongs in this module.
+//! tuples. Both definition forms are normalized here before runtime routing.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use tidb_ast::{Expr, PartitionDefinition, PartitionDefinitionClause, PartitionValue};
 use tidb_datatype::{Datum, FieldType};
 
 use crate::partition_routing::PartitionKind;
 use crate::DriverError;
+
+/// Builds `LIST COLUMNS`' typed tuple key set.
+pub(super) fn build_list_columns_values(
+    columns: &[Vec<String>],
+    definitions: &[PartitionDefinition],
+    names: &[String],
+    types: &[FieldType],
+    ctx: &crate::StmtContext,
+) -> Result<(Vec<String>, PartitionKind), DriverError> {
+    if columns.is_empty() || definitions.is_empty() {
+        return Err(DriverError::PartitionsMustBeDefined("LIST"));
+    }
+    let mut dependency_names = Vec::with_capacity(columns.len());
+    let mut field_types = Vec::with_capacity(columns.len());
+    for path in columns {
+        let name = path
+            .last()
+            .ok_or(DriverError::PartitionColumnValueWrongType)?;
+        if dependency_names
+            .iter()
+            .any(|candidate: &String| candidate.eq_ignore_ascii_case(name))
+        {
+            return Err(DriverError::PartitionDuplicateField(name.clone()));
+        }
+        let offset = names
+            .iter()
+            .position(|candidate| candidate.eq_ignore_ascii_case(name))
+            .ok_or_else(|| DriverError::UnknownColumnInClause {
+                column: name.clone(),
+                clause: "partition function".to_owned(),
+            })?;
+        let field_type = types[offset].clone();
+        if !list_columns_type_allowed(&field_type) {
+            return Err(DriverError::PartitionFieldTypeNotAllowed(name.clone()));
+        }
+        dependency_names.push(name.clone());
+        field_types.push(field_type);
+    }
+
+    let mut values = Vec::new();
+    let mut keys = HashMap::new();
+    let mut default_partition = None;
+    for (ordinal, definition) in definitions.iter().enumerate() {
+        match &definition.clause {
+            PartitionDefinitionClause::Default => {
+                set_default_partition(&mut default_partition, ordinal)?;
+            }
+            PartitionDefinitionClause::In(items) => {
+                for item in items {
+                    if matches!(item, PartitionValue::Default) {
+                        set_default_partition(&mut default_partition, ordinal)?;
+                        continue;
+                    }
+                    let exprs: &[Expr] = match item {
+                        PartitionValue::Expr(expr) if field_types.len() == 1 => {
+                            std::slice::from_ref(expr)
+                        }
+                        PartitionValue::Tuple(exprs) if exprs.len() == field_types.len() => exprs,
+                        _ => return Err(DriverError::PartitionColumnValueWrongType),
+                    };
+                    let tuple = exprs
+                        .iter()
+                        .zip(&field_types)
+                        .map(|(expr, field_type)| fold_column_value(expr, field_type, ctx))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let key = tidb_codec::encode_key_in_timezone(&ctx.session_zone(), &tuple)
+                        .map_err(|_| DriverError::PartitionColumnValueWrongType)?;
+                    if keys.insert(key, ordinal).is_some() {
+                        return Err(DriverError::PartitionDuplicateListValue);
+                    }
+                    values.push((tuple, ordinal));
+                }
+            }
+            PartitionDefinitionClause::LessThan(_) => {
+                return Err(DriverError::PartitionWrongValues {
+                    method: "RANGE",
+                    clause: "VALUES LESS THAN",
+                });
+            }
+            _ => return Err(DriverError::PartitionsMustBeDefined("LIST")),
+        }
+    }
+    Ok((
+        dependency_names,
+        PartitionKind::ListColumns {
+            values,
+            keys,
+            default_partition,
+            field_types,
+        },
+    ))
+}
+
+fn set_default_partition(slot: &mut Option<usize>, ordinal: usize) -> Result<(), DriverError> {
+    if slot.replace(ordinal).is_some() {
+        Err(DriverError::PartitionDuplicateListValue)
+    } else {
+        Ok(())
+    }
+}
+
+fn fold_column_value(
+    expr: &Expr,
+    field_type: &FieldType,
+    ctx: &crate::StmtContext,
+) -> Result<Datum, DriverError> {
+    let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
+        expr,
+        &tidb_expr::rewriter::ZonedNoResolver(ctx.session_zone()),
+    )
+    .map_err(|_| DriverError::PartitionColumnValueWrongType)?;
+    let mut dual = tidb_chunk::chunk::Chunk::new_empty(&[]);
+    dual.set_num_virtual_rows(1);
+    let value = rewritten
+        .eval(ctx, dual.get_row(0))
+        .map_err(|_| DriverError::PartitionColumnValueWrongType)?;
+    let converted = value
+        .convert_to_in(
+            field_type,
+            ctx.ddl_default_conversion_flags(),
+            &ctx.session_zone(),
+        )
+        .map_err(|_| DriverError::PartitionColumnValueWrongType)?;
+    if converted.event.is_some() {
+        return Err(DriverError::PartitionColumnValueWrongType);
+    }
+    Ok(converted.value)
+}
+
+fn list_columns_type_allowed(field_type: &FieldType) -> bool {
+    use tidb_datatype::FieldTypeCode;
+    matches!(
+        field_type.code(),
+        FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong
+            | FieldTypeCode::Date
+            | FieldTypeCode::Datetime
+            | FieldTypeCode::Duration
+            | FieldTypeCode::Varchar
+            | FieldTypeCode::String
+    )
+}
 
 /// Folds scalar LIST definitions into exact-value routing metadata.
 pub(super) fn build_list_values(
@@ -166,6 +311,57 @@ pub fn list_definitions_text(
                 out.push(',');
             }
             out.push_str("NULL");
+        }
+        out.push(')');
+    }
+    out.push(')');
+    out
+}
+
+/// `SHOW CREATE TABLE`'s `LIST COLUMNS` definition list. The values held in
+/// metadata are already converted to their declared types, just like Go's
+/// `PartitionDefinition.InValues` after `formatListPartitionValue`.
+#[must_use]
+pub fn list_columns_definitions_text(
+    definitions: &[crate::partition_routing::PartitionDef],
+    values: &[(Vec<Datum>, usize)],
+    default_partition: Option<usize>,
+) -> String {
+    let mut out = String::from("\n(");
+    for (ordinal, definition) in definitions.iter().enumerate() {
+        if ordinal > 0 {
+            out.push_str(",\n ");
+        }
+        out.push_str(&format!("PARTITION `{}`", definition.name));
+        if default_partition == Some(ordinal) {
+            out.push_str(" DEFAULT");
+            continue;
+        }
+        out.push_str(" VALUES IN (");
+        let mut first = true;
+        for (tuple, owner) in values {
+            if *owner != ordinal {
+                continue;
+            }
+            if !first {
+                out.push(',');
+            }
+            first = false;
+            if tuple.len() > 1 {
+                out.push('(');
+            }
+            for (index, value) in tuple.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                let rendered = value
+                    .restore_value_expr()
+                    .expect("LIST COLUMNS metadata contains a restorable value expression");
+                out.push_str(&String::from_utf8_lossy(&rendered));
+            }
+            if tuple.len() > 1 {
+                out.push(')');
+            }
         }
         out.push(')');
     }

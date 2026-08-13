@@ -797,6 +797,9 @@ impl KvTable {
                 crate::partition_routing::RoutingError::Eval(error) => {
                     KvTableError::Decode(format!("{error:?}"))
                 }
+                crate::partition_routing::RoutingError::Conversion(error) => {
+                    KvTableError::Decode(error)
+                }
             })
     }
 

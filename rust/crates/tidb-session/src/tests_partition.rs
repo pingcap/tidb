@@ -23,8 +23,8 @@
 //! `pkg/planner/core/rule/rule_partition_processor.go`), answers
 //! `... PARTITION (p)` from the named partitions alone, and prints the clause
 //! back through `SHOW CREATE TABLE`. What it still has no answer for is
-//! KEY, `RANGE COLUMNS`, and `LIST COLUMNS` routing, so those methods are
-//! refused rather than answered wrongly.
+//! KEY and `RANGE COLUMNS` routing, so those methods are refused rather than
+//! answered wrongly.
 //!
 //! # The captures these tests are written against
 //!
@@ -387,6 +387,105 @@ fn scalar_list_partitioning_routes_and_round_trips() {
     assert_eq!(error.message, "Table has no partition for value 2");
 }
 
+/// LIST COLUMNS routes the declared, converted tuple as one key. Matching one
+/// component alone must not select a partition; DEFAULT receives a tuple no
+/// explicit definition owns.
+#[test]
+fn list_columns_partitioning_routes_typed_tuples() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE lc (a int, b varchar(8), c int) PARTITION BY LIST COLUMNS(a,b) (\
+             PARTITION p0 VALUES IN ((1,'a'),(2,'b')), \
+             PARTITION p1 VALUES IN ((1,'b')), PARTITION pd DEFAULT)",
+        )
+        .expect("LIST COLUMNS is routed as a tuple");
+    for ((a, b), expected) in [
+        (("1", "'a'"), "p0"),
+        (("2", "'b'"), "p0"),
+        (("1", "'b'"), "p1"),
+        (("9", "'z'"), "pd"),
+    ] {
+        session
+            .run(&format!("INSERT INTO lc VALUES ({a},{b},1)"))
+            .unwrap();
+        assert_eq!(
+            sole_holder(&mut session, "lc"),
+            expected,
+            "LIST COLUMNS({a},{b})"
+        );
+        session.run("DELETE FROM lc").unwrap();
+    }
+    let shown = show_create(&mut session, "lc");
+    assert!(
+        shown.contains("PARTITION BY LIST COLUMNS(`a`,`b`)"),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("PARTITION `p0` VALUES IN ((1,'a'),(2,'b'))"),
+        "{shown}"
+    );
+    assert!(shown.contains("PARTITION `pd` DEFAULT"), "{shown}");
+
+    session
+        .run(
+            "CREATE TABLE lc1 (a int, b int) PARTITION BY LIST COLUMNS(a,b) \
+             (PARTITION p0 VALUES IN ((1,1),(2,2)))",
+        )
+        .unwrap();
+    assert_eq!(show_create(&mut session, "lc1"), GO_LIST_COLUMNS);
+}
+
+/// LIST COLUMNS validates the typed tuple set during DDL and refuses an
+/// unmatched write without DEFAULT. These rules must happen before any row is
+/// written into a physical partition.
+#[test]
+fn list_columns_validates_normalized_tuple_definitions() {
+    let duplicate = Session::new()
+        .run(
+            "CREATE TABLE lcd (a int, b date) PARTITION BY LIST COLUMNS(a,b) (\
+             PARTITION p0 VALUES IN ((1,'2020-02-02')), \
+             PARTITION p1 VALUES IN ((+1,'20200202')))",
+        )
+        .expect_err("converted date/integer tuples collide")
+        .to_mysql_error();
+    assert_eq!(duplicate.code, 1495);
+    assert_eq!(
+        duplicate.message,
+        "Multiple definition of same constant in list partitioning"
+    );
+
+    let wrong_type = Session::new()
+        .run(
+            "CREATE TABLE lct (a tinyint) PARTITION BY LIST COLUMNS(a) \
+             (PARTITION p0 VALUES IN (65536))",
+        )
+        .expect_err("a definition must fit its declared column type")
+        .to_mysql_error();
+    assert_eq!(wrong_type.code, 1654);
+    assert_eq!(
+        wrong_type.message,
+        "Partition column values of incorrect type"
+    );
+
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE lcn (a int, b int) PARTITION BY LIST COLUMNS(a,b) \
+             (PARTITION p0 VALUES IN ((1,2)))",
+        )
+        .unwrap();
+    let unmatched = session
+        .run("INSERT INTO lcn VALUES (1,3)")
+        .expect_err("one matching component is not a matching tuple")
+        .to_mysql_error();
+    assert_eq!(unmatched.code, 1526);
+    assert_eq!(
+        unmatched.message,
+        "Table has no partition for value from column_list"
+    );
+}
+
 /// A `VALUES LESS THAN` bound is EVALUATED at `CREATE` and stored as the
 /// folded integer, which is what `SHOW CREATE TABLE` prints back.
 ///
@@ -690,6 +789,36 @@ fn scalar_list_pruning_reads_only_matching_owners() {
     }
 }
 
+/// Tuple predicates negotiate both LIST COLUMNS key parts with the ranger.
+/// `a = 1 AND b = 2` reads the one owning partition, while an `a`-only range
+/// retains every partition containing that leading value.
+#[test]
+fn list_columns_pruning_reads_matching_tuple_owners() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE lcpr (a int, b int, c int) PARTITION BY LIST COLUMNS(a,b) (\
+             PARTITION p0 VALUES IN ((1,2),(2,2)), \
+             PARTITION p1 VALUES IN ((1,3),(3,3)))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO lcpr VALUES (1,2,12),(2,2,22),(1,3,13),(3,3,33)")
+        .unwrap();
+    for (predicate, read, returned) in [
+        ("a = 1 AND b = 2", "2", "1"),
+        ("a = 1", "4", "2"),
+        ("a = 9 AND b = 9", "0", "0"),
+    ] {
+        let rows = tests_support::row_text(session.run(&format!(
+            "EXPLAIN ANALYZE SELECT c FROM lcpr WHERE {predicate}"
+        )));
+        let scan = rows.last().expect("a plan has a source row");
+        assert_eq!(scan[2], read, "records read for `{predicate}`: {}", scan[0]);
+        assert_eq!(rows[0][2], returned, "rows returned for `{predicate}`");
+    }
+}
+
 /// HASH pruning must narrow the physical scan, not merely leave the WHERE to
 /// discard rows after all partitions were read. Each partition holds three
 /// rows, so the source `actRows` makes the distinction observable.
@@ -765,11 +894,6 @@ fn key_and_columns_partitioning_are_still_refused() {
             "CREATE TABLE rc1 (a int, b int) PARTITION BY RANGE COLUMNS (a, b) (PARTITION p0 VALUES LESS THAN (10, 10), PARTITION p1 VALUES LESS THAN (MAXVALUE, MAXVALUE))",
             "rc1",
             GO_RANGE_COLUMNS,
-        ),
-        (
-            "CREATE TABLE lc1 (a int, b int) PARTITION BY LIST COLUMNS (a, b) (PARTITION p0 VALUES IN ((1,1),(2,2)))",
-            "lc1",
-            GO_LIST_COLUMNS,
         ),
     ] {
         let mut session = Session::new();

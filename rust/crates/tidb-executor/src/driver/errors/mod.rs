@@ -1218,6 +1218,16 @@ impl DriverError {
             *b"HY000",
             "The PARTITION function returns the wrong type".to_owned(),
         ),
+        DriverError::PartitionDuplicateField(field) => MysqlError::new(
+            1652,
+            *b"HY000",
+            format!("Duplicate partition field name '{field}'"),
+        ),
+        DriverError::PartitionColumnValueWrongType => MysqlError::new(
+            1654,
+            *b"HY000",
+            "Partition column values of incorrect type".to_owned(),
+        ),
         DriverError::PartitionTooMany => MysqlError::new(
             1499,
             *b"HY000",

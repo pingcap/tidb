@@ -126,7 +126,77 @@ pub fn pruned_ids(spec: &PartitionSpec, ranges: &[IndexRange]) -> Option<Vec<i64
             *default_partition,
             *unsigned,
         )),
+        PartitionKind::ListColumns {
+            values,
+            default_partition,
+            ..
+        } => Some(prune_list_columns_ids(
+            spec,
+            ranges,
+            values,
+            *default_partition,
+        )),
     }
+}
+
+/// Go `ForListColumnPruning.LocateRanges`: a tuple belongs when its prefix
+/// key intersects a ranger interval. The ranger may constrain only the first
+/// N partition columns, so comparisons intentionally use each interval's
+/// prefix length rather than requiring a full tuple equality.
+fn prune_list_columns_ids(
+    spec: &PartitionSpec,
+    ranges: &[IndexRange],
+    values: &[(Vec<Datum>, usize)],
+    default_partition: Option<usize>,
+) -> Vec<i64> {
+    let mut used = vec![false; spec.definitions.len()];
+    for range in ranges {
+        for (tuple, ordinal) in values {
+            if *ordinal < used.len() && tuple_in_range(tuple, range) {
+                used[*ordinal] = true;
+            }
+        }
+    }
+    // Go adds DEFAULT to every `LocateRanges` result: gaps in any predicate
+    // range may contain a tuple it owns.
+    if let Some(ordinal) = default_partition.filter(|ordinal| *ordinal < used.len()) {
+        used[ordinal] = true;
+    }
+    spec.definitions
+        .iter()
+        .zip(used)
+        .filter_map(|(definition, used)| used.then_some(definition.id))
+        .collect()
+}
+
+fn tuple_in_range(tuple: &[Datum], range: &IndexRange) -> bool {
+    let width = range.low.len().min(range.high.len()).min(tuple.len());
+    if width == 0 {
+        return true;
+    }
+    let value = match tidb_codec::encode_key(&tuple[..width]) {
+        Ok(value) => value,
+        Err(_) => return true,
+    };
+    let low = match tidb_codec::encode_key(&range.low[..width]) {
+        Ok(value) => value,
+        Err(_) => return true,
+    };
+    let high = match tidb_codec::encode_key(&range.high[..width]) {
+        Ok(value) => value,
+        Err(_) => return true,
+    };
+    let lower_ok = if range.low_exclusive {
+        value > low
+    } else {
+        value >= low
+    };
+    let upper_ok = if range.high_exclusive {
+        value < high
+    } else {
+        value <= high
+    };
+    lower_ok && upper_ok
 }
 
 /// Go `ForListPruning.LocatePartitionByRange`: retain the definitions owning

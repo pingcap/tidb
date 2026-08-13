@@ -450,6 +450,19 @@ fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
                 *unsigned
             )
         ),
+        tidb_executor::PartitionKind::ListColumns {
+            values,
+            default_partition,
+            ..
+        } => format!(
+            "\nPARTITION BY LIST COLUMNS({}){}",
+            partition.expr_text,
+            tidb_executor::ddl::table_partition_list::list_columns_definitions_text(
+                &partition.definitions,
+                values,
+                *default_partition
+            )
+        ),
     }
 }
 

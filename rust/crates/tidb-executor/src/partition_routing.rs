@@ -33,9 +33,11 @@
 //!
 //! # NOT MODELLED here (each refused at DDL, see [`crate::ddl::table_partition`])
 //!
-//! KEY partitioning, RANGE COLUMNS, LIST COLUMNS, subpartitioning, and every
-//! `ALTER TABLE ... PARTITION` action. HASH, RANGE, and scalar LIST are
-//! routed, so those three are accepted and the rest are refused.
+//! KEY partitioning, RANGE COLUMNS, subpartitioning, and every `ALTER TABLE
+//! ... PARTITION` action. HASH, RANGE, scalar LIST, and LIST COLUMNS are
+//! routed, so those four are accepted and the rest are refused.
+
+use std::collections::HashMap;
 
 use tidb_datatype::Datum;
 use tidb_expr::expression::Expression;
@@ -60,7 +62,7 @@ pub enum RangeBound {
 ///
 /// Go's `ast.PartitionType` has six values; this tier stores the three it can
 /// route. The rest never reach a `PartitionSpec` because DDL refuses them.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum PartitionKind {
     /// Go `ast.PartitionTypeHash`: `PARTITION BY HASH (expr) PARTITIONS n`.
     Hash,
@@ -87,6 +89,18 @@ pub enum PartitionKind {
         /// Whether the partition expression is unsigned.
         unsigned: bool,
     },
+    /// Go `ast.PartitionTypeList` with `COLUMNS`: typed, normalized tuples.
+    ListColumns {
+        /// Each fully converted `VALUES IN` tuple and its owner ordinal.
+        values: Vec<(Vec<Datum>, usize)>,
+        /// Encoded normalized tuples indexed as Go's list-columns pruner
+        /// does. Routing must be a lookup, not a scan of every definition.
+        keys: HashMap<Vec<u8>, usize>,
+        /// The catch-all `DEFAULT` partition, if written.
+        default_partition: Option<usize>,
+        /// The declared types of each tuple position.
+        field_types: Vec<tidb_datatype::FieldType>,
+    },
 }
 
 impl PartitionKind {
@@ -98,6 +112,7 @@ impl PartitionKind {
             PartitionKind::Hash => "HASH",
             PartitionKind::Range { .. } => "RANGE",
             PartitionKind::List { .. } => "LIST",
+            PartitionKind::ListColumns { .. } => "LIST",
         }
     }
 }
@@ -157,6 +172,9 @@ pub enum RoutingError {
     ValueOverflowsBigint(String),
     /// The partition expression could not be evaluated over this row.
     Eval(tidb_expr::EvalError),
+    /// A LIST COLUMNS value could not be normalized into its declared field
+    /// type or codec key. Stored rows normally make this unreachable.
+    Conversion(String),
 }
 
 impl PartitionSpec {
@@ -228,34 +246,92 @@ impl PartitionSpec {
         columns: &[S],
         ctx: &impl tidb_expr::Columns,
     ) -> Result<usize, RoutingError> {
-        let value = crate::generated_column::eval_over_dependencies(
-            &self.expr,
-            &self.dependencies,
-            columns,
-            row,
-            ctx,
-        )
-        .map_err(RoutingError::Eval)?;
         match &self.kind {
-            PartitionKind::Hash => hash_partition_index(&value, self.num()),
-            PartitionKind::Range {
-                less_than,
-                unsigned,
-            } => range_partition_index(&value, less_than, *unsigned),
-            PartitionKind::List {
-                values,
-                null_partition,
+            PartitionKind::ListColumns {
+                keys,
                 default_partition,
-                unsigned,
-            } => list_partition_index(
-                &value,
-                values,
-                *null_partition,
+                field_types,
+                ..
+            } => list_columns_partition_index(
+                row,
+                columns,
+                &self.dependencies,
+                field_types,
+                keys,
                 *default_partition,
-                *unsigned,
+                ctx,
             ),
+            kind => {
+                let value = crate::generated_column::eval_over_dependencies(
+                    &self.expr,
+                    &self.dependencies,
+                    columns,
+                    row,
+                    ctx,
+                )
+                .map_err(RoutingError::Eval)?;
+                match kind {
+                    PartitionKind::Hash => hash_partition_index(&value, self.num()),
+                    PartitionKind::Range {
+                        less_than,
+                        unsigned,
+                    } => range_partition_index(&value, less_than, *unsigned),
+                    PartitionKind::List {
+                        values,
+                        null_partition,
+                        default_partition,
+                        unsigned,
+                    } => list_partition_index(
+                        &value,
+                        values,
+                        *null_partition,
+                        *default_partition,
+                        *unsigned,
+                    ),
+                    PartitionKind::ListColumns { .. } => unreachable!("matched above"),
+                }
+            }
         }
     }
+}
+
+fn list_columns_partition_index<S: crate::generated_column::GeneratedColumnSlot>(
+    row: &[Datum],
+    columns: &[S],
+    names: &[String],
+    field_types: &[tidb_datatype::FieldType],
+    keys: &HashMap<Vec<u8>, usize>,
+    default_partition: Option<usize>,
+    ctx: &impl tidb_expr::Columns,
+) -> Result<usize, RoutingError> {
+    let mut tuple = Vec::with_capacity(names.len());
+    for (name, field_type) in names.iter().zip(field_types) {
+        let offset = crate::generated_column::offset_of(columns, name).ok_or_else(|| {
+            RoutingError::Conversion(format!("partition column '{name}' no longer exists"))
+        })?;
+        let converted = row
+            .get(offset)
+            .unwrap_or(&Datum::Null)
+            .convert_to_in(
+                field_type,
+                tidb_datatype::ConversionFlags::default(),
+                &ctx.time_zone(),
+            )
+            .map_err(|error| RoutingError::Conversion(error.to_string()))?;
+        if converted.event.is_some() {
+            return Err(RoutingError::Conversion(format!(
+                "partition column '{name}' does not convert exactly"
+            )));
+        }
+        tuple.push(converted.value);
+    }
+    let key = tidb_codec::encode_key_in_timezone(&ctx.time_zone(), &tuple)
+        .map_err(|error| RoutingError::Conversion(error.to_string()))?;
+    if let Some(ordinal) = keys.get(&key) {
+        return Ok(*ordinal);
+    }
+    default_partition
+        .ok_or_else(|| RoutingError::NoPartitionForValue("from column_list".to_owned()))
 }
 
 /// Go `ForListPruning.LocatePartition`: an exact folded-value match, then
