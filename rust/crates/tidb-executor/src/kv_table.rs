@@ -1302,7 +1302,8 @@ impl KvTable {
         let rows = self.scan_rows_with_handles_recomputed(decode_context)?;
         let mut written = Vec::new();
         for (handle, row) in &rows {
-            let (key, distinct) = self.index_key(&index, row, handle, &zone)?;
+            let physical_id = self.stored_physical_id(handle)?.unwrap_or(self.table_id);
+            let (key, distinct) = self.index_key(&index, row, handle, physical_id, &zone)?;
             let key = Key::from_bytes(key);
             if distinct && self.store.get(&key).is_ok() {
                 // Undo the entries this backfill already wrote, so a rejected
@@ -1361,7 +1362,8 @@ impl KvTable {
         let index = self.indexes.remove(position);
         let rows = self.scan_rows_with_handles_recomputed(decode_context)?;
         for (handle, row) in &rows {
-            let (key, _) = self.index_key(&index, row, handle, zone)?;
+            let physical_id = self.stored_physical_id(handle)?.unwrap_or(self.table_id);
+            let (key, _) = self.index_key(&index, row, handle, physical_id, zone)?;
             self.store
                 .delete(Key::from_bytes(key))
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -1614,7 +1616,7 @@ impl KvTable {
                 self.table_id,
                 &handle.record_handle(),
             ));
-            self.write_index_entries(row, handle, zone)?;
+            self.write_index_entries(row, handle, self.table_id, zone)?;
             self.store
                 .set(key, value)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -1665,12 +1667,14 @@ impl KvTable {
     pub fn conflicting_handles(
         &mut self,
         row: &[Datum],
-        zone: &SessionTimeZone,
+        ctx: &impl tidb_expr::Columns,
     ) -> Result<Vec<TableHandle>, KvTableError> {
+        let zone = ctx.time_zone();
+        let physical_id = self.record_physical_id(row, ctx)?;
         let mut found: Vec<TableHandle> = Vec::new();
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         if clustered {
-            let handle = self.handle_of_row(row, zone)?;
+            let handle = self.handle_of_row(row, &zone)?;
             if self.row_exists(&handle)? {
                 found.push(handle);
             }
@@ -1681,7 +1685,8 @@ impl KvTable {
             }
             // A distinct entry's key does not carry the handle, so the
             // candidate handle below is only a placeholder for the key build.
-            let (key, distinct) = self.index_key(&index, row, &TableHandle::Int(0), zone)?;
+            let (key, distinct) =
+                self.index_key(&index, row, &TableHandle::Int(0), physical_id, &zone)?;
             if !distinct {
                 continue;
             }
@@ -1713,11 +1718,13 @@ impl KvTable {
     pub fn duplicate_entry_error(
         &mut self,
         row: &[Datum],
-        zone: &SessionTimeZone,
+        ctx: &impl tidb_expr::Columns,
     ) -> Result<KvTableError, KvTableError> {
+        let zone = ctx.time_zone();
+        let physical_id = self.record_physical_id(row, ctx)?;
         let clustered = self.pk_handle_offset.is_some() || !self.common_handle_offsets.is_empty();
         if clustered {
-            let handle = self.handle_of_row(row, zone)?;
+            let handle = self.handle_of_row(row, &zone)?;
             if self.row_exists(&handle)? {
                 return Ok(KvTableError::DuplicateEntry {
                     value: clustered_key_text(self, row),
@@ -1729,7 +1736,8 @@ impl KvTable {
             if !index.unique {
                 continue;
             }
-            let (key, distinct) = self.index_key(&index, row, &TableHandle::Int(0), zone)?;
+            let (key, distinct) =
+                self.index_key(&index, row, &TableHandle::Int(0), physical_id, &zone)?;
             if distinct && self.store.get(&Key::from_bytes(key)).is_ok() {
                 return Ok(KvTableError::DuplicateEntry {
                     value: duplicate_value_text(&self.index_values(&index, row)),
@@ -1874,13 +1882,14 @@ impl KvTable {
                 key: self.qualified_key("PRIMARY"),
             });
         }
+        let physical_id = self.record_physical_id(row, ctx)?;
         let key = Key::from_bytes(encode_row_key_with_handle(
-            self.record_physical_id(row, ctx)?,
+            physical_id,
             &handle.record_handle(),
         ));
         // Go writes the row first, then its index entries; a duplicate on a
         // unique index aborts the statement.
-        self.write_index_entries(row, &handle, &zone)?;
+        self.write_index_entries(row, &handle, physical_id, &zone)?;
         self.store
             .set(key, value)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -1901,13 +1910,14 @@ impl KvTable {
     /// [`KvTable::index_key`] for [`crate::admin_check`]: the entry key one
     /// row's values encode to under `index`.
     pub fn index_key_for_check(
-        &self,
+        &mut self,
         index: &KvIndex,
         row: &[Datum],
         handle: &TableHandle,
         zone: &SessionTimeZone,
     ) -> Result<(Vec<u8>, bool), KvTableError> {
-        self.index_key(index, row, handle, zone)
+        let physical_id = self.stored_physical_id(handle)?.unwrap_or(self.table_id);
+        self.index_key(index, row, handle, physical_id, zone)
     }
 
     /// Removes one stored key without touching anything else -- the only way
@@ -2085,19 +2095,24 @@ impl KvTable {
                 key: self.qualified_key("PRIMARY"),
             });
         }
+        let old_key = self.stored_record_key(handle)?;
+        let old_physical_id = old_key.as_ref().map_or(self.table_id, |key| {
+            tidb_codec::decode_table_id(key.as_bytes())
+        });
+        let new_physical_id = self.record_physical_id(row, ctx)?;
         // Go removes the old index entries and writes the new ones. They point
         // AT the handle, so a moved row needs them rewritten even when the
         // indexed values did not change.
         if !self.indexes.is_empty() {
             let old = self.read_row(handle, decode_context)?;
             if let Some(old) = &old {
-                self.delete_index_entries(old, handle, &zone)?;
+                self.delete_index_entries(old, handle, old_physical_id, &zone)?;
             }
-            if let Err(error) = self.write_index_entries(row, &new_handle, &zone) {
+            if let Err(error) = self.write_index_entries(row, &new_handle, new_physical_id, &zone) {
                 // Restore the entries the failed update removed, so a rejected
                 // statement leaves the index as it found it.
                 if let Some(old) = &old {
-                    self.write_index_entries(old, handle, &zone)?;
+                    self.write_index_entries(old, handle, old_physical_id, &zone)?;
                 }
                 return Err(error);
             }
@@ -2109,9 +2124,8 @@ impl KvTable {
         // partition. Both are the same move, because both change the record
         // KEY, so the old key is removed whenever the new one differs from it
         // and there is no "did the partition change" branch.
-        let old_key = self.stored_record_key(handle)?;
         let key = Key::from_bytes(encode_row_key_with_handle(
-            self.record_physical_id(row, ctx)?,
+            new_physical_id,
             &new_handle.record_handle(),
         ));
         if let Some(old_key) = old_key.filter(|old_key| *old_key != key) {
@@ -2152,14 +2166,15 @@ impl KvTable {
         zone: &SessionTimeZone,
         decode_context: &RowDecodeContext,
     ) -> Result<(), KvTableError> {
-        if !self.indexes.is_empty() {
-            if let Some(row) = self.read_row(handle, decode_context)? {
-                self.delete_index_entries(&row, handle, zone)?;
-            }
-        }
         let Some(key) = self.stored_record_key(handle)? else {
             return Ok(());
         };
+        let physical_id = tidb_codec::decode_table_id(key.as_bytes());
+        if !self.indexes.is_empty() {
+            if let Some(row) = self.read_row(handle, decode_context)? {
+                self.delete_index_entries(&row, handle, physical_id, zone)?;
+            }
+        }
         self.store
             .delete(key)
             .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;

@@ -37,9 +37,12 @@ use crate::remote_scan::{
     EXTRA_HANDLE_COLUMN_ID,
 };
 use crate::storage::StorageIterator;
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
-    encode_index_seek_key, encode_row_key_with_handle, get_table_handle_key_range, RecordHandle,
+    cut_index_prefix, encode_index_seek_key, encode_row_key_with_handle,
+    get_table_handle_key_range, RecordHandle,
 };
 use tidb_codec::Encoder;
 use tidb_datatype::{Datum, FieldType, SessionTimeZone};
@@ -491,6 +494,39 @@ impl KvTable {
         range: &IndexRange,
         zone: &SessionTimeZone,
     ) -> Result<IndexRangeCursor, KvTableError> {
+        self.index_ranges_cursor(index_id, std::slice::from_ref(range), zone)
+    }
+
+    /// A forward cursor over all `ranges`, partition by partition. Go builds
+    /// one index request per physical partition and puts every range for that
+    /// partition in the request before advancing to the next partition.
+    pub fn index_ranges_cursor(
+        &mut self,
+        index_id: i64,
+        ranges: &[IndexRange],
+        zone: &SessionTimeZone,
+    ) -> Result<IndexRangeCursor, KvTableError> {
+        let physical_ids = self.record_physical_ids();
+        self.index_ranges_cursor_for_physical_ids(index_id, ranges, zone, &physical_ids)
+    }
+
+    pub(crate) fn index_ranges_cursor_for_physical_id(
+        &mut self,
+        index_id: i64,
+        ranges: &[IndexRange],
+        zone: &SessionTimeZone,
+        physical_id: i64,
+    ) -> Result<IndexRangeCursor, KvTableError> {
+        self.index_ranges_cursor_for_physical_ids(index_id, ranges, zone, &[physical_id])
+    }
+
+    fn index_ranges_cursor_for_physical_ids(
+        &mut self,
+        index_id: i64,
+        ranges: &[IndexRange],
+        zone: &SessionTimeZone,
+        physical_ids: &[i64],
+    ) -> Result<IndexRangeCursor, KvTableError> {
         let Some(index) = self
             .indexes
             .iter()
@@ -505,29 +541,49 @@ impl KvTable {
                 .encode_key_in_timezone(zone, values)
                 .map_err(|e| KvTableError::Encode(format!("{e:?}")))
         };
-        let mut low = Key::from_bytes(encode_index_seek_key(
-            self.table_id,
-            index_id,
-            &encode(&range.low)?,
-        ));
-        if range.low_exclusive {
-            low = low.prefix_next();
+        let mut iterators = Vec::new();
+        for physical_id in physical_ids.iter().copied() {
+            for range in ranges {
+                let mut low = Key::from_bytes(encode_index_seek_key(
+                    physical_id,
+                    index_id,
+                    &encode(&range.low)?,
+                ));
+                if range.low_exclusive {
+                    low = low.prefix_next();
+                }
+                let mut high = Key::from_bytes(encode_index_seek_key(
+                    physical_id,
+                    index_id,
+                    &encode(&range.high)?,
+                ));
+                if !range.high_exclusive {
+                    high = high.prefix_next();
+                }
+                iterators.push(
+                    self.store
+                        .iter(Some(&low), Some(&high))
+                        .map_err(|e| KvTableError::Storage(format!("{e:?}")))?,
+                );
+            }
         }
-        let mut high = Key::from_bytes(encode_index_seek_key(
-            self.table_id,
-            index_id,
-            &encode(&range.high)?,
-        ));
-        if !range.high_exclusive {
-            high = high.prefix_next();
+        let merge_by_index_key = physical_ids.len() > 1;
+        let mut merge_heap = BinaryHeap::new();
+        if merge_by_index_key {
+            for (position, iterator) in iterators.iter().enumerate() {
+                if iterator.valid() {
+                    merge_heap.push(Reverse((
+                        cut_index_prefix(iterator.key().as_bytes()).to_vec(),
+                        position,
+                    )));
+                }
+            }
         }
-
-        let iterator = self
-            .store
-            .iter(Some(&low), Some(&high))
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
         Ok(IndexRangeCursor {
-            iterator,
+            iterators,
+            next_iterator: 0,
+            merge_by_index_key,
+            merge_heap,
             index,
             common_handle: !self.common_handle_offsets.is_empty(),
         })
@@ -781,7 +837,10 @@ impl Drop for RemoteRowCursor {
 ///
 /// See [`KvTable::index_range_cursor`].
 pub struct IndexRangeCursor {
-    iterator: Box<dyn StorageIterator>,
+    iterators: Vec<Box<dyn StorageIterator>>,
+    next_iterator: usize,
+    merge_by_index_key: bool,
+    merge_heap: BinaryHeap<Reverse<(Vec<u8>, usize)>>,
     index: KvIndex,
     common_handle: bool,
 }
@@ -789,25 +848,55 @@ pub struct IndexRangeCursor {
 impl IndexRangeCursor {
     /// The next row handle in index order, or `None` at the end of the range.
     pub fn next_handle(&mut self) -> Result<Option<TableHandle>, KvTableError> {
-        if !self.iterator.valid() {
-            return Ok(None);
+        if self.merge_by_index_key {
+            let Some(Reverse((_, position))) = self.merge_heap.pop() else {
+                return Ok(None);
+            };
+            let iterator = &mut self.iterators[position];
+            let handle = index_entry_handle(
+                &self.index,
+                iterator.key().as_bytes(),
+                iterator.value(),
+                self.common_handle,
+            )?;
+            iterator
+                .next()
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            if iterator.valid() {
+                self.merge_heap.push(Reverse((
+                    cut_index_prefix(iterator.key().as_bytes()).to_vec(),
+                    position,
+                )));
+            }
+            return Ok(Some(handle));
         }
-        let handle = index_entry_handle(
-            &self.index,
-            self.iterator.key().as_bytes(),
-            self.iterator.value(),
-            self.common_handle,
-        )?;
-        self.iterator
-            .next()
-            .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-        Ok(Some(handle))
+        while self.next_iterator < self.iterators.len() {
+            let iterator = &mut self.iterators[self.next_iterator];
+            if !iterator.valid() {
+                iterator.close();
+                self.next_iterator += 1;
+                continue;
+            }
+            let handle = index_entry_handle(
+                &self.index,
+                iterator.key().as_bytes(),
+                iterator.value(),
+                self.common_handle,
+            )?;
+            iterator
+                .next()
+                .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
+            return Ok(Some(handle));
+        }
+        Ok(None)
     }
 }
 
 impl Drop for IndexRangeCursor {
     fn drop(&mut self) {
-        self.iterator.close();
+        for iterator in &mut self.iterators[self.next_iterator..] {
+            iterator.close();
+        }
     }
 }
 

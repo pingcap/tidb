@@ -440,10 +440,23 @@ pub struct IndexRangeSourceExec {
     table: KvTable,
     index_id: i64,
     ranges: Vec<IndexRange>,
-    /// The next range to open a cursor over.
+    /// Physical partitions in Go request order.
+    physical_ids: Vec<i64>,
+    /// The physical partition whose ranges are being read.
+    next_physical: usize,
+    /// The next range in that physical partition.
     next_range: usize,
     /// The open cursor over `ranges[next_range - 1]`.
     cursor: Option<IndexRangeCursor>,
+    /// `next_handle` stopped because one physical partition ended. A lookup
+    /// batch must be sorted and emitted before the next partition is read.
+    partition_boundary: bool,
+    /// Go's partitioned index-lookup pushdown sorts a physical partition's
+    /// handle task before the root LIMIT observes it.
+    partitioned: bool,
+    /// A parent requested one globally ordered index stream, so partition
+    /// iterators are merged by their index-key suffix instead of concatenated.
+    merge_partition_index_order: bool,
     /// Rows produced so far, which the trace reads as this node's `actRows`
     /// when no filter was pushed into it.
     produced: Rc<Cell<u64>>,
@@ -498,13 +511,20 @@ impl IndexRangeSourceExec {
         ranges: Vec<IndexRange>,
         decode_context: crate::kv_table::RowDecodeContext,
     ) -> Self {
+        let physical_ids = table.record_physical_ids();
+        let partitioned = table.partition().is_some();
         IndexRangeSourceExec {
             meta,
             table,
             index_id,
             ranges,
+            physical_ids,
+            next_physical: 0,
             next_range: 0,
             cursor: None,
+            partition_boundary: false,
+            partitioned,
+            merge_partition_index_order: false,
             produced: Rc::new(Cell::new(0)),
             scanned: Rc::new(Cell::new(0)),
             filter: None,
@@ -560,6 +580,11 @@ impl IndexRangeSourceExec {
         self.can_reorder_handles = false;
     }
 
+    pub(crate) fn merge_partition_index_order(&mut self) {
+        self.can_reorder_handles = false;
+        self.merge_partition_index_order = true;
+    }
+
     /// The next handle to READ A ROW FOR: Go's `lookupTableTask` walk, which
     /// is the index walk regrouped into batches and each batch sorted.
     ///
@@ -571,17 +596,26 @@ impl IndexRangeSourceExec {
     fn next_lookup_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
         if self.batch_at == self.batch.len() {
             let mut want = self.batch_size;
-            if let Some(limit) = self.limit {
-                let remaining = limit.saturating_sub(self.produced.get());
-                want = want.min(usize::try_from(remaining).unwrap_or(usize::MAX));
+            if !self.partitioned {
+                if let Some(limit) = self.limit {
+                    let remaining = limit.saturating_sub(self.produced.get());
+                    want = want.min(usize::try_from(remaining).unwrap_or(usize::MAX));
+                }
             }
             self.batch.clear();
             self.batch_at = 0;
             while self.batch.len() < want {
-                let Some(handle) = self.next_handle()? else {
-                    break;
-                };
-                self.batch.push(handle);
+                match self.next_handle()? {
+                    Some(handle) => self.batch.push(handle),
+                    None if self.partition_boundary => {
+                        self.partition_boundary = false;
+                        if self.batch.is_empty() {
+                            continue;
+                        }
+                        break;
+                    }
+                    None => break,
+                }
             }
             self.batch_size = (self.batch_size * 2).min(MAX_HANDLE_BATCH);
             if self.can_reorder_handles {
@@ -609,13 +643,24 @@ impl IndexRangeSourceExec {
                 }
                 self.cursor = None;
             }
-            let Some(range) = self.ranges.get(self.next_range).cloned() else {
+            let Some(physical_id) = self.physical_ids.get(self.next_physical).copied() else {
+                return Ok(None);
+            };
+            let Some(range) = self.ranges.get(self.next_range) else {
+                self.next_physical += 1;
+                self.next_range = 0;
+                self.partition_boundary = true;
                 return Ok(None);
             };
             self.next_range += 1;
             self.cursor = Some(
                 self.table
-                    .index_range_cursor(self.index_id, &range, self.decode_context.zone())
+                    .index_ranges_cursor_for_physical_id(
+                        self.index_id,
+                        std::slice::from_ref(range),
+                        self.decode_context.zone(),
+                        physical_id,
+                    )
                     .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
             );
         }
@@ -624,8 +669,19 @@ impl IndexRangeSourceExec {
 
 impl Executor for IndexRangeSourceExec {
     fn open(&mut self) -> Result<(), ExecError> {
+        self.next_physical = 0;
         self.next_range = 0;
-        self.cursor = None;
+        self.cursor = if self.merge_partition_index_order {
+            self.next_physical = self.physical_ids.len();
+            Some(
+                self.table
+                    .index_ranges_cursor(self.index_id, &self.ranges, self.decode_context.zone())
+                    .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
+            )
+        } else {
+            None
+        };
+        self.partition_boundary = false;
         self.produced.set(0);
         self.scanned.set(0);
         self.batch.clear();
@@ -642,7 +698,9 @@ impl Executor for IndexRangeSourceExec {
                 // Early stop: the cursor is dropped, so no entry past the cap
                 // is read and no row past it is looked up.
                 self.cursor = None;
-                self.next_range = self.ranges.len();
+                self.next_physical = self.physical_ids.len();
+                self.next_range = 0;
+                self.partition_boundary = false;
                 self.batch.clear();
                 self.batch_at = 0;
                 return Ok(());
@@ -742,7 +800,7 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     /// Accepting means the handle batch is read in index order rather than
     /// handle order; see the type doc.
     fn accept_keep_order(&mut self) -> bool {
-        self.can_reorder_handles = false;
+        self.merge_partition_index_order();
         true
     }
 }
@@ -759,7 +817,6 @@ pub(crate) struct IndexMergeSourceExec {
     kind: IndexMergeKind,
     partials: Vec<(i64, Vec<IndexRange>)>,
     partial_at: usize,
-    range_at: usize,
     cursor: Option<IndexRangeCursor>,
     seen: BTreeSet<TableHandle>,
     intersection: Option<btree_set::IntoIter<TableHandle>>,
@@ -782,7 +839,6 @@ impl IndexMergeSourceExec {
             kind,
             partials,
             partial_at: 0,
-            range_at: 0,
             cursor: None,
             seen: BTreeSet::new(),
             intersection: None,
@@ -813,15 +869,10 @@ impl IndexMergeSourceExec {
             let Some((index_id, ranges)) = self.partials.get(self.partial_at) else {
                 return Ok(None);
             };
-            let Some(range) = ranges.get(self.range_at).cloned() else {
-                self.partial_at += 1;
-                self.range_at = 0;
-                continue;
-            };
-            self.range_at += 1;
+            self.partial_at += 1;
             self.cursor = Some(
                 self.table
-                    .index_range_cursor(*index_id, &range, self.decode_context.zone())
+                    .index_ranges_cursor(*index_id, ranges, self.decode_context.zone())
                     .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
             );
         }
@@ -833,17 +884,15 @@ impl IndexMergeSourceExec {
         ranges: &[IndexRange],
     ) -> Result<BTreeSet<TableHandle>, ExecError> {
         let mut handles = BTreeSet::new();
-        for range in ranges {
-            let mut cursor = self
-                .table
-                .index_range_cursor(index_id, range, self.decode_context.zone())
-                .map_err(|_| ExecError::unsupported("index range is not scannable"))?;
-            while let Some(handle) = cursor
-                .next_handle()
-                .map_err(|_| ExecError::unsupported("index bytes failed to decode"))?
-            {
-                handles.insert(handle);
-            }
+        let mut cursor = self
+            .table
+            .index_ranges_cursor(index_id, ranges, self.decode_context.zone())
+            .map_err(|_| ExecError::unsupported("index range is not scannable"))?;
+        while let Some(handle) = cursor
+            .next_handle()
+            .map_err(|_| ExecError::unsupported("index bytes failed to decode"))?
+        {
+            handles.insert(handle);
         }
         Ok(handles)
     }
@@ -882,7 +931,6 @@ impl IndexMergeSourceExec {
 impl Executor for IndexMergeSourceExec {
     fn open(&mut self) -> Result<(), ExecError> {
         self.partial_at = 0;
-        self.range_at = 0;
         self.cursor = None;
         self.seen.clear();
         self.intersection = None;

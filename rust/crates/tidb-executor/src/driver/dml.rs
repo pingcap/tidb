@@ -812,7 +812,7 @@ pub(crate) fn run_insert_traced(
             continue;
         }
         let conflicts = target(catalog, &database, &table_name)
-            .conflicting_handles(row, &ctx.session_zone())
+            .conflicting_handles(row, ctx)
             .map_err(|e| kv_read_error("conflict lookup failed", e))?;
         if !conflicts.is_empty() {
             if insert.replace {
@@ -873,7 +873,7 @@ pub(crate) fn run_insert_traced(
                 continue;
             } else if insert.ignore {
                 let reported = target(catalog, &database, &table_name)
-                    .duplicate_entry_error(row, &ctx.session_zone())
+                    .duplicate_entry_error(row, ctx)
                     .map_err(|e| kv_read_error("conflict lookup failed", e))?;
                 if let crate::kv_table::KvTableError::DuplicateEntry { value, key } = reported {
                     let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
@@ -1751,7 +1751,7 @@ pub(crate) fn run_update_traced(
                     let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
                         unreachable!("only a byte-backed table stages rewrites")
                     };
-                    kv.conflicting_handles(&new_row, &zone)
+                    kv.conflicting_handles(&new_row, ctx)
                         .map_err(|error| kv_read_error("conflict lookup failed", error))?
                         .iter()
                         .any(|conflict| conflict != &handle)
@@ -1761,7 +1761,7 @@ pub(crate) fn run_update_traced(
                         unreachable!("only a byte-backed table stages rewrites")
                     };
                     let error = kv
-                        .duplicate_entry_error(&new_row, &zone)
+                        .duplicate_entry_error(&new_row, ctx)
                         .map_err(|error| kv_read_error("conflict lookup failed", error))?;
                     let warning = kv_write_error(error).to_mysql_error();
                     ctx.append_warning_parts(warning.code, &warning.message);

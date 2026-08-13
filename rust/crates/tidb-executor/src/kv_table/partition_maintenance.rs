@@ -27,7 +27,8 @@ impl KvTable {
         let rows = rows?;
         let zone = ctx.session_zone();
         for (handle, row) in rows {
-            self.delete_index_entries(&row, &handle, &zone)?;
+            let physical_id = self.record_physical_id(&row, ctx)?;
+            self.delete_index_entries(&row, &handle, physical_id, &zone)?;
         }
 
         for physical_id in physical_ids.iter().copied() {

@@ -27,6 +27,7 @@
 //! `TIMESTAMP` key part to UTC before encoding it, so the entry a Shanghai
 //! session files is the entry a UTC session seeks.
 
+use tidb_codec::decode_table_id;
 use tidb_codec::table_key::encode_index_seek_key;
 use tidb_codec::Encoder;
 use tidb_datatype::{is_bin_collation, Datum, SessionTimeZone};
@@ -95,22 +96,24 @@ impl KvTable {
             return Err(KvTableError::Decode("no such index".to_owned()));
         };
         let common = !self.common_handle_offsets().is_empty();
-        let (low, high) = crate::admin_check::index_key_bounds(self.table_id, index_id);
-        let mut iterator = self
-            .store
-            .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(high)))
-            .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
         let mut entries = Vec::new();
-        while iterator.valid() {
-            let key = iterator.key().as_bytes().to_vec();
-            let value = iterator.value().to_vec();
-            let handle = index_entry_handle(&index, &key, &value, common)?;
-            entries.push(IndexEntryForCheck { key, value, handle });
-            iterator
-                .next()
+        for physical_id in self.record_physical_ids() {
+            let (low, high) = crate::admin_check::index_key_bounds(physical_id, index_id);
+            let mut iterator = self
+                .store
+                .iter(Some(&Key::from_bytes(low)), Some(&Key::from_bytes(high)))
                 .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+            while iterator.valid() {
+                let key = iterator.key().as_bytes().to_vec();
+                let value = iterator.value().to_vec();
+                let handle = index_entry_handle(&index, &key, &value, common)?;
+                entries.push(IndexEntryForCheck { key, value, handle });
+                iterator
+                    .next()
+                    .map_err(|error| KvTableError::Storage(format!("{error:?}")))?;
+            }
+            iterator.close();
         }
-        iterator.close();
         Ok(entries)
     }
 
@@ -205,6 +208,7 @@ impl KvTable {
         index: &KvIndex,
         row: &[Datum],
         handle: &TableHandle,
+        physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<(Vec<u8>, bool), KvTableError> {
         let values = self.index_values(index, row);
@@ -225,7 +229,7 @@ impl KvTable {
             }
         }
         Ok((
-            encode_index_seek_key(self.table_id, index.id, &encoded),
+            encode_index_seek_key(physical_id, index.id, &encoded),
             distinct,
         ))
     }
@@ -408,11 +412,12 @@ impl KvTable {
         &mut self,
         row: &[Datum],
         handle: &TableHandle,
+        physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
         let indexes = self.indexes.clone();
         for index in &indexes {
-            let (key, distinct) = self.index_key(index, row, handle, zone)?;
+            let (key, distinct) = self.index_key(index, row, handle, physical_id, zone)?;
             let value = self.index_entry_value(index, row, handle, distinct, zone)?;
             let key = Key::from_bytes(key);
             if distinct && self.store.get(&key).is_ok() {
@@ -433,11 +438,12 @@ impl KvTable {
         &mut self,
         row: &[Datum],
         handle: &TableHandle,
+        physical_id: i64,
         zone: &SessionTimeZone,
     ) -> Result<(), KvTableError> {
         let indexes = self.indexes.clone();
         for index in &indexes {
-            let (key, _) = self.index_key(index, row, handle, zone)?;
+            let (key, _) = self.index_key(index, row, handle, physical_id, zone)?;
             self.store
                 .delete(Key::from_bytes(key))
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
@@ -477,16 +483,28 @@ impl KvTable {
         let encoded = Encoder::new(self.use_new_collation)
             .encode_key_in_timezone(zone, values)
             .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
-        let key = Key::from_bytes(encode_index_seek_key(self.table_id, index.id, &encoded));
-        match self.store.get(&key) {
-            Ok(entry) => {
-                let handle = decode_handle_in_index_value(&entry)
-                    .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
-                Ok(Some(convert_handle(&handle)))
+        for physical_id in self.record_physical_ids() {
+            let key = Key::from_bytes(encode_index_seek_key(physical_id, index.id, &encoded));
+            match self.store.get(&key) {
+                Ok(entry) => {
+                    let handle = decode_handle_in_index_value(&entry)
+                        .map_err(|e| KvTableError::Decode(format!("{e:?}")))?;
+                    return Ok(Some(convert_handle(&handle)));
+                }
+                Err(StorageError::NotFound) => {}
+                Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
             }
-            Err(StorageError::NotFound) => Ok(None),
-            Err(error) => Err(KvTableError::Storage(format!("{error:?}"))),
         }
+        Ok(None)
+    }
+
+    pub(in crate::kv_table) fn stored_physical_id(
+        &mut self,
+        handle: &TableHandle,
+    ) -> Result<Option<i64>, KvTableError> {
+        Ok(self
+            .stored_record_key(handle)?
+            .map(|key| decode_table_id(key.as_bytes())))
     }
 }
 

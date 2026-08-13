@@ -81,9 +81,18 @@ pub(crate) fn commit_fast_path_source(
         .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false);
     let mut index_order: Option<IndexAccessOrder> = None;
     let mut consumed_where = false;
-    let Some(table) = single_kv_table(&select.from, catalog, current_db) else {
+    let Some(table_ref) = sole_table_ref(&select.from) else {
         return Ok((None, false));
     };
+    let Some(table) = sole_kv_table(&select.from, catalog, current_db) else {
+        return Ok((None, false));
+    };
+    let table_name = table_ref
+        .name
+        .last()
+        .map(String::as_str)
+        .unwrap_or(table.name.as_str());
+    let table = super::from::restricted_to_partitions(&table, &table_ref.partitions, table_name)?;
     let columns = scope.column_list();
     // Go's `getPossibleAccessPaths`: the statement's own `USE`/`FORCE`/
     // `IGNORE INDEX` decide which paths exist before any of them is costed.
@@ -92,7 +101,7 @@ pub(crate) fn commit_fast_path_source(
     // that raises 1176.
     let hints = crate::index_hints::single_table_scan_hints(
         select,
-        single_table_ref(&select.from),
+        Some(table_ref),
         &table,
         current_db,
         ctx,
@@ -885,8 +894,11 @@ fn commit_index_range_source(
     // puts a `UnionScanExec` above the reader, and its `compare()` orders on
     // the index's own columns before the handle -- so a double read inside a
     // transaction that has written this table answers in index order too.
-    if covering || table.has_dirty_content() {
+    if covering {
         exec.answer_in_index_order();
+    }
+    if table.has_dirty_content() {
+        exec.merge_partition_index_order();
     }
     let index = table
         .indexes()
@@ -2078,7 +2090,7 @@ pub(crate) fn try_batch_point_get(
     {
         return Ok(None);
     }
-    let Some(table_ref) = single_table_ref(&select.from) else {
+    let Some(table_ref) = sole_table_ref(&select.from) else {
         return Ok(None);
     };
     let Some(table_name) = table_ref.name.last() else {
