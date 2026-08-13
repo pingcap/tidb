@@ -24,7 +24,13 @@
 //! `config.GetGlobalConfig`) and belongs to the server crate's integration
 //! layer.
 
+use std::fs::{File, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 
 use super::arbitrator::{
     ArbitratorWorkMode, RecordMemState, RuntimeMemStateV1, SoftLimitMode,
@@ -35,6 +41,23 @@ use super::arbitrator::{
 const MEM_STATE_VER: &str = "v1";
 const MEM_STATE_STORE_NAME_PREFIX: &str = "mem-state.";
 const MEM_STATE_STORE_NAME_SUFFIX: &str = ".json";
+static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+fn create_temp_file(base_dir: &Path) -> Result<(File, PathBuf), String> {
+    loop {
+        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let path = base_dir.join(format!(".mem_state.{}.{}.json", std::process::id(), id));
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        options.mode(0o600);
+        match options.open(&path) {
+            Ok(file) => return Ok((file, path)),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => return Err(err.to_string()),
+        }
+    }
+}
 
 /// File-backed recorder of the runtime memory state (Go
 /// `runtimeMemStateRecorder`).
@@ -72,14 +95,18 @@ impl RecordMemState for RuntimeMemStateRecorder {
             })?;
         }
         let buff = serde_json::to_vec(mem_state).map_err(|e| e.to_string())?;
-        let tmp = self.base_dir.join(format!(
-            ".mem_state.{}.json",
-            std::process::id() as u64
-                ^ (mem_state.magnif as u64) << 16
-                ^ mem_state.pool_medium_cap as u64
-        ));
-        std::fs::write(&tmp, &buff).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, &self.file_path).map_err(|e| e.to_string())
+        let (mut tmp_file, tmp_path) = create_temp_file(&self.base_dir)?;
+        if let Err(err) = tmp_file.write_all(&buff) {
+            drop(tmp_file);
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(err.to_string());
+        }
+        drop(tmp_file);
+        if let Err(err) = std::fs::rename(&tmp_path, &self.file_path) {
+            let _ = std::fs::remove_file(&tmp_path);
+            return Err(err.to_string());
+        }
+        Ok(())
     }
 
     /// Go `Load`: scan the dir for a `mem-state.v1*.json` file.
@@ -167,8 +194,26 @@ mod tests {
             magnif: 6100,
             pool_medium_cap: 400,
         };
+        let existing_temp = dir.join(format!(
+            ".mem_state.{}.json",
+            std::process::id() as u64 ^ (s.magnif as u64) << 16 ^ s.pool_medium_cap as u64
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&existing_temp, b"unrelated").unwrap();
         r.store(&s).unwrap();
+        assert_eq!(std::fs::read(&existing_temp).unwrap(), b"unrelated");
         assert_eq!(r.load().unwrap(), Some(s));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+
+            let mode = std::fs::metadata(runtime_mem_state_recorder_file_path(&dir))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777;
+            assert_eq!(mode, 0o600);
+        }
 
         // Field names must match the Go JSON contract.
         let raw = std::fs::read_to_string(runtime_mem_state_recorder_file_path(&dir)).unwrap();
