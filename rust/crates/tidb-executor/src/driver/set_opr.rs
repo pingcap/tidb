@@ -381,6 +381,14 @@ pub(crate) fn combine_set_opr(
     right: Vec<Vec<Datum>>,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
     use tidb_ast::SetOp;
+    if matches!(op, SetOp::Except { all: true }) {
+        return Err(DriverError::unsupported("TiDB do not support except all"));
+    }
+    if matches!(op, SetOp::Intersect { all: true }) {
+        return Err(DriverError::unsupported(
+            "TiDB do not support intersect all",
+        ));
+    }
     Ok(match op {
         SetOp::Union { all: true } => {
             let mut rows = left;
@@ -392,43 +400,33 @@ pub(crate) fn combine_set_opr(
             rows.extend(right);
             dedup_rows(rows)?
         }
-        SetOp::Except { all } => {
+        SetOp::Except { all: false } => {
             let mut remaining = row_counts(&right)?;
             let mut rows = Vec::new();
             for row in left {
                 let key = row_key(&row)?;
                 match remaining.get_mut(&key) {
-                    // EXCEPT ALL removes one occurrence per matching right row.
-                    Some(count) if *count > 0 && all => *count -= 1,
                     Some(count) if *count > 0 => {}
                     _ => rows.push(row),
                 }
             }
-            if all {
-                rows
-            } else {
-                dedup_rows(rows)?
-            }
+            dedup_rows(rows)?
         }
-        SetOp::Intersect { all } => {
+        SetOp::Intersect { all: false } => {
             let mut available = row_counts(&right)?;
             let mut rows = Vec::new();
             for row in left {
                 let key = row_key(&row)?;
                 if let Some(count) = available.get_mut(&key) {
                     if *count > 0 {
-                        if all {
-                            *count -= 1;
-                        }
                         rows.push(row);
                     }
                 }
             }
-            if all {
-                rows
-            } else {
-                dedup_rows(rows)?
-            }
+            dedup_rows(rows)?
+        }
+        SetOp::Except { all: true } | SetOp::Intersect { all: true } => {
+            unreachable!("ALL set operations were rejected before folding")
         }
     })
 }

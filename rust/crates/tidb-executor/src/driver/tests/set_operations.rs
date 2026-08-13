@@ -170,16 +170,24 @@ fn set_operations() {
         sorted("SELECT a FROM u1 INTERSECT SELECT a FROM u2", &catalog),
         vec![2, 3]
     );
-    // The ALL forms keep multiplicity: u1 has 2 twice, u2 once.
-    assert_eq!(
-        listed("SELECT a FROM u1 INTERSECT ALL SELECT a FROM u2", &catalog),
-        vec![2, 3]
-    );
-    assert_eq!(
-        listed("SELECT a FROM u1 EXCEPT ALL SELECT a FROM u2", &catalog),
-        vec![1, 2],
-        "one of the two 2s survives EXCEPT ALL"
-    );
+    // Go's planner deliberately has no ALL implementation for these two
+    // set operations (`buildIntersect`/`buildExcept` refuse them before
+    // planning), so execution must not silently invent multiset semantics.
+    for (sql, message) in [
+        (
+            "SELECT a FROM u1 INTERSECT ALL SELECT a FROM u2",
+            "TiDB do not support intersect all",
+        ),
+        (
+            "SELECT a FROM u1 EXCEPT ALL SELECT a FROM u2",
+            "TiDB do not support except all",
+        ),
+    ] {
+        assert!(matches!(
+            run_select_on(sql, &catalog, &crate::StmtContext::for_query()),
+            Err(crate::driver::DriverError::Unsupported(reason)) if reason == message
+        ));
+    }
 
     // A statement-level ORDER BY and LIMIT apply to the folded result.
     // Captured: ... ORDER BY a DESC -> 4,3,2,1.
