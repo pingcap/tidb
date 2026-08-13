@@ -412,8 +412,29 @@ pub(crate) fn correlated_column_indices(
     correlated: &CorrelatedSubquery,
     outer_scope: &FromScope,
 ) -> Result<Vec<usize>, DriverError> {
-    correlated
-        .columns
+    let mut paths = correlated.columns.clone();
+    match &correlated.kind {
+        // The Apply result for a semi/anti-semi comparison depends on both
+        // the inner query's correlated columns AND the outer operand it tests
+        // against that result. Caching only the former makes `(a, b) IN (...)`
+        // reuse `b`'s answer for a later row with the same `a`.
+        SubqueryKind::In { lhs, .. } => {
+            for path in super::only_full_group_by::bare_columns(lhs) {
+                if !paths.contains(&path) {
+                    paths.push(path);
+                }
+            }
+        }
+        SubqueryKind::Compare { lhs, .. } => {
+            for path in super::only_full_group_by::bare_columns(lhs) {
+                if !paths.contains(&path) {
+                    paths.push(path);
+                }
+            }
+        }
+        SubqueryKind::Scalar | SubqueryKind::Exists { .. } => {}
+    }
+    paths
         .iter()
         .map(|path| {
             let resolver = ScopeResolver { scope: outer_scope };
@@ -473,35 +494,40 @@ pub(crate) fn run_correlated_subquery(
         // fold evaluates its own folded list -- same `IN`, same comparisons,
         // so the same three-valued answers.
         SubqueryKind::In { lhs, not } => {
-            let list = subquery_value_list(
-                &rows,
-                "an IN subquery selecting several columns is not supported yet",
-            )?;
+            let list = subquery_value_list(&rows, true)?;
             let test = in_list_expr(lhs.clone(), list, *not);
             eval_expr_on_row(&test, outer_scope, outer_values, ctx)
         }
         SubqueryKind::Compare { op, lhs, all } => {
-            let list = subquery_value_list(
-                &rows,
-                "an ANY/ALL subquery selecting several columns is not supported yet",
-            )?;
+            let list = subquery_value_list(&rows, false)?;
             let test = any_all_expr(*op, lhs.clone(), *all, list);
             eval_expr_on_row(&test, outer_scope, outer_values, ctx)
         }
     }
 }
 
-/// A subquery result's single column, as the literals a value list needs.
+/// A subquery result's rows as the literals a value list needs. A
+/// multi-column row becomes an AST row constructor, which the existing `IN`
+/// evaluator compares component by component.
 fn subquery_value_list(
     rows: &[Vec<Datum>],
-    several_columns: &'static str,
+    allow_rows: bool,
 ) -> Result<Vec<tidb_ast::Expr>, DriverError> {
     let mut list = Vec::with_capacity(rows.len());
     for row in rows {
-        let [value] = row.as_slice() else {
-            return Err(DriverError::unsupported(several_columns));
-        };
-        list.push(datum_to_literal(value)?);
+        let values = row
+            .iter()
+            .map(datum_to_literal)
+            .collect::<Result<Vec<_>, _>>()?;
+        list.push(match values.as_slice() {
+            [value] => value.clone(),
+            _ if allow_rows => tidb_ast::Expr::Row(values),
+            _ => {
+                return Err(DriverError::unsupported(
+                    "an ANY/ALL subquery selecting several columns is not supported yet",
+                ))
+            }
+        });
     }
     Ok(list)
 }
@@ -949,10 +975,7 @@ fn fold_subqueries(
             not,
         } => {
             let rows = run_subquery(subquery, catalog, current_db, ctx)?;
-            let list = subquery_value_list(
-                &rows,
-                "an IN subquery selecting several columns is not supported yet",
-            )?;
+            let list = subquery_value_list(&rows, true)?;
             in_list_expr(
                 fold_subqueries(expr, outer, catalog, current_db, ctx)?,
                 list,
@@ -966,10 +989,7 @@ fn fold_subqueries(
             subquery,
         } => {
             let rows = run_subquery(subquery, catalog, current_db, ctx)?;
-            let list = subquery_value_list(
-                &rows,
-                "an ANY/ALL subquery selecting several columns is not supported yet",
-            )?;
+            let list = subquery_value_list(&rows, false)?;
             any_all_expr(
                 *op,
                 fold_subqueries(left, outer, catalog, current_db, ctx)?,

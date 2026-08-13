@@ -865,3 +865,38 @@ fn grouped_select_chains_correlated_subqueries() {
         [["2"], ["1"]]
     );
 }
+
+/// `IN (SELECT ...)` compares row constructors column by column. The Rust
+/// expression evaluator already owns row-IN's three-valued comparison; the
+/// subquery path must preserve every selected column rather than reject it.
+#[test]
+fn row_valued_in_subqueries_preserve_all_selected_columns() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE outer_rows (a INT, b INT)")
+        .unwrap();
+    session
+        .run("CREATE TABLE inner_rows (k INT, v INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO outer_rows VALUES (1,10),(1,11),(2,20)")
+        .unwrap();
+    session
+        .run("INSERT INTO inner_rows VALUES (1,10),(2,99)")
+        .unwrap();
+
+    assert_eq!(
+        row_text(session.run(
+            "SELECT a, b FROM outer_rows WHERE (a, b) IN \
+             (SELECT k, v FROM inner_rows) ORDER BY a, b"
+        )),
+        [["1", "10"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT a, b FROM outer_rows WHERE (a, b) IN \
+             (SELECT k, v FROM inner_rows WHERE k = outer_rows.a) ORDER BY a, b"
+        )),
+        [["1", "10"]]
+    );
+}
