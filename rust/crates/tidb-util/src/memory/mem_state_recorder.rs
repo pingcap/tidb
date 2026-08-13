@@ -12,17 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Transcreation of the behavioral core of Go
-//! `pkg/util/memory/global_arbitrator.go`: the JSON file recorder that
-//! persists [`RuntimeMemStateV1`] across restarts, plus the work-mode /
-//! soft-limit text parsing.
-//!
-//! Not ported (per the rewrite's scope decisions): the Prometheus metric
-//! reporters and the Go-runtime heap sampling (`SampleRuntimeMemStats`) —
-//! observability glue with no behavioral contract — and the process-global
-//! singleton wiring, which binds to server config (`ServerMemoryLimit`,
-//! `config.GetGlobalConfig`) and belongs to the server crate's integration
-//! layer.
+//! File persistence and text parsing for global memory arbitration.
 
 use std::fs::{File, OpenOptions};
 use std::io::Write;

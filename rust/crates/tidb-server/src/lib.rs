@@ -147,9 +147,10 @@ pub use node_config::{
 pub use pipeline_session::{
     MaterializedResultSetSource, PipelineServerSession, PipelineSessionFactory,
 };
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::thread::JoinHandle;
+use std::time::{Duration, SystemTime};
 
 use real_tikv_multi_node::{run_bound_multi_node, run_configured_multi_node_with_spill};
 pub use real_tikv_multi_node::{
@@ -372,21 +373,56 @@ fn open_memory_arbitrator(
     Ok(Some(arbitrator))
 }
 
-pub(crate) struct MemoryArbitratorAuthority(Option<Arc<tidb_util::memory::MemArbitrator>>);
+pub(crate) struct MemoryArbitratorAuthority {
+    arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    sampler_running: Arc<AtomicBool>,
+    sampler: Option<JoinHandle<()>>,
+}
 
 impl MemoryArbitratorAuthority {
     pub(crate) fn open(config: &NodeConfig) -> Result<Self, RunConfiguredNodeError> {
-        open_memory_arbitrator(config).map(Self)
+        let arbitrator = open_memory_arbitrator(config)?;
+        let sampler_running = Arc::new(AtomicBool::new(true));
+        let sampler = arbitrator.as_ref().map(|arbitrator| {
+            let arbitrator = Arc::downgrade(arbitrator);
+            let running = Arc::clone(&sampler_running);
+            std::thread::spawn(move || {
+                while running.load(Ordering::Acquire) {
+                    if let Some(arbitrator) = arbitrator.upgrade() {
+                        if let Ok(bytes) = tidb_util::cgroup::current_process_memory_usage() {
+                            let bytes = i64::try_from(bytes).unwrap_or(i64::MAX);
+                            arbitrator.handle_runtime_stats(tidb_util::memory::MemStats {
+                                heap_alloc: bytes,
+                                heap_inuse: bytes,
+                                ..Default::default()
+                            });
+                        }
+                    } else {
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            })
+        });
+        Ok(Self {
+            arbitrator,
+            sampler_running,
+            sampler,
+        })
     }
 
     pub(crate) fn arbitrator(&self) -> Option<Arc<tidb_util::memory::MemArbitrator>> {
-        self.0.as_ref().map(Arc::clone)
+        self.arbitrator.as_ref().map(Arc::clone)
     }
 }
 
 impl Drop for MemoryArbitratorAuthority {
     fn drop(&mut self) {
-        if let Some(arbitrator) = self.0.as_ref() {
+        self.sampler_running.store(false, Ordering::Release);
+        if let Some(sampler) = self.sampler.take() {
+            let _ = sampler.join();
+        }
+        if let Some(arbitrator) = self.arbitrator.as_ref() {
             let _ = arbitrator.stop();
         }
     }
@@ -412,8 +448,9 @@ mod skip_grant_startup_tests {
         config.memory_arbitrator.mode = "priority".to_owned();
         config.memory_arbitrator.soft_limit = "0.75".to_owned();
 
-        let arbitrator = open_memory_arbitrator(&config)
-            .unwrap()
+        let authority = MemoryArbitratorAuthority::open(&config).unwrap();
+        let arbitrator = authority
+            .arbitrator()
             .expect("an enabled policy starts a process controller");
         assert_eq!(
             arbitrator.work_mode(),
@@ -421,7 +458,8 @@ mod skip_grant_startup_tests {
         );
         assert_eq!(arbitrator.limit_u64(), 1 << 30);
         assert_eq!(arbitrator.soft_limit(), 3 << 28);
-        assert!(arbitrator.stop());
+        drop(authority);
+        assert!(!arbitrator.stop());
     }
 
     #[test]

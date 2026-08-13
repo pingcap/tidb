@@ -12,34 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Transcreation of Go `pkg/util/memory`'s tracker core (`tracker.go` +
-//! `action.go`): the hierarchical memory-consumption tracker and the
-//! OOM-action chain executors bind to it.
-//!
-//! Package coverage: tracker/action core, `pool.go` (`ResourcePool`/
-//! `Budget`), `utils.go` (arbitrator support machinery), `arbitrator.go`
-//! (the `MemArbitrator`), and the behavioral core of
-//! `global_arbitrator.go` (mem-state JSON recorder + mode/soft-limit text
-//! parsing). Not ported by scope decision: Prometheus metric reporters and
-//! Go-runtime heap sampling (observability with no behavioral contract —
-//! the arbitrator ingests stats via `handle_runtime_stats`), the
-//! process-global singleton (server-config wiring; lands with the server
-//! crate), `memstats.go`
-//! (Go-runtime `ReadMemStats` snapshots — no Rust counterpart), and
-//! `meminfo.go`, which probes host/cgroup memory via gopsutil +
-//! `pkg/util/cgroup` and lands as one unit with the cgroup package port.
-//!
-//! Faithful adaptations in the core, none changing observable behavior:
-//! - Go's `*Tracker` graph becomes `Arc<Tracker>` with a `Weak` parent and
-//!   `Arc::ptr_eq` for the identity comparisons `remove`/`ReplaceChild`/
-//!   `UnbindActionFromHardLimit` perform.
-//! - Prometheus gauges (`metrics.MemoryUsage`) are observability side
-//!   effects with no behavioral contract: not ported.
-//! - GC-aware release (`EnableGCAwareMemoryTrack` + `runtime.SetFinalizer`)
-//!   defers the release decrement until a Go GC cycle — Go-runtime
-//!   machinery with no Rust counterpart; `Release` therefore takes the
-//!   default (flag-off) path, `Consume(-bytes)`, and the flag is not
-//!   surfaced.
+//! Memory tracking, OOM actions, resource pools, and global arbitration.
 
 mod action;
 mod arbitrator;

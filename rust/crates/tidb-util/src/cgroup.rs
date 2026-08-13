@@ -631,6 +631,54 @@ pub fn get_memory_usage() -> io::Result<u64> {
     Ok(0)
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn parse_process_rss_kib(status: &str) -> io::Result<u64> {
+    status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmRSS:"))
+        .and_then(|value| value.split_whitespace().next())
+        .and_then(|value| value.parse::<u64>().ok())
+        .and_then(|kib| kib.checked_mul(1024))
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "missing VmRSS"))
+}
+
+/// Returns the current resident memory of this TiDB process.
+///
+/// This is the native runtime measurement used by the server-memory
+/// controller; it intentionally measures the process rather than the whole
+/// cgroup, which may contain unrelated services.
+#[cfg(target_os = "linux")]
+pub fn current_process_memory_usage() -> io::Result<u64> {
+    parse_process_rss_kib(&fs::read_to_string("/proc/self/status")?)
+}
+
+/// Returns the current resident memory of this TiDB process.
+#[cfg(target_os = "macos")]
+pub fn current_process_memory_usage() -> io::Result<u64> {
+    let pid = std::process::id().to_string();
+    let output = Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid])
+        .output()?;
+    if !output.status.success() {
+        return Err(io::Error::other("ps failed to read process memory"));
+    }
+    std::str::from_utf8(&output.stdout)
+        .ok()
+        .map(str::trim)
+        .and_then(|value| value.parse::<u64>().ok())
+        .and_then(|kib| kib.checked_mul(1024))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid process RSS"))
+}
+
+/// Reports that process-memory discovery is unavailable on this platform.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub fn current_process_memory_usage() -> io::Result<u64> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "process memory discovery is not available on this platform",
+    ))
+}
+
 /// Returns inactive file-backed memory for the current process cgroup.
 #[cfg(target_os = "linux")]
 pub fn get_memory_inactive_file_usage() -> io::Result<u64> {
@@ -691,6 +739,15 @@ mod tests {
         assert_eq!(select_effective_memory_limit(16, 0), 16);
         assert_eq!(select_effective_memory_limit(16, 32), 16);
         assert_eq!(select_effective_memory_limit(16, 8), 8);
+    }
+
+    #[test]
+    fn process_rss_parser_uses_the_status_value_in_bytes() {
+        assert_eq!(
+            parse_process_rss_kib("Name:\ttidb-server\nVmRSS:\t  1234 kB\n").unwrap(),
+            1234 << 10
+        );
+        assert!(parse_process_rss_kib("Name:\ttidb-server\n").is_err());
     }
 
     fn v1_mount(controller: &str, namespace_root: &str, mount: &str) -> String {

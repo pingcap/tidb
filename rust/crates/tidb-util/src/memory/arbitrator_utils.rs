@@ -26,9 +26,6 @@
 //!   multi-producer/single-consumer semantics over a `Mutex`+`Condvar`:
 //!   `wake` queues at most one pending signal; `wait` blocks for it and
 //!   clears the awake flag.
-//! - `SampleRuntimeMemStats`/`IntoRuntimeMemStats` read the Go runtime's
-//!   heap metrics; they have no Rust counterpart and are not ported (the
-//!   arbitrator receives stats through `HandleRuntimeStats`).
 
 use std::sync::atomic::{AtomicI32, Ordering::SeqCst};
 
