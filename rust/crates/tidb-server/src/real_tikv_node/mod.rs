@@ -170,6 +170,7 @@ pub(crate) fn point_read_result_field_types(plan: &ReadOnlyScanPlan) -> Vec<Fiel
 pub(crate) fn default_cursor_memory(
     connection_id: u64,
     spill_storage: Option<&Arc<tidb_util::disk::SpillStorage>>,
+    mem_arbitrator: Option<&Arc<tidb_util::memory::MemArbitrator>>,
 ) -> tidb_executor::SessionMemory {
     let memory = tidb_executor::SessionMemory::new(
         tidb_util::memory::DEF_MEM_QUOTA_QUERY,
@@ -177,8 +178,12 @@ pub(crate) fn default_cursor_memory(
         connection_id,
     )
     .with_tmp_storage_on_oom(true);
-    match spill_storage {
+    let memory = match spill_storage {
         Some(storage) => memory.with_spill_storage(Arc::clone(storage)),
+        None => memory,
+    };
+    match mem_arbitrator {
+        Some(arbitrator) => memory.with_mem_arbitrator(Arc::clone(arbitrator)),
         None => memory,
     }
 }
@@ -271,6 +276,7 @@ pub struct RealTiKvSessionFactory {
     /// opened by this process. `None` exists only for direct unit factories;
     /// the production runner installs it before accepting connections.
     spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
+    mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 }
 
 impl RealTiKvSessionFactory {
@@ -369,6 +375,7 @@ impl RealTiKvSessionFactory {
             stats,
             stats_reloader,
             spill_storage: None,
+            mem_arbitrator: None,
         }
     }
 
@@ -377,6 +384,16 @@ impl RealTiKvSessionFactory {
         spill_storage: Arc<tidb_util::disk::SpillStorage>,
     ) -> Self {
         self.spill_storage = Some(spill_storage);
+        self
+    }
+
+    /// Installs the process memory authority inherited by cursor statements.
+    #[must_use]
+    pub fn with_mem_arbitrator(
+        mut self,
+        arbitrator: Arc<tidb_util::memory::MemArbitrator>,
+    ) -> Self {
+        self.mem_arbitrator = Some(arbitrator);
         self
     }
 
@@ -456,8 +473,11 @@ impl QuerySessionFactory for RealTiKvSessionFactory {
             .opener
             .open_session()
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let cursor_memory =
-            default_cursor_memory(context.connection_id, self.spill_storage.as_ref());
+        let cursor_memory = default_cursor_memory(
+            context.connection_id,
+            self.spill_storage.as_ref(),
+            self.mem_arbitrator.as_ref(),
+        );
         Ok(RealTiKvServerSession {
             inner,
             transaction_opener: self.transaction_opener.clone(),

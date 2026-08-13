@@ -105,6 +105,9 @@ pub struct PipelineSessionFactory {
     /// session's own `@@x` never moves just because another connection ran
     /// `SET GLOBAL`.
     global_vars: GlobalSysvars,
+    /// Process-wide memory admission authority installed before the listener
+    /// accepts connections.
+    mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 }
 
 impl PipelineSessionFactory {
@@ -161,6 +164,16 @@ impl PipelineSessionFactory {
     pub fn global_vars(&self) -> GlobalSysvars {
         self.global_vars.clone()
     }
+
+    /// Installs the process memory authority inherited by each connection.
+    #[must_use]
+    pub fn with_mem_arbitrator(
+        mut self,
+        arbitrator: Arc<tidb_util::memory::MemArbitrator>,
+    ) -> Self {
+        self.mem_arbitrator = Some(arbitrator);
+        self
+    }
 }
 
 impl QuerySessionFactory for PipelineSessionFactory {
@@ -184,6 +197,9 @@ impl QuerySessionFactory for PipelineSessionFactory {
         // dropped entirely when `SessionContext` was threaded through here --
         // double-check it actually arrives (see the TCP-level test below).
         session.session.set_connection_id(context.connection_id);
+        if let Some(arbitrator) = self.mem_arbitrator.as_ref() {
+            session.session.set_mem_arbitrator(Arc::clone(arbitrator));
+        }
         session
             .session
             .set_secure_transport(context.secure_transport);
@@ -576,6 +592,32 @@ mod tests {
     const ABC_HASH: &str = "*0D3CED9BEC10A777AEC23CCC353A8C08A633045E";
     const SALT: [u8; 20] = [7; 20];
 
+    #[derive(Default)]
+    struct NoopMemStateRecorder;
+
+    impl tidb_util::memory::RecordMemState for NoopMemStateRecorder {
+        fn load(&self) -> Result<Option<tidb_util::memory::RuntimeMemStateV1>, String> {
+            Ok(None)
+        }
+
+        fn store(&self, _: &tidb_util::memory::RuntimeMemStateV1) -> Result<(), String> {
+            Ok(())
+        }
+    }
+
+    fn test_mem_arbitrator() -> Arc<tidb_util::memory::MemArbitrator> {
+        let arbitrator =
+            tidb_util::memory::MemArbitrator::new(1024, 4, 3, 0, Box::new(NoopMemStateRecorder));
+        assert!(arbitrator.auto_run(
+            tidb_util::memory::MemArbitratorActions::default(),
+            tidb_util::memory::DEF_AWAIT_FREE_POOL_ALLOC_ALIGN_SIZE,
+            4,
+            tidb_util::memory::DEF_TASK_TICK_DUR,
+        ));
+        arbitrator.set_work_mode(tidb_util::memory::ArbitratorWorkMode::Standard);
+        arbitrator
+    }
+
     fn scramble(password: &[u8], salt: &[u8]) -> [u8; 20] {
         let stage_one = Sha1::digest(password);
         let stage_two = Sha1::digest(stage_one);
@@ -633,6 +675,25 @@ mod tests {
                 .unwrap(),
             "TiDB Server (Apache License 2.0) Starter Edition, MySQL 8.0 compatible"
         );
+    }
+
+    #[test]
+    fn factory_propagates_the_process_memory_authority_to_query_statements() {
+        let arbitrator = test_mem_arbitrator();
+        let factory =
+            PipelineSessionFactory::default().with_mem_arbitrator(Arc::clone(&arbitrator));
+        let mut session = open_on(&factory, 117);
+        session
+            .session
+            .run("SET @@tidb_mem_arbitrator_query_reserved = 64")
+            .unwrap();
+        session.session.run("SELECT 1").unwrap();
+
+        assert!(
+            arbitrator.find_root_pool(117).entry.is_some(),
+            "the listener-created session must create its statement root through the process arbitrator"
+        );
+        assert!(arbitrator.stop());
     }
 
     fn open_on(factory: &PipelineSessionFactory, connection_id: u64) -> PipelineServerSession {

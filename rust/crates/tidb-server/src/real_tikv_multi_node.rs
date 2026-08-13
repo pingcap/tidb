@@ -83,6 +83,7 @@ pub struct RealTiKvMultiSessionFactory {
     /// through, so peers reload without waiting out their lease.
     schema_notifier: Option<Arc<tidb_pd_client::EtcdClient>>,
     spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
+    mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 }
 
 impl RealTiKvMultiSessionFactory {
@@ -138,6 +139,7 @@ impl RealTiKvMultiSessionFactory {
             table_refusals: Arc::new(table_refusals),
             schema_notifier,
             spill_storage: None,
+            mem_arbitrator: None,
         }
     }
 
@@ -146,6 +148,16 @@ impl RealTiKvMultiSessionFactory {
         spill_storage: Arc<tidb_util::disk::SpillStorage>,
     ) -> Self {
         self.spill_storage = Some(spill_storage);
+        self
+    }
+
+    /// Installs the process memory authority inherited by cursor statements.
+    #[must_use]
+    pub fn with_mem_arbitrator(
+        mut self,
+        arbitrator: Arc<tidb_util::memory::MemArbitrator>,
+    ) -> Self {
+        self.mem_arbitrator = Some(arbitrator);
         self
     }
 
@@ -195,8 +207,11 @@ impl QuerySessionFactory for RealTiKvMultiSessionFactory {
             .opener
             .open_multi_session(self.tables.clone())
             .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-        let cursor_memory =
-            default_cursor_memory(context.connection_id, self.spill_storage.as_ref());
+        let cursor_memory = default_cursor_memory(
+            context.connection_id,
+            self.spill_storage.as_ref(),
+            self.mem_arbitrator.as_ref(),
+        );
         Ok(RealTiKvMultiServerSession {
             reader,
             transaction_opener: self.transaction_opener.clone(),

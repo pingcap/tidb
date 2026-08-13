@@ -369,6 +369,8 @@ pub struct ClusterSessionFactory {
     auto_ids: Arc<dyn TableAutoIds>,
     /// Process-owned spill authority inherited by every connection.
     spill_storage: Option<Arc<tidb_util::disk::SpillStorage>>,
+    /// Process-wide memory admission authority installed before listener bind.
+    mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 }
 
 impl ClusterSessionFactory {
@@ -410,6 +412,7 @@ impl ClusterSessionFactory {
             boot_skipped,
             stats,
             spill_storage: None,
+            mem_arbitrator: None,
         }
     }
 
@@ -417,6 +420,16 @@ impl ClusterSessionFactory {
     #[must_use]
     pub fn with_spill_storage(mut self, spill_storage: Arc<tidb_util::disk::SpillStorage>) -> Self {
         self.spill_storage = Some(spill_storage);
+        self
+    }
+
+    /// Installs the process memory authority inherited by every session.
+    #[must_use]
+    pub fn with_mem_arbitrator(
+        mut self,
+        arbitrator: Arc<tidb_util::memory::MemArbitrator>,
+    ) -> Self {
+        self.mem_arbitrator = Some(arbitrator);
         self
     }
 
@@ -479,6 +492,9 @@ impl QuerySessionFactory for ClusterSessionFactory {
         session.set_version_info(context.version_info.clone());
         if let Some(spill_storage) = self.spill_storage.as_ref() {
             session.set_spill_storage(Arc::clone(spill_storage));
+        }
+        if let Some(arbitrator) = self.mem_arbitrator.as_ref() {
+            session.set_mem_arbitrator(Arc::clone(arbitrator));
         }
 
         let identity = &context.identity;
