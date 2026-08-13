@@ -1571,6 +1571,26 @@ pub(crate) fn run_update_traced(
             // source handle narrows which rows this statement may reach.
             // `TableHandle` preserves the physical partition id, so applying
             // the later write through `kv` cannot widen the restriction.
+            let update_partition_ids = if table_ref.partitions.is_empty() {
+                None
+            } else {
+                let Some(spec) = kv.partition() else {
+                    return Err(DriverError::UnknownPartition {
+                        partition: table_ref.partitions[0].clone(),
+                        table: name.clone(),
+                    });
+                };
+                Some(
+                    crate::partition_pruning::ids_for_selected_partitions(
+                        spec,
+                        &table_ref.partitions,
+                    )
+                    .map_err(|partition| DriverError::UnknownPartition {
+                        partition,
+                        table: name.clone(),
+                    })?,
+                )
+            };
             let mut source = restricted_to_partitions(kv, &table_ref.partitions, &name)?;
             let mut rows = fetch_write_rows(&mut source, read_path.as_ref(), &zone)?;
             order_rows_for_dml(
@@ -1626,6 +1646,10 @@ pub(crate) fn run_update_traced(
                     // recompute stays a no-op.
                     kv.materialize_generated(&mut new_row, ctx)
                         .map_err(kv_write_error)?;
+                    if let Some(partitions) = &update_partition_ids {
+                        kv.validate_update_partitions(&row, &new_row, partitions, ctx)
+                            .map_err(kv_write_error)?;
+                    }
                     accountant
                         .account_row(&new_row)
                         .map_err(DriverError::from)?;

@@ -1057,6 +1057,32 @@ fn updates_and_deletes_restricted_to_partitions_do_not_escape_the_named_set() {
     assert_eq!(error.message, "Unknown partition 'p0' in table 'q'");
 }
 
+/// A selected UPDATE is not just a restricted scan: the destination of an
+/// update that changes the partition expression must stay in that selection.
+#[test]
+fn a_partition_qualified_update_cannot_move_a_row_outside_its_selected_set() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE h (a int, b int) PARTITION BY HASH(a) PARTITIONS 4")
+        .unwrap();
+    session.run("INSERT INTO h VALUES (4, 40)").unwrap();
+
+    let error = session
+        .run("UPDATE h PARTITION (p0) SET a = 1")
+        .expect_err("the p0 source cannot be moved into p1")
+        .to_mysql_error();
+    assert_eq!(error.code, 1748);
+    assert_eq!(
+        error.message,
+        "Found a row not matching the given partition set"
+    );
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT a, b FROM h")),
+        vec![vec!["4".to_owned(), "40".to_owned()]],
+        "the rejected staged write leaves the selected row in p0"
+    );
+}
+
 /// The partition expression is keyed by the NAMES it reads, so an
 /// `ALTER TABLE` that inserts a column before the partitioning column cannot
 /// re-route the table.

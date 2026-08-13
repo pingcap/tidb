@@ -820,6 +820,24 @@ impl KvTable {
         }
     }
 
+    /// Verifies both ends of one partition-qualified UPDATE.
+    ///
+    /// Go's `partitionTableWithGivenSets.UpdateRecord` rejects a row that was
+    /// read outside the selection as well as one whose new values would move
+    /// it outside.  The former is normally guaranteed by the read path; the
+    /// latter is the write-boundary check that prevents a selected `p0` row
+    /// from silently becoming a `p1` row.
+    pub fn validate_update_partitions(
+        &self,
+        old_row: &[Datum],
+        new_row: &[Datum],
+        selected: &[i64],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Result<(), KvTableError> {
+        self.validate_insert_partitions(old_row, selected, ctx)?;
+        self.validate_insert_partitions(new_row, selected, ctx)
+    }
+
     /// Go `BatchPointGetPlan.AccessObject().Partitions`: the partitions a set
     /// of HANDLES routes into, named as declared and in DEFINITION order,
     /// deduplicated.
