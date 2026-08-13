@@ -59,12 +59,8 @@
 //! `evalAndEncode`/`appendInt64`/etc, ported in
 //! [`crate::farmhash`]), so results match Go's exactly, including above the
 //! 65536-distinct-value threshold where the sketch stops being exact and
-//! starts extrapolating. Only the encodings for `INT`/`REAL`/`DECIMAL`/
-//! `STRING`/`BINARY`/vector arguments are byte-identical to Go's; `TIME`,
-//! `DURATION`, and `JSON` arguments fall back to the datum's generic hash
-//! key, which dedupes correctly but does not hash identically to Go's raw
-//! struct layout / recursive `BinaryJSON.HashValue` -- a documented,
-//! narrower divergence than before.
+//! starts extrapolating. Its per-type encodings, including `TIME`, `DURATION`,
+//! and recursive JSON hash values, match Go's sketch input.
 
 use crate::agg_spill::AggSpillDiskAction;
 
@@ -79,7 +75,7 @@ use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
 use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
-use tidb_codec::encode_compact_bytes;
+use tidb_codec::{encode_bytes, encode_compact_bytes};
 use tidb_datatype::{
     BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, FieldType, FieldTypeCode, TimeType,
     MAX_DECIMAL_SCALE, UNSPECIFIED_LENGTH,
@@ -232,6 +228,14 @@ pub struct AggFunc {
     pub arg_orig_name: String,
 }
 
+/// One row's aggregate input. `GROUP_CONCAT(DISTINCT ...)` needs the rendered
+/// value and its deduplication key separately: Go encodes every argument under
+/// that argument's own collation before joining the key fields.
+pub(crate) struct AggInput {
+    pub(crate) value: Option<Datum>,
+    pub(crate) distinct_key: Option<Vec<u8>>,
+}
+
 impl AggFunc {
     /// An aggregate without the `DISTINCT` modifier.
     #[must_use]
@@ -360,16 +364,21 @@ impl AggState {
         value: Option<Datum>,
         extra: &[Datum],
         sort_key: Vec<Datum>,
+        distinct_key: Option<Vec<u8>>,
     ) -> Result<i64, ExecError> {
         let mut delta: i64 = 0;
         if let Some(seen) = &mut self.seen {
             let datum = value.clone().unwrap_or(Datum::Null);
             if datum != Datum::Null {
-                let key = match datum.as_raw_bytes() {
-                    Some(_) => group_key_part(&self.collation, &datum),
-                    None => datum
-                        .to_hash_key()
-                        .map_err(|_| ExecError::unsupported("DISTINCT over this datum kind"))?,
+                let key = if let Some(key) = distinct_key {
+                    key
+                } else {
+                    match datum.as_raw_bytes() {
+                        Some(_) => group_key_part(&self.collation, &datum),
+                        None => datum
+                            .to_hash_key()
+                            .map_err(|_| ExecError::unsupported("DISTINCT over this datum kind"))?,
+                    }
                 };
                 let key_bytes = i64::try_from(key.len()).unwrap_or(i64::MAX);
                 let (map_delta, inserted) = seen.insert(key);
@@ -1300,14 +1309,19 @@ impl<C: Columns> HashAggExec<C> {
         for c in 0..self.agg_funcs.len() {
             let f = &self.agg_funcs[c];
             let mut extra_values: Vec<Datum> = Vec::new();
-            let value = eval_agg_input(f, &self.ctx, row, &mut extra_values)?;
+            let input = eval_agg_input(f, &self.ctx, row, &mut extra_values)?;
             // GROUP_CONCAT's own ORDER BY is evaluated over the same source
             // row that produced the value, so the key travels with it.
             let mut sort_key = Vec::with_capacity(f.order_by.len());
             for (expr, _) in &f.order_by {
                 sort_key.push(expr.eval(&self.ctx, row)?);
             }
-            delta += self.ordered[idx][c].update(value, &extra_values, sort_key)?;
+            delta += self.ordered[idx][c].update(
+                input.value,
+                &extra_values,
+                sort_key,
+                input.distinct_key,
+            )?;
         }
         Ok(delta)
     }
@@ -1456,16 +1470,19 @@ pub(crate) fn eval_agg_input<C: Columns>(
     ctx: &C,
     row: tidb_chunk::row::Row<'_>,
     extra_values: &mut Vec<Datum>,
-) -> Result<Option<Datum>, ExecError> {
-    let value = if f.extra_args.is_empty()
+) -> Result<AggInput, ExecError> {
+    let (value, distinct_key) = if f.extra_args.is_empty()
         && !matches!(
             f.kind,
             AggKind::ApproxCountDistinct | AggKind::GroupConcat { .. }
         ) {
-        match &f.arg {
-            Some(expr) => Some(expr.eval(ctx, row)?),
-            None => None,
-        }
+        (
+            match &f.arg {
+                Some(expr) => Some(expr.eval(ctx, row)?),
+                None => None,
+            },
+            None,
+        )
     } else if matches!(f.kind, AggKind::JsonObjectAgg { .. }) {
         // `JSON_OBJECTAGG(key, value)` is the one aggregate
         // whose two arguments stay SEPARATE: the key is
@@ -1476,10 +1493,13 @@ pub(crate) fn eval_agg_input<C: Columns>(
         for expr in &f.extra_args {
             extra_values.push(expr.eval(ctx, row)?);
         }
-        match &f.arg {
-            Some(expr) => Some(expr.eval(ctx, row)?),
-            None => None,
-        }
+        (
+            match &f.arg {
+                Some(expr) => Some(expr.eval(ctx, row)?),
+                None => None,
+            },
+            None,
+        )
     } else if matches!(f.kind, AggKind::Count) {
         // `COUNT(a, b, ...)` / `COUNT(DISTINCT a, b, ...)`:
         // Go's `count4MultiArgs.UpdatePartialResult` skips the
@@ -1505,7 +1525,7 @@ pub(crate) fn eval_agg_input<C: Columns>(
                 buf.extend_from_slice(&key);
             }
         }
-        Some(tuple_key.map_or(Datum::Null, Datum::Bytes))
+        (Some(tuple_key.map_or(Datum::Null, Datum::Bytes)), None)
     } else if matches!(f.kind, AggKind::ApproxCountDistinct) {
         // `APPROX_COUNT_DISTINCT(a, b, ...)`: Go's
         // `approxCountDistinctOriginal.UpdatePartialResult`
@@ -1529,7 +1549,7 @@ pub(crate) fn eval_agg_input<C: Columns>(
                 buf.extend_from_slice(&approx_count_distinct_encode(&datum)?);
             }
         }
-        Some(tuple_key.map_or(Datum::Null, Datum::Bytes))
+        (Some(tuple_key.map_or(Datum::Null, Datum::Bytes)), None)
     } else {
         // Multi-argument GROUP_CONCAT: Go's `groupConcat`
         // update loop stringifies and concatenates every
@@ -1537,19 +1557,31 @@ pub(crate) fn eval_agg_input<C: Columns>(
         // soon as ANY argument evaluates to NULL. DISTINCT
         // then dedupes over this concatenated value.
         let mut concatenated = Some(Vec::new());
+        let mut distinct_key = f.distinct.then(Vec::new);
         for expr in f.arg.iter().chain(f.extra_args.iter()) {
             let datum = expr.eval(ctx, row)?;
             if datum == Datum::Null {
                 concatenated = None;
+                distinct_key = None;
                 break;
             }
             if let Some(buf) = &mut concatenated {
-                buf.extend_from_slice(&group_concat_bytes(&datum, expr.static_type())?);
+                let rendered = group_concat_bytes(&datum, expr.static_type())?;
+                buf.extend_from_slice(&rendered);
+                if let Some(key) = &mut distinct_key {
+                    encode_bytes(key, &expr_collation(expr).immutable_key(&rendered));
+                }
             }
         }
-        Some(concatenated.map_or(Datum::Null, Datum::Bytes))
+        (
+            Some(concatenated.map_or(Datum::Null, Datum::Bytes)),
+            distinct_key,
+        )
     };
-    Ok(value)
+    Ok(AggInput {
+        value,
+        distinct_key,
+    })
 }
 
 #[cfg(test)]
@@ -1965,7 +1997,7 @@ mod tests {
             retained_key_bytes +=
                 i64::try_from(group_key_part(&tidb_datatype::Collation::DEFAULT, &value).len())
                     .unwrap();
-            total_delta += state.update(Some(value), &[], Vec::new()).unwrap();
+            total_delta += state.update(Some(value), &[], Vec::new(), None).unwrap();
         }
         assert!(
             total_delta > retained_key_bytes,
@@ -1973,7 +2005,7 @@ mod tests {
         );
         assert_eq!(
             state
-                .update(Some(Datum::Bytes(vec![127; 32])), &[], Vec::new())
+                .update(Some(Datum::Bytes(vec![127; 32])), &[], Vec::new(), None)
                 .unwrap(),
             0,
             "a duplicate grows neither the retained payload nor the table"

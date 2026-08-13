@@ -95,6 +95,25 @@ fn group_concat() {
     first.sort_unstable();
     assert_eq!(first, ["a1", "a5", "b2"]);
     assert_eq!(multi[1][1], "c3");
+
+    // DISTINCT encodes each argument with its own collation before it joins
+    // the encoded fields. Applying `a`'s binary collation to the concatenated
+    // `a,b` text would incorrectly keep both `xA` and `xa` here.
+    session
+        .run(
+            "CREATE TABLE gc_collation (\
+                 a VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin, \
+                 b VARCHAR(8) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO gc_collation VALUES ('x','A'),('x','a')")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT GROUP_CONCAT(DISTINCT a,b) FROM gc_collation")),
+        [["xA"]]
+    );
+
     // Captured: a literal argument concatenates like any other.
     assert_eq!(
         row_text(session.run("SELECT g, GROUP_CONCAT(v, '-', n) FROM t GROUP BY g ORDER BY g")),

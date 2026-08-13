@@ -151,13 +151,17 @@ impl<C: Columns> StreamAggExec<C> {
         for c in 0..self.agg_funcs.len() {
             let func = &self.agg_funcs[c];
             let mut extra = Vec::new();
-            let value = eval_agg_input(func, &self.ctx, row, &mut extra)?;
+            let input = eval_agg_input(func, &self.ctx, row, &mut extra)?;
             let mut sort_key = Vec::with_capacity(func.order_by.len());
             for (expr, _) in &func.order_by {
                 sort_key.push(expr.eval(&self.ctx, row)?);
             }
-            self.tracker
-                .consume(self.states[c].update(value, &extra, sort_key)?);
+            self.tracker.consume(self.states[c].update(
+                input.value,
+                &extra,
+                sort_key,
+                input.distinct_key,
+            )?);
         }
         self.row_cursor += 1;
         self.memory.check()?;
@@ -456,6 +460,55 @@ mod tests {
             ]
         );
         assert!(!exec.agg_tree_input_empty());
+    }
+
+    #[test]
+    fn distinct_group_concat_uses_each_argument_collation() {
+        let binary = FieldType::new(FieldTypeCode::Varchar)
+            .with_collation(tidb_datatype::Collation::Utf8Mb4Bin);
+        let case_insensitive = FieldType::new(FieldTypeCode::Varchar)
+            .with_collation(tidb_datatype::Collation::Utf8Mb4GeneralCi);
+        let fields = vec![binary.clone(), case_insensitive.clone()];
+        let mut chunk = Chunk::new_with_capacity(&fields, 2);
+        chunk.append_string(0, "x");
+        chunk.append_string(1, "A");
+        chunk.append_string(0, "x");
+        chunk.append_string(1, "a");
+        let columns = fields
+            .iter()
+            .enumerate()
+            .map(|(index, field_type)| {
+                let mut column = Column::new((index + 1) as i64, field_type.clone());
+                column.index = index as i64;
+                column
+            })
+            .collect();
+        let source: Box<dyn Executor> = Box::new(ChunkSource {
+            meta: ExecutorMeta::new(Schema::new(columns), 0, 2, 2),
+            chunks: vec![chunk],
+            next: 0,
+            failure: None,
+        });
+        let mut func = AggFunc::new(
+            AggKind::GroupConcat {
+                separator: ",".to_owned(),
+            },
+            Some(column(0, binary)),
+        );
+        func.distinct = true;
+        func.extra_args = vec![column(1, case_insensitive)];
+        let output = FieldType::new(FieldTypeCode::Varchar);
+        let mut exec = StreamAggExec::new(
+            output_meta(std::slice::from_ref(&output), 8),
+            vec![],
+            vec![func],
+            source,
+            NoColumns,
+            StatementMemory::default(),
+        );
+        let rows = drain(&mut exec, std::slice::from_ref(&output)).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0].sql_bytes().unwrap(), b"xA");
     }
 
     #[test]
