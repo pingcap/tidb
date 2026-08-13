@@ -2,9 +2,9 @@
 options:
   no_parent_owners: true
 filters:
-  "(tidb-lightning\\.toml)$":
+  "(^|/)BUILD\\.bazel$":
     approvers:
-      - sig-critical-approvers-tidb-lightning
+      - sig-community-approvers
   ".*":
     approvers:
       - sig-approvers-br
