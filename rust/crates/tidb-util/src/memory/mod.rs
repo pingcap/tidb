@@ -19,6 +19,7 @@ mod arbitrator;
 mod arbitrator_utils;
 mod mem_state_recorder;
 mod pool;
+mod process;
 mod tracker;
 
 pub use action::{
@@ -44,6 +45,10 @@ pub use mem_state_recorder::{
 pub use pool::{
     Budget, OutOfCapacityActionArgs, PoolActions, PoolCallbackCtx, PoolError, ResourcePool,
     ResourcePoolState, DEF_MAX_LIMIT, DEF_MAX_UNUSED_BLOCKS, DEF_POOL_ALLOC_ALIGN_SIZE,
+};
+pub use process::{
+    apply_process_memory_setting, install_process_arbitrator, parse_server_memory_limit,
+    validate_process_memory_setting, ProcessArbitratorRegistration,
 };
 pub use tracker::{
     bytes_to_string, format_bytes, Tracker, DEF_MEM_QUOTA_QUERY,

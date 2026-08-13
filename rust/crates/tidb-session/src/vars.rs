@@ -204,6 +204,10 @@ impl GlobalSysvars {
                 .map_err(|error| VarError::ValidationRefused(error.to_string()))?;
         }
         let stored_value = validated.value;
+        if self.publishes_runtime_settings && Self::is_memory_arbitration_setting(&key) {
+            tidb_util::memory::validate_process_memory_setting(&key, &stored_value)
+                .map_err(VarError::ValidationRefused)?;
+        }
         {
             let mut values = self.store(def).lock().expect("global sysvar lock poisoned");
             if let Some(other) = alias_of(&key) {
@@ -220,6 +224,7 @@ impl GlobalSysvars {
         if key == tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY {
             self.publish_committer_concurrency();
         }
+        self.publish_memory_arbitration_setting(&key);
         Ok(validated.truncated)
     }
 
@@ -239,7 +244,7 @@ impl GlobalSysvars {
             .expect("global sysvar lock poisoned")
             .remove(&key);
         if !def.has_global_scope() {
-            self.record_instance_mutation(InstanceMutation::Reset(key));
+            self.record_instance_mutation(InstanceMutation::Reset(key.clone()));
         }
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY) {
             self.publish_committer_concurrency();
@@ -247,6 +252,7 @@ impl GlobalSysvars {
         if name.eq_ignore_ascii_case(tidb_vardef::tidb_vars::TIDB_REDACT_LOG) {
             self.publish_redaction_mode();
         }
+        self.publish_memory_arbitration_setting(&key);
         Ok(())
     }
 
@@ -269,6 +275,7 @@ impl GlobalSysvars {
         if !def.has_global_scope() {
             self.record_instance_mutation(InstanceMutation::Reset(key));
         }
+        self.publish_memory_arbitration_setting(name);
         Ok(())
     }
 
@@ -286,12 +293,14 @@ impl GlobalSysvars {
     pub fn load_from_cluster<I: IntoIterator<Item = (String, String)>>(&self, rows: I) {
         let mut loaded_committer_concurrency = false;
         let mut loaded_redaction_mode = false;
+        let mut loaded_memory_arbitration = false;
         for (name, value) in rows {
             let key = name.to_ascii_lowercase();
             if let Some(def) = get_sys_var(&key) {
                 loaded_committer_concurrency |=
                     key == tidb_vardef::tidb_vars::TIDB_COMMITTER_CONCURRENCY;
                 loaded_redaction_mode |= key == tidb_vardef::tidb_vars::TIDB_REDACT_LOG;
+                loaded_memory_arbitration |= Self::is_memory_arbitration_setting(&key);
                 self.store(def)
                     .lock()
                     .expect("global sysvar lock poisoned")
@@ -303,6 +312,9 @@ impl GlobalSysvars {
         }
         if loaded_redaction_mode {
             self.publish_redaction_mode();
+        }
+        if loaded_memory_arbitration {
+            self.publish_memory_arbitration_settings();
         }
     }
 
@@ -344,6 +356,7 @@ impl GlobalSysvars {
             std::mem::take(&mut *fresh.values.lock().expect("global sysvar lock poisoned"));
         self.publish_committer_concurrency();
         self.publish_redaction_mode();
+        self.publish_memory_arbitration_settings();
     }
 
     /// Publishes only the named GLOBAL variables from `fresh`.
@@ -456,6 +469,33 @@ impl GlobalSysvars {
                 )
             });
         tidb_util::redact::set_redact_mode(&value);
+    }
+
+    fn is_memory_arbitration_setting(name: &str) -> bool {
+        matches!(
+            name,
+            tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT
+                | tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_MODE
+                | tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_SOFT_LIMIT
+        )
+    }
+
+    fn publish_memory_arbitration_setting(&self, name: &str) {
+        if self.publishes_runtime_settings && Self::is_memory_arbitration_setting(name) {
+            if let Ok(value) = self.get(name) {
+                let _ = tidb_util::memory::apply_process_memory_setting(name, &value);
+            }
+        }
+    }
+
+    fn publish_memory_arbitration_settings(&self) {
+        for name in [
+            tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT,
+            tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_MODE,
+            tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_SOFT_LIMIT,
+        ] {
+            self.publish_memory_arbitration_setting(name);
+        }
     }
 }
 
@@ -965,6 +1005,61 @@ mod tests {
             .load_from_cluster([("tidb_redact_log".to_owned(), "ON".to_owned())]);
         assert!(tidb_util::redact::need_redact());
         vars.globals.reset("tidb_redact_log").unwrap();
+    }
+
+    #[test]
+    fn global_memory_arbitration_settings_update_the_running_process_authority() {
+        struct NoopRecorder;
+
+        impl tidb_util::memory::RecordMemState for NoopRecorder {
+            fn load(&self) -> Result<Option<tidb_util::memory::RuntimeMemStateV1>, String> {
+                Ok(None)
+            }
+
+            fn store(&self, _: &tidb_util::memory::RuntimeMemStateV1) -> Result<(), String> {
+                Ok(())
+            }
+        }
+
+        let arbitrator =
+            tidb_util::memory::MemArbitrator::new(1 << 30, 4, 4, 64 << 10, Box::new(NoopRecorder));
+        let _registration = tidb_util::memory::install_process_arbitrator(&arbitrator);
+        let globals = GlobalSysvars::new();
+
+        globals
+            .set(
+                tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_MODE,
+                "priority".to_owned(),
+            )
+            .unwrap();
+        assert_eq!(
+            arbitrator.work_mode(),
+            tidb_util::memory::ArbitratorWorkMode::Priority
+        );
+
+        globals
+            .set(
+                tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_SOFT_LIMIT,
+                "0.5".to_owned(),
+            )
+            .unwrap();
+        assert_eq!(arbitrator.soft_limit(), 512 << 20);
+
+        globals
+            .set_instance(
+                tidb_vardef::tidb_vars::TIDB_SERVER_MEMORY_LIMIT,
+                "2GiB".to_owned(),
+            )
+            .unwrap();
+        assert_eq!(arbitrator.limit_u64(), 2 << 30);
+
+        globals
+            .reset(tidb_vardef::tidb_vars::TIDB_MEM_ARBITRATOR_MODE)
+            .unwrap();
+        assert_eq!(
+            arbitrator.work_mode(),
+            tidb_util::memory::ArbitratorWorkMode::Disable
+        );
     }
 
     #[test]

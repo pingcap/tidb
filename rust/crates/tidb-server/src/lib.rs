@@ -291,68 +291,18 @@ fn open_spill_storage(
         .map_err(RunConfiguredNodeError::Spill)
 }
 
-fn source_memory_limit(text: &str, total: Option<u64>) -> Result<i64, String> {
-    let parsed = if let Some(percent) = text.strip_suffix('%') {
-        let percent = percent
-            .parse::<u64>()
-            .map_err(|_| format!("invalid tidb_server_memory_limit {text:?}"))?;
-        if !(1..100).contains(&percent) {
-            return Err(format!("invalid tidb_server_memory_limit {text:?}"));
-        }
-        total
-            .ok_or_else(|| "host memory is required for a percentage limit".to_owned())?
-            .saturating_mul(percent)
-            / 100
-    } else {
-        let suffixes = [
-            ("KiB", 1_u64 << 10),
-            ("MiB", 1_u64 << 20),
-            ("GiB", 1_u64 << 30),
-            ("TiB", 1_u64 << 40),
-            ("KB", 1_u64 << 10),
-            ("MB", 1_u64 << 20),
-            ("GB", 1_u64 << 30),
-            ("TB", 1_u64 << 40),
-        ];
-        let (digits, scale) = suffixes
-            .iter()
-            .find_map(|(suffix, scale)| text.strip_suffix(suffix).map(|digits| (digits, *scale)))
-            .unwrap_or((text, 1));
-        digits
-            .parse::<u64>()
-            .ok()
-            .and_then(|value| value.checked_mul(scale))
-            .ok_or_else(|| format!("invalid tidb_server_memory_limit {text:?}"))?
-    };
-    let parsed = if parsed == 0 {
-        total.ok_or_else(|| "host memory is required for a zero limit".to_owned())?
-    } else {
-        parsed.max(512 << 20)
-    };
-    i64::try_from(parsed).map_err(|_| format!("tidb_server_memory_limit is too large: {text:?}"))
-}
-
 fn open_memory_arbitrator(
     config: &NodeConfig,
 ) -> Result<Option<Arc<tidb_util::memory::MemArbitrator>>, RunConfiguredNodeError> {
     let mode = tidb_util::memory::parse_work_mode_text(&config.memory_arbitrator.mode);
-    if mode == tidb_util::memory::ArbitratorWorkMode::Disable {
-        return Ok(None);
-    }
-    let configured_limit = &config.memory_arbitrator.server_memory_limit;
-    let total = (configured_limit.ends_with('%') || configured_limit == "0")
-        .then(tidb_util::cgroup::effective_memory_limit)
-        .transpose()
-        .map_err(|error| {
-            RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string()))
-        })?;
-    let limit = source_memory_limit(configured_limit, total)
-        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
+    let limit =
+        tidb_util::memory::parse_server_memory_limit(&config.memory_arbitrator.server_memory_limit)
+            .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error)))?;
     let (soft_bytes, soft_ratio, soft_mode) =
         tidb_util::memory::parse_soft_limit_text(&config.memory_arbitrator.soft_limit);
     let state_dir = config.spill_storage.path.join("mem-arbitrator");
     let arbitrator = tidb_util::memory::MemArbitrator::new(
-        limit,
+        i64::try_from(limit).expect("validated server memory limit fits i64"),
         tidb_util::memory::DEF_POOL_STATUS_SHARDS,
         tidb_util::memory::DEF_POOL_QUOTA_SHARDS,
         64 << 10,
@@ -375,6 +325,7 @@ fn open_memory_arbitrator(
 
 pub(crate) struct MemoryArbitratorAuthority {
     arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    registration: Option<tidb_util::memory::ProcessArbitratorRegistration>,
     sampler_running: Arc<AtomicBool>,
     sampler: Option<JoinHandle<()>>,
 }
@@ -404,8 +355,12 @@ impl MemoryArbitratorAuthority {
                 }
             })
         });
+        let registration = arbitrator
+            .as_ref()
+            .map(tidb_util::memory::install_process_arbitrator);
         Ok(Self {
             arbitrator,
+            registration,
             sampler_running,
             sampler,
         })
@@ -425,6 +380,7 @@ impl Drop for MemoryArbitratorAuthority {
         if let Some(arbitrator) = self.arbitrator.as_ref() {
             let _ = arbitrator.stop();
         }
+        self.registration.take();
     }
 }
 
