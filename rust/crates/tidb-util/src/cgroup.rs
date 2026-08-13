@@ -21,6 +21,9 @@
 
 use std::io;
 
+#[cfg(target_os = "macos")]
+use std::process::Command;
+
 #[cfg(any(target_os = "linux", test))]
 use std::collections::HashSet;
 #[cfg(any(target_os = "linux", test))]
@@ -561,6 +564,61 @@ pub fn get_memory_limit() -> io::Result<u64> {
     get_cgroup_memory_limit().map(|(limit, _)| limit)
 }
 
+/// Reads physical RAM through the same operating-system boundary Go's
+/// `gopsutil.VirtualMemory().Total` uses for the global memory limit.
+#[cfg(target_os = "linux")]
+fn host_memory_total() -> io::Result<u64> {
+    let content = fs::read_to_string("/proc/meminfo")?;
+    let kib = content
+        .lines()
+        .find_map(|line| line.strip_prefix("MemTotal:"))
+        .and_then(|value| value.split_whitespace().next())
+        .and_then(|value| value.parse::<u64>().ok())
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "missing MemTotal"))?;
+    kib.checked_mul(1024)
+        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "MemTotal overflows bytes"))
+}
+
+#[cfg(target_os = "macos")]
+fn host_memory_total() -> io::Result<u64> {
+    let output = Command::new("sysctl").args(["-n", "hw.memsize"]).output()?;
+    if !output.status.success() {
+        return Err(io::Error::other("sysctl hw.memsize failed"));
+    }
+    std::str::from_utf8(&output.stdout)
+        .ok()
+        .map(str::trim)
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "invalid hw.memsize"))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn host_memory_total() -> io::Result<u64> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "host memory discovery is not available on this platform",
+    ))
+}
+
+/// Returns the RAM total visible to TiDB: a finite cgroup limit wins over
+/// physical RAM, exactly as Go's memory hook does.
+pub fn effective_memory_limit() -> io::Result<u64> {
+    let physical = host_memory_total()?;
+    Ok(select_effective_memory_limit(
+        physical,
+        get_memory_limit().unwrap_or_default(),
+    ))
+}
+
+fn select_effective_memory_limit(physical: u64, cgroup_limit: u64) -> u64 {
+    if cgroup_limit > 0 && cgroup_limit < physical {
+        cgroup_limit
+    } else {
+        physical
+    }
+}
+
 /// Returns the current process cgroup memory usage.
 #[cfg(target_os = "linux")]
 pub fn get_memory_usage() -> io::Result<u64> {
@@ -626,6 +684,13 @@ mod tests {
         let path = rooted(root, path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, value).unwrap();
+    }
+
+    #[test]
+    fn effective_limit_uses_the_smaller_finite_cgroup_value() {
+        assert_eq!(select_effective_memory_limit(16, 0), 16);
+        assert_eq!(select_effective_memory_limit(16, 32), 16);
+        assert_eq!(select_effective_memory_limit(16, 8), 8);
     }
 
     fn v1_mount(controller: &str, namespace_root: &str, mount: &str) -> String {
