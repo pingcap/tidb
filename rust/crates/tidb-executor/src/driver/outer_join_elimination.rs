@@ -28,18 +28,17 @@
 //!     duplicate-agnostic (`DISTINCT`, `max`/`min`, ...), so a duplicated
 //!     outer row is unobservable even without the uniqueness.
 //!
-//! Only (1) is implemented here. It is the ground that closes both of the
-//! statements this tier diverges on, `explain_easy`'s
+//! The `DISTINCT` subset of (2), together with (1), is implemented here. It
+//! closes both of the statements this tier diverges on, `explain_easy`'s
 //!
 //! ```sql
 //! select t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
 //! select distinct t1.a, t1.b from t1 left outer join t2 on t1.a = t2.a;
 //! ```
 //!
-//! -- the `distinct` one included, because `t2.a` there is `t2`'s PRIMARY KEY
-//! and (1) already applies. (2) would be needed for a version of the same
-//! statement whose join key is NOT unique, which nothing in the corpus asks
-//! for; `GetDupAgnosticAggCols` is what it needs and is not ported.
+//! -- including the `DISTINCT` form when `t2.a` is NOT unique. Other
+//! duplicate-agnostic aggregates (`MAX`, `MIN`, ...) still need a logical
+//! aggregate-column walk and remain outside this statement-shaped rewrite.
 //!
 //! # Why this runs over the statement rather than a logical plan
 //!
@@ -127,11 +126,6 @@ pub(crate) fn eliminate(
         .clone()
         .unwrap_or_else(|| name.to_ascii_lowercase());
 
-    let keys = inner_join_keys(join.on.as_ref()?, &visible)?;
-    if !keys_contain_unique_key(entry, &keys) {
-        return None;
-    }
-
     // The candidate: the same statement reading only the outer side.
     let mut candidate = select.clone();
     candidate.from = Some(Join {
@@ -148,6 +142,17 @@ pub(crate) fn eliminate(
         .needed(&visible, &entry.column_types())
         .is_empty()
     {
+        return None;
+    }
+    // Go carries SELECT DISTINCT as duplicate-agnostic aggregate columns into
+    // `tryToEliminateOuterJoin`. Once no inner column survives, duplicate
+    // matches cannot alter the result, even when the inner key is not unique.
+    if select.distinct {
+        return Some(candidate);
+    }
+
+    let keys = inner_join_keys(join.on.as_ref()?, &visible)?;
+    if !keys_contain_unique_key(entry, &keys) {
         return None;
     }
     Some(candidate)
