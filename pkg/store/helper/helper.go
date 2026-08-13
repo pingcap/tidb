@@ -849,39 +849,50 @@ func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexSta
 	return pdCli.GetRegionStatusByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), false)
 }
 
-// RegionApproximateSizes returns each region's max(ApproximateSize,
-// ApproximateKvSize) in bytes over the logical range [startKey, endKey) via PD,
-// in key order. It prefers ApproximateKvSize because it tracks logical data size
-// better than the compressed on-disk ApproximateSize; max() covers TiKV not
-// reporting the KV size.
-func (h *Helper) RegionApproximateSizes(ctx context.Context, pdCli pd.Client, startKey, endKey kv.Key) ([]int64, error) {
-	start, end := h.Store.GetCodec().EncodeRegionRange(startKey, endKey)
-	var sizes []int64
+// RegionApproximateSizes returns, for each region over the logical range
+// [startKey, endKey) via PD in key order, its raw end key and its byte size
+// (max(ApproximateSize, ApproximateKvSize)). endKeys and sizes are aligned. It
+// prefers ApproximateKvSize because it tracks logical data size better than the
+// compressed on-disk ApproximateSize; max() covers TiKV not reporting the KV
+// size. PD returns region keys in the codec-encoded keyspace, so they are decoded
+// back to the raw keyspace.
+func (h *Helper) RegionApproximateSizes(ctx context.Context, pdCli pd.Client, startKey, endKey kv.Key) (endKeys []kv.Key, sizes []int64, err error) {
+	codec := h.Store.GetCodec()
+	cur, end := codec.EncodeRegionRange(startKey, endKey)
 	for {
-		regions, err := pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(start, end), 128)
+		regions, err := pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(cur, end), 128)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if len(regions.Regions) == 0 {
 			break
 		}
 		for _, r := range regions.Regions {
+			encoded, err := hex.DecodeString(r.EndKey)
+			if err != nil {
+				return nil, nil, err
+			}
+			raw, err := codec.DecodeRegionKey(encoded)
+			if err != nil {
+				return nil, nil, err
+			}
+			endKeys = append(endKeys, raw)
 			sizes = append(sizes, max(r.ApproximateSize, r.ApproximateKvSize)*1024*1024)
 		}
-		start, err = hex.DecodeString(regions.Regions[len(regions.Regions)-1].EndKey)
+		cur, err = hex.DecodeString(regions.Regions[len(regions.Regions)-1].EndKey)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		if bytes.Compare(start, end) >= 0 {
+		if bytes.Compare(cur, end) >= 0 {
 			break
 		}
 	}
-	return sizes, nil
+	return endKeys, sizes, nil
 }
 
 // EstimateKeyRangeSize sums RegionApproximateSizes over [startKey, endKey).
 func (h *Helper) EstimateKeyRangeSize(ctx context.Context, pdCli pd.Client, startKey, endKey kv.Key) (int64, error) {
-	sizes, err := h.RegionApproximateSizes(ctx, pdCli, startKey, endKey)
+	_, sizes, err := h.RegionApproximateSizes(ctx, pdCli, startKey, endKey)
 	if err != nil {
 		return 0, err
 	}

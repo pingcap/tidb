@@ -73,14 +73,14 @@ func splitTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx 
 	ordinal := 0
 	for _, pid := range physicalIDs(tblInfo) {
 		start, end := physicalTableRange(tblInfo, pid)
-		boundaries, err := loadRegionBoundaries(ctx, store, start, end)
-		if err != nil {
-			return nil, err
-		}
 		var tableChunks []Chunk
-		if sizes, ok := regionSizes(ctx, store, start, end); ok && len(sizes) == len(boundaries)-1 {
+		if boundaries, sizes, ok := regionChunks(ctx, store, start, end); ok {
 			tableChunks, ordinal = chunksBySize(tableIdx, pid, boundaries, sizes, ordinal)
 		} else {
+			boundaries, err := loadRegionBoundaries(ctx, store, start, end)
+			if err != nil {
+				return nil, err
+			}
 			tableChunks, ordinal = chunksByCount(tableIdx, pid, boundaries, meta.PhysicalSizes[pid], ordinal)
 		}
 		chunks = append(chunks, tableChunks...)
@@ -88,29 +88,37 @@ func splitTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx 
 	return chunks, nil
 }
 
-// regionSizes returns the per-region byte sizes over [start, end) from a fresh PD
-// estimate, retried on transient error. ok is false when PD is unavailable, so
-// the caller falls back to count-based splitting.
-func regionSizes(ctx context.Context, store kv.Storage, start, end kv.Key) ([]int64, bool) {
+// regionChunks returns the region boundaries covering [start, end) together with
+// each region's byte size, from a fresh PD estimate retried on transient error.
+// The boundaries and sizes come from the same scan, so they are aligned by
+// construction. ok is false when PD is unavailable, so the caller falls back to
+// the region cache and count-based splitting.
+func regionChunks(ctx context.Context, store kv.Storage, start, end kv.Key) (boundaries []kv.Key, sizes []int64, ok bool) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 	h := helper.NewHelper(hStore)
 	pdCli, err := h.TryGetPDHTTPClient()
 	if err != nil {
-		return nil, false
+		return nil, nil, false
 	}
-	var sizes []int64
+	var endKeys []kv.Key
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err = handle.RunWithRetry(ctx, loadRegionMaxRetry, backoffer, logutil.BgLogger(), func(context.Context) (bool, error) {
-		sizes, err = h.RegionApproximateSizes(ctx, pdCli, start, end)
+		endKeys, sizes, err = h.RegionApproximateSizes(ctx, pdCli, start, end)
 		return err != nil, err
 	})
-	if err != nil {
-		return nil, false
+	if err != nil || len(sizes) == 0 {
+		return nil, nil, false
 	}
-	return sizes, true
+	// Chain the interior region end keys between start and end; the last region's
+	// end is clamped to end so the chunks tile [start, end) exactly.
+	boundaries = make([]kv.Key, 0, len(endKeys)+1)
+	boundaries = append(boundaries, start)
+	boundaries = append(boundaries, endKeys[:len(endKeys)-1]...)
+	boundaries = append(boundaries, end)
+	return boundaries, sizes, true
 }
 
 // chunksBySize walks one physical table's regions in key order and starts a new

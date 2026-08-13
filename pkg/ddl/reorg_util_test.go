@@ -36,6 +36,10 @@ func (mockCodec) EncodeRegionRange(start, end []byte) ([]byte, []byte) {
 	return append([]byte("k:"), start...), append([]byte("k:"), end...)
 }
 
+func (mockCodec) DecodeRegionKey(encodedKey []byte) ([]byte, error) {
+	return encodedKey, nil
+}
+
 type mockHelperStorage struct {
 	helper.Storage
 	codec tikv.Codec
