@@ -417,6 +417,12 @@ pub enum DriverError {
     PartitionSubpartition,
     /// Go `ErrPartitionMgmtOnNonpartitioned` (1505).
     PartitionManagementOnNonpartitioned,
+    /// Go `dbterror.ErrDropPartitionNonExistent` (1507).
+    PartitionDropNonexistent,
+    /// Go `dbterror.ErrDropLastPartition` (1508).
+    PartitionDropLast,
+    /// Go `dbterror.ErrOnlyOnRangeListPartition` (1512).
+    PartitionOnlyRangeList(&'static str),
     /// Go `dbterror.ErrUniqueKeyNeedAllFieldsInPf` (1503), carrying the kind
     /// of key Go names (`CLUSTERED INDEX`).
     PartitionUniqueKeyNeedAllFields(String),
@@ -431,6 +437,8 @@ pub enum DriverError {
     /// Go `dbterror.ErrNotAllowedTypeInPartition` (1659), carrying the column
     /// whose type the partition expression may not read.
     PartitionFieldTypeNotAllowed(String),
+    /// Go `dbterror.ErrNullInValuesLessThan` (1566).
+    PartitionNullInValuesLessThan,
     /// Go `dbterror.ErrSameNamePartitionField` (1652).
     PartitionDuplicateField(String),
     /// Go `dbterror.ErrWrongTypeColumnValue` (1654).

@@ -429,11 +429,6 @@ pub(crate) fn range_columns_partition_index_for_tuple(
     less_than: &[Vec<RangeColumnBound>],
     field_types: &[FieldType],
 ) -> Result<usize, RoutingError> {
-    // Go's upper-bound expression returns SQL NULL for a NULL partition
-    // value; locateRangeColumnPartition treats that as the lowest partition.
-    if tuple.iter().any(Datum::is_null) {
-        return Ok(0);
-    }
     for (ordinal, bound) in less_than.iter().enumerate() {
         if range_columns_tuple_cmp(tuple, bound, field_types)? == Ordering::Less {
             return Ok(ordinal);
@@ -793,6 +788,47 @@ mod tests {
         assert_eq!(
             range_partition_index(&Datum::UInt(u64::MAX), &bounds, false).expect("routed"),
             0
+        );
+    }
+
+    #[test]
+    fn range_columns_null_is_lexicographic_not_an_unconditional_first_partition() {
+        let types = vec![
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+            FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        ];
+        let bounds = vec![
+            vec![
+                RangeColumnBound::Value(Datum::Int(-10)),
+                RangeColumnBound::Value(Datum::Int(0)),
+                RangeColumnBound::Value(Datum::Int(0)),
+            ],
+            vec![
+                RangeColumnBound::Value(Datum::Int(10)),
+                RangeColumnBound::Value(Datum::Int(0)),
+                RangeColumnBound::Value(Datum::Int(0)),
+            ],
+        ];
+        assert_eq!(
+            range_columns_partition_index_for_tuple(
+                &[Datum::Int(5), Datum::Null, Datum::Null],
+                &bounds,
+                &types,
+            )
+            .unwrap(),
+            1,
+            "the first component already places the tuple above p0"
+        );
+        assert_eq!(
+            range_columns_partition_index_for_tuple(
+                &[Datum::Int(-10), Datum::Int(0), Datum::Null],
+                &bounds,
+                &types,
+            )
+            .unwrap(),
+            0,
+            "NULL at the first undecided component sorts below the bound"
         );
     }
 

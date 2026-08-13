@@ -191,6 +191,17 @@ pub(super) fn build_list_values(
         types,
         dependencies,
     )?;
+    build_list_values_with_unsigned(definitions, unsigned, ctx)
+}
+
+pub(super) fn build_list_values_with_unsigned(
+    definitions: &[PartitionDefinition],
+    unsigned: bool,
+    ctx: &crate::StmtContext,
+) -> Result<PartitionKind, DriverError> {
+    if definitions.is_empty() {
+        return Err(DriverError::PartitionsMustBeDefined("LIST"));
+    }
     let mut values = Vec::new();
     let mut seen = HashSet::new();
     let mut null_partition = None;

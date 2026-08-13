@@ -1245,6 +1245,21 @@ impl DriverError {
             *b"HY000",
             "Partition management on a not partitioned table is not possible".to_owned(),
         ),
+        DriverError::PartitionDropNonexistent => MysqlError::new(
+            1507,
+            *b"HY000",
+            "Error in list of partitions to DROP".to_owned(),
+        ),
+        DriverError::PartitionDropLast => MysqlError::new(
+            1508,
+            *b"HY000",
+            "Cannot remove all partitions, use DROP TABLE instead".to_owned(),
+        ),
+        DriverError::PartitionOnlyRangeList(operation) => MysqlError::new(
+            1512,
+            *b"HY000",
+            format!("{operation} PARTITION can only be used on RANGE/LIST partitions"),
+        ),
         DriverError::PartitionUniqueKeyNeedAllFields(kind) => MysqlError::new(
             1503,
             *b"HY000",
@@ -1264,6 +1279,11 @@ impl DriverError {
             1564,
             *b"HY000",
             "This partition function is not allowed".to_owned(),
+        ),
+        DriverError::PartitionNullInValuesLessThan => MysqlError::new(
+            1566,
+            *b"HY000",
+            "Not allowed to use NULL value in VALUES LESS THAN".to_owned(),
         ),
         DriverError::PartitionFieldTypeNotAllowed(column) => MysqlError::new(
             1659,

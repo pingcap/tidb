@@ -1584,3 +1584,158 @@ fn static_prune_mode_fans_a_partitioned_scan_out_per_partition() {
         vec!["table:t2, partition:p2".to_owned()]
     );
 }
+
+/// Go `CheckDropTablePartition` plus the LIST metadata transition: dropping
+/// a partition removes both its definition and its physical rows; adding it
+/// back creates a fresh empty physical partition whose values route once.
+/// LIST and LIST COLUMNS share that lifecycle even though their value maps
+/// have different representations.
+#[test]
+fn list_partition_drop_and_add_replace_metadata_and_physical_rows() {
+    for columns in [false, true] {
+        let mut session = Session::new();
+        let method = if columns {
+            "LIST COLUMNS(a)"
+        } else {
+            "LIST(a)"
+        };
+        session
+            .run(&format!(
+                "CREATE TABLE t (a INT) PARTITION BY {method} (\
+                 PARTITION p0 VALUES IN (0,1,2,3,4),\
+                 PARTITION p1 VALUES IN (5,6,7,8,9),\
+                 PARTITION p2 VALUES IN (10,11,12,13,14),\
+                 PARTITION p3 VALUES IN (15,16,17,18,19))"
+            ))
+            .unwrap();
+        session
+            .run("INSERT INTO t VALUES (0),(5),(10),(15)")
+            .unwrap();
+
+        session
+            .run("ALTER TABLE t DROP PARTITION IF EXISTS missing")
+            .unwrap();
+        assert_eq!(
+            crate::tests_support::row_text(session.run("SHOW WARNINGS")).as_slice(),
+            [["Note", "1507", "Error in list of partitions to DROP"]]
+        );
+
+        session.run("ALTER TABLE t DROP PARTITION p0").unwrap();
+        assert_eq!(
+            crate::tests_support::row_text(session.run("SELECT * FROM t ORDER BY a")).as_slice(),
+            [["5"], ["10"], ["15"]]
+        );
+        assert_eq!(
+            session
+                .run("SELECT * FROM t PARTITION (p0)")
+                .unwrap_err()
+                .to_mysql_error()
+                .code,
+            1735
+        );
+
+        session.run("ALTER TABLE t DROP PARTITION p1,p2").unwrap();
+        assert_eq!(
+            crate::tests_support::row_text(session.run("SELECT * FROM t ORDER BY a")).as_slice(),
+            [["15"]]
+        );
+        assert_eq!(
+            session
+                .run("ALTER TABLE t DROP PARTITION p3")
+                .unwrap_err()
+                .to_mysql_error()
+                .code,
+            1508
+        );
+
+        session
+            .run("ALTER TABLE t ADD PARTITION (PARTITION p0 VALUES IN (0,1,2,3,4))")
+            .unwrap();
+        session
+            .run(
+                "ALTER TABLE t ADD PARTITION IF NOT EXISTS \
+                 (PARTITION p0 VALUES IN (0,1,2,3,4))",
+            )
+            .unwrap();
+        assert_eq!(
+            crate::tests_support::row_text(session.run("SHOW WARNINGS")).as_slice(),
+            [["Note", "1517", "Duplicate partition name p0"]]
+        );
+        session
+            .run(
+                "ALTER TABLE t ADD PARTITION (\
+                 PARTITION p1 VALUES IN (5,6,7,8,9),\
+                 PARTITION p2 VALUES IN (10,11,12,13,14))",
+            )
+            .unwrap();
+        session.run("INSERT INTO t VALUES (0),(5),(10)").unwrap();
+        assert_eq!(
+            crate::tests_support::row_text(session.run("SELECT * FROM t ORDER BY a")).as_slice(),
+            [["0"], ["5"], ["10"], ["15"]]
+        );
+    }
+}
+
+#[test]
+fn range_columns_rejects_null_values_less_than_bounds() {
+    let mut session = Session::new();
+    let error = session
+        .run(
+            "CREATE TABLE t (a INT, b DATETIME, c VARCHAR(255)) \
+             PARTITION BY RANGE COLUMNS(a,b,c) (\
+             PARTITION p0 VALUES LESS THAN (NULL,NULL,NULL))",
+        )
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1566);
+    assert_eq!(
+        error.message,
+        "Not allowed to use NULL value in VALUES LESS THAN"
+    );
+}
+
+#[test]
+fn range_columns_filter_uses_the_partition_columns_collation() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t (a CHAR(32) COLLATE utf8mb4_unicode_ci) \
+             PARTITION BY RANGE COLUMNS(a) (\
+             PARTITION p0 VALUES LESS THAN ('c'),\
+             PARTITION p1 VALUES LESS THAN ('F'),\
+             PARTITION p2 VALUES LESS THAN ('h'),\
+             PARTITION p3 VALUES LESS THAN ('L'),\
+             PARTITION p4 VALUES LESS THAN ('t'),\
+             PARTITION p5 VALUES LESS THAN (MAXVALUE))",
+        )
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO t VALUES \
+             ('a'),('A'),('c'),('C'),('f'),('F'),('h'),('H'),\
+             ('l'),('L'),('t'),('T'),('z'),('Z')",
+        )
+        .unwrap();
+    session
+        .run("CREATE TABLE u (a CHAR(32) COLLATE utf8mb4_unicode_ci)")
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO u VALUES \
+             ('a'),('A'),('c'),('C'),('f'),('F'),('h'),('H'),\
+             ('l'),('L'),('t'),('T'),('z'),('Z')",
+        )
+        .unwrap();
+    let unpartitioned = crate::tests_support::row_text(
+        session.run("SELECT * FROM u WHERE a > 'c' AND a < 'Q' ORDER BY a"),
+    );
+    assert_eq!(
+        unpartitioned.as_slice(),
+        [["f"], ["F"], ["h"], ["H"], ["l"], ["L"]]
+    );
+
+    let rows = crate::tests_support::row_text(
+        session.run("SELECT * FROM t WHERE a > 'c' AND a < 'Q' ORDER BY a"),
+    );
+    assert_eq!(rows.as_slice(), [["f"], ["F"], ["h"], ["H"], ["l"], ["L"]]);
+}

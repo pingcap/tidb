@@ -37,6 +37,7 @@ use super::column_types::{field_type_of, NOT_NULL_FLAG};
 use super::indexes::{add_index_to_table, drop_index_from_table, is_visible};
 use super::table_constraints::{AUTO_INCREMENT_FLAG, PRI_KEY_FLAG};
 use super::{Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset};
+use crate::partition_routing::{PartitionDef, PartitionKind, RangeBound};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 /// Runs an `ALTER TABLE`, applying its actions in source order.
@@ -235,6 +236,15 @@ pub fn run_alter_table_in(
                 all,
                 names,
             }) => truncate_partition_action(catalog, &database, &name, *all, names, ctx)?,
+            tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Drop {
+                if_exists,
+                names,
+            }) => drop_partition_action(catalog, &database, &name, *if_exists, names, ctx)?,
+            tidb_ast::AlterTableAction::Partition(tidb_ast::AlterPartitionAction::Add {
+                if_not_exists,
+                spec,
+                ..
+            }) => add_partition_action(catalog, &database, &name, *if_not_exists, spec, ctx)?,
             // The four metadata-only actions: a name or a flag changes while
             // every column id, column offset and index entry stays put. See
             // the `alter_metadata` module doc for why they belong together.
@@ -364,6 +374,289 @@ fn truncate_partition_action(
     table
         .truncate_partitions(&ordinals, &replacement_ids, ctx)
         .map_err(|error| crate::driver::kv_read_error("truncate partition", error))
+}
+
+fn drop_partition_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    if_exists: bool,
+    names: &[String],
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let ordinals = {
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+            return Err(DriverError::unsupported(
+                "ALTER TABLE ... DROP PARTITION needs a storage-backed table",
+            ));
+        };
+        let Some(partition) = table.partition() else {
+            return Err(DriverError::PartitionManagementOnNonpartitioned);
+        };
+        if !matches!(
+            partition.kind,
+            PartitionKind::Range { .. }
+                | PartitionKind::RangeColumns { .. }
+                | PartitionKind::List { .. }
+                | PartitionKind::ListColumns { .. }
+        ) {
+            return Err(DriverError::PartitionOnlyRangeList("DROP"));
+        }
+        if partition.definitions.len() <= names.len() {
+            return Err(DriverError::PartitionDropLast);
+        }
+        let mut ordinals = Vec::with_capacity(names.len());
+        for name in names {
+            let Some(ordinal) = partition
+                .definitions
+                .iter()
+                .position(|definition| definition.name.eq_ignore_ascii_case(name))
+            else {
+                if if_exists {
+                    ctx.append_suppressed(&DriverError::PartitionDropNonexistent);
+                    return Ok(());
+                }
+                return Err(DriverError::PartitionDropNonexistent);
+            };
+            if ordinals.contains(&ordinal) {
+                if if_exists {
+                    ctx.append_suppressed(&DriverError::PartitionDropNonexistent);
+                    return Ok(());
+                }
+                return Err(DriverError::PartitionDropNonexistent);
+            }
+            ordinals.push(ordinal);
+        }
+        ordinals
+    };
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        unreachable!("the table was resolved above")
+    };
+    table
+        .drop_partitions(&ordinals, ctx)
+        .map_err(|error| crate::driver::kv_read_error("drop partition", error))
+}
+
+fn add_partition_action(
+    catalog: &mut Catalog,
+    database: &str,
+    table_name: &str,
+    if_not_exists: bool,
+    spec: &tidb_ast::AddPartitionSpec,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    let tidb_ast::AddPartitionSpec::Definitions(definitions) = spec else {
+        return Err(DriverError::unsupported(
+            "ALTER TABLE ... ADD PARTITION PARTITIONS n is not supported yet",
+        ));
+    };
+    if definitions.is_empty() {
+        return Err(DriverError::PartitionsMustBeDefined("LIST"));
+    }
+    if definitions
+        .iter()
+        .any(|definition| !definition.options.is_empty() || !definition.sub_partitions.is_empty())
+    {
+        return Err(DriverError::unsupported(
+            "ALTER TABLE ... ADD PARTITION options and subpartitions are not supported yet",
+        ));
+    }
+
+    let added_kind = {
+        let Some(crate::TableEntry::Kv(table)) = catalog.table_in(database, table_name) else {
+            return Err(DriverError::unsupported(
+                "ALTER TABLE ... ADD PARTITION needs a storage-backed table",
+            ));
+        };
+        let Some(partition) = table.partition() else {
+            return Err(DriverError::PartitionManagementOnNonpartitioned);
+        };
+        if partition.definitions.len() + definitions.len()
+            > super::table_partition::MAX_PARTITIONS as usize
+        {
+            return Err(DriverError::PartitionTooMany);
+        }
+        for definition in definitions {
+            let duplicate_existing = partition
+                .definitions
+                .iter()
+                .any(|old| old.name.eq_ignore_ascii_case(&definition.name));
+            let duplicate_added = definitions
+                .iter()
+                .filter(|candidate| candidate.name.eq_ignore_ascii_case(&definition.name))
+                .count()
+                > 1;
+            if duplicate_existing || duplicate_added {
+                if if_not_exists {
+                    ctx.append_suppressed(&DriverError::PartitionSameName(definition.name.clone()));
+                    return Ok(());
+                }
+                return Err(DriverError::PartitionSameName(definition.name.clone()));
+            }
+        }
+
+        let names = table
+            .visible_columns()
+            .iter()
+            .map(|column| column.name.clone())
+            .collect::<Vec<_>>();
+        let types = table
+            .visible_columns()
+            .iter()
+            .map(|column| column.field_type.clone())
+            .collect::<Vec<_>>();
+        match &partition.kind {
+            PartitionKind::List {
+                values,
+                null_partition,
+                default_partition,
+                unsigned,
+            } => {
+                if default_partition.is_some() {
+                    return Err(DriverError::unsupported(
+                        "ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead",
+                    ));
+                }
+                let added = super::table_partition_list::build_list_values_with_unsigned(
+                    definitions,
+                    *unsigned,
+                    ctx,
+                )?;
+                let PartitionKind::List {
+                    values: added_values,
+                    null_partition: added_null,
+                    default_partition: added_default,
+                    ..
+                } = &added
+                else {
+                    unreachable!()
+                };
+                if added_values
+                    .iter()
+                    .any(|(value, _)| values.iter().any(|(old, _)| *old as u64 == *value as u64))
+                    || (null_partition.is_some() && added_null.is_some())
+                    || (default_partition.is_some() && added_default.is_some())
+                {
+                    return Err(DriverError::PartitionDuplicateListValue);
+                }
+                added
+            }
+            PartitionKind::ListColumns {
+                keys,
+                default_partition,
+                ..
+            } => {
+                if default_partition.is_some() {
+                    return Err(DriverError::unsupported(
+                        "ADD List partition, already contains DEFAULT partition. Please use REORGANIZE PARTITION instead",
+                    ));
+                }
+                let columns = partition
+                    .dependencies
+                    .iter()
+                    .map(|name| vec![name.clone()])
+                    .collect::<Vec<_>>();
+                let (_, added) = super::table_partition_list::build_list_columns_values(
+                    &columns,
+                    definitions,
+                    &names,
+                    &types,
+                    ctx,
+                )?;
+                let PartitionKind::ListColumns {
+                    keys: added_keys,
+                    default_partition: added_default,
+                    ..
+                } = &added
+                else {
+                    unreachable!()
+                };
+                if added_keys.keys().any(|key| keys.contains_key(key))
+                    || (default_partition.is_some() && added_default.is_some())
+                {
+                    return Err(DriverError::PartitionDuplicateListValue);
+                }
+                added
+            }
+            PartitionKind::Range {
+                less_than,
+                unsigned,
+            } => {
+                let added = super::table_partition_range::build_range_bounds_with_unsigned(
+                    definitions,
+                    *unsigned,
+                    ctx,
+                )?;
+                match (less_than.last(), added.first()) {
+                    (Some(RangeBound::MaxValue), _) => {
+                        return Err(DriverError::PartitionMaxValueNotLast)
+                    }
+                    (Some(RangeBound::Value(old)), Some(RangeBound::Value(new))) => {
+                        let increases = if *unsigned {
+                            (*new as u64) > (*old as u64)
+                        } else {
+                            new > old
+                        };
+                        if !increases {
+                            return Err(DriverError::PartitionRangeNotIncreasing);
+                        }
+                    }
+                    _ => {}
+                }
+                PartitionKind::Range {
+                    less_than: added,
+                    unsigned: *unsigned,
+                }
+            }
+            PartitionKind::RangeColumns {
+                less_than,
+                field_types,
+            } => {
+                let columns = partition
+                    .dependencies
+                    .iter()
+                    .map(|name| vec![name.clone()])
+                    .collect::<Vec<_>>();
+                let (_, added_types, added_bounds) =
+                    super::table_partition_range::build_range_columns_bounds(
+                        &columns,
+                        definitions,
+                        &names,
+                        &types,
+                        ctx,
+                    )?;
+                if let (Some(old), Some(new)) = (less_than.last(), added_bounds.first()) {
+                    if !super::table_partition_range::range_columns_bound_increases(
+                        old,
+                        new,
+                        field_types,
+                    )? {
+                        return Err(DriverError::PartitionRangeNotIncreasing);
+                    }
+                }
+                PartitionKind::RangeColumns {
+                    less_than: added_bounds,
+                    field_types: added_types,
+                }
+            }
+            PartitionKind::Hash | PartitionKind::Key => {
+                return Err(DriverError::PartitionOnlyRangeList("ADD"));
+            }
+        }
+    };
+
+    let added_definitions = definitions
+        .iter()
+        .map(|definition| PartitionDef {
+            id: catalog.allocate_table_id(),
+            name: definition.name.clone(),
+        })
+        .collect::<Vec<_>>();
+    let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
+        unreachable!("the table was resolved above")
+    };
+    table.append_partitions(added_definitions, added_kind);
+    Ok(())
 }
 
 /// Adds one ordinary or unique index from either spelling Go accepts:

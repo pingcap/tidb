@@ -65,7 +65,7 @@ use crate::kv_table::IndexRange;
 use like::points_from_like;
 use std::cmp::Ordering;
 use tidb_ast::{BinaryOp, Expr, IsTarget, UnaryOp};
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Collation, Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::rewrite_expr_resolved;
 
@@ -166,6 +166,14 @@ fn equal_value_cmp(a: &Point, b: &Point) -> Ordering {
 /// Orders two datums with `MinNotNull` below and `MaxValue` above every
 /// ordinary value, and `NULL` below `MinNotNull` (Go's datum kind order).
 pub(crate) fn compare_datum_bounds(left: &Datum, right: &Datum) -> Ordering {
+    compare_datum_bounds_with_collation(left, right, Collation::Utf8Mb4Bin)
+}
+
+fn compare_datum_bounds_with_collation(
+    left: &Datum,
+    right: &Datum,
+    collation: Collation,
+) -> Ordering {
     let rank = |value: &Datum| match value {
         Datum::Null => 0,
         Datum::MinNotNull => 1,
@@ -179,23 +187,37 @@ pub(crate) fn compare_datum_bounds(left: &Datum, right: &Datum) -> Ordering {
     if rank(left) != 2 {
         return Ordering::Equal;
     }
-    tidb_expr::compare_datums(left, right).unwrap_or(Ordering::Equal)
+    match (left, right) {
+        // LIKE endpoints are already collation weight strings. Every other
+        // string endpoint is still text, so compare the latter's weight to
+        // the former directly, exactly as Go's convertToSortKey builder does
+        // before merging point sets.
+        (Datum::Bytes(left), Datum::String(right)) => {
+            left.as_slice().cmp(&collation.key(right.bytes()))
+        }
+        (Datum::String(left), Datum::Bytes(right)) => {
+            collation.key(left.bytes()).as_slice().cmp(right.as_slice())
+        }
+        (Datum::Bytes(left), Datum::Bytes(right)) => left.cmp(right),
+        _ => tidb_expr::compare_datums_with_collation(left, right, collation)
+            .unwrap_or(Ordering::Equal),
+    }
 }
 
 /// Go `rangePointCmp`.
-fn point_cmp(a: &Point, b: &Point) -> Ordering {
-    match compare_datum_bounds(&a.value, &b.value) {
+fn point_cmp(a: &Point, b: &Point, collation: Collation) -> Ordering {
+    match compare_datum_bounds_with_collation(&a.value, &b.value, collation) {
         Ordering::Equal => equal_value_cmp(a, b),
         other => other,
     }
 }
 
 /// Go `builder.mergeSorted`.
-fn merge_sorted(a: &[Point], b: &[Point]) -> Vec<Point> {
+fn merge_sorted(a: &[Point], b: &[Point], collation: Collation) -> Vec<Point> {
     let mut out = Vec::with_capacity(a.len() + b.len());
     let (mut i, mut j) = (0, 0);
     while i < a.len() && j < b.len() {
-        if point_cmp(&a[i], &b[j]) == Ordering::Less {
+        if point_cmp(&a[i], &b[j], collation) == Ordering::Less {
             out.push(a[i].clone());
             i += 1;
         } else {
@@ -211,8 +233,8 @@ fn merge_sorted(a: &[Point], b: &[Point]) -> Vec<Point> {
 /// Go `builder.merge`: a sweep over the merged endpoints keeping the spans
 /// covered by `required` inputs at once --- one for a union, two for an
 /// intersection.
-fn merge(a: &[Point], b: &[Point], union: bool) -> Vec<Point> {
-    let merged = merge_sorted(a, b);
+fn merge(a: &[Point], b: &[Point], union: bool, collation: Collation) -> Vec<Point> {
+    let merged = merge_sorted(a, b, collation);
     let required = if union { 1 } else { 2 };
     let mut in_range = 0;
     let mut out = Vec::with_capacity(merged.len());
@@ -233,13 +255,13 @@ fn merge(a: &[Point], b: &[Point], union: bool) -> Vec<Point> {
 }
 
 /// Go `builder.intersection`.
-pub(crate) fn intersection(a: &[Point], b: &[Point]) -> Vec<Point> {
-    merge(a, b, false)
+pub(crate) fn intersection(a: &[Point], b: &[Point], collation: Collation) -> Vec<Point> {
+    merge(a, b, false, collation)
 }
 
 /// Go `builder.union`.
-pub(crate) fn union_points(a: &[Point], b: &[Point]) -> Vec<Point> {
-    merge(a, b, true)
+pub(crate) fn union_points(a: &[Point], b: &[Point], collation: Collation) -> Vec<Point> {
+    merge(a, b, true, collation)
 }
 
 /// Go `validInterval`: an interval is non-empty when its low key, advanced
@@ -754,6 +776,7 @@ fn points_from_bin_op(op: BinaryOp, value: Datum) -> Option<Vec<Point>> {
 fn points_from_in(
     list: &[Expr],
     zone: &tidb_datatype::SessionTimeZone,
+    collation: Collation,
 ) -> Option<(Vec<Point>, bool)> {
     let mut points = Vec::with_capacity(list.len() * 2);
     let mut has_null = false;
@@ -766,7 +789,7 @@ fn points_from_in(
         points.push(Point::start(value.clone(), false));
         points.push(Point::end(value, false));
     }
-    points.sort_by(point_cmp);
+    points.sort_by(|left, right| point_cmp(left, right, collation));
     // Go's duplicate removal: keep an endpoint only when it alternates
     // start/end with the one before it.
     let mut cur = 0;
@@ -791,8 +814,12 @@ fn points_from_in(
 
 /// Go `builder.buildFromNot` for `IN`: the gaps between the list values,
 /// starting at an excluded NULL.
-fn points_from_not_in(list: &[Expr], zone: &tidb_datatype::SessionTimeZone) -> Option<Vec<Point>> {
-    let (points, has_null) = points_from_in(list, zone)?;
+fn points_from_not_in(
+    list: &[Expr],
+    zone: &tidb_datatype::SessionTimeZone,
+    collation: Collation,
+) -> Option<Vec<Point>> {
+    let (points, has_null) = points_from_in(list, zone, collation)?;
     // `a NOT IN (1, NULL)` is never true, so Go builds no points at all.
     if has_null {
         return Some(Vec::new());
@@ -937,10 +964,11 @@ fn points_on_column(
         Expr::Binary(op @ (BinaryOp::LogicAnd | BinaryOp::LogicOr), lhs, rhs) => {
             let lhs = points_on_column(lhs, column, zone, like_default_escape)?;
             let rhs = points_on_column(rhs, column, zone, like_default_escape)?;
+            let collation = column.field_type.collation();
             let points = if matches!(op, BinaryOp::LogicAnd) {
-                intersection(&lhs.points, &rhs.points)
+                intersection(&lhs.points, &rhs.points, collation)
             } else {
-                union_points(&lhs.points, &rhs.points)
+                union_points(&lhs.points, &rhs.points, collation)
             };
             // Go `allEqOrIn`, exactly: an `OR` counts as this column's
             // equality slot when EVERY disjunct does, and an `AND` never does.
@@ -1007,9 +1035,9 @@ fn points_on_column(
                 return None;
             }
             let points = if *not {
-                points_from_not_in(list, zone)?
+                points_from_not_in(list, zone, column.field_type.collation())?
             } else {
-                points_from_in(list, zone)?.0
+                points_from_in(list, zone, column.field_type.collation())?.0
             };
             Some(ColumnPoints {
                 points,
@@ -1029,15 +1057,18 @@ fn points_on_column(
             }
             let low = constant_value(low, zone)?;
             let high = constant_value(high, zone)?;
+            let collation = column.field_type.collation();
             let points = if *not {
                 union_points(
                     &points_from_bin_op(BinaryOp::Lt, low)?,
                     &points_from_bin_op(BinaryOp::Gt, high)?,
+                    collation,
                 )
             } else {
                 intersection(
                     &points_from_bin_op(BinaryOp::Ge, low)?,
                     &points_from_bin_op(BinaryOp::Le, high)?,
+                    collation,
                 )
             };
             Some(ColumnPoints {
@@ -1175,7 +1206,9 @@ fn build_cnf_ranges<'a>(
             // Several equalities on one column intersect, so `a = 1 AND a = 2`
             // is empty rather than the first one alone.
             points = Some(match points {
-                Some(existing) => intersection(&existing, &column.points),
+                Some(existing) => {
+                    intersection(&existing, &column.points, key_part.field_type.collation())
+                }
                 None => column.points,
             });
             consumed[i] = true;
@@ -1202,6 +1235,7 @@ fn build_cnf_ranges<'a>(
             tail = Some(intersection(
                 &tail.unwrap_or_else(full_range),
                 &column.points,
+                key_part.field_type.collation(),
             ));
             consumed[i] = true;
             access_count += 1;
@@ -1393,7 +1427,11 @@ pub(crate) fn detach_conds_for_column<'a>(
         // column exactly when the point builder can turn it into points.
         match points_for_condition(condition, column, zone, b'\\') {
             Some(column_points) => {
-                points = intersection(&points, &column_points.points);
+                points = intersection(
+                    &points,
+                    &column_points.points,
+                    column.field_type.collation(),
+                );
                 access_count += 1;
             }
             None => residual.push(*condition),
@@ -1525,7 +1563,11 @@ fn column_conjuncts_contradict(
         let Some(column_points) = simple_comparison_points(condition, &column, zone) else {
             continue;
         };
-        points = intersection(&points, &column_points.points);
+        points = intersection(
+            &points,
+            &column_points.points,
+            column.field_type.collation(),
+        );
         has_equality |= column_points.eq_or_in;
         access = true;
     }

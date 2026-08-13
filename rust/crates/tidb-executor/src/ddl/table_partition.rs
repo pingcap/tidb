@@ -67,7 +67,7 @@ use crate::partition_routing::{PartitionDef, PartitionKind, PartitionSpec};
 use crate::DriverError;
 
 /// Go `checkAddPartitionTooManyPartitions`: the hard cap on partitions.
-const MAX_PARTITIONS: u64 = 8192;
+pub(super) const MAX_PARTITIONS: u64 = 8192;
 
 /// Builds a table's partitioning from its `PARTITION BY` clause.
 ///

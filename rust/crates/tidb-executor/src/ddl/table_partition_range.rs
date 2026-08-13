@@ -74,6 +74,18 @@ pub(super) fn build_range_bounds(
         return Err(DriverError::PartitionsMustBeDefined("RANGE"));
     }
     let unsigned = range_expression_is_unsigned(partition_expr, names, types, dependencies)?;
+    let bounds = build_range_bounds_with_unsigned(definitions, unsigned, ctx)?;
+    Ok((bounds, unsigned))
+}
+
+pub(super) fn build_range_bounds_with_unsigned(
+    definitions: &[PartitionDefinition],
+    unsigned: bool,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<RangeBound>, DriverError> {
+    if definitions.is_empty() {
+        return Err(DriverError::PartitionsMustBeDefined("RANGE"));
+    }
 
     let mut bounds = Vec::with_capacity(definitions.len());
     for (index, definition) in definitions.iter().enumerate() {
@@ -114,7 +126,7 @@ pub(super) fn build_range_bounds(
         bounds.push(bound);
     }
     check_strictly_increasing(&bounds, unsigned)?;
-    Ok((bounds, unsigned))
+    Ok(bounds)
 }
 
 /// Builds `RANGE COLUMNS`' typed, lexicographic upper-bound tuples.
@@ -181,8 +193,12 @@ pub(super) fn build_range_columns_bounds(
             .map(|(value, field_type)| match value {
                 PartitionValue::MaxValue => Ok(RangeColumnBound::MaxValue),
                 PartitionValue::Expr(expr) => {
-                    super::table_partition_list::fold_column_value(expr, field_type, ctx)
-                        .map(RangeColumnBound::Value)
+                    let value =
+                        super::table_partition_list::fold_column_value(expr, field_type, ctx)?;
+                    if value.is_null() {
+                        return Err(DriverError::PartitionNullInValuesLessThan);
+                    }
+                    Ok(RangeColumnBound::Value(value))
                 }
                 PartitionValue::Default | PartitionValue::Tuple(_) => {
                     Err(DriverError::PartitionColumnValueWrongType)
@@ -199,7 +215,7 @@ pub(super) fn build_range_columns_bounds(
     Ok((dependency_names, field_types, less_than))
 }
 
-fn range_columns_bound_increases(
+pub(super) fn range_columns_bound_increases(
     previous: &[RangeColumnBound],
     current: &[RangeColumnBound],
     field_types: &[FieldType],
