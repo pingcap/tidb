@@ -1548,6 +1548,12 @@ impl DriverError {
     }
 }
 
+impl std::fmt::Display for DriverError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.clone().to_mysql_error().message)
+    }
+}
+
 #[cfg(test)]
 mod source_tests {
     use super::*;
@@ -1578,5 +1584,11 @@ mod source_tests {
         assert_eq!(error.code, tidb_error::tidb::errcode::ErrRegionUnavailable);
         assert_eq!(error.state, *b"HY000");
         assert_eq!(error.message, "Region is unavailable");
+    }
+
+    #[test]
+    fn display_matches_the_mysql_diagnostic() {
+        let error = DriverError::unsupported("an unsupported source operation");
+        assert_eq!(error.to_string(), error.clone().to_mysql_error().message);
     }
 }
