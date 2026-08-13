@@ -5,6 +5,6 @@ filters:
   "(^|/)BUILD\\.bazel$":
     approvers:
       - sig-community-approvers
-  ".*":
+  "analyze.*\\.go$":
     approvers:
-      - sig-approvers-executor-import
+      - sig-approvers-stats
