@@ -96,6 +96,7 @@ func TestTableSplit(t *testing.T) {
 	for _, def := range pi.Definitions {
 		checkRegionStartWithTableID(t, def.ID, store.(kvStore))
 	}
+	// 0x03 and 0x04 are the memcomparable codec flags for signed and unsigned integers, respectively.
 	checkCommonHandleSplitKeys := func(tableName, encodedPrefix string) {
 		rows := tk.MustQuery("show table " + tableName + " regions").Rows()
 		require.Len(t, rows, 5)

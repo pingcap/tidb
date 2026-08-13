@@ -64,7 +64,7 @@ func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore,
 		// Try to split global index region here.
 		regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter, tableID)...)
 		for _, def := range parts {
-			regionIDs = append(regionIDs, preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, def.ID, scatterScope)...)
+			regionIDs = append(regionIDs, preSplitPhysicalTableByShardBits(ctxWithTimeout, store, tbInfo, def.ID, scatterScope)...)
 		}
 	} else {
 		regionIDs = make([]uint64, 0, len(parts))
@@ -86,7 +86,7 @@ func splitTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *
 	if hasSplitPolicies(tbInfo) {
 		regionIDs = applySplitPoliciesForTable(ctxWithTimeout, ctx, store, tbInfo, tbInfo.ID)
 	} else if shardingBits(tbInfo) > 0 && tbInfo.PreSplitRegions > 0 {
-		regionIDs = preSplitPhysicalTableByShardRowID(ctxWithTimeout, store, tbInfo, tbInfo.ID, scatterScope)
+		regionIDs = preSplitPhysicalTableByShardBits(ctxWithTimeout, store, tbInfo, tbInfo.ID, scatterScope)
 	} else {
 		regionIDs = append(regionIDs, SplitRecordRegion(ctxWithTimeout, store, tbInfo.ID, tbInfo.ID, scatterScope))
 	}
@@ -108,7 +108,7 @@ func getScatterConfig(scope string, tableID int64) (scatter bool, tID int64) {
 	}
 }
 
-func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableStore, tbInfo *model.TableInfo, physicalID int64, scatterScope string) []uint64 {
+func preSplitPhysicalTableByShardBits(ctx context.Context, store kv.SplittableStore, tbInfo *model.TableInfo, physicalID int64, scatterScope string) []uint64 {
 	// Example:
 	// sharding_bits = 4
 	// PreSplitRegions = 2
