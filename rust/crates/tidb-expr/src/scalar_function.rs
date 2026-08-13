@@ -410,6 +410,26 @@ impl ScalarFunction {
             };
             return self.args[branch].eval(ctx, row);
         }
+        // Go's IFNULL and COALESCE signatures stop at the first non-NULL
+        // value. Evaluate only as far as that decision requires so an error
+        // in a skipped argument stays unreachable.
+        if name == "ifnull" && self.args.len() == 2 {
+            let first = self.args[0].eval(ctx, row)?;
+            return if first.is_null() {
+                self.args[1].eval(ctx, row)
+            } else {
+                Ok(first)
+            };
+        }
+        if name == "coalesce" {
+            for arg in &self.args {
+                let value = arg.eval(ctx, row)?;
+                if !value.is_null() {
+                    return Ok(value);
+                }
+            }
+            return Ok(Datum::Null);
+        }
         // Go `builtinLikeSig`: both operands are stringified, NULL in either
         // propagates, and the third argument is the escape byte.
         if (name == "like" || name == "ilike") && self.args.len() == 3 {
@@ -862,7 +882,7 @@ impl ScalarFunction {
         ) {
             return result;
         }
-        // Values-only builtins (ABS/CONCAT/COALESCE/...): evaluate every
+        // Values-only builtins (ABS/CONCAT/...): evaluate every
         // argument, then reuse the single Datum-level implementation shared
         // with the AST evaluator (`crate::func::eval_func_values`). Lazy
         // control forms (IF/CASE), session-state functions, and the

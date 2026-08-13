@@ -14,7 +14,7 @@
 
 //! Focused source-table tests for translated control builtins.
 
-use super::{e, v};
+use super::{chunk_e, e, v};
 use crate::Datum;
 
 /// Scalar rows from `pkg/expression/builtin_control_test.go:61`
@@ -78,6 +78,11 @@ fn ifnull_source_vectors_preserve_first_non_null_value() {
         v("ifnull(null, x'01')"),
         Datum::new_binary_literal(tidb_datatype::BinaryLiteral::from(vec![1_u8]))
     );
+
+    // Exercise the rewritten ScalarFunction tier that live SQL uses: Go's
+    // `builtinIfNull*Sig` does not evaluate an unreachable fallback.
+    assert_eq!(e("ifnull(1, 'x' regexp '[')"), "INT:1");
+    assert_eq!(chunk_e("ifnull(1, 'x' regexp '[')"), "INT:1");
 }
 
 /// Scalar rows from `pkg/expression/builtin_control_test.go:29`
@@ -147,4 +152,8 @@ fn coalesce_source_vectors_preserve_first_non_null_value() {
     ] {
         assert_eq!(e(expr), want, "{expr}");
     }
+
+    // The same laziness applies to each skipped `COALESCE` argument.
+    assert_eq!(e("coalesce(1, 'x' regexp '[')"), "INT:1");
+    assert_eq!(chunk_e("coalesce(1, 'x' regexp '[')"), "INT:1");
 }

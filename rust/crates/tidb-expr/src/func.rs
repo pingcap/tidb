@@ -141,6 +141,26 @@ pub(crate) fn eval_func(
         let take_true = truthy_of(&condition)? == Some(true);
         return eval_in(if take_true { when_true } else { when_false }, cols);
     }
+    if name == "IFNULL" {
+        let [first, fallback] = args else {
+            return Err(EvalError::Unsupported("bad IFNULL arguments"));
+        };
+        let first = eval_in(first, cols)?;
+        return if first.is_null() {
+            eval_in(fallback, cols)
+        } else {
+            Ok(first)
+        };
+    }
+    if name == "COALESCE" {
+        for arg in args {
+            let value = eval_in(arg, cols)?;
+            if !value.is_null() {
+                return Ok(value);
+            }
+        }
+        return Ok(Datum::Null);
+    }
     let vals: Vec<Datum> = args
         .iter()
         .map(|a| eval_in(a, cols))
