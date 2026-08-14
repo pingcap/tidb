@@ -157,20 +157,21 @@ fn window_range_desc_direction_and_nulls() {
 
     // Under DESC, `N PRECEDING` reaches the LARGER keys (the ones that
     // sort EARLIER), so at `k = 7` the frame is `{8, 7}` and not `{7, 3}`.
-    // Rows come out in source order `1,3,3,7,8`.
+    // Go's Window emits its required child property, so rows come out in
+    // window order `8,7,3,3,1` when there is no outer `ORDER BY`.
     assert_eq!(
             row_text(session.run(
                 "SELECT SUM(v) OVER (ORDER BY k DESC RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) s, \
                  COUNT(*) OVER (ORDER BY k DESC RANGE BETWEEN 2 PRECEDING AND CURRENT ROW) c FROM ri"
             )),
-            [["60", "3"], ["50", "2"], ["50", "2"], ["90", "2"], ["50", "1"]]
+            [["50", "1"], ["90", "2"], ["50", "2"], ["50", "2"], ["60", "3"]]
         );
     assert_eq!(
         row_text(session.run(
             "SELECT SUM(v) OVER (ORDER BY k DESC RANGE BETWEEN CURRENT ROW AND 2 FOLLOWING) \
                  FROM ri"
         )),
-        [["10"], ["60"], ["60"], ["40"], ["90"]]
+        [["90"], ["40"], ["60"], ["60"], ["10"]]
     );
 
     // NULL keys form a frame of their OWN: they peer with each other and
@@ -199,7 +200,7 @@ fn window_range_desc_direction_and_nulls() {
             "SELECT SUM(v) OVER (ORDER BY k DESC RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) \
                  FROM rn"
         )),
-        [["3"], ["3"], ["30"], ["30"], ["50"]]
+        [["50"], ["30"], ["30"], ["3"], ["3"]]
     );
 }
 

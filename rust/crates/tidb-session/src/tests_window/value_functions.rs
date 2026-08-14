@@ -274,6 +274,25 @@ fn window_lag_and_lead() {
     );
 }
 
+/// Without an outer `ORDER BY`, Go's physical Window emits the rows supplied
+/// by its child, whose required property is the window's own partition/order
+/// key. The values and the row stream therefore share one sorted authority.
+#[test]
+fn window_lead_emits_the_window_ordered_row_stream() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE wl (v BIGINT UNSIGNED)").unwrap();
+    session
+        .run("INSERT INTO wl VALUES (30),(10),(40),(20)")
+        .unwrap();
+
+    let (columns, rows) = query_text(
+        &mut session,
+        "SELECT LEAD(v, 1, NULL) OVER (ORDER BY v) FROM wl",
+    );
+    assert_eq!(columns, ["LEAD(v, 1, NULL) OVER (ORDER BY v)"]);
+    assert_eq!(rows, [["20"], ["30"], ["40"], ["<nil>"]]);
+}
+
 /// The table the merge boundaries below are measured on, reproducing the one
 /// `gorun` was pointed at.
 fn merge_session() -> Session {

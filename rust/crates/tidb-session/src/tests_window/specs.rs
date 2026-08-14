@@ -174,6 +174,26 @@ fn window_outer_order_by_applies_after_computation() {
     );
 }
 
+/// Go groups window calls by specification, sorts those specifications in
+/// reverse lexical order, and stacks one Window operator per group. The
+/// lexically smallest non-empty property is therefore topmost and determines
+/// the row stream when no outer `ORDER BY` replaces it.
+#[test]
+fn multiple_window_specs_emit_the_topmost_window_property() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE mw (a BIGINT, b BIGINT)").unwrap();
+    session
+        .run("INSERT INTO mw VALUES (2,10),(1,30),(3,20)")
+        .unwrap();
+
+    assert_eq!(
+        row_text(session.run(
+            "SELECT a, ROW_NUMBER() OVER (ORDER BY a), ROW_NUMBER() OVER (ORDER BY b) FROM mw"
+        )),
+        [["1", "1", "3"], ["2", "2", "1"], ["3", "3", "2"]]
+    );
+}
+
 /// The ranking functions' result types, checked against captured TiDB
 /// metadata: `BIGINT(21)` for all four, `NOT NULL` for the three ranking
 /// ones and `UNSIGNED`/binary for `NTILE`.

@@ -22,13 +22,13 @@
 //! the projection runs, so the same values come out of a simpler shape: group
 //! the materialized rows by the `PARTITION BY` key, stable-sort each partition
 //! by the window's own `ORDER BY`, walk it once per function, and append the
-//! results as extra source columns named `__window_<i>`. Each `Expr::Window`
-//! in the select list / `ORDER BY` is then rewritten to read its appended
-//! column, so the ordinary projection, outer `ORDER BY` and `LIMIT` pipeline
-//! runs unchanged -- which is also why the outer `ORDER BY` sorts the
-//! already-computed window values, as Go does (confirmed against Go: `... FROM
-//! t ORDER BY 3 DESC` reorders rows whose `ROW_NUMBER` was computed under the
-//! window's own order).
+//! results as extra source columns named `__window_<i>`. Go also exposes the
+//! sorted child stream of its topmost non-empty physical window property when
+//! there is no outer `ORDER BY`; this implementation applies that same row
+//! permutation after all values are attached. Each `Expr::Window` in the
+//! select list / `ORDER BY` is then rewritten to read its appended column, so
+//! the ordinary projection, outer `ORDER BY` and `LIMIT` pipeline runs
+//! unchanged.
 //!
 //! Semantics confirmed against Go (`TestZZDumpWindow` capture, since removed):
 //!
@@ -232,6 +232,12 @@ pub(crate) struct WindowCall {
     /// The frame every non-ranking function evaluates over, already validated
     /// and defaulted.
     frame: Frame,
+}
+
+struct ComputedWindow {
+    values: Vec<Datum>,
+    result_type: FieldType,
+    output_order: Option<Vec<usize>>,
 }
 
 /// The window function itself, with each constant argument already folded.
@@ -1215,16 +1221,44 @@ pub(crate) fn compute_windows(
         .collect();
     let mut computed: Vec<Vec<Datum>> = Vec::with_capacity(calls.len());
     let mut columns: Vec<(String, FieldType)> = Vec::with_capacity(calls.len());
+    let output_call = calls
+        .iter()
+        .enumerate()
+        .filter(|(_, call)| !window_sort_items(&call.spec).is_empty())
+        .min_by(|(_, left), (_, right)| compare_window_specs(&left.spec, &right.spec))
+        .map(|(index, _)| index);
+    let mut output_order = None;
     for (index, call) in calls.iter().enumerate() {
-        let (values, result_type) = compute_one(call, &rows, &field_types, &resolver, ctx)?;
-        computed.push(values);
-        columns.push((window_column_name(index), result_type));
+        let computed_window = compute_one(
+            call,
+            &rows,
+            &field_types,
+            &resolver,
+            ctx,
+            output_call == Some(index),
+        )?;
+        computed.push(computed_window.values);
+        columns.push((window_column_name(index), computed_window.result_type));
+        if computed_window.output_order.is_some() {
+            output_order = computed_window.output_order;
+        }
     }
     let mut out_rows = rows;
     for (row_index, row) in out_rows.iter_mut().enumerate() {
         for values in &computed {
             row.push(values[row_index].clone());
         }
+    }
+    if let Some(order) = output_order {
+        let mut owned: Vec<Option<Vec<Datum>>> = out_rows.into_iter().map(Some).collect();
+        out_rows = order
+            .into_iter()
+            .map(|index| {
+                owned[index]
+                    .take()
+                    .expect("window row is moved exactly once")
+            })
+            .collect();
     }
     let mut out_scope = scope.clone();
     let offset = scope.width();
@@ -1251,7 +1285,8 @@ fn compute_one(
     field_types: &[FieldType],
     resolver: &impl ColumnResolver,
     ctx: &StmtContext,
-) -> Result<(Vec<Datum>, FieldType), DriverError> {
+    produce_output_order: bool,
+) -> Result<ComputedWindow, DriverError> {
     // The function's own argument (and LAG/LEAD's default) is evaluated per
     // row up front, against the SOURCE row -- the same scope the partition and
     // order keys resolve in.
@@ -1287,6 +1322,18 @@ fn compute_one(
         .map(|item: &OrderItem| item.expr.clone())
         .collect();
     let (order_keys, order_collations) = eval_keys(&order_exprs, rows, field_types, resolver, ctx)?;
+    let output_order = produce_output_order
+        .then(|| {
+            sorted_window_rows(
+                rows.len(),
+                &partition_keys,
+                &partition_collations,
+                &order_keys,
+                &order_collations,
+                &call.spec.order_by,
+            )
+        })
+        .transpose()?;
 
     // A value-measured RANGE frame needs the single ORDER BY key's own type,
     // which is only known here -- Go checks it in the planner, so it fires
@@ -1382,7 +1429,83 @@ fn compute_one(
             )?,
         }
     }
-    Ok((values, result_type))
+    Ok(ComputedWindow {
+        values,
+        result_type,
+        output_order,
+    })
+}
+
+/// Go builds logical windows in reverse lexical order of their complete
+/// partition/order item list. The last non-empty property is the topmost
+/// physical window whose sorted child stream remains observable.
+fn compare_window_specs(left: &WindowSpec, right: &WindowSpec) -> std::cmp::Ordering {
+    window_sort_items(left).cmp(&window_sort_items(right))
+}
+
+fn window_sort_items(spec: &WindowSpec) -> Vec<(String, bool)> {
+    spec.partition_by
+        .iter()
+        .map(|expr| (expr.restore(), false))
+        .chain(
+            spec.order_by
+                .iter()
+                .map(|item| (item.expr.restore(), item.desc)),
+        )
+        .collect()
+}
+
+fn sorted_window_rows(
+    row_count: usize,
+    partition_keys: &[Vec<Datum>],
+    partition_collations: &[tidb_datatype::Collation],
+    order_keys: &[Vec<Datum>],
+    order_collations: &[tidb_datatype::Collation],
+    order_by: &[OrderItem],
+) -> Result<Vec<usize>, DriverError> {
+    let mut indices: Vec<usize> = (0..row_count).collect();
+    let mut failure = None;
+    indices.sort_by(|left, right| {
+        for (position, collation) in partition_collations.iter().enumerate() {
+            match tidb_expr::compare_datums_with_collation(
+                &partition_keys[*left][position],
+                &partition_keys[*right][position],
+                *collation,
+            ) {
+                Ok(std::cmp::Ordering::Equal) => {}
+                Ok(ordering) => return ordering,
+                Err(error) => {
+                    failure = Some(error);
+                    return std::cmp::Ordering::Equal;
+                }
+            }
+        }
+        for (position, item) in order_by.iter().enumerate() {
+            match tidb_expr::compare_datums_with_collation(
+                &order_keys[*left][position],
+                &order_keys[*right][position],
+                order_collations[position],
+            ) {
+                Ok(std::cmp::Ordering::Equal) => {}
+                Ok(ordering) => {
+                    return if item.desc {
+                        ordering.reverse()
+                    } else {
+                        ordering
+                    };
+                }
+                Err(error) => {
+                    failure = Some(error);
+                    return std::cmp::Ordering::Equal;
+                }
+            }
+        }
+        std::cmp::Ordering::Equal
+    });
+    match failure {
+        Some(error) => Err(DriverError::Exec(crate::ExecError::Eval(error))),
+        None => Ok(indices),
+    }
 }
 
 impl WindowKind {

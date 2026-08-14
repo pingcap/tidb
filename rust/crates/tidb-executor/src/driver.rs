@@ -1107,6 +1107,7 @@ pub(crate) fn run_select_traced(
     // in the select list / ORDER BY is then rewritten to read that column, so
     // everything below -- projection, outer ORDER BY, DISTINCT, LIMIT -- runs
     // unchanged, and the outer ORDER BY sorts the already-computed values.
+    let visible_fields = select.fields.clone();
     let window_rewritten;
     let select = if crate::window::select_has_window(select) {
         let calls = crate::window::collect_window_calls(select)?;
@@ -1151,9 +1152,15 @@ pub(crate) fn run_select_traced(
             projected.push((field.clone(), None));
             continue;
         };
-        let name = alias
-            .clone()
-            .unwrap_or_else(|| default_field_display_name(&select.fields, field_index, expr));
+        let SelectField::Expr {
+            expr: visible_expr, ..
+        } = &visible_fields.fields()[field_index]
+        else {
+            unreachable!("window rewriting preserves the select-field shape")
+        };
+        let name = alias.clone().unwrap_or_else(|| {
+            default_field_display_name(&visible_fields, field_index, visible_expr)
+        });
         let mut rewritten = expr.clone();
         loop {
             let mut correlated = None;
