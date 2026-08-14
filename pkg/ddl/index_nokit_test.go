@@ -33,7 +33,7 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func TestCloudStorageURIForNewBackfillTask(t *testing.T) {
+func TestResolveCloudStorageURI(t *testing.T) {
 	originalURI := vardef.CloudStorageURI.Load()
 	t.Cleanup(func() {
 		vardef.CloudStorageURI.Store(originalURI)
@@ -59,7 +59,7 @@ func TestCloudStorageURIForNewBackfillTask(t *testing.T) {
 	t.Run("configured URI recovers empty owner cache", func(t *testing.T) {
 		vardef.CloudStorageURI.Store("s3://bucket")
 		w, jc := newTestWorker("")
-		uri, err := w.cloudStorageURIForNewBackfillTask(newJob(true), false)
+		uri, err := w.resolveCloudStorageURI(newJob(true), false)
 		require.NoError(t, err)
 		require.Equal(t, "s3://bucket/dxf/", uri)
 		require.Equal(t, uri, jc.cloudStorageURI)
@@ -68,7 +68,7 @@ func TestCloudStorageURIForNewBackfillTask(t *testing.T) {
 	t.Run("missing configured URI is retryable", func(t *testing.T) {
 		vardef.CloudStorageURI.Store("")
 		w, _ := newTestWorker("")
-		_, err := w.cloudStorageURIForNewBackfillTask(newJob(true), false)
+		_, err := w.resolveCloudStorageURI(newJob(true), false)
 		require.ErrorContains(t, err, "cloud storage URI is empty for add-index job 900001 with cloud storage enabled")
 		require.True(t, isRetryableJobError(err, 0))
 	})
@@ -76,7 +76,7 @@ func TestCloudStorageURIForNewBackfillTask(t *testing.T) {
 	t.Run("cached URI wins over changed configuration", func(t *testing.T) {
 		vardef.CloudStorageURI.Store("s3://new-bucket")
 		w, _ := newTestWorker("s3://cached-bucket/dxf/")
-		uri, err := w.cloudStorageURIForNewBackfillTask(newJob(true), false)
+		uri, err := w.resolveCloudStorageURI(newJob(true), false)
 		require.NoError(t, err)
 		require.Equal(t, "s3://cached-bucket/dxf/", uri)
 	})
@@ -84,7 +84,7 @@ func TestCloudStorageURIForNewBackfillTask(t *testing.T) {
 	t.Run("local sort permits empty URI", func(t *testing.T) {
 		vardef.CloudStorageURI.Store("")
 		w, _ := newTestWorker("")
-		uri, err := w.cloudStorageURIForNewBackfillTask(newJob(false), false)
+		uri, err := w.resolveCloudStorageURI(newJob(false), false)
 		require.NoError(t, err)
 		require.Empty(t, uri)
 	})
@@ -92,7 +92,7 @@ func TestCloudStorageURIForNewBackfillTask(t *testing.T) {
 	t.Run("merge temp index does not require cloud storage", func(t *testing.T) {
 		vardef.CloudStorageURI.Store("")
 		w, _ := newTestWorker("")
-		uri, err := w.cloudStorageURIForNewBackfillTask(newJob(true), true)
+		uri, err := w.resolveCloudStorageURI(newJob(true), true)
 		require.NoError(t, err)
 		require.Empty(t, uri)
 	})
