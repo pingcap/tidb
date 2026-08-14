@@ -116,10 +116,10 @@ fn show_databases_and_tables() {
         other => panic!("expected rows, got {other:?}"),
     }
 
-    // Go evaluates the LIKE operand once, then wildcard-matches lower-cased
-    // table names. The expression form and NULL use that same path.
+    // A computed LIKE operand is a binary-collation Selection over the first
+    // virtual column; only Go's literal-pattern extractor lower-cases names.
     match session
-        .run_with_columns("SHOW TABLES LIKE CONCAT('%', 'TA')")
+        .run_with_columns("SHOW TABLES LIKE CONCAT('%', 'ta')")
         .unwrap()
     {
         StmtOutput::Rows { columns, rows } => {
@@ -128,6 +128,7 @@ fn show_databases_and_tables() {
         }
         other => panic!("expected rows, got {other:?}"),
     }
+    assert!(row_text(session.run("SHOW TABLES LIKE CONCAT('%', 'TA')")).is_empty());
     match session.run_with_columns("SHOW TABLES LIKE NULL").unwrap() {
         StmtOutput::Rows { rows, .. } => assert!(rows.is_empty()),
         other => panic!("expected rows, got {other:?}"),
@@ -241,6 +242,15 @@ fn show_columns_and_describe() {
     assert_eq!(
         describe(&mut session, "SHOW COLUMNS FROM t LIKE CONCAT('c', 'ode')").1,
         vec![vec!["code", "varchar(8)", "YES", "UNI", "NULL", ""]]
+    );
+    assert_eq!(
+        describe(&mut session, "SHOW COLUMNS FROM t LIKE 'CODE'").1,
+        vec![vec!["code", "varchar(8)", "YES", "UNI", "NULL", ""]]
+    );
+    assert!(
+        describe(&mut session, "SHOW COLUMNS FROM t LIKE CONCAT('CODE', '')")
+            .1
+            .is_empty()
     );
     assert_eq!(
         describe(
@@ -954,6 +964,16 @@ fn show_table_status() {
     let filtered = row_text(session.run("SHOW TABLE STATUS LIKE 't'"));
     assert_eq!(filtered.len(), 1, "{filtered:?}");
     assert_eq!(filtered[0][0], "t");
+    assert_eq!(
+        row_text(session.run("SHOW TABLE STATUS LIKE 'T'"))[0][0],
+        "t"
+    );
+    assert_eq!(
+        row_text(session.run("SHOW TABLE STATUS LIKE CONCAT('u', '')"))[0][0],
+        "u"
+    );
+    assert!(row_text(session.run("SHOW TABLE STATUS LIKE NULL")).is_empty());
+    assert!(row_text(session.run("SHOW TABLE STATUS LIKE CONCAT('T', '')")).is_empty());
 
     // A table with an auto column reports its next value there.
     session
@@ -1106,6 +1126,22 @@ fn show_index_reports_each_index_column() {
     );
     // Captured: SHOW KEYS is the same statement.
     assert_eq!(row_text(session.run("SHOW KEYS FROM t")), rows);
+
+    // SHOW INDEX has no predicate extractor in Go. LIKE is therefore a
+    // Selection over the first virtual output column (`Table`), while WHERE
+    // can address the complete 17-column result.
+    assert_eq!(
+        row_text(session.run("SHOW INDEX FROM t LIKE CONCAT('t', '')")),
+        rows
+    );
+    assert!(row_text(session.run("SHOW INDEX FROM t LIKE 'bc'")).is_empty());
+    assert!(row_text(session.run("SHOW INDEX FROM t LIKE 'T'")).is_empty());
+    assert!(row_text(session.run("SHOW INDEX FROM t LIKE NULL")).is_empty());
+    let filtered =
+        row_text(session.run("SHOW INDEX FROM t WHERE Key_name = 'bc' AND Seq_in_index = 2"));
+    assert_eq!(filtered.len(), 1, "{filtered:?}");
+    assert_eq!(filtered[0][2], "bc");
+    assert_eq!(filtered[0][3], "2");
 }
 
 /// `SHOW STATUS`, checked against captured TiDB output: the columns are

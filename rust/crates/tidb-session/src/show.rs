@@ -1095,10 +1095,64 @@ fn show_row_matches(
     Ok(truthy.unwrap_or(false))
 }
 
+/// An evaluated SHOW LIKE operand, including whether Go's predicate extractor
+/// lower-cases both the metadata name and a literal pattern.
+struct ShowLikePattern {
+    value: Option<String>,
+    fold_lowercase: bool,
+}
+
+impl ShowLikePattern {
+    fn from_expr(expr: &tidb_ast::Expr, value: Option<String>, has_extractor: bool) -> Self {
+        let extracted_literal = has_extractor
+            && matches!(
+                expr,
+                tidb_ast::Expr::Null
+                    | tidb_ast::Expr::Int(_)
+                    | tidb_ast::Expr::Decimal(_)
+                    | tidb_ast::Expr::Float(_)
+                    | tidb_ast::Expr::Hex(_)
+                    | tidb_ast::Expr::Bit(_)
+                    | tidb_ast::Expr::String(_)
+                    | tidb_ast::Expr::RawString(_)
+                    | tidb_ast::Expr::Bool(_)
+            );
+        Self {
+            value: if extracted_literal {
+                value.map(|pattern| pattern.to_lowercase())
+            } else {
+                value
+            },
+            fold_lowercase: extracted_literal,
+        }
+    }
+
+    fn matches(&self, text: &str) -> bool {
+        let Some(pattern) = &self.value else {
+            return false;
+        };
+        if self.fold_lowercase {
+            tidb_executor::like_match_with_collation(
+                text.to_lowercase(),
+                pattern,
+                None,
+                tidb_datatype::Collation::Utf8Mb4Bin,
+            )
+        } else {
+            tidb_executor::like_match_with_collation(
+                text,
+                pattern,
+                None,
+                tidb_datatype::Collation::Utf8Mb4Bin,
+            )
+        }
+    }
+}
+
 /// Applies the `LIKE`/`WHERE` layer Go builds over a virtual SHOW result.
 fn filter_show_output(
     output: StmtOutput,
-    like_pattern: Option<Option<String>>,
+    like_pattern: Option<ShowLikePattern>,
     where_clause: Option<&tidb_ast::Expr>,
 ) -> Result<StmtOutput, DriverError> {
     let StmtOutput::Rows { columns, rows } = output else {
@@ -1109,17 +1163,10 @@ fn filter_show_output(
     for row in rows {
         let matches_like = match &like_pattern {
             None => true,
-            Some(None) => false,
-            Some(Some(pattern)) => row.first().is_some_and(|value| {
-                datum_text(value).is_some_and(|text| {
-                    tidb_executor::like_match_with_collation(
-                        text.to_ascii_lowercase(),
-                        pattern,
-                        None,
-                        tidb_datatype::Collation::Utf8Mb4Bin,
-                    )
-                })
-            }),
+            Some(pattern) => row
+                .first()
+                .and_then(datum_text)
+                .is_some_and(|text| pattern.matches(&text)),
         };
         if !matches_like {
             continue;
@@ -1248,13 +1295,10 @@ impl Session {
             tidb_ast::AdminStmt::ShowDatabases(show) => {
                 let (like_pattern, where_clause) = match &show.filter {
                     None => (None, None),
-                    Some(tidb_ast::ShowDatabasesFilter::Like(expr)) => (
-                        Some(
-                            datum_text(&self.eval_value(expr)?)
-                                .map(|pattern| pattern.to_ascii_lowercase()),
-                        ),
-                        None,
-                    ),
+                    Some(tidb_ast::ShowDatabasesFilter::Like(expr)) => {
+                        let value = datum_text(&self.eval_value(expr)?);
+                        (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+                    }
                     Some(tidb_ast::ShowDatabasesFilter::Where(expr)) => (None, Some(expr)),
                 };
                 let names = self.with_catalog_mut(|catalog| Ok(catalog.database_names()))?;
@@ -1290,20 +1334,13 @@ impl Session {
                 // 639) applies the same pre-lookup 1044 gate `SHOW TABLES`
                 // does.
                 self.require_visible_database(&database)?;
-                let pattern = match &show.filter {
-                    Some(tidb_ast::ShowTableStatusFilter::Like(tidb_ast::Expr::String(text))) => {
-                        Some(text.clone())
+                let (like_pattern, where_clause) = match &show.filter {
+                    None => (None, None),
+                    Some(tidb_ast::ShowTableStatusFilter::Like(expr)) => {
+                        let value = datum_text(&self.eval_value(expr)?);
+                        (Some(ShowLikePattern::from_expr(expr, value, true)), None)
                     }
-                    Some(tidb_ast::ShowTableStatusFilter::Like(_)) => {
-                        return Err(DriverError::unsupported(
-                            "SHOW TABLE STATUS LIKE takes a string pattern",
-                        ))
-                    }
-                    Some(tidb_ast::ShowTableStatusFilter::Where(_)) | None => None,
-                };
-                let where_clause = match &show.filter {
-                    Some(tidb_ast::ShowTableStatusFilter::Where(expr)) => Some(expr.clone()),
-                    _ => None,
+                    Some(tidb_ast::ShowTableStatusFilter::Where(expr)) => (None, Some(expr)),
                 };
                 let rows = self.with_catalog_mut(|catalog| {
                     let mut rows = Vec::new();
@@ -1311,16 +1348,6 @@ impl Session {
                         DriverError::Schema(SchemaErrorKind::UnknownDatabase(database.clone()))
                     })?;
                     for name in names {
-                        if let Some(pattern) = &pattern {
-                            if !tidb_executor::like_match_with_collation(
-                                &name,
-                                pattern,
-                                None,
-                                tidb_datatype::Collation::Utf8Mb4Bin,
-                            ) {
-                                continue;
-                            }
-                        }
                         let entry = catalog.table_in(&database, &name);
                         let (auto_increment, table_charset, comment) = match entry {
                             Some(tidb_executor::TableEntry::Kv(table)) => (
@@ -1335,18 +1362,6 @@ impl Session {
                         } else {
                             show_table_status_row(&name, auto_increment, table_charset, comment)
                         };
-                        if let Some(predicate) = &where_clause {
-                            if !show_row_matches(
-                                predicate,
-                                &SHOW_TABLE_STATUS_COLUMNS
-                                    .iter()
-                                    .map(|(name, _)| *name)
-                                    .collect::<Vec<_>>(),
-                                &row,
-                            )? {
-                                continue;
-                            }
-                        }
                         rows.push(row);
                     }
                     Ok(rows)
@@ -1361,7 +1376,8 @@ impl Session {
                         ((*name).to_owned(), if *numeric { number() } else { text() })
                     })
                     .collect();
-                Ok(Some(StmtOutput::Rows { columns, rows }))
+                let output = StmtOutput::Rows { columns, rows };
+                filter_show_output(output, like_pattern, where_clause).map(Some)
             }
             // Go `fetchShowIndex`: one row per index COLUMN, ordered
             // with the clustered primary key first, then the table's own
@@ -1374,11 +1390,14 @@ impl Session {
             // Expression is NULL (no expression indexes), and Global is
             // NO (no partitioned global indexes).
             tidb_ast::AdminStmt::ShowIndex(show) => {
-                if show.filter.is_some() {
-                    return Err(DriverError::unsupported(
-                        "SHOW INDEX filters are not supported yet",
-                    ));
-                }
+                let (like_pattern, where_clause) = match &show.filter {
+                    None => (None, None),
+                    Some(tidb_ast::ShowIndexFilter::Like(expr)) => {
+                        let value = datum_text(&self.eval_value(expr)?);
+                        (Some(ShowLikePattern::from_expr(expr, value, false)), None)
+                    }
+                    Some(tidb_ast::ShowIndexFilter::Where(expr)) => (None, Some(expr)),
+                };
                 let current = self.require_current_database()?.to_owned();
                 let (database, table_name) = match show.table.as_slice() {
                     [table] => (current, table.clone()),
@@ -1408,7 +1427,8 @@ impl Session {
                         ((*name).to_owned(), if *numeric { number() } else { text() })
                     })
                     .collect();
-                Ok(Some(StmtOutput::Rows { columns, rows }))
+                let output = StmtOutput::Rows { columns, rows };
+                filter_show_output(output, like_pattern, where_clause).map(Some)
             }
             // Go `ShowExec` with `ShowVariables`: one row per variable,
             // as `Variable_name` and `Value`, filtered by LIKE.
@@ -1894,13 +1914,10 @@ impl Session {
                 }
                 let (like_pattern, where_clause) = match &show.filter {
                     None => (None, None),
-                    Some(tidb_ast::ShowColumnsFilter::Like(expr)) => (
-                        Some(
-                            datum_text(&self.eval_value(expr)?)
-                                .map(|pattern| pattern.to_ascii_lowercase()),
-                        ),
-                        None,
-                    ),
+                    Some(tidb_ast::ShowColumnsFilter::Like(expr)) => {
+                        let value = datum_text(&self.eval_value(expr)?);
+                        (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+                    }
                     Some(tidb_ast::ShowColumnsFilter::Where(expr)) => (None, Some(expr)),
                 };
                 let database = match &show.database {
@@ -1927,13 +1944,10 @@ impl Session {
             tidb_ast::AdminStmt::ShowTables(show) => {
                 let (like_pattern, where_clause) = match &show.filter {
                     None => (None, None),
-                    Some(tidb_ast::ShowTablesFilter::Like(expr)) => (
-                        Some(
-                            datum_text(&self.eval_value(expr)?)
-                                .map(|pattern| pattern.to_ascii_lowercase()),
-                        ),
-                        None,
-                    ),
+                    Some(tidb_ast::ShowTablesFilter::Like(expr)) => {
+                        let value = datum_text(&self.eval_value(expr)?);
+                        (Some(ShowLikePattern::from_expr(expr, value, true)), None)
+                    }
                     Some(tidb_ast::ShowTablesFilter::Where(expr)) => (None, Some(expr)),
                 };
                 let database = match &show.database {
@@ -1975,15 +1989,10 @@ impl Session {
                             privilege::show_tables_priv_mask(),
                         )
                     })
-                    .filter(|(name, _)| match &like_pattern {
-                        None => true,
-                        Some(None) => false,
-                        Some(Some(pattern)) => tidb_executor::like_match_with_collation(
-                            name.to_ascii_lowercase(),
-                            pattern,
-                            None,
-                            tidb_datatype::Collation::Utf8Mb4Bin,
-                        ),
+                    .filter(|(name, _)| {
+                        like_pattern
+                            .as_ref()
+                            .is_none_or(|pattern| pattern.matches(name))
                     })
                     .collect();
                 // Go names the column after the schema being listed.
