@@ -549,6 +549,9 @@ func TestCustomEscapeChar(t *testing.T) {
 
 	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
 
+	// `*` is deliberately a regexp metacharacter: the byte scanner must treat it
+	// as an ordinary escape byte, with none of the quoting the regexp-based
+	// implementation needed.
 	cfg.FieldsEscapedBy = `*`
 	cfg.FieldNullDefinedBy = []string{`*N`}
 	parser, err = mydump.NewCSVParser(
@@ -1526,7 +1529,7 @@ func BenchmarkCSVParserUnescape(b *testing.B) {
 			row:       `1,"{!"id!":123,!"name!":!"alice!",!"nested!":{!"enabled!":true,!"items!":[!"a!",!"b!",!"c!"]}}",3` + "\n",
 		},
 		{
-			name:      "CustomRegexpMetaDense",
+			name:      "CustomStarDense",
 			escapedBy: `*`,
 			row:       `1,"{*"id*":123,*"name*":*"alice*",*"nested*":{*"enabled*":true,*"items*":[*"a*",*"b*",*"c*"]}}",3` + "\n",
 		},
