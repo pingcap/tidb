@@ -91,14 +91,23 @@ pub fn run_create_view_in(
         _ => return Err(DriverError::ViewWrongList),
     };
 
+    let (definer_user, definer_host) = if create.definer.current_user {
+        ctx.authenticated_identity().map_or_else(
+            || (String::new(), String::new()),
+            |(user, host)| (user.to_owned(), host.to_owned()),
+        )
+    } else {
+        (create.definer.user.clone(), create.definer.host.clone())
+    };
+    let (character_set_client, collation_connection) = ctx.connection_charset_info();
     let view = ViewDef {
         name: name.clone(),
         columns,
         select_sql,
-        // This tier authenticates no user, so the definer is the empty
-        // identity -- which is exactly what a mock-store TiDB records too.
-        definer_user: create.definer.user.clone(),
-        definer_host: create.definer.host.clone(),
+        definer_user,
+        definer_host,
+        character_set_client: character_set_client.to_owned(),
+        collation_connection: collation_connection.to_owned(),
         algorithm: create.algorithm.sql().to_owned(),
         security: create.security.sql().to_owned(),
         // Go records a check option on every view, `CASCADED` by default:

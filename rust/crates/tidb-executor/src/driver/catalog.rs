@@ -229,6 +229,10 @@ pub struct ViewDef {
     pub definer_user: String,
     /// The definer's host name.
     pub definer_host: String,
+    /// The creator connection's client character set.
+    pub character_set_client: String,
+    /// The creator connection's collation.
+    pub collation_connection: String,
     /// The `ALGORITHM` as written, defaulting to `UNDEFINED`.
     pub algorithm: String,
     /// The `SQL SECURITY` mode as written, defaulting to `DEFINER`.

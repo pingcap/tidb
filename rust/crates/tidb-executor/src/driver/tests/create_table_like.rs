@@ -159,6 +159,8 @@ fn like_a_view_is_wrong_object() {
                 select_sql: "SELECT `a` AS `a` FROM `test`.`t`".to_owned(),
                 definer_user: String::new(),
                 definer_host: String::new(),
+                character_set_client: "utf8mb4".to_owned(),
+                collation_connection: "utf8mb4_bin".to_owned(),
                 algorithm: "UNDEFINED".to_owned(),
                 security: "DEFINER".to_owned(),
                 check_option: "CASCADED".to_owned(),

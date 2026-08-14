@@ -465,6 +465,30 @@ fn show_create_view_prints_the_stored_definition() {
     assert_eq!(rows, [["1"]]);
 }
 
+#[test]
+fn show_create_view_preserves_creator_identity_and_connection_collation() {
+    let mut session = Session::new();
+    session.set_user("root@%".to_owned(), "root@127.0.0.1".to_owned());
+    session
+        .run("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci")
+        .unwrap();
+    session.run("CREATE VIEW vc AS SELECT 1").unwrap();
+    session
+        .run("SET NAMES utf8mb4 COLLATE utf8mb4_bin")
+        .unwrap();
+
+    let (_, rows) = query_text(&mut session, "SHOW CREATE VIEW vc");
+    assert_eq!(
+        rows,
+        [[
+            "vc",
+            "CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `vc` (`1`) AS SELECT 1 AS `1`",
+            "utf8mb4",
+            "utf8mb4_general_ci",
+        ]]
+    );
+}
+
 /// Which statements may name a view, and which report the other kind.
 #[test]
 fn view_and_table_statements_do_not_cross() {

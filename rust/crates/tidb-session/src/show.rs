@@ -1833,16 +1833,22 @@ impl Session {
                 // A view answers either spelling with the same row, which
                 // is Go's own behaviour; only `SHOW CREATE VIEW` on a base
                 // table is refused.
-                let (text, reported, is_view, is_sequence) = self.with_catalog_mut(|catalog| {
+                let shown = self.with_catalog_mut(|catalog| {
                     let Some(entry) = catalog.table_in(&database, &table_name) else {
                         return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
                             "{database}.{table_name}"
                         ))));
                     };
                     match entry {
-                        tidb_executor::TableEntry::View(view) => {
-                            Ok((show_create_view_text(view), table_name.clone(), true, false))
-                        }
+                        tidb_executor::TableEntry::View(view) => Ok((
+                            show_create_view_text(view),
+                            table_name.clone(),
+                            Some((
+                                view.character_set_client.clone(),
+                                view.collation_connection.clone(),
+                            )),
+                            false,
+                        )),
                         _ if want_view => Err(DriverError::Schema(SchemaErrorKind::WrongObject {
                             name: format!("{database}.{table_name}"),
                             expected: "VIEW",
@@ -1850,13 +1856,13 @@ impl Session {
                         tidb_executor::TableEntry::Sequence(sequence) => Ok((
                             tidb_executor::show_create_sequence(sequence),
                             sequence.name.clone(),
-                            false,
+                            None,
                             true,
                         )),
                         tidb_executor::TableEntry::Kv(table) => Ok((
                             show_create_table_text(&database, &table_name, table, &ctx)?,
                             table_name.clone(),
-                            false,
+                            None,
                             false,
                         )),
                         tidb_executor::TableEntry::Mem(_) | tidb_executor::TableEntry::Cte(_) => {
@@ -1865,12 +1871,13 @@ impl Session {
                             ))
                         }
                     }
-                })?;
+                });
+                let (text, reported, view_charset, is_sequence) = shown?;
                 let field_type =
                     tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
                 // Go's view form carries its own header and the session's
                 // character set and collation.
-                if is_view {
+                if let Some((character_set_client, collation_connection)) = view_charset {
                     return Ok(Some(StmtOutput::Rows {
                         columns: vec![
                             ("View".to_owned(), field_type.clone()),
@@ -1881,8 +1888,8 @@ impl Session {
                         rows: vec![vec![
                             Datum::Bytes(reported.into_bytes()),
                             Datum::Bytes(text.into_bytes()),
-                            Datum::Bytes(b"utf8mb4".to_vec()),
-                            Datum::Bytes(b"utf8mb4_bin".to_vec()),
+                            Datum::Bytes(character_set_client.into_bytes()),
+                            Datum::Bytes(collation_connection.into_bytes()),
                         ]],
                     }));
                 }

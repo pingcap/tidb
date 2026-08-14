@@ -835,6 +835,12 @@ impl StmtContext {
         (&self.connection_charset, &self.connection_collation)
     }
 
+    /// The authenticated account used for `CURRENT_USER()`.
+    #[must_use]
+    pub fn authenticated_identity(&self) -> Option<(&str, &str)> {
+        self.current_user.as_deref()?.split_once('@')
+    }
+
     /// Re-parses this statement's own text under its `sql_mode`. Every entry
     /// point that takes SQL text as a string goes through here, so a scanner
     /// flag cannot be honored by one tier and dropped by the next.
