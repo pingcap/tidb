@@ -96,16 +96,9 @@ type reorgFnResult struct {
 }
 
 func newReorgExprCtx() *exprstatic.ExprContext {
-	evalCtx := exprstatic.NewEvalContext(
-		exprstatic.WithSQLMode(mysql.ModeNone),
-		exprstatic.WithTypeFlags(types.DefaultStmtFlags),
-		exprstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels),
-	)
-
 	planCacheTracker := contextutil.NewPlanCacheTracker(contextutil.IgnoreWarn)
-
 	return exprstatic.NewExprContext(
-		exprstatic.WithEvalCtx(evalCtx),
+		exprstatic.WithEvalCtx(exprstatic.NewDefaultEvalContext(stmtctx.DefaultStmtErrLevels)),
 		exprstatic.WithPlanCacheTracker(&planCacheTracker),
 	)
 }
