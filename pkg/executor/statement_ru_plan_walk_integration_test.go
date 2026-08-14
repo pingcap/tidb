@@ -38,28 +38,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const statementRUOwnerInstallFailpoint = "github.com/pingcap/tidb/pkg/executor/installStatementRUPlanWalkOwnerForTest"
+const statementRUOwnerInstallFailpoint = "github.com/pingcap/tidb/pkg/executor/observeStatementRUOwnerInstallForTest"
 
 type statementRUObservation struct {
-	stmt   *executor.ExecStmt
-	visits atomic.Int64
-	scalar atomic.Int64
+	stmt  *executor.ExecStmt
+	owner *executor.StatementRUOwnerObservationForTest
 }
 
-func installStatementRUObservation(stmt *executor.ExecStmt) *statementRUObservation {
-	observation := &statementRUObservation{stmt: stmt}
-	executor.InstallStatementRUPlanWalkOwnerForTest(stmt, func(
-		treeKind string,
-		_ int,
-		_ int,
-		_ *plannercore.FlatOperator,
-	) {
-		observation.visits.Add(1)
-		if treeKind == "scalar" {
-			observation.scalar.Add(1)
-		}
-	})
-	return observation
+func observeInstalledStatementRUOwner(stmt *executor.ExecStmt) *statementRUObservation {
+	return &statementRUObservation{
+		stmt:  stmt,
+		owner: executor.ObserveStatementRUOwnerForTest(stmt),
+	}
 }
 
 func requireStatementRUTerminalFlatPlan(t *testing.T, stmt *executor.ExecStmt) *plannercore.FlatPhysicalPlan {
@@ -121,7 +111,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			if stmt.Ctx != tk.Session() {
 				return
 			}
-			observation = installStatementRUObservation(stmt)
+			observation = observeInstalledStatementRUOwner(stmt)
 		})
 		connID := tk.Session().GetSessionVars().ConnectionID
 		testfailpoint.Enable(
@@ -134,11 +124,11 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			_, _ = tk.Exec("select 1")
 		})
 		require.NotNil(t, observation)
-		require.Zero(t, observation.visits.Load())
+		require.True(t, observation.owner.ConsumedForTest())
 
 		observation.stmt.RecordStatementRUFinalOutcome(true)
 		observation.stmt.FinishExecuteStmt(0, nil, false)
-		require.Zero(t, observation.visits.Load(), "the post-compile panic must consume the owner")
+		require.True(t, observation.owner.ConsumedForTest(), "the post-compile panic must consume the owner")
 	})
 
 	t.Run("aborted transaction early return consumes owner", func(t *testing.T) {
@@ -153,7 +143,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			if stmt.Ctx != tk.Session() {
 				return
 			}
-			observation = installStatementRUObservation(stmt)
+			observation = observeInstalledStatementRUOwner(stmt)
 			lockExpire = &tk.Session().GetSessionVars().TxnCtx.LockExpire
 			atomic.StoreUint32(lockExpire, 1)
 		})
@@ -168,11 +158,11 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		require.True(t, terror.ErrorEqual(err, kv.ErrLockExpire), "unexpected error: %v", err)
 		require.Nil(t, rs)
 		require.NotNil(t, observation)
-		require.Zero(t, observation.visits.Load())
+		require.True(t, observation.owner.ConsumedForTest())
 
 		observation.stmt.RecordStatementRUFinalOutcome(true)
 		observation.stmt.FinishExecuteStmt(0, nil, false)
-		require.Zero(t, observation.visits.Load(), "the aborted-transaction return must consume the owner")
+		require.True(t, observation.owner.ConsumedForTest(), "the aborted-transaction return must consume the owner")
 	})
 
 	t.Run("finishStmt error", func(t *testing.T) {
@@ -187,7 +177,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			if stmt.Ctx != tk.Session() {
 				return
 			}
-			observation = installStatementRUObservation(stmt)
+			observation = observeInstalledStatementRUOwner(stmt)
 		})
 
 		rs, err := tk.Exec("select v from t where id = 1")
@@ -198,10 +188,10 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		connID := tk.Session().GetSessionVars().ConnectionID
 		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/session/finishStmtError", fmt.Sprintf("return(%d)", connID))
 		require.Error(t, rs.Close())
-		require.Zero(t, observation.visits.Load())
+		require.True(t, observation.owner.ConsumedForTest())
 
 		observation.stmt.FinishExecuteStmt(0, nil, false)
-		require.Zero(t, observation.visits.Load(), "the failed first terminal must consume the owner")
+		require.True(t, observation.owner.ConsumedForTest(), "the failed first terminal must consume the owner")
 	})
 
 	t.Run("SQLKiller error reaches terminal", func(t *testing.T) {
@@ -216,7 +206,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			if stmt.Ctx != tk.Session() {
 				return
 			}
-			observation = installStatementRUObservation(stmt)
+			observation = observeInstalledStatementRUOwner(stmt)
 		})
 
 		rs, err := tk.Exec("select v from t where id = 1")
@@ -226,7 +216,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 
 		require.Error(t, drainStatementRURecordSet(t, rs))
 		require.NoError(t, rs.Close())
-		require.Zero(t, observation.visits.Load())
+		require.True(t, observation.owner.ConsumedForTest())
 	})
 
 	t.Run("execution returns result set and error", func(t *testing.T) {
@@ -241,7 +231,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			if stmt.Ctx != tk.Session() {
 				return
 			}
-			observation = installStatementRUObservation(stmt)
+			observation = observeInstalledStatementRUOwner(stmt)
 		})
 		connID := tk.Session().GetSessionVars().ConnectionID
 		testfailpoint.Enable(
@@ -255,11 +245,11 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		require.NotNil(t, rs)
 		require.NotNil(t, observation)
 		require.NoError(t, rs.Close())
-		require.Zero(t, observation.visits.Load())
+		require.True(t, observation.owner.ConsumedForTest())
 
 		observation.stmt.RecordStatementRUFinalOutcome(true)
 		observation.stmt.FinishExecuteStmt(0, nil, false)
-		require.Zero(t, observation.visits.Load(), "the first execution failure must consume the owner")
+		require.True(t, observation.owner.ConsumedForTest(), "the first execution failure must consume the owner")
 	})
 
 	t.Run("successful close and repeated terminal", func(t *testing.T) {
@@ -274,7 +264,7 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 			if stmt.Ctx != tk.Session() {
 				return
 			}
-			observation = installStatementRUObservation(stmt)
+			observation = observeInstalledStatementRUOwner(stmt)
 		})
 
 		rs, err := tk.Exec("select v from t where id = 1")
@@ -284,13 +274,13 @@ func TestStatementRUResultSetTerminalOutcomes(t *testing.T) {
 		require.True(t, ok)
 		require.NoError(t, finisher.Finish())
 		require.NoError(t, finisher.Finish())
-		require.Zero(t, observation.visits.Load(), "session Finish publishes outcome but does not run the executor terminal")
+		require.True(t, observation.owner.RecordedSuccessForTest())
+		require.False(t, observation.owner.ConsumedForTest(), "session Finish records outcome but does not run the executor terminal")
 		require.NoError(t, rs.Close())
-		firstVisits := observation.visits.Load()
-		require.Positive(t, firstVisits)
+		require.True(t, observation.owner.ConsumedForTest())
 
 		observation.stmt.FinishExecuteStmt(0, nil, false)
-		require.Equal(t, firstVisits, observation.visits.Load())
+		require.True(t, observation.owner.ConsumedForTest())
 	})
 }
 
@@ -305,7 +295,7 @@ func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
 			if stmt.Ctx != tk.Session() {
 				return
 			}
-			observation = installStatementRUObservation(stmt)
+			observation = observeInstalledStatementRUOwner(stmt)
 		})
 		tk.Session().SetValue(executor.LoadStatsVarKey, struct{}{})
 		t.Cleanup(func() {
@@ -316,13 +306,14 @@ func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
 		rs, err := tk.Exec("do 1")
 		require.NoError(t, err)
 		require.Nil(t, rs)
-		require.Zero(t, observation.visits.Load())
+		require.True(t, observation.owner.RecordedSuccessForTest())
+		require.False(t, observation.owner.ConsumedForTest())
 
 		delayed, ok := tk.Session().Value(session.ExecStmtVarKey).(*executor.ExecStmt)
 		require.True(t, ok)
 		require.Same(t, observation.stmt, delayed)
 		delayed.FinishExecuteStmt(0, nil, false)
-		require.Positive(t, observation.visits.Load())
+		require.True(t, observation.owner.ConsumedForTest())
 	})
 
 	t.Run("post-run panic consumes owner before delayed terminal", func(t *testing.T) {
@@ -335,7 +326,7 @@ func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
 			if stmt.Ctx != tk.Session() {
 				return
 			}
-			observation = installStatementRUObservation(stmt)
+			observation = observeInstalledStatementRUOwner(stmt)
 		})
 		tk.Session().SetValue(executor.LoadStatsVarKey, struct{}{})
 		t.Cleanup(func() {
@@ -353,14 +344,14 @@ func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
 			_, _ = tk.Exec("do 1")
 		})
 		require.NotNil(t, observation)
-		require.Zero(t, observation.visits.Load())
+		require.True(t, observation.owner.ConsumedForTest())
 
 		delayed, ok := tk.Session().Value(session.ExecStmtVarKey).(*executor.ExecStmt)
 		require.True(t, ok)
 		require.Same(t, observation.stmt, delayed)
 		delayed.RecordStatementRUFinalOutcome(true)
 		delayed.FinishExecuteStmt(0, nil, false)
-		require.Zero(t, observation.visits.Load(), "the file-transfer post-run panic must consume the owner")
+		require.True(t, observation.owner.ConsumedForTest(), "the file-transfer post-run panic must consume the owner")
 	})
 
 	t.Run("finishStmt failure is RU-consumed without a legacy terminal", func(t *testing.T) {
@@ -373,7 +364,7 @@ func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
 			if stmt.Ctx != tk.Session() {
 				return
 			}
-			observation = installStatementRUObservation(stmt)
+			observation = observeInstalledStatementRUOwner(stmt)
 		})
 		tk.Session().SetValue(executor.LoadStatsVarKey, struct{}{})
 		t.Cleanup(func() {
@@ -386,14 +377,14 @@ func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
 		rs, err := tk.Exec("do 1")
 		require.Error(t, err)
 		require.Nil(t, rs)
-		require.Zero(t, observation.visits.Load())
+		require.True(t, observation.owner.ConsumedForTest())
 
 		delayed, ok := tk.Session().Value(session.ExecStmtVarKey).(*executor.ExecStmt)
 		require.True(t, ok, "preserve the pre-existing file-transfer handoff on finishStmt error")
 		require.Same(t, observation.stmt, delayed)
 		delayed.RecordStatementRUFinalOutcome(true)
 		delayed.FinishExecuteStmt(0, nil, false)
-		require.Zero(t, observation.visits.Load(), "the failed outcome must consume the owner")
+		require.True(t, observation.owner.ConsumedForTest(), "the failed outcome must consume the owner")
 	})
 
 	t.Run("stale handler does not publish result-set success", func(t *testing.T) {
@@ -407,7 +398,7 @@ func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
 			if stmt.Ctx != tk.Session() {
 				return
 			}
-			observations = append(observations, installStatementRUObservation(stmt))
+			observations = append(observations, observeInstalledStatementRUOwner(stmt))
 		})
 		tk.Session().SetValue(executor.LoadStatsVarKey, struct{}{})
 		t.Cleanup(func() {
@@ -421,7 +412,7 @@ func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
 		require.Error(t, err)
 		require.Nil(t, rs)
 		require.Len(t, observations, 1)
-		require.Zero(t, observations[0].visits.Load())
+		require.True(t, observations[0].owner.ConsumedForTest())
 		require.NotNil(t, tk.Session().Value(executor.LoadStatsVarKey), "the failed file transfer leaves its handler for the server path")
 
 		rs, err = tk.Exec("select id from t")
@@ -431,15 +422,15 @@ func TestStatementRUFileTransferOutcomeHandoff(t *testing.T) {
 		resultSetObservation := observations[1]
 		require.NoError(t, drainStatementRURecordSet(t, rs))
 		require.Error(t, rs.Close())
-		require.Zero(t, resultSetObservation.visits.Load(), "stale file-transfer state must not publish result-set success")
+		require.True(t, resultSetObservation.owner.ConsumedForTest(), "stale file-transfer state must not publish result-set success")
 
 		resultSetObservation.stmt.RecordStatementRUFinalOutcome(true)
 		resultSetObservation.stmt.FinishExecuteStmt(0, nil, false)
-		require.Zero(t, resultSetObservation.visits.Load(), "the result-set failure must consume the owner")
+		require.True(t, resultSetObservation.owner.ConsumedForTest(), "the result-set failure must consume the owner")
 	})
 }
 
-func TestStatementRUPointGetWalksTerminalFlatPlan(t *testing.T) {
+func TestStatementRUPointGetTerminalPlanHandoff(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -448,23 +439,11 @@ func TestStatementRUPointGetWalksTerminalFlatPlan(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1)")
 
 	var observation *statementRUObservation
-	var sawPointGet atomic.Bool
 	testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
 		if stmt.Ctx != tk.Session() {
 			return
 		}
-		observation = &statementRUObservation{stmt: stmt}
-		executor.InstallStatementRUPlanWalkOwnerForTest(stmt, func(
-			_ string,
-			_ int,
-			_ int,
-			operator *plannercore.FlatOperator,
-		) {
-			observation.visits.Add(1)
-			if operator.Origin == stmt.Plan {
-				sawPointGet.Store(true)
-			}
-		})
+		observation = observeInstalledStatementRUOwner(stmt)
 	})
 
 	rs, err := tk.Exec("select v from t where id = ?", 1)
@@ -473,17 +452,17 @@ func TestStatementRUPointGetWalksTerminalFlatPlan(t *testing.T) {
 	require.IsType(t, &physicalop.PointGetPlan{}, observation.stmt.Plan)
 	require.NoError(t, drainStatementRURecordSet(t, rs))
 	stmtCtx := observation.stmt.Ctx.GetSessionVars().StmtCtx
-	// Make lookup order observable: an RU hook before FinishExecuteStmt's SetPlan
-	// would see neither a plan nor a flat cache and could not visit the PointGet.
+	// Make lookup order observable: a terminal before FinishExecuteStmt's SetPlan
+	// would leave neither a plan nor a flat cache for statement RU.
 	stmtCtx.SetPlan(nil)
 	stmtCtx.SetFlatPlan(nil)
 	require.NoError(t, rs.Close())
-	expected, _ := countStatementRUFlatOccurrences(requireStatementRUTerminalFlatPlan(t, observation.stmt))
-	require.Positive(t, expected)
-	require.Equal(t, int64(expected), observation.visits.Load())
-	require.True(t, sawPointGet.Load(), "terminal lookup must visit the effective PointGet after SetPlan")
+	flat := requireStatementRUTerminalFlatPlan(t, observation.stmt)
+	require.NotEmpty(t, flat.Main)
+	require.Same(t, observation.stmt.Plan, flat.Main[0].Origin)
+	require.True(t, observation.owner.ConsumedForTest())
 	// FinishExecuteStmt publishes the effective plan to StmtCtx before the RU
-	// hook. This does not prove that an independently cached flat plan owns it.
+	// terminal. This does not prove that an independently cached flat plan owns it.
 	require.Same(t, observation.stmt.Plan, stmtCtx.GetPlan())
 
 	t.Run("post-execution panic consumes owner", func(t *testing.T) {
@@ -499,11 +478,11 @@ func TestStatementRUPointGetWalksTerminalFlatPlan(t *testing.T) {
 			_, _ = tk.Exec("select v from t where id = ?", 1)
 		})
 		require.NotNil(t, observation)
-		require.Zero(t, observation.visits.Load())
+		require.True(t, observation.owner.ConsumedForTest())
 
 		observation.stmt.RecordStatementRUFinalOutcome(true)
 		observation.stmt.FinishExecuteStmt(0, nil, false)
-		require.Zero(t, observation.visits.Load(), "the PointGet post-exec panic must consume the owner")
+		require.True(t, observation.owner.ConsumedForTest(), "the PointGet post-exec panic must consume the owner")
 	})
 
 	observation = nil
@@ -517,14 +496,14 @@ func TestStatementRUPointGetWalksTerminalFlatPlan(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, rs)
 	require.NotNil(t, observation)
-	require.Zero(t, observation.visits.Load())
+	require.True(t, observation.owner.ConsumedForTest())
 
 	observation.stmt.RecordStatementRUFinalOutcome(true)
 	observation.stmt.FinishExecuteStmt(0, nil, false)
-	require.Zero(t, observation.visits.Load(), "the PointGet failure must consume only the RU owner")
+	require.True(t, observation.owner.ConsumedForTest(), "the PointGet failure must consume only the RU owner")
 }
 
-func TestStatementRUScalarSubQueries(t *testing.T) {
+func TestStatementRUScalarSubqueryTerminalLifecycle(t *testing.T) {
 	t.Run("real scalar SQL", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		tk := testkit.NewTestKit(t, store)
@@ -540,7 +519,7 @@ func TestStatementRUScalarSubQueries(t *testing.T) {
 			if stmt.Ctx != tk.Session() {
 				return
 			}
-			observation = installStatementRUObservation(stmt)
+			observation = observeInstalledStatementRUOwner(stmt)
 		})
 
 		rs, err := tk.Exec("select * from t1 where a = (select a from t2 limit 1)")
@@ -550,9 +529,9 @@ func TestStatementRUScalarSubQueries(t *testing.T) {
 		expectedTotal, expectedScalar := countStatementRUFlatOccurrences(
 			requireStatementRUTerminalFlatPlan(t, observation.stmt),
 		)
+		require.Positive(t, expectedTotal)
 		require.Positive(t, expectedScalar)
-		require.Equal(t, int64(expectedTotal), observation.visits.Load())
-		require.Equal(t, int64(expectedScalar), observation.scalar.Load())
+		require.True(t, observation.owner.ConsumedForTest())
 	})
 
 	t.Run("prepared execute and rebuild use terminal-returned trees", func(t *testing.T) {
@@ -575,7 +554,7 @@ func TestStatementRUScalarSubQueries(t *testing.T) {
 			if stmt.Ctx != tk.Session() {
 				return
 			}
-			observation := installStatementRUObservation(stmt)
+			observation := observeInstalledStatementRUOwner(stmt)
 			observationsMu.Lock()
 			observations = append(observations, observation)
 			observationsMu.Unlock()
@@ -598,8 +577,8 @@ func TestStatementRUScalarSubQueries(t *testing.T) {
 			expectedTotal, expectedScalar := countStatementRUFlatOccurrences(
 				requireStatementRUTerminalFlatPlan(t, observation.stmt),
 			)
-			require.Equal(t, int64(expectedTotal), observation.visits.Load())
-			require.Equal(t, int64(expectedScalar), observation.scalar.Load())
+			require.Positive(t, expectedTotal)
+			require.True(t, observation.owner.ConsumedForTest())
 			t.Logf(
 				"prepared execution %d (plan cache hit: %t) returned %d scalar occurrences",
 				execution+1,
@@ -620,6 +599,7 @@ func TestStatementRUScalarSubQueries(t *testing.T) {
 		require.NoError(t, err)
 		observation := getObservation(2)
 		require.Same(t, stmt, observation.stmt)
+		require.Nil(t, observation.owner, "a pre-existing flat cache keeps the production owner disabled")
 		require.NoError(t, tk.Session().PrepareTxnCtx(ctx, nil))
 		_, err = stmt.RebuildPlan(ctx)
 		require.NoError(t, err)
@@ -631,8 +611,7 @@ func TestStatementRUScalarSubQueries(t *testing.T) {
 		expectedTotal, expectedScalar := countStatementRUFlatOccurrences(
 			requireStatementRUTerminalFlatPlan(t, stmt),
 		)
-		require.Equal(t, int64(expectedTotal), observation.visits.Load())
-		require.Equal(t, int64(expectedScalar), observation.scalar.Load())
+		require.Positive(t, expectedTotal)
 		t.Logf("prepared RebuildPlan returned %d scalar occurrences", expectedScalar)
 	})
 }
@@ -650,7 +629,7 @@ func TestStatementRUCursorExclusion(t *testing.T) {
 			if stmt.Ctx != tk.Session() {
 				return
 			}
-			observation = installStatementRUObservation(stmt)
+			observation = observeInstalledStatementRUOwner(stmt)
 		})
 
 		restricted := tk.Session().GetRestrictedSQLExecutor()
@@ -662,10 +641,7 @@ func TestStatementRUCursorExclusion(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, rows, 1)
 		require.NotNil(t, observation)
-		require.Zero(t, observation.visits.Load())
-
-		observation.stmt.FinishExecuteStmt(0, nil, false)
-		require.Zero(t, observation.visits.Load(), "the snapshotted restricted classification must consume once")
+		require.Nil(t, observation.owner, "restricted SQL must not install the production owner")
 	})
 
 	t.Run("eager cursor terminal consumes skip", func(t *testing.T) {
@@ -684,17 +660,15 @@ func TestStatementRUCursorExclusion(t *testing.T) {
 			if stmt.Ctx != tk.Session() {
 				return
 			}
-			observation = installStatementRUObservation(stmt)
+			observation = observeInstalledStatementRUOwner(stmt)
 		})
 
 		rs, err := tk.Exec("select * from t")
 		require.NoError(t, err)
 		require.NoError(t, drainStatementRURecordSet(t, rs))
 		require.NoError(t, rs.Close())
-		require.Zero(t, observation.visits.Load())
-
-		observation.stmt.FinishExecuteStmt(0, nil, false)
-		require.Zero(t, observation.visits.Load())
+		require.NotNil(t, observation)
+		require.Nil(t, observation.owner, "cursor execution must not install the production owner")
 	})
 
 	t.Run("lazy cursor test installer rejects owner", func(t *testing.T) {
@@ -717,7 +691,7 @@ func TestStatementRUCursorExclusion(t *testing.T) {
 				rejected.Add(1)
 				return
 			}
-			installStatementRUObservation(stmt)
+			observeInstalledStatementRUOwner(stmt)
 		})
 
 		rs, err := tk.Exec("select * from t")
@@ -733,7 +707,7 @@ func TestStatementRUCursorExclusion(t *testing.T) {
 }
 
 func TestStatementRURetryAndReplay(t *testing.T) {
-	t.Run("pessimistic retry has one terminal walk", func(t *testing.T) {
+	t.Run("pessimistic retry keeps production owner disabled", func(t *testing.T) {
 		store := testkit.CreateMockStore(t)
 		writer := testkit.NewTestKit(t, store)
 		writer.MustExec("use test")
@@ -751,16 +725,14 @@ func TestStatementRURetryAndReplay(t *testing.T) {
 
 		query := "select * from t where id = 1 for update"
 		var observedStmt atomic.Pointer[executor.ExecStmt]
-		var visits atomic.Int64
+		var observedOwner atomic.Pointer[executor.StatementRUOwnerObservationForTest]
 		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
 			if stmt.OriginText() != query ||
 				fmt.Sprint(stmt.Ctx.GetSessionVars().ConnectionID) != retryingConnectionID {
 				return
 			}
 			observedStmt.Store(stmt)
-			executor.InstallStatementRUPlanWalkOwnerForTest(stmt, func(string, int, int, *plannercore.FlatOperator) {
-				visits.Add(1)
-			})
+			observedOwner.Store(executor.ObserveStatementRUOwnerForTest(stmt))
 		})
 
 		retrying.SetBreakPoints(
@@ -775,9 +747,8 @@ func TestStatementRURetryAndReplay(t *testing.T) {
 
 		stmt := observedStmt.Load()
 		require.NotNil(t, stmt)
-		expected, _ := countStatementRUFlatOccurrences(requireStatementRUTerminalFlatPlan(t, stmt))
-		require.Positive(t, expected)
-		require.Equal(t, int64(expected), visits.Load())
+		require.NotEmpty(t, requireStatementRUTerminalFlatPlan(t, stmt).Main)
+		require.Nil(t, observedOwner.Load(), "select for update must not install the production statement RU owner")
 	})
 
 	t.Run("optimistic replay is not a second terminal", func(t *testing.T) {
@@ -797,29 +768,29 @@ func TestStatementRURetryAndReplay(t *testing.T) {
 
 		query := "update t set v = v + 1 where id = 1"
 		var observedStmt atomic.Pointer[executor.ExecStmt]
-		var visits atomic.Int64
+		var observedOwner atomic.Pointer[executor.StatementRUOwnerObservationForTest]
+		var installs atomic.Int64
 		testfailpoint.EnableCall(t, statementRUOwnerInstallFailpoint, func(stmt *executor.ExecStmt) {
 			if stmt.OriginText() != query || stmt.Ctx != tk1.Session() {
 				return
 			}
 			observedStmt.Store(stmt)
-			executor.InstallStatementRUPlanWalkOwnerForTest(stmt, func(string, int, int, *plannercore.FlatOperator) {
-				visits.Add(1)
-			})
+			observedOwner.Store(executor.ObserveStatementRUOwnerForTest(stmt))
+			installs.Add(1)
 		})
 
 		tk1.MustExec("begin optimistic")
 		tk1.MustExec(query)
 		stmt := observedStmt.Load()
 		require.NotNil(t, stmt)
-		expected, _ := countStatementRUFlatOccurrences(requireStatementRUTerminalFlatPlan(t, stmt))
-		require.Positive(t, expected)
-		require.Equal(t, int64(expected), visits.Load())
-		visitsAfterOriginalTerminal := visits.Load()
+		require.NotEmpty(t, requireStatementRUTerminalFlatPlan(t, stmt).Main)
+		require.Nil(t, observedOwner.Load(), "DML must not install the production statement RU owner")
+		installsAfterOriginalTerminal := installs.Load()
 
 		tk2.MustExec(query)
 		tk1.MustExec("commit")
-		require.Equal(t, visitsAfterOriginalTerminal, visits.Load())
+		require.Equal(t, installsAfterOriginalTerminal, installs.Load())
+		require.Nil(t, observedOwner.Load())
 		tk2.MustQuery("select v from t where id = 1").Check(testkit.Rows("2"))
 	})
 }

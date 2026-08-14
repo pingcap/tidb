@@ -17,50 +17,34 @@ package executor
 import (
 	"context"
 	"errors"
-	"fmt"
-	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 )
 
-func newStatementRUPlanForTest() (*ExecStmt, *atomic.Int64) {
+func newStatementRUOwnerForTest() (*ExecStmt, *statementRUOwner) {
 	ctx := mock.NewContext()
 	plan := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
 	ctx.GetSessionVars().StmtCtx.SetPlan(plan)
-	visits := &atomic.Int64{}
 	stmt := &ExecStmt{
 		Ctx:   ctx,
 		GoCtx: context.Background(),
 		Plan:  plan,
 	}
-	stmt.statementRUPlanWalkOwner = newStatementRUPlanWalkOwner(
-		stmt,
-		func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator) {
-			visits.Add(1)
-		},
-	)
-	return stmt, visits
-}
-
-func statementRUPlanTreeKindForTest(kind statementRUPlanTreeKind) string {
-	switch kind {
-	case statementRUPlanTreeMain:
-		return "main"
-	case statementRUPlanTreeCTE:
-		return "cte"
-	case statementRUPlanTreeScalarSubQuery:
-		return "scalar"
-	default:
-		return "unknown"
-	}
+	owner := newStatementRUOwner(stmt)
+	owner.calculationSetup.frontendCompileBytes = 1
+	stmt.statementRUOwner = owner
+	return stmt, owner
 }
 
 type statementRUPanicOnceContext struct {
@@ -75,65 +59,165 @@ func (ctx *statementRUPanicOnceContext) Value(key any) any {
 	return ctx.Context.Value(key)
 }
 
-// InstallStatementRUPlanWalkOwnerForTest installs the otherwise-dark owner on
-// an ExecStmt compiled by a test-only failpoint.
-func InstallStatementRUPlanWalkOwnerForTest(
-	stmt *ExecStmt,
-	visit func(treeKind string, treeIndex int, operatorIndex int, operator *plannercore.FlatOperator),
-) {
-	stmt.statementRUPlanWalkOwner = newStatementRUPlanWalkOwner(
-		stmt,
-		func(kind statementRUPlanTreeKind, treeIndex, operatorIndex int, operator *plannercore.FlatOperator) {
-			visit(statementRUPlanTreeKindForTest(kind), treeIndex, operatorIndex, operator)
-		},
-	)
+// StatementRUOwnerObservationForTest exposes lifecycle state to external-package
+// tests without adding a callback or probe field to the production owner.
+type StatementRUOwnerObservationForTest struct {
+	owner        *statementRUOwner
+	initialSetup statementRUCalculationSetup
 }
 
-func TestStatementRUPlanWalkOccurrences(t *testing.T) {
-	ctx := mock.NewContext()
-	duplicate := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
-	duplicate.SetID(7)
-	cte := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
-	cte.SetID(7)
-	scalar := &plannercore.ScalarSubqueryEvalCtx{}
-	dml := &physicalop.Insert{}
+// ObserveStatementRUOwnerForTest returns a handle to the production-installed
+// owner. It must not make an otherwise-ineligible statement appear eligible.
+func ObserveStatementRUOwnerForTest(stmt *ExecStmt) *StatementRUOwnerObservationForTest {
+	if stmt == nil || stmt.statementRUOwner == nil {
+		return nil
+	}
+	return &StatementRUOwnerObservationForTest{
+		owner:        stmt.statementRUOwner,
+		initialSetup: stmt.statementRUOwner.calculationSetup,
+	}
+}
 
-	flat := &plannercore.FlatPhysicalPlan{
-		Main: plannercore.FlatPlanTree{
-			{Origin: dml},
-			nil,
-			{},
-			{Origin: duplicate},
-		},
-		CTEs: []plannercore.FlatPlanTree{
-			{{Origin: cte}},
-			{{Origin: duplicate}},
-		},
-		ScalarSubQueries: []plannercore.FlatPlanTree{
-			{{Origin: scalar}},
-			{nil, {Origin: duplicate}},
-		},
+// ConsumedForTest reports whether the first terminal or abort cleared the setup.
+// A zero initial setup cannot distinguish an unconsumed owner from a consumed
+// one, so it fails closed. Call this only after the lifecycle has quiesced.
+func (observation *StatementRUOwnerObservationForTest) ConsumedForTest() bool {
+	return observation != nil && observation.owner != nil &&
+		observation.initialSetup != (statementRUCalculationSetup{}) &&
+		observation.owner.calculationSetup == (statementRUCalculationSetup{})
+}
+
+// RecordedSuccessForTest reports whether the session recorded success first.
+func (observation *StatementRUOwnerObservationForTest) RecordedSuccessForTest() bool {
+	return observation != nil && observation.owner != nil &&
+		statementRUFinalOutcome(observation.owner.finalOutcome.Load()) == statementRUFinalOutcomeSuccess
+}
+
+func TestStatementRUCalculationTraversal(t *testing.T) {
+	requireNoPublication := func(t *testing.T, fixture statementRUSimpleSelectFixture) {
+		var calibrationCount atomic.Int64
+		observeStatementRUCalibrationForTest(t, func(statementRUCalibrationSnapshot) {
+			calibrationCount.Add(1)
+		})
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+		fixture.stmt.RecordStatementRUFinalOutcome(true)
+		fixture.stmt.finishStatementRUForTest(nil)
+		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
+		require.Zero(t, calibrationCount.Load())
 	}
 
-	occurrences := make([]string, 0, 6)
-	walkStatementRUFlatPlan(flat, func(kind statementRUPlanTreeKind, treeIndex, operatorIndex int, operator *plannercore.FlatOperator) {
-		occurrences = append(occurrences, fmt.Sprintf(
-			"%s/%d/%d/%T",
-			statementRUPlanTreeKindForTest(kind),
-			treeIndex,
-			operatorIndex,
-			operator.Origin,
-		))
+	t.Run("Reader scan evidence is collected during calculation", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		// Statement-level ExecDetails is deliberately unrelated to the Reader's
+		// own cop runtime stats and must not affect this calculation.
+		fixture.mergeStatementScanDetail(&util.ScanDetail{
+			TotalKeys:         100,
+			ProcessedKeys:     100,
+			ProcessedKeysSize: 10000,
+		})
+		var snapshot statementRUCalibrationSnapshot
+		observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
+			snapshot = published
+		})
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+		fixture.stmt.RecordStatementRUFinalOutcome(true)
+		fixture.stmt.finishStatementRUForTest(nil)
+		require.Equal(t, float64(45), testutil.ToFloat64(metrics.RUV3Total)-totalBefore)
+		require.Equal(t, statementRURawUnits{
+			ScanBytes:            10,
+			NetBytes:             20,
+			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
+		}, snapshot.Units)
 	})
 
-	require.ElementsMatch(t, []string{
-		"main/0/0/*physicalop.Insert",
-		"main/0/3/*physicalop.PhysicalTableDual",
-		"cte/0/0/*physicalop.PhysicalTableDual",
-		"cte/1/0/*physicalop.PhysicalTableDual",
-		"scalar/0/0/*core.ScalarSubqueryEvalCtx",
-		"scalar/1/1/*physicalop.PhysicalTableDual",
-	}, occurrences)
+	t.Run("pushed Selection does not duplicate Reader scan evidence", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		planCtx := fixture.stmt.Ctx.(*mock.Context)
+		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+		scan := reader.TablePlan.(*physicalop.PhysicalTableScan)
+		selection := physicalop.PhysicalSelection{}.Init(planCtx, &property.StatsInfo{RowCount: 1}, 0)
+		selection.SetChildren(scan)
+		reader.TablePlan = selection
+		reader.TablePlans = physicalop.FlattenListPushDownPlan(selection)
+		fixture.recordReaderScanDetail(reader, 1, 1, 10)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(reader, false))
+
+		var calibrationCount atomic.Int64
+		var snapshot statementRUCalibrationSnapshot
+		observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
+			calibrationCount.Add(1)
+			snapshot = published
+		})
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+		fixture.stmt.RecordStatementRUFinalOutcome(true)
+		fixture.stmt.finishStatementRUForTest(nil)
+		fixture.stmt.finishStatementRUForTest(nil)
+		require.Equal(t, float64(45), testutil.ToFloat64(metrics.RUV3Total)-totalBefore)
+		require.Equal(t, int64(1), calibrationCount.Load())
+		require.Equal(t, statementRUCalibrationComplete, snapshot.State)
+		require.Equal(t, float64(10), snapshot.Units.ScanBytes)
+		require.Zero(t, fixture.owner.calculationSetup)
+	})
+
+	t.Run("root Selection is outside the current slice", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		planCtx := fixture.stmt.Ctx.(*mock.Context)
+		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+		selection := physicalop.PhysicalSelection{}.Init(planCtx, &property.StatsInfo{RowCount: 1}, 0)
+		selection.SetChildren(reader)
+		fixture.stmt.Plan = selection
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(selection, false))
+
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("root TableScan is outside the current slice", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+		scan := reader.TablePlan.(*physicalop.PhysicalTableScan)
+		fixture.stmt.Plan = scan
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(scan, false))
+
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("nested TableReader is outside the current slice", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		planCtx := fixture.stmt.Ctx.(*mock.Context)
+		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+		scan := reader.TablePlan.(*physicalop.PhysicalTableScan)
+		nestedReader := (&physicalop.PhysicalTableReader{
+			TablePlan: scan,
+			StoreType: reader.StoreType,
+		}).Init(planCtx, 0)
+		reader.TablePlan = nestedReader
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(reader, false))
+
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("invalid child edge fails closed", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+		flat.Main[0].ChildrenIdx = []int{len(flat.Main)}
+
+		requireNoPublication(t, fixture)
+	})
+
+	t.Run("unsupported intermediate operator publishes nothing", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		planCtx := fixture.stmt.Ctx.(*mock.Context)
+		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+		scan := reader.TablePlan.(*physicalop.PhysicalTableScan)
+		limit := physicalop.PhysicalLimit{}.Init(planCtx, &property.StatsInfo{RowCount: 1}, 0)
+		limit.SetChildren(scan)
+		reader.TablePlan = limit
+		reader.TablePlans = physicalop.FlattenListPushDownPlan(limit)
+		fixture.recordReaderScanDetail(reader, 1, 1, 10)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(reader, false))
+
+		requireNoPublication(t, fixture)
+	})
 }
 
 func TestStatementRUFinalOutcomeFirstRecordWins(t *testing.T) {
@@ -141,52 +225,75 @@ func TestStatementRUFinalOutcomeFirstRecordWins(t *testing.T) {
 		stmt := &ExecStmt{}
 		require.NotPanics(t, func() {
 			stmt.RecordStatementRUFinalOutcome(true)
-			stmt.finishStatementRUPlanWalk(nil)
+			stmt.finishStatementRUForTest(nil)
 		})
 	})
 
+	t.Run("owner observation distinguishes pending and consumed setup", func(t *testing.T) {
+		stmt, _ := newStatementRUOwnerForTest()
+		observation := ObserveStatementRUOwnerForTest(stmt)
+		require.NotNil(t, observation)
+		require.False(t, observation.ConsumedForTest())
+
+		stmt.RecordStatementRUFinalOutcome(false)
+		require.True(t, observation.ConsumedForTest())
+	})
+
+	t.Run("owner observation fails closed for zero initial setup", func(t *testing.T) {
+		stmt, owner := newStatementRUOwnerForTest()
+		owner.calculationSetup = statementRUCalculationSetup{}
+		observation := ObserveStatementRUOwnerForTest(stmt)
+		require.NotNil(t, observation)
+		require.False(t, observation.ConsumedForTest())
+
+		stmt.RecordStatementRUFinalOutcome(false)
+		require.False(t, observation.ConsumedForTest())
+	})
+
 	t.Run("unknown terminal consumes once", func(t *testing.T) {
-		stmt, visits := newStatementRUPlanForTest()
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt, owner := newStatementRUOwnerForTest()
+		stmt.finishStatementRUForTest(nil)
+		require.Zero(t, owner.calculationSetup)
 		stmt.RecordStatementRUFinalOutcome(true)
-		stmt.finishStatementRUPlanWalk(nil)
-		require.Zero(t, visits.Load())
+		stmt.finishStatementRUForTest(nil)
+		require.Zero(t, owner.calculationSetup)
 	})
 
 	t.Run("recorded failure consumes once", func(t *testing.T) {
-		stmt, visits := newStatementRUPlanForTest()
+		stmt, owner := newStatementRUOwnerForTest()
 		stmt.RecordStatementRUFinalOutcome(false)
-		// Force the atomic state to success so this assertion specifically proves
-		// failure consumed finishOnce, rather than only proving CAS first-wins.
-		stmt.statementRUPlanWalkOwner.finalOutcome.Store(uint32(statementRUFinalOutcomeSuccess))
-		stmt.finishStatementRUPlanWalk(nil)
-		require.Zero(t, visits.Load())
+		stmt.RecordStatementRUFinalOutcome(true)
+		require.Equal(t, statementRUFinalOutcomeFailure, statementRUFinalOutcome(owner.finalOutcome.Load()))
+		require.Zero(t, owner.calculationSetup)
+		stmt.finishStatementRUForTest(nil)
+		require.Zero(t, owner.calculationSetup)
 	})
 
 	for _, tc := range []struct {
 		name         string
 		firstSuccess bool
 		second       bool
-		wantVisits   int64
+		wantOutcome  statementRUFinalOutcome
 	}{
-		{name: "success then success", firstSuccess: true, second: true, wantVisits: 1},
-		{name: "success then failure", firstSuccess: true, second: false, wantVisits: 1},
-		{name: "failure then success", firstSuccess: false, second: true, wantVisits: 0},
-		{name: "failure then failure", firstSuccess: false, second: false, wantVisits: 0},
+		{name: "success then success", firstSuccess: true, second: true, wantOutcome: statementRUFinalOutcomeSuccess},
+		{name: "success then failure", firstSuccess: true, second: false, wantOutcome: statementRUFinalOutcomeSuccess},
+		{name: "failure then success", firstSuccess: false, second: true, wantOutcome: statementRUFinalOutcomeFailure},
+		{name: "failure then failure", firstSuccess: false, second: false, wantOutcome: statementRUFinalOutcomeFailure},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			stmt, visits := newStatementRUPlanForTest()
+			stmt, owner := newStatementRUOwnerForTest()
 			stmt.RecordStatementRUFinalOutcome(tc.firstSuccess)
 			stmt.RecordStatementRUFinalOutcome(tc.second)
-			stmt.finishStatementRUPlanWalk(nil)
-			require.Equal(t, tc.wantVisits, visits.Load())
+			require.Equal(t, tc.wantOutcome, statementRUFinalOutcome(owner.finalOutcome.Load()))
+			stmt.finishStatementRUForTest(nil)
+			require.Zero(t, owner.calculationSetup)
 		})
 	}
 }
 
-func TestStatementRUPlanWalkTerminalFirstCallWins(t *testing.T) {
+func TestStatementRUTerminalFirstCallWins(t *testing.T) {
 	t.Run("recordSet SQLKiller reaches terminal", func(t *testing.T) {
-		stmt, visits := newStatementRUPlanForTest()
+		stmt, owner := newStatementRUOwnerForTest()
 		stmt.RecordStatementRUFinalOutcome(true)
 		stmt.Ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 		t.Cleanup(func() { stmt.Ctx.GetSessionVars().SQLKiller.Reset() })
@@ -194,107 +301,92 @@ func TestStatementRUPlanWalkTerminalFirstCallWins(t *testing.T) {
 
 		require.Error(t, rs.Next(context.Background(), nil))
 		require.Empty(t, rs.lastErrs, "the RU-only abort must not change legacy terminal errors")
-		stmt.finishStatementRUPlanWalk(nil)
-		require.Zero(t, visits.Load())
+		stmt.finishStatementRUForTest(nil)
+		require.Zero(t, owner.calculationSetup)
 	})
 
 	t.Run("recordSet recovered panic reaches terminal", func(t *testing.T) {
-		stmt, visits := newStatementRUPlanForTest()
+		stmt, owner := newStatementRUOwnerForTest()
 		stmt.RecordStatementRUFinalOutcome(true)
 		rs := &recordSet{stmt: stmt}
 		ctx := &statementRUPanicOnceContext{Context: context.Background()}
 
 		require.Error(t, rs.Next(ctx, nil))
 		require.Empty(t, rs.lastErrs, "the RU-only abort must not change legacy terminal errors")
-		stmt.finishStatementRUPlanWalk(nil)
-		require.Zero(t, visits.Load())
+		stmt.finishStatementRUForTest(nil)
+		require.Zero(t, owner.calculationSetup)
 	})
 
 	t.Run("terminal error then success", func(t *testing.T) {
-		stmt, visits := newStatementRUPlanForTest()
+		stmt, owner := newStatementRUOwnerForTest()
 		stmt.RecordStatementRUFinalOutcome(true)
-		stmt.finishStatementRUPlanWalk(errors.New("terminal error"))
-		stmt.finishStatementRUPlanWalk(nil)
-		require.Zero(t, visits.Load())
+		stmt.finishStatementRUForTest(errors.New("terminal error"))
+		stmt.finishStatementRUForTest(nil)
+		require.Zero(t, owner.calculationSetup)
 	})
 
 	t.Run("deadline then success", func(t *testing.T) {
-		stmt, visits := newStatementRUPlanForTest()
+		stmt, owner := newStatementRUOwnerForTest()
 		stmt.RecordStatementRUFinalOutcome(true)
-		stmt.finishStatementRUPlanWalk(context.DeadlineExceeded)
-		stmt.finishStatementRUPlanWalk(nil)
-		require.Zero(t, visits.Load())
+		stmt.finishStatementRUForTest(context.DeadlineExceeded)
+		stmt.finishStatementRUForTest(nil)
+		require.Zero(t, owner.calculationSetup)
 	})
 
 	t.Run("restricted then success", func(t *testing.T) {
-		stmt, visits := newStatementRUPlanForTest()
+		stmt, owner := newStatementRUOwnerForTest()
 		stmt.RecordStatementRUFinalOutcome(true)
 		stmt.Ctx.GetSessionVars().InRestrictedSQL = true
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		stmt.Ctx.GetSessionVars().InRestrictedSQL = false
-		stmt.finishStatementRUPlanWalk(nil)
-		require.Zero(t, visits.Load())
+		stmt.finishStatementRUForTest(nil)
+		require.Zero(t, owner.calculationSetup)
 	})
 
 	t.Run("cursor then success", func(t *testing.T) {
-		stmt, visits := newStatementRUPlanForTest()
+		stmt, owner := newStatementRUOwnerForTest()
 		stmt.RecordStatementRUFinalOutcome(true)
 		stmt.Ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, true)
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		stmt.Ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusCursorExists, false)
-		stmt.finishStatementRUPlanWalk(nil)
-		require.Zero(t, visits.Load())
+		stmt.finishStatementRUForTest(nil)
+		require.Zero(t, owner.calculationSetup)
 	})
 
 	t.Run("nil plan then plan", func(t *testing.T) {
-		stmt, visits := newStatementRUPlanForTest()
+		stmt, owner := newStatementRUOwnerForTest()
 		plan := stmt.Plan
 		stmt.Plan = nil
 		stmt.RecordStatementRUFinalOutcome(true)
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		stmt.Plan = plan
-		stmt.finishStatementRUPlanWalk(nil)
-		require.Zero(t, visits.Load())
+		stmt.finishStatementRUForTest(nil)
+		require.Zero(t, owner.calculationSetup)
 	})
 
 	t.Run("empty plan then plan", func(t *testing.T) {
-		stmt, visits := newStatementRUPlanForTest()
+		stmt, owner := newStatementRUOwnerForTest()
 		plan := stmt.Plan
 		stmt.Plan = &physicalop.Insert{}
 		stmt.Ctx.GetSessionVars().StmtCtx.SetPlan(stmt.Plan)
 		stmt.Ctx.GetSessionVars().StmtCtx.SetFlatPlan(nil)
 		stmt.RecordStatementRUFinalOutcome(true)
-		stmt.finishStatementRUPlanWalk(nil)
+		stmt.finishStatementRUForTest(nil)
 		stmt.Plan = plan
-		stmt.finishStatementRUPlanWalk(nil)
-		require.Zero(t, visits.Load())
-	})
-
-	t.Run("panic then retry", func(t *testing.T) {
-		stmt, visits := newStatementRUPlanForTest()
-		stmt.RecordStatementRUFinalOutcome(true)
-		stmt.statementRUPlanWalkOwner.visit = func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator) {
-			visits.Add(1)
-			panic("statement RU visit panic")
-		}
-		require.NotPanics(t, func() { stmt.finishStatementRUPlanWalk(nil) })
-		stmt.statementRUPlanWalkOwner.visit = func(statementRUPlanTreeKind, int, int, *plannercore.FlatOperator) {
-			visits.Add(1)
-		}
-		stmt.finishStatementRUPlanWalk(nil)
-		require.Equal(t, int64(1), visits.Load())
+		stmt.finishStatementRUForTest(nil)
+		require.Zero(t, owner.calculationSetup)
 	})
 
 	t.Run("success then terminal error", func(t *testing.T) {
-		stmt, visits := newStatementRUPlanForTest()
+		stmt, owner := newStatementRUOwnerForTest()
 		stmt.RecordStatementRUFinalOutcome(true)
-		stmt.finishStatementRUPlanWalk(nil)
-		stmt.finishStatementRUPlanWalk(errors.New("late terminal error"))
-		require.Equal(t, int64(1), visits.Load())
+		stmt.finishStatementRUForTest(nil)
+		stmt.finishStatementRUForTest(errors.New("late terminal error"))
+		require.Zero(t, owner.calculationSetup)
 	})
 }
 
-func TestStatementRUPlanWalkUsesStmtCtxFlatPlanCache(t *testing.T) {
+func TestStatementRUTerminalUsesStmtCtxFlatPlanCache(t *testing.T) {
 	ctx := mock.NewContext()
 	stats := &property.StatsInfo{RowCount: 1}
 	stalePlan := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, stats, 0)
@@ -305,39 +397,18 @@ func TestStatementRUPlanWalkUsesStmtCtxFlatPlanCache(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.SetPlan(currentPlan)
 	ctx.GetSessionVars().StmtCtx.SetFlatPlan(plannercore.FlattenPhysicalPlan(stalePlan, false))
 
-	var sawCurrent, sawStale bool
 	stmt := &ExecStmt{
 		Ctx:  ctx,
 		Plan: currentPlan,
 	}
-	stmt.statementRUPlanWalkOwner = newStatementRUPlanWalkOwner(
-		stmt,
-		func(_ statementRUPlanTreeKind, _, _ int, operator *plannercore.FlatOperator) {
-			sawCurrent = sawCurrent || operator.Origin == currentPlan
-			sawStale = sawStale || operator.Origin == stalePlan
-		},
-	)
+	owner := newStatementRUOwner(stmt)
+	owner.calculationSetup.frontendCompileBytes = 1
+	stmt.statementRUOwner = owner
 	stmt.RecordStatementRUFinalOutcome(true)
-	stmt.finishStatementRUPlanWalk(nil)
+	stmt.finishStatementRUForTest(nil)
 	// This intentionally characterizes the current getFlatPlan contract. It does
 	// not prove that the cached Origin belongs to the current ExecStmt generation.
-	require.False(t, sawCurrent)
-	require.True(t, sawStale)
-}
-
-func TestStatementRUPlanWalkConcurrentOwnerTerminal(t *testing.T) {
-	stmt, visits := newStatementRUPlanForTest()
-	stmt.RecordStatementRUFinalOutcome(true)
-
-	const callers = 64
-	var wg sync.WaitGroup
-	wg.Add(callers)
-	for range callers {
-		go func() {
-			defer wg.Done()
-			stmt.finishStatementRUPlanWalk(nil)
-		}()
-	}
-	wg.Wait()
-	require.Equal(t, int64(1), visits.Load())
+	flat := ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+	require.Same(t, stalePlan, flat.Main[0].Origin)
+	require.Zero(t, owner.calculationSetup)
 }
