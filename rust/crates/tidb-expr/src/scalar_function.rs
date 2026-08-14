@@ -1065,6 +1065,18 @@ impl ScalarFunction {
                 ctx,
             );
         }
+        if matches!(upper.as_str(), "CEIL" | "CEILING" | "FLOOR")
+            && matches!(vals.first(), Some(Datum::Decimal(_)))
+        {
+            return crate::math_fn::ceil_floor_with_result_domain(
+                &vals,
+                upper != "FLOOR",
+                self.ret_type
+                    .as_ref()
+                    .map(|field_type| field_type.eval_type() == tidb_datatype::EvalType::Decimal),
+                ctx,
+            );
+        }
         if let Some(result) = crate::func::eval_func_values_in(&upper, &vals, ctx) {
             return result;
         }

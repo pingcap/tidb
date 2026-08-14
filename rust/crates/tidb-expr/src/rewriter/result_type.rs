@@ -343,6 +343,32 @@ fn round_truncate_return_type(name: &str, args: &[Expression]) -> Option<FieldTy
     Some(result)
 }
 
+/// Go `getEvalTp4FloorAndCeil` plus `setFlag4FloorAndCeil`.
+fn ceil_floor_return_type(args: &[Expression]) -> Option<FieldType> {
+    use tidb_datatype::EvalType;
+
+    let source = args.first()?.static_type()?;
+    let mut result = match source.eval_type() {
+        EvalType::Int => FieldType::new(FieldTypeCode::LongLong),
+        EvalType::Decimal if source.flen() - source.decimal() > 18 => {
+            let mut decimal = FieldType::new(FieldTypeCode::NewDecimal);
+            decimal.set_flen_under_limit(source.flen());
+            decimal.set_decimal(0);
+            decimal
+        }
+        EvalType::Decimal => FieldType::new(FieldTypeCode::LongLong),
+        _ => FieldType::new(FieldTypeCode::Double),
+    };
+    if matches!(
+        source.code(),
+        FieldTypeCode::Long | FieldTypeCode::LongLong | FieldTypeCode::NewDecimal
+    ) && source.is_unsigned()
+    {
+        result.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+    }
+    Some(result)
+}
+
 fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<FieldType> {
     let text = || {
         let mut ft = FieldType::new(FieldTypeCode::VarString);
@@ -592,12 +618,11 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // types are what a chunk cell must be sized for: `ABS` and `MOD`
         // preserve the argument domain, `CEIL`/`FLOOR` return an integer for
         // an integer or decimal argument but stay real for a real one, and
-        // `ROUND`/`TRUNCATE` keep the decimal domain.
+        // `ROUND`/`TRUNCATE` keep the decimal domain. `CEIL`/`FLOOR` keep a
+        // decimal only when its declared integer width exceeds 18 digits;
+        // narrower decimals use the integer signatures.
         "abs" | "mod" => arg_numeric_type(args)?,
-        "ceil" | "ceiling" | "floor" => match arg_numeric_type(args)?.eval_type() {
-            tidb_datatype::EvalType::Real => FieldType::new(FieldTypeCode::Double),
-            _ => int(),
-        },
+        "ceil" | "ceiling" | "floor" => ceil_floor_return_type(args)?,
         // `ROUND`/`TRUNCATE` read the FIRST argument alone -- `argTp :=
         // args[0].GetType(ctx.GetEvalCtx()).EvalType()` (`builtin_math.go:272`
         // and `:2036`) -- because the second is the SCALE, declared
@@ -1577,6 +1602,60 @@ mod round_truncate_type_source_tests {
             let result = builtin_return_type(name, &[value.clone(), scale(requested)]).unwrap();
             assert_eq!(result.flen(), expected_flen, "{name}({requested})");
             assert_eq!(result.decimal(), expected_decimal, "{name}({requested})");
+        }
+    }
+}
+
+#[cfg(test)]
+mod ceil_floor_type_source_tests {
+    use super::*;
+    use crate::column::Column;
+    use crate::scalar_function::ScalarFunction;
+    use tidb_chunk::chunk::Chunk;
+
+    fn decimal(flen: i64, scale: i64) -> Expression {
+        let mut field_type = FieldType::new(FieldTypeCode::NewDecimal);
+        field_type.set_flen(flen);
+        field_type.set_decimal(scale);
+        Expression::Column(Column::new(1, field_type))
+    }
+
+    #[test]
+    fn decimal_result_domain_uses_declared_integer_width() {
+        for name in ["ceil", "ceiling", "floor"] {
+            let narrow_arg = decimal(20, 2);
+            let narrow = builtin_return_type(name, std::slice::from_ref(&narrow_arg)).unwrap();
+            assert_eq!(narrow.code(), FieldTypeCode::LongLong, "{name}");
+
+            let wide_arg = decimal(21, 2);
+            let wide = builtin_return_type(name, std::slice::from_ref(&wide_arg)).unwrap();
+            assert_eq!(wide.code(), FieldTypeCode::NewDecimal, "{name}");
+            assert_eq!(wide.flen(), 21, "{name}");
+            assert_eq!(wide.decimal(), 0, "{name}");
+
+            for (argument, result_type, expect_decimal) in
+                [(narrow_arg, narrow, false), (wide_arg, wide, true)]
+            {
+                let mut chunk =
+                    Chunk::new_with_capacity(&[argument.static_type().unwrap().clone()], 1);
+                chunk.append_datum(
+                    0,
+                    &Datum::Decimal(tidb_datatype::Decimal::from_literal("-1.23")),
+                );
+                let result =
+                    ScalarFunction::new(tidb_ast::CiString::new(name), result_type, vec![argument])
+                        .eval(&crate::context::NoColumns, chunk.get_row(0))
+                        .unwrap();
+                let expected = if name == "floor" { -2 } else { -1 };
+                if expect_decimal {
+                    let Datum::Decimal(result) = result else {
+                        panic!("{name} returned a non-decimal wide result")
+                    };
+                    assert_eq!(result.to_string(), expected.to_string(), "{name}");
+                } else {
+                    assert_eq!(result, Datum::Int(expected), "{name}");
+                }
+            }
         }
     }
 }

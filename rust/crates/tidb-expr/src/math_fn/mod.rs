@@ -607,6 +607,21 @@ fn is_constant_expr(expr: &Expr) -> bool {
 /// stays `Float` — the OPPOSITE convention from `Decimal`'s own
 /// int-collapsing rule, also confirmed via `goeval`, not assumed.
 fn ceil_floor(vals: &[Datum], ceiling: bool, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    ceil_floor_with_result_domain(vals, ceiling, None, ctx)
+}
+
+/// Typed scalar evaluation for `CEIL`/`FLOOR`.
+///
+/// `decimal_result` is Go's build-time `retTp == ETDecimal` decision. The
+/// values-only path can still recover a stored column's declared shape from
+/// [`Decimal::declared_shape`], and uses the payload width only for an
+/// unstamped literal.
+pub(crate) fn ceil_floor_with_result_domain(
+    vals: &[Datum],
+    ceiling: bool,
+    decimal_result: Option<bool>,
+    ctx: &dyn Columns,
+) -> Result<Datum, EvalError> {
     let [v] = vals else {
         return Err(EvalError::Unsupported("bad function arity"));
     };
@@ -616,18 +631,20 @@ fn ceil_floor(vals: &[Datum], ceiling: bool, ctx: &dyn Columns) -> Result<Datum,
         Datum::UInt(i) => Datum::UInt(*i),
         Datum::Decimal(d) => {
             let r = d.ceil_floor(ceiling);
-            // `getEvalTp4FloorAndCeil` chooses ETDecimal from FieldType's
-            // declared integer width, not from the rounded value. A literal
-            // such as `9223372036854775807.0` therefore remains DECIMAL even
-            // though its exact ceiling fits i64. `Decimal` retains the same
-            // width information losslessly as coefficient digits minus its
-            // storage scale; 18 is TiDB's `mysql.MaxIntWidth - 2` cutoff.
-            let integer_digits = d
-                .coefficient_digits()
-                .len()
-                .saturating_sub(d.storage_scale() as usize)
-                .max(1);
-            if integer_digits > 18 {
+            let declared_decimal_result = d
+                .declared_shape()
+                .map(|(flen, decimal)| flen - decimal > 18);
+            let payload_decimal_result = || {
+                d.coefficient_digits()
+                    .len()
+                    .saturating_sub(d.storage_scale() as usize)
+                    .max(1)
+                    > 18
+            };
+            if decimal_result
+                .or(declared_decimal_result)
+                .unwrap_or_else(payload_decimal_result)
+            {
                 Datum::Decimal(r)
             } else {
                 match r.round_to_i64() {
