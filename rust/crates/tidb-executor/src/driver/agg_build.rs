@@ -513,11 +513,16 @@ pub(crate) struct AggOutputResolver {
     /// The statement's session `time_zone` (see [`ColumnResolver::time_zone`]),
     /// carried over from the source scope the aggregation reads.
     pub(crate) zone: tidb_expr::SessionTimeZone,
+    pub(crate) no_unsigned_subtraction: bool,
 }
 
 impl ColumnResolver for AggOutputResolver {
     fn time_zone(&self) -> tidb_expr::SessionTimeZone {
         self.zone.clone()
+    }
+
+    fn no_unsigned_subtraction(&self) -> bool {
+        self.no_unsigned_subtraction
     }
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {

@@ -565,6 +565,7 @@ impl Session {
                 .with_block_encryption_mode(block_encryption_mode)
                 .with_sequences(self.sequence_snapshot())
                 .with_sql_mode(scanner_sql_mode_of(&mode))
+                .with_no_unsigned_subtraction(has("NO_UNSIGNED_SUBTRACTION"))
                 .with_like_default_escape(like_default_escape)
                 .with_sysdate_is_now(sysdate_is_now)
                 .with_clock(clock, zone);
@@ -603,6 +604,7 @@ impl Session {
         .with_sysdate_is_now(sysdate_is_now)
         .with_clock(clock, zone)
         .with_sql_mode(scanner_sql_mode_of(&mode))
+        .with_no_unsigned_subtraction(has("NO_UNSIGNED_SUBTRACTION"))
         .with_like_default_escape(like_default_escape)
         .with_auto_increment_step(increment, offset)
         .with_auto_increment_zero_explicit(has("NO_AUTO_VALUE_ON_ZERO"))

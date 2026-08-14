@@ -171,6 +171,7 @@ struct MultiSource {
     zone: tidb_expr::SessionTimeZone,
     tidb_info_len: usize,
     like_default_escape: u8,
+    no_unsigned_subtraction: bool,
     /// The output naming state of a child `NATURAL`/`USING` join. The row
     /// remains full-width for writes, just as Go resets the join schema for
     /// DML after using the coalesced names to construct its equality.
@@ -201,6 +202,7 @@ impl MultiSource {
             zone: self.zone.clone(),
             tidb_info_len: self.tidb_info_len,
             like_default_escape: self.like_default_escape,
+            no_unsigned_subtraction: self.no_unsigned_subtraction,
             coalesced: self.coalesced.clone(),
             star: self.star.clone(),
             ..FromScope::default()
@@ -348,6 +350,7 @@ fn scan_derived_table(
         zone: ctx.session_zone(),
         tidb_info_len: ctx.tidb_info_len(),
         like_default_escape: ctx.like_default_escape(),
+        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         coalesced: Vec::new(),
         star: Vec::new(),
         tables: vec![SourceTable {
@@ -466,6 +469,7 @@ fn join_lateral_source(
         zone,
         tidb_info_len,
         like_default_escape,
+        no_unsigned_subtraction,
         coalesced,
         star,
     } = left;
@@ -475,6 +479,7 @@ fn join_lateral_source(
         zone: zone.clone(),
         tidb_info_len,
         like_default_escape,
+        no_unsigned_subtraction,
         coalesced: coalesced.clone(),
         star: star.clone(),
     };
@@ -484,6 +489,7 @@ fn join_lateral_source(
         zone: zone.clone(),
         tidb_info_len,
         like_default_escape,
+        no_unsigned_subtraction,
         coalesced: Vec::new(),
         star: Vec::new(),
     };
@@ -572,6 +578,7 @@ fn scan_base_table(
                 zone: ctx.session_zone(),
                 tidb_info_len: ctx.tidb_info_len(),
                 like_default_escape: ctx.like_default_escape(),
+                no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
                 coalesced: Vec::new(),
                 star: Vec::new(),
                 tables: vec![SourceTable {
@@ -597,6 +604,7 @@ fn scan_base_table(
         zone: ctx.session_zone(),
         tidb_info_len: ctx.tidb_info_len(),
         like_default_escape: ctx.like_default_escape(),
+        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         coalesced: Vec::new(),
         star: Vec::new(),
         tables: vec![SourceTable {
@@ -669,6 +677,7 @@ fn join_sources(
         zone: ctx.session_zone(),
         tidb_info_len: ctx.tidb_info_len(),
         like_default_escape: ctx.like_default_escape(),
+        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         coalesced: Vec::new(),
         star: Vec::new(),
     };

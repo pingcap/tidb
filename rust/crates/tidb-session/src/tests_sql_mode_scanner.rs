@@ -190,6 +190,23 @@ fn high_not_precedence_rebinds_not() {
     assert_eq!(one(&mut session, "SELECT NOT 1 BETWEEN 0 AND 3"), "1");
 }
 
+#[test]
+fn no_unsigned_subtraction_changes_the_result_domain_and_value() {
+    let mut session = Session::new();
+    assert!(session.run("SELECT CAST(0 AS UNSIGNED) - 1").is_err());
+
+    session
+        .run("SET sql_mode='NO_UNSIGNED_SUBTRACTION'")
+        .unwrap();
+    assert_eq!(one(&mut session, "SELECT CAST(0 AS UNSIGNED) - 1"), "-1");
+
+    session.run("CREATE TABLE t (v BIGINT)").unwrap();
+    session
+        .run("INSERT INTO t VALUES (CAST(0 AS UNSIGNED) - 1)")
+        .unwrap();
+    assert_eq!(one(&mut session, "SELECT v FROM t"), "-1");
+}
+
 /// The mode in force is the one AT PARSE TIME: a `SET sql_mode` changes the
 /// statements after it and nothing already parsed. The clearing direction is
 /// the interesting one, because a cached mode would keep answering 4.

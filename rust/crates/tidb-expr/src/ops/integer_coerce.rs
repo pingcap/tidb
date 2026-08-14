@@ -107,10 +107,17 @@ pub(super) fn integer_binary(
         // non-overflowing result keeps its wrapped two's-complement value, typed
         // by `unsigned`.
         Minus => {
-            if minus_overflows(lhs_unsigned, rhs_unsigned, bits_a as i64, bits_b as i64) {
+            let force_signed = ctx.no_unsigned_subtraction();
+            if minus_overflows(
+                lhs_unsigned,
+                rhs_unsigned,
+                force_signed,
+                bits_a as i64,
+                bits_b as i64,
+            ) {
                 return Err(EvalError::IntOverflow);
             }
-            integer_result(unsigned, bits_a.wrapping_sub(bits_b))
+            integer_result(unsigned && !force_signed, bits_a.wrapping_sub(bits_b))
         }
         // `*` matches Go's two sigs, selected by whether either operand is
         // unsigned (`getFunction`: `HasUnsignedFlag(lhs) || HasUnsignedFlag(rhs)`
@@ -238,13 +245,16 @@ pub(super) fn integer_add(a: Integer, b: Integer) -> Result<Datum, EvalError> {
 
 /// A line-for-line port of Go `builtinArithmeticMinusIntSig.overflowCheck`:
 /// `true` when `a - b` overflows the result type. `a`/`b` are the operands
-/// reinterpreted as `i64` (Go passes the raw `int64` bits). `signed` is
-/// `!lhs_unsigned && !rhs_unsigned` — Go's `forceToSigned` is the
-/// `NO_UNSIGNED_SUBTRACTION` sql_mode, which this context-free layer does not
-/// model, so this is the default (mode off). The branch structure and the final
-/// condition mirror Go exactly; verified against goeval across every branch.
-pub(super) fn minus_overflows(lhs_unsigned: bool, rhs_unsigned: bool, a: i64, b: i64) -> bool {
-    let signed = !lhs_unsigned && !rhs_unsigned;
+/// reinterpreted as `i64` (Go passes the raw `int64` bits), and
+/// `force_signed` is `NO_UNSIGNED_SUBTRACTION`.
+pub(super) fn minus_overflows(
+    lhs_unsigned: bool,
+    rhs_unsigned: bool,
+    force_signed: bool,
+    a: i64,
+    b: i64,
+) -> bool {
+    let signed = force_signed || (!lhs_unsigned && !rhs_unsigned);
     let res = a.wrapping_sub(b);
     let (ua, ub) = (a as u64, b as u64);
     let mut res_unsigned = false;
@@ -315,6 +325,40 @@ mod source_tests {
             field_type.add_flags(FieldTypeFlags::UNSIGNED);
         }
         Expression::Column(Column::new(1, field_type))
+    }
+
+    struct NoUnsignedSubtraction;
+
+    impl crate::Columns for NoUnsignedSubtraction {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn no_unsigned_subtraction(&self) -> bool {
+            true
+        }
+    }
+
+    #[test]
+    fn no_unsigned_subtraction_forces_the_signed_value_domain() {
+        assert_eq!(
+            integer_binary(
+                tidb_ast::BinaryOp::Minus,
+                Integer::Unsigned(0),
+                Integer::Signed(1),
+                &NoUnsignedSubtraction,
+            ),
+            Ok(Datum::Int(-1))
+        );
+        assert_eq!(
+            integer_binary(
+                tidb_ast::BinaryOp::Minus,
+                Integer::Unsigned(0),
+                Integer::Signed(1),
+                &NoColumns,
+            ),
+            Err(EvalError::IntOverflow)
+        );
     }
 
     /// Exact scalar-semantic port of Go `TestBuiltinUnaryMinusIntSig` from

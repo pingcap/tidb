@@ -420,6 +420,7 @@ pub(crate) fn pruned_scope(scope: &FromScope, keep: &[usize]) -> FromScope {
             func_deps: remap_func_deps(&table.func_deps, keep, true),
         }],
         zone: scope.zone.clone(),
+        no_unsigned_subtraction: scope.no_unsigned_subtraction,
         ..FromScope::default()
     }
 }

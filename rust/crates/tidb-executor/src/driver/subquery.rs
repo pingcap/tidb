@@ -775,6 +775,7 @@ pub(crate) fn select_outer_scope(
         zone: ctx.session_zone(),
         tidb_info_len: ctx.tidb_info_len(),
         like_default_escape: ctx.like_default_escape(),
+        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         ..FromScope::default()
     };
     match &select.from {

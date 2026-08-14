@@ -23,11 +23,10 @@
 //! shared Datum operator semantics (`ops.rs`), which dispatch on the operand
 //! kinds exactly as the per-signature builtins do.
 //!
-//! DEFERRED (documented): the vector-float32 signatures; the SQL-mode
-//! `NO_UNSIGNED_SUBTRACTION` check in minus (assumed unset -- the default);
-//! `div_precision_increment` is fixed at its default (4) until the session
-//! variable is wired; and `newReturnFieldTypeForBaseBuiltinFunc`'s
-//! boolean-function flag (none of these six are boolean functions).
+//! The remaining type-inference seam is `div_precision_increment`: this pure
+//! entry uses its default (4), while row evaluation already receives the live
+//! statement value. `newReturnFieldTypeForBaseBuiltinFunc`'s boolean flag is
+//! irrelevant because none of these six functions is boolean.
 
 use crate::expression::Expression;
 use tidb_datatype::{
@@ -260,6 +259,18 @@ fn unsigned(ft: Option<&FieldType>) -> bool {
 /// function name.
 #[must_use]
 pub fn infer_arithmetic_type(name: &str, lhs: &Expression, rhs: &Expression) -> Option<FieldType> {
+    infer_arithmetic_type_with_mode(name, lhs, rhs, false)
+}
+
+/// [`infer_arithmetic_type`] under the statement's
+/// `NO_UNSIGNED_SUBTRACTION` mode.
+#[must_use]
+pub fn infer_arithmetic_type_with_mode(
+    name: &str,
+    lhs: &Expression,
+    rhs: &Expression,
+    no_unsigned_subtraction: bool,
+) -> Option<FieldType> {
     let lhs_tp = numeric_context_result_type(lhs);
     let rhs_tp = numeric_context_result_type(rhs);
     let a = lhs.static_type();
@@ -302,9 +313,7 @@ pub fn infer_arithmetic_type(name: &str, lhs: &Expression, rhs: &Expression) -> 
         "plus" | "minus" => {
             if int_result {
                 let mut ret = new_return_field_type(EvalType::Int);
-                // Minus additionally consults NO_UNSIGNED_SUBTRACTION (assumed
-                // unset, the default), making the branches identical here.
-                if unsigned(a) || unsigned(b) {
+                if (name != "minus" || !no_unsigned_subtraction) && (unsigned(a) || unsigned(b)) {
                     ret.add_flags(FieldTypeFlags::UNSIGNED);
                 }
                 ret
@@ -391,6 +400,18 @@ mod tests {
             Datum::Int(v),
             FieldTypeBuilder::new()
                 .with_code(FieldTypeCode::LongLong)
+                .flen_set(MAX_INT_WIDTH)
+                .decimal_set(0)
+                .build(),
+        ))
+    }
+
+    fn uint_expr(v: u64) -> Expression {
+        Expression::Constant(Constant::new(
+            Datum::UInt(v),
+            FieldTypeBuilder::new()
+                .with_code(FieldTypeCode::LongLong)
+                .add_flags(FieldTypeFlags::UNSIGNED)
                 .flen_set(MAX_INT_WIDTH)
                 .decimal_set(0)
                 .build(),
@@ -547,6 +568,20 @@ mod tests {
         assert!(infer_arithmetic_type("mod", &u, &int_expr(1))
             .unwrap()
             .is_unsigned());
+    }
+
+    #[test]
+    fn no_unsigned_subtraction_removes_the_unsigned_result_flag() {
+        let unsigned = uint_expr(0);
+        let signed = int_expr(1);
+        assert!(infer_arithmetic_type("minus", &unsigned, &signed)
+            .unwrap()
+            .is_unsigned());
+        assert!(
+            !infer_arithmetic_type_with_mode("minus", &unsigned, &signed, true)
+                .unwrap()
+                .is_unsigned()
+        );
     }
 
     #[test]

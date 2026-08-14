@@ -426,6 +426,9 @@ pub struct StmtContext {
     /// The all-false default is TiDB's default `sql_mode` for these flags, so
     /// a context with no session behind it lexes exactly as before.
     sql_mode: tidb_parser::SqlMode,
+    /// `NO_UNSIGNED_SUBTRACTION` changes expression typing and evaluation,
+    /// not scanning, so it is kept beside the lexer's compact mode.
+    no_unsigned_subtraction: bool,
     /// The implicit escape byte `LIKE` receives when the syntax omitted an
     /// `ESCAPE` clause. Go derives this from both `sql_mode` and
     /// `tidb_enable_no_backslash_escapes_in_like` while building expressions.
@@ -595,6 +598,7 @@ impl StmtContext {
             sequences: Rc::default(),
             memory: StatementMemory::default(),
             sql_mode: tidb_parser::SqlMode::default(),
+            no_unsigned_subtraction: false,
             like_default_escape: b'\\',
             block_encryption_mode: tidb_expr::BlockEncryptionMode::default(),
             // Go `vardef.DefMaxAllowedPacket`, the value a default server runs
@@ -762,6 +766,13 @@ impl StmtContext {
         self
     }
 
+    /// Attaches `NO_UNSIGNED_SUBTRACTION` for expression build and runtime.
+    #[must_use]
+    pub fn with_no_unsigned_subtraction(mut self, enabled: bool) -> Self {
+        self.no_unsigned_subtraction = enabled;
+        self
+    }
+
     /// Attaches the statement-time implicit `LIKE` escape selected by the
     /// session's SQL mode and `tidb_enable_no_backslash_escapes_in_like`.
     #[must_use]
@@ -781,6 +792,12 @@ impl StmtContext {
     #[must_use]
     pub fn sql_mode(&self) -> tidb_parser::SqlMode {
         self.sql_mode
+    }
+
+    /// Whether subtraction must use a signed result domain.
+    #[must_use]
+    pub fn no_unsigned_subtraction(&self) -> bool {
+        self.no_unsigned_subtraction
     }
 
     /// The implicit `LIKE` escape for expressions built in this statement.
@@ -1621,6 +1638,10 @@ impl StmtContext {
 impl Columns for StmtContext {
     fn get(&self, _: &[String]) -> Option<Datum> {
         None
+    }
+
+    fn no_unsigned_subtraction(&self) -> bool {
+        self.no_unsigned_subtraction
     }
 
     fn now(&self) -> Option<(i64, u32, i32)> {

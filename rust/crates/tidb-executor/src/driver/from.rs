@@ -48,6 +48,9 @@ pub(crate) struct FromScope {
     /// scope state because every expression rewrite beneath this `FROM`
     /// receives only its resolver.
     pub(crate) like_default_escape: u8,
+    /// Statement snapshot of `NO_UNSIGNED_SUBTRACTION` used while expression
+    /// result types are built.
+    pub(crate) no_unsigned_subtraction: bool,
     /// The row offsets a `NATURAL`/`USING` join coalesced AWAY: the inner
     /// side's copy of each common column, which stays reachable through its
     /// own table's qualifier (`SELECT u2.id`) but is invisible to `*` and to
@@ -118,6 +121,7 @@ impl Default for FromScope {
             )
             .len(),
             like_default_escape: b'\\',
+            no_unsigned_subtraction: false,
         }
     }
 }
@@ -225,6 +229,10 @@ impl ColumnResolver for ScopeResolver<'_> {
 
     fn like_default_escape(&self) -> u8 {
         self.scope.like_default_escape
+    }
+
+    fn no_unsigned_subtraction(&self) -> bool {
+        self.scope.no_unsigned_subtraction
     }
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
@@ -710,6 +718,7 @@ pub(crate) fn build_from(
                 zone: ctx.session_zone(),
                 tidb_info_len: ctx.tidb_info_len(),
                 like_default_escape: ctx.like_default_escape(),
+                no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
                 ..FromScope::default()
             };
             // What this leaf DELIVERS -- read off the branch that RAN, which
@@ -854,6 +863,7 @@ pub(crate) fn build_derived_source(
         zone: ctx.session_zone(),
         tidb_info_len: ctx.tidb_info_len(),
         like_default_escape: ctx.like_default_escape(),
+        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         ..FromScope::default()
     };
     Ok((exec, scope))
@@ -1275,6 +1285,7 @@ pub(crate) fn build_view_source(
         zone: ctx.session_zone(),
         tidb_info_len: ctx.tidb_info_len(),
         like_default_escape: ctx.like_default_escape(),
+        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         ..FromScope::default()
     };
     Ok((exec, scope))

@@ -379,6 +379,12 @@ pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
     fn get(&self, path: &[String]) -> Option<Datum>;
 
+    /// Whether the statement's SQL mode forces integer subtraction to use a
+    /// signed result even when an operand is unsigned.
+    fn no_unsigned_subtraction(&self) -> bool {
+        false
+    }
+
     /// The statement's fixed `(utc_secs, nanos, tz_offset_seconds)` clock.
     fn now(&self) -> Option<(i64, u32, i32)> {
         None

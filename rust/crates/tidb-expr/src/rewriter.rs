@@ -94,6 +94,11 @@ pub trait ColumnResolver {
     fn like_default_escape(&self) -> u8 {
         b'\\'
     }
+
+    /// Whether integer subtraction is forced onto the signed result domain.
+    fn no_unsigned_subtraction(&self) -> bool {
+        false
+    }
 }
 
 /// A resolver that knows no columns but folds in a REAL session zone: what
@@ -338,11 +343,21 @@ fn scalar(name: &str, args: Vec<Expression>) -> Expression {
     ))
 }
 
-fn binary_expression(op: BinaryOp, left: Expression, right: Expression) -> Expression {
+fn binary_expression(
+    op: BinaryOp,
+    left: Expression,
+    right: Expression,
+    resolver: &impl ColumnResolver,
+) -> Expression {
     let name = binary_op_name(op);
-    let ret_type = crate::builtin_arithmetic::infer_arithmetic_type(name, &left, &right)
-        .or_else(|| crate::builtin_compare::infer_compare_type(name))
-        .or_else(|| crate::builtin_op::infer_op_type(name));
+    let ret_type = crate::builtin_arithmetic::infer_arithmetic_type_with_mode(
+        name,
+        &left,
+        &right,
+        resolver.no_unsigned_subtraction(),
+    )
+    .or_else(|| crate::builtin_compare::infer_compare_type(name))
+    .or_else(|| crate::builtin_op::infer_op_type(name));
     match ret_type {
         Some(ret_type) => {
             let mut args = vec![left, right];
@@ -375,6 +390,7 @@ fn rewrite_equality(
             BinaryOp::Eq,
             rewrite_expr_resolved(left, resolver)?,
             rewrite_expr_resolved(right, resolver)?,
+            resolver,
         )),
     }
 }
@@ -397,7 +413,12 @@ fn rewrite_row_equality(
         .next()
         .ok_or(EvalError::Unsupported("a row expression with no columns"))??;
     equalities.try_fold(first, |condition, equality| {
-        Ok(binary_expression(BinaryOp::LogicAnd, condition, equality?))
+        Ok(binary_expression(
+            BinaryOp::LogicAnd,
+            condition,
+            equality?,
+            resolver,
+        ))
     })
 }
 
@@ -684,7 +705,12 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                     "an IN expression with no candidates",
                 ))??;
                 let call = comparisons.try_fold(first, |condition, comparison| {
-                    Ok(binary_expression(BinaryOp::LogicOr, condition, comparison?))
+                    Ok(binary_expression(
+                        BinaryOp::LogicOr,
+                        condition,
+                        comparison?,
+                        resolver,
+                    ))
                 })?;
                 if *not {
                     let ret_type = call
@@ -786,7 +812,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             // builtin_compare (eq/nulleq/ne/lt/le/gt/ge) and builtin_op
             // (logic and bit operators). Anything still uncovered keeps the
             // LongLong placeholder.
-            Ok(binary_expression(*op, left, right))
+            Ok(binary_expression(*op, left, right, resolver))
         }
         // Go `expressionRewriter.betweenToExpression`: `x BETWEEN l AND h`
         // is `x >= l AND x <= h`, and the negated form is `x < l OR x > h` --
@@ -806,8 +832,8 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 (BinaryOp::Ge, BinaryOp::Le, "and")
             };
             let compare = binary_expression;
-            let lower = compare(lower_op, value.clone(), low);
-            let upper = compare(upper_op, value, high);
+            let lower = compare(lower_op, value.clone(), low, resolver);
+            let upper = compare(upper_op, value, high, resolver);
             // The joining `AND`/`OR` is a `booleanFunctions` name, so the whole
             // `BETWEEN` result is boolean-flagged: `JSON_ARRAY(x BETWEEN l AND h)`
             // is `[true]`/`[false]`, not `[1]`/`[0]`.
