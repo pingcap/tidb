@@ -68,17 +68,7 @@ fn corpus_dir() -> PathBuf {
 /// Each reason names the missing capability the topic's script depends on
 /// from its very first statement (usually a `CREATE TABLE ... FOREIGN KEY`
 /// or the clause itself), not a narrower per-statement gap.
-const UNSUPPORTED_TOPICS: &[(&str, &str)] = &[
-    // The seven other `foreign_key*` topics came OFF this list when FOREIGN KEY
-    // was transcreated -- removing a topic is the point of a capability unit.
-    // This one stays for a DIFFERENT reason than it was first skipped for: its
-    // FK half now passes, and it is the multi-table `DELETE ... USING` in its
-    // second half that this tier still refuses.
-    (
-        "delete_ignore_foreign_key",
-        "multi-table DELETE ... USING is not modelled",
-    ),
-];
+const UNSUPPORTED_TOPICS: &[(&str, &str)] = &[];
 
 /// Runs one statement against a live [`Session`], returning its outcome
 /// label.

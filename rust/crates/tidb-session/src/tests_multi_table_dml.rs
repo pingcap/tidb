@@ -9,7 +9,7 @@
 
 #![cfg(test)]
 
-use crate::tests_support::row_text;
+use crate::tests_support::{row_text, warnings_of};
 use crate::{Session, StmtResult};
 
 /// Runs `sql` and returns its affected-row count.
@@ -341,6 +341,55 @@ fn multi_table_delete_using_spelling_and_duplicate_targets() {
     assert!(column(&mut session, "SELECT id FROM e1 ORDER BY id").is_empty());
 }
 
+/// Go `TestDeleteIgnoreWithFK`: a multi-table delete is one atomic statement,
+/// while `IGNORE` evaluates each target row independently. Both referenced
+/// row 1 values survive with one warning each; both unreferenced row 2 values
+/// are removed and counted.
+#[test]
+fn multi_table_delete_enforces_foreign_keys_per_target_row() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE parent (a INT PRIMARY KEY)")
+        .unwrap();
+    session
+        .run("CREATE TABLE child (a INT, FOREIGN KEY (a) REFERENCES parent(a))")
+        .unwrap();
+    session
+        .run("CREATE TABLE parent2 (a INT PRIMARY KEY)")
+        .unwrap();
+    session
+        .run("CREATE TABLE child2 (a INT, FOREIGN KEY (a) REFERENCES parent2(a))")
+        .unwrap();
+    session.run("INSERT INTO parent VALUES (1),(2)").unwrap();
+    session.run("INSERT INTO child VALUES (1)").unwrap();
+    session.run("INSERT INTO parent2 VALUES (1),(2)").unwrap();
+    session.run("INSERT INTO child2 VALUES (1)").unwrap();
+
+    let sql = "DELETE FROM parent, parent2 USING parent INNER JOIN parent2 \
+               WHERE parent.a = parent2.a";
+    assert_eq!(session.run(sql).unwrap_err().to_mysql_error().code, 1451);
+    assert_eq!(
+        column(&mut session, "SELECT a FROM parent ORDER BY a"),
+        ["1", "2"]
+    );
+    assert_eq!(
+        column(&mut session, "SELECT a FROM parent2 ORDER BY a"),
+        ["1", "2"]
+    );
+
+    let sql = "DELETE IGNORE FROM parent, parent2 USING parent INNER JOIN parent2 \
+               WHERE parent.a = parent2.a";
+    assert_eq!(affected(&mut session, sql), 2);
+    let mut warning_codes: Vec<_> = warnings_of(&session)
+        .into_iter()
+        .map(|(code, _)| code)
+        .collect();
+    warning_codes.sort_unstable();
+    assert_eq!(warning_codes, [1451, 1451]);
+    assert_eq!(column(&mut session, "SELECT a FROM parent"), ["1"]);
+    assert_eq!(column(&mut session, "SELECT a FROM parent2"), ["1"]);
+}
+
 /// An alias REPLACES the target's name: `DELETE x FROM f1 AS x` deletes,
 /// while `DELETE f1 FROM f1 AS x` -- and any target the `FROM` never
 /// mentions -- is Go's `ERROR 1109 Unknown table '<t>' in MULTI DELETE`. A
@@ -505,8 +554,7 @@ fn multi_table_dml_rejects_order_by_and_limit_where_mysql_does() {
 }
 
 /// `DELETE IGNORE` removes the same rows and reports the same count as a
-/// plain `DELETE` when no per-row failure is available to downgrade -- which
-/// is every row here, since this engine models no foreign keys. Its
+/// plain `DELETE` when no per-row failure is available to downgrade. Its
 /// single-table `ORDER BY`/`LIMIT` tail keeps working.
 #[test]
 fn delete_ignore_matches_plain_delete_without_a_failure_to_downgrade() {

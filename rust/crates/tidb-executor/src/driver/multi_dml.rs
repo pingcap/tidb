@@ -91,7 +91,7 @@
 //! resulting rows. The derived side remains read-only because it has no base
 //! row identity.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use super::*;
 use crate::kv_table::TableHandle;
@@ -1108,8 +1108,8 @@ pub(crate) fn run_multi_delete(
     // several join paths -- or named twice in the target list -- is removed
     // once, and two aliases of one table are still one table here (unlike
     // UPDATE, whose key is the target position).
-    let mut doomed: BTreeSet<(String, String, RowId)> = BTreeSet::new();
-    for (ids, _) in &rows {
+    let mut doomed: BTreeMap<(String, String, RowId), (usize, usize)> = BTreeMap::new();
+    for (row_index, (ids, _)) in rows.iter().enumerate() {
         for &slot in &target_slots {
             let Some(id) = &ids[slot] else { continue };
             let table = &source.tables[slot];
@@ -1117,14 +1117,46 @@ pub(crate) fn run_multi_delete(
             let SourceOrigin::Base { database, name } = &table.origin else {
                 return Err(table.not_updatable("DELETE"));
             };
-            doomed.insert((database.clone(), name.clone(), id.clone()));
+            doomed
+                .entry((database.clone(), name.clone(), id.clone()))
+                .or_insert((row_index, slot));
+        }
+    }
+
+    if ctx.foreign_key_checks() {
+        if delete.ignore {
+            let mut surviving = BTreeMap::new();
+            for (key, location) in doomed {
+                let table = &source.tables[location.1];
+                let row = &rows[location.0].1[table.offset..table.end()];
+                let changes = [crate::foreign_key::ParentChange::Delete(row)];
+                match crate::foreign_key::cascade_parent_changes(
+                    catalog, &key.0, &key.1, &changes, ctx,
+                ) {
+                    Ok(()) => {
+                        surviving.insert(key, location);
+                    }
+                    Err(error) => {
+                        let warning = error.to_mysql_error();
+                        ctx.append_warning_parts(warning.code, &warning.message);
+                    }
+                }
+            }
+            doomed = surviving;
+        } else {
+            for ((database, name, _), location) in &doomed {
+                let table = &source.tables[location.1];
+                let row = &rows[location.0].1[table.offset..table.end()];
+                let changes = [crate::foreign_key::ParentChange::Delete(row)];
+                crate::foreign_key::cascade_parent_changes(catalog, database, name, &changes, ctx)?;
+            }
         }
     }
 
     let deleted = doomed.len() as u64;
     // A matrix-backed table identifies rows by position, so its removals are
     // applied from the back; a stored table's handle is position-independent.
-    for (database, name, id) in doomed.into_iter().rev() {
+    for ((database, name, id), _) in doomed.into_iter().rev() {
         let entry = catalog
             .get_mut_in(&database, &name)
             .ok_or(DriverError::unsupported("unknown table"))?;
