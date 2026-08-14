@@ -364,6 +364,23 @@ impl ScalarFunction {
         if let Some(op) = binary_op_for_name(name) {
             if self.args.len() == 2 {
                 let lhs = self.args[0].eval(ctx, row)?;
+                if matches!(op, BinaryOp::LogicAnd | BinaryOp::LogicOr) {
+                    let lhs = crate::truthy_of(&lhs)?;
+                    match (op, lhs) {
+                        (BinaryOp::LogicAnd, Some(false)) => return Ok(Datum::Int(0)),
+                        (BinaryOp::LogicOr, Some(true)) => return Ok(Datum::Int(1)),
+                        _ => {}
+                    }
+                    let rhs = crate::truthy_of(&self.args[1].eval(ctx, row)?)?;
+                    return Ok(match op {
+                        BinaryOp::LogicAnd if rhs == Some(false) => Datum::Int(0),
+                        BinaryOp::LogicOr if rhs == Some(true) => Datum::Int(1),
+                        _ if lhs.is_none() || rhs.is_none() => Datum::Null,
+                        BinaryOp::LogicAnd => Datum::Int(1),
+                        BinaryOp::LogicOr => Datum::Int(0),
+                        _ => unreachable!("logical operator was guarded"),
+                    });
+                }
                 let rhs = self.args[1].eval(ctx, row)?;
                 // A binary-literal operand carries its signedness in its own
                 // `FieldType` and nowhere else -- `binary_literal_type(len,
@@ -476,6 +493,18 @@ impl ScalarFunction {
                 }
             }
             return Ok(Datum::Null);
+        }
+        if name == "interval" && self.args.len() >= 2 {
+            let arg_types = self
+                .args
+                .iter()
+                .map(|argument| argument.static_type().cloned())
+                .collect::<Vec<_>>();
+            return crate::builtin_ext::interval_lazy(
+                &arg_types,
+                |index| self.args[index].eval(ctx, row),
+                ctx,
+            );
         }
         // Go's CONCAT signatures capture max_allowed_packet at build time and
         // evaluate left-to-right. Crossing the limit returns NULL immediately,
@@ -1425,6 +1454,85 @@ mod tests {
     struct PacketColumns {
         limit: u64,
         warnings: RefCell<Vec<(u16, String)>>,
+    }
+
+    #[derive(Default)]
+    struct WarningColumns {
+        warnings: RefCell<Vec<(u16, String)>>,
+    }
+
+    impl Columns for WarningColumns {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.warnings.borrow_mut().push((code, message.to_owned()));
+        }
+
+        fn warning_count(&self) -> usize {
+            self.warnings.borrow().len()
+        }
+
+        fn truncate_warnings(&self, bookmark: usize) {
+            self.warnings.borrow_mut().truncate(bookmark);
+        }
+    }
+
+    #[test]
+    fn logical_and_interval_skip_unreachable_warning_arguments() {
+        let ctx = WarningColumns::default();
+        let integer = |value| Expression::Constant(Constant::new(Datum::Int(value), ft()));
+        let division = || {
+            let mut decimal = FieldType::new(FieldTypeCode::NewDecimal);
+            decimal.set_flen(15);
+            decimal.set_decimal(4);
+            Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("div"),
+                decimal,
+                vec![integer(1), integer(0)],
+            ))
+        };
+
+        for (name, first, expected) in [("and", 0, 0), ("or", 1, 1)] {
+            let function =
+                ScalarFunction::new(CiString::new(name), ft(), vec![integer(first), division()]);
+            assert_eq!(
+                function.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap(),
+                Datum::Int(expected)
+            );
+            assert!(ctx.warnings.borrow().is_empty());
+        }
+
+        let interval = ScalarFunction::new(
+            CiString::new("interval"),
+            ft(),
+            vec![integer(1), integer(0), integer(1), integer(2), division()],
+        );
+        assert_eq!(
+            interval.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap(),
+            Datum::Int(2)
+        );
+        assert!(ctx.warnings.borrow().is_empty());
+
+        let mut not_null_int = ft();
+        not_null_int.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+        let integer =
+            |value| Expression::Constant(Constant::new(Datum::Int(value), not_null_int.clone()));
+        let unreachable = Expression::ScalarFunction(ScalarFunction::new(
+            CiString::new("not_a_function"),
+            not_null_int.clone(),
+            vec![],
+        ));
+        let interval = ScalarFunction::new(
+            CiString::new("interval"),
+            ft(),
+            vec![integer(1), integer(0), integer(1), integer(2), unreachable],
+        );
+        assert_eq!(
+            interval.eval(&ctx, tidb_chunk::row::Row::empty()).unwrap(),
+            Datum::Int(2)
+        );
     }
 
     impl Columns for PacketColumns {

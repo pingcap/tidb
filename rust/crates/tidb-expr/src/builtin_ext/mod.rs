@@ -32,7 +32,7 @@ pub(crate) mod regexp;
 pub(crate) mod string2;
 pub(crate) mod vec;
 
-pub(crate) use compare2::{extremum_with_signature, GlCmpStringMode, GlSignature};
+pub(crate) use compare2::{extremum_with_signature, interval_lazy, GlCmpStringMode, GlSignature};
 pub(crate) use crypto::eval_aes_lazy;
 pub(crate) use json::{
     cast_as_json, cast_as_json_typed, cast_as_json_value_typed,

@@ -19,7 +19,7 @@ use std::net::{Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
 use tidb_ast::BinaryOp;
-use tidb_datatype::TimeType;
+use tidb_datatype::{EvalType, FieldType, FieldTypeFlags, TimeType};
 
 use crate::coerce::{coerce_str, integer_cmp, integer_of};
 use crate::ops::{to_decimal, to_f64};
@@ -597,6 +597,105 @@ fn interval(vals: &[Datum], ctx: &dyn crate::Columns) -> Result<Datum, EvalError
             .unwrap_or(vals.len() - 1)
     } else {
         boundaries.partition_point(|boundary| boundary.is_some_and(|value| value <= target))
+    };
+    Ok(Datum::Int(index as i64))
+}
+
+/// Evaluates `INTERVAL` directly from its argument expressions.
+///
+/// Go's integer and real signatures evaluate only the boundaries visited by
+/// their linear or binary search. Keeping the arguments behind this closure
+/// is therefore semantic: eagerly collecting every value would surface a
+/// warning or error from a boundary that the search never reads.
+pub(crate) fn interval_lazy(
+    arg_types: &[Option<FieldType>],
+    mut eval: impl FnMut(usize) -> Result<Datum, EvalError>,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
+    debug_assert!(arg_types.len() >= 2);
+    let all_int = arg_types.iter().all(|field_type| {
+        field_type
+            .as_ref()
+            .is_some_and(|ft| ft.eval_type() == EvalType::Int)
+    });
+    let has_nullable = arg_types.iter().any(|field_type| {
+        field_type
+            .as_ref()
+            .is_none_or(|ft| !ft.has_flag(FieldTypeFlags::NOT_NULL))
+    });
+
+    if all_int {
+        let read = |index: usize,
+                    eval: &mut dyn FnMut(usize) -> Result<Datum, EvalError>|
+         -> Result<Option<crate::coerce::Integer>, EvalError> {
+            let value = eval(index)?;
+            let value = crate::cast::cast_arg_as_int(&value, arg_types[index].as_ref(), ctx)?;
+            integer_of(&value)
+        };
+        let Some(target) = read(0, &mut eval)? else {
+            return Ok(Datum::Int(-1));
+        };
+        let index = if has_nullable {
+            let mut result = arg_types.len() - 1;
+            for index in 1..arg_types.len() {
+                if read(index, &mut eval)?
+                    .is_some_and(|boundary| integer_cmp(target, boundary).is_lt())
+                {
+                    result = index - 1;
+                    break;
+                }
+            }
+            result
+        } else {
+            let (mut low, mut high) = (1, arg_types.len());
+            while low < high {
+                let middle = low + (high - low) / 2;
+                if read(middle, &mut eval)?
+                    .is_some_and(|boundary| integer_cmp(target, boundary).is_lt())
+                {
+                    high = middle;
+                } else {
+                    low = middle + 1;
+                }
+            }
+            low - 1
+        };
+        return Ok(Datum::Int(index as i64));
+    }
+
+    let read = |index: usize,
+                eval: &mut dyn FnMut(usize) -> Result<Datum, EvalError>|
+     -> Result<Option<f64>, EvalError> {
+        let value = eval(index)?;
+        if value == Datum::Null {
+            Ok(None)
+        } else {
+            interval_real(&value, ctx).map(Some)
+        }
+    };
+    let Some(target) = read(0, &mut eval)? else {
+        return Ok(Datum::Int(-1));
+    };
+    let index = if has_nullable {
+        let mut result = arg_types.len() - 1;
+        for index in 1..arg_types.len() {
+            if read(index, &mut eval)?.is_some_and(|boundary| target < boundary) {
+                result = index - 1;
+                break;
+            }
+        }
+        result
+    } else {
+        let (mut low, mut high) = (1, arg_types.len());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if read(middle, &mut eval)?.is_some_and(|boundary| target < boundary) {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        low - 1
     };
     Ok(Datum::Int(index as i64))
 }
