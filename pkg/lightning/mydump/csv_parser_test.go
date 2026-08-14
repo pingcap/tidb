@@ -564,7 +564,7 @@ func TestCustomEscapeChar(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NoError(t, parser.ReadRow())
-	require.Equal(t, parsedef.Row{
+	require.Equal(t, mydump.Row{
 		RowID: 1,
 		Row: []types.Datum{
 			types.NewStringDatum(string([]byte{0, '\b', '\n', '\r', '\t', 26, '*', 'q'})),
