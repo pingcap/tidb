@@ -1121,6 +1121,24 @@ impl ScalarFunction {
                 _ => Ok(result),
             };
         }
+        if upper == "TIMESTAMP" {
+            let result = crate::time_fn::add_sub::timestamp(&vals, ctx)?;
+            return crate::cast::parse_computed_time(
+                &result,
+                ctx,
+                tidb_datatype::TimeType::DateTime,
+                None,
+            );
+        }
+        if upper == "SYSDATE" {
+            let result = crate::time_fn::add_sub::sysdate(&vals, ctx)?;
+            return crate::cast::parse_computed_time(
+                &result,
+                ctx,
+                tidb_datatype::TimeType::DateTime,
+                self.get_static_type().map(FieldType::decimal),
+            );
+        }
         if matches!(upper.as_str(), "ROUND" | "TRUNCATE")
             && matches!(vals.first(), Some(Datum::Decimal(_)))
         {

@@ -306,6 +306,39 @@ fn add_sub_time_return_type(args: &[Expression]) -> Option<FieldType> {
     Some(result)
 }
 
+fn timestamp_return_type(args: &[Expression]) -> Option<FieldType> {
+    if !(1..=2).contains(&args.len()) {
+        return None;
+    }
+    let fsp = args.iter().map(time_argument_fsp).max().unwrap_or(0);
+    let mut result = FieldType::new(FieldTypeCode::Datetime);
+    result.set_decimal(fsp);
+    result.set_flen(19 + if fsp == 0 { 0 } else { fsp + 1 });
+    set_binary_charset(&mut result);
+    Some(result)
+}
+
+fn sysdate_return_type(args: &[Expression]) -> Option<FieldType> {
+    let fsp = match args {
+        [] => 0,
+        [Expression::Constant(constant)] => match &constant.value {
+            Datum::Int(value) => *value,
+            Datum::UInt(value) => i64::try_from(*value).ok()?,
+            value => value.sql_string().ok()?.parse().ok()?,
+        },
+        _ => return None,
+    };
+    if !(0..=6).contains(&fsp) {
+        return None;
+    }
+    let mut result = FieldType::new(FieldTypeCode::Datetime);
+    result.set_decimal(fsp);
+    result.set_flen(19 + if fsp == 0 { 0 } else { fsp + 1 });
+    result.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    set_binary_charset(&mut result);
+    Some(result)
+}
+
 fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
     use tidb_datatype::EvalType;
 
@@ -706,7 +739,9 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         | "curtime" | "current_time" | "utc_time" | "monthname" | "dayname" | "last_day"
         | "sec_to_time" | "maketime" | "makedate" | "from_days" | "date_format" | "str_to_date" => text(),
         "addtime" | "subtime" => add_sub_time_return_type(args)?,
-        "timestamp" | "timestampadd" | "sysdate" => text(),
+        "timestamp" => timestamp_return_type(args)?,
+        "sysdate" => sysdate_return_type(args)?,
+        "timestampadd" => text(),
         "month" | "day" | "dayofmonth" | "dayofweek" | "dayofyear" | "weekday" | "quarter"
         | "week" | "weekofyear" | "yearweek" | "year" | "hour" | "minute" | "second"
         | "microsecond" | "time_to_sec" | "to_days" | "period_add" | "period_diff"

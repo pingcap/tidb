@@ -1156,7 +1156,9 @@ fn addtime_and_subtime_match_the_captured_session_answers() {
     }
 }
 
-/// `TIMESTAMP`, `TIMESTAMPADD`, captured the same way.
+/// `TIMESTAMP`, `TIMESTAMPADD`, captured the same way. The AST-only adapter
+/// renders both through text, while the typed chunk path preserves Go's
+/// native DATETIME result for `TIMESTAMP`.
 #[test]
 fn timestamp_and_timestampadd_match_the_captured_session_answers() {
     for (expr, want) in [
@@ -1249,7 +1251,12 @@ fn timestamp_and_timestampadd_match_the_captured_session_answers() {
         ("timestampadd(second, 1, '9999-12-31 23:59:59')", "NULL"),
     ] {
         assert_eq!(e(expr), want, "{expr}");
-        assert_eq!(chunk_e(expr), want, "{expr} (chunk tier)");
+        let chunk_want = if expr.starts_with("timestamp(") {
+            want.replacen("STR:", "TIME:", 1)
+        } else {
+            want.to_owned()
+        };
+        assert_eq!(chunk_e(expr), chunk_want, "{expr} (chunk tier)");
     }
 }
 

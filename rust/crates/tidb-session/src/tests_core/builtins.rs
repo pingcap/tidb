@@ -2024,6 +2024,35 @@ fn addtime_selects_its_signature_from_the_column_types() {
     }
 }
 
+#[test]
+fn timestamp_returns_native_datetime() {
+    let mut session = Session::new();
+    let StmtOutput::Rows { columns, rows, .. } = session
+        .run_with_columns(
+            "SELECT TIMESTAMP('2024-01-02 03:04:05.123'), \
+                    TIMESTAMP('2024-01-02 03:04:05.123', '00:00:00.000456')",
+        )
+        .unwrap()
+    else {
+        panic!("TIMESTAMP did not return rows")
+    };
+    assert_eq!(columns[0].1.code(), tidb_datatype::FieldTypeCode::Datetime);
+    assert_eq!(columns[0].1.flen(), 23);
+    assert_eq!(columns[0].1.decimal(), 3);
+    assert_eq!(columns[1].1.code(), tidb_datatype::FieldTypeCode::Datetime);
+    assert_eq!(columns[1].1.flen(), 26);
+    assert_eq!(columns[1].1.decimal(), 6);
+    assert_eq!(
+        rows.into_iter()
+            .map(|row| row
+                .into_iter()
+                .map(|value| value.sql_string().unwrap())
+                .collect())
+            .collect::<Vec<Vec<_>>>(),
+        [["2024-01-02 03:04:05.123", "2024-01-02 03:04:05.123456"]]
+    );
+}
+
 /// With `tidb_sysdate_is_now=OFF`, `SYSDATE` calls `time.Now()` per
 /// evaluation while `NOW` returns the fixed statement timestamp.
 #[test]
@@ -2032,15 +2061,21 @@ fn sysdate_reads_the_wall_clock_and_not_the_statement_timestamp() {
     session.run("SET time_zone = '+00:00'").unwrap();
     session.run("SET timestamp = 1").unwrap();
     session.run("SET tidb_sysdate_is_now = OFF").unwrap();
-    let StmtResult::Rows(rows) = session
-        .run("SELECT SYSDATE(), SYSDATE(3), SYSDATE() = NOW()")
+    let StmtOutput::Rows { columns, rows, .. } = session
+        .run_with_columns("SELECT SYSDATE(), SYSDATE(3), SYSDATE() = NOW()")
         .unwrap()
     else {
         panic!("SYSDATE did not produce rows")
     };
+    assert_eq!(columns[0].1.code(), tidb_datatype::FieldTypeCode::Datetime);
+    assert_eq!(columns[0].1.flen(), 19);
+    assert_eq!(columns[0].1.decimal(), 0);
+    assert_eq!(columns[1].1.code(), tidb_datatype::FieldTypeCode::Datetime);
+    assert_eq!(columns[1].1.flen(), 23);
+    assert_eq!(columns[1].1.decimal(), 3);
     let text = |value: &Datum| match value {
-        Datum::String(payload) => payload.as_utf8().expect("SYSDATE is UTF-8").to_owned(),
-        other => panic!("SYSDATE did not produce a string: {other:?}"),
+        Datum::Time(value) => value.to_string(),
+        other => panic!("SYSDATE did not produce a datetime: {other:?}"),
     };
     let plain = text(&rows[0][0]);
     let with_fsp = text(&rows[0][1]);
