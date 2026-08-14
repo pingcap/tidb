@@ -274,6 +274,38 @@ fn time_return_type(args: &[Expression]) -> Option<FieldType> {
     Some(ft)
 }
 
+fn add_sub_time_return_type(args: &[Expression]) -> Option<FieldType> {
+    let [left, right] = args else {
+        return None;
+    };
+    let fsp = time_argument_fsp(left).max(time_argument_fsp(right)).min(6);
+    let code = match left.static_type()?.code() {
+        FieldTypeCode::Datetime | FieldTypeCode::Timestamp => FieldTypeCode::Datetime,
+        FieldTypeCode::Duration => FieldTypeCode::Duration,
+        _ => FieldTypeCode::String,
+    };
+    let mut result = FieldType::new(code);
+    match code {
+        FieldTypeCode::Datetime | FieldTypeCode::Duration => {
+            result.set_decimal(fsp);
+            result.set_flen(
+                if code == FieldTypeCode::Datetime {
+                    19
+                } else {
+                    10
+                } + if fsp == 0 { 0 } else { fsp + 1 },
+            );
+            set_binary_charset(&mut result);
+        }
+        FieldTypeCode::String => {
+            result.set_flen(26);
+            result.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+        }
+        _ => unreachable!("ADDTIME result type is closed"),
+    }
+    Some(result)
+}
+
 fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
     use tidb_datatype::EvalType;
 
@@ -672,14 +704,9 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "now" | "current_timestamp" | "localtime" | "localtimestamp" | "utc_timestamp"
         | "curdate" | "current_date" | "utc_date"
         | "curtime" | "current_time" | "utc_time" | "monthname" | "dayname" | "last_day"
-        | "sec_to_time" | "maketime" | "makedate" | "from_days" | "date_format" | "str_to_date"
-        // `ADDTIME`/`SUBTIME` return one of Go's THREE result types
-        // (`getBf4TimeAddSub`: DATETIME, TIME or STRING, chosen from the
-        // first argument's own type), `TIMESTAMP` a DATETIME and
-        // `TIMESTAMPADD`/`SYSDATE` a VarString and a DATETIME. All five land
-        // on the same documented divergence as the rest of this family: the
-        // value is the formatted string, so the reported type is text.
-        | "addtime" | "subtime" | "timestamp" | "timestampadd" | "sysdate" => text(),
+        | "sec_to_time" | "maketime" | "makedate" | "from_days" | "date_format" | "str_to_date" => text(),
+        "addtime" | "subtime" => add_sub_time_return_type(args)?,
+        "timestamp" | "timestampadd" | "sysdate" => text(),
         "month" | "day" | "dayofmonth" | "dayofweek" | "dayofyear" | "weekday" | "quarter"
         | "week" | "weekofyear" | "yearweek" | "year" | "hour" | "minute" | "second"
         | "microsecond" | "time_to_sec" | "to_days" | "period_add" | "period_diff"

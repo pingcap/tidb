@@ -762,13 +762,13 @@ impl ScalarFunction {
                         &result,
                         ctx,
                         tidb_datatype::TimeType::Date,
-                        0,
+                        Some(0),
                     ),
                     tidb_datatype::FieldTypeCode::Datetime => crate::cast::parse_computed_time(
                         &result,
                         ctx,
                         tidb_datatype::TimeType::DateTime,
-                        result_type.decimal(),
+                        Some(result_type.decimal()),
                     ),
                     _ => Ok(result),
                 };
@@ -1107,7 +1107,19 @@ impl ScalarFunction {
                 .iter()
                 .all(|arg| matches!(arg, Expression::Constant(_)));
             let sign = if upper == "SUBTIME" { -1 } else { 1 };
-            return add_sub_time(&vals, kinds, sign, row_path, ctx);
+            let result = add_sub_time(&vals, kinds, sign, row_path, ctx)?;
+            return match self.get_static_type().map(FieldType::code) {
+                Some(tidb_datatype::FieldTypeCode::Datetime) => crate::cast::parse_computed_time(
+                    &result,
+                    ctx,
+                    tidb_datatype::TimeType::DateTime,
+                    None,
+                ),
+                Some(tidb_datatype::FieldTypeCode::Duration) => {
+                    crate::cast::parse_computed_duration(&result, ctx)
+                }
+                _ => Ok(result),
+            };
         }
         if matches!(upper.as_str(), "ROUND" | "TRUNCATE")
             && matches!(vals.first(), Some(Datum::Decimal(_)))

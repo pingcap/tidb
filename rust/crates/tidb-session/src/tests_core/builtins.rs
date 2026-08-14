@@ -1960,6 +1960,25 @@ fn addtime_selects_its_signature_from_the_column_types() {
              '01:02:03','2020-01-01','2020-01-01 10:00:00')",
         )
         .unwrap();
+    let StmtOutput::Rows { columns, .. } = session
+        .run_with_columns(
+            "SELECT ADDTIME(dt, tm), ADDTIME(tm, tm6), ADDTIME(dd, tm), \
+                    SUBTIME(dt, tm) FROM w",
+        )
+        .unwrap()
+    else {
+        panic!("typed ADDTIME query did not return rows")
+    };
+    assert_eq!(columns[0].1.code(), tidb_datatype::FieldTypeCode::Datetime);
+    assert_eq!(columns[0].1.flen(), 24);
+    assert_eq!(columns[0].1.decimal(), 4);
+    assert_eq!(columns[1].1.code(), tidb_datatype::FieldTypeCode::Duration);
+    assert_eq!(columns[1].1.flen(), 17);
+    assert_eq!(columns[1].1.decimal(), 6);
+    assert_eq!(columns[2].1.code(), tidb_datatype::FieldTypeCode::String);
+    assert_eq!(columns[2].1.flen(), 26);
+    assert_eq!(columns[2].1.decimal(), tidb_datatype::UNSPECIFIED_LENGTH);
+    assert_eq!(columns[3].1.code(), tidb_datatype::FieldTypeCode::Datetime);
     for (expr, want) in [
         // DATETIME + TIME: the result's fsp is the DATETIME's own, because
         // the vectorized arm hands `Time.Add` a `Duration{Fsp: -1}`. The
@@ -1977,6 +1996,7 @@ fn addtime_selects_its_signature_from_the_column_types() {
         ("addtime(tm, tm)", "02:04:06.9134"),
         ("addtime(tm, tm6)", "02:04:06.913489"),
         ("addtime(t0, tm)", "02:04:06.4567"),
+        ("subtime(dt, tm)", "2020-01-01 08:57:56.666"),
         // A VARCHAR first argument sniffs its own text at RUNTIME, and the
         // VECTORIZED body has no `<digits>-<rest>` guard, so this is the one
         // that differs from the constant-folded spelling (which is NULL).
@@ -1984,8 +2004,8 @@ fn addtime_selects_its_signature_from_the_column_types() {
         ("addtime(s, tm)", "2020-01-01 11:02:03.456700"),
     ] {
         assert_eq!(
-            session.run(&format!("SELECT {expr} FROM w")).unwrap(),
-            StmtResult::Rows(vec![vec![Datum::new_string(want)]]),
+            row_text(session.run(&format!("SELECT {expr} FROM w"))),
+            [[want]],
             "{expr}"
         );
     }

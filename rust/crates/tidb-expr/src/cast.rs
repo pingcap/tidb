@@ -1059,9 +1059,20 @@ pub(crate) fn parse_computed_time(
     value: &Datum,
     ctx: &dyn crate::Columns,
     kind: tidb_datatype::TimeType,
-    fsp: i64,
+    fsp: Option<i64>,
 ) -> Result<Datum, EvalError> {
-    Ok(cast_to_time_value(value, None, ctx, kind, Some(fsp))?.map_or(Datum::Null, Datum::Time))
+    Ok(cast_to_time_value(value, None, ctx, kind, fsp)?.map_or(Datum::Null, Datum::Time))
+}
+
+pub(crate) fn parse_computed_duration(
+    value: &Datum,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
+    let fsp = value.sql_string().ok().map_or(0, |text| {
+        text.rsplit_once('.')
+            .map_or(0, |(_, fraction)| fraction.len().min(6) as i64)
+    });
+    cast_to_duration(value, None, ctx, fsp)
 }
 
 /// Go's `WrapWithCastAsTime(ctx, expr, types.NewFieldType(mysql.TypeDatetime))`
