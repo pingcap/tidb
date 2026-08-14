@@ -333,6 +333,8 @@ impl DomainMap {
 /// tier (documented deferral).
 pub struct Session {
     catalog: SharedCatalog,
+    /// Metadata snapshot cache keyed by the catalog mutation version.
+    tidb_decode_key_cache: RefCell<Option<(u64, Rc<tidb_executor::TidbDecodeKeySnapshot>)>>,
     /// One connection-wide memory/disk tracker pair. Every statement gets a
     /// fresh child below these roots, so an open cursor remains counted when
     /// the client starts its next command.
@@ -509,6 +511,7 @@ impl Default for Session {
     fn default() -> Self {
         Session {
             catalog: SharedCatalog::default(),
+            tidb_decode_key_cache: RefCell::new(None),
             session_memory: tidb_executor::SessionMemory::new(
                 tidb_util::memory::DEF_MEM_QUOTA_QUERY,
                 tidb_executor::OomAction::Cancel,
@@ -1072,6 +1075,8 @@ mod tests_support;
 mod tests_sysbench_access;
 #[cfg(test)]
 mod tests_system_schemas;
+#[cfg(test)]
+mod tests_tidb_decode_key;
 #[cfg(test)]
 mod tests_timestamp_range;
 #[cfg(test)]

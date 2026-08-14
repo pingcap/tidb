@@ -270,6 +270,8 @@ pub struct StmtContext {
     /// The already-rendered `CURRENT_ROLE()` text; see `Columns::current_role`.
     current_role: Option<String>,
     connection_id: Option<u64>,
+    /// Statement-version catalog metadata used by `TIDB_DECODE_KEY`.
+    tidb_decode_key_snapshot: Option<Rc<crate::TidbDecodeKeySnapshot>>,
     /// Go session advisory-lock map and its shared physical lock authority.
     advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
     /// Go `StatementContext`'s fixed statement time as
@@ -586,6 +588,7 @@ impl StmtContext {
             login_user: None,
             global_sysvars: Rc::default(),
             connection_id: None,
+            tidb_decode_key_snapshot: None,
             advisory_locks: crate::advisory_lock_state::AdvisoryLockSession::default(),
             now: None,
             sysdate_is_now: false,
@@ -1251,6 +1254,16 @@ impl StmtContext {
         self
     }
 
+    /// Attaches the catalog metadata visible to this statement.
+    #[must_use]
+    pub fn with_tidb_decode_key_snapshot(
+        mut self,
+        snapshot: Rc<crate::TidbDecodeKeySnapshot>,
+    ) -> Self {
+        self.tidb_decode_key_snapshot = Some(snapshot);
+        self
+    }
+
     /// Attaches the session-scoped generator unseeded `RAND()` reads and
     /// advances, which Go keeps on `SessionVars.Rng` for the session's whole
     /// lifetime (shared across statements, unlike constant `RAND(N)`'s
@@ -1800,6 +1813,19 @@ impl Columns for StmtContext {
 
     fn connection_id(&self) -> Option<u64> {
         self.connection_id
+    }
+
+    fn tidb_decode_key(&self, input: &[u8]) -> Vec<u8> {
+        let Some(snapshot) = &self.tidb_decode_key_snapshot else {
+            return input.to_vec();
+        };
+        match snapshot.decode(input, &self.time_zone()) {
+            Ok(decoded) => decoded,
+            Err(message) => {
+                self.append_warning(1105, &message);
+                input.to_vec()
+            }
+        }
     }
 
     fn acquire_advisory_lock(

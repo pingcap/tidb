@@ -350,6 +350,7 @@ const fn string_arg_mask(name: &str) -> ArgMask {
         // decoders declare their sole argument as `types.ETString`.
         b"TIDB_DECODE_PLAN"
         | b"TIDB_DECODE_BINARY_PLAN"
+        | b"TIDB_DECODE_KEY"
         | b"TIDB_ENCODE_SQL_DIGEST"
         | b"VEC_FROM_TEXT" => 1 << 0,
         // `getFormatFunctionClass`: the selector is lowered to a string

@@ -517,6 +517,12 @@ pub trait Columns {
         None
     }
 
+    /// Go `TIDB_DECODE_KEY`'s statement infoschema hook. A resolver without
+    /// a session has no hook and returns the input unchanged.
+    fn tidb_decode_key(&self, input: &[u8]) -> Vec<u8> {
+        input.to_vec()
+    }
+
     /// Acquires a session advisory lock. `Ok(false)` is lock-wait timeout.
     fn acquire_advisory_lock(
         &self,

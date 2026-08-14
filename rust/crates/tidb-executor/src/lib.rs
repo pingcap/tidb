@@ -85,6 +85,7 @@ pub(crate) mod merge_join_plan;
 pub mod partition_pruning;
 pub mod partition_routing;
 pub(crate) mod ranger_detacher;
+mod tidb_decode_key;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
 mod plan_trace;
 pub mod point_get;
@@ -159,6 +160,7 @@ pub use stmt_context::{
 pub use stream_agg::StreamAggExec;
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
+pub use tidb_decode_key::TidbDecodeKeySnapshot;
 /// The level a statement warning carries -- Go's three `contextutil` levels,
 /// re-exported so the session can read the one a `StmtContext` recorded
 /// without depending on `tidb-distsql` directly.

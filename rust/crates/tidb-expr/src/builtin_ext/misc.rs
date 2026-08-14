@@ -55,9 +55,20 @@ pub(crate) fn dispatch_in(
         ("BIN_TO_UUID", [value]) => Some(bin_to_uuid(value, None)),
         ("BIN_TO_UUID", [value, flag]) => Some(bin_to_uuid(value, Some(flag))),
         ("TIDB_SHARD", [value]) => Some(tidb_shard(value, ctx)),
+        ("TIDB_DECODE_KEY", [value]) => Some(tidb_decode_key(value, ctx)),
         ("VITESS_HASH", [value]) => Some(vitess_hash(value, ctx)),
         _ => None,
     }
+}
+
+fn tidb_decode_key(value: &Datum, ctx: &dyn crate::Columns) -> Result<Datum, EvalError> {
+    if value.is_null() {
+        return Ok(Datum::Null);
+    }
+    let input = value
+        .sql_bytes()
+        .map_err(|_| EvalError::IncorrectArguments("tidb_decode_key".to_owned()))?;
+    Ok(Datum::new_string(ctx.tidb_decode_key(&input)))
 }
 
 #[derive(Default)]

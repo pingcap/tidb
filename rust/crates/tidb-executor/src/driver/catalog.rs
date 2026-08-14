@@ -587,6 +587,20 @@ impl Catalog {
         self.version
     }
 
+    /// Captures only the immutable schema metadata needed by `TIDB_DECODE_KEY`.
+    #[must_use]
+    pub fn tidb_decode_key_snapshot(&self) -> crate::TidbDecodeKeySnapshot {
+        let mut snapshot = crate::TidbDecodeKeySnapshot::default();
+        for database in self.databases.values() {
+            for entry in database.tables.values() {
+                if let TableEntry::Kv(table) = entry {
+                    snapshot.insert_table(table);
+                }
+            }
+        }
+        snapshot
+    }
+
     /// Empties every table's staged-write mark: the state Go's transaction
     /// membuffer is in before a transaction has written anything, which is
     /// what `session.HasDirtyContent` (`pkg/session/txn.go:730`) reads.

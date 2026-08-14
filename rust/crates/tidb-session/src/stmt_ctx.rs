@@ -234,6 +234,21 @@ impl Session {
         ))
     }
 
+    fn tidb_decode_key_snapshot(&self) -> Rc<tidb_executor::TidbDecodeKeySnapshot> {
+        let Ok(catalog) = self.catalog.lock() else {
+            return Rc::default();
+        };
+        let version = catalog.version();
+        if let Some((cached_version, snapshot)) = self.tidb_decode_key_cache.borrow().as_ref() {
+            if *cached_version == version {
+                return Rc::clone(snapshot);
+            }
+        }
+        let snapshot = Rc::new(catalog.tidb_decode_key_snapshot());
+        *self.tidb_decode_key_cache.borrow_mut() = Some((version, Rc::clone(&snapshot)));
+        snapshot
+    }
+
     /// The scanner-facing half of `@@sql_mode`: the input Go hands
     /// `Parser.SetSQLMode`, read fresh at every parse so a `SET sql_mode`
     /// changes the statements AFTER it and no AST built before it.
@@ -580,6 +595,7 @@ impl Session {
                 .with_apply_cache_capacity(apply_cache_capacity)
                 .with_block_encryption_mode(block_encryption_mode)
                 .with_sequences(self.sequence_snapshot())
+                .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
                 .with_sql_mode(scanner_sql_mode_of(&mode))
                 .with_no_unsigned_subtraction(has("NO_UNSIGNED_SUBTRACTION"))
                 .with_like_default_escape(like_default_escape)
@@ -621,6 +637,7 @@ impl Session {
         .with_apply_cache_capacity(apply_cache_capacity)
         .with_block_encryption_mode(block_encryption_mode)
         .with_sequences(self.sequence_snapshot())
+        .with_tidb_decode_key_snapshot(self.tidb_decode_key_snapshot())
         .with_sysdate_is_now(sysdate_is_now)
         .with_clock(clock, zone)
         .with_sql_mode(scanner_sql_mode_of(&mode))

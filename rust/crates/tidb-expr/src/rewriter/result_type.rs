@@ -1598,7 +1598,10 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "interval" if args.len() >= 2 => int(),
         // These information functions return connection-charset text with no fixed flen.
         "format_bytes" | "format_nano_time" if args.len() == 1 => text(),
-        "tidb_decode_plan" | "tidb_decode_binary_plan" | "tidb_encode_sql_digest"
+        "tidb_decode_plan"
+        | "tidb_decode_binary_plan"
+        | "tidb_decode_key"
+        | "tidb_encode_sql_digest"
             if args.len() == 1 =>
         {
             text()
