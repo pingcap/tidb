@@ -1269,6 +1269,13 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             ft.set_decimal(0);
             ft
         }
+        // Go's three UUID generators return canonical UUID text in the
+        // connection charset.
+        "uuid" | "uuid_v4" | "uuid_v7" if args.is_empty() => {
+            let mut ft = text();
+            ft.set_flen(36);
+            ft
+        }
         // Go `tidbShardFunctionClass` (`builtin_miscellaneous.go:1982`) and
         // `vitessHashFunctionClass` (`:1760`): both are UNSIGNED ints with
         // `types.SetBinChsClnFlag`. `TIDB_SHARD` is flen 4 because its value

@@ -11,8 +11,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Stateless miscellaneous scalar builtins. This is a separate family so
-//! unrelated expression workers do not have to edit the central dispatcher.
+//! Miscellaneous scalar builtins. This is a separate family so unrelated
+//! expression workers do not have to edit the central dispatcher.
+
+use std::sync::{Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::coerce::coerce_str;
 use crate::{Datum, Decimal, EvalError};
@@ -31,6 +34,9 @@ pub(crate) fn dispatch_in(
     ctx: &dyn crate::Columns,
 ) -> Option<Result<Datum, EvalError>> {
     match (name, vals) {
+        ("UUID", []) => Some(uuid_v1()),
+        ("UUID_V4", []) => Some(uuid_v4()),
+        ("UUID_V7", []) => Some(uuid_v7()),
         ("ANY_VALUE", [value]) => Some(Ok(value.clone())),
         // Go's nameConstFunctionClass selects a typed signature from the
         // second argument and every builtinNameConst*Sig evaluator returns
@@ -52,6 +58,115 @@ pub(crate) fn dispatch_in(
         ("VITESS_HASH", [value]) => Some(vitess_hash(value, ctx)),
         _ => None,
     }
+}
+
+#[derive(Default)]
+struct UuidClock {
+    last_v1: u64,
+    clock_sequence: u16,
+    node: [u8; 6],
+    initialized: bool,
+    last_v7: u64,
+}
+
+fn uuid_clock() -> &'static Mutex<UuidClock> {
+    static CLOCK: OnceLock<Mutex<UuidClock>> = OnceLock::new();
+    CLOCK.get_or_init(|| Mutex::new(UuidClock::default()))
+}
+
+fn unix_nanos() -> Result<u128, EvalError> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .map_err(|_| EvalError::Unsupported("system clock is before the Unix epoch"))
+}
+
+fn random_bytes(bytes: &mut [u8]) -> Result<(), EvalError> {
+    getrandom::fill(bytes).map_err(|_| EvalError::Unsupported("OS random source unavailable"))
+}
+
+/// `UUID()`: RFC 9562 version 1, following the clock/sequence layout used by
+/// TiDB's pinned `google/uuid.NewUUID`. The node identifier uses that
+/// library's process-random fallback instead of exposing a hardware address;
+/// it remains process-stable, and the 14-bit clock sequence advances whenever
+/// the clock does not advance.
+fn uuid_v1() -> Result<Datum, EvalError> {
+    let unix_100ns = u64::try_from(unix_nanos()? / 100)
+        .map_err(|_| EvalError::Unsupported("system clock exceeds the UUID time domain"))?;
+    let timestamp =
+        unix_100ns
+            .checked_add(UUID_EPOCH_100NS as u64)
+            .ok_or(EvalError::Unsupported(
+                "system clock exceeds the UUID time domain",
+            ))?;
+    let mut state = uuid_clock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !state.initialized {
+        let mut seed = [0_u8; 8];
+        random_bytes(&mut seed)?;
+        state.clock_sequence = (u16::from_be_bytes([seed[0], seed[1]]) & 0x3fff) | 0x8000;
+        state.node.copy_from_slice(&seed[2..]);
+        state.initialized = true;
+    }
+    if timestamp <= state.last_v1 {
+        state.clock_sequence = ((state.clock_sequence + 1) & 0x3fff) | 0x8000;
+    }
+    state.last_v1 = timestamp;
+
+    let mut uuid = [0_u8; 16];
+    uuid[..4].copy_from_slice(&(timestamp as u32).to_be_bytes());
+    uuid[4..6].copy_from_slice(&((timestamp >> 32) as u16).to_be_bytes());
+    uuid[6..8].copy_from_slice(&(((timestamp >> 48) as u16 & 0x0fff) | 0x1000).to_be_bytes());
+    uuid[8..10].copy_from_slice(&state.clock_sequence.to_be_bytes());
+    uuid[10..].copy_from_slice(&state.node);
+    Ok(Datum::new_string(format_uuid(&uuid)))
+}
+
+/// `UUID_V4()`: 122 random bits with the RFC version and variant bits.
+fn uuid_v4() -> Result<Datum, EvalError> {
+    let mut uuid = [0_u8; 16];
+    random_bytes(&mut uuid)?;
+    uuid[6] = (uuid[6] & 0x0f) | 0x40;
+    uuid[8] = (uuid[8] & 0x3f) | 0x80;
+    Ok(Datum::new_string(format_uuid(&uuid)))
+}
+
+/// `UUID_V7()`: the Unix-millisecond prefix and sub-millisecond sequence
+/// used by TiDB's pinned `google/uuid.NewV7`, plus random tail bits.
+fn uuid_v7() -> Result<Datum, EvalError> {
+    let mut uuid = [0_u8; 16];
+    random_bytes(&mut uuid)?;
+    uuid[8] = (uuid[8] & 0x3f) | 0x80;
+
+    let nanos = unix_nanos()?;
+    let millis = u64::try_from(nanos / 1_000_000)
+        .map_err(|_| EvalError::Unsupported("system clock exceeds the UUID time domain"))?;
+    let sub_millis = u64::try_from((nanos % 1_000_000) >> 8)
+        .map_err(|_| EvalError::Unsupported("system clock exceeds the UUID time domain"))?;
+    let mut state = uuid_clock()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut combined = millis
+        .checked_mul(1 << 12)
+        .and_then(|value| value.checked_add(sub_millis))
+        .ok_or(EvalError::Unsupported(
+            "system clock exceeds the UUID time domain",
+        ))?;
+    if combined <= state.last_v7 {
+        combined = state.last_v7.checked_add(1).ok_or(EvalError::Unsupported(
+            "system clock exceeds the UUID time domain",
+        ))?;
+    }
+    state.last_v7 = combined;
+    let millis = combined >> 12;
+    let sequence = combined & 0x0fff;
+
+    let time = millis.to_be_bytes();
+    uuid[..6].copy_from_slice(&time[2..]);
+    uuid[6] = 0x70 | (sequence >> 8) as u8;
+    uuid[7] = sequence as u8;
+    Ok(Datum::new_string(format_uuid(&uuid)))
 }
 
 /// `UUID_TO_BIN(string_uuid, swap_flag)`, ported from
