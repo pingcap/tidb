@@ -311,6 +311,27 @@ impl ScalarFunction {
         if same_eval_family(&value, ret_type) {
             return Ok(value);
         }
+        // COALESCE is the one control function built with
+        // `newBaseBuiltinFuncWithTp`: each argument is cast only to the
+        // merged EVAL FAMILY. `WrapWithCastAsDecimal` therefore preserves an
+        // integer argument's own scale (zero); it does not cast the selected
+        // value to the merged result's wider scale. IF/IFNULL/CASE use
+        // `newBaseBuiltinFuncWithFieldTypes` instead and intentionally cast
+        // to the full merged FieldType. Keep that source-owned distinction so
+        // `COALESCE(1, 1/0)` returns decimal `1`, not decimal `1.0000`.
+        if ret_type.eval_type() == tidb_datatype::EvalType::Decimal
+            && self.func_name.lowercase() == "coalesce"
+        {
+            match value {
+                Datum::Int(value) => {
+                    return Ok(Datum::Decimal(tidb_datatype::Decimal::from_int(value)));
+                }
+                Datum::UInt(value) => {
+                    return Ok(Datum::Decimal(tidb_datatype::Decimal::from_uint(value)));
+                }
+                _ => {}
+            }
+        }
         match value.convert_to(ret_type, tidb_datatype::DEFAULT_STATEMENT_FLAGS) {
             Ok(converted) => Ok(converted.value),
             Err(_) => Ok(value),
@@ -1837,6 +1858,22 @@ mod tests {
             vec![konst(Datum::Null), konst(Datum::Int(7))],
         );
         assert_eq!(coalesce.eval(&NoColumns, row).unwrap(), Datum::Int(7));
+
+        // `InferType4ControlFuncs` widens the result metadata to the widest
+        // branch scale, but Go's `WrapWithCastAsDecimal` converts this
+        // selected integer argument at scale zero before COALESCE returns it.
+        let mut decimal_four = FieldType::new(FieldTypeCode::NewDecimal);
+        decimal_four.set_flen(15);
+        decimal_four.set_decimal(4);
+        let decimal_coalesce = ScalarFunction::new(
+            CiString::new("coalesce"),
+            decimal_four,
+            vec![konst(Datum::Int(1)), konst(Datum::Null)],
+        );
+        assert_eq!(
+            decimal_coalesce.eval(&NoColumns, row).unwrap(),
+            Datum::Decimal(tidb_datatype::Decimal::from_int(1))
+        );
 
         // A column argument feeds the builtin from the chunk row: ABS(col).
         let mut col = Column::new(1, ft());

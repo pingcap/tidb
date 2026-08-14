@@ -14,6 +14,42 @@
 
 use super::*;
 
+#[test]
+fn name_const_requires_the_source_literal_shapes() {
+    use tidb_ast::{BinaryOp, Expr, UnaryOp};
+
+    let string = || Expr::String("hello".to_owned());
+    let int = || Expr::Int("1".to_owned());
+    assert!(validate_name_const_args(&[string(), int()]).is_ok());
+    assert!(
+        validate_name_const_args(&[string(), Expr::Unary(UnaryOp::Minus, Box::new(int()))]).is_ok()
+    );
+
+    for args in [
+        vec![Expr::Column(vec!["a".to_owned()]), int()],
+        vec![string(), Expr::Column(vec!["b".to_owned()])],
+        vec![
+            string(),
+            Expr::Binary(BinaryOp::Plus, Box::new(int()), Box::new(int())),
+        ],
+        vec![
+            Expr::Func {
+                name: "concat".to_owned(),
+                args: vec![string(), string()],
+                origin_position: 0,
+            },
+            int(),
+        ],
+    ] {
+        assert_eq!(
+            validate_name_const_args(&args),
+            Err(crate::EvalError::IncorrectArguments(
+                "Incorrect arguments to NAME_CONST".to_owned()
+            ))
+        );
+    }
+}
+
 #[cfg(test)]
 mod round_truncate_type_source_tests {
     use super::*;

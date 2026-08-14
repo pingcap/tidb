@@ -181,6 +181,40 @@ pub(super) fn validate_cast_type(cast: &tidb_ast::CastExpr) -> Result<(), crate:
     }
 }
 
+/// Go `preprocessor` accepts `NAME_CONST` only when the name is a literal and
+/// the value is a literal or unary expression. This check precedes name/type
+/// resolution, so invalid source shapes always report 1210.
+pub(super) fn validate_name_const_args(args: &[tidb_ast::Expr]) -> Result<(), crate::EvalError> {
+    use tidb_ast::Expr;
+
+    if args.len() != 2 {
+        return Err(crate::EvalError::WrongParameterCount("name_const"));
+    }
+    let literal = |expr: &Expr| {
+        matches!(
+            expr,
+            Expr::Null
+                | Expr::Int(_)
+                | Expr::Decimal(_)
+                | Expr::Float(_)
+                | Expr::Hex(_)
+                | Expr::Bit(_)
+                | Expr::String(_)
+                | Expr::RawString(_)
+                | Expr::CharsetString { .. }
+                | Expr::CharsetBinary { .. }
+                | Expr::Bool(_)
+        )
+    };
+    if literal(&args[0]) && (literal(&args[1]) || matches!(args[1], Expr::Unary(_, _))) {
+        Ok(())
+    } else {
+        Err(crate::EvalError::IncorrectArguments(
+            "Incorrect arguments to NAME_CONST".to_owned(),
+        ))
+    }
+}
+
 pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldType)> {
     use tidb_ast::CastType;
     let name = match cast_type {

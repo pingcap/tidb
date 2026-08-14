@@ -37,7 +37,7 @@ use fold_mode::FoldModeResolver;
 pub use result_type::go_result_type_code;
 use result_type::{
     binary_literal_type, builtin_return_type, cast_target, decimal_literal_type, int_literal_type,
-    returns_binary_string, set_binary_charset, validate_cast_type,
+    returns_binary_string, set_binary_charset, validate_cast_type, validate_name_const_args,
 };
 
 /// Resolves a dotted column path to an output column, standing in for the
@@ -1110,6 +1110,9 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         Expr::Func { name, args, .. } => {
             let lowered = name.to_ascii_lowercase();
             let child_resolver = FoldModeResolver::for_function(resolver, &lowered);
+            if lowered == "name_const" {
+                validate_name_const_args(args)?;
+            }
             // `NEXTVAL(s)` / `LASTVAL(s)` / `SETVAL(s, n)` name a SEQUENCE, but
             // the grammar has no place for a table name inside an expression,
             // so the parser produces a COLUMN reference. Go's expression
