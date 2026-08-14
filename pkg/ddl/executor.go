@@ -535,6 +535,12 @@ func (e *executor) ModifySchemaSetTiFlashReplica(sctx sessionctx.Context, stmt *
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if tiflashReplica.Count > 0 {
+		err = checkColumnarStorageEnabled(sctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	var originVersion int64
 	var pendingCount uint32
@@ -3837,6 +3843,13 @@ func (e *executor) AlterTableSetTiFlashReplica(ctx sessionctx.Context, ident ast
 		}
 	}
 
+	if replicaInfo.Count > 0 {
+		err = checkColumnarStorageEnabled(ctx)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
@@ -4020,6 +4033,39 @@ func checkTiFlashReplicaCount(ctx sessionctx.Context, replicaCount uint64) error
 	}
 	if replicaCount > tiflashStoreCnt {
 		return errors.Errorf("the tiflash replica count: %d should be less than the total tiflash server count: %d", replicaCount, tiflashStoreCnt)
+	}
+	return nil
+}
+
+// globalVarGetter is the subset of *domain.Domain used by the columnar-storage
+// DDL gate. pkg/ddl cannot import pkg/domain because domain already imports ddl.
+type globalVarGetter interface {
+	GetGlobalVar(name string) (string, error)
+}
+
+// checkColumnarStorageEnabled checks whether the cluster allows creating TiFlash replicas.
+// It reads tidb_columnar_storage_enabled from the domain sysvar cache (memory, no PD RPC).
+func checkColumnarStorageEnabled(ctx sessionctx.Context) error {
+	if !config.GetGlobalConfig().CSE.IsColumnarStoreEnabled() {
+		return nil
+	}
+	keyspace := ctx.GetStore().GetKeyspace()
+	failpoint.Inject("mockColumnarStorageEnabledCheckFail", func() {
+		failpoint.Return(dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace))
+	})
+	do, ok := ctx.GetDomain().(globalVarGetter)
+	if !ok || do == nil {
+		logutil.DDLLogger().Error("failed to read tidb_columnar_storage_enabled for columnar storage check: domain is unavailable")
+		return dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace)
+	}
+	val, err := do.GetGlobalVar(vardef.TiDBColumnarStorageEnabled)
+	if err != nil {
+		logutil.DDLLogger().Error("failed to read tidb_columnar_storage_enabled for columnar storage check",
+			zap.Error(err))
+		return dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace)
+	}
+	if strings.EqualFold(val, vardef.Off) {
+		return dbterror.ErrTiFlashColumnarStorageNotEnabled.GenWithStackByArgs(keyspace)
 	}
 	return nil
 }

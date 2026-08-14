@@ -574,3 +574,140 @@ func TestTruncateTable2(t *testing.T) {
 	require.False(t, t2.Meta().TiFlashReplica.Available)
 	require.Equal(t, []int64{partition.Definitions[1].ID}, t2.Meta().TiFlashReplica.AvailablePartitionIDs)
 }
+
+func TestColumnarStorageEnabledGate(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_col(a int)")
+	tk.MustExec("create database db_col")
+	tk.MustExec("create table db_col.t1(a int)")
+	tk.MustExec("create table db_col.t2(a int)")
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "columnar"
+	})
+
+	// Default ON: SET TIFLASH REPLICA succeeds without an explicit SET GLOBAL.
+	tk.MustExec("alter table t_col set tiflash replica 1")
+	tbl := external.GetTableByName(t, tk, "test", "t_col")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+
+	// OFF + count>0: rejected, metadata unchanged, no job persisted.
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
+	tk.MustGetErrCode("alter table t_col set tiflash replica 2", errno.ErrUnsupportedDDLOperation)
+	tk.MustContainErrMsg("alter table t_col set tiflash replica 2", "Columnar Storage is not enabled")
+	tbl = external.GetTableByName(t, tk, "test", "t_col")
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+
+	tk.MustGetErrCode("alter database db_col set tiflash replica 1", errno.ErrUnsupportedDDLOperation)
+	tk.MustContainErrMsg("alter database db_col set tiflash replica 1", "Columnar Storage is not enabled")
+	require.Nil(t, external.GetTableByName(t, tk, "db_col", "t1").Meta().TiFlashReplica)
+	require.Nil(t, external.GetTableByName(t, tk, "db_col", "t2").Meta().TiFlashReplica)
+
+	// OFF + count=0: cleanup is always allowed.
+	tk.MustExec("alter table t_col set tiflash replica 0")
+	tbl = external.GetTableByName(t, tk, "test", "t_col")
+	require.Nil(t, tbl.Meta().TiFlashReplica)
+
+	// ON + count>0: succeeds.
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'ON'")
+	tk.MustExec("alter table t_col set tiflash replica 1")
+	tbl = external.GetTableByName(t, tk, "test", "t_col")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+	tk.MustExec("alter table t_col set tiflash replica 0")
+
+	// both + OFF + count>0: rejected (replica availability depends on the columnar path).
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "both"
+	})
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
+	})
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
+	tk.MustGetErrCode("alter table t_col set tiflash replica 1", errno.ErrUnsupportedDDLOperation)
+
+	// classic tiflash + OFF: gate is skipped, existing store-count check still applies.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "tiflash"
+	})
+	tk.MustExec("alter table t_col set tiflash replica 1")
+	tbl = external.GetTableByName(t, tk, "test", "t_col")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+}
+
+func TestColumnarStorageEnabledGateFailClosed(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "columnar"
+	})
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_fail(a int)")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockColumnarStorageEnabledCheckFail", `return(true)`)
+	tk.MustGetErrCode("alter table t_fail set tiflash replica 1", errno.ErrUnsupportedDDLOperation)
+	tk.MustContainErrMsg("alter table t_fail set tiflash replica 1", "cannot be verified")
+	require.Nil(t, external.GetTableByName(t, tk, "test", "t_fail").Meta().TiFlashReplica)
+
+	// count=0 is not gated, so fail-closed does not block replica cleanup.
+	tk.MustExec("alter table t_fail set tiflash replica 0")
+}
+
+func TestColumnarStorageEnabledGateJobSide(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "columnar"
+	})
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_job(a int)")
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionSetTiFlashReplica {
+			tk2.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
+		}
+	})
+	tk.MustGetErrCode("alter table t_job set tiflash replica 1", errno.ErrUnsupportedDDLOperation)
+	tk.MustContainErrMsg("alter table t_job set tiflash replica 1", "Columnar Storage is not enabled")
+	require.Nil(t, external.GetTableByName(t, tk, "test", "t_job").Meta().TiFlashReplica)
+}
+
+func TestColumnarStorageEnabledGateInternalBypass(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "columnar"
+	})
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_internal(a int)")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceSetTiFlashReplicaInternal", `return(true)`)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionSetTiFlashReplica {
+			tk2.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
+		}
+	})
+	tk.MustExec("alter table t_internal set tiflash replica 1")
+	tbl := external.GetTableByName(t, tk, "test", "t_internal")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+}
