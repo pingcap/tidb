@@ -1205,14 +1205,36 @@ fn prepare_alter_column_default(
             let value = tidb_expr::eval_expression_once(&body.expr, ctx)
                 .map_err(|error| DriverError::Exec(crate::ExecError::Eval(error)))?;
             let origin =
-                prepare_column_default(value, field_type, column, column_info_version, ctx, zone)?
-                    .stored;
+                prepare_computed_origin(value, field_type, column, column_info_version, ctx, zone)?;
             Ok(PreparedAlterDefault {
                 default: Some(computed),
                 origin: Some(origin),
             })
         }
     }
+}
+
+fn prepare_computed_origin(
+    value: Datum,
+    field_type: &FieldType,
+    column: &str,
+    column_info_version: u64,
+    ctx: &crate::StmtContext,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Datum, DriverError> {
+    let flags = ctx.ddl_default_conversion_flags();
+    let stored = column_default_storage_value(value, field_type, column, flags, zone)?;
+    let stored = timestamp_default_to_utc(stored, field_type, column, flags, zone)?;
+    let stored = pad_fixed_width_binary_default(stored, field_type);
+    validate_column_default(
+        &stored,
+        field_type,
+        column,
+        column_info_version,
+        flags,
+        zone,
+    )?;
+    Ok(stored)
 }
 
 /// Go `checkDefaultValue`: validate the persisted spelling against the
@@ -2296,6 +2318,8 @@ fn modify_column_action(
         ));
     }
 
+    let preserve_origin_default = table.columns[offset].field_type == field_type;
+    let previous_origin_default = table.columns[offset].origin_default.clone();
     let new_position = match position {
         tidb_ast::ColumnPosition::Default => None,
         tidb_ast::ColumnPosition::First => Some(0),
@@ -2313,21 +2337,33 @@ fn modify_column_action(
             Some(if target > offset { target } else { target + 1 })
         }
     };
-    let prepared_default = default_value
-        .map(|default| {
-            prepare_alter_column_default(
+    let prepared_default = match default_value {
+        Some(default @ crate::column_default::ColumnDefault::Computed(_))
+            if preserve_origin_default =>
+        {
+            PreparedAlterDefault {
+                default: Some(default),
+                origin: previous_origin_default,
+            }
+        }
+        Some(default) => {
+            let mut prepared = prepare_alter_column_default(
                 default,
                 &field_type,
                 &def.name,
                 tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
                 ctx,
-            )
-        })
-        .transpose()?
-        .unwrap_or(PreparedAlterDefault {
+            )?;
+            if preserve_origin_default {
+                prepared.origin = previous_origin_default;
+            }
+            prepared
+        }
+        None => PreparedAlterDefault {
             default: None,
-            origin: None,
-        });
+            origin: previous_origin_default,
+        },
+    };
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was found above and nothing here removes it");
     };

@@ -420,13 +420,13 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
 /// Exact upper bound for known definition mismatches.
 ///
 /// The matching floor below prevents a lower count caused by examining less.
-const KNOWN_CATALOG_DIVERGENCES: usize = 70;
+const KNOWN_CATALOG_DIVERGENCES: usize = 64;
 
 /// Exact lower bound for definitions already matching TiDB.
-const MATCHED_FLOOR: usize = 220;
+const MATCHED_FLOOR: usize = 226;
 
 /// Stable identity of the known mismatch set, independent of topic order.
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 8_430_602_854_575_281_265;
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 15_488_882_520_297_359_806;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.

@@ -1476,6 +1476,59 @@ fn computed_default_whitelist_evaluates_the_allowed_function_shapes() {
     );
 }
 
+#[test]
+fn alter_add_and_modify_keep_computed_defaults_as_expressions() {
+    let mut session = Session::new();
+    session.run("SET time_zone = '+00:00'").unwrap();
+    session.run("SET timestamp = 1700000000").unwrap();
+    session
+        .run("CREATE TABLE alter_computed (id INT PRIMARY KEY)")
+        .unwrap();
+    session
+        .run("INSERT INTO alter_computed VALUES (1)")
+        .unwrap();
+    session
+        .run(
+            "ALTER TABLE alter_computed ADD COLUMN payload BLOB \
+             DEFAULT (date_format(now(),'%Y-%m-%d'))",
+        )
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT payload FROM alter_computed"),
+        [["2023-11-14"]]
+    );
+    assert!(show_create(&mut session, "alter_computed")
+        .contains("`payload` blob DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d'))"));
+
+    session
+        .run("ALTER TABLE alter_computed ADD COLUMN document JSON")
+        .unwrap();
+    session
+        .run(
+            "ALTER TABLE alter_computed MODIFY COLUMN document JSON \
+             DEFAULT (json_quote('foobar'))",
+        )
+        .unwrap();
+    assert!(show_create(&mut session, "alter_computed")
+        .contains("`document` json DEFAULT (json_quote(_utf8mb4'foobar'))"));
+
+    session
+        .run("ALTER TABLE alter_computed ADD COLUMN choice ENUM('y','n') DEFAULT 'y'")
+        .unwrap();
+    session
+        .run(
+            "ALTER TABLE alter_computed MODIFY COLUMN choice ENUM('y','n') \
+             DEFAULT (date_format(now(),'%Y-%m-%d'))",
+        )
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT choice FROM alter_computed"),
+        [["y"]]
+    );
+    assert!(show_create(&mut session, "alter_computed")
+        .contains("`choice` enum('y','n') DEFAULT (date_format(now(), _utf8mb4'%Y-%m-%d'))"));
+}
+
 /// Go `pkg/ddl/add_column.go` runs the inline-key precheck before installing a
 /// table-level primary key and before the final `checkDefaultValue`:
 ///
