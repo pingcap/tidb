@@ -1442,6 +1442,115 @@ fn a_column_move_does_not_reroute_a_partitioned_table() {
     );
 }
 
+/// Go `checkPartitionModifiableColumn` allows every non-partitioning column
+/// to be modified: the DDL rewrites each record in its existing physical
+/// partition and rebuilds that partition's local indexes. The partition
+/// method does not change this rule.
+#[test]
+fn modifying_a_non_partition_column_preserves_physical_ownership() {
+    let cases = [
+        (
+            "mh",
+            "CREATE TABLE mh (a int, b int, KEY idx_b(b)) \
+             PARTITION BY HASH(a) PARTITIONS 4",
+        ),
+        (
+            "mr",
+            "CREATE TABLE mr (a int, b int, KEY idx_b(b)) \
+             PARTITION BY RANGE(a) (PARTITION pn VALUES LESS THAN (0), \
+             PARTITION p0 VALUES LESS THAN (10), PARTITION pm VALUES LESS THAN (MAXVALUE))",
+        ),
+        (
+            "ml",
+            "CREATE TABLE ml (a int, b int, KEY idx_b(b)) \
+             PARTITION BY LIST COLUMNS(a) (PARTITION p0 VALUES IN ((0)), \
+             PARTITION p1 VALUES IN ((1)), PARTITION pd DEFAULT)",
+        ),
+        (
+            "mk",
+            "CREATE TABLE mk (a int PRIMARY KEY, b int, KEY idx_b(b)) \
+             PARTITION BY KEY(a) PARTITIONS 3",
+        ),
+    ];
+
+    for (table, create) in cases {
+        let mut session = Session::new();
+        session.run(create).unwrap();
+        session
+            .run(&format!(
+                "INSERT INTO {table} VALUES (-1,11),(0,12),(1,13),(11,14)"
+            ))
+            .unwrap();
+        let before = partition_counts(&mut session, table);
+
+        session
+            .run(&format!(
+                "ALTER TABLE {table} MODIFY COLUMN b BIGINT UNSIGNED"
+            ))
+            .expect("a non-partitioning column is independently modifiable");
+
+        assert_eq!(
+            partition_counts(&mut session, table),
+            before,
+            "MODIFY must retain every row's physical partition for {table}"
+        );
+        assert_eq!(
+            tests_support::row_text(session.run(&format!("SELECT a,b FROM {table} ORDER BY a"))),
+            [
+                ["-1".to_owned(), "11".to_owned()],
+                ["0".to_owned(), "12".to_owned()],
+                ["1".to_owned(), "13".to_owned()],
+                ["11".to_owned(), "14".to_owned()],
+            ],
+            "converted rows remain visible for {table}"
+        );
+        assert_eq!(
+            tests_support::row_text(session.run(&format!(
+                "SELECT a FROM {table} FORCE INDEX(idx_b) WHERE b=13"
+            ))),
+            [["1".to_owned()]],
+            "the local index is rebuilt under the same physical id for {table}"
+        );
+    }
+}
+
+#[test]
+fn modifying_a_partition_column_keeps_the_source_safety_boundary() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE mp (a int, b int) PARTITION BY HASH(a) PARTITIONS 4")
+        .unwrap();
+    session.run("INSERT INTO mp VALUES (1,10)").unwrap();
+
+    session
+        .run("ALTER TABLE mp MODIFY COLUMN a INT DEFAULT 7")
+        .expect("a default-only change cannot alter partition routing");
+
+    let error = session
+        .run("ALTER TABLE mp MODIFY COLUMN a VARCHAR(20)")
+        .expect_err("a routing type change needs partition reorganization")
+        .to_mysql_error();
+    assert_eq!(error.code, 8200);
+    assert_eq!(
+        error.message,
+        "Unsupported modify column: can't change the partitioning column, since it would require reorganize all partitions"
+    );
+
+    let error = session
+        .run("ALTER TABLE mp CHANGE COLUMN a renamed INT")
+        .expect_err("the partition expression still names a")
+        .to_mysql_error();
+    assert_eq!(error.code, 3855);
+    assert_eq!(
+        error.message,
+        "Column 'a' has a partitioning function dependency and cannot be dropped or renamed"
+    );
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT a,b FROM mp")),
+        [["1".to_owned(), "10".to_owned()]]
+    );
+}
+
 /// Go `checkDropColumnWithPartitionConstraint` (`pkg/ddl/executor.go`), which
 /// `RenameColumn` and `DropColumn` both call: a column the partition
 /// expression -- or a `COLUMNS` list -- reads cannot be renamed or dropped,

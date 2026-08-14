@@ -41,7 +41,7 @@ use std::cmp::Reverse;
 use std::collections::BinaryHeap;
 use tidb_chunk::chunk::Chunk;
 use tidb_codec::table_key::{
-    cut_index_prefix, encode_index_seek_key, encode_row_key_with_handle,
+    cut_index_prefix, decode_table_id, encode_index_seek_key, encode_row_key_with_handle,
     get_table_handle_key_range, RecordHandle,
 };
 use tidb_codec::Encoder;
@@ -376,6 +376,25 @@ impl KvTable {
         self.scan_rows_with_handles_in_with_context(None, context)
     }
 
+    /// Like [`KvTable::scan_rows_with_handles_with_context`], retaining the
+    /// physical table id encoded in every record key.
+    ///
+    /// DDL rewrites need this identity: a partitioned table can contain the
+    /// same local handle in more than one physical partition, and rewriting
+    /// either row under the logical table id would collapse the partitions.
+    pub(crate) fn scan_physical_rows_with_handles_with_context(
+        &mut self,
+        context: &RowDecodeContext,
+    ) -> Result<Vec<(i64, TableHandle, Vec<Datum>)>, KvTableError> {
+        let decoder = self.row_decoder_projected(None, context)?;
+        let mut cursor = self.row_cursor_with_decoder(decoder, None)?;
+        let mut rows = Vec::new();
+        while let Some(entry) = cursor.next_physical_row()? {
+            rows.push(entry);
+        }
+        Ok(rows)
+    }
+
     /// Legacy zone-only handle scan; see [`KvTable::row_cursor`].
     pub fn scan_rows_with_handles(
         &mut self,
@@ -648,6 +667,15 @@ pub struct RowCursor {
 impl RowCursor {
     /// The next row in key order, or `None` at the end of the last range.
     pub fn next_row(&mut self) -> Result<Option<(TableHandle, Vec<Datum>)>, KvTableError> {
+        Ok(self
+            .next_physical_row()?
+            .map(|(_, handle, row)| (handle, row)))
+    }
+
+    /// The next row plus the physical table id its record key carries.
+    pub(crate) fn next_physical_row(
+        &mut self,
+    ) -> Result<Option<(i64, TableHandle, Vec<Datum>)>, KvTableError> {
         loop {
             let Some(iterator) = self.current.as_mut() else {
                 // Every range is opened when the cursor is, so advancing is
@@ -662,13 +690,14 @@ impl RowCursor {
                 self.current.take().expect("just borrowed").close();
                 continue;
             }
-            let decoded = self
+            let physical_id = decode_table_id(iterator.key().as_bytes());
+            let (handle, row) = self
                 .decoder
                 .decode_record(iterator.key().as_bytes(), iterator.value())?;
             iterator
                 .next()
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
-            return Ok(Some(decoded));
+            return Ok(Some((physical_id, handle, row)));
         }
     }
 }

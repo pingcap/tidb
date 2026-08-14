@@ -1679,6 +1679,16 @@ fn check_type_change_supported(origin: &FieldType, to: &FieldType) -> Result<(),
     Ok(())
 }
 
+fn partition_routing_definition_changed(origin: &FieldType, to: &FieldType) -> bool {
+    origin.code() != to.code()
+        || origin.is_unsigned() != to.is_unsigned()
+        || (!origin.code().is_type_integer() && origin.flen() != to.flen())
+        || origin.decimal() != to.decimal()
+        || origin.charset_name() != to.charset_name()
+        || origin.collation_name() != to.collation_name()
+        || origin.elems_snapshot() != to.elems_snapshot()
+}
+
 /// What one `MODIFY COLUMN` / `CHANGE COLUMN` action states, plus the session
 /// facts it is decided against. Grouped because the old column's own
 /// definition is only half the input: the rest is what the STATEMENT says and
@@ -1795,6 +1805,12 @@ fn modify_column_action(
         ctx.append_suppressed(&missing);
         return Ok(());
     };
+    let partition_column = table.partition().is_some_and(|partition| {
+        partition
+            .dependencies
+            .iter()
+            .any(|dependency| dependency.eq_ignore_ascii_case(old_name))
+    });
     // Go `checkModifyGeneratedColumn` (`pkg/ddl/modify_column.go`): a MODIFY
     // may not turn a generated column into an ordinary one, nor an ordinary
     // column into a generated one, nor move a column between VIRTUAL and
@@ -1853,6 +1869,12 @@ fn modify_column_action(
         if let Some(dependent) = dependent {
             return Err(super::column_dependent_error(dependent, old_name));
         }
+        if partition_column {
+            return Err(super::column_dependent_error(
+                crate::kv_table::ColumnDependent::Partition,
+                old_name,
+            ));
+        }
     }
 
     // Go `getModifiableColumnJob` asks this HERE: after the rename checks
@@ -1906,6 +1928,13 @@ fn modify_column_action(
         if has_null_flag {
             return Err(DriverError::PrimaryCantHaveNull);
         }
+    }
+    if partition_column
+        && partition_routing_definition_changed(&table.columns[offset].field_type, &field_type)
+    {
+        return Err(DriverError::UnsupportedModifyColumn(
+            "can't change the partitioning column, since it would require reorganize all partitions",
+        ));
     }
     // Go `checkModifyTypes` (`pkg/ddl/modify_column.go:2262`), reached right
     // after the index-flag copy above and before the AUTO_INCREMENT checks

@@ -1539,23 +1539,16 @@ impl KvTable {
         zone: &SessionTimeZone,
         decode_context: &RowDecodeContext,
     ) -> Result<(), KvTableError> {
-        // Rewriting the rows here reads them back through the scan and writes
-        // them under a key built from the table id, which for a partitioned
-        // table would collapse every partition into one. Re-routing them
-        // instead would need the statement's evaluation context, which this
-        // path does not carry, and Go has its own rules for modifying a
-        // partitioning column besides -- so this refuses rather than moving
-        // rows it cannot place.
-        if self.partition.is_some() {
-            return Err(KvTableError::Storage(
-                "MODIFY COLUMN on a partitioned table is not supported by this node".to_owned(),
-            ));
-        }
         let target = new_column.field_type.clone();
         let not_null = target.flags() & NOT_NULL_FLAG != 0;
-        let rows = self.scan_rows_with_handles_with_context(decode_context)?;
+        // Keep the physical id from the record key rather than attempting to
+        // route the converted value again. Go permits a non-partition column
+        // rewrite without reorganizing partitions, and separately restricts
+        // partition-column changes to definitions whose routing is stable.
+        // In both cases the existing physical owner is the source of truth.
+        let rows = self.scan_physical_rows_with_handles_with_context(decode_context)?;
         let mut converted_rows = Vec::with_capacity(rows.len());
-        for (row_number, (handle, row)) in rows.into_iter().enumerate() {
+        for (row_number, (physical_id, handle, row)) in rows.into_iter().enumerate() {
             let mut row = row;
             let value = row[offset].clone();
             // Go reports the offending row's 1-based position for a value the
@@ -1582,7 +1575,7 @@ impl KvTable {
                 }
                 row[offset] = converted.value;
             }
-            converted_rows.push((handle, row));
+            converted_rows.push((physical_id, handle, row));
         }
 
         self.columns[offset] = new_column;
@@ -1610,7 +1603,7 @@ impl KvTable {
         }
         if let Some(position) = new_position.filter(|position| *position != offset) {
             self.move_column(offset, position);
-            for (_, row) in &mut converted_rows {
+            for (_, _, row) in &mut converted_rows {
                 let value = row.remove(offset);
                 row.insert(position, value);
             }
@@ -1619,13 +1612,13 @@ impl KvTable {
         // The value bytes encode the column's type, so every row is written
         // again; the handles and index ids are unchanged.
         self.store.clear();
-        for (handle, row) in &converted_rows {
+        for (physical_id, handle, row) in &converted_rows {
             let value = self.encode_row_value(row, zone)?;
             let key = Key::from_bytes(encode_row_key_with_handle(
-                self.table_id,
+                *physical_id,
                 &handle.record_handle(),
             ));
-            self.write_index_entries(row, handle, self.table_id, zone)?;
+            self.write_index_entries(row, handle, *physical_id, zone)?;
             self.store
                 .set(key, value)
                 .map_err(|e| KvTableError::Storage(format!("{e:?}")))?;
