@@ -214,8 +214,8 @@ pub(crate) fn to_f64_with_mysql_string(
     ctx: &dyn crate::context::Columns,
 ) -> Result<f64, EvalError> {
     match v {
-        Datum::String(s) => Ok(bytes_to_f64(s.bytes(), ctx)),
-        Datum::Bytes(s) => Ok(bytes_to_f64(s, ctx)),
+        Datum::String(s) => bytes_to_f64(s.bytes(), ctx),
+        Datum::Bytes(s) => bytes_to_f64(s, ctx),
         Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_) | Datum::Real(_) | Datum::Float32(_) => {
             Ok(to_f64(v.clone()))
         }
@@ -243,13 +243,16 @@ pub(crate) fn to_f64_with_mysql_string(
 /// true)`. The flag changes nothing about the VALUE, only whether the EMPTY
 /// string counts as truncated -- and captured, an empty string raises no
 /// warning at all where `'abc' + 1` raises 1292.
-pub(super) fn bytes_to_f64(bytes: &[u8], ctx: &dyn crate::context::Columns) -> f64 {
+pub(super) fn bytes_to_f64(
+    bytes: &[u8],
+    ctx: &dyn crate::context::Columns,
+) -> Result<f64, EvalError> {
     let text = String::from_utf8_lossy(bytes);
     let converted = tidb_datatype::str_to_float(&text, true);
     if converted.event.is_some() {
-        raise_truncated_double(ctx, text.trim());
+        raise_truncated_double(ctx, text.trim())?;
     }
-    converted.value
+    Ok(converted.value)
 }
 
 /// Go `ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", s)` at warning
@@ -264,8 +267,11 @@ pub(super) fn bytes_to_f64(bytes: &[u8], ctx: &dyn crate::context::Columns) -> f
 /// coercing sites records six warnings, not one (captured:
 /// `SELECT ABS(a), a+0 FROM t` over three rows lists all six). Nothing here
 /// deduplicates, for the same reason.
-pub(crate) fn raise_truncated_double(ctx: &dyn crate::context::Columns, text: &str) {
-    ctx.append_warning(1292, &format!("Truncated incorrect DOUBLE value: '{text}'"));
+pub(crate) fn raise_truncated_double(
+    ctx: &dyn crate::context::Columns,
+    text: &str,
+) -> Result<(), EvalError> {
+    ctx.handle_truncate(&format!("Truncated incorrect DOUBLE value: '{text}'"))
 }
 
 pub(super) fn real_compare(op: BinaryOp, a: f64, b: f64) -> Result<Datum, EvalError> {

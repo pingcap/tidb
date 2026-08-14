@@ -58,6 +58,12 @@ pub trait ActiveQueryCancellation: Send + Sync {
     fn cancel(&self);
 }
 
+impl ActiveQueryCancellation for tidb_executor::StatementCancellation {
+    fn cancel(&self) {
+        tidb_executor::StatementCancellation::cancel(self);
+    }
+}
+
 #[derive(Default)]
 struct ConnectionCancellationState {
     requested: bool,
@@ -724,6 +730,11 @@ pub struct SessionContext {
 pub trait QuerySession {
     /// Starts one sequential query and returns its lazy result owner.
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError>;
+
+    /// The command-scoped cancellation authority installed before parsing.
+    fn query_cancellation(&self) -> Option<Arc<dyn ActiveQueryCancellation>> {
+        None
+    }
 
     /// Maximum idle time while waiting for the next command packet.
     ///

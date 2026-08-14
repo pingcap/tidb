@@ -1619,7 +1619,7 @@ fn build_window_stage(
             }],
             ..FromScope::for_statement(ctx)
         };
-        let rows = drain_executor_rows(root, &state.types)?;
+        let rows = drain_executor_rows(root, &state.types, &ctx.statement_memory())?;
         let (rows, scope_with_windows) =
             crate::window::compute_windows(&state.window_calls, rows, &scope, ctx)?;
         // The synthetic `__window_<i>` names are kept here so the ORDER BY /

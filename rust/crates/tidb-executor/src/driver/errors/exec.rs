@@ -60,6 +60,11 @@ pub(super) fn to_mysql_error(error: ExecError) -> MysqlError {
         ExecError::Unsupported(reason) => MysqlError::unknown(reason),
         // Go surfaces a spill failure as the raw error from `Next`, i.e. 1105.
         ExecError::SpillFailed(reason) => MysqlError::unknown(reason),
+        ExecError::Killed(error) => {
+            let mut state = [0; 5];
+            state.copy_from_slice(error.state.as_bytes());
+            MysqlError::new(error.code, state, error.message)
+        }
         // `From<ExecError> for DriverError` rewrites each of these into its
         // own driver variant, so they arrive here only from an `ExecError` a
         // caller wrapped by hand. Rendering through the twin keeps ONE

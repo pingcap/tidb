@@ -146,7 +146,7 @@ pub use kv_table::{
     KvTable, RowDecodeContext, RowDecoder, TableCharset, TableHandle, TableScanExec,
 };
 pub use limit::LimitExec;
-pub use mem_quota::{OomAction, SessionMemory, StatementMemory};
+pub use mem_quota::{OomAction, SessionMemory, StatementCancellation, StatementMemory};
 pub use mem_table::MemTableSourceExec;
 pub use predicate_pushdown::{PushedScanFilter, ScanComparison, ScanComparisonOp, ScanPredicate};
 pub use projection::ProjectionExec;

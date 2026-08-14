@@ -19,7 +19,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering::SeqCst};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 
 use super::action::ArcAction;
@@ -66,6 +66,26 @@ pub const LABEL_FOR_GLOBAL_STORAGE: i64 = -11;
 pub const LABEL_FOR_CHUNK_DATA_IN_DISK_BY_CHUNKS: i64 = -30;
 
 const SOFT_SCALE: f64 = 0.8;
+
+/// How a session root transports a pending SQL-killer signal across a memory
+/// accounting boundary.
+///
+/// Go unwinds through `Tracker.Consume`, which is the default and remains the
+/// exact contract for standalone trackers. The Rust executor uses typed
+/// `Result` propagation instead, so its session owner selects [`Deferred`]
+/// and reads the same killer at its statement boundary.
+///
+/// [`Deferred`]: KillSignalTransport::Deferred
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[repr(u8)]
+pub enum KillSignalTransport {
+    /// Panic from `Consume`, matching Go's tracker contract.
+    #[default]
+    Panic = 0,
+    /// Preserve the signal for the statement boundary to return as a typed
+    /// execution error.
+    Deferred = 1,
+}
 
 const BYTE_SIZE_GB: i64 = 1 << 30;
 const BYTE_SIZE_MB: i64 = 1 << 20;
@@ -270,6 +290,7 @@ pub struct Tracker {
     is_global: bool,
     /// The query killer polled during consumption (Go `Killer`).
     pub killer: Arc<SqlKiller>,
+    kill_signal_transport: AtomicU8,
     arbitration: Mutex<Option<Arc<TrackerArbitration>>>,
 }
 
@@ -308,8 +329,23 @@ impl Tracker {
             is_root_tracker_of_sess: AtomicBool::new(false),
             is_global,
             killer: Arc::new(SqlKiller::default()),
+            kill_signal_transport: AtomicU8::new(KillSignalTransport::Panic as u8),
             arbitration: Mutex::new(None),
         })
+    }
+
+    /// Selects the owner-level transport for SQL-killer failures discovered
+    /// while memory is consumed.
+    pub fn set_kill_signal_transport(&self, transport: KillSignalTransport) {
+        self.kill_signal_transport.store(transport as u8, SeqCst);
+    }
+
+    fn kill_signal_transport(&self) -> KillSignalTransport {
+        if self.kill_signal_transport.load(SeqCst) == KillSignalTransport::Deferred as u8 {
+            KillSignalTransport::Deferred
+        } else {
+            KillSignalTransport::Panic
+        }
     }
 
     /// Registers this statement root with the server-owned global memory
@@ -615,8 +651,10 @@ impl Tracker {
 
         if bs > 0 {
             if let Some(root) = &session_root {
-                if let Some(err) = root.killer.handle_signal() {
-                    std::panic::panic_any(err.to_string());
+                if root.kill_signal_transport() == KillSignalTransport::Panic {
+                    if let Some(err) = root.killer.handle_signal() {
+                        std::panic::panic_any(err.to_string());
+                    }
                 }
             }
             if let Some(root) = root_exceed {
@@ -1041,6 +1079,20 @@ mod tests {
             h.join().unwrap();
         }
         assert_eq!(tracker.bytes_consumed(), 100);
+    }
+
+    #[test]
+    fn standalone_session_tracker_keeps_source_panic_transport() {
+        let root = Tracker::new(LABEL_FOR_SESSION, -1);
+        root.is_root_tracker_of_sess.store(true, SeqCst);
+        let child = Tracker::new(1, -1);
+        child.attach_to(&root);
+        root.killer.send_kill_signal(KillSignal::QueryInterrupted);
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            child.consume(1);
+        }));
+        assert!(panicked.is_err());
     }
 
     // Go `TestRelease`'s flag-off path (the GC-aware flag-on path is Go

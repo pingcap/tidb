@@ -593,6 +593,12 @@ pub mod vars;
 pub use vars::{GlobalSysvars, SessionVars, VarError};
 
 impl Session {
+    /// Starts the cancellation lifetime for the next wire command.
+    #[must_use]
+    pub fn begin_query_cancellation(&self) -> tidb_executor::StatementCancellation {
+        self.session_memory.begin_query_cancellation()
+    }
+
     /// The live transaction timestamp authority used by storage integration.
     #[must_use]
     pub fn current_tso(&self) -> tidb_executor::CurrentTso {

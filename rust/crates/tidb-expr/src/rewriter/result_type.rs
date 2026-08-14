@@ -1308,6 +1308,9 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // evaluated as `ETInt`; the second argument keeps its own eval type so
         // repeating it adds no conversion not present in the source.
         "benchmark" if args.len() == 2 => int(),
+        // Go `sleepFunctionClass`: one ETReal argument, signed integer result
+        // with the fixed display width set by `getFunction`.
+        "sleep" if args.len() == 1 => ft_with_flen(int(), 21),
         // Go sizes this VarString from `printer.GetTiDBInfo()`.
         "tidb_version" if args.is_empty() => ft_with_flen(
             text(),

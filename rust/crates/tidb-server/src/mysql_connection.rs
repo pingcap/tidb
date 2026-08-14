@@ -969,7 +969,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         peer_addr,
         identity,
         secure_transport: socket.is_tls(),
-        cancellation,
+        cancellation: cancellation.clone(),
         close: close.clone(),
         version_info: runtime.version_info.clone(),
     }) {
@@ -1104,6 +1104,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 continue;
             }
         };
+        let _query_cancellation = engine
+            .query_cancellation()
+            .map(|active| cancellation.install(active));
         match command {
             Command::Quit => {
                 return Ok(ConnectionReport {

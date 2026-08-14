@@ -1254,6 +1254,10 @@ impl ClusterServerSession {
 }
 
 impl QuerySession for ClusterServerSession {
+    fn query_cancellation(&self) -> Option<Arc<dyn crate::sql_node::ActiveQueryCancellation>> {
+        Some(Arc::new(self.session.begin_query_cancellation()))
+    }
+
     fn wait_timeout(&self) -> std::time::Duration {
         self.session.wait_timeout()
     }

@@ -9,6 +9,7 @@ mod dml;
 mod lifecycle;
 mod numeric_domain;
 mod session_state;
+mod sleep;
 mod status_values;
 mod temporal_types;
 mod transactions;

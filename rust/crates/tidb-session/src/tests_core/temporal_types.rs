@@ -1,6 +1,59 @@
 //! Native result domains and metadata for temporal builtins.
 
+use crate::tests_support::row_text;
 use crate::*;
+
+/// Go's `types.ETDatetime` argument declaration over real columns, where the
+/// static `YEAR` type selects `ParseTimeFromYear` and other integers select
+/// `ParseTimeFromNum`.
+#[test]
+fn an_etdatetime_argument_is_cast_from_its_column_type() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE yt (y YEAR, n BIGINT, d DATE)")
+        .unwrap();
+    session
+        .run("INSERT INTO yt VALUES (2024, 20240315123045, '2024-03-15')")
+        .unwrap();
+
+    assert_eq!(
+        row_text(session.run("SELECT month(y), day(y), quarter(y), year(y) FROM yt")),
+        [["0", "0", "0", "2024"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT month(n), day(n), quarter(n), year(n) FROM yt")),
+        [["3", "15", "1", "2024"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT month(d), quarter(d), year(d) FROM yt")),
+        [["3", "1", "2024"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT to_days(n), date_format(n,'%Y-%m'), \
+             timestampdiff(day,'2024-01-01',n), timestampadd(day,1,n) FROM yt"
+        )),
+        [["739325", "2024-03", "74", "2024-03-16 12:30:45"]]
+    );
+}
+
+#[test]
+fn in_casts_every_candidate_to_the_first_arguments_temporal_domain() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE in_time (d DATETIME, ds VARCHAR(32), t TIME, ts VARCHAR(32))")
+        .unwrap();
+    session
+        .run(
+            "INSERT INTO in_time VALUES \
+             ('2024-03-15 12:30:45', '2024-03-15 12:30:45', '01:00:00', '1:00:00')",
+        )
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT d IN (ds), t = ts, t IN (ts) FROM in_time")),
+        [["1", "0", "1"]]
+    );
+}
 
 #[test]
 fn current_clock_builtins_return_native_temporal_values() {

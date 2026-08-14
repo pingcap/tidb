@@ -37,21 +37,14 @@
 //! with the kill error, which `pkg/executor`'s recover turns back into the
 //! statement's error. Panicking across an operator is Go-runtime shaping, not
 //! observable behavior, so [`CancelOnExceed`] here sends the same kill signal
-//! to a killer of its own and stops; the accounting operator then calls
-//! [`StatementMemory::check`], which polls that killer and returns the error
-//! it yields. The errno, the SQL state and the message text therefore come
+//! to the statement's canonical killer and stops; the accounting operator
+//! then calls [`StatementMemory::check`], which polls that killer and returns
+//! the error it yields. The errno, the SQL state and the message text come
 //! from the ported `SqlKiller`/`exeerrors` path unchanged -- errno 8175,
 //! `ErrMemoryExceedForQuery` (captured: `[executor:8175]Your query has been
 //! cancelled due to exceeding the allowed memory limit for a single SQL
 //! query. Please try narrowing your query scope or increase the
 //! tidb_mem_quota_query limit and try again.[conn=1]`).
-//!
-//! NOT WIRED, and named so it is not mistaken for covered: the killer above
-//! is private to the memory path, so only an operator that calls `check`
-//! observes the cancellation. Go's killer is the SESSION's, which every
-//! operator polls, so a Go statement stops in whatever operator notices
-//! first. Until a session-wide killer is plumbed through the executor tree,
-//! a statement here stops in the ACCOUNTING operator only.
 //!
 //! WHICH OPERATORS ACCOUNT: the sort (`crate::sort`), and the WRITE path --
 //! `UPDATE`, `DELETE`, `INSERT`/`REPLACE`, and the rows a foreign-key cascade
@@ -66,8 +59,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use tidb_datatype::{estimated_mem_usage, Datum};
 use tidb_util::disk::{SpillEncryptionMethod, SpillStorage, SpillStorageSpec};
 use tidb_util::memory::{
-    ActionOnExceed, ArcAction, BaseOomAction, LogOnExceed, Tracker, DEF_MEM_QUOTA_QUERY,
-    DEF_PANIC_PRIORITY, LABEL_FOR_SESSION, LABEL_FOR_SQL_TEXT,
+    ActionOnExceed, ArcAction, BaseOomAction, KillSignalTransport, LogOnExceed, Tracker,
+    DEF_MEM_QUOTA_QUERY, DEF_PANIC_PRIORITY, LABEL_FOR_SESSION, LABEL_FOR_SQL_TEXT,
 };
 use tidb_util::sqlkiller::{KillSignal, SqlKiller};
 
@@ -187,24 +180,23 @@ fn install_oom_action(
     session: &Arc<Tracker>,
     oom_action: OomAction,
     connection_id: u64,
-) -> Option<Arc<SqlKiller>> {
-    session.killer.reset();
+) -> Arc<SqlKiller> {
+    let killer = Arc::clone(&session.killer);
+    killer.reset();
+    killer.conn_id.store(connection_id, SeqCst);
     match oom_action {
         OomAction::Cancel => {
-            let killer = Arc::new(SqlKiller::default());
-            killer.conn_id.store(connection_id, SeqCst);
             session.set_action_on_exceed(Some(Arc::new(CancelOnExceed {
                 base: BaseOomAction::default(),
                 killer: Arc::clone(&killer),
                 acted: AtomicBool::new(false),
             })));
-            Some(killer)
         }
         OomAction::Log => {
             session.set_action_on_exceed(Some(Arc::new(LogOnExceed::default())));
-            None
         }
     }
+    killer
 }
 
 fn refresh_global_disk_attachment(
@@ -232,6 +224,46 @@ pub struct SessionMemory {
     session: Arc<Tracker>,
     disk_session: Arc<Tracker>,
     config: Arc<Mutex<SessionMemoryConfig>>,
+    query_cancellation: Arc<Mutex<QueryCancellationState>>,
+}
+
+#[derive(Default)]
+struct QueryCancellationState {
+    generation: u64,
+    requested: bool,
+}
+
+/// One command's handle for `KILL QUERY` and connection shutdown.
+///
+/// The handle is installed before parsing starts. If cancellation arrives
+/// before `ResetContextOfStmt` creates the statement, the request stays
+/// latched and is replayed onto the freshly reset statement killer.
+pub struct StatementCancellation {
+    killer: Arc<SqlKiller>,
+    state: Arc<Mutex<QueryCancellationState>>,
+    generation: u64,
+}
+
+impl StatementCancellation {
+    /// Interrupts the command that owns this handle.
+    pub fn cancel(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.generation != self.generation {
+            return;
+        }
+        state.requested = true;
+        drop(state);
+        self.killer.send_kill_signal(KillSignal::QueryInterrupted);
+    }
+}
+
+impl Drop for StatementCancellation {
+    fn drop(&mut self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if state.generation == self.generation {
+            state.requested = false;
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -274,6 +306,7 @@ impl SessionMemory {
         session.set_bytes_limit(quota);
         session.is_root_tracker_of_sess.store(true, SeqCst);
         session.session_id.store(connection_id, SeqCst);
+        session.set_kill_signal_transport(KillSignalTransport::Deferred);
 
         let disk_session = Tracker::new(LABEL_FOR_SESSION, -1);
         disk_session.session_id.store(connection_id, SeqCst);
@@ -287,6 +320,26 @@ impl SessionMemory {
                 tmp_storage_on_oom: true,
                 oom_action,
             })),
+            query_cancellation: Arc::default(),
+        }
+    }
+
+    /// Starts the cancellation lifetime for one wire command.
+    #[must_use]
+    pub fn begin_query_cancellation(&self) -> StatementCancellation {
+        let generation = {
+            let mut state = self
+                .query_cancellation
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            state.generation = state.generation.wrapping_add(1);
+            state.requested = false;
+            state.generation
+        };
+        StatementCancellation {
+            killer: Arc::clone(&self.session.killer),
+            state: Arc::clone(&self.query_cancellation),
+            generation,
         }
     }
 
@@ -391,6 +444,14 @@ impl SessionMemory {
         let connection_id = self.session.session_id.load(SeqCst);
         let config = self.config.lock().unwrap().clone();
         let killer = install_oom_action(&self.session, config.oom_action, connection_id);
+        if self
+            .query_cancellation
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .requested
+        {
+            killer.send_kill_signal(KillSignal::QueryInterrupted);
+        }
 
         let stmt = Tracker::new(LABEL_FOR_SQL_TEXT, -1);
         stmt.session_id.store(connection_id, SeqCst);
@@ -452,9 +513,9 @@ pub struct StatementMemory {
     /// default ON): whether an operator that can spill is allowed to, instead
     /// of failing the statement with 8175.
     tmp_storage_on_oom: bool,
-    /// The killer [`CancelOnExceed`] signals; `None` under `LOG`, where
-    /// nothing cancels.
-    killer: Option<Arc<SqlKiller>>,
+    /// The statement's canonical SQL killer, shared by memory cancellation,
+    /// `KILL QUERY`, connection shutdown, and blocking expression waits.
+    killer: Arc<SqlKiller>,
 }
 
 impl Default for StatementMemory {
@@ -586,15 +647,29 @@ impl StatementMemory {
     /// An accounting operator calls this immediately after each `Consume`.
     /// Under `LOG` it can never fail, which is exactly the captured behavior.
     pub fn check(&self) -> Result<(), ExecError> {
-        let Some(killer) = self.killer.as_ref() else {
-            return Ok(());
-        };
-        match killer.get_kill_signal() {
+        match self.killer.get_kill_signal() {
             Some(KillSignal::QueryMemoryExceeded) => Err(ExecError::MemoryExceedForQuery {
-                conn_id: killer.conn_id.load(SeqCst),
+                conn_id: self.killer.conn_id.load(SeqCst),
             }),
-            _ => Ok(()),
+            Some(_) => self
+                .killer
+                .handle_signal()
+                .map_or(Ok(()), |error| Err(ExecError::Killed(error.to_sql_error()))),
+            None => Ok(()),
         }
+    }
+
+    /// Waits for a SQL `SLEEP` duration or this statement's canonical kill
+    /// event, whichever happens first.
+    #[must_use]
+    pub fn sleep_for(&self, duration: std::time::Duration) -> bool {
+        self.killer.wait_kill_event_timeout(duration)
+    }
+
+    /// Clears a handled standalone-query kill, as Go's `doSleep` does after
+    /// observing the signal outside a table/DML statement.
+    pub(crate) fn reset_kill_signal(&self) {
+        self.killer.reset();
     }
 
     /// Ends the statement-scoped tracker/action lifetime after every source
@@ -879,6 +954,23 @@ mod tests {
             second.check(),
             Err(ExecError::MemoryExceedForQuery { conn_id: 7 })
         ));
+    }
+
+    #[test]
+    fn session_tracker_defers_kill_to_the_typed_statement_boundary() {
+        let session = SessionMemory::new(4096, OomAction::Cancel, 7);
+        let cancellation = session.begin_query_cancellation();
+        let statement = session.statement();
+        cancellation.cancel();
+
+        statement.operator_tracker(3).consume(1);
+        match statement.check() {
+            Err(ExecError::Killed(error)) => {
+                assert_eq!(error.code, 1317);
+                assert_eq!(error.state, "70100");
+            }
+            other => panic!("expected typed query interruption, got {other:?}"),
+        }
     }
 
     #[test]

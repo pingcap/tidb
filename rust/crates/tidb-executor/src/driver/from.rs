@@ -687,6 +687,11 @@ pub(crate) fn build_from(
                 // `WHERE`, so a second, condition-blind choice here would
                 // only be the worse of the two.
                 TableEntry::Kv(kv) => {
+                    // Go appends this table's ID to `StmtCtx.TableIDs` at the
+                    // physical reader build site. The expression context only
+                    // needs the equivalent empty/non-empty fact for SLEEP's
+                    // post-kill reset rule.
+                    ctx.mark_physical_table_reader();
                     let wanted_order: Option<Vec<usize>> = keep_order.then(|| {
                         required
                             .sort_items

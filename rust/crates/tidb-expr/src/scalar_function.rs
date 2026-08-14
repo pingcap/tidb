@@ -466,6 +466,33 @@ impl ScalarFunction {
             }
             return Ok(Datum::Int(0));
         }
+        if name == "sleep" {
+            let [argument] = self.args.as_slice() else {
+                return Err(EvalError::WrongParameterCount("sleep"));
+            };
+            let value = argument.eval(ctx, row)?;
+            if value.is_null() {
+                ctx.handle_sleep_incorrect_argument()?;
+                return Ok(Datum::Int(0));
+            }
+            let seconds = crate::ops::to_f64_with_mysql_string(&value, ctx)?;
+            if seconds < 0.0 {
+                ctx.handle_sleep_incorrect_argument()?;
+                return Ok(Datum::Int(0));
+            }
+            if seconds > f64::MAX / 1_000_000_000.0 {
+                return Err(EvalError::IncorrectArguments(
+                    "Incorrect arguments to sleep".to_owned(),
+                ));
+            }
+            if seconds <= 0.0 {
+                return Ok(Datum::Int(0));
+            }
+            let duration = std::time::Duration::try_from_secs_f64(seconds).map_err(|_| {
+                EvalError::IncorrectArguments("Incorrect arguments to sleep".to_owned())
+            })?;
+            return Ok(Datum::Int(i64::from(ctx.sleep_for(duration))));
+        }
         // Go `builtinCaseWhen*Sig`: the arguments are the flattened
         // `cond, result, ..., else` list, and only the selected branch is
         // evaluated -- so an error in an unreachable branch never surfaces.

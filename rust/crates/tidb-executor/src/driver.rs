@@ -52,6 +52,7 @@ use crate::topn::TopNExec;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tidb_ast::{JoinNode, QueryStmt, SelectField, SelectFieldList, Stmt};
+use tidb_chunk::chunk::Chunk;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_expr::builtin_compare::refine_comparisons;
 use tidb_expr::column::Column;
@@ -1116,7 +1117,7 @@ pub(crate) fn run_select_traced(
             .into_iter()
             .map(|(_, field_type)| field_type)
             .collect();
-        let rows = drain_executor_rows(source, &source_types)?;
+        let rows = drain_executor_rows(source, &source_types, &ctx.statement_memory())?;
         let (rows, scope_with_windows) =
             crate::window::compute_windows(&calls, rows, &current_scope, ctx)?;
         let columns: Vec<Column> = scope_with_windows
@@ -1443,7 +1444,7 @@ pub(crate) fn run_select_traced(
     let mut req = root.new_chunk();
     let mut rows: Vec<Vec<Datum>> = Vec::new();
     loop {
-        root.next(&mut req)?;
+        next_executor(root.as_mut(), &mut req, &ctx.statement_memory())?;
         let n = req.num_rows();
         if n == 0 {
             break;
@@ -1532,12 +1533,13 @@ pub(crate) struct FromTable {
 fn drain_executor_rows(
     mut exec: Box<dyn Executor>,
     types: &[FieldType],
+    memory: &crate::StatementMemory,
 ) -> Result<Vec<Vec<Datum>>, DriverError> {
     exec.open()?;
     let mut rows = Vec::new();
     let mut req = exec.new_chunk();
     loop {
-        exec.next(&mut req)?;
+        next_executor(exec.as_mut(), &mut req, memory)?;
         let n = req.num_rows();
         if n == 0 {
             break;
@@ -1548,6 +1550,21 @@ fn drain_executor_rows(
     }
     exec.close()?;
     Ok(rows)
+}
+
+/// Go `exec.Next` checks the session SQL killer before and after every
+/// executor batch. This wrapper is the Rust driver's single boundary for the
+/// same contract, returning the killer failure through `Result` instead of
+/// Go's panic/recover transport.
+fn next_executor(
+    exec: &mut dyn Executor,
+    req: &mut Chunk,
+    memory: &crate::StatementMemory,
+) -> Result<(), DriverError> {
+    memory.check()?;
+    exec.next(req)?;
+    memory.check()?;
+    Ok(())
 }
 
 /// Go `buildDistinct(child, length)`: an aggregation grouping by the columns

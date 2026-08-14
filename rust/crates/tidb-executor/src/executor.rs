@@ -52,6 +52,9 @@ pub enum ExecError {
         /// it (`...try again.[conn=%d]`).
         conn_id: u64,
     },
+    /// A canonical SQL-killer failure transported through Rust's typed
+    /// executor boundary instead of Go's panic/recover mechanism.
+    Killed(tidb_error::mysql::SqlError),
     /// Go `types.ErrJSONDocumentNULLKey` (3158): `JSON_OBJECTAGG` evaluated a
     /// NULL member name. It is an executor error because Go raises it while
     /// folding the group, after the result columns are already on the wire.

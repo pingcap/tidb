@@ -247,6 +247,10 @@ impl QuerySessionFactory for PipelineSessionFactory {
 }
 
 impl QuerySession for PipelineServerSession {
+    fn query_cancellation(&self) -> Option<Arc<dyn crate::sql_node::ActiveQueryCancellation>> {
+        Some(Arc::new(self.session.begin_query_cancellation()))
+    }
+
     fn wait_timeout(&self) -> std::time::Duration {
         self.session.wait_timeout()
     }
@@ -694,6 +698,26 @@ mod tests {
             "the listener-created session must create its statement root through the process arbitrator"
         );
         assert!(arbitrator.stop());
+    }
+
+    #[test]
+    fn command_cancellation_reaches_blocking_expression_evaluation() {
+        let mut session = open_session();
+        let cancellation = QuerySession::query_cancellation(&session)
+            .expect("pipeline sessions expose command cancellation");
+        let interrupter = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            cancellation.cancel();
+        });
+
+        let started = std::time::Instant::now();
+        assert_eq!(
+            session.session.run("SELECT SLEEP(1)").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+        interrupter.join().unwrap();
+        assert!(started.elapsed() >= std::time::Duration::from_millis(15));
+        assert!(started.elapsed() < std::time::Duration::from_millis(200));
     }
 
     fn open_on(factory: &PipelineSessionFactory, connection_id: u64) -> PipelineServerSession {

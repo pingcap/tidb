@@ -581,6 +581,20 @@ pub trait Columns {
         }
     }
 
+    /// Applies `ErrGroupBadNull` to `SLEEP(NULL)` and negative durations.
+    fn handle_sleep_incorrect_argument(&self) -> Result<(), EvalError> {
+        Err(EvalError::IncorrectArguments(
+            "Incorrect arguments to sleep".to_owned(),
+        ))
+    }
+
+    /// Waits for a SQL `SLEEP` duration, returning whether the statement was
+    /// killed before the deadline.
+    fn sleep_for(&self, duration: std::time::Duration) -> bool {
+        std::thread::sleep(duration);
+        false
+    }
+
     /// Records a statement warning, which Go appends to `StmtCtx.warnings`.
     fn append_warning(&self, code: u16, message: &str) {
         let _ = (code, message);

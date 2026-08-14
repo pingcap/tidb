@@ -230,7 +230,7 @@ pub(crate) fn run_rollup_aggregate(
     // Materialize the source once; every prefix pass replays these rows.
     let mut source_schema = source.schema().clone();
     let source_types = source.ret_field_types().to_vec();
-    let rows = drain_executor_rows(source, &source_types)?;
+    let rows = drain_executor_rows(source, &source_types, &ctx.statement_memory())?;
 
     // Go `buildExpand` evaluates each distinct GROUP BY expression into a
     // fresh projection column before Expand. Restore duplicate group items as
@@ -339,7 +339,8 @@ pub(crate) fn run_rollup_aggregate(
             // This pass rolls up positions `k..`, which IS the grouping bit
             // each GROUPING() call reports -- the one thing that distinguishes
             // a subtotal's NULL from a data NULL.
-            let mut pass_out = drain_executor_rows(Box::new(agg), out_types)?;
+            let mut pass_out =
+                drain_executor_rows(Box::new(agg), out_types, &ctx.statement_memory())?;
             for spec in grouping_specs {
                 let mask = Datum::UInt(spec.mask_for_prefix(k));
                 for row in &mut pass_out {

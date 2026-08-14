@@ -562,6 +562,12 @@ impl Session {
             Stmt::Dml(dml) => match &**dml {
                 DmlStmt::Insert(insert) => {
                     let current_db = self.current_db.clone();
+                    let enable_strict_not_null_check = !matches!(
+                        self.vars
+                            .get_system(tidb_vardef::tidb_vars::TIDB_ENABLE_STRICT_NOT_NULL_CHECK)
+                            .as_deref(),
+                        Ok("OFF" | "off" | "0")
+                    );
                     // Go `ResetContextOfStmt`'s `*ast.InsertStmt` arm. The class
                     // is what `StmtContext::push_down_flags` turns into the
                     // statement-kind bit of any coprocessor request this
@@ -570,7 +576,11 @@ impl Session {
                     // every value-level error to a warning.
                     let ctx = self
                         .statement_context_ignoring(true, insert.ignore)
-                        .with_statement_class(tidb_executor::StatementClass::Insert);
+                        .with_statement_class(tidb_executor::StatementClass::Insert)
+                        .with_single_insert_bad_null_policy(
+                            insert.rows.len() == 1,
+                            enable_strict_not_null_check,
+                        );
                     let result = self.with_staged_catalog(|catalog| {
                         tidb_executor::run_insert_reporting(sql, catalog, &current_db, &ctx)
                     });

@@ -205,6 +205,30 @@ impl SqlKiller {
         self.get_kill_event().wait();
     }
 
+    /// Waits up to `duration` for a real kill signal.
+    ///
+    /// A statement reset also wakes the underlying generation channel, but
+    /// it is not itself a kill. In that case this method subscribes to the
+    /// new generation and keeps waiting for the remainder of the deadline.
+    #[must_use]
+    pub fn wait_kill_event_timeout(&self, duration: Duration) -> bool {
+        let started = Instant::now();
+        loop {
+            if self.get_kill_signal().is_some() {
+                return true;
+            }
+            let elapsed = started.elapsed();
+            if elapsed >= duration {
+                return false;
+            }
+            let event = self.subscribe_kill_event();
+            match event.recv_timeout(duration - elapsed) {
+                Ok(()) | Err(crossbeam_channel::RecvTimeoutError::Disconnected) => continue,
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => return false,
+            }
+        }
+    }
+
     fn trigger_kill_event(&self) {
         let mut state = lock_unpoison(&self.kill_event.state);
         if state.triggered {

@@ -51,7 +51,7 @@ pub use process::{
     validate_process_memory_setting, ProcessArbitratorRegistration,
 };
 pub use tracker::{
-    bytes_to_string, format_bytes, Tracker, DEF_MEM_QUOTA_QUERY,
+    bytes_to_string, format_bytes, KillSignalTransport, Tracker, DEF_MEM_QUOTA_QUERY,
     LABEL_FOR_CHUNK_DATA_IN_DISK_BY_CHUNKS, LABEL_FOR_CHUNK_DATA_IN_DISK_BY_ROWS,
     LABEL_FOR_CHUNK_LIST, LABEL_FOR_CTE_STORAGE, LABEL_FOR_CURSOR_FETCH,
     LABEL_FOR_GLOBAL_ANALYZE_MEMORY, LABEL_FOR_GLOBAL_SIMPLE_LRU_CACHE, LABEL_FOR_GLOBAL_STORAGE,

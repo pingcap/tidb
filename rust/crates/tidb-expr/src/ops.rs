@@ -1719,18 +1719,24 @@ mod tests {
             ("not a number", 0.0),
         ] {
             assert_eq!(
-                bytes_to_f64(text.as_bytes(), &crate::NoColumns),
+                bytes_to_f64(text.as_bytes(), &crate::NoColumns).unwrap(),
                 expected,
                 "{text}"
             );
         }
-        assert_eq!(bytes_to_f64(b"1e999", &crate::NoColumns), f64::MAX);
-        assert_eq!(bytes_to_f64(b"-1e999", &crate::NoColumns), -f64::MAX);
+        assert_eq!(bytes_to_f64(b"1e999", &crate::NoColumns).unwrap(), f64::MAX);
+        assert_eq!(
+            bytes_to_f64(b"-1e999", &crate::NoColumns).unwrap(),
+            -f64::MAX
+        );
         // A `binary`/`latin1` payload is not UTF-8, and TiDB still reads its
         // numeric prefix: `SELECT ABS(0x3132FF)` answers 12, captured from a
         // running session. Reading it as 0.0 was a silent wrong answer.
-        assert_eq!(bytes_to_f64(&[b'1', b'2', 0xFF], &crate::NoColumns), 12.0);
-        assert_eq!(bytes_to_f64(&[0xFF], &crate::NoColumns), 0.0);
+        assert_eq!(
+            bytes_to_f64(&[b'1', b'2', 0xFF], &crate::NoColumns).unwrap(),
+            12.0
+        );
+        assert_eq!(bytes_to_f64(&[0xFF], &crate::NoColumns).unwrap(), 0.0);
         for datum in [
             Datum::Bytes(vec![b'4', 0xFF]),
             Datum::new_string(vec![b'4', 0xFF]),

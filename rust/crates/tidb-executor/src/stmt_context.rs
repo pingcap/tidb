@@ -232,6 +232,9 @@ pub struct StmtContext {
     /// every executor-tier note would arrive at the session as a `Warning`.
     warnings: Rc<RefCell<Vec<(WarningLevel, u16, String)>>>,
     division_by_zero: ErrorLevel,
+    /// Go `ErrGroupBadNull`, used by SLEEP's NULL/negative argument alias and
+    /// by the same statement-level policy as column NOT NULL failures.
+    bad_null: ErrorLevel,
     /// Go's truncation flags (`IgnoreTruncateErr` / `TruncateAsWarning`)
     /// collapsed to the level `types.Context.HandleTruncate` acts on. It is
     /// NOT derivable from `strict`: a SELECT warns in every mode, while a
@@ -462,6 +465,11 @@ pub struct StmtContext {
     /// `INSERT ... SELECT` must say `InInsertStmt`, and only the statement
     /// knows that.
     statement_class: StatementClass,
+    /// Whether executor construction installed a physical table reader for
+    /// this statement. Go records the corresponding table IDs while building
+    /// those readers; `SLEEP` needs only the empty/non-empty distinction when
+    /// deciding whether a handled kill may reset the statement killer.
+    has_physical_table_reader: Rc<Cell<bool>>,
     /// The warnings TiKV reported for THIS statement's coprocessor requests.
     ///
     /// It is an `Arc` sink rather than the `Rc` buffer beside it because a
@@ -558,6 +566,11 @@ impl StmtContext {
         Self {
             warnings: Rc::default(),
             division_by_zero,
+            bad_null: if strict {
+                ErrorLevel::Error
+            } else {
+                ErrorLevel::Warn
+            },
             truncate,
             strict,
             strict_sql_mode: strict,
@@ -624,6 +637,7 @@ impl StmtContext {
             group_concat_max_len: 1024,
             apply_cache_capacity: tidb_vardef::defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE,
             statement_class: StatementClass::Other,
+            has_physical_table_reader: Rc::default(),
             cop_warnings: WarningCollector::new(),
         }
     }
@@ -640,6 +654,31 @@ impl StmtContext {
     #[must_use]
     pub const fn statement_class(&self) -> StatementClass {
         self.statement_class
+    }
+
+    /// Applies Go's one-row INSERT bad-NULL rule after the parser has exposed
+    /// the row count and the session switch.
+    #[must_use]
+    pub fn with_single_insert_bad_null_policy(
+        mut self,
+        is_single_insert: bool,
+        enable_strict_not_null_check: bool,
+    ) -> Self {
+        let error = (self.strict_sql_mode || is_single_insert)
+            && enable_strict_not_null_check
+            && !self.ignore_err;
+        self.bad_null = if error {
+            ErrorLevel::Error
+        } else {
+            ErrorLevel::Warn
+        };
+        self
+    }
+
+    /// Records the same physical-reader fact Go records by appending to
+    /// `StmtCtx.TableIDs` in `executorBuilder`.
+    pub(crate) fn mark_physical_table_reader(&self) {
+        self.has_physical_table_reader.set(true);
     }
 
     /// The sink a coprocessor request must be given so the warnings TiKV
@@ -1845,6 +1884,29 @@ impl Columns for StmtContext {
         self.truncate
     }
 
+    fn handle_sleep_incorrect_argument(&self) -> Result<(), tidb_expr::EvalError> {
+        let message = "Incorrect arguments to sleep";
+        match self.bad_null {
+            ErrorLevel::Ignore => Ok(()),
+            ErrorLevel::Warn => {
+                self.append_warning(1210, message);
+                Ok(())
+            }
+            ErrorLevel::Error => Err(tidb_expr::EvalError::IncorrectArguments(message.to_owned())),
+        }
+    }
+
+    fn sleep_for(&self, duration: std::time::Duration) -> bool {
+        let killed = self.memory.sleep_for(duration);
+        if killed
+            && self.statement_class == StatementClass::Select
+            && !self.has_physical_table_reader.get()
+        {
+            self.memory.reset_kill_signal();
+        }
+        killed
+    }
+
     fn strict_sql_mode(&self) -> bool {
         self.strict_sql_mode
     }
@@ -1915,6 +1977,31 @@ impl Columns for StmtContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sleep_keeps_a_kill_installed_after_a_physical_table_reader_is_built() {
+        let session = crate::SessionMemory::new(-1, crate::OomAction::Cancel, 7);
+        let cancellation = session.begin_query_cancellation();
+        cancellation.cancel();
+        let ctx = StmtContext::for_query().with_statement_memory(session.statement());
+        ctx.mark_physical_table_reader();
+
+        let started = std::time::Instant::now();
+        assert!(tidb_expr::Columns::sleep_for(
+            &ctx,
+            std::time::Duration::from_secs(1)
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+
+        // Go retains the killer when `StmtCtx.TableIDs` is non-empty, so the
+        // rest of a table-backed evaluation is interrupted too.
+        let started = std::time::Instant::now();
+        assert!(tidb_expr::Columns::sleep_for(
+            &ctx,
+            std::time::Duration::from_secs(1)
+        ));
+        assert!(started.elapsed() < std::time::Duration::from_millis(100));
+    }
 
     /// Go `EvalContext.GetMaxAllowedPacket`, read by every result-sizing
     /// string builtin: `SPACE(n)` past the limit is NULL with warning 1301
