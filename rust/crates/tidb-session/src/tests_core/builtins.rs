@@ -331,6 +331,14 @@ fn date_interval_extract_and_timestampdiff() {
         row_text(session.run("SELECT DATE_ADD(created, INTERVAL 2 HOUR) FROM t")),
         [["2024-01-31 12:20:30"], ["2025-03-16 01:59:59"], ["NULL"]]
     );
+    assert_eq!(
+        row_text(session.run("SELECT DATE_ADD(created, INTERVAL 500000 MICROSECOND) FROM t")),
+        [
+            ["2024-01-31 10:20:30.500000"],
+            ["2025-03-15 23:59:59.500000"],
+            ["NULL"]
+        ]
+    );
     // Captured: the month-end CLAMP -- January 31 plus one month is
     // February 29 in a leap year, not March 3.
     assert_eq!(

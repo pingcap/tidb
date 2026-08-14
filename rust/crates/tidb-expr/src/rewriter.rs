@@ -1095,6 +1095,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                             | "HOUR"
                             | "MINUTE"
                             | "SECOND"
+                            | "MICROSECOND"
                             | "YEAR_MONTH"
                             | "DAY_HOUR"
                             | "DAY_MINUTE"

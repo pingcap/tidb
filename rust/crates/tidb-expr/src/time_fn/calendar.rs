@@ -662,14 +662,9 @@ pub(crate) fn to_seconds(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// (which ALWAYS compute and render a time-of-day component instead — see
 /// [`date_add_time`]'s doc comment for why that's a different, much
 /// simpler problem than the standalone `HOUR()`/`MINUTE()`/`SECOND()`
-/// extraction functions' unimplemented two-path algorithm). `MICROSECOND`
-/// is the one single unit whose real result (captured: `DATE_ADD('2026-07-25
-/// 10:00:00', INTERVAL 500000 MICROSECOND)` = `'2026-07-25 10:00:00.500000'`)
-/// needs a fractional-second slot this tier's result has none of; rather
-/// than refuse the whole unit, [`round_micros_to_seconds`] rounds the
-/// amount to the nearest whole second (ties away from zero) and the
-/// arithmetic proceeds on that, the same lossy-but-honest choice already
-/// documented below for a decimal `SECOND` amount.
+/// extraction functions' different two-path algorithm). `MICROSECOND`
+/// retains the full six-digit fractional result, matching the source's
+/// fixed `MaxFsp` result type for every microsecond interval.
 ///
 /// `DAY` is exact day arithmetic via the same `days_from_civil`/
 /// `civil_from_days` round-trip `TO_DAYS`/`FROM_DAYS` use, so month/year
@@ -798,26 +793,28 @@ pub(crate) fn date_add(
         return Ok(date_add_time(y, m, d, h, mi, sec, delta_secs));
     }
     if unit.eq_ignore_ascii_case("MICROSECOND") {
-        // This tier's `date_add_time` result has no fractional-second
-        // representation (see this function's own doc comment), the same
-        // limitation the `SECOND` unit's decimal amount already has. `n` is
-        // a whole microsecond count; rather than refuse the whole unit,
-        // round it to the nearest whole second (ties away from zero, same
-        // convention `Decimal::round_to_i64_saturating` already uses
-        // elsewhere in this file) and act on THAT -- honest about the
-        // precision lost, not a fabricated sub-second value.
-        let whole_seconds = round_micros_to_seconds(n);
-        let (h, mi, sec) = match time_suffix {
-            Some(t) => match parse_time_hms(t) {
-                Some(hms) => hms,
+        let (h, mi, sec, microsecond) = match time_suffix {
+            Some(t) => match parse_time_with_fraction(t) {
+                Some((h, mi, sec, fraction)) => {
+                    let scale = 10u32.pow(6 - fraction.len() as u32);
+                    let microsecond = if fraction.is_empty() {
+                        0
+                    } else {
+                        fraction.parse::<u32>().unwrap_or(0) * scale
+                    };
+                    (h, mi, sec, microsecond)
+                }
                 None => return Ok(Datum::Null),
             },
-            None => (0, 0, 0),
+            None => (0, 0, 0, 0),
         };
-        let Some(delta_secs) = sign.checked_mul(whole_seconds) else {
+        let Some(delta_micros) = sign.checked_mul(n) else {
             return Ok(Datum::Null);
         };
-        return Ok(date_add_time(y, m, d, h, mi, sec, delta_secs));
+        return Ok(date_add_time_micros(
+            (y, m, d, h, mi, sec, microsecond),
+            delta_micros,
+        ));
     }
     // Every unit below scales the amount and adds it to a day or month count,
     // and TiDB's own suite hands this an amount that does not fit an `i64` at
@@ -1739,19 +1736,6 @@ fn parse_time_12(input: &[char]) -> Option<(u32, u32, u32, Option<bool>, usize)>
 /// into month/year, exactly like `DAY`-unit arithmetic already does
 /// (`22:00:00 + 5 HOUR` = the next day's `03:00:00`, confirmed via
 /// `goeval`).
-/// Rounds a whole microsecond count to the nearest whole second, ties away
-/// from zero -- used by [`date_add`]'s `MICROSECOND`-unit branch, whose
-/// result has no fractional-second slot to keep the remainder in.
-fn round_micros_to_seconds(micros: i64) -> i64 {
-    let whole = micros / 1_000_000;
-    let remainder = micros % 1_000_000;
-    if remainder.abs() * 2 >= 1_000_000 {
-        whole + remainder.signum()
-    } else {
-        whole
-    }
-}
-
 /// An amount whose seconds count does not fit an `i64` is `NULL`, for the same
 /// reason as the day/month units above: real TiDB answers `NULL` there because
 /// the date left `DATE`'s range, and an overflow is that case arriving early.
@@ -1774,6 +1758,61 @@ fn date_add_time(y: i64, m: u32, d: u32, h: u32, mi: u32, sec: u32, delta_secs: 
         (secs_of_day / 60 % 60) as u32,
         (secs_of_day % 60) as u32,
     )
+}
+
+/// The microsecond form of [`date_add_time`]. Go fixes this unit's result FSP
+/// at six, so even a whole-second result retains a `.000000` suffix.
+fn date_add_time_micros(parts: (i64, u32, u32, u32, u32, u32, u32), delta_micros: i64) -> Datum {
+    let (y, m, d, h, mi, sec, microsecond) = parts;
+    const MICROS_PER_SECOND: i64 = 1_000_000;
+    const MICROS_PER_DAY: i64 = 86_400 * MICROS_PER_SECOND;
+    let Some(total) = days_from_civil(y, m, d)
+        .checked_mul(MICROS_PER_DAY)
+        .and_then(|value| {
+            value.checked_add(
+                (i64::from(h) * 3_600 + i64::from(mi) * 60 + i64::from(sec)) * MICROS_PER_SECOND
+                    + i64::from(microsecond),
+            )
+        })
+        .and_then(|value| value.checked_add(delta_micros))
+    else {
+        return Datum::Null;
+    };
+    let day_count = total.div_euclid(MICROS_PER_DAY);
+    let micros_of_day = total.rem_euclid(MICROS_PER_DAY);
+    let seconds_of_day = micros_of_day / MICROS_PER_SECOND;
+    let (y2, m2, d2) = civil_from_days(day_count);
+    format_ymdhms_micro_result(
+        y2,
+        m2,
+        d2,
+        (seconds_of_day / 3_600) as u32,
+        (seconds_of_day / 60 % 60) as u32,
+        (seconds_of_day % 60) as u32,
+        (micros_of_day % MICROS_PER_SECOND) as u32,
+    )
+}
+
+fn format_ymdhms_micro_result(
+    y: i64,
+    m: u32,
+    d: u32,
+    h: u32,
+    mi: u32,
+    sec: u32,
+    microsecond: u32,
+) -> Datum {
+    if y == 0 {
+        return Datum::new_string(format!(
+            "0000-00-00 {h:02}:{mi:02}:{sec:02}.{microsecond:06}"
+        ));
+    }
+    if !(1..=9999).contains(&y) {
+        return Datum::Null;
+    }
+    Datum::new_string(format!(
+        "{y:04}-{m:02}-{d:02} {h:02}:{mi:02}:{sec:02}.{microsecond:06}"
+    ))
 }
 
 /// Like [`format_ymd_result`], but for `HOUR`/`MINUTE`/`SECOND` intervals,
@@ -1983,7 +2022,7 @@ mod clock_source_tests {
 
 #[cfg(test)]
 mod date_add_microsecond_tests {
-    use super::{date_add, format_decimal_composite_interval, round_micros_to_seconds};
+    use super::{date_add, format_decimal_composite_interval};
     use tidb_datatype::{Datum, Decimal};
 
     /// Exact port of Go `TestGetIntervalFromDecimal` in
@@ -2059,39 +2098,21 @@ mod date_add_microsecond_tests {
         );
     }
 
-    /// `DATE_ADD(d, INTERVAL n MICROSECOND)` rounds `n` to the nearest
-    /// whole second (this tier's result has no fractional-second slot) and
-    /// otherwise behaves like the `SECOND` unit -- captured against real
-    /// TiDB (`testkit.CreateMockStore`): `DATE_ADD('2026-07-25 10:00:00',
-    /// INTERVAL 500000 MICROSECOND)` is `'2026-07-25 10:00:00.500000'`,
-    /// which needs a fractional second this tier cannot represent, so the
-    /// rounded result is the nearest whole second instead (a documented,
-    /// honest divergence, not a silent one).
     #[test]
-    fn microsecond_rounds_to_nearest_whole_second() {
+    fn microsecond_preserves_six_digit_results() {
         let date = Datum::new_string("2026-07-25 10:00:00");
-        // 1,500,000 microseconds rounds up to 2 whole seconds.
         let result = date_add("MICROSECOND", &date, &Datum::Int(1_500_000), 1).unwrap();
-        assert_eq!(result, Datum::new_string("2026-07-25 10:00:02"));
+        assert_eq!(result, Datum::new_string("2026-07-25 10:00:01.500000"));
 
-        // 499,999 microseconds rounds down to 0 whole seconds -- the date
-        // is unchanged (still gains the always-rendered time-of-day
-        // component the HOUR/MINUTE/SECOND branch always produces).
         let result = date_add("MICROSECOND", &date, &Datum::Int(499_999), 1).unwrap();
-        assert_eq!(result, Datum::new_string("2026-07-25 10:00:00"));
+        assert_eq!(result, Datum::new_string("2026-07-25 10:00:00.499999"));
 
-        // DATE_SUB: sign = -1.
         let result = date_add("MICROSECOND", &date, &Datum::Int(1_500_000), -1).unwrap();
-        assert_eq!(result, Datum::new_string("2026-07-25 09:59:58"));
-    }
+        assert_eq!(result, Datum::new_string("2026-07-25 09:59:58.500000"));
 
-    #[test]
-    fn round_micros_to_seconds_ties_away_from_zero() {
-        assert_eq!(round_micros_to_seconds(500_000), 1);
-        assert_eq!(round_micros_to_seconds(499_999), 0);
-        assert_eq!(round_micros_to_seconds(-500_000), -1);
-        assert_eq!(round_micros_to_seconds(1_500_000), 2);
-        assert_eq!(round_micros_to_seconds(0), 0);
+        let date = Datum::new_string("2026-07-25 10:00:00.250000");
+        let result = date_add("MICROSECOND", &date, &Datum::Int(500_000), 1).unwrap();
+        assert_eq!(result, Datum::new_string("2026-07-25 10:00:00.750000"));
     }
 }
 
