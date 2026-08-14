@@ -601,6 +601,7 @@ pub mod process;
 mod process_arm;
 mod show;
 mod show_create_database;
+mod show_index;
 pub mod sysvar;
 pub mod vars;
 pub use vars::{GlobalSysvars, SessionVars, VarError};

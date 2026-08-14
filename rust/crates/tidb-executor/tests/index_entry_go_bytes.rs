@@ -161,6 +161,7 @@ fn index(id: i64, unique: bool, offsets: Vec<usize>) -> KvIndex {
     KvIndex {
         id,
         name: "idx".to_owned(),
+        comment: String::new(),
         unique,
         column_offsets: offsets,
         prefix_lengths,

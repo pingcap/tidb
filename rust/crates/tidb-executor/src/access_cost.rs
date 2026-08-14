@@ -1979,6 +1979,7 @@ mod tests {
         let index = |prefix_len: i64| KvIndex {
             id: 1,
             name: "idx".to_owned(),
+            comment: String::new(),
             unique: false,
             column_offsets: vec![0],
             prefix_lengths: vec![prefix_len],
@@ -2013,6 +2014,7 @@ mod tests {
                 KvIndex {
                     id: 1,
                     name: "ib".to_owned(),
+                    comment: String::new(),
                     unique: false,
                     column_offsets: vec![1],
                     prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],

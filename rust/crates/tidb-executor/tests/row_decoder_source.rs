@@ -616,6 +616,7 @@ fn live_consumers_share_full_and_projected_decoder_semantics() {
     let index = KvIndex {
         id: 7,
         name: "b".to_owned(),
+        comment: String::new(),
         unique: false,
         column_offsets: vec![1],
         prefix_lengths: vec![-1],

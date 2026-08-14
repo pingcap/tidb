@@ -319,8 +319,12 @@ fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
             rows.push(statistics_row(
                 &schema,
                 &table_name,
-                "PRIMARY",
-                true,
+                StatisticsIndex {
+                    name: "PRIMARY",
+                    unique: true,
+                    comment: "",
+                    visible: true,
+                },
                 1,
                 &table.columns[offset].name,
                 false,
@@ -334,8 +338,12 @@ fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
                 rows.push(statistics_row(
                     &schema,
                     &table_name,
-                    &index.name,
-                    index.unique,
+                    StatisticsIndex {
+                        name: &index.name,
+                        unique: index.unique,
+                        comment: &index.comment,
+                        visible: index.visible,
+                    },
                     position + 1,
                     &column.name,
                     nullable,
@@ -346,12 +354,18 @@ fn statistics_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<
     rows
 }
 
+struct StatisticsIndex<'a> {
+    name: &'a str,
+    unique: bool,
+    comment: &'a str,
+    visible: bool,
+}
+
 /// One `STATISTICS` row.
 fn statistics_row(
     schema: &str,
     table_name: &str,
-    index_name: &str,
-    unique: bool,
+    index: StatisticsIndex<'_>,
     sequence: usize,
     column_name: &str,
     nullable: bool,
@@ -362,9 +376,9 @@ fn statistics_row(
         text(table_name),
         // Go `setDataForStatisticsInTable` writes the STRING "1"/"0" here,
         // which is why the declared type is `varchar(1)` and not an integer.
-        text(if unique { "0" } else { "1" }),
+        text(if index.unique { "0" } else { "1" }),
         text(schema),
-        text(index_name),
+        text(index.name),
         Datum::Int(sequence as i64),
         text(column_name),
         text("A"),
@@ -375,8 +389,8 @@ fn statistics_row(
         text(if nullable { "YES" } else { "" }),
         text("BTREE"),
         text(""),
-        text(""),
-        text("YES"),
+        text(index.comment),
+        text(if index.visible { "YES" } else { "NO" }),
         Datum::Null,
     ]
 }

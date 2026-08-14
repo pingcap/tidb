@@ -460,6 +460,9 @@ pub struct KvIndex {
     pub id: i64,
     /// The index name, which a duplicate-key error reports.
     pub name: String,
+    /// Go `IndexInfo.Comment`, preserved verbatim in metadata and escaped
+    /// only when a SQL renderer emits it.
+    pub comment: String,
     /// Go `IndexInfo.Unique`.
     pub unique: bool,
     /// The indexed columns' offsets in the row, in index order.

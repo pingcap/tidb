@@ -1232,6 +1232,7 @@ pub fn run_create_table_in(
             table.add_index(KvIndex {
                 id,
                 name: foreign_key.name.clone(),
+                comment: String::new(),
                 unique: false,
                 column_offsets: fk_offsets.clone(),
                 // Go's auto-created foreign-key index names whole columns:

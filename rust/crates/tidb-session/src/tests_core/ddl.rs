@@ -2093,3 +2093,98 @@ fn table_cache_state_is_shared_metadata_and_guards_ddl() {
         "ALTER table cache for tables in system database is currently unsupported"
     );
 }
+
+/// Index comments and optimizer visibility are one `IndexInfo` authority:
+/// CREATE/ALTER mutate it, while SHOW and information_schema read it back.
+#[test]
+fn index_comments_and_visibility_share_metadata() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE index_meta (a INT NOT NULL, b INT, \
+             KEY a(a) COMMENT 'foo''bar', UNIQUE KEY b(b) INVISIBLE)",
+        )
+        .unwrap();
+    session
+        .run("CREATE INDEX created ON index_meta (b) COMMENT 'create path' INVISIBLE")
+        .unwrap();
+    session
+        .run("ALTER TABLE index_meta ADD KEY altered(a) COMMENT 'alter path'")
+        .unwrap();
+
+    assert_eq!(
+        query_text(
+            &mut session,
+            "SELECT index_name, index_comment, is_visible \
+             FROM information_schema.statistics \
+             WHERE table_schema = 'test' AND table_name = 'index_meta' \
+             ORDER BY index_name",
+        )
+        .1,
+        vec![
+            vec!["a".to_owned(), "foo'bar".to_owned(), "YES".to_owned()],
+            vec![
+                "altered".to_owned(),
+                "alter path".to_owned(),
+                "YES".to_owned(),
+            ],
+            vec!["b".to_owned(), String::new(), "NO".to_owned()],
+            vec![
+                "created".to_owned(),
+                "create path".to_owned(),
+                "NO".to_owned(),
+            ],
+        ]
+    );
+    let create = query_text(&mut session, "SHOW CREATE TABLE index_meta").1[0][1].clone();
+    assert!(create.contains("KEY `a` (`a`) COMMENT 'foo''bar'"));
+    assert!(create.contains("UNIQUE KEY `b` (`b`) /*!80000 INVISIBLE */"));
+    assert!(create.contains("KEY `created` (`b`) /*!80000 INVISIBLE */ COMMENT 'create path'"));
+    assert!(create.contains("KEY `altered` (`a`) COMMENT 'alter path'"));
+    let shown = query_text(&mut session, "SHOW INDEX FROM index_meta").1;
+    assert_eq!(
+        shown
+            .iter()
+            .map(|row| vec![row[2].clone(), row[12].clone(), row[13].clone()])
+            .collect::<Vec<_>>(),
+        vec![
+            vec!["a".to_owned(), "foo'bar".to_owned(), "YES".to_owned()],
+            vec!["b".to_owned(), String::new(), "NO".to_owned()],
+            vec![
+                "created".to_owned(),
+                "create path".to_owned(),
+                "NO".to_owned(),
+            ],
+            vec![
+                "altered".to_owned(),
+                "alter path".to_owned(),
+                "YES".to_owned(),
+            ],
+        ]
+    );
+
+    session
+        .run("ALTER TABLE index_meta ALTER INDEX a INVISIBLE")
+        .unwrap();
+    session
+        .run("ALTER TABLE index_meta ALTER INDEX b VISIBLE")
+        .unwrap();
+    assert_eq!(
+        query_text(
+            &mut session,
+            "SELECT index_name, is_visible FROM information_schema.statistics \
+             WHERE table_schema = 'test' AND table_name = 'index_meta' \
+             ORDER BY index_name",
+        )
+        .1,
+        vec![
+            vec!["a".to_owned(), "NO".to_owned()],
+            vec!["altered".to_owned(), "YES".to_owned()],
+            vec!["b".to_owned(), "YES".to_owned()],
+            vec!["created".to_owned(), "NO".to_owned()],
+        ]
+    );
+    let shown = query_text(&mut session, "SHOW INDEX FROM index_meta").1;
+    assert_eq!(shown[0][13], "NO");
+    assert_eq!(shown[1][13], "YES");
+}

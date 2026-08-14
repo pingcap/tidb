@@ -540,6 +540,7 @@ pub(crate) fn kv_index(
     Ok(KvIndex {
         id: index.id,
         name: index.name.original().to_owned(),
+        comment: index.comment.clone(),
         unique: index.unique,
         column_offsets: offsets,
         prefix_lengths,
@@ -1338,6 +1339,12 @@ mod tests {
             indices: vec![index(1, "inv", "a", 1, -1)].into(),
             ..TableInfo::default()
         };
+        table
+            .indices
+            .get(0)
+            .expect("the fixture has its index")
+            .write()
+            .comment = "cluster comment".to_owned();
         let invisible = table.clone_like_go();
         invisible
             .indices
@@ -1380,6 +1387,8 @@ mod tests {
                 panic!("a cluster table is a kv table");
             };
             assert_eq!(kv.indexes().len(), 1);
+            assert_eq!(kv.indexes()[0].comment, "cluster comment");
+            assert_eq!(kv.indexes()[0].visible, expect_plan_index);
             assert_eq!(kv.plan_indexes().count(), usize::from(expect_plan_index));
         }
     }

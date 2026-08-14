@@ -735,6 +735,7 @@ fn add_index_constraint_action(
         table_name,
         super::indexes::IndexSpec {
             name: &index_name,
+            comment: index.options.comment.as_deref().unwrap_or(""),
             unique,
             parts: &index.parts,
             visible: is_visible(&index.options),
@@ -865,6 +866,7 @@ fn add_foreign_key_action(
         table.add_index(super::KvIndex {
             id,
             name: foreign_key.name.clone(),
+            comment: String::new(),
             unique: false,
             column_offsets: fk_offsets.clone(),
             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; fk_offsets.len()],

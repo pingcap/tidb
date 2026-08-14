@@ -94,6 +94,7 @@ fn inner_table_datums(rows: &[Vec<Datum>]) -> KvTable {
             KvIndex {
                 id: 1,
                 name: "ib".to_owned(),
+                comment: String::new(),
                 unique: false,
                 column_offsets: vec![1],
                 prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
@@ -660,6 +661,7 @@ mod decision {
                 crate::kv_table::KvIndex {
                     id: 1,
                     name: "ib".to_owned(),
+                    comment: String::new(),
                     unique: false,
                     column_offsets: vec![1],
                     prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],

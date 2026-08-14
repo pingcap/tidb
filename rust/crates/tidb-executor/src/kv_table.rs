@@ -2586,6 +2586,7 @@ mod tests {
         table.add_index(KvIndex {
             id: 1,
             name: "s".to_owned(),
+            comment: String::new(),
             unique: true,
             column_offsets: vec![1],
             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
@@ -2877,6 +2878,7 @@ mod tests {
         t.add_index(KvIndex {
             id: 1,
             name: "idx".to_owned(),
+            comment: String::new(),
             unique: false,
             column_offsets: vec![1],
             prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],

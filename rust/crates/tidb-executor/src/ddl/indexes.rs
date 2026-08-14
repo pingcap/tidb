@@ -76,6 +76,7 @@ pub fn run_create_index_in(
         &table_name,
         IndexSpec {
             name: &create.name,
+            comment: create.options.comment.as_deref().unwrap_or(""),
             unique,
             parts: &create.parts,
             visible: is_visible(&create.options),
@@ -163,6 +164,8 @@ pub(crate) fn reject_duplicate_index_columns(
 pub(crate) struct IndexSpec<'a> {
     /// The index's name.
     pub name: &'a str,
+    /// Go `IndexInfo.Comment`.
+    pub comment: &'a str,
     /// Go `IndexInfo.Unique`.
     pub unique: bool,
     /// The key parts, each a column or an expression.
@@ -190,6 +193,7 @@ pub(crate) fn add_index_to_table(
 ) -> Result<(), DriverError> {
     let IndexSpec {
         name: index_name,
+        comment,
         unique,
         parts,
         visible,
@@ -334,6 +338,7 @@ pub(crate) fn add_index_to_table(
             KvIndex {
                 id,
                 name: index_name.to_owned(),
+                comment: comment.to_owned(),
                 unique,
                 column_offsets: offsets,
                 prefix_lengths,

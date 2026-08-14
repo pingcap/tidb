@@ -101,25 +101,6 @@ pub(crate) fn table_indexes(
         }
         Ok(offset)
     };
-    fn push(
-        indexes: &mut Vec<KvIndex>,
-        name: String,
-        unique: bool,
-        offsets: Vec<usize>,
-        prefix_lengths: Vec<i64>,
-        visible: bool,
-        global: bool,
-    ) {
-        indexes.push(KvIndex {
-            id: (indexes.len() + 1) as i64,
-            name,
-            unique,
-            column_offsets: offsets,
-            prefix_lengths,
-            visible,
-            global,
-        });
-    }
     /// Go `GetName4AnonymousIndex` (`pkg/ddl/executor.go`): an index written
     /// without a name is named after its FIRST column, and a collision with an
     /// index already on the table appends `_2`, `_3`, ... until it is free.
@@ -300,15 +281,16 @@ pub(crate) fn table_indexes(
             prefix_lengths[0] = stored_length;
         }
         hidden.extend(built.into_iter().map(|(_, column)| column));
-        push(
-            &mut indexes,
+        indexes.push(KvIndex {
+            id: (indexes.len() + 1) as i64,
             name,
+            comment: index.options.comment.clone().unwrap_or_default(),
             unique,
-            offsets,
+            column_offsets: offsets,
             prefix_lengths,
-            is_visible(&index.options),
-            index.options.global,
-        );
+            visible: is_visible(&index.options),
+            global: index.options.global,
+        });
     }
     for def in &create.columns {
         for option in &def.options {
@@ -323,15 +305,16 @@ pub(crate) fn table_indexes(
                     tidb_ast::InlineKeyKind::Unique => {
                         let offset = offset_of(&def.name)?;
                         let name = anonymous_index_name(&indexes, &reserved, &def.name);
-                        push(
-                            &mut indexes,
+                        indexes.push(KvIndex {
+                            id: (indexes.len() + 1) as i64,
                             name,
-                            true,
-                            vec![offset],
-                            vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
-                            true,
-                            false,
-                        );
+                            comment: String::new(),
+                            unique: true,
+                            column_offsets: vec![offset],
+                            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                            visible: true,
+                            global: false,
+                        });
                     }
                     // A primary key that is not the row handle still needs an
                     // index to enforce its uniqueness. Either way it CONSUMES
@@ -343,15 +326,16 @@ pub(crate) fn table_indexes(
                         let offset = offset_of(&def.name)?;
                         reserved.push(anonymous_index_name(&indexes, &reserved, &def.name));
                         if !clustered {
-                            push(
-                                &mut indexes,
-                                "PRIMARY".to_owned(),
-                                true,
-                                vec![offset],
-                                vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
-                                true,
-                                false,
-                            );
+                            indexes.push(KvIndex {
+                                id: (indexes.len() + 1) as i64,
+                                name: "PRIMARY".to_owned(),
+                                comment: String::new(),
+                                unique: true,
+                                column_offsets: vec![offset],
+                                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH],
+                                visible: true,
+                                global: false,
+                            });
                         }
                     }
                 }
