@@ -146,6 +146,14 @@ impl DriverError {
             *b"42000",
             format!("Unknown storage engine '{engine}'"),
         ),
+        DriverError::OperationOnCachedTable(operation) => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrOptOnCacheTable,
+            format!("'{operation}' is unsupported on cache tables."),
+        ),
+        DriverError::UnsupportedAlterCacheForSystemTable => MysqlError::coded(
+            tidb_error::tidb::errcode::ErrUnsupportedDDLOperation,
+            "ALTER table cache for tables in system database is currently unsupported",
+        ),
         // Every execution and evaluation failure, one arm each, in `exec`.
         DriverError::Exec(error) => exec::to_mysql_error(error),
         DriverError::Txn(crate::TxnErrorKind::WriteConflict) => {

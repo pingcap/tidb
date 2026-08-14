@@ -415,6 +415,9 @@ fn show_create_table_text(
     if let Some(base) = table.next_auto_random().filter(|base| *base > 1) {
         out.push_str(&format!(" /*T![auto_rand_base] AUTO_RANDOM_BASE={base} */"));
     }
+    if table.is_cached() {
+        out.push_str(" /* CACHED ON */");
+    }
     out.push_str(&partition_clause_text(table));
     Ok(out)
 }

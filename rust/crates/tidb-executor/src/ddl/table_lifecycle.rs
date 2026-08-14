@@ -80,6 +80,11 @@ pub fn run_rename_table_in(
     // `c` -- the first pair is not applied. Staging is also why a chain like
     // `a TO tmp, b TO a` succeeds: `a` is free by the time pair two is read.
     let mut staged: Vec<Rename> = Vec::new();
+    let cache_operation = if pairs.len() == 1 {
+        "Rename Table"
+    } else {
+        "Rename Tables"
+    };
     for (from, to) in &pairs {
         let (from_db, from_name) = crate::driver::split_table_path_pub(from, current_db)?;
         let (from_db, from_name) = (from_db.to_lowercase(), from_name.to_lowercase());
@@ -91,6 +96,19 @@ pub fn run_rename_table_in(
                 format!("{from_db}.{from_name}"),
             )));
         }
+        let source_cached = staged
+            .iter()
+            .rev()
+            .find(|rename| rename.to_db == from_db && rename.to_name == from_name)
+            .map_or_else(
+                || {
+                    matches!(
+                        catalog.table_in(&from_db, &from_name),
+                        Some(crate::TableEntry::Kv(table)) if table.is_cache_table()
+                    )
+                },
+                |rename| rename.source_cached,
+            );
         // Go checks the destination SCHEMA before the destination table, and
         // reports a missing one as 1025 rather than moving anything.
         if !catalog.has_database(&to_db) {
@@ -107,6 +125,9 @@ pub fn run_rename_table_in(
                 format!("{to_db}.{to_name}"),
             )));
         }
+        if source_cached {
+            return Err(DriverError::OperationOnCachedTable(cache_operation));
+        }
         // A foreign key names the referenced table, so moving one side would
         // leave the constraint pointing at a name that no longer resolves.
         if crate::foreign_key::participates(catalog, &from_db, &from_name) {
@@ -119,6 +140,7 @@ pub fn run_rename_table_in(
             from_name,
             to_db,
             to_name,
+            source_cached,
         });
     }
 
@@ -140,6 +162,7 @@ struct Rename {
     from_name: String,
     to_db: String,
     to_name: String,
+    source_cached: bool,
 }
 
 /// Whether `database`.`name` would exist once `staged` had been applied.
@@ -193,6 +216,9 @@ pub fn run_truncate_table_in(
             format!("{database}.{name}"),
         )));
     };
+    if table.is_cache_table() {
+        return Err(DriverError::OperationOnCachedTable("Truncate Table"));
+    }
     // TRUNCATE starts the counter over, and on a shared counter that is a
     // write like any other: a failure here must not be reported as a
     // successful truncate whose next insert then collides.
@@ -262,6 +288,18 @@ pub fn run_drop_table_in(
             dropping.push((database.to_owned(), name.to_owned()));
         }
         crate::foreign_key::check_drop_tables(catalog, &dropping)?;
+    }
+
+    // Go validates every named object before submitting the DROP job, so a
+    // cached table anywhere in the list prevents every drop in the statement.
+    for path in &drop.names {
+        let (database, name) = crate::driver::split_table_path_pub(path, current_db)?;
+        if matches!(
+            catalog.table_in(database, name),
+            Some(crate::TableEntry::Kv(table)) if table.is_cache_table()
+        ) {
+            return Err(DriverError::OperationOnCachedTable("Drop Table"));
+        }
     }
 
     let mut missing = Vec::new();

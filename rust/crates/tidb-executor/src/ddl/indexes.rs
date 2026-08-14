@@ -63,6 +63,12 @@ pub fn run_create_index_in(
             ))
         }
     };
+    if matches!(
+        catalog.table_in(&database, &table_name),
+        Some(crate::TableEntry::Kv(table)) if table.is_cache_table()
+    ) {
+        return Err(DriverError::OperationOnCachedTable("Create Index"));
+    }
     reject_partial_index(&create.options)?;
     add_index_to_table(
         catalog,
@@ -392,6 +398,12 @@ pub fn run_drop_index_in(
     };
     let (database, table_name) = crate::driver::split_table_path_pub(&drop.table, current_db)?;
     let (database, table_name) = (database.to_owned(), table_name.to_owned());
+    if matches!(
+        catalog.table_in(&database, &table_name),
+        Some(crate::TableEntry::Kv(table)) if table.is_cache_table()
+    ) {
+        return Err(DriverError::OperationOnCachedTable("Drop Index"));
+    }
     drop_index_from_table(
         catalog,
         &database,

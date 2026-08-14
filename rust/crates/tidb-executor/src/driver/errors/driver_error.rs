@@ -50,6 +50,10 @@ pub enum DriverError {
     TableOptionInsertMethodUnsupported,
     /// Go `dbterror.ErrUnknownEngine` (1286).
     UnknownStorageEngine(String),
+    /// TiDB `ErrOptOnCacheTable` (8242), carrying the operation or reason.
+    OperationOnCachedTable(&'static str),
+    /// Go `dbterror.ErrUnsupportedAlterCacheForSysTable` (8200).
+    UnsupportedAlterCacheForSystemTable,
     /// Rewriting an expression or executing failed.
     Exec(ExecError),
     /// The shared catalog is unusable because a statement panicked while

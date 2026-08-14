@@ -39,6 +39,7 @@
 mod auto_id;
 mod auto_increment;
 mod auto_random;
+mod cache;
 mod column_deps;
 mod index_entries;
 mod partition_maintenance;
@@ -438,6 +439,11 @@ pub struct KvTable {
     /// Go `TableInfo.Comment`, persisted by CREATE/ALTER TABLE and served by
     /// metadata statements.
     comment: String,
+    /// Go `TableInfo.TableCacheStatusType`. The synchronous local DDL has no
+    /// externally visible switching phase, so tables are either enabled or
+    /// disabled here; cluster-loaded metadata may still carry the source
+    /// value verbatim.
+    cache_status: tidb_model::TableCacheStatusType,
     /// The cluster's persisted new-collation mode, captured when this table
     /// object is built.
     ///
@@ -575,6 +581,8 @@ pub enum KvTableError {
     Decode(String),
     /// The storage layer refused a read or write.
     Storage(String),
+    /// TiDB `ErrOptOnCacheTable` (8242).
+    CacheTableUnsupported(&'static str),
 }
 
 /// Carries a generation failure across the module boundary without losing the
@@ -637,6 +645,7 @@ impl KvTable {
             auto_random_id: AutoIdAllocator::new(),
             charset: TableCharset::default(),
             comment: String::new(),
+            cache_status: tidb_model::TableCacheStatusType::DISABLE,
             use_new_collation,
             foreign_keys: Vec::new(),
             max_foreign_key_id: 0,

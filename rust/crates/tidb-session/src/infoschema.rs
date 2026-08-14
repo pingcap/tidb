@@ -498,7 +498,7 @@ fn tables_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Vec<Vec<Datu
             Datum::Null,
             text(COLLATION),
             Datum::Null,
-            text(""),
+            text(table_create_options(table)),
             text(table.comment()),
             Datum::Int(table.table_id),
             text(&sharding_info(table)),
@@ -580,6 +580,18 @@ fn pk_type(table: &KvTable) -> String {
         "CLUSTERED".to_owned()
     } else {
         "NONCLUSTERED".to_owned()
+    }
+}
+
+/// Go `information_schema.tables.CREATE_OPTIONS`: partitioning takes
+/// precedence, otherwise an enabled table cache is reported as `cached=on`.
+fn table_create_options(table: &KvTable) -> &'static str {
+    if table.partition().is_some() {
+        "partitioned"
+    } else if table.is_cached() {
+        "cached=on"
+    } else {
+        ""
     }
 }
 

@@ -80,6 +80,7 @@ pub fn run_alter_table_in(
             format!("{database}.{name}"),
         )));
     }
+    super::table_cache::guard_alter_actions(catalog, &database, &name, &alter.actions)?;
 
     // A constraint names its columns and its referenced table, and a DROP
     // COLUMN, a column RENAME or a table RENAME rewrites neither, so each
@@ -110,6 +111,9 @@ pub fn run_alter_table_in(
             ));
         }
         match action {
+            tidb_ast::AlterTableAction::Cache(mode) => {
+                super::table_cache::alter_cache_action(catalog, &database, &name, *mode)?
+            }
             tidb_ast::AlterTableAction::AddColumn {
                 column, position, ..
             } => add_column_action(catalog, &database, &name, column, position, ctx)?,

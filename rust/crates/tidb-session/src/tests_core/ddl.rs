@@ -1986,3 +1986,110 @@ fn auto_random_validates_range_and_incremental_bits_before_create() {
         .run("CREATE TABLE ar64 (a BIGINT AUTO_RANDOM(5, 64) PRIMARY KEY)")
         .unwrap();
 }
+
+/// Go keeps CACHE as table metadata: DDL, SHOW and information_schema all
+/// read the same state, and only NOCACHE may change a cached table.
+#[test]
+fn table_cache_state_is_shared_metadata_and_guards_ddl() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE cached_t (id INT PRIMARY KEY, v INT, KEY k(v))")
+        .unwrap();
+    session.run("INSERT INTO cached_t VALUES (1, 10)").unwrap();
+
+    assert!(!query_text(&mut session, "SHOW CREATE TABLE cached_t").1[0][1].contains("CACHED ON"));
+    assert_eq!(
+        query_text(
+            &mut session,
+            "SELECT CREATE_OPTIONS FROM information_schema.tables \
+             WHERE table_schema = 'test' AND table_name = 'cached_t'",
+        )
+        .1,
+        vec![vec![String::new()]]
+    );
+
+    session.run("ALTER TABLE cached_t CACHE").unwrap();
+    session.run("ALTER TABLE cached_t CACHE").unwrap();
+    assert!(
+        query_text(&mut session, "SHOW CREATE TABLE cached_t").1[0][1]
+            .ends_with(" /* CACHED ON */")
+    );
+    assert_eq!(
+        query_text(
+            &mut session,
+            "SELECT CREATE_OPTIONS FROM information_schema.tables \
+             WHERE table_schema = 'test' AND table_name = 'cached_t'",
+        )
+        .1,
+        vec![vec!["cached=on".to_owned()]]
+    );
+    session.run("INSERT INTO cached_t VALUES (2, 20)").unwrap();
+    assert_eq!(
+        query_text(&mut session, "SELECT id, v FROM cached_t ORDER BY id").1,
+        vec![
+            vec!["1".to_owned(), "10".to_owned()],
+            vec!["2".to_owned(), "20".to_owned()],
+        ]
+    );
+
+    let refused = |session: &mut Session, sql: &str, operation: &str| {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(error.code, 8242, "{sql}");
+        assert_eq!(
+            error.message,
+            format!("'{operation}' is unsupported on cache tables."),
+            "{sql}"
+        );
+    };
+    for (sql, operation) in [
+        ("ALTER TABLE cached_t ADD COLUMN x INT", "Alter Table"),
+        ("CREATE INDEX k2 ON cached_t(v)", "Create Index"),
+        ("DROP INDEX k ON cached_t", "Drop Index"),
+        ("RENAME TABLE cached_t TO cached_u", "Rename Table"),
+        ("TRUNCATE TABLE cached_t", "Truncate Table"),
+        ("DROP TABLE cached_t", "Drop Table"),
+    ] {
+        refused(&mut session, sql, operation);
+    }
+
+    session
+        .run("CREATE TABLE cache_copy LIKE cached_t")
+        .unwrap();
+    assert!(
+        !query_text(&mut session, "SHOW CREATE TABLE cache_copy").1[0][1].contains("CACHED ON")
+    );
+
+    session.run("ALTER TABLE cached_t NOCACHE").unwrap();
+    session.run("ALTER TABLE cached_t NOCACHE").unwrap();
+    assert!(!query_text(&mut session, "SHOW CREATE TABLE cached_t").1[0][1].contains("CACHED ON"));
+    assert_eq!(
+        query_text(
+            &mut session,
+            "SELECT CREATE_OPTIONS FROM information_schema.tables \
+             WHERE table_schema = 'test' AND table_name = 'cached_t'",
+        )
+        .1,
+        vec![vec![String::new()]]
+    );
+    session
+        .run("ALTER TABLE cached_t ADD COLUMN x INT")
+        .unwrap();
+
+    session
+        .run("CREATE TABLE cached_p (id INT) PARTITION BY HASH(id) PARTITIONS 2")
+        .unwrap();
+    refused(&mut session, "ALTER TABLE cached_p CACHE", "partition mode");
+
+    session
+        .run("CREATE TABLE mysql.cached_sys (id INT)")
+        .unwrap();
+    let error = session
+        .run("ALTER TABLE mysql.cached_sys CACHE")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8200);
+    assert_eq!(
+        error.message,
+        "ALTER table cache for tables in system database is currently unsupported"
+    );
+}

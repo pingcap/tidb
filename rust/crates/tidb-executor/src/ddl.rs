@@ -224,6 +224,7 @@ pub mod column_field_type;
 mod column_types;
 pub mod index_prefix;
 mod indexes;
+mod table_cache;
 mod table_constraints;
 mod table_lifecycle;
 pub mod table_partition;

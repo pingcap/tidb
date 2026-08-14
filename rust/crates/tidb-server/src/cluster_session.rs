@@ -410,6 +410,7 @@ pub(crate) fn cluster_table(
     }
     let mut kv_table = KvTable::with_storage(table.id, kv_columns, storage.clone_box());
     kv_table.set_name(table.name.original());
+    kv_table.set_cache_status(table.table_cache_status_type);
     // The AUTO_INCREMENT column and the counter that feeds it. Both halves
     // have to be here: marking the column without giving the counter a
     // cluster-wide home would allocate from a fresh in-process cell and
@@ -873,6 +874,23 @@ mod tests {
             panic!("expected rows");
         };
         assert_eq!(rows, vec![vec![tidb_datatype::Datum::Int(7)]]);
+    }
+
+    #[test]
+    fn a_cluster_table_restores_its_persisted_cache_status() {
+        let table = TableInfo {
+            id: 302,
+            name: CiString::new("cached"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            table_cache_status_type: tidb_model::TableCacheStatusType::ENABLE,
+            ..TableInfo::default()
+        };
+        let (storage, _, _) = cluster_storage();
+        let loaded = cluster_table(&table, &storage, &AutoIdSource::Unavailable)
+            .expect("the cached table is otherwise ordinary");
+        assert!(loaded.is_cached());
     }
 
     /// A default whose value is not a literal -- `CURRENT_TIMESTAMP`, whose
