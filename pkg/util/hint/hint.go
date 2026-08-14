@@ -1048,7 +1048,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 				// get LeadingList
 				if hint.HintData != nil {
 					if list, ok := hint.HintData.(*ast.LeadingList); ok {
-						leadingList = list
+						leadingList = normalizeLeadingListQBNames(list, hintProcessor, currentLevel)
 					}
 				}
 			}
@@ -1158,6 +1158,31 @@ func tableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintT
 		return nil
 	}
 	return hintTableInfos
+}
+
+func normalizeLeadingListQBNames(list *ast.LeadingList, p *QBHintHandler, currentOffset int) *ast.LeadingList {
+	if list == nil {
+		return nil
+	}
+	normalized := &ast.LeadingList{Items: make([]interface{}, 0, len(list.Items))}
+	for _, item := range list.Items {
+		switch x := item.(type) {
+		case *ast.HintTable:
+			table := *x
+			if table.QBName.L != "" {
+				offset := p.GetHintOffset(table.QBName, currentOffset)
+				if offset > 0 {
+					table.QBName, _ = GenerateQBName(TypeSelect, offset)
+				}
+			}
+			normalized.Items = append(normalized.Items, &table)
+		case *ast.LeadingList:
+			normalized.Items = append(normalized.Items, normalizeLeadingListQBNames(x, p, currentOffset))
+		default:
+			normalized.Items = append(normalized.Items, item)
+		}
+	}
+	return normalized
 }
 
 func restore2TableHint(hintTables ...HintedTable) string {
