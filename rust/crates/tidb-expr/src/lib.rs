@@ -774,24 +774,41 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             // available; every `CAST` it evaluates routes by datum kind.
             v => cast::eval_cast(&cast.cast_type, v, None, cols),
         },
-        // `CONVERT(expr USING charset)` is a charset RETAG, not a value-type
-        // cast: it stringifies (confirmed via `goeval`: `CONVERT(123 USING
-        // utf8)` is the STRING `"123"`, not the integer `123`) and then
-        // re-tags the UTF-8 bytes with the target charset, replacing an
-        // unrepresentable character with `?`. See `crate::convert_charset`.
+        // `CONVERT(expr USING charset)` evaluates through ETString, then
+        // transcodes according to the argument's declared charset. Literal
+        // introducers are part of that declared type: a plain hex/bit literal
+        // is binary, while `_utf8 0x...` is UTF-8. Preserve that distinction
+        // here instead of reconstructing every value as a UTF-8 string.
         Expr::ConvertUsing { expr, charset } => match eval_in(expr, cols)? {
             Datum::Null => Ok(Datum::Null),
             value => {
-                let text = value
-                    .sql_string()
-                    .map_err(|_| EvalError::Unsupported("invalid UTF-8 string coercion"))?;
-                let collation = value
-                    .collation()
-                    .unwrap_or(tidb_datatype::Collation::DEFAULT);
-                let source = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
-                    .with_collation(collation);
+                let (string_value, source) = if let Some(source_charset) = literal_charset(expr) {
+                    let source_charset = tidb_datatype::Charset::from_name(source_charset)
+                        .ok_or(EvalError::Unsupported("unknown character introducer"))?;
+                    let collation = source_charset.default_collation();
+                    let mut source =
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                    source.set_charset_name(source_charset.name());
+                    source.set_collation_name(collation.name());
+                    (
+                        Datum::new_collation_string(value.go_bytes().to_vec(), collation),
+                        source,
+                    )
+                } else {
+                    let text = value
+                        .sql_string()
+                        .map_err(|_| EvalError::Unsupported("invalid UTF-8 string coercion"))?;
+                    let collation = value
+                        .collation()
+                        .unwrap_or(tidb_datatype::Collation::DEFAULT);
+                    (
+                        Datum::new_collation_string(text.into_bytes(), collation),
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
+                            .with_collation(collation),
+                    )
+                };
                 convert_charset::convert_using(
-                    &Datum::new_collation_string(text.into_bytes(), collation),
+                    &string_value,
                     &source,
                     &charset.to_ascii_lowercase(),
                 )
@@ -1021,6 +1038,23 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             }
         }
         _ => Err(EvalError::Unsupported("unsupported expression")),
+    }
+}
+
+/// Returns the parser-owned charset of a literal string value.
+///
+/// Go's `DefaultTypeForValue` makes bare hex/bit literals binary strings;
+/// `parseCharsetIntroducer` overrides that type without changing the datum.
+/// Parentheses preserve the type. Other expression types need resolver-owned
+/// field metadata and therefore deliberately fall back to their evaluated
+/// datum above.
+fn literal_charset(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Hex(_) | Expr::Bit(_) => Some("binary"),
+        Expr::String(_) => Some("utf8mb4"),
+        Expr::CharsetString { charset, .. } | Expr::CharsetBinary { charset, .. } => Some(charset),
+        Expr::Paren(inner) => literal_charset(inner),
+        _ => None,
     }
 }
 

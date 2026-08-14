@@ -134,11 +134,9 @@ pub fn needs_to_binary(prop: FuncProp, arg_charset: &str, result_charset: &str) 
 /// replacement -- `OpEncode` carries `opTruncateTrim`, so the caller sees
 /// `ErrInvalidCharacterString`.
 pub fn to_binary(value: &Datum, arg_charset: &str) -> Result<Datum, EvalError> {
-    let Some(bytes) = value.as_raw_bytes() else {
-        return Ok(value.clone());
-    };
+    let bytes = crate::arg_eval_type::eval_string(value)?.unwrap_or_default();
     let (encoded, error) = find_encoding(arg_charset)
-        .transform(bytes, TransformOp::ENCODE)
+        .transform(&bytes, TransformOp::ENCODE)
         .into_parts();
     if error.is_some() {
         return Err(EvalError::Unsupported("invalid character string"));
@@ -161,11 +159,9 @@ pub fn to_binary_by_collation(value: &Datum) -> Result<Datum, EvalError> {
 
 /// Go `builtinInternalFromBinarySig`: encoded bytes in, UTF-8 out.
 pub fn from_binary(value: &Datum, target_charset: &str) -> Result<Datum, EvalError> {
-    let Some(bytes) = value.as_raw_bytes() else {
-        return Ok(value.clone());
-    };
+    let bytes = crate::arg_eval_type::eval_string(value)?.unwrap_or_default();
     let (decoded, error) = find_encoding(target_charset)
-        .transform(bytes, TransformOp::DECODE)
+        .transform(&bytes, TransformOp::DECODE)
         .into_parts();
     if error.is_some() {
         return Err(EvalError::Unsupported("invalid character string"));
@@ -191,15 +187,13 @@ pub fn convert_using(
     if !tidb_datatype::is_supported_encoding(result_charset) {
         return Err(EvalError::Unsupported("unknown character set"));
     }
-    let Some(bytes) = value.as_raw_bytes() else {
-        return Ok(value.clone());
-    };
+    let bytes = crate::arg_eval_type::eval_string(value)?.unwrap_or_default();
     let arg_is_binary = arg_type.charset() == Charset::Binary;
     let result_is_binary = result_charset == "binary";
     if arg_is_binary && !result_is_binary {
         // Binary -> character set: DECODE. A failure is NULL, not an error.
         let (decoded, error) = find_encoding(result_charset)
-            .transform(bytes, TransformOp::DECODE_REPLACE)
+            .transform(&bytes, TransformOp::DECODE_REPLACE)
             .into_parts();
         return Ok(if error.is_some() {
             Datum::Null
@@ -211,11 +205,11 @@ pub fn convert_using(
         return to_binary(value, arg_type.charset_name());
     }
     let encoding = find_encoding(result_charset);
-    if encoding.is_valid(bytes) {
-        return Ok(retag(bytes.to_vec(), result_charset));
+    if encoding.is_valid(&bytes) {
+        return Ok(retag(bytes, result_charset));
     }
     let (replaced, _) = encoding
-        .transform(bytes, TransformOp::REPLACE_NO_ERR)
+        .transform(&bytes, TransformOp::REPLACE_NO_ERR)
         .into_parts();
     Ok(retag(replaced, result_charset))
 }

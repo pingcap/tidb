@@ -21,7 +21,9 @@ use crate::coerce::{coerce_str, coerce_str_bytes};
 use crate::ops::to_f64_with_mysql_string;
 use crate::string_signature::StrUnits;
 use crate::{Datum, EvalError};
-use tidb_datatype::{find_encoding, get_default_collation, Collation, GoString, TransformOp};
+use tidb_datatype::{
+    find_encoding, get_default_collation, Collation, FieldType, GoString, TransformOp,
+};
 
 /// CONCAT: `NULL` if any argument is `NULL`, else the concatenation.
 pub(crate) fn concat(vals: &[Datum]) -> Result<Datum, EvalError> {
@@ -467,34 +469,18 @@ pub(crate) fn hex(vals: &[Datum]) -> Result<Datum, EvalError> {
         | Datum::Decimal(_)
         | Datum::Real(_)
         | Datum::Float32(_)
-        | Datum::Duration(_)
-        | Datum::Enum(_, _)
-        | Datum::Set(_, _)
-        | Datum::Bit(_)
-        | Datum::Time(_) => {
+        | Datum::Bit(_) => {
             let bits = radix_integer_bits(&vals[0])?.expect("non-NULL numeric HEX input");
             Ok(Datum::new_string(format!("{bits:X}")))
         }
-        Datum::String(value) => Ok(Datum::new_string(
-            value
-                .bytes()
-                .iter()
-                .map(|byte| format!("{byte:02X}"))
-                .collect::<String>(),
-        )),
-        Datum::Bytes(value) => Ok(Datum::new_string(
-            value
-                .iter()
-                .map(|byte| format!("{byte:02X}"))
-                .collect::<String>(),
-        )),
-        Datum::BinaryLiteral(value) => Ok(Datum::new_string(
-            value
-                .as_bytes()
-                .iter()
-                .map(|byte| format!("{byte:02X}"))
-                .collect::<String>(),
-        )),
+        Datum::String(_)
+        | Datum::Bytes(_)
+        | Datum::BinaryLiteral(_)
+        | Datum::Duration(_)
+        | Datum::Enum(_, _)
+        | Datum::Set(_, _)
+        | Datum::Time(_)
+        | Datum::Json(_) => hex_string_value(&vals[0]),
         Datum::Raw(value) => Ok(Datum::new_string(
             value
                 .iter()
@@ -515,6 +501,51 @@ pub(crate) fn hex(vals: &[Datum]) -> Result<Datum, EvalError> {
                     .collect::<String>(),
             ))
         }
+    }
+}
+
+fn hex_string_value(value: &Datum) -> Result<Datum, EvalError> {
+    let Some(bytes) = coerce_str_bytes(value)? else {
+        return Ok(Datum::Null);
+    };
+    Ok(Datum::new_string(
+        bytes
+            .iter()
+            .map(|byte| format!("{byte:02X}"))
+            .collect::<String>(),
+    ))
+}
+
+/// Go `hexFunctionClass.getFunction`: select the string or integer signature
+/// from the argument's declared eval type, then apply the corresponding
+/// build-time argument cast before evaluating the body.
+pub(crate) fn hex_with_type(
+    vals: &[Datum],
+    arg_type: Option<&FieldType>,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
+    use tidb_datatype::EvalType;
+
+    let Some(arg_type) = arg_type else {
+        return hex(vals);
+    };
+    let [value] = vals else {
+        return Err(EvalError::Unsupported("bad HEX arity"));
+    };
+    match arg_type.eval_type() {
+        EvalType::String
+        | EvalType::Datetime
+        | EvalType::Timestamp
+        | EvalType::Duration
+        | EvalType::Json => {
+            let value = crate::cast::cast_arg_as_string(value, Some(arg_type), ctx)?;
+            hex_string_value(&value)
+        }
+        EvalType::Int | EvalType::Real | EvalType::Decimal => {
+            let value = crate::cast::cast_arg_as_int(value, Some(arg_type), ctx)?;
+            hex(&[value])
+        }
+        _ => Err(EvalError::Unsupported("HEX argument eval type")),
     }
 }
 
@@ -1227,6 +1258,18 @@ mod from_base64_tests {
 /// bytes folded as a base-256 number (`ORD('A')` = 65, `ORD('é')` = 50089).
 /// `0` for the empty string; `NULL` propagates.
 pub(crate) fn ord(vals: &[Datum]) -> Result<Datum, EvalError> {
+    ord_with_type(vals, None)
+}
+
+/// Go `builtinOrdSig.evalInt` with the argument's declared charset. The
+/// signature reads the first UTF-8 character from the in-memory value,
+/// encodes it into that charset, then folds the first encoded character as a
+/// base-256 integer. An unrepresentable character falls back to its first raw
+/// byte.
+pub(crate) fn ord_with_type(
+    vals: &[Datum],
+    arg_type: Option<&FieldType>,
+) -> Result<Datum, EvalError> {
     let [value] = vals else {
         return Err(EvalError::Unsupported("bad ORD arity"));
     };
@@ -1236,22 +1279,25 @@ pub(crate) fn ord(vals: &[Datum]) -> Result<Datum, EvalError> {
     let Some(&first_byte) = bytes.first() else {
         return Ok(Datum::Int(0));
     };
-    // Binary signatures use the first raw byte. Text signatures fold the
-    // complete first UTF-8 character, exactly as Go's charset transform does;
-    // malformed text falls back to that first byte rather than being decoded
-    // with replacement.
-    let first = if crate::string_signature::is_binary_str(value) {
-        vec![first_byte]
-    } else if let Ok(text) = std::str::from_utf8(&bytes) {
-        let mut buf = [0_u8; 4];
-        text.chars()
-            .next()
-            .expect("non-empty UTF-8 text has a first character")
-            .encode_utf8(&mut buf)
-            .as_bytes()
-            .to_vec()
+    let charset = arg_type.map_or_else(
+        || {
+            if crate::string_signature::is_binary_str(value) {
+                "binary"
+            } else {
+                "utf8mb4"
+            }
+        },
+        FieldType::charset_name,
+    );
+    let encoding = find_encoding(charset);
+    let utf8_first = find_encoding("utf8mb4").peek(&bytes);
+    let (encoded, error) = encoding
+        .transform(utf8_first, TransformOp::ENCODE)
+        .into_parts();
+    let first = if error.is_some() {
+        std::slice::from_ref(&first_byte)
     } else {
-        vec![first_byte]
+        encoding.peek(&encoded)
     };
     let n = first
         .iter()

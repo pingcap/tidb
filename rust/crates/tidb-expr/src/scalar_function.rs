@@ -742,7 +742,19 @@ impl ScalarFunction {
             let arg_type = self.args[0].static_type().cloned().unwrap_or_else(|| {
                 tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
             });
-            return crate::convert_charset::convert_using(&value, &arg_type, &target);
+            let value = crate::cast::cast_arg_as_string(&value, Some(&arg_type), ctx)?;
+            let string_type = if arg_type.eval_type() == tidb_datatype::EvalType::String {
+                arg_type
+            } else if arg_type.code() == tidb_datatype::FieldTypeCode::Bit {
+                let mut field_type =
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                field_type.set_charset_name("binary");
+                field_type.set_collation_name("binary");
+                field_type
+            } else {
+                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
+            };
+            return crate::convert_charset::convert_using(&value, &string_type, &target);
         }
         // Go picks one cast signature per target type; the rewriter records
         // that choice in the name, and the width/scale arguments the CHAR,
@@ -1155,6 +1167,13 @@ impl ScalarFunction {
         // `dispatch` below and stays the documented partial boundary.
         let arg_types: Vec<Option<FieldType>> =
             self.args.iter().map(|a| a.static_type().cloned()).collect();
+        if upper == "HEX" {
+            return crate::string_fn::hex_with_type(
+                &vals,
+                arg_types.first().and_then(Option::as_ref),
+                ctx,
+            );
+        }
         // Go's `newBaseBuiltinFuncWithTp` argument-cast layer
         // (`crate::arg_eval_type`), the one point where a builtin's declared
         // argument eval types are imposed. Only this tier has the static
@@ -1163,6 +1182,12 @@ impl ScalarFunction {
         let vals = crate::arg_eval_type::wrap_datetime_args(&upper, vals, &arg_types, ctx)?;
         let vals = crate::arg_eval_type::wrap_int_args(&upper, vals, &arg_types, ctx)?;
         let vals = crate::arg_eval_type::wrap_string_args(&upper, vals, &arg_types, ctx)?;
+        if upper == "ORD" {
+            return crate::string_fn::ord_with_type(
+                &vals,
+                arg_types.first().and_then(Option::as_ref),
+            );
+        }
         if let Some(result) = crate::builtin_ext::json_dispatch_typed(&upper, &vals, &arg_types) {
             return result;
         }

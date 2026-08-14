@@ -200,6 +200,15 @@ fn ord_source_vectors_preserve_utf8_and_binary_bytes() {
         string_fn::ord(&[Datum::new_bytes(vec![0xff])]).unwrap(),
         Datum::Int(0xff)
     );
+    for charset in ["ascii", "latin1"] {
+        let mut field_type = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        field_type.set_charset_name(charset);
+        assert_eq!(
+            string_fn::ord_with_type(&[Datum::new_string("你")], Some(&field_type)).unwrap(),
+            Datum::Int(0xe4),
+            "{charset}",
+        );
+    }
     assert_eq!(
         string_fn::ord(&[]),
         Err(EvalError::Unsupported("bad ORD arity"))
@@ -226,6 +235,11 @@ fn hex_source_vectors_preserve_numeric_and_byte_signatures() {
         ("-12.8e0", "STR:FFFFFFFFFFFFFFF3"),
         ("0x0c", "STR:0C"),
         ("0x12", "STR:12"),
+        (
+            "cast('2017-01-01 12:01:01' as datetime)",
+            "STR:323031372D30312D30312031323A30313A3031",
+        ),
+        ("cast('12:01:01' as time)", "STR:31323A30313A3031"),
         ("null", "NULL"),
         ("'🀁'", "STR:F09F8081"),
         (
@@ -533,6 +547,32 @@ fn char_length_public_eval_uses_source_field_type() {
 fn char_using_reaches_both_public_evaluators() {
     assert_eq!(e("char(65, 16740, 67.5 using utf8)"), "STR:AAdD");
     assert_eq!(chunk_e("char(65, 16740, 67.5 using utf8)"), "STR:AAdD");
+}
+
+#[test]
+fn convert_using_invalid_binary_literal_is_null_in_both_evaluators() {
+    for expression in [
+        "convert(0x1e240 using utf8)",
+        "convert(x'01e240' using utf8)",
+    ] {
+        assert_eq!(e(expression), "NULL", "AST evaluator: {expression}");
+        assert_eq!(chunk_e(expression), "NULL", "chunk evaluator: {expression}");
+    }
+    for (expression, expected) in [
+        ("convert(123 using utf8)", "STR:123"),
+        ("convert(0x7e using binary)", "STR:~"),
+        (
+            "convert(0xe4b8ade696870a using utf8)",
+            "STR:\u{4e2d}\u{6587}\n",
+        ),
+    ] {
+        assert_eq!(e(expression), expected, "AST evaluator: {expression}");
+        assert_eq!(
+            chunk_e(expression),
+            expected,
+            "chunk evaluator: {expression}"
+        );
+    }
 }
 
 #[test]

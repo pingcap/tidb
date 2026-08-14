@@ -110,9 +110,6 @@ pub(crate) fn conv(vals: &[Datum]) -> Result<Datum, EvalError> {
     if vals.iter().any(Datum::is_range_sentinel) {
         return Err(EvalError::Unsupported("range sentinel CONV argument"));
     }
-    let Some(n) = coerce_str(&vals[0])? else {
-        return Ok(Datum::Null);
-    };
     if vals[1].is_null() || vals[2].is_null() {
         return Ok(Datum::Null);
     }
@@ -120,10 +117,37 @@ pub(crate) fn conv(vals: &[Datum]) -> Result<Datum, EvalError> {
     // every domain with an integer reading reaches them -- notably
     // `Datum::UInt`, which `CAST(16 AS UNSIGNED)` produces. Matching on
     // `Datum::Int` alone answered NULL for it.
-    let (mut from, mut to) = (
+    let (from, to) = (
         crate::cast::to_i64_signed(&vals[1]),
         crate::cast::to_i64_signed(&vals[2]),
     );
+    let n = match &vals[0] {
+        Datum::Null => return Ok(Datum::Null),
+        // Go `builtinConvSig.evalString` recognizes a binary-literal
+        // expression before ordinary EvalString. It first interprets the
+        // literal's bits in base 2 and emits those bits in `from_base`; only
+        // then does the ordinary from_base -> to_base conversion. This is why
+        // `CONV(0x20, 2, 2)` reads the byte as binary `100000`, not as the
+        // one-character string containing an ASCII space.
+        Datum::BinaryLiteral(literal) => {
+            let bit_literal = literal.to_bit_literal_string(true);
+            let digits = &bit_literal[2..];
+            let Some(converted) = conv_text(digits, 2, from) else {
+                return Ok(Datum::Null);
+            };
+            converted
+        }
+        value => {
+            let Some(text) = coerce_str(value)? else {
+                return Ok(Datum::Null);
+            };
+            text
+        }
+    };
+    Ok(conv_text(&n, from, to).map_or(Datum::Null, Datum::new_string))
+}
+
+fn conv_text(n: &str, mut from: i64, mut to: i64) -> Option<String> {
     let signed = from < 0;
     let ignore_sign = to < 0;
     if signed {
@@ -133,11 +157,11 @@ pub(crate) fn conv(vals: &[Datum]) -> Result<Datum, EvalError> {
         to = -to;
     }
     if !(2..=36).contains(&from) || !(2..=36).contains(&to) {
-        return Ok(Datum::Null);
+        return None;
     }
     let prefix = conv_valid_prefix(n.trim(), from as u32);
     if prefix.is_empty() {
-        return Ok(Datum::new_string("0".to_string()));
+        return Some("0".to_owned());
     }
     let (mut negative, digits) = match prefix.strip_prefix('-') {
         Some(rest) => (true, rest),
@@ -172,7 +196,7 @@ pub(crate) fn conv(vals: &[Datum]) -> Result<Datum, EvalError> {
     if negative && ignore_sign {
         out.insert(0, '-');
     }
-    Ok(Datum::new_string(out))
+    Some(out)
 }
 
 /// The longest valid `CONV` prefix in `base` (a port of

@@ -101,6 +101,24 @@ fn conv_reads_the_unsigned_base_domain() {
     );
 }
 
+#[test]
+fn conv_reinterprets_binary_literals_through_base_two() {
+    for (bytes, from, to, expected) in [
+        (&[0x00, 0x20][..], 2, 2, "100000"),
+        (&[0x02][..], 16, 2, "10"),
+        (&[0x02][..], 16, 8, "2"),
+    ] {
+        assert_eq!(
+            call_conv(
+                Datum::BinaryLiteral(tidb_datatype::BinaryLiteral::from(bytes)),
+                from,
+                to,
+            ),
+            Datum::new_string(expected),
+        );
+    }
+}
+
 /// UTF-8 source vectors from `pkg/expression/builtin_math_test.go`'s
 /// `TestCRC32`. The GBK-only vectors belong to the executor charset domain,
 /// which this scalar `String` value intentionally does not model.

@@ -200,6 +200,11 @@ pub(crate) const fn int_arg_mask(name: &str) -> ArgMask {
         // args, argTp, argTp, types.ETInt)` (truncateFunctionClass) -- same
         // shape, and `TRUNCATE` has no one-argument form.
         b"TRUNCATE" => 1 << 1,
+        // `builtin_math.go:1241` `types.ETString, types.ETString,
+        // types.ETInt, types.ETInt` (convFunctionClass) -- the leading
+        // `types.ETString` is the return type, so both base arguments are
+        // integer arguments 1 and 2.
+        b"CONV" => (1 << 1) | (1 << 2),
         // `builtin_string.go:3924` `types.ETString, types.ETString,
         // types.ETInt, types.ETInt, types.ETString` (insertFunctionClass) --
         // the leading `types.ETString` is the RETURN type, so `pos` and `len`
@@ -334,7 +339,11 @@ const fn string_arg_mask(name: &str) -> ArgMask {
         b"ELT" => !1,
         // `builtin_string.go:3180` `types.ETString, types.ETString`
         // (quoteFunctionClass) -- the leading entry is the RETURN type.
-        b"QUOTE" => 1 << 0,
+        b"QUOTE" | b"ORD" => 1 << 0,
+        // `convFunctionClass` declares its digit string as ETString. A binary
+        // literal remains a binary-literal datum through that cast because
+        // Go's signature body identifies it before calling EvalString.
+        b"CONV" => 1 << 0,
         // `tidbDecodePlanFunctionClass.getFunction`: both textual and binary
         // decoders declare their sole argument as `types.ETString`.
         b"TIDB_DECODE_PLAN"
