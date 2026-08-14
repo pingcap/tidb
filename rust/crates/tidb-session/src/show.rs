@@ -177,8 +177,8 @@ fn index_part_text(table: &tidb_executor::KvTable, offset: usize, prefix_length:
 /// one, then the indexes, then the closing paren with the engine and charset.
 ///
 /// NOT MODELLED (documented, and each one rejected at DDL time so no table can
-/// carry it): ON UPDATE CURRENT_TIMESTAMP, column and index comments, foreign keys, check
-/// constraints, temporary tables, views and sequences. Partitioning IS
+/// carry it): column and index comments, foreign keys, check constraints,
+/// temporary tables, views and sequences. Partitioning IS
 /// printed, by [`partition_clause_text`], for the one method the tier
 /// builds.
 /// A column prints its own charset/collation only where it differs from the
@@ -279,6 +279,18 @@ fn show_create_table_text(
                     clause.push_str(" DEFAULT NULL");
                 }
                 None => {}
+            }
+        }
+        if column
+            .field_type
+            .has_flag(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW)
+        {
+            clause.push_str(" ON UPDATE CURRENT_TIMESTAMP");
+            let fsp = column.field_type.decimal();
+            if fsp > 0 {
+                clause.push('(');
+                clause.push_str(&fsp.to_string());
+                clause.push(')');
             }
         }
         if let Some(spec) = table.auto_random().filter(|spec| spec.offset == offset) {

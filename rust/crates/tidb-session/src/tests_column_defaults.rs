@@ -58,6 +58,153 @@ fn rows(session: &mut Session, sql: &str) -> Vec<Vec<String>> {
     row_text(session.run(sql))
 }
 
+#[test]
+fn on_update_current_timestamp_tracks_real_row_changes() {
+    let mut session = Session::new();
+    session.run("SET time_zone = '+00:00'").unwrap();
+    session.run("SET timestamp = 1700000000").unwrap();
+    session
+        .run(
+            "CREATE TABLE on_update_clock (\
+             id INT PRIMARY KEY, v INT, \
+             changed_at TIMESTAMP NULL ON UPDATE CURRENT_TIMESTAMP)",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO on_update_clock (id, v) VALUES (1, 1)")
+        .unwrap();
+    let definition = show_create(&mut session, "on_update_clock");
+    assert!(
+        definition.contains("`changed_at` timestamp NULL DEFAULT NULL ON UPDATE CURRENT_TIMESTAMP"),
+        "{definition}"
+    );
+    let changed_at = rows(&mut session, "SHOW COLUMNS FROM on_update_clock")
+        .into_iter()
+        .find(|column| column[0] == "changed_at")
+        .unwrap();
+    assert_eq!(
+        changed_at[5],
+        "DEFAULT_GENERATED on update CURRENT_TIMESTAMP"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT changed_at FROM on_update_clock"),
+        [["NULL"]]
+    );
+
+    session.run("SET timestamp = 1700000100").unwrap();
+    assert_eq!(
+        session.run("UPDATE on_update_clock SET v = 2").unwrap(),
+        StmtResult::Affected(1)
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT changed_at FROM on_update_clock"),
+        [["2023-11-14 22:15:00"]]
+    );
+
+    session.run("SET timestamp = 1700000200").unwrap();
+    assert_eq!(
+        session.run("UPDATE on_update_clock SET v = v").unwrap(),
+        StmtResult::Affected(0)
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT changed_at FROM on_update_clock"),
+        [["2023-11-14 22:15:00"]],
+        "a no-op update advanced the implicit clock"
+    );
+
+    session.run("SET timestamp = 1700000300").unwrap();
+    assert_eq!(
+        session
+            .run("UPDATE on_update_clock SET v = 3, changed_at = changed_at")
+            .unwrap(),
+        StmtResult::Affected(1)
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT changed_at FROM on_update_clock"),
+        [["2023-11-14 22:15:00"]],
+        "an explicitly assigned on-update column was overwritten"
+    );
+
+    session.run("SET timestamp = 1700000400").unwrap();
+    assert_eq!(
+        session
+            .run(
+                "INSERT INTO on_update_clock (id, v) VALUES (1, 4) \
+                 ON DUPLICATE KEY UPDATE v = VALUES(v)",
+            )
+            .unwrap(),
+        StmtResult::Affected(2)
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT changed_at FROM on_update_clock"),
+        [["2023-11-14 22:20:00"]]
+    );
+
+    session.run("SET timestamp = 1700000500").unwrap();
+    assert_eq!(
+        session
+            .run(
+                "INSERT INTO on_update_clock (id, v) VALUES (1, 4) \
+                 ON DUPLICATE KEY UPDATE v = VALUES(v)",
+            )
+            .unwrap(),
+        StmtResult::Affected(0)
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT changed_at FROM on_update_clock"),
+        [["2023-11-14 22:20:00"]]
+    );
+
+    session
+        .run("CREATE TABLE on_update_peer (id INT PRIMARY KEY, delta INT)")
+        .unwrap();
+    session
+        .run("INSERT INTO on_update_peer VALUES (1, 1)")
+        .unwrap();
+    session.run("SET timestamp = 1700000600").unwrap();
+    assert_eq!(
+        session
+            .run(
+                "UPDATE on_update_clock c JOIN on_update_peer p ON c.id = p.id \
+                 SET c.v = c.v + p.delta",
+            )
+            .unwrap(),
+        StmtResult::Affected(1)
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT v, changed_at FROM on_update_clock"),
+        [["5", "2023-11-14 22:23:20"]]
+    );
+}
+
+#[test]
+fn invalid_on_update_clauses_keep_tidbs_error_boundary() {
+    let mut session = Session::new();
+    for sql in [
+        "CREATE TABLE bad_on_update_type (v INT ON UPDATE CURRENT_TIMESTAMP)",
+        "CREATE TABLE bad_on_update_fsp (v TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP)",
+    ] {
+        assert_eq!(code(&mut session, sql), Some(1294), "{sql}");
+    }
+
+    session
+        .run(
+            "CREATE TABLE valid_on_update_fsp (\
+             id INT PRIMARY KEY, v INT, \
+             changed_at DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3) \
+             ON UPDATE CURRENT_TIMESTAMP(3))",
+        )
+        .unwrap();
+    let definition = show_create(&mut session, "valid_on_update_fsp");
+    assert!(
+        definition.contains(
+            "`changed_at` datetime(3) DEFAULT CURRENT_TIMESTAMP(3) \
+             ON UPDATE CURRENT_TIMESTAMP(3)"
+        ),
+        "{definition}"
+    );
+}
+
 /// The body of `SHOW CREATE TABLE t`, which is its second cell.
 fn show_create(session: &mut Session, table: &str) -> String {
     rows(session, &format!("SHOW CREATE TABLE {table}")).remove(0)[1].clone()

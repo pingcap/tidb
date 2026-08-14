@@ -29,7 +29,7 @@ use correlated::{dml_table_scope, DmlExpression, UpdateExpression};
 pub(crate) use defaults::{
     column_default, column_metadata, materialize_column_default, prepare_named_defaults,
     rewrite_with_prepared_defaults, ColumnDefaultMeta, DefaultColumnIdentity, DefaultUse,
-    PreparedNamedDefault, ResolvedDefaultColumn,
+    PreparedNamedDefault, PreparedOnUpdateNow, ResolvedDefaultColumn,
 };
 
 /// Parses and runs a plain `INSERT INTO t [(cols)] VALUES (...), ...` against
@@ -508,7 +508,7 @@ pub(crate) fn run_insert_traced(
     // Go resolves ON DUPLICATE after the VALUES lists and before execution.
     // Keeping that placement makes generated-column and DEFAULT errors visible
     // even when no candidate row ends up conflicting.
-    let prepared_on_duplicate = match select_on_duplicate {
+    let on_duplicate_assignments = match select_on_duplicate {
         Some(prepared) => prepared,
         None => prepare_on_duplicate_assignments(
             &insert.on_duplicate,
@@ -518,6 +518,15 @@ pub(crate) fn run_insert_traced(
             ctx,
             eval_chunk.get_row(0),
         )?,
+    };
+    let prepared_on_duplicate = PreparedOnDuplicate {
+        on_update_now: PreparedOnUpdateNow::new(
+            &column_meta,
+            on_duplicate_assignments
+                .iter()
+                .map(|assignment| assignment.offset),
+        )?,
+        assignments: on_duplicate_assignments,
     };
 
     let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(row_count);
@@ -1115,6 +1124,11 @@ pub(crate) struct PreparedOnDuplicateAssignment {
     value: PreparedOnDuplicateValue,
 }
 
+struct PreparedOnDuplicate {
+    assignments: Vec<PreparedOnDuplicateAssignment>,
+    on_update_now: PreparedOnUpdateNow,
+}
+
 /// Resolves ON DUPLICATE assignments once, whether or not an inserted row
 /// eventually conflicts. `VALUES(col)` remains in the AST until a candidate
 /// row exists, but every DEFAULT leaf is already a typed statement constant.
@@ -1207,11 +1221,11 @@ fn prepare_on_duplicate_assignments(
 /// a stored 10 gives 11, not the rejected value plus one), `VALUES(col)`
 /// reads the row that would have been inserted, an update that changes
 /// nothing counts 0, and one that changes something counts 2.
-pub(crate) fn apply_on_duplicate(
+fn apply_on_duplicate(
     table: &mut crate::KvTable,
     handle: &crate::kv_table::TableHandle,
     candidate: &[Datum],
-    assignments: &[PreparedOnDuplicateAssignment],
+    prepared: &PreparedOnDuplicate,
     column_list: &[(String, FieldType)],
     row_index: usize,
     ctx: &crate::StmtContext,
@@ -1232,7 +1246,7 @@ pub(crate) fn apply_on_duplicate(
         div_precision_increment: ctx.div_precision_increment(),
     };
     let mut updated = existing.clone();
-    for assignment in assignments {
+    for assignment in &prepared.assignments {
         let expr = match &assignment.value {
             PreparedOnDuplicateValue::Constant(expression) => expression.as_ref().clone(),
             PreparedOnDuplicateValue::Ast { value, defaults } => {
@@ -1255,7 +1269,11 @@ pub(crate) fn apply_on_duplicate(
             ctx,
         )?;
     }
-    if updated == existing {
+    let updated_chunk = row_chunk(&updated, &field_types)?;
+    if !prepared
+        .on_update_now
+        .apply(&existing, &mut updated, ctx, updated_chunk.get_row(0))?
+    {
         // Captured: an update that changes nothing affects no rows.
         return Ok(0);
     }
@@ -1376,11 +1394,9 @@ pub(crate) fn substitute_values_references(
 /// Multi-table `UPDATE` lives in `multi_dml`, which reads a joined row
 /// source carrying each target's row identity.
 ///
-/// DEFERRED (documented): generated and `ON UPDATE CURRENT_TIMESTAMP`
-/// columns. A changed primary-key handle moves the row and rewrites its
-/// secondary-index entries. Single-table
-/// `ORDER BY`/`LIMIT` is supported (see `order_rows_for_dml`,
-/// `dml_row_limit`).
+/// A changed primary-key handle moves the row and rewrites its secondary-index
+/// entries. Single-table `ORDER BY`/`LIMIT` is supported (see
+/// `order_rows_for_dml`, `dml_row_limit`).
 pub fn run_update_on(
     sql: &str,
     catalog: &mut Catalog,
@@ -1581,6 +1597,8 @@ pub(crate) fn run_update_traced(
         };
         set_exprs.push((*offset, expression));
     }
+    let on_update_now =
+        PreparedOnUpdateNow::new(&column_meta, set_exprs.iter().map(|(offset, _)| *offset))?;
 
     let field_types: Vec<FieldType> = column_list.iter().map(|(_, ft)| ft.clone()).collect();
     let column_names: Vec<String> = column_list.iter().map(|(name, _)| name.clone()).collect();
@@ -1701,6 +1719,7 @@ pub(crate) fn run_update_traced(
         catalog,
         current_db,
         ctx,
+        on_update_now: &on_update_now,
     };
     match source_rows {
         SourceRows::Mem(rows) => {
@@ -1858,6 +1877,7 @@ struct UpdateRowEvaluator<'a> {
     catalog: &'a Catalog,
     current_db: &'a str,
     ctx: &'a crate::StmtContext,
+    on_update_now: &'a PreparedOnUpdateNow,
 }
 
 impl UpdateRowEvaluator<'_> {
@@ -1903,16 +1923,17 @@ impl UpdateRowEvaluator<'_> {
                 self.ctx,
             )?;
         }
-        // Go `updateRecord`'s step 5 runs `HandleBadNull` over EVERY column of
-        // the new row, before the row is compared with the old one -- which is
-        // why a row whose NULL is replaced by the same zero it already held is
-        // still counted as unchanged AND still warns. `ErrGroupBadNull` for an
-        // UPDATE is an error exactly under strict mode (`ResetUpdateStmtCtx`).
-        // Zipped rather than indexed because the row can be WIDER than the column
-        // list: an expression index appends a hidden generated column to the
-        // stored row that `column_list` does not name. Go loops `t.Cols()`, which
-        // is the visible columns, so stopping where the names stop IS the rule
-        // and not a bounds guard.
+        if !self
+            .on_update_now
+            .apply(row, &mut new_row, self.ctx, chunk.get_row(0))?
+        {
+            // Go counts a no-op row as touched, not affected.
+            return Ok(None);
+        }
+        // Go `updateRecord` step 5 runs only after the changed comparison and
+        // implicit clock assignment. Zipped rather than indexed because an
+        // expression index can append a hidden column to the stored row while
+        // Go loops only the public `t.Cols()` here.
         let level = crate::bad_null::NullLevel::from_is_error(self.ctx.strict());
         for ((value, field_type), name) in new_row
             .iter_mut()
@@ -1920,10 +1941,6 @@ impl UpdateRowEvaluator<'_> {
             .zip(self.column_names.iter())
         {
             crate::bad_null::handle_bad_null(value, field_type, name, level, self.ctx)?;
-        }
-        if new_row == row {
-            // Go counts this row as touched, not affected.
-            return Ok(None);
         }
         Ok(Some(new_row))
     }

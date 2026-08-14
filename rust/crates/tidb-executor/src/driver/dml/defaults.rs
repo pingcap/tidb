@@ -124,6 +124,67 @@ pub(crate) fn column_metadata(table: &TableEntry) -> Vec<ColumnDefaultMeta> {
     }
 }
 
+/// The implicit clock assignments for one update target, prepared once per
+/// statement. Explicitly assigned columns are excluded even when the written
+/// expression preserves their old value, matching Go's `modified[i]` rule.
+pub(crate) struct PreparedOnUpdateNow {
+    columns: Vec<(
+        usize,
+        crate::column_default::ColumnDefault,
+        ColumnDefaultMeta,
+    )>,
+}
+
+impl PreparedOnUpdateNow {
+    pub(crate) fn new(
+        metadata: &[ColumnDefaultMeta],
+        explicitly_assigned: impl IntoIterator<Item = usize>,
+    ) -> Result<Self, DriverError> {
+        let assigned: std::collections::BTreeSet<usize> = explicitly_assigned.into_iter().collect();
+        let mut columns = Vec::new();
+        for (offset, meta) in metadata.iter().enumerate() {
+            if assigned.contains(&offset)
+                || !meta
+                    .field_type
+                    .has_flag(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW)
+            {
+                continue;
+            }
+            let value = crate::column_default::on_update_current_timestamp(&meta.field_type)
+                .map_err(|error| error.into_driver_error(&meta.name))?;
+            columns.push((offset, value, meta.clone()));
+        }
+        Ok(Self { columns })
+    }
+
+    /// Applies the implicit clock only after some ordinary assignment really
+    /// changed the row. A no-op update returns `false` without reading the
+    /// statement clock.
+    pub(crate) fn apply(
+        &self,
+        old_row: &[Datum],
+        new_row: &mut [Datum],
+        ctx: &crate::StmtContext,
+        row: tidb_chunk::row::Row<'_>,
+    ) -> Result<bool, DriverError> {
+        if new_row == old_row {
+            return Ok(false);
+        }
+        for (offset, default, meta) in &self.columns {
+            new_row[*offset] = crate::column_default::evaluate(
+                default,
+                &meta.field_type,
+                meta.column_info_version,
+                ctx.write_conversion_flags(),
+                ctx,
+                row,
+            )
+            .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
+        }
+        Ok(true)
+    }
+}
+
 /// The value an omitted column takes, following Go `GetColDefaultValue` and
 /// `getColDefaultValueFromNil`: the stored `DEFAULT` when one was written, or
 /// NULL for a nullable column; a NOT NULL column with no default is Go's

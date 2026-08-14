@@ -160,6 +160,11 @@ impl DriverError {
             *b"42000",
             format!("Incorrect column specifier for column '{name}'"),
         ),
+        DriverError::InvalidOnUpdate(name) => MysqlError::new(
+            1294,
+            *b"HY000",
+            format!("Invalid ON UPDATE clause for '{name}' column"),
+        ),
         // Go: "Incorrect column name '%-.100s'".
         DriverError::WrongColumnName(name) => MysqlError::new(
             1166,

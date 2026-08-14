@@ -841,6 +841,20 @@ pub(crate) fn run_multi_update(
     let mut source = build_multi_source(from, catalog, current_db, ctx)?;
     let scope = source.scope();
     let assignments = resolve_assignments(&update.assignments, &source, &scope, ctx)?;
+    let on_update_now: Vec<super::dml::PreparedOnUpdateNow> = source
+        .tables
+        .iter()
+        .enumerate()
+        .map(|(slot, table)| {
+            super::dml::PreparedOnUpdateNow::new(
+                &table.default_meta,
+                assignments
+                    .iter()
+                    .filter(move |assignment| assignment.slot == slot)
+                    .map(|assignment| assignment.column),
+            )
+        })
+        .collect::<Result<_, _>>()?;
     let field_types = source.field_types();
     let rows = selected_rows(
         &mut source,
@@ -881,15 +895,14 @@ pub(crate) fn run_multi_update(
                     ctx,
                 )?;
             }
-            // Go `updateRecord` step 5, the same rule the single-table path
-            // follows: every column of the new row is NULL-checked before the
-            // changed comparison.
-            let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
-            for (value, (name, field_type)) in new_row.iter_mut().zip(table.columns.iter()) {
-                crate::bad_null::handle_bad_null(value, field_type, name, level, ctx)?;
-            }
-            let changed = new_row != old;
+            let changed = on_update_now[slot].apply(old, &mut new_row, ctx, chunk.get_row(0))?;
             if changed {
+                // Go `updateRecord` step 5 follows both the changed comparison
+                // and the implicit clock assignment.
+                let level = crate::bad_null::NullLevel::from_is_error(ctx.strict());
+                for (value, (name, field_type)) in new_row.iter_mut().zip(table.columns.iter()) {
+                    crate::bad_null::handle_bad_null(value, field_type, name, level, ctx)?;
+                }
                 write_row(catalog, table, id, &new_row, ctx)?;
                 changed_rows += 1;
             }

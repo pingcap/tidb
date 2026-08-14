@@ -240,6 +240,32 @@ fn clock_fsp_argument(arg: &Expr) -> Option<i64> {
     }
 }
 
+/// Validates the expression stored by `ON UPDATE` against the destination
+/// column, following Go `expression.IsValidCurrentTimestampExpr`.
+pub(crate) fn validate_on_update_current_timestamp(
+    expr: &Expr,
+    field_type: &FieldType,
+) -> Result<(), DefaultError> {
+    if !matches!(
+        field_type.code(),
+        FieldTypeCode::Timestamp | FieldTypeCode::Datetime
+    ) {
+        return Err(DefaultError::InvalidDefault);
+    }
+    let Some(args) = clock_marker_call(expr) else {
+        return Err(DefaultError::InvalidDefault);
+    };
+    let written_fsp = match args {
+        [] => 0,
+        [only] => clock_fsp_argument(only).ok_or(DefaultError::InvalidDefault)?,
+        _ => return Err(DefaultError::InvalidDefault),
+    };
+    if written_fsp != field_type.decimal() {
+        return Err(DefaultError::InvalidDefault);
+    }
+    Ok(())
+}
+
 /// Go `restoreFuncCall`'s flag set, which is what `ColumnInfo.DefaultValue`
 /// stores for an expression default and therefore what `SHOW CREATE TABLE`
 /// prints back.
@@ -343,6 +369,27 @@ pub fn build(
         ));
     }
     fold(expr).map(ColumnDefault::Value)
+}
+
+/// Builds the same computed `CURRENT_TIMESTAMP` value source used by a
+/// declared default, but for an `ON UPDATE CURRENT_TIMESTAMP` column. The
+/// column's fractional precision is part of the expression so evaluation and
+/// storage use the same rounding path as an omitted default.
+pub(crate) fn on_update_current_timestamp(
+    field_type: &FieldType,
+) -> Result<ColumnDefault, DefaultError> {
+    let args = (field_type.decimal() > 0)
+        .then(|| Expr::Int(field_type.decimal().to_string()))
+        .into_iter()
+        .collect();
+    let expr = Expr::Func {
+        name: "CURRENT_TIMESTAMP".to_owned(),
+        args,
+        origin_position: 0,
+    };
+    build(&expr, field_type, |_| {
+        unreachable!("a clock marker is computed")
+    })
 }
 
 /// Materializes one literal `ColumnInfo.DefaultValue` in the consumer's zone.

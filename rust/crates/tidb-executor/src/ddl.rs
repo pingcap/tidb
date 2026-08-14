@@ -250,7 +250,7 @@ use crate::driver::{Catalog, DriverError};
 use crate::kv_table::{FkAction, KvColumn, KvForeignKey, KvIndex, KvTable, TableCharset};
 use crate::SchemaErrorKind;
 use tidb_ast::{ColumnDef, DdlStmt, Stmt};
-use tidb_datatype::FieldTypeCode;
+use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
 use tidb_model::column::ColumnInfo;
 
 /// The row-handle layout a table is built with, decided ONCE per
@@ -787,6 +787,9 @@ pub fn run_create_table_in(
                 }
                 tidb_ast::ColumnOption::Null => {
                     columns[i].del_flag(u64::from(NOT_NULL_FLAG));
+                    if columns[i].field_type.has_flag(FieldTypeFlags::TIMESTAMP) {
+                        columns[i].del_flag(u64::from(FieldTypeFlags::ON_UPDATE_NOW));
+                    }
                     has_null_flag[i] = true;
                 }
                 tidb_ast::ColumnOption::AutoIncrement => {
@@ -796,6 +799,21 @@ pub fn run_create_table_in(
                     if matches!(inline.kind, tidb_ast::InlineKeyKind::Primary { .. }) =>
                 {
                     columns[i].add_flag(u64::from(NOT_NULL_FLAG | PRI_KEY_FLAG));
+                }
+                tidb_ast::ColumnOption::Default(_) => {
+                    // Go `removeOnUpdateNowFlag`: an explicit default clears a
+                    // preceding ON UPDATE on TIMESTAMP (but not DATETIME).
+                    if columns[i].field_type.has_flag(FieldTypeFlags::TIMESTAMP) {
+                        columns[i].del_flag(u64::from(FieldTypeFlags::ON_UPDATE_NOW));
+                    }
+                }
+                tidb_ast::ColumnOption::OnUpdate(expr) => {
+                    crate::column_default::validate_on_update_current_timestamp(
+                        expr,
+                        &columns[i].field_type,
+                    )
+                    .map_err(|_| DriverError::InvalidOnUpdate(def.name.clone()))?;
+                    columns[i].add_flag(u64::from(FieldTypeFlags::ON_UPDATE_NOW));
                 }
                 _ => {}
             }

@@ -637,6 +637,8 @@ pub enum DriverError {
     WrongAutoKey,
     /// Go `ErrWrongFieldSpec` (1063): AUTO_INCREMENT on a non-integer column.
     WrongColumnSpecifier(String),
+    /// Go `dbterror.ErrInvalidOnUpdate` (1294).
+    InvalidOnUpdate(String),
     /// Go `ErrWrongColumnName` (1166): a column name the server reserves, of
     /// which `_tidb_rowid` is the one an `ALTER TABLE ... RENAME COLUMN` can
     /// reach.
