@@ -119,10 +119,15 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 	}
 	// Full-sampling analyze sorts collected samples by handle before computing
 	// correlation, so this request does not need KeepOrder.
+	storeBatchSize := e.ctx.GetSessionVars().AnalyzeStoreBatchSize
+	enableStoreBatch := storeBatchSize > 0
 	kvReq, err := reqBuilder.
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
 		SetConcurrency(e.concurrency).
+		SetStoreBatchSize(storeBatchSize).
+		SetAllowBatchTaskDataMerge(enableStoreBatch).
+		SetExecuteBatchTasksSerially(enableStoreBatch).
 		SetMemTracker(e.memTracker).
 		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
 		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).
