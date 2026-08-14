@@ -218,7 +218,6 @@ func TestStatementRUCalculationTraversal(t *testing.T) {
 
 		requireNoPublication(t, fixture)
 	})
-
 }
 
 func TestStatementRUFinalOutcomeFirstRecordWins(t *testing.T) {
