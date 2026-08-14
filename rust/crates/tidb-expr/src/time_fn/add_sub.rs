@@ -120,6 +120,88 @@ pub(crate) fn add_sub_untyped(
     add_sub_time(vals, kinds, sign, true, cols)
 }
 
+pub(crate) fn date_add_duration(
+    unit: &str,
+    date: &Datum,
+    amount: &Datum,
+    amount_type: Option<&FieldType>,
+    sign: i64,
+    result_fsp: i64,
+) -> Result<Datum, EvalError> {
+    let Datum::Duration(date) = date else {
+        return if matches!(date, Datum::Null) {
+            Ok(Datum::Null)
+        } else {
+            Err(EvalError::Unsupported("DATE_ADD duration operand"))
+        };
+    };
+    let upper = unit.to_ascii_uppercase();
+    let interval = if let Some((index, count)) = super::calendar::composite_spec(&upper) {
+        let text = match amount {
+            Datum::Null => return Ok(Datum::Null),
+            Datum::Decimal(value) => {
+                super::calendar::format_decimal_composite_interval(&upper, value)
+            }
+            Datum::Real(value) => amount_type
+                .map(FieldType::decimal)
+                .filter(|decimal| *decimal >= 0)
+                .map_or_else(
+                    || value.to_string(),
+                    |decimal| format!("{value:.decimal$}", decimal = decimal as usize),
+                ),
+            Datum::Float32(value) => amount_type
+                .map(FieldType::decimal)
+                .filter(|decimal| *decimal >= 0)
+                .map_or_else(
+                    || value.to_string(),
+                    |decimal| format!("{value:.decimal$}", decimal = decimal as usize),
+                ),
+            _ => match coerce_str(amount)? {
+                Some(value) => value,
+                None => return Ok(Datum::Null),
+            },
+        };
+        let (years, months, _, _) = super::calendar::parse_composite_value(index, count, &text);
+        if years != 0 || months != 0 {
+            return Ok(Datum::Null);
+        }
+        match tidb_datatype::extract_duration_value(&upper, &text) {
+            Ok(value) => value,
+            Err(_) => return Ok(Datum::Null),
+        }
+    } else {
+        let nanos = match upper.as_str() {
+            "MICROSECOND" => super::calendar::whole_interval_amount(&upper, amount)?
+                .and_then(|value| value.checked_mul(1_000)),
+            "SECOND" => super::calendar::second_interval_micros(amount)?
+                .and_then(|value| value.checked_mul(1_000)),
+            "MINUTE" => super::calendar::whole_interval_amount(&upper, amount)?
+                .and_then(|value| value.checked_mul(60_000_000_000)),
+            "HOUR" => super::calendar::whole_interval_amount(&upper, amount)?
+                .and_then(|value| value.checked_mul(3_600_000_000_000)),
+            _ => return Ok(Datum::Null),
+        };
+        let Some(nanos) =
+            nanos.filter(|value| value.unsigned_abs() <= tidb_datatype::MAX_TIME_NANOS as u64)
+        else {
+            return Ok(Datum::Null);
+        };
+        tidb_datatype::MySqlDuration::from_raw_parts(nanos, result_fsp)
+    };
+    let value = if sign < 0 {
+        date.checked_sub(interval)
+    } else {
+        date.checked_add(interval)
+    };
+    Ok(match value {
+        Ok(value) => Datum::new_duration(tidb_datatype::MySqlDuration::from_raw_parts(
+            value.nanoseconds(),
+            result_fsp,
+        )),
+        Err(_) => Datum::Null,
+    })
+}
+
 /// Go's `getBf4TimeAddSub` + `addTimeFunctionClass.getFunction` /
 /// `subTimeFunctionClass.getFunction`, evaluated.
 ///

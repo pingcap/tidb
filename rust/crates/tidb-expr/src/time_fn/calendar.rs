@@ -954,7 +954,7 @@ fn parse_single_string_amount(unit: &str, s: &str) -> i64 {
     trimmed[..i].parse::<i64>().unwrap_or(i64::MAX)
 }
 
-fn whole_interval_amount(unit: &str, amount: &Datum) -> Result<Option<i64>, EvalError> {
+pub(super) fn whole_interval_amount(unit: &str, amount: &Datum) -> Result<Option<i64>, EvalError> {
     Ok(Some(match amount {
         Datum::Null => return Ok(None),
         Datum::Int(value) => *value,
@@ -984,7 +984,7 @@ fn whole_interval_amount(unit: &str, amount: &Datum) -> Result<Option<i64>, Eval
 /// interval getters all normalize their value to decimal text before that
 /// parser runs; doing the same here makes one exact microsecond amount for
 /// the calendar path instead of rounding through an integer.
-fn second_interval_micros(amount: &Datum) -> Result<Option<i64>, EvalError> {
+pub(super) fn second_interval_micros(amount: &Datum) -> Result<Option<i64>, EvalError> {
     let text = match amount {
         Datum::Null => return Ok(None),
         Datum::Int(value) => value.to_string(),
@@ -1046,7 +1046,7 @@ fn decimal_seconds_to_micros(text: &str) -> Result<i64, EvalError> {
 /// composite `INTERVAL` unit name — the field the LAST numeric group in the
 /// string lands on, and the max number of numeric groups accepted.
 /// `None` for a non-composite (single) unit name.
-fn composite_spec(unit: &str) -> Option<(usize, usize)> {
+pub(super) fn composite_spec(unit: &str) -> Option<(usize, usize)> {
     const MONTH: usize = 1;
     const HOUR: usize = 3;
     const MINUTE: usize = 4;
@@ -1087,7 +1087,11 @@ fn composite_spec(unit: &str) -> Option<(usize, usize)> {
 /// returns the all-zero interval for that case instead of an `Err`, the
 /// same effective behavior without inventing a warning channel this crate
 /// doesn't have.
-fn parse_composite_value(index: usize, cnt: usize, format: &str) -> (i64, i64, i64, i64) {
+pub(super) fn parse_composite_value(
+    index: usize,
+    cnt: usize,
+    format: &str,
+) -> (i64, i64, i64, i64) {
     let trimmed = format.trim();
     let (neg, body) = match trimmed.strip_prefix('-') {
         Some(rest) => (true, rest),
@@ -1130,7 +1134,7 @@ fn parse_composite_value(index: usize, cnt: usize, format: &str) -> (i64, i64, i
 /// is significant at this boundary: it makes the decimal point land on the
 /// unit-specific field separator before `parse_composite_value` right-aligns
 /// the resulting numeric groups.
-fn format_decimal_composite_interval(unit: &str, decimal: &crate::Decimal) -> String {
+pub(super) fn format_decimal_composite_interval(unit: &str, decimal: &crate::Decimal) -> String {
     let interval = decimal.to_string();
     let (negative, magnitude) = interval
         .strip_prefix('-')

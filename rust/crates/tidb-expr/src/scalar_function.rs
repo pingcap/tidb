@@ -724,8 +724,29 @@ impl ScalarFunction {
                     self.args[0].static_type(),
                     self.args[1].static_type(),
                 );
-                let date = self.args[0].eval(ctx, row)?;
+                let mut date = self.args[0].eval(ctx, row)?;
                 let amount = self.args[1].eval(ctx, row)?;
+                let result_type = self.get_static_type();
+                if result_type.is_some_and(|field_type| {
+                    field_type.code() == tidb_datatype::FieldTypeCode::Duration
+                }) {
+                    return crate::time_fn::add_sub::date_add_duration(
+                        unit,
+                        &date,
+                        &amount,
+                        self.args[1].static_type(),
+                        if subtract { -1 } else { 1 },
+                        i64::from(result_fsp.unwrap_or(0)),
+                    );
+                }
+                if result_type.is_some_and(|field_type| {
+                    field_type.code() == tidb_datatype::FieldTypeCode::Datetime
+                }) && self.args[0].static_type().is_some_and(|field_type| {
+                    field_type.code() == tidb_datatype::FieldTypeCode::Duration
+                }) {
+                    date =
+                        crate::cast::cast_arg_as_datetime(&date, self.args[0].static_type(), ctx)?;
+                }
                 let result = crate::time_fn::calendar::date_add_with_result_fsp(
                     unit,
                     &date,
@@ -733,7 +754,7 @@ impl ScalarFunction {
                     if subtract { -1 } else { 1 },
                     result_fsp,
                 )?;
-                let Some(result_type) = self.get_static_type() else {
+                let Some(result_type) = result_type else {
                     return Ok(result);
                 };
                 return match result_type.code() {

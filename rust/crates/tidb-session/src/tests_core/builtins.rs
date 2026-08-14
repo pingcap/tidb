@@ -334,6 +334,41 @@ fn date_interval_extract_and_timestampdiff() {
     assert_eq!(columns[2].1.flen(), 19);
     assert_eq!(columns[2].1.decimal(), 0);
 
+    session.run("CREATE TABLE td (tm TIME(3))").unwrap();
+    session
+        .run("INSERT INTO td VALUES ('10:20:30.125')")
+        .unwrap();
+    let StmtOutput::Rows { columns, .. } = session
+        .run_with_columns(
+            "SELECT DATE_ADD(tm, INTERVAL 0.5 SECOND), \
+                    DATE_ADD(tm, INTERVAL 1 DAY), \
+                    DATE_ADD(tm, INTERVAL '1.500000' SECOND_MICROSECOND) FROM td",
+        )
+        .unwrap()
+    else {
+        panic!("duration DATE_ADD type query did not return rows")
+    };
+    assert_eq!(columns[0].1.code(), tidb_datatype::FieldTypeCode::Duration);
+    assert_eq!(columns[0].1.flen(), 14);
+    assert_eq!(columns[0].1.decimal(), 3);
+    assert_eq!(columns[1].1.code(), tidb_datatype::FieldTypeCode::Datetime);
+    assert_eq!(columns[1].1.flen(), 23);
+    assert_eq!(columns[1].1.decimal(), 3);
+    assert_eq!(columns[2].1.code(), tidb_datatype::FieldTypeCode::Duration);
+    assert_eq!(columns[2].1.flen(), 17);
+    assert_eq!(columns[2].1.decimal(), 6);
+    assert_eq!(
+        row_text(session.run("SELECT DATE_ADD(tm, INTERVAL 0.5 SECOND) FROM td")),
+        [["10:20:30.625"]]
+    );
+    assert_eq!(
+        row_text(session.run(
+            "SELECT DATE_ADD(tm, INTERVAL '1.500000' SECOND_MICROSECOND), \
+                    TIME(DATE_ADD(tm, INTERVAL 1 DAY)) FROM td",
+        )),
+        [["10:20:31.625000", "10:20:30.125"]]
+    );
+
     // Captured: DAY arithmetic keeps the time-of-day, HOUR recomputes it
     // (and rolls the date over), and NULL propagates.
     assert_eq!(

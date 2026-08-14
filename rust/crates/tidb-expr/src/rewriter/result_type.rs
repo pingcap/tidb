@@ -301,6 +301,19 @@ fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
             | "DAY_MINUTE"
             | "DAY_HOUR"
     );
+    let date_unit = matches!(
+        unit.to_ascii_uppercase().as_str(),
+        "DAY"
+            | "WEEK"
+            | "MONTH"
+            | "QUARTER"
+            | "YEAR"
+            | "DAY_MICROSECOND"
+            | "DAY_SECOND"
+            | "DAY_MINUTE"
+            | "DAY_HOUR"
+            | "YEAR_MONTH"
+    );
     let code = if date_type.code() == FieldTypeCode::Date {
         if clock_unit {
             FieldTypeCode::Datetime
@@ -309,6 +322,10 @@ fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
         }
     } else {
         match date_type.eval_type() {
+            EvalType::Duration if date_unit && !unit.eq_ignore_ascii_case("DAY_MICROSECOND") => {
+                FieldTypeCode::Datetime
+            }
+            EvalType::Duration => FieldTypeCode::Duration,
             EvalType::Datetime | EvalType::Timestamp => FieldTypeCode::Datetime,
             _ => FieldTypeCode::VarString,
         }
@@ -319,14 +336,20 @@ fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
             result.set_flen(10);
             result.set_decimal(0);
         }
-        FieldTypeCode::Datetime => {
+        FieldTypeCode::Datetime | FieldTypeCode::Duration => {
             let fsp = i64::from(crate::time_fn::calendar::date_add_result_fsp(
                 unit,
                 Some(date_type),
                 amount.static_type(),
             )?);
             result.set_decimal(fsp);
-            result.set_flen(19 + if fsp == 0 { 0 } else { fsp + 1 });
+            result.set_flen(
+                if code == FieldTypeCode::Datetime {
+                    19
+                } else {
+                    10
+                } + if fsp == 0 { 0 } else { fsp + 1 },
+            );
             set_binary_charset(&mut result);
         }
         FieldTypeCode::VarString => {
