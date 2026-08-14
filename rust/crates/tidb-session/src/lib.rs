@@ -378,6 +378,9 @@ pub struct Session {
     /// [`Session::statement_kind`], so the function and the OK packet cannot
     /// disagree about what the statement did.
     prev_row_count: i64,
+    /// Go `SessionVars.LastFoundRows`: the row count of the last result set
+    /// drained to EOF. Non-result statements leave it unchanged.
+    last_found_rows: u64,
     /// The class of the statement currently running, which decides what
     /// `ROW_COUNT()` reports next (Go's `StmtCtx.InSelectStmt` /
     /// `InInsertStmt` / `InUpdateStmt` / `InDeleteStmt` bits, read by
@@ -517,6 +520,7 @@ impl Default for Session {
             statement_insert_id: 0,
             set_var_hint_restore: Vec::new(),
             prev_row_count: 0,
+            last_found_rows: 0,
             statement_kind: StatementKind::Other,
             published_last_insert_id: Rc::default(),
             retry_auto_ids: Rc::default(),

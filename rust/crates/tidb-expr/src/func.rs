@@ -310,7 +310,8 @@ pub(crate) fn ensure_benchmark_eval_type(
 }
 
 /// The builtins whose result is a function of their argument values AND the
-/// session: `ROW_COUNT()` and both forms of `LAST_INSERT_ID`. `None` if
+/// session: `FOUND_ROWS()`, `ROW_COUNT()` and both forms of
+/// `LAST_INSERT_ID`. `None` if
 /// `name` is not one of them.
 ///
 /// Ports `builtinRowCountSig.evalInt` and the `builtinLastInsertID*Sig` pair
@@ -321,6 +322,10 @@ fn eval_session_state(
     cols: &dyn Columns,
 ) -> Option<Result<Datum, EvalError>> {
     Some(match (name, vals) {
+        ("FOUND_ROWS", []) => cols
+            .found_rows()
+            .map(Datum::UInt)
+            .ok_or(EvalError::Unsupported("FOUND_ROWS requires a session")),
         ("ROW_COUNT", []) => cols
             .row_count()
             .map(Datum::Int)

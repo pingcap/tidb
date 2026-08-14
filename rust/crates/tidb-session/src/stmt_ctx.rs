@@ -559,6 +559,7 @@ impl Session {
                 .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
                 .with_user_vars(Rc::clone(&self.user_vars))
                 .with_previous_statement(self.last_insert_id, self.prev_row_count)
+                .with_last_found_rows(self.last_found_rows)
                 .with_week_and_division_scale(week_format, div_scale)
                 .with_max_allowed_packet(max_allowed_packet)
                 .with_group_concat_max_len(group_concat_max_len)
@@ -596,6 +597,7 @@ impl Session {
         .with_auto_random_policy(allow_auto_random_explicit_insert, shard_allocate_step)
         .with_user_vars(Rc::clone(&self.user_vars))
         .with_previous_statement(self.last_insert_id, self.prev_row_count)
+        .with_last_found_rows(self.last_found_rows)
         .with_week_and_division_scale(week_format, div_scale)
         .with_max_allowed_packet(max_allowed_packet)
         .with_group_concat_max_len(group_concat_max_len)
@@ -719,6 +721,9 @@ impl Session {
         // fails and still moves the id (captured).
         if let Some(published) = self.published_last_insert_id.get() {
             self.last_insert_id = published;
+        }
+        if let Ok(StmtOutput::Rows { rows, .. }) = result {
+            self.last_found_rows = u64::try_from(rows.len()).unwrap_or(u64::MAX);
         }
         self.prev_row_count = match self.statement_kind {
             StatementKind::Select => -1,

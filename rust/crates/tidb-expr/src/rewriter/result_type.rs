@@ -1070,6 +1070,12 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
             ft
         }
+        // Go `foundRowsFunctionClass`: unsigned `LongLong`, with no argument.
+        "found_rows" if args.is_empty() => {
+            let mut ft = int();
+            ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            ft
+        }
         // Go `rowCountFunctionClass` (`pkg/expression/builtin_info.go`): a
         // plain signed `LongLong` with no flen of its own -- unlike
         // `LAST_INSERT_ID` below, `ROW_COUNT()` is signed, because a failed

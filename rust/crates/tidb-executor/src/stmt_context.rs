@@ -310,6 +310,9 @@ pub struct StmtContext {
     /// otherwise. The session derives it from that statement's class exactly
     /// as `ResetContextOfStmt` does.
     prev_row_count: i64,
+    /// Go `SessionVars.LastFoundRows`, the count published when the previous
+    /// result set reached EOF.
+    last_found_rows: Option<u64>,
     /// Go `StmtCtx.InsertID`: the explicit value a row gave the
     /// `AUTO_INCREMENT` column, which the OK packet falls back to.
     given_insert_id: Rc<Cell<u64>>,
@@ -567,6 +570,7 @@ impl StmtContext {
             last_insert_id: Rc::default(),
             prev_last_insert_id: 0,
             prev_row_count: 0,
+            last_found_rows: None,
             given_insert_id: Rc::default(),
             retry_auto_ids: Rc::default(),
             row_id_shards: Rc::default(),
@@ -1508,6 +1512,13 @@ impl StmtContext {
         self
     }
 
+    /// Attaches the completed result-set count `FOUND_ROWS()` reads.
+    #[must_use]
+    pub fn with_last_found_rows(mut self, rows: u64) -> Self {
+        self.last_found_rows = Some(rows);
+        self
+    }
+
     /// Go `StmtCtx.InsertID`: the explicit non-zero value a row GAVE the
     /// `AUTO_INCREMENT` column. Go overwrites it per row, so the LAST such
     /// value of the statement is the one that survives.
@@ -1685,6 +1696,10 @@ impl Columns for StmtContext {
 
     fn connection_id(&self) -> Option<u64> {
         self.connection_id
+    }
+
+    fn found_rows(&self) -> Option<u64> {
+        self.last_found_rows
     }
 
     fn tidb_info(&self) -> String {

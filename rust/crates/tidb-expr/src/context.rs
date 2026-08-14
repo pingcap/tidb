@@ -431,6 +431,13 @@ pub trait Columns {
         None
     }
 
+    /// Go `SessionVars.LastFoundRows`, published when the preceding result
+    /// set was completely drained. Statements without a result set do not
+    /// replace it.
+    fn found_rows(&self) -> Option<u64> {
+        None
+    }
+
     /// Reads a supported system variable.
     fn sysvar(&self, scope: Option<tidb_ast::SysVarScope>, name: &str) -> Option<Datum> {
         let _ = (scope, name);

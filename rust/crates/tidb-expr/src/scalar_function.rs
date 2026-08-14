@@ -849,6 +849,12 @@ impl ScalarFunction {
                         None => Datum::Null,
                     })
                 }
+                "found_rows" => {
+                    return Ok(match ctx.found_rows() {
+                        Some(rows) => Datum::UInt(rows),
+                        None => Datum::Null,
+                    })
+                }
                 _ => {}
             }
         }
