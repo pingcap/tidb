@@ -383,17 +383,20 @@ fn row_len(expr: &Expr) -> usize {
     }
 }
 
-fn rewrite_equality(
+/// Go `expressionRewriter.constructBinaryOpFunction`: scalar comparisons stay
+/// scalar; same-arity row comparisons are expanded into AND/OR trees.
+fn rewrite_comparison(
+    op: BinaryOp,
     left: &Expr,
     right: &Expr,
     resolver: &impl ColumnResolver,
 ) -> Result<Expression, EvalError> {
     match (left, right) {
-        (Expr::Row(left), Expr::Row(right)) => rewrite_row_equality(left, right, resolver),
+        (Expr::Row(left), Expr::Row(right)) => rewrite_row_comparison(op, left, right, resolver),
         (Expr::Row(left), _) => Err(EvalError::OperandColumns(left.len())),
         (_, Expr::Row(_)) => Err(EvalError::OperandColumns(1)),
         _ => Ok(binary_expression(
-            BinaryOp::Eq,
+            op,
             rewrite_expr_resolved(left, resolver)?,
             rewrite_expr_resolved(right, resolver)?,
             resolver,
@@ -401,9 +404,24 @@ fn rewrite_equality(
     }
 }
 
-/// Go `constructBinaryOpFunction` for row equality: compare each pair of
-/// columns and compose the results with `AND`.
-fn rewrite_row_equality(
+fn compose_comparisons(
+    join: BinaryOp,
+    comparisons: impl IntoIterator<Item = Result<Expression, EvalError>>,
+    resolver: &impl ColumnResolver,
+) -> Result<Expression, EvalError> {
+    let mut comparisons = comparisons.into_iter();
+    let first = comparisons
+        .next()
+        .ok_or(EvalError::Unsupported("a row expression with no columns"))??;
+    comparisons.try_fold(first, |condition, comparison| {
+        Ok(binary_expression(join, condition, comparison?, resolver))
+    })
+}
+
+/// Go `constructBinaryOpFunction` for row comparisons. Equality and NULL-safe
+/// equality are CNF, inequality is DNF, and ordering is lexicographic DNF.
+fn rewrite_row_comparison(
+    op: BinaryOp,
     left: &[Expr],
     right: &[Expr],
     resolver: &impl ColumnResolver,
@@ -411,21 +429,43 @@ fn rewrite_row_equality(
     if left.len() != right.len() {
         return Err(EvalError::OperandColumns(left.len()));
     }
-    let mut equalities = left
-        .iter()
-        .zip(right)
-        .map(|(left, right)| rewrite_equality(left, right, resolver));
-    let first = equalities
-        .next()
-        .ok_or(EvalError::Unsupported("a row expression with no columns"))??;
-    equalities.try_fold(first, |condition, equality| {
-        Ok(binary_expression(
-            BinaryOp::LogicAnd,
-            condition,
-            equality?,
+    if matches!(op, BinaryOp::Eq | BinaryOp::Ne | BinaryOp::NullEq) {
+        let join = if op == BinaryOp::Ne {
+            BinaryOp::LogicOr
+        } else {
+            BinaryOp::LogicAnd
+        };
+        return compose_comparisons(
+            join,
+            left.iter()
+                .zip(right)
+                .map(|(left, right)| rewrite_comparison(op, left, right, resolver)),
             resolver,
-        ))
-    })
+        );
+    }
+
+    let comparisons = (0..left.len()).map(|index| {
+        let mut prefix = (0..index)
+            .map(|prefix| rewrite_comparison(BinaryOp::Eq, &left[prefix], &right[prefix], resolver))
+            .collect::<Vec<_>>();
+        let current_op = if index + 1 < left.len() {
+            match op {
+                BinaryOp::Ge => BinaryOp::Gt,
+                BinaryOp::Le => BinaryOp::Lt,
+                _ => op,
+            }
+        } else {
+            op
+        };
+        prefix.push(rewrite_comparison(
+            current_op,
+            &left[index],
+            &right[index],
+            resolver,
+        ));
+        compose_comparisons(BinaryOp::LogicAnd, prefix, resolver)
+    });
+    compose_comparisons(BinaryOp::LogicOr, comparisons, resolver)
 }
 
 /// Go `expression_rewriter`: rewrite a parsed AST [`Expr`] into an evaluable
@@ -705,7 +745,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                     let Expr::Row(right) = right else {
                         return Err(EvalError::OperandColumns(left.len()));
                     };
-                    rewrite_row_equality(left, right, resolver)
+                    rewrite_row_comparison(BinaryOp::Eq, left, right, resolver)
                 });
                 let first = comparisons.next().ok_or(EvalError::Unsupported(
                     "an IN expression with no candidates",
@@ -811,6 +851,19 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             Ok(scalar(name, vec![arg]))
         }
         Expr::Binary(op, lhs, rhs) => {
+            if matches!(
+                op,
+                BinaryOp::Eq
+                    | BinaryOp::Ne
+                    | BinaryOp::NullEq
+                    | BinaryOp::Lt
+                    | BinaryOp::Le
+                    | BinaryOp::Gt
+                    | BinaryOp::Ge
+            ) && (matches!(lhs.as_ref(), Expr::Row(_)) || matches!(rhs.as_ref(), Expr::Row(_)))
+            {
+                return rewrite_comparison(*op, lhs, rhs, resolver);
+            }
             let left = rewrite_expr_resolved(lhs, resolver)?;
             let right = rewrite_expr_resolved(rhs, resolver)?;
             // Result types come from the transcreated function classes:

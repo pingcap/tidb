@@ -1358,6 +1358,20 @@ fn builtin_other_row_and_in_source_vectors() {
         "INT:1"
     );
     assert_eq!(e("row(1, 2) <> row(1, 3)"), "INT:1");
+    assert_eq!(e("row(NULL, 2) <=> row(NULL, 2)"), "INT:1");
+    assert_eq!(e("row(NULL, 2) <=> row(NULL, 3)"), "INT:0");
+    assert_eq!(e("row(1, NULL) <=> row(1, 2)"), "INT:0");
+    assert_eq!(chunk_e("(NULL, 2) <=> (NULL, 2)"), "INT:1");
+    assert_eq!(chunk_e("(NULL, 2) <=> (NULL, 3)"), "INT:0");
+    assert_eq!(chunk_e("(1, 2) = (1, 2)"), "INT:1");
+    assert_eq!(chunk_e("(1, 2) <> (1, 3)"), "INT:1");
+    assert_eq!(chunk_e("(1, 2) < (1, 3)"), "INT:1");
+    assert_eq!(chunk_e("(1, 3) <= (1, 3)"), "INT:1");
+    assert_eq!(chunk_e("(1, 4) > (1, 3)"), "INT:1");
+    assert_eq!(chunk_e("(1, 3) >= (1, 3)"), "INT:1");
+    assert_eq!(chunk_e("(0, NULL) < (1, NULL)"), "INT:1");
+    assert_eq!(chunk_e("(1, NULL) < (1, 2)"), "NULL");
+    assert_eq!(chunk_e("(1, 2) = (1, 2, 3)"), "OperandColumns(2)");
     assert_eq!(chunk_e("(1, 2) in ((1, 2), (3, 4))"), "INT:1");
     assert_eq!(chunk_e("(1, 2) not in ((1, 2), (3, 4))"), "INT:0");
     assert_eq!(chunk_e("(1, 2) in ((1, 3), (3, 4))"), "INT:0");

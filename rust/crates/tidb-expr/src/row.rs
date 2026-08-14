@@ -23,11 +23,9 @@
 //! projected as an ordinary column value; AST-level special-casing at
 //! exactly these two call sites is enough.
 //!
-//! `<=>` (NULL-safe equal) is deliberately NOT implemented here —
-//! narrower scope, not exercised by the corpus, and its own NULL
-//! semantics (never `NULL`, treats `NULL<=>NULL` as `TRUE`) would need
-//! a second, differently-shaped combination rule from the `=`/`<>`/
-//! ordering operators below, not a trivial extension of them.
+//! `<=>` (NULL-safe equal) uses its own combination rule: every position is
+//! compared with scalar `<=>`, then the results are AND-composed. It therefore
+//! never returns NULL and treats two NULLs in the same position as equal.
 
 use std::cmp::Ordering;
 
@@ -112,7 +110,7 @@ fn row_eq(l: &[Datum], r: &[Datum]) -> Result<Datum, EvalError> {
 }
 
 /// `l <op> r` for two same-arity row values, `op` one of
-/// `Eq`/`Ne`/`Lt`/`Gt`/`Le`/`Ge` — see [`row_eq`]'s own doc for
+/// `Eq`/`Ne`/`NullEq`/`Lt`/`Gt`/`Le`/`Ge` — see [`row_eq`]'s own doc for
 /// equality; the four ordering operators are LEXICOGRAPHIC (confirmed
 /// via `gorun`: the FIRST position where the two rows differ decides
 /// the whole comparison, regardless of what follows — `ROW(2,1) <
@@ -134,6 +132,18 @@ pub(crate) fn row_compare(op: BinaryOp, l: &[Datum], r: &[Datum]) -> Result<Datu
             Datum::Null => Datum::Null,
             _ => unreachable!("row_eq only ever returns Int or Null"),
         }),
+        // Go `constructBinaryOpFunction` rewrites row `<=>` into one scalar
+        // `<=>` per position and ComposeCNFCondition over those results.
+        BinaryOp::NullEq => {
+            for (lv, rv) in l.iter().zip(r) {
+                match eval_binary(BinaryOp::NullEq, lv.clone(), rv.clone())? {
+                    Datum::Int(0) => return Ok(Datum::Int(0)),
+                    Datum::Int(1) => {}
+                    _ => unreachable!("scalar NullEq only ever returns Int(0/1)"),
+                }
+            }
+            Ok(Datum::Int(1))
+        }
         BinaryOp::Lt | BinaryOp::Gt | BinaryOp::Le | BinaryOp::Ge => {
             for (lv, rv) in l.iter().zip(r) {
                 match eval_binary(BinaryOp::Eq, lv.clone(), rv.clone())? {
