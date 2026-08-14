@@ -701,11 +701,15 @@ fn column_row(
         collation_name,
         text(&field_type.info_schema_str(STRICT_INTEGER_DISPLAY_WIDTH)),
         text(&crate::show::column_key_flag(table, offset)),
-        text(if table.auto_increment_offset() == Some(offset) {
-            "auto_increment"
-        } else {
-            ""
-        }),
+        text(&crate::show::column_extra(
+            field_type,
+            table.auto_increment_offset() == Some(offset),
+            column.generated.as_ref().map(|generated| generated.stored),
+            column
+                .default_value
+                .as_ref()
+                .is_some_and(tidb_executor::column_default::ColumnDefault::is_default_generated),
+        )),
         text(PRIVILEGES),
         text(""),
         text(""),

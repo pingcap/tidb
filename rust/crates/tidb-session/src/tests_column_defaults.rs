@@ -610,6 +610,14 @@ fn show_columns_reports_the_stored_default_text() {
         .unwrap();
     let expression = rows(&mut session, "SHOW COLUMNS FROM t5");
     assert_eq!(expression[1][4], "rand()");
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT column_default, extra FROM information_schema.columns \
+             WHERE table_schema = 'test' AND table_name = 't5' AND column_name = 'b'",
+        ),
+        [["rand()", "DEFAULT_GENERATED"]]
+    );
     let clock = rows(&mut session, "SHOW COLUMNS FROM t1");
     assert_eq!(clock[1][4], "CURRENT_TIMESTAMP");
 }

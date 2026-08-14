@@ -667,7 +667,7 @@ fn column_description(
 
 /// Go `table.NewColDesc`'s `Extra` field, kept as a pure formatter so every
 /// metadata producer supplies the same four source facts in the same order.
-fn column_extra(
+pub(crate) fn column_extra(
     field_type: &tidb_datatype::FieldType,
     auto_increment: bool,
     generated_stored: Option<bool>,
