@@ -182,3 +182,28 @@ fn temporal_difference_and_zone_conversion_return_native_values() {
     assert_eq!((columns[2].1.flen(), columns[2].1.decimal()), (22, 2));
     assert_eq!(rows[0][2], Datum::Null);
 }
+
+#[test]
+fn from_unixtime_preserves_its_one_argument_datetime_signature() {
+    let mut session = Session::new();
+    session.run("SET time_zone = '+00:00'").unwrap();
+    let StmtOutput::Rows { columns, rows, .. } = session
+        .run_with_columns(
+            "SELECT FROM_UNIXTIME(CAST(1700000000.123 AS DECIMAL(20,3))), \
+                    FROM_UNIXTIME(1700000000), FROM_UNIXTIME(1700000000, '%Y')",
+        )
+        .unwrap()
+    else {
+        panic!("FROM_UNIXTIME did not return rows")
+    };
+    assert_eq!(columns[0].1.code(), tidb_datatype::FieldTypeCode::Datetime);
+    assert_eq!((columns[0].1.flen(), columns[0].1.decimal()), (23, 3));
+    assert!(matches!(rows[0][0], Datum::Time(_)));
+    assert_eq!(rows[0][0].sql_string().unwrap(), "2023-11-14 22:13:20.123");
+    assert_eq!(columns[1].1.code(), tidb_datatype::FieldTypeCode::Datetime);
+    assert_eq!((columns[1].1.flen(), columns[1].1.decimal()), (19, 0));
+    assert!(matches!(rows[0][1], Datum::Time(_)));
+    assert!(columns[2].1.code().is_string());
+    assert!(matches!(rows[0][2], Datum::String(_)));
+    assert_eq!(rows[0][2].sql_string().unwrap(), "2023");
+}

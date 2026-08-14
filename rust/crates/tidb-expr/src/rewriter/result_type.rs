@@ -472,6 +472,28 @@ fn convert_tz_return_type(args: &[Expression]) -> Option<FieldType> {
     datetime_return_type(fsp, false)
 }
 
+fn from_unixtime_return_type(args: &[Expression]) -> Option<FieldType> {
+    match args {
+        [arg] => {
+            let decimal = arg.static_type().map_or(6, FieldType::decimal);
+            let fsp = if arg_eval_type(args, 0) == tidb_datatype::EvalType::String
+                || decimal == tidb_datatype::UNSPECIFIED_LENGTH
+            {
+                6
+            } else {
+                decimal.clamp(0, 6)
+            };
+            datetime_return_type(fsp, false)
+        }
+        [_, _] => {
+            let mut result = FieldType::new(FieldTypeCode::VarString);
+            result.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            Some(result)
+        }
+        _ => None,
+    }
+}
+
 fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
     use tidb_datatype::EvalType;
 
@@ -874,6 +896,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "str_to_date" => str_to_date_return_type(args)?,
         "timediff" => timediff_return_type(args)?,
         "convert_tz" => convert_tz_return_type(args)?,
+        "from_unixtime" => from_unixtime_return_type(args)?,
         "monthname" | "dayname" | "date_format" => text(),
         "addtime" | "subtime" => add_sub_time_return_type(args)?,
         "timestamp" => timestamp_return_type(args)?,
