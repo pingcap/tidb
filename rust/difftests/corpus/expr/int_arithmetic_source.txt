@@ -40,15 +40,6 @@
 ## tests about which builtin*Sig or tipb.ScalarFuncSig was CHOSEN, which
 ## observes dispatch rather than the value.
 ##
-## One further row is held out; it is pinned, with the Go answer above,
-## by a running guard in
-## `difftests/result-tests/tests/expr_corpus_holdouts.rs`, so the gap fails
-## loudly the day it closes rather than staying invisible:
-##
-##   mod(cast('12:34:56' as time), 122)   Go INT:114
-##
-## It needs `CAST(... AS TIME)`.
-##
 ## The BIT-literal arithmetic row left that hold-out list for the executable
 ## rows below when the arithmetic classes learned to read the operand's
 ## UNSIGNED FLAG rather than its datum kind: Go's `DefaultTypeForValue` adds
@@ -148,6 +139,7 @@ null % -1001
 null % null
 '1231' % 12
 '1231' % '12'
+mod(cast('12:34:56' as time), 122)
 0x20000000000000 + 1
 b'00011' + 1
 b'1111111111111111111111111111111111111111111111111111111111111111' + 0
