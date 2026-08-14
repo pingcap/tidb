@@ -257,8 +257,8 @@ fn test_utc_time() {
 
 #[test]
 fn date_parts() {
-    // A DATE/DATETIME value is a plain string; these extract its
-    // calendar components directly, ignoring any time-of-day part.
+    // String arguments are cast through the datetime domain before extracting
+    // calendar components; the time-of-day part does not affect these fields.
     assert_eq!(e("year('2021-03-15')"), "INT:2021");
     assert_eq!(e("month('2021-03-15')"), "INT:3");
     assert_eq!(e("day('2021-03-15')"), "INT:15");
@@ -899,9 +899,9 @@ fn cast_and_convert() {
         ("cast('  123  ' as char)", "STR:  123  "),
         ("cast(1 as char(1))", "STR:1"),
         ("cast('hello' as char(3))", "STR:hel"),
-        ("cast('2021-01-01' as date)", "STR:2021-01-01"),
-        ("cast('2021-01-01 10:30:00' as date)", "STR:2021-01-01"),
-        ("cast('2021-01-01' as datetime)", "STR:2021-01-01 00:00:00"),
+        ("cast('2021-01-01' as date)", "TIME:2021-01-01"),
+        ("cast('2021-01-01 10:30:00' as date)", "TIME:2021-01-01"),
+        ("cast('2021-01-01' as datetime)", "TIME:2021-01-01 00:00:00"),
         ("cast('not a date' as date)", "NULL"),
         ("cast(NULL as date)", "NULL"),
         ("cast('2021-01-01' as year)", "INT:2021"),

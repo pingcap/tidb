@@ -17,16 +17,14 @@
 //! handled directly in `crate::eval_in`'s own `Expr::ConvertUsing` arm —
 //! this crate has no charset domain at all).
 //!
-//! JSON targets retain their native datum domain. DATE/DATETIME keep the
-//! evaluator's established string result boundary; the native temporal
-//! integration gap remains explicit at that API. Every rule here
-//! (string-to-number prefix parsing width, rounding tie-breaking per source type, `UNSIGNED`'s
-//! negative-float-clamps-to-zero rule, `DECIMAL`'s precision clamp,
-//! `BINARY`'s NUL-padding) was confirmed via `goeval`, not assumed — see
-//! each function's own doc for the specific probe.
+//! JSON and DATE/DATETIME targets retain their native datum domains. Every
+//! rule here (string-to-number prefix parsing width, rounding tie-breaking per
+//! source type, `UNSIGNED`'s negative-float-clamps-to-zero rule, `DECIMAL`'s
+//! precision clamp, `BINARY`'s NUL-padding) was confirmed via `goeval`, not
+//! assumed — see each function's own doc for the specific probe.
 
 use crate::coerce::coerce_str;
-use crate::time_fn::calendar::{format_ymd_result, parse_date_ymd};
+use crate::time_fn::calendar::parse_date_ymd;
 use crate::Decimal;
 use crate::{Datum, EvalError};
 use tidb_ast::CastType;
@@ -896,23 +894,7 @@ fn cast_to_time(
     let Some(time) = cast_to_time_value(v, source, ctx, kind, Some(fsp))? else {
         return Ok(Datum::Null);
     };
-    // The evaluator's public differential protocol still represents DATE and
-    // DATETIME CAST results as strings. Keep the one YEAR-source exception
-    // whose zero month/day fields need the typed value for later comparisons.
-    if year_source_value(v, source).is_some() {
-        return Ok(Datum::Time(time));
-    }
-    let core = time.core_time();
-    Ok(if kind == tidb_datatype::TimeType::Date {
-        format_ymd_result(
-            i64::from(core.year()),
-            u32::from(core.month()),
-            u32::from(core.day()),
-            None,
-        )
-    } else {
-        Datum::new_string(time.to_string())
-    })
+    Ok(Datum::Time(time))
 }
 
 /// Go's repeated DATE-target rule: preserve the calendar fields and clear the
@@ -937,16 +919,9 @@ fn truncate_clock_for_date(
     time
 }
 
-/// The `types.Time` Go's chosen `builtinCast*AsTimeSig` produces, BEFORE this
-/// tier renders it as a string. `None` is Go's NULL (any warning already
-/// raised).
-///
-/// [`cast_to_time`] is this plus the rendering; the argument-cast seam
-/// ([`crate::arg_eval_type`]) is this WITHOUT it, because the rendering is
-/// lossy in exactly the place Go's `ETDatetime` argument layer is not: a
-/// `types.Time` carries a zero month or day as a stored field, while
-/// `format_ymd*_result` collapses any zero year to the literal `0000-00-00`
-/// and answers NULL outside `1..=9999`.
+/// The `types.Time` Go's chosen `builtinCast*AsTimeSig` produces. `None` is
+/// Go's NULL (any warning already raised). Both explicit CAST and the
+/// argument-cast seam retain this native temporal value.
 fn cast_to_time_value(
     v: &Datum,
     source: Option<&tidb_datatype::FieldType>,
@@ -1815,7 +1790,7 @@ mod tests {
             0,
         )
         .expect("cast");
-        assert!(matches!(got, Datum::String(_)));
+        assert!(matches!(got, Datum::Time(_)));
         assert_eq!(render_time(&got), "0000-01-02 03:04:05");
 
         let date = cast_to_time(

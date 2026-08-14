@@ -107,10 +107,8 @@ fn greatest_least_source_vector_stringifies_mixed_arguments() {
 
 /// A one-row chunk holding a single `DATE`/`DATETIME` column named `d`, and
 /// the expression `sql` evaluated over it through the CHUNK tier. This is the
-/// only way to put a genuine temporal `FieldType` in front of a builtin here:
-/// this crate's `CAST(... AS DATE)` deliberately reports `VarString` (its own
-/// documented temporal-as-string divergence), so a cast argument cannot stand
-/// in for a real DATE column.
+/// direct column path used to exercise the same builtin with stored temporal
+/// data rather than a scalar cast expression.
 fn eval_over_date_column(sql: &str, code: tidb_datatype::FieldTypeCode, literal: &str) -> String {
     use tidb_ast::{QueryStmt, SelectField, Stmt};
     use tidb_datatype::{FieldType, TimeType};

@@ -259,12 +259,19 @@ pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static st
             ft.set_decimal(i64::from(*scale));
             ft
         }
-        CastType::Date => FieldType::new(FieldTypeCode::VarString),
+        CastType::Date => {
+            let mut ft = FieldType::new(FieldTypeCode::Date);
+            ft.set_flen(10);
+            ft.set_decimal(0);
+            set_binary_charset(&mut ft);
+            ft
+        }
         CastType::DateTime { fsp } => {
             let decimal = i64::from(fsp.unwrap_or(0));
-            let mut ft = FieldType::new(FieldTypeCode::VarString);
+            let mut ft = FieldType::new(FieldTypeCode::Datetime);
             ft.set_flen(if decimal > 0 { 20 + decimal } else { 19 });
             ft.set_decimal(decimal);
+            set_binary_charset(&mut ft);
             ft
         }
         CastType::Time { fsp } => {
@@ -866,6 +873,26 @@ fn ceil_floor_return_type(args: &[Expression]) -> Option<FieldType> {
     Some(result)
 }
 
+/// Go `absFunctionClass.getFunction`: the result keeps the argument's
+/// numeric family, unsigned flag, display width, and scale. Non-numeric
+/// arguments are evaluated through the REAL signature.
+fn abs_return_type(args: &[Expression]) -> Option<FieldType> {
+    use tidb_datatype::{EvalType, FieldTypeFlags};
+
+    let source = args.first()?.static_type()?;
+    let mut result = match source.eval_type() {
+        EvalType::Int => FieldType::new(FieldTypeCode::LongLong),
+        EvalType::Decimal => FieldType::new(FieldTypeCode::NewDecimal),
+        _ => return Some(FieldType::new(FieldTypeCode::Double)),
+    };
+    result.set_flen_under_limit(source.flen());
+    result.set_decimal_under_limit(source.decimal());
+    if source.is_unsigned() {
+        result.add_flags(FieldTypeFlags::UNSIGNED);
+    }
+    Some(result)
+}
+
 fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<FieldType> {
     let text = || {
         let mut ft = FieldType::new(FieldTypeCode::VarString);
@@ -1139,7 +1166,8 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // `ROUND`/`TRUNCATE` keep the decimal domain. `CEIL`/`FLOOR` keep a
         // decimal only when its declared integer width exceeds 18 digits;
         // narrower decimals use the integer signatures.
-        "abs" | "mod" => arg_numeric_type(args)?,
+        "abs" => abs_return_type(args)?,
+        "mod" => arg_numeric_type(args)?,
         "ceil" | "ceiling" | "floor" => ceil_floor_return_type(args)?,
         // `ROUND`/`TRUNCATE` read the FIRST argument alone -- `argTp :=
         // args[0].GetType(ctx.GetEvalCtx()).EvalType()` (`builtin_math.go:272`
@@ -1151,7 +1179,13 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // same decimal as `round(3.14159,100)`, not `3.14159`.
         "round" | "truncate" => round_truncate_return_type(name, args)?,
         // Always real, whatever went in.
-        "sqrt" | "pow" | "power" | "exp" | "ln" | "log" | "log2" | "log10" | "pi" | "sin"
+        "pi" => {
+            let mut result = FieldType::new(FieldTypeCode::Double);
+            result.set_flen(8);
+            result.set_decimal(6);
+            result
+        }
+        "sqrt" | "pow" | "power" | "exp" | "ln" | "log" | "log2" | "log10" | "sin"
         | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2" | "cot" | "radians" | "degrees"
         | "rand" => FieldType::new(FieldTypeCode::Double),
         "sign" | "crc32" => int(),

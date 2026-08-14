@@ -15,6 +15,42 @@
 use super::*;
 
 #[test]
+fn pi_and_abs_keep_their_source_field_metadata() {
+    let pi = builtin_return_type("pi", &[]).unwrap();
+    assert_eq!(pi.code(), FieldTypeCode::Double);
+    assert_eq!((pi.flen(), pi.decimal()), (8, 6));
+
+    let mut unsigned = FieldType::new(FieldTypeCode::LongLong);
+    unsigned.set_flen(20);
+    unsigned.set_decimal(0);
+    unsigned.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+    let argument = Expression::Constant(Constant::new(Datum::UInt(u64::MAX), unsigned));
+    let abs = builtin_return_type("abs", &[argument]).unwrap();
+    assert_eq!(abs.code(), FieldTypeCode::LongLong);
+    assert_eq!((abs.flen(), abs.decimal()), (20, 0));
+    assert!(abs.is_unsigned());
+}
+
+#[test]
+fn temporal_casts_keep_native_result_types() {
+    let (_, date) = cast_target(&tidb_ast::CastType::Date).unwrap();
+    assert_eq!(date.code(), FieldTypeCode::Date);
+    assert_eq!((date.flen(), date.decimal()), (10, 0));
+    assert_eq!(
+        (date.charset_name(), date.collation_name()),
+        ("binary", "binary")
+    );
+
+    let (_, datetime) = cast_target(&tidb_ast::CastType::DateTime { fsp: Some(3) }).unwrap();
+    assert_eq!(datetime.code(), FieldTypeCode::Datetime);
+    assert_eq!((datetime.flen(), datetime.decimal()), (23, 3));
+    assert_eq!(
+        (datetime.charset_name(), datetime.collation_name()),
+        ("binary", "binary")
+    );
+}
+
+#[test]
 fn name_const_requires_the_source_literal_shapes() {
     use tidb_ast::{BinaryOp, Expr, UnaryOp};
 

@@ -189,12 +189,10 @@ impl ColumnResolver for NoResolver {
 ///
 /// Go picks one `builtinCast*As*Sig` per target type; the name here carries
 /// that choice, so evaluation never has to re-derive the target from a result
-/// type that may not describe it. JSON retains its native domain; public
-/// DATE/DATETIME results remain strings until the differential protocol owns
-/// native temporal cells.
+/// type that may not describe it. JSON and DATE/DATETIME retain their native
+/// datum domains.
 ///
-/// The `ARRAY` modifier is outside this AST's cast surface. JSON retains its
-/// native result domain.
+/// The `ARRAY` modifier is outside this AST's cast surface.
 /// The literal text a typed temporal literal wraps.
 ///
 /// Go's `getFunction` asserts the argument is a `*Constant` and PANICS

@@ -22,10 +22,10 @@ mod tests {
     #[test]
     fn cast_result_types_keep_json_native_and_temporal_fsp() {
         for (cast, code, decimal) in [
-            (tidb_ast::CastType::Date, FieldTypeCode::VarString, -1),
+            (tidb_ast::CastType::Date, FieldTypeCode::Date, 0),
             (
                 tidb_ast::CastType::DateTime { fsp: Some(3) },
-                FieldTypeCode::VarString,
+                FieldTypeCode::Datetime,
                 3,
             ),
             (
