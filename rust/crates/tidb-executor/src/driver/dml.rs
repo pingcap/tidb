@@ -527,6 +527,7 @@ pub(crate) fn run_insert_traced(
                 .map(|assignment| assignment.offset),
         )?,
         assignments: on_duplicate_assignments,
+        selected_partitions: insert_partition_ids.clone(),
     };
 
     let mut new_rows: Vec<Vec<Datum>> = Vec::with_capacity(row_count);
@@ -823,6 +824,18 @@ pub(crate) fn run_insert_traced(
             ctx.append_warning_parts(warning.code, &warning.message);
             continue;
         }
+        // Go's partition-qualified INSERT target is a table wrapper, so the
+        // completed candidate is routed through the selected partition set
+        // before duplicate-key resolution.  This prevents a row for p0 from
+        // finding and updating a conflicting row when the statement names p1.
+        if let Some(partitions) = &insert_partition_ids {
+            if let Err(error) = target(catalog, &database, &table_name)
+                .validate_insert_partitions(row, partitions, ctx)
+            {
+                handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
+                continue;
+            }
+        }
         let conflicts = match target(catalog, &database, &table_name).conflicting_handles(row, ctx)
         {
             Ok(conflicts) => conflicts,
@@ -878,7 +891,7 @@ pub(crate) fn run_insert_traced(
                     continue;
                 }
             } else if !insert.on_duplicate.is_empty() {
-                inserted += apply_on_duplicate(
+                let result = apply_on_duplicate(
                     target(catalog, &database, &table_name),
                     &conflicts[0],
                     row,
@@ -886,7 +899,13 @@ pub(crate) fn run_insert_traced(
                     &column_list,
                     position,
                     ctx,
-                )?;
+                );
+                match result {
+                    Ok(affected) => inserted += affected,
+                    Err(error) => {
+                        handle_partition_write_error(error, insert.ignore, ctx)?;
+                    }
+                }
                 continue;
             } else if insert.ignore {
                 let reported = target(catalog, &database, &table_name)
@@ -905,14 +924,6 @@ pub(crate) fn run_insert_traced(
         // fails the statement only afterwards -- while an IGNORE-skipped row
         // and a row redirected into ON DUPLICATE KEY UPDATE never reach here
         // and so publish nothing.
-        if let Some(partitions) = &insert_partition_ids {
-            if let Err(error) = target(catalog, &database, &table_name)
-                .validate_insert_partitions(row, partitions, ctx)
-            {
-                handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
-                continue;
-            }
-        }
         if let Some(allocated) = first_allocated {
             ctx.publish_last_insert_id(allocated);
         }
@@ -1157,6 +1168,7 @@ pub(crate) struct PreparedOnDuplicateAssignment {
 struct PreparedOnDuplicate {
     assignments: Vec<PreparedOnDuplicateAssignment>,
     on_update_now: PreparedOnUpdateNow,
+    selected_partitions: Option<Vec<i64>>,
 }
 
 /// Resolves ON DUPLICATE assignments once, whether or not an inserted row
@@ -1306,6 +1318,11 @@ fn apply_on_duplicate(
     {
         // Captured: an update that changes nothing affects no rows.
         return Ok(0);
+    }
+    if let Some(partitions) = &prepared.selected_partitions {
+        table
+            .validate_update_partitions(&existing, &updated, partitions, ctx)
+            .map_err(kv_write_error)?;
     }
     table
         .update_row(handle, &updated, ctx)

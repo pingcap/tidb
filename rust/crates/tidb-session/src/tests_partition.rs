@@ -1430,6 +1430,90 @@ fn a_partition_qualified_update_cannot_move_a_row_outside_its_selected_set() {
     );
 }
 
+/// A partition-qualified INSERT keeps the same partition wrapper when a
+/// duplicate is found: both the candidate row and the completed update must
+/// belong to the named set.
+#[test]
+fn partition_qualified_on_duplicate_cannot_escape_the_named_set() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE t (a int primary key, b varchar(32)) \
+             PARTITION BY RANGE (a) (\
+               PARTITION p0 VALUES LESS THAN (5),\
+               PARTITION p1 VALUES LESS THAN (10),\
+               PARTITION p2 VALUES LESS THAN MAXVALUE)",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO t PARTITION (p0) VALUES (4, 'original')")
+        .unwrap();
+
+    let escaping_update = session
+        .run(
+            "INSERT INTO t PARTITION (p0) VALUES (4, 'candidate') \
+             ON DUPLICATE KEY UPDATE a = a + 1, b = VALUES(b)",
+        )
+        .expect_err("the duplicate update cannot move the p0 row into p1")
+        .to_mysql_error();
+    assert_eq!(escaping_update.code, 1748);
+    assert_eq!(
+        escaping_update.message,
+        "Found a row not matching the given partition set"
+    );
+
+    let mismatched_candidate = session
+        .run(
+            "INSERT INTO t PARTITION (p1) VALUES (4, 'candidate') \
+             ON DUPLICATE KEY UPDATE b = VALUES(b)",
+        )
+        .expect_err("the candidate is checked before duplicate-key resolution")
+        .to_mysql_error();
+    assert_eq!(mismatched_candidate.code, 1748);
+    assert_eq!(
+        mismatched_candidate.message,
+        "Found a row not matching the given partition set"
+    );
+
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT a, b FROM t")),
+        vec![vec!["4".to_owned(), "original".to_owned()]],
+        "both rejected statements leave the original p0 row unchanged"
+    );
+    assert_eq!(
+        session
+            .run(
+                "INSERT IGNORE INTO t PARTITION (p0) VALUES (4, 'candidate') \
+                 ON DUPLICATE KEY UPDATE a = a + 1, b = VALUES(b)",
+            )
+            .unwrap(),
+        StmtResult::Affected(0),
+        "IGNORE turns the partition update failure into a skipped row"
+    );
+    assert_eq!(
+        tests_support::row_text(session.run("SHOW WARNINGS")).as_slice(),
+        [[
+            "Warning",
+            "1748",
+            "Found a row not matching the given partition set"
+        ]]
+    );
+    assert_eq!(
+        session
+            .run(
+                "INSERT INTO t PARTITION (p0) VALUES (4, 'updated') \
+                 ON DUPLICATE KEY UPDATE b = VALUES(b)",
+            )
+            .unwrap(),
+        StmtResult::Affected(2),
+        "an update that remains in p0 is still accepted"
+    );
+    assert_eq!(
+        tests_support::row_text(session.run("SELECT a, b FROM t PARTITION (p0)")),
+        vec![vec!["4".to_owned(), "updated".to_owned()]]
+    );
+}
+
 /// The partition expression is keyed by the NAMES it reads, so an
 /// `ALTER TABLE` that inserts a column before the partitioning column cannot
 /// re-route the table.
