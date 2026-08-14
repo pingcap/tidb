@@ -1095,6 +1095,48 @@ fn show_row_matches(
     Ok(truthy.unwrap_or(false))
 }
 
+/// Applies the `LIKE`/`WHERE` layer Go builds over a virtual SHOW result.
+fn filter_show_output(
+    output: StmtOutput,
+    like_pattern: Option<Option<String>>,
+    where_clause: Option<&tidb_ast::Expr>,
+) -> Result<StmtOutput, DriverError> {
+    let StmtOutput::Rows { columns, rows } = output else {
+        return Ok(output);
+    };
+    let column_names: Vec<&str> = columns.iter().map(|(name, _)| name.as_str()).collect();
+    let mut filtered = Vec::with_capacity(rows.len());
+    for row in rows {
+        let matches_like = match &like_pattern {
+            None => true,
+            Some(None) => false,
+            Some(Some(pattern)) => row.first().is_some_and(|value| {
+                datum_text(value).is_some_and(|text| {
+                    tidb_executor::like_match_with_collation(
+                        text.to_ascii_lowercase(),
+                        pattern,
+                        None,
+                        tidb_datatype::Collation::Utf8Mb4Bin,
+                    )
+                })
+            }),
+        };
+        if !matches_like {
+            continue;
+        }
+        if let Some(predicate) = where_clause {
+            if !show_row_matches(predicate, &column_names, &row)? {
+                continue;
+            }
+        }
+        filtered.push(row);
+    }
+    Ok(StmtOutput::Rows {
+        columns,
+        rows: filtered,
+    })
+}
+
 impl Session {
     /// The `SHOW COLUMNS` / `DESCRIBE` result for one table, optionally
     /// narrowed to a single column as Go's `DESCRIBE tbl col` narrows it.
@@ -1204,21 +1246,16 @@ impl Session {
             tidb_ast::AdminStmt::GrantRole(grant) => Ok(Some(self.grant_role_stmt(grant)?)),
             tidb_ast::AdminStmt::RevokeRole(revoke) => Ok(Some(self.revoke_role_stmt(revoke)?)),
             tidb_ast::AdminStmt::ShowDatabases(show) => {
-                let pattern = match &show.filter {
-                    Some(tidb_ast::ShowDatabasesFilter::Like(tidb_ast::Expr::String(text))) => {
-                        Some(text.to_ascii_lowercase())
-                    }
-                    Some(tidb_ast::ShowDatabasesFilter::Like(_)) => {
-                        return Err(DriverError::unsupported(
-                            "SHOW DATABASES LIKE takes a string pattern",
-                        ));
-                    }
-                    Some(tidb_ast::ShowDatabasesFilter::Where(_)) => {
-                        return Err(DriverError::unsupported(
-                            "SHOW DATABASES WHERE is not supported yet",
-                        ));
-                    }
-                    None => None,
+                let (like_pattern, where_clause) = match &show.filter {
+                    None => (None, None),
+                    Some(tidb_ast::ShowDatabasesFilter::Like(expr)) => (
+                        Some(
+                            datum_text(&self.eval_value(expr)?)
+                                .map(|pattern| pattern.to_ascii_lowercase()),
+                        ),
+                        None,
+                    ),
+                    Some(tidb_ast::ShowDatabasesFilter::Where(expr)) => (None, Some(expr)),
                 };
                 let names = self.with_catalog_mut(|catalog| Ok(catalog.database_names()))?;
                 // Go `fetchShowDatabases` (`executor/show.go` around line
@@ -1229,18 +1266,9 @@ impl Session {
                 let names = names
                     .into_iter()
                     .filter(|name| self.database_is_visible(name))
-                    .filter(|name| {
-                        pattern.as_ref().is_none_or(|pattern| {
-                            tidb_executor::like_match_with_collation(
-                                name.to_ascii_lowercase(),
-                                pattern,
-                                None,
-                                tidb_datatype::Collation::Utf8Mb4Bin,
-                            )
-                        })
-                    })
                     .collect();
-                Ok(Some(string_column_output("Database", names)))
+                let output = string_column_output("Database", names);
+                filter_show_output(output, like_pattern, where_clause).map(Some)
             }
             // Go `fetchShowTableStatus`: one row per table in the
             // schema, with the columns MySQL's own SHOW TABLE STATUS
@@ -1859,17 +1887,28 @@ impl Session {
             }
             // Go `fetchShowColumns`.
             tidb_ast::AdminStmt::ShowColumns(show) => {
-                if show.filter.is_some() || show.extended {
+                if show.extended {
                     return Err(DriverError::unsupported(
-                        "SHOW EXTENDED COLUMNS and column filters are not supported yet",
+                        "SHOW EXTENDED COLUMNS is not supported yet",
                     ));
                 }
+                let (like_pattern, where_clause) = match &show.filter {
+                    None => (None, None),
+                    Some(tidb_ast::ShowColumnsFilter::Like(expr)) => (
+                        Some(
+                            datum_text(&self.eval_value(expr)?)
+                                .map(|pattern| pattern.to_ascii_lowercase()),
+                        ),
+                        None,
+                    ),
+                    Some(tidb_ast::ShowColumnsFilter::Where(expr)) => (None, Some(expr)),
+                };
                 let database = match &show.database {
                     Some(name) => name.clone(),
                     None => self.require_current_database()?.to_owned(),
                 };
-                self.show_columns(&database, &show.table, None, show.full)
-                    .map(Some)
+                let output = self.show_columns(&database, &show.table, None, show.full)?;
+                filter_show_output(output, like_pattern, where_clause).map(Some)
             }
             // Go's parser rewrites `DESCRIBE tbl [col]` into a SHOW
             // COLUMNS statement; this parser keeps a node of its own, so
@@ -1886,11 +1925,17 @@ impl Session {
                 .map(Some)
             }
             tidb_ast::AdminStmt::ShowTables(show) => {
-                if show.filter.is_some() {
-                    return Err(DriverError::unsupported(
-                        "SHOW TABLES filters are not supported yet",
-                    ));
-                }
+                let (like_pattern, where_clause) = match &show.filter {
+                    None => (None, None),
+                    Some(tidb_ast::ShowTablesFilter::Like(expr)) => (
+                        Some(
+                            datum_text(&self.eval_value(expr)?)
+                                .map(|pattern| pattern.to_ascii_lowercase()),
+                        ),
+                        None,
+                    ),
+                    Some(tidb_ast::ShowTablesFilter::Where(expr)) => (None, Some(expr)),
+                };
                 let database = match &show.database {
                     Some(name) => name.clone(),
                     None => self.require_current_database()?.to_owned(),
@@ -1930,33 +1975,48 @@ impl Session {
                             privilege::show_tables_priv_mask(),
                         )
                     })
+                    .filter(|(name, _)| match &like_pattern {
+                        None => true,
+                        Some(None) => false,
+                        Some(Some(pattern)) => tidb_executor::like_match_with_collation(
+                            name.to_ascii_lowercase(),
+                            pattern,
+                            None,
+                            tidb_datatype::Collation::Utf8Mb4Bin,
+                        ),
+                    })
                     .collect();
                 // Go names the column after the schema being listed.
                 let name_column = format!("Tables_in_{database}");
-                if !full {
-                    return Ok(Some(string_column_output(
-                        &name_column,
-                        listed.into_iter().map(|(name, _)| name).collect(),
-                    )));
-                }
-                // Go's `SHOW FULL TABLES` adds the object kind.
                 let field_type =
                     tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                Ok(Some(StmtOutput::Rows {
-                    columns: vec![
+                let column_names: Vec<&str> = if full {
+                    vec![name_column.as_str(), "Table_type"]
+                } else {
+                    vec![name_column.as_str()]
+                };
+                let mut rows = Vec::with_capacity(listed.len());
+                for (name, is_view) in listed {
+                    let mut row = vec![Datum::Bytes(name.into_bytes())];
+                    if full {
+                        row.push(Datum::Bytes(table_type_of(is_view).as_bytes().to_vec()));
+                    }
+                    if let Some(predicate) = where_clause {
+                        if !show_row_matches(predicate, &column_names, &row)? {
+                            continue;
+                        }
+                    }
+                    rows.push(row);
+                }
+                let columns = if full {
+                    vec![
                         (name_column, field_type.clone()),
                         ("Table_type".to_owned(), field_type),
-                    ],
-                    rows: listed
-                        .into_iter()
-                        .map(|(name, is_view)| {
-                            vec![
-                                Datum::Bytes(name.into_bytes()),
-                                Datum::Bytes(table_type_of(is_view).as_bytes().to_vec()),
-                            ]
-                        })
-                        .collect(),
-                }))
+                    ]
+                } else {
+                    vec![(name_column, field_type)]
+                };
+                Ok(Some(StmtOutput::Rows { columns, rows }))
             }
             _ => Ok(None),
         }

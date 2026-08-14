@@ -69,6 +69,38 @@ fn show_databases_and_tables() {
         ),
         other => panic!("expected rows, got {other:?}"),
     }
+    match session
+        .run_with_columns("SHOW DATABASES LIKE CONCAT('%', 'SCHEMA')")
+        .unwrap()
+    {
+        StmtOutput::Rows { rows, .. } => {
+            assert_eq!(
+                rows,
+                vec![vec![Datum::Bytes(b"INFORMATION_SCHEMA".to_vec())]]
+            )
+        }
+        other => panic!("expected rows, got {other:?}"),
+    }
+    match session
+        .run_with_columns("SHOW DATABASES WHERE Database = 'other' OR Database LIKE '%SCHEMA'")
+        .unwrap()
+    {
+        StmtOutput::Rows { rows, .. } => assert_eq!(
+            rows,
+            vec![
+                vec![Datum::Bytes(b"INFORMATION_SCHEMA".to_vec())],
+                vec![Datum::Bytes(b"other".to_vec())]
+            ]
+        ),
+        other => panic!("expected rows, got {other:?}"),
+    }
+    match session
+        .run_with_columns("SHOW DATABASES LIKE NULL")
+        .unwrap()
+    {
+        StmtOutput::Rows { rows, .. } => assert!(rows.is_empty()),
+        other => panic!("expected rows, got {other:?}"),
+    }
 
     // Go names the column Tables_in_<db> and sorts the table names.
     match session.run_with_columns("SHOW TABLES").unwrap() {
@@ -81,6 +113,63 @@ fn show_databases_and_tables() {
                 vec!["alpha".to_owned(), "zeta".to_owned()]
             );
         }
+        other => panic!("expected rows, got {other:?}"),
+    }
+
+    // Go evaluates the LIKE operand once, then wildcard-matches lower-cased
+    // table names. The expression form and NULL use that same path.
+    match session
+        .run_with_columns("SHOW TABLES LIKE CONCAT('%', 'TA')")
+        .unwrap()
+    {
+        StmtOutput::Rows { columns, rows } => {
+            assert_eq!(columns[0].0, "Tables_in_test");
+            assert_eq!(rows, vec![vec![Datum::Bytes(b"zeta".to_vec())]]);
+        }
+        other => panic!("expected rows, got {other:?}"),
+    }
+    match session.run_with_columns("SHOW TABLES LIKE NULL").unwrap() {
+        StmtOutput::Rows { rows, .. } => assert!(rows.is_empty()),
+        other => panic!("expected rows, got {other:?}"),
+    }
+    match session
+        .run_with_columns("SHOW FULL TABLES LIKE 'alpha'")
+        .unwrap()
+    {
+        StmtOutput::Rows { columns, rows } => {
+            assert_eq!(columns[1].0, "Table_type");
+            assert_eq!(
+                rows,
+                vec![vec![
+                    Datum::Bytes(b"alpha".to_vec()),
+                    Datum::Bytes(b"BASE TABLE".to_vec())
+                ]]
+            );
+        }
+        other => panic!("expected rows, got {other:?}"),
+    }
+    match session
+        .run_with_columns("SHOW TABLES WHERE Tables_in_test = 'alpha'")
+        .unwrap()
+    {
+        StmtOutput::Rows { rows, .. } => {
+            assert_eq!(rows, vec![vec![Datum::Bytes(b"alpha".to_vec())]])
+        }
+        other => panic!("expected rows, got {other:?}"),
+    }
+    match session
+        .run_with_columns(
+            "SHOW FULL TABLES WHERE Table_type = 'BASE TABLE' AND Tables_in_test LIKE 'z%'",
+        )
+        .unwrap()
+    {
+        StmtOutput::Rows { rows, .. } => assert_eq!(
+            rows,
+            vec![vec![
+                Datum::Bytes(b"zeta".to_vec()),
+                Datum::Bytes(b"BASE TABLE".to_vec())
+            ]]
+        ),
         other => panic!("expected rows, got {other:?}"),
     }
 
@@ -148,6 +237,25 @@ fn show_columns_and_describe() {
             vec!["v", "bigint", "YES", "", "NULL", ""],
         ]
     );
+
+    assert_eq!(
+        describe(&mut session, "SHOW COLUMNS FROM t LIKE CONCAT('c', 'ode')").1,
+        vec![vec!["code", "varchar(8)", "YES", "UNI", "NULL", ""]]
+    );
+    assert_eq!(
+        describe(
+            &mut session,
+            "SHOW COLUMNS FROM t WHERE Field IN ('id', 'v') AND Type LIKE 'bigint%'",
+        )
+        .1,
+        vec![
+            vec!["id", "bigint", "NO", "PRI", "NULL", ""],
+            vec!["v", "bigint", "YES", "", "NULL", ""],
+        ]
+    );
+    assert!(describe(&mut session, "SHOW COLUMNS FROM t LIKE NULL")
+        .1
+        .is_empty());
 
     // Go reports auto_increment in Extra; captured from TiDB's DESCRIBE:
     // [[id bigint(20) NO PRI <nil> auto_increment] [v bigint(20) YES  <nil> ]]

@@ -293,15 +293,16 @@ fn run_routes_session_statements() {
 }
 
 #[test]
-fn unsupported_kinds_error() {
+fn parser_only_dml_modifiers_do_not_change_the_write() {
     let mut session = Session::new();
     session.run("CREATE TABLE t (a INT)").unwrap();
-    // Shapes the write paths do not model yet. (ORDER BY and LIMIT used
-    // to be the examples here; both work now -- see
-    // `insert_select_and_ordered_dml`.)
-    assert!(session.run("DELETE QUICK FROM t").is_err());
-    // RETURNING is not one of them: Go parses it and silently ignores it,
-    // so the insert lands with a plain OK.
+    // Go parses QUICK but neither its planner nor executor reads it.
+    assert_eq!(
+        session.run("DELETE QUICK FROM t").unwrap(),
+        StmtResult::Affected(0)
+    );
+    // RETURNING is likewise parsed and silently ignored, so the insert lands
+    // with a plain OK rather than a result set.
     assert_eq!(
         session
             .run("INSERT INTO t (a) VALUES (1) RETURNING a")

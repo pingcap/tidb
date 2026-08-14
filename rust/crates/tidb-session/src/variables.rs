@@ -736,7 +736,7 @@ impl Session {
     /// they are bound to their values first -- the same substitution a
     /// user-facing query gets, for the same reason: the rewriter behind
     /// `run_select_on` knows literals and columns, not session state.
-    fn eval_value(&mut self, expr: &tidb_ast::Expr) -> Result<Datum, DriverError> {
+    pub(crate) fn eval_value(&mut self, expr: &tidb_ast::Expr) -> Result<Datum, DriverError> {
         // An unquoted identifier is a bare word value such as `SET sql_mode =
         // ANSI_QUOTES` or `SET autocommit = ON`, which MySQL takes literally
         // (`SET @x = ANSI_QUOTES` stores the string too, confirmed via
