@@ -3258,6 +3258,15 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 		})
 	} else {
 		job := reorgInfo.Job
+		workerCntLimit := job.ReorgMeta.GetConcurrency()
+		requiredSlots, err := adjustConcurrency(ctx, taskManager, workerCntLimit)
+		if err != nil {
+			return err
+		}
+		logutil.DDLLogger().Info("adjusted add-index task required slots",
+			zap.Int("worker-cnt", workerCntLimit), zap.Int("required-slots", requiredSlots),
+			zap.String("task-key", taskKey))
+		rowSize := estimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
 		cloudStorageURI, err := w.cloudStorageURIForNewBackfillTask(job, reorgInfo.mergingTmpIdx)
 		if err != nil {
 			return err
@@ -3268,23 +3277,9 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: cloudStorageURI,
 			MergeTempIndex:  reorgInfo.mergingTmpIdx,
+			EstimateRowSize: rowSize,
 			Version:         BackfillTaskMetaVersion1,
 		}
-		failpoint.InjectCall("afterNewBackfillTaskMeta", taskMeta)
-		failpoint.Inject("returnAfterNewBackfillTaskMeta", func() {
-			failpoint.Return(errors.New("stopped after constructing new backfill task meta"))
-		})
-
-		workerCntLimit := job.ReorgMeta.GetConcurrency()
-		requiredSlots, err := adjustConcurrency(ctx, taskManager, workerCntLimit)
-		if err != nil {
-			return err
-		}
-		logutil.DDLLogger().Info("adjusted add-index task required slots",
-			zap.Int("worker-cnt", workerCntLimit), zap.Int("required-slots", requiredSlots),
-			zap.String("task-key", taskKey))
-		rowSize := estimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
-		taskMeta.EstimateRowSize = rowSize
 
 		metaData, err := json.Marshal(taskMeta)
 		if err != nil {
@@ -3293,7 +3288,6 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 		targetScope := reorgInfo.ReorgMeta.TargetScope
 		maxNodeCnt := reorgInfo.ReorgMeta.MaxNodeCount
-		failpoint.InjectCall("beforeSubmitNewBackfillTask")
 		task, err := handle.SubmitTaskWithExtraParams(ctx, taskKey, taskType, w.store.GetKeyspace(),
 			requiredSlots, targetScope, maxNodeCnt, proto.ExtraParams{PauseOnKVDiskFull: true}, metaData)
 		if err != nil {

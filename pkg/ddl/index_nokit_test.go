@@ -26,52 +26,76 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
 
-// ExecuteDistTaskForCloudStorageTest runs executeDistTask with the minimum
-// internal DDL state needed by the cloud-storage URI regression test.
-func ExecuteDistTaskForCloudStorageTest(
-	d DDL,
-	job *model.Job,
-	mergeTempIndex bool,
-	cachedURI string,
-) (string, error) {
-	impl := d.(*ddl)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
-	w := newWorker(ctx, addIdxWorker, impl.sessPool, impl.delRangeMgr, impl.ddlCtx)
-	jc := NewReorgContext()
-	jc.cloudStorageURI = cachedURI
-	impl.jobCtx.Lock()
-	impl.jobCtx.jobCtxMap[job.ID] = jc
-	impl.jobCtx.Unlock()
-	impl.newReorgCtx(job.ID, 0)
-	defer func() {
-		impl.removeReorgCtx(job.ID)
-		impl.jobCtx.Lock()
-		delete(impl.jobCtx.jobCtxMap, job.ID)
-		impl.jobCtx.Unlock()
-	}()
-	reorgInfo := &reorgInfo{
-		Job:           job,
-		mergingTmpIdx: mergeTempIndex,
-		currElement: &meta.Element{
-			ID:      1,
-			TypeKey: meta.IndexElementKey,
-		},
-	}
-	err := w.executeDistTask(&jobContext{stepCtx: ctx}, nil, reorgInfo)
-	return jc.cloudStorageURI, err
-}
+func TestCloudStorageURIForNewBackfillTask(t *testing.T) {
+	originalURI := vardef.CloudStorageURI.Load()
+	t.Cleanup(func() {
+		vardef.CloudStorageURI.Store(originalURI)
+	})
 
-// IsRetryableJobErrorForTest exposes the DDL retry classification to external tests.
-func IsRetryableJobErrorForTest(err error, jobErrCnt int64) bool {
-	return isRetryableJobError(err, jobErrCnt)
+	const jobID int64 = 900001
+	newTestWorker := func(cachedURI string) (*worker, *ReorgContext) {
+		jc := NewReorgContext()
+		jc.cloudStorageURI = cachedURI
+		dc := &ddlCtx{}
+		dc.jobCtx.jobCtxMap = map[int64]*ReorgContext{jobID: jc}
+		return &worker{workCtx: context.Background(), ddlCtx: dc}, jc
+	}
+	newJob := func(useCloudStorage bool) *model.Job {
+		return &model.Job{
+			ID: jobID,
+			ReorgMeta: &model.DDLReorgMeta{
+				UseCloudStorage: useCloudStorage,
+			},
+		}
+	}
+
+	t.Run("configured URI recovers empty owner cache", func(t *testing.T) {
+		vardef.CloudStorageURI.Store("s3://bucket")
+		w, jc := newTestWorker("")
+		uri, err := w.cloudStorageURIForNewBackfillTask(newJob(true), false)
+		require.NoError(t, err)
+		require.Equal(t, "s3://bucket/dxf/", uri)
+		require.Equal(t, uri, jc.cloudStorageURI)
+	})
+
+	t.Run("missing configured URI is retryable", func(t *testing.T) {
+		vardef.CloudStorageURI.Store("")
+		w, _ := newTestWorker("")
+		_, err := w.cloudStorageURIForNewBackfillTask(newJob(true), false)
+		require.ErrorContains(t, err, "cloud storage URI is empty for add-index job 900001 with cloud storage enabled")
+		require.True(t, isRetryableJobError(err, 0))
+	})
+
+	t.Run("cached URI wins over changed configuration", func(t *testing.T) {
+		vardef.CloudStorageURI.Store("s3://new-bucket")
+		w, _ := newTestWorker("s3://cached-bucket/dxf/")
+		uri, err := w.cloudStorageURIForNewBackfillTask(newJob(true), false)
+		require.NoError(t, err)
+		require.Equal(t, "s3://cached-bucket/dxf/", uri)
+	})
+
+	t.Run("local sort permits empty URI", func(t *testing.T) {
+		vardef.CloudStorageURI.Store("")
+		w, _ := newTestWorker("")
+		uri, err := w.cloudStorageURIForNewBackfillTask(newJob(false), false)
+		require.NoError(t, err)
+		require.Empty(t, uri)
+	})
+
+	t.Run("merge temp index does not require cloud storage", func(t *testing.T) {
+		vardef.CloudStorageURI.Store("")
+		w, _ := newTestWorker("")
+		uri, err := w.cloudStorageURIForNewBackfillTask(newJob(true), true)
+		require.NoError(t, err)
+		require.Empty(t, uri)
+	})
 }
 
 func TestShouldAutoPauseExistingKVDiskFullTask(t *testing.T) {
