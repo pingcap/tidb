@@ -145,10 +145,12 @@ pub(super) fn dml_table_scope(
         table_ref.alias.is_none().then(|| database.to_owned()),
         columns,
     );
-    scope.zone = ctx.session_zone();
-    scope.tidb_info_len = ctx.tidb_info_len();
-    scope.like_default_escape = ctx.like_default_escape();
-    scope.no_unsigned_subtraction = ctx.no_unsigned_subtraction();
-    scope.div_precision_increment = ctx.div_precision_increment();
+    let statement = FromScope::for_statement(ctx);
+    scope.constant_context = statement.constant_context;
+    scope.zone = statement.zone;
+    scope.tidb_info_len = statement.tidb_info_len;
+    scope.like_default_escape = statement.like_default_escape;
+    scope.no_unsigned_subtraction = statement.no_unsigned_subtraction;
+    scope.div_precision_increment = statement.div_precision_increment;
     scope
 }

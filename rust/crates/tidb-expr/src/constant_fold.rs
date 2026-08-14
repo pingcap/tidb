@@ -18,6 +18,19 @@
 use crate::expression::Expression;
 use tidb_datatype::Datum;
 
+/// How Go's expression rewriter constructs functions under the current AST
+/// parent (`newFunctionWithInit`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ConstantFoldMode {
+    /// `expression.NewFunction`: fold the newly built function normally.
+    #[default]
+    Normal,
+    /// `expression.NewFunctionTryFold`: keep the function when folding warns.
+    Try,
+    /// `expression.NewFunctionBase`: do not fold descendants in this scope.
+    Disabled,
+}
+
 /// Runs the NOT NULL half of Go's `foldConstant`
 /// (`pkg/expression/constant_fold.go`) over a freshly built tree, bottom up.
 ///
@@ -33,6 +46,58 @@ use tidb_datatype::Datum;
 /// base table declared NOT NULL.
 pub fn derive_constant_null_flag(expr: &mut Expression) {
     let _ = fold_value(expr);
+}
+
+/// Folds exactly the function just built, under Go's selected construction
+/// mode. Its arguments have already been rewritten and folded individually;
+/// recursively evaluating them here would duplicate warnings and side effects.
+pub fn fold_constant_in_mode(
+    expr: &mut Expression,
+    ctx: &impl crate::Columns,
+    mode: ConstantFoldMode,
+) {
+    if mode == ConstantFoldMode::Disabled {
+        return;
+    }
+    let original = (mode == ConstantFoldMode::Try).then(|| expr.clone());
+    let warning_bookmark = ctx.warning_count();
+    let _ = fold_current_value_in(expr, ctx);
+    if mode == ConstantFoldMode::Try && ctx.warning_count() > warning_bookmark {
+        ctx.truncate_warnings(warning_bookmark);
+        *expr = original.expect("try-fold mode retained the original expression");
+    }
+}
+
+fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Option<Datum> {
+    let func = match expr {
+        Expression::Constant(constant) => return Some(constant.value.clone()),
+        Expression::Column(_) | Expression::CorrelatedColumn(_) => return None,
+        Expression::ScalarFunction(func) => func,
+    };
+    let unfoldable = is_unfoldable(func.func_name.lowercase());
+    let mut has_null_arg = false;
+    let mut all_const_arg = true;
+    for arg in &func.args {
+        match arg {
+            Expression::Constant(constant) if constant.value.is_null() => has_null_arg = true,
+            Expression::Constant(_) => {}
+            _ => all_const_arg = false,
+        }
+    }
+    if unfoldable || !all_const_arg {
+        return None;
+    }
+    let value = crate::eval_expression_once(expr, ctx).ok()?;
+    let mut ret_type = expr.static_type()?.clone();
+    if !has_null_arg {
+        if value.is_null() {
+            ret_type.del_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+        } else {
+            ret_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+        }
+    }
+    *expr = Expression::Constant(crate::constant::Constant::new(value.clone(), ret_type));
+    Some(value)
 }
 
 /// One node of Go's `foldConstant`: folds bottom up, returning the constant

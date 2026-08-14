@@ -555,7 +555,20 @@ fn subquery_value_list(
     for row in rows {
         let values = row
             .iter()
-            .map(datum_to_literal)
+            .map(|value| {
+                // Go keeps a subquery result as a runtime column of the
+                // semi-join. This driver materializes that relation, so a
+                // bare literal would let constant folding collapse the whole
+                // predicate and run its coercions once instead of once per
+                // outer row. ANY_VALUE is Go's non-foldable scalar identity:
+                // it preserves the exact datum/type while retaining the
+                // runtime-column property of the source plan.
+                datum_to_literal(value).map(|literal| tidb_ast::Expr::Func {
+                    name: "any_value".to_owned(),
+                    args: vec![literal],
+                    origin_position: 0,
+                })
+            })
             .collect::<Result<Vec<_>, _>>()?;
         list.push(match values.as_slice() {
             [value] => value.clone(),
@@ -768,14 +781,7 @@ pub(crate) fn select_outer_scope(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> FromScope {
-    let empty = || FromScope {
-        zone: ctx.session_zone(),
-        tidb_info_len: ctx.tidb_info_len(),
-        like_default_escape: ctx.like_default_escape(),
-        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
-        div_precision_increment: ctx.div_precision_increment(),
-        ..FromScope::default()
-    };
+    let empty = || FromScope::for_statement(ctx);
     match &select.from {
         None => empty(),
         Some(join) => match build_join(

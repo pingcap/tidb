@@ -149,6 +149,7 @@ pub(crate) fn leaf_index_path(
     let resolver = TableResolver {
         table_name: visible,
         columns,
+        constant_context: ctx.clone(),
         zone: ctx.session_zone(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),
@@ -318,6 +319,7 @@ pub(crate) fn leaf_alternatives(
     let resolver = TableResolver {
         table_name: visible,
         columns,
+        constant_context: ctx.clone(),
         zone: ctx.session_zone(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),

@@ -120,6 +120,12 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         EvalError::AllowedPacketOverflowed(message) => {
             MysqlError::coded(ER_WARN_ALLOWED_PACKET_OVERFLOWED, message)
         }
+        EvalError::FunctionNotExists(name) => {
+            MysqlError::new(1305, *b"42000", format!("FUNCTION {name} does not exist"))
+        }
+        EvalError::NoDatabaseSelected => {
+            MysqlError::new(1046, *b"3D000", "No database selected".to_owned())
+        }
         // A typed temporal literal raises 1292 (22007) for a parse failure and
         // 1525 (HY000) for its regex gate, so the code travels with the
         // message and the SQLSTATE is derived from it like the JSON class

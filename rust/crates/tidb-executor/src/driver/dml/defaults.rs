@@ -268,6 +268,14 @@ impl<R: tidb_expr::rewriter::ColumnResolver> tidb_expr::rewriter::ColumnResolver
     fn div_precision_increment(&self) -> u32 {
         self.base.div_precision_increment()
     }
+
+    fn current_database(&self) -> Option<String> {
+        self.base.current_database()
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        self.base.fold_constant(expression, mode);
+    }
 }
 
 /// Finds and materializes every named DEFAULT in one scalar expression using

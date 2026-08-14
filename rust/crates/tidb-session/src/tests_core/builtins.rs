@@ -1825,16 +1825,21 @@ fn aes_modes_reach_live_sql() {
         row_text(session.run("SELECT HEX(AES_ENCRYPT('pingcap', '123', 1 / 0))"))[0][0],
         "996E0CA8688D7AD20819B90B273E01C6"
     );
-    assert_eq!(session.warnings().len(), 1);
-    assert_eq!(session.warnings()[0].code, 1618);
-    assert_eq!(session.warnings()[0].message, "<IV> option ignored");
+    // Go folds the division child while rewriting the call, before the ECB
+    // signature ignores the third argument at evaluation time. Both warnings
+    // therefore survive, in construction/evaluation order.
+    assert_eq!(session.warnings().len(), 2);
+    assert_eq!(session.warnings()[0].code, 1365);
+    assert_eq!(session.warnings()[1].code, 1618);
+    assert_eq!(session.warnings()[1].message, "<IV> option ignored");
 
     for sql in [
         "SELECT AES_ENCRYPT(NULL, 1 / 0)",
         "SELECT AES_DECRYPT(NULL, 1 / 0)",
     ] {
         assert_eq!(row_text(session.run(sql)), [["NULL"]], "{sql}");
-        assert!(session.warnings().is_empty(), "{sql}");
+        assert_eq!(session.warnings().len(), 1, "{sql}");
+        assert_eq!(session.warnings()[0].code, 1365, "{sql}");
     }
 
     session
@@ -1842,12 +1847,22 @@ fn aes_modes_reach_live_sql() {
         .unwrap();
     for sql in [
         "SELECT AES_ENCRYPT(NULL, 1 / 0, 1 / 0)",
-        "SELECT AES_ENCRYPT('pingcap', NULL, 1 / 0)",
         "SELECT AES_DECRYPT(NULL, 1 / 0, 1 / 0)",
+    ] {
+        assert_eq!(row_text(session.run(sql)), [["NULL"]], "{sql}");
+        assert_eq!(session.warnings().len(), 2, "{sql}");
+        assert!(session
+            .warnings()
+            .iter()
+            .all(|warning| warning.code == 1365));
+    }
+    for sql in [
+        "SELECT AES_ENCRYPT('pingcap', NULL, 1 / 0)",
         "SELECT AES_DECRYPT('cipher', NULL, 1 / 0)",
     ] {
         assert_eq!(row_text(session.run(sql)), [["NULL"]], "{sql}");
-        assert!(session.warnings().is_empty(), "{sql}");
+        assert_eq!(session.warnings().len(), 1, "{sql}");
+        assert_eq!(session.warnings()[0].code, 1365, "{sql}");
     }
     let short_iv = session
         .run("SELECT AES_ENCRYPT('pingcap', '123', 'short')")

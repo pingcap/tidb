@@ -12,26 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The expression rewriter: builds a planner [`Expression`] from a parsed AST
-//! [`Expr`] (Go's `expression_rewriter.go`).
-//!
-//! This is the bridge from a parsed SQL expression to the evaluable expression
-//! tree. It is a SEED: literals become [`Constant`]s and operators become
-//! [`ScalarFunction`]s (named so [`ScalarFunction::eval`] dispatches them),
-//! which is enough for constant/operator expressions such as `1 + 1` or
-//! `2 * 3 - 1`.
-//!
-//! DEFERRED (documented): column references (need schema/name resolution), the
-//! full literal domain (decimal/hex/bit/charset strings, unsigned promotion of
-//! large integers), function calls, subqueries, and the result-type inference
-//! that Go performs while rewriting for forms other than the arithmetic,
-//! comparison, logic, bit and unary operators (which consult the transcreated
-//! `builtin_arithmetic`/`builtin_compare`/`builtin_op` function classes);
-//! uncovered forms keep a LongLong placeholder ret type (evaluation dispatches
-//! on operand kinds, not on this type).
+//! Go-shaped AST-to-planner expression rewriting and constant-fold ordering.
 
 use crate::column::Column;
 use crate::constant::Constant;
+use crate::constant_fold::ConstantFoldMode;
 use crate::expression::{Expression, ScalarFunction};
 use crate::scalar_function::{binary_op_name, unary_op_name};
 use crate::EvalError;
@@ -44,9 +29,11 @@ const DEFAULT_DECIMAL_LITERAL: &str =
     "99999999999999999999999999999999999999999999999999999999999999999";
 
 pub(crate) mod control_type;
+mod fold_mode;
 pub(crate) mod result_type;
 
 pub use control_type::{infer_type4_control_funcs, set_numeric_len_from_args};
+use fold_mode::FoldModeResolver;
 pub use result_type::go_result_type_code;
 use result_type::{
     binary_literal_type, builtin_return_type, decimal_literal_type, int_literal_type,
@@ -104,12 +91,26 @@ pub trait ColumnResolver {
     fn div_precision_increment(&self) -> u32 {
         4
     }
+
+    /// Go `SessionVars.CurrentDB`, used to qualify an unknown function name.
+    fn current_database(&self) -> Option<String> {
+        None
+    }
+
+    /// Construction mode inherited from the current AST parent.
+    fn fold_mode(&self) -> ConstantFoldMode {
+        ConstantFoldMode::Normal
+    }
+
+    /// Folds the node just built in its statement context and selected mode.
+    fn fold_constant(&self, expression: &mut Expression, mode: ConstantFoldMode) {
+        if mode != ConstantFoldMode::Disabled {
+            crate::constant_fold::derive_constant_null_flag(expression);
+        }
+    }
 }
 
-/// A resolver that knows no columns but folds in a REAL session zone: what
-/// [`NoResolver`] should be wherever the caller has a statement context to
-/// take the zone from. `resolve` answering `None` is the constant test the
-/// callers rely on; only the zone differs.
+/// A no-column resolver carrying a real session zone and `LIKE` escape.
 pub struct ZonedNoResolver {
     zone: tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
@@ -484,12 +485,7 @@ fn rewrite_row_comparison(
     compose_comparisons(BinaryOp::LogicOr, comparisons, resolver)
 }
 
-/// Go `expression_rewriter`: rewrite a parsed AST [`Expr`] into an evaluable
-/// [`Expression`].
-///
-/// Supports integer/float/string/boolean/NULL literals, unary and binary
-/// operators, and parentheses. Returns [`EvalError::Unsupported`] for forms not
-/// yet handled (column references, function calls, other literal kinds).
+/// Rewrites a parsed AST expression without a column scope.
 pub fn rewrite_expr(expr: &Expr) -> Result<Expression, EvalError> {
     rewrite_expr_resolved(expr, &NoResolver)
 }
@@ -515,7 +511,7 @@ pub fn rewrite_expr_resolved(
     }
     let mut built = rewrite_leaf(expr, resolver)?;
     derive_tree_collation(&mut built)?;
-    crate::constant_fold::derive_constant_null_flag(&mut built);
+    resolver.fold_constant(&mut built, resolver.fold_mode());
     Ok(built)
 }
 
@@ -882,6 +878,13 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             {
                 return rewrite_comparison(*op, lhs, rhs, resolver);
             }
+            let mode = if matches!(op, BinaryOp::LogicAnd | BinaryOp::LogicOr) {
+                ConstantFoldMode::Try
+            } else {
+                ConstantFoldMode::Normal
+            };
+            let child_resolver = FoldModeResolver::new(resolver, mode);
+            let resolver = &child_resolver;
             let left = rewrite_expr_resolved(lhs, resolver)?;
             let right = rewrite_expr_resolved(rhs, resolver)?;
             // Result types come from the transcreated function classes:
@@ -992,13 +995,14 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             when_clauses,
             else_clause,
         } => {
+            let child_resolver = FoldModeResolver::new(resolver, ConstantFoldMode::Try);
             let compare_value = match value {
-                Some(value) => Some(rewrite_expr_resolved(value, resolver)?),
+                Some(value) => Some(rewrite_expr_resolved(value, &child_resolver)?),
                 None => None,
             };
             let mut args = Vec::with_capacity(when_clauses.len() * 2 + 1);
             for (condition, result) in when_clauses {
-                let condition = rewrite_expr_resolved(condition, resolver)?;
+                let condition = rewrite_expr_resolved(condition, &child_resolver)?;
                 let condition = match &compare_value {
                     Some(value) => {
                         let name = binary_op_name(BinaryOp::Eq);
@@ -1013,10 +1017,10 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                     None => condition,
                 };
                 args.push(condition);
-                args.push(rewrite_expr_resolved(result, resolver)?);
+                args.push(rewrite_expr_resolved(result, &child_resolver)?);
             }
             if let Some(else_clause) = else_clause {
-                args.push(rewrite_expr_resolved(else_clause, resolver)?);
+                args.push(rewrite_expr_resolved(else_clause, &child_resolver)?);
             }
             // The result type comes from the branches, which are every other
             // argument plus the trailing ELSE.
@@ -1153,6 +1157,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         // the shared `eval_func_values` implementation runs it.
         Expr::Func { name, args, .. } => {
             let lowered = name.to_ascii_lowercase();
+            let child_resolver = FoldModeResolver::for_function(resolver, &lowered);
             // `NEXTVAL(s)` / `LASTVAL(s)` / `SETVAL(s, n)` name a SEQUENCE, but
             // the grammar has no place for a table name inside an expression,
             // so the parser produces a COLUMN reference. Go's expression
@@ -1172,7 +1177,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                         tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString),
                     ))];
                     for arg in &args[1..] {
-                        rewritten.push(rewrite_expr_resolved(arg, resolver)?);
+                        rewritten.push(rewrite_expr_resolved(arg, &child_resolver)?);
                     }
                     let ret_type =
                         builtin_return_type(&lowered, &rewritten).ok_or(EvalError::Unsupported(
@@ -1240,8 +1245,8 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                         unit.to_ascii_lowercase()
                     );
                     let args = vec![
-                        rewrite_expr_resolved(date, resolver)?,
-                        rewrite_expr_resolved(value, resolver)?,
+                        rewrite_expr_resolved(date, &child_resolver)?,
+                        rewrite_expr_resolved(value, &child_resolver)?,
                     ];
                     let ret_type =
                         builtin_return_type(&name, &args).ok_or(EvalError::Unsupported(
@@ -1263,7 +1268,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                     .enumerate()
                     .map(|(index, arg)| match (index + 1 == args.len(), arg) {
                         (true, Expr::RawString(charset)) => Ok(constant_string(charset)),
-                        _ => rewrite_expr_resolved(arg, resolver),
+                        _ => rewrite_expr_resolved(arg, &child_resolver),
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let ret_type = builtin_return_type(&lowered, &rewritten).ok_or(
@@ -1277,11 +1282,11 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             }
             let rewritten: Vec<Expression> = args
                 .iter()
-                .map(|arg| rewrite_expr_resolved(arg, resolver))
+                .map(|arg| rewrite_expr_resolved(arg, &child_resolver))
                 .collect::<Result<_, _>>()?;
-            let mut ret_type = builtin_return_type(&lowered, &rewritten).ok_or(
-                EvalError::Unsupported("this builtin is not yet built for chunk evaluation"),
-            )?;
+            let mut ret_type = builtin_return_type(&lowered, &rewritten).ok_or_else(|| {
+                crate::builtin_registry::unresolved_error(&lowered, resolver.current_database())
+            })?;
             if lowered == "tidb_version" {
                 ret_type.set_flen(i64::try_from(resolver.tidb_info_len()).unwrap_or(i64::MAX));
             }

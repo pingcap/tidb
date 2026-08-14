@@ -123,6 +123,7 @@ fn agg_output_resolver(state: &AggPipelineState, ctx: &crate::StmtContext) -> Ag
     AggOutputResolver {
         names: state.names.clone(),
         types: state.types.clone(),
+        constant_context: ctx.clone(),
         zone: ctx.session_zone(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),
@@ -1498,12 +1499,7 @@ fn build_apply_chain(
                 offset: 0,
                 func_deps: Default::default(),
             }],
-            zone: ctx.session_zone(),
-            tidb_info_len: ctx.tidb_info_len(),
-            like_default_escape: ctx.like_default_escape(),
-            no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
-            div_precision_increment: ctx.div_precision_increment(),
-            ..FromScope::default()
+            ..FromScope::for_statement(ctx)
         };
         state.types.push(value_type);
         state.names.push(display);
@@ -1616,12 +1612,7 @@ fn build_window_stage(
                 offset: 0,
                 func_deps: Default::default(),
             }],
-            zone: ctx.session_zone(),
-            tidb_info_len: ctx.tidb_info_len(),
-            like_default_escape: ctx.like_default_escape(),
-            no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
-            div_precision_increment: ctx.div_precision_increment(),
-            ..FromScope::default()
+            ..FromScope::for_statement(ctx)
         };
         let rows = drain_executor_rows(root, &state.types)?;
         let (rows, scope_with_windows) =

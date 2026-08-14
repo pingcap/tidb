@@ -510,6 +510,7 @@ fn constant_eval_int(value: &Datum) -> Option<i64> {
 pub(crate) struct AggOutputResolver {
     pub(crate) names: Vec<String>,
     pub(crate) types: Vec<FieldType>,
+    pub(crate) constant_context: crate::StmtContext,
     /// The statement's session `time_zone` (see [`ColumnResolver::time_zone`]),
     /// carried over from the source scope the aggregation reads.
     pub(crate) zone: tidb_expr::SessionTimeZone,
@@ -528,6 +529,14 @@ impl ColumnResolver for AggOutputResolver {
 
     fn div_precision_increment(&self) -> u32 {
         self.div_precision_increment
+    }
+
+    fn current_database(&self) -> Option<String> {
+        tidb_expr::Columns::current_database(&self.constant_context)
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        tidb_expr::fold_constant_in_mode(expression, &self.constant_context, mode);
     }
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {

@@ -55,6 +55,11 @@ impl CurrentTso {
 pub enum EvalError {
     /// The expression uses a construct outside the currently ported domain.
     Unsupported(&'static str),
+    /// Go `expression.ErrFunctionNotExists` (1305).
+    FunctionNotExists(String),
+    /// Go `plannererrors.ErrNoDB` (1046), raised before 1305 when resolving an
+    /// unknown function with no current database.
+    NoDatabaseSelected,
     /// Go `expression.ErrOperandColumns` (1241): the right row operand does
     /// not contain the number of columns required by the left operand.
     OperandColumns(usize),
@@ -544,6 +549,17 @@ pub trait Columns {
     fn append_warning(&self, code: u16, message: &str) {
         let _ = (code, message);
     }
+
+    /// Number of warnings currently held by the statement evaluator.
+    ///
+    /// Go's `NewFunctionTryFold` bookmarks this count before evaluating a
+    /// constant candidate and restores the bookmark when evaluation warns.
+    fn warning_count(&self) -> usize {
+        0
+    }
+
+    /// Removes warnings at and after `bookmark`.
+    fn truncate_warnings(&self, _bookmark: usize) {}
 
     /// Go `EvalContext.GetMaxAllowedPacket`, which every result-sizing string
     /// builtin captures into its signature at BUILD time

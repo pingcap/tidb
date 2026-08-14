@@ -1819,6 +1819,14 @@ impl Columns for StmtContext {
         self.append_leveled(WarningLevel::Warning, code, message);
     }
 
+    fn warning_count(&self) -> usize {
+        StmtContext::warning_count(self)
+    }
+
+    fn truncate_warnings(&self, bookmark: usize) {
+        self.warnings.borrow_mut().truncate(bookmark);
+    }
+
     /// The same three mode bits the WRITE path reads from
     /// [`Self::write_conversion_flags`], handed to expression evaluation so a
     /// `CAST` to a temporal type answers under the session's SQL mode.

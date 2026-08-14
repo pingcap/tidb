@@ -364,6 +364,7 @@ pub(crate) fn run_insert_traced(
         let resolver = TableResolver {
             table_name: &table_name,
             columns: &column_list,
+            constant_context: ctx.clone(),
             zone: ctx.session_zone(),
             no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
             div_precision_increment: ctx.div_precision_increment(),
@@ -1128,6 +1129,7 @@ fn prepare_on_duplicate_assignments(
     let resolver = TableResolver {
         table_name,
         columns: column_list,
+        constant_context: ctx.clone(),
         zone: ctx.session_zone(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),
@@ -1224,6 +1226,7 @@ pub(crate) fn apply_on_duplicate(
     let resolver = TableResolver {
         table_name: "",
         columns: column_list,
+        constant_context: ctx.clone(),
         zone: ctx.session_zone(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),
@@ -1474,6 +1477,7 @@ pub(crate) fn run_update_traced(
     let resolver = TableResolver {
         table_name: table_ref.alias.as_deref().unwrap_or(&name),
         columns: &column_list,
+        constant_context: ctx.clone(),
         zone: ctx.session_zone(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),
@@ -2029,6 +2033,7 @@ pub(crate) fn run_delete_traced(
     let resolver = TableResolver {
         table_name: table_ref.alias.as_deref().unwrap_or(&name),
         columns: &column_list,
+        constant_context: ctx.clone(),
         zone: ctx.session_zone(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),

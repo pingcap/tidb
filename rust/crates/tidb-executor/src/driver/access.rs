@@ -1622,6 +1622,7 @@ fn write_index_range_path(
     let resolver = TableResolver {
         table_name,
         columns,
+        constant_context: ctx.clone(),
         zone: ctx.session_zone(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
         div_precision_increment: ctx.div_precision_increment(),

@@ -31,9 +31,10 @@ pub(crate) type MaterializedRelation = (Vec<(String, FieldType)>, Vec<Vec<Datum>
 /// `NATURAL`/`USING` coalescing does not change that row layout at all -- it
 /// is expressed here, as the two pieces of naming a coalesced join adds on
 /// top of it (see [`coalesce_common_columns`]).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub(crate) struct FromScope {
     pub(crate) tables: Vec<FromTable>,
+    pub(crate) constant_context: Option<crate::StmtContext>,
     /// The statement's session `time_zone`, which [`ScopeResolver`] publishes
     /// to the expression rewriter as [`ColumnResolver::time_zone`] -- Go's
     /// `ctx.Location()`, reached while BUILDING an expression (the
@@ -114,6 +115,7 @@ impl Default for FromScope {
     fn default() -> Self {
         Self {
             tables: Vec::new(),
+            constant_context: None,
             coalesced: Vec::new(),
             star: Vec::new(),
             qualified_star_is_output_only: false,
@@ -130,6 +132,18 @@ impl Default for FromScope {
 }
 
 impl FromScope {
+    pub(crate) fn for_statement(ctx: &crate::StmtContext) -> Self {
+        Self {
+            constant_context: Some(ctx.clone()),
+            zone: ctx.session_zone(),
+            tidb_info_len: ctx.tidb_info_len(),
+            like_default_escape: ctx.like_default_escape(),
+            no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+            div_precision_increment: ctx.div_precision_increment(),
+            ..Self::default()
+        }
+    }
+
     /// Every column of the scope in row order.
     pub(crate) fn column_list(&self) -> Vec<(String, FieldType)> {
         self.tables
@@ -240,6 +254,23 @@ impl ColumnResolver for ScopeResolver<'_> {
 
     fn div_precision_increment(&self) -> u32 {
         self.scope.div_precision_increment
+    }
+
+    fn current_database(&self) -> Option<String> {
+        self.scope
+            .constant_context
+            .as_ref()
+            .and_then(tidb_expr::Columns::current_database)
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        match &self.scope.constant_context {
+            Some(ctx) => tidb_expr::fold_constant_in_mode(expression, ctx, mode),
+            None if mode != tidb_expr::ConstantFoldMode::Disabled => {
+                tidb_expr::derive_constant_null_flag(expression);
+            }
+            None => {}
+        }
     }
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
@@ -722,12 +753,7 @@ pub(crate) fn build_from(
                     columns,
                     offset: 0,
                 }],
-                zone: ctx.session_zone(),
-                tidb_info_len: ctx.tidb_info_len(),
-                like_default_escape: ctx.like_default_escape(),
-                no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
-                div_precision_increment: ctx.div_precision_increment(),
-                ..FromScope::default()
+                ..FromScope::for_statement(ctx)
             };
             // What this leaf DELIVERS -- read off the branch that RAN, which
             // is the verify half of `merge_decision`'s promise/verify
@@ -868,12 +894,7 @@ pub(crate) fn build_derived_source(
             offset: 0,
             func_deps: Default::default(),
         }],
-        zone: ctx.session_zone(),
-        tidb_info_len: ctx.tidb_info_len(),
-        like_default_escape: ctx.like_default_escape(),
-        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
-        div_precision_increment: ctx.div_precision_increment(),
-        ..FromScope::default()
+        ..FromScope::for_statement(ctx)
     };
     Ok((exec, scope))
 }
@@ -1291,12 +1312,7 @@ pub(crate) fn build_view_source(
             offset: 0,
             func_deps: Default::default(),
         }],
-        zone: ctx.session_zone(),
-        tidb_info_len: ctx.tidb_info_len(),
-        like_default_escape: ctx.like_default_escape(),
-        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
-        div_precision_increment: ctx.div_precision_increment(),
-        ..FromScope::default()
+        ..FromScope::for_statement(ctx)
     };
     Ok((exec, scope))
 }

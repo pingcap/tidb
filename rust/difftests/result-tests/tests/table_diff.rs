@@ -138,94 +138,14 @@ fn table_execution_matches_go_engine() {
         skipped_topics.join(", ")
     );
 
-    // Every divergence below is a real gap against Go, printed in full so it
-    // can be worked off. It is a ratchet, not a waiver: the count may only go
-    // DOWN. A permanently red suite would destroy the signal every other gate
-    // depends on, and deleting the cases would destroy the evidence -- so the
-    // debt is carried as a number that fails the moment it grows.
-    //
-    // Multi-table UPDATE/DELETE and `DELETE IGNORE` took this from 79 to 76:
-    // five `row_count` statements now match, and TWO of that topic's
-    // `ROW_COUNT()` reads newly diverge because `DELETE IGNORE FROM fp`
-    // finally RUNS. Go skips its row -- a child row in `fc` references it --
-    // and reports 0; with no foreign keys modelled here the row really is
-    // deletable, so the count is 1, and the later `foreign_key_checks = 0`
-    // delete then finds nothing left. Both belong to FOREIGN KEY support,
-    // not to multi-table DML.
-    //
-    // 36 -> 31: `SAVEPOINT` with autocommit OFF now OPENS the pending
-    // transaction (Go's `Txn(true)` in `executeSavepoint`) instead of being a
-    // no-op, which was the whole `savepoint_autocommit` topic -- a seam
-    // between two landed features, not missing work.
-    //
-    // 31 -> 28: user variables now store a TYPED value (Go's
-    // `SetUserVarVal` keeps a `types.Datum`) and a `SET` right-hand side has
-    // its own variable references bound before evaluation, so `@x + 1` is
-    // integer arithmetic and `SET @z = @x + 1` runs at all.
-    //
-    // 28 -> 23: the inline `@x := expr` assignment expression now runs in the
-    // live tier (Go's `SETVAR` builtin), evaluated per row with the session's
-    // variable map lent to the statement context, and a bare `@x` read is
-    // typed from the value the session holds the way Go's
-    // `BuildGetVarFunction` picks its signature -- the whole
-    // `user_var_scalar` topic.
-    //
-    // 23 -> 21: the uncorrelated-subquery FOLD GATE now recognises a subquery
-    // inside a `CASE`, a function call, or an aggregate's argument, so those
-    // constants fold instead of reaching a tier that knows no subqueries. The
-    // two remaining `foundations` cases are CORRELATED subqueries in an
-    // aggregate's argument, which need an Apply BELOW the aggregation --
-    // refused by name, not counted as fixed.
-    //
-    // 11 -> 8: `AUTO_INCREMENT = 18446744073709551615` at CREATE. Go stores the
-    // option as `int64(opt.UintValue)` and `handleAutoIncID` seeds only when
-    // that is `> 1`, so a value above `i64::MAX` seeds NOTHING and the first
-    // row lands on 1 -- while the same number through `ALTER` rebases in the
-    // auto column's OWN domain and really does move an unsigned counter up.
-    // The two Go paths disagree; reading the option in one domain for both is
-    // what produced the parse error and the two `table not found` cascades.
-    //
-    // 8 -> 7: `UPDATE` that assigns to the `AUTO_INCREMENT` column now REBASES
-    // the allocator (Go's `updateRecord` calls the same `Rebase` an explicit
-    // INSERT value does), so an `UPDATE ... SET id = 300` no longer leaves the
-    // counter behind for later rows to walk back over.
-    //
-    // 7 -> 3: the whole `rand_session` tail, and the symptom named the WRONG
-    // component. `MysqlRng` was already an exact port -- its own test asserts
-    // the very values this corpus wanted -- and the gap was the SYSVAR SEAM:
-    // `SET rand_seed1/2` never reached the generator, and the variables kept
-    // the value SET instead of Go's constant `GetSession` of `"0"`. Not storing
-    // the value at all reproduces that on every read surface at once
-    // (`@@`, `@@session.`, `SHOW VARIABLES` -- all captured as 0), so no read
-    // path needs to special-case the two names.
-    // 3 -> 1: a correlated subquery inside an AGGREGATE'S ARGUMENT now runs as
-    // an Apply BELOW the aggregation, once per SOURCE row, which is where Go
-    // plans it (`EXPLAIN` prints `HashAgg <- Projection <- Apply`) -- see
-    // `agg_select::hoist_pre_agg_subqueries`. Both `foundations` cases were
-    // that shape, and one of them needed a second fix in the shared binder:
-    // an outer `dept.id` binding was matched by LAST NAME, so it also
-    // swallowed the inner query's own `id` and every inner run returned NULL.
-    // The one statement left is `last_insert_id_uint`, an unrelated topic.
-    const KNOWN_DIVERGENCES: usize = 1;
-
     assert!(
-        failures.len() <= KNOWN_DIVERGENCES,
-        "{} of {} in-domain statements diverged from real TiDB, up from {} ({} skipped, {} total, {} topics skipped by name) -- a new divergence appeared:{}",
+        failures.is_empty(),
+        "{} of {} in-domain statements diverged from real TiDB ({} skipped, {} total, {} topics skipped by name):{}",
         failures.len(),
         matched + failures.len(),
-        KNOWN_DIVERGENCES,
         skipped,
         total,
         skipped_topics.len(),
         failures.join("")
-    );
-    assert!(
-        failures.len() >= KNOWN_DIVERGENCES,
-        "only {} of {} statements diverge now, down from {}. Lower \
-         KNOWN_DIVERGENCES to {} so the ratchet holds.",
-        failures.len(),
-        matched + failures.len(),
-        KNOWN_DIVERGENCES,
-        failures.len()
     );
 }

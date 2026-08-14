@@ -876,6 +876,7 @@ fn key_info_table(
 pub(crate) struct TableResolver<'a> {
     pub(crate) table_name: &'a str,
     pub(crate) columns: &'a [(String, FieldType)],
+    pub(crate) constant_context: crate::StmtContext,
     /// The statement's session `time_zone` (see [`ColumnResolver::time_zone`]),
     /// taken from the write's `StmtContext` at each build site.
     pub(crate) zone: tidb_expr::SessionTimeZone,
@@ -894,6 +895,14 @@ impl ColumnResolver for TableResolver<'_> {
 
     fn div_precision_increment(&self) -> u32 {
         self.div_precision_increment
+    }
+
+    fn current_database(&self) -> Option<String> {
+        tidb_expr::Columns::current_database(&self.constant_context)
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        tidb_expr::fold_constant_in_mode(expression, &self.constant_context, mode);
     }
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
