@@ -24,15 +24,14 @@
 //! framing: a 4-byte little-endian original-length prefix followed by a zlib
 //! stream. The compressed block layout is deliberately left to Rust's zlib
 //! encoder; SQL observes a standards-compliant stream and the framing, not a
-//! particular standard-library DEFLATE strategy. Corruption warnings from the
-//! inverse functions belong to the statement context and are not fabricated
-//! by this value-only dispatch.
+//! particular standard-library DEFLATE strategy. The inverse functions require
+//! a complete checksummed stream and append TiDB's corruption warnings to the
+//! statement context.
 //!
-use std::io::{Read, Write};
+use std::io::Write;
 
-use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
-use flate2::Compression;
+use flate2::{Compression, Decompress, FlushDecompress, Status};
 use md5::{Digest, Md5};
 use sha1::Sha1;
 use sha2::{Sha224, Sha256, Sha384, Sha512};
@@ -62,8 +61,8 @@ pub(crate) fn dispatch(
         ("AES_ENCRYPT" | "AES_DECRYPT", _) => {
             eval_aes_lazy(name, vals.len(), |i| Ok(vals[i].clone()), ctx)
         }
-        ("UNCOMPRESS", 1) => Some(uncompress(&vals[0])),
-        ("UNCOMPRESSED_LENGTH", 1) => Some(uncompressed_length(&vals[0])),
+        ("UNCOMPRESS", 1) => Some(uncompress(&vals[0], ctx)),
+        ("UNCOMPRESSED_LENGTH", 1) => Some(uncompressed_length(&vals[0], ctx)),
         _ => None,
     }
 }
@@ -109,18 +108,39 @@ fn frame_compressed(original_len: u32, compressed: Vec<u8>) -> Vec<u8> {
 /// (`compress/zlib`), which reads the whole stream and verifies its Adler-32
 /// checksum; trailing bytes past the stream end are ignored.
 fn inflate(data: &[u8]) -> Option<Vec<u8>> {
-    let mut decoder = ZlibDecoder::new(data);
+    let mut decoder = Decompress::new(true);
     let mut out = Vec::new();
-    decoder.read_to_end(&mut out).ok().map(|_| out)
+    let mut input_offset = 0;
+    let mut chunk = [0; 8 * 1024];
+    loop {
+        let input_before = decoder.total_in();
+        let output_before = decoder.total_out();
+        let status = decoder
+            .decompress(&data[input_offset..], &mut chunk, FlushDecompress::None)
+            .ok()?;
+        input_offset = usize::try_from(decoder.total_in()).ok()?;
+        let produced = usize::try_from(decoder.total_out() - output_before).ok()?;
+        out.extend_from_slice(&chunk[..produced]);
+        if status == Status::StreamEnd {
+            return Some(out);
+        }
+        // `compress/zlib.NewReader` refuses a stream that ends before the
+        // DEFLATE terminator and Adler-32 checksum.  The high-level flate2
+        // reader can instead report a successful zero-byte read for that
+        // truncated input, so require either stream completion or forward
+        // progress toward it here.
+        if decoder.total_in() == input_before && produced == 0 {
+            return None;
+        }
+    }
 }
 
 /// `UNCOMPRESS(payload)`. Port of `builtinUncompressSig.evalString`. The 4-byte
 /// little-endian prefix records the original length and the remainder is a zlib
 /// stream. Empty input yields an empty string; NULL, a too-short/corrupted
 /// payload, an undecodable stream, or a stored length below the decompressed
-/// length all yield NULL. Go additionally raises a warning, which belongs to the
-/// statement context and is not fabricated in this value-only dispatch.
-fn uncompress(arg: &Datum) -> Result<Datum, EvalError> {
+/// length all yield NULL and append the same statement warning as Go.
+fn uncompress(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let Some(payload) = sql_string_bytes(arg)? else {
         return Ok(Datum::Null);
     };
@@ -128,14 +148,19 @@ fn uncompress(arg: &Datum) -> Result<Datum, EvalError> {
         return Ok(Datum::new_string(Vec::new()));
     }
     if payload.len() <= 4 {
-        // corrupted
+        ctx.append_warning(1259, "ZLIB: Input data corrupted");
         return Ok(Datum::Null);
     }
     let length = u32::from_le_bytes(payload[0..4].try_into().unwrap());
     let Some(bytes) = inflate(&payload[4..]) else {
+        ctx.append_warning(1259, "ZLIB: Input data corrupted");
         return Ok(Datum::Null);
     };
     if length < bytes.len() as u32 {
+        ctx.append_warning(
+            1258,
+            "ZLIB: Not enough room in the output buffer (probably, length of uncompressed data was corrupted)",
+        );
         return Ok(Datum::Null);
     }
     Ok(Datum::new_string(bytes))
@@ -145,7 +170,7 @@ fn uncompress(arg: &Datum) -> Result<Datum, EvalError> {
 /// `builtinUncompressedLengthSig.evalInt`: returns the 4-byte little-endian
 /// prefix as the original length. NULL yields NULL; empty or too-short/corrupted
 /// input yields 0.
-fn uncompressed_length(arg: &Datum) -> Result<Datum, EvalError> {
+fn uncompressed_length(arg: &Datum, ctx: &dyn Columns) -> Result<Datum, EvalError> {
     let Some(payload) = sql_string_bytes(arg)? else {
         return Ok(Datum::Null);
     };
@@ -153,7 +178,7 @@ fn uncompressed_length(arg: &Datum) -> Result<Datum, EvalError> {
         return Ok(Datum::Int(0));
     }
     if payload.len() <= 4 {
-        // corrupted
+        ctx.append_warning(1259, "ZLIB: Input data corrupted");
         return Ok(Datum::Int(0));
     }
     let length = u32::from_le_bytes(payload[0..4].try_into().unwrap());
@@ -645,6 +670,7 @@ fn parse_string_i64_saturating(value: &str) -> i64 {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::collections::HashMap;
 
     use super::{dispatch, frame_compressed};
@@ -654,6 +680,25 @@ mod tests {
         dispatch(name, vals, &crate::NoColumns)
             .expect("name/arity should dispatch to the crypto family")
             .expect("evaluation should succeed")
+    }
+
+    fn call_with(name: &str, vals: &[Datum], context: &impl Columns) -> Datum {
+        dispatch(name, vals, context)
+            .expect("name/arity should dispatch to the crypto family")
+            .expect("evaluation should succeed")
+    }
+
+    #[derive(Default)]
+    struct WarningContext(RefCell<Vec<(u16, String)>>);
+
+    impl Columns for WarningContext {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn append_warning(&self, code: u16, message: &str) {
+            self.0.borrow_mut().push((code, message.to_owned()));
+        }
     }
 
     #[derive(Default)]
@@ -872,6 +917,15 @@ mod tests {
         );
         assert_eq!(call("UNCOMPRESSED_LENGTH", &[compressed]), Datum::Int(4));
 
+        // The strict decoder streams output beyond its fixed scratch buffer;
+        // validation must not turn a large, complete stream into corruption.
+        let large = Datum::new_bytes(vec![b'x'; 20_000]);
+        let compressed = call("COMPRESS", std::slice::from_ref(&large));
+        assert_eq!(
+            bytes_of(&call("UNCOMPRESS", std::slice::from_ref(&compressed))),
+            bytes_of(&large)
+        );
+
         // The suffix rule is part of the SQL framing, independent of which
         // inputs a particular zlib implementation happens to encode that way.
         assert_eq!(
@@ -921,6 +975,45 @@ mod tests {
         assert_eq!(call("COMPRESS", &[Datum::Null]), Datum::Null);
         assert_eq!(call("UNCOMPRESS", &[Datum::Null]), Datum::Null);
         assert_eq!(call("UNCOMPRESSED_LENGTH", &[Datum::Null]), Datum::Null);
+    }
+
+    /// Go's `zlib.NewReader` rejects a truncated stream even when it has not
+    /// produced output yet. Keep that validation and the public warning codes
+    /// on the shared inverse-function boundary.
+    #[test]
+    fn uncompress_requires_a_complete_zlib_stream_and_reports_corruption() {
+        let warnings = WarningContext::default();
+        assert_eq!(
+            call_with(
+                "UNCOMPRESS",
+                &[Datum::new_string(b"12345".to_vec())],
+                &warnings,
+            ),
+            Datum::Null
+        );
+        assert_eq!(
+            warnings.0.borrow().as_slice(),
+            &[(1259, "ZLIB: Input data corrupted".to_owned())]
+        );
+
+        warnings.0.borrow_mut().clear();
+        let hello = hex_bytes("02000000789CCA48CDC9C907040000FFFF062C0215");
+        assert_eq!(
+            call_with("UNCOMPRESS", &[Datum::new_string(hello)], &warnings,),
+            Datum::Null
+        );
+        assert_eq!(warnings.0.borrow()[0].0, 1258);
+
+        warnings.0.borrow_mut().clear();
+        assert_eq!(
+            call_with(
+                "UNCOMPRESSED_LENGTH",
+                &[Datum::new_string(vec![0x01, 0x00])],
+                &warnings,
+            ),
+            Datum::Int(0)
+        );
+        assert_eq!(warnings.0.borrow()[0].0, 1259);
     }
 
     /// Parser-auth's source-owned SM3 vectors, exercised through the SQL
