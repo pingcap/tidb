@@ -65,12 +65,12 @@ func TestResolveCloudStorageURI(t *testing.T) {
 		require.Equal(t, uri, jc.cloudStorageURI)
 	})
 
-	t.Run("missing configured URI is retryable", func(t *testing.T) {
+	t.Run("missing configured URI is unretryable", func(t *testing.T) {
 		vardef.CloudStorageURI.Store("")
 		w, _ := newTestWorker("")
 		_, err := w.resolveCloudStorageURI(newJob(true), false)
 		require.ErrorContains(t, err, "cloud storage URI is empty for add-index job 900001 with cloud storage enabled")
-		require.True(t, isRetryableJobError(err, 0))
+		require.False(t, isRetryableJobError(err, 0))
 	})
 
 	t.Run("cached URI wins over changed configuration", func(t *testing.T) {
