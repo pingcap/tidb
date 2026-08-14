@@ -136,6 +136,15 @@ pub enum DdlStatement {
         /// Whether a lower value replaces rather than preserves the counter.
         force: bool,
     },
+    /// `ALTER TABLE ... AUTO_ID_CACHE=n`.
+    ModifyAutoIdCache {
+        /// Database containing the table.
+        schema: String,
+        /// Table whose cached allocator range is rebuilt.
+        table: String,
+        /// New fixed reservation size, or zero for TiDB's default.
+        new_cache: i64,
+    },
     /// The AUTO_RANDOM portion of `ALTER TABLE ... MODIFY COLUMN`.
     AlterAutoRandomBits {
         /// Database containing the table.
@@ -348,6 +357,22 @@ fn lower_alter_table_catalog(
             let [option] = options.as_slice() else {
                 return Ok(None);
             };
+            if let tidb_ast::TableOption::AutoIdCache(value) = option {
+                let new_cache = value
+                    .parse::<u64>()
+                    .map_err(|_| DdlAdmissionError::new("AUTO_ID_CACHE needs an integer value"))?;
+                if new_cache > i64::MAX as u64 {
+                    return Err(DdlAdmissionError::new(
+                        "table option auto_id_cache overflows int64",
+                    ));
+                }
+                let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+                return Ok(Some(DdlStatement::ModifyAutoIdCache {
+                    schema,
+                    table,
+                    new_cache: new_cache as i64,
+                }));
+            }
             let (value, force) = match option {
                 tidb_ast::TableOption::AutoRandomBase(value) => (value, false),
                 tidb_ast::TableOption::ForceAutoRandomBase(value) => (value, true),
@@ -690,6 +715,8 @@ pub enum DdlPlanError {
     InvalidAutoRandom(String),
     /// TiDB `ErrAutoincReadFailed` (1467), used by FORCE base zero.
     AutoIdReadFailed,
+    /// A source-defined DDL refusal reported as TiDB's generic 1105.
+    Unsupported(String),
     /// The named table is already in the named database.
     TableExists {
         /// The database name as written.
@@ -734,6 +761,7 @@ impl fmt::Display for DdlPlanError {
             Self::AutoIdReadFailed => {
                 formatter.write_str("Failed to read auto-increment value from storage engine")
             }
+            Self::Unsupported(reason) => formatter.write_str(reason),
             Self::TableExists { schema, table } => {
                 write!(formatter, "Table '{schema}.{table}' already exists")
             }
@@ -1070,6 +1098,38 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_REBASE_AUTO_RANDOM_BASE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+        }
+        DdlStatement::ModifyAutoIdCache {
+            schema,
+            table,
+            new_cache,
+        } => {
+            let Some(database) = find_database(&catalog, schema) else {
+                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            };
+            let Some(stored) = find_table(database, table) else {
+                return Err(DdlPlanError::UnknownTable {
+                    schema: schema.clone(),
+                    table: table.clone(),
+                });
+            };
+            if (*new_cache == 1) != (stored.auto_id_cache == 1) {
+                return Err(DdlPlanError::Unsupported(
+                    "Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different"
+                        .to_owned(),
+                ));
+            }
+            let mut info = stored.clone_like_go();
+            info.auto_id_cache = *new_cache;
+            let db_id = database.info.id;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, stored.id),
+                value::serialize_table_info(&info)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+            )?);
+            diff.action_type = ActionType::ACTION_MODIFY_TABLE_AUTO_IDCACHE;
+            diff.schema_id = db_id;
+            diff.table_id = stored.id;
         }
         DdlStatement::AlterAutoRandomBits {
             schema,

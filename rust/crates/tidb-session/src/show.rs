@@ -1941,6 +1941,55 @@ impl Session {
                     ]],
                 }))
             }
+            tidb_ast::AdminStmt::ShowTableNextRowId(show) => {
+                let current = self.require_current_database()?.to_owned();
+                let (database, table_name) = match show.table.as_slice() {
+                    [table] => (current, table.clone()),
+                    [database, table] => (database.clone(), table.clone()),
+                    _ => return Err(DriverError::unsupported("empty table name")),
+                };
+                let ids = self.with_catalog_mut(|catalog| {
+                    let Some(entry) = catalog.table_in(&database, &table_name) else {
+                        return Err(DriverError::Schema(SchemaErrorKind::UnknownTable(format!(
+                            "{database}.{table_name}"
+                        ))));
+                    };
+                    let tidb_executor::TableEntry::Kv(table) = entry else {
+                        return Err(DriverError::unsupported(
+                            "SHOW TABLE NEXT_ROW_ID needs a storage-backed table",
+                        ));
+                    };
+                    table
+                        .next_global_row_ids()
+                        .map_err(|error| DriverError::AutoIdUnavailable(error.0))
+                })?;
+                let rows = ids
+                    .into_iter()
+                    .map(|(column, next, id_type)| {
+                        vec![
+                            Datum::Bytes(database.as_bytes().to_vec()),
+                            Datum::Bytes(table_name.as_bytes().to_vec()),
+                            Datum::Bytes(column.into_bytes()),
+                            Datum::Int(next),
+                            Datum::Bytes(id_type.as_bytes().to_vec()),
+                        ]
+                    })
+                    .collect();
+                let text =
+                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                let number =
+                    || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+                Ok(Some(StmtOutput::Rows {
+                    columns: vec![
+                        ("DB_NAME".to_owned(), text()),
+                        ("TABLE_NAME".to_owned(), text()),
+                        ("COLUMN_NAME".to_owned(), text()),
+                        ("NEXT_GLOBAL_ROW_ID".to_owned(), number()),
+                        ("ID_TYPE".to_owned(), text()),
+                    ],
+                    rows,
+                }))
+            }
             // Go `fetchShowColumns`.
             tidb_ast::AdminStmt::ShowColumns(show) => {
                 if show.extended {

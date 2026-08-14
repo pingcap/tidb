@@ -49,7 +49,7 @@ use crate::cluster_session::TableAutoIds;
 pub struct ClusterTableAutoIds {
     opener: RealOptimisticTransactionOpener,
     timeout: Duration,
-    allocators: Mutex<HashMap<(i64, bool), TableAutoId>>,
+    allocators: Mutex<HashMap<(i64, bool), (i64, TableAutoId)>>,
 }
 
 impl std::fmt::Debug for ClusterTableAutoIds {
@@ -77,32 +77,45 @@ impl ClusterTableAutoIds {
 
 impl TableAutoIds for ClusterTableAutoIds {
     fn allocator_for(&self, db_id: i64, table: &TableInfo) -> TableAutoId {
-        self.allocators
-            .lock()
-            .expect("cluster auto id registry poisoned")
-            .entry((table.id, false))
-            .or_insert_with(|| {
-                TableAutoId::over(
-                    ClusterAutoIdStore::new(self.opener.clone(), db_id, table, self.timeout)
-                        .shared(),
-                    DEFAULT_AUTO_ID_STEP,
-                )
-            })
-            .clone()
+        self.allocator(db_id, table, false)
     }
 
     fn random_allocator_for(&self, db_id: i64, table: &TableInfo) -> TableAutoId {
-        self.allocators
+        self.allocator(db_id, table, true)
+    }
+}
+
+impl ClusterTableAutoIds {
+    fn allocator(&self, db_id: i64, table: &TableInfo, random: bool) -> TableAutoId {
+        let mut allocators = self
+            .allocators
             .lock()
-            .expect("cluster auto id registry poisoned")
-            .entry((table.id, true))
-            .or_insert_with(|| {
-                TableAutoId::over(
-                    ClusterAutoIdStore::new_random(self.opener.clone(), db_id, table, self.timeout)
-                        .shared(),
-                    DEFAULT_AUTO_ID_STEP,
-                )
-            })
-            .clone()
+            .expect("cluster auto id registry poisoned");
+        if let Some((cache, allocator)) = allocators.get(&(table.id, random)) {
+            if *cache == table.auto_id_cache {
+                return allocator.clone();
+            }
+            let step = if table.auto_id_cache > 1 {
+                table.auto_id_cache as u64
+            } else {
+                DEFAULT_AUTO_ID_STEP
+            };
+            let allocator = allocator.with_step(step);
+            allocators.insert((table.id, random), (table.auto_id_cache, allocator.clone()));
+            return allocator;
+        }
+        let store = if random {
+            ClusterAutoIdStore::new_random(self.opener.clone(), db_id, table, self.timeout).shared()
+        } else {
+            ClusterAutoIdStore::new(self.opener.clone(), db_id, table, self.timeout).shared()
+        };
+        let step = if table.auto_id_cache > 1 {
+            table.auto_id_cache as u64
+        } else {
+            DEFAULT_AUTO_ID_STEP
+        };
+        let allocator = TableAutoId::over(store, step);
+        allocators.insert((table.id, random), (table.auto_id_cache, allocator.clone()));
+        allocator
     }
 }

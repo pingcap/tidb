@@ -974,6 +974,19 @@ fn set_table_options_action(
                     );
                 }
             }
+            tidb_ast::TableOption::AutoIdCache(value) => {
+                let cache = value.parse::<u64>().map_err(|_| {
+                    DriverError::unsupported("AUTO_ID_CACHE needs an integer value")
+                })?;
+                if cache > i64::MAX as u64 {
+                    return Err(DriverError::unsupported(
+                        "table option auto_id_cache overflows int64",
+                    ));
+                }
+                table
+                    .set_auto_id_cache(cache)
+                    .map_err(DriverError::unsupported)?;
+            }
             _ => {
                 return Err(DriverError::unsupported(
                     "this ALTER TABLE table option is not supported yet",

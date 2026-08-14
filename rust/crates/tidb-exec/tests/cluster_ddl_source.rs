@@ -1179,6 +1179,48 @@ fn alter_auto_random_base_updates_table_info_and_the_tarid_counter_together() {
 }
 
 #[test]
+fn alter_auto_id_cache_publishes_table_metadata_without_touching_the_counter() {
+    let mut store = bootstrapped();
+    let create = plan(
+        &mut store,
+        "CREATE TABLE cached (id INT AUTO_INCREMENT PRIMARY KEY)",
+        130,
+    );
+    apply(&mut store, &create);
+    store.put(key::schema_version_kv_key(), b"61".to_vec());
+
+    let alter = plan(&mut store, "ALTER TABLE cached AUTO_ID_CACHE=100", 131);
+    let table_id = create.created_id.unwrap();
+    let table: tidb_model::TableInfo = serde_json::from_slice(stored_value(
+        &alter,
+        &key::table_kv_key(112, table_id),
+    ))
+    .unwrap();
+    assert_eq!(table.auto_id_cache, 100);
+    assert_eq!(
+        alter.diff.action_type,
+        tidb_model::ActionType::ACTION_MODIFY_TABLE_AUTO_IDCACHE
+    );
+    assert!(!alter
+        .mutations
+        .iter()
+        .any(|mutation| mutation.key() == key::auto_table_id_kv_key(112, table_id)));
+
+    apply(&mut store, &alter);
+    store.put(key::schema_version_kv_key(), b"62".to_vec());
+    assert!(matches!(
+        plan_ddl(
+            &mut store,
+            &statement("ALTER TABLE cached AUTO_ID_CACHE=1"),
+            132,
+        )
+        .unwrap_err(),
+        DdlPlanError::Unsupported(reason)
+            if reason == "Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different"
+    ));
+}
+
+#[test]
 fn modify_auto_random_bits_updates_table_info_and_the_tarid_counter_together() {
     let mut store = bootstrapped();
     let create = plan(

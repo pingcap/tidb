@@ -214,6 +214,29 @@ impl ClusterDdl for MockDdl {
                     (*requested).max(stored.auto_rand_id)
                 };
             }
+            DdlStatement::ModifyAutoIdCache {
+                schema,
+                table,
+                new_cache,
+            } => {
+                let at = find(&mut next.databases, schema).ok_or_else(|| {
+                    SqlQueryError::unknown(format!("Unknown database '{schema}'"))
+                })?;
+                let lowered = table.to_lowercase();
+                let stored = next.databases[at]
+                    .tables
+                    .iter_mut()
+                    .find(|stored| stored.name.lowercase() == lowered)
+                    .ok_or_else(|| {
+                        SqlQueryError::unknown(format!("Unknown table '{schema}.{table}'"))
+                    })?;
+                if (*new_cache == 1) != (stored.auto_id_cache == 1) {
+                    return Err(SqlQueryError::unknown(
+                        "Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different",
+                    ));
+                }
+                stored.auto_id_cache = *new_cache;
+            }
             DdlStatement::AlterAutoRandomBits {
                 schema,
                 table,

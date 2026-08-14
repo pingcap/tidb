@@ -19,19 +19,7 @@
 //! `CREATE TABLE ai (id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY, v INT
 //! UNIQUE)` and its `AUTO_INCREMENT=100` variant.
 //!
-//! Two things the capture shows are deliberately NOT reproduced, because both
-//! are artifacts of Go's BATCH-CACHING allocator rather than of
-//! `AUTO_INCREMENT` semantics, and this tier's allocator has no cache:
-//!
-//!  * `SHOW CREATE TABLE`'s reported `AUTO_INCREMENT=` is the cached END of
-//!    the current batch, not the next id -- Go answers `AUTO_INCREMENT=2000100`
-//!    for a table seeded at 100 that has handed out exactly two ids.
-//!  * consequently `ALTER TABLE ... AUTO_INCREMENT=n` looks like it does
-//!    nothing in the mock store: the counter is already millions past `n`, and
-//!    a rebase never moves DOWN. The rule captured -- rebase up only -- is the
-//!    one reproduced; the cached numbers are not.
-//!
-//! A third thing is not reproduced, and it is a real gap rather than a cache
+//! One thing is not reproduced, and it is a real gap:
 //! artifact: `tidb_enable_clustered_index=off` and the `NONCLUSTERED`
 //! qualifier are both IGNORED by this tier's DDL, so a single-integer-column
 //! primary key is always the row handle (`ddl.rs`'s `pk_is_handle`). Such a
@@ -98,6 +86,45 @@ fn alter_table_auto_increment_only_raises_the_counter() {
     assert_eq!(
         rows(&mut session, "SELECT id, v FROM ai ORDER BY id"),
         [["1", "1"], ["500", "2"], ["501", "3"]]
+    );
+}
+
+#[test]
+fn altering_auto_id_cache_discards_the_reserved_range() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE cached (id INT KEY AUTO_INCREMENT)")
+        .unwrap();
+    session.run("INSERT INTO cached VALUES ()").unwrap();
+    assert_eq!(
+        rows(&mut session, "SHOW TABLE cached NEXT_ROW_ID"),
+        [["test", "cached", "id", "30001", "_TIDB_ROWID"]]
+    );
+    session
+        .run("ALTER TABLE cached AUTO_ID_CACHE = 100")
+        .unwrap();
+    assert_eq!(
+        rows(&mut session, "SHOW TABLE cached NEXT_ROW_ID"),
+        [["test", "cached", "id", "30001", "_TIDB_ROWID"]]
+    );
+    session.run("INSERT INTO cached VALUES ()").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT id FROM cached ORDER BY id"),
+        [["1"], ["30001"]]
+    );
+    assert_eq!(
+        rows(&mut session, "SHOW TABLE cached NEXT_ROW_ID"),
+        [["test", "cached", "id", "30101", "_TIDB_ROWID"]]
+    );
+
+    let error = session
+        .run("ALTER TABLE cached AUTO_ID_CACHE = 1")
+        .expect_err("AUTO_ID_CACHE=1 uses a distinct allocator")
+        .to_mysql_error();
+    assert_eq!(error.code, 1105);
+    assert_eq!(
+        error.message,
+        "Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different"
     );
 }
 

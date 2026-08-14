@@ -39,10 +39,6 @@
 //! which ids are issued, which explicit value rebases, when the domain is
 //! exhausted -- exist once and be the same rules on both.
 //!
-//! The in-process home ([`LocalAutoIdStore`]) reserves one id at a time, so it
-//! caches nothing and every id comes straight off its cell: exactly the
-//! semantics that tier had before the counter had a home at all.
-//!
 //! The callers that drive the allocator -- `KvTable::apply_auto_increment`,
 //! `rebase_auto_increment`, `truncate` -- stay with the table in the parent
 //! module.
@@ -86,6 +82,10 @@ pub trait AutoIdStore: fmt::Debug + Send + Sync {
     /// `unsigned` is the column's domain, which decides how the stored
     /// pattern is compared and how much room is left above it.
     fn reserve(&self, step: u64, unsigned: bool) -> Result<(u64, u64), AutoIdStoreError>;
+
+    /// Go `Allocator.NextGlobalAutoID`: the first id beyond every range that
+    /// has already been reserved from this counter.
+    fn next_global(&self) -> Result<u64, AutoIdStoreError>;
 
     /// Reserve enough space for a concrete source `Allocator.Alloc` request.
     ///
@@ -195,6 +195,10 @@ impl AutoIdStore for LocalAutoIdStore {
                 Err(observed) => base = observed,
             }
         }
+    }
+
+    fn next_global(&self) -> Result<u64, AutoIdStoreError> {
+        Ok(self.last.load(Ordering::SeqCst).wrapping_add(1))
     }
 
     fn reserve_batch(
@@ -404,7 +408,7 @@ struct AutoIdRange {
 impl AutoIdAllocator {
     /// A fresh in-process allocator, whose first id is 1.
     pub(crate) fn new() -> Self {
-        Self::over(Arc::new(LocalAutoIdStore::new()), 1)
+        Self::over(Arc::new(LocalAutoIdStore::new()), DEFAULT_AUTO_ID_STEP)
     }
 
     /// An allocator over `store`, reserving `step` ids at a time.
@@ -429,6 +433,22 @@ impl AutoIdAllocator {
     /// over the same store: same cache, so the same reserved range.
     pub(crate) fn shares_cache_with(&self, other: &AutoIdAllocator) -> bool {
         Arc::ptr_eq(&self.cache, &other.cache)
+    }
+
+    /// Builds a fresh local range over the same global counter.
+    ///
+    /// A schema change to `AUTO_ID_CACHE` rebuilds Go's table allocator. The
+    /// global high-water mark remains, while the old table object's unused
+    /// local range is abandoned.
+    pub(crate) fn with_step(&self, step: u64) -> Self {
+        let mut allocator = Self::over(self.store.clone(), step);
+        allocator.unsigned = self.unsigned;
+        allocator
+    }
+
+    /// Whether this allocator uses Go's single-point `AUTO_ID_CACHE=1` mode.
+    pub(crate) fn is_single_point(&self) -> bool {
+        self.initial_step == 1
     }
 
     /// Go `allocator.isUnsigned`, set from the AUTO_INCREMENT column's type.
@@ -546,6 +566,11 @@ impl AutoIdAllocator {
             .expect("auto id cache poisoned")
             .base
             .wrapping_add(1)
+    }
+
+    /// The next id beyond all ranges reserved in the shared store.
+    pub(crate) fn next_global(&self) -> Result<u64, AutoIdStoreError> {
+        self.store.next_global()
     }
 
     /// Advances the shared counter by one for a DDL validation and discards
@@ -686,6 +711,18 @@ mod tests {
         assert_eq!(next_step(2_000_000, Duration::from_nanos(1)), 2_000_000);
         assert_eq!(next_step(678_910, Duration::from_secs(10)), 678_910);
         assert_eq!(next_step(50_000, Duration::from_secs(600)), 30_000);
+    }
+
+    #[test]
+    fn changing_cache_step_keeps_the_global_counter_and_discards_the_old_range() {
+        let store = Arc::new(LocalAutoIdStore::new());
+        let allocator = AutoIdAllocator::over(store.clone(), DEFAULT_AUTO_ID_STEP);
+        assert_eq!(allocator.alloc(1, 1), Ok(1));
+        assert_eq!(allocator.next_global(), Ok(DEFAULT_AUTO_ID_STEP + 1));
+
+        let allocator = allocator.with_step(100);
+        assert_eq!(allocator.alloc(1, 1), Ok(DEFAULT_AUTO_ID_STEP + 1));
+        assert_eq!(allocator.next_global(), Ok(DEFAULT_AUTO_ID_STEP + 101));
     }
 
     /// Complete allocator-value translation of
@@ -855,6 +892,10 @@ mod tests {
 
     impl AutoIdStore for FailingStore {
         fn reserve(&self, _step: u64, _unsigned: bool) -> Result<(u64, u64), AutoIdStoreError> {
+            Err(AutoIdStoreError("injected".to_owned()))
+        }
+
+        fn next_global(&self) -> Result<u64, AutoIdStoreError> {
             Err(AutoIdStoreError("injected".to_owned()))
         }
 

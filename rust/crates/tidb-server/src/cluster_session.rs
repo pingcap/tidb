@@ -80,37 +80,49 @@ pub trait TableAutoIds: std::fmt::Debug + Send + Sync {
 /// exist.
 #[derive(Debug, Default)]
 pub struct LocalTableAutoIds {
-    allocators: Mutex<std::collections::HashMap<(i64, bool), TableAutoId>>,
+    allocators: Mutex<LocalTableAutoIdMap>,
+}
+
+type LocalTableAutoIdMap = std::collections::HashMap<(i64, bool), (i64, TableAutoId)>;
+
+fn auto_id_step(table: &TableInfo) -> u64 {
+    if table.auto_id_cache > 1 {
+        table.auto_id_cache as u64
+    } else {
+        tidb_executor::kv_table::DEFAULT_AUTO_ID_STEP
+    }
 }
 
 impl TableAutoIds for LocalTableAutoIds {
     fn allocator_for(&self, _db_id: i64, table: &TableInfo) -> TableAutoId {
-        self.allocators
-            .lock()
-            .expect("local auto id map poisoned")
-            .entry((table.id, false))
-            .or_insert_with(|| {
-                TableAutoId::over(
-                    Arc::new(tidb_executor::kv_table::LocalAutoIdStore::new()),
-                    1,
-                )
-            })
-            .clone()
+        local_allocator_for(&self.allocators, table, false)
     }
 
     fn random_allocator_for(&self, _db_id: i64, table: &TableInfo) -> TableAutoId {
-        self.allocators
-            .lock()
-            .expect("local auto id map poisoned")
-            .entry((table.id, true))
-            .or_insert_with(|| {
-                TableAutoId::over(
-                    Arc::new(tidb_executor::kv_table::LocalAutoIdStore::new()),
-                    1,
-                )
-            })
-            .clone()
+        local_allocator_for(&self.allocators, table, true)
     }
+}
+
+fn local_allocator_for(
+    allocators: &Mutex<LocalTableAutoIdMap>,
+    table: &TableInfo,
+    random: bool,
+) -> TableAutoId {
+    let mut allocators = allocators.lock().expect("local auto id map poisoned");
+    if let Some((cache, allocator)) = allocators.get(&(table.id, random)) {
+        if *cache == table.auto_id_cache {
+            return allocator.clone();
+        }
+        let allocator = allocator.with_step(auto_id_step(table));
+        allocators.insert((table.id, random), (table.auto_id_cache, allocator.clone()));
+        return allocator;
+    }
+    let allocator = TableAutoId::over(
+        Arc::new(tidb_executor::kv_table::LocalAutoIdStore::new()),
+        auto_id_step(table),
+    );
+    allocators.insert((table.id, random), (table.auto_id_cache, allocator.clone()));
+    allocator
 }
 
 /// What [`cluster_table`] gives the table it builds as an auto-increment
@@ -179,6 +191,12 @@ impl tidb_executor::kv_table::AutoIdStore for UnavailableAutoIdStore {
         _unsigned: bool,
     ) -> Result<(u64, u64), tidb_executor::kv_table::AutoIdStoreError> {
         Err(unavailable_counter())
+    }
+
+    fn next_global(&self) -> Result<u64, tidb_executor::kv_table::AutoIdStoreError> {
+        Err(tidb_executor::kv_table::AutoIdStoreError(
+            "the table has no auto-id counter home".to_owned(),
+        ))
     }
 
     fn rebase(

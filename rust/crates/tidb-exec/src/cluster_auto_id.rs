@@ -552,6 +552,10 @@ impl AutoIdStore for ClusterAutoIdStore {
         })
     }
 
+    fn next_global(&self) -> Result<u64, AutoIdStoreError> {
+        self.transact(|current| (None, current.wrapping_add(1)))
+    }
+
     fn reserve_batch(
         &self,
         minimum_step: u64,

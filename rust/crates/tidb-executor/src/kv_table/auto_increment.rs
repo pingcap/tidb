@@ -58,6 +58,12 @@ impl TableAutoId {
     pub fn same_allocator_as(&self, other: &TableAutoId) -> bool {
         self.0.shares_cache_with(&other.0)
     }
+
+    /// A fresh cached range over the same persistent counter.
+    #[must_use]
+    pub fn with_step(&self, step: u64) -> Self {
+        TableAutoId(self.0.with_step(step))
+    }
 }
 
 /// Where a row's `AUTO_INCREMENT` value came from.
@@ -151,6 +157,66 @@ impl KvTable {
     #[must_use]
     pub fn auto_increment_offset(&self) -> Option<usize> {
         self.auto_increment_offset
+    }
+
+    /// The AUTO_INCREMENT column's name.
+    #[must_use]
+    fn auto_increment_column_name(&self) -> Option<&str> {
+        self.auto_increment_offset
+            .and_then(|offset| self.columns.get(offset))
+            .map(|column| column.name.as_str())
+    }
+
+    /// Rows produced by Go's `ShowNextRowIDExec` for this table.
+    pub fn next_global_row_ids(
+        &self,
+    ) -> Result<Vec<(String, i64, &'static str)>, AutoIdStoreError> {
+        let mut rows = Vec::new();
+        let has_implicit_row_id =
+            self.pk_handle_offset.is_none() && self.common_handle_offsets.is_empty();
+        if has_implicit_row_id || self.auto_increment_offset.is_some() {
+            let column = if self.pk_handle_offset.is_some() {
+                self.auto_increment_column_name().unwrap_or_default()
+            } else {
+                "_tidb_rowid"
+            };
+            rows.push((
+                column.to_owned(),
+                self.auto_id.next_global()? as i64,
+                "_TIDB_ROWID",
+            ));
+        }
+        if let Some(spec) = self.auto_random {
+            let column = self
+                .columns
+                .get(spec.offset)
+                .map_or("", |column| column.name.as_str());
+            rows.push((
+                column.to_owned(),
+                self.auto_random_id.next_global()? as i64,
+                "AUTO_RANDOM",
+            ));
+        }
+        Ok(rows)
+    }
+
+    /// Rebuilds the allocator after `ALTER TABLE ... AUTO_ID_CACHE=n` while
+    /// retaining the counter's global high-water mark.
+    pub fn set_auto_id_cache(&mut self, cache: u64) -> Result<(), &'static str> {
+        let single_point = cache == 1;
+        if single_point != self.auto_id.is_single_point() {
+            return Err(
+                "Can't Alter AUTO_ID_CACHE between 1 and non-1, the underlying implementation is different",
+            );
+        }
+        let step = if cache == 0 {
+            auto_id::DEFAULT_AUTO_ID_STEP
+        } else {
+            cache
+        };
+        self.auto_id = self.auto_id.with_step(step);
+        self.auto_random_id = self.auto_random_id.with_step(step);
+        Ok(())
     }
 
     /// Go's `AUTO_INCREMENT=n` table option: the first id the table hands out.
