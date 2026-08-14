@@ -334,6 +334,13 @@ fn clock_fsp(args: &[Expression]) -> Option<i64> {
 
 fn clock_datetime_return_type(args: &[Expression], not_null: bool) -> Option<FieldType> {
     let fsp = clock_fsp(args)?;
+    datetime_return_type(fsp, not_null)
+}
+
+fn datetime_return_type(fsp: i64, not_null: bool) -> Option<FieldType> {
+    if !(0..=6).contains(&fsp) {
+        return None;
+    }
     let mut result = FieldType::new(FieldTypeCode::Datetime);
     result.set_decimal(fsp);
     result.set_flen(19 + if fsp == 0 { 0 } else { fsp + 1 });
@@ -413,6 +420,25 @@ fn maketime_return_type(args: &[Expression]) -> Option<FieldType> {
         _ => 6,
     };
     duration_return_type(fsp, 10)
+}
+
+fn str_to_date_return_type(args: &[Expression]) -> Option<FieldType> {
+    let [_, format] = args else {
+        return None;
+    };
+    let Expression::Constant(format) = format else {
+        return datetime_return_type(6, false);
+    };
+    if matches!(&format.value, Datum::Null) {
+        return datetime_return_type(0, false);
+    }
+    let format = format.value.sql_string().ok()?;
+    let fsp = if format.contains("%f") { 6 } else { 0 };
+    match tidb_datatype::get_format_type(&format) {
+        (true, false) => duration_return_type(fsp, 10),
+        (false, true) => date_return_type(args, 2),
+        _ => datetime_return_type(fsp, false),
+    }
 }
 
 fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
@@ -814,7 +840,8 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "makedate" => date_return_type(args, 2)?,
         "sec_to_time" => sec_to_time_return_type(args)?,
         "maketime" => maketime_return_type(args)?,
-        "monthname" | "dayname" | "date_format" | "str_to_date" => text(),
+        "str_to_date" => str_to_date_return_type(args)?,
+        "monthname" | "dayname" | "date_format" => text(),
         "addtime" | "subtime" => add_sub_time_return_type(args)?,
         "timestamp" => timestamp_return_type(args)?,
         "sysdate" => clock_datetime_return_type(args, true)?,

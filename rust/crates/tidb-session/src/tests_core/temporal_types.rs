@@ -94,3 +94,65 @@ fn duration_constructors_preserve_source_scale() {
         assert_eq!(rows[0][index].sql_string().unwrap(), value);
     }
 }
+
+#[test]
+fn str_to_date_uses_the_format_to_choose_its_native_domain() {
+    let mut session = Session::new();
+    let StmtOutput::Rows { columns, rows, .. } = session
+        .run_with_columns(
+            "SELECT STR_TO_DATE('2024-02-29', '%Y-%m-%d'), \
+                    STR_TO_DATE('12:34:56.123456', '%H:%i:%s.%f'), \
+                    STR_TO_DATE('2024-02-29 12:34:56.123456', '%Y-%m-%d %H:%i:%s.%f')",
+        )
+        .unwrap()
+    else {
+        panic!("STR_TO_DATE did not return rows")
+    };
+    for (index, code, flen, decimal) in [
+        (0, tidb_datatype::FieldTypeCode::Date, 10, 0),
+        (1, tidb_datatype::FieldTypeCode::Duration, 17, 6),
+        (2, tidb_datatype::FieldTypeCode::Datetime, 26, 6),
+    ] {
+        assert_eq!(columns[index].1.code(), code);
+        assert_eq!(
+            (columns[index].1.flen(), columns[index].1.decimal()),
+            (flen, decimal)
+        );
+    }
+    assert!(matches!(rows[0][0], Datum::Time(_)));
+    assert!(matches!(rows[0][1], Datum::Duration(_)));
+    assert!(matches!(rows[0][2], Datum::Time(_)));
+
+    session.run("CREATE TABLE f (format VARCHAR(20))").unwrap();
+    session.run("INSERT INTO f VALUES ('%Y-%m-%d')").unwrap();
+    let StmtOutput::Rows { columns, rows, .. } = session
+        .run_with_columns("SELECT STR_TO_DATE('2024-02-29', format) FROM f")
+        .unwrap()
+    else {
+        panic!("dynamic STR_TO_DATE did not return rows")
+    };
+    assert_eq!(columns[0].1.code(), tidb_datatype::FieldTypeCode::Datetime);
+    assert_eq!((columns[0].1.flen(), columns[0].1.decimal()), (26, 6));
+    assert!(matches!(rows[0][0], Datum::Time(_)));
+
+    session.run("UPDATE f SET format = '%H:%i:%s'").unwrap();
+    let StmtOutput::Rows { rows, .. } = session
+        .run_with_columns("SELECT STR_TO_DATE('12:34:56', format) FROM f")
+        .unwrap()
+    else {
+        panic!("dynamic time-only STR_TO_DATE did not return rows")
+    };
+    assert_eq!(rows[0][0], Datum::Null);
+    session.run("SET sql_mode = ''").unwrap();
+    let StmtOutput::Rows { rows, .. } = session
+        .run_with_columns("SELECT STR_TO_DATE('12:34:56', format) FROM f")
+        .unwrap()
+    else {
+        panic!("relaxed dynamic STR_TO_DATE did not return rows")
+    };
+    assert!(matches!(rows[0][0], Datum::Time(_)));
+    assert_eq!(
+        rows[0][0].sql_string().unwrap(),
+        "0000-00-00 12:34:56.000000"
+    );
+}

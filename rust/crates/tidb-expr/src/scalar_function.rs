@@ -1157,9 +1157,23 @@ impl ScalarFunction {
                 | "FROM_DAYS"
                 | "SEC_TO_TIME"
                 | "MAKETIME"
+                | "STR_TO_DATE"
         ) {
-            let result = crate::time_fn::dispatch(&upper, &vals, ctx)
+            let mut result = crate::time_fn::dispatch(&upper, &vals, ctx)
                 .expect("the native temporal family is registered")?;
+            if upper == "STR_TO_DATE"
+                && self.get_static_type().map(FieldType::code)
+                    == Some(tidb_datatype::FieldTypeCode::Datetime)
+            {
+                if let Ok(text) = result.sql_string() {
+                    if text.contains(':') && !text.contains('-') {
+                        if ctx.date_modes().no_zero_date {
+                            return Ok(Datum::Null);
+                        }
+                        result = Datum::new_string(format!("0000-00-00 {text}"));
+                    }
+                }
+            }
             return match self.get_static_type().map(FieldType::code) {
                 Some(tidb_datatype::FieldTypeCode::Datetime) => crate::cast::parse_computed_time(
                     &result,
