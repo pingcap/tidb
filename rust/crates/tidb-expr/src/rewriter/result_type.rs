@@ -990,7 +990,9 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         | "json_length"
         | "json_depth"
         | "json_member_of"
-        | "json_overlaps" => int(),
+        | "json_overlaps"
+        | "json_storage_free"
+        | "json_storage_size" => int(),
         // `ast.JSONValid` is in Go's `booleanFunctions` map
         // (`json_contains`/`_length`/`_depth` are not), so its `ETInt` result
         // carries `IsBooleanFlag`: `JSON_ARRAY(json_valid('{}'))` is `[true]`.

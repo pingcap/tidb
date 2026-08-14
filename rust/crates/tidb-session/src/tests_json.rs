@@ -56,6 +56,48 @@ fn json_path_and_overlap_predicates_reach_chunk_evaluation() {
     );
 }
 
+/// Go `builtinJSONStorage{Free,Size}Sig`, including the exact BinaryJSON
+/// byte sizes pinned by `TestJSONStorageSize` in `builtin_json_test.go`.
+#[test]
+fn json_storage_functions_reach_chunk_evaluation() {
+    let mut session = Session::new();
+    assert_eq!(
+        session
+            .run(
+                r#"SELECT JSON_STORAGE_FREE('null'),
+                          JSON_STORAGE_FREE('{\"a\":1}'),
+                          JSON_STORAGE_FREE(NULL),
+                          JSON_STORAGE_SIZE('null'),
+                          JSON_STORAGE_SIZE('true'),
+                          JSON_STORAGE_SIZE('1'),
+                          JSON_STORAGE_SIZE('\"1\"'),
+                          JSON_STORAGE_SIZE('{}'),
+                          JSON_STORAGE_SIZE('{\"a\":1}'),
+                          JSON_STORAGE_SIZE('[{\"a\":{\"a\":1},\"b\":2}]'),
+                          JSON_STORAGE_SIZE('{\"a\": 1000, \"b\": \"wxyz\", \"c\": \"[1, 3, 5, 7]\"}'),
+                          JSON_STORAGE_SIZE(NULL)"#,
+            )
+            .unwrap(),
+        StmtResult::Rows(vec![vec![
+            Datum::Int(0),
+            Datum::Int(0),
+            Datum::Null,
+            Datum::Int(2),
+            Datum::Int(2),
+            Datum::Int(9),
+            Datum::Int(3),
+            Datum::Int(9),
+            Datum::Int(29),
+            Datum::Int(82),
+            Datum::Int(71),
+            Datum::Null,
+        ]])
+    );
+
+    assert!(session.run("SELECT JSON_STORAGE_SIZE('not json')").is_err());
+    assert!(session.run("SELECT JSON_STORAGE_FREE('not json')").is_err());
+}
+
 /// `JSON_TABLE` is REFUSED, and this test records WHY rather than
 /// leaving it looking like an unfinished port.
 ///
