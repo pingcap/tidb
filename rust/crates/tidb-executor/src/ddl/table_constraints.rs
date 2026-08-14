@@ -185,6 +185,7 @@ pub(crate) fn table_indexes(
                 "CLUSTERED/NONCLUSTERED keyword is only supported for primary key",
             ));
         }
+        crate::ddl::indexes::reject_duplicate_index_columns(&index.parts)?;
         match index.kind {
             tidb_ast::IndexConstraintKind::PrimaryKey if clustered => continue,
             tidb_ast::IndexConstraintKind::PrimaryKey

@@ -59,6 +59,41 @@ fn code(session: &mut Session, sql: &str) -> Option<u16> {
     }
 }
 
+/// Go's statement preprocessor rejects a repeated named column inside one
+/// index case-insensitively and reports the spelling of the repeated part.
+#[test]
+fn one_index_cannot_name_the_same_column_twice() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE duplicate_parts (a INT, b INT)")
+        .unwrap();
+    for (sql, repeated) in [
+        ("CREATE INDEX c ON duplicate_parts (b, a, b)", "b"),
+        ("CREATE INDEX c ON duplicate_parts (b, a, B)", "B"),
+        ("ALTER TABLE duplicate_parts ADD INDEX c (b, a, b)", "b"),
+        ("ALTER TABLE duplicate_parts ADD INDEX c (b, a, B)", "B"),
+        (
+            "CREATE TABLE duplicate_inline (a INT, b INT, KEY c (b, a, B))",
+            "B",
+        ),
+        (
+            "CREATE TABLE duplicate_primary (a INT, b INT, PRIMARY KEY (a, b, A) CLUSTERED)",
+            "A",
+        ),
+    ] {
+        let error = session
+            .run(sql)
+            .expect_err("an index cannot contain a named column twice")
+            .to_mysql_error();
+        assert_eq!(error.code, 1060, "{sql}");
+        assert_eq!(
+            error.message,
+            format!("Duplicate column name '{repeated}'"),
+            "{sql}"
+        );
+    }
+}
+
 /// `create table t (a int, b int); create index idx on t((a+1));`
 fn indexed() -> Session {
     let mut session = Session::new();

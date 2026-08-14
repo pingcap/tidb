@@ -134,6 +134,23 @@ pub(crate) fn index_part_names(parts: &[tidb_ast::IndexPart]) -> Result<Vec<Stri
     Ok(names)
 }
 
+/// Go planner `checkDuplicateColumnName`: a named column may occur only once
+/// in one index. Expression parts are independent hidden columns and do not
+/// participate in this name set.
+pub(crate) fn reject_duplicate_index_columns(
+    parts: &[tidb_ast::IndexPart],
+) -> Result<(), DriverError> {
+    let mut seen = std::collections::HashSet::with_capacity(parts.len());
+    for part in parts {
+        if let tidb_ast::IndexPart::Column { name, .. } = part {
+            if !seen.insert(name.to_lowercase()) {
+                return Err(DriverError::DuplicateColumnName(name.clone()));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The index a statement asks for, read off either spelling of the request:
 /// `CREATE INDEX` and `ALTER TABLE ... ADD INDEX` name the same four facts in
 /// different AST nodes.
@@ -172,6 +189,7 @@ pub(crate) fn add_index_to_table(
         visible,
         global,
     } = index;
+    reject_duplicate_index_columns(parts)?;
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         return Err(DriverError::Schema(crate::SchemaErrorKind::UnknownTable(
             format!("{database}.{table_name}"),
