@@ -300,6 +300,8 @@ func calculateStatementRUPlanChildFirst(
 
 	switch origin := operator.Origin.(type) {
 	case *physicalop.PhysicalTableReader:
+		// Scan-byte accounting is performed at Reader boundaries. A TableReader
+		// contributes scan evidence from its single TiKV table request exactly once.
 		if !operator.IsRoot || origin.StoreType != kv.TiKV || origin.ReadReqType != physicalop.Cop ||
 			origin.TablePlan == nil || len(operator.ChildrenIdx) != 1 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
@@ -310,6 +312,8 @@ func calculateStatementRUPlanChildFirst(
 			return statementRUOperatorResult{state: state}
 		}
 	case *physicalop.PhysicalIndexReader:
+		// Scan-byte accounting is performed at Reader boundaries. An IndexReader
+		// contributes scan evidence from its single TiKV index request exactly once.
 		if !operator.IsRoot || origin.IndexPlan == nil || len(operator.ChildrenIdx) != 1 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
@@ -319,6 +323,8 @@ func calculateStatementRUPlanChildFirst(
 			return statementRUOperatorResult{state: state}
 		}
 	case *physicalop.PhysicalIndexLookUpReader:
+		// An IndexLookUpReader owns distinct index/build and table/probe requests.
+		// Each request-root contribution is collected exactly once at this boundary.
 		if !operator.IsRoot || origin.IndexLookUpPushDown ||
 			origin.IndexPlan == nil || origin.TablePlan == nil || origin.IndexPlan == origin.TablePlan ||
 			len(operator.ChildrenIdx) != 2 {
@@ -341,6 +347,8 @@ func calculateStatementRUPlanChildFirst(
 			return statementRUOperatorResult{state: state}
 		}
 	case *physicalop.PhysicalSelection:
+		// CPU work for Selection is defined as the child output-row count
+		// multiplied by the number of conditions evaluated per row.
 		if !statementRUOperatorRunsAtSupportedSite(operator) || len(children) != 1 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
@@ -348,6 +356,8 @@ func calculateStatementRUPlanChildFirst(
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
 		}
 	case *physicalop.PhysicalSort:
+		// For n > 0, CPU work for Sort is defined as n * log2(max(n, 2)), where n
+		// is the child output-row count. Only root Sort is supported.
 		if !operator.IsRoot || len(children) != 1 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
@@ -356,6 +366,9 @@ func calculateStatementRUPlanChildFirst(
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
 		}
 	case *physicalop.PhysicalTopN:
+		// For n > 0 and k > 0, CPU work for TopN is defined as
+		// n * log2(max(min(n, k), 2)). Root k is Offset + Count; for pushed TopN,
+		// the planner has already folded Offset into Count.
 		if !statementRUOperatorRunsAtSupportedSite(operator) || len(children) != 1 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
@@ -380,6 +393,7 @@ func calculateStatementRUPlanChildFirst(
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
 		}
 	case *physicalop.PhysicalLimit:
+		// CPU work for Limit is defined as its child output-row count.
 		if !statementRUOperatorRunsAtSupportedSite(operator) || len(children) != 1 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
@@ -387,6 +401,8 @@ func calculateStatementRUPlanChildFirst(
 			return statementRUOperatorResult{state: statementRUOperatorInvalid}
 		}
 	case *physicalop.PhysicalTableScan, *physicalop.PhysicalIndexScan:
+		// TableScan and IndexScan do not contribute units directly. Their scan
+		// evidence is accounted for by the owning Reader boundary.
 		if operator.IsRoot || len(operator.ChildrenIdx) != 0 {
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
@@ -394,6 +410,8 @@ func calculateStatementRUPlanChildFirst(
 			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
 	default:
+		// Operators not listed above, including Projection, are outside the
+		// supported statement-RU model and therefore fail closed.
 		return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 	}
 
