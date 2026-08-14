@@ -149,5 +149,6 @@ pub(super) fn dml_table_scope(
     scope.tidb_info_len = ctx.tidb_info_len();
     scope.like_default_escape = ctx.like_default_escape();
     scope.no_unsigned_subtraction = ctx.no_unsigned_subtraction();
+    scope.div_precision_increment = ctx.div_precision_increment();
     scope
 }

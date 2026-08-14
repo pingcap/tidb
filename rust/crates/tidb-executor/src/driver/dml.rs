@@ -365,6 +365,8 @@ pub(crate) fn run_insert_traced(
             table_name: &table_name,
             columns: &column_list,
             zone: ctx.session_zone(),
+            no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+            div_precision_increment: ctx.div_precision_increment(),
         };
         for (index, values) in insert.rows.iter().enumerate() {
             let width = values.len();
@@ -1127,6 +1129,8 @@ fn prepare_on_duplicate_assignments(
         table_name,
         columns: column_list,
         zone: ctx.session_zone(),
+        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+        div_precision_increment: ctx.div_precision_increment(),
     };
     let mut prepared = Vec::with_capacity(assignments.len());
     for assignment in assignments {
@@ -1221,6 +1225,8 @@ pub(crate) fn apply_on_duplicate(
         table_name: "",
         columns: column_list,
         zone: ctx.session_zone(),
+        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+        div_precision_increment: ctx.div_precision_increment(),
     };
     let mut updated = existing.clone();
     for assignment in assignments {
@@ -1469,6 +1475,8 @@ pub(crate) fn run_update_traced(
         table_name: table_ref.alias.as_deref().unwrap_or(&name),
         columns: &column_list,
         zone: ctx.session_zone(),
+        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+        div_precision_increment: ctx.div_precision_increment(),
     };
     let mut assignments = Vec::with_capacity(update.assignments.len());
     for assignment in &update.assignments {
@@ -2027,6 +2035,8 @@ pub(crate) fn run_delete_traced(
         table_name: table_ref.alias.as_deref().unwrap_or(&name),
         columns: &column_list,
         zone: ctx.session_zone(),
+        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+        div_precision_increment: ctx.div_precision_increment(),
     };
     let predicate = match &delete.where_clause {
         Some(expr) => Some(DmlExpression::build(

@@ -51,6 +51,8 @@ pub(crate) struct FromScope {
     /// Statement snapshot of `NO_UNSIGNED_SUBTRACTION` used while expression
     /// result types are built.
     pub(crate) no_unsigned_subtraction: bool,
+    /// Statement snapshot used to build decimal division metadata.
+    pub(crate) div_precision_increment: u32,
     /// The row offsets a `NATURAL`/`USING` join coalesced AWAY: the inner
     /// side's copy of each common column, which stays reachable through its
     /// own table's qualifier (`SELECT u2.id`) but is invisible to `*` and to
@@ -122,6 +124,7 @@ impl Default for FromScope {
             .len(),
             like_default_escape: b'\\',
             no_unsigned_subtraction: false,
+            div_precision_increment: 4,
         }
     }
 }
@@ -233,6 +236,10 @@ impl ColumnResolver for ScopeResolver<'_> {
 
     fn no_unsigned_subtraction(&self) -> bool {
         self.scope.no_unsigned_subtraction
+    }
+
+    fn div_precision_increment(&self) -> u32 {
+        self.scope.div_precision_increment
     }
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
@@ -650,7 +657,7 @@ pub(crate) fn build_from(
                             wanted,
                             &hints,
                             catalog,
-                            &ctx.session_zone(),
+                            ctx,
                             wanted_order.as_deref(),
                         )
                     }) {
@@ -719,6 +726,7 @@ pub(crate) fn build_from(
                 tidb_info_len: ctx.tidb_info_len(),
                 like_default_escape: ctx.like_default_escape(),
                 no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+                div_precision_increment: ctx.div_precision_increment(),
                 ..FromScope::default()
             };
             // What this leaf DELIVERS -- read off the branch that RAN, which
@@ -864,6 +872,7 @@ pub(crate) fn build_derived_source(
         tidb_info_len: ctx.tidb_info_len(),
         like_default_escape: ctx.like_default_escape(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+        div_precision_increment: ctx.div_precision_increment(),
         ..FromScope::default()
     };
     Ok((exec, scope))
@@ -1286,6 +1295,7 @@ pub(crate) fn build_view_source(
         tidb_info_len: ctx.tidb_info_len(),
         like_default_escape: ctx.like_default_escape(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+        div_precision_increment: ctx.div_precision_increment(),
         ..FromScope::default()
     };
     Ok((exec, scope))

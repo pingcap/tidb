@@ -514,6 +514,7 @@ pub(crate) struct AggOutputResolver {
     /// carried over from the source scope the aggregation reads.
     pub(crate) zone: tidb_expr::SessionTimeZone,
     pub(crate) no_unsigned_subtraction: bool,
+    pub(crate) div_precision_increment: u32,
 }
 
 impl ColumnResolver for AggOutputResolver {
@@ -523,6 +524,10 @@ impl ColumnResolver for AggOutputResolver {
 
     fn no_unsigned_subtraction(&self) -> bool {
         self.no_unsigned_subtraction
+    }
+
+    fn div_precision_increment(&self) -> u32 {
+        self.div_precision_increment
     }
 
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {

@@ -263,7 +263,7 @@ fn build_logical_node(
                 &table_columns,
                 columns,
                 catalog,
-                &ctx.session_zone(),
+                ctx,
                 &schema,
             )?;
             Some(LogicalBuild {

@@ -1591,7 +1591,7 @@ pub(crate) fn write_read_path(
     // same chooser a `SELECT` reaches (`tryUpdatePointPlan` falls through to
     // the ordinary `DataSource`). When the winner is an index, read through it;
     // otherwise fall back to the clustered-handle table path below, unchanged.
-    if let Some(index_path) = write_index_range_path(table, &columns, stmt.where_clause, name, zone)
+    if let Some(index_path) = write_index_range_path(table, &columns, stmt.where_clause, name, ctx)
     {
         return Ok(Some(index_path));
     }
@@ -1616,13 +1616,15 @@ fn write_index_range_path(
     columns: &[(String, FieldType)],
     where_clause: Option<&tidb_ast::Expr>,
     table_name: &str,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) -> Option<WriteReadPath> {
     let where_clause = where_clause?;
     let resolver = TableResolver {
         table_name,
         columns,
-        zone: zone.clone(),
+        zone: ctx.session_zone(),
+        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+        div_precision_increment: ctx.div_precision_increment(),
     };
     let needed: Vec<usize> = (0..columns.len()).collect();
     let hints = crate::index_hints::AvailablePaths::unrestricted();

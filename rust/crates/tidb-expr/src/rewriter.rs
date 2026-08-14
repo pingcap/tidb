@@ -99,6 +99,11 @@ pub trait ColumnResolver {
     fn no_unsigned_subtraction(&self) -> bool {
         false
     }
+
+    /// The statement's `div_precision_increment` used to build `/` metadata.
+    fn div_precision_increment(&self) -> u32 {
+        4
+    }
 }
 
 /// A resolver that knows no columns but folds in a REAL session zone: what
@@ -350,11 +355,12 @@ fn binary_expression(
     resolver: &impl ColumnResolver,
 ) -> Expression {
     let name = binary_op_name(op);
-    let ret_type = crate::builtin_arithmetic::infer_arithmetic_type_with_mode(
+    let ret_type = crate::builtin_arithmetic::infer_arithmetic_type_with_context(
         name,
         &left,
         &right,
         resolver.no_unsigned_subtraction(),
+        resolver.div_precision_increment(),
     )
     .or_else(|| crate::builtin_compare::infer_compare_type(name))
     .or_else(|| crate::builtin_op::infer_op_type(name));

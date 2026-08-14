@@ -421,6 +421,7 @@ pub(crate) fn pruned_scope(scope: &FromScope, keep: &[usize]) -> FromScope {
         }],
         zone: scope.zone.clone(),
         no_unsigned_subtraction: scope.no_unsigned_subtraction,
+        div_precision_increment: scope.div_precision_increment,
         ..FromScope::default()
     }
 }

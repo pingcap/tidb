@@ -135,7 +135,7 @@ pub(crate) fn leaf_index_path(
     demand: &crate::driver::leaf_demand::LeafDemand,
     hints: &crate::index_hints::AvailablePaths,
     catalog: &Catalog,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
     wanted: Option<&[usize]>,
 ) -> Option<LeafIndexPath> {
     // A partitioned leaf would need the pruning this call site has no
@@ -149,7 +149,9 @@ pub(crate) fn leaf_index_path(
     let resolver = TableResolver {
         table_name: visible,
         columns,
-        zone: zone.clone(),
+        zone: ctx.session_zone(),
+        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+        div_precision_increment: ctx.div_precision_increment(),
     };
     let stats = catalog.table_statistics(table.table_id);
     let stats = stats.as_ref().map(AsRef::as_ref);
@@ -299,7 +301,7 @@ pub(crate) fn leaf_alternatives(
     columns: &[(String, FieldType)],
     demand: &crate::driver::leaf_demand::LeafDemand,
     catalog: &Catalog,
-    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
     column_ids: &[i64],
 ) -> Option<Vec<tidb_planner::find_best_task::LeafAlternative>> {
     // The recursive model currently has an exact clustered-handle probe but
@@ -316,7 +318,9 @@ pub(crate) fn leaf_alternatives(
     let resolver = TableResolver {
         table_name: visible,
         columns,
-        zone: zone.clone(),
+        zone: ctx.session_zone(),
+        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+        div_precision_increment: ctx.div_precision_increment(),
     };
     let stats = catalog.table_statistics(table.table_id);
     let stats = stats.as_ref().map(AsRef::as_ref);

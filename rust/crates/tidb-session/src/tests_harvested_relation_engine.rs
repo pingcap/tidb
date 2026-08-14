@@ -362,6 +362,13 @@ fn avg_metadata_uses_the_sessions_div_precision_increment() {
 
     for (sql, expected_rows) in [
         (
+            "SELECT v / 2 FROM d ORDER BY v",
+            vec![
+                vec!["0.750000000000".to_owned()],
+                vec!["1.250000000000".to_owned()],
+            ],
+        ),
+        (
             "SELECT AVG(v) FROM d",
             vec![vec!["2.000000000000".to_owned()]],
         ),
@@ -389,6 +396,26 @@ fn avg_metadata_uses_the_sessions_div_precision_increment() {
             }
             other => panic!("AVG query returned {other:?}"),
         }
+    }
+
+    session.run("SET @@div_precision_increment = 0").unwrap();
+    match session.run_with_columns("SELECT v / 2 FROM d ORDER BY v") {
+        Ok(StmtOutput::Rows { columns, rows }) => {
+            assert_eq!(
+                rows.iter()
+                    .map(|row| row.iter().map(cell_text).collect::<Vec<_>>())
+                    .collect::<Vec<_>>(),
+                [["0.750000"], ["1.250000"]]
+            );
+            assert_eq!(
+                columns
+                    .iter()
+                    .map(|(_, field_type)| (field_type.flen(), field_type.decimal()))
+                    .collect::<Vec<_>>(),
+                [(14, 6)]
+            );
+        }
+        other => panic!("division query returned {other:?}"),
     }
 }
 

@@ -23,10 +23,8 @@
 //! shared Datum operator semantics (`ops.rs`), which dispatch on the operand
 //! kinds exactly as the per-signature builtins do.
 //!
-//! The remaining type-inference seam is `div_precision_increment`: this pure
-//! entry uses its default (4), while row evaluation already receives the live
-//! statement value. `newReturnFieldTypeForBaseBuiltinFunc`'s boolean flag is
-//! irrelevant because none of these six functions is boolean.
+//! `newReturnFieldTypeForBaseBuiltinFunc`'s boolean flag is irrelevant because
+//! none of these six functions is boolean.
 
 use crate::expression::Expression;
 use tidb_datatype::{
@@ -38,8 +36,8 @@ use tidb_datatype::{
 const MAX_INT_WIDTH: i64 = 20;
 /// Go `mysql.MaxRealWidth` (`pkg/parser/mysql/const.go` = 23).
 const MAX_REAL_WIDTH: i64 = 23;
-/// Go `vardef.DefDivPrecisionIncrement` (= 4), the `div_precision_increment`
-/// default; the session variable is not yet wired.
+/// Go `vardef.DefDivPrecisionIncrement` (= 4), the default used by isolated
+/// callers that have no statement context.
 const DEF_DIV_PRECISION_INCREMENT: i64 = 4;
 
 /// Go `isConstantBinaryLiteral`: a constant whose value is a binary literal
@@ -259,7 +257,7 @@ fn unsigned(ft: Option<&FieldType>) -> bool {
 /// function name.
 #[must_use]
 pub fn infer_arithmetic_type(name: &str, lhs: &Expression, rhs: &Expression) -> Option<FieldType> {
-    infer_arithmetic_type_with_mode(name, lhs, rhs, false)
+    infer_arithmetic_type_with_context(name, lhs, rhs, false, DEF_DIV_PRECISION_INCREMENT as u32)
 }
 
 /// [`infer_arithmetic_type`] under the statement's
@@ -270,6 +268,24 @@ pub fn infer_arithmetic_type_with_mode(
     lhs: &Expression,
     rhs: &Expression,
     no_unsigned_subtraction: bool,
+) -> Option<FieldType> {
+    infer_arithmetic_type_with_context(
+        name,
+        lhs,
+        rhs,
+        no_unsigned_subtraction,
+        DEF_DIV_PRECISION_INCREMENT as u32,
+    )
+}
+
+/// [`infer_arithmetic_type`] with the statement's arithmetic settings.
+#[must_use]
+pub fn infer_arithmetic_type_with_context(
+    name: &str,
+    lhs: &Expression,
+    rhs: &Expression,
+    no_unsigned_subtraction: bool,
+    div_precision_increment: u32,
 ) -> Option<FieldType> {
     let lhs_tp = numeric_context_result_type(lhs);
     let rhs_tp = numeric_context_result_type(rhs);
@@ -341,7 +357,7 @@ pub fn infer_arithmetic_type_with_mode(
             } else {
                 let mut ret = new_return_field_type(EvalType::Decimal);
                 if let (Some(a), Some(b)) = (a, b) {
-                    set_type4_div_decimal(&mut ret, a, b, DEF_DIV_PRECISION_INCREMENT);
+                    set_type4_div_decimal(&mut ret, a, b, i64::from(div_precision_increment));
                 }
                 if unsigned(a) {
                     // Note: Go sets no flag here; division result keeps default.
@@ -537,6 +553,18 @@ mod tests {
         assert_eq!(real.code(), FieldTypeCode::Double);
         assert_eq!(real.decimal(), UNSPECIFIED_LENGTH);
         assert_eq!(real.flen(), MAX_REAL_WIDTH);
+    }
+
+    #[test]
+    fn div_uses_the_statement_precision_increment() {
+        let field_type = FieldTypeBuilder::new()
+            .with_code(FieldTypeCode::NewDecimal)
+            .flen_set(10)
+            .decimal_set(2)
+            .build();
+        let lhs = Expression::Column(crate::column::Column::new(0, field_type));
+        let ret = infer_arithmetic_type_with_context("div", &lhs, &int_expr(2), false, 10).unwrap();
+        assert_eq!((ret.flen(), ret.decimal()), (20, 12));
     }
 
     #[test]

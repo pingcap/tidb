@@ -800,6 +800,12 @@ impl StmtContext {
         self.no_unsigned_subtraction
     }
 
+    /// The statement snapshot of `div_precision_increment`.
+    #[must_use]
+    pub fn div_precision_increment(&self) -> u32 {
+        self.div_precision_increment
+    }
+
     /// The implicit `LIKE` escape for expressions built in this statement.
     #[must_use]
     pub fn like_default_escape(&self) -> u8 {

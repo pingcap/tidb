@@ -264,6 +264,10 @@ impl<R: tidb_expr::rewriter::ColumnResolver> tidb_expr::rewriter::ColumnResolver
     fn no_unsigned_subtraction(&self) -> bool {
         self.base.no_unsigned_subtraction()
     }
+
+    fn div_precision_increment(&self) -> u32 {
+        self.base.div_precision_increment()
+    }
 }
 
 /// Finds and materializes every named DEFAULT in one scalar expression using

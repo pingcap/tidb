@@ -125,6 +125,7 @@ fn agg_output_resolver(state: &AggPipelineState, ctx: &crate::StmtContext) -> Ag
         types: state.types.clone(),
         zone: ctx.session_zone(),
         no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+        div_precision_increment: ctx.div_precision_increment(),
     }
 }
 
@@ -1461,6 +1462,7 @@ fn build_apply_chain(
             tidb_info_len: ctx.tidb_info_len(),
             like_default_escape: ctx.like_default_escape(),
             no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+            div_precision_increment: ctx.div_precision_increment(),
             ..FromScope::default()
         };
         state.types.push(value_type);
@@ -1578,6 +1580,7 @@ fn build_window_stage(
             tidb_info_len: ctx.tidb_info_len(),
             like_default_escape: ctx.like_default_escape(),
             no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+            div_precision_increment: ctx.div_precision_increment(),
             ..FromScope::default()
         };
         let rows = drain_executor_rows(root, &state.types)?;

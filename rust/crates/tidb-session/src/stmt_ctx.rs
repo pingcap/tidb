@@ -358,6 +358,7 @@ impl Session {
             .get_system("div_precision_increment")
             .ok()
             .and_then(|value| value.parse::<u32>().ok())
+            .filter(|value| *value > 0)
             .unwrap_or(4);
         // Go `SessionVars.CTEMaxRecursionDepth`, the `WITH RECURSIVE` round
         // bound; the registry default is 1000.

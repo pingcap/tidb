@@ -715,6 +715,7 @@ pub(crate) fn run_select_traced(
                     tidb_info_len: ctx.tidb_info_len(),
                     like_default_escape: ctx.like_default_escape(),
                     no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
+                    div_precision_increment: ctx.div_precision_increment(),
                     ..FromScope::default()
                 },
             )
