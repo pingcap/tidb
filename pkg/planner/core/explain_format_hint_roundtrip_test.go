@@ -194,12 +194,14 @@ func TestExplainFormatHintDoesNotExtendLeadingAcrossQueryBlockOwners(t *testing.
 	t.Run("single inner query block", func(t *testing.T) {
 		hints := tk.MustQuery("explain format='hint' " + explainFormatHintMixedQueryBlockLeadingSQL).Rows()[0][0]
 		require.Contains(t, hints, "leading(`t2`, `t1`)")
+		require.NotRegexp(t, `leading\(.*leading\(`, hints)
 		require.NotContains(t, hints, "leading(`test`.`t2`, `test`.`t1`, `test`.`t3`@`sel_2`)")
 	})
 
 	t.Run("multiple inner query blocks", func(t *testing.T) {
 		hints := tk.MustQuery("explain format='hint' " + explainFormatHintMultipleMixedQueryBlockLeadingSQL).Rows()[0][0]
 		require.Contains(t, hints, "leading(`t2`, `t1`, `t4`@`sel_2`)")
+		require.NotRegexp(t, `leading\(.*leading\(`, hints)
 		require.NotContains(t, hints, "leading(`test`.`t2`, `test`.`t1`, `test`.`t4`@`sel_2`, `test`.`t3`@`sel_1`)")
 	})
 }
