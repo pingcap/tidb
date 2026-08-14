@@ -124,6 +124,11 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, tasks)
 
+	tasks, err = gm.GetTasksByIDs(ctx, []int64{task5.ID, -1})
+	require.NoError(t, err)
+	require.Len(t, tasks, 1)
+	require.Equal(t, task5.ID, tasks[0].ID)
+
 	cancelling, err := testutil.IsTaskCancelling(ctx, gm, id)
 	require.NoError(t, err)
 	require.False(t, cancelling)

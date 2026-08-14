@@ -492,6 +492,8 @@ func (mgr *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *pr
 }
 
 // GetTasksByIDs gets the tasks by their task IDs.
+// The result order is not guaranteed to match taskIDs. Missing IDs are omitted;
+// this method does not return ErrTaskNotFound.
 func (mgr *TaskManager) GetTasksByIDs(ctx context.Context, taskIDs []int64) (tasks []*proto.Task, err error) {
 	if len(taskIDs) == 0 {
 		return nil, nil
