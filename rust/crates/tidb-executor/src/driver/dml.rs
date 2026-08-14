@@ -1102,7 +1102,7 @@ pub(crate) fn dml_row_limit(limit: &Option<tidb_ast::Limit>) -> Result<Option<u6
 
 #[derive(Clone, Debug)]
 enum PreparedOnDuplicateValue {
-    Constant(Expression),
+    Constant(Box<Expression>),
     Ast {
         value: tidb_ast::Expr,
         defaults: Vec<PreparedNamedDefault>,
@@ -1171,9 +1171,9 @@ fn prepare_on_duplicate_assignments(
             tidb_ast::Expr::Default(None) => {
                 let datum =
                     materialize_column_default(target_meta, DefaultUse::Expression, ctx, row)?;
-                PreparedOnDuplicateValue::Constant(Expression::Constant(
+                PreparedOnDuplicateValue::Constant(Box::new(Expression::Constant(
                     tidb_expr::constant::Constant::new(datum, target_meta.field_type.clone()),
-                ))
+                )))
             }
             value => {
                 let defaults =
@@ -1234,7 +1234,7 @@ pub(crate) fn apply_on_duplicate(
     let mut updated = existing.clone();
     for assignment in assignments {
         let expr = match &assignment.value {
-            PreparedOnDuplicateValue::Constant(expression) => expression.clone(),
+            PreparedOnDuplicateValue::Constant(expression) => expression.as_ref().clone(),
             PreparedOnDuplicateValue::Ast { value, defaults } => {
                 // `VALUES(col)` is the value the insert would have written,
                 // resolved only after this candidate exists. DEFAULT leaves
