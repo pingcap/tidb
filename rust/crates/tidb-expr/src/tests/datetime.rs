@@ -1363,9 +1363,6 @@ fn an_etdatetime_argument_is_cast_before_the_signature_runs() {
     // Both evaluators impose the layer: the chunk tier from
     // `ScalarFunction::eval` and the row/AST tier from `func::eval_func`, so
     // no statement can pick up the old re-derivation by choosing a plan.
-    // CONVERT_TZ is absent here only because the chunk tier does not build
-    // that builtin at all yet (`this builtin is not yet built for chunk
-    // evaluation`) -- a pre-existing gap, unrelated to this layer.
     for (expr, want) in [
         ("month(20240315123045)", "INT:3"),
         ("day(20240315123045)", "INT:15"),
@@ -1385,6 +1382,10 @@ fn an_etdatetime_argument_is_cast_before_the_signature_runs() {
         ("dayofyear(20240315123045)", "INT:75"),
         ("weekday(20240315123045)", "INT:4"),
         ("last_day(20240315123045)", "TIME:2024-03-31"),
+        (
+            "convert_tz(20240315123045,'+00:00','+08:00')",
+            "TIME:2024-03-15 20:30:45",
+        ),
         (
             "timestampadd(day,1,20240315123045)",
             "STR:2024-03-16 12:30:45",

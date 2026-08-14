@@ -1158,6 +1158,8 @@ impl ScalarFunction {
                 | "SEC_TO_TIME"
                 | "MAKETIME"
                 | "STR_TO_DATE"
+                | "TIMEDIFF"
+                | "CONVERT_TZ"
         ) {
             let mut result = crate::time_fn::dispatch(&upper, &vals, ctx)
                 .expect("the native temporal family is registered")?;

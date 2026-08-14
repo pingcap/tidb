@@ -441,6 +441,37 @@ fn str_to_date_return_type(args: &[Expression]) -> Option<FieldType> {
     }
 }
 
+fn timediff_return_type(args: &[Expression]) -> Option<FieldType> {
+    let [left, right] = args else {
+        return None;
+    };
+    duration_return_type(time_argument_fsp(left).max(time_argument_fsp(right)), 10)
+}
+
+fn convert_tz_return_type(args: &[Expression]) -> Option<FieldType> {
+    let [datetime, _, _] = args else {
+        return None;
+    };
+    let fsp = match datetime {
+        Expression::Constant(constant) => match arg_eval_type(args, 0) {
+            tidb_datatype::EvalType::Int => 0,
+            tidb_datatype::EvalType::Real | tidb_datatype::EvalType::Decimal => datetime
+                .static_type()
+                .map_or(6, FieldType::decimal)
+                .clamp(0, 6),
+            tidb_datatype::EvalType::String => constant
+                .value
+                .sql_string()
+                .ok()
+                .and_then(|value| value.rsplit_once('.').map(|(_, fraction)| fraction.len()))
+                .map_or(0, |fsp| fsp.min(6) as i64),
+            _ => 6,
+        },
+        _ => 6,
+    };
+    datetime_return_type(fsp, false)
+}
+
 fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
     use tidb_datatype::EvalType;
 
@@ -841,6 +872,8 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "sec_to_time" => sec_to_time_return_type(args)?,
         "maketime" => maketime_return_type(args)?,
         "str_to_date" => str_to_date_return_type(args)?,
+        "timediff" => timediff_return_type(args)?,
+        "convert_tz" => convert_tz_return_type(args)?,
         "monthname" | "dayname" | "date_format" => text(),
         "addtime" | "subtime" => add_sub_time_return_type(args)?,
         "timestamp" => timestamp_return_type(args)?,

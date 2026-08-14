@@ -156,3 +156,29 @@ fn str_to_date_uses_the_format_to_choose_its_native_domain() {
         "0000-00-00 12:34:56.000000"
     );
 }
+
+#[test]
+fn temporal_difference_and_zone_conversion_return_native_values() {
+    let mut session = Session::new();
+    let StmtOutput::Rows { columns, rows, .. } = session
+        .run_with_columns(
+            "SELECT TIMEDIFF('2024-01-02 00:00:00.123', '2024-01-01 23:59:59.120'), \
+                    CONVERT_TZ('2024-01-01 00:00:00.123', '+00:00', '+08:00'), \
+                    CONVERT_TZ('bad.prefix.12', '+00:00', '+08:00')",
+        )
+        .unwrap()
+    else {
+        panic!("temporal conversion builtins did not return rows")
+    };
+    assert_eq!(columns[0].1.code(), tidb_datatype::FieldTypeCode::Duration);
+    assert_eq!((columns[0].1.flen(), columns[0].1.decimal()), (14, 3));
+    assert!(matches!(rows[0][0], Datum::Duration(_)));
+    assert_eq!(rows[0][0].sql_string().unwrap(), "00:00:01.003");
+    assert_eq!(columns[1].1.code(), tidb_datatype::FieldTypeCode::Datetime);
+    assert_eq!((columns[1].1.flen(), columns[1].1.decimal()), (23, 3));
+    assert!(matches!(rows[0][1], Datum::Time(_)));
+    assert_eq!(rows[0][1].sql_string().unwrap(), "2024-01-01 08:00:00.123");
+    assert_eq!(columns[2].1.code(), tidb_datatype::FieldTypeCode::Datetime);
+    assert_eq!((columns[2].1.flen(), columns[2].1.decimal()), (22, 2));
+    assert_eq!(rows[0][2], Datum::Null);
+}
