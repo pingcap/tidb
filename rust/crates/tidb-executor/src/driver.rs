@@ -542,6 +542,72 @@ pub(crate) fn append_correlated_apply(
     Ok((source, applied, schema))
 }
 
+/// Builds the Apply chain a correlated `WHERE` predicate needs and returns
+/// the residual expression that still belongs in a `Selection`.
+///
+/// Go uses the same `Selection -> Apply` rewrite whether an aggregation sits
+/// above the predicate or not. Keeping that rewrite here prevents the plain
+/// and aggregate SELECT builders from drifting into different subquery
+/// capabilities.
+pub(crate) struct CorrelatedWherePlan {
+    source: Box<dyn Executor>,
+    scope: FromScope,
+    residual: Option<tidb_ast::Expr>,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn append_correlated_where_applies(
+    source: Box<dyn Executor>,
+    scope: &FromScope,
+    predicate: &tidb_ast::Expr,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+    trace: Option<&mut PlanTrace>,
+) -> Result<CorrelatedWherePlan, DriverError> {
+    let mut current_scope = scope.clone();
+    let decorrelated = decorrelate_exists::decorrelate_where(
+        source,
+        &current_scope,
+        predicate,
+        catalog,
+        current_db,
+        ctx,
+        trace,
+    )?;
+    let mut source = decorrelated.source;
+    let Some(mut predicate) = decorrelated.residual else {
+        return Ok(CorrelatedWherePlan {
+            source,
+            scope: current_scope,
+            residual: None,
+        });
+    };
+
+    loop {
+        let mut correlated = None;
+        predicate = extract_correlated_subquery(
+            &predicate,
+            &current_scope,
+            catalog,
+            current_db,
+            current_scope.width(),
+            &mut correlated,
+            ctx,
+        )?;
+        let Some(correlated) = correlated else { break };
+        let (applied, widened_scope, _) =
+            append_correlated_apply(source, &current_scope, correlated, catalog, current_db, ctx)?;
+        source = applied;
+        current_scope = widened_scope;
+    }
+    Ok(CorrelatedWherePlan {
+        source,
+        scope: current_scope,
+        residual: Some(predicate),
+    })
+}
+
 /// Runs one parsed `SELECT` against the catalog, for a caller that has
 /// already rewritten the statement (session-variable binding, for instance)
 /// and must not go back through SQL text.
@@ -926,11 +992,8 @@ pub(crate) fn run_select_traced(
 
     // Source: the table rows (matrix- or TiKV-byte-backed), or one virtual row
     // from a table-dual.
-    let (mut source, source_schema): (Box<dyn Executor>, Schema) = match from_source {
-        Some(exec) => {
-            let schema = exec.schema().clone();
-            (exec, schema)
-        }
+    let mut source: Box<dyn Executor> = match from_source {
+        Some(exec) => exec,
         None => {
             let exec: Box<dyn Executor> = Box::new(TableDualExec::new(
                 ExecutorMeta::new(Schema::new(vec![]), 0, INIT_CAP, MAX_CHUNK_SIZE),
@@ -940,7 +1003,7 @@ pub(crate) fn run_select_traced(
                 Some(trace) => trace.meter(exec),
                 None => exec,
             };
-            (exec, Schema::new(vec![]))
+            exec
         }
     };
     // The plan text quotes the statement as written, against the FROM scope
@@ -993,40 +1056,19 @@ pub(crate) fn run_select_traced(
         }
     }
     if let Some(predicate) = &executed_where {
-        let decorrelated = decorrelate_exists::decorrelate_where(
+        let correlated_where = append_correlated_where_applies(
             source,
-            &current_scope,
+            &scope,
             predicate,
             catalog,
             current_db,
             ctx,
             trace.as_deref_mut(),
         )?;
-        source = decorrelated.source;
-        if let Some(mut predicate) = decorrelated.residual {
+        source = correlated_where.source;
+        current_scope = correlated_where.scope;
+        if let Some(predicate) = correlated_where.residual {
             let selection_written = predicate.clone();
-            let mut source_schema = source_schema;
-            loop {
-                let mut correlated = None;
-                predicate = extract_correlated_subquery(
-                    &predicate,
-                    &current_scope,
-                    catalog,
-                    current_db,
-                    current_scope.width(),
-                    &mut correlated,
-                    ctx,
-                )?;
-                let Some(correlated) = correlated else { break };
-                (source, current_scope, source_schema) = append_correlated_apply(
-                    source,
-                    &current_scope,
-                    correlated,
-                    catalog,
-                    current_db,
-                    ctx,
-                )?;
-            }
             let predicate_resolver = ScopeResolver {
                 scope: &current_scope,
             };
@@ -1038,8 +1080,9 @@ pub(crate) fn run_select_traced(
                 predicates.push(pred.clone());
                 predicates
             });
+            let selection_schema = source.schema().clone();
             source = Box::new(SelectionExec::new(
-                ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
+                ExecutorMeta::new(selection_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
                 vec![pred],
                 source,
                 ctx.clone(),

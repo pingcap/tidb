@@ -489,6 +489,31 @@ fn grouped_correlated_subqueries() {
             ],
         ]
     );
+
+    // The WHERE Apply and an aggregate-argument Apply occupy different
+    // lexical stages. The private average column used by WHERE must be
+    // removed before the per-source-row COUNT Apply is indexed. Go keeps the
+    // two qualifying `g=1` rows (2 + 2) and the one `g=2` row (1).
+    assert_eq!(
+        run_select_on(
+            "SELECT g, SUM((SELECT COUNT(*) FROM s s3 WHERE s3.k = t.g)) \
+             FROM t WHERE v > (SELECT AVG(x) FROM s WHERE s.k = t.g) \
+             GROUP BY g ORDER BY g",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![
+            vec![
+                Datum::Int(1),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(4))
+            ],
+            vec![
+                Datum::Int(2),
+                Datum::Decimal(tidb_datatype::Decimal::from_int(1))
+            ],
+        ]
+    );
     // CASE is not a special traversal boundary: the EXISTS is the same
     // per-source-row Apply as the scalar aggregate argument above. Captured
     // from Go: `<nil>|0;1|30;2|5;3|0`.
@@ -535,16 +560,25 @@ fn grouped_correlated_subqueries() {
         Err(DriverError::UnknownColumnInClause { .. })
     ));
 
-    // DEFERRED: two-level nesting (a correlated subquery whose own body
-    // contains a subquery correlated to ITS outer scope) is refused
-    // rather than mis-evaluated.
-    assert!(run_select_on(
-        "SELECT g, (SELECT COUNT(*) FROM s WHERE s.k = t.g \
-         AND s.x > (SELECT AVG(x) FROM s s2 WHERE s2.k = s.k)) FROM t GROUP BY g",
-        &catalog,
-        &crate::StmtContext::for_query()
-    )
-    .is_err());
+    // Go builds one Apply for each lexical level: the outer Apply binds
+    // `t.g`, then the inner Apply binds that invocation's `s.k` while
+    // calculating the average for the same key.
+    assert_eq!(
+        run_select_on(
+            "SELECT g, (SELECT COUNT(*) FROM s WHERE s.k = t.g \
+             AND s.x > (SELECT AVG(x) FROM s s2 WHERE s2.k = s.k)) \
+             FROM t GROUP BY g ORDER BY g",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![
+            vec![Datum::Null, Datum::Int(0)],
+            vec![Datum::Int(1), Datum::Int(1)],
+            vec![Datum::Int(2), Datum::Int(0)],
+            vec![Datum::Int(3), Datum::Int(0)],
+        ]
+    );
 }
 
 /// A subquery does not launder a `HAVING` column reference: the name it

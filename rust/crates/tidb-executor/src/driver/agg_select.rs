@@ -1300,19 +1300,59 @@ fn build_aggregation(
     );
     let mut explained_where = trace.is_some().then_some(pushed_where);
     if let Some(predicate) = &executed_where {
-        let mut pred = rewrite_expr_resolved(predicate, resolver)
-            .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-        refine_comparisons(&mut pred, ctx);
-        if let Some(explained) = &mut explained_where {
-            explained.push(pred.clone());
-        }
-        source = Box::new(SelectionExec::new(
-            ExecutorMeta::new(source_schema, 1, INIT_CAP, MAX_CHUNK_SIZE),
-            vec![pred],
+        let correlated_where = super::append_correlated_where_applies(
             source,
-            ctx.clone(),
-            ctx.statement_memory(),
-        ));
+            resolver.scope,
+            predicate,
+            catalog,
+            current_db,
+            ctx,
+            trace.as_deref_mut(),
+        )?;
+        source = correlated_where.source;
+        if let Some(predicate) = correlated_where.residual {
+            let predicate_resolver = ScopeResolver {
+                scope: &correlated_where.scope,
+            };
+            let mut pred = rewrite_expr_resolved(&predicate, &predicate_resolver)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
+            refine_comparisons(&mut pred, ctx);
+            if let Some(explained) = &mut explained_where {
+                explained.push(pred.clone());
+            }
+            source = Box::new(SelectionExec::new(
+                ExecutorMeta::new(source.schema().clone(), 1, INIT_CAP, MAX_CHUNK_SIZE),
+                vec![pred],
+                source,
+                ctx.clone(),
+                ctx.statement_memory(),
+            ));
+        }
+
+        // A WHERE Apply appends private result columns used only by the
+        // predicate. Remove them before building the aggregate's own Apply
+        // chain: its correlated-column indexes are defined against the FROM
+        // scope, just as Go's column-pruning pass removes the WHERE helpers
+        // before the aggregation consumes its input.
+        if correlated_where.scope.width() > resolver.scope.width() {
+            let expressions = resolver
+                .scope
+                .column_list()
+                .into_iter()
+                .enumerate()
+                .map(|(index, (_, field_type))| {
+                    let mut column = Column::new((index + 1) as i64, field_type);
+                    column.index = index as i64;
+                    Expression::Column(column)
+                })
+                .collect();
+            source = Box::new(ProjectionExec::new(
+                ExecutorMeta::new(source_schema.clone(), 2, INIT_CAP, MAX_CHUNK_SIZE),
+                expressions,
+                source,
+                ctx.clone(),
+            ));
+        }
     }
     // The `Selection` is RECORDED whenever the statement wrote a `WHERE`,
     // whether or not an executor survived above the scan: Go prints one
