@@ -222,17 +222,17 @@ func ClearSchedulerFactory() {
 	schedulerFactoryMap.m = make(map[proto.TaskType]schedulerFactoryFn)
 }
 
-// CleanUpRoutine is used for the framework to do some clean up work if the task is finished.
-type CleanUpRoutine interface {
-	// CleanUp do the cleanup work.
+// Cleaner performs task cleanup after a task finishes.
+type Cleaner interface {
+	// Clean performs cleanup for one task.
 	// task.Meta can be updated here, such as redacting some sensitive info.
-	CleanUp(ctx context.Context, task *proto.Task) error
+	Clean(ctx context.Context, task *proto.Task) error
 }
 
-// BatchCleanUpRoutine optionally extends CleanUpRoutine with batched cleanup.
-// For these routines, the scheduler calls CleanUpBatch instead of CleanUp. In
-// each cleanup pass, it calls one routine instance with a non-empty group of
-// tasks that all have the same task type. When CleanUpBatch returns nil, the
+// BatchCleaner optionally extends Cleaner with batched cleanup.
+// For these cleaners, the scheduler calls BatchClean instead of Clean. In
+// each cleanup pass, it calls one cleaner instance with a non-empty group of
+// tasks that all have the same task type. When BatchClean returns nil, the
 // scheduler submits every task in the group together in the subsequent
 // history-table transfer. When it returns an error, no task in the group is
 // transferred in that pass.
@@ -241,39 +241,37 @@ type CleanUpRoutine interface {
 // and the history-table transfer. Implementations must be idempotent and safe
 // to retry after a partial cleanup failure or after cleanup succeeds but the
 // history-table transfer fails.
-type BatchCleanUpRoutine interface {
-	CleanUpRoutine
-	CleanUpBatch(ctx context.Context, tasks []*proto.Task) error
+type BatchCleaner interface {
+	Cleaner
+	BatchClean(ctx context.Context, tasks []*proto.Task) error
 }
 
-type cleanUpFactoryFn func() CleanUpRoutine
+type cleanerFactoryFn func() Cleaner
 
-var cleanUpFactoryMap = struct {
+var cleanerFactoryMap = struct {
 	syncutil.RWMutex
-	m map[proto.TaskType]cleanUpFactoryFn
+	m map[proto.TaskType]cleanerFactoryFn
 }{
-	m: make(map[proto.TaskType]cleanUpFactoryFn),
+	m: make(map[proto.TaskType]cleanerFactoryFn),
 }
 
-// RegisterSchedulerCleanUpFactory is used to register the scheduler clean up factory.
-// normally scheduler cleanup is used in the scheduler_manager gcTaskLoop to do clean up
-// works when tasks are finished.
-func RegisterSchedulerCleanUpFactory(taskType proto.TaskType, ctor cleanUpFactoryFn) {
-	cleanUpFactoryMap.Lock()
-	defer cleanUpFactoryMap.Unlock()
-	cleanUpFactoryMap.m[taskType] = ctor
+// RegisterCleanerFactory registers a cleaner factory for a task type.
+func RegisterCleanerFactory(taskType proto.TaskType, ctor cleanerFactoryFn) {
+	cleanerFactoryMap.Lock()
+	defer cleanerFactoryMap.Unlock()
+	cleanerFactoryMap.m[taskType] = ctor
 }
 
-// getSchedulerCleanUpFactory is used to get the scheduler factory.
-func getSchedulerCleanUpFactory(taskType proto.TaskType) cleanUpFactoryFn {
-	cleanUpFactoryMap.RLock()
-	defer cleanUpFactoryMap.RUnlock()
-	return cleanUpFactoryMap.m[taskType]
+// getCleanerFactory returns the cleaner factory for a task type.
+func getCleanerFactory(taskType proto.TaskType) cleanerFactoryFn {
+	cleanerFactoryMap.RLock()
+	defer cleanerFactoryMap.RUnlock()
+	return cleanerFactoryMap.m[taskType]
 }
 
-// ClearSchedulerCleanUpFactory is only used in test.
-func ClearSchedulerCleanUpFactory() {
-	cleanUpFactoryMap.Lock()
-	defer cleanUpFactoryMap.Unlock()
-	cleanUpFactoryMap.m = make(map[proto.TaskType]cleanUpFactoryFn)
+// ClearCleanerFactory is only used in test.
+func ClearCleanerFactory() {
+	cleanerFactoryMap.Lock()
+	defer cleanerFactoryMap.Unlock()
+	cleanerFactoryMap.m = make(map[proto.TaskType]cleanerFactoryFn)
 }

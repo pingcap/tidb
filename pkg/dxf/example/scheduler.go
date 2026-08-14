@@ -103,9 +103,9 @@ func (*schedulerImpl) GetNextStep(task *proto.TaskBase) proto.Step {
 	}
 }
 
-type postCleanupImpl struct{}
+type postCleanImpl struct{}
 
-func (*postCleanupImpl) CleanUp(_ context.Context, task *proto.Task) error {
+func (*postCleanImpl) Clean(_ context.Context, task *proto.Task) error {
 	logutil.BgLogger().Info("clean up task", zap.Int64("taskID", task.ID))
 	return nil
 }
