@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -98,6 +99,38 @@ type DistSQLContext struct {
 
 	// Only one cop-reader can use lite worker at the same time. Using lite-worker in multiple readers will affect the concurrent execution of readers.
 	TryCopLiteWorker atomic.Uint32
+}
+
+// NewDefaultContext builds a DistSQLContext with the defaults used by internal,
+// session-independent scans (add-index backfill, export). errLevels seeds the
+// ErrCtx; callers needing SQL-mode-specific error handling replace ErrCtx after.
+func NewDefaultContext(kvClient kv.Client, warnHandler contextutil.WarnAppender, errLevels errctx.LevelMap) *DistSQLContext {
+	var sqlKiller sqlkiller.SQLKiller
+	var execDetail execdetails.SyncExecDetails
+	var cpuUsages ppcpuusage.SQLCPUUsages
+	return &DistSQLContext{
+		WarnHandler:                          warnHandler,
+		Client:                               kvClient,
+		EnableChunkRPC:                       true,
+		EnabledRateLimitAction:               vardef.DefTiDBEnableRateLimitAction,
+		KVVars:                               tikvstore.NewVariables(&sqlKiller.Signal),
+		SessionMemTracker:                    memory.NewTracker(memory.LabelForSession, -1),
+		Location:                             time.UTC,
+		SQLKiller:                            &sqlKiller,
+		CPUUsage:                             &cpuUsages,
+		ErrCtx:                               errctx.NewContextWithLevels(errLevels, warnHandler),
+		TiFlashReplicaRead:                   tiflash.GetTiFlashReplicaReadByStr(vardef.DefTiFlashReplicaRead),
+		TiFlashMaxThreads:                    vardef.DefTiFlashMaxThreads,
+		TiFlashMaxBytesBeforeExternalJoin:    vardef.DefTiFlashMaxBytesBeforeExternalJoin,
+		TiFlashMaxBytesBeforeExternalGroupBy: vardef.DefTiFlashMaxBytesBeforeExternalGroupBy,
+		TiFlashMaxBytesBeforeExternalSort:    vardef.DefTiFlashMaxBytesBeforeExternalSort,
+		TiFlashMaxQueryMemoryPerNode:         vardef.DefTiFlashMemQuotaQueryPerNode,
+		TiFlashQuerySpillRatio:               vardef.DefTiFlashQuerySpillRatio,
+		TiFlashHashJoinVersion:               vardef.DefTiFlashHashJoinVersion,
+		ResourceGroupName:                    resourcegroup.DefaultResourceGroupName,
+		ExecDetails:                          &execDetail,
+		RuntimeStatsColl:                     execdetails.NewRuntimeStatsColl(nil),
+	}
 }
 
 // AppendWarning appends the warning to the warning handler.
