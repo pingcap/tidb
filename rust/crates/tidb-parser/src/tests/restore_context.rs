@@ -269,3 +269,20 @@ fn string_literal_charset_introducer_follows_the_keyword_case_flag() {
         assert!(!restored.contains(absent), "restored: {restored}");
     }
 }
+
+/// Go `FuncCallExpr.Restore` writes both `CONVERT` and ` USING ` through the
+/// active keyword-case policy. DDL uses the lowercase policy when persisting
+/// a computed column default.
+#[test]
+fn convert_using_follows_the_keyword_case_flag() {
+    let flags = RestoreFlags::STRING_SINGLE_QUOTES
+        | RestoreFlags::KEYWORD_LOWERCASE
+        | RestoreFlags::NAME_BACK_QUOTES
+        | RestoreFlags::SPACES_AROUND_BINARY_OPERATION;
+    assert_eq!(
+        parse("SELECT CONVERT(UPPER(UUID()) USING utf8mb4)")
+            .unwrap()
+            .restore_with_flags(flags),
+        "SELECT convert(upper(uuid()) using 'utf8mb4')"
+    );
+}

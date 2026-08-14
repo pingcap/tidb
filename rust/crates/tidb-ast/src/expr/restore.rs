@@ -812,9 +812,12 @@ impl Expr {
                 }
             },
             Expr::ConvertUsing { expr, charset } => {
-                out.push_str("CONVERT(");
+                restore_keyword(out, "CONVERT", context);
+                out.push('(');
                 expr.restore_into_with_context(out, context);
-                out.push_str(" USING '");
+                out.push(' ');
+                restore_keyword(out, "USING", context);
+                out.push_str(" '");
                 out.push_str(&escape_string_literal(charset));
                 out.push_str("')");
             }

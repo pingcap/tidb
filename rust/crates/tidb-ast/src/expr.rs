@@ -1030,12 +1030,16 @@ impl Expr {
 }
 
 fn restore_charset_name(out: &mut String, charset: &str, context: &RestoreContext) {
+    restore_keyword(out, charset, context);
+}
+
+fn restore_keyword(out: &mut String, keyword: &str, context: &RestoreContext) {
     if context.flags().has_keyword_uppercase() {
-        out.push_str(&charset.to_ascii_uppercase());
+        out.push_str(&keyword.to_ascii_uppercase());
     } else if context.flags().has_keyword_lowercase() {
-        out.push_str(&identifier_to_lower(charset));
+        out.push_str(&identifier_to_lower(keyword));
     } else {
-        out.push_str(charset);
+        out.push_str(keyword);
     }
 }
 
