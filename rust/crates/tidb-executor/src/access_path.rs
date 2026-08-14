@@ -251,6 +251,10 @@ pub struct HandleSourceExec {
     meta: ExecutorMeta,
     table: KvTable,
     handles: Vec<TableHandle>,
+    /// One physical table id per handle for a partitioned batch point get.
+    /// Absent for ordinary point reads whose table authority performs the
+    /// lookup itself.
+    physical_ids: Option<Vec<i64>>,
     /// The next handle to read.
     cursor: usize,
     /// Rows produced so far, which the trace reads as this node's `actRows`.
@@ -274,6 +278,33 @@ impl HandleSourceExec {
             meta,
             table,
             handles,
+            physical_ids: None,
+            cursor: 0,
+            produced: Rc::new(Cell::new(0)),
+            decode_context,
+        }
+    }
+
+    /// Builds Go's partitioned `BatchPointGetExec`: each handle is paired
+    /// with the physical table id found while pruning the plan.
+    #[must_use]
+    pub(crate) fn new_partitioned_with_context(
+        meta: ExecutorMeta,
+        table: KvTable,
+        handles: Vec<TableHandle>,
+        physical_ids: Vec<i64>,
+        decode_context: crate::kv_table::RowDecodeContext,
+    ) -> Self {
+        assert_eq!(
+            handles.len(),
+            physical_ids.len(),
+            "every batch-point handle needs one physical partition"
+        );
+        HandleSourceExec {
+            meta,
+            table,
+            handles,
+            physical_ids: Some(physical_ids),
             cursor: 0,
             produced: Rc::new(Cell::new(0)),
             decode_context,
@@ -314,16 +345,28 @@ impl Executor for HandleSourceExec {
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
         while !req.is_full() {
+            let index = self.cursor;
             let Some(handle) = self.handles.get(self.cursor) else {
                 return Ok(());
             };
             self.cursor += 1;
             // A handle with no row is Go's point get that finds nothing: the
             // plan is right, the row is simply absent.
-            let row = self
-                .table
-                .get_row_by_handle_with_context(handle, &self.decode_context)
-                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+            let row = match self
+                .physical_ids
+                .as_ref()
+                .and_then(|physical_ids| physical_ids.get(index))
+            {
+                Some(physical_id) => self.table.get_row_by_handle_in_physical_id_with_context(
+                    handle,
+                    *physical_id,
+                    &self.decode_context,
+                ),
+                None => self
+                    .table
+                    .get_row_by_handle_with_context(handle, &self.decode_context),
+            }
+            .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
             if let Some(row) = row {
                 for (c, value) in visible_of(&self.table, &row).iter().enumerate() {
                     req.append_datum(c, value);

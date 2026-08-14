@@ -823,9 +823,14 @@ pub(crate) fn run_insert_traced(
             ctx.append_warning_parts(warning.code, &warning.message);
             continue;
         }
-        let conflicts = target(catalog, &database, &table_name)
-            .conflicting_handles(row, ctx)
-            .map_err(|e| kv_read_error("conflict lookup failed", e))?;
+        let conflicts = match target(catalog, &database, &table_name).conflicting_handles(row, ctx)
+        {
+            Ok(conflicts) => conflicts,
+            Err(error) => {
+                handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
+                continue;
+            }
+        };
         if !conflicts.is_empty() {
             if insert.replace {
                 // Go `InsertValues.removeRow` (`insert_common.go`): a
@@ -886,7 +891,7 @@ pub(crate) fn run_insert_traced(
             } else if insert.ignore {
                 let reported = target(catalog, &database, &table_name)
                     .duplicate_entry_error(row, ctx)
-                    .map_err(|e| kv_read_error("conflict lookup failed", e))?;
+                    .map_err(kv_write_error)?;
                 if let crate::kv_table::KvTableError::DuplicateEntry { value, key } = reported {
                     let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
                     ctx.append_warning_parts(warning.code, &warning.message);
@@ -900,17 +905,21 @@ pub(crate) fn run_insert_traced(
         // fails the statement only afterwards -- while an IGNORE-skipped row
         // and a row redirected into ON DUPLICATE KEY UPDATE never reach here
         // and so publish nothing.
+        if let Some(partitions) = &insert_partition_ids {
+            if let Err(error) = target(catalog, &database, &table_name)
+                .validate_insert_partitions(row, partitions, ctx)
+            {
+                handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
+                continue;
+            }
+        }
         if let Some(allocated) = first_allocated {
             ctx.publish_last_insert_id(allocated);
         }
-        if let Some(partitions) = &insert_partition_ids {
-            target(catalog, &database, &table_name)
-                .validate_insert_partitions(row, partitions, ctx)
-                .map_err(kv_write_error)?;
+        if let Err(error) = target(catalog, &database, &table_name).insert_row(row, ctx) {
+            handle_partition_write_error(kv_write_error(error), insert.ignore, ctx)?;
+            continue;
         }
-        target(catalog, &database, &table_name)
-            .insert_row(row, ctx)
-            .map_err(kv_write_error)?;
         inserted += 1;
     }
     Ok((inserted, first_allocated))
@@ -957,6 +966,27 @@ pub(crate) fn kv_write_error(error: crate::kv_table::KvTableError) -> DriverErro
         // same 1467 an allocated column value would have reported.
         crate::kv_table::KvTableError::AutoIdExhausted => DriverError::AutoincReadFailed,
         other => DriverError::Parse(format!("row encode failed: {other:?}")),
+    }
+}
+
+/// Applies Go's `ErrCtx.HandleError` rule for partition-routing failures on
+/// `INSERT/UPDATE IGNORE`: report one warning and skip the row. Other write
+/// failures retain their normal error identity.
+fn handle_partition_write_error(
+    error: DriverError,
+    ignore: bool,
+    ctx: &crate::StmtContext,
+) -> Result<(), DriverError> {
+    match error {
+        error @ (DriverError::NoPartitionForValue(_)
+        | DriverError::RowDoesNotMatchGivenPartitionSet)
+            if ignore =>
+        {
+            let warning = error.to_mysql_error();
+            ctx.append_warning_parts(warning.code, &warning.message);
+            Ok(())
+        }
+        error => Err(error),
     }
 }
 
@@ -1759,8 +1789,16 @@ pub(crate) fn run_update_traced(
                     kv.materialize_generated(&mut new_row, ctx)
                         .map_err(kv_write_error)?;
                     if let Some(partitions) = &partition_ids {
-                        kv.validate_update_partitions(&row, &new_row, partitions, ctx)
-                            .map_err(kv_write_error)?;
+                        if let Err(error) =
+                            kv.validate_update_partitions(&row, &new_row, partitions, ctx)
+                        {
+                            handle_partition_write_error(
+                                kv_write_error(error),
+                                update.ignore,
+                                ctx,
+                            )?;
+                            continue;
+                        }
                     }
                     accountant
                         .account_row(&new_row)
@@ -1782,10 +1820,13 @@ pub(crate) fn run_update_traced(
                     let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
                         unreachable!("only a byte-backed table stages rewrites")
                     };
-                    kv.conflicting_handles(&new_row, ctx)
-                        .map_err(|error| kv_read_error("conflict lookup failed", error))?
-                        .iter()
-                        .any(|conflict| conflict != &handle)
+                    match kv.conflicting_handles(&new_row, ctx) {
+                        Ok(conflicts) => conflicts.iter().any(|conflict| conflict != &handle),
+                        Err(error) => {
+                            handle_partition_write_error(kv_write_error(error), true, ctx)?;
+                            continue;
+                        }
+                    }
                 };
                 if duplicate {
                     let Some(TableEntry::Kv(kv)) = catalog.get_mut_in(&database, &name) else {
@@ -1793,7 +1834,7 @@ pub(crate) fn run_update_traced(
                     };
                     let error = kv
                         .duplicate_entry_error(&new_row, ctx)
-                        .map_err(|error| kv_read_error("conflict lookup failed", error))?;
+                        .map_err(kv_write_error)?;
                     let warning = kv_write_error(error).to_mysql_error();
                     ctx.append_warning_parts(warning.code, &warning.message);
                     continue;
@@ -1828,7 +1869,9 @@ pub(crate) fn run_update_traced(
                         let warning = DriverError::DuplicateEntry { value, key }.to_mysql_error();
                         ctx.append_warning_parts(warning.code, &warning.message);
                     }
-                    Err(error) => return Err(kv_write_error(error)),
+                    Err(error) => {
+                        handle_partition_write_error(kv_write_error(error), true, ctx)?;
+                    }
                 }
             }
         } else {

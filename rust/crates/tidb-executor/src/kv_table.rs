@@ -856,6 +856,37 @@ impl KvTable {
         self.validate_insert_partitions(new_row, selected, ctx)
     }
 
+    /// The definition ordinal and physical table id each HANDLE routes to.
+    ///
+    /// This is Go `BatchPointGetPlan.getPartitionIdxs` before its caller
+    /// removes handles outside the statement's explicit/pruned partition
+    /// set. Keeping the route aligned with the handle list lets the executor
+    /// issue one physical row read per handle instead of probing every
+    /// partition.
+    pub(crate) fn handle_partition_routes(
+        &self,
+        handles: &[TableHandle],
+        zone: &SessionTimeZone,
+        ctx: &impl tidb_expr::Columns,
+    ) -> Vec<Option<(usize, i64)>> {
+        let Some(partition) = &self.partition else {
+            return vec![None; handles.len()];
+        };
+        let readable = self.record_physical_ids();
+        handles
+            .iter()
+            .map(|handle| {
+                let mut row = vec![Datum::Null; self.columns.len()];
+                self.fill_handle_columns(&mut row, handle, zone).ok()?;
+                let ordinal = partition.locate_ordinal(&row, &self.columns, ctx).ok()?;
+                let definition = partition.definitions.get(ordinal)?;
+                readable
+                    .contains(&definition.id)
+                    .then_some((ordinal, definition.id))
+            })
+            .collect()
+    }
+
     /// Go `BatchPointGetPlan.AccessObject().Partitions`: the partitions a set
     /// of HANDLES routes into, named as declared and in DEFINITION order,
     /// deduplicated.
@@ -895,15 +926,13 @@ impl KvTable {
             return Vec::new();
         };
         let mut ordinals: Vec<usize> = Vec::new();
-        for handle in handles {
-            let mut row = vec![Datum::Null; self.columns.len()];
-            if self.fill_handle_columns(&mut row, handle, zone).is_err() {
-                continue;
-            }
-            if let Ok(ordinal) = partition.locate_ordinal(&row, &self.columns, ctx) {
-                if !ordinals.contains(&ordinal) {
-                    ordinals.push(ordinal);
-                }
+        for (ordinal, _) in self
+            .handle_partition_routes(handles, zone, ctx)
+            .into_iter()
+            .flatten()
+        {
+            if !ordinals.contains(&ordinal) {
+                ordinals.push(ordinal);
             }
         }
         ordinals.sort_unstable();
@@ -1962,6 +1991,29 @@ impl KvTable {
         self.read_row(handle, context)
     }
 
+    /// The point row under one already-routed physical partition id.
+    ///
+    /// Go's partitioned `BatchPointGetExec` carries one physical id beside
+    /// each handle. This is the matching storage boundary: one exact row-key
+    /// lookup, without probing the table's remaining partitions.
+    pub(crate) fn get_row_by_handle_in_physical_id_with_context(
+        &mut self,
+        handle: &TableHandle,
+        physical_id: i64,
+        context: &RowDecodeContext,
+    ) -> Result<Option<Vec<Datum>>, KvTableError> {
+        let key = Key::from_bytes(encode_row_key_with_handle(
+            physical_id,
+            &handle.record_handle(),
+        ));
+        let entry = match self.store.get(&key) {
+            Ok(entry) => entry,
+            Err(StorageError::NotFound) => return Ok(None),
+            Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
+        };
+        Ok(Some(self.decode_row_entry(handle, &entry, context)?))
+    }
+
     /// Legacy zone-only point read retained for unmigrated DML/FK callers.
     /// Origin defaults use the exact former `DEFAULT_STATEMENT_FLAGS` behavior.
     pub fn get_row_by_handle(
@@ -1978,6 +2030,18 @@ impl KvTable {
         handle: &TableHandle,
         context: &RowDecodeContext,
     ) -> Result<Option<Vec<Datum>>, KvTableError> {
+        let Some((_, entry)) = self.stored_record(handle)? else {
+            return Ok(None);
+        };
+        Ok(Some(self.decode_row_entry(handle, &entry, context)?))
+    }
+
+    fn decode_row_entry(
+        &self,
+        handle: &TableHandle,
+        entry: &[u8],
+        context: &RowDecodeContext,
+    ) -> Result<Vec<Datum>, KvTableError> {
         let decoder = RowDecoder::for_table_read(
             self.columns.clone(),
             self.pk_handle_offset,
@@ -1985,12 +2049,7 @@ impl KvTable {
             None,
             context.clone(),
         )?;
-        let Some((_, entry)) = self.stored_record(handle)? else {
-            return Ok(None);
-        };
-        Ok(Some(
-            decoder.decode_and_eval(handle, &entry)?.into_parts().0,
-        ))
+        Ok(decoder.decode_and_eval(handle, entry)?.into_parts().0)
     }
 
     /// Whether a row is already stored under `handle`, in ANY partition.

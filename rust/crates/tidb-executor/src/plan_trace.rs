@@ -809,6 +809,7 @@ impl PlanTrace {
         &mut self,
         visible: &str,
         handles: &[TableHandle],
+        estimated_rows: usize,
         partitions: &[String],
         index: Option<&str>,
         static_partition_prune: bool,
@@ -830,7 +831,7 @@ impl PlanTrace {
         };
         self.replace_top(PlanNode::new(
             "Batch_Point_Get",
-            Some(handles.len() as f64),
+            Some(estimated_rows as f64),
             format!(
                 "table:{visible}{}{index}",
                 partition_object(access_partitions)

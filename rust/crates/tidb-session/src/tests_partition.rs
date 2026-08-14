@@ -707,6 +707,31 @@ fn a_range_table_without_maxvalue_refuses_the_row_it_cannot_place() {
         .to_mysql_error();
     assert_eq!(rendered.code, 1526);
     assert_eq!(rendered.message, "Table has no partition for value 25");
+    session
+        .run("INSERT IGNORE INTO r2 VALUES (25,2)")
+        .expect("IGNORE skips an unroutable row");
+    assert_eq!(
+        crate::tests_support::row_text(session.run("SHOW WARNINGS")).as_slice(),
+        [["Warning", "1526", "Table has no partition for value 25"]]
+    );
+    session
+        .run("INSERT IGNORE INTO r2 PARTITION (p0) VALUES (15,2)")
+        .expect("IGNORE skips a row outside the named partition set");
+    assert_eq!(
+        crate::tests_support::row_text(session.run("SHOW WARNINGS")).as_slice(),
+        [[
+            "Warning",
+            "1748",
+            "Found a row not matching the given partition set"
+        ]]
+    );
+    session
+        .run("UPDATE IGNORE r2 SET a=25 WHERE a=5")
+        .expect("IGNORE leaves an update in its original partition");
+    assert_eq!(
+        crate::tests_support::row_text(session.run("SHOW WARNINGS")).as_slice(),
+        [["Warning", "1526", "Table has no partition for value 25"]]
+    );
     session.run("INSERT INTO r2 VALUES (NULL,1)").unwrap();
     assert_eq!(
         tests_support::row_text(session.run("SELECT a FROM r2 PARTITION (p0) ORDER BY a"))
@@ -1747,12 +1772,40 @@ fn a_batch_point_get_names_the_partitions_its_handles_reach() {
         plan_access_objects(&mut session, "EXPLAIN SELECT * FROM t WHERE a IN (1, 2, 1)"),
         vec!["table:t, partition:p1,P2".to_owned()]
     );
+    let repeated =
+        crate::tests_support::row_text(session.run("EXPLAIN SELECT * FROM t WHERE a IN (1, 2, 1)"));
+    let batch = repeated
+        .iter()
+        .find(|row| row[0].contains("Batch_Point_Get"))
+        .unwrap_or_else(|| panic!("the partitioned IN remains a batch point get: {repeated:?}"));
+    assert_eq!(batch[1], "3.00", "the estimate precedes handle dedup");
     // Handles 1, 2, 3 land in p1, P2, P0 -- so the ASCENDING handle order and
     // the DEFINITION order disagree, and Go sorts the ORDINALS. Without that
     // sort this reads `p1,P2,P0`.
     assert_eq!(
         plan_access_objects(&mut session, "EXPLAIN SELECT * FROM t WHERE a IN (1, 2, 3)"),
         vec!["table:t, partition:P0,p1,P2".to_owned()]
+    );
+    let mut rows =
+        crate::tests_support::row_text(session.run("SELECT a,b FROM t WHERE a IN (1,2)"));
+    rows.sort();
+    assert_eq!(
+        rows,
+        vec![
+            vec!["1".to_owned(), "1".to_owned()],
+            vec!["2".to_owned(), "2".to_owned()]
+        ]
+    );
+    assert!(crate::tests_support::row_text(
+        session.run("SELECT * FROM t PARTITION (P0) WHERE a IN (1,2)")
+    )
+    .is_empty());
+    let excluded = crate::tests_support::row_text(
+        session.run("EXPLAIN SELECT * FROM t PARTITION (P0) WHERE a IN (1,2)"),
+    );
+    assert!(
+        excluded.iter().any(|row| row[0].contains("TableDual")),
+        "Go prunes an all-excluded handle list to TableDual: {excluded:?}"
     );
     // Control: an UNPARTITIONED table prints no partition clause at all.
     session

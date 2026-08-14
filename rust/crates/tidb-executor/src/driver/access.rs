@@ -147,33 +147,46 @@ pub(crate) fn commit_fast_path_source(
         .then(|| try_batch_point_get(select, &table, &columns, zone, &hints, ctx))
         .transpose()?
         .flatten()
-        .filter(|decision| {
-            table.partition().is_none()
-                || ctx.static_partition_prune()
-                || decision.handles.len() <= 1
-        })
     {
         let BatchPointGetDecision {
             handles,
             index,
             routed_partitions,
+            physical_ids,
+            estimated_rows,
+            no_matching_partition,
         } = decision;
         // This fast plan only accepts a WHERE that is exactly the IN whose
         // keys it just converted. Go replaces the whole pipeline with the
         // BatchPointGetPlan, so retaining the row expression above this
         // source would duplicate a predicate already proved by the key.
         consumed_where = true;
-        let exec = HandleSourceExec::new_with_context(
-            ExecutorMeta::new(
-                Schema::new(source_schema_columns(&columns)),
-                0,
-                INIT_CAP,
-                MAX_CHUNK_SIZE,
-            ),
-            table.clone(),
-            handles.clone(),
-            crate::kv_table::RowDecodeContext::for_query(ctx),
+        if no_matching_partition {
+            install_contradiction_dual(&columns, from_source, trace.as_deref_mut());
+            return Ok((None, true));
+        }
+        let meta = ExecutorMeta::new(
+            Schema::new(source_schema_columns(&columns)),
+            0,
+            INIT_CAP,
+            MAX_CHUNK_SIZE,
         );
+        let decode_context = crate::kv_table::RowDecodeContext::for_query(ctx);
+        let exec = match physical_ids {
+            Some(physical_ids) => HandleSourceExec::new_partitioned_with_context(
+                meta,
+                table.clone(),
+                handles.clone(),
+                physical_ids,
+                decode_context,
+            ),
+            None => HandleSourceExec::new_with_context(
+                meta,
+                table.clone(),
+                handles.clone(),
+                decode_context,
+            ),
+        };
         if let Some(trace) = trace.as_deref_mut() {
             let index = index.as_ref().map(BatchPointGetIndex::access_object);
             let partitions = routed_partitions
@@ -181,6 +194,7 @@ pub(crate) fn commit_fast_path_source(
             trace.batch_point_get(
                 source_table_name(scope, &table.name),
                 &handles,
+                estimated_rows,
                 &partitions,
                 index.as_deref(),
                 ctx.static_partition_prune(),
@@ -2057,6 +2071,15 @@ pub(crate) struct BatchPointGetDecision {
     /// The index authority, absent only for an integer handle primary key.
     index: Option<BatchPointGetIndex>,
     routed_partitions: Option<Vec<String>>,
+    /// One physical table id per handle after partition pruning. Go carries
+    /// the same aligned `PartitionIdxs` into `BatchPointGetExec`.
+    physical_ids: Option<Vec<i64>>,
+    /// Go creates `StatsInfo` from the written IN-list length before it
+    /// deduplicates point handles.
+    estimated_rows: usize,
+    /// Every written key routed outside the statement's available
+    /// partitions, so Go replaces the access with `TableDual rows:0`.
+    no_matching_partition: bool,
 }
 
 struct BatchPointGetIndex {
@@ -2232,6 +2255,30 @@ pub(crate) fn try_batch_point_get(
             handles.push(handle);
         }
     };
+    let route_handles = |handles: Vec<TableHandle>| {
+        if table.partition().is_none() {
+            return (handles, None, None, false);
+        }
+        let had_handles = !handles.is_empty();
+        let routes = table.handle_partition_routes(&handles, zone, ctx);
+        let mut routed_handles = Vec::with_capacity(handles.len());
+        let mut physical_ids = Vec::with_capacity(handles.len());
+        for (handle, route) in handles.into_iter().zip(routes) {
+            let Some((_, physical_id)) = route else {
+                continue;
+            };
+            routed_handles.push(handle);
+            physical_ids.push(physical_id);
+        }
+        let names = table.handle_partition_names(&routed_handles, zone, ctx);
+        let no_matching_partition = had_handles && routed_handles.is_empty();
+        (
+            routed_handles,
+            Some(names),
+            Some(physical_ids),
+            no_matching_partition,
+        )
+    };
 
     // The handle path.
     if let Some(offset) = table.pk_handle_offset() {
@@ -2250,10 +2297,15 @@ pub(crate) fn try_batch_point_get(
                 };
                 push_unique(&mut handles, handle);
             }
+            let (handles, routed_partitions, physical_ids, no_matching_partition) =
+                route_handles(handles);
             return Ok(Some(BatchPointGetDecision {
                 handles,
                 index: None,
-                routed_partitions: None,
+                routed_partitions,
+                physical_ids,
+                estimated_rows: list.len(),
+                no_matching_partition,
             }));
         }
     }
@@ -2278,6 +2330,8 @@ pub(crate) fn try_batch_point_get(
                 .map_err(|e| DriverError::Parse(format!("common handle encoding failed: {e:?}")))?;
             push_unique(&mut handles, handle);
         }
+        let (handles, routed_partitions, physical_ids, no_matching_partition) =
+            route_handles(handles);
         return Ok(Some(BatchPointGetDecision {
             handles,
             index: Some(BatchPointGetIndex {
@@ -2289,7 +2343,10 @@ pub(crate) fn try_batch_point_get(
                     .collect(),
                 clustered: true,
             }),
-            routed_partitions: None,
+            routed_partitions,
+            physical_ids,
+            estimated_rows: list.len(),
+            no_matching_partition,
         }));
     }
 
@@ -2323,6 +2380,8 @@ pub(crate) fn try_batch_point_get(
         };
         let mut handles = Vec::new();
         let mut routed_partitions = Vec::new();
+        let mut physical_ids = Vec::new();
+        let readable_physical_ids = table.record_physical_ids();
         for row in &rows {
             let values = ordered_values(row, &order);
             if let Some(handle) = table
@@ -2330,21 +2389,37 @@ pub(crate) fn try_batch_point_get(
                 .map_err(|e| DriverError::Parse(format!("index lookup failed: {e:?}")))?
             {
                 if !handles.contains(&handle) {
-                    handles.push(handle);
-                    if let Some(partition) = table.partition() {
+                    let route = if let Some(partition) = table.partition() {
                         let mut full_row = vec![Datum::Null; table.columns.len()];
                         for (offset, value) in offsets.iter().zip(row) {
                             full_row[*offset] = value.clone();
                         }
-                        if let Ok(ordinal) =
+                        let route = if let Ok(ordinal) =
                             partition.locate_ordinal(&full_row, &table.columns, ctx)
                         {
                             if let Some(definition) = partition.definitions.get(ordinal) {
-                                if !routed_partitions.contains(&definition.name) {
-                                    routed_partitions.push(definition.name.clone());
-                                }
+                                readable_physical_ids
+                                    .contains(&definition.id)
+                                    .then_some((definition.name.clone(), definition.id))
+                            } else {
+                                None
                             }
+                        } else {
+                            None
+                        };
+                        let Some(route) = route else {
+                            continue;
+                        };
+                        Some(route)
+                    } else {
+                        None
+                    };
+                    handles.push(handle);
+                    if let Some((name, physical_id)) = route {
+                        if !routed_partitions.contains(&name) {
+                            routed_partitions.push(name);
                         }
+                        physical_ids.push(physical_id);
                     }
                 }
             }
@@ -2370,6 +2445,9 @@ pub(crate) fn try_batch_point_get(
                 clustered: false,
             }),
             routed_partitions: Some(routed_partitions),
+            physical_ids: table.partition().is_some().then_some(physical_ids),
+            estimated_rows: list.len(),
+            no_matching_partition: false,
         }));
     }
     Ok(None)
