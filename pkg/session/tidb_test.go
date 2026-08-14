@@ -29,9 +29,12 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
@@ -40,6 +43,97 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
+
+type recordingObserver struct {
+	count int
+}
+
+func (o *recordingObserver) Observe(float64) {
+	o.count++
+}
+
+func TestSharedLockLostRollsBackTransaction(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	defer dom.Close()
+
+	testCases := []struct {
+		name           string
+		beginSQL       string
+		pessimistic    bool
+		sharedLockLost bool
+	}{
+		{
+			name:           "pessimistic shared lock lost",
+			beginSQL:       "begin pessimistic",
+			pessimistic:    true,
+			sharedLockLost: true,
+		},
+		{
+			name:           "optimistic shared lock lost mode mismatch",
+			beginSQL:       "begin optimistic",
+			pessimistic:    false,
+			sharedLockLost: true,
+		},
+		{
+			name:           "pessimistic deadlock unchanged",
+			beginSQL:       "begin pessimistic",
+			pessimistic:    true,
+			sharedLockLost: false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			se, err := createSession(store)
+			require.NoError(t, err)
+			defer se.Close()
+
+			MustExec(t, se, testCase.beginSQL)
+			txnManager := sessiontxn.GetTxnManager(se)
+			txn, err := txnManager.ActivateTxn()
+			require.NoError(t, err)
+			require.True(t, txn.Valid())
+			require.Equal(t, testCase.pessimistic, txn.IsPessimistic())
+			require.NotNil(t, txnManager.GetContextProvider())
+
+			recorder := &recordingObserver{}
+			var restoreObserver func()
+			if testCase.pessimistic {
+				originalObserver := session_metrics.TransactionDurationPessimisticAbortGeneral
+				session_metrics.TransactionDurationPessimisticAbortGeneral = recorder
+				restoreObserver = func() {
+					session_metrics.TransactionDurationPessimisticAbortGeneral = originalObserver
+				}
+			} else {
+				originalObserver := session_metrics.TransactionDurationOptimisticAbortGeneral
+				session_metrics.TransactionDurationOptimisticAbortGeneral = recorder
+				restoreObserver = func() {
+					session_metrics.TransactionDurationOptimisticAbortGeneral = originalObserver
+				}
+			}
+			defer restoreObserver()
+
+			var stmtErr error
+			if testCase.sharedLockLost {
+				stmtErr = kv.ErrSharedLockLost.GenWithStackByArgs(txn.StartTS(), "6B6579")
+			} else {
+				stmtErr = exeerrors.ErrDeadlock
+			}
+			got := autoCommitAfterStmt(context.Background(), se, stmtErr, nil)
+			require.Same(t, stmtErr, got)
+			if testCase.sharedLockLost {
+				require.True(t, kv.ErrSharedLockLost.Equal(got))
+			} else {
+				require.True(t, exeerrors.ErrDeadlock.Equal(got))
+			}
+			require.False(t, se.sessionVars.InTxn())
+			require.False(t, se.txn.Valid())
+			require.Nil(t, txnManager.GetContextProvider())
+			require.Equal(t, 1, recorder.count)
+		})
+	}
+}
 
 func TestDomapHandleNil(t *testing.T) {
 	// this is required for enterprise plugins
