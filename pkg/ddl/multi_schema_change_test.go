@@ -887,7 +887,7 @@ func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
 	tk.MustGetErrCode("alter table t add (c1 int, c2 int)", errno.ErrUnsupportedDDLOperation)
 }
 
-func TestMultiSchemaChangePersistsCloudStorageMode(t *testing.T) {
+func TestMultiSchemaChangePreservesCloudStorageMode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -906,15 +906,16 @@ func TestMultiSchemaChangePersistsCloudStorageMode(t *testing.T) {
 
 	tk.MustExec("create table t (a int)")
 
+	type cloudModeObservation struct {
+		seen      bool
+		parent    bool
+		nextProxy bool
+	}
 	var (
-		observationMu              sync.Mutex
-		ordinaryRevertibleObserved bool
-		ordinaryParentCloud        bool
-		ordinaryNextProxyCloud     bool
-		batchedBeforeObserved      bool
-		batchedAfterObserved       bool
-		batchedParentCloud         bool
-		batchedNextProxyCloud      bool
+		mu              sync.Mutex
+		revertible      cloudModeObservation
+		batched         cloudModeObservation
+		batchedInjected bool
 	)
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
@@ -926,50 +927,55 @@ func TestMultiSchemaChangePersistsCloudStorageMode(t *testing.T) {
 				continue
 			}
 			nextProxy := subJob.ToProxyJob(job, i)
-			observationMu.Lock()
-			ordinaryRevertibleObserved = true
-			ordinaryParentCloud = job.ReorgMeta.UseCloudStorage
-			ordinaryNextProxyCloud = nextProxy.ReorgMeta != nil && nextProxy.ReorgMeta.UseCloudStorage
-			observationMu.Unlock()
+			mu.Lock()
+			revertible = cloudModeObservation{
+				seen:      true,
+				parent:    job.ReorgMeta.UseCloudStorage,
+				nextProxy: nextProxy.ReorgMeta != nil && nextProxy.ReorgMeta.UseCloudStorage,
+			}
+			mu.Unlock()
 		}
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeBatchedMultiSchemaCloudModePropagation", func(parentJob, proxyJob *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeBatchedMultiSchemaParentJobUpdate", func(parentJob, proxyJob *model.Job) {
 		if proxyJob.Type != model.ActionAddIndex || parentJob.ReorgMeta == nil || proxyJob.ReorgMeta == nil {
 			return
 		}
-		observationMu.Lock()
-		defer observationMu.Unlock()
-		batchedBeforeObserved = true
+		mu.Lock()
+		defer mu.Unlock()
+		batchedInjected = true
 		parentJob.ReorgMeta.UseCloudStorage = false
 		proxyJob.ReorgMeta.UseCloudStorage = true
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterBatchedMultiSchemaCloudModePropagation", func(parentJob, proxyJob *model.Job) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterBatchedMultiSchemaParentJobUpdate", func(parentJob, proxyJob *model.Job) {
 		if proxyJob.Type != model.ActionAddIndex || parentJob.ReorgMeta == nil || proxyJob.MultiSchemaInfo == nil {
 			return
 		}
-		observationMu.Lock()
-		defer observationMu.Unlock()
-		if !batchedBeforeObserved {
+		mu.Lock()
+		defer mu.Unlock()
+		if !batchedInjected {
 			return
 		}
-		batchedAfterObserved = true
-		batchedParentCloud = parentJob.ReorgMeta.UseCloudStorage
 		seq := int(proxyJob.MultiSchemaInfo.Seq)
 		nextProxy := parentJob.MultiSchemaInfo.SubJobs[seq].ToProxyJob(parentJob, seq)
-		batchedNextProxyCloud = nextProxy.ReorgMeta != nil && nextProxy.ReorgMeta.UseCloudStorage
+		batched = cloudModeObservation{
+			seen:      true,
+			parent:    parentJob.ReorgMeta.UseCloudStorage,
+			nextProxy: nextProxy.ReorgMeta != nil && nextProxy.ReorgMeta.UseCloudStorage,
+		}
 	})
 
 	tk.MustExec("alter table t add column b int, add index idx_a(a)")
 
-	observationMu.Lock()
-	defer observationMu.Unlock()
-	require.True(t, ordinaryRevertibleObserved)
-	require.True(t, ordinaryParentCloud)
-	require.True(t, ordinaryNextProxyCloud)
-	require.True(t, batchedBeforeObserved)
-	require.True(t, batchedAfterObserved)
-	require.True(t, batchedParentCloud)
-	require.True(t, batchedNextProxyCloud)
+	want := cloudModeObservation{
+		seen:      true,
+		parent:    true,
+		nextProxy: true,
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	require.Equal(t, want, revertible)
+	require.True(t, batchedInjected)
+	require.Equal(t, want, batched)
 }
 
 func TestMultiSchemaChangePollJobCount(t *testing.T) {
