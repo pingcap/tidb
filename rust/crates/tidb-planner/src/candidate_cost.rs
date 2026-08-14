@@ -62,8 +62,8 @@ use crate::cardinality::row_size::RowSizeColumn;
 use crate::cost_usage::{CostVer2, PlanCostOption};
 use crate::physical_table_reader::StoreType;
 use crate::plan_cost_ver2::{
-    self as ver2, CostFactorVars, CostSessionOpts, HashJoinInput, IndexJoinInput, NetOwner,
-    TableScanInput, TableScanPenaltyInput, Ver2Factors,
+    self as ver2, CostFactorVars, CostSessionOpts, HashJoinInput, IndexJoinInput, IndexLookUpInput,
+    NetOwner, TableScanInput, TableScanPenaltyInput, Ver2Factors,
 };
 use crate::task_type::TaskType;
 
@@ -206,6 +206,17 @@ pub enum Candidate {
         /// Which reader this is.
         kind: ReaderKind,
     },
+    /// `PhysicalIndexLookUpReader`: an index scan followed by a row-handle
+    /// table scan. Both children run in TiKV; the lookup reader itself runs
+    /// at the root and charges the batched double read.
+    IndexLookup {
+        /// `p.IndexPlan`.
+        index: Box<Candidate>,
+        /// `p.TablePlan`.
+        table: Box<Candidate>,
+        /// The reader cardinalities, transfer widths, and pushed-limit state.
+        input: IndexLookUpInput,
+    },
     /// `PhysicalHashJoin` on a root task.
     HashJoin {
         /// The BUILD child, already resolved through `InnerChildIdx` /
@@ -319,6 +330,9 @@ pub fn number_of_ranges(node: &Candidate) -> usize {
         | Candidate::Selection { child, .. }
         | Candidate::Projection { child, .. }
         | Candidate::Sort { child, .. } => number_of_ranges(child),
+        Candidate::IndexLookup { index, table, .. } => {
+            number_of_ranges(index) + number_of_ranges(table)
+        }
         Candidate::HashJoin { build, probe, .. } | Candidate::IndexJoin { build, probe, .. } => {
             number_of_ranges(build) + number_of_ranges(probe)
         }
@@ -475,6 +489,28 @@ pub fn evaluate_traced(
                 row_size,
                 cost,
                 children: vec![child],
+            }
+        }
+        Candidate::IndexLookup {
+            index,
+            table,
+            input,
+        } => {
+            let index = evaluate_traced(index, env, TaskType::CopSingleRead, option);
+            let table = evaluate_traced(table, env, TaskType::CopSingleRead, option);
+            let cost = ver2::index_lookup_reader_cost(
+                option,
+                *input,
+                (&index.cost, &table.cost),
+                (&env.factors, &env.cost_factors),
+                &env.session,
+                task,
+            );
+            CostedNode {
+                rows: input.table_rows,
+                row_size: table.row_size,
+                cost,
+                children: vec![index, table],
             }
         }
         Candidate::HashJoin {
@@ -767,6 +803,51 @@ mod tests {
         assert_prints(&costed.children[1].children[0], "317.07");
         // └─IndexRangeScan_56 10010.01 254.63
         assert_prints(&costed.children[1].children[0].children[0], "254.63");
+    }
+
+    /// The non-covering secondary-index probe printed by the accepted Go
+    /// wide-row case. Its cost is per outer row even though `EXPLAIN` prints
+    /// the totals after multiplying by 8000 outer rows.
+    #[test]
+    fn a_secondary_index_join_probe_costs_the_recorded_double_read() {
+        let index = Candidate::Selection {
+            child: Box::new(Candidate::IndexScan {
+                rows: 1.2512512512512513,
+                row_size: RowSize::Fixed(32.0),
+                index_id: Some(2),
+                num_ranges: 1,
+                desc: false,
+            }),
+            input_rows: 1.2512512512512513,
+            conditions: vec![true],
+        };
+        let table = Candidate::TableScan {
+            rows: 1.25,
+            row_size: RowSize::Fixed(72.0),
+            is_child_of_inl: Some(true),
+            has_full_range_scan: false,
+            penalty: TableScanPenaltyInput::default(),
+            num_ranges: 0,
+            desc: false,
+        };
+        let lookup = Candidate::IndexLookup {
+            index: Box::new(index),
+            table: Box::new(table),
+            input: IndexLookUpInput {
+                index_rows: 1.25,
+                table_rows: 1.25,
+                index_row_size: 16.25,
+                table_row_size: 24.375,
+                pushed_limit: None,
+                expected_cnt: f64::MAX,
+            },
+        };
+        let costed = evaluate(&lookup, &env(), TaskType::Root);
+
+        assert_prints(&costed, "2444.77");
+        assert_prints(&costed.children[0], "317.07");
+        assert_prints(&costed.children[1], "313.89");
+        assert_eq!(number_of_ranges(&lookup), 1);
     }
 
     /// The HASH-join candidate at the SAME decision site, which a
