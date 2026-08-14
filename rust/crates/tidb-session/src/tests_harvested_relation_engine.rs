@@ -925,6 +925,52 @@ fn only_full_group_by_pins_by_name_by_where_equality_and_by_candidate_key() {
     );
 }
 
+#[test]
+fn only_full_group_by_checks_correlated_scalar_subquery_dependencies() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE ofgb_apply (a INT, b INT NOT NULL, c INT NOT NULL, d INT, \
+             UNIQUE KEY(b,c), UNIQUE KEY(b,d))",
+        )
+        .unwrap();
+
+    let error = session
+        .run("SELECT (SELECT SIN(a)) AS z FROM ofgb_apply GROUP BY d,b")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1055, "{error:?}");
+    assert!(
+        error.message.contains("nonaggregated column 'z'"),
+        "{}",
+        error.message
+    );
+
+    let error = session
+        .run("SELECT (SELECT SIN(a)) AS z, COUNT(*) FROM ofgb_apply")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8123, "{error:?}");
+    assert!(
+        error.message.contains("nonaggregated column 'z'"),
+        "{}",
+        error.message
+    );
+
+    for sql in [
+        "SELECT (SELECT SIN(a)) AS z FROM ofgb_apply GROUP BY a",
+        "SELECT (SELECT SIN(a)) AS z FROM ofgb_apply \
+         WHERE d IS NOT NULL GROUP BY d,b",
+        "SELECT (SELECT 1) AS z FROM ofgb_apply GROUP BY d,b",
+        "SELECT (SELECT SIN(a)) AS z, COUNT(*) FROM ofgb_apply WHERE a=1",
+        "SELECT SUM((SELECT a)) FROM ofgb_apply GROUP BY b",
+    ] {
+        session
+            .run(sql)
+            .unwrap_or_else(|error| panic!("{sql}: {error:?}"));
+    }
+}
+
 /// Join equalities participate in the same functional-dependency graph as
 /// table keys. These are the seven source cases from
 /// `planner/funcdep/only_full_group_by`: the spelling of the equality and the

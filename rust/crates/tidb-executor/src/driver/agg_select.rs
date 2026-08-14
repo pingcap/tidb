@@ -164,7 +164,13 @@ pub(crate) fn run_aggregate_select(
     // expressions are rewritten, on the clauses AS WRITTEN, which is also the
     // only point where the select list still distinguishes a bare column from
     // the FIRST_ROW carrier the stages below turn it into.
-    super::only_full_group_by::check_only_full_group_by(select, resolver.scope, ctx)?;
+    super::only_full_group_by::check_only_full_group_by(
+        select,
+        resolver.scope,
+        catalog,
+        current_db,
+        ctx,
+    )?;
     // ... and then the DISTINCT rule, in Go's order: `checkOnlyFullGroupBy`
     // runs in `buildSelect`, `checkOrderByInDistinct` later in `buildSort`.
     super::only_full_group_by::check_order_by_in_distinct(select, resolver.scope, ctx)?;
@@ -1013,7 +1019,7 @@ fn check_having_names(
     // `ErrUnknownColumn.GenWithStackByArgs(v.Name, ...)` over a
     // `*ast.ColumnName`.
     let mut correlated = Vec::new();
-    for query in having_subqueries(having) {
+    for query in direct_subqueries(having) {
         crate::driver::subquery::collect_correlated_columns_query(
             &query,
             resolver.scope,
@@ -1038,15 +1044,14 @@ fn check_having_names(
     Ok(())
 }
 
-/// Every subquery body directly under a `HAVING` expression.
+/// Every subquery body directly under an expression.
 ///
 /// This is the set `havingWindowAndOrderbyExprResolver.Enter` skips
 /// (`*ast.SubqueryExpr`, `*ast.ExistsSubqueryExpr`, and the subquery operand
-/// of `IN`/`ANY`/`ALL`), collected so their correlated names can be checked
-/// where Go checks them later. A subquery nested INSIDE one of these is not
-/// visited: its correlations are the middle query's outer scope, not this
-/// clause's, and the middle query reports its own.
-pub(crate) fn having_subqueries(expr: &tidb_ast::Expr) -> Vec<QueryStmt> {
+/// of `IN`/`ANY`/`ALL`). A subquery nested INSIDE one of these is not visited:
+/// its correlations are the middle query's outer scope, not the containing
+/// expression's, and the middle query reports its own.
+pub(crate) fn direct_subqueries(expr: &tidb_ast::Expr) -> Vec<QueryStmt> {
     struct Collector {
         found: Vec<QueryStmt>,
     }

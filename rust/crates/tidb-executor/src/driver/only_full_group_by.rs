@@ -64,6 +64,18 @@ struct Offender {
     clause: Clause,
 }
 
+/// A projected subquery value and the outer columns it varies with.
+///
+/// Go's new ONLY_FULL_GROUP_BY checker sees this after the subquery has become
+/// an Apply output column. The Apply/projection FD graph connects that output
+/// to every correlated outer column, while the reported name is the projected
+/// field's alias (or its ordinary display name), not one of those columns.
+struct CorrelatedProjection {
+    dependencies: Vec<usize>,
+    name: String,
+    position: usize,
+}
+
 /// Rejects a grouped query that reports a value its groups do not determine.
 ///
 /// A no-op unless `ONLY_FULL_GROUP_BY` is in the session's `sql_mode`, which
@@ -88,6 +100,8 @@ struct Offender {
 pub(crate) fn check_only_full_group_by(
     select: &tidb_ast::SelectStmt,
     scope: &FromScope,
+    catalog: &Catalog,
+    current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     if !ctx.only_full_group_by() || select.from.is_none() {
@@ -133,9 +147,10 @@ pub(crate) fn check_only_full_group_by(
     }
 
     let mut offenders: Vec<Offender> = Vec::new();
+    let mut correlated_projections: Vec<CorrelatedProjection> = Vec::new();
     let mut has_aggregate = false;
     for (index, field) in select.fields.fields().iter().enumerate() {
-        let tidb_ast::SelectField::Expr { expr, .. } = field else {
+        let tidb_ast::SelectField::Expr { expr, alias } = field else {
             continue;
         };
         has_aggregate |= aggregates_anywhere(expr);
@@ -148,6 +163,36 @@ pub(crate) fn check_only_full_group_by(
             &resolver,
             &mut offenders,
         );
+
+        let mut correlated_paths = Vec::new();
+        for query in subqueries_outside_exemptions(expr) {
+            super::subquery::collect_correlated_columns_query(
+                &query,
+                scope,
+                catalog,
+                current_db,
+                &mut correlated_paths,
+                ctx,
+            );
+        }
+        let mut dependencies = Vec::new();
+        for path in correlated_paths {
+            let Some((offset, _, _)) = resolver.resolve(&path) else {
+                continue;
+            };
+            if !dependencies.contains(&offset) {
+                dependencies.push(offset);
+            }
+        }
+        if !dependencies.is_empty() {
+            correlated_projections.push(CorrelatedProjection {
+                dependencies,
+                name: alias.clone().unwrap_or_else(|| {
+                    crate::driver::default_field_display_name(&select.fields, index, expr)
+                }),
+                position: index + 1,
+            });
+        }
     }
     // `ORDER BY` is checked only against an explicit `GROUP BY`: Go's
     // no-`GROUP BY` path reaches the clause only to widen an error it already
@@ -227,11 +272,22 @@ pub(crate) fn check_only_full_group_by(
             .iter()
             .map(|&offset| i64::try_from(offset).expect("scope column offset fits source int")),
     ));
+    let first_bad_projection = correlated_projections.into_iter().find(|projection| {
+        !projection.dependencies.iter().all(|&offset| {
+            determined.has(i64::try_from(offset).expect("scope column offset fits source int"))
+        })
+    });
     for offender in offenders {
         if determined
             .has(i64::try_from(offender.offset).expect("scope column offset fits source int"))
         {
             continue;
+        }
+        if first_bad_projection.as_ref().is_some_and(|projection| {
+            offender.clause != Clause::Select || projection.position < offender.position
+        }) {
+            let projection = first_bad_projection.expect("checked above");
+            return Err(correlated_projection_error(select, projection));
         }
         return Err(if select.group_by.is_empty() {
             DriverError::FieldNotInAggregatedQuery {
@@ -246,7 +302,73 @@ pub(crate) fn check_only_full_group_by(
             }
         });
     }
+    if let Some(projection) = first_bad_projection {
+        return Err(correlated_projection_error(select, projection));
+    }
     Ok(())
+}
+
+fn correlated_projection_error(
+    select: &tidb_ast::SelectStmt,
+    projection: CorrelatedProjection,
+) -> DriverError {
+    if select.group_by.is_empty() {
+        DriverError::FieldNotInAggregatedQuery {
+            position: projection.position,
+            column: projection.name,
+        }
+    } else {
+        DriverError::FieldNotInGroupBy {
+            position: projection.position,
+            clause: Clause::Select.label(),
+            column: projection.name,
+        }
+    }
+}
+
+/// Direct subqueries whose values are reported by this expression itself.
+///
+/// A subquery inside an aggregate, window function, `ANY_VALUE()` or
+/// `GROUPING()` belongs to that enclosing operation, exactly like the bare
+/// columns [`collect_offenders`] ignores there. Subqueries outside those
+/// boundaries become Apply output columns in Go's projection FD graph.
+fn subqueries_outside_exemptions(expr: &tidb_ast::Expr) -> Vec<tidb_ast::QueryStmt> {
+    struct Collector {
+        found: Vec<tidb_ast::QueryStmt>,
+    }
+    impl tidb_ast::Visitor for Collector {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() else {
+                return false;
+            };
+            match expr {
+                tidb_ast::Expr::Subquery(subquery) | tidb_ast::Expr::Exists { subquery, .. } => {
+                    self.found.push((**subquery).clone());
+                    true
+                }
+                tidb_ast::Expr::InSubquery { expr, subquery, .. } => {
+                    self.found.extend(subqueries_outside_exemptions(expr));
+                    self.found.push((**subquery).clone());
+                    true
+                }
+                tidb_ast::Expr::CompareSubquery { left, subquery, .. } => {
+                    self.found.extend(subqueries_outside_exemptions(left));
+                    self.found.push((**subquery).clone());
+                    true
+                }
+                other => is_exempt(other),
+            }
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut collector = Collector { found: Vec::new() };
+    let mut owned = expr.clone();
+    tidb_ast::Visitable::accept(&mut owned, &mut collector);
+    collector.found
 }
 
 /// Go `PlanBuilder.checkOrderByInDistinct`: a `SELECT DISTINCT` may only order

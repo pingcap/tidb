@@ -224,7 +224,7 @@ fn bind_having_correlations(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let mut correlated = Vec::new();
-    for query in having_subqueries(having) {
+    for query in direct_subqueries(having) {
         crate::driver::subquery::collect_correlated_columns_query(
             &query,
             source_scope,
