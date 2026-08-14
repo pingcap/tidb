@@ -4086,6 +4086,8 @@ func GlobalSystemVariableInitialValue(varName, varVal string) string {
 		}
 	case vardef.TiDBEnableMutationChecker:
 		varVal = vardef.On
+	case vardef.TiDBEnableAdaptiveLimitScan:
+		varVal = vardef.On
 	case vardef.TiDBPessimisticTransactionFairLocking:
 		if kerneltype.IsNextGen() {
 			varVal = vardef.Off

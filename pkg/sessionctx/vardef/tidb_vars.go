@@ -1453,7 +1453,7 @@ const (
 	DefHostname                         = "localhost"
 	DefIndexLookupConcurrency           = ConcurrencyUnset
 	DefIndexLookupJoinConcurrency       = ConcurrencyUnset
-	DefTiDBEnableAdaptiveLimitScan      = true
+	DefTiDBEnableAdaptiveLimitScan      = false
 	DefIndexSerialScanConcurrency       = 1
 	DefIndexJoinBatchSize               = 25000
 	DefIndexLookupSize                  = 20000

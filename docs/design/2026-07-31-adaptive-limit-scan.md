@@ -386,7 +386,7 @@ The feature is controlled by:
 SET SESSION tidb_enable_adaptive_limit_scan = ON;
 ```
 
-The variable has GLOBAL and SESSION scope, uses Boolean values, and defaults to ON. It can be disabled to restore the existing executor behavior for subsequent statements. It does not affect plan selection and does not introduce persistent profile state.
+The variable has GLOBAL and SESSION scope and uses Boolean values. Freshly bootstrapped clusters persist ON. Clusters upgraded from a bootstrap version before this feature persist OFF when the variable is absent, while an existing explicit value is preserved. It can be disabled to restore the existing executor behavior for subsequent statements. It does not affect plan selection and does not introduce persistent profile state.
 
 Existing batch and concurrency variables are unchanged and remain upper bounds. In particular, enabling this feature does not override or reduce the existing DistSQL request concurrency.
 
@@ -456,13 +456,13 @@ Additional limitations are:
 
 **Planner and plan cache:** The controller is attached while executors are built. It does not select a plan or change plan-cache keys. Cached plans are eligible or ineligible at execution time according to the same executor properties and session switch.
 
-**Mixed versions:** The design changes only TiDB-side execution and does not require a TiKV, PD, TiFlash, or protocol change. During a rolling upgrade, operators can explicitly set the GLOBAL switch to OFF until all desired TiDB instances are upgraded.
+**Mixed versions:** The design changes only TiDB-side execution and does not require a TiKV, PD, TiFlash, or protocol change. An upgraded cluster materializes the GLOBAL switch as OFF before the adaptive path can run, so a rolling upgrade preserves the existing executor behavior unless an operator explicitly enables the feature.
 
 **Partitioned tables and unsupported readers:** Unsupported paths skip the feature and preserve current behavior.
 
 **Resource control:** RU accounting and resource groups continue to observe the actual work performed. The controller does not bypass resource control.
 
-**Downgrade and rollback:** The feature creates no persistent metadata. Turning the variable OFF restores the existing execution path for subsequent statements.
+**Downgrade and rollback:** The feature creates no persistent execution profile or schema metadata. The persisted system-variable row is ignored by versions that do not define it. Turning the variable OFF restores the existing execution path for subsequent statements.
 
 ## Test Design
 
@@ -514,7 +514,7 @@ The complete SQL scenario matrix should include:
 
 Tests verify:
 
-- the switch is GLOBAL/SESSION, Boolean, and ON by default;
+- the switch is GLOBAL/SESSION and Boolean, fresh clusters bootstrap with ON, upgraded clusters materialize OFF when the variable is absent, and existing values are preserved;
 - OFF uses the existing executor behavior and omits adaptive runtime stats;
 - unsupported plans remain unchanged;
 - user batch and concurrency settings remain hard upper bounds;
@@ -595,7 +595,7 @@ Risks include:
 - recent samples may be biased if task completion order does not match the intended ordered consumption contract;
 - unchanged DistSQL concurrency can still read ahead inside requests before TiDB-side admission stops.
 
-The GLOBAL/SESSION gate provides an immediate opt-out if a regression is observed. Because the feature defaults to ON, performance evaluation must compare latency, throughput, and RU in addition to scan counters.
+The GLOBAL/SESSION gate provides an immediate opt-out if a regression is observed. Fresh clusters start with the feature ON, so performance evaluation must compare latency, throughput, and RU in addition to scan counters. Upgraded clusters remain OFF until operators opt in after validation.
 
 ## Investigation and Alternatives
 
