@@ -240,6 +240,14 @@ impl ColumnResolver for ScopeResolver<'_> {
         self.scope.zone.clone()
     }
 
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        self.scope
+            .constant_context
+            .as_ref()
+            .map(tidb_expr::Columns::date_modes)
+            .unwrap_or(tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE)
+    }
+
     fn connection_charset_info(&self) -> (&str, &str) {
         match &self.scope.constant_context {
             Some(ctx) => ctx.connection_charset_info(),

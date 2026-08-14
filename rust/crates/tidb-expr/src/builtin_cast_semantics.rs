@@ -16,7 +16,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::Datum;
+    use crate::{Datum, EvalError};
     use tidb_datatype::{FieldTypeCode, VectorFloat32};
 
     #[test]
@@ -89,6 +89,40 @@ mod tests {
             .sql_string()
             .expect("string value"),
             "[1,2]"
+        );
+    }
+
+    #[test]
+    fn cast_type_declarations_are_validated_before_evaluation() {
+        let rewrite = |sql: &str| {
+            let stmt = tidb_parser::parse(sql).expect("the CAST syntax parses");
+            let tidb_ast::Stmt::Query(query) = stmt else {
+                panic!("expected a query")
+            };
+            let tidb_ast::QueryStmt::Select(select) = &*query else {
+                panic!("expected a SELECT")
+            };
+            let tidb_ast::SelectField::Expr { expr, .. } = &select.fields.fields()[0] else {
+                panic!("expected an expression")
+            };
+            crate::rewriter::rewrite_expr_resolved(expr, &crate::rewriter::NoResolver)
+        };
+
+        assert_eq!(
+            rewrite("select cast(12.1 as decimal(3, 4))").unwrap_err(),
+            EvalError::InvalidTypeDeclaration {
+                code: 1427,
+                message:
+                    "For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '12.1')."
+                        .to_owned(),
+            }
+        );
+        assert_eq!(
+            rewrite("select cast(1 as datetime(7))").unwrap_err(),
+            EvalError::InvalidTypeDeclaration {
+                code: 1426,
+                message: "Too-big precision 7 specified for 'CAST'. Maximum is 6.".to_owned(),
+            }
         );
     }
 }

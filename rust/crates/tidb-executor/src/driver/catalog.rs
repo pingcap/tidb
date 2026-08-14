@@ -893,6 +893,10 @@ impl ColumnResolver for TableResolver<'_> {
         self.zone.clone()
     }
 
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        tidb_expr::Columns::date_modes(&self.constant_context)
+    }
+
     fn connection_charset_info(&self) -> (&str, &str) {
         self.constant_context.connection_charset_info()
     }

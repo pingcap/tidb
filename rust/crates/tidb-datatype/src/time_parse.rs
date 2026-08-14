@@ -650,6 +650,7 @@ fn parse_datetime_core<TZ: TimeZone>(
                 parse_compact_clock(&fraction, &mut fields[3..]);
             } else if matches!(length, 9 | 10) {
                 fields[5] = parse_prefix(&fraction, 2).unwrap_or(0);
+                truncated |= fraction.len() > 2;
             }
         }
         2 => return Err(TimeError::InvalidDate),
@@ -1691,6 +1692,8 @@ mod tests {
             "1000-09-31 00:00:00",
             "1001-02-29 00:00:00",
             "20170118.999",
+            "1701020304.111",
+            "1101010101.111",
             "2018-01",
             "2018.01",
             "20170118-12:34",

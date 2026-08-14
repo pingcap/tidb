@@ -1045,10 +1045,13 @@ fn cast_to_time_value(
         modes.allow_invalid_dates,
         &ctx.time_zone(),
     );
-    let Ok(time) = parsed else {
+    let Ok((time, truncated)) = parsed else {
         invalid_time_warning(ctx, &s);
         return Ok(None);
     };
+    if truncated {
+        ctx.append_warning(1292, &format!("Truncated incorrect datetime value: '{s}'"));
+    }
     // Go's SECOND check is the STRING signature's ALONE
     // (`builtinCastStringAsTimeSig`: `res.IsZero() && HasNoZeroDateMode()`).
     // The INT/REAL/DECIMAL signatures have no such rejection -- a numeric zero
@@ -1307,7 +1310,7 @@ fn parse_time_by_source(
     fsp: Option<i64>,
     allow_invalid: bool,
     zone: &tidb_datatype::SessionTimeZone,
-) -> Result<tidb_datatype::Time, ()> {
+) -> Result<(tidb_datatype::Time, bool), ()> {
     match v {
         Datum::Int(value) => tidb_datatype::parse_time_from_num(
             *value,
@@ -1317,7 +1320,7 @@ fn parse_time_by_source(
             allow_invalid,
             zone,
         )
-        .map(|parsed| parsed.time)
+        .map(|parsed| (parsed.time, false))
         .map_err(|_| ()),
         Datum::UInt(value) => {
             let signed = i64::try_from(*value).map_err(|_| ())?;
@@ -1329,7 +1332,7 @@ fn parse_time_by_source(
                 allow_invalid,
                 zone,
             )
-            .map(|parsed| parsed.time)
+            .map(|parsed| (parsed.time, false))
             .map_err(|_| ())
         }
         Datum::Decimal(value) => {
@@ -1337,18 +1340,26 @@ fn parse_time_by_source(
                 .map_err(|_| ())?;
             time.set_kind(kind);
             match fsp {
-                Some(fsp) => time.round_frac(fsp, zone).map_err(|_| ()),
-                None => Ok(time),
+                Some(fsp) => time
+                    .round_frac(fsp, zone)
+                    .map(|time| (time, false))
+                    .map_err(|_| ()),
+                None => Ok((time, false)),
             }
         }
-        Datum::Real(value) => real_to_time(*value, kind, fsp.unwrap_or(0), allow_invalid, zone),
-        Datum::Float32(value) => real_to_time(*value, kind, fsp.unwrap_or(0), allow_invalid, zone),
+        Datum::Real(value) => real_to_time(*value, kind, fsp.unwrap_or(0), allow_invalid, zone)
+            .map(|time| (time, false)),
+        Datum::Float32(value) => real_to_time(*value, kind, fsp.unwrap_or(0), allow_invalid, zone)
+            .map(|time| (time, false)),
         Datum::Time(value) => {
             let mut time = *value;
             time.set_kind(kind);
             match fsp {
-                Some(fsp) => time.round_frac(fsp, zone).map_err(|_| ()),
-                None => Ok(time),
+                Some(fsp) => time
+                    .round_frac(fsp, zone)
+                    .map(|time| (time, false))
+                    .map_err(|_| ()),
+                None => Ok((time, false)),
             }
         }
         // STRING/BYTES and every other coercible source keep Go's
@@ -1374,7 +1385,7 @@ fn parse_time_by_source(
             allow_invalid,
             zone,
         )
-        .map(|parsed| parsed.time)
+        .map(|parsed| (parsed.time, parsed.truncated))
         .map_err(|_| ()),
     }
 }
@@ -1435,6 +1446,38 @@ mod tests {
 
         fn append_warning(&self, code: u16, message: &str) {
             self.0.borrow_mut().push((code, message.to_owned()));
+        }
+    }
+
+    #[test]
+    fn truncated_datetime_cast_keeps_the_value_and_warns() {
+        for (input, expected) in [
+            ("1701020304.111", "2017-01-02 03:04:11"),
+            ("150101.a", "2015-01-01 00:00:00"),
+            ("150101.1a", "2015-01-01 01:00:00"),
+            ("150101.1a1", "2015-01-01 01:00:00"),
+            ("1101010101.111", "2011-01-01 01:01:11"),
+            ("1101010101.11aaaaa", "2011-01-01 01:01:11"),
+            ("1101010101.a1aaaaa", "2011-01-01 01:01:00"),
+            ("970101.111a1", "1997-01-01 11:01:00"),
+        ] {
+            let ctx = WarningContext(RefCell::new(Vec::new()));
+            let got = eval_cast(
+                &CastType::DateTime { fsp: Some(0) },
+                Datum::new_string(input),
+                None,
+                &ctx,
+            )
+            .expect("a truncated datetime remains a successful read cast");
+            assert_eq!(render_time(&got), expected, "{input}");
+            assert_eq!(
+                ctx.0.borrow().as_slice(),
+                &[(
+                    1292,
+                    format!("Truncated incorrect datetime value: '{input}'")
+                )],
+                "{input}"
+            );
         }
     }
 

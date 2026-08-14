@@ -132,6 +132,16 @@ pub enum EvalError {
         /// The fully formatted message body.
         message: String,
     },
+    /// A source-owned MySQL error raised while validating an expression's
+    /// declared type before evaluation (for example `DECIMAL(M,D)` or a
+    /// temporal fractional precision). The code and text are both fixed by
+    /// TiDB's preprocessing contract.
+    InvalidTypeDeclaration {
+        /// The MySQL error number.
+        code: u16,
+        /// The fully formatted message body.
+        message: String,
+    },
     /// Go `collate.ErrIllegalMix2Collation`/`ErrIllegalMix3Collation` (1267):
     /// the operands of one operation carry collations that cannot be
     /// aggregated, and no explicit `COLLATE` clause resolves the tie. Carries

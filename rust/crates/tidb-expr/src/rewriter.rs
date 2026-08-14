@@ -37,7 +37,7 @@ use fold_mode::FoldModeResolver;
 pub use result_type::go_result_type_code;
 use result_type::{
     binary_literal_type, builtin_return_type, cast_target, decimal_literal_type, int_literal_type,
-    returns_binary_string, set_binary_charset,
+    returns_binary_string, set_binary_charset, validate_cast_type,
 };
 
 /// Resolves a dotted column path to an output column, standing in for the
@@ -67,6 +67,13 @@ pub trait ColumnResolver {
     /// in rather than silently inheriting a hardcode -- which is exactly the
     /// dropped-Context bug this accessor closes.
     fn time_zone(&self) -> tidb_datatype::SessionTimeZone;
+
+    /// The statement's temporal SQL-mode bits. Typed `DATE`/`TIMESTAMP`
+    /// literals are built under the same session context as ordinary casts;
+    /// a resolver with no session uses TiDB's shipped default mode.
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        tidb_datatype::DateModes::TIDB_DEFAULT_SQL_MODE
+    }
 
     /// Go's `BuildContext.GetCharsetInfo`: the connection charset/collation
     /// stamped onto ordinary string literals and string results with no
@@ -1260,11 +1267,12 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
         {
             let text = literal_text(&cast.expr, resolver)?;
             let zone = resolver.time_zone();
+            let modes = resolver.date_modes();
             let (time, ret_type) = match cast.style {
                 tidb_ast::CastStyle::DateLiteral => {
-                    crate::time_literal::date_literal(&text, &zone)?
+                    crate::time_literal::date_literal(&text, &zone, modes)?
                 }
-                _ => crate::time_literal::timestamp_literal(&text, &zone)?,
+                _ => crate::time_literal::timestamp_literal(&text, &zone, modes)?,
             };
             // The folded constant carries Go's OWN result type -- `TypeDate`
             // or `TypeDatetime` with the literal's fsp -- over the same
@@ -1290,6 +1298,7 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                     "a CAST with the ARRAY modifier is not supported yet",
                 ));
             }
+            validate_cast_type(cast)?;
             let (name, mut ret_type) = cast_target(&cast.cast_type).ok_or(
                 EvalError::Unsupported("this CAST target type has no value domain yet"),
             )?;

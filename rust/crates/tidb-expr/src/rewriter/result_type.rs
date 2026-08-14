@@ -142,6 +142,45 @@ pub(super) fn set_binary_charset(ft: &mut FieldType) {
     ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
 }
 
+/// Go `preprocessor.checkFuncCastExpr` plus the duration precision check in
+/// `expressionRewriter.checkTimePrecision`. These reject the statement before
+/// the cast argument is evaluated.
+pub(super) fn validate_cast_type(cast: &tidb_ast::CastExpr) -> Result<(), crate::EvalError> {
+    use tidb_ast::CastType;
+
+    let invalid = |code, message| crate::EvalError::InvalidTypeDeclaration { code, message };
+    match cast.cast_type {
+        CastType::Decimal { flen, scale } if flen < scale => Err(invalid(
+            1427,
+            format!(
+                "For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '{}').",
+                cast.expr.restore()
+            ),
+        )),
+        CastType::Decimal { flen, .. } if flen > 65 => Err(invalid(
+            1426,
+            format!(
+                "Too-big precision {flen} specified for '{}'. Maximum is 65.",
+                cast.expr.restore()
+            ),
+        )),
+        CastType::Decimal { scale, .. } if scale > 30 => Err(invalid(
+            1425,
+            format!(
+                "Too big scale {scale} specified for column '{}'. Maximum is 30.",
+                cast.expr.restore()
+            ),
+        )),
+        CastType::DateTime { fsp: Some(fsp) } | CastType::Time { fsp: Some(fsp) } if fsp > 6 => {
+            Err(invalid(
+                1426,
+                format!("Too-big precision {fsp} specified for 'CAST'. Maximum is 6."),
+            ))
+        }
+        _ => Ok(()),
+    }
+}
+
 pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldType)> {
     use tidb_ast::CastType;
     let name = match cast_type {

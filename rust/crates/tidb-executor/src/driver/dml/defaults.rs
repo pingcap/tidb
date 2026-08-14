@@ -261,6 +261,10 @@ impl<R: tidb_expr::rewriter::ColumnResolver> tidb_expr::rewriter::ColumnResolver
         self.base.time_zone()
     }
 
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        self.base.date_modes()
+    }
+
     fn connection_charset_info(&self) -> (&str, &str) {
         self.base.connection_charset_info()
     }

@@ -57,11 +57,10 @@
 //! (`'... 14:00:00+02:00'`) normalizes into that zone, and a fractional
 //! carry rounds the INSTANT in it (see [`parse`]).
 //!
-//! LIKEWISE the SQL mode: Go consults the statement's `TypeCtx` flags, and
-//! this parses at the MOST PERMISSIVE setting (zero and invalid dates
-//! allowed). That can only accept where Go rejects, never the reverse, so
-//! adding this gate cannot turn a statement that works today into an error
-//! for a reason Go would not raise.
+//! The SQL mode follows the statement too. `ALLOW_INVALID_DATES` controls
+//! calendar validation while `DATE` applies `NO_ZERO_DATE` and
+//! `NO_ZERO_IN_DATE` after parsing, in the same order as Go's literal
+//! function.
 
 use crate::EvalError;
 use regex::Regex;
@@ -125,12 +124,19 @@ fn date_pattern() -> &'static Regex {
 pub(crate) fn date_literal(
     text: &str,
     zone: &tidb_datatype::SessionTimeZone,
+    modes: tidb_datatype::DateModes,
 ) -> Result<(Time, FieldType), EvalError> {
     if !date_pattern().is_match(text) {
         return Err(wrong_value(1292, "date", text));
     }
-    let time =
-        parse(text, TimeType::Date, 0, zone).map_err(|()| wrong_value(1292, "date", text))?;
+    let time = parse(text, TimeType::Date, 0, zone, modes.allow_invalid_dates)
+        .map_err(|()| wrong_value(1292, "datetime", text))?;
+    if modes.no_zero_date && time.is_zero() {
+        return Err(wrong_value(1292, "date", text));
+    }
+    if modes.no_zero_in_date && time.invalid_zero() && !time.is_zero() {
+        return Err(wrong_value(1292, "date", text));
+    }
     // Go `setDecimalAndFlenForDate` (`pkg/expression/builtin.go:1065`):
     // `SetDecimal(0)`, `SetFlen(mysql.MaxDateWidth)`, `SetType(mysql.TypeDate)`.
     let mut ft = FieldType::new(FieldTypeCode::Date);
@@ -148,13 +154,20 @@ pub(crate) fn date_literal(
 pub(crate) fn timestamp_literal(
     text: &str,
     zone: &tidb_datatype::SessionTimeZone,
+    modes: tidb_datatype::DateModes,
 ) -> Result<(Time, FieldType), EvalError> {
     if !timestamp_pattern().is_match(text) {
         return Err(wrong_value(1525, "datetime", text));
     }
     let fsp = i64::from(tidb_datatype::get_fsp(text));
-    let time = parse(text, TimeType::DateTime, fsp, zone)
-        .map_err(|()| wrong_value(1292, "datetime", text))?;
+    let time = parse(
+        text,
+        TimeType::DateTime,
+        fsp,
+        zone,
+        modes.allow_invalid_dates,
+    )
+    .map_err(|()| wrong_value(1292, "datetime", text))?;
     // Go `setDecimalAndFlenForDatetime(tm.Fsp())`
     // (`pkg/expression/builtin.go:1056`): the base type for the `ETDatetime`
     // return is already `mysql.TypeDatetime`, and only the scale and width
@@ -196,8 +209,9 @@ fn parse(
     kind: TimeType,
     fsp: i64,
     zone: &tidb_datatype::SessionTimeZone,
+    allow_invalid_dates: bool,
 ) -> Result<Time, ()> {
-    tidb_datatype::parse_time(text, kind, fsp, false, true, true, zone)
+    tidb_datatype::parse_time(text, kind, fsp, false, true, allow_invalid_dates, zone)
         .map(|parsed| parsed.time)
         .map_err(|_| ())
 }
@@ -227,32 +241,92 @@ mod tests {
     #[test]
     fn literal_gates_and_fraction_follow_the_recording() {
         let utc = tidb_datatype::SessionTimeZone::utc();
+        let modes = tidb_datatype::DateModes::default();
         // The regex gate: a date with no time is a 1525 for TIMESTAMP even
         // though CAST accepts it.
         assert!(matches!(
-            timestamp_literal("2024-01-01", &utc),
+            timestamp_literal("2024-01-01", &utc, modes),
             Err(EvalError::WrongTemporalLiteral { code: 1525, .. })
         ));
         // A parse failure is a hard error, not a warning plus NULL.
         assert!(matches!(
-            timestamp_literal("2024-01-01 14:00:00+14:01", &utc),
+            timestamp_literal("2024-01-01 14:00:00+14:01", &utc, modes),
             Err(EvalError::WrongTemporalLiteral { code: 1292, .. })
         ));
         // The literal's own fsp survives into the printed value.
         assert_eq!(
-            shown(timestamp_literal("2024-01-01 14:00:00.010", &utc)),
+            shown(timestamp_literal("2024-01-01 14:00:00.010", &utc, modes)),
             "2024-01-01 14:00:00.010"
         );
         assert_eq!(
-            shown(timestamp_literal("2024-01-01 14:00:00", &utc)),
+            shown(timestamp_literal("2024-01-01 14:00:00", &utc, modes)),
             "2024-01-01 14:00:00"
         );
         // DATE refuses a literal carrying a time part.
         assert!(matches!(
-            date_literal("2024-01-01 01:12:31", &utc),
+            date_literal("2024-01-01 01:12:31", &utc, modes),
             Err(EvalError::WrongTemporalLiteral { code: 1292, .. })
         ));
-        assert_eq!(shown(date_literal("2024-01-01", &utc)), "2024-01-01");
+        assert_eq!(shown(date_literal("2024-01-01", &utc, modes)), "2024-01-01");
+    }
+
+    #[test]
+    fn date_literal_uses_the_statement_sql_mode() {
+        let utc = tidb_datatype::SessionTimeZone::utc();
+        let permissive = tidb_datatype::DateModes::default();
+        assert_eq!(
+            shown(date_literal("0000-00-00", &utc, permissive)),
+            "0000-00-00"
+        );
+        assert_eq!(
+            shown(date_literal("2007-10-00", &utc, permissive)),
+            "2007-10-00"
+        );
+
+        let no_zero_date = tidb_datatype::DateModes {
+            no_zero_date: true,
+            ..permissive
+        };
+        assert!(matches!(
+            date_literal("0000-00-00", &utc, no_zero_date),
+            Err(EvalError::WrongTemporalLiteral { code: 1292, ref message })
+                if message == "Incorrect date value: '0000-00-00'"
+        ));
+        assert_eq!(
+            shown(date_literal("2007-10-00", &utc, no_zero_date)),
+            "2007-10-00"
+        );
+
+        let no_zero_in_date = tidb_datatype::DateModes {
+            no_zero_in_date: true,
+            ..permissive
+        };
+        assert_eq!(
+            shown(date_literal("0000-00-00", &utc, no_zero_in_date)),
+            "0000-00-00"
+        );
+        assert!(matches!(
+            date_literal("2007-10-00", &utc, no_zero_in_date),
+            Err(EvalError::WrongTemporalLiteral { code: 1292, ref message })
+                if message == "Incorrect date value: '2007-10-00'"
+        ));
+
+        assert!(matches!(
+            date_literal("2017-2-31", &utc, permissive),
+            Err(EvalError::WrongTemporalLiteral { code: 1292, ref message })
+                if message == "Incorrect datetime value: '2017-2-31'"
+        ));
+        assert_eq!(
+            shown(date_literal(
+                "2017-2-31",
+                &utc,
+                tidb_datatype::DateModes {
+                    allow_invalid_dates: true,
+                    ..permissive
+                }
+            )),
+            "2017-02-31"
+        );
     }
 
     /// The fold rounds in the SESSION zone, not in UTC: the capture in
@@ -264,6 +338,7 @@ mod tests {
     fn the_fractional_carry_rounds_in_the_session_zone() {
         let utc = tidb_datatype::SessionTimeZone::utc();
         let la = tidb_datatype::SessionTimeZone::Named(chrono_tz::America::Los_Angeles);
+        let modes = tidb_datatype::DateModes::default();
         for (input, in_utc, in_la) in [
             (
                 "2011-03-13 01:59:59.9999999",
@@ -276,18 +351,26 @@ mod tests {
                 "2011-11-06 01:00:00.000000",
             ),
         ] {
-            assert_eq!(shown(timestamp_literal(input, &utc)), in_utc, "{input}");
-            assert_eq!(shown(timestamp_literal(input, &la)), in_la, "{input}");
+            assert_eq!(
+                shown(timestamp_literal(input, &utc, modes)),
+                in_utc,
+                "{input}"
+            );
+            assert_eq!(
+                shown(timestamp_literal(input, &la, modes)),
+                in_la,
+                "{input}"
+            );
         }
         // An explicit offset in the literal normalizes into the session zone
         // (the divergence the module doc used to pin as UTC-only): 14:00 at
         // +02:00 is 12:00 UTC and 04:00 in Los Angeles (PST, -08:00).
         assert_eq!(
-            shown(timestamp_literal("2024-01-01 14:00:00+02:00", &utc)),
+            shown(timestamp_literal("2024-01-01 14:00:00+02:00", &utc, modes)),
             "2024-01-01 12:00:00"
         );
         assert_eq!(
-            shown(timestamp_literal("2024-01-01 14:00:00+02:00", &la)),
+            shown(timestamp_literal("2024-01-01 14:00:00+02:00", &la, modes)),
             "2024-01-01 04:00:00"
         );
     }
@@ -305,7 +388,8 @@ mod tests {
     #[test]
     fn the_literal_reports_gos_own_temporal_type() {
         let utc = tidb_datatype::SessionTimeZone::utc();
-        let (_, date) = date_literal("2024-01-01", &utc).unwrap();
+        let modes = tidb_datatype::DateModes::default();
+        let (_, date) = date_literal("2024-01-01", &utc, modes).unwrap();
         assert_eq!(date.code(), FieldTypeCode::Date);
         assert_eq!((date.flen(), date.decimal()), (10, 0));
 
@@ -317,7 +401,7 @@ mod tests {
             // reported scale is six and not the nine the text carries.
             ("2024-01-01 14:00:00.123456789", 6, 26),
         ] {
-            let (time, ft) = timestamp_literal(text, &utc).unwrap();
+            let (time, ft) = timestamp_literal(text, &utc, modes).unwrap();
             assert_eq!(ft.code(), FieldTypeCode::Datetime, "{text}");
             assert_eq!((ft.flen(), ft.decimal()), (flen, decimal), "{text}");
             assert_eq!(i64::from(time.fsp()), decimal, "{text}");

@@ -57,6 +57,10 @@ impl ColumnResolver for FoldModeResolver<'_> {
         self.base.time_zone()
     }
 
+    fn date_modes(&self) -> tidb_datatype::DateModes {
+        self.base.date_modes()
+    }
+
     fn connection_charset_info(&self) -> (&str, &str) {
         self.base.connection_charset_info()
     }

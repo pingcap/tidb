@@ -131,6 +131,7 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         // message and the SQLSTATE is derived from it like the JSON class
         // above.
         EvalError::WrongTemporalLiteral { code, message } => MysqlError::coded(code, message),
+        EvalError::InvalidTypeDeclaration { code, message } => MysqlError::coded(code, message),
         EvalError::OperandColumns(columns) => MysqlError::coded(
             ER_OPERAND_COLUMNS,
             format!("Operand should contain {columns} column(s)"),
