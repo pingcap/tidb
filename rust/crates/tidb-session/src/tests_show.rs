@@ -61,12 +61,15 @@ fn show_databases_and_tables() {
         .run_with_columns("SHOW DATABASES LIKE '%SCHEMA'")
         .unwrap()
     {
-        StmtOutput::Rows { rows, .. } => assert_eq!(
-            rows.iter()
-                .map(|row| datum_text(&row[0]).unwrap())
-                .collect::<Vec<_>>(),
-            vec!["INFORMATION_SCHEMA"]
-        ),
+        StmtOutput::Rows { columns, rows } => {
+            assert_eq!(columns[0].0, "Database (%SCHEMA)");
+            assert_eq!(
+                rows.iter()
+                    .map(|row| datum_text(&row[0]).unwrap())
+                    .collect::<Vec<_>>(),
+                vec!["INFORMATION_SCHEMA"]
+            );
+        }
         other => panic!("expected rows, got {other:?}"),
     }
     match session
@@ -138,6 +141,7 @@ fn show_databases_and_tables() {
         .unwrap()
     {
         StmtOutput::Rows { columns, rows } => {
+            assert_eq!(columns[0].0, "Tables_in_test (alpha)");
             assert_eq!(columns[1].0, "Table_type");
             assert_eq!(
                 rows,

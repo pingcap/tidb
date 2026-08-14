@@ -1100,6 +1100,7 @@ fn show_row_matches(
 struct ShowLikePattern {
     value: Option<String>,
     fold_lowercase: bool,
+    literal_name: Option<String>,
 }
 
 impl ShowLikePattern {
@@ -1117,6 +1118,11 @@ impl ShowLikePattern {
                     | tidb_ast::Expr::RawString(_)
                     | tidb_ast::Expr::Bool(_)
             );
+        let literal_name = if extracted_literal {
+            value.clone().filter(|name| !name.is_empty())
+        } else {
+            None
+        };
         Self {
             value: if extracted_literal {
                 value.map(|pattern| pattern.to_lowercase())
@@ -1124,7 +1130,14 @@ impl ShowLikePattern {
                 value
             },
             fold_lowercase: extracted_literal,
+            literal_name,
         }
+    }
+
+    fn column_name(&self, base: &str) -> String {
+        self.literal_name
+            .as_ref()
+            .map_or_else(|| base.to_owned(), |pattern| format!("{base} ({pattern})"))
     }
 
     fn matches(&self, text: &str) -> bool {
@@ -1311,7 +1324,11 @@ impl Session {
                     .into_iter()
                     .filter(|name| self.database_is_visible(name))
                     .collect();
-                let output = string_column_output("Database", names);
+                let column_name = like_pattern.as_ref().map_or_else(
+                    || "Database".to_owned(),
+                    |pattern| pattern.column_name("Database"),
+                );
+                let output = string_column_output(&column_name, names);
                 filter_show_output(output, like_pattern, where_clause).map(Some)
             }
             // Go `fetchShowTableStatus`: one row per table in the
@@ -2003,7 +2020,11 @@ impl Session {
                     })
                     .collect();
                 // Go names the column after the schema being listed.
-                let name_column = format!("Tables_in_{database}");
+                let base_name = format!("Tables_in_{database}");
+                let name_column = match &like_pattern {
+                    Some(pattern) => pattern.column_name(&base_name),
+                    None => base_name,
+                };
                 let field_type =
                     tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
                 let column_names: Vec<&str> = if full {
