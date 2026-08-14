@@ -35,6 +35,8 @@ import (
 // gives each proxy a copy of the parent's ReorgMeta, and FromProxyJob does not
 // copy UseCloudStorage back. Without this step, later proxies can revert to local
 // sort, including after a DDL owner failover.
+// This cannot reconstruct a selection made by an older binary before the field
+// was copied to the parent, because neither the parent nor SubJob persists it.
 func updateParentJobFromProxy(parentJob, proxyJob *model.Job) {
 	if parentJob.ReorgMeta != nil && proxyJob.ReorgMeta != nil && proxyJob.ReorgMeta.UseCloudStorage {
 		parentJob.ReorgMeta.UseCloudStorage = true
