@@ -177,11 +177,6 @@ fn index_part_text(table: &tidb_executor::KvTable, offset: usize, prefix_length:
 /// clauses separated by ",\n", the clustered primary key when the handle is
 /// one, then the indexes, then the closing paren with the engine and charset.
 ///
-/// NOT MODELLED (documented, and each one rejected at DDL time so no table can
-/// carry it): column and index comments, foreign keys, check constraints,
-/// temporary tables, views and sequences. Partitioning IS
-/// printed, by [`partition_clause_text`], for the one method the tier
-/// builds.
 /// A column prints its own charset/collation only where it differs from the
 /// table's, which is Go's rule and what the capture shows: a column whose
 /// charset differs prints `CHARACTER SET <cs> COLLATE <coll>`, one that only
@@ -514,13 +509,15 @@ fn partition_clause_text(table: &tidb_executor::KvTable) -> String {
 }
 
 /// The `ON DELETE`/`ON UPDATE` spelling `SHOW CREATE TABLE` prints, or
-/// `None` for the default -- Go prints no clause for `RESTRICT`, which is
-/// also what an omitted clause stores.
+/// `None` for an omitted clause.
 fn referential_action_sql(action: tidb_executor::FkAction) -> Option<&'static str> {
     match action {
-        tidb_executor::FkAction::Restrict => None,
+        tidb_executor::FkAction::NoOption => None,
+        tidb_executor::FkAction::Restrict => Some("RESTRICT"),
         tidb_executor::FkAction::Cascade => Some("CASCADE"),
         tidb_executor::FkAction::SetNull => Some("SET NULL"),
+        tidb_executor::FkAction::NoAction => Some("NO ACTION"),
+        tidb_executor::FkAction::SetDefault => Some("SET DEFAULT"),
     }
 }
 

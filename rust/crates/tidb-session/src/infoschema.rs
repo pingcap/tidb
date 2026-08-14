@@ -29,9 +29,8 @@
 //! NOT MODELLED (documented): the statistics columns are reported as TiDB
 //! reports them for a table it has not analyzed -- `TABLE_ROWS`,
 //! `DATA_LENGTH` and friends are 0 and `CREATE_TIME` is NULL rather than a
-//! fabricated timestamp; `REFERENTIAL_CONSTRAINTS` always has zero rows,
-//! since this tier has no foreign keys; the other `information_schema`
-//! tables; and the contents of `mysql`, which is a real schema OBJECT in the
+//! fabricated timestamp; the other `information_schema` tables; and the
+//! contents of `mysql`, which is a real schema OBJECT in the
 //! catalog (see `Catalog::default`) holding none of its 61 bootstrap tables,
 //! so `SCHEMATA` lists it as TiDB does while `TABLES` reports it empty and
 //! naming one of its tables refuses with 1146. The `performance_schema`,
@@ -216,9 +215,7 @@ pub fn table_rows(
         return Some(table_constraints_rows(catalog, visibility));
     }
     if name.eq_ignore_ascii_case("REFERENTIAL_CONSTRAINTS") {
-        // No foreign keys in this tier: the header exists, the body never
-        // does.
-        return Some(Vec::new());
+        return Some(referential_constraints_rows(catalog, visibility));
     }
     if name.eq_ignore_ascii_case("SCHEMA_PRIVILEGES")
         || name.eq_ignore_ascii_case("TABLE_PRIVILEGES")
@@ -245,8 +242,11 @@ fn key_column_usage_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Ve
                 &mut rows,
                 &schema,
                 &table_name,
-                "PRIMARY",
-                true,
+                KeyColumnConstraint {
+                    name: "PRIMARY",
+                    is_primary: true,
+                    reference: None,
+                },
                 1,
                 &table.columns[offset].name,
             );
@@ -261,15 +261,53 @@ fn key_column_usage_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> Ve
                     &mut rows,
                     &schema,
                     &table_name,
-                    &index.name,
-                    is_primary,
+                    KeyColumnConstraint {
+                        name: &index.name,
+                        is_primary,
+                        reference: None,
+                    },
                     (position + 1) as i64,
                     &table.columns[*offset].name,
                 );
             }
         }
+        for foreign_key in table.foreign_keys() {
+            for (position, column_name) in foreign_key.cols.iter().enumerate() {
+                push_key_column_usage_row(
+                    &mut rows,
+                    &schema,
+                    &table_name,
+                    KeyColumnConstraint {
+                        name: &foreign_key.name,
+                        is_primary: false,
+                        reference: Some(KeyColumnReference {
+                            schema: &foreign_key.ref_schema,
+                            table: &foreign_key.ref_table,
+                            column: foreign_key
+                                .ref_cols
+                                .get(position)
+                                .map_or("", String::as_str),
+                        }),
+                    },
+                    (position + 1) as i64,
+                    column_name,
+                );
+            }
+        }
     }
     rows
+}
+
+struct KeyColumnReference<'a> {
+    schema: &'a str,
+    table: &'a str,
+    column: &'a str,
+}
+
+struct KeyColumnConstraint<'a> {
+    name: &'a str,
+    is_primary: bool,
+    reference: Option<KeyColumnReference<'a>>,
 }
 
 /// One `KEY_COLUMN_USAGE` row.
@@ -282,28 +320,42 @@ fn push_key_column_usage_row(
     rows: &mut Vec<Vec<Datum>>,
     schema: &str,
     table_name: &str,
-    constraint_name: &str,
-    is_primary: bool,
+    constraint: KeyColumnConstraint<'_>,
     ordinal_position: i64,
     column_name: &str,
 ) {
+    let position_in_unique = if constraint.is_primary || constraint.reference.is_some() {
+        Datum::Int(if constraint.is_primary {
+            ordinal_position
+        } else {
+            1
+        })
+    } else {
+        Datum::Null
+    };
+    let (referenced_schema, referenced_table, referenced_column) =
+        constraint
+            .reference
+            .map_or((Datum::Null, Datum::Null, Datum::Null), |reference| {
+                (
+                    text(reference.schema),
+                    text(reference.table),
+                    text(reference.column),
+                )
+            });
     rows.push(vec![
         text(CATALOG),
         text(schema),
-        text(constraint_name),
+        text(constraint.name),
         text(CATALOG),
         text(schema),
         text(table_name),
         text(column_name),
         Datum::Int(ordinal_position),
-        if is_primary {
-            Datum::Int(ordinal_position)
-        } else {
-            Datum::Null
-        },
-        Datum::Null,
-        Datum::Null,
-        Datum::Null,
+        position_in_unique,
+        referenced_schema,
+        referenced_table,
+        referenced_column,
     ]);
 }
 
@@ -426,8 +478,54 @@ fn table_constraints_rows(catalog: &Catalog, visibility: &SchemaVisibility) -> V
                 constraint_type,
             ));
         }
+        for foreign_key in table.foreign_keys() {
+            rows.push(table_constraint_row(
+                &schema,
+                &table_name,
+                &foreign_key.name,
+                "FOREIGN KEY",
+            ));
+        }
     }
     rows
+}
+
+fn referential_constraints_rows(
+    catalog: &Catalog,
+    visibility: &SchemaVisibility,
+) -> Vec<Vec<Datum>> {
+    let mut rows = Vec::new();
+    for (schema, table_name) in visible_tables(catalog, visibility, ANY_PRIV) {
+        let Some(TableEntry::Kv(table)) = catalog.table_in(&schema, &table_name) else {
+            continue;
+        };
+        for foreign_key in table.foreign_keys() {
+            rows.push(vec![
+                text(CATALOG),
+                text(&schema),
+                text(&foreign_key.name),
+                text(CATALOG),
+                text(&schema),
+                text("PRIMARY"),
+                text("NONE"),
+                text(referential_rule(foreign_key.on_update)),
+                text(referential_rule(foreign_key.on_delete)),
+                text(&table_name),
+                text(&foreign_key.ref_table),
+            ]);
+        }
+    }
+    rows
+}
+
+fn referential_rule(action: tidb_executor::FkAction) -> &'static str {
+    match action {
+        tidb_executor::FkAction::NoOption | tidb_executor::FkAction::NoAction => "NO ACTION",
+        tidb_executor::FkAction::Restrict => "RESTRICT",
+        tidb_executor::FkAction::Cascade => "CASCADE",
+        tidb_executor::FkAction::SetNull => "SET NULL",
+        tidb_executor::FkAction::SetDefault => "SET DEFAULT",
+    }
 }
 
 /// One `TABLE_CONSTRAINTS` row.

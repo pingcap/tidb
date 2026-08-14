@@ -572,23 +572,35 @@ impl KvIndex {
     }
 }
 
-/// What a parent-side mutation does to the rows that reference it: Go's
-/// `ast.ReferOptionType` reduced to the three behaviours that differ.
-///
-/// `NO ACTION`, `SET DEFAULT` and a missing clause all collapse into
-/// [`FkAction::Restrict`]. That is not an approximation: MySQL's InnoDB --
-/// and TiDB after it -- never implemented `SET DEFAULT`, and `NO ACTION` is
-/// not deferred to commit either, so all three reject the parent mutation
-/// outright (re-confirmed via `gorun`, not assumed).
+/// Go `ast.ReferOptionType`: both its exact metadata spelling and the parent
+/// mutation behavior TiDB gives that spelling.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FkAction {
-    /// Reject the parent mutation while a referencing row exists.
+    /// No clause was supplied. It behaves as `RESTRICT`, while SHOW omits it
+    /// and `REFERENTIAL_CONSTRAINTS` reports `NO ACTION`.
     #[default]
+    NoOption,
+    /// Reject the parent mutation while a referencing row exists.
     Restrict,
     /// Delete the referencing rows, or repoint them at the new value.
     Cascade,
     /// Null out the referencing columns.
     SetNull,
+    /// TiDB stores this spelling but, like MySQL, does not defer the check.
+    NoAction,
+    /// TiDB stores this spelling but does not implement default propagation.
+    SetDefault,
+}
+
+impl FkAction {
+    /// Whether this spelling rejects a parent mutation when children exist.
+    #[must_use]
+    pub fn is_restricting(self) -> bool {
+        matches!(
+            self,
+            Self::NoOption | Self::Restrict | Self::NoAction | Self::SetDefault
+        )
+    }
 }
 
 /// One foreign key of a [`KvTable`]: Go `model.FKInfo`, reduced to what a

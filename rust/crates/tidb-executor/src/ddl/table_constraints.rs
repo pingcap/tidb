@@ -594,16 +594,15 @@ fn child_generated_column_rules(
     Ok(())
 }
 
-/// Go `ast.ReferOptionType` -> the behaviour it actually produces. See
-/// [`FkAction`] for why three of the six spellings collapse into `Restrict`.
+/// Go `ast.ReferOptionType` -> the exact stored metadata spelling.
 fn fk_action(action: Option<tidb_ast::ReferentialAction>) -> FkAction {
     match action.unwrap_or(tidb_ast::ReferentialAction::NoOption) {
+        tidb_ast::ReferentialAction::NoOption => FkAction::NoOption,
+        tidb_ast::ReferentialAction::Restrict => FkAction::Restrict,
         tidb_ast::ReferentialAction::Cascade => FkAction::Cascade,
         tidb_ast::ReferentialAction::SetNull => FkAction::SetNull,
-        tidb_ast::ReferentialAction::NoOption
-        | tidb_ast::ReferentialAction::Restrict
-        | tidb_ast::ReferentialAction::NoAction
-        | tidb_ast::ReferentialAction::SetDefault => FkAction::Restrict,
+        tidb_ast::ReferentialAction::NoAction => FkAction::NoAction,
+        tidb_ast::ReferentialAction::SetDefault => FkAction::SetDefault,
     }
 }
 

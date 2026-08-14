@@ -1535,3 +1535,101 @@ fn a_parent_column_rename_carries_every_childs_reference_to_the_new_name() {
         )
     );
 }
+
+/// `FKInfo` is the single metadata authority for all three foreign-key
+/// information-schema tables and for `SHOW CREATE TABLE` action spelling.
+#[test]
+fn foreign_key_catalog_rows_preserve_constraint_metadata() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE parent (id INT PRIMARY KEY)")
+        .unwrap();
+    session
+        .run(
+            "CREATE TABLE child (id INT PRIMARY KEY, parent_id INT, parent2_id INT, \
+             CONSTRAINT fk_default FOREIGN KEY (parent_id) REFERENCES parent(id), \
+             CONSTRAINT fk_rules FOREIGN KEY (parent2_id) REFERENCES parent(id) \
+             ON DELETE RESTRICT ON UPDATE NO ACTION)",
+        )
+        .unwrap();
+
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT constraint_name, constraint_type \
+             FROM information_schema.table_constraints \
+             WHERE constraint_schema = 'test' AND table_name = 'child' \
+             ORDER BY constraint_name",
+        ),
+        vec![
+            vec!["PRIMARY".to_owned(), "PRIMARY KEY".to_owned()],
+            vec!["fk_default".to_owned(), "FOREIGN KEY".to_owned()],
+            vec!["fk_rules".to_owned(), "FOREIGN KEY".to_owned()],
+        ]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT constraint_name, column_name, ordinal_position, \
+                    position_in_unique_constraint, referenced_table_schema, \
+                    referenced_table_name, referenced_column_name \
+             FROM information_schema.key_column_usage \
+             WHERE table_schema = 'test' AND table_name = 'child' \
+               AND constraint_name LIKE 'fk_%' ORDER BY constraint_name",
+        ),
+        vec![
+            vec!["fk_default", "parent_id", "1", "1", "test", "parent", "id"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>(),
+            vec!["fk_rules", "parent2_id", "1", "1", "test", "parent", "id"]
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>(),
+        ]
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT constraint_name, unique_constraint_schema, \
+                    unique_constraint_name, match_option, update_rule, delete_rule, \
+                    table_name, referenced_table_name \
+             FROM information_schema.referential_constraints \
+             WHERE constraint_schema = 'test' AND table_name = 'child' \
+             ORDER BY constraint_name",
+        ),
+        vec![
+            vec![
+                "fk_default",
+                "test",
+                "PRIMARY",
+                "NONE",
+                "NO ACTION",
+                "NO ACTION",
+                "child",
+                "parent",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>(),
+            vec![
+                "fk_rules",
+                "test",
+                "PRIMARY",
+                "NONE",
+                "NO ACTION",
+                "RESTRICT",
+                "child",
+                "parent",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect::<Vec<_>>(),
+        ]
+    );
+    let create = &rows(&mut session, "SHOW CREATE TABLE child")[0][1];
+    assert!(
+        create.contains("ON DELETE RESTRICT ON UPDATE NO ACTION"),
+        "{create}"
+    );
+}

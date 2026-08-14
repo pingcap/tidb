@@ -486,7 +486,7 @@ fn cascade_at_depth(
         } else {
             foreign_key.on_update
         };
-        if action == FkAction::Restrict {
+        if action.is_restricting() {
             return Err(violation(
                 Side::Parent,
                 &child_db,
@@ -510,7 +510,9 @@ fn cascade_at_depth(
             continue;
         };
         match action {
-            FkAction::Restrict => unreachable!("a restrict returned above"),
+            FkAction::NoOption | FkAction::Restrict | FkAction::NoAction | FkAction::SetDefault => {
+                unreachable!("a restricting action returned above")
+            }
             FkAction::Cascade if deleting => {
                 // ON DELETE CASCADE: the dependents go away, and so do THEIR
                 // dependents -- the recursion is what makes it transitive.
