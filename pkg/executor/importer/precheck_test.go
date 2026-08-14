@@ -267,9 +267,6 @@ func TestCheckRequirementsTTL(t *testing.T) {
 	err = c.CheckRequirements(ctx, tk.Session())
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
 	require.ErrorContains(t, err, "target table has TTL enabled, please disable TTL before IMPORT INTO")
-	err = c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session())
-	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
-	require.ErrorContains(t, err, "target table has TTL enabled, please disable TTL before IMPORT INTO")
 
 	tk.MustExec("alter table test.t ttl_enable = 'OFF'")
 	is = tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
@@ -285,5 +282,4 @@ func TestCheckRequirementsTTL(t *testing.T) {
 		Table: tableObj,
 	}
 	require.NoError(t, c.CheckRequirements(ctx, tk.Session()))
-	require.NoError(t, c.CheckRequirementsBeforeInitDataFiles(ctx, tk.Session()))
 }

@@ -48,18 +48,6 @@ var GetEtcdClient = store.NewEtcdCli
 //
 // we check them one by one, and return the first error we meet.
 func (e *LoadDataController) CheckRequirements(ctx context.Context, se sessionctx.Context) error {
-<<<<<<< HEAD
-=======
-	return e.checkRequirements(ctx, se, true)
-}
-
-// CheckRequirementsBeforeInitDataFiles checks requirements that don't depend on
-// discovered data files, and is used by async-prepare submit path.
-func (e *LoadDataController) CheckRequirementsBeforeInitDataFiles(ctx context.Context, se sessionctx.Context) error {
-	return e.checkRequirements(ctx, se, false)
-}
-
-func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionctx.Context, checkTotalFileSize bool) error {
 	tableInfo := e.Plan.TableInfo
 	// Import table mode can prevent TTL from deleting data and causing a checksum
 	// mismatch. However, because TTL jobs run asynchronously, a job that races with the
@@ -72,7 +60,6 @@ func (e *LoadDataController) checkRequirements(ctx context.Context, se sessionct
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table has TTL enabled, please disable TTL before IMPORT INTO")
 	}
 
->>>>>>> d5f9ca5690c (importinto: forbid importing into TTL-enabled tables (#70427))
 	conn := se.GetSQLExecutor()
 	if e.DataSourceType == DataSourceTypeFile {
 		cnt, err := GetActiveJobCnt(ctx, conn, e.Plan.DBName, e.Plan.TableInfo.Name.L)
