@@ -117,6 +117,55 @@ fn an_explicit_transaction_holds_one_transaction_for_every_statement() {
     assert_eq!(cluster.live.load(Ordering::Acquire), 0);
 }
 
+/// Go `TIDB_CURRENT_TSO()` reads the session transaction context rather than
+/// allocating a timestamp of its own. An autocommit statement publishes the
+/// timestamp its first table read opened, while an explicit transaction keeps
+/// one value until COMMIT and then returns to zero.
+#[test]
+fn current_tso_follows_the_cluster_transaction_lifecycle() {
+    let (mut session, cluster) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+        .expect("seed");
+
+    let autocommit = rows(
+        &mut session,
+        "SELECT TIDB_CURRENT_TSO(), v FROM t ORDER BY id",
+    );
+    let Datum::Int(autocommit_tso) = autocommit[0][0] else {
+        panic!("TIDB_CURRENT_TSO must return a signed integer")
+    };
+    assert!(autocommit_tso > 0, "the table read opens the statement TSO");
+    assert_eq!(
+        autocommit_tso as u64,
+        cluster.clock.load(Ordering::Acquire),
+        "the builtin reports the timestamp of the read that produced its row"
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT TIDB_CURRENT_TSO()"),
+        vec![vec![Datum::Int(0)]],
+        "an autocommit statement does not retain its completed transaction"
+    );
+
+    session.control_transaction("BEGIN").expect("begin");
+    let first = rows(&mut session, "SELECT TIDB_CURRENT_TSO()");
+    let second = rows(&mut session, "SELECT TIDB_CURRENT_TSO()");
+    assert_eq!(first, second, "one explicit transaction keeps one TSO");
+    assert!(matches!(first[0][0], Datum::Int(value) if value > 0));
+
+    session
+        .control_transaction("BEGIN")
+        .expect("a second begin implicitly commits and starts anew");
+    let replacement = rows(&mut session, "SELECT TIDB_CURRENT_TSO()");
+    assert_ne!(replacement, first, "a new transaction takes a new TSO");
+
+    session.control_transaction("COMMIT").expect("commit");
+    assert_eq!(
+        rows(&mut session, "SELECT TIDB_CURRENT_TSO()"),
+        vec![vec![Datum::Int(0)]]
+    );
+}
+
 /// Repeatable read, which holding one transaction is what buys: a statement
 /// inside `BEGIN` cannot see a commit made after `BEGIN`, because there is
 /// no newer timestamp for it to see it at. Go's default isolation level.

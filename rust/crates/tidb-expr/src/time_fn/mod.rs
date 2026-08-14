@@ -64,6 +64,7 @@ pub(crate) fn dispatch(
         "WEEK" => week(vals, cols.default_week_format()),
         "WEEKOFYEAR" => week_of_year_builtin(vals),
         "TIDB_PARSE_TSO_LOGICAL" => tidb_parse_tso_logical(vals),
+        "TIDB_CURRENT_TSO" => current_tso(vals, cols),
         "YEARWEEK" => yearweek(vals),
         "MONTHNAME" => monthname(vals),
         "DAYNAME" => dayname(vals),
@@ -103,6 +104,15 @@ pub(crate) fn dispatch(
         | "MINUTE_MICROSECOND" | "SECOND_MICROSECOND" => calendar::extract_composite(name, vals),
         _ => return None,
     })
+}
+
+/// `TIDB_CURRENT_TSO()`: the active transaction's start timestamp, or zero
+/// when the session is not inside a transaction.
+fn current_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+    if !vals.is_empty() {
+        return Err(EvalError::Unsupported("bad function arity"));
+    }
+    Ok(Datum::Int(cols.current_tso()))
 }
 
 /// `DATE(expr)`, after Go's declared `ETDatetime` argument cast has produced

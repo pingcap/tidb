@@ -20,7 +20,7 @@ use std::rc::Rc;
 
 use tidb_datatype::Datum;
 use tidb_distsql::{WarningCollector, WarningLevel};
-use tidb_expr::{Columns, ErrorLevel, MysqlRng};
+use tidb_expr::{Columns, CurrentTso, ErrorLevel, MysqlRng};
 pub use tidb_util::context::MAX_WARNING_COUNT;
 
 use crate::error_context::{ErrGroup, Level, LevelMap};
@@ -313,6 +313,10 @@ pub struct StmtContext {
     /// Go `SessionVars.LastFoundRows`, the count published when the previous
     /// result set reached EOF.
     last_found_rows: Option<u64>,
+    /// The session transaction timestamp. Unlike ordinary statement
+    /// snapshots, this handle may be published after the context is built
+    /// when an autocommit statement performs its first storage read.
+    current_tso: CurrentTso,
     /// Go `StmtCtx.InsertID`: the explicit value a row gave the
     /// `AUTO_INCREMENT` column, which the OK packet falls back to.
     given_insert_id: Rc<Cell<u64>>,
@@ -571,6 +575,7 @@ impl StmtContext {
             prev_last_insert_id: 0,
             prev_row_count: 0,
             last_found_rows: None,
+            current_tso: CurrentTso::default(),
             given_insert_id: Rc::default(),
             retry_auto_ids: Rc::default(),
             row_id_shards: Rc::default(),
@@ -1519,6 +1524,13 @@ impl StmtContext {
         self
     }
 
+    /// Attaches the session's live transaction timestamp authority.
+    #[must_use]
+    pub fn with_current_tso(mut self, current_tso: CurrentTso) -> Self {
+        self.current_tso = current_tso;
+        self
+    }
+
     /// Go `StmtCtx.InsertID`: the explicit non-zero value a row GAVE the
     /// `AUTO_INCREMENT` column. Go overwrites it per row, so the LAST such
     /// value of the statement is the one that survives.
@@ -1700,6 +1712,10 @@ impl Columns for StmtContext {
 
     fn found_rows(&self) -> Option<u64> {
         self.last_found_rows
+    }
+
+    fn current_tso(&self) -> i64 {
+        self.current_tso.value()
     }
 
     fn tidb_info(&self) -> String {

@@ -387,6 +387,10 @@ pub struct Session {
     /// `ResetContextOfStmt`). It is recorded even for a statement that ends
     /// in an error, because Go's bits survive the failure too.
     statement_kind: StatementKind,
+    /// Go `SessionVars.TxnCtx.StartTS`, shared with statement contexts so a
+    /// lazily opened cluster snapshot becomes visible inside the statement
+    /// that opened it.
+    current_tso: tidb_executor::CurrentTso,
     /// Go `StmtCtx.LastInsertID`/`LastInsertIDSet`: the id the RUNNING
     /// statement publishes. The session owns the cell and lends it to every
     /// [`tidb_executor::StmtContext`] the statement builds, so an allocating
@@ -522,6 +526,7 @@ impl Default for Session {
             prev_row_count: 0,
             last_found_rows: 0,
             statement_kind: StatementKind::Other,
+            current_tso: tidb_executor::CurrentTso::default(),
             published_last_insert_id: Rc::default(),
             retry_auto_ids: Rc::default(),
             row_id_shards: Rc::default(),
@@ -588,6 +593,12 @@ pub mod vars;
 pub use vars::{GlobalSysvars, SessionVars, VarError};
 
 impl Session {
+    /// The live transaction timestamp authority used by storage integration.
+    #[must_use]
+    pub fn current_tso(&self) -> tidb_executor::CurrentTso {
+        self.current_tso.clone()
+    }
+
     /// A fresh session with its own empty catalog.
     #[must_use]
     pub fn new() -> Self {

@@ -90,6 +90,9 @@ pub trait ClusterTransactions: Send + Sync {
 /// same timestamp -- which is what makes a racing writer a write conflict
 /// instead of a silent overwrite.
 pub trait OpenClusterTransaction: Send {
+    /// The transaction timestamp shared by every statement until it ends.
+    fn start_ts(&self) -> u64;
+
     /// One statement's read handle. Dropping it ends the statement, never the
     /// transaction.
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
@@ -122,16 +125,33 @@ pub trait OpenClusterTransaction: Send {
 /// not a timestamp; [`RealOptimisticTransactionOpener::begin_at`] refuses it,
 /// so such a statement fails closed instead of publishing anywhere.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct StatementReadTs(Arc<Mutex<Option<u64>>>);
+pub(crate) struct StatementReadTs {
+    value: Arc<Mutex<Option<u64>>>,
+    current_tso: tidb_executor::CurrentTso,
+}
 
 impl StatementReadTs {
+    pub(crate) fn new(current_tso: tidb_executor::CurrentTso) -> Self {
+        Self {
+            value: Arc::default(),
+            current_tso,
+        }
+    }
+
     fn record(&self, start_ts: u64) {
-        *self.0.lock().unwrap_or_else(|poison| poison.into_inner()) = Some(start_ts);
+        *self
+            .value
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(start_ts);
+        self.current_tso.publish(start_ts);
     }
 
     /// The timestamp the statement read at, or `None` if it never read.
     pub(crate) fn get(&self) -> Option<u64> {
-        *self.0.lock().unwrap_or_else(|poison| poison.into_inner())
+        *self
+            .value
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
     }
 }
 
@@ -337,6 +357,10 @@ impl ClusterTransactions for RealClusterTransactions {
 }
 
 impl OpenClusterTransaction for SessionTransaction {
+    fn start_ts(&self) -> u64 {
+        SessionTransaction::start_ts(self)
+    }
+
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
         SessionTransaction::snapshot(self).map_err(|error| error.to_string())
     }

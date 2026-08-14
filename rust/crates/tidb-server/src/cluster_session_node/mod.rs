@@ -729,10 +729,14 @@ impl ClusterServerSession {
         savepoint: BufferImage,
         run: &mut impl FnMut(&mut Session) -> Result<T, SqlQueryError>,
     ) -> Result<T, SqlQueryError> {
+        let autocommit = self.explicit.is_none();
+        if autocommit {
+            self.session.current_tso().clear();
+        }
         // The statement's own timestamp, filled in by its first read and read
         // back by its publication after the read handle is gone. Autocommit
         // publishes THERE, not at a fresh one: see `StatementReadTs`.
-        let read_ts = transactions::StatementReadTs::default();
+        let read_ts = transactions::StatementReadTs::new(self.session.current_tso());
         let snapshot = match self.explicit.as_ref() {
             // The transaction's timestamp is already spent; its per-statement
             // read handle costs nothing, so there is nothing to defer.
@@ -753,7 +757,7 @@ impl ClusterServerSession {
         self.declare_read_shape(shape);
         let outcome = run(&mut self.session);
         let finished = self.finish_snapshot();
-        match outcome {
+        let result = (|| match outcome {
             Ok(value) => {
                 finished?;
                 self.commit_if_session_left_transaction()?;
@@ -766,7 +770,11 @@ impl ClusterServerSession {
                 self.buffer.restore(savepoint);
                 Err(error)
             }
+        })();
+        if autocommit {
+            self.session.current_tso().clear();
         }
+        result
     }
 
     /// Whether the statement that just failed is one Go would have retried
@@ -894,7 +902,13 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.is_autocommit() {
             return Ok(());
         }
-        self.explicit = Some(self.transactions.begin().map_err(SqlQueryError::unknown)?);
+        self.open_explicit()
+    }
+
+    fn open_explicit(&mut self) -> Result<(), SqlQueryError> {
+        let transaction = self.transactions.begin().map_err(SqlQueryError::unknown)?;
+        self.session.current_tso().publish(transaction.start_ts());
+        self.explicit = Some(transaction);
         Ok(())
     }
 
@@ -955,6 +969,7 @@ impl ClusterServerSession {
     /// empty and nothing is spent.
     fn commit_explicit(&mut self) -> Result<(), SqlQueryError> {
         self.savepoints.clear();
+        self.session.current_tso().clear();
         let Some(transaction) = self.explicit.take() else {
             // No transaction and no statement read: the buffer can only hold
             // what a previous statement already published, so there is nothing
@@ -1023,6 +1038,7 @@ impl ClusterServerSession {
     fn discard_explicit(&mut self) -> Result<(), SqlQueryError> {
         self.buffer.reset();
         self.savepoints.clear();
+        self.session.current_tso().clear();
         match self.explicit.take() {
             Some(transaction) => transaction.rollback().map_err(SqlQueryError::unknown),
             None => Ok(()),
@@ -1299,7 +1315,7 @@ impl QuerySession for ClusterServerSession {
             // that its COMMIT will prewrite at.
             Some(TransactionControl::Begin { .. }) => {
                 self.discard_explicit()?;
-                self.explicit = Some(self.transactions.begin().map_err(SqlQueryError::unknown)?);
+                self.open_explicit()?;
             }
             Some(
                 control @ (TransactionControl::Savepoint(_)

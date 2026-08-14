@@ -324,6 +324,10 @@ pub(super) struct MockSessionTransaction {
 }
 
 impl OpenClusterTransaction for MockSessionTransaction {
+    fn start_ts(&self) -> u64 {
+        self.start_ts
+    }
+
     fn snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
         self.cluster.live.fetch_add(1, Ordering::AcqRel);
         Ok(Box::new(MockSnapshot {

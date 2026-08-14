@@ -18,7 +18,37 @@
 //! evaluation context. It owns no scalar representation; every value crossing
 //! the seam is the dependency-leaf [`tidb_datatype::Datum`].
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use tidb_datatype::Datum;
+
+/// The transaction timestamp visible to one SQL session.
+///
+/// The handle is shared with statement contexts because an autocommit
+/// transaction opens lazily on its first storage read, after expression
+/// evaluation has already been wired. Publishing through this handle lets a
+/// later expression in that same statement observe the timestamp without
+/// allocating one for constant-only statements.
+#[derive(Clone, Debug, Default)]
+pub struct CurrentTso(Arc<AtomicU64>);
+
+impl CurrentTso {
+    /// Publishes the timestamp of the transaction that just opened.
+    pub fn publish(&self, tso: u64) {
+        self.0.store(tso, Ordering::Release);
+    }
+
+    /// Clears the completed transaction from the session.
+    pub fn clear(&self) {
+        self.publish(0);
+    }
+
+    /// Returns the signed value `TIDB_CURRENT_TSO()` exposes.
+    #[must_use]
+    pub fn value(&self) -> i64 {
+        i64::try_from(self.0.load(Ordering::Acquire)).unwrap_or(i64::MAX)
+    }
+}
 
 /// Why an expression could not be evaluated in the supported domain.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -436,6 +466,12 @@ pub trait Columns {
     /// replace it.
     fn found_rows(&self) -> Option<u64> {
         None
+    }
+
+    /// Go `TIDB_CURRENT_TSO()`: the active transaction's start timestamp, or
+    /// zero when this session has no active transaction.
+    fn current_tso(&self) -> i64 {
+        0
     }
 
     /// Reads a supported system variable.

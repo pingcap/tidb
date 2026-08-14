@@ -163,6 +163,7 @@ pub use table_dual::TableDualExec;
 /// re-exported so the session can read the one a `StmtContext` recorded
 /// without depending on `tidb-distsql` directly.
 pub use tidb_distsql::WarningLevel as WarnLevel;
+pub use tidb_expr::CurrentTso;
 pub use tidb_expr::{
     eval_in, like_match_with_collation, truthy_of, BlockEncryptionMode, Columns, EvalError,
     JsonError, MysqlRng, SessionTimeZone,
