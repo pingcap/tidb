@@ -266,6 +266,8 @@ func TestHistoryReader(t *testing.T) {
 	require.NoError(t, err)
 	_, err = file.WriteString("{\"begin\":1672129270,\"end\":1672129280,\"digest\":\"digest2\",\"exec_count\":20}\n")
 	require.NoError(t, err)
+	_, err = file.WriteString("{\"begin\":1672129270,\"end\":1672129280,\"digest\":\"evicted_digest\",\"exec_count\":99,\"evicted\":true}\n")
+	require.NoError(t, err)
 	require.NoError(t, file.Close())
 
 	file, err = os.Create(filename2)
