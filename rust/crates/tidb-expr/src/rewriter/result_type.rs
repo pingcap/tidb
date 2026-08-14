@@ -344,8 +344,8 @@ fn clock_datetime_return_type(args: &[Expression], not_null: bool) -> Option<Fie
     Some(result)
 }
 
-fn clock_date_return_type(args: &[Expression]) -> Option<FieldType> {
-    if !args.is_empty() {
+fn date_return_type(args: &[Expression], arity: usize) -> Option<FieldType> {
+    if args.len() != arity {
         return None;
     }
     let mut result = FieldType::new(FieldTypeCode::Date);
@@ -357,11 +357,62 @@ fn clock_date_return_type(args: &[Expression]) -> Option<FieldType> {
 
 fn clock_duration_return_type(args: &[Expression]) -> Option<FieldType> {
     let fsp = clock_fsp(args)?;
+    duration_return_type(fsp, 8)
+}
+
+fn duration_return_type(fsp: i64, base_flen: i64) -> Option<FieldType> {
+    if !(0..=6).contains(&fsp) {
+        return None;
+    }
     let mut result = FieldType::new(FieldTypeCode::Duration);
     result.set_decimal(fsp);
-    result.set_flen(8 + if fsp == 0 { 0 } else { fsp + 1 });
+    result.set_flen(base_flen + if fsp == 0 { 0 } else { fsp + 1 });
     set_binary_charset(&mut result);
     Some(result)
+}
+
+fn sec_to_time_return_type(args: &[Expression]) -> Option<FieldType> {
+    let [arg] = args else {
+        return None;
+    };
+    let fsp = if matches!(
+        arg,
+        Expression::Constant(Constant {
+            value: Datum::BinaryLiteral(_),
+            ..
+        })
+    ) {
+        0
+    } else if arg_eval_type(args, 0) == tidb_datatype::EvalType::String {
+        6
+    } else {
+        let decimal = arg.static_type().map_or(0, FieldType::decimal);
+        if decimal == tidb_datatype::UNSPECIFIED_LENGTH || decimal > 6 {
+            6
+        } else {
+            decimal.max(0)
+        }
+    };
+    duration_return_type(fsp, 10)
+}
+
+fn maketime_return_type(args: &[Expression]) -> Option<FieldType> {
+    let [_, _, seconds] = args else {
+        return None;
+    };
+    let fsp = match arg_eval_type(args, 2) {
+        tidb_datatype::EvalType::Int => 0,
+        tidb_datatype::EvalType::Real | tidb_datatype::EvalType::Decimal => {
+            let decimal = seconds.static_type().map_or(6, FieldType::decimal);
+            if decimal == tidb_datatype::UNSPECIFIED_LENGTH || decimal > 6 {
+                6
+            } else {
+                decimal
+            }
+        }
+        _ => 6,
+    };
+    duration_return_type(fsp, 10)
 }
 
 fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
@@ -753,19 +804,17 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // ETDatetime or ETDuration retain those native chunk cell domains;
         // string-formatting functions stay textual.
         "time" => time_return_type(args)?,
-        "date" if args.len() == 1 => {
-            let mut ft = FieldType::new(FieldTypeCode::Date);
-            ft.set_decimal(0);
-            ft.set_flen(10);
-            ft
-        }
+        "date" => date_return_type(args, 1)?,
         "now" | "current_timestamp" | "localtime" | "localtimestamp" | "utc_timestamp" => {
             clock_datetime_return_type(args, false)?
         }
-        "curdate" | "current_date" | "utc_date" => clock_date_return_type(args)?,
+        "curdate" | "current_date" | "utc_date" => date_return_type(args, 0)?,
         "curtime" | "current_time" | "utc_time" => clock_duration_return_type(args)?,
-        "monthname" | "dayname" | "last_day" | "sec_to_time" | "maketime" | "makedate"
-        | "from_days" | "date_format" | "str_to_date" => text(),
+        "last_day" | "from_days" => date_return_type(args, 1)?,
+        "makedate" => date_return_type(args, 2)?,
+        "sec_to_time" => sec_to_time_return_type(args)?,
+        "maketime" => maketime_return_type(args)?,
+        "monthname" | "dayname" | "date_format" | "str_to_date" => text(),
         "addtime" | "subtime" => add_sub_time_return_type(args)?,
         "timestamp" => timestamp_return_type(args)?,
         "sysdate" => clock_datetime_return_type(args, true)?,

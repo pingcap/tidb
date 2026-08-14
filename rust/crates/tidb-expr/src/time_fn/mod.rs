@@ -76,6 +76,7 @@ pub(crate) fn dispatch(
         "PERIOD_DIFF" => period_diff(vals),
         "TIME_FORMAT" => time_format(vals),
         "STR_TO_DATE" => calendar::str_to_date(vals, cols),
+        "FROM_DAYS" => calendar::from_days(vals),
         "TIMEDIFF" => time_diff(vals),
         "CONVERT_TZ" => convert_tz::convert_tz(vals),
         "FROM_UNIXTIME" => session_tz::from_unixtime(vals, cols),

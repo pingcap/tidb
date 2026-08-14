@@ -1152,9 +1152,14 @@ impl ScalarFunction {
                 | "CURTIME"
                 | "CURRENT_TIME"
                 | "UTC_TIME"
+                | "LAST_DAY"
+                | "MAKEDATE"
+                | "FROM_DAYS"
+                | "SEC_TO_TIME"
+                | "MAKETIME"
         ) {
             let result = crate::time_fn::dispatch(&upper, &vals, ctx)
-                .expect("the current-clock family is registered")?;
+                .expect("the native temporal family is registered")?;
             return match self.get_static_type().map(FieldType::code) {
                 Some(tidb_datatype::FieldTypeCode::Datetime) => crate::cast::parse_computed_time(
                     &result,

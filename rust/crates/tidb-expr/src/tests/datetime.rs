@@ -1384,7 +1384,7 @@ fn an_etdatetime_argument_is_cast_before_the_signature_runs() {
         ("dayofweek(20240315123045)", "INT:6"),
         ("dayofyear(20240315123045)", "INT:75"),
         ("weekday(20240315123045)", "INT:4"),
-        ("last_day(20240315123045)", "STR:2024-03-31"),
+        ("last_day(20240315123045)", "TIME:2024-03-31"),
         (
             "timestampadd(day,1,20240315123045)",
             "STR:2024-03-16 12:30:45",
