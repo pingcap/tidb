@@ -236,6 +236,9 @@ impl Connections {
                 .map_err(|error| format!("initial database `{database}`: {error:?}"))?;
         }
         session.attach_privileges(self.privileges.clone());
+        session
+            .run("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci")
+            .expect("mysql-tester's driver handshake collation is accepted");
         // mysql-tester puts these in the DSN of EVERY connection it opens, so
         // the driver issues them before the script's first statement. They are
         // in the recorded output's provenance, not the engine's defaults:
@@ -388,6 +391,30 @@ mod tests {
                     "connection {connection} lost mysql-tester's {name}"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn every_connection_uses_mysql_tester_handshake_collation() {
+        let mut pool = Connections::open("driver/isolation").unwrap();
+        for connection in ["default", "conn1"] {
+            if connection != "default" {
+                pool.apply(&open_root(connection)).unwrap();
+            }
+            assert_eq!(
+                pool.current()
+                    .vars()
+                    .get_system("character_set_connection")
+                    .unwrap(),
+                "utf8mb4"
+            );
+            assert_eq!(
+                pool.current()
+                    .vars()
+                    .get_system("collation_connection")
+                    .unwrap(),
+                "utf8mb4_general_ci"
+            );
         }
     }
 
