@@ -142,6 +142,85 @@ pub(super) fn set_binary_charset(ft: &mut FieldType) {
     ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
 }
 
+pub(super) fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldType)> {
+    use tidb_ast::CastType;
+    let name = match cast_type {
+        CastType::Signed => "cast_signed",
+        CastType::Unsigned => "cast_unsigned",
+        CastType::Char { .. } => "cast_char",
+        CastType::Binary { .. } => "cast_binary",
+        CastType::Decimal { .. } => "cast_decimal",
+        CastType::Date => "cast_date",
+        CastType::DateTime { .. } => "cast_datetime",
+        CastType::Time { .. } => "cast_time",
+        CastType::Year => "cast_year",
+        CastType::Double | CastType::Float => "cast_double",
+        CastType::Json => "cast_json",
+        CastType::Vector { .. } => "cast_vector",
+    };
+    let ft = match cast_type {
+        CastType::Signed => FieldType::new(FieldTypeCode::LongLong),
+        CastType::Unsigned => {
+            let mut ft = FieldType::new(FieldTypeCode::LongLong);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+            ft
+        }
+        CastType::Char { len, .. } => {
+            let mut ft = FieldType::new(FieldTypeCode::VarString);
+            if let Some(len) = len {
+                ft.set_flen(i64::from(*len));
+            }
+            ft
+        }
+        CastType::Binary { len } => {
+            let mut ft = FieldType::new(FieldTypeCode::VarString);
+            set_binary_charset(&mut ft);
+            if let Some(len) = len {
+                ft.set_flen(i64::from(*len));
+            }
+            ft
+        }
+        CastType::Decimal { flen, scale } => {
+            let mut ft = FieldType::new(FieldTypeCode::NewDecimal);
+            ft.set_flen(i64::from(*flen));
+            ft.set_decimal(i64::from(*scale));
+            ft
+        }
+        CastType::Date => FieldType::new(FieldTypeCode::VarString),
+        CastType::DateTime { fsp } => {
+            let decimal = i64::from(fsp.unwrap_or(0));
+            let mut ft = FieldType::new(FieldTypeCode::VarString);
+            ft.set_flen(if decimal > 0 { 20 + decimal } else { 19 });
+            ft.set_decimal(decimal);
+            ft
+        }
+        CastType::Time { fsp } => {
+            let decimal = i64::from(fsp.unwrap_or(0));
+            let mut ft = FieldType::new(FieldTypeCode::Duration);
+            ft.set_flen(if decimal > 0 { 11 + decimal } else { 10 });
+            ft.set_decimal(decimal);
+            set_binary_charset(&mut ft);
+            ft
+        }
+        CastType::Year => FieldType::new(FieldTypeCode::LongLong),
+        CastType::Double | CastType::Float => FieldType::new(FieldTypeCode::Double),
+        CastType::Json => {
+            let mut ft = FieldType::new(FieldTypeCode::Json);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON);
+            ft
+        }
+        CastType::Vector { dimensions } => {
+            let mut ft = FieldType::new(FieldTypeCode::VectorFloat32);
+            if let Some(dimensions) = dimensions {
+                ft.set_flen(i64::from(*dimensions));
+            }
+            ft.set_decimal(0);
+            ft
+        }
+    };
+    Some((name, ft))
+}
+
 /// Go `types.DefaultTypeForValue` for a `*MyDecimal`: the printed length plus
 /// one for the decimal point, and the literal's own fractional digits.
 pub(super) fn decimal_literal_type(value: &tidb_datatype::Decimal) -> FieldType {

@@ -36,7 +36,7 @@ pub use control_type::{infer_type4_control_funcs, set_numeric_len_from_args};
 use fold_mode::FoldModeResolver;
 pub use result_type::go_result_type_code;
 use result_type::{
-    binary_literal_type, builtin_return_type, decimal_literal_type, int_literal_type,
+    binary_literal_type, builtin_return_type, cast_target, decimal_literal_type, int_literal_type,
     returns_binary_string, set_binary_charset,
 };
 
@@ -67,6 +67,13 @@ pub trait ColumnResolver {
     /// in rather than silently inheriting a hardcode -- which is exactly the
     /// dropped-Context bug this accessor closes.
     fn time_zone(&self) -> tidb_datatype::SessionTimeZone;
+
+    /// Go's `BuildContext.GetCharsetInfo`: the connection charset/collation
+    /// stamped onto ordinary string literals and string results with no
+    /// stronger collation source.
+    fn connection_charset_info(&self) -> (&str, &str) {
+        crate::collation_derive::connection_charset_info()
+    }
 
     /// Length of the immutable server identity returned by `TIDB_VERSION()`.
     /// Go reads the process globals while building this function and uses the
@@ -199,86 +206,6 @@ fn literal_text(expr: &Expr, resolver: &impl ColumnResolver) -> Result<String, E
         .value
         .sql_string()
         .map_err(|_| EvalError::Unsupported("invalid UTF-8 in a temporal literal"))
-}
-
-fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldType)> {
-    use tidb_ast::CastType;
-    let name = match cast_type {
-        CastType::Signed => "cast_signed",
-        CastType::Unsigned => "cast_unsigned",
-        CastType::Char { .. } => "cast_char",
-        CastType::Binary { .. } => "cast_binary",
-        CastType::Decimal { .. } => "cast_decimal",
-        CastType::Date => "cast_date",
-        CastType::DateTime { .. } => "cast_datetime",
-        CastType::Time { .. } => "cast_time",
-        CastType::Year => "cast_year",
-        CastType::Double | CastType::Float => "cast_double",
-        CastType::Json => "cast_json",
-        CastType::Vector { .. } => "cast_vector",
-    };
-    let ft = match cast_type {
-        CastType::Signed => FieldType::new(FieldTypeCode::LongLong),
-        CastType::Unsigned => {
-            let mut ft = FieldType::new(FieldTypeCode::LongLong);
-            ft.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
-            ft
-        }
-        CastType::Char { len, .. } => {
-            let mut ft = FieldType::new(FieldTypeCode::VarString);
-            if let Some(len) = len {
-                ft.set_flen(i64::from(*len));
-            }
-            ft
-        }
-        CastType::Binary { len } => {
-            let mut ft = FieldType::new(FieldTypeCode::VarString);
-            set_binary_charset(&mut ft);
-            if let Some(len) = len {
-                ft.set_flen(i64::from(*len));
-            }
-            ft
-        }
-        CastType::Decimal { flen, scale } => {
-            let mut ft = FieldType::new(FieldTypeCode::NewDecimal);
-            ft.set_flen(i64::from(*flen));
-            ft.set_decimal(i64::from(*scale));
-            ft
-        }
-        CastType::Date => FieldType::new(FieldTypeCode::VarString),
-        CastType::DateTime { fsp } => {
-            let decimal = i64::from(fsp.unwrap_or(0));
-            let mut ft = FieldType::new(FieldTypeCode::VarString);
-            ft.set_flen(if decimal > 0 { 20 + decimal } else { 19 });
-            ft.set_decimal(decimal);
-            ft
-        }
-        CastType::Time { fsp } => {
-            let decimal = i64::from(fsp.unwrap_or(0));
-            let mut ft = FieldType::new(FieldTypeCode::Duration);
-            ft.set_flen(if decimal > 0 { 11 + decimal } else { 10 });
-            ft.set_decimal(decimal);
-            set_binary_charset(&mut ft);
-            ft
-        }
-        // Likewise, the year cast yields an integer value here.
-        CastType::Year => FieldType::new(FieldTypeCode::LongLong),
-        CastType::Double | CastType::Float => FieldType::new(FieldTypeCode::Double),
-        CastType::Json => {
-            let mut ft = FieldType::new(FieldTypeCode::Json);
-            ft.add_flags(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON);
-            ft
-        }
-        CastType::Vector { dimensions } => {
-            let mut ft = FieldType::new(FieldTypeCode::VectorFloat32);
-            if let Some(dimensions) = dimensions {
-                ft.set_flen(i64::from(*dimensions));
-            }
-            ft.set_decimal(0);
-            ft
-        }
-    };
-    Some((name, ft))
 }
 
 #[cfg(test)]
@@ -510,7 +437,7 @@ pub fn rewrite_expr_resolved(
         return Ok(Expression::Column(col));
     }
     let mut built = rewrite_leaf(expr, resolver)?;
-    derive_tree_collation(&mut built)?;
+    derive_tree_collation_with_connection(&mut built, resolver.connection_charset_info())?;
     resolver.fold_constant(&mut built, resolver.fold_mode());
     Ok(built)
 }
@@ -527,11 +454,18 @@ pub fn rewrite_expr_resolved(
 /// recursion in [`rewrite_expr_resolved`] runs it once per level, and only the
 /// first visit does work.
 pub fn derive_tree_collation(expr: &mut Expression) -> Result<(), EvalError> {
+    derive_tree_collation_with_connection(expr, crate::collation_derive::connection_charset_info())
+}
+
+fn derive_tree_collation_with_connection(
+    expr: &mut Expression,
+    connection: (&str, &str),
+) -> Result<(), EvalError> {
     let Expression::ScalarFunction(func) = expr else {
         return Ok(());
     };
     for arg in &mut func.args {
-        derive_tree_collation(arg)?;
+        derive_tree_collation_with_connection(arg, connection)?;
     }
     if func.collation.has_coercibility() {
         return Ok(());
@@ -541,7 +475,9 @@ pub fn derive_tree_collation(expr: &mut Expression) -> Result<(), EvalError> {
         .as_ref()
         .map_or(tidb_datatype::EvalType::Int, FieldType::eval_type);
     let name = func.func_name.lowercase().to_owned();
-    let ec = crate::collation_derive::derive_collation(&name, &func.args, ret_type)?;
+    let ec = crate::collation_derive::derive_collation_with_connection(
+        &name, &func.args, ret_type, connection,
+    )?;
     crate::collation_derive::apply_derived_collation(expr, &ec);
     // Some getFunction implementations overwrite generic derivation with a
     // fixed result charset. Reapply those source-owned result rules last.
@@ -594,7 +530,16 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             )))
         }
         Expr::Null => Ok(constant(Datum::Null, FieldTypeCode::Null)),
-        Expr::String(text) => Ok(constant_string(text)),
+        Expr::String(text) => {
+            let (charset, collation) = resolver.connection_charset_info();
+            let mut field_type = FieldType::new(FieldTypeCode::VarString);
+            field_type.set_flen(text.len() as i64);
+            field_type.set_charset_name(charset);
+            field_type.set_collation_name(collation);
+            let datum =
+                Datum::new_collation_string(text.as_bytes().to_vec(), field_type.collation());
+            Ok(Expression::Constant(Constant::new(datum, field_type)))
+        }
         // Go's parser folds a decimal literal into a `*MyDecimal` value whose
         // type `DefaultTypeForValue` derives from the printed literal.
         //
@@ -1345,9 +1290,25 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                     "a CAST with the ARRAY modifier is not supported yet",
                 ));
             }
-            let (name, ret_type) = cast_target(&cast.cast_type).ok_or(EvalError::Unsupported(
-                "this CAST target type has no value domain yet",
-            ))?;
+            let (name, mut ret_type) = cast_target(&cast.cast_type).ok_or(
+                EvalError::Unsupported("this CAST target type has no value domain yet"),
+            )?;
+            if let tidb_ast::CastType::Char { charset, .. } = &cast.cast_type {
+                match charset.as_deref() {
+                    Some("BINARY" | "binary") => set_binary_charset(&mut ret_type),
+                    Some(charset) => {
+                        let charset = tidb_datatype::Charset::from_name(charset)
+                            .ok_or(EvalError::Unsupported("unknown CAST character set"))?;
+                        ret_type.set_charset_name(charset.name());
+                        ret_type.set_collation_name(charset.default_collation().name());
+                    }
+                    None => {
+                        let (charset, collation) = resolver.connection_charset_info();
+                        ret_type.set_charset_name(charset);
+                        ret_type.set_collation_name(collation);
+                    }
+                }
+            }
             let arg = rewrite_expr_resolved(&cast.expr, resolver)?;
             // `CAST(x AS BINARY)` is Go's `funcPropAuto` binary-result arm:
             // a gbk-charset argument transcodes on the way in, which is why

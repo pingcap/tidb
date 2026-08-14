@@ -56,6 +56,32 @@ fn constant_folding_preserves_expression_coercibility() {
     }
 }
 
+/// Go's parser stamps ordinary string literals with
+/// `@@character_set_connection`/`@@collation_connection`, and expression
+/// derivation uses the same pair for string results with no stronger source.
+#[test]
+fn set_names_reaches_literal_and_folded_expression_collations() {
+    let mut session = Session::new();
+    session
+        .run("SET NAMES utf8mb4 COLLATE utf8mb4_general_ci")
+        .unwrap();
+    for sql in [
+        "SELECT COLLATION('a')",
+        "SELECT COLLATION(CONCAT('a', 'b'))",
+        "SELECT COLLATION(CAST(1 AS CHAR))",
+        "SELECT COLLATION(IFNULL(CONCAT(NULL), '~'))",
+        "SELECT COLLATION(IFNULL(CONCAT(NULL), IFNULL(CONCAT(NULL), '~')))",
+    ] {
+        assert_eq!(one(&mut session, sql), "utf8mb4_general_ci", "{sql}");
+    }
+    // Go's system constants deliberately use TiDB's server default rather
+    // than the connection pair (pkg/expression/collation.go).
+    assert_eq!(
+        one(&mut session, "SELECT COLLATION(VERSION())"),
+        "utf8mb4_bin"
+    );
+}
+
 /// A `_ci` column compared with a literal folds case: the literal is
 /// COERCIBLE (4) and the column IMPLICIT (2), so the column's collation wins
 /// every one of these. Captured: each count is 2, where a byte-wise

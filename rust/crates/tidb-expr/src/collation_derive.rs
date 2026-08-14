@@ -399,6 +399,20 @@ pub fn check_and_derive_collation_from_exprs(
     eval_type: EvalType,
     args: &[Expression],
 ) -> Result<ExprCollation, EvalError> {
+    check_and_derive_collation_from_exprs_with_connection(
+        func_name,
+        eval_type,
+        args,
+        connection_charset_info(),
+    )
+}
+
+fn check_and_derive_collation_from_exprs_with_connection(
+    func_name: &str,
+    eval_type: EvalType,
+    args: &[Expression],
+    connection: (&str, &str),
+) -> Result<ExprCollation, EvalError> {
     let Some(mut ec) = infer_collation(args) else {
         return Err(illegal_mix_collation_err(func_name, args));
     };
@@ -406,7 +420,7 @@ pub fn check_and_derive_collation_from_exprs(
         return Err(illegal_mix_collation_err(func_name, args));
     }
     if eval_type == EvalType::String && ec.coer == Coercibility::NUMERIC {
-        let (chs, coll) = connection_charset_info();
+        let (chs, coll) = connection;
         ec.charset = chs.to_owned();
         ec.collation = coll.to_owned();
         ec.coer = Coercibility::COERCIBLE;
@@ -431,39 +445,68 @@ pub fn derive_collation(
     args: &[Expression],
     ret_type: EvalType,
 ) -> Result<ExprCollation, EvalError> {
+    derive_collation_with_connection(func_name, args, ret_type, connection_charset_info())
+}
+
+/// [`derive_collation`] under the statement's connection charset/collation.
+pub fn derive_collation_with_connection(
+    func_name: &str,
+    args: &[Expression],
+    ret_type: EvalType,
+    connection: (&str, &str),
+) -> Result<ExprCollation, EvalError> {
     match func_name {
         // Aggregate over ALL arguments, string in / string out.
         "concat" | "concat_ws" | "lower" | "lcase" | "reverse" | "upper" | "ucase" | "quote"
         | "coalesce" | "greatest" | "least" => {
-            check_and_derive_collation_from_exprs(func_name, ret_type, args)
+            check_and_derive_collation_from_exprs_with_connection(
+                func_name, ret_type, args, connection,
+            )
         }
         // Only the first argument decides.
         "left" | "right" | "repeat" | "trim" | "ltrim" | "rtrim" | "substr" | "substring"
         | "mid" | "substring_index" | "replace" | "translate"
             if !args.is_empty() =>
         {
-            check_and_derive_collation_from_exprs(func_name, ret_type, &args[..1])
+            check_and_derive_collation_from_exprs_with_connection(
+                func_name,
+                ret_type,
+                &args[..1],
+                connection,
+            )
         }
         // `INSERT(str, pos, len, newstr)`: arguments 0 and 3.
-        "insert_func" if args.len() == 4 => check_and_derive_collation_from_exprs(
+        "insert_func" if args.len() == 4 => check_and_derive_collation_from_exprs_with_connection(
             func_name,
             ret_type,
             &[args[0].clone(), args[3].clone()],
+            connection,
         ),
         // `LPAD(str, len, padstr)` / `RPAD`: arguments 0 and 2.
-        "lpad" | "rpad" if args.len() == 3 => check_and_derive_collation_from_exprs(
-            func_name,
-            ret_type,
-            &[args[0].clone(), args[2].clone()],
-        ),
+        "lpad" | "rpad" if args.len() == 3 => {
+            check_and_derive_collation_from_exprs_with_connection(
+                func_name,
+                ret_type,
+                &[args[0].clone(), args[2].clone()],
+                connection,
+            )
+        }
         // `ELT`/`EXPORT_SET`/`MAKE_SET`: every argument but the first.
         "elt" | "export_set" | "make_set" if !args.is_empty() => {
-            check_and_derive_collation_from_exprs(func_name, ret_type, &args[1..])
+            check_and_derive_collation_from_exprs_with_connection(
+                func_name,
+                ret_type,
+                &args[1..],
+                connection,
+            )
         }
         // Int-returning, but the comparison itself needs a collation.
-        "find_in_set" | "regexp" => {
-            check_and_derive_collation_from_exprs(func_name, EvalType::Int, args)
-        }
+        "find_in_set" | "regexp" => check_and_derive_collation_from_exprs_with_connection(
+            func_name,
+            EvalType::Int,
+            args,
+            connection,
+        ),
         // `FIELD(needle, a, b, ...)` aggregates over EVERY argument, but only
         // when the whole list is string-typed. Go tests `argTps[0] ==
         // types.ETString`, and `fieldFunctionClass.getFunction` fills `argTps`
@@ -474,18 +517,30 @@ pub fn derive_collation(
                 .iter()
                 .all(|arg| ret_type_of(arg).eval_type() == EvalType::String)
             {
-                return check_and_derive_collation_from_exprs(func_name, ret_type, args);
+                return check_and_derive_collation_from_exprs_with_connection(
+                    func_name, ret_type, args, connection,
+                );
             }
-            Ok(default_collation(ret_type))
+            Ok(default_collation(ret_type, connection))
         }
         // `REGEXP_REPLACE(expr, pat, repl, ...)`: the first three arguments.
         "regexp_replace" if args.len() >= 3 => {
-            check_and_derive_collation_from_exprs(func_name, ret_type, &args[..3])
+            check_and_derive_collation_from_exprs_with_connection(
+                func_name,
+                ret_type,
+                &args[..3],
+                connection,
+            )
         }
         "locate" | "instr" | "position" | "regexp_like" | "regexp_substr" | "regexp_instr"
             if args.len() >= 2 =>
         {
-            check_and_derive_collation_from_exprs(func_name, ret_type, &args[..2])
+            check_and_derive_collation_from_exprs_with_connection(
+                func_name,
+                ret_type,
+                &args[..2],
+                connection,
+            )
         }
         // Comparison: aggregate when the compare type is string, then report
         // the RESULT as a NUMERIC/ASCII int (the aggregated collation stays on
@@ -498,55 +553,82 @@ pub fn derive_collation(
         // Go answers 0 -- where the comparison operators would have promoted
         // to REAL and consulted none.
         "strcmp" if args.len() == 2 => {
-            let mut ec = check_and_derive_collation_from_exprs(func_name, EvalType::Int, args)?;
+            let mut ec = check_and_derive_collation_from_exprs_with_connection(
+                func_name,
+                EvalType::Int,
+                args,
+                connection,
+            )?;
             ec.coer = Coercibility::NUMERIC;
             ec.repe = Repertoire::ASCII;
             Ok(ec)
         }
         "ge" | "le" | "gt" | "lt" | "eq" | "ne" | "nulleq" => {
             if args.len() == 2 && compare_is_string(args) {
-                let mut ec = check_and_derive_collation_from_exprs(func_name, EvalType::Int, args)?;
+                let mut ec = check_and_derive_collation_from_exprs_with_connection(
+                    func_name,
+                    EvalType::Int,
+                    args,
+                    connection,
+                )?;
                 ec.coer = Coercibility::NUMERIC;
                 ec.repe = Repertoire::ASCII;
                 return Ok(ec);
             }
-            Ok(default_collation(ret_type))
+            Ok(default_collation(ret_type, connection))
         }
         // `IF(cond, a, b)` aggregates the two branches; `IFNULL(a, b)` both.
-        "if" if args.len() == 3 => check_and_derive_collation_from_exprs(
+        "if" if args.len() == 3 => check_and_derive_collation_from_exprs_with_connection(
             func_name,
             ret_type,
             &[args[1].clone(), args[2].clone()],
+            connection,
         ),
-        "ifnull" if args.len() == 2 => {
-            check_and_derive_collation_from_exprs(func_name, ret_type, args)
-        }
+        "ifnull" if args.len() == 2 => check_and_derive_collation_from_exprs_with_connection(
+            func_name, ret_type, args, connection,
+        ),
         "like" | "ilike" if args.len() >= 2 => {
-            let mut ec =
-                check_and_derive_collation_from_exprs(func_name, EvalType::Int, &args[..2])?;
+            let mut ec = check_and_derive_collation_from_exprs_with_connection(
+                func_name,
+                EvalType::Int,
+                &args[..2],
+                connection,
+            )?;
             ec.coer = Coercibility::NUMERIC;
             ec.repe = Repertoire::ASCII;
             Ok(ec)
         }
         "date_format" | "time_format" if args.len() == 2 => {
-            let mut ec = check_and_derive_collation_from_exprs(func_name, ret_type, &args[1..2])?;
-            let (charset, collation) = connection_charset_info();
+            let mut ec = check_and_derive_collation_from_exprs_with_connection(
+                func_name,
+                ret_type,
+                &args[1..2],
+                connection,
+            )?;
+            let (charset, collation) = connection;
             ec.charset = charset.to_owned();
             ec.collation = collation.to_owned();
             Ok(ec)
         }
         "cast" if args.len() == 1 => {
-            let mut ec = check_and_derive_collation_from_exprs(func_name, ret_type, args)?;
-            let (charset, collation) = connection_charset_info();
+            let mut ec = check_and_derive_collation_from_exprs_with_connection(
+                func_name, ret_type, args, connection,
+            )?;
+            let (charset, collation) = connection;
             ec.charset = charset.to_owned();
             ec.collation = collation.to_owned();
             Ok(ec)
         }
         "in" if !args.is_empty() => {
             if ret_type_of(&args[0]).eval_type() == EvalType::String {
-                return check_and_derive_collation_from_exprs(func_name, EvalType::Int, args);
+                return check_and_derive_collation_from_exprs_with_connection(
+                    func_name,
+                    EvalType::Int,
+                    args,
+                    connection,
+                );
             }
-            Ok(default_collation(ret_type))
+            Ok(default_collation(ret_type, connection))
         }
         // Go `ast.Database, ast.User, ast.Version, ...`: a system constant.
         "database"
@@ -558,19 +640,16 @@ pub fn derive_collation(
         | "version"
         | "current_role"
         | "tidb_version"
-        | "current_resource_group" => {
-            let (chs, coll) = connection_charset_info();
-            Ok(ExprCollation {
-                coer: Coercibility::SYSCONST,
-                repe: Repertoire::UNICODE,
-                charset: chs.to_owned(),
-                collation: coll.to_owned(),
-            })
-        }
+        | "current_resource_group" => Ok(ExprCollation {
+            coer: Coercibility::SYSCONST,
+            repe: Repertoire::UNICODE,
+            charset: CHARSET_UTF8MB4.to_owned(),
+            collation: COLLATION_UTF8MB4.to_owned(),
+        }),
         // Pure-ASCII producers: the connection charset with ASCII repertoire.
         "format" | "space" | "to_base64" | "uuid" | "hex" | "md5" | "sha" | "sha1" | "sha2"
         | "sm3" => {
-            let (chs, coll) = connection_charset_info();
+            let (chs, coll) = connection;
             Ok(ExprCollation {
                 coer: Coercibility::COERCIBLE,
                 repe: Repertoire::ASCII,
@@ -585,13 +664,13 @@ pub fn derive_collation(
             charset: CHARSET_UTF8MB4.to_owned(),
             collation: COLLATION_UTF8MB4.to_owned(),
         }),
-        _ => Ok(default_collation(ret_type)),
+        _ => Ok(default_collation(ret_type, connection)),
     }
 }
 
 /// Go `deriveCollation`'s default arm: `binary`/NUMERIC/ASCII for a
 /// non-string result, the connection charset for a string one.
-fn default_collation(ret_type: EvalType) -> ExprCollation {
+fn default_collation(ret_type: EvalType, connection: (&str, &str)) -> ExprCollation {
     let mut ec = ExprCollation {
         coer: Coercibility::NUMERIC,
         repe: Repertoire::ASCII,
@@ -599,7 +678,7 @@ fn default_collation(ret_type: EvalType) -> ExprCollation {
         collation: COLLATION_BIN.to_owned(),
     };
     if ret_type == EvalType::String {
-        let (chs, coll) = connection_charset_info();
+        let (chs, coll) = connection;
         ec.charset = chs.to_owned();
         ec.collation = coll.to_owned();
         ec.coer = Coercibility::COERCIBLE;

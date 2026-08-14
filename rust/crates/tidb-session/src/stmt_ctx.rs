@@ -308,6 +308,14 @@ impl Session {
         };
         let version = self.vars.get_system("version").ok();
         let tidb_info = Some(self.vars.tidb_info());
+        let connection_charset = self
+            .vars
+            .get_system("character_set_connection")
+            .unwrap_or_else(|_| "utf8mb4".to_owned());
+        let connection_collation = self
+            .vars
+            .get_system("collation_connection")
+            .unwrap_or_else(|_| "utf8mb4_bin".to_owned());
         let zone = self.session_time_zone();
         let clock = self.statement_clock(&zone);
         let sysdate_is_now = self
@@ -544,6 +552,10 @@ impl Session {
                 .with_static_partition_prune(static_partition_prune)
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
                 .with_session_state(current_db, version, tidb_info)
+                .with_connection_charset_info(
+                    connection_charset.clone(),
+                    connection_collation.clone(),
+                )
                 .with_user(self.current_user.clone(), self.login_user.clone())
                 .with_global_sysvars(password_validation_globals.clone())
                 .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
@@ -583,6 +595,7 @@ impl Session {
         .with_date_modes(date_modes)
         .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
         .with_session_state(current_db, version, tidb_info)
+        .with_connection_charset_info(connection_charset, connection_collation)
         .with_user(self.current_user.clone(), self.login_user.clone())
         .with_global_sysvars(password_validation_globals)
         .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))

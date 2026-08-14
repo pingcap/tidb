@@ -261,6 +261,10 @@ impl<R: tidb_expr::rewriter::ColumnResolver> tidb_expr::rewriter::ColumnResolver
         self.base.time_zone()
     }
 
+    fn connection_charset_info(&self) -> (&str, &str) {
+        self.base.connection_charset_info()
+    }
+
     fn no_unsigned_subtraction(&self) -> bool {
         self.base.no_unsigned_subtraction()
     }

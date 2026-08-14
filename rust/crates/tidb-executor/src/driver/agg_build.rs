@@ -523,6 +523,10 @@ impl ColumnResolver for AggOutputResolver {
         self.zone.clone()
     }
 
+    fn connection_charset_info(&self) -> (&str, &str) {
+        self.constant_context.connection_charset_info()
+    }
+
     fn no_unsigned_subtraction(&self) -> bool {
         self.no_unsigned_subtraction
     }

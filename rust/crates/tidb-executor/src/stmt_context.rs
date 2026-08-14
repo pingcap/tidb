@@ -273,6 +273,10 @@ pub struct StmtContext {
     now: Option<(i64, u32, i32)>,
     sysdate_is_now: bool,
     time_zone: Option<tidb_expr::SessionTimeZone>,
+    /// Go `BuildContext.GetCharsetInfo`: the statement snapshot of
+    /// `@@character_set_connection` and `@@collation_connection`.
+    connection_charset: String,
+    connection_collation: String,
     /// Go `SessionVars.Rng`: the SESSION-scoped generator unseeded `RAND()`
     /// advances, shared across every statement of one session. `None` is a
     /// context with no session behind it (a test, a DEFAULT expression
@@ -570,6 +574,8 @@ impl StmtContext {
             now: None,
             sysdate_is_now: false,
             time_zone: None,
+            connection_charset: "utf8mb4".to_owned(),
+            connection_collation: "utf8mb4_bin".to_owned(),
             rand_session: None,
             user_vars: None,
             rand_seeded: Rc::default(),
@@ -821,6 +827,12 @@ impl StmtContext {
     #[must_use]
     pub fn like_default_escape(&self) -> u8 {
         self.like_default_escape
+    }
+
+    /// The connection charset/collation used while building expressions.
+    #[must_use]
+    pub fn connection_charset_info(&self) -> (&str, &str) {
+        (&self.connection_charset, &self.connection_collation)
     }
 
     /// Re-parses this statement's own text under its `sql_mode`. Every entry
@@ -1230,6 +1242,18 @@ impl StmtContext {
     #[must_use]
     pub fn with_time_zone(mut self, time_zone: tidb_expr::SessionTimeZone) -> Self {
         self.time_zone = Some(time_zone);
+        self
+    }
+
+    /// Attaches the connection charset/collation captured for this statement.
+    #[must_use]
+    pub fn with_connection_charset_info(
+        mut self,
+        charset: impl Into<String>,
+        collation: impl Into<String>,
+    ) -> Self {
+        self.connection_charset = charset.into();
+        self.connection_collation = collation.into();
         self
     }
 

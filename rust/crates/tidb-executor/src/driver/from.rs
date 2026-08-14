@@ -240,6 +240,13 @@ impl ColumnResolver for ScopeResolver<'_> {
         self.scope.zone.clone()
     }
 
+    fn connection_charset_info(&self) -> (&str, &str) {
+        match &self.scope.constant_context {
+            Some(ctx) => ctx.connection_charset_info(),
+            None => tidb_expr::collation_derive::connection_charset_info(),
+        }
+    }
+
     fn tidb_info_len(&self) -> usize {
         self.scope.tidb_info_len
     }
