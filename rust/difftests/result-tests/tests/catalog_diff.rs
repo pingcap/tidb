@@ -417,149 +417,16 @@ fn run_topic_on_this_stack(topic: &str) -> Result<CatalogReport, String> {
     Ok(report)
 }
 
-/// The catalog ratchet, asserted on BOTH sides.
+/// Exact upper bound for known definition mismatches.
 ///
-/// The lower bound matters as much as the upper one here. This gate compares
-/// a SUBSET of each topic, chosen by a predicate, so the cheapest way to make
-/// it green is to narrow the predicate until nothing is examined -- and that
-/// is indistinguishable from real progress if only the divergence count is
-/// published. So the number of catalog reads MATCHED is pinned too: it may
-/// only rise.
-/// 111 -> 104: the `mysql` schema became a name that exists, so
-/// `infoschema/infoschema`'s `rename table infoschema__infoschema.t1 to
-/// mysql.t1` has somewhere to rename TO. All seven were the same shape --
-/// `SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA =
-/// 'mysql' AND TABLE_NAME = 't1'` answering 0 where TiDB answers 1 -- and
-/// they are genuine parity rather than a fabricated schema: Go really does
-/// accept a user table in `mysql` (captured: `create table mysql.zz(a int)`
-/// succeeds), so those rows exist on both sides now.
-/// 111 -> 112: RANGE partitioning became measurable. `CREATE TABLE ...
-/// PARTITION BY RANGE` used to be refused, so two of `executor/show`'s
-/// catalog reads were out of domain; they are compared now (217 -> 219),
-/// one MATCHES (106 -> 107) and one diverges.
-///
-/// The divergent one is `SHOW CREATE TABLE log`, and NOT for its partition
-/// clause -- that clause reads back character for character, twelve
-/// `VALUES LESS THAN` definitions over `MONTH(`end_time`)` and a `MAXVALUE`.
-/// It diverges on two pre-existing gaps the refusal had been hiding: the
-/// composite primary key prints `CLUSTERED` where TiDB prints
-/// `NONCLUSTERED`, and the `AUTO_INCREMENT=505488` counter is not printed at
-/// all. Both belong to the clustered-index and auto-increment surfaces, not
-/// to partitioning.
-/// 105 -> 102: the CREATE TABLE index-key validations landed (Go's
-/// `buildIndexColumns` running `sumLength` and `checkIndexColumn`'s 1167),
-/// so three catalog reads whose tables TiDB refuses to create are now
-/// refused here too, and their `SHOW CREATE TABLE` divergences vanish with
-/// the tables.
-/// 102 -> 100: Go's `checkColumnDefaultValue` landed on `CREATE TABLE`
-/// (#274). Under `sql_mode=''` an EMPTY default on a TEXT/BLOB column is a
-/// warning and the default is DROPPED, which is what TiDB's own
-/// `TestCheckColumnDefaultValue` records; this tier used to store the `''`
-/// and print it, so `show create table text_default_text` and
-/// `text_default_blob` both read back a `DEFAULT ''` TiDB does not print.
-/// They now MATCH rather than vanish: compared held at 219 and matched rose
-/// 117 -> 119, so no read stopped being examined.
-/// 100 -> 95: the integrated metadata/default ownership work compares 220
-/// catalog reads, of which 125 match. Five previously red reads left the
-/// divergence set while the compared surface grew by one.
-///
-/// The current replay compares 221 reads: 128 match TiDB and 93 remain
-/// divergent. The fingerprint below pins the exact unresolved set.
-const KNOWN_CATALOG_DIVERGENCES: usize = 93;
+/// The matching floor below prevents a lower count caused by examining less.
+const KNOWN_CATALOG_DIVERGENCES: usize = 87;
 
-/// The floor on catalog reads that MATCH TiDB's recording exactly. See
-/// [`KNOWN_CATALOG_DIVERGENCES`] for why a divergence ceiling alone is not a
-/// gate.
-///
-/// 102 -> 106: prefix indexes on secondary keys are built rather than
-/// refused, so `ddl/column_type_change`'s four
-/// `TestChangePrefixedIndexColumnToNonPrefixOne` tables exist and their
-/// `SHOW CREATE TABLE` is compared -- and matches, because `SHOW CREATE
-/// TABLE` prints the declared `(n)` and `MODIFY COLUMN` clears it exactly
-/// where Go's `UpdateIndexCol` does. The divergence count and fingerprint
-/// did not move: all four were previously OUT OF DOMAIN, not red.
-///
-/// 106 -> 113: the same `mysql` schema change. Seven catalog reads went from
-/// red to matched, and the floor rises with them -- which is the point of
-/// having a floor at all, since a divergence count that falls while the
-/// matched count falls too is statements going dark, not statements getting
-/// right.
-/// 106 -> 107: RANGE partitioning is built, so `executor/show`'s `thash2`
-/// definition reads back and matches. See [`KNOWN_CATALOG_DIVERGENCES`] for
-/// the second newly-measurable read, which does not.
-/// 114 -> 125: the same integrated metadata/default checkpoint raised the
-/// measured exact-match count to 125 while also adding one comparable read.
-///
-/// 125 -> 126: generated-column `Extra` markers close the first
-/// `DESC test_gv_ddl` catalog read named above.
-const MATCHED_FLOOR: usize = 128;
+/// Exact lower bound for definitions already matching TiDB.
+const MATCHED_FLOOR: usize = 203;
 
-/// A fingerprint over the TEXT of every carried divergence, and the reason it
-/// exists is a hole this gate was CAUGHT having on its first day.
-///
-/// The `bit(10) DEFAULT 250` bug -- one of the eight catalog bugs that
-/// motivated this file -- was reverted in place to check that the gate would
-/// have caught it. It did not. Six `tidb-session` unit tests went red, so the
-/// revert was certainly live, and the catalog counts did not move by one:
-/// the corpus's only bit column, `ddl/column_type_change`'s `bit(13)`, was
-/// ALREADY diverging for an unrelated reason, so the mutation changed the
-/// divergence's TEXT while leaving the COUNT identical.
-///
-/// That is the general failure of a counting ratchet: it is blind inside its
-/// own red set, and the red set is exactly where the unfixed bugs are, so a
-/// second bug landing on an already-red statement is invisible. Hashing the
-/// divergence text closes it. The hash is FNV-1a, written out here rather
-/// than taken from `DefaultHasher`, because a gate constant has to mean the
-/// same thing in a future toolchain.
-///
-/// 15_209_155_495_828_413_401 -> 5_541_979_227_473_374_610: the seven
-/// `TABLE_SCHEMA = 'mysql'` counts named on [`KNOWN_CATALOG_DIVERGENCES`]
-/// LEFT the set. Nothing else in it changed text -- the before/after lists
-/// were diffed line for line, and those seven entries are the whole diff.
-/// 15_209_155_495_828_413_401 -> 4_674_120_825_973_024_879, and the value is
-/// the COMPOSITION of two units that landed together rather than either one's
-/// own number. The `mysql` schema removed seven `TABLE_SCHEMA = 'mysql'`
-/// counts from the set; RANGE partitioning added one (`SHOW CREATE TABLE
-/// log`). Neither unit's separately-measured fingerprint (5_541_979_227_473_374_610
-/// and 16_061_795_834_336_541_714) is correct on the merged tree, which is
-/// exactly what this constant exists to catch: the count moved 111 -> 105 and
-/// the SET moved differently again, so a count-only gate would have accepted
-/// either stale value.
-///
-/// 4_674_120_825_973_024_879 -> 12_364_006_894_818_275_074: the count stayed
-/// 105 and matched stayed at the floor, but divergence TEXTS inside the red
-/// set improved -- the CREATE TABLE handle-kind fix (NONCLUSTERED honoured)
-/// moved several `SHOW CREATE TABLE` and `tidb_pk_type` reads closer to the
-/// recording without closing them. The clearest single witness is the
-/// partitioned `log` table, which previously diverged on BOTH the clustered
-/// clause and the AUTO_INCREMENT counter and now diverges ONLY on
-/// `AUTO_INCREMENT=505488`. Same statements, still red, redder for fewer
-/// reasons -- the count-blind ratchet could never have seen this, which is
-/// why the fingerprint exists.
-/// 12_364_006_894_818_275_074 -> 9_329_879_596_375_632_442: the count stayed
-/// 105, and exactly TWO texts moved -- both `DESC test_gv_ddl` in
-/// `ddl/column_modify`, which lost the column `a` here and no longer does.
-/// `column_modify.test` runs `alter table test_gv_ddl drop column a` and
-/// `alter table test_gv_ddl change column a anew int` over
-/// `test_gv_ddl(a int, b int as (a+8) virtual, c int as (b+2) stored)`, and
-/// the recording answers both with `Error 3108 (HY000): Column 'a' has a
-/// generated column dependency.` This tier accepted them, so `a` really went
-/// away and every later read of that table was short a column. Both are now
-/// refused with that exact error (#202). The two DESCs stay red because `b`
-/// reads back `bigint` with no `VIRTUAL GENERATED` in `Extra` -- a separate,
-/// still-open gap -- so the count could not see this: the fingerprint is the
-/// only gate that could.
-///
-/// Moved again with [`KNOWN_CATALOG_DIVERGENCES`] 102 -> 100: the two
-/// `SHOW CREATE TABLE` reads that stopped printing a `DEFAULT ''` TiDB does
-/// not print (`text_default_text` and `text_default_blob`) left the set, and
-/// nothing else in it changed.
-/// 6_068_344_160_096_210_003 -> 6_833_596_090_493_068_542 with the measured
-/// 100 -> 95 divergence and 114 -> 125 match ratchets above. This pins the
-/// exact 95 carried texts after the integrated metadata/default ownership
-/// changes rather than treating the improved count alone as sufficient.
-///
-const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 539_839_333_133_462_617;
+/// Stable identity of the known mismatch set, independent of topic order.
+const CATALOG_DIVERGENCE_FINGERPRINT: u64 = 2_121_768_866_532_931_590;
 
 /// FNV-1a over the sorted divergence texts. Sorted because the value must
 /// depend on WHAT diverges and not on the order topics happen to run in.
@@ -608,22 +475,10 @@ fn catalog_reads_match_recorded_tidb_output() {
         eprintln!("carried catalog divergences:{}", total.divergences.join(""));
     }
 
-    assert!(
-        total.divergences.len() <= KNOWN_CATALOG_DIVERGENCES,
-        "catalog divergences rose to {} (limit {}). Run with \
-         CATALOG_SHOW_DIVERGENCES=1 to see them. A catalog divergence is a \
-         table whose DEFINITION reads back differently from TiDB's, which the \
-         row-shaped gates cannot see.",
+    assert_eq!(
         total.divergences.len(),
         KNOWN_CATALOG_DIVERGENCES,
-    );
-    assert!(
-        total.divergences.len() >= KNOWN_CATALOG_DIVERGENCES,
-        "catalog divergences fell to {} (recorded {}). Lower \
-         KNOWN_CATALOG_DIVERGENCES to {} so the ratchet holds.",
-        total.divergences.len(),
-        KNOWN_CATALOG_DIVERGENCES,
-        total.divergences.len(),
+        "catalog mismatch count changed; inspect with CATALOG_SHOW_DIVERGENCES=1"
     );
     let seen = fingerprint(&total.divergences);
     assert_eq!(

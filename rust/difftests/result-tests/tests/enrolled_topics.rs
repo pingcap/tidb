@@ -489,10 +489,7 @@ pub const TOPICS: &[(&str, &str)] = &[
     ("ddl/serial", "28 of 77 with no divergences"),
     (
         "ddl/table_modify",
-        "17 of 47 with 2 divergences: a database-level `COLLATE utf8_general_ci` is \
-     not inherited by a table created in it (so `SHOW CREATE TABLE` prints \
-     `utf8mb4_bin`), and `ENGINE = MERGE UNION = (x, y)` is accepted where \
-     TiDB raises 8232",
+        "database collation inheritance and unsupported table options match TiDB",
     ),
     (
         "executor/autoid",

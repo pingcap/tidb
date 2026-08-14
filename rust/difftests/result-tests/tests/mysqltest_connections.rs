@@ -365,18 +365,18 @@ mod tests {
             ("tidb_max_chunk_size", "[[Int(32)]]"),
             (
                 "tidb_hash_join_concurrency",
-                "[[String(StringDatum { bytes: [49], collation: Utf8Mb4Bin })]]",
+                "[[String(StringDatum { bytes: [49], collation: Utf8Mb4GeneralCi })]]",
             ),
             ("tidb_enable_analyze_snapshot", "[[Int(1)]]"),
             ("tidb_enable_pseudo_for_outdated_stats", "[[Int(0)]]"),
             (
                 "tidb_multi_statement_mode",
-                "[[String(StringDatum { bytes: [79, 78], collation: Utf8Mb4Bin })]]",
+                "[[String(StringDatum { bytes: [79, 78], collation: Utf8Mb4GeneralCi })]]",
             ),
             (
                 "tidb_enable_clustered_index",
                 "[[String(StringDatum { bytes: [73, 78, 84, 95, 79, 78, 76, 89], collation: \
-                 Utf8Mb4Bin })]]",
+                 Utf8Mb4GeneralCi })]]",
             ),
         ];
         let mut pool = Connections::open("driver/isolation").unwrap();
