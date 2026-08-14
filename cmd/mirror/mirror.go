@@ -233,6 +233,18 @@ func dumpBuildNamingConventionArgsForRepo(repoName string) {
 	}
 }
 
+func dumpBuildFileGenerationArgsForRepo(repoName string) {
+	switch repoName {
+	case "com_github_envoyproxy_protoc_gen_validate",
+		"com_github_grpc_ecosystem_grpc_gateway_v2",
+		"dev_cel_expr":
+		// These modules ship Bazel BUILD files that regenerate checked-in *.pb.go
+		// files from source. Replace them with Gazelle's Go-only rules so consumers
+		// do not need a native protoc toolchain to compile generated Go code.
+		fmt.Printf("        build_file_generation = \"clean\",\n")
+	}
+}
+
 func dumpNewDepsBzl(
 	listed map[string]listedModule,
 	downloaded map[string]downloadedModule,
@@ -274,6 +286,7 @@ def go_deps():
 		}
 		fmt.Printf(`        build_file_proto_mode = "%s",
 `, buildFileProtoModeForRepo(repoName))
+		dumpBuildFileGenerationArgsForRepo(repoName)
 		dumpBuildNamingConventionArgsForRepo(repoName)
 		fmt.Printf("        importpath = \"%s\",\n", mod.Path)
 		if err := dumpPatchArgsForRepo(repoName); err != nil {
