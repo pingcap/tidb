@@ -166,7 +166,8 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	if err = sessiontxn.AdviseOptimizeWithPlanAndThenWarmUp(c.Ctx, stmt.Plan); err != nil {
 		return nil, err
 	}
-	failpoint.InjectCall("installStatementRUPlanWalkOwnerForTest", stmt)
+	installStatementRUOwner(stmt)
+	failpoint.InjectCall("observeStatementRUOwnerInstallForTest", stmt)
 
 	return stmt, nil
 }
