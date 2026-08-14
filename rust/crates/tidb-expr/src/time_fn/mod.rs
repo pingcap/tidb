@@ -52,6 +52,7 @@ pub(crate) fn dispatch(
         "UTC_DATE" => utc_date(vals, cols),
         "CURTIME" | "CURRENT_TIME" => current_time(vals, cols),
         "UTC_TIME" => utc_time(vals, cols),
+        "DATE" => date(vals, cols),
         "MICROSECOND" => microsecond(vals),
         "TIME" => time(vals, cols),
         "MONTH" => month(vals),
@@ -101,6 +102,45 @@ pub(crate) fn dispatch(
         | "MINUTE_MICROSECOND" | "SECOND_MICROSECOND" => calendar::extract_composite(name, vals),
         _ => return None,
     })
+}
+
+/// `DATE(expr)`, after Go's declared `ETDatetime` argument cast has produced
+/// a typed temporal value. The function applies its own zero-date SQL-mode
+/// checks, clears the clock, and changes the result domain to `DATE`.
+fn date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+    let [value] = vals else {
+        return Err(EvalError::Unsupported("bad function arity"));
+    };
+    let Datum::Time(mut value) = value else {
+        return if matches!(value, Datum::Null) {
+            Ok(Datum::Null)
+        } else {
+            Err(EvalError::Unsupported(
+                "DATE argument reached the signature without its ETDatetime cast",
+            ))
+        };
+    };
+
+    let modes = cols.date_modes();
+    if (value.is_zero() && modes.no_zero_date)
+        || (!value.is_zero() && value.invalid_zero() && modes.no_zero_in_date)
+    {
+        cols.handle_truncate(&format!("Incorrect datetime value: '{value}'"))?;
+        return Ok(Datum::Null);
+    }
+
+    let core = value.core_time();
+    value.set_core_time(tidb_datatype::CoreTime::from_date(
+        u16::try_from(core.year()).expect("a typed temporal value has a nonnegative year"),
+        core.month(),
+        core.day(),
+        0,
+        0,
+        0,
+        0,
+    ));
+    value.set_kind(tidb_datatype::TimeType::Date);
+    Ok(Datum::Time(value))
 }
 
 /// `builtinNowWithArgSig` / `builtinNowWithoutArgSig`: local

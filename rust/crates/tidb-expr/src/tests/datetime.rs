@@ -1300,6 +1300,23 @@ fn an_etdatetime_argument_is_cast_before_the_signature_runs() {
     // `toDaysFunctionClass` (`:6733`): `types.ETInt, types.ETDatetime`.
     // Captured `RS:739325`.
     assert_eq!(e("to_days(20240315123045)"), "INT:739325");
+    assert_eq!(e("to_seconds(20240315123045)"), "INT:63877725045");
+    assert_eq!(e("date(20240315123045)"), "TIME:2024-03-15");
+    assert_eq!(e("datediff(20240315123045,'2024-03-01')"), "INT:14");
+
+    // These classes declare the same `ETDatetime` argument and must not
+    // bypass the shared cast layer merely because their signature bodies
+    // consume the calendar through a different helper.
+    for (expr, want) in [
+        ("monthname(20240315123045)", "STR:March"),
+        ("dayname(20240315123045)", "STR:Friday"),
+        ("dayofweek(20240315123045)", "INT:6"),
+        ("dayofyear(20240315123045)", "INT:75"),
+        ("weekday(20240315123045)", "INT:4"),
+        ("last_day(20240315123045)", "STR:2024-03-31"),
+    ] {
+        assert_eq!(e(expr), want, "{expr}");
+    }
 
     // `timestampAddFunctionClass` (`:6551`): `types.ETString, types.ETString,
     // types.ETReal, types.ETDatetime` -- the DATETIME is argument 2, which is
@@ -1355,6 +1372,15 @@ fn an_etdatetime_argument_is_cast_before_the_signature_runs() {
             "STR:2024-03-15 12:30:45",
         ),
         ("to_days(20240315123045)", "INT:739325"),
+        ("to_seconds(20240315123045)", "INT:63877725045"),
+        ("date(20240315123045)", "TIME:2024-03-15"),
+        ("datediff(20240315123045,'2024-03-01')", "INT:14"),
+        ("monthname(20240315123045)", "STR:March"),
+        ("dayname(20240315123045)", "STR:Friday"),
+        ("dayofweek(20240315123045)", "INT:6"),
+        ("dayofyear(20240315123045)", "INT:75"),
+        ("weekday(20240315123045)", "INT:4"),
+        ("last_day(20240315123045)", "STR:2024-03-31"),
         (
             "timestampadd(day,1,20240315123045)",
             "STR:2024-03-16 12:30:45",

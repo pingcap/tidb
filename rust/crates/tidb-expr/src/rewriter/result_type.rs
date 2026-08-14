@@ -577,11 +577,16 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             set_binary_charset(&mut ft);
             ft
         }
-        // The date/time family. `TIME()` is the native Duration arm above;
-        // the remaining temporal values this crate produces are formatted
-        // strings or integers, so their reported column type retains the
-        // documented temporal-as-string divergence.
+        // The date/time family. `TIME()` and `DATE()` retain their native
+        // temporal cell domains; the remaining values this crate produces
+        // are formatted strings or integers.
         "time" => time_return_type(args)?,
+        "date" if args.len() == 1 => {
+            let mut ft = FieldType::new(FieldTypeCode::Date);
+            ft.set_decimal(0);
+            ft.set_flen(10);
+            ft
+        }
         "now" | "current_timestamp" | "localtime" | "localtimestamp" | "utc_timestamp"
         | "curdate" | "current_date" | "utc_date"
         | "curtime" | "current_time" | "utc_time" | "monthname" | "dayname" | "last_day"

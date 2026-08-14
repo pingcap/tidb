@@ -72,18 +72,6 @@ type ArgMask = u32;
 /// first type argument and is NOT part of this mask -- only the `argTps...`
 /// tail is.
 ///
-/// # Deferred, with the reason
-///
-/// Go declares `types.ETDatetime` arguments for roughly two dozen more
-/// builtins (`builtin_time.go:279`, `:388`, `:898`, `:1161`, `:1209`,
-/// `:1325`, `:1370`, `:1525`, `:1571`, `:2013`, `:2246`, `:2496`, `:2787`,
-/// `:5523`, `:6781`, `:6923`, `:7081`, and `builtin_other.go:1456`, plus the
-/// `argTps...` forms at `:2164`, `:2542`, `:2640` and `:4597` that BUILD
-/// their type list at run time). They are not listed here because this is
-/// the first rung: the layer is proved on the two measured classes before it
-/// is pointed at the rest. Adding a name here is the whole cost of routing
-/// one -- that is the point of the design.
-///
 /// `TIMESTAMP` is a deliberate NON-member even though its first argument is
 /// temporal: Go declares it `types.ETString` and then selects between two
 /// PARSERS from the argument's type,
@@ -94,10 +82,24 @@ type ArgMask = u32;
 /// state, not an argument cast, and it belongs to a different rung.
 const fn datetime_arg_mask(name: &str) -> ArgMask {
     match name.as_bytes() {
+        // `:279` `types.ETDatetime, types.ETDatetime` (dateFunctionClass).
+        b"DATE" => 1 << 0,
+        // `:388` `types.ETInt, types.ETDatetime, types.ETDatetime`
+        // (dateDiffFunctionClass).
+        b"DATEDIFF" => (1 << 0) | (1 << 1),
         // `:1116` `types.ETInt, types.ETDatetime` (monthFunctionClass).
         b"MONTH" => 1 << 0,
+        // `:1161`/`:1209` (monthNameFunctionClass/dayNameFunctionClass).
+        b"MONTHNAME" | b"DAYNAME" => 1 << 0,
         // `:1284` `types.ETInt, types.ETDatetime` (dayOfMonthFunctionClass).
         b"DAY" | b"DAYOFMONTH" => 1 << 0,
+        // `:1325`/`:1370` (dayOfWeekFunctionClass/dayOfYearFunctionClass).
+        b"DAYOFWEEK" | b"DAYOFYEAR" => 1 << 0,
+        // The optional second argument is ETInt; the date is always argument
+        // zero (`weekFunctionClass`/`yearWeekFunctionClass`).
+        b"WEEK" | b"YEARWEEK" => 1 << 0,
+        // `:1525`/`:1571` (weekDayFunctionClass/weekOfYearFunctionClass).
+        b"WEEKDAY" | b"WEEKOFYEAR" => 1 << 0,
         // `:5833` `types.ETInt, types.ETDatetime` (quarterFunctionClass).
         b"QUARTER" => 1 << 0,
         // `:1620` `types.ETInt, types.ETDatetime` (yearFunctionClass).
@@ -107,6 +109,10 @@ const fn datetime_arg_mask(name: &str) -> ArgMask {
         b"DATE_FORMAT" => 1 << 0,
         // `:6733` `types.ETInt, types.ETDatetime` (toDaysFunctionClass).
         b"TO_DAYS" => 1 << 0,
+        // `:6781` `types.ETInt, types.ETDatetime` (toSecondsFunctionClass).
+        b"TO_SECONDS" => 1 << 0,
+        // `:6923` `types.ETDatetime, types.ETDatetime` (lastDayFunctionClass).
+        b"LAST_DAY" => 1 << 0,
         // `:4310` `types.ETInt, types.ETString, types.ETDatetime,
         // types.ETDatetime` (timestampDiffFunctionClass) -- the UNIT is
         // argument 0 and stays a string.
@@ -464,7 +470,19 @@ mod tests {
         assert_eq!(datetime_arg_mask("CONVERT_TZ"), 1);
         assert_eq!(datetime_arg_mask("TIMESTAMPDIFF"), 0b110);
         assert_eq!(datetime_arg_mask("TIMESTAMPADD"), 0b100);
+        assert_eq!(datetime_arg_mask("DATE"), 1);
+        assert_eq!(datetime_arg_mask("DATEDIFF"), 0b11);
         assert_eq!(datetime_arg_mask("MONTH"), 1);
+        assert_eq!(datetime_arg_mask("MONTHNAME"), 1);
+        assert_eq!(datetime_arg_mask("DAYNAME"), 1);
+        assert_eq!(datetime_arg_mask("DAYOFWEEK"), 1);
+        assert_eq!(datetime_arg_mask("DAYOFYEAR"), 1);
+        assert_eq!(datetime_arg_mask("WEEK"), 1);
+        assert_eq!(datetime_arg_mask("WEEKDAY"), 1);
+        assert_eq!(datetime_arg_mask("WEEKOFYEAR"), 1);
+        assert_eq!(datetime_arg_mask("YEARWEEK"), 1);
+        assert_eq!(datetime_arg_mask("TO_SECONDS"), 1);
+        assert_eq!(datetime_arg_mask("LAST_DAY"), 1);
         // Not a member: Go declares `types.ETString` and branches on
         // `isFloat` instead (see the mask's doc).
         assert_eq!(datetime_arg_mask("TIMESTAMP"), 0);

@@ -474,6 +474,10 @@ fn date_time_builtins() {
         [["9", "10", "202009"]]
     );
     assert_eq!(
+        row_text(session.run("SELECT DATE(d), DATEDIFF(d, '2020-03-01') FROM t")),
+        [["2020-03-05", "4"]]
+    );
+    assert_eq!(
         row_text(session.run("SELECT SEC_TO_TIME(3661), MAKEDATE(2020,10), MAKETIME(1,2,3)")),
         [["01:01:01", "2020-01-10", "01:02:03"]]
     );

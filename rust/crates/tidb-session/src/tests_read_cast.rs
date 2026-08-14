@@ -252,6 +252,41 @@ fn a_read_never_fails_the_statement() {
     }
 }
 
+#[test]
+fn date_applies_its_own_zero_date_modes_after_the_argument_cast() {
+    for (sql_mode, expected, warns) in [
+        (
+            "STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE",
+            "NULL",
+            true,
+        ),
+        ("", "2024-00-01", false),
+        ("NO_ZERO_DATE", "2024-00-01", false),
+        ("NO_ZERO_IN_DATE", "NULL", true),
+    ] {
+        let mut session = Session::new();
+        session.run(&format!("SET sql_mode='{sql_mode}'")).unwrap();
+        assert_eq!(
+            rows(&mut session, "SELECT DATE('2024-00-01 12:34:56')"),
+            [[expected]],
+            "sql_mode='{sql_mode}'"
+        );
+        let expected_warnings = if warns {
+            vec![(
+                1292,
+                "Incorrect datetime value: '2024-00-01 12:34:56'".to_owned(),
+            )]
+        } else {
+            Vec::new()
+        };
+        assert_eq!(
+            warnings(&session),
+            expected_warnings,
+            "sql_mode='{sql_mode}'"
+        );
+    }
+}
+
 /// THE CONTROL against an over-broad relaxation. `parse_date_ymd` is shared
 /// by `DATE_ADD` and by the comparison paths, and letting a zero-in-date
 /// through THERE would change row sets rather than one scalar. Every

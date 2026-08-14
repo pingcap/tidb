@@ -217,6 +217,15 @@ mod time_source_tests {
         assert_eq!(result.flen(), 10);
         assert!(builtin_return_type("time", &[]).is_none());
     }
+
+    #[test]
+    fn date_reports_the_native_date_domain() {
+        let result = builtin_return_type("date", &[string_arg("2024-03-15 12:34:56")]).unwrap();
+        assert_eq!(result.code(), FieldTypeCode::Date);
+        assert_eq!(result.decimal(), 0);
+        assert_eq!(result.flen(), 10);
+        assert!(builtin_return_type("date", &[]).is_none());
+    }
 }
 
 #[cfg(test)]
