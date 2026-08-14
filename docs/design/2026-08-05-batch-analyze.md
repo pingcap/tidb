@@ -169,11 +169,11 @@ Both [TiUP](https://github.com/pingcap/tiup/blob/9f6ebb7edc26ca0ba53b9f4a70de223
 
 #### Concurrency Control
 
-`tidb_analyze_store_batch_size` is a dedicated `GLOBAL` and `SESSION` variable for full-sampling column `ANALYZE`. Its value `B` is the maximum number of child Region tasks per RPC. It defaults to 4, accepts 0 to 8, and 0 disables batching. It is independent of `tidb_store_batch_size`.
+`tidb_analyze_store_batch_size` is a dedicated `GLOBAL` and `SESSION` variable for full-sampling column `ANALYZE`. Its value is the maximum number of child Region tasks per RPC. It defaults to 4, accepts 0 to 8, and 0 disables batching. It is independent of `tidb_store_batch_size`.
 
 Manual `ANALYZE` uses the session value; Auto Analyze uses the global value.
 
-`tidb_analyze_distsql_scan_concurrency` remains the outer RPC concurrency `C`. **TiDB requests serial execution, so each batched RPC has at most one active Region task and batching does not change this limit.**
+`tidb_analyze_distsql_scan_concurrency` remains the outer RPC concurrency. **TiDB requests serial execution, so each batched RPC has at most one active Region task and batching does not change this limit.**
 
 ## Test Design
 
