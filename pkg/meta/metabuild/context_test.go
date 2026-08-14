@@ -19,9 +19,11 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -127,6 +129,28 @@ func TestMetaBuildContext(t *testing.T) {
 				return metabuild.WithSuppressTooLongIndexErr(val.(bool))
 			},
 			testVals: []any{true, false},
+		},
+		{
+			name: "fullTextAnalyzer",
+			getter: func(ctx *metabuild.Context) any {
+				return ctx.GetFullTextAnalyzer()
+			},
+			checkDefault: fulltext.AnalyzerConfig{},
+			option: func(val any) metabuild.Option {
+				return metabuild.WithFullTextAnalyzer(val.(fulltext.AnalyzerConfig))
+			},
+			testVals: []any{
+				fulltext.AnalyzerConfig{
+					ParserType:             model.FullTextParserTypeStandardV1,
+					InnodbFtMinTokenSize:   3,
+					InnodbFtMaxTokenSize:   84,
+					InnodbFtEnableStopword: true,
+				},
+				fulltext.AnalyzerConfig{
+					ParserType:     model.FullTextParserTypeNgramV1,
+					NgramTokenSize: 2,
+				},
+			},
 		},
 		{
 			name: "is",

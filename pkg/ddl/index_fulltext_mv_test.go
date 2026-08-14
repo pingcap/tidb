@@ -130,19 +130,10 @@ func TestFullTextIndexShowCreateTableRoundTrip(t *testing.T) {
 		"WITH PARSER NGRAM")
 }
 
-// TestFullTextIndexInCreateTable documents a gap: only ALTER TABLE / CREATE
-// INDEX are rewritten today, because the rewrite needs the session's analyzer
-// variables and BuildTableInfo only has a *metabuild.Context, which does not
-// carry them. An inline FULLTEXT KEY in CREATE TABLE therefore still takes the
-// columnar path and is rejected.
-//
-// This makes SHOW CREATE TABLE output non-restorable, so it must be fixed
-// before the feature ships - either by plumbing the analyzer defaults through
-// metabuild.Context, or by rewriting the statement in (*executor).CreateTable
-// where a sessionctx is available.
+// TestFullTextIndexInCreateTable covers the copy-paste contract: the output of
+// SHOW CREATE TABLE must recreate the table, which requires an inline FULLTEXT
+// KEY to be rewritten just as ALTER TABLE / CREATE INDEX is.
 func TestFullTextIndexInCreateTable(t *testing.T) {
-	t.Skip("FULLTEXT in CREATE TABLE is not rewritten yet; see the comment above")
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

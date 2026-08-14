@@ -4971,7 +4971,9 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		// non-unique; the rewritten specification carries an expression, so
 		// createIndex builds the hidden generated column for it as it would for
 		// any other expression index.
-		mvSpecs, err := buildFullTextMVIndexSpec(ctx, indexPartSpecifications, indexOption, tblInfo)
+		mvSpecs, err := buildFullTextMVIndexSpec(
+			NewMetaBuildContextWithSctx(ctx).GetFullTextAnalyzer(),
+			indexPartSpecifications, indexOption, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pkg/expression/exprctx",
         "//pkg/expression/exprstatic",
+        "//pkg/expression/fulltext",
         "//pkg/infoschema/context",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/vardef",
@@ -24,8 +25,10 @@ go_test(
         ":metabuild",
         "//pkg/expression/exprctx",
         "//pkg/expression/exprstatic",
+        "//pkg/expression/fulltext",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
+        "//pkg/meta/model",
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/vardef",

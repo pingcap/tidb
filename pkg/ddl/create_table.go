@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/deploymode"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -1420,6 +1421,23 @@ func BuildTableInfo(
 	}
 
 	for _, constr := range constraints {
+		// Rewrite an inline FULLTEXT index into a multi-valued index over the
+		// tokenized column before hidden columns are built, so the generated
+		// column it needs is created along with every other expression index.
+		// This mirrors the ALTER TABLE / CREATE INDEX path and is what lets the
+		// FULLTEXT KEY that SHOW CREATE TABLE prints be pasted back.
+		if constr.Tp == ast.ConstraintColumnar && constr.Option != nil &&
+			constr.Option.Tp == ast.IndexTypeFulltext && !deploymode.IsStarter() {
+			mvSpecs, err := buildFullTextMVIndexSpec(
+				ctx.GetFullTextAnalyzer(), constr.Keys, constr.Option, tbInfo)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			constr.Keys = mvSpecs
+			constr.Tp = ast.ConstraintIndex
+			constr.Option = nil
+		}
+
 		var hiddenCols []*model.ColumnInfo
 		if constr.Tp != ast.ConstraintColumnar {
 			// Build hidden columns if necessary.
@@ -1516,6 +1534,8 @@ func BuildTableInfo(
 			case ast.IndexTypeInverted:
 				columnarIndexType = model.ColumnarIndexTypeInverted
 			case ast.IndexTypeFulltext:
+				// Reached only in starter deployments; elsewhere the constraint
+				// was rewritten into an ordinary expression index above.
 				columnarIndexType = model.ColumnarIndexTypeFulltext
 			default:
 				return nil, dbterror.ErrUnsupportedIndexType.GenWithStackByArgs(constr.Option.Tp)

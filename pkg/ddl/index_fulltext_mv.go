@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
@@ -49,7 +48,7 @@ import (
 // from session variables instead would let a later SET reshape the token stream
 // and silently disagree with the rows already indexed.
 func buildFullTextMVIndexSpec(
-	ctx sessionctx.Context,
+	analyzerDefaults fulltext.AnalyzerConfig,
 	indexPartSpecifications []*ast.IndexPartSpecification,
 	indexOption *ast.IndexOption,
 	tblInfo *model.TableInfo,
@@ -92,9 +91,10 @@ func buildFullTextMVIndexSpec(
 			"FULLTEXT index with the MULTILINGUAL parser is not supported without a columnar engine")
 	}
 
-	config, err := fulltext.AnalyzerConfigFromSessionVars(ctx.GetSessionVars(), parserType)
-	if err != nil {
-		return nil, errors.Trace(err)
+	config := analyzerDefaults
+	config.ParserType = parserType
+	if config.ParserType == model.FullTextParserTypeNgramV1 && config.NgramTokenSize <= 0 {
+		config.NgramTokenSize = 2
 	}
 	if _, err := fulltext.GetAnalyzer(config); err != nil {
 		return nil, errors.Trace(err)
