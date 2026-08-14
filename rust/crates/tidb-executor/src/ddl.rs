@@ -137,8 +137,9 @@
 //!   [`run_create_table_in`].
 //! * **`tidb_exec::table_info_build`, the OTHER builder -- NOT affected.** It
 //!   refuses `PARTITION BY` outright and its `set_default_value` accepts only
-//!   a LITERAL or `CURRENT_TIMESTAMP`, never folding an expression, so it has
-//!   no DDL-time evaluation to give a zone to.
+//!   a LITERAL or a temporal marker (`CURRENT_TIMESTAMP` / `CURRENT_DATE`),
+//!   never folding an expression, so it has no DDL-time evaluation to give a
+//!   zone to.
 //!
 //! One zone-dependent DDL-time behaviour the audit found -- TIMESTAMP
 //! `DEFAULT` RANGE validation -- is CLOSED. `ts timestamp default

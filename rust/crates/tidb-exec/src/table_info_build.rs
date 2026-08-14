@@ -1159,9 +1159,9 @@ fn is_current_timestamp(expr: &Expr) -> bool {
 /// A DEFAULT retained between Go's option-order storage stages and its final
 /// `checkDefaultValue` pass.
 enum StagedColumnDefault {
-    /// `CURRENT_TIMESTAMP` is computed at row-write time and therefore has no
+    /// A temporal marker is computed at row-write time and therefore has no
     /// settled spelling to cast through the final column type.
-    CurrentTimestamp(String),
+    TemporalMarker(String),
     /// A literal's exact metadata spelling, including fixed-binary padding.
     Settled(tidb_executor::ddl::SettledColumnDefault),
 }
@@ -1169,7 +1169,7 @@ enum StagedColumnDefault {
 impl StagedColumnDefault {
     fn has_default(&self) -> bool {
         match self {
-            Self::CurrentTimestamp(_) => true,
+            Self::TemporalMarker(_) => true,
             Self::Settled(default) => default.has_default,
         }
     }
@@ -1224,12 +1224,12 @@ fn stage_column_default(
 
     match built {
         tidb_executor::column_default::ColumnDefault::Computed(computed) => {
-            if computed.is_expr {
+            if computed.is_expr() {
                 return Err(DdlAdmissionError::new(format!(
                     "column `{name}` uses a computed DEFAULT this catalog writer cannot execute"
                 )));
             }
-            Ok(StagedColumnDefault::CurrentTimestamp(computed.text))
+            Ok(StagedColumnDefault::TemporalMarker(computed.text))
         }
         tidb_executor::column_default::ColumnDefault::Value(value) => {
             let zone = context.session_zone();
@@ -1251,7 +1251,7 @@ fn persist_column_default(
     context: &tidb_executor::StmtContext,
 ) -> Refusal<()> {
     match staged {
-        StagedColumnDefault::CurrentTimestamp(text) => {
+        StagedColumnDefault::TemporalMarker(text) => {
             info.default_is_expr = false;
             info.set_default_value(ColumnDefaultValue::str(&text))
                 .map_err(|error| DdlAdmissionError::new(error.to_string()))?;

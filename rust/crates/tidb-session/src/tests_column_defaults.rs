@@ -1287,6 +1287,49 @@ fn alter_column_set_default_retains_computed_expressions() {
 }
 
 #[test]
+fn alter_column_current_date_retains_the_temporal_marker() {
+    let mut session = Session::new();
+    session.run("SET time_zone = '+00:00'").unwrap();
+    session
+        .run("CREATE TABLE alter_current_date (id INT, d DATE)")
+        .unwrap();
+    session
+        .run("INSERT INTO alter_current_date VALUES (0, NULL)")
+        .unwrap();
+    session
+        .run(
+            "ALTER TABLE alter_current_date ALTER COLUMN d \
+             SET DEFAULT (CURRENT_DATE())",
+        )
+        .unwrap();
+
+    let definition = show_create(&mut session, "alter_current_date");
+    assert!(
+        definition.contains("`d` date DEFAULT (CURRENT_DATE)"),
+        "{definition}"
+    );
+    let columns = rows(&mut session, "SHOW COLUMNS FROM alter_current_date");
+    assert_eq!(columns[1][4], "CURRENT_DATE");
+    assert_eq!(columns[1][5], "");
+
+    session.run("SET timestamp = 1700000000").unwrap();
+    session
+        .run("INSERT INTO alter_current_date (id) VALUES (1)")
+        .unwrap();
+    session.run("SET timestamp = 1700086400").unwrap();
+    session
+        .run("INSERT INTO alter_current_date (id) VALUES (2)")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT id,d FROM alter_current_date ORDER BY id"
+        ),
+        [["0", "NULL"], ["1", "2023-11-14"], ["2", "2023-11-15"],]
+    );
+}
+
+#[test]
 fn str_to_date_default_reaches_every_ddl_entry_point() {
     let mut session = Session::new();
     session

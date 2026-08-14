@@ -27,8 +27,7 @@
 //! and every row that omits the column runs that computation afresh. That is
 //! the single fact [`ColumnDefault::Computed`] carries.
 //!
-//! Go splits the computed ones into two only for PRINTING, and this keeps the
-//! same split in one boolean rather than in two code paths:
+//! Go splits the computed ones into three storage/display kinds:
 //!
 //! * `DEFAULT CURRENT_TIMESTAMP` on a `TIMESTAMP`/`DATETIME` column stores the
 //!   marker word and leaves `DefaultIsExpr` FALSE, so
@@ -36,7 +35,9 @@
 //!   the column's own fsp appended when it has one. The fsp the default is
 //!   WRITTEN with must already equal the column's, which is why the printer
 //!   never has to choose between them -- see [`func_call_default`].
-//! * every other computed default sets `DefaultIsExpr` TRUE, and the same
+//! * `CURRENT_DATE` is also a marker with `DefaultIsExpr` FALSE, but SHOW
+//!   CREATE parenthesizes it while SHOW COLUMNS reports the bare marker.
+//! * every ordinary computed default sets `DefaultIsExpr` TRUE, and the same
 //!   printer's `default:` arm wraps it: `` DEFAULT (`rand()`) `` without the
 //!   quotes a literal default would get.
 //!
@@ -52,8 +53,8 @@
 //!
 //! # Deferred, and refused rather than guessed
 //!
-//! Go's whitelist also carries `CURRENT_DATE`, `NEXTVAL` (a sequence read),
-//! and `VEC_FROM_TEXT`. Each needs its own argument check, and a wrong one would
+//! Go's whitelist also carries `NEXTVAL` (a sequence read) and
+//! `VEC_FROM_TEXT`. Each needs its own argument check, and a wrong one would
 //! silently store a default TiDB rejects, so the ones not listed in
 //! [`func_call_default`] are refused by name.
 
@@ -86,14 +87,35 @@ pub struct ComputedDefault {
     /// Go's stored `DefaultValue` string: the marker word
     /// `CURRENT_TIMESTAMP`, or `restoreFuncCall`'s rendering of the call.
     pub text: String,
-    /// Go `ColumnInfo.DefaultIsExpr`, which decides only how the default is
-    /// PRINTED back -- see this module's docs.
-    pub is_expr: bool,
+    /// The source storage/display kind. This keeps `CURRENT_TIMESTAMP`,
+    /// `CURRENT_DATE`, and ordinary expression defaults distinct without
+    /// branching on their persisted text.
+    pub kind: ComputedDefaultKind,
     /// The evaluable form. It reads no column, so it evaluates over an empty
     /// row.
     pub expr: Expression,
     /// Whether ADD COLUMN may evaluate this once for pre-existing rows.
     pub added_origin_safety: AddedOriginSafety,
+}
+
+/// Go's three observable computed-default metadata shapes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ComputedDefaultKind {
+    /// `DefaultIsExpr=true`: parenthesized in SHOW CREATE and marked
+    /// `DEFAULT_GENERATED` by SHOW COLUMNS.
+    Expression,
+    /// `DefaultIsExpr=false`, printed bare with the column fsp.
+    CurrentTimestamp,
+    /// `DefaultIsExpr=false`, but parenthesized by SHOW CREATE.
+    CurrentDate,
+}
+
+impl ComputedDefault {
+    /// Go `ColumnInfo.DefaultIsExpr`.
+    #[must_use]
+    pub const fn is_expr(&self) -> bool {
+        matches!(self.kind, ComputedDefaultKind::Expression)
+    }
 }
 
 /// Go's replication-safety decision for synthesizing an added column's value
@@ -133,8 +155,9 @@ impl ColumnDefault {
     /// What follows `DEFAULT ` in `SHOW CREATE TABLE`, quoting included.
     ///
     /// Go `pkg/executor/show.go`: the `CURRENT_TIMESTAMP` marker prints bare
-    /// with the column's fsp appended, a `DefaultIsExpr` default prints
-    /// parenthesised and unquoted, and a literal prints single-quoted.
+    /// with the column's fsp appended, while `CURRENT_DATE` and a
+    /// `DefaultIsExpr` default print parenthesised and unquoted; a literal
+    /// prints single-quoted.
     #[must_use]
     pub fn show_create_clause(&self, field_type: &FieldType, literal_text: &str) -> String {
         match self {
@@ -150,7 +173,9 @@ impl ColumnDefault {
             ColumnDefault::Value(_) => {
                 format!("'{}'", tidb_util::format::output_format(literal_text))
             }
-            ColumnDefault::Computed(computed) if !computed.is_expr => {
+            ColumnDefault::Computed(computed)
+                if computed.kind == ComputedDefaultKind::CurrentTimestamp =>
+            {
                 let fsp = field_type.decimal();
                 if fsp > 0 {
                     format!("{}({fsp})", computed.text)
@@ -172,7 +197,9 @@ impl ColumnDefault {
     pub fn column_desc_text(&self, field_type: &FieldType) -> Option<String> {
         match self {
             ColumnDefault::Value(_) => None,
-            ColumnDefault::Computed(computed) if !computed.is_expr => {
+            ColumnDefault::Computed(computed)
+                if computed.kind == ComputedDefaultKind::CurrentTimestamp =>
+            {
                 let fsp = field_type.decimal();
                 let temporal = matches!(
                     field_type.code(),
@@ -191,7 +218,7 @@ impl ColumnDefault {
     /// Go `NewColDesc`'s `Extra` for a column whose default is an expression.
     #[must_use]
     pub fn is_default_generated(&self) -> bool {
-        matches!(self, ColumnDefault::Computed(computed) if computed.is_expr)
+        matches!(self, ColumnDefault::Computed(computed) if computed.is_expr())
     }
 }
 
@@ -268,7 +295,7 @@ fn computed_default(
 ) -> Result<Option<ColumnDefault>, DefaultError> {
     Ok(Some(ColumnDefault::Computed(Box::new(ComputedDefault {
         text: expr.restore_with_flags(default_restore_flags()),
-        is_expr: true,
+        kind: ComputedDefaultKind::Expression,
         expr: build_expression(expr)?,
         added_origin_safety,
     }))))
@@ -360,6 +387,32 @@ fn func_call_default(
     field_type: &FieldType,
 ) -> Result<Option<ColumnDefault>, DefaultError> {
     let lower = name.to_ascii_lowercase();
+    if lower == "current_date" {
+        if !matches!(
+            field_type.code(),
+            FieldTypeCode::Timestamp | FieldTypeCode::Datetime | FieldTypeCode::Date
+        ) {
+            return Ok(None);
+        }
+        if matches!(
+            field_type.code(),
+            FieldTypeCode::Timestamp | FieldTypeCode::Datetime
+        ) {
+            let written_fsp = match args {
+                [only] => clock_fsp_argument(only).unwrap_or(0),
+                _ => 0,
+            };
+            if written_fsp != field_type.decimal() {
+                return Err(DefaultError::InvalidDefault);
+            }
+        }
+        return Ok(Some(ColumnDefault::Computed(Box::new(ComputedDefault {
+            text: "CURRENT_DATE".to_owned(),
+            kind: ComputedDefaultKind::CurrentDate,
+            expr: build_expression(expr)?,
+            added_origin_safety: AddedOriginSafety::Safe,
+        }))));
+    }
     if is_clock_marker(&lower) {
         // Go: the marker settles only on a temporal column; anywhere else it
         // falls through to `EvalSimpleAst`, which FREEZES the clock reading
@@ -387,7 +440,7 @@ fn func_call_default(
             // Go stores the marker word itself, not the written spelling, so
             // `DEFAULT now()` and `DEFAULT current_timestamp` are one table.
             text: "CURRENT_TIMESTAMP".to_owned(),
-            is_expr: false,
+            kind: ComputedDefaultKind::CurrentTimestamp,
             expr: build_expression(expr)?,
             added_origin_safety: AddedOriginSafety::Safe,
         }))));
@@ -687,8 +740,9 @@ fn materialize_stored_literal_with_system_zone(
 
 /// Go `table.GetColDefaultValue`: the value an omitted column takes for ONE
 /// row. A settled default is that value; a computed one is evaluated now,
-/// against the statement's own context, so `CURRENT_TIMESTAMP` reads the
-/// statement clock exactly as Go's `getColDefaultExprValue` does.
+/// against the statement's own context, so `CURRENT_TIMESTAMP` and
+/// `CURRENT_DATE` read the statement clock exactly as Go's
+/// `getColDefaultExprValue` does.
 pub fn evaluate(
     default: &ColumnDefault,
     field_type: &FieldType,

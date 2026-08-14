@@ -235,8 +235,8 @@ pub(crate) fn materialize_column_default(
     match &meta.default_value {
         // A COMPUTED default reads the statement's own clock here rather than
         // a value settled at DDL time, which is what makes every row of one
-        // `INSERT` share one `CURRENT_TIMESTAMP` reading -- Go's
-        // `GetColDefaultValue` over the same fixed `EvalContext`.
+        // `INSERT` share one `CURRENT_TIMESTAMP` / `CURRENT_DATE` reading --
+        // Go's `GetColDefaultValue` over the same fixed `EvalContext`.
         Some(default) => crate::column_default::evaluate(
             default,
             &meta.field_type,
@@ -516,7 +516,7 @@ mod source_tests {
         let computed_one = Some(crate::column_default::ColumnDefault::Computed(Box::new(
             crate::column_default::ComputedDefault {
                 text: "1".to_owned(),
-                is_expr: true,
+                kind: crate::column_default::ComputedDefaultKind::Expression,
                 expr: Expression::Constant(tidb_expr::constant::Constant::new(
                     Datum::Int(1),
                     not_null_bigint.clone(),
