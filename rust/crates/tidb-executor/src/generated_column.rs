@@ -147,6 +147,104 @@ use tidb_datatype::{Datum, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::rewriter::ColumnResolver;
 
+/// Go `expression.IllegalFunctions4GeneratedColumns`.
+const DISALLOWED_FUNCTIONS: &[&str] = &[
+    "benchmark",
+    "connection_id",
+    "curdate",
+    "current_date",
+    "current_resource_group",
+    "current_role",
+    "current_time",
+    "current_timestamp",
+    "current_user",
+    "curtime",
+    "database",
+    "found_rows",
+    "get_lock",
+    "getvar",
+    "is_free_lock",
+    "is_used_lock",
+    "json_merge",
+    "last_insert_id",
+    "load_file",
+    "localtime",
+    "localtimestamp",
+    "name_const",
+    "now",
+    "rand",
+    "random_bytes",
+    "release_all_locks",
+    "release_lock",
+    "row_count",
+    "row",
+    "schema",
+    "session_user",
+    "setvar",
+    "sleep",
+    "sysdate",
+    "system_user",
+    "tidb_bounded_staleness",
+    "tidb_current_tso",
+    "tidb_is_ddl_owner",
+    "tidb_row_checksum",
+    "tidb_version",
+    "unix_timestamp",
+    "user",
+    "utc_date",
+    "utc_time",
+    "utc_timestamp",
+    "uuid",
+    "uuid_v4",
+    "uuid_v7",
+    "uuid_short",
+    "values",
+    "version",
+];
+
+pub(crate) fn is_disallowed_generated_function(name: &str) -> bool {
+    DISALLOWED_FUNCTIONS
+        .iter()
+        .any(|blocked| name.eq_ignore_ascii_case(blocked))
+}
+
+fn generated_expression_has_disallowed_function(expression: &tidb_ast::Expr) -> bool {
+    struct Scanner {
+        found: bool,
+    }
+
+    impl tidb_ast::Visitor for Scanner {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expression) = node.downcast_ref::<tidb_ast::Expr>() else {
+                return false;
+            };
+            self.found = match expression {
+                tidb_ast::Expr::Func { name, .. }
+                | tidb_ast::Expr::GenericFuncCall { name, .. } => {
+                    is_disallowed_generated_function(name)
+                }
+                tidb_ast::Expr::Subquery(_)
+                | tidb_ast::Expr::Exists { .. }
+                | tidb_ast::Expr::InSubquery { .. }
+                | tidb_ast::Expr::CompareSubquery { .. }
+                | tidb_ast::Expr::UserVar(_)
+                | tidb_ast::Expr::SysVar { .. } => true,
+                _ => false,
+            };
+            self.found
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            !self.found
+        }
+    }
+
+    let mut expression = expression.clone();
+    let mut scanner = Scanner { found: false };
+    tidb_ast::Visitable::accept(&mut expression, &mut scanner);
+    scanner.found
+}
+
 /// What makes a column generated: Go `ColumnInfo.GeneratedExprString` /
 /// `GeneratedStored`, plus the built expression Go keeps as `GeneratedExpr`.
 #[derive(Clone, Debug)]
@@ -478,6 +576,8 @@ pub enum GeneratedDdlError {
     /// Go `ErrGeneratedColumnNonPrior` (3107): the expression names a
     /// generated column defined at or after this one.
     NonPrior,
+    /// Go `ErrGeneratedColumnFunctionIsNotAllowed` (3102).
+    DisallowedFunction(String),
     /// Go `ErrUnsupportedOnGeneratedColumn` (3106) with the reason as its
     /// argument, e.g. `Defining a virtual generated column as primary key`.
     Unsupported(&'static str),
@@ -533,6 +633,9 @@ pub fn build_generated_columns_with_like_default_escape(
             built.push(None);
             continue;
         };
+        if generated_expression_has_disallowed_function(expression) {
+            return Err(GeneratedDdlError::DisallowedFunction(def.name.clone()));
+        }
         let resolver = TableColumnResolver::with_like_default_escape(
             names,
             types,
@@ -597,6 +700,7 @@ pub fn build_generated_columns_with_like_default_escape(
 /// `'Adding generated stored column through ALTER TABLE' is not supported for
 /// generated columns.` before any expression is built (captured).
 pub fn build_added_generated_column(
+    name: &str,
     expression: &tidb_ast::Expr,
     stored: bool,
     names: &[String],
@@ -604,12 +708,13 @@ pub fn build_added_generated_column(
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Result<GeneratedColumn, GeneratedDdlError> {
     build_added_generated_column_with_like_default_escape(
-        expression, stored, names, types, zone, b'\\',
+        name, expression, stored, names, types, zone, b'\\',
     )
 }
 
 /// Statement-aware form of [`build_added_generated_column`].
 pub fn build_added_generated_column_with_like_default_escape(
+    name: &str,
     expression: &tidb_ast::Expr,
     stored: bool,
     names: &[String],
@@ -617,6 +722,9 @@ pub fn build_added_generated_column_with_like_default_escape(
     zone: &tidb_datatype::SessionTimeZone,
     like_default_escape: u8,
 ) -> Result<GeneratedColumn, GeneratedDdlError> {
+    if generated_expression_has_disallowed_function(expression) {
+        return Err(GeneratedDdlError::DisallowedFunction(name.to_owned()));
+    }
     let resolver = TableColumnResolver::with_like_default_escape(
         names,
         types,

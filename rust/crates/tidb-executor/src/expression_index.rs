@@ -172,7 +172,9 @@ use tidb_ast::{Expr, IndexPart};
 use tidb_datatype::FieldType;
 
 use crate::driver::DriverError;
-use crate::generated_column::{GeneratedColumn, TableColumnResolver};
+use crate::generated_column::{
+    is_disallowed_generated_function, GeneratedColumn, TableColumnResolver,
+};
 
 /// Go `pkg/ddl/executor.go`'s `expressionIndexPrefix`.
 const HIDDEN_COLUMN_PREFIX: &str = "_V$";
@@ -233,70 +235,6 @@ const GA_FUNCTIONS: &[(&str, usize, Option<usize>)] = &[
     ("json_depth", 1, Some(1)),
     ("json_keys", 1, Some(2)),
     ("json_length", 1, Some(2)),
-];
-
-/// Go `expression.IllegalFunctions4GeneratedColumns`
-/// (`pkg/expression/function_traits.go`), transcribed VERBATIM. Every name on
-/// it is 3758 in an expression index -- reported BEFORE the 8200 GA gate, so
-/// `abs(rand())` is 3758 and not 8200 even though `abs` is the outer call.
-///
-/// The list is what makes an expression index deterministic: each name either
-/// reads the clock (`now`, `curdate`, `sysdate`), the session (`user`,
-/// `database`, `connection_id`, `@x` via `get_var`), or an entropy source
-/// (`rand`, `uuid`) -- values that would be frozen into the stored key at
-/// write time and no longer match on the way back out.
-const ILLEGAL_FUNCTIONS: &[&str] = &[
-    "benchmark",
-    "connection_id",
-    "curdate",
-    "current_date",
-    "current_resource_group",
-    "current_role",
-    "current_time",
-    "current_timestamp",
-    "current_user",
-    "curtime",
-    "database",
-    "found_rows",
-    "get_lock",
-    "getvar",
-    "is_free_lock",
-    "is_used_lock",
-    "json_merge",
-    "last_insert_id",
-    "load_file",
-    "localtime",
-    "localtimestamp",
-    "name_const",
-    "now",
-    "rand",
-    "random_bytes",
-    "release_all_locks",
-    "release_lock",
-    "row_count",
-    "row",
-    "schema",
-    "session_user",
-    "setvar",
-    "sleep",
-    "sysdate",
-    "system_user",
-    "tidb_bounded_staleness",
-    "tidb_current_tso",
-    "tidb_is_ddl_owner",
-    "tidb_row_checksum",
-    "tidb_version",
-    "unix_timestamp",
-    "user",
-    "utc_date",
-    "utc_time",
-    "utc_timestamp",
-    "uuid",
-    "uuid_v4",
-    "uuid_v7",
-    "uuid_short",
-    "values",
-    "version",
 ];
 
 /// Go `illegalFunctionChecker` for `typeIndex`: one pass that COLLECTS every
@@ -512,7 +450,7 @@ impl AdmissibilityScan {
             self.agg_func = true;
             return;
         }
-        if ILLEGAL_FUNCTIONS.contains(&name.as_str()) {
+        if is_disallowed_generated_function(&name) {
             self.illegal_func = true;
             return;
         }

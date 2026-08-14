@@ -1300,6 +1300,9 @@ pub(crate) fn generated_column_error(
             clause: "generated column function".to_owned(),
         },
         GeneratedDdlError::NonPrior => DriverError::GeneratedColumnNonPrior,
+        GeneratedDdlError::DisallowedFunction(column) => {
+            DriverError::GeneratedColumnFunctionNotAllowed(column)
+        }
         GeneratedDdlError::Unsupported(reason) => {
             DriverError::UnsupportedOnGeneratedColumn(reason.to_owned())
         }

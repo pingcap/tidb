@@ -2502,6 +2502,7 @@ fn add_column_action(
                 .collect();
             Some(
                 crate::generated_column::build_added_generated_column_with_like_default_escape(
+                    &def.name,
                     expression,
                     false,
                     &names,

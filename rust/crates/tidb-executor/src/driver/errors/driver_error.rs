@@ -347,6 +347,8 @@ pub enum DriverError {
         /// The table it belongs to.
         table: String,
     },
+    /// Go `dbterror.ErrGeneratedColumnFunctionIsNotAllowed` (3102).
+    GeneratedColumnFunctionNotAllowed(String),
     /// Go `dbterror.ErrGeneratedColumnNonPrior` (3107).
     GeneratedColumnNonPrior,
     /// Go `dbterror.ErrWrongKeyColumnFunctionalIndex` (3761), carrying the

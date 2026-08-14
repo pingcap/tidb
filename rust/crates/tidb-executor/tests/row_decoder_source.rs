@@ -70,6 +70,7 @@ fn generated_column(
         .map(|column| column.field_type.clone())
         .collect::<Vec<_>>();
     tidb_executor::generated_column::build_added_generated_column(
+        "generated",
         &parse_generated_expr(text),
         stored,
         &names,

@@ -1201,6 +1201,13 @@ impl DriverError {
                 "The value specified for generated column '{column}' in table '{table}' is not allowed."
             ),
         ),
+        DriverError::GeneratedColumnFunctionNotAllowed(column) => MysqlError::new(
+            3102,
+            *b"HY000",
+            format!(
+                "Expression of generated column '{column}' contains a disallowed function."
+            ),
+        ),
         // Go: "Generated column can refer only to generated columns defined
         // prior to it."
         DriverError::GeneratedColumnNonPrior => MysqlError::new(

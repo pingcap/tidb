@@ -176,6 +176,51 @@ fn an_unknown_dependency_is_refused_by_name() {
     );
 }
 
+/// Go validates the generated-expression AST before building an evaluator,
+/// so a disallowed function remains 3102 even when the scalar function itself
+/// is implemented and nested below an otherwise legal call.
+#[test]
+fn disallowed_generated_column_functions_are_refused_by_column_name() {
+    let mut session = Session::new();
+    for (sql, column) in [
+        (
+            "CREATE TABLE gu (id INT, token VARCHAR(64) AS (UUID()))",
+            "token",
+        ),
+        (
+            "CREATE TABLE gn (id INT, token VARCHAR(64) AS (LOWER(UUID())))",
+            "token",
+        ),
+        (
+            "CREATE TABLE gr (id INT, sample DOUBLE AS (RAND()))",
+            "sample",
+        ),
+        ("CREATE TABLE gv (id INT, copied INT AS (@value))", "copied"),
+    ] {
+        let error = session
+            .run(sql)
+            .expect_err("a generated column cannot use a volatile expression")
+            .to_mysql_error();
+        assert_eq!(error.code, 3102, "{sql}");
+        assert_eq!(
+            error.message,
+            format!("Expression of generated column '{column}' contains a disallowed function."),
+            "{sql}"
+        );
+    }
+
+    session.run("CREATE TABLE ga (id INT)").unwrap();
+    let error = session
+        .run("ALTER TABLE ga ADD COLUMN token VARCHAR(64) AS (UUID())")
+        .expect_err("ALTER TABLE uses the same generated-expression boundary")
+        .to_mysql_error();
+    assert_eq!(error.code, 3102);
+    assert_eq!(
+        error.message,
+        "Expression of generated column 'token' contains a disallowed function."
+    );
+}
+
 /// Go `verifyColumnGeneration`: a generated column that reads a generated
 /// column defined at or after it is 3107.
 #[test]
