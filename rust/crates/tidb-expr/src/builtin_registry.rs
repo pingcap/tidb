@@ -333,6 +333,16 @@ pub(crate) fn is_registered_builtin(name: &str) -> bool {
 }
 
 pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> crate::EvalError {
+    // These names are in Go's registry so the parser can recognize them, but
+    // their function classes deliberately return ErrFunctionNotExists.
+    let unavailable = match name {
+        "default_func" => Some("DEFAULT"),
+        "uuid_short" => Some("UUID_SHORT"),
+        _ => None,
+    };
+    if let Some(display_name) = unavailable {
+        return crate::EvalError::FunctionNotExists(display_name.to_owned());
+    }
     if is_registered_builtin(name) {
         return crate::EvalError::Unsupported("this builtin is not yet built for chunk evaluation");
     }
@@ -346,12 +356,25 @@ pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::is_registered_builtin;
+    use super::{is_registered_builtin, unresolved_error};
+    use crate::EvalError;
 
     #[test]
     fn source_registry_distinguishes_unported_from_unknown() {
         assert!(is_registered_builtin("get_lock"));
         assert!(is_registered_builtin("last_insert_id"));
         assert!(!is_registered_builtin("no_such_fn"));
+    }
+
+    #[test]
+    fn registered_but_unavailable_functions_keep_source_names() {
+        assert_eq!(
+            unresolved_error("uuid_short", Some("test".to_owned())),
+            EvalError::FunctionNotExists("UUID_SHORT".to_owned())
+        );
+        assert_eq!(
+            unresolved_error("default_func", None),
+            EvalError::FunctionNotExists("DEFAULT".to_owned())
+        );
     }
 }

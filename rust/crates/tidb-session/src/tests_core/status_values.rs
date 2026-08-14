@@ -290,6 +290,21 @@ fn a_folded_last_insert_id_publishes_even_when_a_later_expression_fails_to_resol
     );
 }
 
+/// `UUID_SHORT` is present in Go's builtin registry, but its function class
+/// deliberately returns `ErrFunctionNotExists` because TiDB has no real
+/// `server_id` input for MySQL's UUID_SHORT formula.
+#[test]
+fn uuid_short_is_a_source_1305_not_an_unimplemented_builtin() {
+    let mut session = Session::new();
+    let error = session
+        .run("SELECT UUID_SHORT()")
+        .expect_err("UUID_SHORT is deliberately unavailable")
+        .to_mysql_error();
+    assert_eq!(error.code, 1305);
+    assert_eq!(error.state, *b"42000");
+    assert_eq!(error.message, "FUNCTION UUID_SHORT does not exist");
+}
+
 /// The FUNCTION and the WIRE value read ONE publication, so they can differ
 /// only where Go itself makes them differ.
 ///
