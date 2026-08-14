@@ -1,9 +1,11 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,7 +18,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -26,7 +28,6 @@ import (
 	"github.com/tikv/client-go/v2/rawkv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/constants"
 	"github.com/tikv/pd/client/opt"
@@ -38,7 +39,14 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-const pkdbDefaultReadStoreConcurrency = 16
+const (
+	pkdbDefaultReadStoreConcurrency = 16
+	pkdbFlashbackRegionsPerTask     = 128
+	pkdbFlashbackPDSchedulePauseTTL = 5 * time.Minute
+	// pkdbFlashbackInProgressKey records a wait-flashback attempt that has started
+	// but has not completed. The value is an encoded ReplicaWaitFlashback.
+	pkdbFlashbackInProgressKey = "flashback_in_progress"
+)
 
 var (
 	// tidbWaitJobWatchRetryInterval is used when the etcd watch needs to be
@@ -147,38 +155,374 @@ func (w waitFlashback) checkAndWait(
 	if !ok {
 		return 0, errors.Errorf("waitFlashback requires tikv.Storage, got %T", store)
 	}
-
-	logutil.BgLogger().Info("start to flashback cluster",
-		zap.Uint64("flashback TS", curr.FlashbackTs),
-		zap.Uint64("start TS", curr.StartTs),
-		zap.Uint64("commit TS", curr.CommitTs))
-	r := model.KeyRange{
-		StartKey: []byte{0},
-		EndKey:   nil,
+	storeWithPD, ok := store.(kv.StorageWithPD)
+	if !ok {
+		return 0, errors.Errorf("waitFlashback requires kv.StorageWithPD, got %T", store)
 	}
-	// TODO(lance6716): Flashback is an all-region operation (range task over the
-	// whole keyspace). On clusters with huge region counts it can be extremely
-	// expensive and may increase memory usage (e.g. via region cache growth).
-	// Keep this in mind when adding any additional per-region bookkeeping here.
-	err = flashbackToVersion(ctx, store,
-		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-			stats, err := SendPrepareFlashbackToVersionRPC(
-				ctx, tikvStore, curr.FlashbackTs, curr.StartTs, r,
-			)
-			return stats, err
-		}, r.StartKey, r.EndKey)
+	pdCli := storeWithPD.GetPDClient()
+	if pdCli == nil {
+		return 0, errors.New("waitFlashback got nil pd client")
+	}
+	pdHTTPCli := storeWithPD.GetPDHTTPClient()
+
+	pauseCfg := make(map[string]any, len(pdScheduleKey))
+	for _, key := range pdScheduleKey {
+		pauseCfg["schedule."+key] = 0
+	}
+	if err := pdHTTPCli.SetConfig(ctx, pauseCfg, pkdbFlashbackPDSchedulePauseTTL.Seconds()); err != nil {
+		return version, errors.Annotate(err, "pause PD schedule with TTL before flashback")
+	}
+
+	g, ctx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	pauseCtx, cancelPause := context.WithCancel(ctx)
+	defer func() {
+		cancelPause()
+		_ = g.Wait()
+	}()
+	g.Go(func() error {
+		ticker := time.NewTicker(pkdbFlashbackPDSchedulePauseTTL / 3)
+		for {
+			select {
+			case <-pauseCtx.Done():
+				ticker.Stop()
+				clearCtx, cancelClear := context.WithTimeout(context.Background(), flashbackTimeout)
+				err := pdHTTPCli.SetConfig(clearCtx, pauseCfg, 0)
+				cancelClear()
+				if err != nil {
+					logutil.BgLogger().Warn("clear PD schedule TTL config failed",
+						zap.Duration("timeout", flashbackTimeout),
+						zap.Error(err))
+				}
+				return nil
+			case <-ticker.C:
+				if err := pdHTTPCli.SetConfig(pauseCtx, pauseCfg, pkdbFlashbackPDSchedulePauseTTL.Seconds()); err != nil {
+					logutil.BgLogger().Warn("refresh PD schedule TTL config failed",
+						zap.Duration("pauseTTL", pkdbFlashbackPDSchedulePauseTTL),
+						zap.Error(err))
+				}
+			}
+		}
+	})
+
+	flashbackRanges := []tikvstore.KeyRange{{}}
+	flashbackInProgress, err := pdCli.GetLogReplMetadata(ctx, pkdbFlashbackInProgressKey)
 	if err != nil {
+		return version, errors.Annotate(err, "get flashback in-progress state")
+	}
+	if flashbackInProgress != "" {
+		previous := &pdpb.ReplicaWaitFlashback{}
+		logFields := []zap.Field{
+			zap.Uint64("version", version),
+			zap.Uint64("flashbackTS", curr.GetFlashbackTs()),
+			zap.Int("prevValueLen", len(flashbackInProgress)),
+		}
+		if err := previous.Unmarshal([]byte(flashbackInProgress)); err != nil {
+			logFields = append(logFields, zap.NamedError("decodeErr", err))
+		} else {
+			logFields = append(logFields,
+				zap.Uint64("prevVersion", previous.GetVersion()),
+				zap.Uint64("prevFlashbackTS", previous.GetFlashbackTs()),
+			)
+		}
+		logutil.BgLogger().Info("found unfinished flashback; retry with full flashback", logFields...)
+	} else {
+		skipRanges, err := loadFlashbackSkipRanges(ctx, pdCli, store.GetCodec(), curr.GetFlashbackTs())
+		if err != nil {
+			logutil.BgLogger().Warn("load flashback skip ranges failed; fall back to full flashback",
+				zap.Uint64("version", version),
+				zap.Uint64("flashbackTS", curr.GetFlashbackTs()),
+				zap.Error(err))
+		} else {
+			flashbackRanges = buildFlashbackRanges(skipRanges)
+			logutil.BgLogger().Info("collected flashback skip ranges; will skip regions with maxTS <= flashbackTS",
+				zap.Uint64("version", version),
+				zap.Uint64("flashbackTS", curr.GetFlashbackTs()),
+				zap.Int("skipRanges", len(skipRanges)),
+				zap.Int("flashbackRanges", len(flashbackRanges)))
+		}
+	}
+
+	logutil.BgLogger().Info("start flashback cluster",
+		zap.Uint64("version", version),
+		zap.Uint64("flashbackTS", curr.GetFlashbackTs()),
+		zap.Int("flashbackRanges", len(flashbackRanges)))
+	if err := pdCli.SetLogReplMetadata(ctx, pkdbFlashbackInProgressKey, string(newJobBytes)); err != nil {
+		return version, errors.Annotate(err, "set flashback in-progress state")
+	}
+	if err = runFlashbackRanges(
+		ctx,
+		tikvStore,
+		curr.GetFlashbackTs(),
+		curr.GetStartTs(),
+		curr.GetCommitTs(),
+		flashbackRanges,
+	); err != nil {
 		return version, errors.Trace(err)
 	}
+	err = pdCli.DeleteLogReplMetadata(ctx, pkdbFlashbackInProgressKey)
+	if err != nil {
+		return version, errors.Annotate(err, "delete flashback in-progress state")
+	}
+	logutil.BgLogger().Info("finish flashback cluster",
+		zap.Uint64("version", version),
+		zap.Uint64("flashbackTS", curr.GetFlashbackTs()),
+		zap.Int("flashbackRanges", len(flashbackRanges)))
+	return version, nil
+}
 
-	err = flashbackToVersion(ctx, store,
-		func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
-			stats, err := SendFlashbackToVersionRPC(
-				ctx, tikvStore, curr.FlashbackTs, curr.StartTs, curr.CommitTs, r,
-			)
-			return stats, err
-		}, r.StartKey, r.EndKey)
-	return version, errors.Trace(err)
+func runFlashbackRanges(
+	ctx context.Context,
+	tikvStore tikv.Storage,
+	flashbackTS uint64,
+	startTS uint64,
+	commitTS uint64,
+	flashbackRanges []tikvstore.KeyRange,
+) error {
+	if len(flashbackRanges) == 0 {
+		logutil.BgLogger().Info("all flashback ranges are skipped",
+			zap.Uint64("flashbackTS", flashbackTS))
+		return nil
+	}
+
+	concurrency := int(variable.GetDDLFlashbackConcurrency())
+	preparedRanges, err := prepareFlashbackRanges(
+		ctx,
+		tikvStore,
+		flashbackTS,
+		startTS,
+		flashbackRanges,
+		concurrency,
+	)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return flashbackPreparedRanges(
+		ctx,
+		tikvStore,
+		flashbackTS,
+		startTS,
+		commitTS,
+		preparedRanges,
+		concurrency,
+	)
+}
+
+func loadFlashbackSkipRanges(
+	ctx context.Context,
+	pdCli pd.Client,
+	keyCodec tikv.Codec,
+	flashbackTS uint64,
+) ([]tikvstore.KeyRange, error) {
+	stores, err := pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())
+	if err != nil {
+		return nil, err
+	}
+	dialOptions, err := pkdbDialOptions()
+	if err != nil {
+		return nil, err
+	}
+
+	clusterID := pdCli.GetClusterID(ctx)
+	var (
+		mu         sync.Mutex
+		skipRanges []tikvstore.KeyRange
+	)
+
+	g, gCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	g.SetLimit(pkdbDefaultReadStoreConcurrency)
+	for _, store := range stores {
+		if tikvrpc.GetStoreTypeByMeta(store) != tikvrpc.TiKV ||
+			store.GetState() != metapb.StoreState_Up {
+			continue
+		}
+		storeID, addr := store.GetId(), store.GetAddress()
+		g.Go(func() error {
+			conn, err := grpc.DialContext(gCtx, addr, dialOptions...)
+			if err != nil {
+				return errors.Annotatef(err, "dial store %d(%s)", storeID, addr)
+			}
+			defer func() { _ = conn.Close() }()
+
+			client := logreplicationpb.NewLogReplicationClient(conn)
+			callCtx, cancel := context.WithTimeout(gCtx, flashbackTimeout)
+			defer cancel()
+			resp, err := client.GetFlashbackSkipRanges(callCtx, &logreplicationpb.GetFlashbackSkipRangesRequest{
+				Header:      &logreplicationpb.Header{ClusterId: clusterID},
+				FlashbackTs: flashbackTS,
+			})
+			if err != nil {
+				return errors.Annotatef(err, "get flashback skip ranges from store %d(%s)", storeID, addr)
+			}
+			if resp == nil {
+				return errors.Errorf("get flashback skip ranges from store %d(%s) returned empty response", storeID, addr)
+			}
+
+			storeSkipRanges := make([]tikvstore.KeyRange, 0, len(resp.GetRanges()))
+			for _, r := range resp.GetRanges() {
+				startKey, endKey, err := keyCodec.DecodeRegionRange(r.GetStartKey(), r.GetEndKey())
+				if err != nil {
+					return errors.Annotatef(err, "decode flashback skip range from store %d(%s)", storeID, addr)
+				}
+				storeSkipRanges = append(storeSkipRanges, tikvstore.KeyRange{
+					StartKey: startKey,
+					EndKey:   endKey,
+				})
+			}
+			mu.Lock()
+			skipRanges = append(skipRanges, storeSkipRanges...)
+			mu.Unlock()
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+
+	return skipRanges, nil
+}
+
+func buildFlashbackRanges(skipRanges []tikvstore.KeyRange) []tikvstore.KeyRange {
+	var startKey []byte
+	sort.Slice(skipRanges, func(i, j int) bool {
+		return bytes.Compare(skipRanges[i].StartKey, skipRanges[j].StartKey) < 0
+	})
+
+	var flashbackRanges []tikvstore.KeyRange
+	for _, skip := range skipRanges {
+		if bytes.Compare(startKey, skip.StartKey) < 0 {
+			flashbackRanges = append(flashbackRanges, tikvstore.KeyRange{
+				StartKey: startKey,
+				EndKey:   skip.StartKey,
+			})
+		}
+		if len(skip.EndKey) == 0 {
+			return flashbackRanges
+		}
+		if bytes.Compare(startKey, skip.EndKey) < 0 {
+			startKey = skip.EndKey
+		}
+	}
+	return append(flashbackRanges, tikvstore.KeyRange{StartKey: startKey})
+}
+
+func prepareFlashbackRanges(
+	ctx context.Context,
+	s tikv.Storage,
+	flashbackTS uint64,
+	startTS uint64,
+	ranges []tikvstore.KeyRange,
+	concurrency int,
+) ([]tikvstore.KeyRange, error) {
+	logutil.BgLogger().Info("start preparing flashback ranges",
+		zap.Uint64("flashbackTS", flashbackTS),
+		zap.Uint64("startTS", startTS),
+		zap.Int("flashbackRanges", len(ranges)),
+		zap.Int("concurrency", concurrency),
+		zap.Int("regionsPerTask", pkdbFlashbackRegionsPerTask))
+
+	var (
+		mu       sync.Mutex
+		prepared []tikvstore.KeyRange
+	)
+
+	tasks := make(chan tikvstore.KeyRange, concurrency)
+	g, gCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	g.Go(func() error {
+		defer close(tasks)
+		for _, r := range ranges {
+			startKey, rangeEndKey := r.StartKey, r.EndKey
+			for len(rangeEndKey) == 0 || bytes.Compare(startKey, rangeEndKey) < 0 {
+				bo := tikv.NewBackoffer(gCtx, flashbackMaxBackoff)
+				regions, err := s.GetRegionCache().BatchLoadRegionsWithKeyRange(
+					bo,
+					startKey,
+					rangeEndKey,
+					pkdbFlashbackRegionsPerTask,
+				)
+				if err != nil {
+					return err
+				}
+
+				endKey := regions[len(regions)-1].EndKey()
+				isLast := len(endKey) == 0 || (len(rangeEndKey) > 0 && bytes.Compare(endKey, rangeEndKey) >= 0)
+				if isLast {
+					endKey = rangeEndKey
+				}
+				select {
+				case <-gCtx.Done():
+					return errors.WithStack(gCtx.Err())
+				case tasks <- tikvstore.KeyRange{StartKey: startKey, EndKey: endKey}:
+				}
+				if isLast {
+					break
+				}
+				startKey = endKey
+			}
+		}
+		return nil
+	})
+	for range concurrency {
+		g.Go(func() error {
+			for r := range tasks {
+				if _, err := SendPrepareFlashbackToVersionRPC(gCtx, s, flashbackTS, startTS, r); err != nil {
+					return err
+				}
+				mu.Lock()
+				prepared = append(prepared, r)
+				mu.Unlock()
+			}
+			return nil
+		})
+	}
+	if err := g.Wait(); err != nil {
+		return nil, err
+	}
+	sort.Slice(prepared, func(i, j int) bool {
+		return bytes.Compare(prepared[i].StartKey, prepared[j].StartKey) < 0
+	})
+	return prepared, nil
+}
+
+func flashbackPreparedRanges(
+	ctx context.Context,
+	s tikv.Storage,
+	flashbackTS uint64,
+	startTS uint64,
+	commitTS uint64,
+	ranges []tikvstore.KeyRange,
+	concurrency int,
+) error {
+	logutil.BgLogger().Info("start flashback for prepared ranges",
+		zap.Uint64("flashbackTS", flashbackTS),
+		zap.Uint64("startTS", startTS),
+		zap.Uint64("commitTS", commitTS),
+		zap.Int("preparedRanges", len(ranges)),
+		zap.Int("concurrency", concurrency))
+
+	g, gCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	tasks := make(chan tikvstore.KeyRange, concurrency)
+	g.Go(func() error {
+		defer close(tasks)
+		for _, r := range ranges {
+			select {
+			case <-gCtx.Done():
+				return errors.WithStack(gCtx.Err())
+			case tasks <- r:
+			}
+		}
+		return nil
+	})
+	for range concurrency {
+		g.Go(func() error {
+			for r := range tasks {
+				if _, err := SendFlashbackToVersionRPC(gCtx, s, flashbackTS, startTS, commitTS, r); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+	}
+	return g.Wait()
 }
 
 type saveRaftIndex struct{}

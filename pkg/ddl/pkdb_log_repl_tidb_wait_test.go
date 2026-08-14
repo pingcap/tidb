@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/pd/client/constants"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -474,4 +475,53 @@ func (j *blockingWaitJobForTest) checkAndWait(
 		return ver, ctx.Err()
 	}
 	return ver, nil
+}
+
+func TestBuildFlashbackRanges(t *testing.T) {
+	r := func(start, end string) tikvstore.KeyRange {
+		var startKey, endKey []byte
+		if start != "" {
+			startKey = []byte(start)
+		}
+		if end != "" {
+			endKey = []byte(end)
+		}
+		return tikvstore.KeyRange{StartKey: startKey, EndKey: endKey}
+	}
+
+	tests := []struct {
+		name  string
+		skips []tikvstore.KeyRange
+		want  []tikvstore.KeyRange
+	}{
+		{
+			name: "full",
+			want: []tikvstore.KeyRange{r("", "")},
+		},
+		{
+			name:  "allSkipped",
+			skips: []tikvstore.KeyRange{r("", "")},
+		},
+		{
+			name:  "middle",
+			skips: []tikvstore.KeyRange{r("b", "d")},
+			want:  []tikvstore.KeyRange{r("", "b"), r("d", "")},
+		},
+		{
+			name:  "prefixAndTail",
+			skips: []tikvstore.KeyRange{r("", "b"), r("d", "f"), r("h", "")},
+			want:  []tikvstore.KeyRange{r("b", "d"), r("f", "h")},
+		},
+		{
+			name:  "merged",
+			skips: []tikvstore.KeyRange{r("e", "g"), r("b", "d"), r("c", "f"), r("g", "h")},
+			want:  []tikvstore.KeyRange{r("", "b"), r("h", "")},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, buildFlashbackRanges(tt.skips))
+		})
+	}
 }
