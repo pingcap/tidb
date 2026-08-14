@@ -238,6 +238,7 @@ pub struct StmtContext {
     /// strict write fails, and both statement classes build this struct.
     truncate: ErrorLevel,
     strict: bool,
+    strict_sql_mode: bool,
     /// Go `ast.InsertStmt/UpdateStmt/DeleteStmt.IgnoreErr`, the statement's
     /// own `IGNORE` modifier.
     ///
@@ -555,6 +556,7 @@ impl StmtContext {
             division_by_zero,
             truncate,
             strict,
+            strict_sql_mode: strict,
             ignore_err,
             date_modes: crate::zero_date::DateModes::default(),
             current_db: None,
@@ -856,6 +858,7 @@ impl StmtContext {
     #[must_use]
     pub fn with_strict(mut self, strict: bool) -> Self {
         self.strict = strict;
+        self.strict_sql_mode = strict;
         self
     }
 
@@ -1252,7 +1255,8 @@ impl StmtContext {
     /// exactly as the same plain `INSERT` does under `sql_mode = ''`.
     #[must_use]
     pub fn for_dml(error_for_division_by_zero: bool, strict: bool, ignore_err: bool) -> Self {
-        let strict = strict && !ignore_err;
+        let strict_sql_mode = strict;
+        let strict = strict_sql_mode && !ignore_err;
         let level = if !error_for_division_by_zero {
             ErrorLevel::Ignore
         } else if strict {
@@ -1265,7 +1269,9 @@ impl StmtContext {
         } else {
             ErrorLevel::Warn
         };
-        Self::new(level, truncate, strict, ignore_err)
+        let mut context = Self::new(level, truncate, strict, ignore_err);
+        context.strict_sql_mode = strict_sql_mode;
+        context
     }
 
     /// Whether the statement runs under a strict SQL mode, which decides
@@ -1805,6 +1811,10 @@ impl Columns for StmtContext {
         self.truncate
     }
 
+    fn strict_sql_mode(&self) -> bool {
+        self.strict_sql_mode
+    }
+
     fn append_warning(&self, code: u16, message: &str) {
         self.append_leveled(WarningLevel::Warning, code, message);
     }
@@ -1943,6 +1953,20 @@ mod tests {
         let warnings = lenient.take_warnings();
         assert_eq!(warnings.len(), 1);
         assert_eq!(warnings[0].1, 1301);
+    }
+
+    #[test]
+    fn insert_ignore_keeps_the_raw_strict_sql_mode() {
+        let ignored = StmtContext::for_dml(true, true, true);
+
+        assert!(
+            !ignored.strict(),
+            "IGNORE makes value conversion errors lenient"
+        );
+        assert!(
+            Columns::strict_sql_mode(&ignored),
+            "CHAR decoding reads the session SQL mode, not the IGNORE policy"
+        );
     }
 
     #[test]

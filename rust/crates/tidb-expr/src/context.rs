@@ -518,6 +518,11 @@ pub trait Columns {
         ErrorLevel::Warn
     }
 
+    /// Whether the session SQL mode contains either strict-mode flag.
+    fn strict_sql_mode(&self) -> bool {
+        true
+    }
+
     /// Go `types.Context.HandleTruncate`: applies this statement's level to a
     /// value that lost information during conversion. The best-effort value
     /// the caller already computed stands either way -- Go returns the

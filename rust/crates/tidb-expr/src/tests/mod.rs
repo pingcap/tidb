@@ -530,6 +530,12 @@ fn char_length_public_eval_uses_source_field_type() {
 }
 
 #[test]
+fn char_using_reaches_both_public_evaluators() {
+    assert_eq!(e("char(65, 16740, 67.5 using utf8)"), "STR:AAdD");
+    assert_eq!(chunk_e("char(65, 16740, 67.5 using utf8)"), "STR:AAdD");
+}
+
+#[test]
 fn char_length_rejects_unresolved_field_type_before_runtime_datum() {
     struct RuntimeBytes;
 

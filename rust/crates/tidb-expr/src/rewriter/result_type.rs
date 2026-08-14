@@ -31,9 +31,34 @@ use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 use super::control_type::set_numeric_len_from_args;
 use crate::builtin_ext::{GlCmpStringMode, GlSignature};
+use crate::scalar_function::ScalarFunction;
+use crate::EvalError;
 
 mod crypto;
 pub(super) use crypto::returns_binary_string;
+
+pub(super) fn restore_char_result_charset(func: &mut ScalarFunction) -> Result<(), EvalError> {
+    if func.func_name.lowercase() != "char_func" {
+        return Ok(());
+    }
+    let charset = match func.args.last() {
+        Some(Expression::Constant(constant)) if constant.value == Datum::Null => None,
+        Some(Expression::Constant(constant)) => constant.value.sql_string().ok(),
+        _ => return Err(EvalError::Unsupported("CHAR charset argument")),
+    };
+    let Some(ft) = func.ret_type.as_mut() else {
+        return Ok(());
+    };
+    if let Some(charset) = charset {
+        let collation = tidb_datatype::get_default_collation(&charset)
+            .map_err(|_| EvalError::Unsupported("CHAR charset argument"))?;
+        ft.set_charset_name(charset);
+        ft.set_collation_name(collation);
+    } else {
+        super::set_binary_charset(ft);
+    }
+    Ok(())
+}
 
 /// Go `types.SetBinChsClnFlag`: the binary charset/collation plus the binary
 /// flag every non-string literal type carries.
@@ -798,7 +823,22 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // argument is the USING charset (see `build.rs`'s `CHAR_FUNC` arm),
         // which is not a code point, so Go's `len(args) - 1` counts it out.
         "char_func" if !args.is_empty() => {
-            ft_with_flen(text(), 4 * (args.len() as i64 - 1))
+            let mut ft = ft_with_flen(text(), 4 * (args.len() as i64 - 1));
+            match args.last() {
+                Some(Expression::Constant(constant)) if constant.value == Datum::Null => {
+                    ft.set_charset_name("binary");
+                    ft.set_collation_name("binary");
+                    ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+                }
+                Some(Expression::Constant(constant)) => {
+                    let charset = constant.value.sql_string().ok()?;
+                    let collation = tidb_datatype::get_default_collation(&charset).ok()?;
+                    ft.set_charset_name(charset);
+                    ft.set_collation_name(collation);
+                }
+                _ => return None,
+            }
+            ft
         }
         // `quoteFunctionClass`: every character could need a backslash, plus
         // the two surrounding quotes.

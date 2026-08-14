@@ -547,23 +547,15 @@ pub fn derive_tree_collation(expr: &mut Expression) -> Result<(), EvalError> {
     let name = func.func_name.lowercase().to_owned();
     let ec = crate::collation_derive::derive_collation(&name, &func.args, ret_type)?;
     crate::collation_derive::apply_derived_collation(expr, &ec);
-    // The builtins whose `getFunction` calls `types.SetBinChsClnFlag(bf.tp)`
-    // AFTER `newBaseBuiltinFuncWithTp` has built `bf.tp` from the generically
-    // derived collation -- so the forced binary charset/collation is always
-    // the LAST word for them, regardless of what `deriveCollation`'s generic
-    // (non-string-in-string-out) default arm computed from the connection
-    // charset. `derive_tree_collation` runs that generic derivation as a
-    // bottom-up walk over an already-built tree, i.e. strictly after
-    // `builtin_return_type` gave these names their forced binary type, so
-    // without this re-assertion the generic pass would silently overwrite it
-    // back to a character type -- and a `VARBINARY` result reported as
-    // `utf8mb4` makes `CHAR_LENGTH` count characters where TiDB counts bytes.
+    // Some getFunction implementations overwrite generic derivation with a
+    // fixed result charset. Reapply those source-owned result rules last.
     if let Expression::ScalarFunction(func) = expr {
         if returns_binary_string(func.func_name.lowercase()) {
             if let Some(ft) = func.ret_type.as_mut() {
                 set_binary_charset(ft);
             }
         }
+        result_type::restore_char_result_charset(func)?;
     }
     Ok(())
 }
@@ -1261,6 +1253,27 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                         args,
                     )));
                 }
+            }
+            // The parser keeps CHAR(... USING charset)'s validated charset as
+            // RawString so it cannot be mistaken for a SQL string literal.
+            // Go appends the same value as the function's final Constant.
+            if lowered == "char_func" {
+                let rewritten = args
+                    .iter()
+                    .enumerate()
+                    .map(|(index, arg)| match (index + 1 == args.len(), arg) {
+                        (true, Expr::RawString(charset)) => Ok(constant_string(charset)),
+                        _ => rewrite_expr_resolved(arg, resolver),
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let ret_type = builtin_return_type(&lowered, &rewritten).ok_or(
+                    EvalError::Unsupported("this builtin is not yet built for chunk evaluation"),
+                )?;
+                return Ok(Expression::ScalarFunction(ScalarFunction::new(
+                    CiString::new(&lowered),
+                    ret_type,
+                    rewritten,
+                )));
             }
             let rewritten: Vec<Expression> = args
                 .iter()

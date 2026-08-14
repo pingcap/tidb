@@ -20,7 +20,7 @@ use crate::coerce::{bool_int, truthy_of};
 use crate::eval_in;
 use crate::row::row_compare;
 use crate::string_fn::{
-    ascii, bin, bit_count, bit_length, case_convert, char_func, concat_with_context,
+    ascii, bin, bit_count, bit_length, case_convert, char_func_with_context, concat_with_context,
     concat_ws_with_context, elt, field, format_num, from_base64, hex, locate, locate_collation,
     make_set, oct, ord, quote, replace, reverse, str_insert, str_take, strcmp, substring,
     substring_index, unhex,
@@ -243,7 +243,15 @@ pub(crate) fn eval_func(
     }
     let vals: Vec<Datum> = args
         .iter()
-        .map(|a| eval_in(a, cols))
+        .enumerate()
+        .map(|(index, arg)| {
+            if name == "CHAR_FUNC" && index + 1 == args.len() {
+                if let Expr::RawString(charset) = arg {
+                    return Ok(Datum::new_string(charset.clone()));
+                }
+            }
+            eval_in(arg, cols)
+        })
         .collect::<Result<_, _>>()?;
     // Go `HandleBinaryLiteral`'s `funcPropBinAware` arm. The chunk path reads
     // the argument's static charset; this value-only path reads the datum's
@@ -595,7 +603,7 @@ pub(crate) fn eval_func_values(
         "QUOTE" if vals.len() == 1 => quote(vals),
         "BIT_COUNT" if vals.len() == 1 => bit_count(vals),
         "FORMAT" if vals.len() == 2 => format_num(vals, ctx),
-        "CHAR_FUNC" if !vals.is_empty() => char_func(vals),
+        "CHAR_FUNC" if !vals.is_empty() => char_func_with_context(vals, ctx),
         "TO_BASE64" if vals.len() == 1 => to_base64(vals, ctx),
         // Go `builtinLoadFileSig.evalString` reads the argument and then
         // returns `"", true, nil` UNCONDITIONALLY: TiDB has no server-side

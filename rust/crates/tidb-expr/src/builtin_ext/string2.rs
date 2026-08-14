@@ -517,8 +517,9 @@ mod tests {
                 Datum::Int(16_740),
                 Datum::Real(67.5),
                 string("utf8"),
-            ]),
-            Err(crate::EvalError::Unsupported("CHAR ... USING charset"))
+            ])
+            .unwrap(),
+            Datum::new_collation_string(b"AAdD".to_vec(), Collation::Utf8Bin)
         );
         assert_eq!(
             char_func(&[
