@@ -1295,6 +1295,21 @@ func (w *worker) checkColumnarStorageEnabled(replicaCount uint64, internal bool)
 	return checkColumnarStorageEnabled(ctx)
 }
 
+func (w *worker) checkCreateTableColumnarStorage(job *model.Job, tbInfo *model.TableInfo) error {
+	if tbInfo.TiFlashReplica == nil {
+		return nil
+	}
+	err := w.checkColumnarStorageEnabled(tbInfo.TiFlashReplica.Count, false)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		if tableHasColumnarIndex(tbInfo) {
+			return wrapColumnarStorageGateForColumnarIndex(err)
+		}
+		return err
+	}
+	return nil
+}
+
 func onUpdateTiFlashReplicaStatus(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	args, err := model.GetUpdateTiFlashReplicaStatusArgs(job)
 	if err != nil {

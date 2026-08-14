@@ -711,3 +711,109 @@ func TestColumnarStorageEnabledGateInternalBypass(t *testing.T) {
 	require.NotNil(t, tbl.Meta().TiFlashReplica)
 	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
 }
+
+func TestColumnarStorageEnabledGateCreateTableLike(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_src(a int)")
+	tk.MustExec("create table t_plain(a int)")
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "columnar"
+	})
+	tk.MustExec("alter table t_src set tiflash replica 1")
+
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
+	tk.MustGetErrCode("create table t_like like t_src", errno.ErrUnsupportedDDLOperation)
+	tk.MustContainErrMsg("create table t_like like t_src", "Columnar Storage is not enabled")
+	tk.MustQuery("show tables like 't_like'").Check(testkit.Rows())
+	tbl := external.GetTableByName(t, tk, "test", "t_src")
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+
+	// LIKE of a table without replica is not gated.
+	tk.MustExec("create table t_plain_like like t_plain")
+	require.Nil(t, external.GetTableByName(t, tk, "test", "t_plain_like").Meta().TiFlashReplica)
+
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'ON'")
+	tk.MustExec("create table t_like like t_src")
+	tbl = external.GetTableByName(t, tk, "test", "t_like")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+	require.False(t, tbl.Meta().TiFlashReplica.Available)
+
+	// classic tiflash + OFF: gate is skipped, LIKE still copies replica metadata.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "tiflash"
+	})
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
+	})
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
+	tk.MustExec("create table t_like_classic like t_src")
+	tbl = external.GetTableByName(t, tk, "test", "t_like_classic")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+}
+
+func TestColumnarStorageEnabledGateCreateTableLikeJobSide(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "columnar"
+	})
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_src(a int)")
+	tk.MustExec("alter table t_src set tiflash replica 1")
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionCreateTable {
+			tk2.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
+		}
+	})
+	tk.MustGetErrCode("create table t_like_job like t_src", errno.ErrUnsupportedDDLOperation)
+	tk.MustContainErrMsg("create table t_like_job like t_src", "Columnar Storage is not enabled")
+	tk.MustQuery("show tables like 't_like_job'").Check(testkit.Rows())
+}
+
+func TestColumnarStorageEnabledGateColumnarIndex(t *testing.T) {
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.CSE.ColumnarStoreType = "columnar"
+	})
+
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
+	tk.MustGetErrCode("create table t_idx(a int, b int, columnar index idx(b) using inverted)", errno.ErrUnsupportedDDLOperation)
+	tk.MustContainErrMsg("create table t_idx(a int, b int, columnar index idx(b) using inverted)",
+		"Unsupported add columnar index: Columnar Storage is not enabled")
+	tk.MustQuery("show tables like 't_idx'").Check(testkit.Rows())
+
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'ON'")
+	tk.MustExec("create table t_add(a int, b int)")
+	tk.MustExec("alter table t_add set tiflash replica 1")
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
+	tk.MustGetErrCode("alter table t_add add columnar index idx(a) using inverted", errno.ErrUnsupportedDDLOperation)
+	tk.MustContainErrMsg("alter table t_add add columnar index idx(a) using inverted",
+		"Unsupported add columnar index: Columnar Storage is not enabled")
+	require.Empty(t, external.GetTableByName(t, tk, "test", "t_add").Meta().Indices)
+
+	tk.MustExec("set global tidb_columnar_storage_enabled = 'ON'")
+	tk.MustExec("create table t_idx(a int, b int, columnar index idx(b) using inverted)")
+	tbl := external.GetTableByName(t, tk, "test", "t_idx")
+	require.NotNil(t, tbl.Meta().TiFlashReplica)
+	require.Equal(t, uint64(1), tbl.Meta().TiFlashReplica.Count)
+	require.Equal(t, 1, len(tbl.Meta().Indices))
+}

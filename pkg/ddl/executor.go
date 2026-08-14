@@ -1136,6 +1136,9 @@ func (e *executor) createTableWithInfoJob(
 	if err := checkTableInfoValidExtra(ctx.GetSessionVars().StmtCtx.ErrCtx(), ctx.GetStore(), dbName, tbInfo); err != nil {
 		return nil, err
 	}
+	if err := checkColumnarStorageEnabledForNewTable(ctx, tbInfo); err != nil {
+		return nil, err
+	}
 
 	var actionType model.ActionType
 	switch {
@@ -4070,6 +4073,45 @@ func checkColumnarStorageEnabled(ctx sessionctx.Context) error {
 	return nil
 }
 
+func tableHasColumnarIndex(tbInfo *model.TableInfo) bool {
+	for _, idx := range tbInfo.Indices {
+		if idx.IsColumnarIndex() {
+			return true
+		}
+	}
+	return false
+}
+
+const columnarStorageDisabledHint = "Columnar Storage is not enabled, please enable it in the TiDB Cloud console first"
+
+func wrapColumnarStorageGateForColumnarIndex(err error) error {
+	if err == nil {
+		return nil
+	}
+	if dbterror.ErrTiFlashColumnarStorageNotEnabled.Equal(err) {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(columnarStorageDisabledHint)
+	}
+	return err
+}
+
+// checkColumnarStorageEnabledForNewTable rejects persisting TiFlash replica
+// metadata on CREATE TABLE / CREATE TABLE LIKE when Columnar Storage is off.
+// CREATE TABLE with a columnar index is remapped to ErrUnsupportedAddColumnarIndex
+// because the user intent is adding the index, not SET TIFLASH REPLICA.
+func checkColumnarStorageEnabledForNewTable(ctx sessionctx.Context, tbInfo *model.TableInfo) error {
+	if tbInfo.TiFlashReplica == nil || tbInfo.TiFlashReplica.Count == 0 {
+		return nil
+	}
+	err := checkColumnarStorageEnabled(ctx)
+	if err == nil {
+		return nil
+	}
+	if tableHasColumnarIndex(tbInfo) {
+		return wrapColumnarStorageGateForColumnarIndex(err)
+	}
+	return err
+}
+
 // AlterTableAddStatistics would register extended statistics for a table.
 // The extended statistics feature has been removed; this always returns an error.
 func (*executor) AlterTableAddStatistics() error {
@@ -5017,6 +5059,9 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 
 	if err := checkTableTypeForColumnarIndex(tblInfo); err != nil {
 		return errors.Trace(err)
+	}
+	if err := checkColumnarStorageEnabled(ctx); err != nil {
+		return wrapColumnarStorageGateForColumnarIndex(err)
 	}
 
 	metaBuildCtx := NewMetaBuildContextWithSctx(ctx)

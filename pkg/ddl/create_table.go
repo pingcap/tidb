@@ -56,9 +56,13 @@ import (
 // DANGER: it is an internal function used by onCreateTable and onCreateTables, for reusing code. Be careful.
 // 1. it expects the argument of job has been deserialized.
 // 2. it won't call updateSchemaVersion, FinishTableJob and asyncNotifyEvent.
-func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args *model.CreateTableArgs) (*model.TableInfo, error) {
+func createTable(w *worker, jobCtx *jobContext, job *model.Job, r autoid.Requirement, args *model.CreateTableArgs) (*model.TableInfo, error) {
 	schemaID := job.SchemaID
 	tbInfo, fkCheck := args.TableInfo, args.FKCheck
+
+	if err := w.checkCreateTableColumnarStorage(job, tbInfo); err != nil {
+		return tbInfo, errors.Trace(err)
+	}
 
 	tbInfo.State = model.StateNone
 	err := checkTableNotExists(jobCtx.infoCache, schemaID, tbInfo.Name.L)
@@ -231,7 +235,7 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return w.createTableWithForeignKeys(jobCtx, job, args)
 	}
 
-	tbInfo, err = createTable(jobCtx, job, &asAutoIDRequirement{
+	tbInfo, err = createTable(w, jobCtx, job, &asAutoIDRequirement{
 		store:     w.store,
 		autoidCli: w.autoidCli,
 	}, args)
@@ -266,7 +270,7 @@ func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, 
 		// the `tbInfo.State` with `model.StateNone`, so it's fine to just call the `createTable` with
 		// public state.
 		// when `br` restores table, the state of `tbInfo` will be public.
-		tbInfo, err = createTable(jobCtx, job, &asAutoIDRequirement{
+		tbInfo, err = createTable(w, jobCtx, job, &asAutoIDRequirement{
 			store:     w.store,
 			autoidCli: w.autoidCli,
 		}, args)
@@ -337,7 +341,7 @@ func (w *worker) onCreateTables(jobCtx *jobContext, job *model.Job) (int64, erro
 			}
 			tableInfos = append(tableInfos, tableInfo)
 		} else {
-			tbInfo, err := createTable(jobCtx, stubJob, &asAutoIDRequirement{
+			tbInfo, err := createTable(w, jobCtx, stubJob, &asAutoIDRequirement{
 				store:     w.store,
 				autoidCli: w.autoidCli,
 			}, tblArgs)
