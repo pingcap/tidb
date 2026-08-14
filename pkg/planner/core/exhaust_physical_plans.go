@@ -2552,11 +2552,18 @@ func exhaustPhysicalPlans4LogicalApply(lp base.LogicalPlan, prop *property.Physi
 		columns = append(columns, &tmp.Column)
 	}
 	cacheHitRatio := 0.0
-	if la.StatsInfo().RowCount != 0 {
-		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(columns, la.Schema(), la.StatsInfo())
-		// for example, if there are 100 rows and the number of distinct values of these correlated columns
-		// are 70, then we can assume 30 rows can hit the cache so the cache hit ratio is 1 - (70/100) = 0.3
-		cacheHitRatio = 1 - (ndv / la.StatsInfo().RowCount)
+	// The inner plan runs once per outer row and the cache is looked up once per run, so the
+	// distinct correlated values have to be compared against the number of outer rows. The rows
+	// the Apply itself emits are not that number: a LATERAL join can return several rows per
+	// outer row, which would overstate the ratio and enable a cache that cannot hit.
+	outerChild := la.Children()[0]
+	stats0 := outerChild.StatsInfo()
+	if stats0 != nil && stats0.RowCount != 0 {
+		ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(columns, outerChild.Schema(), stats0)
+		// for example, if there are 100 outer rows and the number of distinct values of these
+		// correlated columns are 70, then we can assume 30 rows can hit the cache so the cache
+		// hit ratio is 1 - (70/100) = 0.3
+		cacheHitRatio = 1 - (ndv / stats0.RowCount)
 	}
 
 	var canUseCache bool
