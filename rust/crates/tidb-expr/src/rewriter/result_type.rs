@@ -274,6 +274,75 @@ fn time_return_type(args: &[Expression]) -> Option<FieldType> {
     Some(ft)
 }
 
+/// Go `roundFunctionClass.getFunction` / `truncateFunctionClass.getFunction`.
+///
+/// These functions preserve the first argument's numeric domain. For decimal
+/// values, a row-dependent scale cannot widen the result beyond the input's
+/// declared scale; a constant scale fixes the result scale at build time.
+fn round_truncate_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
+    use tidb_datatype::{EvalType, MAX_DECIMAL_SCALE, UNSPECIFIED_LENGTH};
+
+    let value_type = args.first()?.static_type()?;
+    let eval_type = match value_type.eval_type() {
+        EvalType::Int => EvalType::Int,
+        EvalType::Decimal => EvalType::Decimal,
+        _ => EvalType::Real,
+    };
+    let mut result = match eval_type {
+        EvalType::Int => FieldType::new(FieldTypeCode::LongLong),
+        EvalType::Decimal => FieldType::new(FieldTypeCode::NewDecimal),
+        EvalType::Real => FieldType::new(FieldTypeCode::Double),
+        _ => unreachable!("normalized above"),
+    };
+    if value_type.is_unsigned() {
+        result.add_flags(tidb_datatype::FieldTypeFlags::UNSIGNED);
+    }
+    if eval_type != EvalType::Decimal {
+        return Some(result);
+    }
+
+    let decimal = if args.len() <= 1 {
+        0
+    } else if let Expression::Constant(constant) = &args[1] {
+        constant
+            .eval()
+            .ok()
+            .and_then(|value| {
+                crate::cast::cast_arg_as_int(
+                    &value,
+                    constant.ret_type.as_ref(),
+                    &crate::context::NoColumns,
+                )
+                .ok()
+            })
+            .and_then(|value| crate::arg_eval_type::eval_int(&value).ok().flatten())
+            .filter(|decimal| *decimal >= 0)
+            .map_or(0, |decimal| decimal.min(MAX_DECIMAL_SCALE))
+    } else {
+        value_type.decimal()
+    };
+    result.set_decimal_under_limit(decimal);
+
+    let flen = if name == "round" {
+        let mut flen = value_type.flen();
+        if decimal != UNSPECIFIED_LENGTH {
+            flen = if value_type.decimal() == UNSPECIFIED_LENGTH {
+                flen.saturating_add(decimal)
+            } else {
+                flen.saturating_add((decimal - value_type.decimal()).max(0))
+            };
+        }
+        flen
+    } else {
+        value_type
+            .flen()
+            .saturating_sub(value_type.decimal())
+            .saturating_add(decimal)
+    };
+    result.set_flen_under_limit(flen);
+    Some(result)
+}
+
 fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<FieldType> {
     let text = || {
         let mut ft = FieldType::new(FieldTypeCode::VarString);
@@ -537,11 +606,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // the result into the real domain: captured from real TiDB (`gorun`),
         // `round(3.14159,'100')` is `3.141590000000000000000000000000`, the
         // same decimal as `round(3.14159,100)`, not `3.14159`.
-        "round" | "truncate" => match arg_numeric_type(&args[..1])?.eval_type() {
-            tidb_datatype::EvalType::Real => FieldType::new(FieldTypeCode::Double),
-            tidb_datatype::EvalType::Int if name == "round" => int(),
-            _ => FieldType::new(FieldTypeCode::NewDecimal),
-        },
+        "round" | "truncate" => round_truncate_return_type(name, args)?,
         // Always real, whatever went in.
         "sqrt" | "pow" | "power" | "exp" | "ln" | "log" | "log2" | "log10" | "pi" | "sin"
         | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2" | "cot" | "radians" | "degrees"
@@ -1427,6 +1492,93 @@ fn arg_numeric_type(args: &[Expression]) -> Option<FieldType> {
         // A string argument is read as a number, which Go does as a real.
         _ => FieldType::new(FieldTypeCode::Double),
     })
+}
+
+#[cfg(test)]
+mod round_truncate_type_source_tests {
+    use super::*;
+    use crate::column::Column;
+    use crate::scalar_function::ScalarFunction;
+    use tidb_chunk::chunk::Chunk;
+
+    fn column(code: FieldTypeCode, flen: i64, decimal: i64) -> Expression {
+        let mut field_type = FieldType::new(code);
+        field_type.set_flen(flen);
+        field_type.set_decimal(decimal);
+        Expression::Column(Column::new(1, field_type))
+    }
+
+    #[test]
+    fn dynamic_decimal_scale_and_integer_domain_match_the_source_types() {
+        let value = column(FieldTypeCode::NewDecimal, 10, 2);
+        let mut scale = column(FieldTypeCode::LongLong, 20, 0);
+        let Expression::Column(scale_column) = &mut scale else {
+            unreachable!()
+        };
+        scale_column.index = 1;
+        for name in ["round", "truncate"] {
+            let result = builtin_return_type(name, &[value.clone(), scale.clone()]).unwrap();
+            assert_eq!(result.code(), FieldTypeCode::NewDecimal, "{name}");
+            assert_eq!(result.flen(), 10, "{name}");
+            assert_eq!(result.decimal(), 2, "{name}");
+
+            let mut chunk = Chunk::new_with_capacity(
+                &[
+                    value.static_type().unwrap().clone(),
+                    scale.static_type().unwrap().clone(),
+                ],
+                1,
+            );
+            chunk.append_datum(
+                0,
+                &Datum::Decimal(tidb_datatype::Decimal::from_literal("1.23")),
+            );
+            chunk.append_int64(1, 5);
+            let function = ScalarFunction::new(
+                tidb_ast::CiString::new(name),
+                result,
+                vec![value.clone(), scale.clone()],
+            );
+            let Datum::Decimal(answer) = function
+                .eval(&crate::context::NoColumns, chunk.get_row(0))
+                .unwrap()
+            else {
+                panic!("{name} returned a non-decimal value")
+            };
+            assert_eq!(answer.to_string(), "1.23", "{name}");
+        }
+
+        let integer = column(FieldTypeCode::LongLong, 20, 0);
+        assert_eq!(
+            builtin_return_type("truncate", &[integer, scale])
+                .unwrap()
+                .code(),
+            FieldTypeCode::LongLong
+        );
+    }
+
+    #[test]
+    fn constant_decimal_scale_fixes_the_source_metadata() {
+        let value = column(FieldTypeCode::NewDecimal, 10, 2);
+        let scale = |value| {
+            Expression::Constant(Constant::new(
+                Datum::Int(value),
+                FieldType::new(FieldTypeCode::LongLong),
+            ))
+        };
+        for (name, requested, expected_flen, expected_decimal) in [
+            ("round", 5, 13, 5),
+            ("truncate", 5, 13, 5),
+            ("round", -1, 10, 0),
+            ("truncate", -1, 8, 0),
+            ("round", 100, 38, 30),
+            ("truncate", 100, 38, 30),
+        ] {
+            let result = builtin_return_type(name, &[value.clone(), scale(requested)]).unwrap();
+            assert_eq!(result.flen(), expected_flen, "{name}({requested})");
+            assert_eq!(result.decimal(), expected_decimal, "{name}({requested})");
+        }
+    }
 }
 
 #[cfg(test)]

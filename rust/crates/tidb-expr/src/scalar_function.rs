@@ -1055,6 +1055,16 @@ impl ScalarFunction {
             let sign = if upper == "SUBTIME" { -1 } else { 1 };
             return add_sub_time(&vals, kinds, sign, row_path, ctx);
         }
+        if matches!(upper.as_str(), "ROUND" | "TRUNCATE")
+            && matches!(vals.first(), Some(Datum::Decimal(_)))
+        {
+            return crate::math_fn::round_or_truncate_with_result_decimal(
+                &vals,
+                upper == "ROUND",
+                self.ret_type.as_ref().map(FieldType::decimal),
+                ctx,
+            );
+        }
         if let Some(result) = crate::func::eval_func_values_in(&upper, &vals, ctx) {
             return result;
         }
@@ -1295,6 +1305,35 @@ mod tests {
             Datum::Null
         );
         assert_eq!(ctx.warnings.borrow()[0].0, 1301);
+    }
+
+    #[test]
+    fn decimal_round_and_truncate_cap_dynamic_scale_by_the_result_type() {
+        let mut decimal_type = FieldType::new(FieldTypeCode::NewDecimal);
+        decimal_type.set_flen(10);
+        decimal_type.set_decimal(2);
+        let decimal = || {
+            Expression::Constant(Constant::new(
+                Datum::Decimal(tidb_datatype::Decimal::from_literal("1.23")),
+                decimal_type.clone(),
+            ))
+        };
+        let scale = || Expression::Constant(Constant::new(Datum::Int(5), ft()));
+
+        for name in ["round", "truncate"] {
+            let function = ScalarFunction::new(
+                CiString::new(name),
+                decimal_type.clone(),
+                vec![decimal(), scale()],
+            );
+            let value = function
+                .eval(&crate::context::NoColumns, tidb_chunk::row::Row::empty())
+                .expect("decimal ROUND/TRUNCATE must evaluate");
+            let Datum::Decimal(value) = value else {
+                panic!("{name} returned a non-decimal value")
+            };
+            assert_eq!(value.to_string(), "1.23", "{name}");
+        }
     }
 
     // Go TestCurrentUser.

@@ -692,6 +692,21 @@ fn sign_of_real(value: f64) -> i64 {
 ///   decimal-aware rounding, since the reference implementation is
 ///   deliberately this simple and occasionally imprecise.
 fn round_or_truncate(vals: &[Datum], round: bool, ctx: &dyn Columns) -> Result<Datum, EvalError> {
+    round_or_truncate_with_result_decimal(vals, round, None, ctx)
+}
+
+/// The typed scalar path for decimal `ROUND`/`TRUNCATE`.
+///
+/// Go's decimal signatures cap the row's requested scale by `b.tp.Decimal`,
+/// which is fixed when the expression is built. The values-only evaluator has
+/// no result `FieldType`, so it passes `None`; [`crate::ScalarFunction`] owns
+/// that type and passes the declared scale here.
+pub(crate) fn round_or_truncate_with_result_decimal(
+    vals: &[Datum],
+    round: bool,
+    result_decimal: Option<i64>,
+    ctx: &dyn Columns,
+) -> Result<Datum, EvalError> {
     if vals.iter().any(Datum::is_range_sentinel) {
         return Err(EvalError::Unsupported(
             "range sentinel ROUND/TRUNCATE argument",
@@ -766,7 +781,11 @@ fn round_or_truncate(vals: &[Datum], round: bool, ctx: &dyn Columns) -> Result<D
             // MySQL clamps a positive scale to DECIMAL's max (30); a
             // negative scale is used as-is (confirmed via `goeval`:
             // `ROUND(12345, -2)` is `12300`, not clamped).
-            let target_scale = d.clamp(i32::MIN as i64, 30) as i32;
+            let target_scale = d.clamp(i32::MIN as i64, 30);
+            let target_scale = result_decimal
+                .filter(|decimal| *decimal >= 0)
+                .map_or(target_scale, |decimal| target_scale.min(decimal))
+                as i32;
             Datum::Decimal(if round {
                 dec.round_to_scale(target_scale)
             } else {
