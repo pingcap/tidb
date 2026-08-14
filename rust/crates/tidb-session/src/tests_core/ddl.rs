@@ -325,13 +325,63 @@ fn alter_table_columns() {
     };
     assert!(create_comp.contains("KEY `kab` (`a`,`b`)"));
 
-    // An unknown table is an error, and an action this tier does not
-    // implement is still rejected rather than ignored. (RENAME TO used to
-    // be this example; it is implemented now.)
+    // An unknown table is an error.
     assert!(session
         .run("ALTER TABLE nosuch ADD COLUMN a BIGINT")
         .is_err());
-    assert!(session.run("ALTER TABLE a ORDER BY v").is_err());
+}
+
+#[test]
+fn alter_table_order_by_matches_tidb_compatibility_behavior() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE heap (a BIGINT)").unwrap();
+
+    // Go does not validate or physically apply the ORDER BY list.
+    assert_eq!(
+        session
+            .run("ALTER TABLE heap ORDER BY missing DESC")
+            .unwrap(),
+        StmtResult::Affected(0)
+    );
+    assert!(warnings_of(&session).is_empty());
+    session
+        .run("ALTER TABLE heap ADD COLUMN b BIGINT DEFAULT 7")
+        .unwrap();
+    session.run("INSERT INTO heap (a) VALUES (3)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT a, b FROM heap")),
+        vec![vec!["3", "7"]]
+    );
+
+    session
+        .run("CREATE TABLE clustered (id BIGINT PRIMARY KEY CLUSTERED, v BIGINT)")
+        .unwrap();
+    session
+        .run("ALTER TABLE clustered ORDER BY v DESC")
+        .unwrap();
+    assert_eq!(
+        warnings_of(&session),
+        vec![(
+            1105,
+            "ORDER BY ignored as there is a user-defined clustered index in the table 'clustered'"
+                .to_owned(),
+        )]
+    );
+
+    // The source checks GetPkColInfo(), not PKIsHandle. Consequently the
+    // same warning is emitted for an explicitly nonclustered primary key.
+    session
+        .run("CREATE TABLE nonclustered (id BIGINT PRIMARY KEY NONCLUSTERED, v BIGINT)")
+        .unwrap();
+    session.run("ALTER TABLE nonclustered ORDER BY v").unwrap();
+    assert_eq!(
+        warnings_of(&session),
+        vec![(
+            1105,
+            "ORDER BY ignored as there is a user-defined clustered index in the table 'nonclustered'"
+                .to_owned(),
+        )]
+    );
 }
 
 /// ALTER TABLE MODIFY / CHANGE COLUMN, checked against captured TiDB

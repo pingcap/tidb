@@ -1295,9 +1295,8 @@ pub enum AlterTableAction {
         /// Where to move it; `Default` leaves it at its current position.
         position: ColumnPosition,
     },
-    /// `ORDER BY col [, col ...]` — TiDB's table-reorganization ordering
-    /// clause. The seed retains the source payload but rejects execution
-    /// because it has no physical row-rewrite/storage-engine path.
+    /// `ORDER BY col [, col ...]`. TiDB accepts this compatibility clause
+    /// without validating or physically applying its column list.
     OrderByColumns {
         /// Ordered column names and optional descending directions.
         items: Vec<AlterOrderItem>,

@@ -323,6 +323,24 @@ pub fn run_alter_table_in(
                 8200,
                 "ALTER TABLE WITHOUT VALIDATION is currently unsupported",
             ),
+            tidb_ast::AlterTableAction::OrderByColumns { .. } => {
+                // Go's OrderByColumns does not inspect the requested order.
+                // Its warning condition is exactly GetPkColInfo() != nil,
+                // which means any column carrying the primary-key flag.
+                let has_primary_key = matches!(
+                    catalog.table_in(&database, &name),
+                    Some(crate::TableEntry::Kv(table))
+                        if table.columns.iter().any(|column| column.field_type.has_flag(PRI_KEY_FLAG))
+                );
+                if has_primary_key {
+                    ctx.append_warning_parts(
+                        1105,
+                        &format!(
+                            "ORDER BY ignored as there is a user-defined clustered index in the table '{name}'"
+                        ),
+                    );
+                }
+            }
             _ => {
                 return Err(DriverError::unsupported(
                     "this ALTER TABLE action is not supported yet",
