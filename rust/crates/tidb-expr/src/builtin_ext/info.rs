@@ -29,8 +29,22 @@ pub(crate) fn dispatch(
         ("FORMAT_NANO_TIME", [value]) => Some(format_nano_time(value, ctx)),
         ("TIDB_DECODE_PLAN", [value]) => Some(decode_plan(value)),
         ("TIDB_DECODE_BINARY_PLAN", [value]) => Some(decode_binary_plan(value, ctx)),
+        ("TIDB_ENCODE_SQL_DIGEST", [value]) => Some(encode_sql_digest(value)),
         _ => None,
     }
+}
+
+/// `TIDB_ENCODE_SQL_DIGEST(sql)`: the digest of the parser-normalized SQL,
+/// using the same normalizer and SHA-256 representation as `parser.DigestHash`.
+fn encode_sql_digest(value: &Datum) -> Result<Datum, EvalError> {
+    let Some(sql) = crate::arg_eval_type::eval_string(value)? else {
+        return Ok(Datum::Null);
+    };
+    let sql = std::str::from_utf8(&sql)
+        .map_err(|_| EvalError::Unsupported("non-UTF-8 SQL digest input"))?;
+    Ok(Datum::new_string(
+        tidb_parser::normalize_digest(sql).1.to_string(),
+    ))
 }
 
 /// `TIDB_DECODE_PLAN(value)`. TiDB deliberately returns the original encoded

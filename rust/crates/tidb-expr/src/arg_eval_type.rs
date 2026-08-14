@@ -337,7 +337,10 @@ const fn string_arg_mask(name: &str) -> ArgMask {
         b"QUOTE" => 1 << 0,
         // `tidbDecodePlanFunctionClass.getFunction`: both textual and binary
         // decoders declare their sole argument as `types.ETString`.
-        b"TIDB_DECODE_PLAN" | b"TIDB_DECODE_BINARY_PLAN" | b"VEC_FROM_TEXT" => 1 << 0,
+        b"TIDB_DECODE_PLAN"
+        | b"TIDB_DECODE_BINARY_PLAN"
+        | b"TIDB_ENCODE_SQL_DIGEST"
+        | b"VEC_FROM_TEXT" => 1 << 0,
         // `builtin_string.go:2029` `types.ETString, types.ETString`
         // (lTrimFunctionClass) and `:2098` the same for `rTrimFunctionClass`.
         b"LTRIM" | b"RTRIM" => 1 << 0,
