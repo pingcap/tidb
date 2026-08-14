@@ -103,15 +103,7 @@ func (*schedulerImpl) GetNextStep(task *proto.TaskBase) proto.Step {
 	}
 }
 
-<<<<<<< HEAD
-type postCleanupImpl struct{}
-=======
-func (*schedulerImpl) OnPrepare(context.Context, storage.TaskHandle, *proto.Task) error {
-	return nil
-}
-
 type postCleanImpl struct{}
->>>>>>> 2423b9d00c7 (dxf: rename cleanup routines to cleaners (#70481))
 
 func (*postCleanImpl) Clean(_ context.Context, task *proto.Task) error {
 	logutil.BgLogger().Info("clean up task", zap.Int64("taskID", task.ID))
