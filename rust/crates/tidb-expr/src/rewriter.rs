@@ -214,7 +214,7 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
         CastType::Year => "cast_year",
         CastType::Double | CastType::Float => "cast_double",
         CastType::Json => "cast_json",
-        CastType::Vector { .. } => return None,
+        CastType::Vector { .. } => "cast_vector",
     };
     let ft = match cast_type {
         CastType::Signed => FieldType::new(FieldTypeCode::LongLong),
@@ -268,7 +268,14 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
             ft.add_flags(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON);
             ft
         }
-        CastType::Vector { .. } => return None,
+        CastType::Vector { dimensions } => {
+            let mut ft = FieldType::new(FieldTypeCode::VectorFloat32);
+            if let Some(dimensions) = dimensions {
+                ft.set_flen(i64::from(*dimensions));
+            }
+            ft.set_decimal(0);
+            ft
+        }
     };
     Some((name, ft))
 }

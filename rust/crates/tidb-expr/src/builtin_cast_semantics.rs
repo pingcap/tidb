@@ -34,6 +34,13 @@ mod tests {
                 3,
             ),
             (tidb_ast::CastType::Json, FieldTypeCode::Json, -1),
+            (
+                tidb_ast::CastType::Vector {
+                    dimensions: Some(3),
+                },
+                FieldTypeCode::VectorFloat32,
+                0,
+            ),
         ] {
             let (_, field_type) = crate::rewriter::builtin_cast_result_type(&cast).expect("target");
             assert_eq!(field_type.code(), code);
@@ -47,6 +54,15 @@ mod tests {
                 .expect("TIME target");
         assert_eq!(time.flen(), 14);
         assert!(time.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
+
+        let (_, vector) = crate::rewriter::builtin_cast_result_type(&tidb_ast::CastType::Vector {
+            dimensions: Some(3),
+        })
+        .expect("VECTOR target");
+        assert_eq!(vector.flen(), 3);
+        assert_eq!(vector.charset_name(), "binary");
+        assert_eq!(vector.collation_name(), "binary");
+        assert!(!vector.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
     }
 
     #[test]

@@ -140,9 +140,17 @@ pub(crate) fn eval_cast(
             if let Some(dimensions) = dimensions {
                 target.set_flen(i64::from(*dimensions));
             }
+            let source_name = source
+                .map(|field_type| tidb_datatype::type_str(field_type.code()))
+                .unwrap_or("unspecified");
             v.convert_to(&target, ConversionFlags::default())
                 .map(|converted| converted.value)
-                .map_err(|_| EvalError::Unsupported("invalid CAST AS VECTOR operand"))
+                .map_err(|error| match error {
+                    DatumValueError::Unsupported(_, _) => {
+                        EvalError::Vector(format!("cannot cast from {source_name} to vector"))
+                    }
+                    error => EvalError::Vector(error.to_string()),
+                })
         }
         CastType::Time { fsp } => cast_to_duration(&v, source, ctx, i64::from(fsp.unwrap_or(0))),
         CastType::Json => crate::builtin_ext::cast_as_json(&v),
