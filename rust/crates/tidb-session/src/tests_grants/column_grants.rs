@@ -26,7 +26,10 @@ fn only_the_four_column_privileges_accept_a_column_list() {
         assert!(
             matches!(
                 session.run(&format!("GRANT {privilege} (a) ON test.t TO 'u'@'%'")),
-                Err(DriverError::ColumnGrantNonColumnPriv)
+                Err(DriverError::WrongUsage {
+                    first: "COLUMN GRANT",
+                    second: "NON-COLUMN PRIVILEGES"
+                })
             ),
             "{privilege} (a) should be refused"
         );

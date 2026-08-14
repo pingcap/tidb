@@ -393,7 +393,10 @@ fn db_scope_grant_rejects_global_only_privilege() {
     session.run("CREATE DATABASE db1").unwrap();
     assert!(matches!(
         session.run("GRANT PROCESS ON db1.* TO 'u1'@'%'"),
-        Err(DriverError::DbGrantGlobalOnlyPriv)
+        Err(DriverError::WrongUsage {
+            first: "DB GRANT",
+            second: "GLOBAL PRIVILEGES"
+        })
     ));
 }
 

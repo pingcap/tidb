@@ -153,6 +153,36 @@ fn depth_bound_reports_the_round_it_refused() {
     );
 }
 
+/// Go checks the next recursive round against the depth bound before the
+/// accumulated LIMIT short-circuit. `LIMIT 0` leaves the delta empty and runs
+/// no round; `LIMIT 1` retains the seed and therefore attempts round one.
+#[test]
+fn depth_check_precedes_the_definition_limit_short_circuit() {
+    let mut session = Session::new();
+    session.run("SET @@cte_max_recursion_depth = 0").unwrap();
+
+    assert_eq!(
+        column(session.run(
+            "WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM t LIMIT 0) \
+             SELECT * FROM t"
+        )),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        wire_error(
+            &mut session,
+            "WITH RECURSIVE t(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM t LIMIT 1) \
+             SELECT * FROM t"
+        ),
+        (
+            3636,
+            "Recursive query aborted after 1 iterations. Try increasing \
+             @@cte_max_recursion_depth to a larger value"
+                .to_owned()
+        )
+    );
+}
+
 /// The default is exactly 1000 rounds: a counter needing 1000 succeeds and one
 /// needing 1001 aborts.
 #[test]
@@ -218,6 +248,30 @@ fn definition_limit_caps_total_rows_and_ends_the_recursion() {
              UNION ALL SELECT n+100 FROM t WHERE n<3 LIMIT 4) SELECT n FROM t ORDER BY n"
         )),
         vec!["1", "2", "3", "101"]
+    );
+}
+
+/// Go's set-operation preprocessor rejects LIMIT on an unparenthesized term
+/// before the last UNION operand. Parentheses give the LIMIT its own scope;
+/// a trailing LIMIT belongs to the whole set operation.
+#[test]
+fn union_limit_requires_parentheses_around_a_non_final_term() {
+    let mut session = Session::new();
+    assert_eq!(
+        wire_error(&mut session, "SELECT 1 LIMIT 1 UNION SELECT 2"),
+        (1221, "Incorrect usage of UNION and LIMIT".to_owned())
+    );
+    assert_eq!(
+        wire_error(&mut session, "SELECT 1 ORDER BY 1 UNION SELECT 2"),
+        (1221, "Incorrect usage of UNION and ORDER BY".to_owned())
+    );
+    assert_eq!(
+        row_text(session.run("(SELECT 1 LIMIT 1) UNION SELECT 2 ORDER BY 1")),
+        [["1"], ["2"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT 1 UNION SELECT 2 ORDER BY 1 LIMIT 1")),
+        [["1"]]
     );
 }
 

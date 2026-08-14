@@ -40,6 +40,44 @@
 //! materializing each term.
 
 use super::*;
+
+/// Go `preprocessor.checkSetOprSelectList`: every nested set-operation list is
+/// checked, and every plain term except that list's last one must put its own
+/// `ORDER BY`/`LIMIT` inside parentheses. `INTO` is incompatible with UNION
+/// even when that term is parenthesized.
+pub(super) fn validate_set_opr_usage(stmt: &tidb_ast::SetOprStmt) -> Result<(), DriverError> {
+    for (index, term) in stmt.terms.iter().enumerate() {
+        match &term.body {
+            tidb_ast::SetOprTermBody::Nested(nested) => validate_set_opr_usage(nested)?,
+            tidb_ast::SetOprTermBody::Select(select) if index + 1 < stmt.terms.len() => {
+                if select.into_outfile.is_some() {
+                    return Err(DriverError::WrongUsage {
+                        first: "UNION",
+                        second: "INTO",
+                    });
+                }
+                if term.in_braces {
+                    continue;
+                }
+                if select.limit.is_some() {
+                    return Err(DriverError::WrongUsage {
+                        first: "UNION",
+                        second: "LIMIT",
+                    });
+                }
+                if !select.order_by.is_empty() {
+                    return Err(DriverError::WrongUsage {
+                        first: "UNION",
+                        second: "ORDER BY",
+                    });
+                }
+            }
+            tidb_ast::SetOprTermBody::Select(_) => {}
+        }
+    }
+    Ok(())
+}
+
 /// Runs a set-operation statement: `UNION`, `EXCEPT` or `INTERSECT`.
 ///
 /// Go plans the terms left to right and folds each into the accumulated
@@ -145,6 +183,7 @@ pub(crate) fn run_set_opr_traced(
     ctx: &crate::StmtContext,
     mut trace: Option<&mut crate::plan_trace::PlanTrace>,
 ) -> Result<SelectMeta, DriverError> {
+    validate_set_opr_usage(stmt)?;
     let union_shape = traced_set_opr(stmt);
     if trace.is_some() && union_shape.is_none() {
         return Err(DriverError::unsupported(

@@ -1689,7 +1689,10 @@ impl Session {
                 _ => {
                     let priv_ = privilege::GlobalPriv::from_grant_name(&privilege.name)
                         .filter(|priv_| priv_.is_valid_at_column_scope())
-                        .ok_or(DriverError::ColumnGrantNonColumnPriv)?;
+                        .ok_or(DriverError::WrongUsage {
+                            first: "COLUMN GRANT",
+                            second: "NON-COLUMN PRIVILEGES",
+                        })?;
                     priv_.bit()
                 }
             };
@@ -1786,7 +1789,10 @@ impl Session {
             };
             if !valid {
                 return Err(match scope {
-                    ScopeKind::Database => DriverError::DbGrantGlobalOnlyPriv,
+                    ScopeKind::Database => DriverError::WrongUsage {
+                        first: "DB GRANT",
+                        second: "GLOBAL PRIVILEGES",
+                    },
                     ScopeKind::Table => DriverError::IllegalGrantForTable,
                 });
             }

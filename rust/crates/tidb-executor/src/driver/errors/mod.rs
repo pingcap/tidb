@@ -147,6 +147,11 @@ impl DriverError {
             *b"21000",
             "The used SELECT statements have a different number of columns".to_owned(),
         ),
+        DriverError::WrongUsage { first, second } => MysqlError::new(
+            1221,
+            *b"HY000",
+            format!("Incorrect usage of {first} and {second}"),
+        ),
         // Go: "Incorrect table definition; there can be only one auto column
         // and it must be defined as a key".
         DriverError::WrongAutoKey => MysqlError::new(
@@ -1013,13 +1018,6 @@ impl DriverError {
             *b"42000",
             format!("There is no such grant defined for user '{user}' on host '{host}'"),
         ),
-        // Go `ErrWrongUsage` (1221), `grantDBLevel`'s global-only-privilege
-        // check.
-        DriverError::DbGrantGlobalOnlyPriv => MysqlError::new(
-            1221,
-            *b"HY000",
-            "Incorrect usage of DB GRANT and GLOBAL PRIVILEGES".to_owned(),
-        ),
         // Go `ErrIllegalGrantForTable` (1144).
         DriverError::IllegalGrantForTable => MysqlError::new(
             1144,
@@ -1027,12 +1025,6 @@ impl DriverError {
             "Illegal GRANT/REVOKE command; please consult the manual to see which privileges \
              can be used"
                 .to_owned(),
-        ),
-        // Go `ErrWrongUsage` (1221), `GrantExec.Next`'s column-list check.
-        DriverError::ColumnGrantNonColumnPriv => MysqlError::new(
-            1221,
-            *b"HY000",
-            "Incorrect usage of COLUMN GRANT and NON-COLUMN PRIVILEGES".to_owned(),
         ),
         // Go: `errors.Errorf("Unknown column: %s", ...)`.
         DriverError::UnknownGrantColumn(column) => {

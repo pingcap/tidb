@@ -72,7 +72,8 @@ use std::sync::Arc;
 use tidb_ast::{Expr, Join, JoinNode, QueryStmt, SelectStmt, SetOp, SetOprStmt, SetOprTermBody};
 
 use super::{
-    eval_limit_bound, run_select_stmt, run_set_opr_stmt, Catalog, DriverError, MAX_CHUNK_SIZE,
+    eval_limit_bound, run_select_stmt, run_set_opr_stmt, validate_set_opr_usage, Catalog,
+    DriverError, MAX_CHUNK_SIZE,
 };
 use crate::{CteStorage, CteTable, StmtContext};
 
@@ -99,6 +100,7 @@ pub(super) fn materialize_cte_body(
             store_rows(apply_column_list(columns, column_names)?, rows, ctx)
         }
         QueryStmt::SetOpr(set_opr) => {
+            validate_set_opr_usage(set_opr)?;
             let self_refs: usize = set_opr
                 .terms
                 .iter()
@@ -183,15 +185,11 @@ fn run_fixpoint(
         seed_rows = unique;
     }
 
-    // Reaching the target before any round runs (`LIMIT 0`, or a seed that
-    // already fills it) is the same check the loop makes, not a special case:
-    // it just empties the delta, so no round ever runs.
+    // Go's seed producer stops filling once the definition's window is full.
+    // `LIMIT 0` therefore leaves an empty delta; a positive limit retains at
+    // least one seed row and still has a recursive round to admit below.
     if let Some(t) = target {
-        if seed_rows.len() >= t {
-            seed_rows.truncate(t);
-            let storage = storage_from_rows(&columns, seed_rows, ctx)?;
-            return definition_table(columns, storage, set_opr);
-        }
+        seed_rows.truncate(t);
     }
 
     let delta_rows = seed_rows.clone();
@@ -209,6 +207,12 @@ fn run_fixpoint(
         round += 1;
         if round > depth {
             return Err(DriverError::CteMaxRecursionDepth(round));
+        }
+        // Go checks the round bound before this limit condition. With depth
+        // zero, `LIMIT 1` therefore reports iteration 1 while `LIMIT 0` never
+        // enters the loop because the seed delta is empty.
+        if target.is_some_and(|target| accumulated.num_rows() >= target) {
+            break;
         }
         // The recursive blocks see the previous round's new rows only.
         scratch.register_cte_in(

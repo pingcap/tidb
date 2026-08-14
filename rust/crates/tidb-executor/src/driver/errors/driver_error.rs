@@ -644,6 +644,14 @@ pub enum DriverError {
     CannotDropColumnWithCompositeIndex(String),
     /// Go `ErrWrongNumberOfColumnsInSelect` (1222).
     WrongNumberOfColumnsInSelect,
+    /// Go `ErrWrongUsage` (1221): two SQL constructs were combined in a
+    /// grammar position where TiDB refuses their interaction.
+    WrongUsage {
+        /// The outer construct named first in the diagnostic.
+        first: &'static str,
+        /// The conflicting construct named second in the diagnostic.
+        second: &'static str,
+    },
     /// Go `ErrWrongAutoKey` (1075): more than one auto column.
     WrongAutoKey,
     /// Go `ErrWrongFieldSpec` (1063): AUTO_INCREMENT on a non-integer column.
@@ -1049,17 +1057,9 @@ pub enum DriverError {
         /// The account host.
         host: String,
     },
-    /// Go `ErrWrongUsage.GenWithStackByArgs("DB GRANT", "GLOBAL PRIVILEGES")`
-    /// (1221): a DB-scope `GRANT`/`REVOKE` named a global-only privilege
-    /// (`PROCESS`, `SUPER`, ...).
-    DbGrantGlobalOnlyPriv,
     /// Go `ErrIllegalGrantForTable` (1144): a TABLE-scope `GRANT`/`REVOKE`
     /// named a privilege outside `mysql.AllTablePrivs`.
     IllegalGrantForTable,
-    /// Go `ErrWrongUsage.GenWithStackByArgs("COLUMN GRANT", "NON-COLUMN
-    /// PRIVILEGES")` (1221): a privilege carrying a column list is not one of
-    /// `mysql.AllColumnPrivs`.
-    ColumnGrantNonColumnPriv,
     /// Go's plain `errors.Errorf("Unknown column: %s", ...)` in
     /// `checkAndInitColumnPriv`: a `GRANT` named a column the table does not
     /// have. Carries the column name as written.

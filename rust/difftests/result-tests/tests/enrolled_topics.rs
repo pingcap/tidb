@@ -496,17 +496,13 @@ pub const TOPICS: &[(&str, &str)] = &[
     ),
     (
         "executor/autoid",
-        "the largest topic this census onboards: 411 of 458 compared with ONE \
-     divergence -- `AUTO_ID_CACHE` is not modelled, so after the cache is \
-     rebased the next id is 2 where TiDB's is 30001. Every other auto-increment \
-     and auto-random statement in the topic agrees",
+        "416 of 458 compared with zero divergences; the remaining 42 statements \
+     are skipped by the replay classifier",
     ),
     (
         "executor/cte",
-        "118 of 133 with 3 divergences: a recursive CTE's UNION (not UNION ALL) does \
-     not deduplicate ACROSS iterations (1,1,1,2,2,2,3,4 for 1,2,3,4), and two \
-     refusals this tier does not make -- 1221 for a `LIMIT` inside a recursive \
-     term, and 3636 when `cte_max_recursion_depth` is exceeded",
+        "119 of 133 compared with zero divergences; the remaining 14 statements \
+     are skipped by the replay classifier",
     ),
     (
         "executor/dual_password",
