@@ -494,6 +494,19 @@ fn from_unixtime_return_type(args: &[Expression]) -> Option<FieldType> {
     }
 }
 
+fn tidb_parse_tso_return_type(args: &[Expression]) -> Option<FieldType> {
+    let [_] = args else {
+        return None;
+    };
+    // Current Go deliberately publishes MaxDateWidth (10) and DefaultFsp
+    // (0), even though evalTime returns a DATETIME value carrying MaxFsp.
+    let mut result = FieldType::new(FieldTypeCode::Datetime);
+    result.set_flen(10);
+    result.set_decimal(0);
+    set_binary_charset(&mut result);
+    Some(result)
+}
+
 fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
     use tidb_datatype::EvalType;
 
@@ -897,6 +910,8 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         "timediff" => timediff_return_type(args)?,
         "convert_tz" => convert_tz_return_type(args)?,
         "from_unixtime" => from_unixtime_return_type(args)?,
+        "tidb_parse_tso" => tidb_parse_tso_return_type(args)?,
+        "tidb_parse_tso_logical" if args.len() == 1 => int(),
         "monthname" | "dayname" | "date_format" => text(),
         "addtime" | "subtime" => add_sub_time_return_type(args)?,
         "timestamp" => timestamp_return_type(args)?,

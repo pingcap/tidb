@@ -219,6 +219,11 @@ pub(crate) const fn int_arg_mask(name: &str) -> ArgMask {
         b"REGEXP_SUBSTR" => (1 << 2) | (1 << 3),
         b"REGEXP_INSTR" => (1 << 2) | (1 << 3) | (1 << 4),
         b"REGEXP_REPLACE" => (1 << 3) | (1 << 4),
+        // `builtin_time.go`'s TSO extractors both declare their only
+        // argument as `types.ETInt`. The physical extractor derives its
+        // RETURN eval type from the source argument, but its argument cast is
+        // still fixed to integer.
+        b"TIDB_PARSE_TSO" | b"TIDB_PARSE_TSO_LOGICAL" => 1 << 0,
         _ => 0,
     }
 }

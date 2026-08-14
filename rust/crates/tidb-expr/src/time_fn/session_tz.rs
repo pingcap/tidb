@@ -42,6 +42,7 @@ use super::convert_tz::parse_datetime;
 use crate::coerce::coerce_str;
 use crate::context::SessionTimeZone;
 use crate::{Columns, Datum, Decimal, EvalError};
+use tidb_datatype::{Time, TimeType};
 
 /// MySQL 8.0.28's maximum unix timestamp: '3001-01-18 23:59:59' UTC.
 const MAX_UNIX_SECS: i64 = 32_536_771_199;
@@ -294,8 +295,8 @@ fn unix_result(micros: i64, fsp: usize) -> Datum {
     Datum::Decimal(Decimal::from_literal(&format!("{secs}.{frac:0fsp$}")))
 }
 
-/// `TIDB_PARSE_TSO(tso)`: the physical half, rendered at full precision in
-/// the session zone.
+/// `TIDB_PARSE_TSO(tso)`: the physical half as a full-precision native
+/// DATETIME in the session zone.
 pub(super) fn tidb_parse_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
     if vals.len() != 1 {
         return Err(EvalError::Unsupported("bad function arity"));
@@ -312,7 +313,19 @@ pub(super) fn tidb_parse_tso(vals: &[Datum], cols: &dyn Columns) -> Result<Datum
     let Some(local) = instant_to_local(secs, micros, &cols.time_zone()) else {
         return Ok(Datum::Null);
     };
-    Ok(Datum::new_string(format_local(local, 6)))
+    let time = Time::from_date_checked(
+        local.year(),
+        local.month() as i32,
+        local.day() as i32,
+        local.hour() as i32,
+        local.minute() as i32,
+        local.second() as i32,
+        local.and_utc().timestamp_subsec_micros() as i32,
+        TimeType::DateTime,
+        6,
+    )
+    .map_err(|_| EvalError::Unsupported("TSO datetime exceeds the native temporal domain"))?;
+    Ok(Datum::Time(time))
 }
 
 #[cfg(test)]
@@ -440,8 +453,10 @@ mod tests {
     #[test]
     fn tidb_parse_tso_goeval_vectors() {
         assert_eq!(
-            call(tidb_parse_tso, &[Datum::Int(424_930_234_047_906_595)]),
-            s("2021-05-14 19:16:41.903000")
+            call(tidb_parse_tso, &[Datum::Int(424_930_234_047_906_595)])
+                .sql_string()
+                .unwrap(),
+            "2021-05-14 19:16:41.903000"
         );
         assert_eq!(call(tidb_parse_tso, &[Datum::Int(0)]), Datum::Null);
         assert_eq!(call(tidb_parse_tso, &[Datum::Null]), Datum::Null);
