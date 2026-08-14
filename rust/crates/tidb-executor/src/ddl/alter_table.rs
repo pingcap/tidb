@@ -38,7 +38,7 @@ use super::indexes::{add_index_to_table, drop_index_from_table, is_visible};
 use super::table_constraints::{AUTO_INCREMENT_FLAG, PRI_KEY_FLAG};
 use super::{Catalog, ColumnDef, DdlStmt, DriverError, KvColumn, Stmt, TableCharset};
 use crate::partition_routing::{PartitionDef, PartitionKind, RangeBound};
-use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, FieldType, FieldTypeCode, FieldTypeFlags};
 
 /// Runs an `ALTER TABLE`, applying its actions in source order.
 ///
@@ -1679,14 +1679,176 @@ fn check_type_change_supported(origin: &FieldType, to: &FieldType) -> Result<(),
     Ok(())
 }
 
-fn partition_routing_definition_changed(origin: &FieldType, to: &FieldType) -> bool {
-    origin.code() != to.code()
+fn integer_type_widens(origin: &FieldType, to: &FieldType) -> bool {
+    origin.code().is_type_integer()
+        && to.code().is_type_integer()
+        && to.code().default_length_and_decimal().0 > origin.code().default_length_and_decimal().0
+}
+
+fn string_type_extends(origin: &FieldType, to: &FieldType) -> bool {
+    let matching_family = match (origin.code(), to.code()) {
+        (FieldTypeCode::String, FieldTypeCode::String) => {
+            !origin.has_flag(FieldTypeFlags::BINARY)
+                && !to.has_flag(FieldTypeFlags::BINARY)
+                && origin.charset_name() != "binary"
+                && to.charset_name() != "binary"
+        }
+        (FieldTypeCode::Varchar, FieldTypeCode::Varchar)
+        | (FieldTypeCode::VarString, FieldTypeCode::VarString) => true,
+        _ => false,
+    };
+    matching_family && to.flen() > origin.flen()
+}
+
+fn time_fsp_extends(origin: &FieldType, to: &FieldType) -> bool {
+    origin.code() == to.code()
+        && matches!(
+            origin.code(),
+            FieldTypeCode::Duration | FieldTypeCode::Datetime
+        )
+        && to.decimal() > origin.decimal()
+}
+
+fn enum_or_set_appends(origin: &FieldType, to: &FieldType) -> bool {
+    if origin.code() != to.code()
+        || !matches!(origin.code(), FieldTypeCode::Enum | FieldTypeCode::Set)
+    {
+        return false;
+    }
+    let old = origin.elems_snapshot();
+    let new = to.elems_snapshot();
+    new.len() >= old.len() && new.starts_with(&old)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PartitionColumnUsage {
+    NoFunction,
+    ToDays,
+    Extract,
+    Unsupported,
+}
+
+fn collect_partition_column_usage(
+    expression: &tidb_ast::Expr,
+    target: &str,
+    current: PartitionColumnUsage,
+    usage: &mut Vec<PartitionColumnUsage>,
+) {
+    match expression {
+        tidb_ast::Expr::Column(path) => {
+            if path
+                .last()
+                .is_some_and(|name| name.eq_ignore_ascii_case(target))
+                && !usage.contains(&current)
+            {
+                usage.push(current);
+            }
+        }
+        tidb_ast::Expr::Func { name, args, .. } => {
+            let name = name.to_ascii_lowercase();
+            let next = if current == PartitionColumnUsage::Unsupported {
+                current
+            } else {
+                match name.as_str() {
+                    "to_days" => PartitionColumnUsage::ToDays,
+                    _ => PartitionColumnUsage::Unsupported,
+                }
+            };
+            for argument in args {
+                collect_partition_column_usage(argument, target, next, usage);
+            }
+        }
+        tidb_ast::Expr::Extract { value, .. } => {
+            let next = if current == PartitionColumnUsage::Unsupported {
+                current
+            } else {
+                PartitionColumnUsage::Extract
+            };
+            collect_partition_column_usage(value, target, next, usage);
+        }
+        tidb_ast::Expr::Paren(inner) | tidb_ast::Expr::Unary(_, inner) => {
+            collect_partition_column_usage(inner, target, current, usage);
+        }
+        tidb_ast::Expr::Binary(_, left, right) => {
+            collect_partition_column_usage(left, target, current, usage);
+            collect_partition_column_usage(right, target, current, usage);
+        }
+        tidb_ast::Expr::Int(_)
+        | tidb_ast::Expr::Decimal(_)
+        | tidb_ast::Expr::Float(_)
+        | tidb_ast::Expr::Hex(_)
+        | tidb_ast::Expr::Bit(_)
+        | tidb_ast::Expr::String(_)
+        | tidb_ast::Expr::Bool(_)
+        | tidb_ast::Expr::Null
+        | tidb_ast::Expr::Default(_) => {}
+        _ => {
+            if !usage.contains(&PartitionColumnUsage::Unsupported) {
+                usage.push(PartitionColumnUsage::Unsupported);
+            }
+        }
+    }
+}
+
+fn partition_column_change_allowed(
+    partition: &crate::partition_routing::PartitionSpec,
+    name: &str,
+    origin: &FieldType,
+    to: &FieldType,
+) -> bool {
+    let mut allowed_changed_flags = FieldTypeFlags::NO_DEFAULT_VALUE;
+    if origin.has_flag(FieldTypeFlags::NOT_NULL) && !to.has_flag(FieldTypeFlags::NOT_NULL) {
+        allowed_changed_flags |= FieldTypeFlags::NOT_NULL;
+    }
+    if origin.eval_type() != to.eval_type()
         || origin.is_unsigned() != to.is_unsigned()
-        || (!origin.code().is_type_integer() && origin.flen() != to.flen())
-        || origin.decimal() != to.decimal()
         || origin.charset_name() != to.charset_name()
         || origin.collation_name() != to.collation_name()
-        || origin.elems_snapshot() != to.elems_snapshot()
+        || origin.flags() & !allowed_changed_flags != to.flags() & !allowed_changed_flags
+    {
+        return false;
+    }
+    let unchanged = origin.code() == to.code()
+        && (origin.code().is_type_integer() || origin.flen() == to.flen())
+        && origin.decimal() == to.decimal()
+        && origin.elems_snapshot() == to.elems_snapshot();
+    if unchanged {
+        return true;
+    }
+
+    let key_change = || {
+        integer_type_widens(origin, to)
+            || string_type_extends(origin, to)
+            || enum_or_set_appends(origin, to)
+    };
+    match &partition.kind {
+        PartitionKind::Key => key_change(),
+        PartitionKind::RangeColumns { .. } | PartitionKind::ListColumns { .. } => {
+            key_change() || time_fsp_extends(origin, to)
+        }
+        PartitionKind::Hash | PartitionKind::Range { .. } | PartitionKind::List { .. } => {
+            let Ok(expression) = tidb_model::generated_expr::parse_expression(&partition.expr_text)
+            else {
+                return false;
+            };
+            let mut usage = Vec::new();
+            collect_partition_column_usage(
+                &expression,
+                name,
+                PartitionColumnUsage::NoFunction,
+                &mut usage,
+            );
+            !usage.is_empty()
+                && usage.into_iter().all(|usage| match usage {
+                    PartitionColumnUsage::NoFunction => integer_type_widens(origin, to),
+                    PartitionColumnUsage::ToDays => {
+                        time_fsp_extends(origin, to) && origin.code() == FieldTypeCode::Datetime
+                    }
+                    PartitionColumnUsage::Extract => time_fsp_extends(origin, to),
+                    PartitionColumnUsage::Unsupported => false,
+                })
+        }
+    }
 }
 
 /// What one `MODIFY COLUMN` / `CHANGE COLUMN` action states, plus the session
@@ -1929,12 +2091,29 @@ fn modify_column_action(
             return Err(DriverError::PrimaryCantHaveNull);
         }
     }
-    if partition_column
-        && partition_routing_definition_changed(&table.columns[offset].field_type, &field_type)
-    {
-        return Err(DriverError::UnsupportedModifyColumn(
-            "can't change the partitioning column, since it would require reorganize all partitions",
-        ));
+    if partition_column {
+        let partition = table
+            .partition()
+            .expect("partition dependency has an owner");
+        let mut partition_candidate = field_type.clone();
+        if table.columns[offset]
+            .field_type
+            .has_flag(FieldTypeFlags::AUTO_INCREMENT)
+            && wants_auto_increment
+        {
+            partition_candidate
+                .add_flags(FieldTypeFlags::AUTO_INCREMENT | FieldTypeFlags::NOT_NULL);
+        }
+        if !partition_column_change_allowed(
+            partition,
+            old_name,
+            &table.columns[offset].field_type,
+            &partition_candidate,
+        ) {
+            return Err(DriverError::UnsupportedModifyColumn(
+                "can't change the partitioning column, since it would require reorganize all partitions",
+            ));
+        }
     }
     // Go `checkModifyTypes` (`pkg/ddl/modify_column.go:2262`), reached right
     // after the index-flag copy above and before the AUTO_INCREMENT checks

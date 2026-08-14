@@ -221,6 +221,27 @@ impl PartitionSpec {
         self.definitions.iter().map(|def| def.id).collect()
     }
 
+    pub(crate) fn update_dependency_type(&mut self, name: &str, field_type: &FieldType) {
+        let Some(index) = self
+            .dependencies
+            .iter()
+            .position(|dependency| dependency.eq_ignore_ascii_case(name))
+        else {
+            return;
+        };
+        update_expression_dependency_type(&mut self.expr, index, field_type);
+        match &mut self.kind {
+            PartitionKind::RangeColumns { field_types, .. }
+            | PartitionKind::ListColumns { field_types, .. } => {
+                field_types[index] = field_type.clone();
+            }
+            PartitionKind::Hash
+            | PartitionKind::Key
+            | PartitionKind::Range { .. }
+            | PartitionKind::List { .. } => {}
+        }
+    }
+
     /// The partition named `name`, matched case-insensitively as MySQL
     /// matches partition names.
     #[must_use]
@@ -334,6 +355,24 @@ impl PartitionSpec {
                 }
             }
         }
+    }
+}
+
+fn update_expression_dependency_type(
+    expression: &mut Expression,
+    index: usize,
+    field_type: &FieldType,
+) {
+    match expression {
+        Expression::Column(column) if column.index == index as i64 => {
+            column.ret_type = Some(field_type.clone());
+        }
+        Expression::ScalarFunction(function) => {
+            for argument in &mut function.args {
+                update_expression_dependency_type(argument, index, field_type);
+            }
+        }
+        Expression::Column(_) | Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
     }
 }
 

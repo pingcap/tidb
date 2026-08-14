@@ -1579,6 +1579,12 @@ impl KvTable {
         }
 
         self.columns[offset] = new_column;
+        if let Some(partition) = &mut self.partition {
+            partition.update_dependency_type(
+                &self.columns[offset].name,
+                &self.columns[offset].field_type,
+            );
+        }
         // Go `ddl.UpdateIndexCol` (`pkg/ddl/column.go`), run as part of the
         // same column change: a key part over this column keeps its declared
         // prefix only while the new type is still prefixable AND wider than

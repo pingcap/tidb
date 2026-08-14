@@ -1551,6 +1551,122 @@ fn modifying_a_partition_column_keeps_the_source_safety_boundary() {
     );
 }
 
+#[test]
+fn partition_column_modify_uses_the_source_method_allowlist() {
+    let cases = [
+        (
+            "ak",
+            "CREATE TABLE ak (a tinyint, b int) PARTITION BY KEY(a) PARTITIONS 3",
+            "ALTER TABLE ak MODIFY COLUMN a INT",
+            "INSERT INTO ak VALUES (1000,1)",
+        ),
+        (
+            "aks",
+            "CREATE TABLE aks (a varchar(4), b int) PARTITION BY KEY(a) PARTITIONS 3",
+            "ALTER TABLE aks MODIFY COLUMN a VARCHAR(16)",
+            "INSERT INTO aks VALUES ('extended',1)",
+        ),
+        (
+            "ake",
+            "CREATE TABLE ake (a enum('x','y'), b int) PARTITION BY KEY(a) PARTITIONS 3",
+            "ALTER TABLE ake MODIFY COLUMN a ENUM('x','y','z')",
+            "INSERT INTO ake VALUES ('z',1)",
+        ),
+        (
+            "akset",
+            "CREATE TABLE akset (a set('x','y'), b int) PARTITION BY KEY(a) PARTITIONS 3",
+            "ALTER TABLE akset MODIFY COLUMN a SET('x','y','z')",
+            "INSERT INTO akset VALUES ('z',1)",
+        ),
+        (
+            "arc",
+            "CREATE TABLE arc (a tinyint, b int) PARTITION BY RANGE COLUMNS(a) (\
+             PARTITION p0 VALUES LESS THAN (10), PARTITION pm VALUES LESS THAN (MAXVALUE))",
+            "ALTER TABLE arc MODIFY COLUMN a INT",
+            "INSERT INTO arc VALUES (1000,1)",
+        ),
+        (
+            "arcd",
+            "CREATE TABLE arcd (a datetime, b int) PARTITION BY RANGE COLUMNS(a) (\
+             PARTITION p0 VALUES LESS THAN ('2024-06-01'), \
+             PARTITION pm VALUES LESS THAN (MAXVALUE))",
+            "ALTER TABLE arcd MODIFY COLUMN a DATETIME(3)",
+            "INSERT INTO arcd VALUES ('2024-07-01 00:00:00.123',1)",
+        ),
+        (
+            "ah",
+            "CREATE TABLE ah (a tinyint, b int) PARTITION BY HASH(a) PARTITIONS 4",
+            "ALTER TABLE ah MODIFY COLUMN a INT",
+            "INSERT INTO ah VALUES (1000,1)",
+        ),
+        (
+            "atd",
+            "CREATE TABLE atd (a datetime, b int) PARTITION BY RANGE (TO_DAYS(a)) (\
+             PARTITION p0 VALUES LESS THAN (TO_DAYS('2024-06-01')), \
+             PARTITION pm VALUES LESS THAN (MAXVALUE))",
+            "ALTER TABLE atd MODIFY COLUMN a DATETIME(3)",
+            "INSERT INTO atd VALUES ('2024-07-01 00:00:00.123',1)",
+        ),
+        (
+            "aex",
+            "CREATE TABLE aex (a time, b int) PARTITION BY RANGE (EXTRACT(SECOND FROM a)) (\
+             PARTITION p0 VALUES LESS THAN (30), PARTITION pm VALUES LESS THAN (MAXVALUE))",
+            "ALTER TABLE aex MODIFY COLUMN a TIME(3)",
+            "INSERT INTO aex VALUES ('00:00:45.123',1)",
+        ),
+    ];
+
+    for (table, create, alter, insert) in cases {
+        let mut session = Session::new();
+        session
+            .run(create)
+            .unwrap_or_else(|error| panic!("create {table}: {error:?}"));
+        session
+            .run(alter)
+            .unwrap_or_else(|error| panic!("alter {table}: {error:?}"));
+        session
+            .run(insert)
+            .unwrap_or_else(|error| panic!("insert {table}: {error:?}"));
+        assert_eq!(
+            tests_support::row_text(session.run(&format!("SELECT count(*) FROM {table}"))),
+            [["1".to_owned()]],
+            "accepted partition-column extension remains routable for {table}"
+        );
+    }
+
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE an (a int NULL, b int) PARTITION BY HASH(a) PARTITIONS 4")
+        .unwrap();
+    let error = session
+        .run("ALTER TABLE an MODIFY COLUMN a INT NOT NULL")
+        .expect_err("NULL to NOT NULL is outside the source allowlist")
+        .to_mysql_error();
+    assert_eq!(error.code, 8200);
+
+    session
+        .run("CREATE TABLE ae (a enum('x','y'), b int) PARTITION BY KEY(a) PARTITIONS 3")
+        .unwrap();
+    let error = session
+        .run("ALTER TABLE ae MODIFY COLUMN a ENUM('y','x','z')")
+        .expect_err("existing ENUM ordinals cannot move")
+        .to_mysql_error();
+    assert_eq!(error.code, 8200);
+
+    session
+        .run(
+            "CREATE TABLE af (a datetime, b int) PARTITION BY RANGE (FLOOR(TO_DAYS(a))) (\
+             PARTITION p0 VALUES LESS THAN (TO_DAYS('2024-06-01')), \
+             PARTITION pm VALUES LESS THAN (MAXVALUE))",
+        )
+        .unwrap();
+    let error = session
+        .run("ALTER TABLE af MODIFY COLUMN a DATETIME(3)")
+        .expect_err("an unsupported function on the column path blocks FSP widening")
+        .to_mysql_error();
+    assert_eq!(error.code, 8200);
+}
+
 /// Go `checkDropColumnWithPartitionConstraint` (`pkg/ddl/executor.go`), which
 /// `RenameColumn` and `DropColumn` both call: a column the partition
 /// expression -- or a `COLUMNS` list -- reads cannot be renamed or dropped,

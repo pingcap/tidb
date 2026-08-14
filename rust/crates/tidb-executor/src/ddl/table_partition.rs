@@ -576,6 +576,7 @@ fn check_partition_expression_allowed(expr: &Expr) -> Result<(), DriverError> {
         | Expr::Bool(_)
         | Expr::Default(_) => Ok(()),
         Expr::Paren(inner) => check_partition_expression_allowed(inner),
+        Expr::Extract { value, .. } => check_partition_expression_allowed(value),
         // Go `AllowedPartition4UnaryOpMap`.
         Expr::Unary(tidb_ast::UnaryOp::Plus | tidb_ast::UnaryOp::Minus, inner) => {
             check_partition_expression_allowed(inner)
@@ -671,6 +672,7 @@ fn partition_expr_is_integral(expr: &Expr, names: &[String], types: &[FieldType]
         // Reachable only for a whitelisted name, all of which return an
         // integer.
         Expr::Func { .. } => true,
+        Expr::Extract { .. } => true,
         Expr::Int(_) | Expr::Bool(_) | Expr::Hex(_) | Expr::Bit(_) => true,
         _ => false,
     }
