@@ -1164,7 +1164,7 @@ func normalizeLeadingListQBNames(list *ast.LeadingList, p *QBHintHandler, curren
 	if list == nil {
 		return nil
 	}
-	normalized := &ast.LeadingList{Items: make([]interface{}, 0, len(list.Items))}
+	normalized := &ast.LeadingList{Items: make([]any, 0, len(list.Items))}
 	for _, item := range list.Items {
 		switch x := item.(type) {
 		case *ast.HintTable:
