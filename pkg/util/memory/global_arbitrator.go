@@ -54,7 +54,10 @@ var (
 		v struct {
 			atomic.Pointer[MemArbitrator]
 			sync.Mutex
+			reset atomic.Bool
 		}
+		heapProfiler atomic.Pointer[heapProfileCollector]
+
 		enable  atomic.Bool
 		metrics struct {
 			last struct {
@@ -69,8 +72,7 @@ var (
 				big     atomic.Int64
 				intoBig atomic.Int64
 			}
-			init  atomic.Bool
-			reset atomic.Bool
+			init atomic.Bool
 			sync.Mutex
 		}
 	}
@@ -211,22 +213,25 @@ func readRuntimeMemStats() memStats {
 
 // HandleGlobalMemArbitratorRuntime is used to handle runtime memory stats.
 func HandleGlobalMemArbitratorRuntime() {
+	profiler := globalArbitrator.heapProfiler.Load()
 	m := GlobalMemArbitrator()
 	if m == nil {
-		if globalArbitrator.metrics.reset.Load() {
+		if globalArbitrator.v.reset.Load() && globalArbitrator.v.reset.Swap(false) {
+			if profiler != nil {
+				profiler.resetTriggerState()
+			}
 			resetGlobalMemArbitratorMetrics()
 		}
 		return
 	}
 	m.HandleRuntimeStats(readRuntimeMemStats())
+	if profiler != nil {
+		profiler.tryCapture(m)
+	}
 	reportGlobalMemArbitratorMetrics()
 }
 
 func resetGlobalMemArbitratorMetrics() {
-	if !globalArbitrator.metrics.reset.Swap(false) {
-		return
-	}
-
 	globalArbitrator.metrics.Lock()
 	defer globalArbitrator.metrics.Unlock()
 
@@ -309,6 +314,7 @@ func CleanupGlobalMemArbitratorForTest() {
 	globalArbitrator.v.Lock()
 	defer globalArbitrator.v.Unlock()
 
+	globalArbitrator.heapProfiler.Store(nil)
 	m := globalArbitrator.v.Load()
 	if m == nil {
 		return
@@ -429,7 +435,7 @@ func SetGlobalMemArbitratorWorkMode(str string) bool {
 	if newMode == ArbitratorModeDisable {
 		m.SetWorkMode(newMode)
 		globalArbitrator.enable.Store(false)
-		globalArbitrator.metrics.reset.Store(true)
+		globalArbitrator.v.reset.Store(true)
 		return true
 	}
 
@@ -487,6 +493,7 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 		limit = GetMemTotalIgnoreErr()
 	}
 
+	profiler := newHeapProfileCollector(filepath.Join(baseDir, heapProfileDirName))
 	m = NewMemArbitrator(
 		int64(limit),
 		defPoolStatusShards,
@@ -512,6 +519,7 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 		defTaskTickDur,
 	)
 
+	globalArbitrator.heapProfiler.Store(profiler)
 	globalArbitrator.v.Store(m)
 	return
 }
