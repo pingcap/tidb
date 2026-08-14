@@ -3135,7 +3135,10 @@ func shouldAutoPauseExistingKVDiskFullTask(job *model.Job, task *proto.Task) boo
 		!job.HasResumeReason(model.JobResumeReasonKVDiskFull)
 }
 
-func (w *worker) cloudStorageURIForNewBackfillTask(job *model.Job, mergeTempIndex bool) (string, error) {
+// resolveCloudStorageURI reloads the URI when a new DDL owner resumes the job.
+// UseCloudStorage is persisted in the job, but the URI loaded by loadCloudStorageURI
+// is cached only in the previous owner's in-memory ReorgContext.
+func (w *worker) resolveCloudStorageURI(job *model.Job, mergeTempIndex bool) (string, error) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
 	if mergeTempIndex || !job.ReorgMeta.UseCloudStorage || jc.cloudStorageURI != "" {
 		return jc.cloudStorageURI, nil
@@ -3252,7 +3255,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("required-slots", requiredSlots),
 			zap.String("task-key", taskKey))
 		rowSize := estimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
-		cloudStorageURI, err := w.cloudStorageURIForNewBackfillTask(job, reorgInfo.mergingTmpIdx)
+		cloudStorageURI, err := w.resolveCloudStorageURI(job, reorgInfo.mergingTmpIdx)
 		if err != nil {
 			return err
 		}
