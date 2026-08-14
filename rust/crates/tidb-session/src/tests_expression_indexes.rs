@@ -659,11 +659,9 @@ fn every_ga_function_passes_the_gate() {
             Some(8200),
             "{expr} is on GAFunction4ExpressionIndex; Go answers {go_code}, never 8200"
         );
-        // `json_pretty`, `json_contains_path`, `json_storage_size` and
-        // `json_schema_valid` have no evaluator in this tier yet, so they are
-        // refused 1105 BEFORE the result-type gate is reached. That is a
-        // wrong-REFUSE, the safe direction, and it is the only code allowed
-        // to stand in for Go's here.
+        // The remaining seed-only functions may still refuse 1105 before the
+        // result-type gate. That is the only code allowed to stand in for
+        // Go's result while their evaluators remain absent.
         if got == Some(1105) {
             continue;
         }

@@ -152,6 +152,171 @@ fn json_valid_go_vectors() {
     assert_eq!(call("JSON_VALID", &[Datum::Null]), Datum::Null);
 }
 
+/// Complete source table from `TestJSONSchemaValid` in
+/// `pkg/expression/builtin_json_test.go`.  The schema is a draft-2019-09
+/// document because qri-io/jsonschema v0.2.1 loads that draft by default.
+#[test]
+fn json_schema_valid_go_vectors() {
+    assert_eq!(
+        call("JSON_SCHEMA_VALID", &[Datum::Null, s("{}")]),
+        Datum::Null
+    );
+    assert_eq!(
+        call("JSON_SCHEMA_VALID", &[s("{}"), Datum::Null]),
+        Datum::Null
+    );
+    for (schema, document, want) in [
+        ("{}", "{}", 1),
+        (r#"{"required":["a","b"]}"#, r#"{"a":5}"#, 0),
+        (r#"{"required":["a","b"]}"#, r#"{"a":5,"b":6}"#, 1),
+        (r#"{"type":["string"]}"#, "{}", 0),
+        (r#"{"type":["string"]}"#, r#""foobar""#, 1),
+        (r#"{"type":["object"]}"#, "{}", 1),
+        (r#"{"type":["object"]}"#, r#""foobar""#, 0),
+        (r#"{"properties":{"a":{"type":"number"}}}"#, "{}", 1),
+        (
+            r#"{"properties":{"a":{"type":"number"}}}"#,
+            r#"{"a":"foobar"}"#,
+            0,
+        ),
+        (r#"{"properties":{"a":{"type":"number"}}}"#, r#"{"a":5}"#, 1),
+        (
+            r#"{"properties":{"a":{"type":"number","minimum":6}}}"#,
+            r#"{"a":5}"#,
+            0,
+        ),
+        (
+            r#"{"properties":{"a":{"type":"string","pattern":"^a"}}}"#,
+            r#"{"a":"abc"}"#,
+            1,
+        ),
+        (
+            r#"{"properties":{"a":{"type":"string","pattern":"^a"}}}"#,
+            r#"{"a":"cba"}"#,
+            0,
+        ),
+    ] {
+        assert_eq!(
+            call("JSON_SCHEMA_VALID", &[s(schema), s(document)]),
+            Datum::Int(want),
+            "schema={schema}, document={document}",
+        );
+    }
+
+    // qri-io's Schema.UnmarshalJSON accepts the draft's boolean-schema form.
+    assert_eq!(
+        call("JSON_SCHEMA_VALID", &[s("true"), s("42")]),
+        Datum::Int(1)
+    );
+    assert_eq!(
+        call("JSON_SCHEMA_VALID", &[s("false"), s("42")]),
+        Datum::Int(0)
+    );
+    assert_eq!(
+        call(
+            "JSON_SCHEMA_VALID",
+            &[s(r#"{"format":"ipv4"}"#), s(r#""999.1.1.1""#)],
+        ),
+        Datum::Int(0),
+    );
+
+    let error = call_result("JSON_SCHEMA_VALID", &[s("[]"), s("{}")])
+        .expect_err("a schema root must be an object or boolean");
+    assert!(matches!(
+        error,
+        crate::EvalError::Json(crate::JsonError::InvalidJsonType {
+            argument: 1,
+            function: "json_schema_valid",
+            ref required,
+        }) if required == "object"
+    ));
+
+    let error = call_result("JSON_SCHEMA_VALID", &[s(r#"{"type":7}"#), s("{}")])
+        .expect_err("a schema keyword with the wrong JSON kind must be rejected");
+    assert!(matches!(
+        error,
+        crate::EvalError::Json(crate::JsonError::InvalidJsonType {
+            argument: 1,
+            function: "json_schema_valid",
+            ..
+        })
+    ));
+
+    assert!(matches!(
+        call_result("JSON_SCHEMA_VALID", &[s("{}"), s("")]),
+        Err(crate::EvalError::Json(crate::JsonError::EmptyText))
+    ));
+}
+
+#[test]
+fn json_schema_valid_resolves_file_and_http_references() {
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::time::{Duration, Instant};
+
+    let directory = tempfile::tempdir().expect("create schema directory");
+    let missing_reference = format!(
+        r#"{{"$ref":"file://{}"}}"#,
+        directory.path().join("missing.json").display(),
+    );
+    assert_eq!(
+        call("JSON_SCHEMA_VALID", &[s(&missing_reference), Datum::Null],),
+        Datum::Null,
+    );
+
+    let schema_path = directory.path().join("integer.json");
+    std::fs::write(&schema_path, r#"{"type":"integer"}"#).expect("write referenced file schema");
+    let file_reference = format!(r#"{{"$ref":"file://{}"}}"#, schema_path.display());
+    assert_eq!(
+        call("JSON_SCHEMA_VALID", &[s(&file_reference), s("7")]),
+        Datum::Int(1),
+    );
+    assert_eq!(
+        call("JSON_SCHEMA_VALID", &[s(&file_reference), s(r#""seven""#)],),
+        Datum::Int(0),
+    );
+
+    let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind schema server");
+    listener
+        .set_nonblocking(true)
+        .expect("make schema server bounded");
+    let address = listener.local_addr().expect("read schema server address");
+    let server = std::thread::spawn(move || {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let (mut stream, _) = loop {
+            match listener.accept() {
+                Ok(connection) => break connection,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "schema request did not arrive");
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(error) => panic!("accept schema request: {error}"),
+            }
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .expect("bound schema request read");
+        let mut request = [0_u8; 1024];
+        let read = stream.read(&mut request).expect("read schema request");
+        assert!(std::str::from_utf8(&request[..read])
+            .expect("HTTP request is text")
+            .starts_with("GET /integer.json "),);
+        let body = r#"{"type":"integer"}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len(),
+        )
+        .expect("write schema response");
+    });
+    let http_reference = format!(r#"{{"$ref":"http://{address}/integer.json"}}"#);
+    assert_eq!(
+        call("JSON_SCHEMA_VALID", &[s(&http_reference), s("7")]),
+        Datum::Int(1),
+    );
+    server.join().expect("schema server completed");
+}
+
 /// All successful vectors in `TestJSONQuote` and `TestJSONUnquote`
 /// (`pkg/expression/builtin_json_test.go`).  The two malformed-root
 /// vectors are deliberately checked as errors rather than captured in

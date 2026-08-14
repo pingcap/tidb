@@ -36,7 +36,7 @@ pub(crate) use compare2::{extremum_with_signature, interval_lazy, GlCmpStringMod
 pub(crate) use crypto::eval_aes_lazy;
 pub(crate) use json::{
     cast_as_json, cast_as_json_typed, cast_as_json_value_typed,
-    dispatch_typed as json_dispatch_typed,
+    dispatch_typed as json_dispatch_typed, JsonSchemaCache,
 };
 pub(crate) use string2::find_in_set_with_collation;
 

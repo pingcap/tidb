@@ -95,6 +95,21 @@ pub(super) fn v(expr: &str) -> Datum {
 }
 
 #[test]
+fn json_schema_valid_rewrites_and_short_circuits_like_go() {
+    assert_eq!(
+        chunk_e(r#"json_schema_valid('{"required":["a"]}', '{"a":1}')"#),
+        "INT:1"
+    );
+    assert_eq!(
+        chunk_e(r#"json_schema_valid('{"required":["a"]}', '{}')"#),
+        "INT:0"
+    );
+    // Go returns as soon as the schema argument is NULL, before evaluating
+    // or converting the document argument.
+    assert_eq!(chunk_e("json_schema_valid(NULL, 1 / 0)"), "NULL");
+}
+
+#[test]
 fn avg() {
     // AVG grows the sum's scale by 4 (MySQL's div_precision_increment)
     // and ROUNDS to it, unlike DIV's exact truncation.

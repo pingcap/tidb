@@ -1170,34 +1170,22 @@ fn json_column_type() {
 }
 
 /// `json_schema_valid` is in Go's `GAFunction4ExpressionIndex`
-/// (`pkg/sessionctx/variable/varsutil.go`), so this tier's allowlist keeps
-/// it -- dropping the name would DIVERGE from Go rather than fix anything.
-/// What is missing is the evaluator (Go delegates the whole of JSON Schema
-/// draft-2020-12 to `santhosh-tekuri/jsonschema`), and this pins that the
-/// absence surfaces as a refusal at BOTH doors rather than as a wrong
-/// answer or an index that silently stores nothing.
+/// (`pkg/sessionctx/variable/varsutil.go`) and is evaluated with TiDB's
+/// qri-io draft-2019-09 schema contract at both the SELECT and expression-
+/// index doors.
 #[test]
-fn json_schema_valid_is_allowlisted_for_expression_indexes_and_refused_by_both_doors() {
+fn json_schema_valid_is_evaluated_at_both_expression_index_doors() {
     let mut session = Session::new();
-    let error = session
-        .run("SELECT json_schema_valid('{\"type\":\"object\"}', '{}')")
-        .unwrap_err();
-    assert!(
-        format!("{error:?}").contains("not yet built"),
-        "a missing evaluator must refuse, not answer: {error:?}"
+    assert_eq!(
+        row_text(session.run("SELECT json_schema_valid('{\"type\":\"object\"}', '{}')")),
+        vec![vec!["1".to_owned()]],
     );
 
     session.run("CREATE TABLE t (j JSON)").unwrap();
-    let error = session
+    session
         .run("CREATE INDEX i ON t ((json_schema_valid('{\"type\":\"object\"}', j)))")
-        .unwrap_err();
-    assert!(
-        format!("{error:?}").contains("not supported yet"),
-        "an index over it must refuse rather than be built empty: {error:?}"
-    );
-    // The name is still ALLOWLISTED: the refusal above is the evaluator's,
-    // not 8200. A name Go does not allow reports the different, earlier
-    // error.
+        .unwrap();
+    // A name Go does not allow still reports the distinct allowlist error.
     let error = session
         .run("CREATE INDEX i2 ON t ((json_depth(j) + length(cast(j as char))))")
         .unwrap_err();
@@ -1207,27 +1195,17 @@ fn json_schema_valid_is_allowlisted_for_expression_indexes_and_refused_by_both_d
     );
 }
 
-/// The IS_BOOLEAN half of the boolean-functions story, and the reason
-/// `json_schema_valid` must NOT gain a result type: `json_valid` HAS an
-/// evaluator and is in Go's `booleanFunctions`, so a `JSON_ARRAY(json_valid(x))`
-/// element is the JSON boolean `true`/`false`. The mixed row is the mutation
-/// probe -- without the flag both cells would be `1`/`0`, so a change that
-/// dropped it fails here. `json_schema_valid` shares the boolean status but has
-/// no evaluator, so it refuses rather than rendering a guessed boolean; giving
-/// it a result type to carry an unobservable flag is what moved its expression-
-/// index refusal door, which is why it deliberately has none.
+/// Both schema validation functions are in Go's `booleanFunctions`, so their
+/// integer results render as JSON booleans when nested in `JSON_ARRAY`.
 #[test]
-fn json_valid_renders_as_a_json_boolean_and_json_schema_valid_is_refused() {
+fn json_validation_results_render_as_json_booleans() {
     let mut session = Session::new();
     assert_eq!(
-        row_text(session.run("SELECT JSON_ARRAY(json_valid('{}'), json_valid('not json'))")),
-        vec![vec!["[true, false]".to_owned()]],
-    );
-    assert!(
-        session
-            .run("SELECT JSON_ARRAY(json_schema_valid('{}', '{}'))")
-            .is_err(),
-        "json_schema_valid has no evaluator, so it must refuse rather than render"
+        row_text(session.run(
+            "SELECT JSON_ARRAY(json_valid('{}'), json_valid('not json'), \
+             json_schema_valid('{}', '{}'))",
+        )),
+        vec![vec!["[true, false, true]".to_owned()]],
     );
 }
 

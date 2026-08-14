@@ -217,19 +217,17 @@ pub fn unary_op_name(op: UnaryOp) -> &'static str {
 pub struct ScalarFunction {
     /// Go `FuncName` (an `ast.CIStr`): the function's name.
     pub func_name: CiString,
-
     /// Go `RetType` (a `*types.FieldType`; `None` mirrors a nil pointer).
     pub ret_type: Option<FieldType>,
-
     /// The function arguments. In Go these live inside `Function.getArgs()`.
     pub args: Vec<Expression>,
-
     /// Lazily-filled `HashCode` cache (Go `hashcode`). Go also caches a
     /// `canonicalhashcode`; that field lands with `CanonicalHashCode`.
     hashcode: Vec<u8>,
 
     /// Go embedded collation state (via the `Function`'s `collationInfo`).
     pub collation: CollationInfo,
+    json_schema_cache: crate::builtin_ext::JsonSchemaCache,
 }
 
 impl ScalarFunction {
@@ -408,6 +406,9 @@ impl ScalarFunction {
     /// [`Self::eval`]'s job, done once for all of them.
     fn eval_by_signature(&self, ctx: &impl Columns, row: Row<'_>) -> Result<Datum, EvalError> {
         let name = self.func_name.lowercase();
+        if name == "json_schema_valid" {
+            return self.json_schema_cache.eval(&self.args, ctx, row);
+        }
         if let Some(op) = binary_op_for_name(name) {
             if self.args.len() == 2 {
                 let lhs = self.args[0].eval(ctx, row)?;

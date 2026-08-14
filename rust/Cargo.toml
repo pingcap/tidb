@@ -113,6 +113,9 @@ aes = "0.9"
 # to match TiDB's own text form exactly (spacing differs from serde_json's
 # defaults), verified via gorun.
 serde_json = "1"
+# `JSON_SCHEMA_VALID` follows TiDB's qri-io validator at draft 2019-09,
+# including its file and HTTP(S) retrieval of external `$ref` schemas.
+jsonschema = { version = "0.49.9", default-features = false, features = ["resolve-file", "resolve-http", "tls-ring"] }
 serde = { version = "1", features = ["derive"] }
 # MySQL temporal values require proleptic calendar arithmetic and IANA timezone
 # transitions. These replace Go's time.Time and time.Location without embedding

@@ -324,5 +324,8 @@ fn datum_json_scalar(value: &Datum) -> Result<Json, EvalError> {
 }
 
 pub(super) fn parse_json(s: &str) -> Result<Json, EvalError> {
+    if s.trim().is_empty() {
+        return Err(EvalError::Json(JsonError::EmptyText));
+    }
     serde_json::from_str(s).map_err(|_| EvalError::Json(JsonError::InvalidText))
 }

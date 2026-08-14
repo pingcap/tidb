@@ -1226,15 +1226,9 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // the flag is observable and the existing result-type arm is unchanged
         // except for the flag.
         //
-        // `ast.JSONSchemaValid` is ALSO a Go boolean function, but this tier has
-        // NO evaluator for it, so it deliberately keeps NO result-type arm:
-        // giving it one lets the rewriter build a ScalarFunction that an
-        // expression index would accept and then fail to populate. The flag is
-        // unobservable on a value that can never be produced, and refusing at the
-        // rewrite door (the Go-code-1105 wrong-refuse pinned as the safe
-        // direction by `tests_expression_indexes::every_ga_function_passes_the_gate`)
-        // is the correct behaviour.
-        "json_valid" => {
+        // `ast.JSONSchemaValid` is in the same boolean-function map and its
+        // evaluator below uses the source validator's draft-2019-09 contract.
+        "json_valid" | "json_schema_valid" => {
             let mut ft = int();
             ft.add_flags(tidb_datatype::FieldTypeFlags::IS_BOOLEAN);
             ft

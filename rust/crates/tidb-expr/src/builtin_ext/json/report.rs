@@ -33,7 +33,128 @@ use super::value::{
     json_document_string, json_sql_string, parse_json, parse_json_document_argument,
 };
 use crate::coerce::coerce_str;
-use crate::{Datum, EvalError, JsonError};
+use crate::expression::{ConstLevel, Expression};
+use crate::{Columns, Datum, EvalError, JsonError};
+use tidb_chunk::row::Row;
+
+/// Per-signature cache and lazy evaluator for `JSON_SCHEMA_VALID`.
+///
+/// Clone deliberately starts empty, matching Go's
+/// `builtinJSONSchemaValidSig.Clone`. Only strict constants are cached because
+/// Rust's evaluation context does not yet expose Go's `CtxID`; a context-only
+/// parameter must never leak its compiled schema into another execution.
+#[derive(Debug, Default)]
+pub(crate) struct JsonSchemaCache(
+    std::sync::OnceLock<Result<Option<PreparedJsonSchema>, EvalError>>,
+);
+
+#[derive(Debug)]
+struct PreparedJsonSchema {
+    schema: Json,
+    validator: std::sync::OnceLock<Result<jsonschema::Validator, EvalError>>,
+}
+
+impl Clone for JsonSchemaCache {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl JsonSchemaCache {
+    pub(crate) fn eval(
+        &self,
+        args: &[Expression],
+        ctx: &impl Columns,
+        row: Row<'_>,
+    ) -> Result<Datum, EvalError> {
+        let [schema_arg, document_arg] = args else {
+            return Err(EvalError::WrongParameterCount("json_schema_valid"));
+        };
+        let schema_value = schema_arg.eval(ctx, row)?;
+        if schema_value.is_null() {
+            return Ok(Datum::Null);
+        }
+
+        if schema_arg.const_level() == ConstLevel::STRICT {
+            let schema = match self.0.get_or_init(|| prepare_json_schema(&schema_value)) {
+                Ok(Some(schema)) => schema,
+                Ok(None) => return Ok(Datum::Null),
+                Err(error) => return Err(error.clone()),
+            };
+            return validate_json_schema(schema, &document_arg.eval(ctx, row)?);
+        }
+
+        let schema = prepare_json_schema(&schema_value)?;
+        let Some(schema) = schema.as_ref() else {
+            return Ok(Datum::Null);
+        };
+        validate_json_schema(schema, &document_arg.eval(ctx, row)?)
+    }
+}
+
+/// Parses and checks the schema argument without resolving external `$ref`s.
+/// TiDB's qri-io validator does not fetch them until document validation, so a
+/// NULL document still short-circuits without filesystem or network access.
+fn prepare_json_schema(value: &Datum) -> Result<Option<PreparedJsonSchema>, EvalError> {
+    let Some(schema) = parse_json_document_argument(value)? else {
+        return Ok(None);
+    };
+    if !matches!(schema, Json::Object(_) | Json::Bool(_)) {
+        return Err(EvalError::Json(JsonError::InvalidJsonType {
+            argument: 1,
+            function: "json_schema_valid",
+            required: "object".to_owned(),
+        }));
+    }
+    jsonschema::draft201909::meta::validate(&schema).map_err(invalid_json_schema)?;
+    Ok(Some(PreparedJsonSchema {
+        schema,
+        validator: std::sync::OnceLock::new(),
+    }))
+}
+
+fn build_json_schema(schema: &Json) -> Result<jsonschema::Validator, EvalError> {
+    jsonschema::options()
+        .with_draft(jsonschema::Draft::Draft201909)
+        // qri-io's Draft2019_09 `Format` keyword is an assertion, while the
+        // Rust validator follows the newer annotation default unless enabled.
+        .should_validate_formats(true)
+        .build(schema)
+        .map_err(invalid_json_schema)
+}
+
+fn invalid_json_schema(error: impl ToString) -> EvalError {
+    EvalError::Json(JsonError::InvalidJsonType {
+        argument: 1,
+        function: "json_schema_valid",
+        required: error.to_string(),
+    })
+}
+
+/// Validates the document, resolving external references only after the
+/// document has survived the source NULL/parse boundary.
+fn validate_json_schema(schema: &PreparedJsonSchema, document: &Datum) -> Result<Datum, EvalError> {
+    let Some(document) = parse_json_document_argument(document)? else {
+        return Ok(Datum::Null);
+    };
+    let validator = match schema
+        .validator
+        .get_or_init(|| build_json_schema(&schema.schema))
+    {
+        Ok(validator) => validator,
+        Err(error) => return Err(error.clone()),
+    };
+    Ok(Datum::Int(i64::from(validator.is_valid(&document))))
+}
+
+/// Datum-level `JSON_SCHEMA_VALID(schema, document)` used by callers that do
+/// not own a reusable scalar-function node.
+pub(super) fn json_schema_valid(values: &[Datum]) -> Result<Datum, EvalError> {
+    let Some(schema) = prepare_json_schema(&values[0])? else {
+        return Ok(Datum::Null);
+    };
+    validate_json_schema(&schema, &values[1])
+}
 
 /// `JSON_VALID(arg)`, port of `builtinJSONValid{JSON,String,Others}Sig`.
 /// String arguments are JSON documents; every non-string, non-JSON SQL value

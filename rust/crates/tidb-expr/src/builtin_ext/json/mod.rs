@@ -55,13 +55,14 @@ use merge::{json_merge, json_merge_patch};
 use modify::{json_array_append, json_array_insert, json_modify, json_remove, JsonModifyMode};
 use path::json_extract;
 use predicate::{json_contains, json_contains_path, json_member_of, json_overlaps};
-use report::{json_keys, json_length, json_sum_crc32, json_type, json_valid};
+use report::{json_keys, json_length, json_schema_valid, json_sum_crc32, json_type, json_valid};
 use search::json_search;
 use text::json_pretty;
 
 use crate::{Datum, EvalError};
 use tidb_datatype::FieldType;
 
+pub(crate) use report::JsonSchemaCache;
 pub(crate) use value::{
     cast_as_json, cast_as_json_typed, cast_as_json_value_typed, parse_json_document_argument,
 };
@@ -73,6 +74,7 @@ pub(crate) use value::{
 pub(crate) fn dispatch(name: &str, vals: &[Datum]) -> Option<Result<Datum, EvalError>> {
     match (name, vals.len()) {
         ("JSON_VALID", 1) => Some(json_valid(&vals[0])),
+        ("JSON_SCHEMA_VALID", 2) => Some(json_schema_valid(vals)),
         ("JSON_TYPE", 1) => Some(json_type(&vals[0])),
         ("JSON_QUOTE", 1) => Some(json_quote(&vals[0])),
         ("JSON_UNQUOTE", 1) => Some(json_unquote(&vals[0])),

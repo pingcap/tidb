@@ -245,6 +245,18 @@ pub enum JsonError {
         /// The lowercase function name Go names in the message.
         function: &'static str,
     },
+    /// `ErrInvalidJSONType` (3853): a JSON value was supplied where a JSON
+    /// object with a schema shape was required. `JSON_SCHEMA_VALID` uses this
+    /// for a non-schema root and for a keyword whose value has the wrong JSON
+    /// kind.
+    InvalidJsonType {
+        /// Go's 1-based argument index.
+        argument: usize,
+        /// The lowercase function name Go names in the message.
+        function: &'static str,
+        /// The object/type detail forwarded by the schema compiler.
+        required: String,
+    },
     /// `ErrIncorrectType` (3064): an argument of the wrong SQL type.
     IncorrectType {
         /// Go's 1-based argument index.
@@ -285,6 +297,7 @@ impl JsonError {
             JsonError::InvalidPath(_) => 3143,
             JsonError::InvalidPathMultipleSelection => 3149,
             JsonError::InvalidTypeForJson { .. } => 3146,
+            JsonError::InvalidJsonType { .. } => 3853,
             JsonError::IncorrectType { .. } => 3064,
             JsonError::NullMemberName => 3158,
             JsonError::VacuousPath => 3153,
@@ -313,6 +326,14 @@ impl JsonError {
             JsonError::InvalidTypeForJson { argument, function } => format!(
                 "Invalid data type for JSON data in argument {argument} to function {function}; \
                  a JSON string or JSON type is required."
+            ),
+            JsonError::InvalidJsonType {
+                argument,
+                function,
+                required,
+            } => format!(
+                "Invalid JSON type in argument {argument} to function {function}; an {required} \
+                 is required."
             ),
             JsonError::IncorrectType { argument, function } => {
                 format!("Incorrect type for argument {argument} in function {function}.")
