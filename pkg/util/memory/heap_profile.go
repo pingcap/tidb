@@ -48,17 +48,17 @@ var heapProfileLevels = [...]struct {
 }
 
 type heapProfileTriggerState struct {
+	lastCaptureAt time.Time
 	lastLimit     int64
 	attempted     uint32
 	closed        bool
-	lastCaptureAt time.Time
 }
 
 type heapProfileCollector struct {
-	dir          string
-	trigger      heapProfileTriggerState
 	now          func() time.Time
 	writeProfile func(io.Writer) error
+	dir          string
+	trigger      heapProfileTriggerState
 }
 
 type heapProfileArbitratorSnapshot struct {
@@ -75,18 +75,18 @@ type heapProfileMetadataState struct {
 }
 
 type heapProfileMetadata struct {
-	Version      int                      `json:"version"`
 	StartTime    string                   `json:"start_time"`
-	ThresholdPct int                      `json:"threshold_pct"`
 	StartState   heapProfileMetadataState `json:"start_state"`
+	Version      int                      `json:"version"`
+	ThresholdPct int                      `json:"threshold_pct"`
 	DurationMs   int64                    `json:"duration_ms"`
 }
 
 type heapProfileFileGroup struct {
+	modTime      time.Time
 	base         string
 	profilePath  string
 	metadataPath string
-	modTime      time.Time
 }
 
 func newHeapProfileCollector(dir string) *heapProfileCollector {

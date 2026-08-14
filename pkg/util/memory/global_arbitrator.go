@@ -43,7 +43,8 @@ const (
 
 var (
 	globalArbitrator struct {
-		softLimit struct {
+		heapProfiler atomic.Pointer[heapProfileCollector]
+		softLimit    struct {
 			originText atomic.Value
 			sync.Mutex
 		}
@@ -56,9 +57,6 @@ var (
 			sync.Mutex
 			reset atomic.Bool
 		}
-		heapProfiler atomic.Pointer[heapProfileCollector]
-
-		enable  atomic.Bool
 		metrics struct {
 			last struct {
 				updateUtimeSec atomic.Int64
@@ -75,6 +73,7 @@ var (
 			init atomic.Bool
 			sync.Mutex
 		}
+		enable atomic.Bool
 	}
 	mockinitGlobalMemArbitrator func() *MemArbitrator
 )
