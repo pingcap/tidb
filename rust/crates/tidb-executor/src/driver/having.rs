@@ -96,7 +96,7 @@ pub(crate) fn build_plain_having(
     };
     let mut predicate = rewrite_expr_resolved(&predicate, &resolver)
         .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-    refine_comparisons(&mut predicate, ctx);
+    refine_comparisons(&mut predicate, ctx).map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
     let schema = source.schema().clone();
     Ok(Box::new(SelectionExec::new(
         ExecutorMeta::new(schema, 1, INIT_CAP, MAX_CHUNK_SIZE),

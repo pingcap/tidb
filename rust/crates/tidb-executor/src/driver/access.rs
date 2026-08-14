@@ -1711,7 +1711,7 @@ pub(crate) fn split_scan_predicates(
             // scan runs on every row compares int to int. Without it the
             // string is re-coerced per row -- the same work, and the same
             // 1292 truncation, once for each row scanned.
-            tidb_expr::builtin_compare::refine_comparisons(&mut filter, ctx);
+            tidb_expr::builtin_compare::refine_comparisons(&mut filter, ctx).ok()?;
             Some((predicate, filter))
         }) {
             Some((predicate, filter)) => {

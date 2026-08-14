@@ -1070,7 +1070,8 @@ pub(crate) fn run_select_traced(
             };
             let mut pred = rewrite_expr_resolved(&predicate, &predicate_resolver)
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-            refine_comparisons(&mut pred, ctx);
+            refine_comparisons(&mut pred, ctx)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
             let explained_where = trace.is_some().then(|| {
                 let mut predicates = pushed_where;
                 predicates.push(pred.clone());
@@ -1228,7 +1229,8 @@ pub(crate) fn run_select_traced(
             SelectField::Expr { expr, .. } => {
                 let mut rewritten = rewrite_expr_resolved(expr, &resolver)
                     .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-                refine_comparisons(&mut rewritten, ctx);
+                refine_comparisons(&mut rewritten, ctx)
+                    .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
                 exprs.push(rewritten);
                 names.push(name.clone().unwrap_or_default());
             }
@@ -1328,7 +1330,8 @@ pub(crate) fn run_select_traced(
             let mut expr = rewrite_expr_resolved(&resolved, &resolver).map_err(|e| {
                 order_by_column_error(&resolved).unwrap_or(DriverError::Exec(ExecError::Eval(e)))
             })?;
-            refine_comparisons(&mut expr, ctx);
+            refine_comparisons(&mut expr, ctx)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
             by_items.push(SortByItem {
                 expr,
                 desc: item.desc,

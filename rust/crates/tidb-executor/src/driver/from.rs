@@ -1537,7 +1537,8 @@ fn apply_pushed_leaf_filters(
     for filter in filters {
         let mut expression = rewrite_expr_resolved(filter, &resolver)
             .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
-        tidb_expr::builtin_compare::refine_comparisons(&mut expression, ctx);
+        tidb_expr::builtin_compare::refine_comparisons(&mut expression, ctx)
+            .map_err(|error| DriverError::Exec(ExecError::Eval(error)))?;
         built.push(expression);
     }
     let schema = Schema::new(

@@ -88,6 +88,40 @@ fn warning_texts(session: &Session) -> Vec<String> {
         .collect()
 }
 
+#[test]
+fn invalid_duration_constant_is_not_null_safe_equal_to_a_null_time_column() {
+    let mut session = Session::new();
+    session
+        .run("create table duration_cmp(id int, tm time)")
+        .unwrap();
+    session
+        .run("insert into duration_cmp values (1, null), (2, '10:00:00')")
+        .unwrap();
+
+    assert_eq!(
+        row_text(session.run(
+            "select tm <=> 'not-a-time', 'not-a-time' <=> tm, tm <=> null \
+             from duration_cmp order by id",
+        )),
+        [["0", "0", "1"], ["0", "0", "0"]]
+    );
+    session
+        .run(
+            "insert into duration_cmp values \
+             (3, '10:00:00'), (4, '10:00:00'), (5, '10:00:00'), \
+             (6, '10:00:00'), (7, '10:00:00'), (8, '10:00:00')",
+        )
+        .unwrap();
+    assert_eq!(
+        row_text(session.run(
+            "select count(*) from duration_cmp \
+             where (tm <=> 'not-a-time') = 0 and ('not-a-time' <=> tm) = 0",
+        )),
+        [["8"]]
+    );
+    assert_eq!(warning_texts(&session).len(), 2);
+}
+
 /// The reported unit: the warning count is the SAME for all three tables,
 /// because the coercion happens once at build time and never in the scan.
 ///

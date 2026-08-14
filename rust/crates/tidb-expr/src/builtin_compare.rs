@@ -32,7 +32,7 @@
 
 use crate::builtin_arithmetic::new_return_field_type;
 use crate::constant::Constant;
-use crate::context::Columns;
+use crate::context::{Columns, EvalError};
 use crate::expression::Expression;
 use tidb_datatype::{
     Datum, EvalType, FieldType, FieldTypeCode, FieldTypeFlags, ScalarConversionEvent,
@@ -459,31 +459,88 @@ fn wrap_year_operand_for_datetime_compare(left: &mut Expression, right: &mut Exp
 /// and its mirror through `symmetricOp` (`:1836-1854`), and the
 /// numeric-constant-vs-datetime rule (`refineNumericConstantCmpDatetime`,
 /// `:1802-1808`) -- see [`refine_numeric_constant_cmp_datetime`].
-/// DEFERRED, each an independent rule of the same function: the `YEAR`
-/// adjustment (`:1856-1871`), the `NullEQ`-vs-`DURATION` rewrite
-/// (`:1795-1799`), `refineArgsByUnsignedFlag` (`:1919`), and the plan-cache
-/// guard `allowCmpArgsRefining4PlanCache` (`:1789`) -- which matters only once
+/// DEFERRED, each an independent rule of the same function:
+/// `refineArgsByUnsignedFlag` (`:1919`) and the plan-cache guard
+/// `allowCmpArgsRefining4PlanCache` (`:1789`) -- which matters only once
 /// refined plans are cached across parameter values.
-pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) {
+pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<(), EvalError> {
     let Expression::ScalarFunction(function) = expr else {
-        return;
+        return Ok(());
     };
     for arg in &mut function.args {
-        refine_comparisons(arg, ctx);
+        refine_comparisons(arg, ctx)?;
     }
     let name = function.func_name.lowercase();
     let Some(mirrored) = symmetric_op(name) else {
-        return;
+        return Ok(());
     };
     let [left, right] = function.args.as_mut_slice() else {
-        return;
+        return Ok(());
     };
+    if name == "nulleq" && rewrite_invalid_duration_null_eq(left, right, ctx)? {
+        return Ok(());
+    }
     refine_args(left, right, name, mirrored, ctx);
     // Go's own order: `getFunction` runs `refineArgs` first and only then
     // derives the comparison type -- and the argument casts that go with it --
     // from the arguments that survived it (`builtin_compare.go:1984-1989`).
     wrap_year_operand_for_datetime_compare(left, right);
     prepare_json_comparison_args(&mut function.args);
+    Ok(())
+}
+
+/// Go `handleDurationTypeComparisonForNullEq`: when a plain non-NULL
+/// constant cannot be cast to the other operand's `TIME` domain, preserve
+/// MySQL's `NULL <=> non-NULL` result by replacing the comparison with
+/// `0 <=> 1`. The cast is deliberately performed once while the expression
+/// is built, so its truncation warning is not repeated for every input row.
+fn rewrite_invalid_duration_null_eq(
+    left: &mut Expression,
+    right: &mut Expression,
+    ctx: &dyn Columns,
+) -> Result<bool, EvalError> {
+    let duration_nonconstant = |expression: &Expression| {
+        !matches!(expression, Expression::Constant(_))
+            && expression.static_type().map(FieldType::code) == Some(FieldTypeCode::Duration)
+    };
+    let invalid = match (&*left, &*right) {
+        (Expression::Constant(constant), other)
+            if constant.deferred_expr.is_none()
+                && constant.param_marker.is_none()
+                && !matches!(constant.value, Datum::Null)
+                && duration_nonconstant(other) =>
+        {
+            matches!(
+                crate::cast::cast_arg_as_duration(
+                    &constant.value,
+                    constant.get_static_type(),
+                    ctx,
+                )?,
+                Datum::Null
+            )
+        }
+        (other, Expression::Constant(constant))
+            if constant.deferred_expr.is_none()
+                && constant.param_marker.is_none()
+                && !matches!(constant.value, Datum::Null)
+                && duration_nonconstant(other) =>
+        {
+            matches!(
+                crate::cast::cast_arg_as_duration(
+                    &constant.value,
+                    constant.get_static_type(),
+                    ctx,
+                )?,
+                Datum::Null
+            )
+        }
+        _ => false,
+    };
+    if invalid {
+        *left = Expression::Constant(Constant::new_zero());
+        *right = Expression::Constant(Constant::new_one());
+    }
+    Ok(invalid)
 }
 
 /// `refineArgs`' own body, over the two arguments of one comparison. `name` is
@@ -679,6 +736,12 @@ mod tests {
         Expression::Column(column)
     }
 
+    fn duration_column() -> Expression {
+        let mut column = crate::column::Column::new(2, FieldType::new(FieldTypeCode::Duration));
+        column.index = 0;
+        Expression::Column(column)
+    }
+
     fn string_constant(text: &str) -> Expression {
         Expression::Constant(Constant::new(
             Datum::new_string(text),
@@ -694,7 +757,7 @@ mod tests {
             infer_compare_type(op).unwrap(),
             vec![left, right],
         ));
-        refine_comparisons(&mut expr, &sink);
+        refine_comparisons(&mut expr, &sink).unwrap();
         (expr, sink.warnings.into_inner())
     }
 
@@ -706,6 +769,51 @@ mod tests {
             Expression::Constant(constant) => constant.value.clone(),
             other => panic!("argument {index} is not a constant: {other:?}"),
         }
+    }
+
+    #[test]
+    fn invalid_duration_constants_are_rewritten_once_on_either_side() {
+        for (left, right) in [
+            (duration_column(), string_constant("not-a-time")),
+            (string_constant("not-a-time"), duration_column()),
+        ] {
+            let (expr, warnings) = refine("nulleq", left, right);
+            assert_eq!(constant_of(&expr, 0), Datum::Int(0));
+            assert_eq!(constant_of(&expr, 1), Datum::Int(1));
+            assert_eq!(warnings.len(), 1, "{warnings:?}");
+        }
+
+        let (valid, warnings) = refine("nulleq", duration_column(), string_constant("10:00:00"));
+        assert_eq!(constant_of(&valid, 1), Datum::new_string("10:00:00"));
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        let null = Expression::Constant(Constant::new_null());
+        let (null_comparison, warnings) = refine("nulleq", duration_column(), null);
+        assert_eq!(constant_of(&null_comparison, 1), Datum::Null);
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    #[test]
+    fn duration_refinement_propagates_strict_conversion_errors() {
+        struct StrictSink;
+        impl Columns for StrictSink {
+            fn get(&self, _: &[String]) -> Option<Datum> {
+                None
+            }
+            fn truncate_level(&self) -> crate::context::ErrorLevel {
+                crate::context::ErrorLevel::Error
+            }
+        }
+
+        let mut expr = Expression::ScalarFunction(crate::expression::ScalarFunction::new(
+            tidb_ast::CiString::new("nulleq"),
+            infer_compare_type("nulleq").unwrap(),
+            vec![duration_column(), string_constant("not-a-time")],
+        ));
+        assert!(matches!(
+            refine_comparisons(&mut expr, &StrictSink),
+            Err(EvalError::TruncatedWrongValue(_))
+        ));
     }
 
     /// The reported statement, structurally: `a > '10ab'` compares INT TO INT

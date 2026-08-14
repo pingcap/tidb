@@ -1322,7 +1322,8 @@ fn build_aggregation(
             };
             let mut pred = rewrite_expr_resolved(&predicate, &predicate_resolver)
                 .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
-            refine_comparisons(&mut pred, ctx);
+            refine_comparisons(&mut pred, ctx)
+                .map_err(|e| DriverError::Exec(ExecError::Eval(e)))?;
             if let Some(explained) = &mut explained_where {
                 explained.push(pred.clone());
             }
