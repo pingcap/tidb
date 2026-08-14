@@ -79,6 +79,37 @@ fn delete_accepts_tpcc_three_column_row_in() {
     );
 }
 
+#[test]
+fn delete_quick_is_the_same_delete_operation() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE quick_rows (id BIGINT, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO quick_rows VALUES (1, 10), (2, 20), (3, 30)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+
+    assert_eq!(
+        run_delete_on(
+            "DELETE QUICK FROM quick_rows WHERE id >= 2",
+            &mut catalog,
+            &ctx,
+        )
+        .unwrap(),
+        2
+    );
+    assert_eq!(
+        run_select_on("SELECT id, v FROM quick_rows", &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1), Datum::Int(10)]]
+    );
+}
+
 /// Go plans an `UPDATE`/`DELETE`'s read from the same cost chooser a `SELECT`
 /// reaches, so a `WHERE` on a secondary index reads through that index rather
 /// than scanning the whole table. `EXPLAIN` prints the `IndexRangeScan`, and

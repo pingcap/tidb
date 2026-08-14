@@ -1938,10 +1938,11 @@ impl UpdateRowEvaluator<'_> {
 /// referencing child row, `DELETE IGNORE` and `DELETE` remove the same rows
 /// and report the same count. Multi-table `DELETE` lives in `multi_dml`.
 ///
-/// DEFERRED (documented): `QUICK`. Single-table
-/// `ORDER BY`/`LIMIT` IS supported (see `order_rows_for_dml`,
-/// `dml_row_limit`). A `RETURNING` clause is parsed and silently ignored,
-/// matching Go, where the planner and executor never read
+/// `QUICK` is a parser-only storage hint in Go: neither its planner nor its
+/// executor reads `DeleteStmt.Quick`, so it has the same row/count behavior
+/// as plain `DELETE` here. Single-table `ORDER BY`/`LIMIT` is supported (see
+/// `order_rows_for_dml`, `dml_row_limit`). A `RETURNING` clause is parsed and
+/// silently ignored, matching Go, where the planner and executor never read
 /// `DeleteStmt.Returning`.
 pub fn run_delete_on(
     sql: &str,
@@ -1994,13 +1995,7 @@ pub(crate) fn run_delete_traced(
     let zone = ctx.session_zone();
     // `DELETE IGNORE` differs from a plain `DELETE` only in what it does with
     // a referential violation: Go downgrades it from a statement error to a
-    // per-row skip with a warning. `QUICK` is an index-maintenance hint with
-    // no visible behaviour, and is still refused rather than ignored.
-    if delete.quick {
-        return Err(DriverError::unsupported(
-            "DELETE QUICK is not supported yet",
-        ));
-    }
+    // per-row skip with a warning. `QUICK` is parser-only and needs no branch.
     let table_ref = match &delete.kind {
         tidb_ast::DeleteKind::Single(table_ref) => table_ref,
         // See `multi_dml`'s module doc; `EXPLAIN` has never described this.
