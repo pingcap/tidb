@@ -985,7 +985,7 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         | "json_unquote" | "json_type" | "json_set" | "json_insert" | "json_replace"
         | "json_remove" | "json_array_append" | "json_array_insert" | "json_merge"
         | "json_merge_preserve" | "json_merge_patch" => text(),
-        "json_contains" | "json_length" | "json_depth" => int(),
+        "json_contains" | "json_length" | "json_depth" | "json_member_of" => int(),
         // `ast.JSONValid` is in Go's `booleanFunctions` map
         // (`json_contains`/`_length`/`_depth` are not), so its `ETInt` result
         // carries `IsBooleanFlag`: `JSON_ARRAY(json_valid('{}'))` is `[true]`.

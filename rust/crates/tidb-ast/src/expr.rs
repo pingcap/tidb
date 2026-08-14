@@ -842,10 +842,8 @@ pub enum Expr {
     /// restriction there — confirmed via `godump restore`: `MEMBER OF(1
     /// OR 2)` is a genuine `ParseError`), while `expr` (the left operand)
     /// has NO type restriction (unlike [`Expr::Column`]-only `->`/`->>`
-    /// just below). No JSON array/membership semantics are modelled at
-    /// all — evaluation is `Unsupported`, the SAME "parse/restore
-    /// fidelity only" boundary [`Expr::MatchAgainst`]'s own doc already
-    /// established.
+    /// just below). Evaluation lowers this node to the same
+    /// `JSON_MEMBER_OF` scalar function Go builds.
     MemberOf {
         /// The candidate element.
         expr: Box<Expr>,

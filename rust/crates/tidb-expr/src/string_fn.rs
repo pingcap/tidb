@@ -13,11 +13,9 @@
 
 //! String builtin functions (`CONCAT`, `LENGTH`, `UPPER`/`LOWER`,
 //! `LEFT`/`RIGHT`, `SUBSTRING`), dispatched from `crate::func::eval_func`,
-//! plus `position`/`trim_value` below — the SAME kind of pure string
-//! operation, but dispatched directly from `crate::eval_in`'s own
-//! `Expr::Position`/`Expr::Trim` arms instead, since those are dedicated
-//! AST variants (`POSITION(a IN b)`/`TRIM(...)`'s own grammar), not
-//! ordinary `Expr::Func` calls.
+//! plus `position`/`trim_value` below. `POSITION(a IN b)` and `TRIM(...)`
+//! have dedicated AST grammars; the row evaluator handles those nodes
+//! directly, while the production rewriter lowers them to scalar functions.
 
 use crate::coerce::{coerce_str, coerce_str_bytes};
 use crate::ops::to_f64_with_mysql_string;

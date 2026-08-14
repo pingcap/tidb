@@ -3,6 +3,32 @@
 use crate::tests_support::*;
 use crate::*;
 
+/// Go `builtinJSONMemberOfSig`: the left operand is a JSON value (an SQL
+/// string stays a JSON string), while the right operand is parsed as a JSON
+/// document and may be either an array or a scalar.
+#[test]
+fn member_of_reaches_the_sql_expression_path() {
+    let mut session = Session::new();
+    assert_eq!(
+        session
+            .run(
+                "SELECT 1 MEMBER OF('[1,2]'), \
+                        '1' MEMBER OF('[1]'), \
+                        '1' MEMBER OF('[\"1\"]'), \
+                        1 MEMBER OF('1'), \
+                        NULL MEMBER OF('[1]')",
+            )
+            .unwrap(),
+        StmtResult::Rows(vec![vec![
+            Datum::Int(1),
+            Datum::Int(0),
+            Datum::Int(1),
+            Datum::Int(1),
+            Datum::Null,
+        ]])
+    );
+}
+
 /// `JSON_TABLE` is REFUSED, and this test records WHY rather than
 /// leaving it looking like an unfinished port.
 ///

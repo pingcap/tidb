@@ -84,6 +84,19 @@ fn get_format_reaches_the_sql_expression_path() {
     );
 }
 
+/// Go parses `POSITION(substr IN str)` as a dedicated AST form but builds the
+/// same two-argument `locateFunctionClass` used by `LOCATE(substr, str)`.
+#[test]
+fn position_reaches_the_sql_expression_path() {
+    let mut session = Session::new();
+    assert_eq!(
+        session
+            .run("SELECT POSITION('A' IN '大A写'), POSITION('' IN 'abc'), POSITION(NULL IN 'abc')")
+            .unwrap(),
+        StmtResult::Rows(vec![vec![Datum::Int(2), Datum::Int(1), Datum::Null]])
+    );
+}
+
 /// A DATETIME/DATE column compared with a string or a number, checked
 /// against captured TiDB output.
 ///

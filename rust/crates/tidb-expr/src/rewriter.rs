@@ -1008,6 +1008,35 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
                 args,
             )))
         }
+        // Go parses POSITION with its own `substr IN str` grammar, then
+        // builds the ordinary two-argument `locateFunctionClass`.
+        Expr::Position { substr, str } => {
+            let args = vec![
+                rewrite_expr_resolved(substr, resolver)?,
+                rewrite_expr_resolved(str, resolver)?,
+            ];
+            let ret_type = builtin_return_type("locate", &args).expect("LOCATE is registered");
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("locate"),
+                ret_type,
+                args,
+            )))
+        }
+        // Go's parser represents `candidate MEMBER OF (document)` as a
+        // two-argument JSON_MEMBER_OF call; only the restore syntax is infix.
+        Expr::MemberOf { expr, array } => {
+            let args = vec![
+                rewrite_expr_resolved(expr, resolver)?,
+                rewrite_expr_resolved(array, resolver)?,
+            ];
+            let ret_type =
+                builtin_return_type("json_member_of", &args).expect("JSON_MEMBER_OF is registered");
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("json_member_of"),
+                ret_type,
+                args,
+            )))
+        }
         // `TIMESTAMPDIFF(unit, a, b)`'s unit is a dedicated AST field rather
         // than an argument expression (see `tidb_ast::Expr::TimestampDiff`),
         // but the shared implementation `time_fn::dispatch` already takes the
