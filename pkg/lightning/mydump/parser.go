@@ -382,7 +382,7 @@ func unescapeByChar(input string, escChar byte) string {
 
 	remaining := input[first:]
 	for len(remaining) > 1 {
-		result.WriteByte(unescapedByte(remaining[1]))
+		result.WriteByte(escapedCharToByte(remaining[1]))
 		remaining = remaining[2:]
 
 		next := strings.IndexByte(remaining, escChar)
@@ -398,7 +398,7 @@ func unescapeByChar(input string, escChar byte) string {
 	return result.String()
 }
 
-func unescapedByte(input byte) byte {
+func escapedCharToByte(input byte) byte {
 	switch input {
 	case '0':
 		return 0
