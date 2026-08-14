@@ -29,6 +29,33 @@ fn member_of_reaches_the_sql_expression_path() {
     );
 }
 
+/// Go `builtinJSONContainsPathSig` and `builtinJSONOverlapsSig`, through the
+/// ordinary SQL function-call path rather than direct evaluator helpers.
+#[test]
+fn json_path_and_overlap_predicates_reach_chunk_evaluation() {
+    let mut session = Session::new();
+    assert_eq!(
+        session
+            .run(
+                r#"SELECT JSON_CONTAINS_PATH('{"a":1,"c":{"d":2}}', 'one', '$.missing', '$.c.d'),
+                          JSON_CONTAINS_PATH('{"a":1,"c":{"d":2}}', 'all', '$.a', '$.missing'),
+                          JSON_CONTAINS_PATH('{"a":1,"c":{"d":2}}', 'all', '$.a', '$.c'),
+                          JSON_OVERLAPS('[1,2]', '[2,3]'),
+                          JSON_OVERLAPS('{"a":1}', '{"a":2}'),
+                          JSON_OVERLAPS(NULL, '[1]')"#,
+            )
+            .unwrap(),
+        StmtResult::Rows(vec![vec![
+            Datum::Int(1),
+            Datum::Int(0),
+            Datum::Int(1),
+            Datum::Int(1),
+            Datum::Int(0),
+            Datum::Null,
+        ]])
+    );
+}
+
 /// `JSON_TABLE` is REFUSED, and this test records WHY rather than
 /// leaving it looking like an unfinished port.
 ///
