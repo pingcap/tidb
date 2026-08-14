@@ -1790,6 +1790,59 @@ func TestForeignKeyCascadePessimisticRetrySavepoint(t *testing.T) {
 		tk.MustQuery("select * from gift order by id").Check(testkit.Rows("2 2", "4 4"))
 		tk.MustQuery("select * from user_gift").Check(testkit.Rows("1 2"))
 	})
+
+	t.Run("deferred-fk-lock-retry-rolls-back-cascade-writes", func(t *testing.T) {
+		store := testkit.CreateMockStore(t)
+		tk1 := testkit.NewTestKit(t, store)
+		tk2 := testkit.NewTestKit(t, store)
+
+		tk1.MustExec("set @@global.tidb_enable_foreign_key=1")
+		tk1.MustExec("set @@foreign_key_checks=1")
+		tk1.MustExec("use test")
+		tk2.MustExec("set @@foreign_key_checks=1")
+		tk2.MustExec("use test")
+
+		tk1.MustExec("create table fk_guard (id int primary key)")
+		tk1.MustExec("create table fk_parent (" +
+			"id int primary key, guard_id int, v int, " +
+			"foreign key (guard_id) references fk_guard(id))")
+		tk1.MustExec("create table fk_child (" +
+			"id int primary key, parent_id int, " +
+			"foreign key (parent_id) references fk_parent(id) on update cascade)")
+		tk1.MustExec("insert into fk_guard values (1), (2)")
+		tk1.MustExec("insert into fk_parent values (1, 1, 0)")
+		tk1.MustExec("insert into fk_child values (1, 1)")
+
+		tk2.MustExec("begin pessimistic")
+		tk2.MustQuery("select * from fk_guard where id = 2 for update").Check(testkit.Rows("2"))
+
+		tk1.MustExec("begin pessimistic")
+		done := make(chan error, 1)
+		go func() {
+			done <- tk1.ExecToErr("update fk_parent set id = 2, guard_id = 2, v = v + 1 where id = 1")
+		}()
+
+		time.Sleep(200 * time.Millisecond)
+		tk2.MustExec("delete from fk_guard where id = 2")
+		tk2.MustExec("commit")
+
+		var err error
+		select {
+		case err = <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatal("update did not return after the conflicting transaction committed")
+		}
+		require.True(t, plannererrors.ErrNoReferencedRow2.Equal(err), err.Error())
+		require.True(t, tk1.Session().GetSessionVars().InTxn())
+		require.Empty(t, tk1.Session().GetSessionVars().TxnCtx.Savepoints)
+		tk1.MustQuery("select * from fk_parent order by id").Check(testkit.Rows("1 1 0"))
+		tk1.MustQuery("select * from fk_child order by id").Check(testkit.Rows("1 1"))
+		tk1.MustExec("rollback")
+
+		tk2.MustQuery("select * from fk_guard order by id").Check(testkit.Rows("1"))
+		tk2.MustQuery("select * from fk_parent order by id").Check(testkit.Rows("1 1 0"))
+		tk2.MustQuery("select * from fk_child order by id").Check(testkit.Rows("1 1"))
+	})
 }
 
 func TestForeignKeyOnUpdateCascade(t *testing.T) {
