@@ -122,9 +122,9 @@ func onMultiSchemaChange(w *worker, jobCtx *jobContext, job *model.Job) (ver int
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
 			proxyJobVer, _, err := w.runOneJobStep(jobCtx, &proxyJob)
-			failpoint.InjectCall("beforeBatchedMultiSchemaCloudModePropagation", job, &proxyJob)
+			failpoint.InjectCall("beforeBatchedMultiSchemaParentJobUpdate", job, &proxyJob)
 			updateParentJobFromProxy(job, &proxyJob)
-			failpoint.InjectCall("afterBatchedMultiSchemaCloudModePropagation", job, &proxyJob)
+			failpoint.InjectCall("afterBatchedMultiSchemaParentJobUpdate", job, &proxyJob)
 			if !schemaVersionGenerated && proxyJobVer != 0 {
 				schemaVersionGenerated = true
 				ver = proxyJobVer
