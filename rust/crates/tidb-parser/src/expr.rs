@@ -469,14 +469,10 @@ impl Parser {
                     // `_binary 0x...` and `_utf8mb4 0x...`).
                     TokenKind::Str => {
                         let value = self.bumped_string();
-                        if charset == "utf8mb4" {
-                            Ok(Expr::String(value))
-                        } else {
-                            Ok(Expr::CharsetString {
-                                charset: restored_charset,
-                                value,
-                            })
-                        }
+                        Ok(Expr::CharsetString {
+                            charset: restored_charset,
+                            value,
+                        })
                     }
                     TokenKind::HexLit => {
                         let digits = normalize_hex(&self.peek().text)

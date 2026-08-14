@@ -214,10 +214,9 @@ pub enum Expr {
     /// `_ascii'x'`, `N'x'`/`n'x'` — see `tidb_lexer::TokenKind::
     /// CharsetIntroducer`'s own doc for the token-level distinction this
     /// relies on), for any charset OTHER than the connection's own
-    /// default `utf8mb4` — an explicit `_utf8mb4'x'` introducer restores
-    /// BYTE-IDENTICALLY to a plain [`Expr::String`] (confirmed via
-    /// `godump restore`), so that ONE case reuses the existing variant
-    /// instead, no dedicated representation needed. `N'x'`/`n'x'` map to
+    /// default `utf8mb4`. An explicit `_utf8mb4'x'` introducer restores
+    /// byte-identically to a plain [`Expr::String`], but keeps this variant
+    /// because Go retains `UnderScoreCharsetFlag`. `N'x'`/`n'x'` map to
     /// charset `"UTF8"` specifically, NOT `"UTF8MB4"` (a real, easy-to-
     /// miss distinction confirmed via `godump restore` and read directly
     /// from `pkg/parser/lexer.go`'s own `startWithNn`: `lit = "utf8"`).

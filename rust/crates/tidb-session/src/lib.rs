@@ -976,6 +976,8 @@ mod tests_cast_vector;
 #[cfg(test)]
 mod tests_charset;
 #[cfg(test)]
+mod tests_charset_introducer;
+#[cfg(test)]
 mod tests_coalesced_joins;
 #[cfg(test)]
 mod tests_collation;

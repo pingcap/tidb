@@ -62,6 +62,22 @@ fn charset_and_collation_read_the_arguments_static_type() {
     assert_eq!(text(eval("collation(2)")), "binary");
     assert_eq!(text(eval("charset('a')")), "utf8mb4");
     assert_eq!(text(eval("collation('a')")), "utf8mb4_bin");
+    assert_eq!(text(eval("charset(_latin1'a')")), "latin1");
+    assert_eq!(text(eval("collation(_latin1'a')")), "latin1_bin");
+    assert_eq!(text(eval("charset(N'a')")), "utf8");
+    assert_eq!(text(eval("collation(N'a')")), "utf8_bin");
+    let introduced = rewrite("_latin1'a'");
+    let introduced_type = introduced.static_type().expect("introduced string type");
+    assert!(introduced_type.has_flag(tidb_datatype::FieldTypeFlags::UNDERSCORE_CHARSET));
+    assert_eq!(introduced_type.flen(), 1);
+    assert!(rewrite("_utf8mb4'a'")
+        .static_type()
+        .expect("default introduced string type")
+        .has_flag(tidb_datatype::FieldTypeFlags::UNDERSCORE_CHARSET));
+    assert_eq!(
+        tidb_expr::eval(&parse_expr("_latin1'a'")).expect("AST value evaluates"),
+        Datum::new_collation_string(b"a".to_vec(), Collation::Latin1Bin)
+    );
     assert_eq!(
         text(eval("collation('a' collate utf8mb4_general_ci)")),
         "utf8mb4_general_ci"

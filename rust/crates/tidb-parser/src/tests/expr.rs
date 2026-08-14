@@ -1649,7 +1649,8 @@ fn using_charset_string_literal() {
 /// against real TiDB via `godump restore`.
 #[test]
 fn charset_string_literal() {
-    // The default charset's own explicit introducer reuses Expr::String.
+    // The default charset's explicit introducer restores identically while
+    // retaining its introduced-string metadata in the AST.
     assert_eq!(r("select _utf8mb4'12345'"), "SELECT _UTF8MB4'12345'");
     // Non-default charsets get the dedicated CharsetString shape.
     assert_eq!(r("select _latin1'a'"), "SELECT _LATIN1'a'");

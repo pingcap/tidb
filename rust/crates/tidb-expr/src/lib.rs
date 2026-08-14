@@ -562,6 +562,17 @@ pub fn eval_in(expr: &Expr, cols: &dyn Columns) -> Result<Datum, EvalError> {
             .map_err(|_| EvalError::IntOverflow),
         Expr::Bool(b) => Ok(Datum::Int(i64::from(*b))),
         Expr::String(s) => Ok(Datum::new_string(s.clone())),
+        Expr::CharsetString { charset, value } => {
+            let collation_name = tidb_datatype::get_default_collation_legacy(charset)
+                .map_err(|_| EvalError::Unsupported("unknown character introducer"))?;
+            let collation = tidb_datatype::Collation::from_name(&collation_name)
+                .ok_or(EvalError::Unsupported("unknown character introducer"))?;
+            Ok(if collation == tidb_datatype::Collation::Binary {
+                Datum::Bytes(value.as_bytes().to_vec())
+            } else {
+                Datum::new_collation_string(value.as_bytes().to_vec(), collation)
+            })
+        }
         Expr::Decimal(s) => Ok(Datum::Decimal(Decimal::from_literal(s))),
         // Always finite: the parser itself rejects a literal that would
         // overflow to infinity (confirmed via `godump restore` — real

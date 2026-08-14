@@ -734,15 +734,25 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             Ok(arg)
         }
         // A charset introducer (`_binary'a'`, `_latin1'x'`): Go's parser gives
-        // the literal that charset and its default collation. `_binary` is the
-        // one this tier's value domain can represent exactly -- a byte string,
-        // NO PAD -- and it is also the only introducer with SQL-visible
-        // comparison semantics of its own here.
-        Expr::CharsetString { charset, value } if charset.eq_ignore_ascii_case("binary") => {
-            let mut datum = Datum::Null;
-            datum.set_bytes(value.clone().into_bytes());
+        // the literal that charset and its legacy default collation, and marks
+        // the result as explicitly introduced.
+        Expr::CharsetString { charset, value } => {
+            let charset = charset.to_ascii_lowercase();
+            let collation_name = tidb_datatype::get_default_collation_legacy(&charset)
+                .map_err(|_| EvalError::Unsupported("unknown character introducer"))?;
+            let collation = tidb_datatype::Collation::from_name(&collation_name)
+                .ok_or(EvalError::Unsupported("unknown character introducer"))?;
             let mut ft = FieldType::new(FieldTypeCode::VarString);
-            set_binary_charset(&mut ft);
+            ft.set_flen(value.len() as i64);
+            ft.set_charset_name(charset);
+            ft.set_collation_name(collation_name);
+            ft.add_flags(tidb_datatype::FieldTypeFlags::UNDERSCORE_CHARSET);
+            let datum = if collation == tidb_datatype::Collation::Binary {
+                ft.add_flags(tidb_datatype::FieldTypeFlags::BINARY);
+                Datum::Bytes(value.as_bytes().to_vec())
+            } else {
+                Datum::new_collation_string(value.as_bytes().to_vec(), collation)
+            };
             Ok(Expression::Constant(Constant::new(datum, ft)))
         }
         // Go's `in` builtin takes the tested value as args[0] and the list as

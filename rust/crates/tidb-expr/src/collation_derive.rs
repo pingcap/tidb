@@ -41,7 +41,7 @@ use crate::expression::Expression;
 use crate::EvalError;
 use tidb_datatype::{Collation, Datum, EvalType, FieldType, FieldTypeCode};
 
-const CHARSET_UTF8: &str = "utf8mb3";
+const CHARSET_UTF8: &str = "utf8";
 const CHARSET_UTF8MB4: &str = "utf8mb4";
 const CHARSET_BIN: &str = "binary";
 const CHARSET_ASCII: &str = "ascii";
