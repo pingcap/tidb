@@ -405,6 +405,11 @@ impl ScalarFunction {
                 );
             }
         }
+        if let [arg] = self.args.as_slice() {
+            if let Some(value) = crate::collation_derive::info_metadata_value(name, arg) {
+                return Ok(value);
+            }
+        }
         // Go `builtinCaseWhen*Sig`: the arguments are the flattened
         // `cond, result, ..., else` list, and only the selected branch is
         // evaluated -- so an error in an unreachable branch never surfaces.

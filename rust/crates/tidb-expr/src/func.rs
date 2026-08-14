@@ -162,6 +162,16 @@ pub(crate) fn eval_func(
         }
         return Ok(Datum::Null);
     }
+    if matches!(name.as_str(), "CHARSET" | "COLLATION" | "COERCIBILITY") {
+        let [arg] = args else {
+            return Err(EvalError::Unsupported(
+                "CHARSET/COLLATION/COERCIBILITY arguments",
+            ));
+        };
+        let arg = crate::rewriter::rewrite_expr(arg)?;
+        return crate::collation_derive::info_metadata_value(&name.to_ascii_lowercase(), &arg)
+            .ok_or(EvalError::Unsupported("information metadata function"));
+    }
     if name == "REGEXP_LIKE" && matches!(args.len(), 2 | 3) {
         let string_arg = |index: usize| -> Result<Option<String>, EvalError> {
             let value = eval_in(&args[index], cols)?;

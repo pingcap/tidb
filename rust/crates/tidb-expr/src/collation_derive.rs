@@ -39,7 +39,7 @@ use crate::expr_collation::{
 };
 use crate::expression::Expression;
 use crate::EvalError;
-use tidb_datatype::{Collation, EvalType, FieldType, FieldTypeCode};
+use tidb_datatype::{Collation, Datum, EvalType, FieldType, FieldTypeCode};
 
 const CHARSET_UTF8: &str = "utf8mb3";
 const CHARSET_UTF8MB4: &str = "utf8mb4";
@@ -135,6 +135,26 @@ pub fn coercibility_of(expr: &Expression) -> Coercibility {
             EvalType::Json | EvalType::String => Coercibility::IMPLICIT,
             _ => Coercibility::NUMERIC,
         }
+    }
+}
+
+/// Evaluates the three `builtin_info.go` functions whose result is the
+/// argument expression's static metadata, never its row value.
+///
+/// Go calls `GetType(ctx).GetCharset()/GetCollate()` and `Coercibility()` on
+/// the expression node itself. Keeping the three reads together prevents the
+/// AST and chunk evaluators from drifting into value-based approximations.
+pub(crate) fn info_metadata_value(name: &str, arg: &Expression) -> Option<Datum> {
+    let field_type = ret_type_of(arg);
+    match name {
+        "charset" => Some(Datum::new_string(
+            field_type.charset_name().as_bytes().to_vec(),
+        )),
+        "collation" => Some(Datum::new_string(
+            field_type.collation_name().as_bytes().to_vec(),
+        )),
+        "coercibility" => Some(Datum::Int(i64::from(coercibility_of(arg).0))),
+        _ => None,
     }
 }
 

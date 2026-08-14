@@ -1048,6 +1048,12 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             ft.set_flen(64);
             ft
         }
+        // Go `charsetFunctionClass` / `collationFunctionClass`: both inspect
+        // one argument's static metadata and return connection-charset text
+        // with a fixed display width of 64. `COERCIBILITY` reports the same
+        // node metadata as a signed integer.
+        "charset" | "collation" if args.len() == 1 => ft_with_flen(text(), 64),
+        "coercibility" if args.len() == 1 => int(),
         // Go sizes this VarString from `printer.GetTiDBInfo()`.
         "tidb_version" if args.is_empty() => ft_with_flen(
             text(),
