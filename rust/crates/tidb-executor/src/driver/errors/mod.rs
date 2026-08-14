@@ -127,6 +127,20 @@ impl DriverError {
             format!("You have an error in your SQL syntax: {message}"),
         ),
         DriverError::Unsupported(message) => MysqlError::unknown(message),
+        DriverError::TableOptionUnionUnsupported => MysqlError::new(
+            tidb_error::tidb::errcode::ErrTableOptionUnionUnsupported,
+            *b"HY000",
+            tidb_error::tidb::errname::ErrTableOptionUnionUnsupported
+                .raw
+                .to_owned(),
+        ),
+        DriverError::TableOptionInsertMethodUnsupported => MysqlError::new(
+            tidb_error::tidb::errcode::ErrTableOptionInsertMethodUnsupported,
+            *b"HY000",
+            tidb_error::tidb::errname::ErrTableOptionInsertMethodUnsupported
+                .raw
+                .to_owned(),
+        ),
         // Every execution and evaluation failure, one arm each, in `exec`.
         DriverError::Exec(error) => exec::to_mysql_error(error),
         DriverError::Txn(crate::TxnErrorKind::WriteConflict) => {

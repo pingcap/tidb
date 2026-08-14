@@ -75,9 +75,10 @@ fn collation_named(name: &str) -> Result<Collation, DriverError> {
 }
 
 /// The table's own `DEFAULT CHARSET=` / `DEFAULT COLLATE=` options, falling
-/// back to the server default when neither is written.
+/// back to the owning database when neither is written.
 pub(crate) fn table_charset_of(
     options: &[tidb_ast::TableOption],
+    database: TableCharset,
 ) -> Result<TableCharset, DriverError> {
     let mut charset = None;
     let mut collation = None;
@@ -85,6 +86,23 @@ pub(crate) fn table_charset_of(
         match option {
             tidb_ast::TableOption::CharacterSet(name) => charset = Some(charset_named(name)?),
             tidb_ast::TableOption::Collate(name) => collation = Some(collation_named(name)?),
+            _ => {}
+        }
+    }
+    resolve_pair(charset, collation, database)
+}
+
+/// Resolves `CREATE DATABASE` charset and collation options over the server
+/// defaults. The final declaration of each kind wins, as in Go's DDL executor.
+pub(crate) fn database_charset_of(
+    options: &[tidb_ast::DatabaseOption],
+) -> Result<TableCharset, DriverError> {
+    let mut charset = None;
+    let mut collation = None;
+    for option in options {
+        match option {
+            tidb_ast::DatabaseOption::CharacterSet(name) => charset = Some(charset_named(name)?),
+            tidb_ast::DatabaseOption::Collate(name) => collation = Some(collation_named(name)?),
             _ => {}
         }
     }

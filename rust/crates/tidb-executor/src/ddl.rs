@@ -237,7 +237,7 @@ pub use alter_table::{
 };
 pub use table_partition::linear_partitioning_warning;
 
-use column_types::{field_type_of, table_charset_of, NOT_NULL_FLAG};
+use column_types::{database_charset_of, field_type_of, table_charset_of, NOT_NULL_FLAG};
 pub use indexes::{run_create_index_in, run_drop_index_in};
 use table_constraints::{
     is_int_column, primary_key_column, table_foreign_keys, table_indexes, AUTO_INCREMENT_FLAG,
@@ -448,6 +448,28 @@ pub fn run_create_table_on(sql: &str, catalog: &mut Catalog) -> Result<bool, Dri
     )
 }
 
+/// Resolves the charset/collation persisted by `CREATE DATABASE`.
+pub fn resolve_database_charset(
+    options: &[tidb_ast::DatabaseOption],
+) -> Result<TableCharset, DriverError> {
+    database_charset_of(options)
+}
+
+fn validate_table_options(options: &[tidb_ast::TableOption]) -> Result<(), DriverError> {
+    for option in options {
+        match option {
+            tidb_ast::TableOption::Union(_) => {
+                return Err(DriverError::TableOptionUnionUnsupported)
+            }
+            tidb_ast::TableOption::InsertMethod(_) => {
+                return Err(DriverError::TableOptionInsertMethodUnsupported)
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// How many of an `ALTER TABLE`'s actions are `CHECK`-constraint actions the
 /// `tidb_enable_check_constraint = OFF` model DISCARDS, which is one warning
 /// each. `ADD [CONSTRAINT n] CHECK` and `ALTER {CHECK|CONSTRAINT} n
@@ -645,6 +667,7 @@ pub fn run_create_table_in(
             "temporary tables are not supported yet",
         ));
     }
+    validate_table_options(&create.table_options)?;
     // Go refuses CTAS outright and has never implemented it:
     // `preprocess.go` -> `checkCreateTableGrammar` does
     //
@@ -759,7 +782,10 @@ pub fn run_create_table_in(
     }
 
     // Build the ColumnInfos (ids 1..n, offsets in definition order).
-    let table_charset = table_charset_of(&create.table_options)?;
+    let database_charset = catalog
+        .database_charset(&database)
+        .expect("database existence was checked above");
+    let table_charset = table_charset_of(&create.table_options, database_charset)?;
     let mut columns = Vec::with_capacity(create.columns.len());
     for (i, def) in create.columns.iter().enumerate() {
         let field_type = field_type_of(def, table_charset)?;

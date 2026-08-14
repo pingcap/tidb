@@ -44,6 +44,10 @@ pub enum DriverError {
     /// the bytes. Build one with [`DriverError::unsupported`], which takes
     /// either.
     Unsupported(Cow<'static, str>),
+    /// Go `dbterror.ErrTableOptionUnionUnsupported` (8232).
+    TableOptionUnionUnsupported,
+    /// Go `dbterror.ErrTableOptionInsertMethodUnsupported` (8233).
+    TableOptionInsertMethodUnsupported,
     /// Rewriting an expression or executing failed.
     Exec(ExecError),
     /// The shared catalog is unusable because a statement panicked while

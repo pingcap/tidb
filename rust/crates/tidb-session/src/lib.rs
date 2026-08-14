@@ -600,6 +600,7 @@ pub mod privilege;
 pub mod process;
 mod process_arm;
 mod show;
+mod show_create_database;
 pub mod sysvar;
 pub mod vars;
 pub use vars::{GlobalSysvars, SessionVars, VarError};

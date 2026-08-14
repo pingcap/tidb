@@ -5,15 +5,6 @@
 use crate::tests_support::*;
 use crate::*;
 
-/// Transcreated from Go `pkg/executor/test/ddl/ddl_test.go`
-/// `TestCreateDropDatabase`, case for case, minus the parts that need
-/// tiers this seed does not have yet.
-///
-/// NOT PORTED from that Go test (documented): every `charset`/`collate`
-/// database option and its `SHOW CREATE DATABASE` output, which need the
-/// charset tier; the `drop database mysql` rejection, which is pinned as a
-/// divergence in `tests_system_schemas` now that the `mysql` schema exists;
-/// and the privilege/role cases.
 #[test]
 fn create_drop_database() {
     let mut session = Session::new();
@@ -87,6 +78,67 @@ fn create_drop_database() {
         session.run("USE no_such_database"),
         Err(DriverError::Schema(SchemaErrorKind::UnknownDatabase(_)))
     ));
+}
+
+#[test]
+fn database_defaults_flow_into_table_metadata() {
+    let mut session = Session::new();
+    session
+        .run("CREATE DATABASE db_collate DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci")
+        .unwrap();
+
+    assert_eq!(
+        query_text(&mut session, "SHOW CREATE DATABASE db_collate").1,
+        vec![vec![
+            "db_collate".to_owned(),
+            "CREATE DATABASE `db_collate` /*!40100 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci */".to_owned(),
+        ]]
+    );
+
+    session.run("USE db_collate").unwrap();
+    session
+        .run("CREATE TABLE inherited (a VARCHAR(10))")
+        .unwrap();
+    let shown = query_text(&mut session, "SHOW CREATE TABLE inherited").1;
+    assert!(shown[0][1].contains("`a` varchar(10) COLLATE utf8_general_ci"));
+    assert!(shown[0][1].ends_with("DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"));
+}
+
+#[test]
+fn union_and_insert_method_table_options_are_refused_by_preprocessing() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE x (a INT)").unwrap();
+    session.run("CREATE TABLE y (a INT)").unwrap();
+
+    for (sql, code, message) in [
+        (
+            "CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y)",
+            8232,
+            "CREATE/ALTER table with union option is not supported",
+        ),
+        (
+            "ALTER TABLE x UNION = (y)",
+            8232,
+            "CREATE/ALTER table with union option is not supported",
+        ),
+        (
+            "CREATE TABLE m (a INT) INSERT_METHOD = FIRST",
+            8233,
+            "CREATE/ALTER table with insert method option is not supported",
+        ),
+        (
+            "ALTER TABLE x INSERT_METHOD = LAST",
+            8233,
+            "CREATE/ALTER table with insert method option is not supported",
+        ),
+    ] {
+        let error = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(
+            (error.code, error.message.as_str()),
+            (code, message),
+            "{sql}"
+        );
+    }
 }
 
 /// A table in another schema is reachable by qualifying it, which is what

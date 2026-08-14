@@ -197,13 +197,21 @@ impl Session {
                     name,
                     options,
                 } => {
-                    if !options.is_empty() {
+                    if options.iter().any(|option| {
+                        !matches!(
+                            option,
+                            tidb_ast::DatabaseOption::CharacterSet(_)
+                                | tidb_ast::DatabaseOption::Collate(_)
+                        )
+                    }) {
                         return Err(DriverError::unsupported(
-                            "database charset and collation options are not supported yet",
+                            "this CREATE DATABASE option is not supported yet",
                         ));
                     }
-                    let created =
-                        self.with_catalog_mut(|catalog| Ok(catalog.create_database(name)))?;
+                    let charset = tidb_executor::resolve_database_charset(options)?;
+                    let created = self.with_catalog_mut(|catalog| {
+                        Ok(catalog.create_database_with_charset(name, charset))
+                    })?;
                     // Go raises ErrDBCreateExists unless IF NOT EXISTS, and
                     // under IF NOT EXISTS files that same error as a note:
                     // `Note | 1007 | Can't create database 'test'; database

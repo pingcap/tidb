@@ -23,6 +23,7 @@
 //! table's scope.
 
 use super::*;
+use crate::kv_table::TableCharset;
 /// An in-memory table: named, typed columns plus row values.
 #[derive(Clone, Debug, Default)]
 pub struct MemTable {
@@ -70,17 +71,15 @@ pub const DEFAULT_DATABASE: &str = "test";
 /// in. Spelled lower case, which is the name Go stores and reports.
 pub const SYSTEM_DATABASE: &str = "mysql";
 
-/// One schema: Go `model.DBInfo`, reduced to the name and its tables.
-///
-/// NOT MODELLED (documented): the schema's charset, collation, placement
-/// policy and state, which live on Go's `DBInfo` and matter to DDL rather
-/// than to resolving a name.
+/// One schema: Go `model.DBInfo`, reduced to the metadata this catalog serves.
 #[derive(Clone, Debug, Default)]
 struct Database {
     /// Go `DBInfo.ID`, retained for physical-key diagnostics.
     id: i64,
     /// The name as written, for `SHOW DATABASES` output.
     name: String,
+    /// The defaults inherited by tables created without explicit options.
+    charset: TableCharset,
     tables: HashMap<String, TableEntry>,
 }
 
@@ -163,6 +162,7 @@ impl Default for Catalog {
             Database {
                 id: 1,
                 name: DEFAULT_DATABASE.to_owned(),
+                charset: TableCharset::default(),
                 tables: HashMap::new(),
             },
         );
@@ -171,6 +171,7 @@ impl Default for Catalog {
             Database {
                 id: 2,
                 name: "INFORMATION_SCHEMA".to_owned(),
+                charset: TableCharset::default(),
                 tables: HashMap::new(),
             },
         );
@@ -179,6 +180,7 @@ impl Default for Catalog {
             Database {
                 id: 3,
                 name: SYSTEM_DATABASE.to_owned(),
+                charset: TableCharset::default(),
                 tables: HashMap::new(),
             },
         );
@@ -419,9 +421,30 @@ impl Catalog {
         self.databases.contains_key(&database.to_lowercase())
     }
 
+    /// The effective defaults stored on a database.
+    #[must_use]
+    pub fn database_charset(&self, database: &str) -> Option<TableCharset> {
+        self.databases
+            .get(&database.to_lowercase())
+            .map(|database| database.charset)
+    }
+
+    /// The stored name and defaults needed by `SHOW CREATE DATABASE`.
+    #[must_use]
+    pub fn database_definition(&self, database: &str) -> Option<(String, TableCharset)> {
+        self.databases
+            .get(&database.to_lowercase())
+            .map(|database| (database.name.clone(), database.charset))
+    }
+
     /// Creates `database`, reporting whether it was new. Go raises
     /// `ErrDBCreateExists` (1007) unless `IF NOT EXISTS` was written.
     pub fn create_database(&mut self, database: &str) -> bool {
+        self.create_database_with_charset(database, TableCharset::default())
+    }
+
+    /// Creates a database with its resolved charset and collation defaults.
+    pub fn create_database_with_charset(&mut self, database: &str, charset: TableCharset) -> bool {
         let key = database.to_lowercase();
         if self.databases.contains_key(&key) {
             return false;
@@ -432,6 +455,7 @@ impl Catalog {
             Database {
                 id: self.next_database_id,
                 name: database.to_owned(),
+                charset,
                 tables: HashMap::new(),
             },
         );
@@ -459,6 +483,7 @@ impl Catalog {
             Database {
                 id,
                 name: database.to_owned(),
+                charset: TableCharset::default(),
                 tables: HashMap::new(),
             },
         );
@@ -691,6 +716,7 @@ impl Catalog {
                 Database {
                     id: self.next_database_id,
                     name: database.to_owned(),
+                    charset: TableCharset::default(),
                     tables: HashMap::new(),
                 },
             );
@@ -710,6 +736,7 @@ impl Catalog {
                 Database {
                     id: self.next_database_id,
                     name: database.to_owned(),
+                    charset: TableCharset::default(),
                     tables: HashMap::new(),
                 },
             );

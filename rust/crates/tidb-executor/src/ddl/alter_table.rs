@@ -912,6 +912,7 @@ fn set_table_options_action(
     options: &[tidb_ast::TableOption],
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    super::validate_table_options(options)?;
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, name) else {
         return Err(DriverError::unsupported(
             "ALTER TABLE needs a storage-backed table",

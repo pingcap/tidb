@@ -1839,8 +1839,26 @@ impl Session {
             tidb_ast::AdminStmt::AdminCheck(check) => {
                 self.admin_check_stmt(check.as_ref()).map(Some)
             }
-            // Go `fetchShowCreateTable`.
-            tidb_ast::AdminStmt::ShowCreate { kind, name, .. } => {
+            tidb_ast::AdminStmt::ShowCreate {
+                kind,
+                name,
+                if_not_exists,
+            } => {
+                if *kind == tidb_ast::ShowCreateKind::Database {
+                    let [database] = name.as_slice() else {
+                        return Err(DriverError::unsupported("empty database name"));
+                    };
+                    let (reported, charset) = self.with_catalog_mut(|catalog| {
+                        catalog.database_definition(database).ok_or_else(|| {
+                            DriverError::Schema(SchemaErrorKind::UnknownDatabase(database.clone()))
+                        })
+                    })?;
+                    return Ok(Some(crate::show_create_database::output(
+                        reported,
+                        charset,
+                        *if_not_exists,
+                    )));
+                }
                 // `SHOW CREATE SEQUENCE` and `SHOW CREATE TABLE` take the
                 // SAME path: Go's `buildShow` picks the column names from
                 // whether the object IS a sequence, not from the keyword

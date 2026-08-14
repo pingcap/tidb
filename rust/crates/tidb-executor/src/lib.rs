@@ -118,9 +118,9 @@ pub use apply::ApplyExec;
 pub use cte_storage::{CteStorage, CteTable};
 pub use ddl::{
     added_check_constraint_actions, check_constraint_count, discarded_check_constraint_actions,
-    linear_partitioning_warning, run_alter_table_in, run_create_index_in, run_create_table_in,
-    run_create_table_on, run_drop_index_in, run_drop_table_in, run_rename_table_in,
-    run_truncate_table_in, CreateTableSettings,
+    linear_partitioning_warning, resolve_database_charset, run_alter_table_in, run_create_index_in,
+    run_create_table_in, run_create_table_on, run_drop_index_in, run_drop_table_in,
+    run_rename_table_in, run_truncate_table_in, CreateTableSettings,
 };
 pub use ddl_sequence::{
     run_alter_sequence_in, run_create_sequence_in, run_drop_sequence_in, show_create_sequence,
