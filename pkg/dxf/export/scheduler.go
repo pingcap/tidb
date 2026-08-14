@@ -69,7 +69,7 @@ func (*exportScheduler) OnTick(context.Context, *proto.Task) {}
 // used by the split, and sizes the task's resources from the total — keeping the
 // heavy PD work off the submitting session.
 func (s *exportScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
-	sizes, total, err := estimateTableSetSize(ctx, s.store, s.taskMeta)
+	sizes, total, err := estimateExportSize(ctx, s.store, s.taskMeta)
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ func (s *exportScheduler) setResources(ctx context.Context, task *proto.Task, to
 	if err != nil {
 		return errors.Trace(err)
 	}
-	calc := scheduler.NewRCCalcForExport(totalSize, nodeCPU, factors)
+	calc := scheduler.NewRCCalc(totalSize, nodeCPU, 0, factors)
 	task.RequiredSlots = calc.CalcRequiredSlots()
 	task.MaxNodeCount = calc.CalcMaxNodeCountForExport()
 	return nil

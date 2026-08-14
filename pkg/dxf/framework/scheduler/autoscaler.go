@@ -83,12 +83,6 @@ func NewRCCalcForAddIndex(dataSize int64, nodeCPU int, factors *schstatus.TuneFa
 	return NewRCCalc(dataSize, nodeCPU, 0, factors)
 }
 
-// NewRCCalcForExport creates a new ResourceCalc for an export task. Export reads
-// record data with no index amplification, so indexSizeRatio is 0.
-func NewRCCalcForExport(dataSize int64, nodeCPU int, factors *schstatus.TuneFactors) *ResourceCalc {
-	return NewRCCalc(dataSize, nodeCPU, 0, factors)
-}
-
 // NewRCCalc creates a new ResourceCalc.
 func NewRCCalc(dataSize int64, nodeCPU int, indexSizeRatio float64, factors *schstatus.TuneFactors) *ResourceCalc {
 	return &ResourceCalc{

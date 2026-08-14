@@ -65,10 +65,10 @@ func splitTables(ctx context.Context, store kv.Storage, meta *TaskMeta, concurre
 	return packSubtasks(chunks, concurrency)
 }
 
-// estimateTableSetSize returns each physical table's estimated byte size and the
+// estimateExportSize returns each physical table's estimated byte size and the
 // total across the whole export set, from PD. It is the prepare-step data-volume
 // estimate that sizes the task's resources and seeds the split fallback.
-func estimateTableSetSize(ctx context.Context, store kv.Storage, meta *TaskMeta) (map[int64]int64, int64, error) {
+func estimateExportSize(ctx context.Context, store kv.Storage, meta *TaskMeta) (map[int64]int64, int64, error) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
 		return nil, 0, errors.New("storage does not support region cache")
