@@ -32,16 +32,19 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 )
 
 const (
 	loadRegionMaxRetry    = 8
 	scanRegionBackoffBase = 200 * time.Millisecond
 	scanRegionBackoffMax  = 2 * time.Second
-	// chunkSize is the per-chunk work granularity, kept above FileSize so each
-	// chunk leaves at most one partial tail file.
+	// chunkSize is the per-chunk work granularity. Assumed (not enforced against
+	// TaskMeta.FileSize) to stay above FileSize so each chunk leaves at most one
+	// partial tail file.
 	chunkSize = 10 * 1024 * 1024 * 1024
-	// chunksPerWorker is how many chunks a subtask holds per worker slot.
+	// chunksPerWorker sizes a subtask's byte budget at this many chunks' worth of
+	// bytes per worker slot (chunksPerWorker*concurrency*chunkSize).
 	chunksPerWorker = 2
 	// maxChunksPerSubtask is a hard ceiling on the chunk count per subtask (the
 	// usual bound is byte size), so a schema of many tiny tables stays bounded.
@@ -72,7 +75,7 @@ func splitTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx 
 	for _, pid := range pids {
 		start, end := physicalTableRange(tblInfo, pid)
 		var tableChunks []Chunk
-		if endKeys, sizes, ok := regionChunks(ctx, store, start, end); ok {
+		if endKeys, sizes, ok := loadRegionSizes(ctx, store, start, end); ok {
 			tableChunks, ordinal = chunksBySize(tableIdx, pid, start, end, endKeys, sizes, ordinal)
 		} else {
 			boundaries, err := loadRegionBoundaries(ctx, store, start, end)
@@ -86,9 +89,12 @@ func splitTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx 
 	return chunks, nil
 }
 
-// regionChunks returns each region's end key and byte size over [start, end) from
-// PD, retried. ok is false when PD is unavailable.
-func regionChunks(ctx context.Context, store kv.Storage, start, end kv.Key) (endKeys []kv.Key, sizes []int64, ok bool) {
+// loadRegionSizes returns each region's end key and byte size over [start, end)
+// from a fresh PD estimate, retried on error. ok is false — and the caller falls
+// back to loadRegionBoundaries with count-based sizing — when the store has no
+// region cache, PD is unavailable, the retries are exhausted, or PD returns no
+// regions.
+func loadRegionSizes(ctx context.Context, store kv.Storage, start, end kv.Key) (endKeys []kv.Key, sizes []int64, ok bool) {
 	hStore, ok := store.(helper.Storage)
 	if !ok {
 		return nil, nil, false
@@ -103,7 +109,11 @@ func regionChunks(ctx context.Context, store kv.Storage, start, end kv.Key) (end
 		endKeys, sizes, err = h.RegionApproximateSizes(ctx, pdCli, start, end)
 		return err != nil, err
 	})
-	if err != nil || len(sizes) == 0 {
+	if err != nil {
+		logutil.BgLogger().Warn("export: per-region size estimate failed, using region-count split", zap.Error(err))
+		return nil, nil, false
+	}
+	if len(sizes) == 0 {
 		return nil, nil, false
 	}
 	return endKeys, sizes, true

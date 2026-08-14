@@ -887,15 +887,30 @@ func (h *Helper) RegionApproximateSizes(ctx context.Context, pdCli pd.Client, st
 	return endKeys, sizes, nil
 }
 
-// EstimateKeyRangeSize sums RegionApproximateSizes over [startKey, endKey).
+// EstimateKeyRangeSize sums each region's max(ApproximateSize, ApproximateKvSize)
+// over [startKey, endKey) via PD. Unlike RegionApproximateSizes it keeps O(1)
+// memory and decodes only the page cursor, since callers here need just the total.
 func (h *Helper) EstimateKeyRangeSize(ctx context.Context, pdCli pd.Client, startKey, endKey kv.Key) (int64, error) {
-	_, sizes, err := h.RegionApproximateSizes(ctx, pdCli, startKey, endKey)
-	if err != nil {
-		return 0, err
-	}
+	start, end := h.Store.GetCodec().EncodeRegionRange(startKey, endKey)
 	var totalSize int64
-	for _, s := range sizes {
-		totalSize += s
+	for {
+		regions, err := pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(start, end), 128)
+		if err != nil {
+			return 0, err
+		}
+		if len(regions.Regions) == 0 {
+			break
+		}
+		for _, r := range regions.Regions {
+			totalSize += max(r.ApproximateSize, r.ApproximateKvSize) * 1024 * 1024
+		}
+		start, err = hex.DecodeString(regions.Regions[len(regions.Regions)-1].EndKey)
+		if err != nil {
+			return 0, err
+		}
+		if bytes.Compare(start, end) >= 0 {
+			break
+		}
 	}
 	return totalSize, nil
 }
