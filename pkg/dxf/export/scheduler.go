@@ -20,6 +20,8 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
@@ -62,10 +64,49 @@ func (s *exportScheduler) Init() error {
 // OnTick implements scheduler.Extension.
 func (*exportScheduler) OnTick(context.Context, *proto.Task) {}
 
+// OnPrepare implements scheduler.Extension. In prepare mode it estimates the
+// export set's data size once the task is submitted, seeds the per-physical sizes
+// used by the split, and sizes the task's resources from the total — keeping the
+// heavy PD work off the submitting session.
+func (s *exportScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
+	sizes, total, err := estimateTableSetSize(ctx, s.store, s.taskMeta)
+	if err != nil {
+		return err
+	}
+	s.taskMeta.PhysicalSizes = sizes
+	if kerneltype.IsNextGen() {
+		if err := s.setResources(ctx, task, total); err != nil {
+			return err
+		}
+	}
+	meta, err := json.Marshal(s.taskMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	task.Meta = meta
+	return nil
+}
+
+// setResources sizes the task's slots and node count from the total data size.
+func (s *exportScheduler) setResources(ctx context.Context, task *proto.Task, totalSize int64) error {
+	nodeCPU, err := scheduler.GetExecCPUNode(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	factors, err := handle.GetScheduleTuneFactors(ctx, s.store.GetKeyspace())
+	if err != nil {
+		return errors.Trace(err)
+	}
+	calc := scheduler.NewRCCalcForExport(totalSize, nodeCPU, factors)
+	task.RequiredSlots = calc.CalcRequiredSlots()
+	task.MaxNodeCount = calc.CalcMaxNodeCountForExport()
+	return nil
+}
+
 // GetNextStep implements scheduler.Extension.
 func (*exportScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	switch task.Step {
-	case proto.StepInit:
+	case proto.StepInit, proto.StepPrepared:
 		return proto.ExportStepDump
 	default:
 		// PostProcess is inserted here by a later milestone.

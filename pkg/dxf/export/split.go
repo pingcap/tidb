@@ -65,6 +65,36 @@ func splitTables(ctx context.Context, store kv.Storage, meta *TaskMeta, concurre
 	return packSubtasks(chunks, concurrency)
 }
 
+// estimateTableSetSize returns each physical table's estimated byte size and the
+// total across the whole export set, from PD. It is the prepare-step data-volume
+// estimate that sizes the task's resources and seeds the split fallback.
+func estimateTableSetSize(ctx context.Context, store kv.Storage, meta *TaskMeta) (map[int64]int64, int64, error) {
+	hStore, ok := store.(helper.Storage)
+	if !ok {
+		return nil, 0, errors.New("storage does not support region cache")
+	}
+	h := helper.NewHelper(hStore)
+	pdCli, err := h.TryGetPDHTTPClient()
+	if err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+	sizes := make(map[int64]int64)
+	var total int64
+	for i := range meta.Tables {
+		tblInfo := meta.Tables[i].TableInfo
+		for _, pid := range physicalIDs(tblInfo) {
+			start, end := physicalTableRange(tblInfo, pid)
+			size, err := h.EstimateKeyRangeSize(ctx, pdCli, start, end)
+			if err != nil {
+				return nil, 0, errors.Trace(err)
+			}
+			sizes[pid] = size
+			total += size
+		}
+	}
+	return sizes, total, nil
+}
+
 // splitTable carves one table into ~chunkSize key-ordered chunks, with a
 // table-local ordinal spanning its partitions so file names stay unique.
 func splitTable(ctx context.Context, store kv.Storage, meta *TaskMeta, tableIdx int) ([]Chunk, error) {
