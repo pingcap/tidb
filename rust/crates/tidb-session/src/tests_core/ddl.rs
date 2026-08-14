@@ -104,6 +104,38 @@ fn database_defaults_flow_into_table_metadata() {
     assert!(shown[0][1].ends_with("DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"));
 }
 
+/// Go `table.NewColDesc` reads `PriKeyFlag` from every column rather than
+/// reconstructing primary-key membership from the table's handle shape.
+#[test]
+fn composite_primary_key_columns_keep_their_key_flag() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE composite_pk (a BIGINT NOT NULL, b BIGINT NOT NULL, v BIGINT, \
+                 PRIMARY KEY (a, b) NONCLUSTERED)",
+        )
+        .unwrap();
+
+    let (_, rows) = query_text(&mut session, "SHOW COLUMNS FROM composite_pk");
+    assert_eq!(
+        rows.iter()
+            .map(|row| [row[0].as_str(), row[3].as_str()])
+            .collect::<Vec<_>>(),
+        [["a", "PRI"], ["b", "PRI"], ["v", ""]]
+    );
+
+    assert_eq!(
+        query_text(
+            &mut session,
+            "SELECT column_name, column_key FROM information_schema.columns \
+                 WHERE table_schema = 'test' AND table_name = 'composite_pk' \
+                 ORDER BY ordinal_position",
+        )
+        .1,
+        [["a", "PRI"], ["b", "PRI"], ["v", ""]]
+    );
+}
+
 #[test]
 fn union_and_insert_method_table_options_are_refused_by_preprocessing() {
     let mut session = Session::new();

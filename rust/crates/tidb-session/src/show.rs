@@ -778,12 +778,9 @@ const NOT_NULL_FLAG: u32 = 1;
 /// `information_schema.COLUMNS`: PRI for a primary key, UNI for a column that
 /// is the whole of a unique index, MUL for one that leads a non-unique index.
 pub(crate) fn column_key_flag(table: &tidb_executor::KvTable, offset: usize) -> String {
-    let is_handle =
-        table.pk_handle_offset() == Some(offset) || table.common_handle_offsets().contains(&offset);
-    if is_handle
-        || table.indexes().iter().any(|index| {
-            index.name.eq_ignore_ascii_case("PRIMARY") && index.column_offsets == [offset]
-        })
+    if table.columns[offset]
+        .field_type
+        .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
     {
         "PRI".to_owned()
     } else if table
