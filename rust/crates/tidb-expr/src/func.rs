@@ -162,6 +162,40 @@ pub(crate) fn eval_func(
         }
         return Ok(Datum::Null);
     }
+    if name == "BENCHMARK" {
+        let [count, expression] = args else {
+            return Err(EvalError::Unsupported("BENCHMARK arguments"));
+        };
+        // Go builds both arguments left-to-right before evaluating the count.
+        // The direct AST evaluator can resolve a column's VALUE through
+        // `Columns` but has no planning schema, so only that one build result
+        // may stay untyped; every other build error remains observable.
+        let rewrite_argument = |argument| match crate::rewriter::rewrite_expr(argument) {
+            Ok(rewritten) => Ok(Some(rewritten)),
+            Err(EvalError::Unsupported("unresolved column reference")) => Ok(None),
+            Err(error) => Err(error),
+        };
+        let rewritten_count = rewrite_argument(count)?;
+        let rewritten_expression = rewrite_argument(expression)?;
+        let Some(loop_count) = benchmark_loop_count(
+            eval_in(count, cols)?,
+            rewritten_count.as_ref().and_then(|arg| arg.static_type()),
+            cols,
+        )?
+        else {
+            return Ok(Datum::Null);
+        };
+        if loop_count < 0 {
+            return Ok(Datum::Null);
+        }
+        if let Some(rewritten) = rewritten_expression {
+            ensure_benchmark_eval_type(rewritten.static_type())?;
+        }
+        for _ in 0..loop_count {
+            eval_in(expression, cols)?;
+        }
+        return Ok(Datum::Int(0));
+    }
     if matches!(name.as_str(), "CHARSET" | "COLLATION" | "COERCIBILITY") {
         let [arg] = args else {
             return Err(EvalError::Unsupported(
@@ -245,6 +279,34 @@ pub(crate) fn eval_func(
     // remains.
     crate::time_fn::dispatch(name.as_str(), &vals, cols)
         .unwrap_or(Err(EvalError::Unsupported("unsupported function")))
+}
+
+/// Go `builtinBenchmarkSig.evalInt`'s first-argument `EvalInt` boundary.
+pub(crate) fn benchmark_loop_count(
+    value: Datum,
+    source: Option<&tidb_datatype::FieldType>,
+    ctx: &dyn Columns,
+) -> Result<Option<i64>, EvalError> {
+    match crate::cast::cast_arg_as_int(&value, source, ctx)? {
+        Datum::Null => Ok(None),
+        Datum::Int(value) => Ok(Some(value)),
+        Datum::UInt(value) => Ok(Some(value as i64)),
+        _ => Err(EvalError::Unsupported("BENCHMARK loop count")),
+    }
+}
+
+/// Go's `builtinBenchmarkSig` switch intentionally has no vector arm.
+pub(crate) fn ensure_benchmark_eval_type(
+    source: Option<&tidb_datatype::FieldType>,
+) -> Result<(), EvalError> {
+    if source
+        .is_some_and(|field_type| field_type.eval_type() == tidb_datatype::EvalType::VectorFloat32)
+    {
+        return Err(EvalError::Unsupported(
+            "VectorFloat32 is not supported for BENCHMARK()",
+        ));
+    }
+    Ok(())
 }
 
 /// The builtins whose result is a function of their argument values AND the

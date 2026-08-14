@@ -1054,6 +1054,10 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // node metadata as a signed integer.
         "charset" | "collation" if args.len() == 1 => ft_with_flen(text(), 64),
         "coercibility" if args.len() == 1 => int(),
+        // Go `benchmarkFunctionClass`: a signed integer result. The count is
+        // evaluated as `ETInt`; the second argument keeps its own eval type so
+        // repeating it adds no conversion not present in the source.
+        "benchmark" if args.len() == 2 => int(),
         // Go sizes this VarString from `printer.GetTiDBInfo()`.
         "tidb_version" if args.is_empty() => ft_with_flen(
             text(),
@@ -1358,7 +1362,9 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // `OCTET_LENGTH` is `lengthFunctionClass` and `POSITION` is
         // `locateFunctionClass` (`builtin.go`'s `funcs` map), so each shares
         // its alias's width.
-        "length" | "octet_length" | "bit_length" => ft_with_flen(int(), 10),
+        "length" | "octet_length" | "bit_length" if args.len() == 1 => {
+            ft_with_flen(int(), 10)
+        }
         "ascii" | "find_in_set" => ft_with_flen(int(), 3),
         "instr" => ft_with_flen(int(), 11),
         "strcmp" => ft_with_flen(int(), 2),

@@ -410,6 +410,24 @@ impl ScalarFunction {
                 return Ok(value);
             }
         }
+        if name == "benchmark" {
+            let [count, expression] = self.args.as_slice() else {
+                return Err(EvalError::Unsupported("BENCHMARK arguments"));
+            };
+            let Some(loop_count) =
+                crate::func::benchmark_loop_count(count.eval(ctx, row)?, count.static_type(), ctx)?
+            else {
+                return Ok(Datum::Null);
+            };
+            if loop_count < 0 {
+                return Ok(Datum::Null);
+            }
+            crate::func::ensure_benchmark_eval_type(expression.static_type())?;
+            for _ in 0..loop_count {
+                expression.eval(ctx, row)?;
+            }
+            return Ok(Datum::Int(0));
+        }
         // Go `builtinCaseWhen*Sig`: the arguments are the flattened
         // `cond, result, ..., else` list, and only the selected branch is
         // evaluated -- so an error in an unreachable branch never surfaces.
