@@ -1286,6 +1286,145 @@ fn alter_column_set_default_retains_computed_expressions() {
     );
 }
 
+#[test]
+fn str_to_date_default_reaches_every_ddl_entry_point() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE default_str_to_date (\
+             id INT, \
+             created_value VARCHAR(32) \
+             DEFAULT (str_to_date('1980-01-01','%Y-%m-%d')))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO default_str_to_date (id) VALUES (1)")
+        .unwrap();
+    session
+        .run(
+            "ALTER TABLE default_str_to_date ADD COLUMN added_value VARCHAR(32) \
+             DEFAULT (str_to_date('1981-02-03','%Y-%m-%d'))",
+        )
+        .unwrap();
+    session
+        .run(
+            "ALTER TABLE default_str_to_date MODIFY COLUMN created_value VARCHAR(32) \
+             DEFAULT (str_to_date('1982-03-04','%Y-%m-%d'))",
+        )
+        .unwrap();
+    session
+        .run(
+            "ALTER TABLE default_str_to_date ALTER COLUMN added_value \
+             SET DEFAULT(str_to_date('1983-04-05','%Y-%m-%d'))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO default_str_to_date (id) VALUES (2)")
+        .unwrap();
+
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT id, created_value, added_value \
+             FROM default_str_to_date ORDER BY id"
+        ),
+        [
+            ["1", "1980-01-01", "1981-02-03"],
+            ["2", "1982-03-04", "1983-04-05"],
+        ]
+    );
+    let definition = show_create(&mut session, "default_str_to_date");
+    assert!(
+        definition.contains("DEFAULT (str_to_date(_utf8mb4'1982-03-04', _utf8mb4'%Y-%m-%d'))"),
+        "{definition}"
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE bad_str_to_date (\
+             value VARCHAR(32) \
+             DEFAULT (str_to_date(upper('1980-01-01'),'%Y-%m-%d')))"
+        ),
+        Some(3770)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE bad_str_to_date (\
+             value VARCHAR(32) DEFAULT (str_to_date('1980-01-01')))"
+        ),
+        Some(1582)
+    );
+}
+
+#[test]
+fn computed_default_whitelist_evaluates_the_allowed_function_shapes() {
+    let mut session = Session::new();
+    session.set_user("bob@%".to_owned(), "bob@10.0.0.1".to_owned());
+    session.run("SET time_zone = '+00:00'").unwrap();
+    session.run("SET timestamp = 1700000000").unwrap();
+    assert_eq!(
+        rows(&mut session, "SELECT UPPER(USER()), UPPER(DATABASE())"),
+        [["BOB@10.0.0.1", "TEST"]]
+    );
+    session
+        .run(
+            "CREATE TABLE default_function_suite (\
+             id INT, \
+             formatted VARCHAR(32) DEFAULT (date_format(now(),'%Y-%m-%d')), \
+             compact VARCHAR(32) DEFAULT (replace(upper(uuid()),'-','')), \
+             login_name VARCHAR(64) \
+                 DEFAULT (upper(substring_index(user(),'@',1))), \
+             packed VARBINARY(16) DEFAULT (\
+                 uuid_to_bin('6ccd780c-baba-1026-9564-5b8c656024db')), \
+             document JSON DEFAULT (json_object('k',7)))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO default_function_suite (id) VALUES (1)")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT formatted, LENGTH(compact), login_name, \
+                    compact REGEXP '^[A-F0-9]{32}$', HEX(packed), \
+                    JSON_EXTRACT(document,'$.k') \
+             FROM default_function_suite"
+        ),
+        [[
+            "2023-11-14",
+            "32",
+            "BOB",
+            "1",
+            "6CCD780CBABA102695645B8C656024DB",
+            "7",
+        ]]
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE default_function_suite ADD COLUMN unsafe_packed VARBINARY(16) \
+             DEFAULT (uuid_to_bin('6ccd780c-baba-1026-9564-5b8c656024db'))"
+        ),
+        Some(1674)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE bad_date_format (\
+             value VARCHAR(32) DEFAULT (date_format(now(),'%b %d %Y')))"
+        ),
+        Some(3770)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "CREATE TABLE bad_uuid (value VARCHAR(64) DEFAULT (uuid(1)))"
+        ),
+        Some(1582)
+    );
+}
+
 /// Go `pkg/ddl/add_column.go` runs the inline-key precheck before installing a
 /// table-level primary key and before the final `checkDefaultValue`:
 ///

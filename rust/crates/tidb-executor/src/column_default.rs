@@ -53,9 +53,7 @@
 //! # Deferred, and refused rather than guessed
 //!
 //! Go's whitelist also carries `CURRENT_DATE`, `NEXTVAL` (a sequence read),
-//! `DATE_FORMAT(NOW(), ...)`, `STR_TO_DATE`, `REPLACE(UPPER(UUID()), ...)`,
-//! `UPPER(SUBSTRING_INDEX(USER(), '@', 1))`, the `JSON_*` builders and
-//! `VEC_FROM_TEXT`. Each needs its own argument check, and a wrong one would
+//! and `VEC_FROM_TEXT`. Each needs its own argument check, and a wrong one would
 //! silently store a default TiDB rejects, so the ones not listed in
 //! [`func_call_default`] are refused by name.
 
@@ -207,6 +205,8 @@ pub enum DefaultError {
     /// Go `dbterror.ErrInvalidDefaultValue` (1067): the default is not one
     /// this column can carry. The caller names the column.
     InvalidDefault,
+    /// Go `expression.ErrIncorrectParameterCount` (1582).
+    WrongParameterCount(&'static str),
     /// A form Go accepts that this tier does not model yet, named so a
     /// refusal says which.
     Unsupported(&'static str),
@@ -221,9 +221,57 @@ impl DefaultError {
                 crate::DriverError::DefaultFunctionNotAllowed(column.to_owned(), function)
             }
             Self::InvalidDefault => crate::DriverError::InvalidDefault(column.to_owned()),
+            Self::WrongParameterCount(function) => crate::DriverError::Exec(
+                crate::ExecError::Eval(tidb_expr::EvalError::WrongParameterCount(function)),
+            ),
             Self::Unsupported(reason) => crate::DriverError::unsupported(reason),
         }
     }
+}
+
+fn is_value_expr(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Int(_)
+            | Expr::Decimal(_)
+            | Expr::Float(_)
+            | Expr::Hex(_)
+            | Expr::Bit(_)
+            | Expr::String(_)
+            | Expr::RawString(_)
+            | Expr::CharsetString { .. }
+            | Expr::CharsetBinary { .. }
+            | Expr::Null
+            | Expr::Bool(_)
+    )
+}
+
+fn function_args<'a>(expr: &'a Expr, expected: &str) -> Option<&'a [Expr]> {
+    let Expr::Func { name, args, .. } = expr else {
+        return None;
+    };
+    name.eq_ignore_ascii_case(expected).then_some(args)
+}
+
+fn string_value(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::String(value) | Expr::RawString(value) | Expr::CharsetString { value, .. } => {
+            Some(value)
+        }
+        _ => None,
+    }
+}
+
+fn computed_default(
+    expr: &Expr,
+    added_origin_safety: AddedOriginSafety,
+) -> Result<Option<ColumnDefault>, DefaultError> {
+    Ok(Some(ColumnDefault::Computed(Box::new(ComputedDefault {
+        text: expr.restore_with_flags(default_restore_flags()),
+        is_expr: true,
+        expr: build_expression(expr)?,
+        added_origin_safety,
+    }))))
 }
 
 /// The names Go's `getFuncCallDefaultValue` treats as the clock marker on a
@@ -345,14 +393,135 @@ fn func_call_default(
         }))));
     }
     match lower.as_str() {
-        // Go's no-argument-check arms: `RAND()`, `UUID()`. `VerifyArgsWrapper`
-        // is the builder's own arity check here, which the rewriter performs.
-        "rand" | "uuid" => Ok(Some(ColumnDefault::Computed(Box::new(ComputedDefault {
-            text: expr.restore_with_flags(default_restore_flags()),
-            is_expr: true,
-            expr: build_expression(expr)?,
-            added_origin_safety: AddedOriginSafety::UnsafeSystemFunction,
-        })))),
+        // Go's RAND/UUID arms preserve the expression for each omitted row;
+        // `VerifyArgsWrapper` still enforces their individual arities.
+        "rand" => {
+            if args.len() > 1 {
+                return Err(DefaultError::WrongParameterCount("rand"));
+            }
+            computed_default(expr, AddedOriginSafety::UnsafeSystemFunction)
+        }
+        "uuid" => {
+            if !args.is_empty() {
+                return Err(DefaultError::WrongParameterCount("uuid"));
+            }
+            computed_default(expr, AddedOriginSafety::UnsafeSystemFunction)
+        }
+        "uuid_to_bin" => {
+            if !(1..=2).contains(&args.len()) {
+                return Err(DefaultError::WrongParameterCount("uuid_to_bin"));
+            }
+            computed_default(expr, AddedOriginSafety::UnsafeSystemFunction)
+        }
+        "date_format" => {
+            let [now, format] = args else {
+                return Err(DefaultError::WrongParameterCount("date_format"));
+            };
+            let Some(now_args) = function_args(now, "now") else {
+                return Err(DefaultError::FunctionNotAllowed(
+                    "date_format with disallowed args".to_owned(),
+                ));
+            };
+            if !now_args.is_empty() {
+                return Err(DefaultError::WrongParameterCount("now"));
+            }
+            let Some(format) = string_value(format) else {
+                return Err(DefaultError::FunctionNotAllowed(
+                    "date_format with disallowed args".to_owned(),
+                ));
+            };
+            if !matches!(
+                format,
+                "%Y-%m" | "%Y-%m-%d" | "%Y-%m-%d %H.%i.%s" | "%Y-%m-%d %H:%i:%s"
+            ) {
+                return Err(DefaultError::FunctionNotAllowed(format!(
+                    "KindString {format}"
+                )));
+            }
+            computed_default(expr, AddedOriginSafety::Safe)
+        }
+        "replace" => {
+            let [source, _, _] = args else {
+                return Err(DefaultError::WrongParameterCount("replace"));
+            };
+            let source = match source {
+                Expr::ConvertUsing { expr, .. } => expr.as_ref(),
+                source => source,
+            };
+            let Some(upper_args) = function_args(source, "upper") else {
+                return Err(DefaultError::FunctionNotAllowed(
+                    "replace with disallowed args".to_owned(),
+                ));
+            };
+            let [uuid] = upper_args else {
+                return Err(DefaultError::WrongParameterCount("upper"));
+            };
+            let Some(uuid_args) = function_args(uuid, "uuid") else {
+                return Err(DefaultError::FunctionNotAllowed(
+                    "replace with disallowed args".to_owned(),
+                ));
+            };
+            if !uuid_args.is_empty() {
+                return Err(DefaultError::WrongParameterCount("uuid"));
+            }
+            computed_default(expr, AddedOriginSafety::UnsafeSystemFunction)
+        }
+        "upper" => {
+            let [substring] = args else {
+                return Err(DefaultError::WrongParameterCount("upper"));
+            };
+            let Some(substring_args) = function_args(substring, "substring_index") else {
+                return Err(DefaultError::FunctionNotAllowed(
+                    "upper with disallowed args".to_owned(),
+                ));
+            };
+            let [user, separator, _] = substring_args else {
+                return Err(DefaultError::WrongParameterCount("substring_index"));
+            };
+            let Some(user_args) = function_args(user, "user") else {
+                return Err(DefaultError::FunctionNotAllowed(
+                    "upper with disallowed args".to_owned(),
+                ));
+            };
+            if !user_args.is_empty() {
+                return Err(DefaultError::WrongParameterCount("user"));
+            }
+            if let Some(separator) = string_value(separator) {
+                if separator == "@" {
+                    return computed_default(expr, AddedOriginSafety::UnsafeSystemFunction);
+                }
+                return Err(DefaultError::FunctionNotAllowed(format!(
+                    "KindString {separator}"
+                )));
+            }
+            Err(DefaultError::FunctionNotAllowed(
+                "upper with disallowed args".to_owned(),
+            ))
+        }
+        "str_to_date" => {
+            if args.len() != 2 {
+                return Err(DefaultError::WrongParameterCount("str_to_date"));
+            }
+            if !args.iter().all(is_value_expr) {
+                return Err(DefaultError::FunctionNotAllowed(
+                    "str_to_date with disallowed args".to_owned(),
+                ));
+            }
+            computed_default(expr, AddedOriginSafety::Safe)
+        }
+        "json_object" => {
+            if !args.len().is_multiple_of(2) {
+                return Err(DefaultError::WrongParameterCount("json_object"));
+            }
+            computed_default(expr, AddedOriginSafety::UnsafeSystemFunction)
+        }
+        "json_array" => computed_default(expr, AddedOriginSafety::UnsafeSystemFunction),
+        "json_quote" => {
+            if args.len() != 1 {
+                return Err(DefaultError::WrongParameterCount("json_quote"));
+            }
+            computed_default(expr, AddedOriginSafety::UnsafeSystemFunction)
+        }
         _ => Err(DefaultError::FunctionNotAllowed(lower)),
     }
 }

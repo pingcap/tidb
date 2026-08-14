@@ -977,7 +977,7 @@ impl ScalarFunction {
             match name {
                 "database" | "schema" => {
                     return Ok(match ctx.current_database() {
-                        Some(name) => Datum::Bytes(name.into_bytes()),
+                        Some(name) => Datum::new_string(name.into_bytes()),
                         None => Datum::Null,
                     })
                 }
@@ -985,7 +985,7 @@ impl ScalarFunction {
                     return Ok(ctx.sysvar(None, "version").unwrap_or(Datum::Null));
                 }
                 "tidb_version" => {
-                    return Ok(Datum::Bytes(ctx.tidb_info().into_bytes()));
+                    return Ok(Datum::new_string(ctx.tidb_info().into_bytes()));
                 }
                 // Go `builtinCurrentUserSig` reports the MATCHED grant
                 // identity (`UserIdentity.String()`, which prefers
@@ -997,7 +997,7 @@ impl ScalarFunction {
                 // `UserIdentity.LoginString()` -- the authenticated identity.
                 "current_user" => {
                     return Ok(match ctx.current_user() {
-                        Some(user) => Datum::Bytes(user.into_bytes()),
+                        Some(user) => Datum::new_string(user.into_bytes()),
                         None => Datum::Null,
                     })
                 }
@@ -1006,13 +1006,13 @@ impl ScalarFunction {
                 // `SHOW GRANTS` prints.
                 "current_role" => {
                     return Ok(match ctx.current_role() {
-                        Some(roles) => Datum::Bytes(roles.into_bytes()),
+                        Some(roles) => Datum::new_string(roles.into_bytes()),
                         None => Datum::Null,
                     })
                 }
                 "user" | "session_user" | "system_user" => {
                     return Ok(match ctx.login_user() {
-                        Some(user) => Datum::Bytes(user.into_bytes()),
+                        Some(user) => Datum::new_string(user.into_bytes()),
                         None => Datum::Null,
                     })
                 }
