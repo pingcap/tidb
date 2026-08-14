@@ -15,9 +15,13 @@
 package expression
 
 import (
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -233,6 +237,68 @@ func BuildFTSTokenizeExpr(colExpr ast.ExprNode, config fulltext.AnalyzerConfig) 
 			ast.NewValueExpr(enableStopword, "", ""),
 		},
 	}
+}
+
+// FTSTokenizeIndexOrigin describes a multi-valued index that was built from a
+// FULLTEXT index definition.
+type FTSTokenizeIndexOrigin struct {
+	ColumnName ast.CIStr
+	ParserType model.FullTextParserType
+}
+
+// ParseFTSTokenizeIndexExpr recognises the generated-column expression that a
+// FULLTEXT index is rewritten into on the classic kernel, and recovers the
+// column and parser it was built from. It reports false for any other
+// expression, including an ordinary multi-valued index.
+//
+// The expression is re-parsed rather than mirrored into index metadata so that
+// it stays the single source of truth: it is what actually produces the indexed
+// tokens, and a second copy of the parser type could drift from it.
+func ParseFTSTokenizeIndexExpr(exprStr string) (FTSTokenizeIndexOrigin, bool) {
+	if exprStr == "" || !strings.Contains(strings.ToLower(exprStr), ast.FTSTokenize) {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	stmt, err := parser.New().ParseOneStmt("select "+exprStr, mysql.UTF8MB4Charset, mysql.UTF8MB4DefaultCollation)
+	if err != nil {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	sel, ok := stmt.(*ast.SelectStmt)
+	if !ok || sel.Fields == nil || len(sel.Fields.Fields) != 1 {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	castExpr, ok := sel.Fields.Fields[0].Expr.(*ast.FuncCastExpr)
+	if !ok || castExpr.Tp == nil || !castExpr.Tp.IsArray() {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	call, ok := castExpr.Expr.(*ast.FuncCallExpr)
+	if !ok || call.FnName.L != ast.FTSTokenize || len(call.Args) != 5 {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	colExpr, ok := call.Args[0].(*ast.ColumnNameExpr)
+	if !ok || colExpr.Name == nil {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	parserName, ok := ftsTokenizeStringLiteral(call.Args[1])
+	if !ok {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	parserType := model.GetFullTextParserTypeBySQLName(parserName)
+	if parserType == model.FullTextParserTypeInvalid {
+		return FTSTokenizeIndexOrigin{}, false
+	}
+	return FTSTokenizeIndexOrigin{ColumnName: colExpr.Name.Name, ParserType: parserType}, true
+}
+
+func ftsTokenizeStringLiteral(node ast.ExprNode) (string, bool) {
+	valueExpr, ok := node.(ast.ValueExpr)
+	if !ok {
+		return "", false
+	}
+	str, ok := valueExpr.GetValue().(string)
+	if !ok {
+		return "", false
+	}
+	return str, true
 }
 
 // ftsTokenizeMaxTokenBytes bounds the CHAR(n) element width of the multi-valued

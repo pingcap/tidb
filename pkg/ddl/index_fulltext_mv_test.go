@@ -17,6 +17,8 @@ package ddl_test
 import (
 	"testing"
 
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -101,6 +103,69 @@ func TestFullTextIndexIsPopulated(t *testing.T) {
 	tk.MustExec("admin check table articles")
 	tk.MustQuery("select id from articles use index (idx_body) order by id").
 		Check(testkit.Rows("1", "2", "3"))
+}
+
+// TestFullTextIndexShowCreateTableRoundTrip checks that the index is displayed
+// as the FULLTEXT index it was declared as, rather than as the multi-valued
+// index it is stored as, and that the displayed form recreates it.
+func TestFullTextIndexShowCreateTableRoundTrip(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table articles (id int primary key, body varchar(255))")
+	tk.MustExec("alter table articles add fulltext index idx_body (body)")
+
+	createSQL := tk.MustQuery("show create table articles").Rows()[0][1].(string)
+	require.Contains(t, createSQL, "FULLTEXT KEY `idx_body` (`body`)")
+	// The hidden tokenized column and its expression must not leak into the
+	// user-facing definition.
+	require.NotContains(t, createSQL, "fts_tokenize")
+	require.NotContains(t, strings.ToLower(createSQL), "_v$_")
+
+	// A non-default parser is reported too.
+	tk.MustExec("create table ngram_articles (id int primary key, body varchar(255))")
+	tk.MustExec("alter table ngram_articles add fulltext index idx_body (body) with parser ngram")
+	require.Contains(t,
+		tk.MustQuery("show create table ngram_articles").Rows()[0][1].(string),
+		"WITH PARSER NGRAM")
+}
+
+// TestFullTextIndexInCreateTable documents a gap: only ALTER TABLE / CREATE
+// INDEX are rewritten today, because the rewrite needs the session's analyzer
+// variables and BuildTableInfo only has a *metabuild.Context, which does not
+// carry them. An inline FULLTEXT KEY in CREATE TABLE therefore still takes the
+// columnar path and is rejected.
+//
+// This makes SHOW CREATE TABLE output non-restorable, so it must be fixed
+// before the feature ships - either by plumbing the analyzer defaults through
+// metabuild.Context, or by rewriting the statement in (*executor).CreateTable
+// where a sessionctx is available.
+func TestFullTextIndexInCreateTable(t *testing.T) {
+	t.Skip("FULLTEXT in CREATE TABLE is not rewritten yet; see the comment above")
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table articles (id int primary key, body varchar(255), fulltext key idx_body (body))")
+
+	createSQL := tk.MustQuery("show create table articles").Rows()[0][1].(string)
+	require.Contains(t, createSQL, "FULLTEXT KEY `idx_body` (`body`)")
+	tk.MustExec("drop table articles")
+	tk.MustExec(createSQL)
+	require.Equal(t, createSQL, tk.MustQuery("show create table articles").Rows()[0][1].(string))
+}
+
+// TestOrdinaryMVIndexShowCreateTableUnchanged guards the detection from
+// claiming multi-valued indexes that have nothing to do with full-text search.
+func TestOrdinaryMVIndexShowCreateTableUnchanged(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (id int primary key, j json, key idx((cast(j->'$.tags' as char(20) array))))")
+
+	createSQL := tk.MustQuery("show create table t").Rows()[0][1].(string)
+	require.NotContains(t, createSQL, "FULLTEXT")
+	require.Contains(t, createSQL, "cast(json_extract(`j`, _utf8mb4'$.tags') as char(20) array)")
 }
 
 func TestFullTextIndexRejectsUnsupported(t *testing.T) {
