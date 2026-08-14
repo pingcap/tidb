@@ -274,6 +274,70 @@ fn time_return_type(args: &[Expression]) -> Option<FieldType> {
     Some(ft)
 }
 
+fn date_add_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
+    use tidb_datatype::EvalType;
+
+    let [date, amount] = args else {
+        return None;
+    };
+    let unit = name
+        .strip_prefix("date_add_")
+        .or_else(|| name.strip_prefix("date_sub_"))?;
+    let date_type = date.static_type()?;
+    let clock_unit = matches!(
+        unit.to_ascii_uppercase().as_str(),
+        "MICROSECOND"
+            | "SECOND"
+            | "MINUTE"
+            | "HOUR"
+            | "SECOND_MICROSECOND"
+            | "MINUTE_MICROSECOND"
+            | "HOUR_MICROSECOND"
+            | "DAY_MICROSECOND"
+            | "MINUTE_SECOND"
+            | "HOUR_SECOND"
+            | "DAY_SECOND"
+            | "HOUR_MINUTE"
+            | "DAY_MINUTE"
+            | "DAY_HOUR"
+    );
+    let code = if date_type.code() == FieldTypeCode::Date {
+        if clock_unit {
+            FieldTypeCode::Datetime
+        } else {
+            FieldTypeCode::Date
+        }
+    } else {
+        match date_type.eval_type() {
+            EvalType::Datetime | EvalType::Timestamp => FieldTypeCode::Datetime,
+            _ => FieldTypeCode::VarString,
+        }
+    };
+    let mut result = FieldType::new(code);
+    match code {
+        FieldTypeCode::Date => {
+            result.set_flen(10);
+            result.set_decimal(0);
+        }
+        FieldTypeCode::Datetime => {
+            let fsp = i64::from(crate::time_fn::calendar::date_add_result_fsp(
+                unit,
+                Some(date_type),
+                amount.static_type(),
+            )?);
+            result.set_decimal(fsp);
+            result.set_flen(19 + if fsp == 0 { 0 } else { fsp + 1 });
+            set_binary_charset(&mut result);
+        }
+        FieldTypeCode::VarString => {
+            result.set_flen(29);
+            result.set_decimal(0);
+        }
+        _ => unreachable!("DATE_ADD result type is closed"),
+    }
+    Some(result)
+}
+
 /// Go `roundFunctionClass.getFunction` / `truncateFunctionClass.getFunction`.
 ///
 /// These functions preserve the first argument's numeric domain. For decimal
@@ -378,13 +442,8 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
     let int = || FieldType::new(FieldTypeCode::LongLong);
     let real = || FieldType::new(FieldTypeCode::Double);
     let vector = || FieldType::new(FieldTypeCode::VectorFloat32);
-    // `date_add_<unit>`/`date_sub_<unit>` carry the INTERVAL unit in the name
-    // (see the `Expr::Func` arm of `rewrite_expr_resolved`). Real TiDB types
-    // these from the date argument (DATE in, DATE out; DATETIME in, DATETIME
-    // out), which this tier renders as the same formatted string the row path
-    // produces — the documented temporal-as-string divergence.
     if name.starts_with("date_add_") || name.starts_with("date_sub_") {
-        return Some(text());
+        return date_add_return_type(name, args);
     }
     Some(match name {
         // ---------------------------------------------------------------

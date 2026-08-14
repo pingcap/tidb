@@ -726,13 +726,31 @@ impl ScalarFunction {
                 );
                 let date = self.args[0].eval(ctx, row)?;
                 let amount = self.args[1].eval(ctx, row)?;
-                return crate::time_fn::calendar::date_add_with_result_fsp(
+                let result = crate::time_fn::calendar::date_add_with_result_fsp(
                     unit,
                     &date,
                     &amount,
                     if subtract { -1 } else { 1 },
                     result_fsp,
-                );
+                )?;
+                let Some(result_type) = self.get_static_type() else {
+                    return Ok(result);
+                };
+                return match result_type.code() {
+                    tidb_datatype::FieldTypeCode::Date => crate::cast::parse_computed_time(
+                        &result,
+                        ctx,
+                        tidb_datatype::TimeType::Date,
+                        0,
+                    ),
+                    tidb_datatype::FieldTypeCode::Datetime => crate::cast::parse_computed_time(
+                        &result,
+                        ctx,
+                        tidb_datatype::TimeType::DateTime,
+                        result_type.decimal(),
+                    ),
+                    _ => Ok(result),
+                };
             }
         }
         // Go `builtinDatabaseSig`/`builtinVersionSig` read session state

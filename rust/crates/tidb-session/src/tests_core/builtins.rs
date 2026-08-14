@@ -290,10 +290,6 @@ fn math_and_conditional_builtins() {
 /// agrees; the context carries that instant and the resolved session
 /// zone (Go `timeutil.ParseTimeZone`).
 ///
-/// DOCUMENTED DIVERGENCE, the same one the temporal casts carry: this
-/// crate's date/time builtins produce formatted STRINGS, so the reported
-/// column type is `VarString` where TiDB says `DATETIME`. The values
-/// match.
 /// `DATE_ADD`/`DATE_SUB`/`ADDDATE`/`SUBDATE`, `EXTRACT` and
 /// `TIMESTAMPDIFF` through the CHUNK path, checked against captured TiDB
 /// output with `time_zone = '+00:00'` (`pkg/executor`, a typed table holding
@@ -304,9 +300,6 @@ fn math_and_conditional_builtins() {
 /// rewriter records it in the function NAME and the chunk evaluator
 /// reuses the same `date_add` implementation the row path calls.
 ///
-/// DOCUMENTED DIVERGENCE, the same one every other date/time builtin
-/// here carries: the result is a formatted STRING (`VarString`) where
-/// TiDB reports `DATE`/`DATETIME`. The values match.
 #[test]
 fn date_interval_extract_and_timestampdiff() {
     let mut session = Session::new();
@@ -320,6 +313,26 @@ fn date_interval_extract_and_timestampdiff() {
                  ('2025-03-15 23:59:59', '2025-03-15'), (NULL, NULL)",
         )
         .unwrap();
+
+    let StmtOutput::Rows { columns, .. } = session
+        .run_with_columns(
+            "SELECT DATE_ADD(created, INTERVAL 0.5 SECOND), \
+                    DATE_ADD(d, INTERVAL 1 DAY), \
+                    DATE_ADD(d, INTERVAL 1 HOUR) FROM t",
+        )
+        .unwrap()
+    else {
+        panic!("DATE_ADD type query did not return rows")
+    };
+    assert_eq!(columns[0].1.code(), tidb_datatype::FieldTypeCode::Datetime);
+    assert_eq!(columns[0].1.flen(), 21);
+    assert_eq!(columns[0].1.decimal(), 1);
+    assert_eq!(columns[1].1.code(), tidb_datatype::FieldTypeCode::Date);
+    assert_eq!(columns[1].1.flen(), 10);
+    assert_eq!(columns[1].1.decimal(), 0);
+    assert_eq!(columns[2].1.code(), tidb_datatype::FieldTypeCode::Datetime);
+    assert_eq!(columns[2].1.flen(), 19);
+    assert_eq!(columns[2].1.decimal(), 0);
 
     // Captured: DAY arithmetic keeps the time-of-day, HOUR recomputes it
     // (and rolls the date over), and NULL propagates.

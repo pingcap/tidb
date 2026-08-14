@@ -1055,6 +1055,15 @@ fn cast_to_time_value(
     Ok(Some(truncate_clock_for_date(time, kind)))
 }
 
+pub(crate) fn parse_computed_time(
+    value: &Datum,
+    ctx: &dyn crate::Columns,
+    kind: tidb_datatype::TimeType,
+    fsp: i64,
+) -> Result<Datum, EvalError> {
+    Ok(cast_to_time_value(value, None, ctx, kind, Some(fsp))?.map_or(Datum::Null, Datum::Time))
+}
+
 /// Go's `WrapWithCastAsTime(ctx, expr, types.NewFieldType(mysql.TypeDatetime))`
 /// (`pkg/expression/builtin_cast.go:2817`), applied to an argument's VALUE
 /// because this tier has no build-time expression rewrite to hang the cast on.
