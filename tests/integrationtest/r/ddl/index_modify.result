@@ -47,3 +47,67 @@ abc
 admin check table test_add_index_restore_data;
 drop table if exists test_add_index_restore_data;
 set global tidb_ddl_enable_fast_reorg=default;
+drop table if exists fts_articles;
+create table fts_articles (id int primary key, body varchar(255));
+insert into fts_articles values (1, 'distributed sql database'), (2, 'relational storage engine');
+alter table fts_articles add fulltext index idx_body (body);
+insert into fts_articles values (3, 'distributed storage layer');
+admin check table fts_articles;
+select * from fts_articles order by id;
+id	body
+1	distributed sql database
+2	relational storage engine
+3	distributed storage layer
+show columns from fts_articles;
+Field	Type	Null	Key	Default	Extra
+id	int	NO	PRI	NULL	
+body	varchar(255)	YES		NULL	
+show create table fts_articles;
+Table	Create Table
+fts_articles	CREATE TABLE `fts_articles` (
+  `id` int NOT NULL,
+  `body` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  FULLTEXT KEY `idx_body` (`body`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select id from fts_articles use index (idx_body) order by id;
+id
+1
+2
+3
+drop table if exists fts_inline;
+create table fts_inline (id int primary key, body varchar(255), fulltext key idx_body (body));
+show create table fts_inline;
+Table	Create Table
+fts_inline	CREATE TABLE `fts_inline` (
+  `id` int NOT NULL,
+  `body` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  FULLTEXT KEY `idx_body` (`body`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+insert into fts_inline values (1, 'distributed sql');
+admin check table fts_inline;
+drop table if exists fts_ngram;
+create table fts_ngram (id int primary key, body varchar(255));
+alter table fts_ngram add fulltext index idx_body (body) with parser ngram;
+show create table fts_ngram;
+Table	Create Table
+fts_ngram	CREATE TABLE `fts_ngram` (
+  `id` int NOT NULL,
+  `body` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  FULLTEXT KEY `idx_body` (`body`) WITH PARSER NGRAM
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists mv_plain;
+create table mv_plain (id int primary key, j json, key idx((cast(j->'$.tags' as char(20) array))));
+show create table mv_plain;
+Table	Create Table
+mv_plain	CREATE TABLE `mv_plain` (
+  `id` int NOT NULL,
+  `j` json DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
+  KEY `idx` ((cast(json_extract(`j`, _utf8mb4'$.tags') as char(20) array)))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table fts_articles add fulltext index idx_bad (id);
+Error 8200 (HY000): FULLTEXT index requires a string column, but id is int
+drop table if exists fts_articles, fts_inline, fts_ngram, mv_plain;

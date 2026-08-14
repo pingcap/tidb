@@ -1247,9 +1247,8 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 				fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 			}
 			if i != len(publicIndices)-1 {
-				buf.WriteString(",")
+				buf.WriteString(",\n")
 			}
-			buf.WriteString("\n")
 			continue
 		}
 		if idxInfo.Primary {
