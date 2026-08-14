@@ -53,6 +53,37 @@ fn everyday_string_and_date_builtins() {
     );
 }
 
+/// Go `builtinGetFormatSig`: both arguments are ETString, the format selector
+/// is case-sensitive, the location is case-insensitive, and TIMESTAMP shares
+/// DATETIME's table.
+#[test]
+fn get_format_reaches_the_sql_expression_path() {
+    let mut session = Session::new();
+    let StmtOutput::Rows { columns, rows } = session
+        .run_with_columns(
+            "SELECT GET_FORMAT(DATE, 'USA'), \
+                    GET_FORMAT(TIMESTAMP, 'eur'), \
+                    GET_FORMAT(TIME, 'unknown'), \
+                    GET_FORMAT(DATE, 1), \
+                    GET_FORMAT(DATE, NULL)",
+        )
+        .unwrap()
+    else {
+        panic!("GET_FORMAT must return rows")
+    };
+    assert!(columns.iter().all(|(_, field)| field.flen() == 17));
+    assert_eq!(
+        rows,
+        vec![vec![
+            Datum::new_string("%m.%d.%Y"),
+            Datum::new_string("%Y-%m-%d %H.%i.%s"),
+            Datum::new_string(""),
+            Datum::new_string(""),
+            Datum::Null,
+        ]]
+    );
+}
+
 /// A DATETIME/DATE column compared with a string or a number, checked
 /// against captured TiDB output.
 ///

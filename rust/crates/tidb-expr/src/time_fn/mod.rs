@@ -65,6 +65,7 @@ pub(crate) fn dispatch(
         "WEEKOFYEAR" => week_of_year_builtin(vals),
         "TIDB_PARSE_TSO_LOGICAL" => tidb_parse_tso_logical(vals),
         "TIDB_CURRENT_TSO" => current_tso(vals, cols),
+        "GET_FORMAT" => get_format_value(vals),
         "YEARWEEK" => yearweek(vals),
         "MONTHNAME" => monthname(vals),
         "DAYNAME" => dayname(vals),
@@ -514,26 +515,64 @@ fn tidb_parse_tso_logical(vals: &[Datum]) -> Result<Datum, EvalError> {
 /// unknown combination returns an empty string. Port of
 /// `builtinGetFormatSig.getFormat`.
 pub(crate) fn get_format(format_type: &str, location: &str) -> String {
-    let location = location.to_uppercase();
-    let res = match (format_type, location.as_str()) {
-        ("DATE", "USA") => "%m.%d.%Y",
-        ("DATE", "JIS") => "%Y-%m-%d",
-        ("DATE", "ISO") => "%Y-%m-%d",
-        ("DATE", "EUR") => "%d.%m.%Y",
-        ("DATE", "INTERNAL") => "%Y%m%d",
-        ("DATETIME", "USA") => "%Y-%m-%d %H.%i.%s",
-        ("DATETIME", "JIS") => "%Y-%m-%d %H:%i:%s",
-        ("DATETIME", "ISO") => "%Y-%m-%d %H:%i:%s",
-        ("DATETIME", "EUR") => "%Y-%m-%d %H.%i.%s",
-        ("DATETIME", "INTERNAL") => "%Y%m%d%H%i%s",
-        ("TIME", "USA") => "%h:%i:%s %p",
-        ("TIME", "JIS") => "%H:%i:%s",
-        ("TIME", "ISO") => "%H:%i:%s",
-        ("TIME", "EUR") => "%H.%i.%s",
-        ("TIME", "INTERNAL") => "%H%i%s",
-        _ => "",
+    get_format_bytes(format_type.as_bytes(), location.as_bytes()).to_owned()
+}
+
+fn get_format_value(vals: &[Datum]) -> Result<Datum, EvalError> {
+    let [format_type, location] = vals else {
+        return Err(EvalError::Unsupported("bad function arity"));
     };
-    res.to_string()
+    let Some(format_type) = crate::arg_eval_type::eval_string(format_type)? else {
+        return Ok(Datum::Null);
+    };
+    let Some(location) = crate::arg_eval_type::eval_string(location)? else {
+        return Ok(Datum::Null);
+    };
+    Ok(Datum::new_string(get_format_bytes(&format_type, &location)))
+}
+
+fn get_format_bytes(format_type: &[u8], location: &[u8]) -> &'static str {
+    let location_is = |expected: &[u8]| location.eq_ignore_ascii_case(expected);
+    let datetime = format_type == b"DATETIME" || format_type == b"TIMESTAMP";
+    if format_type == b"DATE" {
+        if location_is(b"USA") {
+            "%m.%d.%Y"
+        } else if location_is(b"JIS") || location_is(b"ISO") {
+            "%Y-%m-%d"
+        } else if location_is(b"EUR") {
+            "%d.%m.%Y"
+        } else if location_is(b"INTERNAL") {
+            "%Y%m%d"
+        } else {
+            ""
+        }
+    } else if datetime {
+        if location_is(b"USA") {
+            "%Y-%m-%d %H.%i.%s"
+        } else if location_is(b"JIS") || location_is(b"ISO") {
+            "%Y-%m-%d %H:%i:%s"
+        } else if location_is(b"EUR") {
+            "%Y-%m-%d %H.%i.%s"
+        } else if location_is(b"INTERNAL") {
+            "%Y%m%d%H%i%s"
+        } else {
+            ""
+        }
+    } else if format_type == b"TIME" {
+        if location_is(b"USA") {
+            "%h:%i:%s %p"
+        } else if location_is(b"JIS") || location_is(b"ISO") {
+            "%H:%i:%s"
+        } else if location_is(b"EUR") {
+            "%H.%i.%s"
+        } else if location_is(b"INTERNAL") {
+            "%H%i%s"
+        } else {
+            ""
+        }
+    } else {
+        ""
+    }
 }
 
 pub(crate) fn week(vals: &[Datum], default_week_format: i64) -> Result<Datum, EvalError> {

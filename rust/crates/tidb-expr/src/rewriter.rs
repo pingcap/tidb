@@ -35,7 +35,7 @@ use crate::constant::Constant;
 use crate::expression::{Expression, ScalarFunction};
 use crate::scalar_function::{binary_op_name, unary_op_name};
 use crate::EvalError;
-use tidb_ast::{BinaryOp, CiString, Expr, IsTarget, UnaryOp};
+use tidb_ast::{BinaryOp, CiString, Expr, GetFormatSelector, IsTarget, UnaryOp};
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 
 /// Go `mysql.DefaultDecimal` (`parser/mysql/const.go`): the value a decimal
@@ -986,6 +986,28 @@ fn rewrite_leaf(expr: &Expr, resolver: &impl ColumnResolver) -> Result<Expressio
             },
             resolver,
         ),
+        // The first GET_FORMAT argument is grammar, not an expression. Go's
+        // parser turns it into the signature's first ETString constant and
+        // collapses TIMESTAMP into DATETIME before evaluation.
+        Expr::GetFormat { selector, expr } => {
+            let selector = match selector {
+                GetFormatSelector::Date => "DATE",
+                GetFormatSelector::Time => "TIME",
+                GetFormatSelector::Datetime => "DATETIME",
+            };
+            let args = vec![
+                constant_string(selector),
+                rewrite_expr_resolved(expr, resolver)?,
+            ];
+            let ret_type = builtin_return_type("get_format", &args).ok_or(
+                EvalError::Unsupported("this builtin is not yet built for chunk evaluation"),
+            )?;
+            Ok(Expression::ScalarFunction(ScalarFunction::new(
+                CiString::new("get_format"),
+                ret_type,
+                args,
+            )))
+        }
         // `TIMESTAMPDIFF(unit, a, b)`'s unit is a dedicated AST field rather
         // than an argument expression (see `tidb_ast::Expr::TimestampDiff`),
         // but the shared implementation `time_fn::dispatch` already takes the

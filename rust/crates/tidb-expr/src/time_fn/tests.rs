@@ -52,6 +52,7 @@ fn get_format_table() {
     assert_eq!(get_format("DATETIME", "ISO"), "%Y-%m-%d %H:%i:%s");
     assert_eq!(get_format("DATETIME", "EUR"), "%Y-%m-%d %H.%i.%s");
     assert_eq!(get_format("DATETIME", "INTERNAL"), "%Y%m%d%H%i%s");
+    assert_eq!(get_format("TIMESTAMP", "eur"), "%Y-%m-%d %H.%i.%s");
     assert_eq!(get_format("TIME", "USA"), "%h:%i:%s %p");
     assert_eq!(get_format("TIME", "JIS"), "%H:%i:%s");
     assert_eq!(get_format("TIME", "ISO"), "%H:%i:%s");
