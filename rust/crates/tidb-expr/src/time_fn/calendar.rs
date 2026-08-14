@@ -654,112 +654,78 @@ pub(crate) fn to_seconds(vals: &[Datum]) -> Result<Datum, EvalError> {
     Ok(Datum::Int(seconds))
 }
 
-/// `DATE_ADD(date, INTERVAL amount unit)` / `DATE_SUB(...)`: adds (or, when
-/// `sign` is `-1`, subtracts) `amount` `unit`s to a date/datetime string.
-/// Covers `DAY`/`WEEK`/`MONTH`/`YEAR` (which preserve an existing
-/// time-of-day suffix verbatim, or omit it if the input had none — none of
-/// them touch the time portion) and `HOUR`/`MINUTE`/`SECOND`/`MICROSECOND`
-/// (which ALWAYS compute and render a time-of-day component instead — see
-/// [`date_add_time`]'s doc comment for why that's a different, much
-/// simpler problem than the standalone `HOUR()`/`MINUTE()`/`SECOND()`
-/// extraction functions' different two-path algorithm). `MICROSECOND`
-/// retains the full six-digit fractional result, matching the source's
-/// fixed `MaxFsp` result type for every microsecond interval.
+/// `DATE_ADD`/`DATE_SUB` calendar arithmetic from current Go
+/// `baseDateArithmetical` and `types.ParseDurationValue`.
 ///
-/// `DAY` is exact day arithmetic via the same `days_from_civil`/
-/// `civil_from_days` round-trip `TO_DAYS`/`FROM_DAYS` use, so month/year
-/// rollover and leap days are handled correctly for free —
-/// `2021-01-31 + 1 DAY` = `2021-02-01`, `2020-02-28 + 1 DAY` =
-/// `2020-02-29`. `WEEK` is `DAY` with the (already-rounded) amount
-/// pre-multiplied by 7, confirmed via `goeval` rather than assumed —
-/// including that a fractional `WEEK` amount rounds to the nearest whole
-/// WEEK first, THEN multiplies by 7, not the other way around: `INTERVAL
-/// 1.5 WEEK` = `+14` days, not `round(1.5*7)=11` days. `MONTH`/`YEAR` are
-/// calendar-FIELD arithmetic via [`add_months`], a genuinely different
-/// algorithm — MySQL clamps the day to the target month's length rather
-/// than overflowing into the next month, e.g. `2021-01-31 + 1 MONTH` =
-/// `2021-02-28`, not `2021-03-03`; the clamp is computed once against the
-/// FINAL target month, not iteratively re-clamped one month at a time —
-/// confirmed via `goeval`: `2021-01-31 + 2 MONTH` = `2021-03-31`, the full
-/// 31 days, not `2021-03-28` from clamping through February first. `QUARTER`
-/// shares the same `add_months` path, scaled by `×3` months (confirmed via
-/// `goeval`: `2024-01-31 + 1 QUARTER` = `2024-04-30`, `2024-11-30 + 1
-/// QUARTER` = `2025-02-28`).
-///
-/// The COMPOSITE units (`HOUR_MINUTE`, `DAY_HOUR`, `DAY_MINUTE`,
-/// `DAY_SECOND`, `MINUTE_SECOND`, `HOUR_SECOND`, `YEAR_MONTH`, and their
-/// `*_MICROSECOND` variants) are handled by [`composite_spec`]/
-/// [`parse_composite_value`], ported from `parseTimeValue`/
-/// `parseSingleTimeValue` in `pkg/types/time.go`. Their `amount` is always
-/// read as a STRING (an integer/decimal literal is formatted to its plain
-/// decimal string first, exactly like Go's `getIntervalFromInt`/
-/// `getIntervalFromReal` do before ever calling `ParseDurationValue`), then
-/// split on digit runs and right-aligned onto the unit's fields — so a
-/// SHORT string like `INTERVAL '30' HOUR_MINUTE` fills only the RIGHTMOST
-/// (smallest) field (`30` becomes MINUTES, not HOURS: `+30 minutes`), and a
-/// string with MORE numeric groups than the unit has fields (e.g. `'1:2:3'
-/// HOUR_MINUTE`) is a malformed-value warning in real TiDB, not a hard
-/// error, that resolves to a ZERO interval (the date is returned unchanged)
-/// — confirmed via `pkg/executor` capture, both under the default
-/// `STRICT_TRANS_TABLES` `sql_mode`. `*_MICROSECOND` variants keep only the
-/// whole-second part of the parsed nanoseconds; this crate's DATE_ADD
-/// result has no fractional-second representation (see [`date_add_time`]),
-/// the same limitation the plain `SECOND` unit already has for a decimal
-/// amount.
-///
-/// `amount` accepts `Int` directly or `Decimal` (rounded to the nearest
-/// whole unit via [`crate::Decimal::round_to_i64`], ties away
-/// from zero — confirmed via `goeval` for both a positive and a negative
-/// half-unit, matching this crate's one existing decimal-to-integer
-/// rounding rule rather than a newly invented one — BEFORE any per-unit
-/// multiplication like `WEEK`'s `×7` or `YEAR`'s `×12`, per the note
-/// above), or a `String`/`Bytes` amount — see
-/// [`parse_single_string_amount`]'s own doc for the `intervalReformatString`
-/// port (a `Str`-typed `Datum` still needs MySQL's general string-to-number
-/// coercion first, out of scope like `FROM_DAYS`'s argument, but a
-/// `String`/`Bytes` `Datum` — what an `INTERVAL '5' DAY` string literal
-/// actually evaluates to — does not).
-///
-/// The resulting year is validated against `DATE`'s real `0001`-`9999`
-/// range (see [`format_ymd_result`]) — a real bug in an earlier increment's
-/// `DAY`-only implementation never checked this at all, silently producing
-/// a malformed string like `10000-01-01` instead of `NULL` for
-/// `DATE_ADD('9999-12-31', INTERVAL 1 DAY)`; caught and fixed while
-/// probing `MONTH`/`YEAR`'s boundary behavior and confirming (via
-/// `goeval`) that `DAY` obeys the identical rule.
+/// Day/week units use exact civil-day arithmetic; month/quarter/year use
+/// calendar-field arithmetic with a single final-month day clamp. Clock and
+/// composite units use one microsecond timeline so carries and fractional
+/// seconds follow the same path. Composite numeric groups are right-aligned
+/// to their unit fields, and all computed years are limited to TiDB's
+/// representable range.
 pub(crate) fn date_add(
     unit: &str,
     date: &Datum,
     amount: &Datum,
     sign: i64,
 ) -> Result<Datum, EvalError> {
-    if let Some((index, cnt)) = composite_spec(unit) {
-        return date_add_composite(unit, date, amount, sign, index, cnt);
+    date_add_with_result_fsp(unit, date, amount, sign, None)
+}
+
+/// Go determines a temporal `DATE_ADD` result's FSP from the argument
+/// `FieldType`s while building the function. A string/numeric date result is
+/// different: its string signature prints no fraction for a whole-second
+/// answer and six digits otherwise, so it returns `None` here and lets the
+/// value choose that final rendering.
+pub(crate) fn date_add_result_fsp(
+    unit: &str,
+    date_type: Option<&tidb_datatype::FieldType>,
+    amount_type: Option<&tidb_datatype::FieldType>,
+) -> Option<u32> {
+    use tidb_datatype::EvalType;
+
+    let date_type = date_type?;
+    if !matches!(
+        date_type.eval_type(),
+        EvalType::Datetime | EvalType::Timestamp | EvalType::Duration
+    ) {
+        return None;
     }
-    let n = match amount {
-        Datum::Null => return Ok(Datum::Null),
-        Datum::Int(i) => *i,
-        Datum::UInt(i) => *i as i64,
-        Datum::Decimal(d) => d.round_to_i64().ok_or(EvalError::IntOverflow)?,
-        Datum::String(_) | Datum::Bytes(_) => {
-            let Some(s) = coerce_str(amount)? else {
-                return Ok(Datum::Null);
-            };
-            parse_single_string_amount(unit, &s)
-        }
-        Datum::Real(_) => {
-            return Err(EvalError::Unsupported("INTERVAL amount"));
-        }
-        Datum::MinNotNull | Datum::MaxValue => {
-            return Err(EvalError::Unsupported("range sentinel INTERVAL amount"));
-        }
-        other => {
-            other
-                .to_i64()
-                .map_err(|_| EvalError::Unsupported("INTERVAL amount conversion"))?
-                .value
-        }
+    let field_fsp = |field_type: &tidb_datatype::FieldType| {
+        u32::try_from(field_type.decimal().clamp(0, 6)).unwrap_or(0)
     };
+    if matches!(
+        unit.to_ascii_uppercase().as_str(),
+        "MICROSECOND"
+            | "SECOND_MICROSECOND"
+            | "MINUTE_MICROSECOND"
+            | "HOUR_MICROSECOND"
+            | "DAY_MICROSECOND"
+    ) {
+        return Some(6);
+    }
+    let interval_fsp = if unit.eq_ignore_ascii_case("SECOND") {
+        match amount_type.map(tidb_datatype::FieldType::eval_type) {
+            Some(EvalType::String | EvalType::Real | EvalType::Json) => 6,
+            Some(EvalType::Decimal) => amount_type.map_or(0, field_fsp),
+            _ => 0,
+        }
+    } else {
+        0
+    };
+    Some(field_fsp(date_type).max(interval_fsp))
+}
+
+pub(crate) fn date_add_with_result_fsp(
+    unit: &str,
+    date: &Datum,
+    amount: &Datum,
+    sign: i64,
+    result_fsp: Option<u32>,
+) -> Result<Datum, EvalError> {
+    if let Some((index, cnt)) = composite_spec(unit) {
+        return date_add_composite(unit, date, amount, sign, index, cnt, result_fsp);
+    }
     let Some(s) = interval_date_text(date)? else {
         return Ok(Datum::Null);
     };
@@ -770,52 +736,64 @@ pub(crate) fn date_add(
     let Some((y, m, d)) = parse_date_ymd(date_str) else {
         return Ok(Datum::Null);
     };
-    let unit_secs = if unit.eq_ignore_ascii_case("HOUR") {
-        Some(3600)
-    } else if unit.eq_ignore_ascii_case("MINUTE") {
-        Some(60)
-    } else if unit.eq_ignore_ascii_case("SECOND") {
-        Some(1)
-    } else {
-        None
-    };
-    if let Some(unit_secs) = unit_secs {
-        let (h, mi, sec) = match time_suffix {
-            Some(t) => match parse_time_hms(t) {
-                Some(hms) => hms,
-                None => return Ok(Datum::Null),
-            },
-            None => (0, 0, 0),
-        };
-        let Some(delta_secs) = sign.checked_mul(n).and_then(|v| v.checked_mul(unit_secs)) else {
+    if unit.eq_ignore_ascii_case("HOUR") || unit.eq_ignore_ascii_case("MINUTE") {
+        let Some(n) = whole_interval_amount(unit, amount)? else {
             return Ok(Datum::Null);
         };
-        return Ok(date_add_time(y, m, d, h, mi, sec, delta_secs));
+        let unit_micros = if unit.eq_ignore_ascii_case("HOUR") {
+            3_600_000_000
+        } else {
+            60_000_000
+        };
+        let Some(delta_micros) = sign
+            .checked_mul(n)
+            .and_then(|value| value.checked_mul(unit_micros))
+        else {
+            return Ok(Datum::Null);
+        };
+        let Some((h, mi, sec, microsecond)) = time_parts_with_micros(time_suffix) else {
+            return Ok(Datum::Null);
+        };
+        return Ok(date_add_time(
+            (y, m, d, h, mi, sec, microsecond),
+            delta_micros,
+            result_fsp,
+        ));
+    }
+    if unit.eq_ignore_ascii_case("SECOND") {
+        let Some(delta_micros) =
+            second_interval_micros(amount)?.and_then(|value| sign.checked_mul(value))
+        else {
+            return Ok(Datum::Null);
+        };
+        let Some((h, mi, sec, microsecond)) = time_parts_with_micros(time_suffix) else {
+            return Ok(Datum::Null);
+        };
+        return Ok(date_add_time(
+            (y, m, d, h, mi, sec, microsecond),
+            delta_micros,
+            result_fsp,
+        ));
     }
     if unit.eq_ignore_ascii_case("MICROSECOND") {
-        let (h, mi, sec, microsecond) = match time_suffix {
-            Some(t) => match parse_time_with_fraction(t) {
-                Some((h, mi, sec, fraction)) => {
-                    let scale = 10u32.pow(6 - fraction.len() as u32);
-                    let microsecond = if fraction.is_empty() {
-                        0
-                    } else {
-                        fraction.parse::<u32>().unwrap_or(0) * scale
-                    };
-                    (h, mi, sec, microsecond)
-                }
-                None => return Ok(Datum::Null),
-            },
-            None => (0, 0, 0, 0),
+        let Some(n) = whole_interval_amount(unit, amount)? else {
+            return Ok(Datum::Null);
+        };
+        let Some((h, mi, sec, microsecond)) = time_parts_with_micros(time_suffix) else {
+            return Ok(Datum::Null);
         };
         let Some(delta_micros) = sign.checked_mul(n) else {
             return Ok(Datum::Null);
         };
-        return Ok(date_add_time_micros(
+        return Ok(date_add_time(
             (y, m, d, h, mi, sec, microsecond),
             delta_micros,
+            result_fsp,
         ));
     }
+    let Some(n) = whole_interval_amount(unit, amount)? else {
+        return Ok(Datum::Null);
+    };
     // Every unit below scales the amount and adds it to a day or month count,
     // and TiDB's own suite hands this an amount that does not fit an `i64` at
     // all: `select "1000-01-01 00:00:00" + INTERVAL 9223372036854775808 day`
@@ -955,32 +933,12 @@ fn interval_date_text(date: &Datum) -> Result<Option<String>, EvalError> {
     }))
 }
 
-/// Parses a STRING `INTERVAL` amount for a non-composite unit, porting
-/// `intervalReformatString`'s two branches (`pkg/expression/builtin_time.go`):
-///
-/// - Every unit EXCEPT `SECOND` keeps only the LEADING `[+-]?[0-9]+` digit
-///   run (Go's `intervalRegexp`) and throws the fractional part away
-///   entirely — not a round, a hard truncation of the string itself before
-///   any numeric parsing happens. `'5.9' DAY` and `'5.4' DAY` both become
-///   `5` (confirmed via `goeval`: `DATE_ADD('2024-01-01', INTERVAL '5.9'
-///   DAY)` = `'2024-01-06'`, same as `'5.4'` and `'5'` — `'5.99'` doesn't
-///   round to `6` either). A string with no leading digit run (e.g. `''` or
-///   `'abc'`) becomes `0`, matching Go's `interval = "0"` fallback.
-/// - `SECOND` is parsed as a full decimal (Go routes it through
-///   `MyDecimal.FromString`, preserving the fraction so the real engine can
-///   render e.g. `+5.5` as a sub-second time-of-day). This crate's
-///   `date_add_time` has no fractional-second representation (the same
-///   documented limitation the numeric `Decimal` INTERVAL amount already
-///   has, see `date_add`'s own doc comment), so the closest amount this
-///   tier can still act on is the nearest whole second — reusing
-///   `Decimal::round_to_i64_saturating`'s ties-away-from-zero rule rather
-///   than inventing a second rounding convention.
+/// Current Go `intervalReformatString` for a non-SECOND single unit: retain
+/// only the leading signed integer run, or zero when no run exists. SECOND
+/// takes the separate exact decimal-microsecond parser.
 fn parse_single_string_amount(unit: &str, s: &str) -> i64 {
     let trimmed = s.trim();
-    if unit.eq_ignore_ascii_case("SECOND") {
-        let (decimal, _) = crate::Decimal::parse_mysql(trimmed);
-        return decimal.round_to_i64_saturating();
-    }
+    debug_assert!(!unit.eq_ignore_ascii_case("SECOND"));
     let bytes = trimmed.as_bytes();
     let mut i = 0;
     if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
@@ -994,6 +952,92 @@ fn parse_single_string_amount(unit: &str, s: &str) -> i64 {
         return 0;
     }
     trimmed[..i].parse::<i64>().unwrap_or(i64::MAX)
+}
+
+fn whole_interval_amount(unit: &str, amount: &Datum) -> Result<Option<i64>, EvalError> {
+    Ok(Some(match amount {
+        Datum::Null => return Ok(None),
+        Datum::Int(value) => *value,
+        Datum::UInt(value) => i64::try_from(*value).unwrap_or(i64::MAX),
+        Datum::Decimal(value) => value.round_to_i64_saturating(),
+        Datum::String(_) | Datum::Bytes(_) => {
+            let Some(value) = coerce_str(amount)? else {
+                return Ok(None);
+            };
+            parse_single_string_amount(unit, &value)
+        }
+        Datum::Real(value) => value.round() as i64,
+        Datum::MinNotNull | Datum::MaxValue => {
+            return Err(EvalError::Unsupported("range sentinel INTERVAL amount"));
+        }
+        other => {
+            other
+                .to_i64()
+                .map_err(|_| EvalError::Unsupported("INTERVAL amount conversion"))?
+                .value
+        }
+    }))
+}
+
+/// Go's `parseSingleTimeValue(..., "SECOND", false)` keeps the first six
+/// fractional digits and truncates the rest. The decimal/string/real
+/// interval getters all normalize their value to decimal text before that
+/// parser runs; doing the same here makes one exact microsecond amount for
+/// the calendar path instead of rounding through an integer.
+fn second_interval_micros(amount: &Datum) -> Result<Option<i64>, EvalError> {
+    let text = match amount {
+        Datum::Null => return Ok(None),
+        Datum::Int(value) => value.to_string(),
+        Datum::UInt(value) => value.to_string(),
+        Datum::Decimal(value) => value.to_string(),
+        Datum::String(_) | Datum::Bytes(_) => {
+            let Some(value) = coerce_str(amount)? else {
+                return Ok(None);
+            };
+            tidb_datatype::Decimal::parse_mysql(value.trim())
+                .0
+                .to_string()
+        }
+        Datum::Real(value) => tidb_datatype::Decimal::parse_mysql(&value.to_string())
+            .0
+            .to_string(),
+        Datum::MinNotNull | Datum::MaxValue => {
+            return Err(EvalError::Unsupported("range sentinel INTERVAL amount"));
+        }
+        other => other
+            .to_i64()
+            .map_err(|_| EvalError::Unsupported("INTERVAL amount conversion"))?
+            .value
+            .to_string(),
+    };
+    Ok(decimal_seconds_to_micros(&text).ok())
+}
+
+fn decimal_seconds_to_micros(text: &str) -> Result<i64, EvalError> {
+    let text = text.trim();
+    let (negative, magnitude) = text.strip_prefix('-').map_or_else(
+        || (false, text.strip_prefix('+').unwrap_or(text)),
+        |value| (true, value),
+    );
+    let (whole, fraction) = magnitude.split_once('.').unwrap_or((magnitude, ""));
+    let whole = whole.parse::<i128>().map_err(|_| EvalError::IntOverflow)?;
+    let mut micros = fraction
+        .bytes()
+        .take(6)
+        .try_fold(0i128, |value, digit| {
+            digit
+                .is_ascii_digit()
+                .then_some(value * 10 + i128::from(digit - b'0'))
+        })
+        .ok_or(EvalError::IntOverflow)?;
+    for _ in fraction.len().min(6)..6 {
+        micros *= 10;
+    }
+    let value = whole
+        .checked_mul(1_000_000)
+        .and_then(|value| value.checked_add(micros))
+        .ok_or(EvalError::IntOverflow)?;
+    i64::try_from(if negative { -value } else { value }).map_err(|_| EvalError::IntOverflow)
 }
 
 /// Composite-unit field indices, mirroring `pkg/types/time.go`'s
@@ -1126,6 +1170,7 @@ fn date_add_composite(
     sign: i64,
     index: usize,
     cnt: usize,
+    result_fsp: Option<u32>,
 ) -> Result<Datum, EvalError> {
     let format = match amount {
         Datum::Null => return Ok(Datum::Null),
@@ -1148,12 +1193,8 @@ fn date_add_composite(
     let Some((y, m, d)) = parse_date_ymd(date_str) else {
         return Ok(Datum::Null);
     };
-    let (h, mi, sec) = match time_suffix {
-        Some(t) => match parse_time_hms(t) {
-            Some(hms) => hms,
-            None => return Ok(Datum::Null),
-        },
-        None => (0, 0, 0),
+    let Some((h, mi, sec, microsecond)) = time_parts_with_micros(time_suffix) else {
+        return Ok(Datum::Null);
     };
     let (years, months, days, nanos) = parse_composite_value(index, cnt, &format);
     if years != 0 || months != 0 {
@@ -1167,8 +1208,18 @@ fn date_add_composite(
         };
         return Ok(format_ymd_result(y2, m2, d2, time_suffix));
     }
-    let delta_secs = sign * (days * 86_400 + nanos / 1_000_000_000);
-    Ok(date_add_time(y, m, d, h, mi, sec, delta_secs))
+    let Some(delta_micros) = days
+        .checked_mul(86_400_000_000)
+        .and_then(|value| value.checked_add(nanos / 1_000))
+        .and_then(|value| sign.checked_mul(value))
+    else {
+        return Ok(Datum::Null);
+    };
+    Ok(date_add_time(
+        (y, m, d, h, mi, sec, microsecond),
+        delta_micros,
+        result_fsp,
+    ))
 }
 
 /// `EXTRACT(<composite unit> FROM value)`, ported from
@@ -1310,6 +1361,20 @@ pub(crate) fn parse_time_with_fraction(s: &str) -> Option<(u32, u32, u32, String
         return None;
     }
     Some((h, mi, sec, fraction.chars().take(6).collect()))
+}
+
+fn time_parts_with_micros(time_suffix: Option<&str>) -> Option<(u32, u32, u32, u32)> {
+    let Some(time_suffix) = time_suffix else {
+        return Some((0, 0, 0, 0));
+    };
+    let (hour, minute, second, fraction) = parse_time_with_fraction(time_suffix)?;
+    let scale = 10u32.pow(6 - fraction.len() as u32);
+    let microsecond = if fraction.is_empty() {
+        0
+    } else {
+        fraction.parse::<u32>().ok()? * scale
+    };
+    Some((hour, minute, second, microsecond))
 }
 
 #[derive(Default)]
@@ -1739,30 +1804,11 @@ fn parse_time_12(input: &[char]) -> Option<(u32, u32, u32, Option<bool>, usize)>
 /// An amount whose seconds count does not fit an `i64` is `NULL`, for the same
 /// reason as the day/month units above: real TiDB answers `NULL` there because
 /// the date left `DATE`'s range, and an overflow is that case arriving early.
-fn date_add_time(y: i64, m: u32, d: u32, h: u32, mi: u32, sec: u32, delta_secs: i64) -> Datum {
-    let Some(total) = days_from_civil(y, m, d)
-        .checked_mul(86_400)
-        .and_then(|v| v.checked_add(i64::from(h) * 3600 + i64::from(mi) * 60 + i64::from(sec)))
-        .and_then(|v| v.checked_add(delta_secs))
-    else {
-        return Datum::Null;
-    };
-    let day_count = total.div_euclid(86_400);
-    let secs_of_day = total.rem_euclid(86_400);
-    let (y2, m2, d2) = civil_from_days(day_count);
-    format_ymdhms_result(
-        y2,
-        m2,
-        d2,
-        (secs_of_day / 3600) as u32,
-        (secs_of_day / 60 % 60) as u32,
-        (secs_of_day % 60) as u32,
-    )
-}
-
-/// The microsecond form of [`date_add_time`]. Go fixes this unit's result FSP
-/// at six, so even a whole-second result retains a `.000000` suffix.
-fn date_add_time_micros(parts: (i64, u32, u32, u32, u32, u32, u32), delta_micros: i64) -> Datum {
+fn date_add_time(
+    parts: (i64, u32, u32, u32, u32, u32, u32),
+    delta_micros: i64,
+    result_fsp: Option<u32>,
+) -> Datum {
     let (y, m, d, h, mi, sec, microsecond) = parts;
     const MICROS_PER_SECOND: i64 = 1_000_000;
     const MICROS_PER_DAY: i64 = 86_400 * MICROS_PER_SECOND;
@@ -1782,54 +1828,44 @@ fn date_add_time_micros(parts: (i64, u32, u32, u32, u32, u32, u32), delta_micros
     let micros_of_day = total.rem_euclid(MICROS_PER_DAY);
     let seconds_of_day = micros_of_day / MICROS_PER_SECOND;
     let (y2, m2, d2) = civil_from_days(day_count);
-    format_ymdhms_micro_result(
-        y2,
-        m2,
-        d2,
-        (seconds_of_day / 3_600) as u32,
-        (seconds_of_day / 60 % 60) as u32,
-        (seconds_of_day % 60) as u32,
-        (micros_of_day % MICROS_PER_SECOND) as u32,
+    format_ymdhms_result(
+        (
+            y2,
+            m2,
+            d2,
+            (seconds_of_day / 3_600) as u32,
+            (seconds_of_day / 60 % 60) as u32,
+            (seconds_of_day % 60) as u32,
+            (micros_of_day % MICROS_PER_SECOND) as u32,
+        ),
+        result_fsp,
     )
 }
 
-fn format_ymdhms_micro_result(
-    y: i64,
-    m: u32,
-    d: u32,
-    h: u32,
-    mi: u32,
-    sec: u32,
-    microsecond: u32,
+fn format_ymdhms_result(
+    parts: (i64, u32, u32, u32, u32, u32, u32),
+    result_fsp: Option<u32>,
 ) -> Datum {
+    let (y, m, d, h, mi, sec, microsecond) = parts;
+    let fsp =
+        result_fsp
+            .map(|value| value.min(6))
+            .unwrap_or_else(|| if microsecond == 0 { 0 } else { 6 });
+    let fraction = if fsp == 0 {
+        String::new()
+    } else {
+        let value = microsecond / 10u32.pow(6 - fsp);
+        format!(".{value:0width$}", width = fsp as usize)
+    };
     if y == 0 {
-        return Datum::new_string(format!(
-            "0000-00-00 {h:02}:{mi:02}:{sec:02}.{microsecond:06}"
-        ));
+        return Datum::new_string(format!("0000-00-00 {h:02}:{mi:02}:{sec:02}{fraction}"));
     }
     if !(1..=9999).contains(&y) {
         return Datum::Null;
     }
     Datum::new_string(format!(
-        "{y:04}-{m:02}-{d:02} {h:02}:{mi:02}:{sec:02}.{microsecond:06}"
+        "{y:04}-{m:02}-{d:02} {h:02}:{mi:02}:{sec:02}{fraction}"
     ))
-}
-
-/// Like [`format_ymd_result`], but for `HOUR`/`MINUTE`/`SECOND` intervals,
-/// which always render a time-of-day component — even when the computed
-/// year hits the "zero date" case, where ONLY the date portion becomes the
-/// `0000-00-00` placeholder; the time portion still shows the actual
-/// computed value (e.g. `'0001-01-01 00:00:00' - 1 HOUR` =
-/// `'0000-00-00 23:00:00'`, confirmed via `goeval` — not
-/// `'0000-00-00 00:00:00'` or a bare `'0000-00-00'`).
-pub(crate) fn format_ymdhms_result(y: i64, m: u32, d: u32, h: u32, mi: u32, sec: u32) -> Datum {
-    if y == 0 {
-        return Datum::new_string(format!("0000-00-00 {h:02}:{mi:02}:{sec:02}"));
-    }
-    if !(1..=9999).contains(&y) {
-        return Datum::Null;
-    }
-    Datum::new_string(format!("{y:04}-{m:02}-{d:02} {h:02}:{mi:02}:{sec:02}"))
 }
 
 /// Adds `n` months to `(y, m, d)` as a calendar field increment: the

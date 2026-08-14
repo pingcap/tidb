@@ -735,17 +735,14 @@ fn date_parts() {
        // time-of-day) -- captured via `goeval`:
        // `DATE_ADD('...10:00:00', INTERVAL '-5.5' SECOND)` is
        // `...09:59:54.500000`, the fraction kept exactly, not rounded and not
-       // truncated like `DAY`'s string amount above. This tier's
-       // `date_add_time` has no fractional-second representation at all
-       // (the same limitation the numeric `Decimal` amount already has), so
-       // the closest amount it can still act on is the nearest whole second.
+       // truncated like `DAY`'s string amount above.
     assert_eq!(
         e("date_add('2024-01-15 10:00:00', interval '5' second)"),
         "STR:2024-01-15 10:00:05"
     );
     assert_eq!(
         e("date_add('2024-01-15 10:00:00', interval '5.5' second)"),
-        "STR:2024-01-15 10:00:06"
+        "STR:2024-01-15 10:00:05.500000"
     );
 }
 

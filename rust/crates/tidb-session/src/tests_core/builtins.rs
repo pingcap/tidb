@@ -296,7 +296,7 @@ fn math_and_conditional_builtins() {
 /// match.
 /// `DATE_ADD`/`DATE_SUB`/`ADDDATE`/`SUBDATE`, `EXTRACT` and
 /// `TIMESTAMPDIFF` through the CHUNK path, checked against captured TiDB
-/// output with `time_zone = '+00:00'` (`pkg/executor`, a table holding
+/// output with `time_zone = '+00:00'` (`pkg/executor`, a typed table holding
 /// `('2024-01-31 10:20:30', '2024-01-31')` and
 /// `('2025-03-15 23:59:59', '2025-03-15')` plus an all-NULL row).
 ///
@@ -312,7 +312,7 @@ fn date_interval_extract_and_timestampdiff() {
     let mut session = Session::new();
     session.apply_set("SET time_zone = '+00:00'").unwrap();
     session
-        .run("CREATE TABLE t (created VARCHAR(30), d VARCHAR(30))")
+        .run("CREATE TABLE t (created DATETIME(0), d DATE)")
         .unwrap();
     session
         .run(
@@ -338,6 +338,68 @@ fn date_interval_extract_and_timestampdiff() {
             ["2025-03-15 23:59:59.500000"],
             ["NULL"]
         ]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT DATE_ADD(created, INTERVAL 0.5 SECOND) FROM t")),
+        [
+            ["2024-01-31 10:20:30.5"],
+            ["2025-03-15 23:59:59.5"],
+            ["NULL"]
+        ]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT DATE_ADD(created, INTERVAL -0.5 SECOND) FROM t")),
+        [
+            ["2024-01-31 10:20:29.5"],
+            ["2025-03-15 23:59:58.5"],
+            ["NULL"]
+        ]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT DATE_ADD(created, INTERVAL 0.1234567 SECOND) FROM t")),
+        [
+            ["2024-01-31 10:20:30.123456"],
+            ["2025-03-15 23:59:59.123456"],
+            ["NULL"]
+        ]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT DATE_ADD(created, INTERVAL '0.5' SECOND) FROM t")),
+        [
+            ["2024-01-31 10:20:30.500000"],
+            ["2025-03-15 23:59:59.500000"],
+            ["NULL"]
+        ]
+    );
+    assert_eq!(
+        row_text(
+            session.run("SELECT DATE_ADD(created, INTERVAL '1.500000' SECOND_MICROSECOND) FROM t")
+        ),
+        [
+            ["2024-01-31 10:20:31.500000"],
+            ["2025-03-16 00:00:00.500000"],
+            ["NULL"]
+        ]
+    );
+    session
+        .run("CREATE TABLE tf (created DATETIME(3))")
+        .unwrap();
+    session
+        .run("INSERT INTO tf VALUES ('2024-01-31 10:20:30.125')")
+        .unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT DATE_ADD(created, INTERVAL 1 HOUR) FROM tf")),
+        [["2024-01-31 11:20:30.125"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT DATE_ADD(created, INTERVAL 0.5 SECOND) FROM tf")),
+        [["2024-01-31 10:20:30.625"]]
+    );
+    assert_eq!(
+        row_text(
+            session.run("SELECT DATE_ADD(created, INTERVAL '1.500000' SECOND_MICROSECOND) FROM tf")
+        ),
+        [["2024-01-31 10:20:31.625000"]]
     );
     // Captured: the month-end CLAMP -- January 31 plus one month is
     // February 29 in a leap year, not March 3.

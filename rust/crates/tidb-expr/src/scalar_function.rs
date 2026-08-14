@@ -719,13 +719,19 @@ impl ScalarFunction {
             let subtract = name.starts_with("date_sub_");
             if subtract || name.starts_with("date_add_") {
                 let unit = &name["date_add_".len()..];
+                let result_fsp = crate::time_fn::calendar::date_add_result_fsp(
+                    unit,
+                    self.args[0].static_type(),
+                    self.args[1].static_type(),
+                );
                 let date = self.args[0].eval(ctx, row)?;
                 let amount = self.args[1].eval(ctx, row)?;
-                return crate::time_fn::calendar::date_add(
+                return crate::time_fn::calendar::date_add_with_result_fsp(
                     unit,
                     &date,
                     &amount,
                     if subtract { -1 } else { 1 },
+                    result_fsp,
                 );
             }
         }
