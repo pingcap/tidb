@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -356,31 +357,18 @@ func generatePlanForPhysicalTable(
 	backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
 	err = handle.RunWithRetry(ctx, 8, backoffer, logutil.DDLLogger(), func(_ context.Context) (bool, error) {
 		regionCache := store.(helper.Storage).GetRegionCache()
-		recordRegionMetas, err := regionCache.LoadRegionsInKeyRange(tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
+		recordRegionMetas, err := copr.LoadSortedContinuousRegions(
+			tikv.NewBackofferWithVars(context.Background(), 20000, nil), regionCache, startKey, endKey)
+		failpoint.Inject("mockPhysicalTableRegionDiscontinuity", func() {
+			err = copr.ErrRegionsNotContinuous
+		})
+		// A concurrent region split or merge can make the scan discontinuous, so
+		// retry the full scan.
+		if errors.ErrorEqual(err, copr.ErrRegionsNotContinuous) {
+			return true, err
+		}
 		if err != nil {
 			return false, err
-		}
-		sort.Slice(recordRegionMetas, func(i, j int) bool {
-			return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
-		})
-
-		// LoadRegionsInKeyRange can combine multiple PD scans. A concurrent region
-		// split or merge can make those scans discontinuous, so retry the full scan.
-		shouldRetry := false
-		cur := recordRegionMetas[0]
-		for _, m := range recordRegionMetas[1:] {
-			if !bytes.Equal(cur.EndKey(), m.StartKey()) {
-				shouldRetry = true
-				break
-			}
-			cur = m
-		}
-		failpoint.Inject("mockPhysicalTableRegionDiscontinuity", func() {
-			shouldRetry = true
-		})
-
-		if shouldRetry {
-			return true, errors.New("regions are not continuous")
 		}
 
 		attemptMetas := make([][]byte, 0, 4)
