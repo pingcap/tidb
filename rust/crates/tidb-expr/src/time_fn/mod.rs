@@ -147,7 +147,7 @@ fn date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 /// (`time_zone`-adjusted) statement time, always truncating fractional
 /// seconds. `CURRENT_TIMESTAMP` is the same function class.
 fn now(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    let fsp = parse_fsp(vals)?.unwrap_or(0);
+    let fsp = parse_fsp_with_null_as_zero(vals)?.unwrap_or(0);
     let (utc_secs, nanos, tz_offset) = cols.now().ok_or(no_clock_err())?;
     Ok(Datum::new_string(format_datetime(
         utc_secs + i64::from(tz_offset),
@@ -160,7 +160,7 @@ fn now(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 /// `builtinUTCTimestampWithArgSig` / `builtinUTCTimestampWithoutArgSig`:
 /// raw UTC statement time, always rounding fractional seconds half-up.
 fn utc_timestamp(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    let fsp = parse_fsp(vals)?.unwrap_or(0);
+    let fsp = parse_fsp_with_null_as_zero(vals)?.unwrap_or(0);
     let (utc_secs, nanos, _) = cols.now().ok_or(no_clock_err())?;
     Ok(Datum::new_string(format_datetime(
         utc_secs, nanos, fsp, true,
@@ -192,7 +192,7 @@ fn utc_date(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
 /// statement time. The zero-argument signature truncates; an explicit FSP,
 /// including zero, rounds half-up. `CURTIME` and `CURRENT_TIME` are aliases.
 fn current_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
-    let fsp = parse_fsp(vals)?;
+    let fsp = parse_fsp_with_null_as_zero(vals)?;
     let (utc_secs, nanos, tz_offset) = cols.now().ok_or(no_clock_err())?;
     // builtinCurrentTime1ArgSig first renders TimeFSPFormat (six digits,
     // truncating sub-microsecond nanoseconds) and only then ParseDuration
@@ -211,6 +211,9 @@ fn current_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> 
 /// statement time with the same zero-argument-truncate / explicit-FSP-round
 /// split as [`current_time`].
 fn utc_time(vals: &[Datum], cols: &dyn Columns) -> Result<Datum, EvalError> {
+    if matches!(vals, [Datum::Null]) {
+        return Ok(Datum::Null);
+    }
     let fsp = parse_fsp(vals)?;
     let (utc_secs, nanos, _) = cols.now().ok_or(no_clock_err())?;
     // builtinUTCTimeWithArgSig has the identical TimeFSPFormat-then-parse
@@ -277,6 +280,14 @@ fn parse_fsp(vals: &[Datum]) -> Result<Option<u32>, EvalError> {
         _ => Err(EvalError::Unsupported(
             "bad fractional-seconds-precision argument",
         )),
+    }
+}
+
+fn parse_fsp_with_null_as_zero(vals: &[Datum]) -> Result<Option<u32>, EvalError> {
+    if matches!(vals, [Datum::Null]) {
+        Ok(Some(0))
+    } else {
+        parse_fsp(vals)
     }
 }
 

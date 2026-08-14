@@ -318,23 +318,48 @@ fn timestamp_return_type(args: &[Expression]) -> Option<FieldType> {
     Some(result)
 }
 
-fn sysdate_return_type(args: &[Expression]) -> Option<FieldType> {
+fn clock_fsp(args: &[Expression]) -> Option<i64> {
     let fsp = match args {
         [] => 0,
         [Expression::Constant(constant)] => match &constant.value {
+            Datum::Null => 0,
             Datum::Int(value) => *value,
             Datum::UInt(value) => i64::try_from(*value).ok()?,
             value => value.sql_string().ok()?.parse().ok()?,
         },
         _ => return None,
     };
-    if !(0..=6).contains(&fsp) {
-        return None;
-    }
+    (0..=6).contains(&fsp).then_some(fsp)
+}
+
+fn clock_datetime_return_type(args: &[Expression], not_null: bool) -> Option<FieldType> {
+    let fsp = clock_fsp(args)?;
     let mut result = FieldType::new(FieldTypeCode::Datetime);
     result.set_decimal(fsp);
     result.set_flen(19 + if fsp == 0 { 0 } else { fsp + 1 });
-    result.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    if not_null {
+        result.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    }
+    set_binary_charset(&mut result);
+    Some(result)
+}
+
+fn clock_date_return_type(args: &[Expression]) -> Option<FieldType> {
+    if !args.is_empty() {
+        return None;
+    }
+    let mut result = FieldType::new(FieldTypeCode::Date);
+    result.set_decimal(0);
+    result.set_flen(10);
+    set_binary_charset(&mut result);
+    Some(result)
+}
+
+fn clock_duration_return_type(args: &[Expression]) -> Option<FieldType> {
+    let fsp = clock_fsp(args)?;
+    let mut result = FieldType::new(FieldTypeCode::Duration);
+    result.set_decimal(fsp);
+    result.set_flen(8 + if fsp == 0 { 0 } else { fsp + 1 });
     set_binary_charset(&mut result);
     Some(result)
 }
@@ -724,9 +749,9 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             set_binary_charset(&mut ft);
             ft
         }
-        // The date/time family. `TIME()` and `DATE()` retain their native
-        // temporal cell domains; the remaining values this crate produces
-        // are formatted strings or integers.
+        // The date/time family. Functions whose Go signatures return
+        // ETDatetime or ETDuration retain those native chunk cell domains;
+        // string-formatting functions stay textual.
         "time" => time_return_type(args)?,
         "date" if args.len() == 1 => {
             let mut ft = FieldType::new(FieldTypeCode::Date);
@@ -734,13 +759,16 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
             ft.set_flen(10);
             ft
         }
-        "now" | "current_timestamp" | "localtime" | "localtimestamp" | "utc_timestamp"
-        | "curdate" | "current_date" | "utc_date"
-        | "curtime" | "current_time" | "utc_time" | "monthname" | "dayname" | "last_day"
-        | "sec_to_time" | "maketime" | "makedate" | "from_days" | "date_format" | "str_to_date" => text(),
+        "now" | "current_timestamp" | "localtime" | "localtimestamp" | "utc_timestamp" => {
+            clock_datetime_return_type(args, false)?
+        }
+        "curdate" | "current_date" | "utc_date" => clock_date_return_type(args)?,
+        "curtime" | "current_time" | "utc_time" => clock_duration_return_type(args)?,
+        "monthname" | "dayname" | "last_day" | "sec_to_time" | "maketime" | "makedate"
+        | "from_days" | "date_format" | "str_to_date" => text(),
         "addtime" | "subtime" => add_sub_time_return_type(args)?,
         "timestamp" => timestamp_return_type(args)?,
-        "sysdate" => sysdate_return_type(args)?,
+        "sysdate" => clock_datetime_return_type(args, true)?,
         "timestampadd" => text(),
         "month" | "day" | "dayofmonth" | "dayofweek" | "dayofyear" | "weekday" | "quarter"
         | "week" | "weekofyear" | "yearweek" | "year" | "hour" | "minute" | "second"

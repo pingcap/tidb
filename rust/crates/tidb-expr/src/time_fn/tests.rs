@@ -418,6 +418,21 @@ fn current_time_truncates_to_microseconds_before_fsp_rounding() {
 }
 
 #[test]
+fn current_clock_null_fsp_follows_each_go_signature() {
+    let clock = FractionalClock;
+    assert_eq!(now(&[Datum::Null], &clock), now(&[Datum::Int(0)], &clock));
+    assert_eq!(
+        utc_timestamp(&[Datum::Null], &clock),
+        utc_timestamp(&[Datum::Int(0)], &clock)
+    );
+    assert_eq!(
+        current_time(&[Datum::Null], &clock),
+        current_time(&[Datum::Int(0)], &clock)
+    );
+    assert_eq!(utc_time(&[Datum::Null], &clock), Ok(Datum::Null));
+}
+
+#[test]
 fn go_time_vectors_cover_duration_scale_and_clamp() {
     assert_eq!(
         sec_to_time(&[Datum::new_string("123.4".to_string())]).unwrap(),

@@ -1139,6 +1139,41 @@ impl ScalarFunction {
                 self.get_static_type().map(FieldType::decimal),
             );
         }
+        if matches!(
+            upper.as_str(),
+            "NOW"
+                | "CURRENT_TIMESTAMP"
+                | "LOCALTIME"
+                | "LOCALTIMESTAMP"
+                | "UTC_TIMESTAMP"
+                | "CURDATE"
+                | "CURRENT_DATE"
+                | "UTC_DATE"
+                | "CURTIME"
+                | "CURRENT_TIME"
+                | "UTC_TIME"
+        ) {
+            let result = crate::time_fn::dispatch(&upper, &vals, ctx)
+                .expect("the current-clock family is registered")?;
+            return match self.get_static_type().map(FieldType::code) {
+                Some(tidb_datatype::FieldTypeCode::Datetime) => crate::cast::parse_computed_time(
+                    &result,
+                    ctx,
+                    tidb_datatype::TimeType::DateTime,
+                    self.get_static_type().map(FieldType::decimal),
+                ),
+                Some(tidb_datatype::FieldTypeCode::Date) => crate::cast::parse_computed_time(
+                    &result,
+                    ctx,
+                    tidb_datatype::TimeType::Date,
+                    Some(0),
+                ),
+                Some(tidb_datatype::FieldTypeCode::Duration) => {
+                    crate::cast::parse_computed_duration(&result, ctx)
+                }
+                _ => Ok(result),
+            };
+        }
         if matches!(upper.as_str(), "ROUND" | "TRUNCATE")
             && matches!(vals.first(), Some(Datum::Decimal(_)))
         {
