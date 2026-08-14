@@ -864,11 +864,21 @@ impl ScalarFunction {
         // client sees are the vectorized path's.
         if name == "in" && self.args.len() >= 2 {
             let collation = self.derived_collation();
-            let value = self.args[0].eval(ctx, row)?;
+            let first_eval_type = self.args[0].static_type().map(FieldType::eval_type);
+            let cast_candidate =
+                |value: Datum, expression: &Expression| -> Result<Datum, EvalError> {
+                    match first_eval_type {
+                        Some(tidb_datatype::EvalType::Duration) => {
+                            crate::cast::cast_arg_as_duration(&value, expression.static_type(), ctx)
+                        }
+                        _ => Ok(value),
+                    }
+                };
+            let value = cast_candidate(self.args[0].eval(ctx, row)?, &self.args[0])?;
             let mut found_null = value.is_null();
             let mut found_match = false;
             for item_expr in &self.args[1..] {
-                let item = item_expr.eval(ctx, row)?;
+                let item = cast_candidate(item_expr.eval(ctx, row)?, item_expr)?;
                 match crate::ops::eval_binary_full(
                     tidb_ast::BinaryOp::Eq,
                     value.clone(),
@@ -878,11 +888,10 @@ impl ScalarFunction {
                     // Go's `inFunctionClass` gives EVERY argument `args[0]`'s
                     // own eval type rather than running `GetAccurateCmpType`
                     // per pair, so the item's constant-ness does not steer it
-                    // there. Handing the real argument expressions over is
-                    // still strictly more information than claiming both are
-                    // literals; what remains unported is the unconditional
-                    // cast to `args[0]`'s type, which shows up only for a
-                    // temporal `args[0]` against a non-constant text item.
+                    // there. The duration signature's unconditional cast is
+                    // applied above; handing the real argument expressions
+                    // over remains strictly more information than claiming
+                    // both are literals for the other signatures.
                     crate::ops::Operands::of(&self.args[0], item_expr),
                     ctx,
                 )? {

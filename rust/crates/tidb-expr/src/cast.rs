@@ -219,6 +219,30 @@ fn cast_to_duration(
     }
 }
 
+/// Go `WrapWithCastAsDuration` applied to one builtin argument value.
+///
+/// A duration expression is already in the requested domain. Calendar values
+/// preserve their declared fractional precision; every other source receives
+/// Go's `MaxFsp` target before the cast signature parses it.
+pub(crate) fn cast_arg_as_duration(
+    value: &Datum,
+    source: Option<&tidb_datatype::FieldType>,
+    ctx: &dyn crate::Columns,
+) -> Result<Datum, EvalError> {
+    if matches!(value, Datum::Duration(_) | Datum::Null) {
+        return Ok(value.clone());
+    }
+    let fsp = source
+        .filter(|field_type| {
+            matches!(
+                field_type.code(),
+                FieldTypeCode::Date | FieldTypeCode::Datetime | FieldTypeCode::Timestamp
+            )
+        })
+        .map_or(6, FieldType::decimal);
+    cast_to_duration(value, source, ctx, fsp)
+}
+
 /// Go `types.ProduceStrWithSpecifiedTp` (`pkg/types/datum.go:1289-1304`),
 /// warning half: a value the target width cannot hold raises
 /// `ErrDataTooLong` (1406) "Data Too Long, field len %d, data len %d".
