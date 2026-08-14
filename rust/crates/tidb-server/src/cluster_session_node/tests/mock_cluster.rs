@@ -29,6 +29,7 @@ use tidb_txnkv::Key;
 /// assert.
 #[derive(Debug, Default)]
 pub(super) struct MockCluster {
+    pub(super) advisory_locks: tidb_executor::advisory_lock_state::LocalAdvisoryLockService,
     pub(super) committed: Mutex<BTreeMap<Vec<u8>, Vec<u8>>>,
     /// The timestamp of the last commit that touched each key, which is
     /// what a prewrite at `start_ts` is checked against -- TiKV's own
@@ -238,6 +239,28 @@ impl ClusterTransactions for MockTransactions {
             cluster: Arc::clone(&self.0),
             start_ts,
         }))
+    }
+
+    fn acquire_advisory_lock(
+        &self,
+        name: &str,
+        timeout: Duration,
+    ) -> Result<
+        Box<dyn tidb_executor::advisory_lock_state::AdvisoryLockLease>,
+        tidb_executor::advisory_lock_state::AdvisoryLockError,
+    > {
+        tidb_executor::advisory_lock_state::AdvisoryLockService::acquire(
+            &self.0.advisory_locks,
+            name,
+            timeout,
+        )
+    }
+
+    fn is_advisory_lock_used(&self, name: &str) -> bool {
+        tidb_executor::advisory_lock_state::AdvisoryLockService::is_used(
+            &self.0.advisory_locks,
+            name,
+        )
     }
 
     fn open_max_ts_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {

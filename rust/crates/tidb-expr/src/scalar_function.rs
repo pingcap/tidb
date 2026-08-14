@@ -37,6 +37,32 @@ use tidb_chunk::row::Row;
 use tidb_codec::encode_compact_bytes;
 use tidb_datatype::{Datum, FieldType};
 
+const MAX_ADVISORY_LOCK_TIMEOUT_SECS: i64 = 1_073_741_824;
+
+fn advisory_lock_name(value: Datum) -> Result<String, EvalError> {
+    let bytes = crate::arg_eval_type::eval_string(&value)?;
+    let Some(bytes) = bytes else {
+        return Err(EvalError::AdvisoryLock {
+            code: 3057,
+            message: "Incorrect user-level lock name 'NULL'.".to_owned(),
+        });
+    };
+    let text = tidb_datatype::GoString::from_bytes(bytes).to_utf8_lossy_go();
+    if text.is_empty() || text.chars().count() > 64 {
+        return Err(EvalError::AdvisoryLock {
+            code: 3057,
+            message: format!("Incorrect user-level lock name '{text}'."),
+        });
+    }
+    let normalized = tidb_mysql::to_lowercase(&text);
+    if normalized.chars().count() > 64 {
+        return Err(EvalError::IncorrectArguments(
+            "Incorrect arguments to get_lock".to_owned(),
+        ));
+    }
+    Ok(normalized)
+}
+
 /// Maps a Go binary-operator scalar-function name (`pkg/parser/ast`) to a
 /// [`BinaryOp`]. Returns `None` for any function that is not a binary operator.
 fn binary_op_for_name(name: &str) -> Option<BinaryOp> {
@@ -492,6 +518,67 @@ impl ScalarFunction {
                 EvalError::IncorrectArguments("Incorrect arguments to sleep".to_owned())
             })?;
             return Ok(Datum::Int(i64::from(ctx.sleep_for(duration))));
+        }
+        if matches!(
+            name,
+            "get_lock" | "release_lock" | "is_free_lock" | "is_used_lock" | "release_all_locks"
+        ) {
+            if name == "release_all_locks" {
+                if !self.args.is_empty() {
+                    return Err(EvalError::WrongParameterCount("release_all_locks"));
+                }
+                let count = ctx.release_all_advisory_locks()?;
+                return Ok(Datum::Int(i64::try_from(count).unwrap_or(i64::MAX)));
+            }
+
+            let expected = if name == "get_lock" { 2 } else { 1 };
+            if self.args.len() != expected {
+                return Err(EvalError::WrongParameterCount(match name {
+                    "get_lock" => "get_lock",
+                    "release_lock" => "release_lock",
+                    "is_free_lock" => "is_free_lock",
+                    "is_used_lock" => "is_used_lock",
+                    _ => unreachable!("advisory lock name was matched above"),
+                }));
+            }
+            let raw_name = self.args[0].eval(ctx, row)?;
+            let string_name =
+                crate::cast::cast_arg_as_string(&raw_name, self.args[0].static_type(), ctx)?;
+            let lock_name = advisory_lock_name(string_name)?;
+
+            return match name {
+                "get_lock" => {
+                    let raw_timeout = self.args[1].eval(ctx, row)?;
+                    let int_timeout = crate::cast::cast_arg_as_int(
+                        &raw_timeout,
+                        self.args[1].static_type(),
+                        ctx,
+                    )?;
+                    let mut timeout = crate::arg_eval_type::eval_int(&int_timeout)?.unwrap_or(0);
+                    if !(0..=MAX_ADVISORY_LOCK_TIMEOUT_SECS).contains(&timeout) {
+                        ctx.append_warning(
+                            1292,
+                            &format!("Truncated incorrect get_lock value: '{timeout}'"),
+                        );
+                        timeout = MAX_ADVISORY_LOCK_TIMEOUT_SECS;
+                    }
+                    let acquired = ctx.acquire_advisory_lock(
+                        &lock_name,
+                        std::time::Duration::from_secs(timeout as u64),
+                    )?;
+                    Ok(Datum::Int(i64::from(acquired)))
+                }
+                "release_lock" => Ok(Datum::Int(i64::from(
+                    ctx.release_advisory_lock(&lock_name)?,
+                ))),
+                "is_free_lock" => Ok(Datum::Int(i64::from(
+                    ctx.advisory_lock_owner(&lock_name)?.is_none(),
+                ))),
+                "is_used_lock" => Ok(ctx
+                    .advisory_lock_owner(&lock_name)?
+                    .map_or(Datum::Null, |owner| Datum::Int(owner as i64))),
+                _ => unreachable!("advisory lock name was matched above"),
+            };
         }
         // Go `builtinCaseWhen*Sig`: the arguments are the flattened
         // `cond, result, ..., else` list, and only the selected branch is

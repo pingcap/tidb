@@ -490,6 +490,9 @@ impl QuerySessionFactory for ClusterSessionFactory {
         let statistics = self.stats.load();
         let built = cluster_session_catalog(&loaded, &storage, &statistics, self.auto_ids.as_ref());
         let mut session = Session::with_catalog(Arc::new(Mutex::new(built.catalog)));
+        session.set_advisory_lock_service(Arc::new(transactions::ClusterAdvisoryLockService::new(
+            Arc::clone(&self.transactions),
+        )));
         session.set_version_info(context.version_info.clone());
         if let Some(spill_storage) = self.spill_storage.as_ref() {
             session.set_spill_storage(Arc::clone(spill_storage));

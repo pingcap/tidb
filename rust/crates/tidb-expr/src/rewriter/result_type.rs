@@ -1311,6 +1311,10 @@ fn builtin_return_type_before_ret_tp(name: &str, args: &[Expression]) -> Option<
         // Go `sleepFunctionClass`: one ETReal argument, signed integer result
         // with the fixed display width set by `getFunction`.
         "sleep" if args.len() == 1 => ft_with_flen(int(), 21),
+        // Go's five advisory-lock signatures all return signed ETInt with
+        // display width one.
+        "get_lock" | "release_lock" | "is_free_lock" | "is_used_lock"
+        | "release_all_locks" => ft_with_flen(int(), 1),
         // Go sizes this VarString from `printer.GetTiDBInfo()`.
         "tidb_version" if args.is_empty() => ft_with_flen(
             text(),

@@ -362,6 +362,8 @@ pub struct Session {
     /// `None` for a session with no connection identity, where the builtin
     /// answers NULL like `CURRENT_USER()` does for an unauthenticated one.
     connection_id: Option<u64>,
+    /// This connection's lock references over the domain/server lock service.
+    advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession,
     /// Go `SessionVars.PrevLastInsertID`: the id `LAST_INSERT_ID()` reports,
     /// which only a statement that ALLOCATED an auto value updates.
     last_insert_id: u64,
@@ -502,8 +504,8 @@ impl Default for Session {
     /// This is the ONE place a [`Session`] is built. Everything a front end
     /// installs afterwards -- a shared catalog, an identity, a process
     /// registration, a privilege registry, a globals table -- arrives through a
-    /// setter or through struct-update over this, so a field added to `Session`
-    /// has exactly one place that must name it.
+    /// setter, so a field added to `Session` has exactly one construction site
+    /// that must name it.
     fn default() -> Self {
         Session {
             catalog: SharedCatalog::default(),
@@ -520,6 +522,7 @@ impl Default for Session {
             login_user: None,
             active_roles: Vec::new(),
             connection_id: None,
+            advisory_locks: tidb_executor::advisory_lock_state::AdvisoryLockSession::default(),
             last_insert_id: 0,
             statement_insert_id: 0,
             set_var_hint_restore: Vec::new(),
@@ -548,6 +551,12 @@ impl Default for Session {
             found_in_binding: false,
             prev_found_in_binding: false,
         }
+    }
+}
+
+impl Drop for Session {
+    fn drop(&mut self) {
+        self.advisory_locks.release_all();
     }
 }
 
@@ -733,10 +742,9 @@ impl Session {
     /// one `Session` construction site -- see its doc.
     #[must_use]
     pub fn with_catalog(catalog: SharedCatalog) -> Self {
-        Session {
-            catalog,
-            ..Session::default()
-        }
+        let mut session = Session::default();
+        session.catalog = catalog;
+        session
     }
 
     /// Installs the server-owned spill policy for every statement created by

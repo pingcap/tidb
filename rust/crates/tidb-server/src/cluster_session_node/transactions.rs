@@ -18,6 +18,7 @@
 //! it is one of the independent seams that accreted there; see that module's
 //! doc comment for the statement lifecycle this seam is exercised by.
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -27,8 +28,15 @@ use tidb_exec::cluster_table_storage::{
 };
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
+use tidb_executor::advisory_lock_state::{
+    AdvisoryLockError, AdvisoryLockLease, AdvisoryLockService,
+};
 use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPairs};
 use tidb_executor::storage::StorageError;
+use tidb_txnkv::rpc::UnaryCallContext;
+use tidb_txnkv::transaction::{
+    LockKeepAlive, LockWaitTime, PessimisticLockFailure, ProductionPessimisticTransaction,
+};
 use tidb_txnkv::Key;
 
 use crate::sql_node::SqlQueryError;
@@ -81,6 +89,43 @@ pub trait ClusterTransactions: Send + Sync {
     /// Opens the one transaction an explicit `BEGIN` holds until `COMMIT` or
     /// `ROLLBACK`.
     fn begin(&self) -> Result<Box<dyn OpenClusterTransaction>, String>;
+
+    /// Acquires the TiKV pessimistic key backing one advisory lock.
+    fn acquire_advisory_lock(
+        &self,
+        name: &str,
+        timeout: Duration,
+    ) -> Result<Box<dyn AdvisoryLockLease>, AdvisoryLockError>;
+
+    /// Checks the same physical key without retaining it.
+    fn is_advisory_lock_used(&self, name: &str) -> bool;
+}
+
+/// Adapts the cluster transaction authority to the expression/session lock
+/// service without creating a second lock namespace.
+pub struct ClusterAdvisoryLockService {
+    transactions: Arc<dyn ClusterTransactions>,
+}
+
+impl ClusterAdvisoryLockService {
+    #[must_use]
+    pub fn new(transactions: Arc<dyn ClusterTransactions>) -> Self {
+        Self { transactions }
+    }
+}
+
+impl AdvisoryLockService for ClusterAdvisoryLockService {
+    fn acquire(
+        &self,
+        name: &str,
+        timeout: Duration,
+    ) -> Result<Box<dyn AdvisoryLockLease>, AdvisoryLockError> {
+        self.transactions.acquire_advisory_lock(name, timeout)
+    }
+
+    fn is_used(&self, name: &str) -> bool {
+        self.transactions.is_advisory_lock_used(name)
+    }
 }
 
 /// The transaction an explicit `BEGIN` holds open across its statements.
@@ -328,6 +373,103 @@ impl RealClusterTransactions {
             timeout,
         }
     }
+
+    fn acquire_advisory_lock_lease(
+        &self,
+        name: &str,
+        timeout: Duration,
+    ) -> Result<RealAdvisoryLockLease, AdvisoryLockError> {
+        let key = tidb_exec::mysql_bootstrap::advisory_lock_key(name)
+            .map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
+        let mut transaction = self
+            .opener
+            .begin_pessimistic(0, 0)
+            .map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
+        let wait = if timeout.is_zero() {
+            LockWaitTime::NoWait
+        } else {
+            LockWaitTime::Timeout(timeout)
+        };
+        let call = UnaryCallContext::with_timeout(timeout.saturating_add(self.timeout));
+        let presume_not_exists = BTreeSet::from([key.clone()]);
+        let acquired = match transaction.acquire_locks(
+            std::slice::from_ref(&key),
+            &presume_not_exists,
+            wait,
+            &call,
+        ) {
+            Ok(acquired) => acquired,
+            Err(failure) => {
+                finish_advisory_transaction(transaction, &[key], self.timeout);
+                return Err(map_advisory_lock_failure(failure));
+            }
+        };
+        let keep_alive = match self
+            .opener
+            .start_lock_keep_alive(acquired.primary_key, transaction.start_ts())
+        {
+            Ok(keep_alive) => keep_alive,
+            Err(error) => {
+                finish_advisory_transaction(transaction, &acquired.keys, self.timeout);
+                return Err(AdvisoryLockError::Internal(error));
+            }
+        };
+        Ok(RealAdvisoryLockLease {
+            transaction: Some(transaction),
+            keep_alive: Some(keep_alive),
+            end_timeout: self.timeout,
+        })
+    }
+}
+
+struct RealAdvisoryLockLease {
+    transaction: Option<ProductionPessimisticTransaction>,
+    keep_alive: Option<LockKeepAlive>,
+    end_timeout: Duration,
+}
+
+impl RealAdvisoryLockLease {
+    fn finish(&mut self) {
+        if let Some(keep_alive) = self.keep_alive.take() {
+            keep_alive.close();
+        }
+        let Some(transaction) = self.transaction.take() else {
+            return;
+        };
+        let held = transaction.locked_keys();
+        finish_advisory_transaction(transaction, &held, self.end_timeout);
+    }
+}
+
+fn finish_advisory_transaction(
+    mut transaction: ProductionPessimisticTransaction,
+    keys: &[Vec<u8>],
+    timeout: Duration,
+) {
+    let call = UnaryCallContext::with_timeout(timeout);
+    let _ = transaction.pessimistic_rollback(keys, &call);
+    let _ = transaction.into_two_pc().finish_without_writes();
+}
+
+impl Drop for RealAdvisoryLockLease {
+    fn drop(&mut self) {
+        self.finish();
+    }
+}
+
+impl AdvisoryLockLease for RealAdvisoryLockLease {
+    fn release(mut self: Box<Self>) {
+        self.finish();
+    }
+}
+
+fn map_advisory_lock_failure(failure: PessimisticLockFailure) -> AdvisoryLockError {
+    match failure {
+        PessimisticLockFailure::LockAcquireFailAndNoWaitSet { .. }
+        | PessimisticLockFailure::LockWaitTimeout { .. } => AdvisoryLockError::Timeout,
+        PessimisticLockFailure::Deadlock(_) => AdvisoryLockError::Deadlock,
+        other => AdvisoryLockError::Internal(other.to_string()),
+    }
 }
 
 impl ClusterTransactions for RealClusterTransactions {
@@ -353,6 +495,25 @@ impl ClusterTransactions for RealClusterTransactions {
         SessionTransaction::begin(Arc::clone(&self.opener), self.timeout)
             .map(|transaction| Box::new(transaction) as Box<dyn OpenClusterTransaction>)
             .map_err(|error| error.to_string())
+    }
+
+    fn acquire_advisory_lock(
+        &self,
+        name: &str,
+        timeout: Duration,
+    ) -> Result<Box<dyn AdvisoryLockLease>, AdvisoryLockError> {
+        self.acquire_advisory_lock_lease(name, timeout)
+            .map(|lease| Box::new(lease) as Box<dyn AdvisoryLockLease>)
+    }
+
+    fn is_advisory_lock_used(&self, name: &str) -> bool {
+        match self.acquire_advisory_lock_lease(name, Duration::from_secs(1)) {
+            Ok(mut lease) => {
+                lease.finish();
+                false
+            }
+            Err(_) => true,
+        }
     }
 }
 

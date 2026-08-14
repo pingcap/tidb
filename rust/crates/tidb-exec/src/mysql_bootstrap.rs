@@ -42,9 +42,11 @@
 //! exactly the `mysql.tidb` marker this writes.
 
 use std::fmt;
+use std::sync::OnceLock;
 
 use tidb_ast::{CiString, DdlStmt, Stmt};
-use tidb_datatype::Datum;
+use tidb_codec::Encoder;
+use tidb_datatype::{new_collation_enabled, Datum};
 use tidb_meta::{key, value};
 use tidb_metadef::system::SYSTEM_DATABASE_ID;
 use tidb_metadef::{BootstrapTable, BOOTSTRAP_TABLES};
@@ -53,10 +55,12 @@ use tidb_model::db::DBInfo;
 use tidb_model::schema_diff::{AffectedOption, SchemaDiff};
 use tidb_model::schema_state::SchemaState;
 use tidb_model::table_info::TableInfo;
+use tidb_tablecodec::{generate_index_key, TableInfo as CodecTableInfo};
 use tidb_txnkv::transaction::{MutationSetError, OptimisticMutation};
 
 use crate::cluster_catalog::{ClusterCatalogError, MetaSnapshot};
 use crate::mysql_system_tables::SYSTEM_DB;
+use crate::system_row_write::codec_table_info;
 use crate::table_info_build::{build_table_info, ClusteredIndexDefMode, DdlAdmissionError};
 
 mod rows;
@@ -78,6 +82,51 @@ pub const SYSTEM_TZ_VAR: &str = "system_tz";
 pub const NEW_COLLATION_ENABLED_VAR: &str = "new_collation_enabled";
 /// Go `tidbDDLTableVersion`.
 pub const DDL_TABLE_VERSION_VAR: &str = "ddl_table_version";
+
+type AdvisoryLockKeyInfo = (CodecTableInfo, usize, i64);
+
+fn advisory_lock_key_info() -> Result<&'static AdvisoryLockKeyInfo, BootstrapError> {
+    static INFO: OnceLock<Result<AdvisoryLockKeyInfo, String>> = OnceLock::new();
+    INFO.get_or_init(|| {
+        let table = BOOTSTRAP_TABLES
+            .iter()
+            .find(|table| table.id == tidb_metadef::system::ADVISORY_LOCKS_TABLE_ID)
+            .ok_or_else(|| "advisory_locks metadata is absent".to_owned())?;
+        let info = build_bootstrap_table(table, 0).map_err(|error| error.to_string())?;
+        let primary_position = info
+            .indices
+            .iter_deref()
+            .position(|index| index.read().primary)
+            .ok_or_else(|| "advisory_locks primary index is absent".to_owned())?;
+        Ok((codec_table_info(&info), primary_position, info.id))
+    })
+    .as_ref()
+    .map_err(|error| BootstrapError::Encode(error.clone()))
+}
+
+/// Encodes the unique-primary-index key Go's INSERT into
+/// `mysql.advisory_locks` pessimistically locks.
+pub fn advisory_lock_key(lock_name: &str) -> Result<Vec<u8>, BootstrapError> {
+    let (codec_info, primary_position, table_id) = advisory_lock_key_info()?;
+    let primary = &codec_info.indices[*primary_position];
+    let mut values = vec![Datum::new_string(lock_name)];
+    let (key, distinct) = generate_index_key(
+        Encoder::new(new_collation_enabled()),
+        None,
+        codec_info,
+        primary,
+        *table_id,
+        &mut values,
+        None,
+    )
+    .map_err(encode_error)?;
+    if !distinct {
+        return Err(BootstrapError::Encode(
+            "advisory_locks primary key encoded as non-distinct".to_owned(),
+        ));
+    }
+    Ok(key)
+}
 /// Go `tidbClusterID`.
 pub const CLUSTER_ID_VAR: &str = "cluster_id";
 /// Go `varTrue`.
@@ -436,5 +485,27 @@ mod source_tests {
             read_schema_cache_size(&mut snapshot).unwrap(),
             Some(536_870_912)
         );
+    }
+
+    #[test]
+    fn advisory_lock_key_is_the_reserved_table_primary_index_key() {
+        let table = BOOTSTRAP_TABLES
+            .iter()
+            .find(|table| table.id == tidb_metadef::system::ADVISORY_LOCKS_TABLE_ID)
+            .expect("advisory-lock bootstrap metadata");
+        let info = build_bootstrap_table(table, 0).unwrap();
+        let primary_id = info
+            .indices
+            .iter_deref()
+            .find_map(|index| {
+                let index = index.read();
+                index.primary.then_some(index.id)
+            })
+            .expect("advisory-lock primary index");
+        let prefix = tidb_codec::table_key::encode_index_seek_key(info.id, primary_id, &[]);
+        let key = advisory_lock_key("rootlock").unwrap();
+
+        assert!(key.starts_with(&prefix));
+        assert_ne!(key, advisory_lock_key("another-lock").unwrap());
     }
 }

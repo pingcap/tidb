@@ -149,6 +149,7 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
             format!("Incorrect parameter count in the call to native function '{function}'"),
         ),
         EvalError::IncorrectArguments(message) => MysqlError::coded(1210, message),
+        EvalError::AdvisoryLock { code, message } => MysqlError::coded(code, message),
         EvalError::DataOutOfRange { value, expression } => MysqlError::new(
             ER_DATA_OUT_OF_RANGE,
             *b"22003",

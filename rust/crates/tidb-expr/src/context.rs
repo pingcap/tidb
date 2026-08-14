@@ -68,6 +68,13 @@ pub enum EvalError {
     /// Go `ErrWrongArguments` (1210), with the source-formatted argument
     /// description.
     IncorrectArguments(String),
+    /// A source-owned advisory-lock error with its exact MySQL code/message.
+    AdvisoryLock {
+        /// MySQL error number (3057, 3058, or a backend error code).
+        code: u16,
+        /// Client-visible message.
+        message: String,
+    },
     /// Go `types.ErrOverflow` / MySQL 1690 for a builtin-owned range check.
     DataOutOfRange {
         /// The value class printed before "value is out of range".
@@ -487,6 +494,30 @@ pub trait Columns {
     /// resolver (`NoColumns`), which reports NULL like `CURRENT_USER` does.
     fn connection_id(&self) -> Option<u64> {
         None
+    }
+
+    /// Acquires a session advisory lock. `Ok(false)` is lock-wait timeout.
+    fn acquire_advisory_lock(
+        &self,
+        _name: &str,
+        _timeout: std::time::Duration,
+    ) -> Result<bool, EvalError> {
+        Err(EvalError::Unsupported("advisory locks require a session"))
+    }
+
+    /// Returns the source-visible advisory-lock owner, or `None` when free.
+    fn advisory_lock_owner(&self, _name: &str) -> Result<Option<u64>, EvalError> {
+        Err(EvalError::Unsupported("advisory locks require a session"))
+    }
+
+    /// Releases one session reference to an advisory lock.
+    fn release_advisory_lock(&self, _name: &str) -> Result<bool, EvalError> {
+        Err(EvalError::Unsupported("advisory locks require a session"))
+    }
+
+    /// Releases every advisory-lock reference held by this session.
+    fn release_all_advisory_locks(&self) -> Result<usize, EvalError> {
+        Err(EvalError::Unsupported("advisory locks require a session"))
     }
 
     /// Go `SessionVars.LastFoundRows`, published when the preceding result

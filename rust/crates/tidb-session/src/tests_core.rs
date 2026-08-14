@@ -2,6 +2,7 @@
 
 //! Core session behavior, split by the statement surface under test.
 
+mod advisory_locks;
 mod aggregates;
 mod builtins;
 mod ddl;

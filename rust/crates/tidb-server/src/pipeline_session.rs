@@ -86,7 +86,6 @@ impl Default for PipelineServerSession {
 /// Every connection the factory opens shares one catalog, as the sessions of a
 /// TiDB instance share the domain's schema state: a table one connection
 /// creates is immediately visible to the others.
-#[derive(Default)]
 pub struct PipelineSessionFactory {
     catalog: SharedCatalog,
     /// The live connection list `SHOW PROCESSLIST` reads and `KILL` reaches
@@ -108,6 +107,23 @@ pub struct PipelineSessionFactory {
     /// Process-wide memory admission authority installed before the listener
     /// accepts connections.
     mem_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+    /// One lock namespace shared by every connection this factory opens.
+    advisory_locks: Arc<dyn tidb_executor::advisory_lock_state::AdvisoryLockService>,
+}
+
+impl Default for PipelineSessionFactory {
+    fn default() -> Self {
+        Self {
+            catalog: SharedCatalog::default(),
+            processes: ProcessRegistry::default(),
+            privileges: PrivilegeRegistry::default(),
+            global_vars: GlobalSysvars::default(),
+            mem_arbitrator: None,
+            advisory_locks: Arc::new(
+                tidb_executor::advisory_lock_state::LocalAdvisoryLockService::default(),
+            ),
+        }
+    }
 }
 
 impl PipelineSessionFactory {
@@ -181,6 +197,9 @@ impl QuerySessionFactory for PipelineSessionFactory {
 
     fn open_session(&self, context: SessionContext) -> Result<Self::Session, SqlQueryError> {
         let mut session = PipelineServerSession::with_catalog(Arc::clone(&self.catalog));
+        session
+            .session
+            .set_advisory_lock_service(Arc::clone(&self.advisory_locks));
         session
             .session
             .set_version_info(context.version_info.clone());
@@ -698,6 +717,31 @@ mod tests {
             "the listener-created session must create its statement root through the process arbitrator"
         );
         assert!(arbitrator.stop());
+    }
+
+    #[test]
+    fn factory_sessions_share_one_advisory_lock_authority() {
+        let factory = PipelineSessionFactory::default();
+        let mut first = open_on(&factory, 42);
+        let mut second = open_on(&factory, 7);
+
+        assert_eq!(
+            first.session.run("SELECT GET_LOCK('shared', 0)").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
+        assert_eq!(
+            second
+                .session
+                .run("SELECT IS_USED_LOCK('SHARED'), GET_LOCK('shared', 0)")
+                .unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1), Datum::Int(0)]])
+        );
+
+        drop(first);
+        assert_eq!(
+            second.session.run("SELECT GET_LOCK('shared', 0)").unwrap(),
+            StmtResult::Rows(vec![vec![Datum::Int(1)]])
+        );
     }
 
     #[test]

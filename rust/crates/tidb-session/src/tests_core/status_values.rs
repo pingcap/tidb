@@ -217,11 +217,6 @@ fn a_folded_last_insert_id_publishes_even_when_a_later_expression_fails_to_resol
         "the unresolved name must be named: {message}"
     );
 
-    let (code, message) = wire_error(&mut session, "SELECT GET_LOCK('source-known', 0)");
-    assert_eq!(
-        code, 1105,
-        "a Go-registered builtin that Rust has not implemented is not 1305: {message}"
-    );
     assert_eq!(
         session_scalar(&mut session, "SELECT LAST_INSERT_ID()"),
         "17",

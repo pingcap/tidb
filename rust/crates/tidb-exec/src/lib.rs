@@ -51,7 +51,6 @@
 //! keeps only the crate-level vocabulary the rest builds on (`Row`,
 //! `ResultSet`, `Outcome`, `ExecError`) and the re-export surface.
 
-pub mod advisory_lock_state;
 pub mod aggregate;
 pub mod alternative_plan_signals;
 pub mod analyze_panic_error;

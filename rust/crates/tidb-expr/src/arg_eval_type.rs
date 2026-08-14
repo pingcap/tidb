@@ -229,6 +229,8 @@ pub(crate) const fn int_arg_mask(name: &str) -> ArgMask {
         // RETURN eval type from the source argument, but its argument cast is
         // still fixed to integer.
         b"TIDB_PARSE_TSO" | b"TIDB_PARSE_TSO_LOGICAL" => 1 << 0,
+        // `lockFunctionClass`: lock name is ETString and timeout is ETInt.
+        b"GET_LOCK" => 1 << 1,
         _ => 0,
     }
 }
@@ -356,6 +358,8 @@ const fn string_arg_mask(name: &str) -> ArgMask {
         // `builtin_string.go:2029` `types.ETString, types.ETString`
         // (lTrimFunctionClass) and `:2098` the same for `rTrimFunctionClass`.
         b"LTRIM" | b"RTRIM" => 1 << 0,
+        // Advisory-lock names are declared ETString.
+        b"GET_LOCK" | b"RELEASE_LOCK" | b"IS_FREE_LOCK" | b"IS_USED_LOCK" => 1 << 0,
         // `builtin_regexp.go`: subject/pattern are strings in every member;
         // match_type and replacement occupy their source-specific tails.
         b"REGEXP_LIKE" => (1 << 0) | (1 << 1) | (1 << 2),

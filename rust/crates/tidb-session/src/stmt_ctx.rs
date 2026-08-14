@@ -560,6 +560,7 @@ impl Session {
                 .with_global_sysvars(password_validation_globals.clone())
                 .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
                 .with_connection_id(self.connection_id)
+                .with_advisory_locks(self.advisory_locks.clone())
                 .with_statement_memory(
                     self.session_memory
                         .statement_with_arbitration(arbitrator_wait_averse, arbitrator_reserved),
@@ -600,6 +601,7 @@ impl Session {
         .with_global_sysvars(password_validation_globals)
         .with_current_role(self.current_user.as_ref().map(|_| self.current_role_text()))
         .with_connection_id(self.connection_id)
+        .with_advisory_locks(self.advisory_locks.clone())
         .with_statement_memory(
             self.session_memory
                 .statement_with_arbitration(arbitrator_wait_averse, arbitrator_reserved),

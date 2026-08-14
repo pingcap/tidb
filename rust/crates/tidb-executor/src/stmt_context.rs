@@ -270,6 +270,8 @@ pub struct StmtContext {
     /// The already-rendered `CURRENT_ROLE()` text; see `Columns::current_role`.
     current_role: Option<String>,
     connection_id: Option<u64>,
+    /// Go session advisory-lock map and its shared physical lock authority.
+    advisory_locks: crate::advisory_lock_state::AdvisoryLockSession,
     /// Go `StatementContext`'s fixed statement time as
     /// `(utc_seconds, nanos, tz_offset_seconds)`: every `NOW()` in one
     /// statement reads the same instant.
@@ -584,6 +586,7 @@ impl StmtContext {
             login_user: None,
             global_sysvars: Rc::default(),
             connection_id: None,
+            advisory_locks: crate::advisory_lock_state::AdvisoryLockSession::default(),
             now: None,
             sysdate_is_now: false,
             time_zone: None,
@@ -784,6 +787,16 @@ impl StmtContext {
     #[must_use]
     pub fn with_statement_memory(mut self, memory: StatementMemory) -> Self {
         self.memory = memory;
+        self
+    }
+
+    /// Attaches the session-owned advisory-lock state.
+    #[must_use]
+    pub fn with_advisory_locks(
+        mut self,
+        locks: crate::advisory_lock_state::AdvisoryLockSession,
+    ) -> Self {
+        self.advisory_locks = locks;
         self
     }
 
@@ -1787,6 +1800,37 @@ impl Columns for StmtContext {
 
     fn connection_id(&self) -> Option<u64> {
         self.connection_id
+    }
+
+    fn acquire_advisory_lock(
+        &self,
+        name: &str,
+        timeout: std::time::Duration,
+    ) -> Result<bool, tidb_expr::EvalError> {
+        use crate::advisory_lock_state::AdvisoryLockError;
+        match self.advisory_locks.acquire(name, timeout) {
+            Ok(()) => Ok(true),
+            Err(AdvisoryLockError::Timeout) => Ok(false),
+            Err(AdvisoryLockError::Deadlock) => Err(tidb_expr::EvalError::AdvisoryLock {
+                code: 3058,
+                message: "Deadlock found when trying to get user-level lock; try rolling back transaction/releasing locks and restarting lock acquisition.".to_owned(),
+            }),
+            Err(AdvisoryLockError::Internal(message)) => {
+                Err(tidb_expr::EvalError::AdvisoryLock { code: 1105, message })
+            }
+        }
+    }
+
+    fn advisory_lock_owner(&self, name: &str) -> Result<Option<u64>, tidb_expr::EvalError> {
+        Ok(self.advisory_locks.owner(name))
+    }
+
+    fn release_advisory_lock(&self, name: &str) -> Result<bool, tidb_expr::EvalError> {
+        Ok(self.advisory_locks.release(name))
+    }
+
+    fn release_all_advisory_locks(&self) -> Result<usize, tidb_expr::EvalError> {
+        Ok(self.advisory_locks.release_all())
     }
 
     fn found_rows(&self) -> Option<u64> {

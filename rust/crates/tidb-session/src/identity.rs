@@ -479,6 +479,20 @@ impl Session {
     pub fn set_connection_id(&mut self, connection_id: u64) {
         self.connection_id = Some(connection_id);
         self.session_memory.set_connection_id(connection_id);
+        self.advisory_locks.set_owner(connection_id);
+    }
+
+    /// Installs the server/domain advisory-lock authority before this session
+    /// evaluates lock functions.
+    pub fn set_advisory_lock_service(
+        &mut self,
+        service: std::sync::Arc<dyn tidb_executor::advisory_lock_state::AdvisoryLockService>,
+    ) {
+        self.advisory_locks.release_all();
+        self.advisory_locks = tidb_executor::advisory_lock_state::AdvisoryLockSession::new(service);
+        if let Some(connection_id) = self.connection_id {
+            self.advisory_locks.set_owner(connection_id);
+        }
     }
 
     /// Go `SessionVars.ConnectionID`, which `CONNECTION_ID()` reports; zero

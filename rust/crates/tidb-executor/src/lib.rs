@@ -200,3 +200,5 @@ pub(crate) mod test_temp_storage {
         )
     }
 }
+/// Session-owned reference counts over shared advisory-lock services.
+pub mod advisory_lock_state;
