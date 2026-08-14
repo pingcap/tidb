@@ -311,6 +311,29 @@ fn parser_only_dml_modifiers_do_not_change_the_write() {
     );
 }
 
+#[test]
+fn compatibility_only_alter_specs_leave_the_table_unchanged() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a BIGINT)").unwrap();
+
+    for sql in [
+        "ALTER TABLE t LOCK = EXCLUSIVE",
+        "ALTER TABLE t DISABLE KEYS",
+        "ALTER TABLE t ENABLE KEYS",
+    ] {
+        assert_eq!(session.run(sql).unwrap(), StmtResult::Affected(0), "{sql}");
+    }
+    session
+        .run("ALTER TABLE t LOCK = NONE, ADD COLUMN b BIGINT DEFAULT 9")
+        .unwrap();
+
+    session.run("INSERT INTO t (a) VALUES (7)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT a, b FROM t")),
+        vec![vec!["7", "9"]]
+    );
+}
+
 /// UPDATE and DELETE run through the session like any other write, and
 /// report their affected-row counts.
 #[test]

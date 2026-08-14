@@ -313,6 +313,10 @@ pub fn run_alter_table_in(
             tidb_ast::AlterTableAction::DropCheck(drop) => {
                 return Err(DriverError::CheckConstraintNotExists(drop.name.clone()));
             }
+            // Go removes LOCK specs before dispatch and treats ENABLE/DISABLE
+            // KEYS as MyISAM-only compatibility syntax with no TiDB action.
+            tidb_ast::AlterTableAction::Lock(_) | tidb_ast::AlterTableAction::SetKeysEnabled(_) => {
+            }
             _ => {
                 return Err(DriverError::unsupported(
                     "this ALTER TABLE action is not supported yet",

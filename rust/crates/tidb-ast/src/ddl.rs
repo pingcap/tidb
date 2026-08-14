@@ -1191,7 +1191,8 @@ pub enum AlterTableAction {
     WithoutValidation,
     /// `ENABLE KEYS` or `DISABLE KEYS`. Go retains these as distinct
     /// payload-free ALTER specifications; one boolean keeps the same closed
-    /// state space without two empty Rust variants.
+    /// state space without two empty Rust variants. TiDB accepts both as
+    /// MyISAM compatibility no-ops.
     SetKeysEnabled(bool),
     /// `ADD [COLUMN] col type [options...] [FIRST | AFTER col]`. `ADD`
     /// alone (without `COLUMN`) restores identically, matching the Go AST's
