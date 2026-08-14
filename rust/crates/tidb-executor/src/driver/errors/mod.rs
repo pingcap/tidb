@@ -1460,6 +1460,16 @@ impl DriverError {
                  `{function}`."
             ),
         ),
+        DriverError::UnsupportedSequenceDefaultType(column) => MysqlError::new(
+            8228,
+            *b"HY000",
+            format!("Unsupported sequence default value for column type '{column}'"),
+        ),
+        DriverError::AddColumnSequenceDefault(column) => MysqlError::new(
+            8230,
+            *b"HY000",
+            format!("Unsupported using sequence as default value in add column '{column}'"),
+        ),
         DriverError::BinlogUnsafeSystemFunction => MysqlError::new(
             1674,
             *b"HY000",

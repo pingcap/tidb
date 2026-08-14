@@ -1205,6 +1205,13 @@ impl StmtContext {
         self
     }
 
+    /// The database in which this statement resolves unqualified object
+    /// names. DDL persists it into schema-bound expression defaults.
+    #[must_use]
+    pub(crate) fn current_database_name(&self) -> Option<&str> {
+        self.current_db.as_deref()
+    }
+
     /// Length of the server identity this statement returns from
     /// `TIDB_VERSION()`.
     #[must_use]

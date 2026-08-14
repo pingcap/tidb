@@ -269,3 +269,121 @@ fn drop_sequence_frees_the_name() {
     // The name is free for a table now.
     session.run("create table s1 (a int)").unwrap();
 }
+
+/// A sequence default is bound to its DDL schema, advances once per omitted
+/// row, and is never evaluated merely because ALTER installs it. ADD COLUMN
+/// is different: it must refuse the default because historical rows have no
+/// single stable sequence value.
+#[test]
+fn sequence_defaults_obey_ddl_and_row_write_boundaries() {
+    let mut session = Session::new();
+    session.run("create sequence seq").unwrap();
+    session
+        .run("create table t (a int default next value for seq)")
+        .unwrap();
+
+    let (_, rows) = query_text(&mut session, "show create table t");
+    let create = &rows[0][1];
+    assert!(
+        create.contains("`a` int DEFAULT (nextval(`test`.`seq`))"),
+        "{create}"
+    );
+
+    session.run("create database other").unwrap();
+    session.run("use other").unwrap();
+    session
+        .run("insert into test.t (a) values (default), (default), (default)")
+        .unwrap();
+    assert_eq!(
+        query_text(&mut session, "select a from test.t order by a").1,
+        vec![
+            vec!["1".to_owned()],
+            vec!["2".to_owned()],
+            vec!["3".to_owned()]
+        ]
+    );
+
+    session.run("use test").unwrap();
+    for sql in [
+        "create table wrong_type (a char(8) default nextval(seq))",
+        "create table wrong_year (a year default nextval(seq))",
+    ] {
+        assert_eq!(
+            error_of(&mut session, sql),
+            (
+                8228,
+                "Unsupported sequence default value for column type 'a'".to_owned()
+            ),
+            "{sql}"
+        );
+    }
+
+    session.run("create sequence seq_alter").unwrap();
+    session
+        .run("create table altered (a int default -1)")
+        .unwrap();
+    session.run("insert into altered values (default)").unwrap();
+    session
+        .run("alter table altered alter column a set default (next value for seq_alter)")
+        .unwrap();
+    session.run("insert into altered values (default)").unwrap();
+    assert_eq!(
+        query_text(&mut session, "select a from altered order by a").1,
+        vec![vec!["-1".to_owned()], vec!["1".to_owned()]],
+        "ALTER COLUMN must install the expression without consuming it"
+    );
+
+    session.run("create sequence seq2").unwrap();
+    session.run("create table history (a int)").unwrap();
+    session
+        .run("insert into history values (1), (2), (3)")
+        .unwrap();
+    session
+        .run("alter table history add column b int default -1")
+        .unwrap();
+    session
+        .run("alter table history modify column b int default next value for seq2")
+        .unwrap();
+    assert_eq!(
+        query_text(&mut session, "select b from history order by a").1,
+        vec![
+            vec!["-1".to_owned()],
+            vec!["-1".to_owned()],
+            vec!["-1".to_owned()]
+        ],
+        "installing the default must not consume a sequence value or rewrite old rows"
+    );
+    session
+        .run("insert into history (a) values (4), (5)")
+        .unwrap();
+    assert_eq!(
+        query_text(&mut session, "select b from history order by a").1,
+        vec![
+            vec!["-1".to_owned()],
+            vec!["-1".to_owned()],
+            vec!["-1".to_owned()],
+            vec!["1".to_owned()],
+            vec!["2".to_owned()],
+        ]
+    );
+
+    for (sql, column) in [
+        (
+            "alter table history add column c int default nextval(seq2)",
+            "c",
+        ),
+        (
+            "alter table history add column d char(8) default nextval(seq2)",
+            "d",
+        ),
+    ] {
+        assert_eq!(
+            error_of(&mut session, sql),
+            (
+                8230,
+                format!("Unsupported using sequence as default value in add column '{column}'")
+            ),
+            "{sql}"
+        );
+    }
+}

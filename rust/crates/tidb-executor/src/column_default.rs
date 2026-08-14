@@ -53,10 +53,9 @@
 //!
 //! # Deferred, and refused rather than guessed
 //!
-//! Go's whitelist also carries `NEXTVAL` (a sequence read) and
-//! `VEC_FROM_TEXT`. Each needs its own argument check, and a wrong one would
-//! silently store a default TiDB rejects, so the ones not listed in
-//! [`func_call_default`] are refused by name.
+//! Go's whitelist also carries `VEC_FROM_TEXT`. It needs its own type and
+//! argument contract; until the VECTOR DDL surface owns that contract it is
+//! refused by name rather than stored incorrectly.
 
 use tidb_ast::Expr;
 use tidb_datatype::{
@@ -126,19 +125,20 @@ pub enum AddedOriginSafety {
     Safe,
     /// Go `ErrBinlogUnsafeSystemFunction` (1674).
     UnsafeSystemFunction,
+    /// Go `ErrAddColumnWithSequenceAsDefault` (8230): historical rows cannot
+    /// share one stable sequence value.
+    SequenceDefault,
 }
 
 impl ColumnDefault {
-    /// Whether Go permits this computation to synthesize the origin value of
-    /// an added column. RAND and UUID are valid CREATE defaults but unsafe for
-    /// ADD COLUMN because existing rows would get node-local values.
+    /// Go's reason, if any, that this default cannot synthesize one stable
+    /// value for rows predating an added column.
     #[must_use]
-    pub(crate) fn is_safe_added_origin(&self) -> bool {
-        !matches!(
-            self,
-            Self::Computed(computed)
-                if computed.added_origin_safety == AddedOriginSafety::UnsafeSystemFunction
-        )
+    pub(crate) fn added_origin_safety(&self) -> AddedOriginSafety {
+        match self {
+            Self::Value(_) => AddedOriginSafety::Safe,
+            Self::Computed(computed) => computed.added_origin_safety,
+        }
     }
 
     /// The settled value, for the callers that only make sense for one: the
@@ -234,6 +234,8 @@ pub enum DefaultError {
     InvalidDefault,
     /// Go `expression.ErrIncorrectParameterCount` (1582).
     WrongParameterCount(&'static str),
+    /// Go `ErrColumnTypeUnsupportedNextValue` (8228).
+    UnsupportedSequenceDefaultType,
     /// A form Go accepts that this tier does not model yet, named so a
     /// refusal says which.
     Unsupported(&'static str),
@@ -251,6 +253,9 @@ impl DefaultError {
             Self::WrongParameterCount(function) => crate::DriverError::Exec(
                 crate::ExecError::Eval(tidb_expr::EvalError::WrongParameterCount(function)),
             ),
+            Self::UnsupportedSequenceDefaultType => {
+                crate::DriverError::UnsupportedSequenceDefaultType(column.to_owned())
+            }
             Self::Unsupported(reason) => crate::DriverError::unsupported(reason),
         }
     }
@@ -325,6 +330,16 @@ fn clock_marker_call(expr: &Expr) -> Option<&[Expr]> {
     }
 }
 
+/// Whether an ADD COLUMN default names a sequence. Go rejects this before
+/// validating the destination type because historical rows cannot be assigned
+/// one stable value.
+pub(crate) fn is_sequence_default_expression(mut expr: &Expr) -> bool {
+    while let Expr::Paren(inner) = expr {
+        expr = inner;
+    }
+    matches!(expr, Expr::Func { name, .. } if name.eq_ignore_ascii_case("nextval"))
+}
+
 /// The fsp an explicit `CURRENT_TIMESTAMP(n)` argument names.
 ///
 /// Go reads it as `expr.Args[0].(*driver.ValueExpr).GetInt64()`, so a
@@ -385,6 +400,7 @@ fn func_call_default(
     args: &[Expr],
     expr: &Expr,
     field_type: &FieldType,
+    current_database: Option<&str>,
 ) -> Result<Option<ColumnDefault>, DefaultError> {
     let lower = name.to_ascii_lowercase();
     if lower == "current_date" {
@@ -446,6 +462,41 @@ fn func_call_default(
         }))));
     }
     match lower.as_str() {
+        "nextval" => {
+            if !matches!(
+                field_type.code(),
+                FieldTypeCode::Tiny
+                    | FieldTypeCode::Short
+                    | FieldTypeCode::Int24
+                    | FieldTypeCode::Long
+                    | FieldTypeCode::LongLong
+            ) {
+                return Err(DefaultError::UnsupportedSequenceDefaultType);
+            }
+            let [Expr::Column(path)] = args else {
+                return Err(DefaultError::WrongParameterCount("nextval"));
+            };
+            let mut path = path.clone();
+            if path.len() == 1 {
+                if let Some(database) = current_database {
+                    path.insert(0, database.to_owned());
+                }
+            }
+            let Expr::Func {
+                name,
+                origin_position,
+                ..
+            } = expr
+            else {
+                unreachable!("the caller identified a function expression")
+            };
+            let qualified = Expr::Func {
+                name: name.clone(),
+                args: vec![Expr::Column(path)],
+                origin_position: *origin_position,
+            };
+            computed_default(&qualified, AddedOriginSafety::SequenceDefault)
+        }
         // Go's RAND/UUID arms preserve the expression for each omitted row;
         // `VerifyArgsWrapper` still enforces their individual arities.
         "rand" => {
@@ -597,6 +648,15 @@ pub fn build(
     field_type: &FieldType,
     fold: impl FnOnce(&Expr) -> Result<Datum, DefaultError>,
 ) -> Result<ColumnDefault, DefaultError> {
+    build_with_current_database(expr, field_type, None, fold)
+}
+
+fn build_with_current_database(
+    expr: &Expr,
+    field_type: &FieldType,
+    current_database: Option<&str>,
+    fold: impl FnOnce(&Expr) -> Result<Datum, DefaultError>,
+) -> Result<ColumnDefault, DefaultError> {
     let mut expr = expr;
     while let Expr::Paren(inner) = expr {
         expr = inner;
@@ -609,7 +669,7 @@ pub fn build(
         _ => clock_marker_call(expr).map(|args| ("CURRENT_TIMESTAMP".to_owned(), args)),
     };
     if let Some((name, args)) = call {
-        if let Some(default) = func_call_default(&name, args, expr, field_type)? {
+        if let Some(default) = func_call_default(&name, args, expr, field_type, current_database)? {
             return Ok(default);
         }
         // Go falls through to `EvalSimpleAst` here, freezing the clock into a
@@ -632,7 +692,7 @@ pub(crate) fn build_in_context(
     column: &str,
     ctx: &crate::StmtContext,
 ) -> Result<ColumnDefault, crate::DriverError> {
-    build(expr, field_type, |expr| {
+    build_with_current_database(expr, field_type, ctx.current_database_name(), |expr| {
         let rewritten = rewrite_expr_resolved(
             expr,
             &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(

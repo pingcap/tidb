@@ -495,6 +495,12 @@ pub enum DriverError {
     /// column `DEFAULT` names a function that is not on Go's whitelist for
     /// defaults, carried as `(column, function)`.
     DefaultFunctionNotAllowed(String, String),
+    /// Go `dbterror.ErrColumnTypeUnsupportedNextValue` (8228), carrying the
+    /// column name whose type cannot store a sequence default.
+    UnsupportedSequenceDefaultType(String),
+    /// Go `dbterror.ErrAddColumnWithSequenceAsDefault` (8230), carrying the
+    /// added column name.
+    AddColumnSequenceDefault(String),
     /// Go `dbterror.ErrBinlogUnsafeSystemFunction` (1674): ADD COLUMN would
     /// synthesize a node-local value for rows written before the column.
     BinlogUnsafeSystemFunction,

@@ -1181,6 +1181,13 @@ fn prepare_alter_column_default(
             let crate::column_default::ColumnDefault::Computed(body) = &computed else {
                 unreachable!("the matched default is computed")
             };
+            if body.added_origin_safety == crate::column_default::AddedOriginSafety::SequenceDefault
+            {
+                return Ok(PreparedAlterDefault {
+                    default: Some(computed),
+                    origin: None,
+                });
+            }
             let value = tidb_expr::eval_expression_once(&body.expr, ctx)
                 .map_err(|error| DriverError::Exec(crate::ExecError::Eval(error)))?;
             let origin =
@@ -2165,6 +2172,9 @@ fn add_column_action(
     for option in &def.options {
         match option {
             tidb_ast::ColumnOption::Default(expr) => {
+                if crate::column_default::is_sequence_default_expression(expr) {
+                    return Err(DriverError::AddColumnSequenceDefault(def.name.clone()));
+                }
                 default_value = Some(crate::column_default::build_in_context(
                     expr,
                     &field_type,
@@ -2242,11 +2252,16 @@ fn add_column_action(
     if not_null {
         field_type.add_flags(NOT_NULL_FLAG);
     }
-    if default_value
-        .as_ref()
-        .is_some_and(|default| !default.is_safe_added_origin())
-    {
-        return Err(DriverError::BinlogUnsafeSystemFunction);
+    if let Some(default) = default_value.as_ref() {
+        match default.added_origin_safety() {
+            crate::column_default::AddedOriginSafety::Safe => {}
+            crate::column_default::AddedOriginSafety::UnsafeSystemFunction => {
+                return Err(DriverError::BinlogUnsafeSystemFunction);
+            }
+            crate::column_default::AddedOriginSafety::SequenceDefault => {
+                return Err(DriverError::AddColumnSequenceDefault(def.name.clone()));
+            }
+        }
     }
     let prepared_default = default_value
         .map(|default| {
