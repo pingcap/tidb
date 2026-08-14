@@ -42,18 +42,18 @@ type storeWithKS struct {
 	ks string
 }
 
-type cleanUpCallRecorder struct {
-	cleanUpCalls []int64
-	batchCalls   [][]int64
-	batchErr     error
+type batchCleanerCallRecorder struct {
+	calls      []int64
+	batchCalls [][]int64
+	batchErr   error
 }
 
-func (r *cleanUpCallRecorder) CleanUp(_ context.Context, task *proto.Task) error {
-	r.cleanUpCalls = append(r.cleanUpCalls, task.ID)
+func (r *batchCleanerCallRecorder) Clean(_ context.Context, task *proto.Task) error {
+	r.calls = append(r.calls, task.ID)
 	return nil
 }
 
-func (r *cleanUpCallRecorder) CleanUpBatch(_ context.Context, tasks []*proto.Task) error {
+func (r *batchCleanerCallRecorder) BatchClean(_ context.Context, tasks []*proto.Task) error {
 	taskIDs := make([]int64, 0, len(tasks))
 	for _, task := range tasks {
 		taskIDs = append(taskIDs, task.ID)
@@ -62,16 +62,16 @@ func (r *cleanUpCallRecorder) CleanUpBatch(_ context.Context, tasks []*proto.Tas
 	return r.batchErr
 }
 
-type singleCleanUpCallRecorder struct {
-	cleanUpCalls []int64
-	failTaskID   int64
-	cleanUpErr   error
+type singleCleanerCallRecorder struct {
+	calls      []int64
+	failTaskID int64
+	cleanupErr error
 }
 
-func (r *singleCleanUpCallRecorder) CleanUp(_ context.Context, task *proto.Task) error {
-	r.cleanUpCalls = append(r.cleanUpCalls, task.ID)
+func (r *singleCleanerCallRecorder) Clean(_ context.Context, task *proto.Task) error {
+	r.calls = append(r.calls, task.ID)
 	if task.ID == r.failTaskID {
-		return r.cleanUpErr
+		return r.cleanupErr
 	}
 	return nil
 }
@@ -178,7 +178,7 @@ func TestManagerSchedulersOrdered(t *testing.T) {
 	require.True(t, ordered(mgr.getSchedulers()))
 }
 
-func TestSchedulerCleanupTask(t *testing.T) {
+func TestSchedulerCleanTask(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
@@ -193,7 +193,7 @@ func TestSchedulerCleanupTask(t *testing.T) {
 		taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
 
-		batchFinished := mgr.processCleanupTaskBatch()
+		batchFinished := mgr.processCleanTaskBatch()
 
 		require.True(t, batchFinished)
 		require.True(t, ctrl.Satisfied())
@@ -212,55 +212,55 @@ func TestSchedulerCleanupTask(t *testing.T) {
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, secondBatch).Return(nil)
 		taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(nil, nil)
 
-		mgr.drainCleanupTaskBatches()
+		mgr.drainCleanTaskBatches()
 
 		require.True(t, ctrl.Satisfied())
 	})
 
 	t.Run("stops draining after partial batch cleanup", func(t *testing.T) {
-		ClearSchedulerCleanUpFactory()
-		t.Cleanup(ClearSchedulerCleanUpFactory)
+		ClearCleanerFactory()
+		t.Cleanup(ClearCleanerFactory)
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		taskMgr := mock.NewMockTaskManager(ctrl)
 		mgr := NewManager(context.Background(), nil, taskMgr, "1", proto.NodeResourceForTest)
-		cleanupTaskType := proto.TaskType("CleanupWithError")
-		cleanup := &singleCleanUpCallRecorder{failTaskID: 2, cleanUpErr: errors.New("cleanup failed")}
-		RegisterSchedulerCleanUpFactory(cleanupTaskType, func() CleanUpRoutine {
+		cleanTaskType := proto.TaskType("CleanWithError")
+		cleanup := &singleCleanerCallRecorder{failTaskID: 2, cleanupErr: errors.New("cleanup failed")}
+		RegisterCleanerFactory(cleanTaskType, func() Cleaner {
 			return cleanup
 		})
 		tasks := []*proto.Task{
 			{TaskBase: proto.TaskBase{ID: 1}},
-			{TaskBase: proto.TaskBase{ID: 2, Type: cleanupTaskType}},
+			{TaskBase: proto.TaskBase{ID: 2, Type: cleanTaskType}},
 		}
 		taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks[:1]).Return(nil)
 
-		mgr.drainCleanupTaskBatches()
+		mgr.drainCleanTaskBatches()
 
-		require.Equal(t, []int64{2}, cleanup.cleanUpCalls)
+		require.Equal(t, []int64{2}, cleanup.calls)
 		require.True(t, ctrl.Satisfied())
 	})
 
 	t.Run("stops draining without history transfer progress", func(t *testing.T) {
-		ClearSchedulerCleanUpFactory()
-		t.Cleanup(ClearSchedulerCleanUpFactory)
+		ClearCleanerFactory()
+		t.Cleanup(ClearCleanerFactory)
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		taskMgr := mock.NewMockTaskManager(ctrl)
 		mgr := NewManager(context.Background(), nil, taskMgr, "1", proto.NodeResourceForTest)
-		cleanupTaskType := proto.TaskType("CleanupWithError")
-		cleanup := &singleCleanUpCallRecorder{failTaskID: 1, cleanUpErr: errors.New("cleanup failed")}
-		RegisterSchedulerCleanUpFactory(cleanupTaskType, func() CleanUpRoutine {
+		cleanTaskType := proto.TaskType("CleanWithError")
+		cleanup := &singleCleanerCallRecorder{failTaskID: 1, cleanupErr: errors.New("cleanup failed")}
+		RegisterCleanerFactory(cleanTaskType, func() Cleaner {
 			return cleanup
 		})
-		tasks := []*proto.Task{{TaskBase: proto.TaskBase{ID: 1, Type: cleanupTaskType}}}
+		tasks := []*proto.Task{{TaskBase: proto.TaskBase{ID: 1, Type: cleanTaskType}}}
 		taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, gomock.Len(0)).Return(nil)
 
-		mgr.drainCleanupTaskBatches()
+		mgr.drainCleanTaskBatches()
 
-		require.Equal(t, []int64{1}, cleanup.cleanUpCalls)
+		require.Equal(t, []int64{1}, cleanup.calls)
 		require.True(t, ctrl.Satisfied())
 	})
 
@@ -273,7 +273,7 @@ func TestSchedulerCleanupTask(t *testing.T) {
 		taskMgr.EXPECT().GetCleanupTasks(mgr.ctx).Return(tasks, nil)
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(errors.New("transfer failed"))
 
-		mgr.drainCleanupTaskBatches()
+		mgr.drainCleanTaskBatches()
 
 		require.True(t, ctrl.Satisfied())
 	})
@@ -292,7 +292,7 @@ func TestSchedulerCleanupTask(t *testing.T) {
 		})
 		go func() {
 			defer close(loopDone)
-			mgr.cleanupTaskLoop()
+			mgr.cleanTaskLoop()
 		}()
 
 		select {
@@ -310,28 +310,28 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	})
 }
 
-func TestSchedulerCleanupFinishedTasks(t *testing.T) {
+func TestSchedulerCleanFinishedTasks(t *testing.T) {
 	otherBatchTaskType := proto.TaskType("OtherBatch")
-	noCleanUpTaskType := proto.TaskType("NoCleanUp")
+	noCleanerTaskType := proto.TaskType("NoCleaner")
 
 	t.Run("batch cleanup by capability", func(t *testing.T) {
-		ClearSchedulerCleanUpFactory()
-		t.Cleanup(ClearSchedulerCleanUpFactory)
+		ClearCleanerFactory()
+		t.Cleanup(ClearCleanerFactory)
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		taskMgr := mock.NewMockTaskManager(ctrl)
 		mgr := NewManager(context.Background(), nil, taskMgr, "1", proto.NodeResourceForTest)
-		importCleanUp := &cleanUpCallRecorder{}
-		otherBatchCleanUp := &cleanUpCallRecorder{}
-		exampleCleanUp := &singleCleanUpCallRecorder{}
-		RegisterSchedulerCleanUpFactory(proto.ImportInto, func() CleanUpRoutine {
-			return importCleanUp
+		importCleaner := &batchCleanerCallRecorder{}
+		otherBatchCleaner := &batchCleanerCallRecorder{}
+		exampleCleaner := &singleCleanerCallRecorder{}
+		RegisterCleanerFactory(proto.ImportInto, func() Cleaner {
+			return importCleaner
 		})
-		RegisterSchedulerCleanUpFactory(otherBatchTaskType, func() CleanUpRoutine {
-			return otherBatchCleanUp
+		RegisterCleanerFactory(otherBatchTaskType, func() Cleaner {
+			return otherBatchCleaner
 		})
-		RegisterSchedulerCleanUpFactory(proto.TaskTypeExample, func() CleanUpRoutine {
-			return exampleCleanUp
+		RegisterCleanerFactory(proto.TaskTypeExample, func() Cleaner {
+			return exampleCleaner
 		})
 
 		tasks := []*proto.Task{
@@ -340,74 +340,74 @@ func TestSchedulerCleanupFinishedTasks(t *testing.T) {
 			{TaskBase: proto.TaskBase{ID: 3, Type: proto.TaskTypeExample}},
 			{TaskBase: proto.TaskBase{ID: 4, Type: proto.ImportInto}},
 			{TaskBase: proto.TaskBase{ID: 5, Type: otherBatchTaskType}},
-			{TaskBase: proto.TaskBase{ID: 6, Type: noCleanUpTaskType}},
+			{TaskBase: proto.TaskBase{ID: 6, Type: noCleanerTaskType}},
 		}
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, gomock.InAnyOrder(tasks)).Return(nil)
 
-		transferredTaskCount, err := mgr.cleanupFinishedTasks(tasks)
+		transferredTaskCount, err := mgr.cleanFinishedTasks(tasks)
 		require.NoError(t, err)
 		require.Equal(t, len(tasks), transferredTaskCount)
-		require.Equal(t, [][]int64{{1, 4}}, importCleanUp.batchCalls)
-		require.Empty(t, importCleanUp.cleanUpCalls)
-		require.Equal(t, [][]int64{{2, 5}}, otherBatchCleanUp.batchCalls)
-		require.Empty(t, otherBatchCleanUp.cleanUpCalls)
-		require.Equal(t, []int64{3}, exampleCleanUp.cleanUpCalls)
+		require.Equal(t, [][]int64{{1, 4}}, importCleaner.batchCalls)
+		require.Empty(t, importCleaner.calls)
+		require.Equal(t, [][]int64{{2, 5}}, otherBatchCleaner.batchCalls)
+		require.Empty(t, otherBatchCleaner.calls)
+		require.Equal(t, []int64{3}, exampleCleaner.calls)
 	})
 
 	t.Run("single cleanup failure", func(t *testing.T) {
-		ClearSchedulerCleanUpFactory()
-		t.Cleanup(ClearSchedulerCleanUpFactory)
+		ClearCleanerFactory()
+		t.Cleanup(ClearCleanerFactory)
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
-		cleanUpErr := errors.New("single cleanup failed")
+		cleanupErr := errors.New("single cleanup failed")
 		taskMgr := mock.NewMockTaskManager(ctrl)
 		mgr := NewManager(context.Background(), nil, taskMgr, "1", proto.NodeResourceForTest)
-		batchCleanUp := &cleanUpCallRecorder{}
-		singleCleanUp := &singleCleanUpCallRecorder{failTaskID: 4, cleanUpErr: cleanUpErr}
-		RegisterSchedulerCleanUpFactory(proto.ImportInto, func() CleanUpRoutine {
-			return batchCleanUp
+		batchCleaner := &batchCleanerCallRecorder{}
+		singleCleaner := &singleCleanerCallRecorder{failTaskID: 4, cleanupErr: cleanupErr}
+		RegisterCleanerFactory(proto.ImportInto, func() Cleaner {
+			return batchCleaner
 		})
-		RegisterSchedulerCleanUpFactory(proto.TaskTypeExample, func() CleanUpRoutine {
-			return singleCleanUp
+		RegisterCleanerFactory(proto.TaskTypeExample, func() Cleaner {
+			return singleCleaner
 		})
 
 		tasks := []*proto.Task{
-			{TaskBase: proto.TaskBase{ID: 1, Type: noCleanUpTaskType}},
+			{TaskBase: proto.TaskBase{ID: 1, Type: noCleanerTaskType}},
 			{TaskBase: proto.TaskBase{ID: 2, Type: proto.TaskTypeExample}},
 			{TaskBase: proto.TaskBase{ID: 3, Type: proto.ImportInto}},
 			{TaskBase: proto.TaskBase{ID: 4, Type: proto.TaskTypeExample}},
 			{TaskBase: proto.TaskBase{ID: 5, Type: proto.ImportInto}},
-			{TaskBase: proto.TaskBase{ID: 6, Type: noCleanUpTaskType}},
+			{TaskBase: proto.TaskBase{ID: 6, Type: noCleanerTaskType}},
 		}
 		cleanedTasks := []*proto.Task{tasks[0], tasks[1], tasks[5]}
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, gomock.InAnyOrder(cleanedTasks)).Return(nil)
 
-		transferredTaskCount, err := mgr.cleanupFinishedTasks(tasks)
+		transferredTaskCount, err := mgr.cleanFinishedTasks(tasks)
 		require.NoError(t, err)
 		require.Equal(t, len(cleanedTasks), transferredTaskCount)
-		require.Equal(t, []int64{2, 4}, singleCleanUp.cleanUpCalls)
-		require.Empty(t, batchCleanUp.batchCalls)
+		require.Equal(t, []int64{2, 4}, singleCleaner.calls)
+		require.Empty(t, batchCleaner.batchCalls)
 	})
 
 	t.Run("batch cleanup failure", func(t *testing.T) {
-		ClearSchedulerCleanUpFactory()
-		t.Cleanup(ClearSchedulerCleanUpFactory)
+		ClearCleanerFactory()
+		t.Cleanup(ClearCleanerFactory)
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
-		cleanUpErr := errors.New("batch cleanup failed")
+		cleanupErr := errors.New("batch cleanup failed")
 		taskMgr := mock.NewMockTaskManager(ctrl)
 		mgr := NewManager(context.Background(), nil, taskMgr, "1", proto.NodeResourceForTest)
-		importCleanUp := &cleanUpCallRecorder{batchErr: cleanUpErr}
-		otherBatchCleanUp := &cleanUpCallRecorder{batchErr: cleanUpErr}
-		singleCleanUp := &singleCleanUpCallRecorder{}
-		RegisterSchedulerCleanUpFactory(proto.ImportInto, func() CleanUpRoutine {
-			return importCleanUp
+		importCleaner := &batchCleanerCallRecorder{batchErr: cleanupErr}
+		otherBatchCleaner := &batchCleanerCallRecorder{batchErr: cleanupErr}
+		singleCleaner := &singleCleanerCallRecorder{}
+		RegisterCleanerFactory(proto.ImportInto, func() Cleaner {
+			return importCleaner
 		})
-		RegisterSchedulerCleanUpFactory(otherBatchTaskType, func() CleanUpRoutine {
-			return otherBatchCleanUp
+		RegisterCleanerFactory(otherBatchTaskType, func() Cleaner {
+			return otherBatchCleaner
 		})
-		RegisterSchedulerCleanUpFactory(proto.TaskTypeExample, func() CleanUpRoutine {
-			return singleCleanUp
+		RegisterCleanerFactory(proto.TaskTypeExample, func() Cleaner {
+			return singleCleaner
 		})
 
 		tasks := []*proto.Task{
@@ -416,30 +416,30 @@ func TestSchedulerCleanupFinishedTasks(t *testing.T) {
 			{TaskBase: proto.TaskBase{ID: 3, Type: proto.TaskTypeExample}},
 			{TaskBase: proto.TaskBase{ID: 4, Type: proto.ImportInto}},
 			{TaskBase: proto.TaskBase{ID: 5, Type: otherBatchTaskType}},
-			{TaskBase: proto.TaskBase{ID: 6, Type: noCleanUpTaskType}},
+			{TaskBase: proto.TaskBase{ID: 6, Type: noCleanerTaskType}},
 		}
 		cleanedTasks := []*proto.Task{tasks[2], tasks[5]}
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, gomock.InAnyOrder(cleanedTasks)).Return(nil)
 
-		transferredTaskCount, err := mgr.cleanupFinishedTasks(tasks)
+		transferredTaskCount, err := mgr.cleanFinishedTasks(tasks)
 		require.NoError(t, err)
 		require.Equal(t, len(cleanedTasks), transferredTaskCount)
-		require.Equal(t, []int64{3}, singleCleanUp.cleanUpCalls)
-		require.Equal(t, 1, len(importCleanUp.batchCalls)+len(otherBatchCleanUp.batchCalls))
+		require.Equal(t, []int64{3}, singleCleaner.calls)
+		require.Equal(t, 1, len(importCleaner.batchCalls)+len(otherBatchCleaner.batchCalls))
 	})
 
 	t.Run("history transfer failure", func(t *testing.T) {
-		ClearSchedulerCleanUpFactory()
-		t.Cleanup(ClearSchedulerCleanUpFactory)
+		ClearCleanerFactory()
+		t.Cleanup(ClearCleanerFactory)
 		ctrl := gomock.NewController(t)
 		defer ctrl.Finish()
 		transferErr := errors.New("transfer failed")
 		taskMgr := mock.NewMockTaskManager(ctrl)
 		mgr := NewManager(context.Background(), nil, taskMgr, "1", proto.NodeResourceForTest)
-		tasks := []*proto.Task{{TaskBase: proto.TaskBase{ID: 1, Type: noCleanUpTaskType}}}
+		tasks := []*proto.Task{{TaskBase: proto.TaskBase{ID: 1, Type: noCleanerTaskType}}}
 		taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(transferErr)
 
-		transferredTaskCount, err := mgr.cleanupFinishedTasks(tasks)
+		transferredTaskCount, err := mgr.cleanFinishedTasks(tasks)
 		require.ErrorIs(t, err, transferErr)
 		require.Zero(t, transferredTaskCount)
 	})
