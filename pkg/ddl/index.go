@@ -3161,7 +3161,10 @@ func (w *worker) resolveCloudStorageURI(job *model.Job, mergeTempIndex bool) (st
 
 	jc.cloudStorageURI = handle.GetCloudStorageURI(w.workCtx, w.store)
 	if jc.cloudStorageURI == "" {
-		return "", errors.Errorf("cloud storage URI is empty for add-index job %d with cloud storage enabled", job.ID)
+		// Recovering requires the user to restore the cloud storage URI. Retrying could leave the DDL job
+		// in write reorganization for a long time before the configuration problem is noticed, so fail it.
+		return "", dbterror.ErrIngestFailed.GenWithStackByArgs(
+			fmt.Sprintf("cloud storage URI is empty for add-index job %d with cloud storage enabled", job.ID))
 	}
 	return jc.cloudStorageURI, nil
 }
