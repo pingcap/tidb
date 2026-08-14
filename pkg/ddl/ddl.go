@@ -805,7 +805,7 @@ func newDDL(ctx context.Context, options ...Option) (*ddl, *executor) {
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			return newLitBackfillScheduler(ctx, d, task, param)
 		})
-	scheduler.RegisterSchedulerCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
+	scheduler.RegisterCleanerFactory(proto.Backfill, newBackfillCleaner)
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL

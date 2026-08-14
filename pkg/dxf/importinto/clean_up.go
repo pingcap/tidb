@@ -42,36 +42,36 @@ import (
 )
 
 var (
-	_ scheduler.CleanUpRoutine      = (*ImportCleanUp)(nil)
-	_ scheduler.BatchCleanUpRoutine = (*ImportCleanUp)(nil)
+	_ scheduler.Cleaner      = (*ImportCleaner)(nil)
+	_ scheduler.BatchCleaner = (*ImportCleaner)(nil)
 )
 
 // Metering sends use little CPU and memory, so four concurrent workers are a
 // temporary conservative setting to improve throughput without unbounded pressure.
-const cleanUpMeteringConcurrency = 4
+const cleanMeteringConcurrency = 4
 
-// ImportCleanUp implements scheduler.BatchCleanUpRoutine.
-type ImportCleanUp struct {
+// ImportCleaner implements scheduler.BatchCleaner.
+type ImportCleaner struct {
 }
 
-func newImportCleanUpS3() scheduler.CleanUpRoutine {
-	return &ImportCleanUp{}
+func newImportCleaner() scheduler.Cleaner {
+	return &ImportCleaner{}
 }
 
-// CleanUp implements the CleanUpRoutine.CleanUp interface.
-func (c *ImportCleanUp) CleanUp(ctx context.Context, task *proto.Task) error {
-	return c.CleanUpBatch(ctx, []*proto.Task{task})
+// Clean implements Cleaner.
+func (c *ImportCleaner) Clean(ctx context.Context, task *proto.Task) error {
+	return c.BatchClean(ctx, []*proto.Task{task})
 }
 
-type cleanUpFileGroup struct {
+type cleanFileGroup struct {
 	cloudStorageURI    string
 	nonPartitionedDirs []string
 	taskIDs            []int64
 }
 
-type sendMeterOnCleanUpFunc func(context.Context, *proto.Task, *zap.Logger) error
+type sendMeterOnCleanFunc func(context.Context, *proto.Task, *zap.Logger) error
 
-// CleanUpBatch implements scheduler.BatchCleanUpRoutine.
+// BatchClean implements scheduler.BatchCleaner.
 // Global-sort files are partitioned by task ID, but finding them requires a scan
 // of the shared object store. Batching lets cleanup scan each store once instead
 // of once per task. The scheduler moves the tasks to history only after this
@@ -80,7 +80,7 @@ type sendMeterOnCleanUpFunc func(context.Context, *proto.Task, *zap.Logger) erro
 //
 // TODO: Move global-sort file management into DXF so task cleanup can remain
 // independent without giving up batched object-store scans.
-func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) error {
+func (*ImportCleaner) BatchClean(ctx context.Context, tasks []*proto.Task) error {
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -88,7 +88,7 @@ func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) err
 	// we can only clean up files after all write&ingest subtasks are finished,
 	// since they might share the same file.
 	meterTasks := make([]*proto.Task, 0, len(tasks))
-	fileGroups := make(map[string]*cleanUpFileGroup, len(tasks))
+	fileGroups := make(map[string]*cleanFileGroup, len(tasks))
 	for _, task := range tasks {
 		taskMeta := &TaskMeta{}
 		err := json.Unmarshal(task.Meta, taskMeta)
@@ -99,7 +99,7 @@ func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) err
 		isGlobalSort := taskMeta.Plan.IsGlobalSort()
 		redactSensitiveInfo(task, taskMeta)
 
-		if err = cleanUpTableMode(ctx, taskMeta); err != nil {
+		if err = cleanTableMode(ctx, taskMeta); err != nil {
 			return err
 		}
 		failpoint.InjectCall("mockCleanupError", &err)
@@ -112,7 +112,7 @@ func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) err
 			// same cloud storage uri.
 			fileGroup, ok := fileGroups[cloudStorageURI]
 			if !ok {
-				fileGroup = &cleanUpFileGroup{
+				fileGroup = &cleanFileGroup{
 					cloudStorageURI: cloudStorageURI,
 				}
 				fileGroups[cloudStorageURI] = fileGroup
@@ -126,22 +126,22 @@ func (*ImportCleanUp) CleanUpBatch(ctx context.Context, tasks []*proto.Task) err
 	}
 
 	for _, fileGroup := range fileGroups {
-		if err := cleanUpExternalFiles(ctx, *fileGroup); err != nil {
+		if err := cleanExternalFiles(ctx, *fileGroup); err != nil {
 			return err
 		}
 	}
 
-	return sendMeterOnCleanUpInParallel(ctx, meterTasks, sendMeterOnCleanUp)
+	return sendMeterOnCleanInParallel(ctx, meterTasks, sendMeterOnClean)
 }
 
-func sendMeterOnCleanUpInParallel(ctx context.Context, tasks []*proto.Task, sendFn sendMeterOnCleanUpFunc) error {
+func sendMeterOnCleanInParallel(ctx context.Context, tasks []*proto.Task, sendFn sendMeterOnCleanFunc) error {
 	if len(tasks) == 0 {
 		return nil
 	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	taskCh := make(chan *proto.Task)
-	workerCount := min(cleanUpMeteringConcurrency, len(tasks))
+	workerCount := min(cleanMeteringConcurrency, len(tasks))
 	for range workerCount {
 		eg.Go(func() error {
 			for task := range taskCh {
@@ -171,7 +171,7 @@ func sendMeterOnCleanUpInParallel(ctx context.Context, tasks []*proto.Task, send
 	return eg.Wait()
 }
 
-func cleanUpTableMode(ctx context.Context, taskMeta *TaskMeta) error {
+func cleanTableMode(ctx context.Context, taskMeta *TaskMeta) error {
 	if !kerneltype.IsClassic() {
 		return nil
 	}
@@ -197,7 +197,7 @@ func cleanUpTableMode(ctx context.Context, taskMeta *TaskMeta) error {
 	return nil
 }
 
-func cleanUpExternalFiles(ctx context.Context, fileGroup cleanUpFileGroup) error {
+func cleanExternalFiles(ctx context.Context, fileGroup cleanFileGroup) error {
 	logger := logutil.BgLogger().With(zap.Int64s("task-ids", fileGroup.taskIDs))
 	callLog := log.BeginTask(logger, "cleanup global sorted data")
 	defer callLog.End(zap.InfoLevel, nil)
@@ -215,7 +215,7 @@ func cleanUpExternalFiles(ctx context.Context, fileGroup cleanUpFileGroup) error
 	return nil
 }
 
-func sendMeterOnCleanUp(ctx context.Context, task *proto.Task, logger *zap.Logger) error {
+func sendMeterOnClean(ctx context.Context, task *proto.Task, logger *zap.Logger) error {
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
@@ -246,5 +246,5 @@ func sendMeterOnCleanUp(ctx context.Context, task *proto.Task, logger *zap.Logge
 }
 
 func init() {
-	scheduler.RegisterSchedulerCleanUpFactory(proto.ImportInto, newImportCleanUpS3)
+	scheduler.RegisterCleanerFactory(proto.ImportInto, newImportCleaner)
 }
