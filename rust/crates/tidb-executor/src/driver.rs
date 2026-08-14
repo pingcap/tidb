@@ -594,7 +594,7 @@ pub(crate) fn append_correlated_where_applies(
             current_scope.width(),
             &mut correlated,
             ctx,
-        )?;
+        );
         let Some(correlated) = correlated else { break };
         let (applied, widened_scope, _) =
             append_correlated_apply(source, &current_scope, correlated, catalog, current_db, ctx)?;
@@ -1170,7 +1170,7 @@ pub(crate) fn run_select_traced(
                 current_scope.width(),
                 &mut correlated,
                 ctx,
-            )?;
+            );
             let Some(correlated) = correlated else { break };
             let (applied, widened_scope, _) = append_correlated_apply(
                 source,

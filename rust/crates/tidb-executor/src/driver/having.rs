@@ -84,7 +84,7 @@ pub(crate) fn build_plain_having(
             current_scope.width(),
             &mut correlated,
             ctx,
-        )?;
+        );
         let Some(correlated) = correlated else { break };
         let (applied, widened_scope, _) =
             append_correlated_apply(source, current_scope, correlated, catalog, current_db, ctx)?;

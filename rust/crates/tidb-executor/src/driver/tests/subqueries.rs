@@ -336,6 +336,46 @@ fn correlated_subqueries() {
         .unwrap(),
         vec![vec![Datum::Int(3)]]
     );
+
+    // Go rewrites the left operand before it builds the IN subquery, so both
+    // sides may independently correlate to the same outer row. For ids 1 and
+    // 2, the per-id maximum is a member of that id's complete value set.
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM o WHERE \
+             (SELECT MAX(w) FROM i WHERE i.id = o.id) \
+             IN (SELECT w FROM i WHERE i.id = o.id)",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(1)], vec![Datum::Int(2)]]
+    );
+    // Compare-subquery uses the same left-before-right rule. Only id 2 has
+    // two values, so its minimum (5) is less than at least one value (25).
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM o WHERE \
+             (SELECT MIN(w) FROM i WHERE i.id = o.id) \
+             < ANY (SELECT w FROM i WHERE i.id = o.id)",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(2)]]
+    );
+    // The left scalar may also be uncorrelated; Go folds it before building
+    // the correlated right-hand Apply. Only id 2's set contains 25.
+    assert_eq!(
+        run_select_on(
+            "SELECT id FROM o WHERE \
+             (SELECT 25) IN (SELECT w FROM i WHERE i.id = o.id)",
+            &catalog,
+            &crate::StmtContext::for_query()
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(2)]]
+    );
 }
 
 /// A correlated subquery nested inside a larger aggregate-path

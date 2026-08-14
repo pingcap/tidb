@@ -483,7 +483,7 @@ impl PreAggApplyHoister<'_> {
                 index,
                 &mut correlated,
                 self.ctx,
-            )?;
+            );
             let Some(correlated) = correlated else {
                 return Ok(());
             };

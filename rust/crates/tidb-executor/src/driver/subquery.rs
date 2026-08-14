@@ -651,7 +651,7 @@ pub(crate) fn extract_correlated_subquery(
     index: usize,
     found: &mut Option<CorrelatedSubquery>,
     ctx: &crate::StmtContext,
-) -> Result<tidb_ast::Expr, DriverError> {
+) -> tidb_ast::Expr {
     struct Extractor<'a> {
         outer: &'a FromScope,
         catalog: &'a Catalog,
@@ -659,12 +659,11 @@ pub(crate) fn extract_correlated_subquery(
         ctx: &'a crate::StmtContext,
         index: usize,
         found: Option<CorrelatedSubquery>,
-        error: Option<DriverError>,
     }
 
     impl Visitor for Extractor<'_> {
         fn enter(&mut self, node: &mut dyn Any) -> bool {
-            if self.found.is_some() || self.error.is_some() {
+            if self.found.is_some() {
                 return true;
             }
             let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() else {
@@ -722,10 +721,12 @@ pub(crate) fn extract_correlated_subquery(
                 return true;
             }
             if operand_has_subquery {
-                self.error = Some(DriverError::unsupported(
-                    "more than one correlated subquery in an expression is not supported yet",
-                ));
-                return true;
+                // Go's handleInSubquery/handleCompareSubquery rewrites the
+                // left operand before building the right-hand subquery. Let
+                // the visitor descend so this pass extracts that operand;
+                // the caller's next pass then extracts this subquery against
+                // the already-widened Apply scope.
+                return false;
             }
             self.found = Some(CorrelatedSubquery {
                 query,
@@ -742,7 +743,7 @@ pub(crate) fn extract_correlated_subquery(
     }
 
     if found.is_some() {
-        return Ok(expr.clone());
+        return expr.clone();
     }
     let mut rewritten = expr.clone();
     let mut extractor = Extractor {
@@ -752,14 +753,10 @@ pub(crate) fn extract_correlated_subquery(
         ctx,
         index,
         found: None,
-        error: None,
     };
     rewritten.accept(&mut extractor);
-    if let Some(error) = extractor.error {
-        return Err(error);
-    }
     *found = extractor.found;
-    Ok(rewritten)
+    rewritten
 }
 
 /// The scope a subquery inside `select` sees as its OUTER scope: `select`'s
@@ -810,7 +807,7 @@ pub(crate) fn select_has_uncorrelated_subquery(
             let outer = select_outer_scope(select, catalog, current_db, ctx);
             let mut found = None;
             // A correlated WHERE subquery is the Apply path's job.
-            if extract_correlated_subquery(
+            extract_correlated_subquery(
                 where_clause,
                 &outer,
                 catalog,
@@ -818,10 +815,8 @@ pub(crate) fn select_has_uncorrelated_subquery(
                 0,
                 &mut found,
                 ctx,
-            )
-            .is_ok()
-                && found.is_some()
-            {
+            );
+            if found.is_some() {
                 return false;
             }
         }
@@ -949,22 +944,43 @@ pub(crate) fn fold_subqueries(
     use tidb_ast::Expr;
     // A subquery reading the OUTER query's columns has no single value to fold
     // to: it is the Apply path's job, one run per outer row.
-    if let Expr::Subquery(query)
-    | Expr::Exists {
-        subquery: query, ..
-    }
-    | Expr::InSubquery {
-        subquery: query, ..
-    }
-    | Expr::CompareSubquery {
-        subquery: query, ..
-    } = expr
-    {
+    let correlated_right = |query: &tidb_ast::QueryStmt| {
         let mut columns = Vec::new();
         collect_correlated_columns_query(query, outer, catalog, current_db, &mut columns, ctx);
-        if !columns.is_empty() {
+        !columns.is_empty()
+    };
+    match expr {
+        Expr::Subquery(query)
+        | Expr::Exists {
+            subquery: query, ..
+        } if correlated_right(query) => {
             return Ok(expr.clone());
         }
+        Expr::InSubquery {
+            expr: lhs,
+            subquery,
+            not,
+        } if correlated_right(subquery) => {
+            return Ok(Expr::InSubquery {
+                expr: Box::new(fold_subqueries(lhs, outer, catalog, current_db, ctx)?),
+                subquery: subquery.clone(),
+                not: *not,
+            });
+        }
+        Expr::CompareSubquery {
+            op,
+            left,
+            all,
+            subquery,
+        } if correlated_right(subquery) => {
+            return Ok(Expr::CompareSubquery {
+                op: *op,
+                left: Box::new(fold_subqueries(left, outer, catalog, current_db, ctx)?),
+                all: *all,
+                subquery: subquery.clone(),
+            });
+        }
+        _ => {}
     }
     Ok(match expr {
         Expr::Subquery(query) => {
@@ -1180,7 +1196,7 @@ pub(crate) fn extract_and_hoist_subquery(
         let mut found = None;
         rewritten = extract_correlated_subquery(
             &rewritten, outer, catalog, current_db, index, &mut found, ctx,
-        )?;
+        );
         let Some(correlated) = found else {
             // Uncorrelated, or a shape the extraction does not own: leave it
             // to the fold pass or its existing named refusal.
