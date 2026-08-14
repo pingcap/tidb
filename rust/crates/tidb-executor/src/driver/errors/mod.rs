@@ -1460,6 +1460,11 @@ impl DriverError {
                  `{function}`."
             ),
         ),
+        DriverError::BinlogUnsafeSystemFunction => MysqlError::new(
+            1674,
+            *b"HY000",
+            "Statement is unsafe because it uses a system function that may return a different value on the slave".to_owned(),
+        ),
         // Go: "Unknown table '%-.192s' in %-.32s".
         DriverError::UnknownTableInMultiDelete(table) => MysqlError::new(
             1109,

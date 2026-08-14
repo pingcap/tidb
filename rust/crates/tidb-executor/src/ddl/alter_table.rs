@@ -1142,6 +1142,58 @@ pub fn prepare_column_default(
     })
 }
 
+/// The two persisted faces of one ALTER-written DEFAULT.
+///
+/// `default` remains computed when future INSERTs must evaluate it again;
+/// `origin` is settled once for rows that predate an ADD COLUMN. This is the
+/// same `DefaultValue`/`OriginDefaultValue` split used by Go's DDL path.
+struct PreparedAlterDefault {
+    default: Option<crate::column_default::ColumnDefault>,
+    origin: Option<Datum>,
+}
+
+fn prepare_alter_column_default(
+    default: crate::column_default::ColumnDefault,
+    field_type: &FieldType,
+    column: &str,
+    column_info_version: u64,
+    ctx: &crate::StmtContext,
+) -> Result<PreparedAlterDefault, DriverError> {
+    let zone = &ctx.session_zone();
+    match default {
+        crate::column_default::ColumnDefault::Value(value) => {
+            let prepared =
+                prepare_column_default(value, field_type, column, column_info_version, ctx, zone)?;
+            if !prepared.has_default && field_type.has_flag(NOT_NULL_FLAG) {
+                return Ok(PreparedAlterDefault {
+                    default: None,
+                    origin: None,
+                });
+            }
+            Ok(PreparedAlterDefault {
+                default: Some(crate::column_default::ColumnDefault::Value(
+                    prepared.stored.clone(),
+                )),
+                origin: Some(prepared.stored),
+            })
+        }
+        computed @ crate::column_default::ColumnDefault::Computed(_) => {
+            let crate::column_default::ColumnDefault::Computed(body) = &computed else {
+                unreachable!("the matched default is computed")
+            };
+            let value = tidb_expr::eval_expression_once(&body.expr, ctx)
+                .map_err(|error| DriverError::Exec(crate::ExecError::Eval(error)))?;
+            let origin =
+                prepare_column_default(value, field_type, column, column_info_version, ctx, zone)?
+                    .stored;
+            Ok(PreparedAlterDefault {
+                default: Some(computed),
+                origin: Some(origin),
+            })
+        }
+    }
+}
+
 /// Go `checkDefaultValue`: validate the persisted spelling against the
 /// column's final flags and return the typed value an omitted row receives.
 pub fn validate_column_default(
@@ -1641,7 +1693,6 @@ fn modify_column_action(
     request: &ModifyColumnRequest<'_>,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
-    let zone = &ctx.session_zone();
     let &ModifyColumnRequest {
         database,
         table_name,
@@ -1651,31 +1702,19 @@ fn modify_column_action(
         if_exists,
         allow_remove_auto_inc,
     } = request;
-    let field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
+    let mut field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
     let mut default_value = None;
     let mut nullability = None;
     let mut has_null_flag = false;
     for option in &def.options {
         match option {
             tidb_ast::ColumnOption::Default(expr) => {
-                let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
+                default_value = Some(crate::column_default::build_in_context(
                     expr,
-                    &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
-                        zone.clone(),
-                        ctx.like_default_escape(),
-                    ),
-                )
-                .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
-                let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
-                    return Err(DriverError::unsupported(
-                        "an expression DEFAULT is not supported yet",
-                    ));
-                };
-                default_value = Some(
-                    constant
-                        .eval()
-                        .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?,
-                );
+                    &field_type,
+                    &def.name,
+                    ctx,
+                )?);
             }
             tidb_ast::ColumnOption::NotNull => nullability = Some(true),
             tidb_ast::ColumnOption::Null => {
@@ -1696,6 +1735,11 @@ fn modify_column_action(
             // The old table definition decides whether this is an allowed bit
             // increase or AUTO_INCREMENT conversion, so it is checked below.
             | tidb_ast::ColumnOption::AutoRandom(_) => {}
+            tidb_ast::ColumnOption::OnUpdate(expr) => {
+                crate::column_default::validate_on_update_current_timestamp(expr, &field_type)
+                    .map_err(|_| DriverError::InvalidOnUpdate(def.name.clone()))?;
+                field_type.add_flags(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW);
+            }
             _ => {
                 return Err(DriverError::unsupported(
                     "this column option is not supported in ALTER TABLE MODIFY COLUMN",
@@ -1821,7 +1865,6 @@ fn modify_column_action(
         unreachable!("the table was found above and nothing here removes it");
     };
 
-    let mut field_type = field_type;
     // Go `pkg/ddl/modify_column.go`: the new column is built from the new
     // definition, then the OLD column's index flags are copied onto it and a
     // primary key supplies the NOT NULL state with which option processing
@@ -1845,7 +1888,12 @@ fn modify_column_action(
     // they spell NULL. A NULL default wins with 1067; otherwise any explicit
     // NULL option on the key is 1171, even if NOT NULL followed it.
     if old_is_primary {
-        if default_value.as_ref().is_some_and(Datum::is_null) {
+        if default_value.as_ref().is_some_and(|default| {
+            matches!(
+                default,
+                crate::column_default::ColumnDefault::Value(value) if value.is_null()
+            )
+        }) {
             return Err(DriverError::InvalidDefault(def.name.clone()));
         }
         if has_null_flag {
@@ -2036,32 +2084,21 @@ fn modify_column_action(
             Some(if target > offset { target } else { target + 1 })
         }
     };
-    // An ALTER-written default is always a literal here. Keep Go's exact
-    // metadata spelling in both DefaultValue and OriginDefaultValue; omitted
-    // inserts and pre-DDL rows cast that spelling through the column type when
-    // they read it. `prepare_column_default` performs the DDL-time strict cast
-    // only as validation and deliberately does not replace the spelling.
-    let default_value = match default_value {
-        Some(value) => {
-            let prepared = prepare_column_default(
-                value,
+    let prepared_default = default_value
+        .map(|default| {
+            prepare_alter_column_default(
+                default,
                 &field_type,
                 &def.name,
                 tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
                 ctx,
-                zone,
-            )?;
-            if !prepared.has_default && field_type.has_flag(NOT_NULL_FLAG) {
-                None
-            } else {
-                Some(prepared.stored)
-            }
-        }
-        None => None,
-    };
-    let stored_default = default_value
-        .clone()
-        .map(crate::column_default::ColumnDefault::Value);
+            )
+        })
+        .transpose()?
+        .unwrap_or(PreparedAlterDefault {
+            default: None,
+            origin: None,
+        });
     let Some(crate::TableEntry::Kv(table)) = catalog.table_mut_in(database, table_name) else {
         unreachable!("the table was found above and nothing here removes it");
     };
@@ -2085,8 +2122,8 @@ fn modify_column_action(
         // A generated column option is refused above, so a MODIFY never
         // produces one.
         generated: None,
-        default_value: stored_default,
-        origin_default: default_value,
+        default_value: prepared_default.default,
+        origin_default: prepared_default.origin,
     };
     if drop_auto_increment {
         table.clear_auto_increment_offset();
@@ -2122,36 +2159,39 @@ fn add_column_action(
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
     let zone = &ctx.session_zone();
-    let field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
+    let mut field_type = field_type_of(def, existing_table_charset(catalog, database, table_name))?;
     let mut default_value = None;
     let mut not_null = false;
     for option in &def.options {
         match option {
             tidb_ast::ColumnOption::Default(expr) => {
-                let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
+                default_value = Some(crate::column_default::build_in_context(
                     expr,
-                    &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
-                        zone.clone(),
-                        ctx.like_default_escape(),
-                    ),
-                )
-                .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
-                let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
-                    return Err(DriverError::unsupported(
-                        "an expression DEFAULT is not supported yet",
-                    ));
-                };
-                default_value = Some(
-                    constant
-                        .eval()
-                        .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?,
-                );
+                    &field_type,
+                    &def.name,
+                    ctx,
+                )?);
+                // Go `removeOnUpdateNowFlag`: only a TIMESTAMP definition's
+                // explicit DEFAULT clears a preceding ON UPDATE option.
+                if field_type.code() == FieldTypeCode::Timestamp {
+                    field_type.del_flags(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW);
+                }
             }
             // Go mutates the flag while visiting options. Replacing this with
             // `any(NotNull)` loses the last-option-wins result of legal forms
             // such as `NOT NULL NULL`.
             tidb_ast::ColumnOption::NotNull => not_null = true,
-            tidb_ast::ColumnOption::Null => not_null = false,
+            tidb_ast::ColumnOption::Null => {
+                not_null = false;
+                if field_type.code() == FieldTypeCode::Timestamp {
+                    field_type.del_flags(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW);
+                }
+            }
+            tidb_ast::ColumnOption::OnUpdate(expr) => {
+                crate::column_default::validate_on_update_current_timestamp(expr, &field_type)
+                    .map_err(|_| DriverError::InvalidOnUpdate(def.name.clone()))?;
+                field_type.add_flags(tidb_datatype::FieldTypeFlags::ON_UPDATE_NOW);
+            }
             // Go `checkAddColumnTooManyColumns`'s neighbour in
             // `pkg/ddl/column.go`: a STORED generated column added by ALTER
             // would have to be backfilled into every existing row, which TiDB
@@ -2199,35 +2239,30 @@ fn add_column_action(
             .map(|offset| offset + 1)
             .ok_or_else(|| DriverError::UnknownColumnInAlter(after.clone()))?,
     };
-    let mut field_type = field_type;
     if not_null {
         field_type.add_flags(NOT_NULL_FLAG);
     }
-    // Store the exact metadata spelling. Both a newly omitted value and an
-    // old row's OriginDefaultValue are cast through `field_type` when read;
-    // replacing this with the prepared runtime value would make SHOW CREATE
-    // silently print rounded DECIMAL defaults.
-    let default_value = match default_value {
-        Some(value) => {
-            let prepared = prepare_column_default(
-                value,
+    if default_value
+        .as_ref()
+        .is_some_and(|default| !default.is_safe_added_origin())
+    {
+        return Err(DriverError::BinlogUnsafeSystemFunction);
+    }
+    let prepared_default = default_value
+        .map(|default| {
+            prepare_alter_column_default(
+                default,
                 &field_type,
                 &def.name,
                 tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
                 ctx,
-                zone,
-            )?;
-            if !prepared.has_default && field_type.has_flag(NOT_NULL_FLAG) {
-                None
-            } else {
-                Some(prepared.stored)
-            }
-        }
-        None => None,
-    };
-    let stored_default = default_value
-        .clone()
-        .map(crate::column_default::ColumnDefault::Value);
+            )
+        })
+        .transpose()?
+        .unwrap_or(PreparedAlterDefault {
+            default: None,
+            origin: None,
+        });
     // A generated expression resolves against the columns that will PRECEDE
     // the new one, which is Go's `verifyColumnGeneration` prior-order rule
     // and, for the default append position, every column the table has.
@@ -2265,7 +2300,7 @@ fn add_column_action(
             field_type,
             column_info_version: tidb_model::column::CURR_LATEST_COLUMN_INFO_VERSION,
             generated,
-            default_value: stored_default,
+            default_value: prepared_default.default,
             // Rows written before this column existed read back the default.
             // A NOT NULL column with NO default reads back the TYPE's zero
             // instead of NULL: Go fills the backfill value through
@@ -2276,7 +2311,8 @@ fn add_column_action(
             // the pre-existing rows read `''`, and `dd INT NOT NULL` reads
             // `0` -- not NULL, which is why an ordinary UPDATE of such a row
             // does not trip the NOT NULL check.
-            origin_default: default_value
+            origin_default: prepared_default
+                .origin
                 .or_else(|| not_null.then(|| crate::bad_null::zero_value(&field_type_for_origin))),
         },
     );

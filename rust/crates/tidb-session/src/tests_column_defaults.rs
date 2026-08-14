@@ -205,6 +205,150 @@ fn invalid_on_update_clauses_keep_tidbs_error_boundary() {
     );
 }
 
+#[test]
+fn alter_column_options_preserve_computed_default_and_on_update_semantics() {
+    let mut session = Session::new();
+    session.run("SET time_zone = '+00:00'").unwrap();
+    session
+        .run(
+            "CREATE TABLE alter_clock (\
+             id INT PRIMARY KEY, v INT, changed_at DATETIME(3) NULL, \
+             token VARCHAR(64))",
+        )
+        .unwrap();
+    session
+        .run("INSERT INTO alter_clock (id, v, changed_at) VALUES (1, 1, NULL)")
+        .unwrap();
+
+    session.run("SET timestamp = 1700000000").unwrap();
+    session
+        .run(
+            "ALTER TABLE alter_clock ADD COLUMN added_at DATETIME(3) \
+             DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)",
+        )
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT changed_at, added_at FROM alter_clock WHERE id = 1"
+        ),
+        [["NULL", "2023-11-14 22:13:20.000"]]
+    );
+    let definition = show_create(&mut session, "alter_clock");
+    assert!(
+        definition.contains(
+            "`added_at` datetime(3) DEFAULT CURRENT_TIMESTAMP(3) \
+             ON UPDATE CURRENT_TIMESTAMP(3)"
+        ),
+        "{definition}"
+    );
+
+    session.run("SET timestamp = 1700000050").unwrap();
+    session
+        .run("INSERT INTO alter_clock (id, v) VALUES (2, 1)")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT changed_at, added_at FROM alter_clock WHERE id = 2"
+        ),
+        [["NULL", "2023-11-14 22:14:10.000"]],
+        "the ADD default was settled instead of retained as a computation"
+    );
+
+    session
+        .run(
+            "ALTER TABLE alter_clock MODIFY COLUMN changed_at DATETIME(3) NULL \
+             DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)",
+        )
+        .unwrap();
+    session.run("SET timestamp = 1700000100").unwrap();
+    assert_eq!(
+        session
+            .run("UPDATE alter_clock SET v = 2 WHERE id = 1")
+            .unwrap(),
+        StmtResult::Affected(1)
+    );
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT changed_at, added_at FROM alter_clock WHERE id = 1"
+        ),
+        [["2023-11-14 22:15:00.000", "2023-11-14 22:15:00.000"]]
+    );
+
+    session.run("SET timestamp = 1700000200").unwrap();
+    session
+        .run("INSERT INTO alter_clock (id, v) VALUES (3, 1)")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT changed_at, added_at FROM alter_clock WHERE id = 3"
+        ),
+        [["2023-11-14 22:16:40.000", "2023-11-14 22:16:40.000"]],
+        "the MODIFY default was settled instead of retained as a computation"
+    );
+
+    session
+        .run(
+            "ALTER TABLE alter_clock \
+             ADD COLUMN order_cleared TIMESTAMP ON UPDATE CURRENT_TIMESTAMP \
+             DEFAULT CURRENT_TIMESTAMP, \
+             ADD COLUMN order_kept TIMESTAMP DEFAULT CURRENT_TIMESTAMP \
+             ON UPDATE CURRENT_TIMESTAMP, \
+             ADD COLUMN null_cleared TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NULL",
+        )
+        .unwrap();
+    let definition = show_create(&mut session, "alter_clock");
+    let order_cleared = definition
+        .lines()
+        .find(|line| line.contains("`order_cleared`"))
+        .unwrap();
+    let order_kept = definition
+        .lines()
+        .find(|line| line.contains("`order_kept`"))
+        .unwrap();
+    let null_cleared = definition
+        .lines()
+        .find(|line| line.contains("`null_cleared`"))
+        .unwrap();
+    assert!(!order_cleared.contains("ON UPDATE"), "{order_cleared}");
+    assert!(order_kept.contains("ON UPDATE"), "{order_kept}");
+    assert!(!null_cleared.contains("ON UPDATE"), "{null_cleared}");
+
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE alter_clock ADD COLUMN unsafe_token VARCHAR(64) DEFAULT (uuid())"
+        ),
+        Some(1674)
+    );
+    assert!(!show_create(&mut session, "alter_clock").contains("`unsafe_token`"));
+    session
+        .run("ALTER TABLE alter_clock MODIFY COLUMN token VARCHAR(64) DEFAULT (uuid())")
+        .unwrap();
+    session
+        .run("INSERT INTO alter_clock (id, v) VALUES (4, 1)")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT length(token) FROM alter_clock WHERE id = 4"
+        ),
+        [["36"]],
+        "MODIFY incorrectly inherited ADD COLUMN's unsafe-origin refusal"
+    );
+
+    for sql in [
+        "ALTER TABLE alter_clock ADD COLUMN bad_type INT ON UPDATE CURRENT_TIMESTAMP",
+        "ALTER TABLE alter_clock MODIFY COLUMN changed_at DATETIME(3) \
+         ON UPDATE CURRENT_TIMESTAMP",
+    ] {
+        assert_eq!(code(&mut session, sql), Some(1294), "{sql}");
+    }
+}
+
 /// The body of `SHOW CREATE TABLE t`, which is its second cell.
 fn show_create(session: &mut Session, table: &str) -> String {
     rows(session, &format!("SHOW CREATE TABLE {table}")).remove(0)[1].clone()
@@ -370,16 +514,30 @@ fn an_expression_default_prints_parenthesised() {
     );
 }
 
-/// `DEFAULT (uuid())` is ON Go's whitelist and captured as
-/// `` `b` varchar(64) DEFAULT (uuid()) ``, but `uuid` is not among the
-/// builtins this tier evaluates over a chunk, so the default is refused at
-/// DDL time rather than stored as one that would fail on every INSERT.
+/// `DEFAULT (uuid())` is on Go's whitelist, prints as an expression, and is
+/// evaluated independently for every omitted row.
 #[test]
-fn a_uuid_default_is_refused_because_the_builtin_is_not_evaluable() {
+fn a_uuid_default_is_evaluated_per_omitted_row() {
     let mut session = Session::new();
-    assert!(session
+    session
         .run("CREATE TABLE t4 (a INT, b VARCHAR(64) DEFAULT (uuid()))")
-        .is_err());
+        .unwrap();
+    assert!(
+        show_create(&mut session, "t4").contains("DEFAULT (uuid())"),
+        "{}",
+        show_create(&mut session, "t4")
+    );
+    session.run("INSERT INTO t4 (a) VALUES (1), (2)").unwrap();
+    let values = rows(&mut session, "SELECT b FROM t4 ORDER BY a");
+    assert_eq!(values.len(), 2);
+    for value in &values {
+        let value = &value[0];
+        assert_eq!(value.len(), 36, "{value}");
+        for at in [8, 13, 18, 23] {
+            assert_eq!(value.as_bytes()[at], b'-', "{value}");
+        }
+    }
+    assert_ne!(values[0][0], values[1][0]);
 }
 
 /// An omitted expression-default column is evaluated per row: `insert into t4

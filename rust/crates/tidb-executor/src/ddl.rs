@@ -908,29 +908,11 @@ pub fn run_create_table_in(
                     // Go `SetDefaultValue`: a FUNCTION-CALL default takes the
                     // whitelist route and never the constant folder, which is
                     // why `DEFAULT (abs(1))` is 3770 in TiDB despite folding.
-                    let built = crate::column_default::build(expr, &field_type, |expr| {
-                        let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
-                            expr,
-                            &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
-                                ctx.session_zone(),
-                                ctx.like_default_escape(),
-                            ),
-                        )
-                        .map_err(|_| {
-                            crate::column_default::DefaultError::Unsupported(
-                                "a DEFAULT this node cannot evaluate",
-                            )
-                        })?;
-                        // Go `EvalSimpleAst`: the expression is EVALUATED,
-                        // not merely required to be a literal already, which
-                        // is what settles `DEFAULT (1 + 1)` to 2.
-                        tidb_expr::eval_expression_once(&rewritten, ctx).map_err(|_| {
-                            crate::column_default::DefaultError::Unsupported(
-                                "a DEFAULT this node cannot evaluate",
-                            )
-                        })
-                    })
-                    .map_err(|error| error.into_driver_error(&def.name))?;
+                    // Go `EvalSimpleAst`: non-function expressions are
+                    // evaluated rather than required to be literal already,
+                    // which is what settles `DEFAULT (1 + 1)` to 2.
+                    let built =
+                        crate::column_default::build_in_context(expr, &field_type, &def.name, ctx)?;
                     default_value = Some(match built {
                         crate::column_default::ColumnDefault::Value(value) => {
                             let settled = alter_table::settle_column_default(

@@ -521,6 +521,7 @@ mod source_tests {
                     Datum::Int(1),
                     not_null_bigint.clone(),
                 )),
+                added_origin_safety: crate::column_default::AddedOriginSafety::Safe,
             },
         )));
 

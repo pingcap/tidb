@@ -94,9 +94,33 @@ pub struct ComputedDefault {
     /// The evaluable form. It reads no column, so it evaluates over an empty
     /// row.
     pub expr: Expression,
+    /// Whether ADD COLUMN may evaluate this once for pre-existing rows.
+    pub added_origin_safety: AddedOriginSafety,
+}
+
+/// Go's replication-safety decision for synthesizing an added column's value
+/// on rows that predate it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AddedOriginSafety {
+    /// The computation is allowed when ADD COLUMN settles old rows.
+    Safe,
+    /// Go `ErrBinlogUnsafeSystemFunction` (1674).
+    UnsafeSystemFunction,
 }
 
 impl ColumnDefault {
+    /// Whether Go permits this computation to synthesize the origin value of
+    /// an added column. RAND and UUID are valid CREATE defaults but unsafe for
+    /// ADD COLUMN because existing rows would get node-local values.
+    #[must_use]
+    pub(crate) fn is_safe_added_origin(&self) -> bool {
+        !matches!(
+            self,
+            Self::Computed(computed)
+                if computed.added_origin_safety == AddedOriginSafety::UnsafeSystemFunction
+        )
+    }
+
     /// The settled value, for the callers that only make sense for one: the
     /// `ORIGIN_DEFAULT` an `ADD COLUMN` gives to rows written before it, which
     /// Go settles once at DDL time rather than per row.
@@ -317,6 +341,7 @@ fn func_call_default(
             text: "CURRENT_TIMESTAMP".to_owned(),
             is_expr: false,
             expr: build_expression(expr)?,
+            added_origin_safety: AddedOriginSafety::Safe,
         }))));
     }
     match lower.as_str() {
@@ -326,6 +351,7 @@ fn func_call_default(
             text: expr.restore_with_flags(default_restore_flags()),
             is_expr: true,
             expr: build_expression(expr)?,
+            added_origin_safety: AddedOriginSafety::UnsafeSystemFunction,
         })))),
         _ => Err(DefaultError::FunctionNotAllowed(lower)),
     }
@@ -369,6 +395,30 @@ pub fn build(
         ));
     }
     fold(expr).map(ColumnDefault::Value)
+}
+
+/// Builds a DEFAULT against the live statement context for every DDL entry
+/// point. Keeping CREATE and ALTER on this one boundary prevents the allowed
+/// function set and constant-folding behavior from drifting apart.
+pub(crate) fn build_in_context(
+    expr: &Expr,
+    field_type: &FieldType,
+    column: &str,
+    ctx: &crate::StmtContext,
+) -> Result<ColumnDefault, crate::DriverError> {
+    build(expr, field_type, |expr| {
+        let rewritten = rewrite_expr_resolved(
+            expr,
+            &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
+                ctx.session_zone(),
+                ctx.like_default_escape(),
+            ),
+        )
+        .map_err(|_| DefaultError::Unsupported("a DEFAULT this node cannot evaluate"))?;
+        tidb_expr::eval_expression_once(&rewritten, ctx)
+            .map_err(|_| DefaultError::Unsupported("a DEFAULT this node cannot evaluate"))
+    })
+    .map_err(|error| error.into_driver_error(column))
 }
 
 /// Builds the same computed `CURRENT_TIMESTAMP` value source used by a

@@ -495,6 +495,9 @@ pub enum DriverError {
     /// column `DEFAULT` names a function that is not on Go's whitelist for
     /// defaults, carried as `(column, function)`.
     DefaultFunctionNotAllowed(String, String),
+    /// Go `dbterror.ErrBinlogUnsafeSystemFunction` (1674): ADD COLUMN would
+    /// synthesize a node-local value for rows written before the column.
+    BinlogUnsafeSystemFunction,
     /// Go `plannererrors.ErrUnknownTable` (1109): a multi-table `DELETE`
     /// names a target the `FROM`/`USING` clause does not provide -- which
     /// includes naming an aliased source by its stored table name.
