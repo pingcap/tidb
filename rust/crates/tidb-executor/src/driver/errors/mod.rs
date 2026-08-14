@@ -141,6 +141,11 @@ impl DriverError {
                 .raw
                 .to_owned(),
         ),
+        DriverError::UnknownStorageEngine(engine) => MysqlError::new(
+            tidb_error::tidb::errcode::ErrUnknownStorageEngine,
+            *b"42000",
+            format!("Unknown storage engine '{engine}'"),
+        ),
         // Every execution and evaluation failure, one arm each, in `exec`.
         DriverError::Exec(error) => exec::to_mysql_error(error),
         DriverError::Txn(crate::TxnErrorKind::WriteConflict) => {

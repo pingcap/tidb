@@ -311,6 +311,11 @@ pub fn build_table_info_with_context(
         return Err(DdlAdmissionError::new("CREATE TABLE declares no columns"));
     }
 
+    if let Err(error) = tidb_executor::ddl::validate_table_options(&create.table_options) {
+        let error = error.to_mysql_error();
+        return Err(DdlAdmissionError::with_code(error.code, error.message));
+    }
+
     // Go `GetCharsetAndCollateInTableOption`: the LAST declared pair wins, and
     // whatever it leaves unset the database supplies.
     let mut declared_charset = None;

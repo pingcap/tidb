@@ -602,6 +602,31 @@ fn the_shapes_a_bootstrap_needs_are_admitted_rather_than_refused() {
 }
 
 #[test]
+fn cluster_table_options_keep_their_go_error_identity() {
+    for (sql, code, reason) in [
+        (
+            "CREATE TABLE u6.t (id BIGINT) UNION=(u6.other)",
+            8232,
+            "CREATE/ALTER table with union option is not supported",
+        ),
+        (
+            "CREATE TABLE u6.t (id BIGINT) INSERT_METHOD=FIRST",
+            8233,
+            "CREATE/ALTER table with insert method option is not supported",
+        ),
+        (
+            "CREATE TABLE u6.t (id BIGINT) ENGINE=imaginary",
+            1286,
+            "Unknown storage engine 'imaginary'",
+        ),
+    ] {
+        let (actual_code, actual_reason) = refusal_with_code(sql);
+        assert_eq!(actual_code, code, "{sql}");
+        assert!(actual_reason.contains(reason), "{sql}: {actual_reason}");
+    }
+}
+
+#[test]
 fn parsed_binary_enum_default_reaches_the_shared_normalizer_losslessly() {
     let sql = "CREATE TABLE u6.t (a ENUM(0xff,0x15) CHARACTER SET binary DEFAULT 0xff)";
     let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");

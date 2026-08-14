@@ -48,6 +48,8 @@ pub enum DriverError {
     TableOptionUnionUnsupported,
     /// Go `dbterror.ErrTableOptionInsertMethodUnsupported` (8233).
     TableOptionInsertMethodUnsupported,
+    /// Go `dbterror.ErrUnknownEngine` (1286).
+    UnknownStorageEngine(String),
     /// Rewriting an expression or executing failed.
     Exec(ExecError),
     /// The shared catalog is unusable because a statement panicked while

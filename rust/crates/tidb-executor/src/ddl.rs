@@ -455,7 +455,27 @@ pub fn resolve_database_charset(
     database_charset_of(options)
 }
 
-fn validate_table_options(options: &[tidb_ast::TableOption]) -> Result<(), DriverError> {
+/// Go `checkUnsupportedTableOptions`: reject the two unsupported compatibility
+/// clauses and storage engines outside TiDB's MySQL/MariaDB allowlist.
+pub fn validate_table_options(options: &[tidb_ast::TableOption]) -> Result<(), DriverError> {
+    const VALID_ENGINES: &[&str] = &[
+        "archive",
+        "blackhole",
+        "csv",
+        "example",
+        "federated",
+        "innodb",
+        "memory",
+        "merge",
+        "mgr_myisam",
+        "myisam",
+        "ndb",
+        "heap",
+        "aria",
+        "myrocks",
+        "tokudb",
+    ];
+
     for option in options {
         match option {
             tidb_ast::TableOption::Union(_) => {
@@ -463,6 +483,13 @@ fn validate_table_options(options: &[tidb_ast::TableOption]) -> Result<(), Drive
             }
             tidb_ast::TableOption::InsertMethod(_) => {
                 return Err(DriverError::TableOptionInsertMethodUnsupported)
+            }
+            tidb_ast::TableOption::Engine(engine)
+                if !VALID_ENGINES
+                    .iter()
+                    .any(|valid| engine.eq_ignore_ascii_case(valid)) =>
+            {
+                return Err(DriverError::UnknownStorageEngine(engine.clone()))
             }
             _ => {}
         }
@@ -1344,6 +1371,40 @@ mod tests {
     use crate::driver::{run_insert_on, run_select_on};
     use tidb_datatype::Datum;
     use tidb_datatype::{Charset, Collation};
+
+    #[test]
+    fn table_engine_validation_matches_the_go_allowlist_and_error() {
+        for engine in [
+            "ARCHIVE",
+            "blackhole",
+            "csv",
+            "example",
+            "federated",
+            "InnoDB",
+            "memory",
+            "merge",
+            "mgr_myisam",
+            "myisam",
+            "ndb",
+            "heap",
+            "aria",
+            "myrocks",
+            "tokudb",
+        ] {
+            validate_table_options(&[tidb_ast::TableOption::Engine(engine.to_owned())])
+                .unwrap_or_else(|error| panic!("Go admits ENGINE={engine}: {error}"));
+        }
+
+        let error = run_create_table_on(
+            "CREATE TABLE invalid_engine (id BIGINT) ENGINE=imaginary",
+            &mut Catalog::default(),
+        )
+        .expect_err("Go rejects an engine outside its compatibility allowlist")
+        .to_mysql_error();
+        assert_eq!(error.code, 1286);
+        assert_eq!(error.state, *b"42000");
+        assert_eq!(error.message, "Unknown storage engine 'imaginary'");
+    }
 
     /// CREATE TABLE -> INSERT -> SELECT, all from SQL strings, with rows as
     /// real TiKV-format bytes and metadata as tidb-model structs.
