@@ -178,8 +178,8 @@ impl ColumnResolver for NoResolver {
 /// DATE/DATETIME results remain strings until the differential protocol owns
 /// native temporal cells.
 ///
-/// The `ARRAY` modifier is outside this AST's cast surface. `TIME` remains
-/// refused; JSON retains its native result domain.
+/// The `ARRAY` modifier is outside this AST's cast surface. JSON retains its
+/// native result domain.
 /// The literal text a typed temporal literal wraps.
 ///
 /// Go's `getFunction` asserts the argument is a `*Constant` and PANICS
@@ -210,10 +210,11 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
         CastType::Decimal { .. } => "cast_decimal",
         CastType::Date => "cast_date",
         CastType::DateTime { .. } => "cast_datetime",
+        CastType::Time { .. } => "cast_time",
         CastType::Year => "cast_year",
         CastType::Double | CastType::Float => "cast_double",
         CastType::Json => "cast_json",
-        CastType::Time { .. } | CastType::Vector { .. } => return None,
+        CastType::Vector { .. } => return None,
     };
     let ft = match cast_type {
         CastType::Signed => FieldType::new(FieldTypeCode::LongLong),
@@ -251,6 +252,14 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
             ft.set_decimal(decimal);
             ft
         }
+        CastType::Time { fsp } => {
+            let decimal = i64::from(fsp.unwrap_or(0));
+            let mut ft = FieldType::new(FieldTypeCode::Duration);
+            ft.set_flen(if decimal > 0 { 11 + decimal } else { 10 });
+            ft.set_decimal(decimal);
+            set_binary_charset(&mut ft);
+            ft
+        }
         // Likewise, the year cast yields an integer value here.
         CastType::Year => FieldType::new(FieldTypeCode::LongLong),
         CastType::Double | CastType::Float => FieldType::new(FieldTypeCode::Double),
@@ -259,7 +268,7 @@ fn cast_target(cast_type: &tidb_ast::CastType) -> Option<(&'static str, FieldTyp
             ft.add_flags(tidb_datatype::FieldTypeFlags::PARSE_TO_JSON);
             ft
         }
-        CastType::Time { .. } | CastType::Vector { .. } => return None,
+        CastType::Vector { .. } => return None,
     };
     Some((name, ft))
 }

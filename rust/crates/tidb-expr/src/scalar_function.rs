@@ -1315,6 +1315,9 @@ fn cast_type_of(target: &str, ret_type: &FieldType) -> Result<tidb_ast::CastType
         "datetime" => CastType::DateTime {
             fsp: u32::try_from(ret_type.decimal()).ok(),
         },
+        "time" => CastType::Time {
+            fsp: u32::try_from(ret_type.decimal()).ok(),
+        },
         "year" => CastType::Year,
         "double" => CastType::Double,
         "json" => CastType::Json,

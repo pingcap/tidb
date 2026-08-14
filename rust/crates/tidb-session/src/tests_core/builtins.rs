@@ -41,12 +41,14 @@ fn everyday_string_and_date_builtins() {
             .unwrap(),
         StmtResult::Rows(vec![vec![Datum::new_string("2024-01-01 10:00:00")]])
     );
-    assert_eq!(
-        session
-            .run("SELECT STR_TO_DATE('01,5,2024','%d,%m,%Y')")
-            .unwrap(),
-        StmtResult::Rows(vec![vec![Datum::new_string("2024-05-01")]])
-    );
+    let str_to_date = session
+        .run("SELECT STR_TO_DATE('01,5,2024','%d,%m,%Y')")
+        .unwrap();
+    assert!(matches!(
+        &str_to_date,
+        StmtResult::Rows(rows) if matches!(rows[0][0], Datum::Time(_))
+    ));
+    assert_eq!(row_text(Ok(str_to_date)), [["2024-05-01"]]);
     assert_eq!(
         session.run("SELECT QUOTE('a''b')").unwrap(),
         StmtResult::Rows(vec![vec![Datum::new_string("'a\\'b'")]])
@@ -799,8 +801,22 @@ fn cast_and_convert() {
         [["10"], ["20"]]
     );
 
-    // The refusals are refusals, not wrong answers.
-    assert!(session.run("SELECT CAST(c AS TIME) FROM t").is_err());
+    assert_eq!(
+        row_text(session.run("SELECT CAST(c AS TIME) FROM t")),
+        [["00:00:10"], ["00:00:20"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT CAST('12:59:59.9876' AS TIME(3))")),
+        [["12:59:59.988"]]
+    );
+    assert_eq!(
+        row_text(session.run("SELECT CAST(126060 AS TIME)")),
+        [["NULL"]]
+    );
+    assert_eq!(
+        warnings_of(&session),
+        vec![(1292, "Truncated incorrect time value: '126060'".to_owned(),)]
+    );
 }
 
 /// LIKE, BETWEEN, CASE and the ordinary builtins through the chunk

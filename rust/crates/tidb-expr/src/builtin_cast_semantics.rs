@@ -28,6 +28,11 @@ mod tests {
                 FieldTypeCode::VarString,
                 3,
             ),
+            (
+                tidb_ast::CastType::Time { fsp: Some(3) },
+                FieldTypeCode::Duration,
+                3,
+            ),
             (tidb_ast::CastType::Json, FieldTypeCode::Json, -1),
         ] {
             let (_, field_type) = crate::rewriter::builtin_cast_result_type(&cast).expect("target");
@@ -36,6 +41,12 @@ mod tests {
                 assert_eq!(field_type.decimal(), decimal);
             }
         }
+
+        let (_, time) =
+            crate::rewriter::builtin_cast_result_type(&tidb_ast::CastType::Time { fsp: Some(3) })
+                .expect("TIME target");
+        assert_eq!(time.flen(), 14);
+        assert!(time.has_flag(tidb_datatype::FieldTypeFlags::BINARY));
     }
 
     #[test]
