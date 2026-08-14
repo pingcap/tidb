@@ -317,6 +317,12 @@ pub fn run_alter_table_in(
             // KEYS as MyISAM-only compatibility syntax with no TiDB action.
             tidb_ast::AlterTableAction::Lock(_) | tidb_ast::AlterTableAction::SetKeysEnabled(_) => {
             }
+            tidb_ast::AlterTableAction::WithValidation => ctx
+                .append_warning_parts(8200, "ALTER TABLE WITH VALIDATION is currently unsupported"),
+            tidb_ast::AlterTableAction::WithoutValidation => ctx.append_warning_parts(
+                8200,
+                "ALTER TABLE WITHOUT VALIDATION is currently unsupported",
+            ),
             _ => {
                 return Err(DriverError::unsupported(
                     "this ALTER TABLE action is not supported yet",

@@ -1181,9 +1181,8 @@ pub enum AlterTableAction {
         name: String,
     },
     /// `WITH VALIDATION`. Go represents this as a standalone ALTER TABLE
-    /// specification that may be ordered with other specifications; the
-    /// seed executor keeps it typed but rejects it before transaction
-    /// mutation because generated-column validation is not modelled.
+    /// specification that may be ordered with other specifications and
+    /// accepts it with an unsupported-operation warning.
     WithValidation,
     /// `WITHOUT VALIDATION`. This is the explicit opt-out counterpart to
     /// [`Self::WithValidation`], preserved as a distinct Go specification so

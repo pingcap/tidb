@@ -334,6 +334,51 @@ fn compatibility_only_alter_specs_leave_the_table_unchanged() {
     );
 }
 
+#[test]
+fn alter_validation_specs_warn_and_do_not_change_the_table() {
+    let mut session = Session::new();
+    session.run("CREATE TABLE t (a BIGINT)").unwrap();
+
+    for (sql, message) in [
+        (
+            "ALTER TABLE t WITH VALIDATION",
+            "ALTER TABLE WITH VALIDATION is currently unsupported",
+        ),
+        (
+            "ALTER TABLE t WITHOUT VALIDATION",
+            "ALTER TABLE WITHOUT VALIDATION is currently unsupported",
+        ),
+    ] {
+        assert_eq!(session.run(sql).unwrap(), StmtResult::Affected(0), "{sql}");
+        assert_eq!(warnings_of(&session), vec![(8200, message.to_owned())]);
+    }
+    session
+        .run(
+            "ALTER TABLE t WITHOUT VALIDATION, WITH VALIDATION, \
+             ADD COLUMN b BIGINT DEFAULT 12",
+        )
+        .unwrap();
+    assert_eq!(
+        warnings_of(&session),
+        vec![
+            (
+                8200,
+                "ALTER TABLE WITHOUT VALIDATION is currently unsupported".to_owned(),
+            ),
+            (
+                8200,
+                "ALTER TABLE WITH VALIDATION is currently unsupported".to_owned(),
+            ),
+        ]
+    );
+
+    session.run("INSERT INTO t (a) VALUES (11)").unwrap();
+    assert_eq!(
+        row_text(session.run("SELECT a, b FROM t")),
+        vec![vec!["11", "12"]]
+    );
+}
+
 /// UPDATE and DELETE run through the session like any other write, and
 /// report their affected-row counts.
 #[test]
