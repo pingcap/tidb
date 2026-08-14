@@ -39,6 +39,23 @@ fn error_of(session: &mut Session, sql: &str) -> (u16, String) {
     (error.code, error.message)
 }
 
+/// Go `FoldConstant` copies an expression's coercibility onto the replacement
+/// constant. `CONVERT ... USING` therefore stays IMPLICIT after folding,
+/// while an explicit `COLLATE` remains EXPLICIT.
+#[test]
+fn constant_folding_preserves_expression_coercibility() {
+    let mut session = Session::new();
+    for (sql, expected) in [
+        ("SELECT COERCIBILITY(CONVERT('a' USING utf8mb4))", "2"),
+        (
+            "SELECT COERCIBILITY(CONVERT('a' USING utf8mb4) COLLATE utf8mb4_general_ci)",
+            "0",
+        ),
+    ] {
+        assert_eq!(one(&mut session, sql), expected, "{sql}");
+    }
+}
+
 /// A `_ci` column compared with a literal folds case: the literal is
 /// COERCIBLE (4) and the column IMPLICIT (2), so the column's collation wins
 /// every one of these. Captured: each count is 2, where a byte-wise

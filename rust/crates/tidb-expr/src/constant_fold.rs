@@ -74,6 +74,11 @@ fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Op
         Expression::Column(_) | Expression::CorrelatedColumn(_) => return None,
         Expression::ScalarFunction(func) => func,
     };
+    // Go `FoldConstant` copies the original expression's collation state onto
+    // the replacement constant.  That state is semantic: metadata functions
+    // such as COERCIBILITY and enclosing collation aggregation inspect it
+    // after folding.
+    let original_collation = func.collation.clone();
     let unfoldable = is_unfoldable(func.func_name.lowercase());
     let mut has_null_arg = false;
     let mut all_const_arg = true;
@@ -96,7 +101,9 @@ fn fold_current_value_in(expr: &mut Expression, ctx: &impl crate::Columns) -> Op
             ret_type.add_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
         }
     }
-    *expr = Expression::Constant(crate::constant::Constant::new(value.clone(), ret_type));
+    let mut folded = crate::constant::Constant::new(value.clone(), ret_type);
+    folded.collation = original_collation;
+    *expr = Expression::Constant(folded);
     Some(value)
 }
 
