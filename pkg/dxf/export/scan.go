@@ -16,30 +16,19 @@ package export
 
 import (
 	"context"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/distsql"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"github.com/pingcap/tidb/pkg/util/tiflash"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	tikvstore "github.com/tikv/client-go/v2/kv"
 	kvutil "github.com/tikv/client-go/v2/util"
 )
 
@@ -59,43 +48,14 @@ func exportColumns(tblInfo *model.TableInfo) ([]*model.ColumnInfo, []*types.Fiel
 }
 
 func newExportExprCtx() *exprstatic.ExprContext {
-	evalCtx := exprstatic.NewEvalContext(
-		exprstatic.WithSQLMode(mysql.ModeNone),
-		exprstatic.WithTypeFlags(types.DefaultStmtFlags),
-		exprstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels),
-	)
-	return exprstatic.NewExprContext(exprstatic.WithEvalCtx(evalCtx))
+	return exprstatic.NewExprContext(
+		exprstatic.WithEvalCtx(exprstatic.NewDefaultEvalContext(stmtctx.DefaultStmtErrLevels)))
 }
 
-// newExportDistSQLCtx builds a session-independent DistSQLContext, modeled on
-// the reorg one used by add-index backfill.
+// newExportDistSQLCtx builds a session-independent DistSQLContext for the export
+// scan.
 func newExportDistSQLCtx(kvClient kv.Client) *distsqlctx.DistSQLContext {
-	warnHandler := contextutil.NewStaticWarnHandler(0)
-	var sqlKiller sqlkiller.SQLKiller
-	var execDetails execdetails.SyncExecDetails
-	var cpuUsages ppcpuusage.SQLCPUUsages
-	return &distsqlctx.DistSQLContext{
-		WarnHandler:                          warnHandler,
-		Client:                               kvClient,
-		EnableChunkRPC:                       true,
-		EnabledRateLimitAction:               vardef.DefTiDBEnableRateLimitAction,
-		KVVars:                               tikvstore.NewVariables(&sqlKiller.Signal),
-		SessionMemTracker:                    memory.NewTracker(memory.LabelForSession, -1),
-		Location:                             time.UTC,
-		SQLKiller:                            &sqlKiller,
-		CPUUsage:                             &cpuUsages,
-		ErrCtx:                               errctx.NewContextWithLevels(stmtctx.DefaultStmtErrLevels, warnHandler),
-		TiFlashReplicaRead:                   tiflash.GetTiFlashReplicaReadByStr(vardef.DefTiFlashReplicaRead),
-		TiFlashMaxThreads:                    vardef.DefTiFlashMaxThreads,
-		TiFlashMaxBytesBeforeExternalJoin:    vardef.DefTiFlashMaxBytesBeforeExternalJoin,
-		TiFlashMaxBytesBeforeExternalGroupBy: vardef.DefTiFlashMaxBytesBeforeExternalGroupBy,
-		TiFlashMaxBytesBeforeExternalSort:    vardef.DefTiFlashMaxBytesBeforeExternalSort,
-		TiFlashMaxQueryMemoryPerNode:         vardef.DefTiFlashMemQuotaQueryPerNode,
-		TiFlashQuerySpillRatio:               vardef.DefTiFlashQuerySpillRatio,
-		TiFlashHashJoinVersion:               vardef.DefTiFlashHashJoinVersion,
-		ResourceGroupName:                    resourcegroup.DefaultResourceGroupName,
-		ExecDetails:                          &execDetails,
-	}
+	return distsqlctx.NewDefaultContext(kvClient, contextutil.NewStaticWarnHandler(0), stmtctx.DefaultStmtErrLevels)
 }
 
 func buildExportDAG(exprCtx *exprstatic.ExprContext, distCtx *distsqlctx.DistSQLContext,
