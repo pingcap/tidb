@@ -19,6 +19,7 @@ import (
 
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -173,4 +174,30 @@ func TestFullTextIndexRejectsUnsupported(t *testing.T) {
 		"FULLTEXT index must specify one column name")
 	tk.MustContainErrMsg("alter table articles add fulltext index idx_p (body) with parser multilingual",
 		"MULTILINGUAL")
+}
+
+// TestFullTextIndexWithoutExpressionIndexConfig checks that FULLTEXT INDEX
+// works on a default server. The index is built as an expression index over
+// FTS_TOKENIZE, and expression indexes over functions outside
+// GAFunction4ExpressionIndex require allow-expression-index in config - which
+// this test package enables globally, hiding the problem from every other test
+// here. Users never write FTS_TOKENIZE themselves; DDL generates the call.
+func TestFullTextIndexWithoutExpressionIndexConfig(t *testing.T) {
+	original := config.GetGlobalConfig().Experimental.AllowsExpressionIndex
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = false
+	})
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowsExpressionIndex = original
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table articles (id int primary key, body varchar(255))")
+	tk.MustExec("alter table articles add fulltext index idx_body (body)")
+	tk.MustExec("create table inline_articles (id int primary key, body varchar(255), fulltext key idx_body (body))")
+
+	tk.MustExec("insert into articles values (1, 'distributed sql')")
+	tk.MustExec("admin check table articles")
 }
