@@ -1195,6 +1195,97 @@ fn alter_column_set_default_reaches_the_next_row_only() {
     );
 }
 
+#[test]
+fn alter_column_set_default_retains_computed_expressions() {
+    let mut session = Session::new();
+    session.run("SET time_zone = '+00:00'").unwrap();
+    session
+        .run("CREATE TABLE alter_default_expr (id INT, ts DATETIME(3), token VARCHAR(64))")
+        .unwrap();
+    session
+        .run("INSERT INTO alter_default_expr VALUES (0, NULL, NULL)")
+        .unwrap();
+
+    session
+        .run(
+            "ALTER TABLE alter_default_expr ALTER COLUMN ts \
+             SET DEFAULT (CURRENT_TIMESTAMP(3))",
+        )
+        .unwrap();
+    session
+        .run(
+            "ALTER TABLE alter_default_expr ALTER COLUMN token \
+             SET DEFAULT (uuid())",
+        )
+        .unwrap();
+    let definition = show_create(&mut session, "alter_default_expr");
+    assert!(
+        definition.contains("`ts` datetime(3) DEFAULT CURRENT_TIMESTAMP(3)"),
+        "{definition}"
+    );
+    assert!(
+        definition.contains("`token` varchar(64) DEFAULT (uuid())"),
+        "{definition}"
+    );
+
+    session.run("SET timestamp = 1700000000").unwrap();
+    session
+        .run("INSERT INTO alter_default_expr (id) VALUES (1)")
+        .unwrap();
+    session.run("SET timestamp = 1700000100").unwrap();
+    session
+        .run("INSERT INTO alter_default_expr (id) VALUES (2)")
+        .unwrap();
+    let values = rows(
+        &mut session,
+        "SELECT id, ts, token FROM alter_default_expr ORDER BY id",
+    );
+    assert_eq!(values[0], ["0", "NULL", "NULL"]);
+    assert_eq!(values[1][1], "2023-11-14 22:13:20.000");
+    assert_eq!(values[2][1], "2023-11-14 22:15:00.000");
+    assert_eq!(values[1][2].len(), 36);
+    assert_eq!(values[2][2].len(), 36);
+    assert_ne!(values[1][2], values[2][2]);
+
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE alter_default_expr ALTER COLUMN ts \
+             SET DEFAULT CURRENT_TIMESTAMP"
+        ),
+        Some(1064)
+    );
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE alter_default_expr ALTER COLUMN ts \
+             SET DEFAULT (CURRENT_TIMESTAMP)"
+        ),
+        Some(1067)
+    );
+
+    session
+        .run("CREATE TABLE alter_default_ai (id BIGINT AUTO_INCREMENT PRIMARY KEY)")
+        .unwrap();
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE alter_default_ai ALTER COLUMN id SET DEFAULT (uuid())"
+        ),
+        Some(1067)
+    );
+    session
+        .run("CREATE TABLE alter_default_ar (id BIGINT AUTO_RANDOM(5) PRIMARY KEY)")
+        .unwrap();
+    assert_eq!(
+        code(
+            &mut session,
+            "ALTER TABLE alter_default_ar ALTER COLUMN id SET DEFAULT 1"
+        ),
+        Some(8216)
+    );
+}
+
 /// Go `pkg/ddl/add_column.go` runs the inline-key precheck before installing a
 /// table-level primary key and before the final `checkDefaultValue`:
 ///

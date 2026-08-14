@@ -283,23 +283,27 @@ pub(crate) fn alter_column_default_action(
     };
     let field_type = table.columns[offset].field_type.clone();
     let column_info_version = table.columns[offset].column_info_version;
-    let zone = &ctx.session_zone();
-    let rewritten = tidb_expr::rewriter::rewrite_expr_resolved(
-        expr,
-        &tidb_expr::rewriter::ZonedNoResolver::with_like_default_escape(
-            zone.clone(),
-            ctx.like_default_escape(),
-        ),
-    )
-    .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
-    let tidb_expr::expression::Expression::Constant(constant) = rewritten else {
-        return Err(DriverError::unsupported(
-            "an expression DEFAULT is not supported yet",
+    if table
+        .auto_random()
+        .is_some_and(|spec| spec.offset == offset)
+    {
+        return Err(DriverError::InvalidAutoRandom(
+            "auto_random is incompatible with default".to_owned(),
         ));
+    }
+    let default = crate::column_default::build_in_context(expr, &field_type, column_name, ctx)?;
+    let crate::column_default::ColumnDefault::Value(value) = default else {
+        if table.auto_increment_offset() == Some(offset) {
+            return Err(DriverError::InvalidDefault(column_name.to_owned()));
+        }
+        let column = &mut table.columns[offset];
+        column.default_value = Some(default);
+        column
+            .field_type
+            .del_flags(tidb_datatype::FieldTypeFlags::NO_DEFAULT_VALUE);
+        return Ok(());
     };
-    let value = constant
-        .eval()
-        .map_err(|e| DriverError::Exec(crate::ExecError::Eval(e)))?;
+    let zone = &ctx.session_zone();
     // The session first builds and validates the exact ColumnInfo spelling.
     // Keep that spelling in the catalog: omitted writes cast it later, while
     // SHOW CREATE must not replace e.g. DECIMAL 3.14159 with the rounded 3.14.

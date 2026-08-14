@@ -375,6 +375,10 @@ pub fn build(
     field_type: &FieldType,
     fold: impl FnOnce(&Expr) -> Result<Datum, DefaultError>,
 ) -> Result<ColumnDefault, DefaultError> {
+    let mut expr = expr;
+    while let Expr::Paren(inner) = expr {
+        expr = inner;
+    }
     let call = match expr {
         Expr::Func { name, args, .. } => Some((name.clone(), args.as_slice())),
         // A bare `CURRENT_TIMESTAMP` keyword reaches the builder as an
