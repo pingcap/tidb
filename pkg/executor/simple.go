@@ -2785,7 +2785,87 @@ func restoreFlushStatsDeltaSQL(s *ast.FlushStmt) (string, error) {
 	return sb.String(), nil
 }
 
+<<<<<<< HEAD
 func appendStatsDeltaTargetTableIDs(targetIDs []int64, tableInfo *metamodel.TableInfo) []int64 {
+=======
+func (e *SimpleExec) executeRefreshStatsOnCurrentInstance(ctx context.Context, s *ast.RefreshStatsStmt) error {
+	intest.Assert(len(s.RefreshObjects) > 0, "RefreshObjects should not be empty")
+	intest.AssertFunc(func() bool {
+		origCount := len(s.RefreshObjects)
+		s.Dedup()
+		return origCount == len(s.RefreshObjects)
+	}, "RefreshObjects should be deduplicated in the building phase")
+	tableIDs := make([]int64, 0, len(s.RefreshObjects))
+	isGlobalScope := len(s.RefreshObjects) == 1 && s.RefreshObjects[0].StatsObjectScope == ast.StatsObjectScopeGlobal
+	is := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
+	if !isGlobalScope {
+		for _, refreshObject := range s.RefreshObjects {
+			switch refreshObject.StatsObjectScope {
+			case ast.StatsObjectScopeDatabase:
+				exists := is.SchemaExists(refreshObject.DBName)
+				if !exists {
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrDatabaseNotExists.FastGenByArgs(refreshObject.DBName))
+					statslogutil.StatsLogger().Warn("Failed to find database when refreshing stats", zap.String("db", refreshObject.DBName.O))
+					continue
+				}
+				tables, err := is.SchemaTableInfos(ctx, refreshObject.DBName)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if len(tables) == 0 {
+					// Note: We do not warn about databases without tables because we cannot issue a warning
+					// for every such database when refreshing with `REFRESH STATS *.*`.(Technically, we can, but no point to do so.)
+					// Instead, we simply log the information to remain consistent across all cases.
+					statslogutil.StatsLogger().Info("No table in the database when refreshing stats", zap.String("db", refreshObject.DBName.O))
+					continue
+				}
+				for _, table := range tables {
+					tableIDs = append(tableIDs, table.ID)
+				}
+			case ast.StatsObjectScopeTable:
+				table, err := is.TableInfoByName(refreshObject.DBName, refreshObject.TableName)
+				if err != nil {
+					if infoschema.ErrTableNotExists.Equal(err) {
+						e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(refreshObject.DBName, refreshObject.TableName))
+						statslogutil.StatsLogger().Warn("Failed to find table when refreshing stats", zap.String("db", refreshObject.DBName.O), zap.String("table", refreshObject.TableName.O))
+						continue
+					}
+					return errors.Trace(err)
+				}
+				if table == nil {
+					intest.Assert(false, "Table should not be nil here")
+					e.Ctx().GetSessionVars().StmtCtx.AppendWarning(infoschema.ErrTableNotExists.FastGenByArgs(refreshObject.DBName, refreshObject.TableName))
+					statslogutil.StatsLogger().Warn("Failed to find table when refreshing stats", zap.String("db", refreshObject.DBName.O), zap.String("table", refreshObject.TableName.O))
+					continue
+				}
+				tableIDs = append(tableIDs, table.ID)
+			default:
+				intest.Assert(false, "No other scopes should be here")
+			}
+		}
+		// If all specified databases or tables do not exist, we do nothing.
+		if len(tableIDs) == 0 {
+			statslogutil.StatsLogger().Info("No valid database or table to refresh stats")
+			return nil
+		}
+	}
+	// Note: tableIDs is empty means to refresh all tables.
+	h := domain.GetDomain(e.Ctx()).StatsHandle()
+	if s.RefreshMode != nil {
+		if *s.RefreshMode == ast.RefreshStatsModeLite {
+			return h.InitStatsLite(ctx, is, tableIDs...)
+		}
+		return h.InitStats(ctx, is, tableIDs...)
+	}
+	liteInitStats := config.GetGlobalConfig().Performance.LiteInitStats
+	if liteInitStats {
+		return h.InitStatsLite(ctx, is, tableIDs...)
+	}
+	return h.InitStats(ctx, is, tableIDs...)
+}
+
+func appendStatsDeltaTargetTableIDs(targetIDs []int64, tableInfo *model.TableInfo) []int64 {
+>>>>>>> 69b01777cbb (statistics: skip stale stats meta during initialization (#69116))
 	targetIDs = append(targetIDs, tableInfo.ID)
 	if partitionInfo := tableInfo.GetPartitionInfo(); partitionInfo != nil {
 		for _, def := range partitionInfo.Definitions {
