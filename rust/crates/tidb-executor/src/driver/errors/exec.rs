@@ -41,6 +41,8 @@ const ER_UNKNOWN_COLLATION: u16 = 1273;
 const ER_DIVISION_BY_ZERO: u16 = 1365;
 /// Go `types.ErrTruncatedWrongVal`.
 const ER_TRUNCATED_WRONG_VALUE: u16 = 1292;
+/// Go `expression.ErrCutValueGroupConcat`.
+const ER_CUT_VALUE_GROUP_CONCAT: u16 = 1260;
 /// Go `ErrWarnAllowedPacketOverflowed`.
 const ER_WARN_ALLOWED_PACKET_OVERFLOWED: u16 = 1301;
 /// Go `expression.ErrOperandColumns`.
@@ -115,6 +117,7 @@ fn eval_to_mysql_error(error: EvalError) -> MysqlError {
         EvalError::TruncatedWrongValue(message) => {
             MysqlError::coded(ER_TRUNCATED_WRONG_VALUE, message)
         }
+        EvalError::GroupConcatCut(message) => MysqlError::coded(ER_CUT_VALUE_GROUP_CONCAT, message),
         // Go `errWarnAllowedPacketOverflowed` (1301), the ERROR spelling of
         // the warning a read takes: same code, same text.
         EvalError::AllowedPacketOverflowed(message) => {
@@ -224,6 +227,7 @@ mod tests {
             EvalError::IllegalMixCollation("mixed".to_owned()),
             EvalError::IllegalMixCollationGeneric("mixed".to_owned()),
             EvalError::TruncatedWrongValue("truncated".to_owned()),
+            EvalError::GroupConcatCut("group concat cut".to_owned()),
             EvalError::AllowedPacketOverflowed("overflowed".to_owned()),
             EvalError::WrongParameterCount("aes_encrypt"),
             EvalError::IncorrectArguments("bad AES initialization vector".to_owned()),

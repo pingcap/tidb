@@ -119,6 +119,11 @@ pub enum EvalError {
     /// mode input -- but a strict `INSERT` does, so the condition needs an
     /// error spelling as well as a warning one.
     TruncatedWrongValue(String),
+    /// Go `expression.ErrCutValueGroupConcat` (1260) raised when
+    /// `GROUP_CONCAT` exceeds `group_concat_max_len` in a statement whose
+    /// truncate policy is `Error`. Reads and non-strict writes instead append
+    /// the same code and message as a warning.
+    GroupConcatCut(String),
     /// A `json`-class error that carries its own MySQL error code.
     Json(JsonError),
     /// Go `types.ErrWrongValue` (1292) / `ErrWrongValue2` (1525) raised while
@@ -560,6 +565,19 @@ pub trait Columns {
                 Ok(())
             }
             ErrorLevel::Error => Err(EvalError::TruncatedWrongValue(message.to_owned())),
+        }
+    }
+
+    /// Applies this statement's truncate policy to a `GROUP_CONCAT` value
+    /// that exceeded `group_concat_max_len`.
+    fn handle_group_concat_cut(&self, message: &str) -> Result<(), EvalError> {
+        match self.truncate_level() {
+            ErrorLevel::Ignore => Ok(()),
+            ErrorLevel::Warn => {
+                self.append_warning(1260, message);
+                Ok(())
+            }
+            ErrorLevel::Error => Err(EvalError::GroupConcatCut(message.to_owned())),
         }
     }
 

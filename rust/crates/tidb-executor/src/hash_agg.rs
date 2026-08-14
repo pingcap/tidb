@@ -441,9 +441,7 @@ impl AggState {
         truncated: &mut bool,
     ) -> Result<Datum, ExecError> {
         if self.group_concat_was_truncated && !*truncated {
-            *truncated = true;
-            let text = group_concat_arg_text(func);
-            ctx.append_warning(1260, &format!("Some rows were cut by GROUPCONCAT({text})"));
+            handle_group_concat_cut(func, ctx, truncated)?;
         }
         let mut value = self
             .partial
@@ -480,14 +478,23 @@ impl AggState {
             {
                 joined.truncate(max_len as usize);
                 if !*truncated {
-                    *truncated = true;
-                    let text = group_concat_arg_text(func);
-                    ctx.append_warning(1260, &format!("Some rows were cut by GROUPCONCAT({text})"));
+                    handle_group_concat_cut(func, ctx, truncated)?;
                 }
             }
         }
         Ok(value)
     }
+}
+
+fn handle_group_concat_cut<C: Columns>(
+    func: &AggFunc,
+    ctx: &C,
+    truncated: &mut bool,
+) -> Result<(), ExecError> {
+    *truncated = true;
+    let text = group_concat_arg_text(func);
+    ctx.handle_group_concat_cut(&format!("Some rows were cut by GROUPCONCAT({text})"))?;
+    Ok(())
 }
 
 /// The bytes one `GROUP_CONCAT` input contributes, which Go produces by

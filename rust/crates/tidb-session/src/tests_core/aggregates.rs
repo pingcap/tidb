@@ -1047,3 +1047,50 @@ fn group_concat_max_len_truncates_by_bytes_and_warns_1260_once() {
     );
     assert_eq!(warnings(&session), vec![]);
 }
+
+/// Go `baseGroupConcat4String.handleTruncateError` applies the statement's
+/// truncate policy after winning its once-per-function sentinel: a strict
+/// write fails with 1260, while a read or non-strict write keeps the truncated
+/// value and records one warning. The strict failure must not insert a row.
+#[test]
+fn group_concat_truncation_obeys_dml_strictness_atomically() {
+    let mut session = Session::new();
+    session
+        .run("CREATE TABLE gc_source (a VARCHAR(100))")
+        .unwrap();
+    session
+        .run("CREATE TABLE gc_destination (a VARCHAR(100))")
+        .unwrap();
+    session
+        .run("INSERT INTO gc_source VALUES ('hello'),('hello')")
+        .unwrap();
+    session.run("SET group_concat_max_len = 7").unwrap();
+    session.run("SET sql_mode = 'STRICT_TRANS_TABLES'").unwrap();
+
+    let error = session
+        .run("INSERT INTO gc_destination SELECT GROUP_CONCAT(a) FROM gc_source")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 1260);
+    assert_eq!(&error.state, b"HY000");
+    assert_eq!(
+        error.message,
+        "Some rows were cut by GROUPCONCAT(test.gc_source.a)"
+    );
+    assert!(row_text(session.run("SELECT a FROM gc_destination")).is_empty());
+
+    session.run("SET sql_mode = ''").unwrap();
+    session
+        .run("INSERT INTO gc_destination SELECT GROUP_CONCAT(a) FROM gc_source")
+        .unwrap();
+    assert_eq!(session.warnings().len(), 1);
+    assert_eq!(session.warnings()[0].code, 1260);
+    assert_eq!(
+        session.warnings()[0].message,
+        "Some rows were cut by GROUPCONCAT(test.gc_source.a)"
+    );
+    assert_eq!(
+        row_text(session.run("SELECT a FROM gc_destination")),
+        [["hello,h"]]
+    );
+}
