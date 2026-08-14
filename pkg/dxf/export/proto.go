@@ -29,14 +29,16 @@ type TaskMeta struct {
 	Tables     []TableSpec `json:"tables"`
 	SnapshotTS uint64      `json:"snapshot_ts"`
 	// PhysicalSizes maps a physical table (or partition) id to its estimated byte
-	// size, computed once at submit time (where it also feeds resource scaling).
+	// size, computed in the prepare step (where it also feeds resource scaling).
 	// The split prefers a fresh estimate and falls back to this only when PD is
 	// unavailable.
 	PhysicalSizes map[int64]int64 `json:"physical_sizes"`
 	// Dest is the destination URI, with credentials in the query part.
-	Dest     string `json:"dest"`
-	Format   string `json:"format"`
-	FileSize int64  `json:"file_size"`
+	Dest string `json:"dest"`
+	// Format is the output file format, e.g. "csv".
+	Format string `json:"format"`
+	// FileSize is the size in bytes at which the executor cuts output files.
+	FileSize int64 `json:"file_size"`
 }
 
 // Chunk is the atomic unit of export work: a key range of one physical table

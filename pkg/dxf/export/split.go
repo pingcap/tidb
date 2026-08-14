@@ -84,7 +84,12 @@ func estimateExportSize(ctx context.Context, store kv.Storage, meta *TaskMeta) (
 		tblInfo := meta.Tables[i].TableInfo
 		for _, pid := range physicalIDs(tblInfo) {
 			start, end := physicalTableRange(tblInfo, pid)
-			size, err := h.EstimateKeyRangeSize(ctx, pdCli, start, end)
+			var size int64
+			backoffer := backoff.NewExponential(scanRegionBackoffBase, 2, scanRegionBackoffMax)
+			err := handle.RunWithRetry(ctx, loadRegionMaxRetry, backoffer, logutil.BgLogger(), func(context.Context) (bool, error) {
+				size, err = h.EstimateKeyRangeSize(ctx, pdCli, start, end)
+				return err != nil, err
+			})
 			if err != nil {
 				return nil, 0, errors.Trace(err)
 			}

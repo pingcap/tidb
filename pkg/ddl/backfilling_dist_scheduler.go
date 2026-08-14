@@ -364,8 +364,8 @@ func generatePlanForPhysicalTable(
 		failpoint.Inject("mockPhysicalTableRegionDiscontinuity", func() {
 			err = copr.ErrRegionsNotContinuous
 		})
-		// LoadRegionsInKeyRange can combine multiple PD scans. A concurrent region
-		// split or merge can make those scans discontinuous, so retry the full scan.
+		// A concurrent region split or merge can make the scan discontinuous, so
+		// retry the full scan.
 		if errors.ErrorEqual(err, copr.ErrRegionsNotContinuous) {
 			return true, err
 		}

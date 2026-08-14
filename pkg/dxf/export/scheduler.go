@@ -65,9 +65,8 @@ func (s *exportScheduler) Init() error {
 func (*exportScheduler) OnTick(context.Context, *proto.Task) {}
 
 // OnPrepare implements scheduler.Extension. In prepare mode it estimates the
-// export set's data size once the task is submitted, seeds the per-physical sizes
-// used by the split, and sizes the task's resources from the total — keeping the
-// heavy PD work off the submitting session.
+// export set's data size after submit, seeds the per-physical sizes for the
+// split, and (in nextgen) sizes the task's resources from the total.
 func (s *exportScheduler) OnPrepare(ctx context.Context, _ storage.TaskHandle, task *proto.Task) error {
 	sizes, total, err := estimateExportSize(ctx, s.store, s.taskMeta)
 	if err != nil {

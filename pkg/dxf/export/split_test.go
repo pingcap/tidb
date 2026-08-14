@@ -110,12 +110,12 @@ func TestChunksBySize(t *testing.T) {
 func TestChunksByCount(t *testing.T) {
 	b := keys("a", "b", "c", "d", "e") // 4 regions
 	// One chunk per ~chunkSize, rounded up, never more than the region count.
-	require.Len(t, mustChunks(chunksByCount(0, 1, b, 2*chunkSize, 0)), 2)
-	require.Len(t, mustChunks(chunksByCount(0, 1, b, 2*chunkSize+1, 0)), 3)
+	require.Len(t, chunksOnly(chunksByCount(0, 1, b, 2*chunkSize, 0)), 2)
+	require.Len(t, chunksOnly(chunksByCount(0, 1, b, 2*chunkSize+1, 0)), 3)
 	// More chunks wanted than regions → capped at the region count.
-	require.Len(t, mustChunks(chunksByCount(0, 1, b, 100*chunkSize, 0)), 4)
+	require.Len(t, chunksOnly(chunksByCount(0, 1, b, 100*chunkSize, 0)), 4)
 	// Zero size still yields one chunk covering the whole span.
-	require.Len(t, mustChunks(chunksByCount(0, 1, b, 0, 0)), 1)
+	require.Len(t, chunksOnly(chunksByCount(0, 1, b, 0, 0)), 1)
 
 	const size = 4 * chunkSize // 4 regions → 4 chunks, one region each
 	chunks, next := chunksByCount(2, 100, b, size, 0)
@@ -144,7 +144,7 @@ func TestChunksByCount(t *testing.T) {
 	require.Equal(t, 5, next2)
 }
 
-func mustChunks(chunks []Chunk, _ int) []Chunk { return chunks }
+func chunksOnly(chunks []Chunk, _ int) []Chunk { return chunks }
 
 func TestPhysicalTableRange(t *testing.T) {
 	const pid = 100
