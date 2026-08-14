@@ -548,6 +548,33 @@ func TestCustomEscapeChar(t *testing.T) {
 
 	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
 
+	// `*` is deliberately a regexp metacharacter: the byte scanner must treat it
+	// as an ordinary escape byte, with none of the quoting the regexp-based
+	// implementation needed.
+	cfg.FieldsEscapedBy = `*`
+	cfg.FieldNullDefinedBy = []string{`*N`}
+	parser, err = mydump.NewCSVParser(
+		context.Background(),
+		&cfg,
+		mydump.NewStringReader(`"*0*b*n*r*t*Z***q",*N,**N`),
+		int64(config.ReadBlockSize),
+		ioWorkersForCSV,
+		false,
+		nil,
+	)
+	require.NoError(t, err)
+	require.NoError(t, parser.ReadRow())
+	require.Equal(t, mydump.Row{
+		RowID: 1,
+		Row: []types.Datum{
+			types.NewStringDatum(string([]byte{0, '\b', '\n', '\r', '\t', 26, '*', 'q'})),
+			nullDatum,
+			types.NewStringDatum(`*N`),
+		},
+		Length: 21,
+	}, parser.LastRow())
+	require.ErrorIs(t, errors.Cause(parser.ReadRow()), io.EOF)
+
 	cfg = config.CSVConfig{
 		FieldsTerminatedBy: ",",
 		FieldsEnclosedBy:   `"`,
@@ -1475,6 +1502,75 @@ func TestCharsetConversion(t *testing.T) {
 	}
 
 	runTestCasesCSV(t, &cfg, 1, testCases)
+}
+
+func BenchmarkCSVParserUnescape(b *testing.B) {
+	const rowsPerParser = 4096
+
+	testCases := []struct {
+		name      string
+		escapedBy string
+		row       string
+	}{
+		{
+			name:      "NoEscape",
+			escapedBy: `\`,
+			row:       "1,plain-text,3\n",
+		},
+		{
+			name:      "BackslashDense",
+			escapedBy: `\`,
+			row:       `1,"{\"id\":123,\"name\":\"alice\",\"nested\":{\"enabled\":true,\"items\":[\"a\",\"b\",\"c\"]}}",3` + "\n",
+		},
+		{
+			name:      "CustomBangDense",
+			escapedBy: `!`,
+			row:       `1,"{!"id!":123,!"name!":!"alice!",!"nested!":{!"enabled!":true,!"items!":[!"a!",!"b!",!"c!"]}}",3` + "\n",
+		},
+		{
+			name:      "CustomStarDense",
+			escapedBy: `*`,
+			row:       `1,"{*"id*":123,*"name*":*"alice*",*"nested*":{*"enabled*":true,*"items*":[*"a*",*"b*",*"c*"]}}",3` + "\n",
+		},
+	}
+
+	for _, testCase := range testCases {
+		b.Run(testCase.name, func(b *testing.B) {
+			input := strings.Repeat(testCase.row, rowsPerParser)
+			cfg := config.CSVConfig{
+				FieldsTerminatedBy: ",",
+				FieldsEnclosedBy:   `"`,
+				LinesTerminatedBy:  "\n",
+				FieldsEscapedBy:    testCase.escapedBy,
+			}
+			newParser := func() *mydump.CSVParser {
+				parser, err := mydump.NewCSVParser(
+					context.Background(),
+					&cfg,
+					mydump.NewStringReader(input),
+					int64(config.ReadBlockSize),
+					ioWorkersForCSV,
+					false,
+					nil,
+				)
+				require.NoError(b, err)
+				return parser
+			}
+
+			b.SetBytes(int64(len(testCase.row)))
+			b.ReportAllocs()
+			b.ResetTimer()
+
+			var parser *mydump.CSVParser
+			for i := 0; i < b.N; i++ {
+				if i%rowsPerParser == 0 {
+					parser = newParser()
+				}
+				require.NoError(b, parser.ReadRow())
+				parser.RecycleRow(parser.LastRow())
+			}
+		})
+	}
 }
 
 // Run `go test github.com/pingcap/pkg/lightning/mydump -check.b -check.bmem -test.v` to get benchmark result.
