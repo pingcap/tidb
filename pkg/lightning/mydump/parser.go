@@ -370,6 +370,10 @@ func unescape(
 	return input
 }
 
+// unescapeByChar rewrites every escChar-prefixed pair in input. An escChar with
+// no byte after it is left as-is, whether it is the only one or the last of
+// several: an escape sequence is two bytes, and a single trailing byte cannot
+// form one.
 func unescapeByChar(input string, escChar byte) string {
 	first := strings.IndexByte(input, escChar)
 	if first < 0 || first+1 == len(input) {
