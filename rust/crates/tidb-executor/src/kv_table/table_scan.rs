@@ -72,6 +72,7 @@ impl KvTable {
             self.pk_handle_offset,
             self.common_handle_offsets.clone(),
             keep,
+            self.use_new_collation,
             context.clone(),
         )?;
         note_decoded_column_ids(decoder.decoded_column_ids());
@@ -86,6 +87,7 @@ impl KvTable {
             self.columns.clone(),
             self.pk_handle_offset,
             self.common_handle_offsets.clone(),
+            self.use_new_collation,
             context.clone(),
         )
     }

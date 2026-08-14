@@ -257,7 +257,11 @@ fn row_decoder_restores_every_common_handle_column() {
     let zone = SessionTimeZone::utc();
     let columns = vec![
         column(1, "c1", FieldType::new(FieldTypeCode::LongLong)),
-        column(2, "c2", FieldType::new(FieldTypeCode::Varchar)),
+        column(
+            2,
+            "c2",
+            FieldType::new(FieldTypeCode::String).with_collation_name("utf8mb4_bin"),
+        ),
         column(3, "c3", FieldType::new(FieldTypeCode::NewDecimal)),
     ];
     let handle =
@@ -282,11 +286,82 @@ fn row_decoder_restores_every_common_handle_column() {
 }
 
 #[test]
+fn restored_common_handle_value_wins_over_its_lossy_sort_key() {
+    let zone = SessionTimeZone::utc();
+    let restored_char =
+        FieldType::new(FieldTypeCode::String).with_collation_name("utf8mb4_general_ci");
+    assert!(restored_char.need_restored_data());
+    let columns = vec![
+        column(1, "a", restored_char),
+        column(2, "payload", FieldType::new(FieldTypeCode::LongLong)),
+    ];
+
+    // A new-collation common handle keeps the collation sort key in the row
+    // key. The original bytes are stored in the row value because that sort
+    // key is lossy (case folding is visible here as the upper-case weights).
+    let handle =
+        tidb_codec::encode_key(&[Datum::new_bytes(vec![0, b'A', 0, b'B', 0, b'C'])]).unwrap();
+    let bytes = encode(
+        &[1, 2],
+        &[Datum::new_string("abc"), Datum::Int(9)],
+        true,
+        &zone,
+    );
+    let decoded = RowDecoder::new(
+        columns.clone(),
+        None,
+        vec![0],
+        GeneratedColumnSelection::None,
+        query_context(&zone),
+    )
+    .unwrap()
+    .decode_and_eval(&TableHandle::Common(handle), &bytes)
+    .unwrap();
+
+    assert_eq!(decoded.values()[0].go_bytes(), b"abc");
+    assert_eq!(decoded.by_id().get(&1).unwrap().go_bytes(), b"abc");
+    assert_eq!(decoded.values()[1], Datum::Int(9));
+
+    let statement = StmtContext::for_query().with_time_zone(zone.clone());
+    let mut table = KvTable::new(43, columns.clone());
+    table.set_common_handle_offsets(vec![0]);
+    table
+        .insert_row(&[Datum::new_string("abc"), Datum::Int(9)], &statement)
+        .unwrap();
+    let (_, stored) = table
+        .row_cursor_with_context(&RowDecodeContext::for_query(&statement))
+        .unwrap()
+        .next_row()
+        .unwrap()
+        .expect("stored common-handle row");
+    assert_eq!(stored[0].go_bytes(), b"abc");
+    assert_eq!(stored[1], Datum::Int(9));
+
+    let mut old_collation_table = KvTable::new(44, columns).with_new_collation_mode(false);
+    old_collation_table.set_common_handle_offsets(vec![0]);
+    old_collation_table
+        .insert_row(&[Datum::new_string("abc"), Datum::Int(10)], &statement)
+        .unwrap();
+    let (_, stored) = old_collation_table
+        .row_cursor_with_context(&RowDecodeContext::for_query(&statement))
+        .unwrap()
+        .next_row()
+        .unwrap()
+        .expect("old-collation common-handle row");
+    assert_eq!(stored[0].go_bytes(), b"abc");
+    assert_eq!(stored[1], Datum::Int(10));
+}
+
+#[test]
 fn projected_row_decoder_keeps_common_handle_component_positions() {
     let zone = SessionTimeZone::utc();
     let columns = vec![
         column(1, "c1", FieldType::new(FieldTypeCode::LongLong)),
-        column(2, "c2", FieldType::new(FieldTypeCode::Varchar)),
+        column(
+            2,
+            "c2",
+            FieldType::new(FieldTypeCode::String).with_collation_name("utf8mb4_bin"),
+        ),
         column(3, "payload", FieldType::new(FieldTypeCode::LongLong)),
     ];
     let handle =

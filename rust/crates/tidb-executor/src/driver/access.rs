@@ -217,26 +217,63 @@ pub(crate) fn commit_fast_path_source(
     })
     .flatten()
     {
-        let exec = HandleSourceExec::new_with_context(
-            ExecutorMeta::new(
-                Schema::new(source_schema_columns(&columns)),
-                0,
-                INIT_CAP,
-                MAX_CHUNK_SIZE,
-            ),
-            table.clone(),
-            decision.handles.clone(),
-            crate::kv_table::RowDecodeContext::for_query(ctx),
+        let mut handles = Vec::with_capacity(decision.handles.len());
+        let mut physical_ids = Vec::with_capacity(decision.handles.len());
+        let mut ordinals = Vec::new();
+        for (handle, values) in decision.handles.into_iter().zip(&decision.values) {
+            if table.partition().is_none() {
+                handles.push(handle);
+                continue;
+            }
+            let mut row = vec![Datum::Null; columns.len()];
+            for (offset, value) in table.common_handle_offsets().iter().copied().zip(values) {
+                row[offset] = value.clone();
+            }
+            let Some((ordinal, physical_id)) = table.row_partition_route(&row, ctx) else {
+                continue;
+            };
+            handles.push(handle);
+            physical_ids.push(physical_id);
+            if !ordinals.contains(&ordinal) {
+                ordinals.push(ordinal);
+            }
+        }
+        if handles.is_empty() {
+            install_contradiction_dual(&columns, from_source, trace.as_deref_mut());
+            return Ok((None, true));
+        }
+        ordinals.sort_unstable();
+        let partitions = ordinals
+            .into_iter()
+            .filter_map(|ordinal| table.partition()?.definitions.get(ordinal))
+            .map(|definition| definition.name.clone())
+            .collect::<Vec<_>>();
+        let meta = ExecutorMeta::new(
+            Schema::new(source_schema_columns(&columns)),
+            0,
+            INIT_CAP,
+            MAX_CHUNK_SIZE,
         );
+        let decode_context = crate::kv_table::RowDecodeContext::for_query(ctx);
+        let exec = if table.partition().is_some() {
+            HandleSourceExec::new_partitioned_with_context(
+                meta,
+                table.clone(),
+                handles.clone(),
+                physical_ids,
+                decode_context,
+            )
+        } else {
+            HandleSourceExec::new_with_context(meta, table.clone(), handles.clone(), decode_context)
+        };
         if let Some(trace) = trace.as_deref_mut() {
-            let partitions = table.handle_partition_names(&decision.handles, zone, ctx);
             let index = format!("clustered index:PRIMARY({})", decision.columns.join(", "));
-            if decision.handles.len() == 1 {
+            if handles.len() == 1 {
                 trace.index_point_get(source_table_name(scope, &table.name), &partitions, &index);
             } else {
                 trace.index_batch_point_get(
                     source_table_name(scope, &table.name),
-                    decision.handles.len(),
+                    handles.len(),
                     &partitions,
                     &index,
                     ctx.static_partition_prune(),
@@ -2255,22 +2292,30 @@ pub(crate) fn try_batch_point_get(
             handles.push(handle);
         }
     };
-    let route_handles = |handles: Vec<TableHandle>| {
+    let finish_routes = |handles: Vec<TableHandle>, routes: Vec<Option<(usize, i64)>>| {
         if table.partition().is_none() {
             return (handles, None, None, false);
         }
         let had_handles = !handles.is_empty();
-        let routes = table.handle_partition_routes(&handles, zone, ctx);
         let mut routed_handles = Vec::with_capacity(handles.len());
         let mut physical_ids = Vec::with_capacity(handles.len());
+        let mut ordinals = Vec::new();
         for (handle, route) in handles.into_iter().zip(routes) {
-            let Some((_, physical_id)) = route else {
+            let Some((ordinal, physical_id)) = route else {
                 continue;
             };
             routed_handles.push(handle);
             physical_ids.push(physical_id);
+            if !ordinals.contains(&ordinal) {
+                ordinals.push(ordinal);
+            }
         }
-        let names = table.handle_partition_names(&routed_handles, zone, ctx);
+        ordinals.sort_unstable();
+        let names = ordinals
+            .into_iter()
+            .filter_map(|ordinal| table.partition()?.definitions.get(ordinal))
+            .map(|definition| definition.name.clone())
+            .collect();
         let no_matching_partition = had_handles && routed_handles.is_empty();
         (
             routed_handles,
@@ -2278,6 +2323,10 @@ pub(crate) fn try_batch_point_get(
             Some(physical_ids),
             no_matching_partition,
         )
+    };
+    let route_handles = |handles: Vec<TableHandle>| {
+        let routes = table.handle_partition_routes(&handles, zone, ctx);
+        finish_routes(handles, routes)
     };
 
     // The handle path.
@@ -2320,6 +2369,7 @@ pub(crate) fn try_batch_point_get(
     };
     if let Some(order) = common_handle_order {
         let mut handles = Vec::with_capacity(rows.len());
+        let mut partition_rows = Vec::with_capacity(rows.len());
         for row in &rows {
             let values = ordered_values(row, &order);
             if values.contains(&Datum::Null) {
@@ -2328,10 +2378,22 @@ pub(crate) fn try_batch_point_get(
             let handle = table
                 .common_handle_from_values(&values, zone)
                 .map_err(|e| DriverError::Parse(format!("common handle encoding failed: {e:?}")))?;
-            push_unique(&mut handles, handle);
+            if handles.contains(&handle) {
+                continue;
+            }
+            handles.push(handle);
+            let mut partition_row = vec![Datum::Null; columns.len()];
+            for (position, offset) in offsets.iter().copied().enumerate() {
+                partition_row[offset] = row[position].clone();
+            }
+            partition_rows.push(partition_row);
         }
+        let routes = partition_rows
+            .iter()
+            .map(|row| table.row_partition_route(row, ctx))
+            .collect();
         let (handles, routed_partitions, physical_ids, no_matching_partition) =
-            route_handles(handles);
+            finish_routes(handles, routes);
         return Ok(Some(BatchPointGetDecision {
             handles,
             index: Some(BatchPointGetIndex {

@@ -20,6 +20,7 @@ use crate::{KvTable, PartitionKind, TableHandle};
 
 pub(super) struct CommonHandlePoints {
     pub(super) handles: Vec<TableHandle>,
+    pub(super) values: Vec<Vec<Datum>>,
     pub(super) columns: Vec<String>,
 }
 
@@ -73,14 +74,18 @@ pub(super) fn point_ranges(
     }
 
     let mut handles = Vec::with_capacity(built.ranges.len());
+    let mut values = Vec::with_capacity(built.ranges.len());
     for range in built.ranges {
         let handle = table.common_handle_from_values(&range.low, zone).ok()?;
-        if !handles.contains(&handle) {
-            handles.push(handle);
+        if handles.contains(&handle) {
+            continue;
         }
+        handles.push(handle);
+        values.push(range.low);
     }
     Some(CommonHandlePoints {
         handles,
+        values,
         columns: range_columns
             .into_iter()
             .map(|column| column.name)

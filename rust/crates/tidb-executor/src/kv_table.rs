@@ -869,22 +869,35 @@ impl KvTable {
         zone: &SessionTimeZone,
         ctx: &impl tidb_expr::Columns,
     ) -> Vec<Option<(usize, i64)>> {
-        let Some(partition) = &self.partition else {
+        if self.partition.is_none() {
             return vec![None; handles.len()];
-        };
-        let readable = self.record_physical_ids();
+        }
         handles
             .iter()
             .map(|handle| {
                 let mut row = vec![Datum::Null; self.columns.len()];
                 self.fill_handle_columns(&mut row, handle, zone).ok()?;
-                let ordinal = partition.locate_ordinal(&row, &self.columns, ctx).ok()?;
-                let definition = partition.definitions.get(ordinal)?;
-                readable
-                    .contains(&definition.id)
-                    .then_some((ordinal, definition.id))
+                self.row_partition_route(&row, ctx)
             })
             .collect()
+    }
+
+    /// Routes a complete or key-only source row to its readable partition.
+    ///
+    /// Go's common-handle batch point get uses `IndexValues`, not the encoded
+    /// handle, because a collation sort key may not contain the original SQL
+    /// value. Integer-handle callers can still build the row from the handle.
+    pub(crate) fn row_partition_route(
+        &self,
+        row: &[Datum],
+        ctx: &impl tidb_expr::Columns,
+    ) -> Option<(usize, i64)> {
+        let partition = self.partition.as_ref()?;
+        let ordinal = partition.locate_ordinal(row, &self.columns, ctx).ok()?;
+        let definition = partition.definitions.get(ordinal)?;
+        self.record_physical_ids()
+            .contains(&definition.id)
+            .then_some((ordinal, definition.id))
     }
 
     /// Go `BatchPointGetPlan.AccessObject().Partitions`: the partitions a set
@@ -1223,21 +1236,25 @@ impl KvTable {
         Ok(TableHandle::Common(padded.encoded().to_vec()))
     }
 
-    /// The row value bytes, omitting the columns the handle already carries.
+    /// The row value bytes, omitting lossless handle columns.
     fn encode_row_value(
         &self,
         row: &[Datum],
         zone: &SessionTimeZone,
     ) -> Result<Vec<u8>, KvTableError> {
-        let skip = self.handle_column_offsets();
         let mut ids = Vec::with_capacity(self.columns.len());
         let mut values = Vec::with_capacity(self.columns.len());
         for (offset, column) in self.columns.iter().enumerate() {
-            // A clustered handle column and a VIRTUAL generated column are
-            // both columns whose value is not in the row bytes: one is
-            // rebuilt from the key, the other from its expression. Same skip
-            // list, because it is the same fact.
-            if skip.contains(&offset) || crate::generated_column::is_virtual(column) {
+            // A common-handle sort key is not the original value when its
+            // collation loses information. Go keeps exactly those handle
+            // columns in the row bytes and rebuilds only lossless handles
+            // from the record key.
+            let lossless_handle = self.pk_handle_offset == Some(offset)
+                || (self.common_handle_offsets.contains(&offset)
+                    && !column
+                        .field_type
+                        .need_restored_data_with_collation(self.use_new_collation));
+            if lossless_handle || crate::generated_column::is_virtual(column) {
                 continue;
             }
             ids.push(column.id);
@@ -1262,6 +1279,7 @@ impl KvTable {
             row,
             handle,
             zone,
+            self.use_new_collation,
         )
     }
 
@@ -2047,6 +2065,7 @@ impl KvTable {
             self.pk_handle_offset,
             self.common_handle_offsets.clone(),
             None,
+            self.use_new_collation,
             context.clone(),
         )?;
         Ok(decoder.decode_and_eval(handle, entry)?.into_parts().0)

@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use tidb_codec::table_key::RECORD_ROW_KEY_LEN;
-use tidb_datatype::{Datum, FieldType, SessionTimeZone};
+use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 use tidb_tablecodec::decode_table_row_to_map;
 
 use super::table_meta::NOT_NULL_FLAG;
@@ -72,6 +72,7 @@ pub struct RowDecoder {
     changing_dependencies: BTreeMap<usize, usize>,
     pk_handle_offset: Option<usize>,
     common_handle_offsets: Vec<usize>,
+    use_new_collation: bool,
     keep: Option<Vec<usize>>,
     context: RowDecodeContext,
 }
@@ -92,6 +93,7 @@ impl RowDecoder {
             common_handle_offsets,
             generated,
             None,
+            new_collation_enabled(),
             context,
         )
     }
@@ -112,6 +114,7 @@ impl RowDecoder {
             common_handle_offsets,
             generated,
             Some(offsets),
+            new_collation_enabled(),
             context,
         )
     }
@@ -121,6 +124,7 @@ impl RowDecoder {
         pk_handle_offset: Option<usize>,
         common_handle_offsets: Vec<usize>,
         keep: Option<&[usize]>,
+        use_new_collation: bool,
         context: RowDecodeContext,
     ) -> Result<Self, KvTableError> {
         Self::build(
@@ -129,6 +133,7 @@ impl RowDecoder {
             common_handle_offsets,
             GeneratedColumnSelection::Virtual,
             keep,
+            use_new_collation,
             context,
         )
     }
@@ -137,6 +142,7 @@ impl RowDecoder {
         columns: Vec<KvColumn>,
         pk_handle_offset: Option<usize>,
         common_handle_offsets: Vec<usize>,
+        use_new_collation: bool,
         context: RowDecodeContext,
     ) -> Result<Self, KvTableError> {
         Self::build(
@@ -145,6 +151,7 @@ impl RowDecoder {
             common_handle_offsets,
             GeneratedColumnSelection::All,
             None,
+            use_new_collation,
             context,
         )
     }
@@ -155,6 +162,7 @@ impl RowDecoder {
         common_handle_offsets: Vec<usize>,
         generated: GeneratedColumnSelection,
         keep: Option<&[usize]>,
+        use_new_collation: bool,
         context: RowDecodeContext,
     ) -> Result<Self, KvTableError> {
         let width = columns.len();
@@ -249,6 +257,7 @@ impl RowDecoder {
             changing_dependencies: BTreeMap::new(),
             pk_handle_offset,
             common_handle_offsets,
+            use_new_collation,
             keep: keep.map(<[usize]>::to_vec),
             context,
         })
@@ -336,12 +345,19 @@ impl RowDecoder {
             &self.common_handle_offsets,
             &mut values,
             handle,
-            self.context.zone(),
+            HandleDecodeContext {
+                zone: self.context.zone(),
+                use_new_collation: self.use_new_collation,
+            },
             |offset| self.decoded_offsets.contains(&offset),
         )?;
         for offset in self.handle_offsets() {
             let column = &self.columns[offset];
-            if self.decoded_offsets.contains(&offset) {
+            if self.decoded_offsets.contains(&offset)
+                && !column
+                    .field_type
+                    .need_restored_data_with_collation(self.use_new_collation)
+            {
                 by_id
                     .entry(column.id)
                     .or_insert_with(|| values[offset].clone());
@@ -484,6 +500,7 @@ pub(crate) fn fill_handle_columns(
     row: &mut [Datum],
     handle: &TableHandle,
     zone: &SessionTimeZone,
+    use_new_collation: bool,
 ) -> Result<(), KvTableError> {
     fill_handle_columns_if(
         columns,
@@ -491,9 +508,18 @@ pub(crate) fn fill_handle_columns(
         common_handle_offsets,
         row,
         handle,
-        zone,
+        HandleDecodeContext {
+            zone,
+            use_new_collation,
+        },
         |_| true,
     )
+}
+
+#[derive(Clone, Copy)]
+struct HandleDecodeContext<'a> {
+    zone: &'a SessionTimeZone,
+    use_new_collation: bool,
 }
 
 fn fill_handle_columns_if(
@@ -502,11 +528,11 @@ fn fill_handle_columns_if(
     common_handle_offsets: &[usize],
     row: &mut [Datum],
     handle: &TableHandle,
-    zone: &SessionTimeZone,
+    context: HandleDecodeContext<'_>,
     selected: impl Fn(usize) -> bool,
 ) -> Result<(), KvTableError> {
     let unflatten = |offset: usize, value: Datum| -> Result<Datum, KvTableError> {
-        tidb_tablecodec::unflatten_datum(value, &columns[offset].field_type, Some(zone))
+        tidb_tablecodec::unflatten_datum(value, &columns[offset].field_type, Some(context.zone))
             .map_err(|error| KvTableError::Decode(format!("{error:?}")))
     };
     match handle {
@@ -529,7 +555,15 @@ fn fill_handle_columns_if(
                 let (remaining, value) = tidb_codec::decode_one(rest)
                     .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
                 rest = remaining;
-                if selected(*offset) {
+                // Go's `DecodeHandleToDatumMap` deliberately skips a common-
+                // handle column whose collation key loses information. The
+                // original bytes are carried in the row value; decoding the
+                // handle here would replace them with the sort key.
+                if selected(*offset)
+                    && !columns[*offset]
+                        .field_type
+                        .need_restored_data_with_collation(context.use_new_collation)
+                {
                     row[*offset] = unflatten(*offset, value)?;
                 }
             }
