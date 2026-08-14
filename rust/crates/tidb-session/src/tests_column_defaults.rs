@@ -1772,3 +1772,118 @@ fn a_bit_default_wider_than_its_column_is_refused() {
     assert!(show_create(&mut session, "n7")
         .contains(&format!("`a` bit(64) DEFAULT b'{}'", "1".repeat(64))));
 }
+
+#[test]
+fn vector_columns_enforce_dimensions_and_computed_defaults() {
+    let mut session = Session::new();
+    session
+        .run(
+            "CREATE TABLE vectors (\
+             id INT, embedding VECTOR(3) DEFAULT (VEC_FROM_TEXT('[1,2,3]')))",
+        )
+        .unwrap();
+    let create = show_create(&mut session, "vectors");
+    assert!(
+        create.contains("`embedding` vector(3) DEFAULT (vec_from_text(_utf8mb4'[1,2,3]'))"),
+        "{create}"
+    );
+
+    session.run("INSERT INTO vectors (id) VALUES (1)").unwrap();
+    session
+        .run("INSERT INTO vectors VALUES (2, '[4,5,6]')")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT id, VEC_AS_TEXT(embedding), VEC_DIMS(embedding) \
+             FROM vectors ORDER BY id"
+        ),
+        vec![
+            vec!["1".to_owned(), "[1,2,3]".to_owned(), "3".to_owned()],
+            vec!["2".to_owned(), "[4,5,6]".to_owned(), "3".to_owned()],
+        ]
+    );
+
+    session
+        .run("CREATE TABLE dynamic_vectors (id INT, embedding VECTOR)")
+        .unwrap();
+    session
+        .run("INSERT INTO dynamic_vectors VALUES (1, '[1,2]'), (2, '[3,4,5]')")
+        .unwrap();
+    assert_eq!(
+        rows(
+            &mut session,
+            "SELECT VEC_DIMS(embedding) FROM dynamic_vectors ORDER BY id"
+        ),
+        vec![vec!["2".to_owned()], vec!["3".to_owned()]]
+    );
+    let mixed = session
+        .run("ALTER TABLE dynamic_vectors MODIFY COLUMN embedding VECTOR(2)")
+        .expect_err("every stored vector must fit the fixed dimension")
+        .to_mysql_error();
+    assert_eq!(mixed.code, 1105);
+    assert_eq!(
+        mixed.message,
+        "vector has 3 dimensions, does not fit VECTOR(2)"
+    );
+    session
+        .run("DELETE FROM dynamic_vectors WHERE id = 2")
+        .unwrap();
+    session
+        .run("ALTER TABLE dynamic_vectors MODIFY COLUMN embedding VECTOR(2)")
+        .unwrap();
+    let wrong_row = session
+        .run("INSERT INTO dynamic_vectors VALUES (3, '[1,2,3]')")
+        .expect_err("fixed vectors reject a mismatched row")
+        .to_mysql_error();
+    assert_eq!(wrong_row.code, 1105);
+    assert_eq!(
+        wrong_row.message,
+        "vector has 3 dimensions, does not fit VECTOR(2)"
+    );
+    let wrong_update = session
+        .run("UPDATE dynamic_vectors SET embedding = '[1,2,3]' WHERE id = 1")
+        .expect_err("updates obey the same fixed dimension")
+        .to_mysql_error();
+    assert_eq!(wrong_update.code, 1105);
+    assert_eq!(
+        wrong_update.message,
+        "vector has 3 dimensions, does not fit VECTOR(2)"
+    );
+
+    let literal = session
+        .run("CREATE TABLE literal_vector (embedding VECTOR DEFAULT '[1,2,3]')")
+        .expect_err("a VECTOR literal default is forbidden")
+        .to_mysql_error();
+    assert_eq!(literal.code, 1105);
+    assert_eq!(
+        literal.message,
+        "VECTOR column 'embedding' can't have a literal default. Use expression default instead: ((VEC_FROM_TEXT('...')))"
+    );
+
+    let oversized = session
+        .run("CREATE TABLE oversized_vector (embedding VECTOR(16384))")
+        .expect_err("the maximum dimension is 16383")
+        .to_mysql_error();
+    assert_eq!(oversized.code, 1105);
+    assert_eq!(
+        oversized.message,
+        "vector cannot have more than 16383 dimensions"
+    );
+
+    session
+        .run(
+            "CREATE TABLE delayed_dimension_check (\
+             id INT, embedding VECTOR(2) DEFAULT (VEC_FROM_TEXT('[1,2,3]')))",
+        )
+        .unwrap();
+    let mismatch = session
+        .run("INSERT INTO delayed_dimension_check (id) VALUES (1)")
+        .expect_err("computed defaults are dimension-checked when written")
+        .to_mysql_error();
+    assert_eq!(mismatch.code, 1105);
+    assert_eq!(
+        mismatch.message,
+        "vector has 3 dimensions, does not fit VECTOR(2)"
+    );
+}

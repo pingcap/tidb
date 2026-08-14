@@ -2150,6 +2150,7 @@ fn modify_column_action(
             crate::kv_table::KvTableError::DataTruncatedAtRow { column, row } => {
                 DriverError::DataTruncatedAtRow { column, row }
             }
+            crate::kv_table::KvTableError::Vector(message) => DriverError::unsupported(message),
             crate::kv_table::KvTableError::DuplicateEntry { value, key } => {
                 DriverError::DuplicateEntry { value, key }
             }
@@ -2480,13 +2481,7 @@ mod type_change_gate_tests {
     }
 
     /// Rule 4 (`field_type.go:1591-1594`, `TypeTiDBVectorFloat32` on either
-    /// side) exercised directly rather than through SQL: this tier's
-    /// `column_type_code` (`ddl/column_field_type.rs`) does not recognize the
-    /// `VECTOR` type name yet, so no `CREATE TABLE`/`ALTER TABLE` statement
-    /// can build a `FieldType` carrying `FieldTypeCode::VectorFloat32` today
-    /// -- the rule is dead code from the SQL surface's point of view until
-    /// VECTOR column declarations land. Calling the gate directly still
-    /// proves the logic and keeps it mutation-testable in the meantime.
+    /// side): VECTOR cannot be changed to or from another type family.
     #[test]
     fn vector_type_is_refused_on_either_side() {
         let vector = FieldType::new(FieldTypeCode::VectorFloat32);

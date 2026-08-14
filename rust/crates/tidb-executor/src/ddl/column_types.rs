@@ -175,6 +175,9 @@ pub(crate) fn field_type_of(
                 type_name,
             }
         }
+        column_field_type::ColumnAttributeError::InvalidVectorDimension(message) => {
+            DriverError::unsupported(message)
+        }
     })?;
     Ok(field_type)
 }

@@ -544,6 +544,9 @@ pub enum KvTableError {
         /// The value that does not fit.
         value: String,
     },
+    /// Go's plain VECTOR conversion error. Vector dimension failures are not
+    /// retitled as a generic truncation while a column is reorganized.
+    Vector(String),
     /// Go `ErrTruncatedWrongValueForField` (1265) with the row form: a stored
     /// NULL is rejected by the column's new NOT NULL.
     DataTruncatedAtRow {
@@ -1567,7 +1570,13 @@ impl KvTable {
             } else {
                 let converted = value
                     .convert_to(&target, tidb_datatype::STRICT_FLAGS)
-                    .map_err(|_| convert_failure(&new_column.name, &target, &value))?;
+                    .map_err(|error| {
+                        if target.code() == tidb_datatype::FieldTypeCode::VectorFloat32 {
+                            KvTableError::Vector(error.to_string())
+                        } else {
+                            convert_failure(&new_column.name, &target, &value)
+                        }
+                    })?;
                 if converted.event.is_some() {
                     return Err(convert_failure(&new_column.name, &target, &value));
                 }

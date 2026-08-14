@@ -437,12 +437,23 @@ fn modify_column_type_pair_gate_rule_3_enum_set_bit_decimal_float_double_to_time
     ));
 }
 
-/// Rule 4 (`TypeTiDBVectorFloat32` on either side) has no SQL-level pin: this
-/// tier's `column_type_code` does not accept the `VECTOR` type name yet, so
-/// no statement can build a `FieldType` carrying that code in the first
-/// place. It is pinned directly against `check_type_change_supported` in
-/// `tidb-executor`'s `ddl::alter_table::type_change_gate_tests` module
-/// instead (`vector_type_is_refused_on_either_side`).
+#[test]
+fn modify_column_type_pair_gate_rule_4_vector_on_either_side() {
+    let mut session = Session::new();
+
+    session.run("CREATE TABLE r4v (a VECTOR)").unwrap();
+    assert!(matches!(
+        session.run("ALTER TABLE r4v MODIFY COLUMN a INT"),
+        Err(DriverError::UnsupportedModifyColumnType { .. })
+    ));
+
+    session.run("CREATE TABLE r4i (a INT)").unwrap();
+    assert!(matches!(
+        session.run("ALTER TABLE r4i MODIFY COLUMN a VECTOR"),
+        Err(DriverError::UnsupportedModifyColumnType { .. })
+    ));
+}
+
 #[test]
 fn modify_column_type_pair_gate_rule_5_enum_set_bit_to_duration() {
     let mut session = Session::new();

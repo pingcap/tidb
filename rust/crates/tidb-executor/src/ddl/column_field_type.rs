@@ -123,6 +123,7 @@ pub fn column_type_code(declared: &ColumnType) -> Result<FieldTypeCode, ColumnTy
         "JSON" => FieldTypeCode::Json,
         "ENUM" => FieldTypeCode::Enum,
         "SET" => FieldTypeCode::Set,
+        "VECTOR" => FieldTypeCode::VectorFloat32,
         other => {
             return Err(ColumnTypeError::new(format!(
                 "type {other} is not one this node can store"
@@ -237,6 +238,18 @@ pub fn build_field_type(
             decimal = fsp;
             let (base, _) = code.default_length_and_decimal();
             flen = if fsp == 0 { base } else { base + 1 + fsp };
+        }
+        FieldTypeCode::VectorFloat32 => {
+            decimal = 0;
+            match declared.args.as_slice() {
+                [] => {}
+                [dimensions] => flen = type_argument(name, &declared.name, dimensions)?,
+                _ => {
+                    return Err(ColumnTypeError::new(format!(
+                        "column `{name}` declares VECTOR with more than one dimension"
+                    )))
+                }
+            }
         }
         _ => match declared.args.as_slice() {
             [] => {}
@@ -423,7 +436,7 @@ fn type_argument(
 
 #[cfg(test)]
 mod tests {
-    use super::{build_field_type, process_column_flags};
+    use super::{build_field_type, check_column_attributes, process_column_flags};
     use tidb_ast::{ColumnType, ColumnTypeArg};
     use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
 
@@ -546,6 +559,32 @@ mod tests {
         assert_eq!((b.flen(), b.decimal()), (12, 3));
     }
 
+    #[test]
+    fn vector_keeps_an_optional_validated_dimension() {
+        let dynamic = built("embedding vector");
+        assert_eq!(dynamic.code(), FieldTypeCode::VectorFloat32);
+        assert_eq!(dynamic.flen(), tidb_datatype::UNSPECIFIED_LENGTH);
+        check_column_attributes(&dynamic).unwrap();
+
+        let fixed = built("embedding vector(3)");
+        assert_eq!(fixed.code(), FieldTypeCode::VectorFloat32);
+        assert_eq!((fixed.flen(), fixed.decimal()), (3, 0));
+        check_column_attributes(&fixed).unwrap();
+
+        let explicit_element = built("embedding vector<float>(3)");
+        assert_eq!(explicit_element, fixed);
+        let zero = built("embedding vector(0)");
+        check_column_attributes(&zero).unwrap();
+
+        let oversized = built("embedding vector(16384)");
+        let error = check_column_attributes(&oversized).unwrap_err();
+        assert!(matches!(
+            error,
+            super::ColumnAttributeError::InvalidVectorDimension(message)
+                if message == "vector cannot have more than 16383 dimensions"
+        ));
+    }
+
     /// The same column after [`process_column_flags`], which is what both
     /// `CREATE TABLE` builders run on the finished type.
     fn stamped(declaration: &str) -> FieldType {
@@ -664,6 +703,8 @@ pub enum ColumnAttributeError {
         /// `ENUM` or `SET`, as Go spells it in the message.
         type_name: &'static str,
     },
+    /// Go `types.CheckVectorDimValid`'s plain HY000 error.
+    InvalidVectorDimension(String),
 }
 
 /// Go `checkColumnAttributes` plus the ENUM/SET member check: what a built
@@ -729,6 +770,11 @@ pub fn check_column_attributes(field_type: &FieldType) -> Result<(), ColumnAttri
                     },
                 });
             }
+        }
+        FieldTypeCode::VectorFloat32 if field_type.flen() != tidb_datatype::UNSPECIFIED_LENGTH => {
+            let dimensions = isize::try_from(field_type.flen()).unwrap_or(isize::MAX);
+            tidb_datatype::check_vector_dim_valid(dimensions)
+                .map_err(|error| ColumnAttributeError::InvalidVectorDimension(error.to_string()))?;
         }
         _ => {}
     }

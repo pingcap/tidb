@@ -191,6 +191,14 @@ fn cast_value_shaped(
                 fallback, true, field_type, &value, column, row_index, ctx, shape,
             );
         }
+        // Go's vector conversion errors are plain errors: neither
+        // `castColumnValue` nor `completeInsertErr` retitles them as an
+        // incorrect/truncated column value.
+        Err(error) if field_type.code() == tidb_datatype::FieldTypeCode::VectorFloat32 => {
+            return Err(DriverError::Exec(crate::ExecError::Eval(
+                tidb_expr::EvalError::Vector(error.to_string()),
+            )));
+        }
         Err(error) => {
             let named = json_write_error(&error).unwrap_or_else(incorrect_value);
             return Err(shape.name(named, &source, field_type));

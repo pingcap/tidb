@@ -51,12 +51,6 @@
 //! [`build`] therefore routes every function-call default through
 //! [`func_call_default`] and never through the constant folder.
 //!
-//! # Deferred, and refused rather than guessed
-//!
-//! Go's whitelist also carries `VEC_FROM_TEXT`. It needs its own type and
-//! argument contract; until the VECTOR DDL surface owns that contract it is
-//! refused by name rather than stored incorrectly.
-
 use tidb_ast::Expr;
 use tidb_datatype::{
     ConversionFlags, Converted, Datum, DatumValueError, FieldType, FieldTypeCode, SessionTimeZone,
@@ -497,6 +491,12 @@ fn func_call_default(
             };
             computed_default(&qualified, AddedOriginSafety::SequenceDefault)
         }
+        "vec_from_text" => {
+            if args.len() != 1 {
+                return Err(DefaultError::WrongParameterCount("vec_from_text"));
+            }
+            computed_default(expr, AddedOriginSafety::Safe)
+        }
         // Go's RAND/UUID arms preserve the expression for each omitted row;
         // `VerifyArgsWrapper` still enforces their individual arities.
         "rand" => {
@@ -835,10 +835,13 @@ pub fn evaluate(
     value
         .convert_to_in(field_type, flags, &ctx.time_zone())
         .map(|converted| converted.value)
-        // A default whose computed value does not fit its own column is
-        // refused at DDL time by Go's own argument checks, so this is
-        // unreachable for a table this tier built.
-        .map_err(|_| tidb_expr::EvalError::Unsupported("a computed DEFAULT the column cannot hold"))
+        .map_err(|error| {
+            if field_type.code() == FieldTypeCode::VectorFloat32 {
+                tidb_expr::EvalError::Vector(error.to_string())
+            } else {
+                tidb_expr::EvalError::Unsupported("a computed DEFAULT the column cannot hold")
+            }
+        })
 }
 
 #[cfg(test)]
