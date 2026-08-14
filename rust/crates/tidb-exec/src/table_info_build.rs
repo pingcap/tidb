@@ -1094,7 +1094,7 @@ fn should_build_clustered_index(
 }
 
 /// Go `ResolveCharsetCollation` over one `(column, table)` pair.
-fn resolve_charset_collation(
+pub(crate) fn resolve_charset_collation(
     charset: Option<&str>,
     collate: Option<&str>,
     fallback_charset: &str,
@@ -1107,6 +1107,13 @@ fn resolve_charset_collation(
         if let Some(collate) = collate.filter(|collate| !collate.is_empty()) {
             let info = get_collation_by_name(collate)
                 .map_err(|error| DdlAdmissionError::new(format!("COLLATE {collate}: {error}")))?;
+            if let Some(charset) = charset.filter(|charset| !charset.is_empty()) {
+                if !charset.eq_ignore_ascii_case(&info.charset_name) {
+                    return Err(DdlAdmissionError::new(format!(
+                        "COLLATION '{collate}' is not valid for CHARACTER SET '{charset}'"
+                    )));
+                }
+            }
             return Ok((info.charset_name, info.name));
         }
         if let Some(charset) = charset.filter(|charset| !charset.is_empty()) {

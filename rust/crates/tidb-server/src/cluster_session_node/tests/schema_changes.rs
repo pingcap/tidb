@@ -373,13 +373,24 @@ fn a_second_connection_sees_the_new_table_after_the_ddl() {
 fn create_and_drop_database_route_to_the_catalog_writer() {
     let (mut session, node) = open_session();
     session
-        .execute_write("CREATE DATABASE extra")
+        .execute_write("CREATE DATABASE extra CHARACTER SET utf8 COLLATE utf8_general_ci")
         .expect("the catalog change runs");
     session.execute_write("USE extra").expect("USE extra");
     session
         .execute_write("CREATE TABLE here (id BIGINT PRIMARY KEY)")
         .expect("a table in the new database");
     assert!(rows(&mut session, "SELECT id FROM here").is_empty());
+    let catalog = node.catalog.load();
+    let database = catalog
+        .databases
+        .iter()
+        .find(|database| database.info.name.lowercase() == "extra")
+        .expect("the created database is published");
+    assert_eq!(database.info.charset, "utf8");
+    assert_eq!(database.info.collate, "utf8_general_ci");
+    assert_eq!(database.tables[0].charset, "utf8");
+    assert_eq!(database.tables[0].collate, "utf8_general_ci");
+    drop(catalog);
 
     session
         .execute_write("DROP DATABASE extra")

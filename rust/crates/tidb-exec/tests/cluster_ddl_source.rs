@@ -81,10 +81,11 @@ fn statement(sql: &str) -> DdlStatement {
 }
 
 fn stored_default_bytes(sql: &str) -> Vec<u8> {
-    let DdlStatement::CreateTable { template, .. } = statement(sql) else {
+    let DdlStatement::CreateTable { build, .. } = statement(sql) else {
         panic!("the fixture is not CREATE TABLE: {sql}");
     };
-    let column = template
+    let column = build
+        .template()
         .columns
         .get(0)
         .expect("the fixture declares one non-null column");
@@ -231,12 +232,33 @@ fn every_admitted_column_type_is_stored_with_the_go_servers_field_type() {
 }
 
 #[test]
+fn table_build_uses_the_loaded_database_defaults() {
+    let mut store = bootstrapped();
+    store.put(
+        key::database_kv_key(112),
+        br#"{"id":112,"db_name":{"O":"u6","L":"u6"},"charset":"utf8","collate":"utf8_general_ci","Deprecated":{},"state":5,"policy_ref_info":null}"#.to_vec(),
+    );
+    store.put(key::next_global_id_kv_key(), b"116".to_vec());
+
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.inherited (name VARCHAR(32) NOT NULL)",
+        467_996_279_700_000_000,
+    );
+    let table = stored_table(&write, 117);
+    assert_eq!(table["charset"], "utf8");
+    assert_eq!(table["collate"], "utf8_general_ci");
+    assert_eq!(table["cols"][0]["type"]["Charset"], "utf8");
+    assert_eq!(table["cols"][0]["type"]["Collate"], "utf8_general_ci");
+}
+
+#[test]
 fn a_table_constraint_primary_key_is_the_same_clustered_handle_as_an_inline_one() {
     let template = |sql: &str| {
-        let DdlStatement::CreateTable { template, .. } = statement(sql) else {
+        let DdlStatement::CreateTable { build, .. } = statement(sql) else {
             panic!("a CREATE TABLE");
         };
-        template
+        build.template().clone()
     };
     let inline = template("CREATE TABLE u6.t (id BIGINT PRIMARY KEY, v BIGINT NOT NULL)");
     let constraint =
@@ -277,6 +299,45 @@ fn a_created_database_is_stored_exactly_as_the_go_server_stores_it() {
         stored_value(&write, &key::database_kv_key(112)),
         &[],
     );
+}
+
+#[test]
+fn a_created_database_persists_its_resolved_charset_and_collation() {
+    let mut store = MetaStore::default();
+    store.put(key::next_global_id_kv_key(), b"111".to_vec());
+    store.put(key::schema_version_kv_key(), b"60".to_vec());
+    let write = plan(
+        &mut store,
+        "CREATE DATABASE u8 CHARACTER SET utf8 COLLATE utf8_general_ci",
+        1,
+    );
+    let database = value::parse_db_info(stored_value(&write, &key::database_kv_key(112)))
+        .expect("the stored database metadata decodes");
+    assert_eq!(database.charset, "utf8");
+    assert_eq!(database.collate, "utf8_general_ci");
+
+    for (sql, expected_charset, expected_collate) in [
+        ("CREATE DATABASE c CHARACTER SET utf8", "utf8", "utf8_bin"),
+        (
+            "CREATE DATABASE c COLLATE utf8_general_ci",
+            "utf8",
+            "utf8_general_ci",
+        ),
+    ] {
+        let DdlStatement::CreateDatabase {
+            charset, collate, ..
+        } = statement(sql)
+        else {
+            panic!("the fixture is CREATE DATABASE")
+        };
+        assert_eq!(charset, expected_charset, "{sql}");
+        assert_eq!(collate, expected_collate, "{sql}");
+    }
+
+    assert!(refusal(
+        "CREATE DATABASE c CHARACTER SET utf8 COLLATE utf8mb4_bin"
+    )
+    .contains("is not valid for CHARACTER SET"));
 }
 
 #[test]
@@ -478,10 +539,6 @@ fn every_unservable_shape_is_refused_before_a_single_mutation_exists() {
         (
             "DROP TABLE u6.a, u6.b",
             "DROP TABLE names exactly one table on this node",
-        ),
-        (
-            "CREATE DATABASE d CHARACTER SET utf8mb4",
-            "CREATE DATABASE options are not supported",
         ),
     ] {
         let reason = refusal(sql);
@@ -713,12 +770,13 @@ fn defaults_are_validated_and_persisted_against_the_final_column_type() {
         stored_default_bytes("CREATE TABLE u6.t (a BINARY(4) DEFAULT 0x61)"),
         b"a\0\0\0".as_slice()
     );
-    let DdlStatement::CreateTable { template, .. } =
+    let DdlStatement::CreateTable { build, .. } =
         statement("CREATE TABLE u6.t (a BIT(9) DEFAULT b'1')")
     else {
         panic!("the fixture is CREATE TABLE");
     };
-    let column = template
+    let column = build
+        .template()
         .columns
         .get(0)
         .expect("the fixture declares a BIT column");
@@ -747,14 +805,14 @@ fn cluster_create_persists_a_literal_timestamp_in_utc_from_the_session_zone() {
         });
     let sql = "CREATE TABLE u6.t (a TIMESTAMP DEFAULT '2020-01-02 08:00:00')";
     let parsed = tidb_parser::parse_with_sql_mode(sql, context.sql_mode()).expect("parses");
-    let DdlStatement::CreateTable { template, .. } =
+    let DdlStatement::CreateTable { build, .. } =
         lower_ddl_with_context(&parsed, "u6", &context)
             .expect("the timestamp default is admitted")
             .expect("the statement is cluster DDL")
     else {
         panic!("the fixture is CREATE TABLE");
     };
-    let column_handle = template.columns.get(0).expect("one column");
+    let column_handle = build.template().columns.get(0).expect("one column");
     let column = column_handle.read();
     assert_eq!(
         column.default_value.builtin_string().map(|value| value.as_bytes()),
@@ -772,14 +830,14 @@ fn cluster_create_folds_a_timestamp_expression_in_the_session_zone() {
         let sql =
             "CREATE TABLE u6.t (v VARCHAR(64) DEFAULT (TIMESTAMP '2024-01-01 14:00:00+05:00'))";
         let parsed = tidb_parser::parse_with_sql_mode(sql, context.sql_mode()).expect("parses");
-        let DdlStatement::CreateTable { template, .. } =
+        let DdlStatement::CreateTable { build, .. } =
             lower_ddl_with_context(&parsed, "u6", &context)
                 .expect("the expression default is admitted")
                 .expect("the statement is cluster DDL")
         else {
             panic!("the fixture is CREATE TABLE");
         };
-        let column_handle = template.columns.get(0).expect("one column");
+        let column_handle = build.template().columns.get(0).expect("one column");
         let column = column_handle.read();
         match column.default_value.view() {
             Some(GoAnyView::String(bytes)) => bytes.as_bytes().to_vec(),
@@ -1014,14 +1072,15 @@ fn create_table_with_auto_increment_is_admitted_now_the_counter_has_a_home() {
          PRIMARY KEY (id))",
     )
     .expect("the fixture SQL parses");
-    let DdlStatement::CreateTable { template, .. } = lower_ddl(&parsed, "sbtest")
+    let DdlStatement::CreateTable { build, .. } = lower_ddl(&parsed, "sbtest")
         .expect("admitted")
         .expect("a catalog change")
     else {
         panic!("a CREATE TABLE");
     };
     assert!(
-        template
+        build
+            .template()
             .columns
             .get(0)
             .expect("the fixture declares id")
@@ -1035,10 +1094,10 @@ fn create_table_with_auto_increment_is_admitted_now_the_counter_has_a_home() {
     // on this cluster reads. Picking `IID:` because the name matches would
     // give the two nodes separate counters for one column, with nothing to
     // detect it.
-    assert!(!template.sep_auto_inc());
+    assert!(!build.template().sep_auto_inc());
     assert_eq!(
-        tidb_exec::cluster_auto_id::auto_id_key_for(7, &template),
-        tidb_meta::key::auto_table_id_kv_key(7, template.id),
+        tidb_exec::cluster_auto_id::auto_id_key_for(7, build.template()),
+        tidb_meta::key::auto_table_id_kv_key(7, build.template().id),
     );
 }
 
@@ -1049,19 +1108,19 @@ fn create_table_with_auto_random_persists_its_allocator_format() {
          AUTO_RANDOM_BASE=100",
     )
     .expect("the fixture SQL parses");
-    let DdlStatement::CreateTable { template, .. } = lower_ddl(&parsed, "test")
+    let DdlStatement::CreateTable { build, .. } = lower_ddl(&parsed, "test")
         .expect("admitted")
         .expect("a catalog change")
     else {
         panic!("a CREATE TABLE");
     };
-    assert_eq!(template.auto_random_bits, 5);
-    assert_eq!(template.auto_random_range_bits, 32);
-    assert_eq!(template.auto_rand_id, 100);
-    assert!(template.is_auto_random_bit_col_unsigned());
+    assert_eq!(build.template().auto_random_bits, 5);
+    assert_eq!(build.template().auto_random_range_bits, 32);
+    assert_eq!(build.template().auto_rand_id, 100);
+    assert!(build.template().is_auto_random_bit_col_unsigned());
     assert_eq!(
-        tidb_exec::cluster_auto_id::auto_random_id_key_for(7, &template),
-        tidb_meta::key::auto_random_table_id_kv_key(7, template.id),
+        tidb_exec::cluster_auto_id::auto_random_id_key_for(7, build.template()),
+        tidb_meta::key::auto_random_table_id_kv_key(7, build.template().id),
     );
 
     let mut store = bootstrapped();

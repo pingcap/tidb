@@ -57,8 +57,8 @@ use std::fmt;
 
 use tidb_ast::CiString;
 use tidb_ast::{
-    AlterTableStmt, CreateIndexStmt, CreateTableStmt, DdlStmt, DropIndexStmt, DropTableStmt,
-    IndexConstraintDefinition, IndexConstraintKind, RenameTableStmt, Stmt,
+    AlterTableStmt, CreateIndexStmt, CreateTableStmt, DatabaseOption, DdlStmt, DropIndexStmt,
+    DropTableStmt, IndexConstraintDefinition, IndexConstraintKind, RenameTableStmt, Stmt,
 };
 use tidb_datatype::new_collation_enabled;
 use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
@@ -77,7 +77,8 @@ use crate::cluster_catalog::{
     load_cluster_catalog, ClusterCatalog, ClusterCatalogError, MetaSnapshot,
 };
 use crate::table_info_build::{
-    build_table_info_with_context, default_ddl_statement_context, ClusteredIndexDefMode,
+    build_table_info_with_context, default_ddl_statement_context, resolve_charset_collation,
+    ClusteredIndexDefMode,
 };
 
 pub use crate::table_info_build::DdlAdmissionError;
@@ -92,11 +93,71 @@ const CATALOG_CHARSET: &str = "utf8mb4";
 /// The catalog collation paired with [`CATALOG_CHARSET`].
 const CATALOG_COLLATION: &str = "utf8mb4_bin";
 
+/// A validated `CREATE TABLE` recipe whose final metadata waits for `DBInfo`.
+#[derive(Clone)]
+pub struct CreateTableBuild {
+    create: CreateTableStmt,
+    context: tidb_executor::StmtContext,
+    template: TableInfo,
+}
+
+impl std::fmt::Debug for CreateTableBuild {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CreateTableBuild")
+            .field("create", &self.create)
+            .field("template", &self.template)
+            .finish_non_exhaustive()
+    }
+}
+
+impl CreateTableBuild {
+    fn new(
+        create: &CreateTableStmt,
+        context: &tidb_executor::StmtContext,
+    ) -> Result<Self, DdlAdmissionError> {
+        let template = build_table_info_with_context(
+            create,
+            CATALOG_CHARSET,
+            CATALOG_COLLATION,
+            ClusteredIndexDefMode::On,
+            context,
+        )?;
+        Ok(Self {
+            create: create.clone(),
+            context: context.clone(),
+            template,
+        })
+    }
+
+    /// The validated server-default build used by admission tests and mocks.
+    #[must_use]
+    pub const fn template(&self) -> &TableInfo {
+        &self.template
+    }
+
+    /// Builds the final metadata after the owning `DBInfo` has been loaded.
+    pub fn for_database(
+        &self,
+        charset: &str,
+        collate: &str,
+    ) -> Result<TableInfo, DdlAdmissionError> {
+        if charset.eq_ignore_ascii_case(CATALOG_CHARSET)
+            && collate.eq_ignore_ascii_case(CATALOG_COLLATION)
+        {
+            return Ok(self.template.clone());
+        }
+        build_table_info_with_context(
+            &self.create,
+            charset,
+            collate,
+            ClusteredIndexDefMode::On,
+            &self.context,
+        )
+    }
+}
+
 /// One catalog change this node knows how to perform.
-///
-/// `CreateTable` carries a whole `TableInfo`, which has no equality of its own
-/// (a catalog object is compared by its serialized bytes, not structurally), so
-/// this enum is `Debug`/`Clone` only.
 #[derive(Clone, Debug)]
 pub enum DdlStatement {
     /// `CREATE DATABASE [IF NOT EXISTS] name`.
@@ -105,6 +166,10 @@ pub enum DdlStatement {
         name: String,
         /// Whether an existing database is a no-op rather than an error.
         if_not_exists: bool,
+        /// The resolved charset persisted in `DBInfo`.
+        charset: String,
+        /// The resolved collation persisted in `DBInfo`.
+        collate: String,
     },
     /// `DROP DATABASE [IF EXISTS] name`.
     DropDatabase {
@@ -121,9 +186,8 @@ pub enum DdlStatement {
         table: String,
         /// Whether an existing table is a no-op rather than an error.
         if_not_exists: bool,
-        /// The `TableInfo` this statement lowers to, complete except for the
-        /// ID and timestamp the publishing transaction assigns.
-        template: Box<TableInfo>,
+        /// The validated build recipe, finalized against the loaded database.
+        build: Box<CreateTableBuild>,
     },
     /// `ALTER TABLE ... [FORCE] AUTO_RANDOM_BASE=n`.
     RebaseAutoRandom {
@@ -248,6 +312,33 @@ pub fn lower_ddl(
     lower_ddl_with_context(statement, default_schema, &context)
 }
 
+/// Go `executor.CreateSchema`: the last explicit charset/collation wins, and
+/// either explicit half replaces the corresponding server default before the
+/// pair is resolved and validated.
+fn database_charset_collation(
+    options: &[DatabaseOption],
+) -> Result<(String, String), DdlAdmissionError> {
+    let mut charset = None;
+    let mut collate = None;
+    for option in options {
+        match option {
+            DatabaseOption::CharacterSet(value) => charset = Some(value.as_str()),
+            DatabaseOption::Collate(value) => collate = Some(value.as_str()),
+            other => {
+                return Err(DdlAdmissionError::new(format!(
+                    "CREATE DATABASE option {other:?} is not supported by this node"
+                )))
+            }
+        }
+    }
+
+    if charset.is_some() || collate.is_some() {
+        resolve_charset_collation(charset, collate, CATALOG_CHARSET, CATALOG_COLLATION)
+    } else {
+        Ok((CATALOG_CHARSET.to_owned(), CATALOG_COLLATION.to_owned()))
+    }
+}
+
 /// [`lower_ddl`] under the statement's actual SQL mode and time zone.
 ///
 /// Live session paths must use this entrypoint so admission and metadata
@@ -266,15 +357,12 @@ pub fn lower_ddl_with_context(
             name,
             options,
         } => {
-            if !options.is_empty() {
-                return Err(DdlAdmissionError::new(
-                    "CREATE DATABASE options are not supported by this node; \
-                     it writes the server default utf8mb4 / utf8mb4_bin",
-                ));
-            }
+            let (charset, collate) = database_charset_collation(options)?;
             Ok(Some(DdlStatement::CreateDatabase {
                 name: name.clone(),
                 if_not_exists: *if_not_exists,
+                charset,
+                collate,
             }))
         }
         DdlStmt::DropDatabase { if_exists, name } => Ok(Some(DdlStatement::DropDatabase {
@@ -573,18 +661,12 @@ fn lower_create_table(
     // The server default `tidb_enable_clustered_index = ON`, which is what a
     // real TiDB builds a user table under. Bootstrap is the one caller that
     // uses a different mode, and it says so at its own call site.
-    let template = build_table_info_with_context(
-        create,
-        CATALOG_CHARSET,
-        CATALOG_COLLATION,
-        ClusteredIndexDefMode::On,
-        context,
-    )?;
+    let build = CreateTableBuild::new(create, context)?;
     Ok(DdlStatement::CreateTable {
         schema,
         table,
         if_not_exists: create.if_not_exists,
-        template: Box::new(template),
+        build: Box::new(build),
     })
 }
 
@@ -917,6 +999,8 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         DdlStatement::CreateDatabase {
             name,
             if_not_exists,
+            charset,
+            collate,
         } => {
             if let Some(existing) = find_database(&catalog, name) {
                 if *if_not_exists {
@@ -932,8 +1016,8 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             let info = DBInfo {
                 id: db_id,
                 name: CiString::new(name.clone()),
-                charset: CATALOG_CHARSET.to_owned(),
-                collate: CATALOG_COLLATION.to_owned(),
+                charset: charset.clone(),
+                collate: collate.clone(),
                 state: SchemaState::PUBLIC,
                 ..DBInfo::default()
             };
@@ -971,7 +1055,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             schema,
             table,
             if_not_exists,
-            template,
+            build,
         } => {
             let Some(database) = find_database(&catalog, schema) else {
                 return Err(DdlPlanError::UnknownDatabase(schema.clone()));
@@ -998,7 +1082,9 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // transaction-owned fields. `clone_like_go()` would allocate an
             // empty `Indices` slice even when the builder left it nil, turning
             // Go's persisted `"index_info":null` into `[]`.
-            let mut info = (**template).clone();
+            let mut info = build
+                .for_database(&database.info.charset, &database.info.collate)
+                .map_err(|error| DdlPlanError::Unsupported(error.to_string()))?;
             info.id = table_id;
             // Go `createTable` stamps the job transaction's own start timestamp.
             info.update_ts = start_ts;

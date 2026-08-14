@@ -18,16 +18,14 @@ use tidb_ast::CiString;
 use tidb_datatype::FieldTypeFlags;
 use tidb_exec::cluster_catalog::{ClusterCatalog, LoadedDatabase};
 use tidb_model::db::DBInfo;
-use tidb_model::TableInfo;
 
 /// The catalog writer, offline: the meta-key encoding and the 2PC are
 /// proven by `tidb-exec`'s own `cluster_ddl_source` tests, so what is
 /// modelled here is the part this node owns -- the published catalog
 /// moving, at a new schema version, from the statement's own thread.
 ///
-/// The `TableInfo` it publishes is not invented: it is the template
-/// `lower_ddl`/`build_table_info` produced from the statement text, which
-/// is what the real path writes too.
+/// The `TableInfo` it publishes comes from the same catalog-aware build recipe
+/// as the real path.
 pub(super) struct MockDdl {
     pub(super) catalog: Arc<SharedClusterCatalog>,
     /// Stands in for `NextGlobalID`.
@@ -110,6 +108,8 @@ impl ClusterDdl for MockDdl {
             DdlStatement::CreateDatabase {
                 name,
                 if_not_exists,
+                charset,
+                collate,
             } => {
                 if find(&mut next.databases, name).is_some() {
                     if *if_not_exists {
@@ -127,6 +127,8 @@ impl ClusterDdl for MockDdl {
                     info: DBInfo {
                         id,
                         name: CiString::new(name.clone()),
+                        charset: charset.clone(),
+                        collate: collate.clone(),
                         ..DBInfo::default()
                     },
                     tables: Vec::new(),
@@ -151,7 +153,7 @@ impl ClusterDdl for MockDdl {
                 schema,
                 table,
                 if_not_exists,
-                template,
+                build,
             } => {
                 let at = find(&mut next.databases, schema).ok_or_else(|| {
                     SqlQueryError::unknown(format!("Unknown database '{schema}'"))
@@ -173,7 +175,10 @@ impl ClusterDdl for MockDdl {
                 }
                 let id = self.allocate();
                 created_id = Some(id);
-                let mut info = TableInfo::clone(template);
+                let database = &next.databases[at].info;
+                let mut info = build
+                    .for_database(&database.charset, &database.collate)
+                    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                 info.id = id;
                 next.databases[at].tables.push(info);
             }
