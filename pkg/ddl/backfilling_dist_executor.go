@@ -232,26 +232,26 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 }
 
 func (s *backfillDistExecutor) checkLocalSortFreeDisk(ctx context.Context) error {
-	// TODO: Recheck local disk when users increase concurrency with ADMIN ALTER DDL JOB.
 	// This point-in-time, best-effort precheck accounts for aggregate growth of concurrent
 	// local-sort DXF backfills to reduce the risk that all concurrent jobs frequently import
 	// small SST batches; it does not reserve disk or guarantee performance.
+	// It does not recheck disk after a concurrency increase with ADMIN ALTER DDL JOB.
 	// Local-sort IMPORT INTO FROM FILE is excluded because its quota-based import/reset mechanism
 	// manages temporary-disk growth. IMPORT INTO FROM SELECT is excluded because its final
 	// size cannot be reliably estimated. Their current disk usage is reflected in the
 	// filesystem's available space.
-	runningJobCount, runningJobRuntimeSlots, runningJobUsedBytes, err :=
-		s.getRunningLocalSortJobDiskUsage(ctx)
+	otherRunningJobCount, otherRunningJobRuntimeSlots, otherRunningJobUsedBytes, err :=
+		s.getOtherRunningLocalSortJobDiskUsage(ctx)
 	if err != nil {
 		return err
 	}
-	if err := ingest.CheckLocalSortFreeDisk(
-		s.GetExecutorID(),
-		runningJobCount,
-		runningJobRuntimeSlots,
-		runningJobUsedBytes,
-		s.task.GetRuntimeSlots(),
-	); err != nil {
+	if err := ingest.CheckLocalSortFreeDisk(ingest.LocalSortFreeDiskCheck{
+		ExecID:                   s.GetExecutorID(),
+		OtherRunningJobCount:     otherRunningJobCount,
+		OtherRunningRuntimeSlots: otherRunningJobRuntimeSlots,
+		OtherRunningUsedBytes:    otherRunningJobUsedBytes,
+		CurrentJobRuntimeSlots:   s.GetTaskBase().GetRuntimeSlots(),
+	}); err != nil {
 		// The aggregate growth target is capped by tidb_ddl_disk_quota (100 GiB by
 		// default), and available space includes untracked log usage. Reject the task
 		// before local sorting starts to avoid adding disk pressure that can make all
@@ -263,10 +263,10 @@ func (s *backfillDistExecutor) checkLocalSortFreeDisk(ctx context.Context) error
 	return nil
 }
 
-func (s *backfillDistExecutor) getRunningLocalSortJobDiskUsage(
+func (s *backfillDistExecutor) getOtherRunningLocalSortJobDiskUsage(
 	ctx context.Context,
 ) (jobCount int, runtimeSlots int, usedBytes uint64, err error) {
-	return getRunningLocalSortJobDiskUsage(
+	return getOtherRunningLocalSortJobDiskUsage(
 		ctx,
 		s.GetTaskTable(),
 		s.task.ID,
@@ -274,7 +274,7 @@ func (s *backfillDistExecutor) getRunningLocalSortJobDiskUsage(
 	)
 }
 
-func getRunningLocalSortJobDiskUsage(
+func getOtherRunningLocalSortJobDiskUsage(
 	ctx context.Context,
 	taskTable taskexecutor.TaskTable,
 	currentTaskID int64,
@@ -283,8 +283,9 @@ func getRunningLocalSortJobDiskUsage(
 	taskIDs := make([]int64, 0, len(taskRuntimeSlotsByID))
 	for taskID := range taskRuntimeSlotsByID {
 		if taskID == currentTaskID {
-			// Resume does not guarantee cleanup of this task's previous local files. Any
-			// remaining files reduce available space, while its full growth budget is reserved again.
+			// Exclude the current task: resume does not guarantee cleanup of its previous
+			// local files. Remaining files reduce available space, while its full growth
+			// budget is reserved again as CurrentJobRuntimeSlots.
 			continue
 		}
 		taskIDs = append(taskIDs, taskID)

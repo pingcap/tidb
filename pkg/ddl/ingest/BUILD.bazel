@@ -71,6 +71,7 @@ go_test(
     timeout = "moderate",
     srcs = [
         "checkpoint_test.go",
+        "disk_root_test.go",
         "env_test.go",
         "integration_test.go",
         "main_test.go",
