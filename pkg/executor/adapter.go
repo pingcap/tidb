@@ -169,10 +169,14 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return
 		}
 		err = util2.GetRecoverError(r)
+		if a.stmt != nil {
+			a.stmt.abortStatementRUPlanWalk()
+		}
 		logutil.Logger(ctx).Warn("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 	if a.stmt != nil {
 		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			a.stmt.abortStatementRUPlanWalk()
 			return err
 		}
 	}
@@ -360,6 +364,11 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan base.Plan
+	// statementRUPlanWalkOwner is nil unless the dark statement RU walk is
+	// explicitly enabled by a later production layer or the test-only hook. It
+	// must be installed before the ExecStmt is published and must not be replaced
+	// after execution begins.
+	statementRUPlanWalkOwner *statementRUPlanWalkOwner
 
 	StmtNode ast.StmtNode
 
@@ -398,6 +407,11 @@ func (a *ExecStmt) GetStmtNode() ast.StmtNode {
 func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "ExecStmt.PointGet")
 	defer r.End()
+	failpoint.Inject("statementRUPointGetErrorForTest", func(val failpoint.Value) {
+		if a.Ctx != nil && val.(int) == int(a.Ctx.GetSessionVars().ConnectionID) {
+			failpoint.Return(nil, errors.New("statement RU PointGet test error"))
+		}
+	})
 	if r.Span != nil {
 		r.Span.LogKV("sql", a.Text())
 	}
@@ -1698,6 +1712,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 
 	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
+	a.finishStatementRUPlanWalk(err)
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
