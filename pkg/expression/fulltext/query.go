@@ -16,6 +16,7 @@ package fulltext
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression/matchagainst"
@@ -548,4 +549,120 @@ func buildPhraseNode(tokens []Token) queryNode {
 		node.failure = buildPhraseFailure(node.tokens)
 	}
 	return node
+}
+
+// FilterTerms are tokens a cheap pre-filter can use to narrow the rows a query
+// has to be evaluated against. They are an over-approximation: every document
+// the query matches satisfies them, but not every document satisfying them
+// matches the query, so the caller must still apply Query.Match as a residual.
+type FilterTerms struct {
+	// Required tokens must all be present. Non-empty means an intersection of
+	// per-token lookups generates the candidates.
+	Required []string
+	// Optional tokens are only set when there is no required token, and mean
+	// at least one must be present, so a union generates the candidates.
+	Optional []string
+}
+
+// FilterTerms returns tokens that can narrow this query, or false when it
+// cannot be narrowed soundly and every row must be evaluated.
+//
+// Prohibited terms are never usable: they exclude documents rather than
+// requiring them.
+//
+// allowPrefix distinguishes the two consumers. A prefix term like `data*`
+// cannot drive an exact token lookup such as `member of`, so an index caller
+// passes false and the term is dropped - which stays sound, because the
+// remaining terms still over-approximate. A substring pre-filter can use it,
+// since any document matching `data*` contains "data" as a substring, so a
+// LIKE caller passes true and gets a term it would otherwise have to give up.
+func (q *Query) FilterTerms(allowPrefix bool) (FilterTerms, bool) {
+	if q == nil || q.matchesNothing {
+		return FilterTerms{}, false
+	}
+	group, ok := q.root.(groupNode)
+	if !ok {
+		return FilterTerms{}, false
+	}
+
+	var required []string
+	for _, clause := range group.must {
+		required = append(required, definitelyPresentTokens(clause, allowPrefix)...)
+	}
+	if len(required) > 0 {
+		return FilterTerms{Required: dedupeTokens(required)}, true
+	}
+
+	// With nothing required, the query is satisfied by any one of the optional
+	// clauses, so a union over them is sound only if every clause contributes
+	// at least one token. A clause that contributes none - a bare prefix, say -
+	// could match a document none of the collected tokens appear in.
+	var optional []string
+	for _, clause := range group.should {
+		tokens := definitelyPresentTokens(clause, allowPrefix)
+		if len(tokens) == 0 {
+			return FilterTerms{}, false
+		}
+		// Only the first token is needed: the clause requires all of them, so
+		// any one is enough to find every document the clause can match.
+		optional = append(optional, tokens[0])
+	}
+	if len(optional) == 0 {
+		return FilterTerms{}, false
+	}
+	return FilterTerms{Optional: dedupeTokens(optional)}, true
+}
+
+// definitelyPresentTokens returns tokens that every document matching node
+// must contain. It returns nothing when the node makes no such guarantee.
+func definitelyPresentTokens(node queryNode, allowPrefix bool) []string {
+	switch n := node.(type) {
+	case termNode:
+		return []string{n.token}
+	case prefixNode:
+		if allowPrefix {
+			return []string{n.prefix}
+		}
+		return nil
+	case phraseNode:
+		// A phrase requires each of its tokens, adjacent. Adjacency cannot be
+		// checked by an index lookup, but presence can.
+		return slices.Clone(n.tokens)
+	case groupNode:
+		var tokens []string
+		for _, clause := range n.must {
+			tokens = append(tokens, definitelyPresentTokens(clause, allowPrefix)...)
+		}
+		if len(tokens) > 0 {
+			return tokens
+		}
+		// A nested group with only optional clauses guarantees a token only
+		// when every branch does, and then only one token per branch.
+		if len(n.should) == 0 {
+			return nil
+		}
+		for _, clause := range n.should {
+			branch := definitelyPresentTokens(clause, allowPrefix)
+			if len(branch) == 0 {
+				return nil
+			}
+		}
+		return nil
+	default:
+		// neverNode and anything added later guarantee nothing.
+		return nil
+	}
+}
+
+func dedupeTokens(tokens []string) []string {
+	seen := make(map[string]struct{}, len(tokens))
+	out := tokens[:0]
+	for _, token := range tokens {
+		if _, dup := seen[token]; dup {
+			continue
+		}
+		seen[token] = struct{}{}
+		out = append(out, token)
+	}
+	return out
 }

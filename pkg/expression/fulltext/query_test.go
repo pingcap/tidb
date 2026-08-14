@@ -16,6 +16,7 @@ package fulltext
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -312,4 +313,132 @@ func TestCompileBooleanQueryMultiTokenTerm(t *testing.T) {
 	query, err := CompileBooleanQuery("+abc", stopConfig)
 	require.NoError(t, err)
 	require.True(t, query.MatchesNothing(), "a required term that analyzes away can match nothing")
+}
+
+func mustCompileForIndexTerms(t *testing.T, search string) *Query {
+	t.Helper()
+	config := AnalyzerConfig{
+		ParserType:           model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize: 3,
+		InnodbFtMaxTokenSize: 84,
+	}
+	query, err := CompileBooleanQuery(search, config)
+	require.NoError(t, err)
+	return query
+}
+
+func TestQueryFilterTerms(t *testing.T) {
+	for _, tc := range []struct {
+		search   string
+		ok       bool
+		required []string
+		optional []string
+	}{
+		// Required terms intersect.
+		{search: "+distributed +sql", ok: true, required: []string{"distributed", "sql"}},
+		// A prohibited term cannot narrow anything, but must not block the
+		// required term from doing so.
+		{search: "+distributed -mysql", ok: true, required: []string{"distributed"}},
+		// Optional terms union, but only when every branch contributes one.
+		{search: "distributed sql", ok: true, optional: []string{"distributed", "sql"}},
+		// A phrase requires each of its tokens; adjacency is left to the residual.
+		{search: `+"distributed sql"`, ok: true, required: []string{"distributed", "sql"}},
+		// With allowPrefix=false a prefix cannot be expressed as a token lookup.
+		// With a required term alongside it the query still narrows; alone it
+		// does not.
+		{search: "+distributed +sq*", ok: true, required: []string{"distributed"}},
+		{search: "+sq*", ok: false},
+		// One un-narrowable optional branch makes the whole union unsound: a
+		// document could match via that branch alone.
+		{search: "distributed sq*", ok: false},
+		// Purely negative queries cannot generate candidates.
+		{search: "-mysql", ok: false},
+		// Duplicates collapse.
+		{search: "+sql +sql", ok: true, required: []string{"sql"}},
+	} {
+		t.Run(tc.search, func(t *testing.T) {
+			query := mustCompileForIndexTerms(t, tc.search)
+			terms, ok := query.FilterTerms(false)
+			require.Equal(t, tc.ok, ok)
+			if !tc.ok {
+				return
+			}
+			require.ElementsMatch(t, tc.required, terms.Required)
+			require.ElementsMatch(t, tc.optional, terms.Optional)
+			// Required and Optional are alternatives, never both.
+			require.True(t, len(terms.Required) == 0 || len(terms.Optional) == 0)
+		})
+	}
+}
+
+// TestQueryIndexTermsAreSound is the correctness property the access path
+// depends on: any document the query matches must satisfy the generated terms,
+// so using them to pick candidates cannot lose a matching row.
+func TestQueryFilterTermsAreSound(t *testing.T) {
+	config := AnalyzerConfig{
+		ParserType:           model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize: 3,
+		InnodbFtMaxTokenSize: 84,
+	}
+	analyzer, err := GetAnalyzer(config)
+	require.NoError(t, err)
+
+	docs := []string{
+		"distributed sql database",
+		"relational storage engine",
+		"sql is distributed here",
+		"distributed",
+		"mysql distributed sql",
+		"",
+	}
+	searches := []string{
+		"+distributed +sql", "+distributed -mysql", "distributed sql",
+		`+"distributed sql"`, "+distributed +sq*", "+sql +sql", "+storage",
+	}
+
+	for _, search := range searches {
+		query := mustCompileForIndexTerms(t, search)
+		terms, ok := query.FilterTerms(false)
+		if !ok {
+			continue
+		}
+		for _, text := range docs {
+			doc, err := BuildDocument([]ColumnInput{{Text: text}}, analyzer)
+			require.NoError(t, err)
+			if !query.Match(doc) {
+				continue
+			}
+			for _, token := range terms.Required {
+				require.True(t, doc.hasToken(token),
+					"%q matches %q but lacks required index token %q", text, search, token)
+			}
+			if len(terms.Optional) > 0 {
+				require.True(t, slices.ContainsFunc(terms.Optional, doc.hasToken),
+					"%q matches %q but has none of the optional index tokens %v", text, search, terms.Optional)
+			}
+		}
+	}
+}
+
+// TestQueryFilterTermsAllowPrefix covers the difference between the two
+// consumers. A substring pre-filter can use a prefix term - any document
+// matching `sq*` contains "sq" - while an exact token lookup cannot.
+func TestQueryFilterTermsAllowPrefix(t *testing.T) {
+	query := mustCompileForIndexTerms(t, "+sq*")
+
+	_, ok := query.FilterTerms(false)
+	require.False(t, ok, "a prefix alone cannot drive an exact token lookup")
+
+	terms, ok := query.FilterTerms(true)
+	require.True(t, ok, "a prefix alone can drive a substring pre-filter")
+	require.Equal(t, []string{"sq"}, terms.Required)
+
+	// An optional branch that only a prefix can serve is usable for substring
+	// filtering, and not otherwise.
+	mixed := mustCompileForIndexTerms(t, "distributed sq*")
+	_, ok = mixed.FilterTerms(false)
+	require.False(t, ok)
+	terms, ok = mixed.FilterTerms(true)
+	require.True(t, ok)
+	require.ElementsMatch(t, []string{"distributed", "sq"}, terms.Optional)
 }

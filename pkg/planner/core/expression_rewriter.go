@@ -2558,6 +2558,7 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 		return
 	}
 	info := &expression.FTSLocalEvalInfo{AnalyzerConfig: config}
+	var compiledQuery *fulltext.Query
 
 	// Compile eagerly only when the search string is a stable constant. That
 	// surfaces BOOLEAN-syntax errors at plan time — deferring them to the first
@@ -2577,6 +2578,7 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 		if query != nil {
 			info.MatchNothing = query.MatchesNothing()
 			info.SelectivityTerm, _ = query.SelectivityTerm()
+			compiledQuery = query
 		}
 	}
 
@@ -2584,7 +2586,29 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 		er.err = err
 		return
 	}
-	er.ctxStackAppend(fn, types.EmptyName)
+
+	// Emit the substring predicates the MATCH entails alongside it. They are
+	// redundant for correctness, but unlike the MATCH they can be evaluated by
+	// the storage layer, so most non-matching rows are discarded before being
+	// shipped here for the exact check. Only possible when the search string is
+	// a stable constant, which is also when compiledQuery is non-nil.
+	result := fn
+	if compiledQuery != nil {
+		preFilters, err := expression.BuildFTSLocalMatchPreFilters(
+			er.sctx, args[1], compiledQuery)
+		if err != nil {
+			er.err = err
+			return
+		}
+		for _, preFilter := range preFilters {
+			if result, err = er.newFunction(ast.LogicAnd,
+				types.NewFieldType(mysql.TypeTiny), result, preFilter); err != nil {
+				er.err = err
+				return
+			}
+		}
+	}
+	er.ctxStackAppend(result, types.EmptyName)
 }
 
 // ftsNativeViable reports whether the MATCH(...) currently being rewritten

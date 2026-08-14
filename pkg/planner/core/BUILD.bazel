@@ -223,6 +223,7 @@ go_test(
         "exhaust_physical_plans_test.go",
         "expression_test.go",
         "find_best_task_test.go",
+        "fts_like_pushdown_test.go",
         "fts_resolve_index_test.go",
         "fulltext_to_like_test.go",
         "hint_test.go",

@@ -18,6 +18,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -455,4 +456,91 @@ func buildFTSILikePredicate(ctx BuildContext, column Expression, term string) (E
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}
 	return NewFunction(ctx, ast.Ifnull, types.NewFieldType(mysql.TypeTiny), likeFunc, zeroConst)
+}
+
+// BuildFTSLocalMatchPreFilters builds cheap substring predicates entailed by a
+// locally evaluated MATCH ... AGAINST, for the column it matches.
+//
+// Every token the analyzer requires of a matching document appears verbatim in
+// that document's text, so `LOWER(col) LIKE '%token%'` is implied by the MATCH.
+// Adding the implication as a conjunct cannot change which rows qualify, but it
+// can be pushed to the storage layer, where it discards most non-matching rows
+// before they are shipped to TiDB for the exact check.
+//
+// LOWER is applied to the column rather than using ILIKE because ILIKE is not
+// among the functions TiKV can evaluate, while LOWER and LIKE both are. The
+// analyzer already lowercases its tokens, so comparing against the lowered
+// column reproduces the case-insensitivity MySQL full-text search has.
+//
+// This narrows rather than decides: a phrase contributes its tokens but not
+// their adjacency, and a prefix contributes its prefix but not the word
+// boundary. The MATCH must remain in the plan.
+func BuildFTSLocalMatchPreFilters(
+	ctx BuildContext,
+	column Expression,
+	query *fulltext.Query,
+) ([]Expression, error) {
+	terms, ok := query.FilterTerms(true)
+	if !ok {
+		return nil, nil
+	}
+	lowered, err := NewFunction(ctx, ast.Lower, column.GetType(ctx.GetEvalCtx()).Clone(), column)
+	if err != nil {
+		return nil, err
+	}
+	if len(terms.Required) > 0 {
+		filters := make([]Expression, 0, len(terms.Required))
+		for _, token := range terms.Required {
+			like, err := buildFTSLowerLikePredicate(ctx, lowered, token)
+			if err != nil {
+				return nil, err
+			}
+			filters = append(filters, like)
+		}
+		return filters, nil
+	}
+	if len(terms.Optional) == 0 {
+		return nil, nil
+	}
+	// A single disjunction: the document need only contain one of these.
+	var disjunction Expression
+	for _, token := range terms.Optional {
+		like, err := buildFTSLowerLikePredicate(ctx, lowered, token)
+		if err != nil {
+			return nil, err
+		}
+		if disjunction == nil {
+			disjunction = like
+			continue
+		}
+		if disjunction, err = NewFunction(ctx, ast.LogicOr,
+			types.NewFieldType(mysql.TypeTiny), disjunction, like); err != nil {
+			return nil, err
+		}
+	}
+	return []Expression{disjunction}, nil
+}
+
+// buildFTSLowerLikePredicate builds `lowered LIKE '%token%'`, wrapped so a NULL
+// column reads as "does not contain" rather than making the conjunct NULL.
+func buildFTSLowerLikePredicate(ctx BuildContext, lowered Expression, token string) (Expression, error) {
+	pattern := "%" + escapeFTSLikePattern(token) + "%"
+	patternConst := &Constant{
+		Value:   types.NewStringDatum(pattern),
+		RetType: types.NewFieldType(mysql.TypeVarchar),
+	}
+	escapeConst := &Constant{
+		Value:   types.NewIntDatum(92),
+		RetType: types.NewFieldType(mysql.TypeTiny),
+	}
+	like, err := NewFunction(ctx, ast.Like, types.NewFieldType(mysql.TypeTiny),
+		lowered, patternConst, escapeConst)
+	if err != nil {
+		return nil, err
+	}
+	zeroConst := &Constant{
+		Value:   types.NewIntDatum(0),
+		RetType: types.NewFieldType(mysql.TypeTiny),
+	}
+	return NewFunction(ctx, ast.Ifnull, types.NewFieldType(mysql.TypeTiny), like, zeroConst)
 }
