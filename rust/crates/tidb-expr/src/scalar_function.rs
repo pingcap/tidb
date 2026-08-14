@@ -743,17 +743,13 @@ impl ScalarFunction {
                 tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
             });
             let value = crate::cast::cast_arg_as_string(&value, Some(&arg_type), ctx)?;
-            let string_type = if arg_type.eval_type() == tidb_datatype::EvalType::String {
-                arg_type
-            } else if arg_type.code() == tidb_datatype::FieldTypeCode::Bit {
-                let mut field_type =
-                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
-                field_type.set_charset_name("binary");
-                field_type.set_collation_name("binary");
-                field_type
-            } else {
-                tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
-            };
+            let explicit_collation = crate::collation_derive::coercibility_of(&self.args[0])
+                == crate::expr_collation::Coercibility::EXPLICIT;
+            let string_type = crate::cast::cast_arg_as_string_type(
+                &arg_type,
+                explicit_collation,
+                ctx.connection_charset_info(),
+            );
             return crate::convert_charset::convert_using(&value, &string_type, &target);
         }
         // Go picks one cast signature per target type; the rewriter records
@@ -1099,14 +1095,6 @@ impl ScalarFunction {
                 // ARGUMENT's collation -- the function's own is forced to
                 // `binary`, so `derived_collation` is the wrong one here.
                 "weight_string" if !self.args.is_empty() => {
-                    let arg_type = self.args[0].static_type();
-                    if arg_type.is_some_and(|ft| ft.code().is_type_numeric()) {
-                        return Ok(Datum::Null);
-                    }
-                    let arg_collation = arg_type
-                        .and_then(|ft| tidb_datatype::Collation::from_name(ft.collation_name()))
-                        .unwrap_or(crate::ops::DERIVATION_FREE_COLLATION);
-                    let value = self.args[0].eval(ctx, row)?;
                     // The `AS` clause travels as the constant second and
                     // third arguments the rewriter built.
                     let padding = match self.args.len() {
@@ -1118,6 +1106,28 @@ impl ScalarFunction {
                         }
                         _ => None,
                     };
+                    let arg_type = self.args[0].static_type().cloned().unwrap_or_else(|| {
+                        tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString)
+                    });
+                    // Go starts numeric inputs on the NULL signature, then
+                    // lets AS BINARY replace it with the binary-padding
+                    // signature. AS CHAR deliberately does not replace it.
+                    if arg_type.code().is_type_numeric() && !matches!(padding, Some((true, _))) {
+                        return Ok(Datum::Null);
+                    }
+                    let value = self.args[0].eval(ctx, row)?;
+                    let value = crate::cast::cast_arg_as_string(&value, Some(&arg_type), ctx)?;
+                    let explicit_collation =
+                        crate::collation_derive::coercibility_of(&self.args[0])
+                            == crate::expr_collation::Coercibility::EXPLICIT;
+                    let string_type = crate::cast::cast_arg_as_string_type(
+                        &arg_type,
+                        explicit_collation,
+                        ctx.connection_charset_info(),
+                    );
+                    let arg_collation =
+                        tidb_datatype::Collation::from_name(string_type.collation_name())
+                            .unwrap_or(crate::ops::DERIVATION_FREE_COLLATION);
                     return crate::string_packet::weight_string(
                         &value,
                         padding,

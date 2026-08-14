@@ -1246,6 +1246,37 @@ pub(crate) fn cast_arg_as_string(
     }
 }
 
+/// The result type Go's `WrapWithCastAsString` assigns to `source`.
+///
+/// String-typed arguments take the source function's early return unchanged.
+/// Every other type becomes `VAR_STRING`: an explicit collation survives,
+/// BIT stays binary, and all remaining values use the connection charset.
+/// The width is the same source-backed calculation used by CONCAT metadata.
+pub(crate) fn cast_arg_as_string_type(
+    source: &tidb_datatype::FieldType,
+    explicit_collation: bool,
+    connection: (&str, &str),
+) -> tidb_datatype::FieldType {
+    if source.eval_type() == tidb_datatype::EvalType::String {
+        return source.clone();
+    }
+    let mut target = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+    if explicit_collation {
+        target.set_charset_name(source.charset_name());
+        target.set_collation_name(source.collation_name());
+    } else if source.code() == tidb_datatype::FieldTypeCode::Bit {
+        target.set_charset_name("binary");
+        target.set_collation_name("binary");
+    } else {
+        let (charset, collation) = connection;
+        target.set_charset_name(charset);
+        target.set_collation_name(collation);
+    }
+    target.set_flen(crate::rewriter::result_type::string_cast_flen(source));
+    target.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+    target
+}
+
 /// The integer a `YEAR`-typed operand carries, or `None` when the operand is
 /// not a `YEAR` at all.
 ///

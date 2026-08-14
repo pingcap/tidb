@@ -1807,7 +1807,7 @@ fn clamp_blob_width(flen: i64) -> i64 {
 /// Not modeled: a DECIMAL whose own flen is unspecified, where Go computes
 /// `decimalPrecisionToLength`. That leaves the unspecified path below, which
 /// is Go's answer for an argument of genuinely unknown width.
-fn string_cast_flen(ft: &FieldType) -> i64 {
+pub(crate) fn string_cast_flen(ft: &FieldType) -> i64 {
     use tidb_datatype::EvalType;
     const UNSPECIFIED: i64 = tidb_datatype::UNSPECIFIED_LENGTH;
 

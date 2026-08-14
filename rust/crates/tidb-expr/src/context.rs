@@ -424,6 +424,14 @@ pub trait Columns {
     /// Returns the referenced column, matched by its final name segment.
     fn get(&self, path: &[String]) -> Option<Datum>;
 
+    /// The statement's connection charset/collation used by implicit casts.
+    /// Go reads this from `BuildContext.GetCharsetInfo`; keeping it on the
+    /// evaluation context prevents a cast built for one session from silently
+    /// using the process default in another.
+    fn connection_charset_info(&self) -> (&str, &str) {
+        crate::collation_derive::connection_charset_info()
+    }
+
     /// Whether the statement's SQL mode forces integer subtraction to use a
     /// signed result even when an operand is unsigned.
     fn no_unsigned_subtraction(&self) -> bool {

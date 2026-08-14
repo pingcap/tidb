@@ -53,6 +53,10 @@ pub(super) fn e(expr: &str) -> String {
 /// `FieldType` and the derived result collation, so it is the only one that
 /// can see a temporal argument or a `COLLATE` clause.
 pub(super) fn chunk_e(expr: &str) -> String {
+    chunk_e_with(expr, &NoColumns)
+}
+
+fn chunk_e_with(expr: &str, ctx: &impl Columns) -> String {
     let stmt = tidb_parser::parse(&format!("select {expr}")).expect("parse");
     let Stmt::Query(query) = stmt else {
         panic!("not query")
@@ -69,7 +73,7 @@ pub(super) fn chunk_e(expr: &str) -> String {
     };
     let mut chunk = tidb_chunk::chunk::Chunk::new_empty(&[]);
     chunk.set_num_virtual_rows(1);
-    match rewritten.eval(&NoColumns, chunk.get_row(0)) {
+    match rewritten.eval(ctx, chunk.get_row(0)) {
         Ok(value) => value.label(),
         Err(err) => format!("{err:?}"),
     }
@@ -1972,8 +1976,11 @@ fn weight_string_and_load_file_source_vectors() {
             "STR:61622020",
         ),
         ("hex(weight_string(cast('ab' as binary)))", "STR:6162"),
-        // `builtinWeightStringNullSig`: a numeric argument is always NULL,
-        // with or without an AS clause.
+        // `AS BINARY` overrides the numeric NULL signature selected during
+        // verification; the numeric value is stringified and padded.
+        ("hex(weight_string(7 as binary(2)))", "STR:3700"),
+        // `builtinWeightStringNullSig`: numeric arguments without an AS
+        // clause, or with AS CHAR, remain NULL.
         ("weight_string(1)", "NULL"),
         ("weight_string(1 as char(2))", "NULL"),
         ("weight_string(null)", "NULL"),
@@ -1982,6 +1989,24 @@ fn weight_string_and_load_file_source_vectors() {
     ] {
         assert_eq!(chunk_e(sql), want, "{sql}");
     }
+
+    struct GeneralCi;
+    impl Columns for GeneralCi {
+        fn get(&self, _: &[String]) -> Option<Datum> {
+            None
+        }
+
+        fn connection_charset_info(&self) -> (&str, &str) {
+            ("utf8mb4", "utf8mb4_general_ci")
+        }
+    }
+    // Non-string values first pass through `WrapWithCastAsString`; the
+    // wrapped temporal value keys under this statement's connection
+    // collation rather than the temporal type's binary metadata.
+    assert_eq!(
+        chunk_e_with("hex(weight_string(cast(20190821 as date)))", &GeneralCi),
+        "STR:0032003000310039002D00300038002D00320031"
+    );
 
     // The AST/value tier agrees on every row EXCEPT the explicit COLLATE one:
     // it has no collation derivation, so it keys `'A'` under the connection

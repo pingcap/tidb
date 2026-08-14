@@ -1705,6 +1705,10 @@ impl Columns for StmtContext {
         None
     }
 
+    fn connection_charset_info(&self) -> (&str, &str) {
+        StmtContext::connection_charset_info(self)
+    }
+
     fn no_unsigned_subtraction(&self) -> bool {
         self.no_unsigned_subtraction
     }
