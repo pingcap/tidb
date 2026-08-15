@@ -43,7 +43,7 @@ The Rust TiDB implementation on `hparser-integration` must make the same optimiz
 - [x] (2026-08-16) Completed the Ready verification profile: formatting/diff checks, focused and full Rust suites, release build, final workload receipts, and `make lint` all pass.
 - [x] (2026-08-16) Completed the cross-crate self-review and focused PD/server gates: timestamp future 1/1, MaxTS/snapshot 20/20, autocommit transaction 21/21, prepared AST 1/1, and loaded-statistics propagation 1/1.
 - [x] (2026-08-16) Prepared one coupled package-coherent commit inventory for the complete Go planner/core + funcdep mapping and its required runtime integration; splitting it would leave non-compiling cross-crate interfaces.
-- [x] (2026-08-16) Fetched `origin/hparser-integration`; local HEAD is 20 commits ahead and 0 behind, so no integration or gate-invalidating conflict is required.
+- [x] (2026-08-16) Fetched `origin/hparser-integration`; `FETCH_HEAD` matched local baseline `644927fc21`, so no integration or gate-invalidating conflict was required.
 - [x] (2026-08-16) Pushed implementation commit `159bbd52e3` to `origin/hparser-integration` by fast-forward with no force.
 
 ## Surprises & Discoveries
@@ -183,11 +183,11 @@ The reconciled implementation satisfies the final local workload, package, and R
 
 ## Context and Orientation
 
-The active worktree is `/tmp/tidb-hparser-remote-latest` at local commit `644927fc21`, which is 20 commits ahead of fetched `origin/hparser-integration` commit `dcf1ff2471`. Rust implementation code is under `rust/crates`. The primary optimizer bridge is `rust/crates/tidb-executor/src/driver`: `join_reorder.rs` creates a Go-like logical cardinality model, `index_join_decision.rs` and `merge_decision.rs` compare physical join choices, and `from.rs` assembles the committed plan. `rust/crates/tidb-executor/src/access_cost.rs` models analyzed table and index statistics. `rust/crates/tidb-planner` derives cardinalities and costs. Lookup execution crosses `tidb-executor`, `tidb-exec`, `tidb-proto`, and server integration code.
+The active worktree is `/tmp/tidb-hparser-remote-latest`. Its implementation baseline was `644927fc21`, which matched the fetched `origin/hparser-integration` tip before the final commits. Rust implementation code is under `rust/crates`. The primary optimizer bridge is `rust/crates/tidb-executor/src/driver`: `join_reorder.rs` creates a Go-like logical cardinality model, `index_join_decision.rs` and `merge_decision.rs` compare physical join choices, and `from.rs` assembles the committed plan. `rust/crates/tidb-executor/src/access_cost.rs` models analyzed table and index statistics. `rust/crates/tidb-planner` derives cardinalities and costs. Lookup execution crosses `tidb-executor`, `tidb-exec`, `tidb-proto`, and server integration code.
 
 The Go source of truth lives in complete Go packages, principally `pkg/planner/core`, `pkg/planner/cardinality`, and their required statistics/executor dependencies. Before the final claim, inventory every production file, generated or platform variant, original test/support artifact, fixture, and validation gate for each claimed package. Rust may split that behavior across crates, but no partial Go file, function, or feature is to be reported as a completed package.
 
-The shared parity cluster uses PD at `127.0.0.1:43379`, Go TiDB at `127.0.0.1:45000`, and the preserved TiUP data directory `/tmp/tidb-parity-tiup/data/codex-tpcc-plan-fixes-20260814`. Port `45900` is reserved for this branch. The TPCC database is `tpcc_parity_10wh`; the Sysbench database is `sysbench_plan_parity` and contains 32 tables with 10,000 rows each.
+The shared parity cluster uses PD at `127.0.0.1:43379`, Go TiDB at `127.0.0.1:45000`, and the preserved TiUP data directory `/tmp/tidb-parity-tiup/data/codex-tpcc-plan-fixes-20260814`. Port `45900` is reserved for this branch. The TPCC database is `tpcc_parity_10wh`; the Sysbench database is `sysbench_parity_32x10k` and contains 32 tables with 10,000 rows each.
 
 ## Plan of Work
 
@@ -214,7 +214,7 @@ Build the release server from the same directory:
 
 Run the focused TPCC parity check from any directory after the Rust server is ready on port `45900`:
 
-    python3 /tmp/tidb-parity-tools/pr70403-runner/plan-parity.py --manifest /tmp/tidb-parity-tools/local-manifest-10wh-10k.json --go-tpc-root /tmp/tidb-parity-tools/go-tpc-src --sysbench-root /tmp/tidb-parity-tools/sysbench-src --sysbench-contract-root /tmp/tidb-parity-tools/local-contract --go-port 45000 --rust-port 45900 --tpcc-database tpcc_parity_10wh --sysbench-database sysbench_plan_parity --suite tpcc --phase check --allow-incomplete-manifest --output /tmp/tidb-local-parity-20260816-tpcc-go-align.json
+    python3 /tmp/tidb-parity-tools/pr70403-runner/plan-parity.py --manifest /tmp/tidb-parity-tools/local-manifest-10wh-10k.json --go-tpc-root /tmp/tidb-parity-tools/go-tpc-src --sysbench-root /tmp/tidb-parity-tools/sysbench-src --sysbench-contract-root /tmp/tidb-parity-tools/local-contract --go-port 45000 --rust-port 45900 --tpcc-database tpcc_parity_10wh --sysbench-database sysbench_parity_32x10k --suite tpcc --phase check --allow-incomplete-manifest --output /tmp/tidb-local-parity-20260816-tpcc-go-align.json
 
 Use the same tool with the Sysbench suite and a distinct receipt for the full plan gate. Use the preserved alternating benchmark harness and write a new summary under `/tmp` for this branch rather than overwriting known-good evidence.
 
