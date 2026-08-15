@@ -34,6 +34,15 @@ impl ImplementationCost {
     }
 
     /// Replaces the current cost with the ordered sum of child costs.
+    ///
+    /// # No caller yet -- verdict: unreachable until the OLD cascades memo
+    ///
+    /// Go's only production caller is
+    /// `pkg/planner/cascades/old/optimize.go` (`impl.CalcCost` in
+    /// `implGroupExpr`), the experimental cascades planner behind
+    /// `tidb_enable_cascades_planner`, OFF by default. Wiring this means
+    /// porting that memo/implementation phase; until then no live statement
+    /// can reach it, and the difftest keeps its arithmetic honest.
     pub fn calc_cost(&mut self, child_costs: &[f64]) -> f64 {
         self.cost = child_costs.iter().copied().sum();
         self.cost

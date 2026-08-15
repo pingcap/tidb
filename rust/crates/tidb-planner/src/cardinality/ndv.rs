@@ -75,6 +75,16 @@ pub struct GroupNdv {
 /// `row_count` is `StatsInfo.RowCount`; and `skew_ratio` is the caller-owned
 /// `RiskGroupNDVSkewRatio`. IDs and group columns are sorted before matching,
 /// exactly as `GetGroupNDV4Cols` sorts expression columns in Go.
+/// # No caller yet -- verdict: awaiting the join row-count input builder
+///
+/// Go's production callers are the four `EstimateColsNDVWithMatchedLen`
+/// calls in `pkg/planner/cardinality/join.go`'s `EstimateFullJoinRowCount`,
+/// which turn each side's join keys into the `(ndv, matched_len)` pair. This
+/// crate's [`crate::cardinality::join::estimate_full_join_row_count`] took
+/// those pairs as CALLER-SUPPLIED input (`JoinKeyEstimate`) when it was
+/// seeded, so the call Go makes was factored into the absent integration
+/// layer. Wiring = building `FullJoinRowCountInput` from a `StatsInfo`
+/// through this function, at the point a live join estimator lands.
 #[must_use]
 pub fn estimate_cols_ndv_with_matched_len(
     column_ids: &[i64],

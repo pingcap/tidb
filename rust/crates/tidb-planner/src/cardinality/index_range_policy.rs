@@ -118,6 +118,15 @@ pub fn is_full_range_including_nulls(range: &IndexRangeShape) -> bool {
 }
 
 /// Returns whether index-row estimation may use the realtime-count fast path.
+///
+/// # No caller yet -- verdict: awaiting `row_count_index.go`
+///
+/// Go's one production caller is `GetRowCountByIndexRanges`
+/// (`pkg/planner/cardinality/row_count_index.go:53`), which short-circuits
+/// histogram estimation when a range covers the whole index including NULLs.
+/// That function -- the histogram-backed index row counter -- is not ported;
+/// this gate was ported first because it decides whether the histogram is
+/// consulted at all, and its difftest pins the decision table.
 #[must_use]
 pub fn can_skip_index_estimation(policy: IndexRangePolicy, ranges: &[IndexRangeShape]) -> bool {
     !policy.has_condition

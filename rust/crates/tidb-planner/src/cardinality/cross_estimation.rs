@@ -159,6 +159,15 @@ impl ExpectedCountConversion {
 /// lower prefix `[unbounded-low, selected.low]`, descending scans retain the
 /// upper prefix `[selected.high, unbounded-high]`, and the selected endpoint
 /// exclusion is inverted exactly as in the Go source.
+///
+/// # No caller yet -- verdict: awaiting `crossEstimateRowCount`
+///
+/// Go's one production caller is `crossEstimateRowCount` in the SAME file
+/// (`pkg/planner/cardinality/cross_estimation.go:175`), the
+/// order-by-correlated-column row estimator. Its surrounding body reads
+/// column correlation out of loaded histogram statistics, which this crate
+/// does not hold yet; the conversion arithmetic was ported ahead of it
+/// because it is dependency-closed and difftestable.
 #[must_use]
 pub fn convert_range_from_expected_cnt(
     ranges: &[CountedRange],

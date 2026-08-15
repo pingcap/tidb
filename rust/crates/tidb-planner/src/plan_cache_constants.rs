@@ -61,6 +61,16 @@ pub type ConstantRef = Arc<PlanCacheConstant>;
 /// handles are returned. Otherwise safe handles are retained, unsafe handles
 /// are deep-cloned, and nil entries remain nil. An optional destination vector
 /// is cleared and reused in the cloning path.
+///
+/// # No caller yet -- verdict: awaiting the physical-plan clone layer
+///
+/// Go's production callers are the generated physical-plan clones
+/// (`pkg/planner/core/operator/physicalop/plan_clone_generated.go` and
+/// `plan_clone_utils.go`, through the `utilfuncp` indirection), which run
+/// when a cached plan is instantiated for reuse. The live tier's
+/// non-prepared plan cache (`tidb_session::non_prepared_plan_cache`) caches
+/// at the STATEMENT level and re-plans rather than cloning physical plans,
+/// so nothing can call this until physical-plan caching itself is ported.
 #[must_use]
 pub fn clone_constants_for_plan_cache(
     constants: Option<&[Option<ConstantRef>]>,

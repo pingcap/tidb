@@ -29,6 +29,15 @@ pub struct StatsInfo {
 }
 
 impl StatsInfo {
+    // `derive_limit_stats` below: no caller yet -- verdict: awaiting Go
+    // `pkg/planner/core/task.go`. Its five production call sites are all
+    // `attach2Task` arms for Limit/TopN (lines 633-894 at this branch's
+    // pin), the physical-task layer this crate has not ported. The live
+    // tier's own limit costing sits in `tidb_executor::access_cost`
+    // (`scan_limit_cap`), a DIFFERENT ranger by design -- see the tier
+    // topology note -- so nothing should call this until task.go lands
+    // here.
+
     /// Creates a profile from row count and column NDVs.
     #[must_use]
     pub fn new(row_count: f64, col_ndvs: impl IntoIterator<Item = (i64, f64)>) -> Self {
