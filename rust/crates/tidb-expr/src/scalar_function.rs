@@ -1810,7 +1810,7 @@ mod tests {
         };
         assert_eq!(
             eval_info("current_user", text_ft(), &ctx),
-            Datum::Bytes(b"root@localhost".to_vec())
+            Datum::new_string(b"root@localhost".to_vec())
         );
         assert_eq!(
             eval_info("current_user", text_ft(), &InfoColumns::default()),
@@ -1831,7 +1831,7 @@ mod tests {
             };
             assert_eq!(
                 eval_info("current_role", text_ft(), &ctx),
-                Datum::Bytes(expected.as_bytes().to_vec())
+                Datum::new_string(expected.as_bytes().to_vec())
             );
         }
     }
@@ -1860,7 +1860,7 @@ mod tests {
         };
         assert_eq!(
             eval_info("tidb_version", text_ft(), &ctx),
-            Datum::Bytes(b"Release Version: test\nKernel Type: Classic".to_vec())
+            Datum::new_string(b"Release Version: test\nKernel Type: Classic".to_vec())
         );
     }
 
