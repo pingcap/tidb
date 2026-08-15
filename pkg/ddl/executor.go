@@ -4977,7 +4977,8 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		if err != nil {
 			return errors.Trace(err)
 		}
-		return e.createIndex(ctx, ti, ast.IndexKeyTypeNone, indexName, mvSpecs, nil, ifNotExists)
+		return e.createIndex(ctx, ti, ast.IndexKeyTypeNone, indexName, mvSpecs,
+			fullTextMVIndexOption(indexOption), ifNotExists)
 	}
 	if columnarIndexType == model.ColumnarIndexTypeFulltext {
 		if err := checkFullTextSupportedInStarter(); err != nil {

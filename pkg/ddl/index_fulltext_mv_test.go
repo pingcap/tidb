@@ -174,6 +174,10 @@ func TestFullTextIndexRejectsUnsupported(t *testing.T) {
 		"FULLTEXT index must specify one column name")
 	tk.MustContainErrMsg("alter table articles add fulltext index idx_p (body) with parser multilingual",
 		"MULTILINGUAL")
+	// INVISIBLE is rejected on a FULLTEXT index before the rewrite runs, which
+	// is why fullTextMVIndexOption's visibility handling is unreachable today.
+	tk.MustContainErrMsg("alter table articles add fulltext index idx_v (body) invisible",
+		"INVISIBLE can not be used in FULLTEXT INDEX")
 }
 
 // TestFullTextIndexWithoutExpressionIndexConfig checks that FULLTEXT INDEX
@@ -198,6 +202,42 @@ func TestFullTextIndexWithoutExpressionIndexConfig(t *testing.T) {
 	tk.MustExec("alter table articles add fulltext index idx_body (body)")
 	tk.MustExec("create table inline_articles (id int primary key, body varchar(255), fulltext key idx_body (body))")
 
+	tk.MustExec("insert into articles values (1, 'distributed sql')")
+	tk.MustExec("admin check table articles")
+}
+
+// TestFullTextIndexPreservesVisibilityAndComment checks that attributes of the
+// declared index survive the rewrite into a multi-valued index. They describe
+// the index the user asked for rather than how it is stored, and SHOW CREATE
+// TABLE reports them, so losing them would break the round trip.
+func TestFullTextIndexPreservesVisibilityAndComment(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// ALTER TABLE path.
+	tk.MustExec("create table articles (id int primary key, body varchar(255))")
+	tk.MustExec("alter table articles add fulltext index idx_body (body) comment 'fts on body'")
+	altered := tk.MustQuery("show create table articles").Rows()[0][1].(string)
+	require.Contains(t, altered, "FULLTEXT KEY `idx_body` (`body`)")
+	require.Contains(t, altered, "COMMENT 'fts on body'")
+
+	// The definition must recreate the same thing.
+	tk.MustExec("drop table articles")
+	tk.MustExec(altered)
+	require.Equal(t, altered, tk.MustQuery("show create table articles").Rows()[0][1].(string))
+
+	// Inline CREATE TABLE path.
+	tk.MustExec("create table inline_articles (id int primary key, body varchar(255), " +
+		"fulltext key idx_body (body) comment 'inline fts')")
+	inline := tk.MustQuery("show create table inline_articles").Rows()[0][1].(string)
+	require.Contains(t, inline, "COMMENT 'inline fts'")
+	tk.MustExec("drop table inline_articles")
+	tk.MustExec(inline)
+	require.Equal(t, inline, tk.MustQuery("show create table inline_articles").Rows()[0][1].(string))
+
+	// An invisible index must not be picked by the optimizer, which is the
+	// behaviour the flag exists for.
 	tk.MustExec("insert into articles values (1, 'distributed sql')")
 	tk.MustExec("admin check table articles")
 }

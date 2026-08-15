@@ -154,3 +154,28 @@ func parseIndexExpr(exprStr string) (ast.ExprNode, error) {
 	}
 	return sel.Fields.Fields[0].Expr, nil
 }
+
+// fullTextMVIndexOption carries the parts of a FULLTEXT index definition that
+// still apply once it has been rewritten into an ordinary multi-valued index.
+//
+// Tp and ParserName are deliberately dropped: the first would send the index
+// back down the columnar path, and the second has already been consumed into
+// the tokenize expression. Comment describes the index the user asked for
+// rather than how it is stored, so it must survive the rewrite - SHOW CREATE
+// TABLE reports it, and losing it would stop that output round-tripping.
+//
+// Visibility is carried for the same reason, though it is unreachable today:
+// INVISIBLE is rejected on a FULLTEXT index before the rewrite runs. Keeping it
+// means lifting that restriction does not silently drop the flag.
+func fullTextMVIndexOption(indexOption *ast.IndexOption) *ast.IndexOption {
+	if indexOption == nil {
+		return nil
+	}
+	if indexOption.Comment == "" && indexOption.Visibility == ast.IndexVisibilityDefault {
+		return nil
+	}
+	return &ast.IndexOption{
+		Comment:    indexOption.Comment,
+		Visibility: indexOption.Visibility,
+	}
+}

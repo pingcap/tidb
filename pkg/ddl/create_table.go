@@ -1435,7 +1435,7 @@ func BuildTableInfo(
 			}
 			constr.Keys = mvSpecs
 			constr.Tp = ast.ConstraintIndex
-			constr.Option = nil
+			constr.Option = fullTextMVIndexOption(constr.Option)
 		}
 
 		var hiddenCols []*model.ColumnInfo
