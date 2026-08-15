@@ -400,12 +400,14 @@ fn raw_storage_failures_propagate_and_keep_go_partial_mutation_order() {
         Err(MetaError::Storage("second table read".to_owned()))
     );
 
-    let scan_error = Mutator::new(base.clone().with_scan_error(0, "hash scan"));
+    // Go `ListDatabases`/`GetMetasByDBID` fail through `HGetAll`'s forward
+    // iterator, not a prefix scan.
+    let scan_error = Mutator::new(base.clone().with_iteration_error("hash scan"));
     assert!(matches!(
         scan_error.databases(),
         Err(MetaError::Storage(message)) if message == "hash scan"
     ));
-    let scan_error = Mutator::new(base.clone().with_scan_error(0, "database hash scan"));
+    let scan_error = Mutator::new(base.clone().with_iteration_error("database hash scan"));
     assert!(matches!(
         scan_error.metas_by_database_id(1),
         Err(MetaError::Storage(message)) if message == "database hash scan"
@@ -1252,12 +1254,12 @@ fn scalar_settings_preserve_absence_formatting_and_non_boolean_lock_bytes() {
 fn malformed_scalar_storage_returns_the_source_parse_error_class() {
     let with_string_value = |logical_key: &[u8], stored: &[u8]| {
         let mut transaction = MemoryTransaction::default();
-        transaction
-            .set(
-                structure::encode_string_data_key(logical_key),
-                stored.to_vec(),
-            )
-            .unwrap();
+        // seed, not set: Go's kv layer refuses empty values, and several of
+        // these malformed scalars are exactly the empty stored value.
+        transaction.seed(
+            structure::encode_string_data_key(logical_key),
+            stored.to_vec(),
+        );
         Mutator::new(transaction)
     };
 

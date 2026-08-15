@@ -17,9 +17,10 @@
 //!
 //! The Go owner builds its `Mutator` over `structure.TxStructure`; this module
 //! keeps the same division. [`RawTransaction`] owns raw encoded bytes while
-//! [`MetaStructure`] implements TiDB's string/hash data model and [`Mutator`]
-//! implements catalog semantics. The in-memory transaction is deterministic
-//! test infrastructure, not a second catalog implementation.
+//! [`crate::structure::TxStructure`] implements TiDB's string/hash/list data
+//! model and [`Mutator`] implements catalog semantics. The in-memory
+//! transaction is deterministic test infrastructure, not a second catalog
+//! implementation.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -91,6 +92,9 @@ pub trait RawKvIterator {
     /// Whether the iterator currently points at an entry.
     fn valid(&self) -> bool;
 
+    /// Encoded key at the current iterator position.
+    fn key(&self) -> &[u8];
+
     /// Value at the current iterator position.
     fn value(&self) -> &[u8];
 
@@ -129,6 +133,10 @@ fn owned_reverse_iterator(
 impl RawKvIterator for OwnedRawKvIterator {
     fn valid(&self) -> bool {
         self.position < self.entries.len()
+    }
+
+    fn key(&self) -> &[u8] {
+        &self.entries[self.position].0
     }
 
     fn value(&self) -> &[u8] {
@@ -249,6 +257,13 @@ impl MemoryTransaction {
         &self.data
     }
 
+    /// Stores raw bytes as another writer would, bypassing the Go `kv.Txn`
+    /// non-empty value check that [`RawTransaction::set`] enforces. Tests use
+    /// this to model legacy or corrupt stored state.
+    pub fn seed(&mut self, key: Vec<u8>, value: Vec<u8>) {
+        self.data.insert(key, value);
+    }
+
     /// Whether Go `NewMutator`'s transaction settings were applied.
     #[must_use]
     pub fn configured_for_meta(&self) -> bool {
@@ -339,6 +354,10 @@ impl RawTransaction for MemoryTransaction {
             }
         }
         self.set_calls += 1;
+        // Go's transaction buffer rejects empty values (kv.ErrCannotSetNilValue).
+        if value.is_empty() {
+            return Err(MetaError::CannotSetNilValue);
+        }
         self.data.insert(key, value);
         Ok(())
     }
@@ -408,14 +427,7 @@ impl MetaSnapshot for MemoryTransaction {
     }
 }
 
-/// Go `structure.HashPair`.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct HashPair {
-    /// Decoded hash field.
-    pub field: Vec<u8>,
-    /// Stored value.
-    pub value: Vec<u8>,
-}
+pub use crate::structure::HashPair;
 
 /// The `model.Job.Encode`/`Decode` boundary consumed by `meta.go`.
 ///
@@ -691,134 +703,7 @@ pub trait MvccReader {
     fn mvcc_by_encoded_key(&mut self, key: &[u8], timestamp: u64) -> Result<Option<MvccInfo>>;
 }
 
-/// Go `structure.TxStructure`, specialized to the `m` metadata namespace.
-struct MetaStructure<'a, T> {
-    transaction: &'a mut T,
-}
-
-impl<'a, T: RawTransaction> MetaStructure<'a, T> {
-    fn new(transaction: &'a mut T) -> Self {
-        Self { transaction }
-    }
-
-    fn get(&mut self, logical_key: &[u8]) -> Result<Option<Vec<u8>>> {
-        self.transaction
-            .get(&structure::encode_string_data_key(logical_key))
-    }
-
-    fn set(&mut self, logical_key: &[u8], stored: &[u8]) -> Result<()> {
-        self.transaction.set(
-            structure::encode_string_data_key(logical_key),
-            stored.to_vec(),
-        )
-    }
-
-    fn clear(&mut self, logical_key: &[u8]) -> Result<()> {
-        self.transaction
-            .delete(&structure::encode_string_data_key(logical_key))
-    }
-
-    fn get_i64(&mut self, logical_key: &[u8]) -> Result<i64> {
-        self.get(logical_key)?
-            .map_or(Ok(0), |stored| value::parse_int_value(&stored))
-    }
-
-    fn increment(&mut self, logical_key: &[u8], step: i64) -> Result<i64> {
-        let encoded = structure::encode_string_data_key(logical_key);
-        let current = self
-            .transaction
-            .get(&encoded)?
-            .map_or(Ok(0), |stored| value::parse_int_value(&stored))?;
-        let next = current.wrapping_add(step);
-        self.transaction
-            .set(encoded, value::encode_int_value(next))?;
-        Ok(next)
-    }
-
-    fn hget(&mut self, hash: &[u8], field: &[u8]) -> Result<Option<Vec<u8>>> {
-        self.transaction
-            .get(&structure::encode_hash_data_key(hash, field))
-    }
-
-    fn hset(&mut self, hash: &[u8], field: &[u8], stored: &[u8]) -> Result<()> {
-        let encoded = structure::encode_hash_data_key(hash, field);
-        if self.transaction.get(&encoded)?.as_deref() != Some(stored) {
-            self.transaction.set(encoded, stored.to_vec())?;
-        }
-        Ok(())
-    }
-
-    fn hdelete(&mut self, hash: &[u8], field: &[u8]) -> Result<()> {
-        let encoded = structure::encode_hash_data_key(hash, field);
-        if self.transaction.get(&encoded)?.is_some() {
-            self.transaction.delete(&encoded)?;
-        }
-        Ok(())
-    }
-
-    fn hincrement(&mut self, hash: &[u8], field: &[u8], step: i64) -> Result<i64> {
-        let current = self
-            .hget(hash, field)?
-            .map_or(Ok(0), |stored| value::parse_int_value(&stored))?;
-        let next = current.wrapping_add(step);
-        self.hset(hash, field, &value::encode_int_value(next))?;
-        Ok(next)
-    }
-
-    fn hget_i64(&mut self, hash: &[u8], field: &[u8]) -> Result<i64> {
-        self.hget(hash, field)?
-            .map_or(Ok(0), |stored| value::parse_int_value(&stored))
-    }
-
-    fn hget_all(&mut self, hash: &[u8]) -> Result<Vec<HashPair>> {
-        self.transaction
-            .scan_prefix(&structure::encode_hash_data_key_prefix(hash))?
-            .into_iter()
-            .map(|(encoded, stored)| {
-                let (_, field) = structure::decode_hash_data_key(&encoded)
-                    .map_err(|_| MetaError::MalformedKey)?;
-                Ok(HashPair {
-                    field,
-                    value: stored,
-                })
-            })
-            .collect()
-    }
-
-    fn hget_iter(
-        &mut self,
-        hash: &[u8],
-        visit: &mut dyn FnMut(HashPair) -> Result<()>,
-    ) -> Result<()> {
-        let prefix = structure::encode_hash_data_key_prefix(hash);
-        // This prefix always ends in the encoded HashData flag (`0x68`), so
-        // its lexicographic successor exists without carry.
-        let mut end = prefix.clone();
-        *end.last_mut().expect("a structure prefix is non-empty") += 1;
-        self.transaction
-            .iterate_range(&prefix, &end, &mut |encoded, stored| {
-                let (_, field) = structure::decode_hash_data_key(encoded)
-                    .map_err(|_| MetaError::MalformedKey)?;
-                visit(HashPair {
-                    field,
-                    value: stored.to_vec(),
-                })
-            })
-    }
-
-    fn hclear(&mut self, hash: &[u8]) -> Result<()> {
-        let keys = self
-            .transaction
-            .scan_prefix(&structure::encode_hash_data_key_prefix(hash))?
-            .into_iter()
-            .map(|(key, _)| key)
-            .collect::<Vec<_>>();
-        for key in keys {
-            self.transaction.delete(&key)?;
-        }
-        Ok(())
-    }
-}
+use crate::structure::TxStructure;
 
 /// Go `meta.Mutator`, sharing one transaction across clonable handles.
 pub struct Mutator<T> {
@@ -902,7 +787,7 @@ impl<T: RawTransaction> Mutator<T> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut transaction = self.lock()?;
-        let new_id = MetaStructure::new(&mut *transaction).increment(key::NEXT_GLOBAL_ID, 1)?;
+        let new_id = TxStructure::meta(&mut *transaction).inc(key::NEXT_GLOBAL_ID, 1)?;
         check_global_id(new_id)?;
         Ok(new_id)
     }
@@ -913,8 +798,8 @@ impl<T: RawTransaction> Mutator<T> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut transaction = self.lock()?;
-        let new_id = MetaStructure::new(&mut *transaction)
-            .increment(key::NEXT_GLOBAL_ID, i64::from(count))?;
+        let new_id =
+            TxStructure::meta(&mut *transaction).inc(key::NEXT_GLOBAL_ID, i64::from(count))?;
         check_global_id(new_id)?;
         Ok(new_id.wrapping_sub(i64::from(count)))
     }
@@ -925,8 +810,8 @@ impl<T: RawTransaction> Mutator<T> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut transaction = self.lock()?;
-        let new_id = MetaStructure::new(&mut *transaction)
-            .increment(key::NEXT_GLOBAL_ID, i64::from(count))?;
+        let new_id =
+            TxStructure::meta(&mut *transaction).inc(key::NEXT_GLOBAL_ID, i64::from(count))?;
         check_global_id(new_id)?;
         let old_id = new_id.wrapping_sub(i64::from(count));
         // Go's transaction object is not a poisonable mutex and its package
@@ -950,7 +835,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.GetGlobalID`.
     pub fn global_id(&self) -> Result<i64> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).get_i64(key::NEXT_GLOBAL_ID)
+        TxStructure::meta(&mut *transaction).get_int64(key::NEXT_GLOBAL_ID)
     }
 
     /// Go `Mutator.GenPlacementPolicyID`.
@@ -959,7 +844,7 @@ impl<T: RawTransaction> Mutator<T> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).increment(key::POLICY_GLOBAL_ID, 1)
+        TxStructure::meta(&mut *transaction).inc(key::POLICY_GLOBAL_ID, 1)
     }
 
     /// Go `Mutator.GenMaskingPolicyID`.
@@ -968,25 +853,25 @@ impl<T: RawTransaction> Mutator<T> {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).increment(key::MASKING_POLICY_GLOBAL_ID, 1)
+        TxStructure::meta(&mut *transaction).inc(key::MASKING_POLICY_GLOBAL_ID, 1)
     }
 
     /// Go `Mutator.GetPolicyID`.
     pub fn policy_id(&self) -> Result<i64> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).get_i64(key::POLICY_GLOBAL_ID)
+        TxStructure::meta(&mut *transaction).get_int64(key::POLICY_GLOBAL_ID)
     }
 
     /// Go `Mutator.GetMaskingPolicyID`.
     pub fn masking_policy_id(&self) -> Result<i64> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).get_i64(key::MASKING_POLICY_GLOBAL_ID)
+        TxStructure::meta(&mut *transaction).get_int64(key::MASKING_POLICY_GLOBAL_ID)
     }
 
     /// Go `Mutator.GetSchemaVersion`.
     pub fn schema_version(&self) -> Result<i64> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).get_i64(key::SCHEMA_VERSION)
+        TxStructure::meta(&mut *transaction).get_int64(key::SCHEMA_VERSION)
     }
 
     /// Go `Mutator.GenSchemaVersion`.
@@ -997,7 +882,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.GenSchemaVersions`.
     pub fn gen_schema_versions(&self, count: i64) -> Result<i64> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).increment(key::SCHEMA_VERSION, count)
+        TxStructure::meta(&mut *transaction).inc(key::SCHEMA_VERSION, count)
     }
 
     /// Go `Mutator.GetSchemaVersionWithNonEmptyDiff`.
@@ -1018,7 +903,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.CreateDatabase`.
     pub fn create_database(&self, database: &DBInfo) -> Result<()> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let field = key::db_key(database.id);
         if structure.hget(key::DBS, &field)?.is_some() {
             return Err(MetaError::DatabaseExists);
@@ -1029,7 +914,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.IsDatabaseExist`.
     pub fn database_exists(&self, database_id: i64) -> Result<bool> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction)
+        TxStructure::meta(&mut *transaction)
             .hget(key::DBS, &key::db_key(database_id))
             .map(|stored| stored.is_some())
     }
@@ -1037,7 +922,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.UpdateDatabase`.
     pub fn update_database(&self, database: &DBInfo) -> Result<()> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let field = key::db_key(database.id);
         if structure.hget(key::DBS, &field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
@@ -1048,7 +933,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.GetDatabase`.
     pub fn database(&self, database_id: i64) -> Result<Option<DBInfo>> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction)
+        TxStructure::meta(&mut *transaction)
             .hget(key::DBS, &key::db_key(database_id))?
             .map(|stored| value::parse_db_info(&stored))
             .transpose()
@@ -1057,7 +942,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.ListDatabases`, preserving encoded field order.
     pub fn databases(&self) -> Result<Vec<DBInfo>> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction)
+        TxStructure::meta(&mut *transaction)
             .hget_all(key::DBS)?
             .into_iter()
             .map(|pair| value::parse_db_info(&pair.value))
@@ -1067,7 +952,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.IterDatabases`, stopping at the first callback error.
     pub fn iter_databases(&self, mut visit: impl FnMut(&DBInfo) -> Result<()>) -> Result<()> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).hget_iter(key::DBS, &mut |pair| {
+        TxStructure::meta(&mut *transaction).hget_iter(key::DBS, &mut |pair| {
             let database = value::parse_db_info(&pair.value)?;
             visit(&database)
         })
@@ -1124,7 +1009,7 @@ impl<T: RawTransaction> Mutator<T> {
             return Err(MetaError::InvalidObjectId("policy"));
         }
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let field = key::policy_key(policy.id);
         if structure.hget(key::POLICIES, &field)?.is_some() {
             return Err(MetaError::PolicyExists);
@@ -1139,7 +1024,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.UpdatePolicy`.
     pub fn update_policy(&self, policy: &PolicyInfo) -> Result<()> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let field = key::policy_key(policy.id);
         if structure.hget(key::POLICIES, &field)?.is_none() {
             return Err(MetaError::PolicyNotExists);
@@ -1154,7 +1039,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.GetPolicy`.
     pub fn policy(&self, policy_id: i64) -> Result<PolicyInfo> {
         let mut transaction = self.lock()?;
-        let stored = MetaStructure::new(&mut *transaction)
+        let stored = TxStructure::meta(&mut *transaction)
             .hget(key::POLICIES, &key::policy_key(policy_id))?
             .ok_or(MetaError::PolicyIdNotExists(policy_id))?;
         value::parse_policy_info(&stored)
@@ -1163,7 +1048,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.ListPolicies` in encoded field order.
     pub fn policies(&self) -> Result<Vec<PolicyInfo>> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction)
+        TxStructure::meta(&mut *transaction)
             .hget_all(key::POLICIES)?
             .into_iter()
             .map(|pair| value::parse_policy_info(&pair.value))
@@ -1173,10 +1058,10 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.DropPolicy`.
     pub fn drop_policy(&self, policy_id: i64) -> Result<()> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let field = key::policy_key(policy_id);
         structure.hclear(&field)?;
-        structure.hdelete(key::POLICIES, &field)
+        structure.hdel(key::POLICIES, &[&field])
     }
 
     /// Go `Mutator.CreateMaskingPolicy`.
@@ -1185,7 +1070,7 @@ impl<T: RawTransaction> Mutator<T> {
             return Err(MetaError::InvalidObjectId("masking policy"));
         }
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let field = key::masking_policy_key(policy.id);
         if structure.hget(key::MASKING_POLICIES, &field)?.is_some() {
             return Err(MetaError::MaskingPolicyIdExists(policy.id));
@@ -1202,7 +1087,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.UpdateMaskingPolicy`.
     pub fn update_masking_policy(&self, policy: &MaskingPolicyInfo) -> Result<()> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let field = key::masking_policy_key(policy.id);
         if structure.hget(key::MASKING_POLICIES, &field)?.is_none() {
             return Err(MetaError::MaskingPolicyIdNotExists(policy.id));
@@ -1219,7 +1104,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.GetMaskingPolicy`.
     pub fn masking_policy(&self, policy_id: i64) -> Result<MaskingPolicyInfo> {
         let mut transaction = self.lock()?;
-        let stored = MetaStructure::new(&mut *transaction)
+        let stored = TxStructure::meta(&mut *transaction)
             .hget(key::MASKING_POLICIES, &key::masking_policy_key(policy_id))?
             .ok_or(MetaError::MaskingPolicyIdNotExists(policy_id))?;
         serde_json::from_slice(value::detach_magic_byte(&stored)?)
@@ -1229,7 +1114,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.ListMaskingPolicies` in encoded field order.
     pub fn masking_policies(&self) -> Result<Vec<MaskingPolicyInfo>> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction)
+        TxStructure::meta(&mut *transaction)
             .hget_all(key::MASKING_POLICIES)?
             .into_iter()
             .map(|pair| {
@@ -1242,10 +1127,10 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.DropMaskingPolicy`.
     pub fn drop_masking_policy(&self, policy_id: i64) -> Result<()> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let field = key::masking_policy_key(policy_id);
         structure.hclear(&field)?;
-        structure.hdelete(key::MASKING_POLICIES, &field)
+        structure.hdel(key::MASKING_POLICIES, &[&field])
     }
 
     /// Go `Mutator.AddResourceGroup`.
@@ -1254,7 +1139,7 @@ impl<T: RawTransaction> Mutator<T> {
             return Err(MetaError::InvalidObjectId("group"));
         }
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let field = key::resource_group_key(group.id);
         if structure.hget(key::RESOURCE_GROUPS, &field)?.is_some() {
             return Err(MetaError::ResourceGroupExists);
@@ -1270,7 +1155,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// because Go's default group may not be persisted yet.
     pub fn update_resource_group(&self, group: &ResourceGroupInfo) -> Result<()> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let field = key::resource_group_key(group.id);
         if group.id != DEFAULT_RESOURCE_GROUP_ID
             && structure.hget(key::RESOURCE_GROUPS, &field)?.is_none()
@@ -1287,14 +1172,14 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.DropResourceGroup`.
     pub fn drop_resource_group(&self, group_id: i64) -> Result<()> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction)
-            .hdelete(key::RESOURCE_GROUPS, &key::resource_group_key(group_id))
+        TxStructure::meta(&mut *transaction)
+            .hdel(key::RESOURCE_GROUPS, &[&key::resource_group_key(group_id)])
     }
 
     /// Go `Mutator.GetResourceGroup`.
     pub fn resource_group(&self, group_id: i64) -> Result<Arc<ResourceGroupInfo>> {
         let mut transaction = self.lock()?;
-        let stored = MetaStructure::new(&mut *transaction)
+        let stored = TxStructure::meta(&mut *transaction)
             .hget(key::RESOURCE_GROUPS, &key::resource_group_key(group_id))?;
         match stored {
             Some(stored) => decode_resource_group(value::detach_magic_byte(&stored)?).map(Arc::new),
@@ -1307,7 +1192,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// when no stored group has lower-case name `default`.
     pub fn resource_groups(&self) -> Result<Vec<Arc<ResourceGroupInfo>>> {
         let mut transaction = self.lock()?;
-        let mut groups = MetaStructure::new(&mut *transaction)
+        let mut groups = TxStructure::meta(&mut *transaction)
             .hget_all(key::RESOURCE_GROUPS)?
             .into_iter()
             .map(|pair| decode_resource_group(value::detach_magic_byte(&pair.value)?).map(Arc::new))
@@ -1324,7 +1209,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.CreateTableOrView`.
     pub fn create_table_or_view(&self, database_id: i64, table: &TableInfo) -> Result<()> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let database_field = key::db_key(database_id);
         if structure.hget(key::DBS, &database_field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
@@ -1410,7 +1295,7 @@ impl<T: RawTransaction> Mutator<T> {
         sequence_value: i64,
     ) -> Result<()> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let database_field = key::db_key(database_id);
         if structure.hget(key::DBS, &database_field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
@@ -1431,7 +1316,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.GetTable`.
     pub fn table(&self, database_id: i64, table_id: i64) -> Result<Option<TableInfo>> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let database_field = key::db_key(database_id);
         if structure.hget(key::DBS, &database_field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
@@ -1452,7 +1337,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// serializing, so the Rust caller passes a mutable table too.
     pub fn update_table(&self, database_id: i64, table: &mut TableInfo) -> Result<()> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let database_field = key::db_key(database_id);
         if structure.hget(key::DBS, &database_field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
@@ -1502,7 +1387,7 @@ impl<T: RawTransaction> Mutator<T> {
         mut visit: impl FnMut(&TableInfo) -> Result<()>,
     ) -> Result<()> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let database_field = key::db_key(database_id);
         if structure.hget(key::DBS, &database_field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
@@ -1519,7 +1404,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.GetMetasByDBID`.
     pub fn metas_by_database_id(&self, database_id: i64) -> Result<Vec<HashPair>> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let database_field = key::db_key(database_id);
         if structure.hget(key::DBS, &database_field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
@@ -1584,7 +1469,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.DropTableOrView`.
     pub fn drop_table_or_view(&self, database_id: i64, table_id: i64) -> Result<()> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let database_field = key::db_key(database_id);
         if structure.hget(key::DBS, &database_field)?.is_none() {
             return Err(MetaError::DatabaseNotExists);
@@ -1593,7 +1478,7 @@ impl<T: RawTransaction> Mutator<T> {
         if structure.hget(&database_field, &table_field)?.is_none() {
             return Err(MetaError::TableNotExists);
         }
-        structure.hdelete(&database_field, &table_field)
+        structure.hdel(&database_field, &[&table_field])
     }
 
     /// Go `Mutator.DropSequence`.
@@ -1608,22 +1493,22 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.DropDatabase`; Go deliberately does not require existence.
     pub fn drop_database(&self, database_id: i64) -> Result<()> {
         let mut transaction = self.lock()?;
-        let mut structure = MetaStructure::new(&mut *transaction);
+        let mut structure = TxStructure::meta(&mut *transaction);
         let database_field = key::db_key(database_id);
         structure.hclear(&database_field)?;
-        structure.hdelete(key::DBS, &database_field)
+        structure.hdel(key::DBS, &[&database_field])
     }
 
     /// Go `Mutator.SetBDRRole`.
     pub fn set_bdr_role(&self, role: &[u8]) -> Result<()> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).set(key::BDR_ROLE, role)
+        TxStructure::meta(&mut *transaction).set(key::BDR_ROLE, role)
     }
 
     /// Go `Mutator.GetBDRRole` as raw Go-string bytes.
     pub fn bdr_role(&self) -> Result<Vec<u8>> {
         let mut transaction = self.lock()?;
-        Ok(MetaStructure::new(&mut *transaction)
+        Ok(TxStructure::meta(&mut *transaction)
             .get(key::BDR_ROLE)?
             .unwrap_or_default())
     }
@@ -1631,7 +1516,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.ClearBDRRole`.
     pub fn clear_bdr_role(&self) -> Result<()> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).clear(key::BDR_ROLE)
+        TxStructure::meta(&mut *transaction).clear(key::BDR_ROLE)
     }
 
     /// Go `Mutator.SetDDLTableVersion`.
@@ -1646,7 +1531,7 @@ impl<T: RawTransaction> Mutator<T> {
 
     fn set_table_version(&self, logical_key: &[u8], version: i64) -> Result<()> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).set(logical_key, &value::encode_int_value(version))
+        TxStructure::meta(&mut *transaction).set(logical_key, &value::encode_int_value(version))
     }
 
     /// Go `Mutator.GetDDLTableVersion`.
@@ -1663,7 +1548,7 @@ impl<T: RawTransaction> Mutator<T> {
 
     fn table_version(&self, logical_key: &[u8]) -> Result<i64> {
         let mut transaction = self.lock()?;
-        let stored = MetaStructure::new(&mut *transaction)
+        let stored = TxStructure::meta(&mut *transaction)
             .get(logical_key)?
             .unwrap_or_default();
         if stored.is_empty() {
@@ -1675,14 +1560,14 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.SetMetadataLock`.
     pub fn set_metadata_lock(&self, enabled: bool) -> Result<()> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction)
+        TxStructure::meta(&mut *transaction)
             .set(key::METADATA_LOCK, if enabled { b"1" } else { b"0" })
     }
 
     /// Go `Mutator.GetMetadataLock`; `None` is Go's `isNull=true` result.
     pub fn metadata_lock(&self) -> Result<Option<bool>> {
         let mut transaction = self.lock()?;
-        let stored = MetaStructure::new(&mut *transaction)
+        let stored = TxStructure::meta(&mut *transaction)
             .get(key::METADATA_LOCK)?
             .unwrap_or_default();
         if stored.is_empty() {
@@ -1694,14 +1579,14 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.SetSchemaCacheSize`.
     pub fn set_schema_cache_size(&self, size: u64) -> Result<()> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction)
+        TxStructure::meta(&mut *transaction)
             .set(key::SCHEMA_CACHE_SIZE, size.to_string().as_bytes())
     }
 
     /// Go `Mutator.GetSchemaCacheSize`; `None` is Go's `isNull=true` result.
     pub fn schema_cache_size(&self) -> Result<Option<u64>> {
         let mut transaction = self.lock()?;
-        let stored = MetaStructure::new(&mut *transaction)
+        let stored = TxStructure::meta(&mut *transaction)
             .get(key::SCHEMA_CACHE_SIZE)?
             .unwrap_or_default();
         if stored.is_empty() {
@@ -1736,12 +1621,12 @@ impl<T: RawTransaction> Mutator<T> {
 
     fn set_decimal_setting(&self, logical_key: &[u8], setting: i64) -> Result<()> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).set(logical_key, &value::encode_int_value(setting))
+        TxStructure::meta(&mut *transaction).set(logical_key, &value::encode_int_value(setting))
     }
 
     fn decimal_setting(&self, logical_key: &[u8]) -> Result<Option<i64>> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction)
+        TxStructure::meta(&mut *transaction)
             .get(logical_key)?
             .map(|stored| value::parse_int_value(&stored))
             .transpose()
@@ -1770,12 +1655,12 @@ impl<T: RawTransaction> Mutator<T> {
     fn set_float_setting(&self, logical_key: &[u8], setting: f64) -> Result<()> {
         let stored = go_fixed_two(setting);
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).set(logical_key, stored.as_bytes())
+        TxStructure::meta(&mut *transaction).set(logical_key, stored.as_bytes())
     }
 
     fn float_setting(&self, logical_key: &[u8]) -> Result<Option<f64>> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction)
+        TxStructure::meta(&mut *transaction)
             .get(logical_key)?
             .map(|stored| {
                 std::str::from_utf8(&stored)
@@ -1795,7 +1680,7 @@ impl<T: RawTransaction> Mutator<T> {
         let encoded = tidb_model::serde_helpers::to_go_json(factors)
             .map_err(|error| MetaError::InvalidJson(error.to_string()))?;
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).hset(
+        TxStructure::meta(&mut *transaction).hset(
             key::DXF_SCHEDULE_TUNE,
             keyspace.as_bytes(),
             &encoded,
@@ -1805,7 +1690,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.GetDXFScheduleTuneFactors`.
     pub fn dxf_schedule_tune_factors(&self, keyspace: &str) -> Result<Option<TtlTuneFactors>> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction)
+        TxStructure::meta(&mut *transaction)
             .hget(key::DXF_SCHEDULE_TUNE, keyspace.as_bytes())?
             .map(|encoded| {
                 serde_json::from_slice(&encoded)
@@ -1817,7 +1702,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.GetRUStats`.
     pub fn ru_stats(&self) -> Result<Option<RuStats>> {
         let mut transaction = self.lock()?;
-        let Some(encoded) = MetaStructure::new(&mut *transaction).get(key::REQUEST_UNIT_STATS)?
+        let Some(encoded) = TxStructure::meta(&mut *transaction).get(key::REQUEST_UNIT_STATS)?
         else {
             return Ok(None);
         };
@@ -1831,25 +1716,25 @@ impl<T: RawTransaction> Mutator<T> {
         let encoded = tidb_model::serde_helpers::to_go_json(&stats)
             .map_err(|error| MetaError::InvalidJson(error.to_string()))?;
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).set(key::REQUEST_UNIT_STATS, &encoded)
+        TxStructure::meta(&mut *transaction).set(key::REQUEST_UNIT_STATS, &encoded)
     }
 
     /// Go `Mutator.GetBootstrapVersion`.
     pub fn bootstrap_version(&self) -> Result<i64> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).get_i64(key::BOOTSTRAP)
+        TxStructure::meta(&mut *transaction).get_int64(key::BOOTSTRAP)
     }
 
     /// Go `Mutator.FinishBootstrap`.
     pub fn finish_bootstrap(&self, version: i64) -> Result<()> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).set(key::BOOTSTRAP, &value::encode_int_value(version))
+        TxStructure::meta(&mut *transaction).set(key::BOOTSTRAP, &value::encode_int_value(version))
     }
 
     /// Go `Mutator.GetSchemaDiff`.
     pub fn schema_diff(&self, schema_version: i64) -> Result<Option<SchemaDiff>> {
         let mut transaction = self.lock()?;
-        let stored = MetaStructure::new(&mut *transaction)
+        let stored = TxStructure::meta(&mut *transaction)
             .get(&key::schema_diff_key(schema_version))?
             .unwrap_or_default();
         value::parse_schema_diff(&stored)
@@ -1858,7 +1743,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.SetSchemaDiff`.
     pub fn set_schema_diff(&self, diff: &SchemaDiff) -> Result<()> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).set(
+        TxStructure::meta(&mut *transaction).set(
             &key::schema_diff_key(diff.version),
             &value::serialize_schema_diff(diff)?,
         )
@@ -1878,7 +1763,7 @@ impl<T: RawTransaction> Mutator<T> {
     ) -> Result<()> {
         let encoded = job.encode(update_raw_args)?;
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).hset(
+        TxStructure::meta(&mut *transaction).hset(
             key::DDL_JOB_HISTORY,
             &key::ddl_job_id_key(job.id()),
             &encoded,
@@ -1888,7 +1773,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.getHistoryDDLJob` / `GetHistoryDDLJob`.
     pub fn history_ddl_job<J: DdlJobCodec>(&self, job_id: i64) -> Result<Option<J>> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction)
+        TxStructure::meta(&mut *transaction)
             .hget(key::DDL_JOB_HISTORY, &key::ddl_job_id_key(job_id))?
             .map(|encoded| J::decode(&encoded))
             .transpose()
@@ -1897,7 +1782,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// Go `Mutator.GetHistoryDDLCount`.
     pub fn history_ddl_count(&self) -> Result<u64> {
         let mut transaction = self.lock()?;
-        let count = MetaStructure::new(&mut *transaction)
+        let count = TxStructure::meta(&mut *transaction)
             .hget_all(key::DDL_JOB_HISTORY)?
             .len();
         u64::try_from(count).map_err(|_| MetaError::Storage("history count overflow".to_owned()))
@@ -1953,7 +1838,7 @@ impl<T: RawTransaction> Mutator<T> {
     /// reached through Go `GetAutoIDAccessors(...).RowID().Inc(...)`.
     pub fn increment_row_id(&self, database_id: i64, table_id: i64, step: i64) -> Result<i64> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction).hincrement(
+        TxStructure::meta(&mut *transaction).hinc(
             &key::db_key(database_id),
             &key::auto_table_id_key(table_id),
             step,
@@ -1963,15 +1848,17 @@ impl<T: RawTransaction> Mutator<T> {
     /// Reads one row-ID allocator field; missing fields are zero.
     pub fn row_id(&self, database_id: i64, table_id: i64) -> Result<i64> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction)
-            .hget_i64(&key::db_key(database_id), &key::auto_table_id_key(table_id))
+        TxStructure::meta(&mut *transaction)
+            .hget_int64(&key::db_key(database_id), &key::auto_table_id_key(table_id))
     }
 
     /// Deletes one row-ID allocator field.
     pub fn delete_row_id(&self, database_id: i64, table_id: i64) -> Result<()> {
         let mut transaction = self.lock()?;
-        MetaStructure::new(&mut *transaction)
-            .hdelete(&key::db_key(database_id), &key::auto_table_id_key(table_id))
+        TxStructure::meta(&mut *transaction).hdel(
+            &key::db_key(database_id),
+            &[&key::auto_table_id_key(table_id)],
+        )
     }
 }
 
@@ -2085,14 +1972,14 @@ impl<T: RawTransaction> AutoIdAccessor<T> {
     /// Go `AutoIDAccessor.Get`.
     pub fn get(&self) -> Result<i64> {
         let mut transaction = self.meta.lock()?;
-        MetaStructure::new(&mut *transaction)
-            .hget_i64(&key::db_key(self.database_id), &self.field())
+        TxStructure::meta(&mut *transaction)
+            .hget_int64(&key::db_key(self.database_id), &self.field())
     }
 
     /// Go `AutoIDAccessor.Put`.
     pub fn put(&self, value: i64) -> Result<()> {
         let mut transaction = self.meta.lock()?;
-        MetaStructure::new(&mut *transaction).hset(
+        TxStructure::meta(&mut *transaction).hset(
             &key::db_key(self.database_id),
             &self.field(),
             &value::encode_int_value(value),
@@ -2103,7 +1990,7 @@ impl<T: RawTransaction> AutoIdAccessor<T> {
     /// not checked because rename races make those checks invalid in Go.
     pub fn increment(&self, step: i64) -> Result<i64> {
         let mut transaction = self.meta.lock()?;
-        MetaStructure::new(&mut *transaction).hincrement(
+        TxStructure::meta(&mut *transaction).hinc(
             &key::db_key(self.database_id),
             &self.field(),
             step,
@@ -2124,7 +2011,7 @@ impl<T: RawTransaction> AutoIdAccessor<T> {
             AutoIdKind::SequenceCycle => key::sequence_cycle_key(table_id),
         };
         let mut transaction = self.meta.lock()?;
-        MetaStructure::new(&mut *transaction).hset(
+        TxStructure::meta(&mut *transaction).hset(
             &key::db_key(database_id),
             &field,
             &value::encode_int_value(current),
@@ -2134,7 +2021,7 @@ impl<T: RawTransaction> AutoIdAccessor<T> {
     /// Go `AutoIDAccessor.Del`.
     pub fn delete(&self) -> Result<()> {
         let mut transaction = self.meta.lock()?;
-        MetaStructure::new(&mut *transaction).hdelete(&key::db_key(self.database_id), &self.field())
+        TxStructure::meta(&mut *transaction).hdel(&key::db_key(self.database_id), &[&self.field()])
     }
 }
 

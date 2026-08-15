@@ -56,6 +56,19 @@ pub enum MetaError {
         /// Whether the owning Go parser calls `errors.Trace`.
         traced: bool,
     },
+    /// Go `structure.ErrWriteOnSnapshot`: a mutation reached a `TxStructure`
+    /// whose Go `readWriter` is nil.
+    WriteOnSnapshot,
+    /// Go `structure.ErrInvalidListIndex.GenWithStack("invalid list index %d")`.
+    InvalidListIndex(i64),
+    /// Go `structure.ErrInvalidListMetaData`: a stored list meta value was not
+    /// exactly sixteen bytes.
+    InvalidListMetaData,
+    /// Go `kv.ErrCannotSetNilValue`: `Set` received an empty value.
+    CannotSetNilValue,
+    /// Go `kv.ErrNotExist` where the source propagates it instead of mapping a
+    /// missing key to nil (list data reads).
+    KeyNotExist,
     /// A scalar value was not the decimal ASCII integer Go writes.
     ///
     /// Go: `strconv.ParseInt` failing inside `TxStructure.GetInt64`.
@@ -137,6 +150,15 @@ impl fmt::Display for MetaError {
                     IntegerParseFailure::Range => "value out of range",
                 }
             ),
+            Self::WriteOnSnapshot => formatter.write_str("[structure:8220]write on snapshot"),
+            Self::InvalidListIndex(index) => {
+                write!(formatter, "[structure:8218]invalid list index {index}")
+            }
+            Self::InvalidListMetaData => {
+                formatter.write_str("[structure:8219]invalid list meta data")
+            }
+            Self::CannotSetNilValue => formatter.write_str("[kv:8023]can not set nil value"),
+            Self::KeyNotExist => formatter.write_str("[kv:8021]Error: key not exist"),
             Self::InvalidIntValue => formatter.write_str("invalid meta integer value"),
             Self::InvalidUnsignedIntValue => {
                 formatter.write_str("invalid meta unsigned integer value")
@@ -198,11 +220,18 @@ impl fmt::Display for MetaError {
 impl std::error::Error for MetaError {}
 
 impl MetaError {
-    /// TiDB/MySQL error number for source errors declared in `meta.go`.
+    /// TiDB/MySQL error number for source errors declared in `meta.go`,
+    /// `pkg/structure/structure.go`, and the `pkg/kv` errors they propagate.
     #[must_use]
     pub const fn code(&self) -> Option<u16> {
         match self {
             Self::InvalidFieldPrefix(_) => Some(1300),
+            Self::UnexpectedTypeFlag(_) => Some(8217),
+            Self::InvalidListIndex(_) => Some(8218),
+            Self::InvalidListMetaData => Some(8219),
+            Self::WriteOnSnapshot => Some(8220),
+            Self::KeyNotExist => Some(8021),
+            Self::CannotSetNilValue => Some(8023),
             Self::DatabaseExists => Some(1007),
             Self::DatabaseNotExists => Some(1049),
             Self::TableExists => Some(1050),
