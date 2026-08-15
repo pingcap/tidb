@@ -2615,6 +2615,7 @@ dependencies = [
  "tidb-ast",
  "tidb-datatype",
  "tidb-executor",
+ "tidb-metadef",
  "tidb-mysql",
  "tidb-naming",
  "tidb-parser",

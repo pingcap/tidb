@@ -12,6 +12,7 @@ tidb-ast = { path = "../tidb-ast" }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-metadef = { path = "../tidb-metadef" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-mysql = { path = "../tidb-mysql" }
 tidb-naming = { path = "../tidb-naming" }

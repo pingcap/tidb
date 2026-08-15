@@ -509,7 +509,7 @@ impl Default for Session {
     /// setter, so a field added to `Session` has exactly one construction site
     /// that must name it.
     fn default() -> Self {
-        Session {
+        let mut session = Session {
             catalog: SharedCatalog::default(),
             tidb_decode_key_cache: RefCell::new(None),
             session_memory: tidb_executor::SessionMemory::new(
@@ -553,7 +553,12 @@ impl Default for Session {
             session_bindings: binding::SessionBindings::default(),
             found_in_binding: false,
             prev_found_in_binding: false,
-        }
+        };
+        // Go bootstraps the system tables the first time a store comes up
+        // (`pkg/session/bootstrap.go`); this catalog is born here, so its
+        // bootstrap runs here. See `crate::bootstrap`.
+        session.bootstrap_system_tables();
+        session
     }
 }
 
@@ -577,6 +582,7 @@ mod admin_check_arm;
 mod analyze_arm;
 mod binding;
 mod binding_arm;
+mod bootstrap;
 mod classify;
 mod dispatch;
 mod explain_arm;

@@ -596,7 +596,13 @@ fn restore_target_list(out: &mut String, targets: &[Vec<String>], context: &Rest
                 out.push('.');
             }
         }
-        push_name_path(out, t);
+        // See `TableRef::restore_into_with_context`: the flag erases an
+        // explicitly written schema too, as Go's `restoreName` does.
+        if t.len() > 1 && context.flags().has_without_schema_name() {
+            push_name_path(out, &t[t.len() - 1..]);
+        } else {
+            push_name_path(out, t);
+        }
     }
 }
 

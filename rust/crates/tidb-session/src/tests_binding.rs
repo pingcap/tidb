@@ -45,6 +45,17 @@ fn matched(session: &mut Session) -> String {
     scalar_text(session, "select @@last_plan_from_binding").unwrap_or_default()
 }
 
+/// The result rows joined the way `gorun` prints them (`|` between columns,
+/// `;` between rows), so a capture pastes in as one string.
+fn joined(session: &mut Session, sql: &str) -> String {
+    query_text(session, sql)
+        .1
+        .into_iter()
+        .map(|row| row.join("|"))
+        .collect::<Vec<_>>()
+        .join(";")
+}
+
 /// A fresh session reports 0, which is the floor every other assertion here
 /// is measured against.
 ///
@@ -333,34 +344,122 @@ fn a_binding_whose_statement_cannot_plan_is_refused_at_create_time() {
     assert_eq!(missing_index.code, 1176, "{}", missing_index.message);
 }
 
-/// The pinned refusal for GLOBAL scope, and the MEASURED reason for it in the
-/// same test: `mysql.bind_info` is not in this tier's catalog, so there is
-/// nowhere for a global binding to live.
+/// The GLOBAL lifecycle, end to end, against the bootstrapped
+/// `mysql.bind_info`. This test REPLACES the pinned refusal that measured the
+/// table's absence: the table is bootstrapped now (`crate::bootstrap`), so
+/// the refusal's own tripwire fired and the refusal is gone.
 ///
-/// Both halves are here on purpose. The day someone bootstraps
-/// `mysql.bind_info`, the second assertion fails and points straight at this
-/// refusal -- which is the whole reason to pin a refusal rather than just
-/// write one.
+/// Captured from real TiDB (`gorun`, 2026-08-03), the exact rows:
+///
+/// ```text
+/// create global binding for select * from t where a = 1
+///   using select * from t use index(kb) where a = 1;      -> OK
+/// select * from t where a = 2; select @@last_plan_from_binding; -> 1
+/// select original_sql, bind_sql, default_db, status, charset, collation,
+///        source from mysql.bind_info order by create_time;
+///   builtin_pseudo_sql_for_bind_lock|builtin_pseudo_sql_for_bind_lock|mysql|builtin|||builtin
+///   select * from `test` . `t` where `a` = ?|SELECT * FROM `test`.`t` USE INDEX (`kb`) WHERE `a` = 1|test|enabled|utf8mb4|utf8mb4_bin|manual
+/// drop global binding for select * from t where a = 1;    -> OK
+/// select * from t where a = 2; select @@last_plan_from_binding; -> 0
+/// select original_sql, status from mysql.bind_info order by create_time;
+///   builtin_pseudo_sql_for_bind_lock|builtin
+///   select * from `test` . `t` where `a` = ?|deleted
+/// ```
 #[test]
-fn global_scope_is_refused_because_the_storage_table_is_absent() {
+fn a_global_binding_is_a_row_every_session_on_the_catalog_reads() {
     let mut session = binding_session();
-    for statement in [
-        "create global binding for select * from t where a = 1 \
-         using select * from t use index(kb) where a = 1",
-        "drop global binding for select * from t where a = 1",
-        "show global bindings",
-    ] {
-        let error = session.run(statement).expect_err("global scope is refused");
-        assert!(
-            matches!(&error, DriverError::Unsupported(reason) if reason.contains("mysql.bind_info")),
-            "{statement}: {error:?}"
-        );
-    }
-    // The measured gap the refusal names.
-    let storage = session.run("select * from mysql.bind_info");
+    session
+        .run(
+            "create global binding for select * from t where a = 1 \
+             using select * from t use index(kb) where a = 1",
+        )
+        .expect("create global binding");
+
+    // The storage rows, byte for byte as Go stores them.
+    assert_eq!(
+        joined(
+            &mut session,
+            "select original_sql, bind_sql, default_db, status, charset, collation, source \
+             from mysql.bind_info order by create_time",
+        ),
+        concat!(
+            "builtin_pseudo_sql_for_bind_lock|builtin_pseudo_sql_for_bind_lock",
+            "|mysql|builtin|||builtin;",
+            "select * from `test` . `t` where `a` = ?",
+            "|SELECT * FROM `test`.`t` USE INDEX (`kb`) WHERE `a` = 1",
+            "|test|enabled|utf8mb4|utf8mb4_bin|manual",
+        )
+    );
+
+    // The creating session matches it...
+    session.run("select * from t where a = 2").expect("select");
+    assert_eq!(matched(&mut session), "1");
+
+    // ...and so does a PEER session over the same catalog, which is the whole
+    // difference between GLOBAL and SESSION scope.
+    let mut peer = Session::with_catalog(session.shared_catalog());
+    peer.run("use test").expect("use");
+    peer.run("select * from t where a = 2").expect("select");
+    assert_eq!(
+        matched(&mut peer),
+        "1",
+        "a peer session reads the global row"
+    );
+
+    // SHOW GLOBAL BINDINGS lists it (the builtin lock row is hidden).
+    let shown = joined(&mut peer, "show global bindings");
     assert!(
-        storage.is_err(),
-        "mysql.bind_info answered rows -- the GLOBAL refusal above is now stale"
+        shown.starts_with("select * from `test` . `t` where `a` = ?|"),
+        "got {shown}"
+    );
+
+    // DROP marks the row deleted (Go's UPDATE, not a DELETE), and the match
+    // stops for both sessions.
+    session
+        .run("drop global binding for select * from t where a = 1")
+        .expect("drop global binding");
+    assert_eq!(
+        joined(
+            &mut session,
+            "select original_sql, status from mysql.bind_info order by create_time",
+        ),
+        "builtin_pseudo_sql_for_bind_lock|builtin;select * from `test` . `t` where `a` = ?|deleted"
+    );
+    session.run("select * from t where a = 2").expect("select");
+    assert_eq!(matched(&mut session), "0");
+    peer.run("select * from t where a = 2").expect("select");
+    assert_eq!(matched(&mut peer), "0");
+    assert_eq!(joined(&mut peer, "show global bindings"), "");
+}
+
+/// A SESSION binding shadows a GLOBAL one for the session that holds it,
+/// which is Go's lookup order in `planner.optimize`.
+#[test]
+fn a_session_binding_shadows_the_global_one() {
+    let mut session = binding_session();
+    session
+        .run(
+            "create global binding for select * from t where a = 1 \
+             using select * from t use index(kb) where a = 1",
+        )
+        .expect("create global");
+    session
+        .run(
+            "create session binding for select * from t where a = 1 \
+             using select * from t ignore index(kb) where a = 1",
+        )
+        .expect("create session");
+    session.run("select * from t where a = 2").expect("select");
+    assert_eq!(matched(&mut session), "1");
+    // Dropping the session binding uncovers the global one.
+    session
+        .run("drop session binding for select * from t where a = 1")
+        .expect("drop session");
+    session.run("select * from t where a = 2").expect("select");
+    assert_eq!(
+        matched(&mut session),
+        "1",
+        "the global binding still matches"
     );
 }
 

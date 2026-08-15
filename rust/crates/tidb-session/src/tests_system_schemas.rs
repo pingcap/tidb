@@ -225,21 +225,19 @@ fn the_system_schema_is_listed_among_the_databases() {
 /// DIVERGENCE, pinned: enumerating `mysql` under-reports.
 ///
 /// Captured from Go, `use mysql; show tables;` returns 61 names --
-/// `advisory_locks` through `user`. This tier returns none, because it stores
-/// none. Under-reporting an enumeration is the price of refusing every name
-/// in it (see [`the_bootstrap_tables_are_refused_by_name_with_1146`]); the
-/// alternative, fabricating empty tables so the count looks right, would turn
-/// a loud 1146 into a silent zero-row answer.
+/// `advisory_locks` through `user`. This tier returns the ONE it stores:
+/// `bind_info`, bootstrapped by `crate::bootstrap`. Under-reporting an
+/// enumeration is the price of refusing every absent name in it (see
+/// [`the_bootstrap_tables_are_refused_by_name_with_1146`]); the alternative,
+/// fabricating empty tables so the count looks right, would turn a loud 1146
+/// into a silent zero-row answer.
 ///
 /// FLIPS TO SUPPORT as the bootstrap tables land: this count rises toward 61.
 #[test]
-fn enumerating_the_system_schema_reports_it_empty() {
+fn enumerating_the_system_schema_under_reports() {
     let mut session = Session::new();
     session.run("USE mysql").unwrap();
-    assert_eq!(
-        row_text(session.run("SHOW TABLES")),
-        Vec::<Vec<String>>::new()
-    );
+    assert_eq!(row_text(session.run("SHOW TABLES")), [["bind_info"]]);
 
     assert_eq!(
         row_text(
@@ -247,7 +245,7 @@ fn enumerating_the_system_schema_reports_it_empty() {
                 "SELECT TABLE_NAME FROM information_schema.tables WHERE TABLE_SCHEMA = 'mysql'"
             )
         ),
-        Vec::<Vec<String>>::new()
+        [["bind_info"]]
     );
 }
 

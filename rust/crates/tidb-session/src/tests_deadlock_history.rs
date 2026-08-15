@@ -65,6 +65,10 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
         (table.table_id, index_key)
     };
     let key = encode_row_key_with_handle(table_id, &RecordHandle::Int(1));
+    let row_key_hex = key
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<String>();
     let index_key_hex = index_key
         .iter()
         .map(|byte| format!("{byte:02X}"))
@@ -171,11 +175,11 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
             )),
             Datum::Null,
             Datum::String(StringDatum::new(
-                b"7480000000000000015F728000000000000001".to_vec(),
+                row_key_hex.into_bytes(),
                 Collation::Utf8Mb4Bin,
             )),
             Datum::String(StringDatum::new(
-                br#"{"db_name":"test","table_name":"t","handle_type":"int","handle_value":"1","db_id":1,"table_id":1}"#.to_vec(),
+                format!(r#"{{"db_name":"test","table_name":"t","handle_type":"int","handle_value":"1","db_id":1,"table_id":{table_id}}}"#).into_bytes(),
                 Collation::Utf8Mb4Bin,
             )),
             Datum::UInt(102),
@@ -195,7 +199,7 @@ fn deadlocks_table_exposes_package_rows_and_requires_process() {
                 Collation::Utf8Mb4Bin,
             )),
             Datum::String(StringDatum::new(
-                br#"{"db_name":"test","table_name":"t","index_name":"idx_v","index_values":["abc","1"],"db_id":1,"table_id":1,"index_id":1}"#.to_vec(),
+                format!(r#"{{"db_name":"test","table_name":"t","index_name":"idx_v","index_values":["abc","1"],"db_id":1,"table_id":{table_id},"index_id":1}}"#).into_bytes(),
                 Collation::Utf8Mb4Bin,
             )),
             Datum::UInt(202),

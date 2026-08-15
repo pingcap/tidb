@@ -153,6 +153,10 @@ pub(crate) fn datum_text(value: &Datum) -> Option<String> {
         // `BinaryJSON.String`: the canonical document text a JSON column
         // sends on the wire.
         Datum::Json(j) => Some(j.to_string()),
+        // `types.Time.String()`: the text a temporal column prints, fsp
+        // included -- what `mysql.bind_info`'s TIMESTAMP(6) rows read back
+        // as.
+        Datum::Time(t) => Some(t.to_string()),
         _ => None,
     }
 }

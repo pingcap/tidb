@@ -92,7 +92,16 @@ impl TableRef {
                 out.push('.');
             }
         }
-        for (i, part) in self.name.iter().enumerate() {
+        // Go `TableName.restoreName`: `RestoreWithoutSchemaNameFlag` skips
+        // the WHOLE schema block, an explicitly written qualifier included --
+        // which is what makes `RestoreWithoutDB` of `test`.`t` answer `t`,
+        // the text the binding no-DB digest is computed over.
+        let visible = if self.name.len() > 1 && context.flags().has_without_schema_name() {
+            &self.name[self.name.len() - 1..]
+        } else {
+            &self.name[..]
+        };
+        for (i, part) in visible.iter().enumerate() {
             if i > 0 {
                 out.push('.');
             }
