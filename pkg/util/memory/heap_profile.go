@@ -28,14 +28,16 @@ import (
 )
 
 const (
-	heapProfileLevel70Milli int64 = 700
-	heapProfileLevel80Milli int64 = 800
-	heapProfileLevel85Milli int64 = 850
-	heapProfileResetMilli   int64 = 650
-	heapProfileCutoffMilli  int64 = 900
-	heapProfileMinInterval        = time.Minute
-	heapProfileMaxGroups          = 4
-	heapProfileDirName            = "heap_profiles"
+	heapProfileLevel70Milli    int64 = 700
+	heapProfileLevel80Milli    int64 = 800
+	heapProfileLevel85Milli    int64 = 850
+	heapProfileResetMilli      int64 = 650
+	heapProfileCutoffMilli     int64 = 900
+	heapProfileMinInterval           = time.Minute
+	heapProfileMaxGroups             = 4
+	heapProfileDirName               = "heap_profiles"
+	heapProfileTimestampLayout       = "2006-01-02T15-04-05Z0700"
+	heapProfileMetadataSuffix        = ".meta.json"
 )
 
 var heapProfileLevels = [...]struct {
@@ -68,23 +70,23 @@ type heapProfileArbitratorSnapshot struct {
 }
 
 type heapProfileMetadataState struct {
-	HeapAlloc  int64 `json:"heap_alloc"`
-	HeapInuse  int64 `json:"heap_inuse"`
-	MemInuse   int64 `json:"mem_inuse"`
-	QuotaAlloc int64 `json:"quota_alloc"`
-	Limit      int64 `json:"limit"`
+	HeapAlloc  int64 `json:"heap_alloc_bytes"`
+	HeapInuse  int64 `json:"heap_inuse_bytes"`
+	MemInuse   int64 `json:"mem_inuse_bytes"`
+	QuotaAlloc int64 `json:"quota_alloc_bytes"`
+	Limit      int64 `json:"limit_bytes"`
 }
 
 type heapProfileMetadata struct {
 	StartTime    string                   `json:"start_time"`
-	StartState   heapProfileMetadataState `json:"start_state"`
 	Version      int                      `json:"version"`
 	ThresholdPct int                      `json:"threshold_pct"`
 	DurationMs   int64                    `json:"duration_ms"`
+	StartState   heapProfileMetadataState `json:"start_state"`
 }
 
 type heapProfileFileGroup struct {
-	modTime      time.Time
+	captureTime  time.Time
 	base         string
 	profilePath  string
 	metadataPath string
@@ -219,8 +221,8 @@ func (p *heapProfileCollector) capture(m *MemArbitrator, threshold int) {
 	startTime := p.currentTime()
 	p.trigger.lastCaptureAt = startTime
 	p.trigger.lastCaptureThreshold = threshold
-	timestamp := startTime.Format("20060102T150405Z0700")
-	base := "heap-" + timestamp + "-" + strconv.Itoa(threshold) + "pct"
+	timestamp := startTime.Format(heapProfileTimestampLayout)
+	base := timestamp + "." + strconv.Itoa(threshold) + "pct"
 	profilePath := filepath.Join(p.dir, base+".pprof")
 
 	if err := p.writeProfile(tmp); err != nil {
@@ -242,16 +244,11 @@ func (p *heapProfileCollector) capture(m *MemArbitrator, threshold int) {
 		StartState:   snapshot.heapProfileMetadataState,
 		DurationMs:   p.currentTime().Sub(startTime).Milliseconds(),
 	}
-	_ = p.writeMetadataAtomically(base+".json", metadata)
+	_ = p.writeMetadataAtomically(base+heapProfileMetadataSuffix, metadata)
 	p.enforceRetention()
 }
 
 func (p *heapProfileCollector) writeMetadataAtomically(name string, metadata heapProfileMetadata) error {
-	data, err := json.Marshal(metadata)
-	if err != nil {
-		return err
-	}
-
 	tmp, err := os.CreateTemp(p.dir, ".heap-metadata.*.tmp")
 	if err != nil {
 		return err
@@ -271,7 +268,9 @@ func (p *heapProfileCollector) writeMetadataAtomically(name string, metadata hea
 	if err := tmp.Chmod(0600); err != nil {
 		return err
 	}
-	if _, err := tmp.Write(data); err != nil {
+	encoder := json.NewEncoder(tmp)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(metadata); err != nil {
 		return err
 	}
 	if err := tmp.Close(); err != nil {
@@ -301,21 +300,18 @@ func (p *heapProfileCollector) enforceRetention() {
 			_ = os.Remove(filepath.Join(p.dir, name))
 			continue
 		}
-		if !isHeapProfileFinal(name) {
+		base, captureTime, isProfile, ok := parseHeapProfileFileName(name)
+		if !ok {
 			continue
 		}
 
-		base := strings.TrimSuffix(strings.TrimSuffix(name, ".pprof"), ".json")
 		group := groups[base]
 		if group == nil {
-			group = &heapProfileFileGroup{base: base}
+			group = &heapProfileFileGroup{base: base, captureTime: captureTime}
 			groups[base] = group
 		}
 		path := filepath.Join(p.dir, name)
-		if info, err := entry.Info(); err == nil && info.ModTime().After(group.modTime) {
-			group.modTime = info.ModTime()
-		}
-		if strings.HasSuffix(name, ".pprof") {
+		if isProfile {
 			group.profilePath = path
 		} else {
 			group.metadataPath = path
@@ -333,16 +329,8 @@ func (p *heapProfileCollector) enforceRetention() {
 	}
 
 	sort.Slice(profiles, func(i, j int) bool {
-		iTime, iOK := heapProfileTimestamp(profiles[i].base)
-		jTime, jOK := heapProfileTimestamp(profiles[j].base)
-		if !iOK {
-			iTime = profiles[i].modTime
-		}
-		if !jOK {
-			jTime = profiles[j].modTime
-		}
-		if !iTime.Equal(jTime) {
-			return iTime.Before(jTime)
+		if !profiles[i].captureTime.Equal(profiles[j].captureTime) {
+			return profiles[i].captureTime.Before(profiles[j].captureTime)
 		}
 		return profiles[i].base < profiles[j].base
 	})
@@ -362,24 +350,44 @@ func isHeapProfileTemp(name string) bool {
 	return (strings.HasPrefix(name, ".heap-profile.") || strings.HasPrefix(name, ".heap-metadata.")) && strings.HasSuffix(name, ".tmp")
 }
 
-func isHeapProfileFinal(name string) bool {
-	return strings.HasPrefix(name, "heap-") && (strings.HasSuffix(name, ".pprof") || strings.HasSuffix(name, ".json"))
+func parseHeapProfileFileName(name string) (base string, captureTime time.Time, isProfile, ok bool) {
+	switch {
+	case strings.HasSuffix(name, ".pprof"):
+		base = strings.TrimSuffix(name, ".pprof")
+		isProfile = true
+	case strings.HasSuffix(name, heapProfileMetadataSuffix):
+		base = strings.TrimSuffix(name, heapProfileMetadataSuffix)
+	default:
+		return "", time.Time{}, false, false
+	}
+
+	separator := strings.LastIndexByte(base, '.')
+	if separator <= 0 {
+		return "", time.Time{}, false, false
+	}
+	thresholdText := strings.TrimSuffix(base[separator+1:], "pct")
+	if thresholdText == base[separator+1:] {
+		return "", time.Time{}, false, false
+	}
+	threshold, err := strconv.Atoi(thresholdText)
+	if err != nil || strconv.Itoa(threshold) != thresholdText || !isHeapProfileThreshold(threshold) {
+		return "", time.Time{}, false, false
+	}
+
+	captureTime, err = time.Parse(heapProfileTimestampLayout, base[:separator])
+	if err != nil {
+		return "", time.Time{}, false, false
+	}
+	return base, captureTime, isProfile, true
 }
 
-func heapProfileTimestamp(base string) (time.Time, bool) {
-	if !strings.HasPrefix(base, "heap-") {
-		return time.Time{}, false
+func isHeapProfileThreshold(threshold int) bool {
+	for _, level := range heapProfileLevels {
+		if level.threshold == threshold {
+			return true
+		}
 	}
-	rest := strings.TrimPrefix(base, "heap-")
-	separator := strings.LastIndexByte(rest, '-')
-	if separator <= 0 {
-		return time.Time{}, false
-	}
-	timestamp, err := time.Parse("20060102T150405Z0700", rest[:separator])
-	if err != nil {
-		return time.Time{}, false
-	}
-	return timestamp, true
+	return false
 }
 
 func (p *heapProfileCollector) currentTime() time.Time {

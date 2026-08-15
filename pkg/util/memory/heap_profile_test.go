@@ -84,9 +84,9 @@ func TestHeapProfileTriggerState(t *testing.T) {
 	setHeapProfileMemInuse(m, 870)
 	p.tryCapture(m)
 	require.Equal(t, 3, writeCount)
-	require.Contains(t, heapProfileNames(t, p.dir), "heap-20260814T100100+0800-70pct.pprof")
-	require.Contains(t, heapProfileNames(t, p.dir), "heap-20260814T100110+0800-80pct.pprof")
-	require.Contains(t, heapProfileNames(t, p.dir), "heap-20260814T100120+0800-85pct.pprof")
+	require.Contains(t, heapProfileNames(t, p.dir), "2026-08-14T10-01-00+0800.70pct.pprof")
+	require.Contains(t, heapProfileNames(t, p.dir), "2026-08-14T10-01-10+0800.80pct.pprof")
+	require.Contains(t, heapProfileNames(t, p.dir), "2026-08-14T10-01-20+0800.85pct.pprof")
 
 	currentTime = start.Add(4 * time.Minute)
 	setHeapProfileMemInuse(m, 760)
@@ -109,8 +109,8 @@ func TestHeapProfileTriggerState(t *testing.T) {
 	require.Equal(t, 5, writeCount)
 	names := heapProfileNames(t, p2.dir)
 	require.Len(t, names, 2)
-	require.Contains(t, names, "heap-20260814T100000+0800-85pct.pprof")
-	require.Contains(t, names, "heap-20260814T100000+0800-85pct.json")
+	require.Contains(t, names, "2026-08-14T10-00-00+0800.85pct.pprof")
+	require.Contains(t, names, "2026-08-14T10-00-00+0800.85pct.meta.json")
 
 	m3 := newHeapProfileArbitratorForTest(1000)
 	p3 := newHeapProfileCollector(filepath.Join(t.TempDir(), heapProfileDirName))
@@ -138,7 +138,7 @@ func TestHeapProfileTriggerState(t *testing.T) {
 	setHeapProfileMemInuse(m3, 870)
 	p3.tryCapture(m3)
 	require.Equal(t, 2, cooldownWrites)
-	require.Contains(t, heapProfileNames(t, p3.dir), "heap-20260814T100030+0800-85pct.pprof")
+	require.Contains(t, heapProfileNames(t, p3.dir), "2026-08-14T10-00-30+0800.85pct.pprof")
 
 	cooldownTime = start.Add(40 * time.Second)
 	setHeapProfileMemInuse(m3, 640)
@@ -170,9 +170,9 @@ func TestHeapProfileCaptureMetadata(t *testing.T) {
 
 	p.capture(m, 70)
 
-	base := "heap-20260814T100000+0800-70pct"
+	base := "2026-08-14T10-00-00+0800.70pct"
 	profilePath := filepath.Join(dir, base+".pprof")
-	metadataPath := filepath.Join(dir, base+".json")
+	metadataPath := filepath.Join(dir, base+heapProfileMetadataSuffix)
 	profile, err := os.ReadFile(profilePath)
 	require.NoError(t, err)
 	require.Equal(t, "profile", string(profile))
@@ -189,6 +189,10 @@ func TestHeapProfileCaptureMetadata(t *testing.T) {
 	require.Equal(t, 70, metadata.ThresholdPct)
 	require.Equal(t, int64(700), metadata.StartState.MemInuse)
 	require.Equal(t, int64(0), metadata.DurationMs)
+	require.Contains(t, string(metadataBytes), "\n  \"start_time\"")
+	require.Contains(t, string(metadataBytes), "\"mem_inuse_bytes\"")
+	require.True(t, strings.HasSuffix(string(metadataBytes), "\n"))
+	require.NotContains(t, string(metadataBytes), "\"mem_inuse\"")
 	require.NotContains(t, string(metadataBytes), "profile_size_bytes")
 }
 
@@ -255,30 +259,52 @@ func TestHeapProfileRetention(t *testing.T) {
 	require.NoError(t, os.MkdirAll(dir, 0750))
 	start := time.Date(2026, time.August, 14, 10, 0, 0, 0, time.FixedZone("CST", 8*60*60))
 	for i := 0; i < 12; i++ {
-		base := "heap-" + start.Add(time.Duration(i)*time.Minute).Format("20060102T150405Z0700") + "-70pct"
+		base := start.Add(time.Duration(i)*time.Minute).Format(heapProfileTimestampLayout) + ".70pct"
 		require.NoError(t, os.WriteFile(filepath.Join(dir, base+".pprof"), []byte("profile"), 0600))
-		require.NoError(t, os.WriteFile(filepath.Join(dir, base+".json"), []byte("{}"), 0600))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, base+heapProfileMetadataSuffix), []byte("{}"), 0600))
 	}
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "heap-orphan.json"), []byte("{}"), 0600))
+	orphanMetadata := start.Add(12*time.Minute).Format(heapProfileTimestampLayout) + ".70pct" + heapProfileMetadataSuffix
+	require.NoError(t, os.WriteFile(filepath.Join(dir, orphanMetadata), []byte("{}"), 0600))
+	unknownFiles := []string{
+		"heap-manual.pprof",
+		start.Format(heapProfileTimestampLayout) + ".70pct.json",
+		start.Format(heapProfileTimestampLayout) + ".90pct.pprof",
+		start.Format(heapProfileTimestampLayout) + "-70pct.pprof",
+	}
+	for _, name := range unknownFiles {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte("unknown"), 0600))
+	}
 	require.NoError(t, os.WriteFile(filepath.Join(dir, ".heap-profile.stale.tmp"), []byte("tmp"), 0600))
 
 	p := &heapProfileCollector{dir: dir}
 	p.enforceRetention()
 	names := heapProfileNames(t, dir)
-	require.Len(t, names, heapProfileMaxGroups*2)
 	for i := 0; i < 12-heapProfileMaxGroups; i++ {
-		base := "heap-" + start.Add(time.Duration(i)*time.Minute).Format("20060102T150405Z0700") + "-70pct"
+		base := start.Add(time.Duration(i)*time.Minute).Format(heapProfileTimestampLayout) + ".70pct"
 		require.NotContains(t, names, base+".pprof")
-		require.NotContains(t, names, base+".json")
+		require.NotContains(t, names, base+heapProfileMetadataSuffix)
 	}
 	for i := 12 - heapProfileMaxGroups; i < 12; i++ {
-		base := "heap-" + start.Add(time.Duration(i)*time.Minute).Format("20060102T150405Z0700") + "-70pct"
+		base := start.Add(time.Duration(i)*time.Minute).Format(heapProfileTimestampLayout) + ".70pct"
 		require.Contains(t, names, base+".pprof")
-		require.Contains(t, names, base+".json")
+		require.Contains(t, names, base+heapProfileMetadataSuffix)
+	}
+	require.NotContains(t, names, orphanMetadata)
+	for _, name := range unknownFiles {
+		require.Contains(t, names, name)
 	}
 	for _, name := range names {
-		require.False(t, strings.Contains(name, "orphan") || strings.HasSuffix(name, ".tmp"))
+		require.False(t, strings.HasSuffix(name, ".tmp"))
 	}
+
+	base, captureTime, isProfile, ok := parseHeapProfileFileName("2026-08-14T10-00-00-0700.85pct.meta.json")
+	require.True(t, ok)
+	require.False(t, isProfile)
+	require.Equal(t, "2026-08-14T10-00-00-0700.85pct", base)
+	_, offset := captureTime.Zone()
+	require.Equal(t, -7*60*60, offset)
+	_, _, _, ok = parseHeapProfileFileName("2026-08-14T10-00-00+0800.90pct.pprof")
+	require.False(t, ok)
 }
 
 func TestHandleGlobalMemArbitratorRuntimeWithoutCollector(t *testing.T) {
