@@ -44,7 +44,7 @@ The Rust TiDB implementation on `hparser-integration` must make the same optimiz
 - [x] (2026-08-16) Completed the cross-crate self-review and focused PD/server gates: timestamp future 1/1, MaxTS/snapshot 20/20, autocommit transaction 21/21, prepared AST 1/1, and loaded-statistics propagation 1/1.
 - [x] (2026-08-16) Prepared one coupled package-coherent commit inventory for the complete Go planner/core + funcdep mapping and its required runtime integration; splitting it would leave non-compiling cross-crate interfaces.
 - [x] (2026-08-16) Fetched `origin/hparser-integration`; local HEAD is 20 commits ahead and 0 behind, so no integration or gate-invalidating conflict is required.
-- [ ] Push with `git push origin HEAD:hparser-integration` without force.
+- [x] (2026-08-16) Pushed implementation commit `159bbd52e3` to `origin/hparser-integration` by fast-forward with no force.
 
 ## Surprises & Discoveries
 
@@ -179,7 +179,7 @@ The Rust TiDB implementation on `hparser-integration` must make the same optimiz
 
 ## Outcomes & Retrospective
 
-The reconciled implementation satisfies the final local workload, package, and Ready gates: TPCC transaction plans are 63/63, TPCC consistency plans are 12/12, Sysbench plans are 13,984/13,984, and Rust's five-pair two-client median is 6,824.0 QPS against Go's 6,381.0 QPS. Full executor and session library suites are clean, as are the focused PD future, MaxTS/snapshot, autocommit transaction, prepared-AST, and statistics-propagation gates. The fetched remote has no commits absent from local HEAD. Remaining work is the package-coherent commit and normal push.
+The reconciled implementation satisfies the final local workload, package, and Ready gates: TPCC transaction plans are 63/63, TPCC consistency plans are 12/12, Sysbench plans are 13,984/13,984, and Rust's five-pair two-client median is 6,824.0 QPS against Go's 6,381.0 QPS. Full executor and session library suites are clean, as are the focused PD future, MaxTS/snapshot, autocommit transaction, prepared-AST, and statistics-propagation gates. The implementation was committed as one coupled package-coherent unit at `159bbd52e3` and pushed normally to `origin/hparser-integration`.
 
 ## Context and Orientation
 
