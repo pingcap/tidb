@@ -38,11 +38,12 @@ pub trait Selectable {
 /// Performs the introselect algorithm on `data` and returns the index of the
 /// `k`-th smallest value (`k` starts from 1), or `None` if `data` is empty.
 pub fn select<T: Selectable + ?Sized>(data: &mut T, k: usize) -> Option<usize> {
-    if data.len() > 0 {
-        Some(introselect(data, 0, data.len() - 1, k - 1, 6))
-    } else {
-        None
+    if data.is_empty() {
+        return None;
     }
+    // Go computes `k-1` on an int and tolerates the resulting -1 for k=0,
+    // which selects the smallest element; saturating keeps that rank.
+    Some(introselect(data, 0, data.len() - 1, k.saturating_sub(1), 6))
 }
 
 /// Performs quickselect at the beginning, switching to the linear-time
@@ -245,6 +246,10 @@ mod tests {
         assert_eq!(data.0[first], 1);
         let last = select(&mut data, 5).unwrap();
         assert_eq!(data.0[last], 9);
+
+        // Go's `k-1` on rank zero is -1, which still selects the smallest.
+        let zero = select(&mut data, 0).unwrap();
+        assert_eq!(data.0[zero], 1);
     }
 
     // Go `TestSelectionWithRandomCase`.

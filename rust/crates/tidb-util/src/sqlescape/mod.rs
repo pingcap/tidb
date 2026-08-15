@@ -311,6 +311,53 @@ fn append_time(buffer: &mut Vec<u8>, value: Option<NaiveDateTime>) {
     }
 }
 
+/// Go's `%v` spelling of an argument, used by the `%n` type error. Go prints
+/// the dynamic value itself, so a byte slice reads as its decimal element
+/// list and a string reads as its raw bytes.
+fn go_value_string(argument: &SqlArg<'_>) -> String {
+    fn byte_list(value: &[u8]) -> String {
+        let elements: Vec<String> = value.iter().map(u8::to_string).collect();
+        format!("[{}]", elements.join(" "))
+    }
+
+    match argument {
+        SqlArg::Null | SqlArg::Bytes(None) => "<nil>".to_owned(),
+        SqlArg::Signed(value) => value.to_string(),
+        SqlArg::Unsigned(value) => value.to_string(),
+        SqlArg::Float32(value) => format_go_float32(*value),
+        SqlArg::Float64(value) => format_go_float64(*value),
+        SqlArg::Bool(value) => value.to_string(),
+        // Go's `time.Time.String`; these arguments carry no zone, which is
+        // exactly the zero offset Go's UTC times print.
+        SqlArg::Time(None) => "0001-01-01 00:00:00 +0000 UTC".to_owned(),
+        SqlArg::Time(Some(value)) => format!("{} +0000 UTC", value.format("%Y-%m-%d %H:%M:%S%.f")),
+        SqlArg::RawJson(value) | SqlArg::Bytes(Some(value)) => byte_list(value),
+        SqlArg::String(value) => String::from_utf8_lossy(value).into_owned(),
+        SqlArg::Strings(values) => {
+            let elements: Vec<String> = values
+                .iter()
+                .map(|value| String::from_utf8_lossy(value).into_owned())
+                .collect();
+            format!("[{}]", elements.join(" "))
+        }
+        SqlArg::Float32s(values) => {
+            let elements: Vec<String> = values
+                .iter()
+                .map(|value| format_go_float32(*value))
+                .collect();
+            format!("[{}]", elements.join(" "))
+        }
+        SqlArg::Float64s(values) => {
+            let elements: Vec<String> = values
+                .iter()
+                .map(|value| format_go_float64(*value))
+                .collect();
+            format!("[{}]", elements.join(" "))
+        }
+        SqlArg::Unsupported(value) => (*value).to_owned(),
+    }
+}
+
 fn append_string_argument(mut buffer: Vec<u8>, value: &[u8]) -> Vec<u8> {
     buffer.push(b'\'');
     buffer = escape_string_backslash(buffer, value);
@@ -404,7 +451,7 @@ fn escape_sql_impl(
                         })?;
                 argument_position += 1;
                 let SqlArg::String(identifier) = argument else {
-                    return Err(EscapeError::IdentifierType(format!("{argument:?}")));
+                    return Err(EscapeError::IdentifierType(go_value_string(argument)));
                 };
                 buffer.push(b'`');
                 for byte in identifier.iter().copied() {
@@ -918,6 +965,25 @@ mod tests {
             ("+ -><()~*:\"\"&|", "+ -><()~*:\\\"\\\"&|"),
         ] {
             assert_eq!(escape_string(input), expected.as_bytes());
+        }
+    }
+
+    #[test]
+    fn identifier_type_error_prints_the_go_value_spelling() {
+        // Go formats the offending argument with %v, so the message shows the
+        // value itself rather than any type wrapper.
+        for (argument, expected) in [
+            (SqlArg::from(3_i64), "expect a string identifier, got 3"),
+            (SqlArg::from(true), "expect a string identifier, got true"),
+            (SqlArg::from(1.5_f64), "expect a string identifier, got 1.5"),
+            (
+                SqlArg::Bytes(Some(b"hi")),
+                "expect a string identifier, got [104 105]",
+            ),
+            (SqlArg::Null, "expect a string identifier, got <nil>"),
+        ] {
+            let error = escape_sql("use %n", &[argument]).unwrap_err();
+            assert_eq!(error.to_string(), expected);
         }
     }
 

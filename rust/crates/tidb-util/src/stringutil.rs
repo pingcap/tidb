@@ -695,11 +695,15 @@ mod tests {
     #[test]
     fn labels_glob_and_memoization_source_vectors() {
         assert_eq!(build_string_from_labels(&HashMap::new()), "");
+        let one_label = HashMap::from([("aaa".to_owned(), "bbb".to_owned())]);
+        assert_eq!(build_string_from_labels(&one_label), "aaa=bbb");
         let labels = HashMap::from([
             ("ccc".to_owned(), "ddd".to_owned()),
             ("aaa".to_owned(), "bbb".to_owned()),
         ]);
         assert_eq!(build_string_from_labels(&labels), "aaa=bbb,ccc=ddd");
+        assert_eq!(escape_glob_question_mark("123"), "123");
+        assert_eq!(escape_glob_question_mark("12*3"), "12*3");
         assert_eq!(escape_glob_question_mark("12?"), r"12\?");
         assert_eq!(escape_glob_question_mark("[1-2]"), "[1-2]");
 
