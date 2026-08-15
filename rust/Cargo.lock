@@ -2698,6 +2698,7 @@ dependencies = [
  "sha2",
  "snap",
  "tempfile",
+ "tidb-config",
  "tidb-datatype",
  "tidb-error",
  "tidb-hack",

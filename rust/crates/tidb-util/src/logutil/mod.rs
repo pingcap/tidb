@@ -566,14 +566,9 @@ pub fn with_category(base: &Logger, category: &str) -> Logger {
     )])
 }
 
-/// Trace info attached to logs (Go `tracing.TraceInfo`).
-#[derive(Clone, Default, Debug)]
-pub struct TraceInfo {
-    /// Connection ID.
-    pub connection_id: u64,
-    /// Session alias.
-    pub session_alias: String,
-}
+/// Trace info attached to logs. Go's `logutil` imports this straight from
+/// `pkg/util/tracing`, so the type has one owner here too.
+pub use crate::tracing::TraceInfo;
 
 /// Go `fieldsFromTraceInfo`.
 pub fn fields_from_trace_info(info: Option<&TraceInfo>) -> Vec<Field> {
@@ -887,6 +882,7 @@ mod tests {
             Some(&TraceInfo {
                 connection_id: 456,
                 session_alias: "alias789".into(),
+                trace_id: Vec::new(),
             }),
         );
         test_logger_output(&logger, &filename, &with_trace_pattern);
@@ -897,6 +893,7 @@ mod tests {
             Some(&TraceInfo {
                 connection_id: 789,
                 session_alias: "alias012".into(),
+                trace_id: Vec::new(),
             }),
         );
         test_logger_output(&logger, &filename, &with_trace_pattern);
@@ -940,18 +937,21 @@ mod tests {
         let f = fields_from_trace_info(Some(&TraceInfo {
             connection_id: 1,
             session_alias: String::new(),
+            trace_id: Vec::new(),
         }));
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].key, "conn");
         let f = fields_from_trace_info(Some(&TraceInfo {
             connection_id: 0,
             session_alias: "alias123".into(),
+            trace_id: Vec::new(),
         }));
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].key, "session_alias");
         let f = fields_from_trace_info(Some(&TraceInfo {
             connection_id: 1,
             session_alias: "alias123".into(),
+            trace_id: Vec::new(),
         }));
         assert_eq!(f.len(), 2);
     }

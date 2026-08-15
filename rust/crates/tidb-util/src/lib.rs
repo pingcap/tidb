@@ -77,6 +77,7 @@ pub mod texttree;
 pub use tidb_tikvutil as tikvutil;
 pub mod timeutil;
 pub mod tls;
+pub mod tracing;
 pub mod versioninfo;
 pub mod vitess;
 pub mod watcher;
