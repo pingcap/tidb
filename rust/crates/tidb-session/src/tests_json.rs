@@ -1212,24 +1212,17 @@ fn json_validation_results_render_as_json_booleans() {
 /// `JSON_TYPE` cannot report Go's typed names, and the reason is NOT
 /// `json/report.rs`.
 ///
-/// CAPTURED from a running TiDB: `json_type(cast(cast(1 as unsigned) as
-/// json))` is `UNSIGNED INTEGER`, a date is `DATE`, a datetime `DATETIME`, a
-/// time `TIME`, and `cast(x'aabb' as json)` is `BLOB`. This tier answers
-/// `INTEGER` for the first and RAISES for the rest.
+/// The typed JSON names a CAST produces, all CAPTURED from a running TiDB
+/// (`gorun`, 2026-08-15): a date is `DATE` printing `"2020-01-01"`, a
+/// datetime `DATETIME` printing at `MaxFsp` (`"2020-01-01 00:00:00.000000"`),
+/// a time `TIME` at `MaxFsp` (`"12:30:00.000000"`), and a binary literal is
+/// the Opaque `"base64:type253:qrs="` whose `JSON_TYPE` is `BLOB`.
 ///
-/// `BinaryJSON::type_name` (`tidb-datatype`) already produces every one of
-/// those names correctly, and routing `json_type`'s `Datum::Json` arm
-/// through it changes NOTHING here -- measured, byte for byte, on all five
-/// cases. The arm is dead in the live path: `cast_as_json` renders the
-/// BinaryJSON to serde_json TEXT and returns a `Datum::String`, so the type
-/// code is already gone before `json_type` is called. The loss is the JSON
-/// tier's text representation, not this function.
-///
-/// This test records the measured state so the divergence is visible and so
-/// a real fix -- one that keeps the binary document -- is detected by these
-/// assertions failing.
+/// The one loss left is unsignedness: Go answers `UNSIGNED INTEGER` for
+/// `cast(cast(1 as unsigned) as json)` where this tier answers `INTEGER`,
+/// because the cast still narrows through the text JSON model for numerics.
 #[test]
-fn json_type_loses_gos_typed_names_at_cast_not_at_json_type() {
+fn cast_as_json_keeps_gos_typed_names_except_unsignedness() {
     let mut session = Session::new();
     let text = |session: &mut Session, sql: &str| match session.run(sql) {
         Ok(StmtResult::Rows(rows)) => Ok(datum_text(&rows[0][0]).unwrap()),
@@ -1246,17 +1239,36 @@ fn json_type_loses_gos_typed_names_at_cast_not_at_json_type() {
         ),
         Ok("INTEGER".to_owned())
     );
-    // Go: DATE / DATETIME / BLOB. Here the CAST itself cannot render them as
-    // JSON text, so the statement raises before JSON_TYPE runs.
-    for sql in [
-        "SELECT json_type(cast(cast('2020-01-01' as date) as json))",
-        "SELECT json_type(cast(cast('2020-01-01 00:00:00' as datetime) as json))",
-        "SELECT json_type(cast(x'aabb' as json))",
+    // The typed arms, name and printed document both matching Go.
+    for (sql, expected) in [
+        (
+            "SELECT json_type(cast(cast('2020-01-01' as date) as json))",
+            "DATE",
+        ),
+        (
+            "SELECT json_type(cast(cast('2020-01-01 00:00:00' as datetime) as json))",
+            "DATETIME",
+        ),
+        (
+            "SELECT json_type(cast(cast('12:30:00' as time) as json))",
+            "TIME",
+        ),
+        ("SELECT json_type(cast(x'aabb' as json))", "BLOB"),
+        (
+            "SELECT cast(cast('2020-01-01' as date) as json)",
+            "\"2020-01-01\"",
+        ),
+        (
+            "SELECT cast(cast('2020-01-01 00:00:00' as datetime) as json)",
+            "\"2020-01-01 00:00:00.000000\"",
+        ),
+        (
+            "SELECT cast(cast('12:30:00' as time) as json)",
+            "\"12:30:00.000000\"",
+        ),
+        ("SELECT cast(x'aabb' as json)", "\"base64:type253:qrs=\""),
     ] {
-        assert!(
-            text(&mut session, sql).is_err(),
-            "{sql} unexpectedly answered"
-        );
+        assert_eq!(text(&mut session, sql), Ok(expected.to_owned()), "{sql}");
     }
     // The paths that do NOT go through a typed literal agree with Go.
     assert_eq!(

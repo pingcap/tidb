@@ -146,11 +146,75 @@ pub(crate) fn cast_as_json(value: &Datum) -> Result<Datum, EvalError> {
     if value.is_null() {
         return Ok(Datum::Null);
     }
+    if let Some(typed) = typed_cast_json(value) {
+        return typed;
+    }
     let json = match json_sql_string(value)? {
         Some(text) => parse_json(text)?,
         None => datum_json_scalar(value)?,
     };
     binary_json_datum(json)
+}
+
+/// The cast arms whose result is a TYPED binary JSON value -- one the text
+/// [`Json`] model cannot carry, so the round trip through
+/// [`binary_json_datum`] would collapse it into a JSON string. `None` means
+/// the argument has no typed arm and takes the ordinary path.
+///
+/// Each arm is one Go cast signature (all captured through `gorun`):
+///
+/// - `builtinCastTimeAsJSONSig`: DATETIME/TIMESTAMP get `types.MaxFsp`
+///   before conversion (`"2020-01-01 00:00:00.000000"`), DATE keeps printing
+///   bare (`"2020-01-01"`; [`tidb_datatype::Time::set_fsp`] carries Go's
+///   DATE no-op). `JSON_TYPE` answers `DATE`/`DATETIME`.
+/// - `builtinCastDurationAsJSONSig`: the duration is re-stamped at
+///   `types.MaxFsp` (`"12:30:00.000000"`), `JSON_TYPE` answers `TIME`.
+/// - `builtinCastStringAsJSONSig`'s BINARY-charset arm for a binary
+///   LITERAL: `x'aabb'` and `b'101'` are `KindBinaryLiteral` values whose
+///   static type is `var_string`, so they become the JSON Opaque
+///   `"base64:type253:..."` and `JSON_TYPE` answers `BLOB`. (A BIT COLUMN
+///   is unlike the literal: Go routes it through the INT cast -- measured,
+///   `cast(b AS JSON)` answers `5` -- a signature-selection step this tier
+///   does not have yet, so `Datum::Bit` keeps the ordinary path below.)
+fn typed_cast_json(value: &Datum) -> Option<Result<Datum, EvalError>> {
+    match value {
+        Datum::Time(time) => {
+            let mut time = *time;
+            if time.set_fsp(tidb_datatype::MAX_FSP).is_err() {
+                return Some(Err(EvalError::Unsupported("datum JSON conversion")));
+            }
+            Some(
+                Datum::Time(time)
+                    .to_mysql_json()
+                    .map(Datum::Json)
+                    .map_err(|_| EvalError::Unsupported("datum JSON conversion")),
+            )
+        }
+        Datum::Duration(duration) => Some(
+            tidb_datatype::MySqlDuration::from_nanoseconds(
+                duration.nanoseconds(),
+                tidb_datatype::MAX_FSP,
+            )
+            .map_err(|_| EvalError::Unsupported("datum JSON conversion"))
+            .and_then(|duration| {
+                Datum::Duration(duration)
+                    .to_mysql_json()
+                    .map(Datum::Json)
+                    .map_err(|_| EvalError::Unsupported("datum JSON conversion"))
+            }),
+        ),
+        Datum::BinaryLiteral(literal) => Some(
+            BinaryJSON::from_typed_value(&tidb_datatype::BinaryJSONValue::Opaque(
+                tidb_datatype::Opaque {
+                    type_code: tidb_datatype::FieldTypeCode::VarString.mysql_type(),
+                    bytes: literal.as_bytes().to_vec(),
+                },
+            ))
+            .map(Datum::Json)
+            .map_err(|_| EvalError::Unsupported("datum JSON conversion")),
+        ),
+        _ => None,
+    }
 }
 
 fn binary_json_datum(json: Json) -> Result<Datum, EvalError> {

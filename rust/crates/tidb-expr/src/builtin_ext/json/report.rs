@@ -194,6 +194,16 @@ pub(super) fn json_type(v: &Datum) -> Result<Datum, EvalError> {
     if v.is_null() {
         return Ok(Datum::Null);
     }
+    // A binary JSON value carries its own type code, and Go answers straight
+    // from it (`BinaryJSON.Type()`). Rendering to text first would collapse
+    // the typed codes -- DATE/DATETIME/TIME and the Opaque family -- into
+    // STRING, which is exactly the names `CAST(.. AS JSON)` now preserves.
+    if let Datum::Json(document) = v {
+        return document
+            .type_name()
+            .map(|name| Datum::new_string(name.to_owned()))
+            .map_err(|_| EvalError::Json(JsonError::InvalidText));
+    }
     let Some(s) = json_document_string(v)?.map(std::borrow::Cow::into_owned) else {
         return Err(crate::EvalError::Json(
             crate::JsonError::InvalidTypeForJson {
