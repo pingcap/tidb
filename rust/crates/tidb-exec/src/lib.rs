@@ -98,6 +98,7 @@ pub use tidb_vardef::global_sysvar_initial;
 pub mod group_concat;
 pub mod hash_join_version;
 pub mod hint_updatable_vars;
+pub mod infoschema_context;
 pub mod insert_rows_col_multiply;
 pub mod isolation_state;
 pub mod join_table_meta;
