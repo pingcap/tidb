@@ -381,6 +381,22 @@ select id, title from articles where match(title) against('+MySQL -tutorial' in 
 -- error 1235
 select id, title from articles where match(title) against('Optim*' in boolean mode);
 
+# Test 56: The substring predicates a local MATCH entails are pushed to the
+# storage layer, while the MATCH itself stays in TiDB as the exact residual.
+set @@tidb_enable_local_match_against=ON;
+explain format='brief' select id from articles where match(title) against('+MySQL +tutorial' in boolean mode);
+
+# Test 57: A prefix contributes to the pre-filter even though it cannot be an
+# exact token lookup, so the query still narrows before reaching TiDB.
+explain format='brief' select id from articles where match(title) against('+Optim*' in boolean mode);
+
+# Test 58: Results are unchanged by the pre-filter. 'Optimiz' must still match
+# nothing on a word boundary, even though the pushed-down LIKE '%optimiz%'
+# matches 'Optimizing MySQL'.
+select id, title from articles where match(title) against('+Optimiz' in boolean mode);
+select id, title from articles where match(title) against('+MySQL +tutorial' in boolean mode);
+set @@tidb_enable_local_match_against=OFF;
+
 # Cleanup
 set @@tidb_opt_enable_alternative_logical_plans=OFF;
 drop table if exists articles;

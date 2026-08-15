@@ -301,5 +301,26 @@ id	title
 5	MySQL Security
 select id, title from articles where match(title) against('Optim*' in boolean mode);
 Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST search term 'Optim*' is not supported in the LIKE fallback'
+set @@tidb_enable_local_match_against=ON;
+explain format='brief' select id from articles where match(title) against('+MySQL +tutorial' in boolean mode);
+id	estRows	task	access object	operator info
+Projection	6400.00	root		planner__core__fulltext_search.articles.id
+└─Selection	6400.00	root		istrue_with_null(match_against("+MySQL +tutorial", planner__core__fulltext_search.articles.title))
+  └─TableReader	8000.00	root		data:Selection
+    └─Selection	8000.00	cop[tikv]		ifnull(like(lower(planner__core__fulltext_search.articles.title), "%mysql%", 92), 0), ifnull(like(lower(planner__core__fulltext_search.articles.title), "%tutorial%", 92), 0)
+      └─TableFullScan	10000.00	cop[tikv]	table:articles	keep order:false, stats:pseudo
+explain format='brief' select id from articles where match(title) against('+Optim*' in boolean mode);
+id	estRows	task	access object	operator info
+Projection	6400.00	root		planner__core__fulltext_search.articles.id
+└─Selection	6400.00	root		istrue_with_null(match_against("+Optim*", planner__core__fulltext_search.articles.title))
+  └─TableReader	8000.00	root		data:Selection
+    └─Selection	8000.00	cop[tikv]		ifnull(like(lower(planner__core__fulltext_search.articles.title), "%optim%", 92), 0)
+      └─TableFullScan	10000.00	cop[tikv]	table:articles	keep order:false, stats:pseudo
+select id, title from articles where match(title) against('+Optimiz' in boolean mode);
+id	title
+select id, title from articles where match(title) against('+MySQL +tutorial' in boolean mode);
+id	title
+1	MySQL Tutorial
+set @@tidb_enable_local_match_against=OFF;
 set @@tidb_opt_enable_alternative_logical_plans=OFF;
 drop table if exists articles;
