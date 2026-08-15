@@ -404,7 +404,9 @@ fn cross_db_match<'a>(
     let mut least_wildcards = table_names.len() + 1;
     let mut matched = None;
     for binding in candidates {
-        if binding.status != STATUS_ENABLED {
+        // Go `Binding.IsBindingEnabled`: `using` is the legacy spelling of
+        // `enabled`; `disabled` (and everything else) never matches.
+        if binding.status != STATUS_ENABLED && binding.status != STATUS_USING {
             continue;
         }
         let Some(wildcards) =
@@ -457,6 +459,12 @@ fn cross_db_match_table_names(
 
 /// Go `bindinfo.StatusEnabled`.
 pub(crate) const STATUS_ENABLED: &str = "enabled";
+/// Go `bindinfo.StatusDisabled`: listed by `SHOW BINDINGS`, skipped by the
+/// plan-time match.
+pub(crate) const STATUS_DISABLED: &str = "disabled";
+/// Go `bindinfo.StatusUsing`, the pre-v6 spelling of `enabled`, still
+/// accepted by `SET BINDING DISABLED`'s status guard and by the match.
+pub(crate) const STATUS_USING: &str = "using";
 /// Go `bindinfo.SourceManual`.
 pub(crate) const SOURCE_MANUAL: &str = "manual";
 

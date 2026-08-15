@@ -1209,6 +1209,7 @@ impl Session {
                 Ok(Some(self.create_binding_stmt(create)?))
             }
             tidb_ast::AdminStmt::DropBinding(drop) => Ok(Some(self.drop_binding_stmt(drop)?)),
+            tidb_ast::AdminStmt::SetBinding(set) => Ok(Some(self.set_binding_stmt(set)?)),
             tidb_ast::AdminStmt::ShowBindings(show) => Ok(Some(self.show_bindings_stmt(show)?)),
             // `ANALYZE TABLE`, over this session's own catalog. See
             // `crate::analyze_arm` for why an in-process session runs it here

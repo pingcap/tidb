@@ -482,3 +482,60 @@ fn turning_plan_baselines_off_stops_the_match() {
     session.run("select * from t where a = 2").expect("select");
     assert_eq!(matched(&mut session), "0");
 }
+
+/// Go `bindingOperator.SetBindingStatus`, end to end. Captured from real
+/// TiDB (`gorun`, 2026-08-15):
+///
+/// ```text
+/// set binding disabled for <stmt>;      -> OK
+/// show global bindings;                 -> ...|disabled|... (still listed)
+/// select * from t where a = 2; select @@last_plan_from_binding; -> 0
+/// set binding enabled for <stmt>;       -> OK
+/// select * from t where a = 2; select @@last_plan_from_binding; -> 1
+/// set binding disabled for sql digest 'deadbeef'; show warnings;
+///   -> Warning|1105|There are no bindings can be set the status. Please
+///      check the SQL text
+/// ```
+///
+/// A statement form whose literals differ (`a = 99999`) normalizes to the
+/// SAME digest, so it flips the binding rather than warning.
+#[test]
+fn set_binding_flips_the_global_row_between_disabled_and_enabled() {
+    let mut session = binding_session();
+    session
+        .run(
+            "create global binding for select * from t where a = 1 \
+             using select * from t use index(kb) where a = 1",
+        )
+        .expect("create global binding");
+
+    session
+        .run("set binding disabled for select * from t where a = 99999")
+        .expect("set binding disabled");
+    assert_eq!(joined(&mut session, "show warnings"), "");
+    let shown = joined(&mut session, "show global bindings");
+    assert!(
+        shown.contains("|disabled|"),
+        "a disabled binding is still listed: {shown}"
+    );
+    session.run("select * from t where a = 2").expect("select");
+    assert_eq!(matched(&mut session), "0", "disabled bindings never match");
+
+    // A peer session over the same catalog sees the flip both ways.
+    let mut peer = Session::with_catalog(session.shared_catalog());
+    peer.run("use test").expect("use");
+    peer.run("set binding enabled for select * from t where a = 1")
+        .expect("set binding enabled");
+    session.run("select * from t where a = 2").expect("select");
+    assert_eq!(matched(&mut session), "1", "re-enabled bindings match");
+
+    // Nothing holds the digest: the measured warning, not an error.
+    session
+        .run("set binding disabled for sql digest 'deadbeef'")
+        .expect("set binding by digest");
+    assert_eq!(
+        joined(&mut session, "show warnings"),
+        "Warning|1105|There are no bindings can be set the status. \
+         Please check the SQL text"
+    );
+}

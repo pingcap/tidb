@@ -40,6 +40,60 @@ const BIND_INFO_COLUMNS: &str = "original_sql, bind_sql, default_db, status, cre
      update_time, charset, collation, source, sql_digest";
 
 impl Session {
+    /// Go `SQLBindExec.setBindingStatus[ByDigest]` over
+    /// `bindingOperator.SetBindingStatus`: one UPDATE flipping the row
+    /// between `enabled` and `disabled`, guarded by the CURRENT status --
+    /// disabling accepts `using` (the legacy enabled spelling) and
+    /// `enabled`, enabling accepts only `disabled`. Zero rows touched is
+    /// not an error but the measured warning.
+    pub(crate) fn set_binding_stmt(
+        &mut self,
+        set: &tidb_ast::SetBindingStmt,
+    ) -> Result<StmtOutput, DriverError> {
+        let digest = match &set.target {
+            tidb_ast::SetBindingTarget::Statement(target) => {
+                let current_db = self.current_db.clone();
+                let (_, digest) = binding::normalize_with_db(target.origin.as_ref(), &current_db);
+                digest
+            }
+            tidb_ast::SetBindingTarget::SqlDigest(digest) => digest.clone(),
+        };
+        let (new_status, old_status0, old_status1) = match set.status {
+            tidb_ast::BindingStatus::Enabled => (
+                STATUS_ENABLED,
+                binding::STATUS_DISABLED,
+                binding::STATUS_DISABLED,
+            ),
+            tidb_ast::BindingStatus::Disabled => (
+                binding::STATUS_DISABLED,
+                binding::STATUS_USING,
+                STATUS_ENABLED,
+            ),
+        };
+        let now = self.global_binding_timestamp();
+        let changed = self.bind_info_exec(
+            "UPDATE mysql.bind_info SET status = ?, update_time = ? \
+             WHERE sql_digest = ? AND update_time < ? AND status IN (?, ?)",
+            &[
+                Datum::new_string(new_status.to_owned()),
+                Datum::new_string(now.clone()),
+                Datum::new_string(digest),
+                Datum::new_string(now),
+                Datum::new_string(old_status0.to_owned()),
+                Datum::new_string(old_status1.to_owned()),
+            ],
+        )?;
+        if changed == 0 {
+            // Go wraps `errors.NewNoStackError(...)` as an ordinary 1105.
+            self.append_warning(
+                crate::WarningLevel::Warning,
+                1105,
+                "There are no bindings can be set the status. Please check the SQL text".to_owned(),
+            );
+        }
+        Ok(StmtOutput::Affected(0))
+    }
+
     /// Go `SQLBindExec`'s create half, for `CREATE [SESSION] BINDING FOR
     /// <origin> USING <hinted>`.
     pub(crate) fn create_binding_stmt(
@@ -446,9 +500,16 @@ impl Session {
         for row in rows {
             let text = |index: usize| crate::datum_text(row.get(index)?);
             let Some(status) = text(3) else { continue };
-            if status != STATUS_ENABLED {
-                continue;
-            }
+            // Live rows only: `SHOW GLOBAL BINDINGS` lists `disabled` rows
+            // (measured) and the match filter skips them by status; the
+            // `builtin` lock row and `deleted` tombstones never load, as in
+            // Go's cache.
+            let status = match status.as_str() {
+                s if s == STATUS_ENABLED => STATUS_ENABLED,
+                s if s == binding::STATUS_USING => binding::STATUS_USING,
+                s if s == binding::STATUS_DISABLED => binding::STATUS_DISABLED,
+                _ => continue,
+            };
             let (Some(original_sql), Some(bind_sql), Some(db), Some(sql_digest)) =
                 (text(0), text(1), text(2), text(9))
             else {
@@ -464,7 +525,7 @@ impl Session {
                 original_sql,
                 bind_sql,
                 db,
-                status: STATUS_ENABLED,
+                status,
                 charset: text(6).unwrap_or_default(),
                 collation: text(7).unwrap_or_default(),
                 source: SOURCE_MANUAL,
