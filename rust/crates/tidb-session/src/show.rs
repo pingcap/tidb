@@ -1210,7 +1210,22 @@ impl Session {
             }
             tidb_ast::AdminStmt::DropBinding(drop) => Ok(Some(self.drop_binding_stmt(drop)?)),
             tidb_ast::AdminStmt::SetBinding(set) => Ok(Some(self.set_binding_stmt(set)?)),
-            tidb_ast::AdminStmt::ShowBindings(show) => Ok(Some(self.show_bindings_stmt(show)?)),
+            tidb_ast::AdminStmt::ShowBindings(show) => {
+                let output = self.show_bindings_stmt(show)?;
+                // Measured on real TiDB: `LIKE` filters on `Original_sql`
+                // CASE-SENSITIVELY (`like '%KB%'` over a lowercase binding
+                // answers nothing), so the literal is NOT folded the way
+                // `SHOW DATABASES LIKE` folds -- `has_extractor: false`.
+                let (like_pattern, where_clause) = match &show.filter {
+                    None => (None, None),
+                    Some(tidb_ast::ShowBindingsFilter::Like(expr)) => {
+                        let value = datum_text(&self.eval_value(expr)?);
+                        (Some(ShowLikePattern::from_expr(expr, value, false)), None)
+                    }
+                    Some(tidb_ast::ShowBindingsFilter::Where(expr)) => (None, Some(expr)),
+                };
+                filter_show_output(output, like_pattern, where_clause).map(Some)
+            }
             // `ANALYZE TABLE`, over this session's own catalog. See
             // `crate::analyze_arm` for why an in-process session runs it here
             // rather than routing it at a cluster node that can write

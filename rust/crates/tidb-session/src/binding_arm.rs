@@ -262,11 +262,6 @@ impl Session {
         &mut self,
         show: &ShowBindingsStmt,
     ) -> Result<StmtOutput, DriverError> {
-        if show.filter.is_some() {
-            return Err(DriverError::unsupported(
-                "SHOW BINDINGS filters are not supported yet",
-            ));
-        }
         let text = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
         let columns = [
             "Original_sql",

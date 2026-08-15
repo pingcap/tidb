@@ -539,3 +539,62 @@ fn set_binding_flips_the_global_row_between_disabled_and_enabled() {
          Please check the SQL text"
     );
 }
+
+/// `SHOW [GLOBAL] BINDINGS LIKE / WHERE`, captured from real TiDB
+/// (`gorun`, 2026-08-15) over two bindings whose `Original_sql` are
+/// `... where `a` = ?` and `... where `b` = ?`:
+///
+/// ```text
+/// show global bindings like '%b%';   -> the `b` row alone
+/// show global bindings like '%B%';   -> empty (the LIKE is CASE-SENSITIVE,
+///                                       unlike SHOW DATABASES' folded match)
+/// show global bindings where default_db = 'test'; -> both rows
+/// ```
+#[test]
+fn show_bindings_filters_on_original_sql_case_sensitively() {
+    let mut session = binding_session();
+    for statement in [
+        "create global binding for select * from t where a = 1 \
+         using select * from t use index(kb) where a = 1",
+        "create global binding for select * from t where b = 5 \
+         using select * from t ignore index(kb) where b = 5",
+    ] {
+        session.run(statement).expect("create global binding");
+    }
+
+    let liked = joined(&mut session, "show global bindings like '%b%'");
+    assert!(
+        liked.starts_with("select * from `test` . `t` where `b` = ?|") && !liked.contains(';'),
+        "LIKE keeps exactly the row whose Original_sql matches: {liked}"
+    );
+    assert_eq!(
+        joined(&mut session, "show global bindings like '%B%'"),
+        "",
+        "the LIKE is case-sensitive"
+    );
+    let both = joined(
+        &mut session,
+        "show global bindings where default_db = 'test'",
+    );
+    assert_eq!(both.matches("|test|enabled|").count(), 2, "{both}");
+    assert_eq!(
+        joined(
+            &mut session,
+            "show global bindings where default_db = 'other'"
+        ),
+        ""
+    );
+
+    // The same filter layer serves SESSION scope.
+    session
+        .run(
+            "create session binding for select * from t where a = 1 \
+             using select * from t use index(kb) where a = 1",
+        )
+        .expect("create session binding");
+    let liked = joined(&mut session, "show bindings like '%a%'");
+    assert!(
+        liked.starts_with("select * from `test` . `t` where `a` = ?|"),
+        "{liked}"
+    );
+}
