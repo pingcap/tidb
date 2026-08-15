@@ -1746,6 +1746,11 @@ impl Session {
             // Go `ShowExec.fetchShowProcessList`: one row per live
             // connection of this server, read from the session manager.
             tidb_ast::AdminStmt::ShowInspection(show) => {
+                // Go `ShowExec.fetchShowBindingCacheStatus`; see
+                // `crate::binding_arm`.
+                if show.kind == tidb_ast::ShowInspectionKind::BindingCacheStatus {
+                    return Ok(Some(self.binding_cache_status_stmt()?));
+                }
                 if show.kind != tidb_ast::ShowInspectionKind::ProcessList {
                     return Ok(None);
                 }

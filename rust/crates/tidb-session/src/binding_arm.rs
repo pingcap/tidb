@@ -258,6 +258,63 @@ impl Session {
     }
 
     /// Go `fetchShowBind`, session scope.
+    /// Go `ShowExec.fetchShowBindingCacheStatus`: the cache count is the
+    /// enabled/`using` bindings the handle holds, the table count is
+    /// `count(*)` over the same statuses, and the usage is the sum of
+    /// `Binding.size()` -- each string field's byte length plus two 16-byte
+    /// `types.Time` stamps (the `ID` a fresh binding carries is empty).
+    /// This tier's cache IS the table, so the two counts agree by
+    /// construction; on real TiDB they differ only while the cache lags a
+    /// peer's write. Captured: a fresh store answers
+    /// `0|0|0 Bytes|64 MB`, one binding `1|1|156 Bytes|64 MB`.
+    pub(crate) fn binding_cache_status_stmt(&mut self) -> Result<StmtOutput, DriverError> {
+        use crate::binding::STATUS_USING;
+        let loaded = self.load_global_bindings()?;
+        let all = loaded.all_sorted();
+        // A DISABLED row counts in NEITHER column but still holds cache
+        // memory (captured: disabling flips `1|1|156 Bytes` to
+        // `0|0|157 Bytes` -- one byte more, `disabled` over `enabled`).
+        let live = all
+            .iter()
+            .filter(|binding| binding.status == STATUS_ENABLED || binding.status == STATUS_USING)
+            .count();
+        let usage: i64 = all
+            .iter()
+            .map(|binding| {
+                (binding.original_sql.len()
+                    + binding.db.len()
+                    + binding.bind_sql.len()
+                    + binding.status.len()
+                    + 2 * 16
+                    + binding.charset.len()
+                    + binding.collation.len()) as i64
+            })
+            .sum();
+        let quota = self
+            .vars
+            .get_system("tidb_mem_quota_binding_cache")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(64 << 20);
+        let long = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong);
+        let text = || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+        let count = i64::try_from(live).unwrap_or(i64::MAX);
+        Ok(StmtOutput::Rows {
+            columns: vec![
+                ("bindings_in_cache".to_owned(), long()),
+                ("bindings_in_table".to_owned(), long()),
+                ("memory_usage".to_owned(), text()),
+                ("memory_quota".to_owned(), text()),
+            ],
+            rows: vec![vec![
+                Datum::Int(count),
+                Datum::Int(count),
+                Datum::new_string(tidb_util::memory::format_bytes(usage)),
+                Datum::new_string(tidb_util::memory::format_bytes(quota)),
+            ]],
+        })
+    }
+
     pub(crate) fn show_bindings_stmt(
         &mut self,
         show: &ShowBindingsStmt,

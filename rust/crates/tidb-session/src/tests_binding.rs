@@ -598,3 +598,35 @@ fn show_bindings_filters_on_original_sql_case_sensitively() {
         "{liked}"
     );
 }
+
+/// `SHOW BINDING_CACHE STATUS`, byte for byte against real TiDB (`gorun`,
+/// 2026-08-15): a fresh store answers `0|0|0 Bytes|64 MB`; one binding is
+/// `1|1|156 Bytes|64 MB` (Go `Binding.size()`: the string fields plus two
+/// 16-byte `types.Time` stamps); DISABLING it empties both counts but the
+/// row still holds cache memory -- `0|0|157 Bytes|64 MB`, one byte more
+/// because `disabled` outweighs `enabled`.
+#[test]
+fn binding_cache_status_reports_counts_and_gos_size_formula() {
+    let mut session = binding_session();
+    assert_eq!(
+        joined(&mut session, "show binding_cache status"),
+        "0|0|0 Bytes|64 MB"
+    );
+    session
+        .run(
+            "create global binding for select * from t where a = 1 \
+             using select * from t use index(kb) where a = 1",
+        )
+        .expect("create global binding");
+    assert_eq!(
+        joined(&mut session, "show binding_cache status"),
+        "1|1|156 Bytes|64 MB"
+    );
+    session
+        .run("set binding disabled for select * from t where a = 1")
+        .expect("set binding disabled");
+    assert_eq!(
+        joined(&mut session, "show binding_cache status"),
+        "0|0|157 Bytes|64 MB"
+    );
+}
