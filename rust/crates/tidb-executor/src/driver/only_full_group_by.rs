@@ -164,6 +164,14 @@ pub(crate) fn check_only_full_group_by(
             &mut offenders,
         );
 
+        // The correlated-projection rule exists only in Go's FD-based
+        // checker (`@@tidb_enable_new_only_full_group_by_check`, default
+        // OFF). Measured on the default checker, every one of these
+        // projections is accepted -- `SELECT COUNT(1), (SELECT COUNT(1)
+        // FROM e2 WHERE e2.a > e1.a) FROM e1` answers rows.
+        if !ctx.new_only_full_group_by_check() {
+            continue;
+        }
         let mut correlated_paths = Vec::new();
         for query in subqueries_outside_exemptions(expr) {
             super::subquery::collect_correlated_columns_query(

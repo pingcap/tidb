@@ -442,6 +442,17 @@ impl Session {
             .vars
             .get_system("tidb_partition_prune_mode")
             .is_ok_and(|value| value.eq_ignore_ascii_case("static"));
+        // Go `SessionVars.OptimizerEnableNewOnlyFullGroupByCheck`: the
+        // functional-dependency ONLY_FULL_GROUP_BY checker, OFF by default
+        // (`DefTiDBOptimizerEnableNewOFGB`).
+        let new_only_full_group_by_check = matches!(
+            self.vars
+                .get_system(
+                    tidb_vardef::tidb_vars::TIDB_OPTIMIZER_ENABLE_NEW_ONLY_FULL_GROUP_BY_CHECK
+                )
+                .as_deref(),
+            Ok("ON" | "on" | "1")
+        );
         // Go `ResetContextOfStmt`: the statement's memory budget is
         // `@@tidb_mem_quota_query` under the action `@@tidb_mem_oom_action`
         // selects. An unreadable quota falls back to the shipped 1GiB rather
@@ -566,6 +577,7 @@ impl Session {
                 .with_index_merge(index_merge)
                 .with_static_partition_prune(static_partition_prune)
                 .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
+                .with_new_only_full_group_by_check(new_only_full_group_by_check)
                 .with_session_state(current_db, version, tidb_info)
                 .with_connection_charset_info(
                     connection_charset.clone(),
@@ -611,6 +623,7 @@ impl Session {
         )
         .with_date_modes(date_modes)
         .with_only_full_group_by(has("ONLY_FULL_GROUP_BY"))
+        .with_new_only_full_group_by_check(new_only_full_group_by_check)
         .with_session_state(current_db, version, tidb_info)
         .with_connection_charset_info(connection_charset, connection_collation)
         .with_user(self.current_user.clone(), self.login_user.clone())

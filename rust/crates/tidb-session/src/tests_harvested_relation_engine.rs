@@ -928,6 +928,13 @@ fn only_full_group_by_pins_by_name_by_where_equality_and_by_candidate_key() {
 #[test]
 fn only_full_group_by_checks_correlated_scalar_subquery_dependencies() {
     let mut session = Session::new();
+    // The correlated-projection rule is the FD-based checker's; the DEFAULT
+    // checker accepts every case below (measured -- see
+    // `tests_subquery::a_scalar_subquery_beside_an_aggregate_over_an_empty_outer_is_null`,
+    // whose Apply projections run under the default mode).
+    session
+        .run("SET tidb_enable_new_only_full_group_by_check = 1")
+        .unwrap();
     session
         .run(
             "CREATE TABLE ofgb_apply (a INT, b INT NOT NULL, c INT NOT NULL, d INT, \

@@ -356,6 +356,11 @@ pub struct StmtContext {
     /// is in TiDB's DEFAULT `sql_mode`, so a session leaves this on; a context
     /// with no session behind it (a test, a DDL-time fold) is permissive.
     only_full_group_by: bool,
+    /// Go `SessionVars.OptimizerEnableNewOnlyFullGroupByCheck`
+    /// (`@@tidb_enable_new_only_full_group_by_check`, default OFF): the
+    /// functional-dependency `ONLY_FULL_GROUP_BY` checker, gating the checks
+    /// Go runs only under it.
+    new_only_full_group_by_check: bool,
     /// Go `SessionVars`'s `default_week_format` and `div_precision_increment`,
     /// which `EvalContext::GetDefaultWeekFormatMode` and
     /// `GetDivPrecisionIncrement` hand to `WEEK()` and to the `/` operator's
@@ -611,6 +616,7 @@ impl StmtContext {
             allow_auto_random_explicit_insert: false,
             shard_allocate_step: i64::MAX as u64,
             only_full_group_by: false,
+            new_only_full_group_by_check: false,
             default_week_format: 0,
             foreign_key_checks: true,
             allow_remove_auto_inc: false,
@@ -1157,6 +1163,22 @@ impl StmtContext {
     #[must_use]
     pub fn only_full_group_by(&self) -> bool {
         self.only_full_group_by
+    }
+
+    /// Sets `@@tidb_enable_new_only_full_group_by_check` for this statement.
+    #[must_use]
+    pub fn with_new_only_full_group_by_check(mut self, enabled: bool) -> Self {
+        self.new_only_full_group_by_check = enabled;
+        self
+    }
+
+    /// Whether the functional-dependency `ONLY_FULL_GROUP_BY` checker is on
+    /// (`@@tidb_enable_new_only_full_group_by_check`, default OFF as Go's
+    /// `DefTiDBOptimizerEnableNewOFGB`). Only the checks Go runs EXCLUSIVELY
+    /// under this switch consult it -- the classic checks run either way.
+    #[must_use]
+    pub fn new_only_full_group_by_check(&self) -> bool {
+        self.new_only_full_group_by_check
     }
 
     /// Sets `@@foreign_key_checks` for this statement.
