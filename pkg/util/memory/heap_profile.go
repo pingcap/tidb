@@ -175,7 +175,7 @@ func (p *heapProfileCollector) tryCapture(m *MemArbitrator) {
 
 	level := heapProfileLevels[highest]
 	if !state.lastCaptureAt.IsZero() &&
-		level.threshold <= int(state.lastCaptureThreshold) &&
+		level.threshold <= state.lastCaptureThreshold &&
 		p.currentTime().Sub(state.lastCaptureAt) < heapProfileMinInterval {
 		return
 	}
