@@ -281,8 +281,11 @@ impl AdmissibilityScan {
             | Expr::Bit(_)
             | Expr::String(_)
             | Expr::RawString(_)
+            | Expr::CharsetString { .. }
             | Expr::Null
             | Expr::Bool(_) => {}
+            // `_charset X'..'` is the same introduced literal one level down.
+            Expr::CharsetBinary { value, .. } => self.walk(value),
 
             // Go: `*ast.AggregateFuncExpr` -> ErrInvalidGroupFuncUse (1111).
             Expr::Aggregate { .. } | Expr::GroupConcat { .. } => self.agg_func = true,

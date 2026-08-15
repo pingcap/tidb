@@ -136,12 +136,15 @@ pub(crate) fn commit_fast_path_source(
         }
     }
     // Go tries the batch point get before the single one.
+    //
+    // Go `newBatchPointGetPlan`'s partitioned gate: the plan is built only
+    // when `PartitionExpr().Expr` is a bare `*expression.Column`. Measured
+    // through gorun under dynamic pruning: `HASH(b)` and `RANGE(b)` answer
+    // `Batch_Point_Get`, while `KEY(b)` (whose partition expression is nil
+    // there and a placeholder Constant here) and `HASH(b+1)` (a scalar
+    // function) fall back to the index range path.
     let fast_batch_partition_supported = table.partition().is_none_or(|partition| {
-        partition.dependencies.len() == 1
-            && matches!(
-                partition.kind,
-                crate::PartitionKind::Hash | crate::PartitionKind::Key
-            )
+        matches!(partition.expr, tidb_expr::expression::Expression::Column(_))
     });
     if let Some(decision) = (!disable_point_get && fast_batch_partition_supported)
         .then(|| try_batch_point_get(select, &table, &columns, zone, &hints, ctx))
@@ -992,9 +995,15 @@ fn commit_index_range_source(
             *from_source = Some(Box::new(exec));
             return;
         }
+        // Fix 52592 disables Go's fast point/batch plans (`tryFastPlan`
+        // returns early), so the SAME point ranges print as an ordinary
+        // index range scan while it is on.
+        let fast_point_allowed = !ctx
+            .optimizer_fix_control()
+            .get_bool_with_default(tidb_planner::fix_control::FIX_52592, false);
         // A path the ranger narrowed nothing on reads the whole index, which
         // Go names `IndexFullScan` and prints without a `range:`.
-        if point_ranges && ranges.len() == 1 {
+        if point_ranges && fast_point_allowed && ranges.len() == 1 {
             trace.index_point_get(
                 source_table_name(scope, &table.name),
                 &point_partitions,
@@ -1005,7 +1014,7 @@ fn commit_index_range_source(
                     index_columns.join(", ")
                 ),
             );
-        } else if point_ranges && ctx.static_partition_prune() {
+        } else if point_ranges && fast_point_allowed && ctx.static_partition_prune() {
             trace.index_batch_point_get(
                 source_table_name(scope, &table.name),
                 ranges.len(),
