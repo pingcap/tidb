@@ -213,14 +213,14 @@ func readRuntimeMemStats() memStats {
 // HandleGlobalMemArbitratorRuntime is used to handle runtime memory stats.
 func HandleGlobalMemArbitratorRuntime() {
 	profiler := globalArbitrator.heapProfiler.Load()
+	if globalArbitrator.v.reset.Load() && globalArbitrator.v.reset.Swap(false) {
+		if profiler != nil {
+			profiler.resetTriggerState()
+		}
+		resetGlobalMemArbitratorMetrics()
+	}
 	m := GlobalMemArbitrator()
 	if m == nil {
-		if globalArbitrator.v.reset.Load() && globalArbitrator.v.reset.Swap(false) {
-			if profiler != nil {
-				profiler.resetTriggerState()
-			}
-			resetGlobalMemArbitratorMetrics()
-		}
 		return
 	}
 	m.HandleRuntimeStats(readRuntimeMemStats())

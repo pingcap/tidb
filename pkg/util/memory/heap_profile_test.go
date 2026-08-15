@@ -77,16 +77,16 @@ func TestHeapProfileTriggerState(t *testing.T) {
 	currentTime = start.Add(time.Minute)
 	setHeapProfileMemInuse(m, 720)
 	p.tryCapture(m)
-	currentTime = start.Add(2 * time.Minute)
+	currentTime = start.Add(time.Minute + 10*time.Second)
 	setHeapProfileMemInuse(m, 820)
 	p.tryCapture(m)
-	currentTime = start.Add(3 * time.Minute)
+	currentTime = start.Add(time.Minute + 20*time.Second)
 	setHeapProfileMemInuse(m, 870)
 	p.tryCapture(m)
 	require.Equal(t, 3, writeCount)
 	require.Contains(t, heapProfileNames(t, p.dir), "heap-20260814T100100+0800-70pct.pprof")
-	require.Contains(t, heapProfileNames(t, p.dir), "heap-20260814T100200+0800-80pct.pprof")
-	require.Contains(t, heapProfileNames(t, p.dir), "heap-20260814T100300+0800-85pct.pprof")
+	require.Contains(t, heapProfileNames(t, p.dir), "heap-20260814T100110+0800-80pct.pprof")
+	require.Contains(t, heapProfileNames(t, p.dir), "heap-20260814T100120+0800-85pct.pprof")
 
 	currentTime = start.Add(4 * time.Minute)
 	setHeapProfileMemInuse(m, 760)
@@ -143,6 +143,10 @@ func TestHeapProfileTriggerState(t *testing.T) {
 	cooldownTime = start.Add(40 * time.Second)
 	setHeapProfileMemInuse(m3, 640)
 	p3.tryCapture(m3)
+	cooldownTime = start.Add(50 * time.Second)
+	setHeapProfileMemInuse(m3, 870)
+	p3.tryCapture(m3)
+	require.Equal(t, 2, cooldownWrites)
 	cooldownTime = start.Add(80 * time.Second)
 	setHeapProfileMemInuse(m3, 720)
 	p3.tryCapture(m3)
@@ -262,12 +266,12 @@ func TestHeapProfileRetention(t *testing.T) {
 	p.enforceRetention()
 	names := heapProfileNames(t, dir)
 	require.Len(t, names, heapProfileMaxGroups*2)
-	for i := 0; i < 2; i++ {
+	for i := 0; i < 12-heapProfileMaxGroups; i++ {
 		base := "heap-" + start.Add(time.Duration(i)*time.Minute).Format("20060102T150405Z0700") + "-70pct"
 		require.NotContains(t, names, base+".pprof")
 		require.NotContains(t, names, base+".json")
 	}
-	for i := 2; i < 12; i++ {
+	for i := 12 - heapProfileMaxGroups; i < 12; i++ {
 		base := "heap-" + start.Add(time.Duration(i)*time.Minute).Format("20060102T150405Z0700") + "-70pct"
 		require.Contains(t, names, base+".pprof")
 		require.Contains(t, names, base+".json")
@@ -278,7 +282,8 @@ func TestHeapProfileRetention(t *testing.T) {
 }
 
 func TestHandleGlobalMemArbitratorRuntimeWithoutCollector(t *testing.T) {
-	SetupGlobalMemArbitratorForTest(t.TempDir())
+	baseDir := t.TempDir()
+	SetupGlobalMemArbitratorForTest(baseDir)
 	defer CleanupGlobalMemArbitratorForTest()
 	require.True(t, SetGlobalMemArbitratorWorkMode(ArbitratorModeStandardName))
 	m := GlobalMemArbitrator()
@@ -289,4 +294,23 @@ func TestHandleGlobalMemArbitratorRuntimeWithoutCollector(t *testing.T) {
 
 	HandleGlobalMemArbitratorRuntime()
 	require.GreaterOrEqual(t, m.heapController.heapInuse.Load(), int64(0))
+
+	profiler := newHeapProfileCollector(filepath.Join(baseDir, heapProfileDirName))
+	profiler.trigger = heapProfileTriggerState{
+		lastCaptureAt:        time.Now(),
+		lastLimit:            1024,
+		attempted:            7,
+		lastCaptureThreshold: 85,
+		closed:               true,
+	}
+	globalArbitrator.heapProfiler.Store(profiler)
+	require.True(t, SetGlobalMemArbitratorWorkMode(ArbitratorModeDisableName))
+	require.True(t, SetGlobalMemArbitratorWorkMode(ArbitratorModeStandardName))
+
+	HandleGlobalMemArbitratorRuntime()
+	require.True(t, profiler.trigger.lastCaptureAt.IsZero())
+	require.Equal(t, m.limit(), profiler.trigger.lastLimit)
+	require.Zero(t, profiler.trigger.attempted)
+	require.Zero(t, profiler.trigger.lastCaptureThreshold)
+	require.False(t, profiler.trigger.closed)
 }

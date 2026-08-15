@@ -34,7 +34,7 @@ const (
 	heapProfileResetMilli   int64 = 650
 	heapProfileCutoffMilli  int64 = 900
 	heapProfileMinInterval        = time.Minute
-	heapProfileMaxGroups          = 10
+	heapProfileMaxGroups          = 4
 	heapProfileDirName            = "heap_profiles"
 )
 
@@ -48,10 +48,11 @@ var heapProfileLevels = [...]struct {
 }
 
 type heapProfileTriggerState struct {
-	lastCaptureAt time.Time
-	lastLimit     int64
-	attempted     uint32
-	closed        bool
+	lastCaptureAt        time.Time
+	lastLimit            int64
+	lastCaptureThreshold int
+	attempted            uint32
+	closed               bool
 }
 
 type heapProfileCollector struct {
@@ -171,8 +172,8 @@ func (p *heapProfileCollector) tryCapture(m *MemArbitrator) {
 	}
 
 	level := heapProfileLevels[highest]
-	if level.ratioMilli == heapProfileLevel70Milli &&
-		!state.lastCaptureAt.IsZero() &&
+	if !state.lastCaptureAt.IsZero() &&
+		level.threshold <= int(state.lastCaptureThreshold) &&
 		p.currentTime().Sub(state.lastCaptureAt) < heapProfileMinInterval {
 		return
 	}
@@ -217,6 +218,7 @@ func (p *heapProfileCollector) capture(m *MemArbitrator, threshold int) {
 
 	startTime := p.currentTime()
 	p.trigger.lastCaptureAt = startTime
+	p.trigger.lastCaptureThreshold = threshold
 	timestamp := startTime.Format("20060102T150405Z0700")
 	base := "heap-" + timestamp + "-" + strconv.Itoa(threshold) + "pct"
 	profilePath := filepath.Join(p.dir, base+".pprof")
