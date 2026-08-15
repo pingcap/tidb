@@ -393,9 +393,9 @@ func (helper *extractHelper) extractLikePatternCol(
 		} else {
 			canBuildPattern, pattern, isPrefilter = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
 		}
-		if canBuildPattern && toLower {
-			pattern = strings.ToLower(pattern)
-		}
+		// No need to lower-case the pattern: the caller compiles with (?i) prefix
+		// which handles case-insensitive matching. Lower-casing regex patterns
+		// corrupts case-sensitive classes ([A-Z]) and negated classes (\D, \S, etc.).
 		if canBuildPattern {
 			patterns = append(patterns, pattern)
 		}
