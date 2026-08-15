@@ -630,3 +630,111 @@ fn binding_cache_status_reports_counts_and_gos_size_formula() {
         "0|0|157 Bytes|64 MB"
     );
 }
+
+/// The cross-DB (`*.t`) binding, captured from real TiDB (`gorun`,
+/// 2026-08-15): CREATE is accepted with the switch OFF, the row stores an
+/// EMPTY `Default_db` and keeps the `*` in both SQL texts, and the match
+/// obeys `@@tidb_opt_enable_fuzzy_binding` AT MATCH TIME -- the same
+/// binding answers `@@last_plan_from_binding` 0/1/0 as the switch flips
+/// off/on/off, and matches from any schema while on.
+#[test]
+fn a_wildcard_binding_matches_only_under_the_fuzzy_switch() {
+    let mut session = binding_session();
+    session
+        .run("create global binding using select * from *.t use index(kb) where a = 1")
+        .expect("create wildcard binding");
+    let shown = joined(&mut session, "show global bindings");
+    assert!(
+        shown.starts_with(
+            "select * from `*` . `t` where `a` = ?\
+             |SELECT * FROM `*`.`t` USE INDEX (`kb`) WHERE `a` = 1||enabled|"
+        ),
+        "empty Default_db, `*` kept: {shown}"
+    );
+
+    session.run("select * from t where a = 2").expect("select");
+    assert_eq!(matched(&mut session), "0", "the switch defaults OFF");
+
+    session
+        .run("set tidb_opt_enable_fuzzy_binding = 1")
+        .expect("set");
+    session.run("select * from t where a = 2").expect("select");
+    assert_eq!(matched(&mut session), "1", "the switch turns the match on");
+
+    // ... from another schema too: the `*` is the whole point.
+    session.run("create database d2").expect("create db");
+    session
+        .run("create table d2.t (a int, b int, key kb(b))")
+        .expect("create table");
+    session.run("use d2").expect("use");
+    session.run("select * from t where a = 2").expect("select");
+    assert_eq!(matched(&mut session), "1", "any schema matches");
+
+    session
+        .run("set tidb_opt_enable_fuzzy_binding = 0")
+        .expect("set");
+    session.run("select * from t where a = 2").expect("select");
+    assert_eq!(matched(&mut session), "0", "off again stops the match");
+}
+
+/// Go `bindingOperator.GCBinding`: a DROPPED binding's tombstone survives
+/// ten bind-info leases (30s) and is then physically removed. The clock is
+/// pinned through `@@timestamp` (the same pin `statement_clock` serves), so
+/// the aging is deterministic: young tombstone stays, 31-second-old
+/// tombstone is swept by the next write.
+#[test]
+fn dropped_binding_tombstones_are_swept_after_ten_leases() {
+    let mut session = binding_session();
+    session
+        .run("set timestamp = 1000000000")
+        .expect("pin clock");
+    session
+        .run(
+            "create global binding for select * from t where a = 1 \
+             using select * from t use index(kb) where a = 1",
+        )
+        .expect("create");
+    // Each step advances the pinned clock: the writers guard on
+    // `update_time < now`, so two writes at the SAME pinned instant would
+    // leave the second one refusing to touch the first one's row.
+    session
+        .run("set timestamp = 1000000001")
+        .expect("advance clock");
+    session
+        .run("drop global binding for select * from t where a = 1")
+        .expect("drop");
+    // The tombstone is visible in the table, and a write two seconds on
+    // keeps it: it is not yet ten leases old.
+    session
+        .run("set timestamp = 1000000002")
+        .expect("advance clock");
+    session
+        .run(
+            "create global binding for select * from t where b = 5 \
+             using select * from t ignore index(kb) where b = 5",
+        )
+        .expect("create second");
+    assert_eq!(
+        joined(
+            &mut session,
+            "select count(*) from mysql.bind_info where status = 'deleted'",
+        ),
+        "1"
+    );
+    // Thirty-two seconds after the drop, the next write sweeps it.
+    session
+        .run("set timestamp = 1000000033")
+        .expect("advance clock");
+    session
+        .run("drop global binding for select * from t where b = 5")
+        .expect("drop second");
+    assert_eq!(
+        joined(
+            &mut session,
+            "select count(*) from mysql.bind_info where status = 'deleted' \
+             and original_sql like '%`a`%'",
+        ),
+        "0",
+        "the aged tombstone is physically gone"
+    );
+}

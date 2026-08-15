@@ -70,6 +70,7 @@ impl Session {
                 STATUS_ENABLED,
             ),
         };
+        self.gc_global_bindings()?;
         let now = self.global_binding_timestamp();
         let changed = self.bind_info_exec(
             "UPDATE mysql.bind_info SET status = ?, update_time = ? \
@@ -123,7 +124,16 @@ impl Session {
         let hinted = hinted.as_ref();
 
         let current_db = self.current_db.clone();
-        let db = binding::default_db_of(origin, &current_db);
+        // A cross-DB binding (`*.t`) belongs to NO schema: Go stores an
+        // empty `Default_db` (measured), and the `*` survives normalization.
+        let wildcard = binding::collect_table_names(origin)
+            .iter()
+            .any(|(schema, _)| schema == "*");
+        let db = if wildcard {
+            String::new()
+        } else {
+            binding::default_db_of(origin, &current_db)
+        };
         let (original_sql, sql_digest) = binding::normalize_with_db(origin, &current_db);
         let (hinted_normalized, _) = binding::normalize_with_db(hinted, &current_db);
         // Go's preprocessor check: erasing the hints must leave two identical
@@ -133,8 +143,12 @@ impl Session {
         // hinted SQL, so a binding naming a table or index that does not
         // exist fails at CREATE time with that statement's own error (1146 /
         // 1176, captured from real TiDB). Planning the hinted statement here
-        // raises the same errors from the same catalog.
-        self.validate_binding_statement(hinted)?;
+        // raises the same errors from the same catalog. A `*` schema names
+        // no plannable table, and Go accepts the statement without the check
+        // (measured, switch on or off), so the wildcard form skips it.
+        if !wildcard {
+            self.validate_binding_statement(hinted)?;
+        }
 
         let bind_sql = binding::restore_with_default_db(hinted, &current_db);
         let now = self.binding_timestamp();
@@ -166,6 +180,7 @@ impl Session {
     /// inserted `enabled`. The timestamps print with SIX fractional digits
     /// (`types.NewTime(..., 6)` there, against the session handle's 3).
     fn create_global_binding(&mut self, binding: &Binding) -> Result<(), DriverError> {
+        self.gc_global_bindings()?;
         let now = self.global_binding_timestamp();
         self.bind_info_exec(
             "UPDATE mysql.bind_info SET status = ?, update_time = ? \
@@ -233,6 +248,7 @@ impl Session {
         if drop.scope == BindingScope::Global {
             // Go `bindingOperator.DropBinding`: a drop is an UPDATE to
             // `deleted`, and the affected count is the answer.
+            self.gc_global_bindings()?;
             let now = self.global_binding_timestamp();
             let mut dropped = 0u64;
             for digest in &digests {
@@ -386,6 +402,10 @@ impl Session {
         }
         let no_db_digest = binding::no_db_digest(stmt);
         let table_names = binding::collect_table_names(stmt);
+        // Go `crossDBMatchBindings` reads `EnableFuzzyBinding` at MATCH
+        // time, so flipping the switch changes what an existing wildcard
+        // binding does without touching the row.
+        let fuzzy_enabled = self.session_bool("tidb_opt_enable_fuzzy_binding", false);
         // Session bindings shadow global ones, which is Go's order in
         // `planner.optimize`: `getBindingFromSession` first, the domain
         // handle only on a miss.
@@ -393,12 +413,13 @@ impl Session {
             &no_db_digest,
             &table_names,
             &self.current_db,
+            fuzzy_enabled,
         ) {
             Some(matched) => matched.hints.clone(),
             None => {
                 let global = self.load_global_bindings().ok()?;
                 global
-                    .match_statement(&no_db_digest, &table_names, &self.current_db)?
+                    .match_statement(&no_db_digest, &table_names, &self.current_db, fuzzy_enabled)?
                     .hints
                     .clone()
             }
@@ -499,13 +520,38 @@ impl Session {
     /// operator stores `types.NewTime(..., 6)` where the session handle uses
     /// 3, and `bind_info.update_time` is a `TIMESTAMP(6)` column.
     fn global_binding_timestamp(&self) -> String {
+        self.global_binding_timestamp_offset(0)
+    }
+
+    /// [`Self::global_binding_timestamp`] shifted by `seconds` -- the GC
+    /// cutoff is "now minus ten leases" in the same TIMESTAMP(6) spelling
+    /// the rows store, so the comparison happens in one text domain.
+    fn global_binding_timestamp_offset(&self, seconds: i64) -> String {
         let zone = self.session_time_zone();
-        let (seconds, nanos, offset) = self.statement_clock(&zone);
-        let at = chrono::DateTime::from_timestamp(seconds, nanos)
+        let (clock_seconds, nanos, offset) = self.statement_clock(&zone);
+        let at = chrono::DateTime::from_timestamp(clock_seconds, nanos)
             .unwrap_or_else(chrono::Utc::now)
             .naive_utc()
-            + chrono::Duration::seconds(i64::from(offset));
+            + chrono::Duration::seconds(i64::from(offset) + seconds);
         at.format("%Y-%m-%d %H:%M:%S%.6f").to_string()
+    }
+
+    /// Go `bindingOperator.GCBinding`: `deleted` tombstones whose
+    /// `update_time` is older than TEN LEASES (`bindinfo.Lease` = 3s) are
+    /// physically removed, so every peer's cache has long acknowledged the
+    /// drop. Go's owner runs it on a timer; this tier has no background
+    /// loop, so every global-binding WRITE sweeps first -- the same rows
+    /// are gone at the same observable ages, without a goroutine to port.
+    fn gc_global_bindings(&mut self) -> Result<(), DriverError> {
+        let cutoff = self.global_binding_timestamp_offset(-30);
+        self.bind_info_exec(
+            "DELETE FROM mysql.bind_info WHERE status = ? AND update_time < ?",
+            &[
+                Datum::new_string("deleted".to_owned()),
+                Datum::new_string(cutoff),
+            ],
+        )?;
+        Ok(())
     }
 
     /// One parameterized write against `mysql.bind_info`, the same shape as
@@ -516,16 +562,14 @@ impl Session {
     fn bind_info_exec(&mut self, sql: &str, params: &[Datum]) -> Result<u64, DriverError> {
         let text = tidb_executor::bind_parameters(sql, params, self.scanner_sql_mode())?;
         let ctx = self.statement_context(true);
-        self.with_catalog_mut(|catalog| {
-            if text
-                .trim_start()
-                .get(..6)
-                .is_some_and(|word| word.eq_ignore_ascii_case("INSERT"))
-            {
+        self.with_catalog_mut(|catalog| match text.trim_start().get(..6) {
+            Some(word) if word.eq_ignore_ascii_case("INSERT") => {
                 tidb_executor::run_insert_in(&text, catalog, "mysql", &ctx)
-            } else {
-                tidb_executor::run_update_in(&text, catalog, "mysql", &ctx)
             }
+            Some(word) if word.eq_ignore_ascii_case("DELETE") => {
+                tidb_executor::run_delete_in(&text, catalog, "mysql", &ctx)
+            }
+            _ => tidb_executor::run_update_in(&text, catalog, "mysql", &ctx),
         })
     }
 

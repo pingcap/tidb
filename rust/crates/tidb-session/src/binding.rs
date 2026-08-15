@@ -382,24 +382,27 @@ impl SessionBindings {
         no_db_digest: &str,
         table_names: &[(String, String)],
         current_db: &str,
+        fuzzy_enabled: bool,
     ) -> Option<&Binding> {
         let candidates = self
             .bindings
             .values()
             .filter(|binding| binding.no_db_digest == no_db_digest);
-        cross_db_match(candidates, table_names, current_db)
+        cross_db_match(candidates, table_names, current_db, fuzzy_enabled)
     }
 }
 
-/// Go `crossDBMatchBindings`, with `EnableFuzzyBinding` at its default OFF:
-/// a binding whose table list contains a `*` wildcard schema is skipped, so
-/// the "fewest wildcards" tie-break can only ever select a zero-wildcard
-/// binding. Kept in this shape anyway because the wildcard schema is written
-/// by `prepareHints` for a cross-DB binding, and this tier creates none.
+/// Go `crossDBMatchBindings`: `fuzzy_enabled` is
+/// `@@tidb_opt_enable_fuzzy_binding` (default OFF). A `*`-schema binding is
+/// CREATED regardless of the switch but MATCHES only under it -- measured:
+/// the same wildcard binding answers `@@last_plan_from_binding` 1 with the
+/// switch on and 0 with it off, flipping live with `SET`. Among the
+/// candidates the fewest-wildcards binding wins, Go's own tie-break.
 fn cross_db_match<'a>(
     candidates: impl Iterator<Item = &'a Binding>,
     table_names: &[(String, String)],
     current_db: &str,
+    fuzzy_enabled: bool,
 ) -> Option<&'a Binding> {
     let mut least_wildcards = table_names.len() + 1;
     let mut matched = None;
@@ -414,8 +417,7 @@ fn cross_db_match<'a>(
         else {
             continue;
         };
-        // Cross-DB bindings are off by default (`tidb_opt_enable_fuzzy_binding`).
-        if wildcards > 0 {
+        if wildcards > 0 && !fuzzy_enabled {
             continue;
         }
         if wildcards < least_wildcards {
