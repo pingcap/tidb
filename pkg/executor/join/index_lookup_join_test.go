@@ -71,6 +71,34 @@ func TestIndexLookupJoinHang(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestIndexLookupJoinReopenAfterLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_parallel_apply = off")
+	tk.MustExec("create table push (id int primary key, exam_id int)")
+	tk.MustExec("create table employee (user_id int primary key)")
+	tk.MustExec("create table attempt (id int primary key, exam_id int, user_id int, key idx_user_exam (user_id, exam_id))")
+	tk.MustExec("insert into push values (1, 1), (2, 2)")
+	tk.MustExec("insert into employee values (1)")
+	tk.MustExec("insert into attempt values (1, 1, 1), (2, 1, 1)")
+
+	query := `select p.id
+		from push p
+		where not exists (
+			select /*+ no_decorrelate() inl_join(a) */ 1
+			from employee e straight_join attempt a
+				on a.user_id = e.user_id
+			where a.exam_id = p.exam_id
+		)
+		order by p.id`
+	plan := fmt.Sprint(tk.MustQuery("explain format = 'brief' " + query).Rows())
+	require.Contains(t, plan, "Apply")
+	require.Contains(t, plan, "Limit")
+	require.Contains(t, plan, "IndexJoin")
+	tk.MustQuery(query).Check(testkit.Rows("2"))
+}
+
 func TestIssue16887(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

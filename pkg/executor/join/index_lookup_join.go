@@ -826,6 +826,9 @@ func (e *IndexLookUpJoin) Close() error {
 	e.WorkerWg.Wait()
 	e.memTracker = nil
 	e.task = nil
+	if e.innerIter != nil {
+		e.innerIter.Reset(nil)
+	}
 	e.Finished.Store(false)
 	e.prepared = false
 	return e.BaseExecutor.Close()
