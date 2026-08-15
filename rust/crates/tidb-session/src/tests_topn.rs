@@ -85,17 +85,19 @@ fn the_fused_topn_returns_gos_rows() {
 
 /// The plan the fusion produces. Real TiDB prints a ROOT `TopN` with this
 /// info text (captured: `TopN_8|2.00|root||test.t.a, offset:0, count:2`);
-/// this tier's standing divergences add the always-present `Projection` and
-/// drop the cop task (see `tidb_executor::explain`'s module doc).
+/// this tier's standing divergence adds the always-present `Projection`; the
+/// root reader and cop task otherwise retain Go's physical split.
 #[test]
 fn the_fused_topn_prints_gos_operator_info() {
     let mut session = topn_session();
     assert_eq!(
         plan(&mut session, "explain select a from t order by a limit 2"),
         vec![
-            "Projection_3|2.00|root||test.t.a",
-            "└─TopN_2|2.00|root||test.t.a, offset:0, count:2",
-            "  └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
+            "Projection_5|2.00|root||test.t.a",
+            "└─TopN_4|2.00|root||test.t.a, offset:0, count:2",
+            "  └─TableReader_3|2.00|root||data:TopN",
+            "    └─TopN_2|2.00|cop[tikv]||test.t.a, offset:0, count:2",
+            "      └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
     // `limit 1,2`: Go's estRows is the COUNT, not `offset + count`
@@ -104,9 +106,11 @@ fn the_fused_topn_prints_gos_operator_info() {
     assert_eq!(
         plan(&mut session, "explain select a from t order by b limit 1,2"),
         vec![
-            "Projection_3|2.00|root||test.t.a",
-            "└─TopN_2|2.00|root||test.t.b, offset:1, count:2",
-            "  └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
+            "Projection_5|2.00|root||test.t.a",
+            "└─TopN_4|2.00|root||test.t.b, offset:1, count:2",
+            "  └─TableReader_3|3.00|root||data:TopN",
+            "    └─TopN_2|3.00|cop[tikv]||test.t.b, offset:0, count:3",
+            "      └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
     // A descending by-item prints Go's `:desc` suffix, as the `Sort` did.
@@ -116,24 +120,21 @@ fn the_fused_topn_prints_gos_operator_info() {
             "explain select a from t order by b desc limit 3"
         ),
         vec![
-            "Projection_3|3.00|root||test.t.a",
-            "└─TopN_2|3.00|root||test.t.b:desc, offset:0, count:3",
-            "  └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
+            "Projection_5|3.00|root||test.t.a",
+            "└─TopN_4|3.00|root||test.t.b:desc, offset:0, count:3",
+            "  └─TableReader_3|3.00|root||data:TopN",
+            "    └─TopN_2|3.00|cop[tikv]||test.t.b:desc, offset:0, count:3",
+            "      └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
 }
 
-/// `SELECT DISTINCT` must NOT fuse. This tier's dedup sits BETWEEN the sort
-/// and the limit, so a bounded sort would discard rows before they were
-/// deduplicated -- `select distinct a from t order by a limit 2` would answer
-/// `1` instead of Go's `1;2`, because the two smallest raw rows are both `1`.
-///
-/// Go reaches the right answer by a different route: its `TopN` lands ABOVE
-/// the aggregation (captured: `TopN_9|2.00|root||test.t.a, offset:0, count:2`
-/// over `HashAgg_18`), a position this tier's build order cannot express, so
-/// it keeps the `Sort` and the `Limit` instead.
+/// `SELECT DISTINCT` fuses only after its deduplicating aggregation exists.
+/// A TopN below that HashAgg would discard duplicate rows before they were
+/// deduplicated and could answer only `1`; Go instead puts TopN above HashAgg
+/// and returns `1;2`.
 #[test]
-fn select_distinct_does_not_fuse_and_keeps_gos_rows() {
+fn select_distinct_fuses_above_aggregation_and_keeps_gos_rows() {
     let mut session = topn_session();
     // gorun: `select distinct a from t order by a limit 2` -> 1;2
     assert_eq!(
@@ -148,11 +149,11 @@ fn select_distinct_does_not_fuse_and_keeps_gos_rows() {
             "explain select distinct a from t order by a limit 2"
         ),
         vec![
-            "Limit_5|2.00|root||offset:0, count:2",
-            "└─HashAgg_4|8000.00|root||group by:test.t.a, funcs:firstrow",
-            "  └─Projection_3|10000.00|root||test.t.a",
-            "    └─Sort_2|10000.00|root||test.t.a",
-            "      └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
+            "TopN_5|2.00|root||test.t.a, offset:0, count:2",
+            "└─HashAgg_4|8000.00|root||group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
+            "  └─TableReader_3|8000.00|root||data:HashAgg",
+            "    └─HashAgg_2|8000.00|cop[tikv]||group by:test.t.a,",
+            "      └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
 }
@@ -217,7 +218,7 @@ fn a_group_by_pipeline_fuses_above_the_aggregate() {
         ),
         vec![
             "TopN_3|2.00|root||test.t.a, offset:0, count:2",
-            "└─HashAgg_2|8000.00|root||group by:test.t.a, funcs:test.t.a, count(1)",
+            "└─HashAgg_2|8000.00|root||group by:test.t.a, funcs:test.t.a, count(1)->Column#0",
             "  └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
         ]
     );

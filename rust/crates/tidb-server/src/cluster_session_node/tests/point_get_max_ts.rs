@@ -103,6 +103,7 @@ fn a_prepared_point_get_takes_no_timestamp_either() {
     let statement = session
         .prepare_general("SELECT v FROM t WHERE id = ?")
         .expect("prepare");
+    let prepared = node.prepared.load(Ordering::Acquire);
 
     let mut answer = Vec::new();
     let opens = opens_of(&node, || {
@@ -122,6 +123,82 @@ fn a_prepared_point_get_takes_no_timestamp_either() {
     });
     assert_eq!(answer, vec![vec![Datum::Int(20)]]);
     assert_eq!(opens, FREE);
+    assert_eq!(node.prepared.load(Ordering::Acquire), prepared);
+    assert_eq!(node.live.load(Ordering::Acquire), 0);
+}
+
+/// Go builds a prepared point plan on the first EXECUTE and reuses its
+/// `PointGetExecutor` on later MaxTS executions. `Recreated` installs the new
+/// parameter-derived handle before every reuse, so the cache hit must return
+/// row 2 here rather than the row 1 selected while the entry was populated.
+#[test]
+fn a_prepared_point_get_reuses_the_plan_with_each_executions_handle() {
+    use tidb_protocol::PreparedValue;
+
+    let (mut session, _) = open_session();
+    seed(&mut session);
+    let statement = session
+        .prepare_general("SELECT id, v, v FROM t WHERE id = ?")
+        .expect("prepare");
+
+    let execute = |session: &mut ClusterServerSession, id| {
+        let outcome = session
+            .execute_general(&statement, &[PreparedValue::SignedLongLong(id)])
+            .expect("execute");
+        let GeneralExecuteOutcome::Rows(mut result) = outcome else {
+            panic!("a query must answer with rows");
+        };
+        let source = result.source();
+        let mut answer = Vec::new();
+        loop {
+            let batch = source.next_batch(8).expect("batch");
+            if batch.is_empty() {
+                break;
+            }
+            answer.extend(batch);
+        }
+        source.finish().expect("finish");
+        source.close().expect("close");
+        answer
+    };
+
+    assert_eq!(
+        execute(&mut session, 1),
+        vec![vec![Datum::Int(1), Datum::Int(10), Datum::Int(10)]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT @@last_plan_from_cache"),
+        vec![vec![Datum::Int(0)]]
+    );
+
+    assert_eq!(
+        execute(&mut session, 2),
+        vec![vec![Datum::Int(2), Datum::Int(20), Datum::Int(20)]]
+    );
+    assert_eq!(
+        rows(&mut session, "SELECT @@last_plan_from_cache"),
+        vec![vec![Datum::Int(1)]]
+    );
+}
+
+/// The benchmark's aggregate root is not eligible for MaxTS. Go nevertheless
+/// starts its ordinary TSO future after planning and waits for that same future
+/// at the PointGet below StreamAgg.
+#[test]
+fn an_aggregate_point_get_prepares_and_waits_for_one_ordinary_snapshot() {
+    let (mut session, node) = open_session();
+    seed(&mut session);
+    let prepared = node.prepared.load(Ordering::Acquire);
+
+    let opens = opens_of(&node, || {
+        assert_eq!(
+            rows(&mut session, "SELECT COUNT(*) FROM t WHERE id = 1"),
+            vec![vec![Datum::Int(1)]]
+        );
+    });
+
+    assert_eq!(node.prepared.load(Ordering::Acquire), prepared + 1);
+    assert_eq!(opens, PAID);
     assert_eq!(node.live.load(Ordering::Acquire), 0);
 }
 
@@ -557,21 +634,58 @@ fn a_double_reads_row_lookup_does_not_take_the_shortcut() {
 
 // -- #146's pins, re-run against this path ---------------------------------
 
-/// A statement that reads no cluster row still spends nothing, and takes
-/// neither branch: the declaration does not itself open anything.
+/// Go starts the ordinary TSO future after planning, even when execution never
+/// needs a cluster row. Such a statement never waits for or exposes a snapshot.
 #[test]
-fn a_statement_that_reads_no_cluster_row_spends_no_timestamp() {
+fn a_statement_that_reads_no_cluster_row_prepares_but_never_opens_a_snapshot() {
     let (mut session, node) = open_session();
+    let prepared = node.prepared.load(Ordering::Acquire);
+    let timestamp = node.clock.load(Ordering::Acquire);
 
     let opens = opens_of(&node, || {
         assert_eq!(rows(&mut session, "SELECT 1").len(), 1);
     });
+    assert_eq!(
+        node.prepared.load(Ordering::Acquire),
+        prepared + 1,
+        "the statement did not start Go's post-plan TSO future"
+    );
+    assert_eq!(
+        node.clock.load(Ordering::Acquire),
+        timestamp + 1,
+        "preparing the future must request exactly one timestamp"
+    );
     assert_eq!(
         opens,
         Opens {
             timestamped: 0,
             max_ts: 0
         }
+    );
+    assert_eq!(node.live.load(Ordering::Acquire), 0);
+}
+
+/// Preparing a future is not activating a transaction. Go reports an oracle
+/// future's error only when a read asks `Txn()` to wait for it.
+#[test]
+fn a_prepared_snapshot_error_is_reported_only_if_the_statement_reads() {
+    let (mut session, node) = open_session();
+    seed(&mut session);
+
+    node.fail_next_prepared_snapshot
+        .store(true, Ordering::Release);
+    assert_eq!(rows(&mut session, "SELECT 1"), vec![vec![Datum::Int(1)]]);
+
+    node.fail_next_prepared_snapshot
+        .store(true, Ordering::Release);
+    let error = session
+        .execute("SELECT COUNT(*) FROM t WHERE id = 1")
+        .err()
+        .expect("a read must wait for and report the failed future");
+    assert!(
+        error.message.contains("table bytes failed to decode"),
+        "{}",
+        error.message
     );
     assert_eq!(node.live.load(Ordering::Acquire), 0);
 }

@@ -73,9 +73,12 @@ pub(crate) fn subquery_result_type(
         })
         .collect();
     let typed = bind_subquery_columns_query(&correlated.query, &probes).ok()?;
-    run_query_stmt(&typed, catalog, current_db, ctx)
-        .ok()
-        .and_then(|(columns, _)| columns.first().map(|(_, ft)| ft.clone()))
+    let columns = match &typed {
+        QueryStmt::Select(select) => plan_select_meta_stmt(select, catalog, current_db, ctx),
+        QueryStmt::SetOpr(set_opr) => plan_set_opr_meta_stmt(set_opr, catalog, current_db, ctx),
+    }
+    .ok()?;
+    columns.first().map(|(_, ft)| ft.clone())
 }
 
 /// A short description of a driver error, for the executor-level error the
@@ -178,7 +181,7 @@ fn collect_correlated_columns(
     ctx: &crate::StmtContext,
 ) {
     let inner = match &select.from {
-        None => FromScope::default(),
+        None => FromScope::for_statement(ctx),
         Some(join) => match build_join(
             join,
             catalog,
@@ -191,7 +194,7 @@ fn collect_correlated_columns(
         ) {
             Ok((_, scope, _)) => scope,
             // An unresolvable inner FROM is reported by the inner run itself.
-            Err(_) => FromScope::default(),
+            Err(_) => FromScope::for_statement(ctx),
         },
     };
     let mut visit = |expr: &tidb_ast::Expr| {
@@ -664,7 +667,7 @@ pub(crate) fn extract_correlated_subquery(
     index: usize,
     found: &mut Option<CorrelatedSubquery>,
     ctx: &crate::StmtContext,
-) -> tidb_ast::Expr {
+) -> Result<tidb_ast::Expr, DriverError> {
     struct Extractor<'a> {
         outer: &'a FromScope,
         catalog: &'a Catalog,
@@ -756,7 +759,7 @@ pub(crate) fn extract_correlated_subquery(
     }
 
     if found.is_some() {
-        return expr.clone();
+        return Ok(expr.clone());
     }
     let mut rewritten = expr.clone();
     let mut extractor = Extractor {
@@ -769,7 +772,7 @@ pub(crate) fn extract_correlated_subquery(
     };
     rewritten.accept(&mut extractor);
     *found = extractor.found;
-    rewritten
+    Ok(rewritten)
 }
 
 /// The scope a subquery inside `select` sees as its OUTER scope: `select`'s
@@ -813,7 +816,7 @@ pub(crate) fn select_has_uncorrelated_subquery(
             let outer = select_outer_scope(select, catalog, current_db, ctx);
             let mut found = None;
             // A correlated WHERE subquery is the Apply path's job.
-            extract_correlated_subquery(
+            let _ = extract_correlated_subquery(
                 where_clause,
                 &outer,
                 catalog,
@@ -1202,7 +1205,7 @@ pub(crate) fn extract_and_hoist_subquery(
         let mut found = None;
         rewritten = extract_correlated_subquery(
             &rewritten, outer, catalog, current_db, index, &mut found, ctx,
-        );
+        )?;
         let Some(correlated) = found else {
             // Uncorrelated, or a shape the extraction does not own: leave it
             // to the fold pass or its existing named refusal.
@@ -1228,7 +1231,7 @@ pub(crate) fn extract_and_hoist_subquery(
         grouping_specs,
         group_by_exprs,
         resolver,
-        tidb_expr::Columns::div_precision_increment(ctx),
+        ctx.div_precision_increment(),
     )?;
     Ok((hoisted, true))
 }

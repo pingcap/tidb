@@ -49,8 +49,10 @@ fn inner_join(memory: StatementMemory) -> JoinExec<NoColumns> {
 /// A quota the build side cannot fit in, but which is still far larger
 /// than a single chunk -- so the spill has something to release and the
 /// read-path cancellation #289 describes is not what is being measured.
+const TIGHT_QUOTA_BYTES: i64 = 300 * 1024;
+
 fn tight_quota() -> StatementMemory {
-    StatementMemory::new(64 * 1024, OomAction::Cancel, 1)
+    StatementMemory::new(TIGHT_QUOTA_BYTES, OomAction::Cancel, 1)
 }
 
 /// What one build chunk costs, measured rather than assumed, so the
@@ -70,11 +72,11 @@ fn the_tight_quota_is_several_chunks_not_a_fraction_of_one() {
     let one_chunk = join.tracker.bytes_consumed() / chunks;
     assert!(one_chunk > 0, "the build side must account something");
     assert!(
-        64 * 1024 > 2 * one_chunk,
-        "quota 65536 must be several chunks, one chunk is {one_chunk}"
+        TIGHT_QUOTA_BYTES > 2 * one_chunk,
+        "tight quota must be several chunks, one chunk is {one_chunk}"
     );
     assert!(
-        join.tracker.bytes_consumed() > 64 * 1024,
+        join.tracker.bytes_consumed() > TIGHT_QUOTA_BYTES,
         "the build side must not fit in the quota the spill tests use"
     );
 }
@@ -175,7 +177,9 @@ fn a_spilled_outer_join_pads_exactly_where_the_unspilled_one_does() {
             JoinKind::Left,
             vec![eq_on(0, 0, 2)],
             fixture(PROBE_ROWS, BUILD_KEYS),
-            fixture(BUILD_ROWS, 97),
+            // Fewer distinct keys retain less bucket memory than the inner
+            // fixture, so use enough rows to exceed the several-chunk quota.
+            fixture(BUILD_ROWS * 2, 97),
             2,
             memory,
         )

@@ -198,7 +198,7 @@ fn force_index_constrains_the_access_path() {
     // capture for the unhinted statement is `Point_Get ... handle:2`, so the
     // hinted plan below differing from this one is the whole point.
     let unhinted = access_objects(&mut session, "EXPLAIN SELECT b FROM t WHERE a = 2");
-    assert_eq!(unhinted, vec!["", "", "table:t"]);
+    assert_eq!(unhinted, vec!["table:t"]);
     assert!(!plan_uses_index(
         &mut session,
         "EXPLAIN SELECT b FROM t WHERE a = 2",

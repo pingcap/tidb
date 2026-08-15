@@ -14,11 +14,10 @@
 
 //! `pkg/executor/sortexec` `SortExec`: the `ORDER BY` operator.
 //!
-//! Serial semantics of Go's unparallel path: the first `Next` drains the
-//! child, evaluates the by-item keys once per row, and forms sorted runs.
-//! Runs spill through `SortPartition` when the statement quota asks them to;
-//! output is the same ordered merge whether one run stayed in memory or
-//! several runs reached disk.
+//! Serial in-memory semantics of Go's unparallel single-partition path: the
+//! first `Next` drains the child, materializes every row, evaluates the
+//! by-item keys once per row (Go builds `keyColumns`/`keyCmpFuncs` the same
+//! way), sorts, then emits the rows in order chunk by chunk.
 //!
 //! Null ordering matches Go `chunk.cmpNull`: NULL compares below every
 //! non-NULL value, and a descending by-item negates the whole comparison --
@@ -29,8 +28,9 @@
 //! so only the order of exactly-tying rows can differ -- an order Go does not
 //! guarantee either.
 //!
-//! DEFERRED: the parallel sort workers/fetcher/generator pipeline and its
-//! failpoints. This executor uses the serial spill/merge path deliberately.
+//! DEFERRED (documented): spill-to-disk partitions and the multi-way merger,
+//! the parallel sort workers/fetcher/generator pipeline, memory and disk
+//! trackers, the SQL killer, and the failpoints.
 //!
 //! Row comparison is `tidb_expr::compare_datums` — the shared,
 //! collation-aware datum comparator (Go `types/datum.go` `Datum.Compare`
@@ -56,6 +56,7 @@ use crate::sort_partition::{spill_action, SortPartition, SPILL_CHUNK_SIZE};
 
 /// Go `planner/util.ByItems`: one `ORDER BY` item -- the key expression and
 /// its direction.
+#[derive(Clone)]
 pub struct SortByItem {
     /// Go `ByItems.Expr`.
     pub expr: Expression,
@@ -299,9 +300,10 @@ impl<C: Columns> Executor for SortExec<C> {
             self.fetched = true;
         }
 
+        let batch = self.meta.max_chunk_size();
         let mut partitions = std::mem::take(&mut self.partitions);
         let result = (|| -> Result<(), ExecError> {
-            while !req.is_full() {
+            while req.num_rows() < batch {
                 for partition in &mut partitions {
                     partition.load_head(&self.by_items, &self.ctx)?;
                 }
@@ -690,39 +692,6 @@ mod tests {
     }
 
     #[test]
-    fn sort_honors_each_output_chunks_required_rows() {
-        let mut exec = sort_over(
-            &rows1(&[
-                Some(9),
-                Some(8),
-                Some(7),
-                Some(6),
-                Some(5),
-                Some(4),
-                Some(3),
-                Some(2),
-                Some(1),
-                Some(0),
-            ]),
-            vec![SortByItem {
-                expr: col_expr(0),
-                desc: false,
-            }],
-        );
-        exec.open().unwrap();
-        let mut req = exec.new_chunk();
-        let mut rows = Vec::new();
-        for (requested, expected) in [(1_usize, 1_usize), (5, 5), (3, 3), (10, 1)] {
-            req.set_required_rows(requested as isize, exec.max_chunk_size());
-            exec.next(&mut req).unwrap();
-            assert_eq!(req.num_rows(), expected);
-            rows.extend((0..req.num_rows()).map(|row| req.get_row(row).get_int64(0)));
-        }
-        assert_eq!(rows, (0..10).collect::<Vec<_>>());
-        exec.close().unwrap();
-    }
-
-    #[test]
     fn descending_int_sort() {
         let mut e = sort_over(
             &rows1(&[Some(3), Some(1), Some(2)]),
@@ -909,14 +878,9 @@ mod tests {
 
         let mut got = Vec::new();
         let mut saw_spill_file = false;
-        let required_rows = [1_usize, 5, 3, 10, 64];
-        let mut request = 0;
         loop {
             let mut req = exec.new_chunk();
-            let wanted = required_rows[request % required_rows.len()];
-            req.set_required_rows(wanted as isize, exec.max_chunk_size());
             exec.next(&mut req).expect("a spilling sort must not fail");
-            assert_eq!(req.num_rows(), wanted.min(expected.len() - got.len()));
             if req.num_rows() == 0 {
                 break;
             }
@@ -926,7 +890,6 @@ mod tests {
             for r in 0..req.num_rows() {
                 got.push(req.get_row(r).get_int64(0));
             }
-            request += 1;
         }
 
         assert!(

@@ -65,9 +65,9 @@ pub(crate) fn scope_fd_set(
     from: Option<&tidb_ast::Join>,
     where_clause: Option<&tidb_ast::Expr>,
 ) -> FdSet {
-    let mut next_table = 0usize;
-    let built = from.and_then(|join| build_join_fds(join, scope, &mut next_table));
-    let mut fds = match built.filter(|_| next_table == scope.tables.len()) {
+    let mut used = vec![false; scope.tables.len()];
+    let built = from.and_then(|join| build_join_fds(join, scope, &mut used));
+    let mut fds = match built.filter(|_| used.iter().all(|used| *used)) {
         Some(relation) => relation.fds,
         None => flat_scope_fds(scope),
     };
@@ -100,41 +100,58 @@ type VisibleColumn = (usize, String);
 fn build_node_fds(
     node: &tidb_ast::JoinNode,
     scope: &FromScope,
-    next_table: &mut usize,
+    used: &mut [bool],
 ) -> Option<RelationFds> {
     match node {
-        tidb_ast::JoinNode::Join(join) => build_join_fds(join, scope, next_table),
-        tidb_ast::JoinNode::Table(_) | tidb_ast::JoinNode::Derived { .. } => {
-            let table = scope.tables.get(*next_table)?;
-            *next_table += 1;
-            let cols = ColSet::of((0..table.columns.len()).map(|local| {
-                i64::try_from(table.offset + local).expect("scope column offset fits source int")
-            }));
-            let visible = table
-                .columns
-                .iter()
-                .enumerate()
-                .map(|(local, (name, _))| (table.offset + local, name.clone()))
-                .collect();
-            Some(RelationFds {
-                fds: table_fd_set(table),
-                cols,
-                visible,
-            })
+        tidb_ast::JoinNode::Join(join) => build_join_fds(join, scope, used),
+        tidb_ast::JoinNode::Table(table_ref) => {
+            let visible = table_ref.alias.as_ref().or_else(|| table_ref.name.last())?;
+            let at =
+                scope.tables.iter().enumerate().position(|(at, table)| {
+                    !used[at] && table.name.eq_ignore_ascii_case(visible)
+                })?;
+            used[at] = true;
+            relation_fds(&scope.tables[at])
+        }
+        tidb_ast::JoinNode::Derived { alias, .. } => {
+            let visible = alias.as_ref()?;
+            let at =
+                scope.tables.iter().enumerate().position(|(at, table)| {
+                    !used[at] && table.name.eq_ignore_ascii_case(visible)
+                })?;
+            used[at] = true;
+            relation_fds(&scope.tables[at])
         }
     }
+}
+
+fn relation_fds(table: &FromTable) -> Option<RelationFds> {
+    let cols = ColSet::of((0..table.columns.len()).map(|local| {
+        i64::try_from(table.offset + local).expect("scope column offset fits source int")
+    }));
+    let visible = table
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(local, (name, _))| (table.offset + local, name.clone()))
+        .collect();
+    Some(RelationFds {
+        fds: table_fd_set(table),
+        cols,
+        visible,
+    })
 }
 
 fn build_join_fds(
     join: &tidb_ast::Join,
     scope: &FromScope,
-    next_table: &mut usize,
+    used: &mut [bool],
 ) -> Option<RelationFds> {
-    let left = build_node_fds(&join.left, scope, next_table)?;
+    let left = build_node_fds(&join.left, scope, used)?;
     let Some(right_node) = &join.right else {
         return Some(left);
     };
-    let right = build_node_fds(right_node, scope, next_table)?;
+    let right = build_node_fds(right_node, scope, used)?;
     let (common, visible) = coalesced_columns(join, &left.visible, &right.visible);
 
     match join.tp {

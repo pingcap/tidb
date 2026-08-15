@@ -683,6 +683,7 @@ pub fn get_row_count_by_column_ranges(
     let Some(column) = column else {
         return RowEstimate::default_est(pseudo_row_count(
             ranges,
+            collation,
             realtime_row_count,
             pk_is_handle,
         ));
@@ -707,15 +708,6 @@ fn bound_kind(value: &Datum) -> PseudoBoundKind {
     }
 }
 
-fn datum_scalar(value: &Datum) -> f64 {
-    match value {
-        Datum::Int(v) => *v as f64,
-        Datum::UInt(v) => *v as f64,
-        Datum::Real(v) | Datum::Float32(v) => *v,
-        _ => 0.0,
-    }
-}
-
 fn datum_int(value: &Datum) -> i64 {
     match value {
         Datum::Int(v) => *v,
@@ -737,7 +729,12 @@ fn datum_uint(value: &Datum) -> u64 {
     }
 }
 
-fn pseudo_row_count(ranges: &[ColumnRange], realtime_row_count: i64, pk_is_handle: bool) -> f64 {
+fn pseudo_row_count(
+    ranges: &[ColumnRange],
+    collation: Collation,
+    realtime_row_count: i64,
+    pk_is_handle: bool,
+) -> f64 {
     let table_row_count = realtime_row_count as f64;
     if pk_is_handle {
         if ranges.is_empty() {
@@ -790,9 +787,17 @@ fn pseudo_row_count(ranges: &[ColumnRange], realtime_row_count: i64, pk_is_handl
     let scalar: Vec<ScalarRange> = ranges
         .iter()
         .map(|range| {
+            // Go compares the original Datum bounds under the range's
+            // collator. A numeric surrogate cannot preserve that contract:
+            // in particular, mapping every string to 0 turns every string
+            // interval into an equality range.
+            let equal = range
+                .low
+                .compare(&range.high, collation)
+                .is_ok_and(|ordering| ordering.is_eq());
             ScalarRange::new(
-                datum_scalar(&range.low),
-                datum_scalar(&range.high),
+                0.0,
+                if equal { 0.0 } else { 1.0 },
                 bound_kind(&range.low),
                 bound_kind(&range.high),
             )
@@ -896,11 +901,26 @@ fn null_key_bytes() -> Vec<u8> {
     encode_datum(&Datum::Null)
 }
 
-/// Go `outOfRangeOnIndex`. The prefix check only fires for string bounds,
-/// which index-key bounds never are once encoded, so it reduces to the
-/// histogram's own range test here.
+/// Go `outOfRangeOnIndex` and its `matchPrefix` guard.
+///
+/// A shortened composite-index key sorts before the first full key that has
+/// the same prefix. Go does not call that prefix out of range: doing so would
+/// add one out-of-range value to an otherwise exact leading-column estimate.
 fn out_of_range_on_index(index: &IndexStats, value: &Datum) -> bool {
-    index.histogram.out_of_range(value, Collation::Binary)
+    if !index.histogram.out_of_range(value, Collation::Binary) {
+        return false;
+    }
+    let Some(first) = index.histogram.buckets.first() else {
+        return false;
+    };
+    if matches!(
+        value,
+        Datum::String(_) | Datum::Bytes(_) | Datum::BinaryLiteral(_) | Datum::Bit(_)
+    ) && first.lower_bound.go_bytes().starts_with(value.go_bytes())
+    {
+        return false;
+    }
+    true
 }
 
 /// Go `getOrdinalOfRangeCond`: the first index column whose bounds differ.

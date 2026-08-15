@@ -30,9 +30,11 @@
 //! The second question is the one this module grew for: WHICH ORDER the walk
 //! produces. A leaf whose parent requires an order is handed Go's non-empty
 //! `prop` here, and reports back only what the branch that RAN delivers --
-//! the verify half of the contract in [`super::merge_decision`].
+//! the verify half of the contract in [`super::merge_decision`]. The same
+//! chooser also receives predicates that reference only this leaf, so a
+//! clustered-handle or index range can be selected before the join runs.
 
-use super::access::{index_key_part_name, source_schema_columns};
+use super::access::{index_key_part_name, source_schema_columns, PointPlanStmt};
 use super::*;
 
 /// The covering index a LEAF of a multi-table `FROM` reads instead of its
@@ -133,11 +135,12 @@ pub(crate) fn leaf_index_path(
     visible: &str,
     columns: &[(String, FieldType)],
     demand: &crate::driver::leaf_demand::LeafDemand,
+    where_clause: Option<&tidb_ast::Expr>,
     hints: &crate::index_hints::AvailablePaths,
     catalog: &Catalog,
     ctx: &crate::StmtContext,
     wanted: Option<&[usize]>,
-) -> Option<LeafIndexPath> {
+) -> Option<LeafAccessPath> {
     // A partitioned leaf would need the pruning this call site has no
     // conditions to run, and Go's `hasPartitionScan` penalty with it.
     if table.partition().is_some() {
@@ -156,10 +159,41 @@ pub(crate) fn leaf_index_path(
     };
     let stats = catalog.table_statistics(table.table_id);
     let stats = stats.as_ref().map(AsRef::as_ref);
+    let row_size = crate::access_cost::data_source_avg_row_size(table, &needed, stats);
+    // Go's TryFastPlan runs before ordinary path costing. A join leaf can use
+    // the same direct lookup when its local predicates pin a handle or a
+    // complete unique/common key; a one-row source satisfies any requested
+    // order trivially.
+    if hints.allows_table() {
+        if let Some(where_clause) = where_clause {
+            let stmt = PointPlanStmt::of_write(Some(where_clause), &[], None);
+            if let Ok(Some(handle)) =
+                super::access::try_point_get(&stmt, table, columns, &ctx.session_zone())
+            {
+                return Some(LeafAccessPath::Point {
+                    handle,
+                    order: wanted.map(|order| order.to_vec()).unwrap_or_default(),
+                    candidate: tidb_planner::candidate_cost::Candidate::Fixed {
+                        rows: 1.0,
+                        row_size,
+                        cost: tidb_planner::plan_cost_ver2::point_get_cost(
+                            None,
+                            1.0,
+                            row_size,
+                            &tidb_planner::plan_cost_ver2::Ver2Factors::default().tidb_to_kv_net,
+                            true,
+                        )
+                        .value(),
+                        num_ranges: 1,
+                    },
+                });
+            }
+        }
+    }
     let mut paths = crate::access_cost::enumerate_paths(
         table,
         columns,
-        None,
+        where_clause,
         &needed,
         &resolver,
         None,
@@ -200,18 +234,33 @@ pub(crate) fn leaf_index_path(
             // which is how an ordered index that is dearer than the ordered
             // table read still loses -- `best.index?` below then reads the
             // table path as "keep the whole-table scan already installed".
-            None => leaf_handle_order(table, columns) == wanted,
+            None => leaf_handle_order(table, columns).starts_with(wanted),
         });
     }
     let best = crate::access_cost::choose_access_path(paths, stats, false)?;
-    let (index_id, ranges) = best.index?;
-    // Stated as a guard rather than assumed: with no `WHERE` to detach, the
-    // enumeration has nothing to narrow an index with, so anything other than
-    // the whole index would mean this call site is reading a path it did not
-    // ask for.
-    if ranges.len() != 1 || !ranges[0].is_full() {
-        return None;
-    }
+    let Some((index_id, ranges)) = best.index else {
+        let num_ranges = best.table_ranges.as_ref().map_or(1, Vec::len);
+        let residual_filters = where_clause.map_or_else(Vec::new, |predicate| {
+            crate::handle_range::build_handle_ranges(table, predicate, &ctx.session_zone())
+                .map(|built| built.residual.into_iter().cloned().collect())
+                .unwrap_or_else(|| {
+                    let mut all = Vec::new();
+                    crate::plan_trace::collect_and(predicate, &mut all);
+                    all.into_iter().cloned().collect()
+                })
+        });
+        return Some(LeafAccessPath::Table {
+            ranges: best.table_ranges,
+            estimate: best.estimate,
+            residual_filters,
+            candidate: tidb_planner::candidate_cost::Candidate::Fixed {
+                rows: best.estimate.rows,
+                row_size,
+                cost: best.cost,
+                num_ranges,
+            },
+        });
+    };
     // The order the BUILT source will deliver, which is the index walk's own
     // only when this path was chosen to satisfy a property: without that, the
     // source reorders its lookup batches by handle and answers in neither
@@ -225,13 +274,58 @@ pub(crate) fn leaf_index_path(
             .unwrap_or_default(),
         None => Vec::new(),
     };
-    Some(LeafIndexPath {
+    let index_filter =
+        crate::access_cost::index_filter_for_path(table, index_id, where_clause, &resolver);
+    let residual_filters = crate::access_cost::index_residual_filters_for_path(
+        table,
+        index_id,
+        where_clause,
+        &resolver,
+    );
+    let num_ranges = ranges.len();
+    Some(LeafAccessPath::Index(LeafIndexPath {
         index_id,
         ranges,
         estimate: best.estimate,
         order,
         keep_order: wanted.is_some(),
-    })
+        index_filter,
+        residual_filters,
+        candidate: tidb_planner::candidate_cost::Candidate::Fixed {
+            rows: best.estimate.rows,
+            row_size,
+            cost: best.cost,
+            num_ranges,
+        },
+    }))
+}
+
+/// The narrowed path a join leaf committed to, or the full-table path when no
+/// candidate beat it. A table range keeps the already-built `TableScanExec`;
+/// an index range replaces it with the streaming index source.
+pub(crate) enum LeafAccessPath {
+    /// A direct point lookup over a complete handle or unique key.
+    Point {
+        /// The handle, or `None` for a guaranteed miss.
+        handle: Option<TableHandle>,
+        /// The requested order, which a one-row source satisfies.
+        order: Vec<usize>,
+        /// The complete point-read task costed by Go's network formula.
+        candidate: tidb_planner::candidate_cost::Candidate,
+    },
+    /// A clustered-handle range over the existing table scan.
+    Table {
+        /// The ranges to offer to the table source. `None` is the full range.
+        ranges: Option<Vec<IndexRange>>,
+        /// The estimate printed for the narrowed scan.
+        estimate: crate::access_cost::ScanEstimate,
+        /// Predicates that did not become handle access conditions.
+        residual_filters: Vec<tidb_ast::Expr>,
+        /// The complete reader task, already costed by `access_cost`.
+        candidate: tidb_planner::candidate_cost::Candidate,
+    },
+    /// A secondary-index range source.
+    Index(LeafIndexPath),
 }
 
 /// The order a WHOLE-TABLE walk of `table` delivers, in the leaf's own row
@@ -241,7 +335,7 @@ pub(crate) fn leaf_index_path(
 /// The same answer [`crate::merge_join_plan::table_scan_order`] gives, read
 /// through the leaf's column list so it can be compared with
 /// [`leaf_index_order`] on one numbering.
-pub(crate) fn leaf_handle_order(table: &KvTable, columns: &[(String, FieldType)]) -> Vec<usize> {
+fn leaf_handle_order(table: &KvTable, columns: &[(String, FieldType)]) -> Vec<usize> {
     crate::merge_join_plan::table_scan_order(table)
         .into_iter()
         .next()
@@ -266,7 +360,7 @@ pub(crate) fn leaf_handle_order(table: &KvTable, columns: &[(String, FieldType)]
 /// same one [`crate::driver::merge_decision`] does: an expression index's
 /// hidden column is a column of the TABLE that no query row carries, so it
 /// truncates the order rather than pointing at the wrong offset.
-pub(crate) fn leaf_index_order(
+fn leaf_index_order(
     table: &KvTable,
     index: &crate::kv_table::KvIndex,
     columns: &[(String, FieldType)],
@@ -287,129 +381,6 @@ pub(crate) fn leaf_index_order(
     order
 }
 
-/// Every access-path task a recursive join search may choose for one table.
-///
-/// This is the same condition-blind leaf enumeration [`leaf_index_path`]
-/// consumes, stopped after skyline pruning rather than after choosing one
-/// path. Orders are translated to the caller's stable column identities so a
-/// parent property can select a dearer ordered path when that makes the whole
-/// join tree cheaper.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn leaf_alternatives(
-    table: &KvTable,
-    table_ref: &tidb_ast::TableRef,
-    visible: &str,
-    columns: &[(String, FieldType)],
-    demand: &crate::driver::leaf_demand::LeafDemand,
-    catalog: &Catalog,
-    ctx: &crate::StmtContext,
-    column_ids: &[i64],
-) -> Option<Vec<tidb_planner::find_best_task::LeafAlternative>> {
-    // The recursive model currently has an exact clustered-handle probe but
-    // no source-shaped secondary-index double-read probe. Decline the whole
-    // tree when one exists; ordinary access planning still handles it.
-    if table.partition().is_some()
-        || !table.indexes().is_empty()
-        || columns.len() != column_ids.len()
-    {
-        return None;
-    }
-    let hints = crate::index_hints::table_ref_hints(table_ref, table).ok()?;
-    let needed = demand.needed(visible, columns);
-    let resolver = TableResolver {
-        table_name: visible,
-        columns,
-        constant_context: ctx.clone(),
-        zone: ctx.session_zone(),
-        no_unsigned_subtraction: ctx.no_unsigned_subtraction(),
-        div_precision_increment: ctx.div_precision_increment(),
-    };
-    let stats = catalog.table_statistics(table.table_id);
-    let stats = stats.as_ref().map(AsRef::as_ref);
-    let paths = crate::access_cost::pruned_access_paths(
-        crate::access_cost::enumerate_paths(
-            table,
-            columns,
-            None,
-            &needed,
-            &resolver,
-            None,
-            stats,
-            &hints,
-            false,
-            false,
-            demand.statement_forces_an_index(),
-        ),
-        stats,
-        false,
-    );
-    let row_size = crate::access_cost::schema_avg_row_size(
-        &needed
-            .iter()
-            .filter_map(|offset| columns.get(*offset).map(|(_, ty)| ty.clone()))
-            .collect::<Vec<_>>(),
-    );
-    let mut alternatives = Vec::with_capacity(paths.len() + 1);
-    for path in paths {
-        let (order, num_ranges) = match &path.index {
-            Some((index_id, ranges)) => {
-                let index = table.indexes().iter().find(|index| index.id == *index_id)?;
-                (leaf_index_order(table, index, columns), ranges.len())
-            }
-            None => (
-                leaf_handle_order(table, columns),
-                path.table_ranges.as_ref().map_or(1, Vec::len),
-            ),
-        };
-        alternatives.push(tidb_planner::find_best_task::LeafAlternative {
-            plan: tidb_planner::candidate_cost::Candidate::CostedAccess {
-                rows: path.estimate.rows,
-                row_size,
-                cost: path.cost,
-                num_ranges,
-            },
-            order: order
-                .into_iter()
-                .filter_map(|offset| column_ids.get(offset).copied())
-                .map(|col| tidb_planner::physical_property::SortItem::new(col, false))
-                .collect(),
-            role: tidb_planner::find_best_task::LeafRole::Plain,
-        });
-    }
-
-    // `buildDataSource2TableScanByIndexJoinProp`: one clustered-handle range
-    // lookup per outer key. A secondary-index lookup has a different
-    // double-read tree and is deliberately not fabricated here.
-    if table.pk_handle_offset().is_some() {
-        let rows = 1.0;
-        let scan = tidb_planner::candidate_cost::Candidate::TableScan {
-            rows,
-            row_size: tidb_planner::candidate_cost::RowSize::Fixed(row_size),
-            is_child_of_inl: Some(true),
-            has_full_range_scan: false,
-            penalty: tidb_planner::plan_cost_ver2::TableScanPenaltyInput {
-                has_range_info: true,
-                ..Default::default()
-            },
-            num_ranges: 1,
-            desc: false,
-        };
-        alternatives.push(tidb_planner::find_best_task::LeafAlternative {
-            plan: tidb_planner::candidate_cost::Candidate::Reader {
-                child: Box::new(scan),
-                rows,
-                row_size: tidb_planner::candidate_cost::RowSize::Fixed(row_size),
-                kind: tidb_planner::candidate_cost::ReaderKind::Table,
-            },
-            order: Vec::new(),
-            role: tidb_planner::find_best_task::LeafRole::IndexJoinProbe {
-                table_range_scan: true,
-            },
-        });
-    }
-    (!alternatives.is_empty()).then_some(alternatives)
-}
-
 /// The whole-index path a join leaf committed to: what
 /// [`leaf_index_path`] decided and [`leaf_index_source`] then builds.
 pub(crate) struct LeafIndexPath {
@@ -425,12 +396,33 @@ pub(crate) struct LeafIndexPath {
     /// order rather than reordering its handle batches
     /// ([`IndexRangeSourceExec::answer_in_index_order`]).
     keep_order: bool,
+    /// Residual conditions evaluated from columns stored in this index.
+    index_filter: Option<tidb_ast::Expr>,
+    /// Every residual condition, including conditions that require the table
+    /// row after a non-covering index lookup.
+    residual_filters: Vec<tidb_ast::Expr>,
+    /// The complete reader task, already costed by `access_cost`.
+    candidate: tidb_planner::candidate_cost::Candidate,
 }
 
 impl LeafIndexPath {
     /// The order the walk this path describes delivers.
     pub(crate) fn order(&self) -> &[usize] {
         &self.order
+    }
+
+    /// Go's cop-side `Selection` above this index scan, when present.
+    pub(crate) fn index_filter(&self) -> Option<&tidb_ast::Expr> {
+        self.index_filter.as_ref()
+    }
+
+    /// Conditions that remain after the index's access ranges are built.
+    pub(crate) fn residual_filters(&self) -> &[tidb_ast::Expr] {
+        &self.residual_filters
+    }
+
+    pub(crate) fn candidate(&self) -> &tidb_planner::candidate_cost::Candidate {
+        &self.candidate
     }
 }
 
@@ -456,7 +448,34 @@ pub(crate) fn leaf_index_source(
         estimate,
         order: _,
         keep_order,
+        index_filter: _,
+        residual_filters: _,
+        candidate: _,
     } = path;
+    let mut trace = trace;
+    if let Some(trace) = trace.as_deref_mut() {
+        let index = table
+            .indexes()
+            .iter()
+            .find(|index| index.id == index_id)
+            .expect("the chosen path names an index of this table");
+        let index_columns: Vec<String> = index
+            .column_offsets
+            .iter()
+            .map(|offset| index_key_part_name(table, *offset))
+            .collect();
+        let index_columns: Vec<&str> = index_columns.iter().map(String::as_str).collect();
+        if ranges.is_empty() {
+            trace.empty_range_table_dual();
+        } else if ranges.len() == 1 && ranges[0].is_full() {
+            trace.index_full_scan(visible, &index.name, &index_columns, estimate, keep_order);
+        } else {
+            trace.index_range_scan(visible, &index.name, &index_columns, &ranges, estimate);
+            if keep_order {
+                trace.keep_order(false);
+            }
+        }
+    }
     let mut exec = IndexRangeSourceExec::new_with_context(
         ExecutorMeta::new(
             Schema::new(source_schema_columns(columns)),
@@ -469,6 +488,7 @@ pub(crate) fn leaf_index_source(
         ranges,
         crate::kv_table::RowDecodeContext::for_query(ctx),
     );
+    crate::table_access::TableAccess::accept_scan_estimate(&mut exec, estimate.rows);
     if keep_order {
         // Go's `keep order:true` index read: `canReorderHandles` is false, so
         // the lookup batches are sorted BACK into index order and the rows
@@ -490,18 +510,6 @@ pub(crate) fn leaf_index_source(
         exec.answer_in_index_order();
     }
     if let Some(trace) = trace {
-        let index = table
-            .indexes()
-            .iter()
-            .find(|index| index.id == index_id)
-            .expect("the chosen path names an index of this table");
-        let index_columns: Vec<String> = index
-            .column_offsets
-            .iter()
-            .map(|offset| index_key_part_name(table, *offset))
-            .collect();
-        let index_columns: Vec<&str> = index_columns.iter().map(String::as_str).collect();
-        trace.index_full_scan(visible, &index.name, &index_columns, estimate, keep_order);
         trace.set_scan_act_rows(exec.produced_rows());
     }
     Box::new(exec)

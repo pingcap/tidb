@@ -163,12 +163,20 @@ impl Session {
         let Ok(stmt) = self.parse(sql) else {
             return StatementReadShape::Unknown;
         };
+        self.statement_read_shape_parsed(&stmt)
+    }
+
+    /// [`Self::statement_read_shape`] over the bound AST retained by a
+    /// prepared execution. The tree has already been parsed under PREPARE's
+    /// SQL mode and has this execution's parameter values installed.
+    #[must_use]
+    pub fn statement_read_shape_parsed(&self, stmt: &Stmt) -> StatementReadShape {
         // Fix 52592 turns the point/batch shortcut into an ordinary range.
         // Snapshot declaration happens before `apply_set_var_hints`, so
         // derive the direct-AST overlay here as part of the same parse used
         // for shape classification. Declaring MaxTS first and disabling the
         // point plan later would silently read a range without a snapshot.
-        if crate::variables::effective_fix_52592(&stmt, self.vars.optimizer_fix_control()) {
+        if crate::variables::effective_fix_52592(stmt, self.vars.optimizer_fix_control()) {
             return StatementReadShape::Unknown;
         }
         let catalog = self
@@ -176,7 +184,7 @@ impl Session {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
         tidb_executor::access_path::statement_read_shape(
-            &stmt,
+            stmt,
             &catalog,
             self.current_database(),
             &self.session_time_zone(),

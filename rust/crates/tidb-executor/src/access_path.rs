@@ -53,15 +53,20 @@
 //! with one it reports the truncation, as Go's does.
 
 use std::cell::Cell;
-use std::collections::{btree_set, BTreeSet};
+use std::collections::{btree_set, BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use tidb_chunk::chunk::Chunk;
-use tidb_datatype::{Datum, FieldType, SessionTimeZone};
+use tidb_datatype::{Datum, Decimal, FieldType, SessionTimeZone};
+use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
+use tidb_expr::truthy_of;
 
 use crate::executor::{ExecError, Executor, ExecutorMeta};
-use crate::kv_table::{IndexRange, IndexRangeCursor, KvTable, TableHandle};
+use crate::kv_table::{IndexRange, IndexRangeCursor, KvTable, RowCursor, TableHandle};
+use crate::remote_scan::{
+    PushdownAggregateKind, PushdownPartialAggregate, PushdownRowStream, PushdownStatementContext,
+};
 
 /// What a statement declares about its whole read, before its first read
 /// happens.
@@ -199,7 +204,7 @@ pub fn statement_read_shape(
 /// root plan and so land in its `default` arm. The select list is held to
 /// plain column references and wildcards for the same reason -- a scalar
 /// subquery in it is a second read, and an aggregate is a root `HashAgg`.
-fn select_is_bare_point_read(select: &tidb_ast::SelectStmt) -> bool {
+pub(crate) fn select_is_bare_point_read(select: &tidb_ast::SelectStmt) -> bool {
     use tidb_ast::{SelectField, SelectStatementKind};
 
     select.kind == SelectStatementKind::Select
@@ -252,8 +257,6 @@ pub struct HandleSourceExec {
     table: KvTable,
     handles: Vec<TableHandle>,
     /// One physical table id per handle for a partitioned batch point get.
-    /// Absent for ordinary point reads whose table authority performs the
-    /// lookup itself.
     physical_ids: Option<Vec<i64>>,
     /// The next handle to read.
     cursor: usize,
@@ -263,6 +266,9 @@ pub struct HandleSourceExec {
     /// a stored `TIMESTAMP` is read back into, captured where the statement's
     /// context is (`Executor` has none).
     decode_context: crate::kv_table::RowDecodeContext,
+    /// Source-row offsets this complete point plan emits, in result order.
+    /// `None` keeps the ordinary visible-row schema for residual root work.
+    output_offsets: Option<Vec<usize>>,
 }
 
 impl HandleSourceExec {
@@ -282,32 +288,7 @@ impl HandleSourceExec {
             cursor: 0,
             produced: Rc::new(Cell::new(0)),
             decode_context,
-        }
-    }
-
-    /// Builds Go's partitioned `BatchPointGetExec`: each handle is paired
-    /// with the physical table id found while pruning the plan.
-    #[must_use]
-    pub(crate) fn new_partitioned_with_context(
-        meta: ExecutorMeta,
-        table: KvTable,
-        handles: Vec<TableHandle>,
-        physical_ids: Vec<i64>,
-        decode_context: crate::kv_table::RowDecodeContext,
-    ) -> Self {
-        assert_eq!(
-            handles.len(),
-            physical_ids.len(),
-            "every batch-point handle needs one physical partition"
-        );
-        HandleSourceExec {
-            meta,
-            table,
-            handles,
-            physical_ids: Some(physical_ids),
-            cursor: 0,
-            produced: Rc::new(Cell::new(0)),
-            decode_context,
+            output_offsets: None,
         }
     }
 
@@ -328,6 +309,57 @@ impl HandleSourceExec {
         )
     }
 
+    /// Builds Go's complete point plan, projecting source offsets while the
+    /// row is read instead of leaving a root Projection above the lookup.
+    #[must_use]
+    pub fn new_projected_with_context(
+        meta: ExecutorMeta,
+        table: KvTable,
+        handles: Vec<TableHandle>,
+        output_offsets: Vec<usize>,
+        decode_context: crate::kv_table::RowDecodeContext,
+    ) -> Self {
+        Self {
+            meta,
+            table,
+            handles,
+            physical_ids: None,
+            cursor: 0,
+            produced: Rc::new(Cell::new(0)),
+            decode_context,
+            output_offsets: Some(output_offsets),
+        }
+    }
+
+    /// Builds Go's partitioned `BatchPointGetExec`, retaining the current
+    /// source-level projection while pairing every handle with its physical
+    /// table id.
+    #[must_use]
+    pub(crate) fn new_partitioned_projected_with_context(
+        meta: ExecutorMeta,
+        table: KvTable,
+        handles: Vec<TableHandle>,
+        physical_ids: Vec<i64>,
+        output_offsets: Option<Vec<usize>>,
+        decode_context: crate::kv_table::RowDecodeContext,
+    ) -> Self {
+        assert_eq!(
+            handles.len(),
+            physical_ids.len(),
+            "every batch-point handle needs one physical partition"
+        );
+        Self {
+            meta,
+            table,
+            handles,
+            physical_ids: Some(physical_ids),
+            cursor: 0,
+            produced: Rc::new(Cell::new(0)),
+            decode_context,
+            output_offsets,
+        }
+    }
+
     /// The live count of rows this source produced.
     #[must_use]
     pub fn produced_rows(&self) -> Rc<Cell<u64>> {
@@ -344,8 +376,8 @@ impl Executor for HandleSourceExec {
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
-        while !req.is_full() {
-            let index = self.cursor;
+        let cap = self.meta.max_chunk_size();
+        while req.num_rows() < cap {
             let Some(handle) = self.handles.get(self.cursor) else {
                 return Ok(());
             };
@@ -355,7 +387,7 @@ impl Executor for HandleSourceExec {
             let row = match self
                 .physical_ids
                 .as_ref()
-                .and_then(|physical_ids| physical_ids.get(index))
+                .and_then(|physical_ids| physical_ids.get(self.cursor - 1))
             {
                 Some(physical_id) => self.table.get_row_by_handle_in_physical_id_with_context(
                     handle,
@@ -368,8 +400,18 @@ impl Executor for HandleSourceExec {
             }
             .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
             if let Some(row) = row {
-                for (c, value) in visible_of(&self.table, &row).iter().enumerate() {
-                    req.append_datum(c, value);
+                let visible = visible_of(&self.table, &row);
+                if let Some(offsets) = &self.output_offsets {
+                    for (output, source) in offsets.iter().copied().enumerate() {
+                        let value = visible.get(source).ok_or_else(|| {
+                            ExecError::unsupported("point-get output column is outside the row")
+                        })?;
+                        req.append_datum(output, value);
+                    }
+                } else {
+                    for (column, value) in visible.iter().enumerate() {
+                        req.append_datum(column, value);
+                    }
                 }
                 self.produced.set(self.produced.get() + 1);
             }
@@ -481,25 +523,15 @@ impl crate::table_access::TableAccess for HandleSourceExec {}
 pub struct IndexRangeSourceExec {
     meta: ExecutorMeta,
     table: KvTable,
+    /// Physical visible-column offsets emitted by this source. The mapping is
+    /// composed when logical column pruning reaches a join leaf.
+    keep: Vec<usize>,
     index_id: i64,
     ranges: Vec<IndexRange>,
-    /// Physical partitions in Go request order.
-    physical_ids: Vec<i64>,
-    /// The physical partition whose ranges are being read.
-    next_physical: usize,
-    /// The next range in that physical partition.
+    /// The next range to open a cursor over.
     next_range: usize,
     /// The open cursor over `ranges[next_range - 1]`.
     cursor: Option<IndexRangeCursor>,
-    /// `next_handle` stopped because one physical partition ended. A lookup
-    /// batch must be sorted and emitted before the next partition is read.
-    partition_boundary: bool,
-    /// Go's partitioned index-lookup pushdown sorts a physical partition's
-    /// handle task before the root LIMIT observes it.
-    partitioned: bool,
-    /// A parent requested one globally ordered index stream, so partition
-    /// iterators are merged by their index-key suffix instead of concatenated.
-    merge_partition_index_order: bool,
     /// Rows produced so far, which the trace reads as this node's `actRows`
     /// when no filter was pushed into it.
     produced: Rc<Cell<u64>>,
@@ -510,6 +542,9 @@ pub struct IndexRangeSourceExec {
     filter: Option<crate::predicate_pushdown::ScanFilterProbe>,
     /// A pushed row cap (`offset + count`); see [`Executor::accept_scan_limit`].
     limit: Option<u64>,
+    /// Handles skipped before a limit embedded in an ordered IndexLookUp.
+    lookup_offset: u64,
+    skipped_handles: u64,
     /// Go's `canReorderHandles` (`builder.go`): whether this read may answer
     /// in handle order. FALSE for the two reads whose answer is the index
     /// walk itself -- a COVERING path, which is Go's `PhysicalIndexReader`
@@ -517,6 +552,12 @@ pub struct IndexRangeSourceExec {
     /// which sorts the batch back into index order after reading it. See the
     /// type doc.
     can_reorder_handles: bool,
+    /// Go's `PhysicalIndexScan.Desc`: the matching index range is walked from
+    /// its exclusive high key toward its low key.
+    descending: bool,
+    /// Whether the selected columns are served by Go's single-read
+    /// `PhysicalIndexReader`, which cannot accept an IndexLookUp-only limit.
+    covering: bool,
     /// The current handle batch -- Go's `lookupTableTask.handles`, already
     /// sorted unless [`Self::keep_order`].
     batch: Vec<TableHandle>,
@@ -528,6 +569,15 @@ pub struct IndexRangeSourceExec {
     /// The statement-class flags and session zone the row is decoded under;
     /// the zone also encodes the index probe. See [`HandleSourceExec`].
     decode_context: crate::kv_table::RowDecodeContext,
+    /// Statement flags and warning sink carried into a remote DAG request.
+    statement: PushdownStatementContext,
+    /// Planner estimate used to avoid partial aggregation for point-like work.
+    estimated_rows: Option<f64>,
+    /// Partial aggregation accepted from the root aggregation executor.
+    partial_aggregate: Option<PushdownPartialAggregate>,
+    partial_remote: Option<Box<dyn PushdownRowStream>>,
+    partial_rows: Option<std::vec::IntoIter<Vec<Datum>>>,
+    partial_done: bool,
 }
 
 /// Go's `indexWorker.batchSize` at its first batch.
@@ -554,29 +604,55 @@ impl IndexRangeSourceExec {
         ranges: Vec<IndexRange>,
         decode_context: crate::kv_table::RowDecodeContext,
     ) -> Self {
-        let physical_ids = table.record_physical_ids();
-        let partitioned = table.partition().is_some();
-        IndexRangeSourceExec {
+        Self::new_with_statement(
             meta,
             table,
             index_id,
             ranges,
-            physical_ids,
-            next_physical: 0,
+            decode_context,
+            PushdownStatementContext::default(),
+        )
+    }
+
+    /// Builds an index source carrying the statement context required by a
+    /// real TiKV partial-aggregation request.
+    #[must_use]
+    pub fn new_with_statement(
+        meta: ExecutorMeta,
+        table: KvTable,
+        index_id: i64,
+        ranges: Vec<IndexRange>,
+        decode_context: crate::kv_table::RowDecodeContext,
+        statement: PushdownStatementContext,
+    ) -> Self {
+        let keep = (0..meta.schema().columns.len()).collect();
+        IndexRangeSourceExec {
+            meta,
+            table,
+            keep,
+            index_id,
+            ranges,
             next_range: 0,
             cursor: None,
-            partition_boundary: false,
-            partitioned,
-            merge_partition_index_order: false,
             produced: Rc::new(Cell::new(0)),
             scanned: Rc::new(Cell::new(0)),
             filter: None,
             limit: None,
+            lookup_offset: 0,
+            skipped_handles: 0,
             can_reorder_handles: true,
+            descending: false,
+            covering: false,
             batch: Vec::new(),
             batch_at: 0,
             batch_size: INIT_HANDLE_BATCH,
             decode_context,
+            statement,
+            estimated_rows: None,
+            partial_aggregate: None,
+            partial_remote: None,
+            partial_rows: None,
+            partial_done: false,
         }
     }
 
@@ -623,9 +699,10 @@ impl IndexRangeSourceExec {
         self.can_reorder_handles = false;
     }
 
-    pub(crate) fn merge_partition_index_order(&mut self) {
-        self.can_reorder_handles = false;
-        self.merge_partition_index_order = true;
+    /// Declares that this source represents a covering index reader rather
+    /// than a table double read.
+    pub(crate) fn mark_covering(&mut self) {
+        self.covering = true;
     }
 
     /// The next handle to READ A ROW FOR: Go's `lookupTableTask` walk, which
@@ -639,26 +716,17 @@ impl IndexRangeSourceExec {
     fn next_lookup_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
         if self.batch_at == self.batch.len() {
             let mut want = self.batch_size;
-            if !self.partitioned {
-                if let Some(limit) = self.limit {
-                    let remaining = limit.saturating_sub(self.produced.get());
-                    want = want.min(usize::try_from(remaining).unwrap_or(usize::MAX));
-                }
+            if let Some(limit) = self.limit {
+                let remaining = limit.saturating_sub(self.produced.get());
+                want = want.min(usize::try_from(remaining).unwrap_or(usize::MAX));
             }
             self.batch.clear();
             self.batch_at = 0;
             while self.batch.len() < want {
-                match self.next_handle()? {
-                    Some(handle) => self.batch.push(handle),
-                    None if self.partition_boundary => {
-                        self.partition_boundary = false;
-                        if self.batch.is_empty() {
-                            continue;
-                        }
-                        break;
-                    }
-                    None => break,
-                }
+                let Some(handle) = self.next_window_handle()? else {
+                    break;
+                };
+                self.batch.push(handle);
             }
             self.batch_size = (self.batch_size * 2).min(MAX_HANDLE_BATCH);
             if self.can_reorder_handles {
@@ -671,6 +739,16 @@ impl IndexRangeSourceExec {
         let handle = self.batch[self.batch_at].clone();
         self.batch_at += 1;
         Ok(Some(handle))
+    }
+
+    fn next_window_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
+        while self.skipped_handles < self.lookup_offset {
+            if self.next_handle()?.is_none() {
+                return Ok(None);
+            }
+            self.skipped_handles += 1;
+        }
+        self.next_handle()
     }
 
     /// The next handle in index order across all ranges, opening the next
@@ -686,64 +764,323 @@ impl IndexRangeSourceExec {
                 }
                 self.cursor = None;
             }
-            let Some(physical_id) = self.physical_ids.get(self.next_physical).copied() else {
-                return Ok(None);
+            let range = if self.descending {
+                let Some(next_range) = self.next_range.checked_sub(1) else {
+                    return Ok(None);
+                };
+                self.next_range = next_range;
+                self.ranges[next_range].clone()
+            } else {
+                let Some(range) = self.ranges.get(self.next_range).cloned() else {
+                    return Ok(None);
+                };
+                self.next_range += 1;
+                range
             };
-            let Some(range) = self.ranges.get(self.next_range) else {
-                self.next_physical += 1;
-                self.next_range = 0;
-                self.partition_boundary = true;
-                return Ok(None);
-            };
-            self.next_range += 1;
             self.cursor = Some(
                 self.table
-                    .index_ranges_cursor_for_physical_id(
+                    .index_range_cursor_with_direction(
                         self.index_id,
-                        std::slice::from_ref(range),
+                        &range,
                         self.decode_context.zone(),
-                        physical_id,
+                        self.descending,
                     )
                     .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
             );
+        }
+    }
+
+    /// The next index-range row surviving the pushed filter, for the local
+    /// fallback of a partial aggregate request. A remote coprocessor takes
+    /// the same request in [`Self::open`]; this path keeps in-memory storage
+    /// and tests semantically identical.
+    fn next_partial_input_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
+        loop {
+            let Some(handle) = self.next_lookup_handle()? else {
+                return Ok(None);
+            };
+            let row = self
+                .table
+                .get_row_by_handle_projected_with_context(
+                    &handle,
+                    Some(&self.keep),
+                    &self.decode_context,
+                )
+                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+            let Some(row) = row else {
+                continue;
+            };
+            self.scanned.set(self.scanned.get() + 1);
+            if let Some(filter) = self.filter.as_mut() {
+                if !filter.admits(&row)? {
+                    continue;
+                }
+            }
+            self.produced.set(self.produced.get() + 1);
+            return Ok(Some(row));
+        }
+    }
+
+    fn local_partial_rows(
+        &mut self,
+        aggregate: &PushdownPartialAggregate,
+    ) -> Result<Vec<Vec<Datum>>, ExecError> {
+        match aggregate {
+            PushdownPartialAggregate::Count { input_offset, .. } => {
+                let mut count = 0_i64;
+                while let Some(row) = self.next_partial_input_row()? {
+                    if !matches!(row.get(*input_offset), None | Some(Datum::Null)) {
+                        count += 1;
+                    }
+                }
+                Ok(vec![vec![Datum::Int(count)]])
+            }
+            PushdownPartialAggregate::Grouped {
+                group_offsets,
+                group_types,
+                functions,
+                streamed,
+            } => {
+                if group_offsets.len() != group_types.len() || group_offsets.is_empty() {
+                    return Err(ExecError::unsupported(
+                        "index partial grouped aggregation requires typed group keys",
+                    ));
+                }
+
+                enum PartialValue {
+                    Count(i64),
+                    Sum(Option<Decimal>),
+                    Extreme { value: Option<Datum>, is_max: bool },
+                }
+                let new_values = || {
+                    functions
+                        .iter()
+                        .map(|function| match function.kind {
+                            PushdownAggregateKind::Count => PartialValue::Count(0),
+                            PushdownAggregateKind::Sum => PartialValue::Sum(None),
+                            PushdownAggregateKind::Min => PartialValue::Extreme {
+                                value: None,
+                                is_max: false,
+                            },
+                            PushdownAggregateKind::Max => PartialValue::Extreme {
+                                value: None,
+                                is_max: true,
+                            },
+                        })
+                        .collect::<Vec<_>>()
+                };
+                let finish = |groups: Vec<Datum>, values: Vec<PartialValue>| {
+                    values
+                        .into_iter()
+                        .map(|value| match value {
+                            PartialValue::Count(count) => Datum::Int(count),
+                            PartialValue::Sum(sum) => sum.map_or(Datum::Null, Datum::Decimal),
+                            PartialValue::Extreme { value, .. } => value.unwrap_or(Datum::Null),
+                        })
+                        .chain(groups)
+                        .collect::<Vec<_>>()
+                };
+                let group = |row: &[Datum]| -> Result<(Vec<u8>, Vec<Datum>), ExecError> {
+                    let groups = group_offsets
+                        .iter()
+                        .map(|offset| {
+                            row.get(*offset).cloned().ok_or_else(|| {
+                                ExecError::unsupported(
+                                    "index partial GROUP BY input is outside the scan row",
+                                )
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let mut key = Vec::new();
+                    for (group, field_type) in groups.iter().zip(group_types) {
+                        key.extend_from_slice(&crate::hash_agg::group_key_part(
+                            &field_type.collation(),
+                            group,
+                        ));
+                        key.push(0xff);
+                    }
+                    Ok((key, groups))
+                };
+                let update = |values: &mut [PartialValue],
+                              row: &[Datum]|
+                 -> Result<(), ExecError> {
+                    for (function, value) in functions.iter().zip(values.iter_mut()) {
+                        let input = function
+                            .input_offset
+                            .map(|offset| {
+                                row.get(offset).cloned().ok_or_else(|| {
+                                    ExecError::unsupported(
+                                        "index partial aggregate input is outside the scan row",
+                                    )
+                                })
+                            })
+                            .transpose()?;
+                        match (value, input) {
+                            (PartialValue::Count(count), None) => *count += 1,
+                            (PartialValue::Count(_), Some(Datum::Null)) => {}
+                            (PartialValue::Count(count), Some(_)) => *count += 1,
+                            (PartialValue::Sum(_), None) | (PartialValue::Extreme { .. }, None) => {
+                                return Err(ExecError::unsupported(
+                                    "only COUNT may omit an index partial aggregate input",
+                                ));
+                            }
+                            (PartialValue::Sum(_), Some(Datum::Null))
+                            | (PartialValue::Extreme { .. }, Some(Datum::Null)) => {}
+                            (PartialValue::Sum(sum), Some(input)) => {
+                                let addend = match input {
+                                    Datum::Int(value) => Decimal::from_int(value),
+                                    Datum::UInt(value) => Decimal::from_uint(value),
+                                    Datum::Decimal(value) => value,
+                                    _ => {
+                                        return Err(ExecError::unsupported(
+                                            "index partial SUM requires integer or decimal input",
+                                        ));
+                                    }
+                                };
+                                *sum = Some(match sum.take() {
+                                    Some(current) => current.add(&addend),
+                                    None => addend,
+                                });
+                            }
+                            (PartialValue::Extreme { value, is_max }, Some(candidate)) => {
+                                let replace = value.as_ref().is_none_or(|current| {
+                                    tidb_expr::compare_datums(&candidate, current).is_ok_and(
+                                        |ordering| {
+                                            if *is_max {
+                                                ordering.is_gt()
+                                            } else {
+                                                ordering.is_lt()
+                                            }
+                                        },
+                                    )
+                                });
+                                if replace {
+                                    *value = Some(candidate);
+                                }
+                            }
+                        }
+                    }
+                    Ok(())
+                };
+
+                if !streamed {
+                    let mut grouped = BTreeMap::<Vec<u8>, (Vec<Datum>, Vec<PartialValue>)>::new();
+                    while let Some(row) = self.next_partial_input_row()? {
+                        let (key, groups) = group(&row)?;
+                        let (_, values) =
+                            grouped.entry(key).or_insert_with(|| (groups, new_values()));
+                        update(values, &row)?;
+                    }
+                    return Ok(grouped
+                        .into_values()
+                        .map(|(groups, values)| finish(groups, values))
+                        .collect());
+                }
+
+                let mut rows = Vec::new();
+                let mut current: Option<(Vec<u8>, Vec<Datum>, Vec<PartialValue>)> = None;
+                while let Some(row) = self.next_partial_input_row()? {
+                    let (key, groups) = group(&row)?;
+                    if current
+                        .as_ref()
+                        .is_some_and(|(current_key, _, _)| current_key != &key)
+                    {
+                        let (_, previous_groups, previous_values) =
+                            current.take().expect("current group exists");
+                        rows.push(finish(previous_groups, previous_values));
+                    }
+                    let (_, _, values) = current.get_or_insert_with(|| (key, groups, new_values()));
+                    update(values, &row)?;
+                }
+                if let Some((_, groups, values)) = current {
+                    rows.push(finish(groups, values));
+                }
+                Ok(rows)
+            }
+            _ => Err(ExecError::unsupported(
+                "this index partial aggregation is not supported",
+            )),
         }
     }
 }
 
 impl Executor for IndexRangeSourceExec {
     fn open(&mut self) -> Result<(), ExecError> {
-        self.next_physical = 0;
-        self.next_range = 0;
-        self.cursor = if self.merge_partition_index_order {
-            self.next_physical = self.physical_ids.len();
-            Some(
-                self.table
-                    .index_ranges_cursor(self.index_id, &self.ranges, self.decode_context.zone())
-                    .map_err(|_| ExecError::unsupported("index range is not scannable"))?,
-            )
+        self.next_range = if self.descending {
+            self.ranges.len()
         } else {
-            None
+            0
         };
-        self.partition_boundary = false;
+        self.cursor = None;
         self.produced.set(0);
         self.scanned.set(0);
         self.batch.clear();
         self.batch_at = 0;
         self.batch_size = INIT_HANDLE_BATCH;
+        self.skipped_handles = 0;
+        self.partial_remote = None;
+        self.partial_rows = None;
+        self.partial_done = false;
+        if let Some(aggregate) = self.partial_aggregate.as_ref() {
+            self.partial_remote = self
+                .table
+                .pushdown_index_partial_aggregate_cursor(
+                    self.index_id,
+                    &self.ranges,
+                    aggregate,
+                    self.decode_context.zone(),
+                    &self.statement,
+                )
+                .map_err(|_| ExecError::unsupported("index aggregate request failed"))?;
+        }
         Ok(())
     }
 
     fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
         req.reset();
         let cap = self.meta.max_chunk_size();
+        if let Some(remote) = self.partial_remote.as_mut() {
+            while req.num_rows() < cap {
+                let Some(row) = remote.next_row().map_err(|error| {
+                    ExecError::unsupported(format!("index aggregate response failed: {error:?}"))
+                })?
+                else {
+                    self.partial_remote = None;
+                    self.partial_done = true;
+                    break;
+                };
+                for (column, value) in row.iter().enumerate() {
+                    req.append_datum(column, value);
+                }
+            }
+            return Ok(());
+        }
+        if let Some(aggregate) = self.partial_aggregate.clone() {
+            if self.partial_done {
+                return Ok(());
+            }
+            if self.partial_rows.is_none() {
+                self.partial_rows = Some(self.local_partial_rows(&aggregate)?.into_iter());
+            }
+            let rows = self.partial_rows.as_mut().expect("just initialized");
+            while req.num_rows() < cap {
+                let Some(row) = rows.next() else {
+                    self.partial_rows = None;
+                    self.partial_done = true;
+                    break;
+                };
+                for (column, value) in row.iter().enumerate() {
+                    req.append_datum(column, value);
+                }
+            }
+            return Ok(());
+        }
         while req.num_rows() < cap {
             if self.limit.is_some_and(|limit| self.produced.get() >= limit) {
                 // Early stop: the cursor is dropped, so no entry past the cap
                 // is read and no row past it is looked up.
                 self.cursor = None;
-                self.next_physical = self.physical_ids.len();
-                self.next_range = 0;
-                self.partition_boundary = false;
+                self.next_range = self.ranges.len();
                 self.batch.clear();
                 self.batch_at = 0;
                 return Ok(());
@@ -753,15 +1090,18 @@ impl Executor for IndexRangeSourceExec {
             };
             let row = self
                 .table
-                .get_row_by_handle_with_context(&handle, &self.decode_context)
+                .get_row_by_handle_projected_with_context(
+                    &handle,
+                    Some(&self.keep),
+                    &self.decode_context,
+                )
                 .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
             // An index entry whose row is gone is not a row: the same
             // `if let Some(row)` the materializing path had.
             if let Some(row) = row {
                 self.scanned.set(self.scanned.get() + 1);
-                let row = visible_of(&self.table, &row);
                 if let Some(filter) = self.filter.as_mut() {
-                    if !filter.admits(row)? {
+                    if !filter.admits(&row)? {
                         continue;
                     }
                 }
@@ -776,6 +1116,9 @@ impl Executor for IndexRangeSourceExec {
 
     fn close(&mut self) -> Result<(), ExecError> {
         self.cursor = None;
+        self.partial_remote = None;
+        self.partial_rows = None;
+        self.partial_done = false;
         Ok(())
     }
 
@@ -805,12 +1148,112 @@ impl Executor for IndexRangeSourceExec {
 }
 
 impl crate::table_access::TableAccess for IndexRangeSourceExec {
+    fn accept_scan_estimate(&mut self, rows: f64) {
+        self.estimated_rows = Some(rows);
+    }
+
+    fn accept_partial_aggregate(&mut self, aggregate: &PushdownPartialAggregate) -> bool {
+        let supported = matches!(aggregate, PushdownPartialAggregate::Count { .. })
+            || matches!(
+                aggregate,
+                PushdownPartialAggregate::Grouped {
+                    streamed: false,
+                    ..
+                }
+            )
+            || (matches!(
+                aggregate,
+                PushdownPartialAggregate::Grouped { streamed: true, .. }
+            ) && !self.can_reorder_handles);
+        if self.estimated_rows.is_none_or(|rows| rows <= 1.0)
+            || aggregate
+                .input_offsets()
+                .into_iter()
+                .any(|offset| offset >= self.keep.len())
+            || !supported
+            || self.partial_aggregate.is_some()
+            || self.limit.is_some()
+        {
+            return false;
+        }
+        let columns = aggregate
+            .output_types()
+            .into_iter()
+            .enumerate()
+            .map(|(index, field_type)| {
+                let mut column = tidb_expr::column::Column::new((index + 1) as i64, field_type);
+                column.index = index as i64;
+                column
+            })
+            .collect();
+        self.meta = ExecutorMeta::new(
+            Schema::new(columns),
+            self.meta.id(),
+            self.meta.init_cap(),
+            self.meta.max_chunk_size(),
+        );
+        self.partial_aggregate = Some(aggregate.clone());
+        true
+    }
+
+    fn accept_column_prune(&mut self, keep: &[usize]) -> bool {
+        if keep.is_empty()
+            || keep.iter().any(|offset| *offset >= self.keep.len())
+            || self.partial_aggregate.is_some()
+        {
+            return false;
+        }
+        let columns = keep
+            .iter()
+            .enumerate()
+            .map(|(index, offset)| {
+                let mut column = self.meta.schema().columns[*offset].clone();
+                column.index = index as i64;
+                column.id = index as i64 + 1;
+                column
+            })
+            .collect();
+        let meta = ExecutorMeta::new(
+            Schema::new(columns),
+            self.meta.id(),
+            self.meta.init_cap(),
+            self.meta.max_chunk_size(),
+        );
+        let filter = match &self.filter {
+            Some(filter) => {
+                let Some(filter) = filter.remapped_columns(keep, meta.new_chunk()) else {
+                    return false;
+                };
+                Some(filter)
+            }
+            None => None,
+        };
+        self.meta = meta;
+        self.filter = filter;
+        self.keep = keep.iter().map(|offset| self.keep[*offset]).collect();
+        true
+    }
+
     /// The ranges are walked in plan order and each one in index order, so a
     /// cap truncates the same prefix the `LimitExec` above would have kept.
     /// The driver only offers one when nothing above this source filters the
     /// rows (see `run_select_traced`).
     fn accept_scan_limit(&mut self, cap: u64) -> bool {
         self.limit = Some(cap);
+        true
+    }
+
+    fn accept_embedded_lookup_limit(&mut self, offset: u64, count: u64) -> bool {
+        if self.covering
+            || self.table.has_dirty_content()
+            || self.filter.is_some()
+            || self.partial_aggregate.is_some()
+            || self.limit.is_some()
+        {
+            return false;
+        }
+        self.lookup_offset = offset;
+        self.limit = Some(count);
         true
     }
 
@@ -842,8 +1285,9 @@ impl crate::table_access::TableAccess for IndexRangeSourceExec {
     /// Go's `keep order:true` on the `IndexRangeScan` of an `IndexLookUp`.
     /// Accepting means the handle batch is read in index order rather than
     /// handle order; see the type doc.
-    fn accept_keep_order(&mut self) -> bool {
-        self.merge_partition_index_order();
+    fn accept_keep_order(&mut self, descending: bool) -> bool {
+        self.can_reorder_handles = false;
+        self.descending = descending;
         true
     }
 }
@@ -854,6 +1298,8 @@ pub(crate) enum IndexMergeKind {
     Intersection,
 }
 
+/// A non-MV IndexMerge reader: each partial index produces row handles, then
+/// the root reader unions or intersects those handles before fetching rows.
 pub(crate) struct IndexMergeSourceExec {
     meta: ExecutorMeta,
     table: KvTable,
@@ -1043,6 +1489,22 @@ pub enum LookupObject {
     /// Go's `TableRangeScan ... range: decided by [outer_key]`: the outer
     /// key IS the handle, so the probe is a point read.
     Handle,
+    /// Go's clustered common-handle table path. Each probe supplies a non-empty
+    /// leading primary-key prefix and scans the matching record-key range,
+    /// without manufacturing a secondary PRIMARY index entry. A complete
+    /// tuple is the one-row special case of the same range.
+    CommonHandle,
+}
+
+/// One object-key component of an index-join probe.
+///
+/// Go's ranger can combine `eq(inner_col, outer_col)` with constant access
+/// conditions on earlier key columns. `Dynamic` indexes the join-key tuple
+/// supplied by `JoinExec`; `Constant` is copied into every probe.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum LookupProbePart {
+    Dynamic(usize),
+    Constant(Datum),
 }
 
 /// The inner side of an index join: the rows of one table whose join-key
@@ -1063,16 +1525,33 @@ pub struct IndexJoinLookupExec {
     meta: ExecutorMeta,
     table: KvTable,
     object: LookupObject,
+    /// The complete object-key template. Empty preserves the legacy contract
+    /// where the dynamic join-key tuple already is the complete probe.
+    probe_parts: Vec<LookupProbePart>,
     /// The current outer batch's distinct probe tuples, in walk order.
     probes: Vec<Vec<Datum>>,
     /// The next probe to open a cursor over.
     next_probe: usize,
     /// The open cursor over `probes[next_probe - 1]` (index object only).
     cursor: Option<IndexRangeCursor>,
+    /// The open record-key range over a common-handle probe. A leading prefix
+    /// can return several rows; a complete tuple returns at most one.
+    record_cursor: Option<RowCursor>,
     /// Rows produced since `open`, which the trace reads as `actRows`.
     produced: Rc<Cell<u64>>,
     /// See [`HandleSourceExec`].
     decode_context: crate::kv_table::RowDecodeContext,
+    /// Leaf-local predicates that Go places below the index join's inner
+    /// reader. They are evaluated over the same full table row this source
+    /// returns, so replacing the originally-built leaf cannot drop them.
+    filters: Vec<Expression>,
+    filter_context: Option<crate::StmtContext>,
+    filter_chunk: Chunk,
+    /// Physical table offsets decoded from storage, sorted and unique.
+    decode_offsets: Option<Vec<usize>>,
+    /// Physical table offsets emitted by a bare lookup, in logical child
+    /// order. `None` emits a physical-width row for retained aggregation.
+    output_offsets: Option<Vec<usize>>,
 }
 
 impl IndexJoinLookupExec {
@@ -1086,15 +1565,31 @@ impl IndexJoinLookupExec {
         object: LookupObject,
         decode_context: crate::kv_table::RowDecodeContext,
     ) -> Self {
+        // Go evaluates the inner Selection before its final projection. Keep
+        // that physical table shape here even when `meta` already describes
+        // the compact row emitted to the join above.
+        let filter_types = table
+            .visible_columns()
+            .iter()
+            .map(|column| column.field_type.clone())
+            .collect::<Vec<_>>();
+        let filter_chunk = Chunk::new(&filter_types, meta.init_cap(), meta.max_chunk_size());
         IndexJoinLookupExec {
             meta,
             table,
             object,
+            probe_parts: Vec::new(),
             probes: Vec::new(),
             next_probe: 0,
             cursor: None,
+            record_cursor: None,
             produced: Rc::new(Cell::new(0)),
             decode_context,
+            filters: Vec::new(),
+            filter_context: None,
+            filter_chunk,
+            decode_offsets: None,
+            output_offsets: None,
         }
     }
 
@@ -1124,6 +1619,37 @@ impl IndexJoinLookupExec {
         self.probes = probes;
         self.next_probe = 0;
         self.cursor = None;
+        self.record_cursor = None;
+    }
+
+    /// Installs the complete object-key shape built by the index ranger.
+    pub(crate) fn set_probe_parts(&mut self, probe_parts: Vec<LookupProbePart>) {
+        self.probe_parts = probe_parts;
+    }
+
+    /// Installs every predicate local to the looked-up leaf.
+    pub(crate) fn set_filters(&mut self, filters: Vec<Expression>, context: crate::StmtContext) {
+        self.filters = filters;
+        self.filter_context = Some(context);
+    }
+
+    /// Narrows storage decoding while preserving the row shape required by
+    /// the operator above the lookup. `required_offsets` are physical inputs
+    /// retained by a grouped aggregation; filter inputs are added here from
+    /// the executable expressions so they cannot drift from evaluation.
+    pub(crate) fn set_column_projection(
+        &mut self,
+        output_offsets: Option<Vec<usize>>,
+        required_offsets: impl IntoIterator<Item = usize>,
+    ) {
+        let mut decode_offsets = BTreeSet::new();
+        decode_offsets.extend(required_offsets);
+        if let Some(offsets) = &output_offsets {
+            decode_offsets.extend(offsets.iter().copied());
+        }
+        decode_offsets.extend(expression_column_offsets(&self.filters));
+        self.decode_offsets = Some(decode_offsets.into_iter().collect());
+        self.output_offsets = output_offsets;
     }
 
     /// The live count of rows this source produced.
@@ -1132,7 +1658,31 @@ impl IndexJoinLookupExec {
         Rc::clone(&self.produced)
     }
 
-    /// The next handle the probe list reaches, opening the next probe's
+    /// Assembles the next object's leading key from one dynamic probe and its
+    /// static template. An incomplete dynamic tuple is skipped like Go's
+    /// failed `constructDatumLookupKey` conversion.
+    fn next_probe(&mut self) -> Option<Vec<Datum>> {
+        loop {
+            let dynamic_probe = self.probes.get(self.next_probe)?.clone();
+            self.next_probe += 1;
+            if self.probe_parts.is_empty() {
+                return Some(dynamic_probe);
+            }
+            if let Some(probe) = self
+                .probe_parts
+                .iter()
+                .map(|part| match part {
+                    LookupProbePart::Dynamic(offset) => dynamic_probe.get(*offset).cloned(),
+                    LookupProbePart::Constant(value) => Some(value.clone()),
+                })
+                .collect::<Option<Vec<_>>>()
+            {
+                return Some(probe);
+            }
+        }
+    }
+
+    /// The next handle the probe list reaches, opening the next secondary-index
     /// cursor when the current one runs out.
     fn next_handle(&mut self) -> Result<Option<TableHandle>, ExecError> {
         loop {
@@ -1145,10 +1695,9 @@ impl IndexJoinLookupExec {
                 }
                 self.cursor = None;
             }
-            let Some(probe) = self.probes.get(self.next_probe).cloned() else {
+            let Some(probe) = self.next_probe() else {
                 return Ok(None);
             };
-            self.next_probe += 1;
             match &self.object {
                 LookupObject::Index(index_id) => {
                     // Go's `IndexRangeScan` over the range the outer row
@@ -1179,9 +1728,160 @@ impl IndexJoinLookupExec {
                     };
                     return Ok(Some(handle));
                 }
+                LookupObject::CommonHandle => {
+                    unreachable!("common handles are record-key ranges, not handle lookups")
+                }
             }
         }
     }
+
+    /// The next row in the common-handle record ranges. Go uses the table path
+    /// for both a complete composite key and a leading prefix; encoding equal
+    /// low/high tuple bounds makes the former a one-record range and the latter
+    /// a range over every suffix.
+    fn next_common_handle_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
+        loop {
+            if let Some(cursor) = self.record_cursor.as_mut() {
+                let row = cursor
+                    .next_row()
+                    .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+                if let Some((_, row)) = row {
+                    return Ok(Some(row));
+                }
+                self.record_cursor = None;
+            }
+            let Some(probe) = self.next_probe() else {
+                return Ok(None);
+            };
+            let range = IndexRange {
+                low: probe.clone(),
+                high: probe,
+                low_exclusive: false,
+                high_exclusive: false,
+            };
+            self.record_cursor = Some(
+                self.table
+                    .row_cursor_projected_with_context(
+                        self.decode_offsets.as_deref(),
+                        Some(std::slice::from_ref(&range)),
+                        &self.decode_context,
+                    )
+                    .map_err(|_| ExecError::unsupported("common handle range is not scannable"))?,
+            );
+        }
+    }
+
+    fn next_lookup_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
+        if matches!(self.object, LookupObject::CommonHandle) {
+            let complete = self.probe_parts.is_empty()
+                || self.probe_parts.len() == self.table.common_handle_offsets().len();
+            if complete {
+                loop {
+                    let Some(probe) = self.next_probe() else {
+                        return Ok(None);
+                    };
+                    let Ok(handle) = self
+                        .table
+                        .common_handle_of_values(&probe, self.decode_context.zone())
+                    else {
+                        continue;
+                    };
+                    let row = self
+                        .table
+                        .get_row_by_handle_projected_with_context(
+                            &handle,
+                            self.decode_offsets.as_deref(),
+                            &self.decode_context,
+                        )
+                        .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+                    if row.is_some() {
+                        return Ok(row);
+                    }
+                }
+            }
+            return self.next_common_handle_row();
+        }
+        loop {
+            let Some(handle) = self.next_handle()? else {
+                return Ok(None);
+            };
+            let row = self
+                .table
+                .get_row_by_handle_projected_with_context(
+                    &handle,
+                    self.decode_offsets.as_deref(),
+                    &self.decode_context,
+                )
+                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+            if row.is_some() {
+                return Ok(row);
+            }
+        }
+    }
+
+    fn row_passes_filters(&mut self, row: &[Datum]) -> Result<bool, ExecError> {
+        if self.filters.is_empty() {
+            return Ok(true);
+        }
+        let context = self
+            .filter_context
+            .as_ref()
+            .expect("a filtered lookup source has a statement context");
+        self.filter_chunk.reset();
+        for (offset, value) in row.iter().enumerate() {
+            self.filter_chunk.append_datum(offset, value);
+        }
+        let chunk_row = self.filter_chunk.get_row(0);
+        for filter in &self.filters {
+            if truthy_of(&filter.eval(context, chunk_row)?)? != Some(true) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn physical_row(&self, decoded: &[Datum]) -> Result<Vec<Datum>, ExecError> {
+        let Some(offsets) = &self.decode_offsets else {
+            return Ok(visible_of(&self.table, decoded).to_vec());
+        };
+        if offsets.len() != decoded.len() {
+            return Err(ExecError::unsupported(
+                "index-join decoded row does not match its projection",
+            ));
+        }
+        let mut physical = vec![Datum::Null; self.table.visible_column_count()];
+        for (offset, value) in offsets.iter().copied().zip(decoded) {
+            let target = physical.get_mut(offset).ok_or_else(|| {
+                ExecError::unsupported("index-join decode column is outside the table")
+            })?;
+            *target = value.clone();
+        }
+        Ok(physical)
+    }
+}
+
+pub(crate) fn expression_column_offsets(expressions: &[Expression]) -> Vec<usize> {
+    fn collect(expression: &Expression, offsets: &mut BTreeSet<usize>) {
+        match expression {
+            Expression::Column(column) => {
+                if let Ok(offset) = usize::try_from(column.index) {
+                    offsets.insert(offset);
+                }
+            }
+            Expression::ScalarFunction(function) => {
+                for argument in &function.args {
+                    collect(argument, offsets);
+                }
+            }
+            Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
+        }
+    }
+
+    let mut offsets = BTreeSet::new();
+    for expression in expressions {
+        collect(expression, &mut offsets);
+    }
+    offsets.into_iter().collect()
 }
 
 /// The clustered integer handle a probe value names, or `None` when no row
@@ -1198,7 +1898,9 @@ impl Executor for IndexJoinLookupExec {
     fn open(&mut self) -> Result<(), ExecError> {
         self.next_probe = 0;
         self.cursor = None;
+        self.record_cursor = None;
         self.produced.set(0);
+        self.filter_chunk.reset();
         Ok(())
     }
 
@@ -1206,27 +1908,35 @@ impl Executor for IndexJoinLookupExec {
         req.reset();
         let cap = self.meta.max_chunk_size();
         while req.num_rows() < cap {
-            let Some(handle) = self.next_handle()? else {
+            let Some(row) = self.next_lookup_row()? else {
                 return Ok(());
             };
-            let row = self
-                .table
-                .get_row_by_handle_with_context(&handle, &self.decode_context)
-                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
             // An index entry whose row is gone is not a row, as in
             // [`IndexRangeSourceExec`].
-            if let Some(row) = row {
-                for (c, value) in visible_of(&self.table, &row).iter().enumerate() {
-                    req.append_datum(c, value);
-                }
-                self.produced.set(self.produced.get() + 1);
+            let physical = self.physical_row(&row)?;
+            if !self.row_passes_filters(&physical)? {
+                continue;
             }
+            if let Some(offsets) = &self.output_offsets {
+                for (output, source) in offsets.iter().copied().enumerate() {
+                    let value = physical.get(source).ok_or_else(|| {
+                        ExecError::unsupported("index-join output column is outside the table")
+                    })?;
+                    req.append_datum(output, value);
+                }
+            } else {
+                for (output, value) in physical.iter().enumerate() {
+                    req.append_datum(output, value);
+                }
+            }
+            self.produced.set(self.produced.get() + 1);
         }
         Ok(())
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
         self.cursor = None;
+        self.record_cursor = None;
         Ok(())
     }
 
@@ -1324,6 +2034,16 @@ mod tests {
                 entries: Arc::clone(&self.entries),
             }))
         }
+        fn iter_reverse(
+            &mut self,
+            upper_bound: Option<&Key>,
+            lower_bound: Option<&Key>,
+        ) -> Result<Box<dyn StorageIterator>, StorageError> {
+            Ok(Box::new(CountingIterator {
+                inner: self.inner.iter_reverse(upper_bound, lower_bound)?,
+                entries: Arc::clone(&self.entries),
+            }))
+        }
         fn key_count(&self) -> usize {
             self.inner.key_count()
         }
@@ -1407,39 +2127,6 @@ mod tests {
     }
 
     const ROWS: i64 = 5000;
-
-    /// Go `BatchPointGetExec.Next` stops when the caller's chunk is full,
-    /// which means `required_rows`, not the executor's maximum chunk size.
-    #[test]
-    fn a_handle_source_honors_each_output_chunks_required_rows() {
-        let (catalog, _, _) = table_of(4, false);
-        let table = match catalog.get_table_for_test("t").unwrap() {
-            crate::driver::TableEntry::Kv(table) => table.clone(),
-            _ => panic!("expected a kv table"),
-        };
-        let columns = (0..3)
-            .map(|offset| {
-                let mut column = tidb_expr::column::Column::new(offset + 1, long());
-                column.index = offset;
-                column
-            })
-            .collect();
-        let mut exec = HandleSourceExec::new_with_context(
-            ExecutorMeta::new(Schema::new(columns), 0, 4, 4),
-            table,
-            (1..=4).map(TableHandle::Int).collect(),
-            crate::RowDecodeContext::for_test_query_utc(),
-        );
-        exec.open().unwrap();
-        let mut req = exec.new_chunk();
-        for expected in [1, 2, 1] {
-            req.set_required_rows(expected, exec.max_chunk_size());
-            exec.next(&mut req).unwrap();
-            assert_eq!(req.num_rows(), expected as usize);
-        }
-        exec.next(&mut req).unwrap();
-        assert_eq!(req.num_rows(), 0);
-    }
 
     /// A full scan under a `LIMIT` stops at the cap: the rows past it are
     /// never advanced past, let alone decoded into memory.
@@ -1561,6 +2248,134 @@ mod tests {
         );
     }
 
+    /// A common-handle table is stored in primary-key order. Equality on the
+    /// leading handle columns therefore leaves the remaining suffix as the
+    /// scan order, so `ORDER BY` that suffix can stop at the LIMIT. This is
+    /// the TPC-C Delivery shape: `(w_id, d_id)` is fixed and `o_id` is ordered.
+    #[test]
+    fn a_common_handle_equality_prefix_satisfies_order_and_pushes_the_limit() {
+        let store = CountingStorage::default();
+        let entries = Arc::clone(&store.entries);
+        let mut table = KvTable::with_storage(
+            79,
+            vec![column("w_id", 1), column("d_id", 2), column("o_id", 3)],
+            Box::new(store),
+        );
+        table.set_common_handle_offsets(vec![0, 1, 2]);
+        table
+            .create_index(
+                crate::kv_table::KvIndex {
+                    id: 1,
+                    name: "PRIMARY".to_owned(),
+                    comment: String::new(),
+                    unique: true,
+                    column_offsets: vec![0, 1, 2],
+                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+                    visible: true,
+                    global: false,
+                },
+                &tidb_expr::NoColumns,
+            )
+            .unwrap();
+        for o_id in 1..=100 {
+            table
+                .insert_row(
+                    &[Datum::Int(1), Datum::Int(1), Datum::Int(o_id)],
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap();
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("new_order", table);
+        entries.store(0, Ordering::Relaxed);
+
+        let rows = run_select_on(
+            "SELECT o_id FROM new_order \
+             WHERE w_id = 1 AND d_id = 1 \
+             ORDER BY o_id LIMIT 1",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        assert_eq!(first_column(&rows), vec![1]);
+        assert_eq!(
+            entries.load(Ordering::Relaxed),
+            1,
+            "the ordered common-handle range must stop after its first row"
+        );
+    }
+
+    /// Row-valued `IN` over a leading common-handle prefix opens one record
+    /// range per tuple instead of scanning the relation. This is the two slow
+    /// TPC-C Delivery statements over `(w_id, d_id, o_id, line_number)`.
+    #[test]
+    fn a_common_handle_row_in_reads_only_the_named_prefixes() {
+        let store = CountingStorage::default();
+        let entries = Arc::clone(&store.entries);
+        let mut table = KvTable::with_storage(
+            80,
+            vec![
+                column("w_id", 1),
+                column("d_id", 2),
+                column("o_id", 3),
+                column("line_number", 4),
+                column("amount", 5),
+            ],
+            Box::new(store),
+        );
+        table.set_common_handle_offsets(vec![0, 1, 2, 3]);
+        table
+            .create_index(
+                crate::kv_table::KvIndex {
+                    id: 1,
+                    name: "PRIMARY".to_owned(),
+                    comment: String::new(),
+                    unique: true,
+                    column_offsets: vec![0, 1, 2, 3],
+                    prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 4],
+                    visible: true,
+                    global: false,
+                },
+                &tidb_expr::NoColumns,
+            )
+            .unwrap();
+        for d_id in 1..=2 {
+            for o_id in 1..=100 {
+                for line_number in 1..=2 {
+                    table
+                        .insert_row(
+                            &[
+                                Datum::Int(1),
+                                Datum::Int(d_id),
+                                Datum::Int(o_id),
+                                Datum::Int(line_number),
+                                Datum::Int(o_id * 10 + line_number),
+                            ],
+                            &tidb_expr::NoColumns,
+                        )
+                        .unwrap();
+                }
+            }
+        }
+        let mut catalog = Catalog::default();
+        catalog.register_kv("order_line", table);
+        entries.store(0, Ordering::Relaxed);
+
+        let rows = run_select_on(
+            "SELECT amount FROM order_line \
+             WHERE (w_id, d_id, o_id) IN ((1, 1, 42), (1, 2, 43))",
+            &catalog,
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 4);
+        assert_eq!(
+            entries.load(Ordering::Relaxed),
+            4,
+            "only the four records under the two named prefixes may be read"
+        );
+    }
+
     /// THE DOUBLE READ IS UNBATCHED: N index rows produce N point gets.
     ///
     /// This is the executor half of the model/executor seam, pinned so it
@@ -1617,10 +2432,10 @@ mod tests {
         );
     }
 
-    /// Nor may a DESC order by an indexed column push: the cursor is
-    /// forward-only, so the index's ascending walk is the wrong end.
+    /// Go answers a DESC order by walking the matching index range backwards,
+    /// so the pushed cap reads only the requested suffix.
     #[test]
-    fn a_descending_order_by_does_not_push() {
+    fn a_descending_order_by_reads_the_index_backwards() {
         let ctx = crate::StmtContext::for_query();
         let (catalog, entries, _) = table_of(ROWS, true);
         let rows = run_select_on(
@@ -1630,22 +2445,23 @@ mod tests {
         )
         .unwrap();
         assert_eq!(first_column(&rows), vec![ROWS, ROWS - 1, ROWS - 2]);
-        assert_eq!(entries.load(Ordering::Relaxed), ROWS as usize);
+        assert_eq!(entries.load(Ordering::Relaxed), 3);
     }
 
-    /// A conjunct the source could not take stays in a `Selection` above it,
-    /// which can drop rows the cap already counted -- so nothing is pushed.
+    /// Go pushes the cap below a cop `Selection`, including one whose
+    /// arithmetic predicate cannot become an access range. The scan may stop
+    /// after a storage batch once the Selection has produced enough rows.
     #[test]
-    fn a_residual_predicate_blocks_the_cap() {
+    fn an_arithmetic_selection_allows_the_cap_to_push() {
         let ctx = crate::StmtContext::for_query();
         let (catalog, entries, _) = table_of(ROWS, false);
         let rows =
             run_select_on("SELECT a FROM t WHERE c + 1 > 1 LIMIT 3", &catalog, &ctx).unwrap();
         assert_eq!(first_column(&rows), vec![1, 2, 3]);
-        assert_eq!(
-            entries.load(Ordering::Relaxed),
-            1024,
-            "the residual selection asks its child for one normal Go MaxChunkSize batch"
+        let read = entries.load(Ordering::Relaxed);
+        assert!(
+            (3..ROWS as usize).contains(&read),
+            "the pushed cap should stop the arithmetic Selection early, read {read} rows"
         );
     }
 
@@ -1794,7 +2610,7 @@ mod tests {
         }
         if keep_order {
             use crate::table_access::TableAccess;
-            assert!(exec.accept_keep_order());
+            assert!(exec.accept_keep_order(false));
         }
         if let Some(cap) = cap {
             use crate::table_access::TableAccess;

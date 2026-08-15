@@ -142,6 +142,18 @@ pub trait Executor {
         None
     }
 
+    /// Whether this operator tree already enforces every conjunct of the
+    /// statement's `WHERE` clause.
+    ///
+    /// This is a physical-plan fact, not a semantic shortcut: the default is
+    /// deliberately false, and only an operator that has installed all leaf
+    /// filters and join equalities may opt in. The driver uses it to avoid
+    /// rebuilding a redundant root `Selection` after a join strategy is
+    /// committed.
+    fn consumes_where(&self) -> bool {
+        false
+    }
+
     /// Go `aggExecutorTreeInputEmpty` (`pkg/executor/join/hash_join_v1.go`):
     /// whether this already-executed operator tree is an aggregation that saw
     /// NO input row, and therefore owes its single output row entirely to the

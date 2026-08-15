@@ -59,7 +59,7 @@
 //! * [`key_count`](TableStorage::key_count) reports the staged key count only.
 //!   TiKV has no exact count, and the seam's own doc already says so.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
@@ -81,6 +81,12 @@ pub type SnapshotPairs = Vec<(Vec<u8>, Vec<u8>)>;
 /// implementation maps region errors, stale epochs and unresolvable locks onto
 /// [`StorageError::Retryable`]; anything else is [`StorageError::Backend`].
 pub trait ClusterSnapshot: fmt::Debug + Send {
+    /// Starts any asynchronous work needed by an ordinary statement snapshot.
+    /// The first read still owns error delivery and timestamp publication.
+    fn prepare(&mut self) -> Result<(), StorageError> {
+        Ok(())
+    }
+
     /// Reads one key at the snapshot's timestamp. `None` is TiKV's
     /// `not_found`, which the caller turns into [`StorageError::NotFound`].
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError>;
@@ -146,6 +152,64 @@ pub trait ClusterSnapshot: fmt::Debug + Send {
 /// membuffer rather than a copy of it -- which a statement rollback or a
 /// savepoint returns to.
 pub type BufferImage = Vec<(Key, Option<Vec<u8>>)>;
+
+/// Raw keys actually consumed by the current statement.
+///
+/// A pessimistic locking read must lock rows after the executor has applied
+/// its predicates and limits. Tracking at the storage seam records precisely
+/// those point gets and iterator rows, while leaving ordinary statements on
+/// the zero-work disabled path.
+#[derive(Clone, Debug, Default)]
+pub struct StatementReadKeys {
+    state: Arc<Mutex<StatementReadKeyState>>,
+}
+
+#[derive(Debug, Default)]
+struct StatementReadKeyState {
+    enabled: bool,
+    keys: BTreeSet<Vec<u8>>,
+}
+
+impl StatementReadKeys {
+    /// Starts a new locking statement and discards any prior statement's keys.
+    pub fn begin(&self) {
+        let mut state = self.lock();
+        state.keys.clear();
+        state.enabled = true;
+    }
+
+    /// Ends the statement and returns its keys in encoded-key order.
+    #[must_use]
+    pub fn finish(&self) -> Vec<Vec<u8>> {
+        let mut state = self.lock();
+        state.enabled = false;
+        std::mem::take(&mut state.keys).into_iter().collect()
+    }
+
+    /// Ends a failed statement without returning its partial read set.
+    pub fn cancel(&self) {
+        let mut state = self.lock();
+        state.enabled = false;
+        state.keys.clear();
+    }
+
+    fn record(&self, key: &Key) {
+        let mut state = self.lock();
+        if state.enabled {
+            state.keys.insert(key.as_bytes().to_vec());
+        }
+    }
+
+    fn is_enabled(&self) -> bool {
+        self.lock().enabled
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, StatementReadKeyState> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+    }
+}
 
 /// The session's staged writes: Go's `kv.MemBuffer`.
 ///
@@ -296,6 +360,10 @@ impl SwappableSnapshot {
 }
 
 impl ClusterSnapshot for SwappableSnapshot {
+    fn prepare(&mut self) -> Result<(), StorageError> {
+        self.snapshot()?.prepare()
+    }
+
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
         self.snapshot()?.get(key)
     }
@@ -332,6 +400,7 @@ impl ClusterSnapshot for SwappableSnapshot {
 pub struct ClusterTableStorage {
     buffer: MutationBuffer,
     snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+    read_keys: StatementReadKeys,
     /// Whether THIS table handle was truncated (see [`Self::check_usable`]).
     ///
     /// Deliberately a plain `bool` and not shared: the buffer and the snapshot
@@ -353,6 +422,7 @@ impl ClusterTableStorage {
         ClusterTableStorage {
             buffer,
             snapshot,
+            read_keys: StatementReadKeys::default(),
             truncated: false,
             scanner: None,
         }
@@ -374,6 +444,12 @@ impl ClusterTableStorage {
     #[must_use]
     pub fn buffer(&self) -> MutationBuffer {
         self.buffer.clone()
+    }
+
+    /// The per-statement raw-key collector shared by every table clone.
+    #[must_use]
+    pub fn read_keys(&self) -> StatementReadKeys {
+        self.read_keys.clone()
     }
 
     fn check_usable(&self) -> Result<(), StorageError> {
@@ -403,6 +479,7 @@ impl TableStorage for ClusterTableStorage {
         // buffer answers is still one `get` here, because the shape the count
         // describes is the plan's, not the transport's.
         crate::storage::note_storage_op(|ops| ops.gets += 1);
+        self.read_keys.record(key);
         match self.buffer.get(key) {
             Some(Some(value)) => Ok(value),
             Some(None) => Err(StorageError::NotFound),
@@ -437,6 +514,7 @@ impl TableStorage for ClusterTableStorage {
         let staged = self.buffer.range(start, end);
         Ok(Box::new(MergedIterator::open(
             Arc::clone(&self.snapshot),
+            self.read_keys.clone(),
             start.clone(),
             end.clone(),
             staged,
@@ -457,6 +535,9 @@ impl TableStorage for ClusterTableStorage {
         request: &PushdownScanRequest,
     ) -> Option<Result<PushdownScan, StorageError>> {
         let scanner = self.scanner.as_ref()?;
+        if self.read_keys.is_enabled() {
+            return None;
+        }
         if let Err(error) = self.check_usable() {
             return Some(Err(error));
         }
@@ -534,6 +615,7 @@ const SNAPSHOT_BATCH: usize = 256;
 #[derive(Debug)]
 struct MergedIterator {
     snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+    read_keys: StatementReadKeys,
     /// Where the next refill starts, or `None` once the snapshot half of the
     /// range is drained.
     cursor: Option<Key>,
@@ -552,6 +634,7 @@ impl MergedIterator {
     /// one snapshot batch to find it.
     fn open(
         snapshot: Arc<Mutex<dyn ClusterSnapshot>>,
+        read_keys: StatementReadKeys,
         start: Key,
         end: Key,
         staged: Vec<(Key, Option<Vec<u8>>)>,
@@ -559,6 +642,7 @@ impl MergedIterator {
         let empty = end <= start;
         let mut iterator = MergedIterator {
             snapshot,
+            read_keys,
             cursor: (!empty).then_some(start),
             end,
             batch: Vec::new(),
@@ -646,9 +730,14 @@ impl StorageIterator for MergedIterator {
     }
 
     fn key(&self) -> &Key {
-        self.current
+        let key = self
+            .current
             .as_ref()
-            .map_or(&self.empty_key, |(key, _)| key)
+            .map_or(&self.empty_key, |(key, _)| key);
+        if self.current.is_some() {
+            self.read_keys.record(key);
+        }
+        key
     }
 
     fn value(&self) -> &[u8] {

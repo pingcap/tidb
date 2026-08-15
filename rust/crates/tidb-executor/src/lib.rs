@@ -100,7 +100,6 @@ pub mod sort_partition;
 pub mod statement_pushdown;
 mod stmt_context;
 pub mod storage;
-pub mod stream_agg;
 pub mod table_access;
 pub mod table_dual;
 #[cfg(test)]
@@ -127,7 +126,12 @@ pub use ddl_sequence::{
 };
 pub use driver::infoschema_meta;
 pub use driver::{
-    bind_parameters, parameter_count, run_delete_in, run_delete_on, run_insert_in, run_insert_on,
+    access::{
+        build_prepared_point_get_plan, run_prepared_point_get, PreparedPointGetExecution,
+        PreparedPointGetPlan,
+    },
+    bind_parameters, bind_prepared_statement, parameter_count, parsed_parameter_count,
+    plan_select_meta_stmt, run_delete_in, run_delete_on, run_insert_in, run_insert_on,
     run_insert_reporting, run_select, run_select_meta_in, run_select_meta_on, run_select_meta_stmt,
     run_select_on, run_set_opr_stmt, run_update_in, run_update_on, Catalog, DriverError, MemTable,
     MysqlError, SchemaErrorKind, SelectMeta, TableEntry, TxnErrorKind, VarErrorKind, ViewDef,
@@ -140,7 +144,7 @@ pub use explain::{
     explain_insert_stmt, explain_select_stmt, explain_set_opr_stmt, explain_update_stmt,
     ExplainFormat,
 };
-pub use hash_agg::{AggFunc, AggKind, HashAggExec};
+pub use hash_agg::{AggFunc, AggKind, GroupedStreamAggExec, HashAggExec, StreamAggExec};
 pub use join::{JoinExec, JoinKind};
 pub use kv_table::{
     DecodedRow, FkAction, GeneratedColumnSelection, IndexRange, KvColumn, KvForeignKey, KvIndex,
@@ -157,7 +161,6 @@ pub use stmt_context::{
     RetryAutoIds, RowIdShardGenerator, SequenceSnapshot, StatementClass, StmtContext,
     MAX_WARNING_COUNT,
 };
-pub use stream_agg::StreamAggExec;
 pub use table_access::TableAccess;
 pub use table_dual::TableDualExec;
 pub use tidb_decode_key::TidbDecodeKeySnapshot;
@@ -202,5 +205,6 @@ pub(crate) mod test_temp_storage {
         )
     }
 }
+
 /// Session-owned reference counts over shared advisory-lock services.
 pub mod advisory_lock_state;

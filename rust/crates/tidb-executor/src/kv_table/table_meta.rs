@@ -44,6 +44,44 @@ pub struct RowDecodeContext {
     expression: crate::StmtContext,
 }
 
+/// The execute-time facts a cached prepared PointGet needs while decoding
+/// ordinary projected columns.
+///
+/// The prepared-plan admission gate rejects generated columns, so this path
+/// deliberately carries no expression context. Go likewise keeps the
+/// immutable row-decoder shape on the cached point plan and supplies only the
+/// current statement's type context when the executor is recreated.
+#[derive(Clone)]
+pub struct PreparedPointGetDecodeContext {
+    origin_default_flags: ConversionFlags,
+    zone: SessionTimeZone,
+}
+
+impl PreparedPointGetDecodeContext {
+    /// Go `ResetContextOfStmt`'s SELECT flags plus this execution's session
+    /// time zone.
+    #[must_use]
+    pub fn for_query(allow_invalid_dates: bool, zone: SessionTimeZone) -> Self {
+        Self {
+            origin_default_flags: tidb_datatype::DEFAULT_STATEMENT_FLAGS
+                .with_truncate_as_warning(true)
+                .with_ignore_zero_in_date_err(true)
+                .with_ignore_invalid_date_err(allow_invalid_dates),
+            zone,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn zone(&self) -> &SessionTimeZone {
+        &self.zone
+    }
+
+    #[must_use]
+    pub(crate) fn origin_default_flags(&self) -> ConversionFlags {
+        self.origin_default_flags
+    }
+}
+
 impl RowDecodeContext {
     /// The pre-migration row-decoder contract: caller supplies only a zone,
     /// and origin defaults use `DEFAULT_STATEMENT_FLAGS`.

@@ -388,6 +388,11 @@ pub struct StmtContext {
     /// default NO group qualifies, so a stock session never reorders --
     /// see [`crate::driver::join_reorder`].
     join_reorder_threshold: i32,
+    /// Go `SessionVars.OptOrderingIdxSelRatio`
+    /// (`@@tidb_opt_ordering_index_selectivity_ratio`, default `0.01`): the
+    /// fraction of an order-preserving access range expected to be scanned
+    /// before the first LIMIT row is found.
+    ordering_index_selectivity_ratio: f64,
     /// The statement snapshot of Go `SessionVars.OptimizerFixControl`.
     ///
     /// Keeping the parsed map on the context makes planner decisions consume
@@ -624,6 +629,7 @@ impl StmtContext {
             cte_max_recursion_depth: 1000,
             join_reorder_threshold: tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD
                 as i32,
+            ordering_index_selectivity_ratio: 0.01,
             optimizer_fix_control: tidb_planner::fix_control::OptimizerFixControl::default(),
             optimizer_cost_env: tidb_planner::candidate_cost::CostEnv::default(),
             hash_join_concurrency: tidb_vardef::defaults::DEF_EXECUTOR_CONCURRENCY as f64,
@@ -1013,6 +1019,19 @@ impl StmtContext {
     pub fn with_join_reorder_threshold(mut self, threshold: i32) -> Self {
         self.join_reorder_threshold = threshold;
         self
+    }
+
+    /// Sets `@@tidb_opt_ordering_index_selectivity_ratio` for this statement.
+    #[must_use]
+    pub fn with_ordering_index_selectivity_ratio(mut self, ratio: f64) -> Self {
+        self.ordering_index_selectivity_ratio = ratio;
+        self
+    }
+
+    /// Go `SessionVars.OptOrderingIdxSelRatio`.
+    #[must_use]
+    pub fn ordering_index_selectivity_ratio(&self) -> f64 {
+        self.ordering_index_selectivity_ratio
     }
 
     /// Attaches the validated statement snapshot of
@@ -1542,6 +1561,22 @@ impl StmtContext {
 
     /// Records a warning the driver rendered itself.
     pub fn append_warning_parts(&self, code: u16, message: &str) {
+        self.append_warning(code, message);
+    }
+
+    /// Records one optimizer warning even when physical-plan enumeration
+    /// revisits the same logical operator through several candidates.
+    pub fn append_warning_once_parts(&self, code: u16, message: &str) {
+        if self
+            .warnings
+            .borrow()
+            .iter()
+            .any(|(_, warning_code, warning_message)| {
+                *warning_code == code && warning_message == message
+            })
+        {
+            return;
+        }
         self.append_warning(code, message);
     }
 

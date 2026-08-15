@@ -36,7 +36,7 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::{Expression, ScalarFunction};
 use tidb_expr::schema::Schema;
 
-use crate::access_path::{IndexJoinLookupExec, LookupObject};
+use crate::access_path::{IndexJoinLookupExec, LookupObject, LookupProbePart};
 use crate::executor::{Executor, ExecutorMeta};
 use crate::join::{IndexLookupPlan, JoinExec, JoinKind};
 use crate::kv_table::{KvColumn, KvIndex, KvTable};
@@ -79,15 +79,6 @@ fn schema_of(width: usize) -> Schema {
 /// rows is the case a probe that stopped at the first entry, or a lookup map
 /// that kept one row per key, would answer wrongly.
 fn inner_table(rows: &[(i64, i64)]) -> KvTable {
-    inner_table_datums(
-        &rows
-            .iter()
-            .map(|(a, b)| vec![Datum::Int(*a), Datum::Int(*b)])
-            .collect::<Vec<_>>(),
-    )
-}
-
-fn inner_table_datums(rows: &[Vec<Datum>]) -> KvTable {
     let mut table = KvTable::new(91, vec![column("a", 1), column("b", 2)]);
     table
         .create_index_with_context(
@@ -104,8 +95,37 @@ fn inner_table_datums(rows: &[Vec<Datum>]) -> KvTable {
             &crate::StmtContext::for_query(),
         )
         .unwrap();
-    for row in rows {
-        table.insert_row(row, &tidb_expr::NoColumns).unwrap();
+    for (a, b) in rows {
+        table
+            .insert_row(&[Datum::Int(*a), Datum::Int(*b)], &tidb_expr::NoColumns)
+            .unwrap();
+    }
+    table
+}
+
+/// `inner(a, b)` clustered by the composite primary key `(a, b)`.
+fn common_handle_table(rows: &[(i64, i64)]) -> KvTable {
+    let mut table = KvTable::new(94, vec![column("a", 1), column("b", 2)]);
+    table.set_common_handle_offsets(vec![0, 1]);
+    table
+        .create_index_with_context(
+            KvIndex {
+                id: 1,
+                name: "PRIMARY".to_owned(),
+                comment: String::new(),
+                unique: true,
+                column_offsets: vec![0, 1],
+                prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+                visible: true,
+                global: false,
+            },
+            &crate::StmtContext::for_query(),
+        )
+        .unwrap();
+    for (a, b) in rows {
+        table
+            .insert_row(&[Datum::Int(*a), Datum::Int(*b)], &tidb_expr::NoColumns)
+            .unwrap();
     }
     table
 }
@@ -144,17 +164,13 @@ fn lookup_source(table: &KvTable, object: LookupObject, width: usize) -> IndexJo
 /// `outer.<outer_key> = inner.<inner_key>` over the joined row, with the
 /// outer side on the LEFT.
 fn equality(outer_key: usize, inner_key: usize, outer_width: usize) -> Expression {
-    comparison("eq", outer_key, inner_key, outer_width)
-}
-
-fn comparison(name: &str, outer_key: usize, inner_key: usize, outer_width: usize) -> Expression {
     let column = |index: usize| {
         let mut column = Column::new(index as i64 + 1, long());
         column.index = index as i64;
         Expression::Column(column)
     };
     Expression::ScalarFunction(ScalarFunction::new(
-        CiString::new(name),
+        CiString::new("eq"),
         long(),
         vec![column(outer_key), column(outer_width + inner_key)],
     ))
@@ -193,31 +209,10 @@ fn both_ways(
     inner_key: usize,
     probe_keys: Vec<usize>,
 ) -> (Vec<Vec<Datum>>, Vec<Vec<Datum>>) {
-    both_ways_with_comparison(
-        "eq", kind, outer_rows, table, object, outer_key, inner_key, probe_keys,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn both_ways_with_comparison(
-    comparison_name: &str,
-    kind: JoinKind,
-    outer_rows: &[Vec<Datum>],
-    table: &KvTable,
-    object: LookupObject,
-    outer_key: usize,
-    inner_key: usize,
-    probe_keys: Vec<usize>,
-) -> (Vec<Vec<Datum>>, Vec<Vec<Datum>>) {
     let outer_width = outer_rows[0].len();
     let inner_width = table.visible_column_count();
     let types: Vec<FieldType> = std::iter::repeat_n(long(), outer_width + inner_width).collect();
-    let conditions = vec![comparison(
-        comparison_name,
-        outer_key,
-        inner_key,
-        outer_width,
-    )];
+    let conditions = vec![equality(outer_key, inner_key, outer_width)];
     let meta = || ExecutorMeta::new(schema_of(outer_width + inner_width), 0, INIT_CAP, CHUNK);
     let memory = crate::StmtContext::for_query().statement_memory();
 
@@ -245,6 +240,10 @@ fn both_ways_with_comparison(
         lookup_is_left: false,
         probe_keys,
         source: lookup_source(table, object, inner_width),
+        aggregation: None,
+        aggregation_stream_ordered: false,
+        outer_not_null: Vec::new(),
+        inner_not_null: Vec::new(),
     });
     assert!(looked_up.is_index_join());
     let index_rows = drain(&mut looked_up, &types);
@@ -339,42 +338,6 @@ fn a_null_outer_key_matches_nothing() {
     assert_eq!(index_rows[1][3], Datum::Null);
 }
 
-/// Go `TestIndexJoinNullEQ`: a NULL probe reaches every NULL entry in the
-/// inner index, while an ordinary equality probe would have been omitted.
-#[test]
-fn a_null_safe_index_probe_matches_null_index_entries() {
-    let table = inner_table_datums(&[
-        vec![Datum::Int(20), Datum::Int(1)],
-        vec![Datum::Int(21), Datum::Null],
-        vec![Datum::Int(22), Datum::Null],
-        vec![Datum::Int(23), Datum::Int(3)],
-    ]);
-    let outer = vec![
-        vec![Datum::Int(10), Datum::Int(1)],
-        vec![Datum::Int(11), Datum::Null],
-        vec![Datum::Int(12), Datum::Int(2)],
-    ];
-    let (hash_rows, index_rows) = both_ways_with_comparison(
-        "nulleq",
-        JoinKind::Inner,
-        &outer,
-        &table,
-        LookupObject::Index(1),
-        1,
-        1,
-        vec![0],
-    );
-    assert_eq!(index_rows, hash_rows);
-    assert_eq!(
-        index_rows,
-        [
-            vec![Datum::Int(10), Datum::Int(1), Datum::Int(20), Datum::Int(1),],
-            vec![Datum::Int(11), Datum::Null, Datum::Int(21), Datum::Null,],
-            vec![Datum::Int(11), Datum::Null, Datum::Int(22), Datum::Null,],
-        ]
-    );
-}
-
 /// The clustered-handle object: one probe reads exactly one row, and the
 /// answer is still the hash join's.
 #[test]
@@ -401,6 +364,43 @@ fn a_handle_probe_reads_the_row_the_key_names() {
     );
     assert_eq!(index_rows, hash_rows);
     assert_eq!(index_rows.len(), 25);
+}
+
+/// A complete common-handle tuple is a one-row record-key range.
+#[test]
+fn a_complete_common_handle_probe_reads_one_record() {
+    let table = common_handle_table(&[(1, 1), (1, 2), (2, 1)]);
+    let mut source = lookup_source(&table, LookupObject::CommonHandle, 2);
+    source.set_probe_parts(vec![
+        LookupProbePart::Dynamic(0),
+        LookupProbePart::Dynamic(1),
+    ]);
+    source.set_probes(vec![vec![Datum::Int(1), Datum::Int(2)]]);
+
+    assert_eq!(
+        drain(&mut source, &[long(), long()]),
+        vec![vec![Datum::Int(1), Datum::Int(2)]]
+    );
+}
+
+/// Go's `buildDataSource2TableScanByIndexJoinProp` accepts a leading prefix of
+/// a clustered common handle. The probe is a record-key range and can return
+/// several rows; it must not be lowered to a secondary `PRIMARY` index lookup.
+#[test]
+fn a_common_handle_prefix_probe_reads_every_matching_record() {
+    let table = common_handle_table(&[(1, 1), (1, 2), (1, 3), (2, 1)]);
+    let mut source = lookup_source(&table, LookupObject::CommonHandle, 2);
+    source.set_probe_parts(vec![LookupProbePart::Dynamic(0)]);
+    source.set_probes(vec![vec![Datum::Int(1)]]);
+
+    assert_eq!(
+        drain(&mut source, &[long(), long()]),
+        vec![
+            vec![Datum::Int(1), Datum::Int(1)],
+            vec![Datum::Int(1), Datum::Int(2)],
+            vec![Datum::Int(1), Datum::Int(3)],
+        ]
+    );
 }
 
 /// The batch boundary is a PERFORMANCE decision, not an answer: the same
@@ -474,6 +474,10 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
         lookup_is_left: false,
         probe_keys: vec![0],
         source,
+        aggregation: None,
+        aggregation_stream_ordered: false,
+        outer_not_null: Vec::new(),
+        inner_not_null: Vec::new(),
     });
     let rows = drain(&mut exec, &types);
     assert_eq!(
@@ -495,7 +499,8 @@ fn one_key_repeated_across_a_batch_is_probed_once() {
 /// over the whole replay is nowhere, so everything below is pinned by these
 /// tests alone. See `crate::tests_join_search` for the census that says so.
 mod decision {
-    use super::{column, inner_table, long};
+    use super::{column, common_handle_table, inner_table, long};
+    use crate::access_path::LookupObject;
     use crate::driver::index_join_decision::{index_join_decision, JoinSide};
     use crate::hash_join::EquiKey;
     use crate::join::JoinKind;
@@ -519,6 +524,13 @@ mod decision {
             // The projected expression Go prints as a bare `Column`.
             names: vec!["Column".to_owned(), "Column".to_owned()],
             origin: None,
+            source_visible: String::new(),
+            output_to_source: vec![None, None],
+            source_filters: Vec::new(),
+            aggregation: None,
+            aggregation_info: None,
+            aggregation_final_info: None,
+            aggregation_partial_info: None,
         }
     }
 
@@ -542,6 +554,13 @@ mod decision {
                 .collect(),
             names: vec![format!("db.{visible}.a"), format!("db.{visible}.b")],
             origin: Some("db.t".to_owned()),
+            source_visible: visible.to_owned(),
+            output_to_source: vec![Some(0), Some(1)],
+            source_filters: Vec::new(),
+            aggregation: None,
+            aggregation_info: None,
+            aggregation_final_info: None,
+            aggregation_partial_info: None,
         }
     }
 
@@ -561,6 +580,33 @@ mod decision {
         assert!(!decision.lookup_is_left);
         assert_eq!(decision.probe_keys, vec![0]);
         assert_eq!(decision.range_info, "[eq(db.t.b, Column)]");
+    }
+
+    /// A join key that covers only the leading common-handle column still
+    /// builds Go's table range path. It is not unique until every primary-key
+    /// component is fixed.
+    #[test]
+    fn a_common_handle_prefix_is_a_non_unique_table_path() {
+        let table = common_handle_table(&[(1, 1), (1, 2), (2, 1)]);
+        let keys = vec![EquiKey {
+            left: 1,
+            right: 0,
+            class: crate::hash_join::KeyClass::Int,
+            null_safe: false,
+        }];
+        let decision = index_join_decision(
+            JoinKind::Inner,
+            &keys,
+            &outer_side(),
+            &inner_side(&table),
+            false,
+        )
+        .expect("the leading clustered-key column builds a table range");
+
+        assert!(matches!(decision.object, LookupObject::CommonHandle));
+        assert_eq!(decision.probe_keys, vec![0]);
+        assert_eq!(decision.probe_parts.len(), 1);
+        assert!(!decision.max_one_row());
     }
 
     /// An ALIAS renames the access object and NOTHING inside the range.

@@ -763,6 +763,99 @@ mod tests {
     }
 
     #[test]
+    fn loaded_column_ndv_reaches_grouped_cluster_plans() {
+        let table = TableInfo {
+            id: 130,
+            name: CiString::new("order_line"),
+            columns: vec![
+                column(1, 0, "ol_o_id", true),
+                column(2, 1, "ol_d_id", false),
+                column(3, 2, "ol_amount", false),
+            ]
+            .into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            ..TableInfo::default()
+        };
+        let version = 42;
+        let item = |id, ndv| {
+            let mut item = ClusterStatsItem {
+                id,
+                is_index: false,
+                stats_ver: 2,
+                flag: 1,
+                histogram: Default::default(),
+                topn: None,
+                cms: None,
+            };
+            item.histogram.id = id;
+            item.histogram.ndv = ndv;
+            item.histogram.last_update_version = version;
+            item.histogram.append_bucket(
+                tidb_datatype::Datum::Int(1),
+                tidb_datatype::Datum::Int(3_000_065),
+                3_000_065,
+                1,
+            );
+            item
+        };
+        let loaded_stats = ClusterTableStats {
+            table_id: table.id,
+            version,
+            modify_count: 0,
+            row_count: 3_000_065,
+            columns: vec![item(1, 3_000_065), item(2, 10), item(3, 3_000_065)],
+            indexes: Vec::new(),
+        };
+        let translated = planner_statistics(&loaded_stats, &table);
+        assert!(!translated.pseudo);
+        assert_eq!(
+            translated.columns.keys().copied().collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+        let snapshot =
+            StatsSnapshot::from([(table.id, TableStatsState::Loaded(Arc::new(loaded_stats)))]);
+        let (storage, _, _) = cluster_storage();
+        let (mut session, skipped) = session_with_cluster_storage(
+            &one_table_catalog(table),
+            &storage,
+            &snapshot,
+            &LocalTableAutoIds::default(),
+        );
+        assert!(skipped.is_empty(), "{skipped:?}");
+        {
+            let catalog = session.shared_catalog();
+            let catalog = catalog.lock().unwrap();
+            let statistics = catalog
+                .table_statistics(130)
+                .expect("loaded statistics survive session construction");
+            assert!(!statistics.pseudo);
+            assert_eq!(statistics.columns.get(&2).unwrap().histogram.ndv, 10);
+        }
+        session.run("USE app").unwrap();
+        let StmtResult::Rows(rows) = session
+            .run(
+                "EXPLAIN FORMAT='brief' SELECT ol_d_id, SUM(ol_amount) \
+                 FROM order_line WHERE ol_o_id BETWEEN 1 AND 1775 GROUP BY ol_d_id",
+            )
+            .unwrap()
+        else {
+            panic!("expected EXPLAIN rows");
+        };
+        let text = |row: usize, column: usize| match &rows[row][column] {
+            tidb_datatype::Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+            other => format!("{other:?}"),
+        };
+        let grouped = rows
+            .iter()
+            .enumerate()
+            .find(|(row, _)| text(*row, 0).contains("HashAgg"))
+            .map(|(row, _)| row)
+            .expect("the GROUP BY has a physical aggregation");
+        assert_eq!(text(grouped, 1), "1.00", "{rows:#?}");
+    }
+
+    #[test]
     fn wide_sql_runs_on_cluster_storage_without_committing() {
         let (storage, buffer, snapshot) = cluster_storage();
         let (mut session, skipped) = session_with_cluster_storage(

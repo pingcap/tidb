@@ -389,6 +389,58 @@ impl Session {
     }
 
     pub(crate) fn execute_statement(&mut self, sql: &str) -> Result<StmtOutput, DriverError> {
+        let stmt = self.parse_at_statement_boundary(sql)?;
+        self.execute_parsed_statement(sql, stmt, false, None)
+    }
+
+    pub(crate) fn execute_prepared_ast(
+        &mut self,
+        sql: &str,
+        stmt: Stmt,
+        cached_point_get: Option<tidb_executor::PreparedPointGetExecution>,
+    ) -> Result<StmtOutput, DriverError> {
+        self.begin_prepared_statement_boundary(&stmt);
+        self.execute_parsed_statement(sql, stmt, true, cached_point_get)
+    }
+
+    /// Executes the subset Go serves through `ExecStmt.PointGet`: the cached
+    /// plan has already passed the statement-shape, schema, autocommit,
+    /// stale-read, binding, and hint gates. Go skips rebuilding visitInfo for
+    /// this reused executor; this path likewise avoids revisiting the AST.
+    pub(crate) fn execute_cached_prepared_point_get(
+        &mut self,
+        cached: tidb_executor::PreparedPointGetExecution,
+    ) -> Result<StmtOutput, DriverError> {
+        self.begin_cached_prepared_query_boundary();
+        // `dirty_content` only gates scan/access-path planning. This cached
+        // executor owns one handle read and the admission gate already refuses
+        // an open transaction, so walking every catalog table cannot affect
+        // its result.
+        self.refuse_pinned_historical_read()?;
+        self.statement_insert_id = 0;
+        self.statement_kind = StatementKind::Select;
+
+        let current_db = self.current_db.clone();
+        let ctx = self.prepared_point_get_context();
+        let result = self.with_catalog_mut(|catalog| {
+            tidb_executor::run_prepared_point_get(&cached, catalog, &current_db, &ctx)
+        })?;
+        let Some((columns, rows)) = result else {
+            return Err(DriverError::unsupported(
+                "prepared point-get cache was invalidated during the statement",
+            ));
+        };
+        self.found_in_plan_cache = true;
+        Ok(StmtOutput::Rows { columns, rows })
+    }
+
+    fn execute_parsed_statement(
+        &mut self,
+        sql: &str,
+        mut stmt: Stmt,
+        prepared: bool,
+        cached_point_get: Option<tidb_executor::PreparedPointGetExecution>,
+    ) -> Result<StmtOutput, DriverError> {
         // Go hands every statement that is not continuing an open transaction
         // a FRESH membuffer, so `session.HasDirtyContent` answers false for
         // every table at this point -- and `BEGIN` therefore starts from an
@@ -399,22 +451,12 @@ impl Session {
         if !self.in_transaction() {
             self.lock_catalog()?.clear_dirty_content();
         }
-        // One parse serves every door below. `sql_mode` is what decides how a
-        // statement lexes, and nothing between here and execution changes it
-        // -- the `SET` that could is itself one of these doors, and it returns
-        // before the next statement is read -- so re-parsing the same text
-        // under the same mode could only ever produce the same tree. The four
-        // parses this replaces cost ~6 us of a ~13.5 us `SELECT 1`.
-        //
-        // It is also the statement boundary: Go gives every statement a fresh
-        // `StatementContext`, so what `SHOW WARNINGS` reports always belongs
-        // to the statement before it, and the OK/EOF packet's warning count
-        // starts over here too.
-        let mut stmt = self.parse_at_statement_boundary(sql)?;
         // The non-prepared plan cache reads the SAME parse every door below
         // uses. It only decides whether this statement's plan would already
         // have been there; it never replaces the planning that follows.
-        self.probe_non_prepared_plan_cache(&stmt);
+        if !prepared {
+            self.probe_non_prepared_plan_cache(&stmt);
+        }
         // `apply_schema_stmt` dispatches administrative statements early.
         // EXPLAIN is the one such wrapper whose inner query/DML can own
         // `SET_VAR`, so install that direct-AST overlay before the early
@@ -559,6 +601,20 @@ impl Session {
                     },
                     _ => select,
                 };
+                if let Some(cached) = cached_point_get.as_ref() {
+                    let current_db = self.current_db.clone();
+                    let ctx = self.prepared_point_get_context();
+                    let result = self.with_catalog_mut(|catalog| {
+                        tidb_executor::run_prepared_point_get(cached, catalog, &current_db, &ctx)
+                    })?;
+                    let Some((columns, rows)) = result else {
+                        return Err(DriverError::unsupported(
+                            "prepared point-get cache was invalidated during the statement",
+                        ));
+                    };
+                    self.found_in_plan_cache = true;
+                    return Ok(StmtOutput::Rows { columns, rows });
+                }
                 let current_db = self.current_db.clone();
                 let ctx = self.statement_context(false);
                 let (columns, rows) = self.with_catalog_mut(|catalog| {

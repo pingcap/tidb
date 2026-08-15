@@ -48,7 +48,7 @@ impl DmlExpression {
             let mut found = None;
             rewritten = extract_correlated_subquery(
                 &rewritten, &scope, catalog, current_db, index, &mut found, ctx,
-            );
+            )?;
             let Some(correlated) = found else {
                 break;
             };

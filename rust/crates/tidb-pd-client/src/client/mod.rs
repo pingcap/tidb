@@ -153,6 +153,47 @@ pub struct PdClient {
     owns_worker: bool,
 }
 
+/// One timestamp-oracle request that has been dispatched to PD but not yet
+/// observed by its caller.
+///
+/// This is the synchronous client's counterpart of Go `oracle.Future`: creating
+/// it starts the TSO request on the existing PD worker, while [`Self::wait`]
+/// applies the request's original end-to-end deadline only when a transaction
+/// actually needs the timestamp.
+pub struct PdTimestampFuture {
+    shared: Arc<PdClientShared>,
+    response: mpsc::Receiver<Result<u64, PdClientError>>,
+    deadline: Instant,
+}
+
+impl PdTimestampFuture {
+    /// Waits for the timestamp request that was dispatched when this future was
+    /// created.
+    pub fn wait(self) -> Result<u64, PdClientError> {
+        let remaining = self.deadline.saturating_duration_since(Instant::now());
+        match self.response.recv_timeout(remaining) {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(PdClientError::Closed),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let timeout = self.shared.timeout;
+                let endpoint = self
+                    .shared
+                    .state
+                    .read()
+                    .expect("PD state lock poisoned")
+                    .members
+                    .leader_url
+                    .clone();
+                Err(PdClientError::Timeout {
+                    operation: PdOperation::Tso,
+                    endpoint,
+                    timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
+                })
+            }
+        }
+    }
+}
+
 impl Clone for PdClient {
     /// Creates a request-only handle without shutdown or join authority.
     fn clone(&self) -> Self {
@@ -346,6 +387,14 @@ impl PdClient {
     /// The configured PD timeout is the total bound across stream creation,
     /// request/response I/O, membership refresh, and every retry.
     pub fn get_timestamp(&self) -> Result<u64, PdClientError> {
+        self.get_timestamp_async()?.wait()
+    }
+
+    /// Dispatches one timestamp request and returns without waiting for PD.
+    ///
+    /// Dropping the returned future abandons only the answer; the shared PD
+    /// worker still completes the already-submitted request and remains usable.
+    pub fn get_timestamp_async(&self) -> Result<PdTimestampFuture, PdClientError> {
         let timeout = self.shared.timeout;
         let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
             invalid_topology(
@@ -358,15 +407,11 @@ impl PdClient {
             .commands
             .send(WorkerCommand::GetTimestamp { deadline, reply })
             .map_err(|_| PdClientError::Closed)?;
-        match response.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(PdClientError::Closed),
-            Err(mpsc::RecvTimeoutError::Timeout) => Err(PdClientError::Timeout {
-                operation: PdOperation::Tso,
-                endpoint: self.member_set().leader_url,
-                timeout_ms: u64::try_from(timeout.as_millis()).unwrap_or(u64::MAX),
-            }),
-        }
+        Ok(PdTimestampFuture {
+            shared: Arc::clone(&self.shared),
+            response,
+            deadline,
+        })
     }
 
     /// Loads the region containing one already encoded PD wire key.

@@ -151,11 +151,11 @@ fn the_gate_refuses_every_wide_shape_and_they_still_answer_correctly() {
     assert_eq!(rows, vec![vec!["100"], vec!["200"], vec!["300"]]);
     assert_eq!(decoded, BTreeSet::from([C]));
 
-    // A derived table: the outer query's FROM is not a base table, and the
-    // inner one's wildcard names every column.
+    // A derived table: Go pushes the outer projection's demand through the
+    // inner wildcard, so only the selected base column reaches the scan.
     let (rows, decoded) = rows_and_decoded(&mut session, "SELECT c FROM (SELECT * FROM t) x");
     assert_eq!(rows, vec![vec!["100"], vec!["200"], vec!["300"]]);
-    assert_eq!(decoded, all);
+    assert_eq!(decoded, BTreeSet::from([C]));
 }
 
 /// The Go differential for the pruned scan's operator info.
@@ -182,10 +182,19 @@ fn pruning_leaves_the_plan_text_exactly_where_it_was() {
     let mut session = prune_session();
     let narrow = row_text(session.run("EXPLAIN SELECT c FROM t WHERE a > 1"));
     let wide = row_text(session.run("EXPLAIN SELECT * FROM t WHERE a > 1"));
-    // The `Projection` prints the select list, which genuinely differs (Go's
-    // does too). Every row below it -- the `Selection` and the scan -- must
-    // be identical.
-    assert_eq!(narrow[1..], wide[1..]);
+    // The narrow query keeps its proper-subset Projection, while Go's strict
+    // physical projection elimination removes the wide query's identity
+    // Projection. Every operator below that one extra narrow node -- the
+    // Selection and the scan -- must have the same name and semantic columns;
+    // only the tree connector changes when each operator is promoted one level.
+    fn operator_name(name: &str) -> &str {
+        name.trim_start_matches(|c: char| matches!(c, ' ' | '└' | '─'))
+    }
+    assert_eq!(narrow.len(), wide.len() + 1);
+    for (narrow_row, wide_row) in narrow[1..].iter().zip(&wide) {
+        assert_eq!(operator_name(&narrow_row[0]), operator_name(&wide_row[0]));
+        assert_eq!(narrow_row[1..], wide_row[1..]);
+    }
     assert_eq!(
         narrow.last().unwrap(),
         &vec![
@@ -350,52 +359,55 @@ fn pruning_a_join_does_not_change_any_value() {
     assert_eq!(narrow, expected);
 }
 
-/// The join shapes the widened gate still refuses, and why each one has to
-/// stay refused. Every one of them still answers correctly.
+/// The join shapes the widened gate still refuses, plus the derived-table
+/// shape whose leaf demand Go can safely carry through its Projection. Every
+/// one of them still answers correctly.
 #[test]
 fn the_join_gate_refuses_the_shapes_it_cannot_see_all_the_references_of() {
     let mut session = prune_session();
     let all = BTreeSet::from([A, B, C, D]);
 
-    // THREE tables. `build_join` recurses, so the inner `t JOIN j` would be
-    // offered a prune with the OUTER join's `ON` -- which names `t.b` here --
-    // nowhere in view. Dropping `t.b` there would be a silently wrong answer,
-    // so the whole shape is refused.
+    // THREE tables. Go's top-down demand keeps the selected column plus both
+    // join keys, while dropping the unrelated `t.d` from the leaf read.
     let (rows, decoded) = rows_and_decoded(
         &mut session,
         "SELECT t.c FROM t JOIN j ON t.a = j.k JOIN s ON s.v = t.b ORDER BY t.a",
     );
     assert_eq!(rows, Vec::<Vec<String>>::new());
-    assert!(
-        decoded.is_superset(&all),
+    assert_eq!(
+        decoded,
+        BTreeSet::from([A, B, C]),
         "three-way join decoded {decoded:?}"
     );
 
-    // Three tables in the COMMA spelling, which nests differently: here the
-    // inner `t, j` wears no `ON` at all, so nothing about the node shape
-    // marks it as a join to peel past. The scope width is what refuses it --
-    // `tables[0]`/`tables[1]` would name `t` and `j` while the executor on
-    // the left is the whole `t, j` join, and the split point would be applied
-    // to `s`.
+    // Three tables in the COMMA spelling. Go's top-down demand again keeps
+    // the selected column and WHERE keys while dropping unrelated `t.d`.
     let (rows, decoded) = rows_and_decoded(
         &mut session,
         "SELECT t.c FROM t, j, s WHERE t.a = j.k AND t.b = 10",
     );
     assert_eq!(rows, vec![vec!["100"], vec!["100"]]);
-    assert!(
-        decoded.is_superset(&all),
+    assert_eq!(
+        decoded,
+        BTreeSet::from([A, B, C]),
         "three-way comma join decoded {decoded:?}"
     );
 
-    // A derived table on one side: not a base table, so the side has no
-    // column list this gate may narrow. The subquery names only `k` and `p`,
-    // so `t` staying full width is what puts ids 2 and 3 in the set.
+    // A derived table on one side: the narrow executor-row gate still refuses
+    // the shape, but Go's top-down LogicalProjection/LogicalJoin column demand
+    // is also used for leaf access costing. The chosen covering path therefore
+    // decodes only the `t.a` join key and selected `t.c`; the derived side does
+    // not force the unrelated `t.b` and `t.d` columns back into that demand.
     let (rows, decoded) = rows_and_decoded(
         &mut session,
         "SELECT t.c FROM t JOIN (SELECT k, p FROM j) x ON t.a = x.k ORDER BY t.a",
     );
     assert_eq!(rows, vec![vec!["100"], vec!["200"]]);
-    assert_eq!(decoded, all, "derived side decoded {decoded:?}");
+    assert_eq!(
+        decoded,
+        BTreeSet::from([A, C]),
+        "derived side decoded {decoded:?}"
+    );
 
     // A wildcard names every column of both sides.
     let (rows, decoded) = rows_and_decoded(&mut session, "SELECT * FROM t JOIN j ON t.a = j.k");
@@ -407,16 +419,17 @@ fn the_join_gate_refuses_the_shapes_it_cannot_see_all_the_references_of() {
     assert_eq!(rows.len(), 2);
     assert_eq!(decoded, all);
 
-    // A correlated subquery inside a join: the correlated reference lives in
-    // a scope this walk never enters, so the whole statement is refused --
-    // the same rule as the single-table case.
+    // A correlated subquery inside a join: Go retains the outer column read by
+    // the subquery together with the selected column and join key, while the
+    // unrelated fourth column is still pruned.
     let (rows, decoded) = rows_and_decoded(
         &mut session,
         "SELECT t.c FROM t JOIN j ON t.a = j.k WHERE EXISTS (SELECT 1 FROM s WHERE s.k = t.b) ORDER BY t.a",
     );
     assert_eq!(rows, Vec::<Vec<String>>::new());
-    assert!(
-        decoded.is_superset(&all),
+    assert_eq!(
+        decoded,
+        BTreeSet::from([A, B, C]),
         "correlated join decoded {decoded:?}"
     );
 
@@ -476,9 +489,10 @@ fn pruning_a_join_leaves_the_plan_text_exactly_where_it_was() {
     // Only the `Projection`'s own select list differs, as in Go.
     assert_eq!(narrow[1..], wide[1..]);
     assert!(
-        narrow[1][4].contains("equal:[eq(test.t.a, test.j.k)]"),
-        "join operator info moved: {:?}",
-        narrow[1]
+        narrow
+            .iter()
+            .any(|row| row[4].contains("equal:[eq(test.t.a, test.j.k)]")),
+        "join operator info moved: {narrow:?}",
     );
 }
 

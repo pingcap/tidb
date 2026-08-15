@@ -443,6 +443,34 @@ fn sends_first_request_before_waiting_for_response_headers() {
     assert_eq!(state.requests.len(), 1);
 }
 
+/// Go's transaction warmup stores an oracle future: it dispatches TSO work at
+/// prepare time, but a statement that never reads storage can drop the future
+/// without activating a transaction or blocking on PD.
+#[test]
+fn timestamp_future_dispatches_before_wait_and_survives_an_unobserved_result() {
+    let server = Server::start_auto_batching();
+    let client = PdClient::connect(&server.address, Duration::from_secs(1)).unwrap();
+
+    let unused = client.get_timestamp_async().unwrap();
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    while server.state.lock().unwrap().requests.is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "creating the future did not dispatch its TSO request"
+        );
+        std::thread::yield_now();
+    }
+    drop(unused);
+
+    let used = client.get_timestamp_async().unwrap();
+    assert_ne!(used.wait().unwrap(), 0);
+    let state = server.state.lock().unwrap();
+    assert_eq!(state.stream_opens, 1);
+    assert_eq!(state.requests.len(), 2);
+    drop(state);
+    client.shutdown().unwrap();
+}
+
 #[test]
 fn retry_retires_the_broken_stream_before_reopening() {
     let server = Server::start([

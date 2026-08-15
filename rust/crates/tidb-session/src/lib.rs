@@ -590,6 +590,7 @@ mod identity;
 pub mod infoschema;
 mod non_prepared_plan_cache;
 mod noop;
+mod prepared_ast;
 mod prepared_statements;
 mod stmt_ctx;
 mod table_privilege;
@@ -598,6 +599,7 @@ mod variables;
 mod warnings;
 pub(crate) use classify::{statement_kind_of, StatementKind};
 pub use classify::{StmtKind, StoredStateChange};
+pub use prepared_ast::{BoundPreparedAst, PreparedAst};
 pub(crate) use txn::Transaction;
 pub(crate) use variables::datum_text;
 pub use warnings::{SqlWarning, WarningLevel};
@@ -823,6 +825,58 @@ impl Session {
         self.run_with_columns_internal(&bound, true)
     }
 
+    /// Executes one bound clone of a PREPARE-retained AST and replans it
+    /// against the session's current catalog and settings.
+    pub fn run_bound_prepared(
+        &mut self,
+        bound: BoundPreparedAst,
+    ) -> Result<StmtOutput, DriverError> {
+        self.run_bound_prepared_internal(bound, false)
+            .map(|(output, _)| output)
+    }
+
+    /// [`Self::run_bound_prepared`] with the authority needed to retain a row
+    /// result after the cluster statement lifecycle completes.
+    pub fn run_bound_prepared_with_result_authority(
+        &mut self,
+        bound: BoundPreparedAst,
+    ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
+        self.run_bound_prepared_internal(bound, true)
+    }
+
+    fn run_bound_prepared_internal(
+        &mut self,
+        bound: BoundPreparedAst,
+        capture_result_authority: bool,
+    ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
+        let (execution_sql, statement, cached_point_get, cache_candidate, cache_ready) =
+            bound.into_parts();
+        let sql = execution_sql.as_str();
+        let result = match statement {
+            Some(statement) => {
+                self.run_with_columns_using(sql, capture_result_authority, move |session| {
+                    session.execute_prepared_ast(sql, statement, cached_point_get)
+                })
+            }
+            None => self.run_with_columns_using(sql, capture_result_authority, move |session| {
+                session.execute_cached_prepared_point_get(
+                    cached_point_get.expect("the cached path carries its PointGet execution"),
+                )
+            }),
+        };
+        if capture_result_authority
+            && result
+                .as_ref()
+                .is_ok_and(|(output, _)| matches!(output, StmtOutput::Rows { .. }))
+            && cache_candidate
+                .as_ref()
+                .is_some_and(|execution| self.can_reuse_prepared_point_get(execution.plan()))
+        {
+            cache_ready.store(true, std::sync::atomic::Ordering::Release);
+        }
+        result
+    }
+
     /// Runs one SQL statement (Go `session.ExecuteStmt`): parses, dispatches by
     /// statement kind, and executes over the session catalog.
     pub fn run(&mut self, sql: &str) -> Result<StmtResult, DriverError> {
@@ -849,6 +903,17 @@ impl Session {
         sql: &str,
         capture_result_authority: bool,
     ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
+        self.run_with_columns_using(sql, capture_result_authority, |session| {
+            session.execute_statement(sql)
+        })
+    }
+
+    fn run_with_columns_using(
+        &mut self,
+        sql: &str,
+        capture_result_authority: bool,
+        execute: impl FnOnce(&mut Self) -> Result<StmtOutput, DriverError>,
+    ) -> Result<(StmtOutput, Option<ResultMaterializationAuthority>), DriverError> {
         self.check_sandbox_mode(sql)?;
         // A statement is visible to a peer's SHOW PROCESSLIST for exactly as
         // long as it runs, which is why the process list is updated here --
@@ -873,29 +938,10 @@ impl Session {
         // `select @@last_plan_from_binding` reports the statement BEFORE it
         // rather than itself (that SELECT matches no binding of its own).
         self.prev_found_in_binding = std::mem::take(&mut self.found_in_binding);
-        let result = self.execute_statement(sql);
-        let result_authority =
-            if capture_result_authority && matches!(&result, Ok(StmtOutput::Rows { .. })) {
-                let init_chunk_size = self
-                    .vars
-                    .get_system(tidb_vardef::tidb_vars::TIDB_INIT_CHUNK_SIZE)
-                    .ok()
-                    .and_then(|value| value.parse::<usize>().ok())
-                    .unwrap_or(32);
-                let max_chunk_size = self
-                    .vars
-                    .get_system(tidb_vardef::tidb_vars::TIDB_MAX_CHUNK_SIZE)
-                    .ok()
-                    .and_then(|value| value.parse::<usize>().ok())
-                    .unwrap_or(1024);
-                Some(ResultMaterializationAuthority::new(
-                    self.statement_context(false).statement_memory(),
-                    init_chunk_size,
-                    max_chunk_size,
-                ))
-            } else {
-                None
-            };
+        let result = execute(self);
+        let result_authority = (capture_result_authority
+            && matches!(&result, Ok(StmtOutput::Rows { .. })))
+        .then(|| self.result_materialization_authority());
         // Go `ExecStmt` puts a `SET_VAR` hint's variables back when the
         // statement finishes, from the restore list the optimizer built --
         // which is why an overlay survives neither a successful statement nor

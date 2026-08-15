@@ -184,9 +184,9 @@ fn a_left_join_merges_and_keeps_its_unmatched_rows() {
 }
 
 /// An ALIASED self-join merges: the two occurrences are distinguishable, and
-/// each provides its own handle's order. An UNALIASED one never reaches the
-/// decision at all -- `from t2, t2` is a duplicate table name and is refused
-/// before any join is built, as it is in MySQL.
+/// each provides its own handle's order. EXPLAIN retains the source column's
+/// physical table identity after projection elimination, as Go does. An
+/// UNALIASED self-join is still refused before any join is built.
 #[test]
 fn an_aliased_self_join_merges_and_an_unaliased_one_is_refused() {
     let mut session = pk_session();
@@ -197,13 +197,13 @@ fn an_aliased_self_join_merges_and_an_unaliased_one_is_refused() {
     .join("\n");
     assert!(joined.contains("MergeJoin"), "{joined}");
     assert!(
-        joined.contains("left key:test.x.a, right key:test.y.a"),
-        "the keys name the ALIASES, which is what makes them tellable apart:\n{joined}"
+        joined.contains("left key:test.t2.a, right key:test.t2.a"),
+        "the keys retain the physical source identity after alias resolution:\n{joined}"
     );
     assert!(session.run("select t2.a from t2, t2").is_err());
 }
 
-/// The ORDER-BY-driven keep-order scan this batch did NOT reach.
+/// The ORDER-BY-driven keep-order scan matches Go's physical property flow.
 ///
 /// Go, on `t(a int, b int, c int, key ia(a))`:
 ///
@@ -215,13 +215,9 @@ fn an_aliased_self_join_merges_and_an_unaliased_one_is_refused() {
 /// ```
 ///
 /// -- no ordering operator at all, because the index's own order satisfies the
-/// `ORDER BY`. Reaching that needs the property to flow into the ACCESS-PATH
-/// choice (Go's second, order-carrying `findBestTask` invocation), which is
-/// the follow-on increment: only a merge join demands an order here, and only
-/// of a scan whose path was already fixed. This test records where the tier
-/// actually stands so the gap is a measured fact rather than a claim.
+/// `ORDER BY`.
 #[test]
-fn an_order_by_limit_still_sorts_rather_than_reading_the_index_in_order() {
+fn an_order_by_limit_reads_the_index_in_order() {
     let mut session = Session::new();
     session
         .run("create table t (a int, b int, c int, key ia(a))")
@@ -232,12 +228,14 @@ fn an_order_by_limit_still_sorts_rather_than_reading_the_index_in_order() {
     )
     .join("\n");
     assert!(
-        joined.contains("Sort") || joined.contains("TopN"),
-        "an ordering operator is still present, where Go has none:\n{joined}"
+        !joined.contains("Sort") && !joined.contains("TopN"),
+        "the ordered index scan should make a separate ordering operator unnecessary:\n{joined}"
     );
     assert!(
-        !joined.contains("keep order:true"),
-        "no scan claims the order yet:\n{joined}"
+        joined.contains("IndexFullScan")
+            && joined.contains("keep order:true")
+            && joined.contains("desc"),
+        "the index scan should provide descending order:\n{joined}"
     );
 }
 

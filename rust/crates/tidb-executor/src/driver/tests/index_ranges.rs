@@ -8,6 +8,240 @@
 
 use super::*;
 
+/// Go `AdjustRowCountForTableScanByLimit`: an ordered LIMIT over a matching
+/// common-handle prefix expects the first qualifying row near the start of
+/// the remaining range, then applies the shipped 0.01 ordering-risk ratio.
+#[test]
+fn ordered_limit_adjusts_the_common_handle_scan_estimate() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE new_order (\
+            no_o_id INT NOT NULL, no_d_id INT NOT NULL, no_w_id INT NOT NULL, \
+            PRIMARY KEY (no_w_id, no_d_id, no_o_id) CLUSTERED)",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO new_order VALUES (1,1,1),(2,1,1),(1,2,1),(1,1,2)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let TableEntry::Kv(table) = catalog.get_mut_in("test", "new_order").unwrap() else {
+        panic!("new_order is not a KV table");
+    };
+    table.add_index(crate::kv_table::KvIndex {
+        id: 1,
+        name: "PRIMARY".to_owned(),
+        comment: String::new(),
+        unique: true,
+        prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+        column_offsets: vec![2, 1, 0],
+        visible: true,
+        global: false,
+    });
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "new_order",
+        105_500,
+        &[("no_o_id", 3_000), ("no_d_id", 10), ("no_w_id", 10)],
+        &ctx,
+    );
+    catalog.clear_dirty_content();
+
+    let stmt = tidb_parser::parse(
+        "SELECT no_o_id FROM new_order \
+         WHERE no_w_id=1 AND no_d_id=1 ORDER BY no_o_id LIMIT 1 FOR UPDATE",
+    )
+    .unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let scan = rows
+        .iter()
+        .find(|row| {
+            matches!(&row[0], Datum::Bytes(bytes) if String::from_utf8_lossy(bytes).contains("TableRangeScan"))
+        })
+        .expect("the common handle must remain a TableRangeScan");
+    let Datum::Bytes(estimate) = &scan[1] else {
+        panic!("scan estimate is not text: {scan:?}");
+    };
+    let estimate = String::from_utf8_lossy(estimate).parse::<f64>().unwrap();
+    assert!(
+        (estimate - 36.49).abs() < 0.01,
+        "the fixture's Go ordered-limit estimate is 36.49 rows, got {estimate}: {rows:?}"
+    );
+
+    crate::run_create_table_on(
+        "CREATE TABLE orders (\
+            o_id INT NOT NULL, o_d_id INT NOT NULL, o_w_id INT NOT NULL, o_c_id INT, \
+            o_entry_d DATETIME, o_carrier_id INT, o_ol_cnt INT, o_all_local INT, \
+            PRIMARY KEY (o_w_id, o_d_id, o_id) CLUSTERED, \
+            KEY idx_order (o_w_id, o_d_id, o_c_id, o_id))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO orders VALUES \
+            (1,1,1,1,NULL,NULL,1,1), \
+            (2,1,1,1,NULL,2,1,1), \
+            (3,1,1,2,NULL,3,1,1), \
+            (1,2,1,1,NULL,4,1,1)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    scale_analyzed_tpcc_table(
+        &mut catalog,
+        "orders",
+        300_000,
+        &[
+            ("o_id", 3_000),
+            ("o_d_id", 10),
+            ("o_w_id", 10),
+            ("o_c_id", 3_000),
+        ],
+        &ctx,
+    );
+    catalog.clear_dirty_content();
+
+    let stmt = tidb_parser::parse(
+        "SELECT o_id, o_carrier_id, o_entry_d FROM orders \
+         WHERE o_w_id=1 AND o_d_id=1 AND o_c_id=1 ORDER BY o_id DESC LIMIT 1",
+    )
+    .unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let operator = |row: &[Datum]| {
+        datum_text_for_test(&row[0])
+            .trim_start_matches(|ch| matches!(ch, ' ' | '└' | '├' | '│' | '─'))
+            .to_owned()
+    };
+    let names = rows.iter().map(|row| operator(row)).collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        [
+            "Projection",
+            "Projection",
+            "IndexLookUp",
+            "Limit(Build)",
+            "IndexRangeScan",
+            "TableRowIDScan(Probe)",
+        ]
+    );
+    assert_eq!(
+        datum_text_for_test(&rows[1][4]),
+        "test.orders.o_id, test.orders.o_entry_d, test.orders.o_carrier_id"
+    );
+    let lookup = rows
+        .iter()
+        .find(|row| operator(row) == "IndexLookUp")
+        .expect("ordered non-covering index path must remain an IndexLookUp");
+    assert_eq!(
+        datum_text_for_test(&lookup[4]),
+        "limit embedded(offset:0, count:1)"
+    );
+    let scan = rows
+        .iter()
+        .find(|row| operator(row) == "IndexRangeScan")
+        .expect("the lookup build side must remain an IndexRangeScan");
+    assert_eq!(datum_text_for_test(&scan[1]), "1.00");
+    assert!(datum_text_for_test(&scan[4]).contains("keep order:true, desc"));
+
+    let offset_sql = "SELECT o_id, o_carrier_id, o_entry_d FROM orders \
+                      WHERE o_w_id=1 AND o_d_id=1 AND o_c_id=1 \
+                      ORDER BY o_id DESC LIMIT 1,1";
+    assert_eq!(
+        run_select_on(offset_sql, &catalog, &ctx).unwrap(),
+        vec![vec![Datum::Int(1), Datum::Null, Datum::Null]],
+        "the embedded offset is consumed by the index handle stream before table lookup"
+    );
+    let stmt = tidb_parser::parse(offset_sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, offset_plan) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let lookup = offset_plan
+        .iter()
+        .find(|row| operator(row) == "IndexLookUp")
+        .expect("the offset plan must remain an IndexLookUp");
+    assert_eq!(
+        datum_text_for_test(&lookup[4]),
+        "limit embedded(offset:1, count:1)"
+    );
+    let build_limit = offset_plan
+        .iter()
+        .find(|row| operator(row) == "Limit(Build)")
+        .expect("the embedded limit must cap the index build side");
+    assert_eq!(datum_text_for_test(&build_limit[4]), "offset:0, count:2");
+}
+
+/// A secondary-index range that must return non-index columns is Go's
+/// two-child IndexLookUp, not an IndexReader with a root identity projection.
+#[test]
+fn non_covering_random_points_use_index_lookup_without_identity_projection() {
+    use crate::explain::{explain_select_stmt, ExplainFormat};
+
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE lookup_shape (id INT PRIMARY KEY, k INT NOT NULL, c CHAR(4), pad CHAR(4), KEY k_1(k))",
+        &mut catalog,
+    )
+    .unwrap();
+    let ctx = crate::StmtContext::for_query();
+    run_insert_on(
+        "INSERT INTO lookup_shape VALUES (1, 1, 'a', 'x'), (2, 2, 'b', 'y')",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    let sql = "SELECT id, k, c, pad FROM lookup_shape WHERE k IN (1, 2)";
+    let stmt = tidb_parser::parse(sql).unwrap();
+    let Stmt::Query(query) = &stmt else {
+        panic!("not a query");
+    };
+    let QueryStmt::Select(select) = &**query else {
+        panic!("not a SELECT");
+    };
+    let (_, rows) =
+        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 0)).collect::<Vec<_>>(),
+        vec![
+            "IndexLookUp",
+            "├─IndexRangeScan(Build)",
+            "└─TableRowIDScan(Probe)"
+        ]
+    );
+    assert_eq!(
+        (0..rows.len()).map(|row| cell(row, 2)).collect::<Vec<_>>(),
+        vec!["root", "cop[tikv]", "cop[tikv]"]
+    );
+    assert_eq!(run_select_on(sql, &catalog, &ctx).unwrap().len(), 2);
+}
+
 /// A composite-index range spans several datums per bound, an IN list
 /// produces several ranges, and an OR unions them. The answers must be
 /// the same rows a full scan would return -- a range that reads too few
@@ -171,273 +405,6 @@ fn index_range_scans() {
     );
 }
 
-#[test]
-fn use_index_merge_unions_indexed_or_branches_without_duplicate_rows() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
-
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE im (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, KEY ia (a), KEY ib (b))",
-        &mut catalog,
-    )
-    .unwrap();
-    let ctx = crate::StmtContext::for_query();
-    run_insert_on(
-        "INSERT INTO im VALUES (1, 1, 2), (2, 1, 0), (3, 0, 2), (4, 0, 0), (5, 1, 9)",
-        &mut catalog,
-        &ctx,
-    )
-    .unwrap();
-
-    let sql = "SELECT /*+ USE_INDEX_MERGE(im, ia, ib) */ id FROM im WHERE a = 1 OR b = 2";
-    let mut ids: Vec<i64> = run_select_on(sql, &catalog, &ctx)
-        .unwrap()
-        .into_iter()
-        .map(|row| match row[0] {
-            Datum::Int(value) => value,
-            ref other => panic!("expected an integer handle, got {other:?}"),
-        })
-        .collect();
-    ids.sort_unstable();
-    assert_eq!(ids, vec![1, 2, 3, 5]);
-
-    let mut residual_ids: Vec<i64> = run_select_on(
-        "SELECT /*+ USE_INDEX_MERGE(im, ia, ib) */ id FROM im WHERE (a = 1 AND b = 0) OR b = 2",
-        &catalog,
-        &ctx,
-    )
-    .unwrap()
-    .into_iter()
-    .map(|row| match row[0] {
-        Datum::Int(value) => value,
-        ref other => panic!("expected an integer handle, got {other:?}"),
-    })
-    .collect();
-    residual_ids.sort_unstable();
-    assert_eq!(residual_ids, vec![1, 2, 3]);
-
-    let stmt = tidb_parser::parse(sql).unwrap();
-    let Stmt::Query(query) = &stmt else {
-        panic!("not a query");
-    };
-    let QueryStmt::Select(select) = &**query else {
-        panic!("not a SELECT");
-    };
-    let (_, rows) =
-        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
-    let plan: Vec<String> = rows
-        .iter()
-        .map(|row| {
-            row.iter()
-                .map(|datum| match datum {
-                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-                    other => format!("{other:?}"),
-                })
-                .collect::<Vec<_>>()
-                .join(" | ")
-        })
-        .collect();
-    assert!(
-        plan.iter().any(|line| line.contains("IndexMerge")),
-        "USE_INDEX_MERGE must install the multi-index reader, got {plan:?}"
-    );
-}
-
-#[test]
-fn automatic_index_merge_costs_a_sparse_or_and_honors_the_session_switch() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
-
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE aim (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, KEY ia (a), KEY ib (b))",
-        &mut catalog,
-    )
-    .unwrap();
-    let ctx = crate::StmtContext::for_query();
-    run_insert_on(
-        "INSERT INTO aim VALUES (1, 1, 2), (2, 1, 0), (3, 0, 2), (4, 0, 0), (5, 1, 9)",
-        &mut catalog,
-        &ctx,
-    )
-    .unwrap();
-
-    let sql = "SELECT id FROM aim WHERE a = 1 OR b = 2";
-    let stmt = tidb_parser::parse(sql).unwrap();
-    let Stmt::Query(query) = &stmt else {
-        panic!("not a query");
-    };
-    let QueryStmt::Select(select) = &**query else {
-        panic!("not a SELECT");
-    };
-    let (_, rows) =
-        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
-    assert!(
-        rows.iter().any(|row| match &row[0] {
-            Datum::Bytes(id) => String::from_utf8_lossy(id).contains("IndexMerge"),
-            _ => false,
-        }),
-        "a costed automatic OR must use the index-merge reader, got {rows:?}"
-    );
-    let mut ids: Vec<i64> = run_select_on(sql, &catalog, &ctx)
-        .unwrap()
-        .into_iter()
-        .map(|row| match row[0] {
-            Datum::Int(value) => value,
-            ref other => panic!("expected an integer handle, got {other:?}"),
-        })
-        .collect();
-    ids.sort_unstable();
-    assert_eq!(ids, vec![1, 2, 3, 5]);
-
-    let disabled = crate::StmtContext::for_query().with_index_merge(false);
-    let (_, rows) =
-        explain_select_stmt(select, &catalog, "test", &disabled, ExplainFormat::Row).unwrap();
-    assert!(
-        rows.iter().all(|row| match &row[0] {
-            Datum::Bytes(id) => !String::from_utf8_lossy(id).contains("IndexMerge"),
-            _ => true,
-        }),
-        "the session switch must suppress automatic paths, got {rows:?}"
-    );
-}
-
-#[test]
-fn automatic_index_merge_combines_the_top_level_and_conditions() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
-
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE aim_cnf (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, x BIGINT, \
-         KEY ia (a), KEY ib (b))",
-        &mut catalog,
-    )
-    .unwrap();
-    let ctx = crate::StmtContext::for_query();
-    run_insert_on(
-        "INSERT INTO aim_cnf VALUES (1, 1, 2, 1), (2, 1, 0, 1), (3, 0, 2, 1), \
-         (4, 0, 0, 1), (5, 1, 9, 0)",
-        &mut catalog,
-        &ctx,
-    )
-    .unwrap();
-    let sql = "SELECT id FROM aim_cnf WHERE x = 1 AND (a = 1 OR b = 2)";
-    let stmt = tidb_parser::parse(sql).unwrap();
-    let Stmt::Query(query) = &stmt else {
-        panic!("not a query");
-    };
-    let QueryStmt::Select(select) = &**query else {
-        panic!("not a SELECT");
-    };
-    let (_, rows) =
-        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
-    assert!(
-        rows.iter().any(|row| match &row[0] {
-            Datum::Bytes(id) => String::from_utf8_lossy(id).contains("IndexMerge"),
-            _ => false,
-        }),
-        "the DNF reader must retain the top-level AND predicates, got {rows:?}"
-    );
-    let mut ids: Vec<i64> = run_select_on(sql, &catalog, &ctx)
-        .unwrap()
-        .into_iter()
-        .map(|row| match row[0] {
-            Datum::Int(value) => value,
-            ref other => panic!("expected an integer handle, got {other:?}"),
-        })
-        .collect();
-    ids.sort_unstable();
-    assert_eq!(ids, vec![1, 2, 3]);
-}
-
-#[test]
-fn use_index_merge_intersects_indexed_and_branches() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
-
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE imi (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, KEY ia (a), KEY ib (b))",
-        &mut catalog,
-    )
-    .unwrap();
-    let ctx = crate::StmtContext::for_query();
-    run_insert_on(
-        "INSERT INTO imi VALUES (1, 1, 2), (2, 1, 0), (3, 0, 2), (4, 0, 0)",
-        &mut catalog,
-        &ctx,
-    )
-    .unwrap();
-
-    let sql = "SELECT /*+ USE_INDEX_MERGE(imi, ia, ib) */ id FROM imi WHERE a = 1 AND b = 2";
-    assert_eq!(
-        run_select_on(sql, &catalog, &ctx).unwrap(),
-        vec![vec![Datum::Int(1)]]
-    );
-
-    let stmt = tidb_parser::parse(sql).unwrap();
-    let Stmt::Query(query) = &stmt else {
-        panic!("not a query");
-    };
-    let QueryStmt::Select(select) = &**query else {
-        panic!("not a SELECT");
-    };
-    let (_, rows) =
-        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
-    let plan: Vec<String> = rows
-        .iter()
-        .map(|row| {
-            row.iter()
-                .map(|datum| match datum {
-                    Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
-                    other => format!("{other:?}"),
-                })
-                .collect::<Vec<_>>()
-                .join(" | ")
-        })
-        .collect();
-    assert!(
-        plan.iter()
-            .any(|line| line.contains("IndexMerge") && line.contains("intersection")),
-        "USE_INDEX_MERGE must install the intersection reader, got {plan:?}"
-    );
-}
-
-#[test]
-fn no_index_merge_overrides_a_use_index_merge_hint() {
-    use crate::explain::{explain_select_stmt, ExplainFormat};
-
-    let mut catalog = Catalog::default();
-    crate::run_create_table_on(
-        "CREATE TABLE imn (id BIGINT PRIMARY KEY, a BIGINT, b BIGINT, KEY ia (a), KEY ib (b))",
-        &mut catalog,
-    )
-    .unwrap();
-    let ctx = crate::StmtContext::for_query();
-    run_insert_on(
-        "INSERT INTO imn VALUES (1, 1, 2), (2, 1, 0), (3, 0, 2)",
-        &mut catalog,
-        &ctx,
-    )
-    .unwrap();
-
-    let sql = "SELECT /*+ USE_INDEX_MERGE(imn, ia, ib) NO_INDEX_MERGE() */ id FROM imn WHERE a = 1 OR b = 2";
-    let stmt = tidb_parser::parse(sql).unwrap();
-    let Stmt::Query(query) = &stmt else {
-        panic!("not a query");
-    };
-    let QueryStmt::Select(select) = &**query else {
-        panic!("not a SELECT");
-    };
-    let (_, rows) =
-        explain_select_stmt(select, &catalog, "test", &ctx, ExplainFormat::Row).unwrap();
-    assert!(
-        rows.iter().all(|row| match &row[0] {
-            Datum::Bytes(id) => !String::from_utf8_lossy(id).contains("IndexMerge"),
-            _ => true,
-        }),
-        "NO_INDEX_MERGE must suppress the reader, got {rows:?}"
-    );
-}
-
 /// A range scan over a UNIQUE index reads its handles out of the entry
 /// VALUES, not the key, so this covers the other half of the entry format
 /// -- including the NULL entries a unique index stores non-distinctly.
@@ -518,11 +485,15 @@ fn index_ranges_are_built_the_way_go_builds_them() {
             &columns,
             &crate::index_hints::AvailablePaths::unrestricted(),
             false,
+            &crate::StmtContext::for_query(),
         ) {
-            Some(crate::driver::access::ChosenPath::Index(id, ranges, _, _)) => Some((id, ranges)),
-            Some(crate::driver::access::ChosenPath::HandleRange(ranges, _)) => {
+            Some(crate::driver::access::ChosenPath::Index(id, ranges, _, _, _)) => {
+                Some((id, ranges))
+            }
+            Some(crate::driver::access::ChosenPath::HandleRange(ranges, _, _)) => {
                 panic!("expected an index path, got a handle range {ranges:?}")
             }
+            Some(crate::driver::access::ChosenPath::FullTable(_)) => None,
             None => None,
         }
     };
@@ -754,10 +725,14 @@ fn a_non_unique_index_ranges_on_the_clustered_handle_too() {
             &columns,
             &crate::index_hints::AvailablePaths::unrestricted(),
             false,
+            &crate::StmtContext::for_query(),
         ) {
-            Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _)) => Some(ranges),
-            Some(crate::driver::access::ChosenPath::HandleRange(ranges, _)) => {
+            Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _, _)) => Some(ranges),
+            Some(crate::driver::access::ChosenPath::HandleRange(ranges, _, _)) => {
                 panic!("expected an index path, got a handle range {ranges:?}")
+            }
+            Some(crate::driver::access::ChosenPath::FullTable(_)) => {
+                panic!("expected an index path, got the whole-table scan")
             }
             None => panic!("expected an index path, got the whole-table scan"),
         }
@@ -907,15 +882,18 @@ fn a_unique_index_gets_no_handle_dimension() {
         panic!("not a select")
     };
     let scope = crate::plan_trace::PlanTrace::single_table_scope("u", None, columns.clone());
-    if let Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _)) = choose_index_range_path(
-        select,
-        &catalog,
-        &scope,
-        table,
-        &columns,
-        &crate::index_hints::AvailablePaths::unrestricted(),
-        false,
-    ) {
+    if let Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _, _)) =
+        choose_index_range_path(
+            select,
+            &catalog,
+            &scope,
+            table,
+            &columns,
+            &crate::index_hints::AvailablePaths::unrestricted(),
+            false,
+            &crate::StmtContext::for_query(),
+        )
+    {
         assert!(
             ranges.iter().all(|range| range.low.len() == 1),
             "a unique index must not range on the handle: {ranges:?}"
@@ -1019,15 +997,18 @@ fn a_handle_that_is_already_a_key_part_is_not_appended_again() {
         panic!("not a select")
     };
     let scope = crate::plan_trace::PlanTrace::single_table_scope("hd", None, columns.clone());
-    let Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _)) = choose_index_range_path(
-        select,
-        &catalog,
-        &scope,
-        table,
-        &columns,
-        &crate::index_hints::AvailablePaths::unrestricted(),
-        false,
-    ) else {
+    let Some(crate::driver::access::ChosenPath::Index(_, ranges, _, _, _)) =
+        choose_index_range_path(
+            select,
+            &catalog,
+            &scope,
+            table,
+            &columns,
+            &crate::index_hints::AvailablePaths::unrestricted(),
+            false,
+            &crate::StmtContext::for_query(),
+        )
+    else {
         panic!("expected an index path");
     };
     assert_eq!(

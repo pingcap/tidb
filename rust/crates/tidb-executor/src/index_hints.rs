@@ -66,11 +66,6 @@ use crate::driver::DriverError;
 use crate::kv_table::KvTable;
 use tidb_ast::{IndexHint, IndexHintKind, IndexHintScope};
 
-/// The clustered primary index has no duplicate [`crate::kv_table::KvIndex`]
-/// in Rust because its bytes are the row handle itself. Index hints still
-/// need one stable identity for Go's `IndexInfo`-shaped decision.
-pub(crate) const COMMON_PRIMARY_INDEX_ID: i64 = 0;
-
 /// Which access paths over one table its index hints leave available --
 /// Go's `available` slice, in the two states it can be in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -86,6 +81,14 @@ pub(crate) struct AvailablePaths {
     table: bool,
     /// The index ids `IGNORE INDEX` named, applied to whatever survived.
     ignored: Vec<i64>,
+    /// Whether a `USE`/`FORCE INDEX(PRIMARY)` explicitly retained the
+    /// clustered common-handle primary index. Its physical scan is the table
+    /// path, but Go still treats the index identity separately in fast-plan
+    /// hint checks.
+    forced_common_primary: bool,
+    /// Whether `IGNORE INDEX(PRIMARY)` removed the clustered common-handle
+    /// primary index from fast-plan consideration.
+    ignored_common_primary: bool,
 }
 
 impl AvailablePaths {
@@ -95,14 +98,19 @@ impl AvailablePaths {
             forced_indexes: None,
             table: true,
             ignored: Vec::new(),
+            forced_common_primary: false,
+            ignored_common_primary: false,
         }
     }
 
+    /// Restricts one partial IndexMerge path to the indexes named by its hint.
     pub(crate) fn index_merge_only(indexes: Vec<i64>) -> Self {
         Self {
             forced_indexes: Some(indexes),
             table: false,
             ignored: Vec::new(),
+            forced_common_primary: false,
+            ignored_common_primary: false,
         }
     }
 
@@ -147,6 +155,15 @@ impl AvailablePaths {
         self.table
     }
 
+    /// Whether Go's clustered common-handle PRIMARY survives the hints.
+    pub(crate) fn allows_common_primary(&self) -> bool {
+        !self.ignored_common_primary
+            && match &self.forced_indexes {
+                Some(_) => self.forced_common_primary,
+                None => true,
+            }
+    }
+
     /// Resolves one table's hints, exactly in Go's order: collect, then
     /// restrict, then remove the ignored, then fall back to the table path.
     ///
@@ -182,8 +199,13 @@ struct HintAccumulator {
     /// Whether the table path was named (`USE INDEX ()`, `USE INDEX(primary)`
     /// on a handle primary key).
     forced_table: bool,
+    /// Whether the clustered common-handle PRIMARY was named. It also keeps
+    /// the physical table path for ordinary range planning.
+    forced_common_primary: bool,
     /// The ids `IGNORE INDEX` named, applied last.
     ignored: Vec<i64>,
+    /// Whether `IGNORE INDEX(PRIMARY)` named a clustered common handle.
+    ignored_common_primary: bool,
 }
 
 impl HintAccumulator {
@@ -228,6 +250,9 @@ impl HintAccumulator {
     fn take_resolved(&mut self, kind: IndexHintKind, path: HintedPath) {
         match (kind, path) {
             (IndexHintKind::Ignore, HintedPath::Index(id)) => self.ignored.push(id),
+            (IndexHintKind::Ignore, HintedPath::CommonPrimary) => {
+                self.ignored_common_primary = true;
+            }
             // `IGNORE INDEX(primary)` names the table path, which
             // `removeIgnoredPaths` refuses to remove -- so ignoring it does
             // nothing at all.
@@ -235,6 +260,11 @@ impl HintAccumulator {
             (_, HintedPath::Index(id)) => {
                 self.has_use_or_force = true;
                 self.forced_indexes.push(id);
+            }
+            (_, HintedPath::CommonPrimary) => {
+                self.has_use_or_force = true;
+                self.forced_table = true;
+                self.forced_common_primary = true;
             }
             (_, HintedPath::Table) => {
                 self.has_use_or_force = true;
@@ -322,7 +352,9 @@ impl HintAccumulator {
             has_use_or_force,
             forced_indexes,
             forced_table,
+            forced_common_primary,
             ignored,
+            ignored_common_primary,
         } = self;
         let (mut forced_indexes, mut table) = if has_scan_hint && has_use_or_force {
             (Some(forced_indexes), forced_table)
@@ -343,6 +375,8 @@ impl HintAccumulator {
             forced_indexes,
             table,
             ignored,
+            forced_common_primary,
+            ignored_common_primary,
         }
     }
 }
@@ -441,7 +475,7 @@ fn check_index_look_up_push_down_supported(
         .plan_indexes()
         .any(|index| index.id == index_id && index.global);
     if global {
-        ctx.append_warning_parts(
+        ctx.append_warning_once_parts(
             1815,
             "hint INDEX_LOOKUP_PUSHDOWN is inapplicable, \
              the global index in partition table is not supported",
@@ -459,26 +493,32 @@ enum HintedPath {
     /// The table path itself, which is what `PRIMARY` names on a table whose
     /// primary key IS the row handle.
     Table,
+    /// The clustered common-handle PRIMARY: physically the table path, but
+    /// still an index for Go's fast-plan hint availability check.
+    CommonPrimary,
 }
 
 /// Go `getPathByIndexName`: an index of the table by name, or the table path
-/// when the name is `PRIMARY` and the primary key is the handle.
+/// when the name is `PRIMARY` and the primary key is the integer or common
+/// handle.
 ///
 /// Index names are case-insensitive, and an INVISIBLE index is not a path at
 /// all -- it is absent from `publicPaths`, which is why naming one is 1176
 /// rather than a plan that quietly reads it.
 fn resolve_index_name(table: &KvTable, name: &str) -> Option<HintedPath> {
+    if name.eq_ignore_ascii_case("primary") {
+        if table.pk_handle_offset().is_some() {
+            return Some(HintedPath::Table);
+        }
+        if !table.common_handle_offsets().is_empty() {
+            return Some(HintedPath::CommonPrimary);
+        }
+    }
     if let Some(index) = table
         .plan_indexes()
         .find(|index| index.name.eq_ignore_ascii_case(name))
     {
         return Some(HintedPath::Index(index.id));
-    }
-    if name.eq_ignore_ascii_case("primary") && table.pk_handle_offset().is_some() {
-        return Some(HintedPath::Table);
-    }
-    if name.eq_ignore_ascii_case("primary") && !table.common_handle_offsets().is_empty() {
-        return Some(HintedPath::Index(COMMON_PRIMARY_INDEX_ID));
     }
     None
 }
@@ -557,11 +597,8 @@ pub(crate) fn single_table_index_merge_indexes(
 
 /// Whether this table has an explicit `USE_INDEX_MERGE` comment hint.
 ///
-/// Automatic path selection must not reinterpret a hint it cannot lower. In
-/// particular, an empty index list is still an explicit request in Go, even
-/// though the current explicit path needs named indexes. Leave that request
-/// to the hint-specific lowering rather than quietly choosing an automatic
-/// plan with different semantics.
+/// An empty index list is still an explicit request in Go. Automatic path
+/// selection must not reinterpret an inapplicable hint as a different plan.
 pub(crate) fn has_single_table_index_merge_hint(
     select: &tidb_ast::SelectStmt,
     table_ref: Option<&tidb_ast::TableRef>,

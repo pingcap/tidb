@@ -10,6 +10,7 @@
 //! failure is only visible as a count: a leaked read handle, a second
 //! publication, a snapshot taken twice.
 
+use super::super::transactions::PendingClusterSnapshot;
 use super::super::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -40,6 +41,10 @@ pub(super) struct MockCluster {
     /// Autocommit read transactions opened, so "one statement, one
     /// snapshot" stays countable.
     pub(super) opened: AtomicUsize,
+    /// Ordinary autocommit snapshot futures started after planning. A future
+    /// spends a timestamp immediately but becomes an open snapshot only when a
+    /// statement read waits for it.
+    pub(super) prepared: AtomicUsize,
     /// Autocommit read transactions opened at `u64::MAX` -- the ones that
     /// spent no timestamp. Counted apart from `opened` so a pin can say
     /// which branch a statement took, not merely that it read once.
@@ -52,6 +57,9 @@ pub(super) struct MockCluster {
     /// Publications that actually carried mutations.
     pub(super) publications: AtomicUsize,
     pub(super) fail_commit: AtomicBool,
+    /// One-shot failure carried by the next ordinary snapshot future. Merely
+    /// preparing and dropping it is harmless; waiting for a read reports it.
+    pub(super) fail_next_prepared_snapshot: AtomicBool,
     /// One-shot explicit `tikv:9005` at the SQL commit boundary. Unlike a
     /// write conflict, Go reports this error without replaying the statement.
     pub(super) fail_next_region_commit: AtomicBool,
@@ -220,7 +228,60 @@ impl ClusterSnapshot for MockSnapshot {
 #[derive(Debug)]
 pub(super) struct MockTransactions(pub(super) Arc<MockCluster>);
 
+struct MockPendingSnapshot {
+    data: BTreeMap<Vec<u8>, Vec<u8>>,
+    cluster: Arc<MockCluster>,
+    start_ts: u64,
+    failure: Option<String>,
+}
+
+impl PendingClusterSnapshot for MockPendingSnapshot {
+    fn wait(self: Box<Self>) -> Result<Box<dyn ClusterSnapshot>, String> {
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        self.cluster.opened.fetch_add(1, Ordering::AcqRel);
+        self.cluster.live.fetch_add(1, Ordering::AcqRel);
+        Ok(Box::new(MockSnapshot {
+            data: self.data,
+            cluster: Arc::clone(&self.cluster),
+            start_ts: self.start_ts,
+        }))
+    }
+}
+
 impl ClusterTransactions for MockTransactions {
+    fn prepare_snapshot(&self) -> Result<Box<dyn PendingClusterSnapshot>, String> {
+        self.0.prepared.fetch_add(1, Ordering::AcqRel);
+        if self
+            .0
+            .fail_next_prepared_snapshot
+            .swap(false, Ordering::AcqRel)
+        {
+            return Ok(Box::new(MockPendingSnapshot {
+                data: BTreeMap::new(),
+                cluster: Arc::clone(&self.0),
+                start_ts: 0,
+                failure: Some("mock prepared snapshot failed".to_owned()),
+            }));
+        }
+        // Go's oracle future is requested after planning. Capture both the
+        // timestamp and its MVCC image at that point; `wait` only exposes it.
+        let data = self.0.snapshot();
+        let start_ts = self.0.timestamp();
+        if self.0.race_every_read.load(Ordering::Acquire)
+            || self.0.race_next_read.swap(false, Ordering::AcqRel)
+        {
+            self.0.commit_from_another_session();
+        }
+        Ok(Box::new(MockPendingSnapshot {
+            data,
+            cluster: Arc::clone(&self.0),
+            start_ts,
+            failure: None,
+        }))
+    }
+
     fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
         self.0.opened.fetch_add(1, Ordering::AcqRel);
         self.0.live.fetch_add(1, Ordering::AcqRel);

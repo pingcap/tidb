@@ -84,24 +84,225 @@ pub struct PushdownScanColumn {
 /// handle a table without an integer primary key carries.
 pub const EXTRA_HANDLE_COLUMN_ID: i64 = -1;
 
+/// One function in a grouped partial aggregation pushed below a reader.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PushdownAggregateKind {
+    /// `COUNT(expr)`; a missing input offset means Go's `COUNT(1)` lowering
+    /// of `COUNT(*)`.
+    Count,
+    /// `SUM(expr)`.
+    Sum,
+    /// `MIN(expr)`.
+    Min,
+    /// `MAX(expr)`.
+    Max,
+}
+
+/// A pushed aggregate function and the scan column it reads.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PushdownAggregateFunction {
+    /// The aggregate function implemented by TiKV.
+    pub kind: PushdownAggregateKind,
+    /// Offset in [`PushdownScanRequest::columns`], or `None` for `COUNT(1)`.
+    pub input_offset: Option<usize>,
+    /// The partial result column returned by TiKV.
+    pub output_type: FieldType,
+}
+
+/// One aggregation the base scan may execute inside TiKV before rows cross
+/// the network. This deliberately covers only the partial stages required by
+/// the pinned TPCC/Sysbench plan gate.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PushdownPartialAggregate {
+    /// A partial `COUNT(column)`; the root stage sums the per-region counts.
+    Count {
+        /// Offset in [`PushdownScanRequest::columns`].
+        input_offset: usize,
+        /// The partial count column returned by TiKV.
+        output_type: FieldType,
+    },
+    /// A partial `SUM(column)`; the root stage sums the per-region sums.
+    Sum {
+        /// Offset in [`PushdownScanRequest::columns`].
+        input_offset: usize,
+        /// The partial sum column returned by TiKV.
+        output_type: FieldType,
+    },
+    /// A partial hash aggregation with one group key and no aggregate
+    /// functions, used by one-column `SELECT DISTINCT`.
+    GroupBy {
+        /// Offset in [`PushdownScanRequest::columns`].
+        input_offset: usize,
+        /// The group-key column returned by TiKV.
+        output_type: FieldType,
+    },
+    /// A partial hash aggregation with one group key and one `SUM` function.
+    /// The partial row is returned in TiKV's aggregation-schema order:
+    /// aggregate result first, then the group key.
+    GroupBySum {
+        /// Offset of the group key in [`PushdownScanRequest::columns`].
+        group_offset: usize,
+        /// Offset of the summed column in [`PushdownScanRequest::columns`].
+        sum_offset: usize,
+        /// The partial sum column returned by TiKV.
+        sum_type: FieldType,
+        /// The group-key column returned by TiKV.
+        group_type: FieldType,
+    },
+    /// A grouped partial aggregation. TiKV returns aggregate results first
+    /// and group keys last, matching its aggregation-schema contract.
+    Grouped {
+        /// Group-key offsets in [`PushdownScanRequest::columns`].
+        group_offsets: Vec<usize>,
+        /// Group-key result types, index-parallel with `group_offsets`.
+        group_types: Vec<FieldType>,
+        /// Aggregate functions, in physical output order.
+        functions: Vec<PushdownAggregateFunction>,
+        /// `true` for StreamAgg over ordered input, `false` for HashAgg.
+        streamed: bool,
+    },
+}
+
+impl PushdownPartialAggregate {
+    /// The aggregate input's scan-column offset.
+    #[must_use]
+    pub fn input_offset(&self) -> usize {
+        match self {
+            Self::Count { input_offset, .. }
+            | Self::Sum { input_offset, .. }
+            | Self::GroupBy { input_offset, .. } => *input_offset,
+            Self::GroupBySum { group_offset, .. } => *group_offset,
+            Self::Grouped {
+                group_offsets,
+                functions,
+                ..
+            } => group_offsets
+                .first()
+                .copied()
+                .or_else(|| functions.iter().find_map(|function| function.input_offset))
+                .unwrap_or(0),
+        }
+    }
+
+    /// The columns the partial stage returns, in TiKV aggregation-schema
+    /// order (aggregate functions followed by group keys).
+    #[must_use]
+    pub fn output_types(&self) -> Vec<FieldType> {
+        match self {
+            Self::Count { output_type, .. }
+            | Self::Sum { output_type, .. }
+            | Self::GroupBy { output_type, .. } => vec![output_type.clone()],
+            Self::GroupBySum {
+                sum_type,
+                group_type,
+                ..
+            } => vec![sum_type.clone(), group_type.clone()],
+            Self::Grouped {
+                group_types,
+                functions,
+                ..
+            } => functions
+                .iter()
+                .map(|function| function.output_type.clone())
+                .chain(group_types.iter().cloned())
+                .collect(),
+        }
+    }
+
+    /// Every scan-column offset read by the partial stage.
+    #[must_use]
+    pub fn input_offsets(&self) -> Vec<usize> {
+        match self {
+            Self::Count { input_offset, .. }
+            | Self::Sum { input_offset, .. }
+            | Self::GroupBy { input_offset, .. } => vec![*input_offset],
+            Self::GroupBySum {
+                group_offset,
+                sum_offset,
+                ..
+            } => vec![*group_offset, *sum_offset],
+            Self::Grouped {
+                group_offsets,
+                functions,
+                ..
+            } => group_offsets
+                .iter()
+                .copied()
+                .chain(
+                    functions
+                        .iter()
+                        .filter_map(|function| function.input_offset),
+                )
+                .collect(),
+        }
+    }
+}
+
+/// Index-scan identity for a partial aggregation request. `None` on
+/// [`PushdownScanRequest`] means the existing table-scan path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PushdownIndexScan {
+    /// Stable schema index id.
+    pub index_id: i64,
+    /// Whether the schema declares the index unique.
+    pub declared_unique: bool,
+    /// Number of indexed key columns.
+    pub index_column_count: usize,
+}
+
+/// One column order in a coprocessor TopN.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PushdownTopNOrder {
+    /// Offset in [`PushdownScanRequest::columns`].
+    pub offset: usize,
+    /// Whether larger values sort first.
+    pub desc: bool,
+}
+
+/// A bounded sort executed after the scan's complete Selection.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PushdownTopN {
+    /// Ordered comparison keys, in SQL by-item order.
+    pub order_by: Vec<PushdownTopNOrder>,
+    /// Rows retained from offset zero. The root TopN applies the SQL offset.
+    pub limit: u64,
+}
+
 /// One base-table scan a backend may serve remotely.
 #[derive(Clone, Debug)]
 pub struct PushdownScanRequest {
     /// The table whose record range is scanned.
     pub table_id: i64,
+    /// An index source for this request; `None` means a table scan.
+    pub index: Option<PushdownIndexScan>,
     /// The columns to return, in output order.
     pub columns: Vec<PushdownScanColumn>,
-    /// Which of `columns` carries the row handle. The caller needs a handle
-    /// for every remote row to merge the staged overlay by key; when the
-    /// projection already contains the table's integer primary key this
-    /// points at it, and otherwise the handle column was appended last and
-    /// the caller drops it again before the row is emitted.
-    pub handle_index: usize,
+    /// Which of `columns` carries the integer row handle used to merge a
+    /// staged overlay. `None` is a common-handle scan with no staged writes,
+    /// where the caller consumes the remote rows directly.
+    pub handle_index: Option<usize>,
+    /// Stable column IDs forming a common row handle, in handle order.
+    pub primary_column_ids: Vec<i64>,
+    /// Common-handle columns stored as prefixes rather than whole values.
+    pub primary_prefix_column_ids: Vec<i64>,
     /// The conjuncts the caller would like evaluated remotely. Best-effort:
     /// see the module doc.
     pub predicates: Vec<ScanPredicate>,
+    /// Final output offsets into `columns`, after every predicate has been
+    /// evaluated. `None` returns every requested scan column.
+    ///
+    /// A backend must refuse this shape unless it can lower every predicate:
+    /// once the narrower row crosses the wire, the caller no longer has the
+    /// columns needed to repeat a residual filter locally.
+    pub output_offsets: Option<Vec<usize>>,
+    /// A bounded sort after the complete remote Selection. Best-effort; the
+    /// caller retains an equivalent local TopN when the backend refuses it.
+    pub topn: Option<PushdownTopN>,
     /// A row cap the backend may stop at. Best-effort: see the module doc.
     pub limit: Option<u64>,
+    /// A partial aggregation above the scan/Selection. When present, every
+    /// predicate must be lowered and no staged write may be merged locally.
+    pub aggregate: Option<PushdownPartialAggregate>,
     /// The timestamp the remote scan must read at: the statement's own
     /// snapshot, filled in by the storage that owns it.
     pub snapshot_ts: u64,
@@ -253,7 +454,7 @@ mod tests {
         ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
     };
     use crate::driver::{run_select_on, Catalog};
-    use crate::kv_table::{KvColumn, KvTable, TableHandle};
+    use crate::kv_table::{KvColumn, KvIndex, KvTable, TableHandle};
     use crate::predicate_pushdown::{ScanComparisonOp, ScanPredicate};
     use crate::storage::{capture_storage_ops, MemTableStorage, TableStorage};
 
@@ -363,10 +564,25 @@ mod tests {
             if let Some(offset) = self.pk_handle_offset {
                 table.set_pk_handle_offset(offset);
             }
+            if !request.primary_column_ids.is_empty() {
+                let offsets = request
+                    .primary_column_ids
+                    .iter()
+                    .map(|id| {
+                        self.columns
+                            .iter()
+                            .position(|column| column.id == *id)
+                            .expect("a primary column belongs to the table")
+                    })
+                    .collect();
+                table.set_common_handle_offsets(offsets);
+            }
             // Every requested column that is one of the table's own; the
             // appended handle column is not, and is filled from the key.
-            let appended_handle =
-                request.columns[request.handle_index].id == EXTRA_HANDLE_COLUMN_ID;
+            let appended_handle = request
+                .handle_index
+                .and_then(|index| request.columns.get(index))
+                .is_some_and(|column| column.id == EXTRA_HANDLE_COLUMN_ID);
             let projected = if appended_handle {
                 &request.columns[..request.columns.len() - 1]
             } else {
@@ -554,6 +770,23 @@ mod tests {
         fixture_with(Some(0))
     }
 
+    /// A cluster fixture with (a, b) as the clustered common handle.
+    fn common_handle_fixture() -> Fixture {
+        let mut fixture = fixture_with(None);
+        fixture.table.set_common_handle_offsets(vec![0, 1]);
+        fixture.table.add_index(KvIndex {
+            id: 1,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            column_offsets: vec![0, 1],
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+            visible: true,
+            global: false,
+        });
+        fixture
+    }
+
     fn fixture_with(pk_handle_offset: Option<usize>) -> Fixture {
         let snapshot = Arc::new(Mutex::new(MockSnapshot::default()));
         let handle: Arc<Mutex<dyn ClusterSnapshot>> = Arc::clone(&snapshot) as _;
@@ -585,6 +818,38 @@ mod tests {
             scanned,
             scanner,
         }
+    }
+
+    #[test]
+    fn a_clean_common_handle_range_uses_the_coprocessor() {
+        let mut fixture = common_handle_fixture();
+        for row in [[1, 10], [1, 20], [2, 30]] {
+            fixture
+                .table
+                .insert_row(
+                    &[Datum::Int(row[0]), Datum::Int(row[1])],
+                    &tidb_expr::NoColumns,
+                )
+                .unwrap();
+        }
+        commit(&fixture.buffer, &fixture.snapshot);
+        fixture.table.clear_dirty_content();
+
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        let (rows, ops) = capture_storage_ops(|| {
+            run_select_on("SELECT a, b FROM t WHERE a = 1 ORDER BY b", &catalog, &ctx).unwrap()
+        });
+        assert_eq!(
+            rows,
+            vec![
+                vec![Datum::Int(1), Datum::Int(10)],
+                vec![Datum::Int(1), Datum::Int(20)]
+            ]
+        );
+        assert_eq!(ops.cop_scans, 1);
+        assert_eq!(ops.cop_rows, 2);
+        assert_eq!(ops.gets, 0);
     }
 
     fn catalog_of(table: KvTable) -> Catalog {

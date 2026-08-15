@@ -161,7 +161,7 @@ use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::list::RowPtr;
 use tidb_chunk::row_container::RowContainer;
-use tidb_datatype::{Datum, FieldType};
+use tidb_datatype::{Collation, Datum, Decimal, FieldType};
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 use tidb_expr::Columns;
@@ -361,6 +361,214 @@ impl MergeInnerGroup {
 /// pins -- so reading the default is a smaller claim, not a wrong answer.
 pub(crate) const INDEX_JOIN_BATCH_SIZE: usize = 25000;
 
+/// One output of an aggregation rebuilt below an index join's lookup side.
+///
+/// Go rebuilds the complete inner physical task for every outer batch.  Most
+/// inner tasks in this port are a bare table reader, but a grouped derived
+/// table can retain its aggregation above that reader.  These are the two
+/// output shapes needed by TPCC's grouped probes. Aggregate inputs retain
+/// their source offsets so access-path selection can prove index coverage.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum IndexLookupAggregateOutput {
+    Column(usize),
+    Count(Option<usize>),
+    Max { offset: usize, collation: Collation },
+    DecimalSum(usize),
+}
+
+/// The executable aggregation retained above an index join's re-seeded table
+/// reader.
+///
+/// Group keys are currently restricted by the planner to non-null integers.
+/// Aggregate semantics match the ordinary hash aggregation: COUNT skips NULL
+/// arguments, MAX compares under the input field's collation, and decimal SUM
+/// uses the exact `Decimal::add` fold.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct IndexLookupAggregation {
+    pub(crate) group_offsets: Vec<usize>,
+    pub(crate) input_offsets: Vec<usize>,
+    pub(crate) outputs: Vec<IndexLookupAggregateOutput>,
+    /// `LogicalAggregation.PruneColumns` removed the last explicit aggregate
+    /// and appended its synthetic COUNT(1) row-count carrier.
+    pub(crate) pruned_row_count: bool,
+}
+
+impl IndexLookupAggregation {
+    fn apply(
+        &self,
+        rows: Vec<Vec<Datum>>,
+        stream_ordered: bool,
+    ) -> Result<Vec<Vec<Datum>>, ExecError> {
+        enum Partial {
+            Column,
+            Count(i64),
+            Max(Option<Datum>),
+            DecimalSum(Option<Decimal>),
+        }
+
+        struct Group {
+            first: Vec<Datum>,
+            partials: Vec<Partial>,
+        }
+
+        let new_partials = || {
+            self.outputs
+                .iter()
+                .map(|output| match output {
+                    IndexLookupAggregateOutput::Column(_) => Partial::Column,
+                    IndexLookupAggregateOutput::Count(_) => Partial::Count(0),
+                    IndexLookupAggregateOutput::Max { .. } => Partial::Max(None),
+                    IndexLookupAggregateOutput::DecimalSum(_) => Partial::DecimalSum(None),
+                })
+                .collect()
+        };
+        let key_of = |row: &[Datum]| {
+            let mut key = Vec::new();
+            for offset in &self.group_offsets {
+                let value = row.get(*offset).ok_or_else(|| {
+                    ExecError::unsupported("an index lookup aggregation group offset is absent")
+                })?;
+                key.extend_from_slice(&tidb_codec::hash_code(value));
+                key.push(0xff);
+            }
+            Ok::<_, ExecError>(key)
+        };
+        let update = |group: &mut Group, row: &[Datum]| -> Result<(), ExecError> {
+            for (output, partial) in self.outputs.iter().zip(&mut group.partials) {
+                match (output, partial) {
+                    (IndexLookupAggregateOutput::Column(_), Partial::Column) => {}
+                    (IndexLookupAggregateOutput::Count(offset), Partial::Count(count)) => {
+                        let present = match offset {
+                            None => true,
+                            Some(offset) => !matches!(
+                                row.get(*offset).ok_or_else(|| ExecError::unsupported(
+                                    "an index lookup COUNT input offset is absent"
+                                ))?,
+                                Datum::Null
+                            ),
+                        };
+                        if present {
+                            *count += 1;
+                        }
+                    }
+                    (
+                        IndexLookupAggregateOutput::Max { offset, collation },
+                        Partial::Max(current),
+                    ) => {
+                        let input = row.get(*offset).ok_or_else(|| {
+                            ExecError::unsupported("an index lookup MAX input offset is absent")
+                        })?;
+                        if !matches!(input, Datum::Null)
+                            && current.as_ref().is_none_or(|value| {
+                                tidb_expr::compare_datums_with_collation(input, value, *collation)
+                                    .is_ok_and(|order| order == Ordering::Greater)
+                            })
+                        {
+                            *current = Some(input.clone());
+                        } else if let Some(value) = current.as_ref() {
+                            tidb_expr::compare_datums_with_collation(input, value, *collation)?;
+                        }
+                    }
+                    (IndexLookupAggregateOutput::DecimalSum(offset), Partial::DecimalSum(sum)) => {
+                        match row.get(*offset) {
+                            Some(Datum::Null) => {}
+                            Some(Datum::Decimal(value)) => {
+                                *sum = Some(match sum.take() {
+                                    Some(sum) => sum.add(value),
+                                    None => value.clone(),
+                                });
+                            }
+                            Some(_) => {
+                                return Err(ExecError::unsupported(
+                                    "an index lookup decimal SUM received a non-decimal value",
+                                ))
+                            }
+                            None => {
+                                return Err(ExecError::unsupported(
+                                    "an index lookup SUM input offset is absent",
+                                ))
+                            }
+                        }
+                    }
+                    _ => unreachable!("aggregate output and partial state are built together"),
+                }
+            }
+            Ok(())
+        };
+        let finish = |group: Group| {
+            self.outputs
+                .iter()
+                .zip(group.partials)
+                .map(|(output, partial)| match (output, partial) {
+                    (IndexLookupAggregateOutput::Column(offset), Partial::Column) => {
+                        group.first.get(*offset).cloned().ok_or_else(|| {
+                            ExecError::unsupported(
+                                "an index lookup aggregation output offset is absent",
+                            )
+                        })
+                    }
+                    (IndexLookupAggregateOutput::Count(_), Partial::Count(count)) => {
+                        Ok(Datum::Int(count))
+                    }
+                    (IndexLookupAggregateOutput::Max { .. }, Partial::Max(value)) => {
+                        Ok(value.unwrap_or(Datum::Null))
+                    }
+                    (IndexLookupAggregateOutput::DecimalSum(_), Partial::DecimalSum(sum)) => {
+                        Ok(sum.map_or(Datum::Null, Datum::Decimal))
+                    }
+                    _ => unreachable!("aggregate output and partial state are built together"),
+                })
+                .collect::<Result<Vec<_>, ExecError>>()
+        };
+        if stream_ordered {
+            let mut output = Vec::new();
+            let mut current: Option<(Vec<u8>, Group)> = None;
+            for row in rows {
+                let key = key_of(&row)?;
+                if current.as_ref().is_some_and(|(group, _)| *group != key) {
+                    output.push(finish(current.take().expect("a different group exists").1)?);
+                }
+                let group = &mut current
+                    .get_or_insert_with(|| {
+                        (
+                            key,
+                            Group {
+                                first: row.clone(),
+                                partials: new_partials(),
+                            },
+                        )
+                    })
+                    .1;
+                update(group, &row)?;
+            }
+            if let Some((_, group)) = current {
+                output.push(finish(group)?);
+            }
+            return Ok(output);
+        }
+
+        let mut positions = std::collections::HashMap::<Vec<u8>, usize>::new();
+        let mut groups = Vec::<Group>::new();
+        for row in rows {
+            let key = key_of(&row)?;
+            let position = match positions.get(&key).copied() {
+                Some(position) => position,
+                None => {
+                    let position = groups.len();
+                    positions.insert(key, position);
+                    groups.push(Group {
+                        first: row.clone(),
+                        partials: new_partials(),
+                    });
+                    position
+                }
+            };
+            update(&mut groups[position], &row)?;
+        }
+        groups.into_iter().map(finish).collect()
+    }
+}
+
 /// The index-join strategy: which child is LOOKED UP once per distinct outer
 /// key, and over which object.
 ///
@@ -386,6 +594,16 @@ pub(crate) struct IndexLookupPlan {
     pub(crate) probe_keys: Vec<usize>,
     /// The re-seedable inner source.
     pub(crate) source: crate::access_path::IndexJoinLookupExec,
+    /// An aggregation retained by a grouped derived lookup side.  A bare
+    /// table lookup has no transformation.
+    pub(crate) aggregation: Option<IndexLookupAggregation>,
+    /// Whether the lookup key order makes equal aggregate groups contiguous.
+    pub(crate) aggregation_stream_ordered: bool,
+    /// Outer-child columns a null-rejecting join predicate proves non-NULL.
+    pub(crate) outer_not_null: Vec<usize>,
+    /// Lookup-result columns the same predicate proves non-NULL, evaluated
+    /// after a retained derived aggregation.
+    pub(crate) inner_not_null: Vec<usize>,
 }
 
 /// The index strategy's live state: one outer batch and the inner rows its
@@ -460,19 +678,13 @@ pub struct JoinExec<C: Columns> {
     ctx: C,
     /// The indexable `col = col` conjuncts; empty means the nested loop.
     keys: Vec<EquiKey>,
-    /// Go still runs a Cartesian join through hash join v1. Every build row
-    /// has the same empty key, and `concurrentMap.Insert` links the newest row
-    /// at the bucket head, so one probe visits the build side in reverse.
-    cartesian_build_order: bool,
-    /// Which side Go's Cartesian hash join costed as its build input. This is
-    /// consulted only for an inner join with no hash keys.
-    cartesian_build_is_left: bool,
-    /// The recursively costed build side for an ordinary inner hash join.
-    /// `None` preserves the historical non-preserved/right-side choice.
-    planned_hash_build_is_left: Option<bool>,
     /// Nested loop only: whether its single all-at-once batch was emitted.
     emitted: bool,
     hash: Option<HashState>,
+    /// The costed build side for an inner hash join. Outer joins keep their
+    /// preserved side as the probe because unmatched build rows require a
+    /// different executor contract.
+    hash_build_is_left: Option<bool>,
     /// The merge strategy's key pairs and direction, set by the planner when
     /// BOTH children already produce rows in the join keys' order. `None` is
     /// every other join, and is what keeps this a fail-closed opt-in: a
@@ -488,6 +700,9 @@ pub struct JoinExec<C: Columns> {
     index_lookup: Option<IndexLookupPlan>,
     /// The index strategy's live state; absent until the first `next()`.
     index_state: Option<IndexLookupState>,
+    /// True only when the committed join strategy installed every leaf-local
+    /// filter and every inter-leaf equality from the written `WHERE`.
+    consumes_where: bool,
     /// How many times the `ON` clause has been evaluated. This is the cost
     /// the hash table exists to remove, so it is the number a scaling test
     /// asserts on directly instead of timing the machine.
@@ -529,14 +744,6 @@ impl<C: Columns> JoinExec<C> {
         memory: StatementMemory,
     ) -> Self {
         let keys = crate::hash_join::split_equi(&conditions, left.ret_field_types().len()).keys;
-        // A condition the native splitter cannot hash is still a conditional
-        // nested-loop join. Only a condition-free product (including `ON
-        // TRUE`, which Go folds to the same plan) follows hash join v1's
-        // build-bucket order.
-        let cartesian_build_order = conditions.iter().all(|condition| {
-            matches!(condition, Expression::Constant(constant)
-                if tidb_expr::truthy_of(&constant.value).ok() == Some(Some(true)))
-        });
         let condition_types = left
             .ret_field_types()
             .iter()
@@ -554,15 +761,14 @@ impl<C: Columns> JoinExec<C> {
             right,
             ctx,
             keys,
-            cartesian_build_order,
-            cartesian_build_is_left: false,
-            planned_hash_build_is_left: None,
             emitted: false,
             hash: None,
+            hash_build_is_left: None,
             merge: None,
             merge_state: None,
             index_lookup: None,
             index_state: None,
+            consumes_where: false,
             condition_evals: Cell::new(0),
             memory,
             tracker,
@@ -615,6 +821,15 @@ impl<C: Columns> JoinExec<C> {
         !self.keys.is_empty()
     }
 
+    /// Commits the build orientation chosen by the physical cost search.
+    /// Both orientations are semantically interchangeable only for an inner
+    /// join, which is also the only case accepted here.
+    pub(crate) fn set_hash_build_is_left(&mut self, build_is_left: bool) {
+        if self.kind == JoinKind::Inner {
+            self.hash_build_is_left = Some(build_is_left);
+        }
+    }
+
     /// How many times the `ON` clause has been evaluated so far.
     #[must_use]
     pub fn condition_evals(&self) -> u64 {
@@ -632,27 +847,10 @@ impl<C: Columns> JoinExec<C> {
         self.keys.clear();
     }
 
-    pub(crate) fn set_cartesian_build_side(&mut self, build_is_left: bool) {
-        self.cartesian_build_is_left = build_is_left;
-    }
-
-    /// Applies the build/probe orientation selected by recursive planning.
-    pub(crate) fn set_planned_hash_build_side(&mut self, build_is_left: bool) {
-        self.planned_hash_build_is_left = Some(build_is_left);
-    }
-
     /// The outer side is the one whose unmatched rows survive; the inner
     /// side is the other, and is the one the hash path builds its table on.
     /// `true` means the LEFT child is the outer one.
     fn outer_is_left(&self) -> bool {
-        if self.kind == JoinKind::Inner {
-            if let Some(build_is_left) = self.planned_hash_build_is_left {
-                return !build_is_left;
-            }
-        }
-        if self.kind == JoinKind::Inner && self.cartesian_build_order {
-            return !self.cartesian_build_is_left;
-        }
         match &self.index_lookup {
             // The index strategy DRIVES from the side it does not look up,
             // whichever side that is -- an inner join whose left child is the
@@ -660,7 +858,9 @@ impl<C: Columns> JoinExec<C> {
             // two answers coincide, because the decision refuses to look up
             // the preserved side (see [`IndexLookupPlan::lookup_is_left`]).
             Some(plan) => !plan.lookup_is_left,
-            None => self.kind != JoinKind::Right,
+            None => self
+                .hash_build_is_left
+                .map_or(self.kind != JoinKind::Right, |build_is_left| !build_is_left),
         }
     }
 
@@ -802,6 +1002,11 @@ impl<C: Columns> JoinExec<C> {
         }
     }
 
+    /// Records that this committed join tree enforces the complete `WHERE`.
+    pub(crate) fn set_consumes_where(&mut self, consumes_where: bool) {
+        self.consumes_where = consumes_where;
+    }
+
     /// Whether this join looks its inner side up per outer batch.
     #[must_use]
     pub fn is_index_join(&self) -> bool {
@@ -900,7 +1105,16 @@ impl<C: Columns> JoinExec<C> {
         let state = index_state.as_mut().expect("fill_index_batch installed it");
 
         // 1. The outer batch, up to `batch_size` rows.
+        let retained = state
+            .outer
+            .iter()
+            .chain(&state.inner)
+            .map(|row| row_bytes(row))
+            .sum::<i64>();
+        tracker.consume(-retained);
         state.outer.clear();
+        state.inner.clear();
+        state.matched.clear();
         state.cursor = 0;
         let mut bytes = 0i64;
         while state.outer.len() < state.batch_size {
@@ -917,6 +1131,9 @@ impl<C: Columns> JoinExec<C> {
             }
             let row = datum_row(&state.outer_chunk, state.outer_row, &outer_types);
             state.outer_row += 1;
+            if !row_non_null_at(&row, &plan.outer_not_null)? {
+                continue;
+            }
             bytes += row_bytes(&row);
             state.outer.push(row);
         }
@@ -929,8 +1146,9 @@ impl<C: Columns> JoinExec<C> {
             .min(INDEX_JOIN_BATCH_SIZE);
 
         // 2. The batch's distinct probe tuples. A NULL key part contributes
-        //    no probe for ordinary equality, while `<=>` carries NULL through
-        //    to the point range and match map -- Go's `HashIsNullEQ` branch.
+        //    no probe: `key_part` refuses NULL too, so such an outer row
+        //    matches nothing either way -- Go's `constructDatumLookupKey`
+        //    returning nil.
         //
         //    Go DEDUPES by sorting (`sortAndDedupLookUpContents`); this
         //    dedupes by the same encoding the match map is keyed on and
@@ -947,7 +1165,7 @@ impl<C: Columns> JoinExec<C> {
                 left: at,
                 right: at,
                 class: keys[*key].class,
-                null_safe: keys[*key].null_safe,
+                null_safe: false,
             })
             .collect();
         let mut seen = std::collections::HashSet::new();
@@ -958,7 +1176,7 @@ impl<C: Columns> JoinExec<C> {
                 .iter()
                 .map(|at| {
                     let value = row[outer_offset(&keys[*at])].clone();
-                    (!matches!(value, Datum::Null) || keys[*at].null_safe).then_some(value)
+                    (!matches!(value, Datum::Null)).then_some(value)
                 })
                 .collect();
             let Some(probe) = probe else {
@@ -978,8 +1196,6 @@ impl<C: Columns> JoinExec<C> {
         // 3. The inner rows those probes reach.
         plan.source.set_probes(probes);
         let inner_types: Vec<FieldType> = plan.source.ret_field_types().to_vec();
-        state.inner.clear();
-        state.matched.clear();
         let mut chunk = plan.source.new_chunk();
         loop {
             plan.source.next(&mut chunk)?;
@@ -994,6 +1210,30 @@ impl<C: Columns> JoinExec<C> {
                 state.inner.push(row);
             }
             tracker.consume(bytes);
+            memory.check()?;
+        }
+        if let Some(aggregation) = &plan.aggregation {
+            let raw_bytes = state.inner.iter().map(|row| row_bytes(row)).sum::<i64>();
+            let aggregated = aggregation.apply(
+                std::mem::take(&mut state.inner),
+                plan.aggregation_stream_ordered,
+            )?;
+            let aggregated_bytes = aggregated.iter().map(|row| row_bytes(row)).sum::<i64>();
+            tracker.consume(aggregated_bytes - raw_bytes);
+            state.inner = aggregated;
+            memory.check()?;
+        }
+        if !plan.inner_not_null.is_empty() {
+            let before = state.inner.iter().map(|row| row_bytes(row)).sum::<i64>();
+            let mut retained = Vec::with_capacity(state.inner.len());
+            for row in std::mem::take(&mut state.inner) {
+                if row_non_null_at(&row, &plan.inner_not_null)? {
+                    retained.push(row);
+                }
+            }
+            let after = retained.iter().map(|row| row_bytes(row)).sum::<i64>();
+            tracker.consume(after - before);
+            state.inner = retained;
             memory.check()?;
         }
 
@@ -1518,11 +1758,7 @@ impl<C: Columns> JoinExec<C> {
         for outer_row in outer {
             let before_rows = req.num_rows();
             let before_bytes = req.memory_usage();
-            if self.cartesian_build_order {
-                self.emit_outer_row(req, outer_row, inner.iter().rev().cloned())?;
-            } else {
-                self.emit_outer_row(req, outer_row, inner.iter().cloned())?;
-            }
+            self.emit_outer_row(req, outer_row, inner.iter().cloned())?;
             let produced = i64::try_from(req.num_rows() - before_rows).unwrap_or(i64::MAX);
             let grew = (req.memory_usage() - before_bytes).max(0);
             self.tracker
@@ -1673,9 +1909,8 @@ impl<C: Columns> JoinExec<C> {
             }
             let probe_row = datum_row(&hash.probe_chunk, hash.probe_row, &probe_types);
             let key = row_key(&self.keys, &probe_row, offset).map_err(key_error)?;
-            // A probe row whose ordinary equality key holds NULL matches
-            // nothing and, on an outer join, pads immediately. NULL-safe key
-            // parts have a real bucket identity and take the normal path.
+            // A probe row whose key holds a NULL matches nothing, so it never
+            // touches the table -- and, on an outer join, pads immediately.
             //
             // Go `GetMatchedRowsAndPtrs`: walk the bucket's pointers in order
             // and dereference each one through the container, which is where
@@ -1712,6 +1947,18 @@ impl<C: Columns> JoinExec<C> {
 
 /// What one materialized row costs: the `Vec` header plus each datum's own
 /// estimate, which is Go `Datum.MemUsage` summed the same way.
+fn row_non_null_at(row: &[Datum], offsets: &[usize]) -> Result<bool, ExecError> {
+    for offset in offsets {
+        let value = row.get(*offset).ok_or_else(|| {
+            ExecError::unsupported("an index join null-rejection offset is absent")
+        })?;
+        if matches!(value, Datum::Null) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 pub(crate) fn row_bytes(row: &[Datum]) -> i64 {
     let mut bytes = i64::try_from(size_of::<Vec<Datum>>()).unwrap_or(i64::MAX);
     for datum in row {
@@ -1773,8 +2020,16 @@ fn truthy(value: &Datum) -> Result<bool, ExecError> {
 
 impl<C: Columns> Executor for JoinExec<C> {
     fn open(&mut self) -> Result<(), ExecError> {
-        self.left.open()?;
-        self.right.open()?;
+        if self.index_lookup.is_some() {
+            if self.outer_is_left() {
+                self.left.open()?;
+            } else {
+                self.right.open()?;
+            }
+        } else {
+            self.left.open()?;
+            self.right.open()?;
+        }
         self.emitted = false;
         self.hash = None;
         self.build_spilled = false;
@@ -1833,8 +2088,16 @@ impl<C: Columns> Executor for JoinExec<C> {
         if let Some(plan) = self.index_lookup.as_mut() {
             plan.source.close()?;
         }
-        self.left.close()?;
-        self.right.close()
+        if self.index_lookup.is_some() {
+            if self.outer_is_left() {
+                self.left.close()
+            } else {
+                self.right.close()
+            }
+        } else {
+            self.left.close()?;
+            self.right.close()
+        }
     }
 
     fn schema(&self) -> &Schema {
@@ -1855,6 +2118,10 @@ impl<C: Columns> Executor for JoinExec<C> {
 
     fn new_chunk(&self) -> Chunk {
         self.meta.new_chunk()
+    }
+
+    fn consumes_where(&self) -> bool {
+        self.consumes_where
     }
 }
 

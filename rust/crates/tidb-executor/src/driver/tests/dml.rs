@@ -53,6 +53,34 @@ fn delete_accepts_tpcc_three_column_row_in() {
     )
     .unwrap();
 
+    let stmt = tidb_parser::parse(
+        "DELETE FROM new_order WHERE (no_w_id, no_d_id, no_o_id) IN ((1, 1, 100), (2, 1, 100))",
+    )
+    .unwrap();
+    let Stmt::Dml(dml) = &stmt else {
+        panic!("not a DML statement");
+    };
+    let tidb_ast::DmlStmt::Delete(delete) = &**dml else {
+        panic!("not a DELETE");
+    };
+    let (_, plan_rows) = crate::explain::explain_delete_stmt(
+        delete,
+        &mut catalog,
+        "test",
+        &ctx,
+        crate::explain::ExplainFormat::Row,
+    )
+    .unwrap();
+    let plan_text: String = plan_rows
+        .iter()
+        .flat_map(|row| row.iter())
+        .filter_map(|datum| match datum {
+            Datum::Bytes(bytes) => Some(String::from_utf8_lossy(bytes).into_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(plan_text.contains("Batch_Point_Get"), "plan={plan_text}");
     assert_eq!(
         run_delete_on(
             "DELETE FROM new_order \
@@ -79,35 +107,45 @@ fn delete_accepts_tpcc_three_column_row_in() {
     );
 }
 
+/// Go finishes a table-range cop task with a root TableReader before feeding
+/// its rows to Update. A consumed handle range is still a table scan, not a
+/// root fast plan.
 #[test]
-fn delete_quick_is_the_same_delete_operation() {
+fn a_consumed_handle_range_update_keeps_its_table_reader() {
+    use crate::explain::{explain_update_stmt, ExplainFormat};
+
     let mut catalog = Catalog::default();
     crate::run_create_table_on(
-        "CREATE TABLE quick_rows (id BIGINT, v BIGINT)",
+        "CREATE TABLE target (id INT PRIMARY KEY, value INT)",
         &mut catalog,
     )
     .unwrap();
     let ctx = crate::StmtContext::for_query();
-    run_insert_on(
-        "INSERT INTO quick_rows VALUES (1, 10), (2, 20), (3, 30)",
-        &mut catalog,
-        &ctx,
-    )
-    .unwrap();
+    let stmt =
+        tidb_parser::parse("UPDATE target SET value = 1 WHERE id BETWEEN 10 AND 20").unwrap();
+    let Stmt::Dml(dml) = &stmt else {
+        panic!("not a DML statement");
+    };
+    let tidb_ast::DmlStmt::Update(update) = &**dml else {
+        panic!("not an UPDATE");
+    };
 
-    assert_eq!(
-        run_delete_on(
-            "DELETE QUICK FROM quick_rows WHERE id >= 2",
-            &mut catalog,
-            &ctx,
-        )
-        .unwrap(),
-        2
-    );
-    assert_eq!(
-        run_select_on("SELECT id, v FROM quick_rows", &catalog, &ctx).unwrap(),
-        vec![vec![Datum::Int(1), Datum::Int(10)]]
-    );
+    let (_, rows) =
+        explain_update_stmt(update, &mut catalog, "test", &ctx, ExplainFormat::Brief).unwrap();
+    let cell = |row: usize, column: usize| match &rows[row][column] {
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        other => format!("{other:?}"),
+    };
+
+    assert_eq!(rows.len(), 3, "{rows:#?}");
+    assert_eq!(cell(0, 0), "Update");
+    assert_eq!(cell(1, 0), "└─TableReader");
+    assert_eq!(cell(1, 2), "root");
+    assert_eq!(cell(1, 4), "data:TableRangeScan");
+    assert_eq!(cell(2, 0), "  └─TableRangeScan");
+    assert_eq!(cell(2, 2), "cop[tikv]");
+    assert_eq!(cell(2, 3), "table:target");
+    assert!(cell(2, 4).contains("range:[10,20]"));
 }
 
 /// Go plans an `UPDATE`/`DELETE`'s read from the same cost chooser a `SELECT`
@@ -412,8 +450,10 @@ fn update_and_delete_rows() {
             "kv={kv}"
         );
 
-        // ORDER BY, LIMIT, and UPDATE IGNORE are supported. IGNORE changes
-        // only value-error handling; a conflict-free row still updates.
+        // ORDER BY, LIMIT, and IGNORE are supported now (see the session's
+        // `insert_select_and_ordered_dml`); an unknown SET column still fails
+        // closed. With no duplicate-key conflict, Go applies UPDATE IGNORE as
+        // an ordinary update.
         assert!(run_update_on(
             "UPDATE w SET zzz = 1",
             &mut catalog,
@@ -428,6 +468,16 @@ fn update_and_delete_rows() {
             )
             .unwrap(),
             1,
+            "kv={kv}"
+        );
+        assert_eq!(
+            run_select_on(
+                "SELECT a, b FROM w",
+                &catalog,
+                &crate::StmtContext::for_query()
+            )
+            .unwrap(),
+            vec![vec![Datum::Int(1), Datum::Int(9)]],
             "kv={kv}"
         );
     }

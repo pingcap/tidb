@@ -495,6 +495,17 @@ fn source_pseudo_estimates_when_the_column_has_no_statistics() {
             3.1749999999999998,
         ),
         (
+            "pseudo_string_range",
+            vec![range_of(
+                Datum::new_collation_string("a", Collation::Binary),
+                Datum::new_collation_string("b", Collation::Binary),
+                false,
+                true,
+            )],
+            false,
+            3.1749999999999998,
+        ),
+        (
             "pseudo_lt",
             vec![range_of(Datum::MinNotNull, Datum::Int(20), false, true)],
             false,
@@ -672,6 +683,60 @@ fn source_index_exp_backoff_estimates() {
         );
         check(name, (result.est, result.min_est, result.max_est), *want);
     }
+}
+
+#[test]
+fn source_composite_index_prefix_matching_the_first_bound_is_in_range() {
+    let mut index_topn = TopN::new(1);
+    index_topn.append(&key_of(&[Datum::Int(1), Datum::Int(1)]), 10);
+    index_topn.sort();
+    let index = IndexStats {
+        histogram: Histogram {
+            id: 1,
+            ndv: 10,
+            buckets: vec![Bucket {
+                count: 90,
+                repeat: 9,
+                ndv: 0,
+                lower_bound: Datum::Bytes(key_of(&[Datum::Int(1), Datum::Int(1)])),
+                upper_bound: Datum::Bytes(key_of(&[Datum::Int(10), Datum::Int(10)])),
+            }],
+            ..Histogram::default()
+        },
+        topn: Some(index_topn),
+        cms: None,
+        stats_ver: 2,
+        num_columns: 2,
+        unique: true,
+    };
+    let leading_column = ColumnStats {
+        histogram: Histogram {
+            id: 1,
+            ndv: 10,
+            buckets: vec![int_bucket(90, 9, 1, 10)],
+            ..Histogram::default()
+        },
+        topn: Some(topn_of(&[(&[Datum::Int(1)], 10, "038000000000000001")])),
+        cms: None,
+        stats_ver: 2,
+        unsigned: false,
+    };
+    let columns = vec![Some(&leading_column), None];
+
+    let result = get_index_row_count_for_stats_v2(
+        &index,
+        &columns,
+        &[index_range(&[1], &[1], false, false)],
+        100,
+        0,
+        EstimatorOptions::default(),
+    );
+
+    check(
+        "composite prefix at first histogram bound",
+        (result.est, result.min_est, result.max_est),
+        (10.0, 10.0, 10.0),
+    );
 }
 
 /// The `(value, count)` pairs the Go generator fed its version-1 CMSketch.

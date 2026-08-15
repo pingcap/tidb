@@ -105,9 +105,12 @@ pub(crate) struct JoinMethodHints {
     /// `HASH_JOIN` / `TIDB_HJ` -- Go `PlanHints.HashJoin`.
     hash: Vec<String>,
     /// `INL_JOIN` / `TIDB_INLJ` / `INL_HASH_JOIN` / `INL_MERGE_JOIN` -- Go
-    /// `PlanHints.IndexJoin`'s three table lists, which
-    /// `hasForceIndexJoinFamilyHint` reads as one.
+    /// `PlanHints.IndexJoin`'s ordinary lookup-join table list.
     index: Vec<String>,
+    /// Go `PlanHints.IndexHashJoin`.
+    index_hash: Vec<String>,
+    /// Go `PlanHints.IndexMergeJoin`.
+    index_merge: Vec<String>,
 }
 
 impl JoinMethodHints {
@@ -128,7 +131,9 @@ impl JoinMethodHints {
                 "merge_join" | "tidb_smj" => &mut hints.merge,
                 "no_merge_join" => &mut hints.no_merge,
                 "hash_join" | "tidb_hj" => &mut hints.hash,
-                "inl_join" | "tidb_inlj" | "inl_hash_join" | "inl_merge_join" => &mut hints.index,
+                "inl_join" | "tidb_inlj" => &mut hints.index,
+                "inl_hash_join" => &mut hints.index_hash,
+                "inl_merge_join" => &mut hints.index_merge,
                 _ => continue,
             };
             list.extend(tables);
@@ -143,6 +148,8 @@ impl JoinMethodHints {
             && self.no_merge.is_empty()
             && self.hash.is_empty()
             && self.index.is_empty()
+            && self.index_hash.is_empty()
+            && self.index_merge.is_empty()
     }
 
     /// Go's `MatchTableName`: does `list` name either side's alias.
@@ -198,18 +205,79 @@ impl JoinMethodHints {
         // `handleForceIndexJoinHints` returning `forced, true`. See the
         // module doc's NAMED RESIDUE for why this does not first check that an
         // index join is available.
-        !Self::matches(&self.index, sides)
+        !self.matches_index_family(sides)
     }
 
-    /// Whether this site is named by a `MERGE_JOIN` / `TIDB_SMJ` hint.
+    /// The non-index family whose hint returns before ordinary candidate
+    /// costing. A forced hash join is viable only for an empty property;
+    /// under an ordered property Go continues to merge/index enumeration.
+    pub(crate) fn forced_root_join_name(
+        &self,
+        sides: (Option<&str>, Option<&str>),
+        prop_is_empty: bool,
+    ) -> Option<&'static str> {
+        if Self::matches(&self.merge, sides) {
+            Some("MergeJoin")
+        } else if prop_is_empty && Self::matches(&self.hash, sides) {
+            Some("HashJoin")
+        } else {
+            None
+        }
+    }
+
+    /// Whether this site is named by `MERGE_JOIN` / `TIDB_SMJ`.
     ///
-    /// This is deliberately separate from [`Self::merge_join_allowed`]. The
-    /// latter answers whether the ordinary merge candidates remain in the
-    /// enumeration; this answer is what makes `GetMergeJoin` append
-    /// `getEnforcedMergeJoin`, whose children may satisfy the key order with
-    /// root `Sort` enforcers instead of an ordered access path.
+    /// This separately enables Go's `getEnforcedMergeJoin`, whose children
+    /// may receive root Sort enforcers when no access path provides key order.
     pub(crate) fn forces_merge(&self, sides: (Option<&str>, Option<&str>)) -> bool {
         Self::matches(&self.merge, sides)
+    }
+
+    /// Whether Go's forced index-join arm owns this site.
+    ///
+    /// `MERGE_JOIN` and a viable empty-property `HASH_JOIN` are tested before
+    /// `handleForceIndexJoinHints` in the same preference walk, so they keep
+    /// their precedence when hints conflict. Structural index eligibility is
+    /// still checked by `index_join_decision`; this method only narrows the
+    /// candidate family.
+    #[cfg(test)]
+    pub(crate) fn forces_index_join(
+        &self,
+        sides: (Option<&str>, Option<&str>),
+        prop_is_empty: bool,
+    ) -> bool {
+        !Self::matches(&self.merge, sides)
+            && !(prop_is_empty && Self::matches(&self.hash, sides))
+            && self.matches_index_family(sides)
+    }
+
+    /// The exact executor name forced by the matching index-family hint.
+    /// Keeping the three lists separate is observable: Go does not cost an
+    /// `INL_JOIN` into `IndexHashJoin`, nor vice versa.
+    pub(crate) fn forced_index_join_name(
+        &self,
+        sides: (Option<&str>, Option<&str>),
+        prop_is_empty: bool,
+    ) -> Option<&'static str> {
+        if Self::matches(&self.merge, sides) || (prop_is_empty && Self::matches(&self.hash, sides))
+        {
+            return None;
+        }
+        if Self::matches(&self.index, sides) {
+            Some("IndexJoin")
+        } else if Self::matches(&self.index_hash, sides) {
+            Some("IndexHashJoin")
+        } else if Self::matches(&self.index_merge, sides) {
+            Some("IndexMergeJoin")
+        } else {
+            None
+        }
+    }
+
+    fn matches_index_family(&self, sides: (Option<&str>, Option<&str>)) -> bool {
+        Self::matches(&self.index, sides)
+            || Self::matches(&self.index_hash, sides)
+            || Self::matches(&self.index_merge, sides)
     }
 }
 
@@ -307,7 +375,30 @@ mod tests {
     fn an_index_join_hint_drops_the_merge() {
         let hints = hints_of("select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 on t1.a = t2.a");
         assert!(!hints.merge_join_allowed((Some("t1"), Some("t2")), true));
+        assert!(hints.forces_index_join((Some("t1"), Some("t2")), true));
+        assert_eq!(
+            hints.forced_index_join_name((Some("t1"), Some("t2")), true),
+            Some("IndexJoin")
+        );
         assert!(hints.merge_join_allowed((Some("t1"), Some("t3")), true));
+        assert!(!hints.forces_index_join((Some("t1"), Some("t3")), true));
+    }
+
+    #[test]
+    fn each_index_hint_keeps_its_executor_name() {
+        for (hint, expected) in [
+            ("INL_JOIN(t2)", "IndexJoin"),
+            ("INL_HASH_JOIN(t2)", "IndexHashJoin"),
+            ("INL_MERGE_JOIN(t2)", "IndexMergeJoin"),
+        ] {
+            let hints = hints_of(&format!(
+                "select /*+ {hint} */ * from t t1 join t t2 on t1.a = t2.a"
+            ));
+            assert_eq!(
+                hints.forced_index_join_name((Some("t1"), Some("t2")), true),
+                Some(expected)
+            );
+        }
     }
 
     /// The merge hint is read FIRST, so it wins over every other -- including

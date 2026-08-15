@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! The range of a table's CLUSTERED INTEGER HANDLE that a `WHERE` implies:
-//! what turns Go's `TableFullScan` into its `TableRangeScan`.
+//! The range of a table's CLUSTERED HANDLE that a `WHERE` implies: what
+//! turns Go's `TableFullScan` into its `TableRangeScan`.
 //!
 //! Mirrors Go `pkg/planner/core/stats.go`'s `deriveTablePathStats`, which is
 //! three steps this module keeps in the same order:
@@ -56,28 +56,22 @@
 //! ```
 //!
 //! That second number is `ds.StatsInfo().RowCount`, and it reaches the scan
-//! only through `adjustCountAfterAccess`, which RAISES `CountAfterAccess` to
+//! through `adjustCountAfterAccess`, which RAISES `CountAfterAccess` to
 //! `RowCount / SelectionFactor` when the path's own estimate falls below it.
 //! `id < -1` is exactly that case: the unsigned arm reads `-1`'s bits as
 //! `u64::MAX`, calls `[-inf,-1)` the whole domain, and the adjustment lifts
 //! the printed 3333.33 to 10000.00.
 //!
-//! `adjustCountAfterAccess` is NOT ported here, for the reason
-//! [`crate::access_cost::source_row_count`] already records: the
-//! `ds.StatsInfo().RowCount` it reads is not yet Go's under pseudo
-//! statistics, so porting the adjustment on top of this tier's number would
-//! fire where Go's does not. The measured consequence is two shapes of the
-//! captured corpus, `id < -1` and `id <= -1`, where this tier prints 3333.33
-//! against Go's 10000.00 -- classified in
-//! `tidb_session::tests_sysbench_access`, which asserts this tier's value and
-//! quotes Go's beside it. Both are the un-adjusted `CountAfterAccess`, so the
-//! divergence is one missing step and not a different estimator. The
-//! remaining sixteen shapes agree exactly.
+//! [`crate::access_cost::adjust_count_after_access`] applies that lower bound
+//! after the complete predicate's data-source estimate is available. Keeping
+//! the converted-range estimate and the data-source estimate separate is
+//! load-bearing: the former remains 3333.33 while the physical scan prints
+//! Go's adjusted 10000.00.
 
 use crate::access_cost::realtime_row_count;
 use crate::access_cost::TableStatistics;
 use crate::index_range::IndexRanges;
-use crate::kv_table::{IndexRange, KvTable};
+use crate::kv_table::{IndexRange, KvIndex, KvTable};
 use tidb_datatype::{Datum, FieldTypeCode};
 use tidb_distsql::{signed_handle_ranges_to_kv_ranges, SignedHandleRange};
 use tidb_planner::cardinality::row_count_estimator::{
@@ -85,15 +79,14 @@ use tidb_planner::cardinality::row_count_estimator::{
 };
 use tidb_txnkv::Key;
 
-/// The ranges a `WHERE` implies over `table`'s clustered integer handle, or
-/// `None` when this tier builds none.
+/// The ranges a `WHERE` implies over `table`'s clustered handle, or `None`
+/// when this tier builds none.
 ///
 /// `None` is Go's full range, and the caller reads the whole table for it.
 /// The refusals are:
 ///
-/// * a table with no integer primary-key handle -- a `_tidb_rowid` table has
-///   no handle a `WHERE` can name, and a common (clustered non-integer)
-///   handle is a multi-column key whose ranges this tier does not encode;
+/// * a table with no primary-key handle -- a `_tidb_rowid` table has no
+///   handle a `WHERE` can name;
 /// * an UNSIGNED handle. The record key encodes a handle with the SIGNED
 ///   integer codec, so an unsigned value above `i64::MAX` encodes as a
 ///   negative key and a range over it is not the interval its bounds read
@@ -106,6 +99,9 @@ pub(crate) fn build_handle_ranges<'a>(
     where_clause: &'a tidb_ast::Expr,
     zone: &tidb_datatype::SessionTimeZone,
 ) -> Option<IndexRanges<'a>> {
+    if !table.common_handle_offsets().is_empty() {
+        return build_common_handle_ranges(table, where_clause, zone);
+    }
     let column = handle_column(table)?;
     let mut built = crate::index_range::detach_cond_and_build_range_for_index(
         // The clustered handle stores the whole column: a row identifier has
@@ -139,6 +135,43 @@ pub(crate) fn build_handle_ranges<'a>(
         .ranges
         .retain(|range| range.high.first() != Some(&Datum::Null));
     Some(built)
+}
+
+/// The PRIMARY index whose columns are the common row handle.
+///
+/// TiDB exposes this metadata as an index for range building and statistics,
+/// but physically reads its ranges from the table's `_r<common_handle>`
+/// record keys. It is therefore a table path, not a secondary-index path.
+pub(crate) fn common_handle_primary(table: &KvTable) -> Option<&KvIndex> {
+    table.plan_indexes().find(|index| {
+        index.name.eq_ignore_ascii_case("PRIMARY")
+            && index.column_offsets == table.common_handle_offsets()
+    })
+}
+
+fn build_common_handle_ranges<'a>(
+    table: &KvTable,
+    where_clause: &'a tidb_ast::Expr,
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Option<IndexRanges<'a>> {
+    let index = common_handle_primary(table)?;
+    let columns: Vec<crate::index_range::RangeColumn> = index
+        .column_offsets
+        .iter()
+        .enumerate()
+        .filter_map(|(position, offset)| {
+            let column = table.columns.get(*offset)?;
+            Some(crate::index_range::RangeColumn {
+                name: column.name.clone(),
+                field_type: column.field_type.clone(),
+                prefix_len: index.prefix_length(position),
+            })
+        })
+        .collect();
+    if columns.len() != index.column_offsets.len() {
+        return None;
+    }
+    crate::index_range::detach_cond_and_build_range_for_index(&columns, where_clause, zone)
 }
 
 /// The primary-key column that IS the row handle, when the table has one and
@@ -213,6 +246,9 @@ pub(crate) fn handle_range_row_count(
     stats: Option<&TableStatistics>,
 ) -> f64 {
     let realtime = realtime_row_count(stats);
+    if let Some(index) = common_handle_primary(table) {
+        return crate::access_cost::index_range_row_count(index, table, ranges, stats, realtime);
+    }
     let Some(column) = handle_column(table) else {
         return realtime;
     };
@@ -240,7 +276,14 @@ pub(crate) fn handle_range_row_count(
 /// `None` means a bound this tier cannot encode, and the caller falls back to
 /// the whole record range -- reading a superset is always correct, because
 /// the `WHERE` above the source filters every row it returns.
-pub(crate) fn record_key_ranges(table: &KvTable, ranges: &[IndexRange]) -> Option<Vec<(Key, Key)>> {
+pub(crate) fn record_key_ranges(
+    table: &KvTable,
+    ranges: &[IndexRange],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Option<Vec<(Key, Key)>>, tidb_codec::CodecError> {
+    if common_handle_primary(table).is_some() {
+        return common_handle_record_key_ranges(table, ranges, zone).map(Some);
+    }
     let ids = table.record_physical_ids();
     let mut handle_ranges = Vec::with_capacity(ranges.len());
     for range in ranges {
@@ -259,5 +302,37 @@ pub(crate) fn record_key_ranges(table: &KvTable, ranges: &[IndexRange]) -> Optio
             key_ranges.push((encoded.start_key, encoded.end_key));
         }
     }
-    Some(key_ranges)
+    Ok(Some(key_ranges))
+}
+
+/// Go `CommonHandleRangesToKVRanges`: the ranger's encoded tuple bounds
+/// prefixed by each physical table's record namespace.
+fn common_handle_record_key_ranges(
+    table: &KvTable,
+    ranges: &[IndexRange],
+    zone: &tidb_datatype::SessionTimeZone,
+) -> Result<Vec<(Key, Key)>, tidb_codec::CodecError> {
+    let ids = table.record_physical_ids();
+    let mut key_ranges = Vec::with_capacity(ranges.len() * ids.len());
+    for id in ids {
+        for range in ranges {
+            let low = tidb_codec::encode_key_in_timezone(zone, &range.low)?;
+            let low = if range.low_exclusive {
+                Key::from_bytes(low).prefix_next().into_bytes()
+            } else {
+                low
+            };
+            let high = tidb_codec::encode_key_in_timezone(zone, &range.high)?;
+            let high = if range.high_exclusive {
+                high
+            } else {
+                Key::from_bytes(high).prefix_next().into_bytes()
+            };
+            key_ranges.push((
+                Key::from_bytes(tidb_codec::encode_row_key(id, &low)),
+                Key::from_bytes(tidb_codec::encode_row_key(id, &high)),
+            ));
+        }
+    }
+    Ok(key_ranges)
 }

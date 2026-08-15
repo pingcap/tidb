@@ -174,6 +174,15 @@ pub fn new_zero_cost_ver2(trace: bool) -> CostVer2 {
     }
 }
 
+/// Wraps a cost already calculated by the same ver2 model at a lower planning
+/// layer. This is used at an integration boundary where the access-path
+/// chooser owns the complete reader formula and the parent planner must carry
+/// that task into a larger candidate tree without calculating it twice.
+#[must_use]
+pub fn fixed_cost_ver2(cost: f64) -> CostVer2 {
+    CostVer2 { cost, trace: None }
+}
+
 /// Creates a cost and, when tracing is enabled, records its factor and formula.
 #[must_use]
 pub fn new_cost_ver2<F>(
@@ -273,17 +282,6 @@ pub fn add_cost_without_trace(mut cost: CostVer2, additional_cost: f64) -> CostV
 #[must_use]
 pub fn zero_cost_ver2() -> CostVer2 {
     new_zero_cost_ver2(false)
-}
-
-/// Wraps a cost already computed by a source-equivalent operator subtree.
-///
-/// This is for planner composition boundaries where the child subsystem owns
-/// the complete cost formula and the parent only needs its total. It carries
-/// no trace because reconstructing a formula after the fact would be false
-/// provenance.
-#[must_use]
-pub fn fixed_cost_ver2(cost: f64) -> CostVer2 {
-    CostVer2 { cost, trace: None }
 }
 
 #[cfg(test)]

@@ -84,7 +84,7 @@ pub(crate) fn build_plain_having(
             current_scope.width(),
             &mut correlated,
             ctx,
-        );
+        )?;
         let Some(correlated) = correlated else { break };
         let (applied, widened_scope, _) =
             append_correlated_apply(source, current_scope, correlated, catalog, current_db, ctx)?;
@@ -215,6 +215,39 @@ fn star_columns(qualifier: &[String], scope: &FromScope) -> Vec<(String, String)
 /// takes it for an uncorrelated one to evaluate -- so the alias is reported
 /// as an unresolved column there. Fixing it means teaching that fold about
 /// the projection's names, which is a wider seam than this clause.
+fn direct_subqueries(expr: &tidb_ast::Expr) -> Vec<QueryStmt> {
+    struct Collector {
+        found: Vec<QueryStmt>,
+    }
+
+    impl tidb_ast::Visitor for Collector {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(expr) = node.downcast_ref::<tidb_ast::Expr>() else {
+                return false;
+            };
+            match expr {
+                tidb_ast::Expr::Subquery(subquery)
+                | tidb_ast::Expr::Exists { subquery, .. }
+                | tidb_ast::Expr::InSubquery { subquery, .. }
+                | tidb_ast::Expr::CompareSubquery { subquery, .. } => {
+                    self.found.push((**subquery).clone());
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut collector = Collector { found: Vec::new() };
+    let mut owned = expr.clone();
+    tidb_ast::Visitable::accept(&mut owned, &mut collector);
+    collector.found
+}
+
 fn bind_having_correlations(
     having: &tidb_ast::Expr,
     outputs: &[HavingOutput],

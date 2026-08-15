@@ -82,7 +82,7 @@ fn fired(sql: &str, catalog: &Catalog, threshold: i32) -> Option<Vec<usize>> {
 
 /// The statement the recorded topic runs at
 /// `set tidb_opt_join_reorder_threshold = 10`.
-const THREE_WAY: &str = "SELECT t1.a, dt.key_a FROM t1, t5, \
+const THREE_WAY: &str = "SELECT t1.a, dt.key_a, dt.doubled_b FROM t1, t5, \
      (SELECT t2.a AS key_a, t2.b * 2 AS doubled_b FROM t2 JOIN t3 ON t2.a = t3.a) dt \
      WHERE t1.a = dt.key_a AND dt.key_a = t5.a";
 
@@ -105,6 +105,9 @@ const THREE_WAY: &str = "SELECT t1.a, dt.key_a FROM t1, t5, \
 ///
 /// `t5` at the top and `t1` under the second join is the reorder; every leaf
 /// keeping order is the merge that only becomes possible once it happens.
+/// The trace also exposes each proven root/cop reader boundary. The join
+/// equalities are consumed by the join operators, so there is no residual
+/// root `Selection` above this tree.
 #[test]
 fn the_dp_builds_the_tree_tidb_records() {
     let catalog = tables();
@@ -112,16 +115,18 @@ fn the_dp_builds_the_tree_tidb_records() {
     assert_eq!(
         reordered,
         vec![
-            "Projection_10",
-            "└─Selection_9",
-            "  └─MergeJoin_8",
-            "    ├─TableFullScan_1(Build)",
-            "    └─MergeJoin_7(Probe)",
-            "      ├─Projection_5(Build)",
-            "      │ └─MergeJoin_4",
-            "      │   ├─TableFullScan_2(Build)",
-            "      │   └─TableFullScan_3(Probe)",
-            "      └─TableFullScan_6(Probe)",
+            "MergeJoin_12",
+            "├─TableReader_2(Build)",
+            "│ └─TableFullScan_1",
+            "└─MergeJoin_11(Probe)",
+            "  ├─Projection_8(Build)",
+            "  │ └─MergeJoin_7",
+            "  │   ├─TableReader_4(Build)",
+            "  │   │ └─TableFullScan_3",
+            "  │   └─TableReader_6(Probe)",
+            "  │     └─TableFullScan_5",
+            "  └─TableReader_10(Probe)",
+            "    └─TableFullScan_9",
         ],
         "the reordered plan is not TiDB's",
     );

@@ -83,9 +83,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use tidb_ast::{
-    Expr, Join, JoinNode, QueryStmt, SelectField, SelectStmt, WindowDef, WindowOver, WindowSpec,
-};
+use tidb_ast::{Expr, Join, JoinNode, QueryStmt, SelectField, SelectStmt};
 use tidb_datatype::FieldType;
 
 /// What an enclosing `SELECT` hands down to every relation of its `FROM`:
@@ -107,6 +105,11 @@ pub(crate) struct FromDemand<'a> {
     /// the caller has no statement to compute them from -- which every leaf
     /// reads as "every column", the answer it gave before this existed.
     pub(crate) columns: Option<&'a LeafDemand>,
+    /// The columns this `FROM` must expose to its parent logical operator.
+    /// Unlike `columns`, this excludes predicates that a join below can
+    /// consume. Join costing uses it to reproduce the schemas left by Go's
+    /// `LogicalJoin.PruneColumns` without narrowing the executor row itself.
+    pub(crate) output_columns: Option<&'a LeafDemand>,
     /// Every relation of this `FROM` with the row count `derive_stats` gives
     /// it -- the estimate owner the join-strategy search prices its
     /// candidates with. `None` is a `FROM` whose shape
@@ -118,9 +121,9 @@ pub(crate) struct FromDemand<'a> {
     /// site reads it before it decides a merge join; see
     /// [`crate::driver::join_method_hints`].
     pub(crate) join_hints: Option<&'a crate::driver::join_method_hints::JoinMethodHints>,
-    /// The recursively costed physical strategy for every join of this
-    /// `FROM`, when the whole tree was representable by the native planner.
-    pub(crate) join_guide: Option<&'a crate::driver::join_search::RecursiveGuide>,
+    /// Render optimizer-created joins with the base-column identities Go
+    /// preserves after projection elimination, rather than with AST aliases.
+    pub(crate) physical_source_names: bool,
 }
 
 impl FromDemand<'_> {
@@ -130,9 +133,10 @@ impl FromDemand<'_> {
             offered: &[],
             pushdown: None,
             columns: None,
+            output_columns: None,
             rows: None,
             join_hints: None,
-            join_guide: None,
+            physical_source_names: false,
         }
     }
 }
@@ -168,9 +172,6 @@ pub(crate) struct LeafDemand {
     /// does not force; `USE INDEX ()` does, because Go forces the table path
     /// itself there.
     forces_index: bool,
-    /// Named windows visible in each SELECT currently being walked. Nested
-    /// queries push their own scope.
-    window_scopes: Vec<Vec<(String, WindowDef)>>,
 }
 
 impl LeafDemand {
@@ -181,20 +182,45 @@ impl LeafDemand {
         demand
     }
 
-    /// The columns referenced above this SELECT's `FROM`, excluding the
-    /// relations' own definitions and join predicates. Outer-join elimination
-    /// uses this after removing the join: a column read inside the surviving
-    /// outer derived table is not a read of an equally named eliminated inner
-    /// column.
-    pub(crate) fn of_select_parent_clauses(select: &SelectStmt) -> Self {
+    /// The columns the operators above a `FROM` require from it. `WHERE` and
+    /// join conditions are deliberately excluded here: each join adds only
+    /// the conditions it evaluates before handing the demand to its children,
+    /// matching Go's top-down `PruneColumns` walk.
+    pub(crate) fn of_select_output(select: &SelectStmt) -> Self {
         let mut demand = LeafDemand::default();
-        if demand.reject_select_shape(select) {
-            return demand;
-        }
-        demand.window_scopes.push(select.windows.clone());
-        demand.add_select_parent_clauses(select);
-        demand.window_scopes.pop();
+        demand.add_select_output(select);
         demand
+    }
+
+    pub(crate) fn of_select_parent_clauses(select: &SelectStmt) -> Self {
+        let mut demand = Self::of_select_output(select);
+        if let Some(predicate) = &select.where_clause {
+            demand.add_expr(predicate);
+        }
+        demand
+    }
+
+    /// Adds the columns one join needs from its children for its own `ON` or
+    /// `USING` evaluation. This does not descend into child joins; they add
+    /// their own conditions when their turn in the pruning walk arrives.
+    pub(crate) fn add_current_join(&mut self, join: &Join) {
+        if join.natural {
+            self.all = true;
+        }
+        for name in &join.using {
+            self.unqualified.insert(name.to_ascii_lowercase());
+        }
+        if let Some(on) = &join.on {
+            self.add_expr(on);
+        }
+    }
+
+    /// Adds predicates evaluated by the current join after their owning join
+    /// has been established from the two child scopes.
+    pub(crate) fn add_predicates<'a>(&mut self, predicates: impl IntoIterator<Item = &'a Expr>) {
+        for predicate in predicates {
+            self.add_expr(predicate);
+        }
     }
 
     /// The offsets of `columns` this leaf must still produce, given that it is
@@ -253,42 +279,35 @@ impl LeafDemand {
         }
     }
 
-    /// Adds every column reference of one `SELECT`, its `FROM` included.
-    fn add_select(&mut self, select: &SelectStmt) {
+    fn unsupported_select_shape(&mut self, select: &SelectStmt) -> bool {
         // A CTE introduces relation names this walk cannot tell apart from
-        // the leaves below it, and `VALUES` names columns through machinery
-        // outside the expression tree.
-        if self.reject_select_shape(select) {
+        // the leaves below it, and `VALUES`/`WITH ROLLUP`/a `WINDOW` clause
+        // each name columns through machinery outside the expression tree.
+        if select.with.is_some()
+            || !select.values.is_empty()
+            || !select.windows.is_empty()
+            || select.rollup
+        {
+            self.all = true;
+            return true;
+        }
+        false
+    }
+
+    /// Adds the expressions above the `FROM`, excluding `WHERE` and the
+    /// relation tree's own predicates.
+    fn add_select_output(&mut self, select: &SelectStmt) {
+        if self.unsupported_select_shape(select) {
             return;
         }
-        self.window_scopes.push(select.windows.clone());
-        self.add_select_parent_clauses(select);
-        if let Some(join) = &select.from {
-            self.add_join(join);
-        }
-        self.window_scopes.pop();
-    }
-
-    fn reject_select_shape(&mut self, select: &SelectStmt) -> bool {
-        let rejected = select.with.is_some() || !select.values.is_empty();
-        if rejected {
-            self.all = true;
-        }
-        rejected
-    }
-
-    fn add_select_parent_clauses(&mut self, select: &SelectStmt) {
         for field in select.fields.fields() {
             match field {
                 SelectField::Wildcard(path) => self.add_wildcard(path),
                 SelectField::Expr { expr, alias: _ } => self.add_expr(expr),
             }
         }
-        for predicate in [select.where_clause.as_ref(), select.having.as_ref()]
-            .into_iter()
-            .flatten()
-        {
-            self.add_expr(predicate);
+        if let Some(having) = &select.having {
+            self.add_expr(having);
         }
         for item in &select.group_by {
             self.add_expr(&item.expr);
@@ -304,21 +323,24 @@ impl LeafDemand {
         }
     }
 
+    /// Adds every column reference of one `SELECT`, its `FROM` included.
+    fn add_select(&mut self, select: &SelectStmt) {
+        if self.unsupported_select_shape(select) {
+            return;
+        }
+        self.add_select_output(select);
+        if let Some(join) = &select.from {
+            self.add_join(join);
+        }
+        if let Some(predicate) = &select.where_clause {
+            self.add_expr(predicate);
+        }
+    }
+
     /// Adds the references a `FROM` tree writes itself: every `ON`, every
     /// `USING` name, and every derived table's own subquery.
     fn add_join(&mut self, join: &Join) {
-        // A `USING (a, b)` names the columns by bare name on BOTH sides, and
-        // `NATURAL` names them by the two sides' shared names -- which this
-        // walk cannot enumerate without the catalog.
-        if join.natural {
-            self.all = true;
-        }
-        for name in &join.using {
-            self.unqualified.insert(name.to_ascii_lowercase());
-        }
-        if let Some(on) = &join.on {
-            self.add_expr(on);
-        }
+        self.add_current_join(join);
         self.add_join_node(&join.left);
         if let Some(right) = &join.right {
             self.add_join_node(right);
@@ -356,53 +378,6 @@ impl LeafDemand {
         }
     }
 
-    fn add_window_over(&mut self, over: &WindowOver) {
-        match over {
-            WindowOver::Name(name) => {
-                let Some(def) = self.named_window(name) else {
-                    self.all = true;
-                    return;
-                };
-                self.add_window_def(&def, &mut vec![name.to_ascii_lowercase()]);
-            }
-            WindowOver::Def(def) => self.add_window_def(def, &mut Vec::new()),
-        }
-    }
-
-    fn add_window_def(&mut self, def: &WindowDef, seen: &mut Vec<String>) {
-        if let Some(base) = &def.base {
-            let key = base.to_ascii_lowercase();
-            if seen.contains(&key) {
-                self.all = true;
-                return;
-            }
-            let Some(base_def) = self.named_window(base) else {
-                self.all = true;
-                return;
-            };
-            seen.push(key);
-            self.add_window_def(&base_def, seen);
-            seen.pop();
-        }
-        self.add_window_spec(&def.spec);
-    }
-
-    fn named_window(&self, name: &str) -> Option<WindowDef> {
-        self.window_scopes
-            .last()?
-            .iter()
-            .find_map(|(candidate, def)| candidate.eq_ignore_ascii_case(name).then(|| def.clone()))
-    }
-
-    fn add_window_spec(&mut self, spec: &WindowSpec) {
-        for expr in &spec.partition_by {
-            self.add_expr(expr);
-        }
-        for item in &spec.order_by {
-            self.add_expr(&item.expr);
-        }
-    }
-
     /// Adds every column reference inside one expression.
     ///
     /// Exhaustive with no wildcard arm on purpose: see the module doc.
@@ -437,14 +412,9 @@ impl LeafDemand {
             | Expr::UserVar(_)
             | Expr::SysVar { .. } => {}
 
-            // Go `LogicalWindow.extractUsedCols`: the call arguments plus
-            // PARTITION BY / ORDER BY columns are the child's demand.
-            Expr::Window { args, over, .. } => {
-                for arg in args {
-                    self.add_expr(arg);
-                }
-                self.add_window_over(over);
-            }
+            // A window function's frame and partition live in a `WindowOver`
+            // this walk does not model, so the whole statement falls back.
+            Expr::Window { .. } => self.all = true,
 
             // Nested queries: a correlated reference inside one names a
             // column of the leaves this demand is computed for.
@@ -690,18 +660,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn rollup_charges_only_grouping_and_aggregate_inputs() {
-        let sql = "select t1.a, dt.key_a, dt.sum_b from t1 join (\
-            select t2.a as key_a, sum(t3.b) as sum_b \
-            from t2 join t3 on t2.a = t3.a \
-            group by t2.a with rollup\
-          ) dt on t1.a = dt.key_a";
-        assert_eq!(needed_of(sql, "t1", &["a", "b", "c"]), vec![0]);
-        assert_eq!(needed_of(sql, "t2", &["a", "b", "c"]), vec![0]);
-        assert_eq!(needed_of(sql, "t3", &["a", "b", "c"]), vec![0, 1]);
-    }
-
     /// A correlated reference lives inside a subquery, and it names a column
     /// of THIS statement's leaf -- so the walk descends into one.
     #[test]
@@ -732,40 +690,18 @@ mod tests {
         );
     }
 
-    /// Go's logical window passes only its arguments and ordering columns to
-    /// its child. That is what lets `idx(a)` cover `sum(a) over ()` without
-    /// pretending the query reads the rest of the table row.
+    /// An unwalkable construct falls back to the demand that names
+    /// everything, never to a narrower one.
     #[test]
-    fn a_window_charges_only_its_arguments_partition_and_order_columns() {
+    fn an_unwalkable_construct_falls_back_to_everything() {
         assert_eq!(
             needed_of(
                 "select row_number() over (partition by t1.b) from t1 join t2 on t1.c = t2.c",
                 "t1",
                 &["a", "b", "c"]
             ),
-            vec![1, 2],
-        );
-        assert_eq!(
-            needed_of(
-                "select sum(t1.a) over (partition by t1.b order by t1.c) \
-                 from t1 join t2 on t1.a = t2.a",
-                "t1",
-                &["a", "b", "c", "unused"]
-            ),
             vec![0, 1, 2],
-        );
-    }
-
-    #[test]
-    fn a_named_window_resolves_its_base_chain_in_the_current_select() {
-        assert_eq!(
-            needed_of(
-                "select sum(t1.a) over w2 from t1 join t2 on t1.a = t2.a \
-                 window w1 as (partition by t1.b), w2 as (w1 order by t1.c)",
-                "t1",
-                &["a", "b", "c", "unused"]
-            ),
-            vec![0, 1, 2],
+            "a window function's OVER clause is not walked, so nothing is pruned"
         );
     }
 

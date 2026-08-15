@@ -389,6 +389,7 @@ fn an_autocommit_update_that_loses_the_race_is_retried_at_a_new_read() {
         .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
         .expect("seed");
     let opened_before = cluster.opened.load(Ordering::Acquire);
+    let prepared_before = cluster.prepared.load(Ordering::Acquire);
 
     cluster.race_next_read.store(true, Ordering::Release);
     session
@@ -399,6 +400,11 @@ fn an_autocommit_update_that_loses_the_race_is_retried_at_a_new_read() {
         cluster.opened.load(Ordering::Acquire),
         opened_before + 2,
         "the losing attempt and the replay each opened their own read"
+    );
+    assert_eq!(
+        cluster.prepared.load(Ordering::Acquire),
+        prepared_before + 2,
+        "the losing attempt and the replay each prepared a fresh future"
     );
     assert_eq!(
         rows(&mut session, "SELECT v FROM t WHERE id = 1"),

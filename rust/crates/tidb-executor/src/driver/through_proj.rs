@@ -54,9 +54,13 @@
 //!
 //! # When it runs
 //!
-//! Only when `@@tidb_opt_join_reorder_through_proj` is ON, which is Go's own
-//! and only gate (`extractJoinGroupImpl`, `rule_join_reorder.go:80`). It is
-//! OFF by default, so a stock session never dissolves anything.
+//! Go has two distinct paths. `ProjectionEliminator`, which runs before join
+//! reorder, unconditionally removes a projection whose expressions are all
+//! bare columns. A projection that still computes an expression survives that
+//! pass and is dissolved by `extractJoinGroupImpl` only when
+//! `@@tidb_opt_join_reorder_through_proj` is ON. The same distinction is kept
+//! here: identity/pass-through projections are eliminated in a stock session;
+//! computed projections retain the session-variable gate.
 //!
 //! This module briefly carried a second gate of its own -- a POSITIVE
 //! `@@tidb_opt_join_reorder_threshold` -- because dissolving a projection is
@@ -82,8 +86,8 @@
 //! Three declines are this rewrite's own, each because a NAME-keyed restore
 //! cannot express what a `UniqueID`-keyed one can:
 //!
-//! * an unqualified `*` in the select list, whose expansion order and column
-//!   names would have to be reconstructed from the dissolved scope;
+//! * an unqualified `*` that the caller could not expand from the catalog
+//!   before this pass, whose output order would otherwise be unknown;
 //! * a derived table with two output columns of the same name, which no
 //!   qualified reference can tell apart;
 //! * a splice that would put two relations with the same visible name in one
@@ -120,7 +124,7 @@
 use std::collections::BTreeMap;
 
 use tidb_ast::{
-    BinaryOp, Expr, GroupByItem, Hint, Join, JoinNode, JoinType, OrderItem, QueryStmt, SelectField,
+    BinaryOp, Expr, GroupByItem, Join, JoinNode, JoinType, OrderItem, QueryStmt, SelectField,
     SelectStmt,
 };
 use tidb_planner::join_reorder_projection_inline::{
@@ -134,21 +138,29 @@ use crate::driver::catalog::{Catalog, TableEntry};
 struct Dissolved {
     alias: String,
     fields: Vec<(String, Expr)>,
+    /// Base relation qualifiers hidden behind `alias` before this Projection
+    /// dissolved. Name resolution runs before optimization in Go, so a query
+    /// that wrote one of these qualifiers must not become valid by inlining.
+    hidden_qualifiers: Vec<String>,
 }
 
 /// Everything the splice accumulated while walking the `FROM` tree.
 #[derive(Default)]
 struct Splice {
+    /// Whether `@@tidb_opt_join_reorder_through_proj` permits computed
+    /// projections to dissolve.  Bare-column projections are handled by
+    /// Go's earlier `ProjectionEliminator` and do not need this opt-in.
+    allow_general_projection: bool,
+    /// Whether any dissolved projection computed an expression rather than
+    /// merely forwarding a child column. Only this case can create a
+    /// non-column join key that needs Go's `injectExpr` equivalent.
+    computed_projection_dissolved: bool,
     dissolved: Vec<Dissolved>,
     /// `WHERE` conjuncts lifted out of a dissolved subquery. Go reaches these
     /// through the `Selection` the subquery's own predicate pushdown left
     /// under the projection; here they join the outer `WHERE`, which is sound
     /// because every join in the dissolved subtree is an inner join.
     lifted: Vec<Expr>,
-    /// Join-method hints owned by a projection that dissolved into this query
-    /// block. Go moves their preferred-join bits with the logical joins; the
-    /// rewritten AST must therefore carry the same hint authority upward.
-    hints: Vec<Hint>,
     /// The visible name of every relation now in the spliced scope, in order.
     visible: Vec<String>,
 }
@@ -194,6 +206,14 @@ impl Splice {
             .iter()
             .any(|d| d.alias.eq_ignore_ascii_case(qualifier))
     }
+
+    fn hides(&self, qualifier: &str) -> bool {
+        self.dissolved.iter().any(|d| {
+            d.hidden_qualifiers
+                .iter()
+                .any(|hidden| hidden.eq_ignore_ascii_case(qualifier))
+        })
+    }
 }
 
 fn split_path(path: &[String]) -> Option<(Option<&String>, &String)> {
@@ -208,17 +228,20 @@ fn split_path(path: &[String]) -> Option<(Option<&String>, &String)> {
 /// `restoreSchemaIfChanged`, over one `SELECT`.
 ///
 /// Returns the rewritten statement when at least one derived table dissolved,
-/// and `None` when the statement is left exactly as written -- which is every
-/// statement a stock session runs, since the gate is off by default.
+/// and `None` when the statement is left exactly as written. Bare-column
+/// projections may dissolve at the default settings; computed projections
+/// require `@@tidb_opt_join_reorder_through_proj=ON`.
+pub(crate) struct InlinedSelect {
+    pub(crate) select: SelectStmt,
+    pub(crate) computed_output_restored: bool,
+}
+
 pub(crate) fn inline(
     select: &SelectStmt,
     catalog: &Catalog,
     current_db: &str,
     ctx: &crate::StmtContext,
-) -> Option<SelectStmt> {
-    if !ctx.join_reorder_through_proj() {
-        return None;
-    }
+) -> Option<InlinedSelect> {
     // A `leading` hint PINS the join order: Go builds the named prefix into
     // `s.leadingJoinGroup` and `constructConnectedJoinTree` joins it first
     // (`rule_join_reorder_greedy.go:56-76`), so it dissolves the projection
@@ -236,7 +259,10 @@ pub(crate) fn inline(
         return None;
     }
     let from = select.from.as_ref()?;
-    let mut splice = Splice::default();
+    let mut splice = Splice {
+        allow_general_projection: ctx.join_reorder_through_proj(),
+        ..Splice::default()
+    };
     let rewritten_from = splice_join(from, catalog, current_db, &mut splice)?;
     if splice.dissolved.is_empty() {
         return None;
@@ -254,7 +280,6 @@ pub(crate) fn inline(
 
     let mut rewritten = select.clone();
     rewritten.from = Some(rewritten_from);
-    rewritten.hints.extend(splice.hints.iter().cloned());
 
     let mut fields = Vec::new();
     for (index, field) in select.fields.fields().iter().enumerate() {
@@ -290,6 +315,12 @@ pub(crate) fn inline(
             }),
         }
     }
+    let computed_output_restored = fields.iter().any(|field| {
+        matches!(
+            field,
+            SelectField::Expr { expr, .. } if !matches!(expr, Expr::Column(_))
+        )
+    });
     rewritten.fields = fields.into();
 
     let mut conjuncts = Vec::new();
@@ -326,9 +357,22 @@ pub(crate) fn inline(
         })
         .collect::<Option<Vec<_>>>()?;
 
-    // Every equality must read `col = col` before this leaves; Go's
-    // `injectExpr` is what puts the ones that do not back into that form.
-    inject_expressions(rewritten, catalog, current_db)
+    let computed_projection_dissolved = splice.computed_projection_dissolved;
+    let select = if computed_projection_dissolved {
+        // A computed output may now appear inside a join equality. Go's
+        // `injectExpr` materializes it back into a column on its owning side.
+        inject_expressions(rewritten, catalog, current_db)?
+    } else {
+        // Projection elimination only substituted columns for columns, so it
+        // cannot have created a key that needs materialization. In
+        // particular, do not route unrelated `column = constant` filters
+        // through the injection path.
+        rewritten
+    };
+    Some(InlinedSelect {
+        select,
+        computed_output_restored,
+    })
 }
 
 /// Go's `baseSingleGroupJoinOrderSolver.injectExpr` (`rule_join_reorder.go:793`),
@@ -713,7 +757,7 @@ fn substitute(expr: &Expr, splice: &Splice) -> Option<Expr> {
                     // have resolved; anything else names a surviving relation
                     // and is left alone.
                     if let Some((Some(qualifier), _)) = split_path(path) {
-                        if self.splice.owns(qualifier) {
+                        if self.splice.owns(qualifier) || self.splice.hides(qualifier) {
                             self.ok = false;
                         }
                     } else if self
@@ -743,6 +787,55 @@ fn substitute(expr: &Expr, splice: &Splice) -> Option<Expr> {
     let mut rewrite = Rewrite { splice, ok: true };
     tidb_ast::Visitable::accept(&mut owned, &mut rewrite);
     rewrite.ok.then_some(owned)
+}
+
+/// Replaces every unqualified column with the visible leaf name that uniquely
+/// owns it. Go keeps that identity in the column's `UniqueID` when a derived
+/// Projection is eliminated; this AST rewrite must make the same identity
+/// explicit before the derived alias disappears into a larger name scope.
+fn qualify_unique_columns(
+    expr: &Expr,
+    leaves: &[(String, Vec<String>)],
+    owners: &BTreeMap<String, Vec<usize>>,
+) -> Option<Expr> {
+    struct Qualify<'a> {
+        leaves: &'a [(String, Vec<String>)],
+        owners: &'a BTreeMap<String, Vec<usize>>,
+        ok: bool,
+    }
+    impl tidb_ast::Visitor for Qualify<'_> {
+        fn enter(&mut self, node: &mut dyn std::any::Any) -> bool {
+            let Some(Expr::Column(path)) = node.downcast_mut::<Expr>() else {
+                return false;
+            };
+            let [name] = path.as_slice() else {
+                return false;
+            };
+            let Some([owner]) = self
+                .owners
+                .get(&name.to_ascii_lowercase())
+                .map(Vec::as_slice)
+            else {
+                self.ok = false;
+                return true;
+            };
+            *path = vec![self.leaves[*owner].0.clone(), name.clone()];
+            true
+        }
+
+        fn leave(&mut self, _node: &mut dyn std::any::Any) -> bool {
+            true
+        }
+    }
+
+    let mut owned = expr.clone();
+    let mut qualify = Qualify {
+        leaves,
+        owners,
+        ok: true,
+    };
+    tidb_ast::Visitable::accept(&mut owned, &mut qualify);
+    qualify.ok.then_some(owned)
 }
 
 /// Walks one join spine, replacing every derived table that qualifies with the
@@ -914,7 +1007,10 @@ fn dissolve(
     // `Projection -> Join -> Projection -> Join` dissolves bottom-up and this
     // projection's own expressions are rewritten against base relations --
     // Go's bottom-up `colExprMap` propagation (`rule_join_reorder.go:52`).
-    let mut inner = Splice::default();
+    let mut inner = Splice {
+        allow_general_projection: splice.allow_general_projection,
+        ..Splice::default()
+    };
     let spliced_from = splice_join(from, catalog, current_db, &mut inner)?;
     for (index, name) in inner.visible.iter().enumerate() {
         if inner.visible[index + 1..]
@@ -965,7 +1061,7 @@ fn dissolve(
             return None;
         }
         let written = expr;
-        let expr = substitute(expr, &inner)?;
+        let expr = qualify_unique_columns(&substitute(expr, &inner)?, &leaves, &owner)?;
         // `canInlineProjection`: every expression must depend on exactly one
         // leaf, since the reorder has to attribute it to one side.
         let paths = column_paths(&expr);
@@ -983,6 +1079,16 @@ fn dissolve(
             crate::driver::default_field_display_name(&select.fields, index, written)
         });
         fields.push((name, expr));
+    }
+    // `ProjectionEliminator` runs before join reorder and removes a logical
+    // projection whenever every expression is a single column.  That rule is
+    // unconditional; `tidb_opt_join_reorder_through_proj` gates only the
+    // later inlining of projections that still compute expressions.
+    let projection_eliminable = fields
+        .iter()
+        .all(|(_, expr)| matches!(strip(expr), Expr::Column(_)));
+    if !projection_eliminable && !splice.allow_general_projection {
+        return None;
     }
     // `canInlineProjectionBasic`, over the shapes Go's own gate is written
     // against.
@@ -1009,38 +1115,17 @@ fn dissolve(
         lifted.push(substitute(where_clause, &inner)?);
     }
 
-    let mut lifted_hints = inner.hints;
-    lifted_hints.extend(
-        select
-            .hints
-            .iter()
-            .filter(|hint| is_join_method_hint(&hint.name))
-            .cloned(),
-    );
+    splice.computed_projection_dissolved |=
+        inner.computed_projection_dissolved || !projection_eliminable;
     splice.dissolved.extend(inner.dissolved);
     splice.dissolved.push(Dissolved {
         alias: alias.to_owned(),
         fields,
+        hidden_qualifiers: inner.visible.clone(),
     });
     splice.lifted.extend(lifted);
-    splice.hints.extend(lifted_hints);
     splice.visible.extend(inner.visible);
     Some(JoinNode::Join(Box::new(spliced_from)))
-}
-
-fn is_join_method_hint(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "merge_join"
-            | "tidb_smj"
-            | "no_merge_join"
-            | "hash_join"
-            | "tidb_hj"
-            | "inl_join"
-            | "tidb_inlj"
-            | "inl_hash_join"
-            | "inl_merge_join"
-    )
 }
 
 /// Every leaf of a spliced subtree, in order.
@@ -1146,7 +1231,7 @@ fn shape_of(expr: &Expr) -> ProjectionInlineExpr {
 }
 
 /// Go `unFoldableFunctions` (`pkg/expression/function_traits.go:48`).
-pub(crate) fn is_unfoldable(name: &str) -> bool {
+pub(super) fn is_unfoldable(name: &str) -> bool {
     matches!(
         name,
         "sysdate"
@@ -1171,7 +1256,7 @@ pub(crate) fn is_unfoldable(name: &str) -> bool {
 }
 
 /// Go `mutableEffectsFunctions` (`pkg/expression/function_traits.go:224`).
-pub(crate) fn is_mutable_effects(name: &str) -> bool {
+pub(super) fn is_mutable_effects(name: &str) -> bool {
     matches!(
         name,
         "now"

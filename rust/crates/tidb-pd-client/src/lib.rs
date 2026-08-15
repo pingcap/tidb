@@ -15,8 +15,8 @@ mod security;
 mod tso;
 
 pub use client::{
-    is_unimplemented, PdClient, BATCH_SCAN_REGIONS_PATH, GET_GC_STATE_PATH, GET_MEMBERS_PATH,
-    GET_PREV_REGION_PATH, GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH,
+    is_unimplemented, PdClient, PdTimestampFuture, BATCH_SCAN_REGIONS_PATH, GET_GC_STATE_PATH,
+    GET_MEMBERS_PATH, GET_PREV_REGION_PATH, GET_REGION_BY_ID_PATH, GET_REGION_PATH, GET_STORE_PATH,
     SCAN_REGIONS_PATH, TSO_PATH,
 };
 pub use engine::{is_tiflash, is_tiflash_http_response, is_tiflash_write_http_response};

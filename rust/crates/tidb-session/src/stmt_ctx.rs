@@ -100,6 +100,71 @@ impl Session {
         (env, resolved_concurrency("tidb_hash_join_concurrency"))
     }
 
+    /// The expression context used by an immutable prepared PointGet plan.
+    ///
+    /// That cache admits only direct projections of stored columns. Row
+    /// decoding can therefore consult only the session zone and SELECT's
+    /// origin-default date flags; planner settings, sequences, user values,
+    /// clocks, globals, and expression state cannot affect the result.
+    pub(crate) fn prepared_point_get_context(
+        &self,
+    ) -> tidb_executor::kv_table::PreparedPointGetDecodeContext {
+        let mode = self.vars.get_system("sql_mode").unwrap_or_default();
+        let allow_invalid_dates = mode
+            .split(',')
+            .any(|part| part.trim().eq_ignore_ascii_case("ALLOW_INVALID_DATES"));
+        tidb_executor::kv_table::PreparedPointGetDecodeContext::for_query(
+            allow_invalid_dates,
+            self.session_time_zone(),
+        )
+    }
+
+    /// Captures the policy a row result keeps after its statement finishes.
+    ///
+    /// Go retains the memory tracker and chunk bounds from the statement's
+    /// existing context. This session currently materializes rows before the
+    /// wire layer takes ownership, so refresh only the session-memory policy
+    /// and create the result's statement handle here. Constructing a complete
+    /// `StmtContext` would also snapshot planner, expression, sequence, and
+    /// user state that result materialization never reads.
+    pub(crate) fn result_materialization_authority(&self) -> crate::ResultMaterializationAuthority {
+        let quota = self
+            .vars
+            .get_system("tidb_mem_quota_query")
+            .ok()
+            .and_then(|value| value.parse::<i64>().ok())
+            .unwrap_or(tidb_util::memory::DEF_MEM_QUOTA_QUERY);
+        let oom_action = tidb_executor::OomAction::parse(
+            &self
+                .vars
+                .get_global("tidb_mem_oom_action")
+                .unwrap_or_default(),
+        );
+        let tmp_storage_on_oom = {
+            let value = self
+                .vars
+                .get_global("tidb_enable_tmp_storage_on_oom")
+                .unwrap_or_default();
+            !(value.eq_ignore_ascii_case("off") || value == "0")
+        };
+        self.session_memory
+            .configure(quota, oom_action, tmp_storage_on_oom);
+        let memory = self.session_memory.statement();
+        let init_chunk_size = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_INIT_CHUNK_SIZE)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(32);
+        let max_chunk_size = self
+            .vars
+            .get_system(tidb_vardef::tidb_vars::TIDB_MAX_CHUNK_SIZE)
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(1024);
+        crate::ResultMaterializationAuthority::new(memory, init_chunk_size, max_chunk_size)
+    }
+
     /// Go `timeutil.ParseTimeZone`: `SYSTEM` is the host zone, a named zone
     /// comes from the zone database, and a `+HH:MM`/`-HH:MM` string is a
     /// fixed offset bounded to `[-12:59, +14:00]`.
@@ -400,6 +465,12 @@ impl Session {
             .ok()
             .and_then(|value| value.parse::<i32>().ok())
             .unwrap_or(tidb_vardef::defaults::DEF_TIDB_OPT_JOIN_REORDER_THRESHOLD as i32);
+        let ordering_index_selectivity_ratio = self
+            .vars
+            .get_system("tidb_opt_ordering_index_selectivity_ratio")
+            .ok()
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(0.01);
         // Go `SessionVars.TiDBOptJoinReorderThroughProj`: whether the join
         // group may absorb the relations under a `Projection`. Shipped `OFF`.
         let join_reorder_through_proj = matches!(
@@ -569,6 +640,7 @@ impl Session {
                 .with_date_modes(date_modes)
                 .with_cte_max_recursion_depth(cte_depth)
                 .with_join_reorder_threshold(join_reorder_threshold)
+                .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
                 .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
                 .with_optimizer_cost_env(optimizer_cost_env.clone(), hash_join_concurrency)
                 .with_join_reorder_through_proj(join_reorder_through_proj)
@@ -662,6 +734,7 @@ impl Session {
         .with_allow_remove_auto_inc(self.allow_remove_auto_inc())
         .with_cte_max_recursion_depth(cte_depth)
         .with_join_reorder_threshold(join_reorder_threshold)
+        .with_ordering_index_selectivity_ratio(ordering_index_selectivity_ratio)
         .with_optimizer_fix_control(self.vars.optimizer_fix_control().clone())
         .with_optimizer_cost_env(optimizer_cost_env, hash_join_concurrency)
         .with_join_reorder_through_proj(join_reorder_through_proj)

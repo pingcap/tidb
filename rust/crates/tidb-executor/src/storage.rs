@@ -38,6 +38,7 @@
 //! | [`set`](TableStorage::set) | [`Mutator::set`] | `kv.Mutator.Set` |
 //! | [`delete`](TableStorage::delete) | [`Mutator::delete`] | `kv.Mutator.Delete` |
 //! | [`iter`](TableStorage::iter) | [`Retriever::iter`] | `kv.Retriever.Iter` |
+//! | [`iter_reverse`](TableStorage::iter_reverse) | [`Retriever::iter_reverse`] | `kv.Retriever.IterReverse` |
 //!
 //! [`get`](TableStorage::get) returns the value bytes rather than the source
 //! `ValueEntry`, whose `commit_ts` this tier always reports as `0` and no
@@ -213,6 +214,29 @@ pub trait TableStorage: fmt::Debug + Send {
         upper_bound: Option<&Key>,
     ) -> Result<Box<dyn StorageIterator>, StorageError>;
 
+    /// Iterates `[lower_bound, upper_bound)` in descending key order, Go
+    /// `kv.Retriever.IterReverse`. `upper_bound` is exclusive.
+    ///
+    /// Backends without a native reverse cursor retain correctness by
+    /// materializing the bounded forward range. Cluster storage uses this
+    /// fallback initially; in-memory storage overrides it with the native
+    /// [`Retriever::iter_reverse`] path.
+    fn iter_reverse(
+        &mut self,
+        upper_bound: Option<&Key>,
+        lower_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        let mut forward = self.iter(lower_bound, upper_bound)?;
+        let mut entries = Vec::new();
+        while forward.valid() {
+            entries.push((forward.key().clone(), forward.value().to_vec()));
+            forward.next()?;
+        }
+        forward.close();
+        entries.reverse();
+        Ok(Box::new(MaterializedStorageIterator::new(entries)))
+    }
+
     /// Optionally serves a base-table scan remotely, with the predicate, the
     /// row cap and the column projection evaluated at the backend.
     ///
@@ -243,6 +267,53 @@ pub trait TableStorage: fmt::Debug + Send {
 impl Clone for Box<dyn TableStorage> {
     fn clone(&self) -> Self {
         self.clone_box()
+    }
+}
+
+/// An owned cursor used by the correctness-first reverse fallback above.
+struct MaterializedStorageIterator {
+    entries: Vec<(Key, Vec<u8>)>,
+    position: usize,
+    empty_key: Key,
+}
+
+impl MaterializedStorageIterator {
+    fn new(entries: Vec<(Key, Vec<u8>)>) -> Self {
+        Self {
+            entries,
+            position: 0,
+            empty_key: Key::default(),
+        }
+    }
+}
+
+impl StorageIterator for MaterializedStorageIterator {
+    fn valid(&self) -> bool {
+        self.position < self.entries.len()
+    }
+
+    fn key(&self) -> &Key {
+        self.entries
+            .get(self.position)
+            .map_or(&self.empty_key, |(key, _)| key)
+    }
+
+    fn value(&self) -> &[u8] {
+        self.entries
+            .get(self.position)
+            .map_or(&[], |(_, value)| value.as_slice())
+    }
+
+    fn next(&mut self) -> Result<(), StorageError> {
+        if !self.valid() {
+            return Err(StorageError::InvalidIterator);
+        }
+        self.position += 1;
+        Ok(())
+    }
+
+    fn close(&mut self) {
+        self.position = self.entries.len();
     }
 }
 
@@ -287,6 +358,17 @@ impl TableStorage for MemTableStorage {
     ) -> Result<Box<dyn StorageIterator>, StorageError> {
         note_storage_op(|ops| ops.scans += 1);
         Retriever::iter(&mut self.inner, start, upper_bound)
+            .map(|iterator| Box::new(iterator) as Box<dyn StorageIterator>)
+            .map_err(StorageError::from)
+    }
+
+    fn iter_reverse(
+        &mut self,
+        upper_bound: Option<&Key>,
+        lower_bound: Option<&Key>,
+    ) -> Result<Box<dyn StorageIterator>, StorageError> {
+        note_storage_op(|ops| ops.scans += 1);
+        Retriever::iter_reverse(&mut self.inner, upper_bound, lower_bound)
             .map(|iterator| Box::new(iterator) as Box<dyn StorageIterator>)
             .map_err(StorageError::from)
     }

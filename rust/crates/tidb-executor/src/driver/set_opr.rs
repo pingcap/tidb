@@ -101,6 +101,56 @@ pub fn run_set_opr_stmt(
     run_set_opr_traced(stmt, catalog, current_db, ctx, None)
 }
 
+/// Plans a set operation and returns only its merged result-column metadata.
+///
+/// Go derives a scalar subquery's type from the query plan schema. In
+/// particular, it does not execute every UNION branch merely to discover the
+/// merged type. Keep that boundary separate from [`run_set_opr_stmt`], whose
+/// materialized rows are required by ordinary execution.
+pub(crate) fn plan_set_opr_meta_stmt(
+    stmt: &tidb_ast::SetOprStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<Vec<(String, FieldType)>, DriverError> {
+    validate_set_opr_usage(stmt)?;
+    if stmt.with.is_some() {
+        return Err(DriverError::unsupported(
+            "plan-only metadata for a set operation with CTEs is not supported yet",
+        ));
+    }
+
+    let mut terms = Vec::with_capacity(stmt.terms.len());
+    for term in &stmt.terms {
+        let columns = match &term.body {
+            tidb_ast::SetOprTermBody::Select(select) => {
+                plan_select_meta_stmt(select, catalog, current_db, ctx)?
+            }
+            tidb_ast::SetOprTermBody::Nested(nested) => {
+                plan_set_opr_meta_stmt(nested, catalog, current_db, ctx)?
+            }
+        };
+        if terms
+            .first()
+            .is_some_and(|first: &Vec<(String, FieldType)>| first.len() != columns.len())
+        {
+            return Err(DriverError::WrongNumberOfColumnsInSelect);
+        }
+        terms.push(columns);
+    }
+
+    let mut columns = terms
+        .first()
+        .cloned()
+        .ok_or(DriverError::unsupported("an empty set operation"))?;
+    for (index, (_, merged)) in columns.iter_mut().enumerate() {
+        for term in &terms[1..] {
+            *merged = union_join_field_type(merged, &term[index].1);
+        }
+    }
+    Ok(columns)
+}
+
 /// The direct `UNION` forms this trace can describe exactly. Go's
 /// `buildUnion` splits the direct operand list into a DISTINCT prefix and an
 /// optional ALL suffix; the prefix becomes `HashAgg(Union(...))`, then a

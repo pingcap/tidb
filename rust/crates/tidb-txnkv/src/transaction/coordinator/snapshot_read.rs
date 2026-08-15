@@ -23,18 +23,20 @@ use tidb_proto::{
     KvrpcGetRequest, KvrpcGetResponse, KvrpcKeyError, KvrpcScanRequest, KvrpcScanResponse,
 };
 
+use crate::gc_state::GcStateCache;
 use crate::lock::{
     decode_lock_observation, resolve_optimistic_locks, LockRecoveryClient, TimestampSource,
 };
-use crate::region::RegionRecoveryLoader;
+use crate::region::{RegionBackoffBudget, RegionRecoveryLoader};
 use crate::rpc::{TransactionBatchPublication, TransactionBatchResponse, UnaryCallContext};
+use crate::SharedReadRuntime;
 
 use super::super::command_client::{PublishedCommand, TransactionCommandClient};
 use super::super::region_batches::{point_route, RegionKeyBatch};
 use super::super::state::{CoordinatorState, SnapshotReadReceipt};
 use super::{
-    alive_retry_delay, wait_with_call, OptimisticCoordinatorError, RealOptimisticTransaction,
-    RecoveryPhase, MAX_LOCK_ATTEMPTS,
+    alive_retry_delay, recover_region_error_with, wait_with_call, OptimisticCoordinatorError,
+    RealOptimisticTransaction, RecoveryPhase, MAX_LOCK_ATTEMPTS,
 };
 
 /// Pairs one Scan page may return. client-go's `scanBatchSize`.
@@ -55,6 +57,153 @@ pub struct SnapshotGetResult {
 
 /// Key/value pairs one snapshot scan returned, in key order.
 pub type SnapshotScanPairs = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// Runs one MaxTS point snapshot without constructing transaction state.
+///
+/// The caller supplies the thread-local runtime and lock timestamp authority;
+/// this function owns only the per-snapshot recovery sets and backoff budget.
+/// Ordinary transactions call the same lower helper with their retained sets.
+pub(super) fn direct_snapshot_get<C, L, T>(
+    runtime: &SharedReadRuntime<C, L>,
+    timestamps: &T,
+    gc_state: &GcStateCache,
+    key: &[u8],
+    call: &UnaryCallContext,
+) -> Result<SnapshotGetResult, OptimisticCoordinatorError>
+where
+    C: TransactionCommandClient + LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource,
+{
+    let mut forward_backoff = RegionBackoffBudget::campaign_default();
+    let mut resolved_locks = crate::lock::SnapshotLockSet::default();
+    snapshot_get_with(
+        runtime,
+        timestamps,
+        u64::MAX,
+        gc_state,
+        &mut forward_backoff,
+        &mut resolved_locks,
+        key,
+        call,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn snapshot_get_with<C, L, T>(
+    runtime: &SharedReadRuntime<C, L>,
+    timestamps: &T,
+    start_ts: u64,
+    gc_state: &GcStateCache,
+    forward_backoff: &mut RegionBackoffBudget,
+    resolved_locks: &mut crate::lock::SnapshotLockSet,
+    key: &[u8],
+    call: &UnaryCallContext,
+) -> Result<SnapshotGetResult, OptimisticCoordinatorError>
+where
+    C: TransactionCommandClient + LockRecoveryClient,
+    L: RegionRecoveryLoader,
+    T: TimestampSource,
+{
+    if key.is_empty() {
+        return Err(OptimisticCoordinatorError::SnapshotGet(
+            "encoded key is empty".to_owned(),
+        ));
+    }
+    let mut lock_attempts = 0usize;
+    loop {
+        let route = point_route(runtime, key)
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        // Go `ClientHelper.SendReqCtx` stamps both sets immediately before
+        // every send, so a lock this snapshot classified is not met again.
+        let mut context = route.context().clone();
+        resolved_locks.stamp(&mut context);
+        let request = KvrpcGetRequest {
+            key: key.to_vec(),
+            version: start_ts,
+            need_commit_ts: true,
+            ..KvrpcGetRequest::default()
+        };
+        let response = begin_get(runtime, &route, &context, &request, call)?;
+        if let Some(region_error) = response.response.region_error.as_ref() {
+            recover_region_error_with(
+                runtime,
+                forward_backoff,
+                region_error,
+                route.attempt(),
+                call,
+            )
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+            continue;
+        }
+        if let Some(key_error) = response.response.error.as_ref() {
+            if let Some(lock_info) = key_error.locked.as_ref() {
+                let locks = decode_lock_observation(lock_info)
+                    .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+                let recovery = resolve_optimistic_locks(
+                    runtime, &locks, start_ts, &context, call, timestamps, true,
+                )
+                .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+                resolved_locks.absorb(&recovery);
+                if lock_attempts >= MAX_LOCK_ATTEMPTS {
+                    return Err(OptimisticCoordinatorError::SnapshotGet(
+                        "snapshot lock retry budget exhausted".to_owned(),
+                    ));
+                }
+                if recovery.is_alive() {
+                    wait_with_call(call, alive_retry_delay(recovery.ttl)).map_err(|error| {
+                        OptimisticCoordinatorError::SnapshotGet(error.to_string())
+                    })?;
+                }
+                lock_attempts += 1;
+                continue;
+            }
+            return Err(OptimisticCoordinatorError::SnapshotGet(format!(
+                "TiKV key error: {key_error:?}"
+            )));
+        }
+        gc_state
+            .check_visibility(start_ts)
+            .map_err(OptimisticCoordinatorError::Visibility)?;
+        return Ok(SnapshotGetResult {
+            start_ts,
+            value: if response.response.not_found {
+                None
+            } else {
+                Some(response.response.value)
+            },
+            region: route.region(),
+            publication: response.publication,
+        });
+    }
+}
+
+fn begin_get<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    route: &RegionKeyBatch,
+    context: &tidb_proto::KvrpcContext,
+    request: &KvrpcGetRequest,
+    call: &UnaryCallContext,
+) -> Result<TransactionBatchResponse<KvrpcGetResponse>, OptimisticCoordinatorError>
+where
+    C: TransactionCommandClient,
+    L: RegionRecoveryLoader,
+{
+    let published = runtime
+        .client()
+        .try_borrow_mut()
+        .map_err(|_| {
+            OptimisticCoordinatorError::SnapshotGet("TiKV client is already borrowed".to_owned())
+        })?
+        .publish_transaction_get(route.address(), request, context, call);
+    match published {
+        PublishedCommand::Response(response) => Ok(response),
+        PublishedCommand::BeforePublication(error)
+        | PublishedCommand::AfterPublication { error, .. } => {
+            Err(OptimisticCoordinatorError::SnapshotGet(error))
+        }
+    }
+}
 
 impl<C, L, T> RealOptimisticTransaction<C, L, T>
 where
@@ -109,7 +258,7 @@ where
                 need_commit_ts: true,
                 ..KvrpcGetRequest::default()
             };
-            let response = self.begin_get(&route, &context, &request, call)?;
+            let response = begin_get(&self.runtime, &route, &context, &request, call)?;
             if let Some(region_error) = response.response.region_error.as_ref() {
                 self.recover_region_error(
                     RecoveryPhase::Forward,
@@ -332,32 +481,6 @@ where
             }
         }
         Ok(pairs)
-    }
-
-    fn begin_get(
-        &self,
-        route: &RegionKeyBatch,
-        context: &tidb_proto::KvrpcContext,
-        request: &KvrpcGetRequest,
-        call: &UnaryCallContext,
-    ) -> Result<TransactionBatchResponse<KvrpcGetResponse>, OptimisticCoordinatorError> {
-        let published = self
-            .runtime
-            .client()
-            .try_borrow_mut()
-            .map_err(|_| {
-                OptimisticCoordinatorError::SnapshotGet(
-                    "TiKV client is already borrowed".to_owned(),
-                )
-            })?
-            .publish_transaction_get(route.address(), request, context, call);
-        match published {
-            PublishedCommand::Response(response) => Ok(response),
-            PublishedCommand::BeforePublication(error)
-            | PublishedCommand::AfterPublication { error, .. } => {
-                Err(OptimisticCoordinatorError::SnapshotGet(error))
-            }
-        }
     }
 
     fn begin_scan(

@@ -452,31 +452,46 @@ where
             RecoveryPhase::Secondary => &mut self.secondary_backoff,
             RecoveryPhase::Cleanup => &mut self.cleanup_backoff,
         };
-        let disposition = self
-            .runtime
-            .region_cache_handle()
-            .on_region_error(error, attempt.clone(), backoff)
-            .map_err(|error| TransactionCause::Region {
-                detail: format!("RegionCache recovery lifecycle failed: {error}"),
-            })?
-            .map_err(|error| TransactionCause::Region {
-                detail: format!("RegionCache rejected region error: {error}"),
-            })?;
-        let delay = match disposition {
-            RegionErrorDisposition::RetryRoute { delay, .. }
-            | RegionErrorDisposition::RetrySelector { delay, .. }
-            | RegionErrorDisposition::RebuildRanges { delay, .. } => delay,
-            RegionErrorDisposition::ReturnRegionError => {
-                return Err(TransactionCause::Region {
-                    detail: format!("TiKV returned non-retryable region error: {error:?}"),
-                });
-            }
-            RegionErrorDisposition::Terminal(terminal) => {
-                return Err(terminal_region_cause(terminal));
-            }
-        };
-        wait_with_call(call, delay)
+        recover_region_error_with(&self.runtime, backoff, error, attempt, call)
     }
+}
+
+/// Applies one region error to the shared cache and one caller-owned backoff
+/// budget. Snapshot reads use this both inside a transaction and from the
+/// transaction-free MaxTS point path, so recovery semantics cannot drift.
+pub(super) fn recover_region_error_with<C, L>(
+    runtime: &SharedReadRuntime<C, L>,
+    backoff: &mut RegionBackoffBudget,
+    error: &tidb_proto::RegionError,
+    attempt: &crate::region::RegionAttempt,
+    call: &UnaryCallContext,
+) -> Result<(), TransactionCause>
+where
+    L: RegionRecoveryLoader,
+{
+    let disposition = runtime
+        .region_cache_handle()
+        .on_region_error(error, attempt.clone(), backoff)
+        .map_err(|error| TransactionCause::Region {
+            detail: format!("RegionCache recovery lifecycle failed: {error}"),
+        })?
+        .map_err(|error| TransactionCause::Region {
+            detail: format!("RegionCache rejected region error: {error}"),
+        })?;
+    let delay = match disposition {
+        RegionErrorDisposition::RetryRoute { delay, .. }
+        | RegionErrorDisposition::RetrySelector { delay, .. }
+        | RegionErrorDisposition::RebuildRanges { delay, .. } => delay,
+        RegionErrorDisposition::ReturnRegionError => {
+            return Err(TransactionCause::Region {
+                detail: format!("TiKV returned non-retryable region error: {error:?}"),
+            });
+        }
+        RegionErrorDisposition::Terminal(terminal) => {
+            return Err(terminal_region_cause(terminal));
+        }
+    };
+    wait_with_call(call, delay)
 }
 
 fn terminal_region_cause(terminal: RegionTerminalError) -> TransactionCause {

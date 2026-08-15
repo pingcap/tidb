@@ -81,6 +81,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use crate::predicate_pushdown::PushedScanFilter;
+use crate::remote_scan::{PushdownPartialAggregate, PushdownTopN};
 use crate::StmtContext;
 
 /// A base-table source that can take over work from the operators above it.
@@ -89,6 +90,21 @@ use crate::StmtContext;
 /// particular the staged-row rule that applies to all of them -- are the
 /// module doc above.
 pub trait TableAccess {
+    /// Records the physical scan estimate selected by the access-path coster.
+    /// It changes no rows and exists so later operator negotiation can make
+    /// the same partial/final aggregation choice as the optimizer.
+    fn accept_scan_estimate(&mut self, rows: f64) {
+        let _ = rows;
+    }
+
+    /// Offers the scan a real TiKV partial aggregation. Returning `true`
+    /// changes the source schema to the one partial-result column and promises
+    /// that a local fallback computes exactly the same partial rows.
+    fn accept_partial_aggregate(&mut self, aggregate: &PushdownPartialAggregate) -> bool {
+        let _ = aggregate;
+        false
+    }
+
     /// Offers `filter` to this source, as Go's predicate push-down offers a
     /// conjunct to the node below it.
     ///
@@ -101,6 +117,26 @@ pub trait TableAccess {
     /// See [`crate::predicate_pushdown`] for the split rule and the reasoning.
     fn accept_scan_filter(&mut self, filter: &PushedScanFilter, ctx: &StmtContext) -> bool {
         let _ = (filter, ctx);
+        false
+    }
+
+    /// Offers a projection that must run only after an already accepted scan
+    /// filter. `keep` indexes the scan row the filter sees, in final output
+    /// order.
+    ///
+    /// Returning `true` promises two equivalent paths: a local scan filters
+    /// the wider row before projecting it, while a remote scan returns the
+    /// narrow row only when every predicate was evaluated in the coprocessor.
+    /// The source schema must immediately describe the projected row.
+    fn accept_post_filter_projection(&mut self, keep: &[usize]) -> bool {
+        let _ = keep;
+        false
+    }
+
+    /// Offers a coprocessor TopN hint. The caller keeps an equivalent local
+    /// TopN, so refusal changes only where rows are reduced, never the answer.
+    fn accept_remote_topn(&mut self, topn: &PushdownTopN) -> bool {
+        let _ = topn;
         false
     }
 
@@ -119,6 +155,15 @@ pub trait TableAccess {
     /// from.
     fn accept_scan_limit(&mut self, cap: u64) -> bool {
         let _ = cap;
+        false
+    }
+
+    /// Offers Go's `PhysicalIndexLookUpReader.PushedLimit` to an ordered
+    /// non-covering index lookup. Unlike a cop scan cap, the SQL offset is
+    /// consumed from the index handle stream before table lookup tasks are
+    /// built, and only `count` table rows may be requested afterward.
+    fn accept_embedded_lookup_limit(&mut self, offset: u64, count: u64) -> bool {
+        let _ = (offset, count);
         false
     }
 
@@ -170,8 +215,9 @@ pub trait TableAccess {
     }
 
     /// Offers this source the chance to emit only the columns at `keep`
-    /// (offsets into its current output row, ascending and unique), as Go's
-    /// column pruning narrows a `DataSource`'s schema.
+    /// (offsets into its current output row, in the requested output order),
+    /// as Go's column pruning or cop projection narrows a `DataSource`'s
+    /// schema.
     ///
     /// Returning `true` is a promise the driver relies on to renumber the
     /// `FROM` scope: from the next `open` on, every row this source emits
@@ -202,7 +248,8 @@ pub trait TableAccess {
     ///
     /// A source with only one order to give ignores this and stays correct,
     /// which is why the default answers `false`.
-    fn accept_keep_order(&mut self) -> bool {
+    fn accept_keep_order(&mut self, descending: bool) -> bool {
+        let _ = descending;
         false
     }
 }

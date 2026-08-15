@@ -62,8 +62,8 @@ use crate::cardinality::row_size::RowSizeColumn;
 use crate::cost_usage::{CostVer2, PlanCostOption};
 use crate::physical_table_reader::StoreType;
 use crate::plan_cost_ver2::{
-    self as ver2, CostFactorVars, CostSessionOpts, HashJoinInput, IndexJoinInput, IndexLookUpInput,
-    NetOwner, TableScanInput, TableScanPenaltyInput, Ver2Factors,
+    self as ver2, CostFactorVars, CostSessionOpts, HashJoinInput, IndexJoinInput, NetOwner,
+    TableScanInput, TableScanPenaltyInput, Ver2Factors,
 };
 use crate::task_type::TaskType;
 
@@ -130,19 +130,19 @@ pub enum ReaderKind {
 /// than approximated.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Candidate {
-    /// An access-path subtree already priced by its owning scan/reader model.
+    /// A complete child task costed by the lower physical-planning layer.
     ///
-    /// The join search needs the subtree's total, cardinality, width, and
-    /// range count. Keeping those exact values avoids duplicating the access
-    /// planner's table/index/lookup branching in this crate.
-    CostedAccess {
-        /// `getCardinality(reader)`.
+    /// The Rust driver already applies Go's reader formulas while choosing an
+    /// access path. Carrying that answer as a leaf lets the join search price
+    /// the whole tree without re-deriving or double-counting the reader.
+    Fixed {
+        /// `getCardinality(p)` at the top of the task.
         rows: f64,
-        /// `getAvgRowSize(reader.StatsInfo(), reader.Schema().Columns)`.
+        /// `getAvgRowSize(p.StatsInfo(), p.Schema().Columns)`.
         row_size: f64,
-        /// `GetPlanCostVer2(reader)`.
+        /// The task's complete `PlanCostVer2` value.
         cost: f64,
-        /// `getNumberOfRanges(reader)`.
+        /// `getNumberOfRanges(p)`.
         num_ranges: usize,
     },
     /// `PhysicalTableScan` on TiKV.
@@ -194,6 +194,31 @@ pub enum Candidate {
         /// One flag per output expression: whether it is a scalar function.
         exprs: Vec<bool>,
     },
+    /// `PhysicalStreamAgg`.
+    StreamAgg {
+        /// The single child.
+        child: Box<Candidate>,
+        /// `getCardinality(p.Children()[0])`.
+        input_rows: f64,
+        /// `getCardinality(p)`.
+        output_rows: f64,
+        /// This node's output row size.
+        row_size: RowSize,
+        /// `len(p.AggFuncs)`.
+        num_agg_funcs: usize,
+        /// One flag per group item: whether it is a scalar function.
+        group_items: Vec<bool>,
+    },
+    /// `PhysicalHashAgg`.
+    HashAgg {
+        /// The single child.
+        child: Box<Candidate>,
+        /// The rows, output width, aggregate count and ordering fact read by
+        /// `getPlanCostVer24PhysicalHashAgg`.
+        input: ver2::HashAggInput,
+        /// One flag per group item: whether it is a scalar function.
+        group_items: Vec<bool>,
+    },
     /// `PhysicalIndexReader` / `PhysicalTableReader`: the root-task boundary,
     /// below which the child is costed with the coprocessor's factors.
     Reader {
@@ -205,17 +230,6 @@ pub enum Candidate {
         row_size: RowSize,
         /// Which reader this is.
         kind: ReaderKind,
-    },
-    /// `PhysicalIndexLookUpReader`: an index scan followed by a row-handle
-    /// table scan. Both children run in TiKV; the lookup reader itself runs
-    /// at the root and charges the batched double read.
-    IndexLookup {
-        /// `p.IndexPlan`.
-        index: Box<Candidate>,
-        /// `p.TablePlan`.
-        table: Box<Candidate>,
-        /// The reader cardinalities, transfer widths, and pushed-limit state.
-        input: IndexLookUpInput,
     },
     /// `PhysicalHashJoin` on a root task.
     HashJoin {
@@ -241,6 +255,10 @@ pub enum Candidate {
         /// Everything `getIndexJoinCostVer24PhysicalIndexJoin` reads except
         /// `num_ranges`, which [`number_of_ranges`] takes off `probe`.
         input: IndexJoinInput,
+        /// The logical join's output cardinality. The physical probe task can
+        /// have a different row count when AvgInnerRowCnt crosses an
+        /// aggregation, so it cannot define the parent node's statistics.
+        output_rows: f64,
         /// `p.LeftConditions`.
         build_filters: Vec<bool>,
         /// `p.RightConditions`.
@@ -322,17 +340,15 @@ impl CostedNode {
 #[must_use]
 pub fn number_of_ranges(node: &Candidate) -> usize {
     match node {
-        Candidate::CostedAccess { num_ranges, .. } => *num_ranges,
-        Candidate::TableScan { num_ranges, .. } | Candidate::IndexScan { num_ranges, .. } => {
-            *num_ranges
-        }
+        Candidate::Fixed { num_ranges, .. }
+        | Candidate::TableScan { num_ranges, .. }
+        | Candidate::IndexScan { num_ranges, .. } => *num_ranges,
         Candidate::Reader { child, .. }
         | Candidate::Selection { child, .. }
         | Candidate::Projection { child, .. }
+        | Candidate::StreamAgg { child, .. }
+        | Candidate::HashAgg { child, .. }
         | Candidate::Sort { child, .. } => number_of_ranges(child),
-        Candidate::IndexLookup { index, table, .. } => {
-            number_of_ranges(index) + number_of_ranges(table)
-        }
         Candidate::HashJoin { build, probe, .. } | Candidate::IndexJoin { build, probe, .. } => {
             number_of_ranges(build) + number_of_ranges(probe)
         }
@@ -363,12 +379,17 @@ pub fn evaluate_traced(
     option: Option<&PlanCostOption>,
 ) -> CostedNode {
     match node {
-        Candidate::CostedAccess {
+        Candidate::Fixed {
             rows,
             row_size,
             cost,
             ..
-        } => leaf(*rows, *row_size, crate::cost_usage::fixed_cost_ver2(*cost)),
+        } => CostedNode {
+            rows: *rows,
+            row_size: *row_size,
+            cost: crate::cost_usage::fixed_cost_ver2(*cost),
+            children: Vec::new(),
+        },
         Candidate::TableScan {
             rows,
             row_size,
@@ -458,6 +479,57 @@ pub fn evaluate_traced(
                 children: vec![child],
             }
         }
+        Candidate::StreamAgg {
+            child,
+            input_rows,
+            output_rows,
+            row_size,
+            num_agg_funcs,
+            group_items,
+        } => {
+            let child = evaluate_traced(child, env, task, option);
+            let row_size = row_size.resolve();
+            let cost = ver2::stream_agg_cost(
+                option,
+                *input_rows,
+                *num_agg_funcs,
+                group_items,
+                (env.factors.task_cpu(task), env.cost_factors.stream_agg),
+                &child.cost,
+            );
+            CostedNode {
+                rows: *output_rows,
+                row_size,
+                cost,
+                children: vec![child],
+            }
+        }
+        Candidate::HashAgg {
+            child,
+            input,
+            group_items,
+        } => {
+            let child = evaluate_traced(child, env, task, option);
+            let cost = ver2::hash_agg_cost(
+                option,
+                *input,
+                group_items,
+                (
+                    env.factors.task_cpu(task),
+                    env.factors.task_mem(task),
+                    env.cost_factors.hash_agg,
+                ),
+                env.session.hashagg_final_concurrency,
+                task,
+                &child.cost,
+            );
+            CostedNode {
+                rows: input.output_rows,
+                row_size: input.output_row_size,
+                cost,
+                children: vec![child],
+            }
+        }
         Candidate::Reader {
             child,
             rows,
@@ -489,28 +561,6 @@ pub fn evaluate_traced(
                 row_size,
                 cost,
                 children: vec![child],
-            }
-        }
-        Candidate::IndexLookup {
-            index,
-            table,
-            input,
-        } => {
-            let index = evaluate_traced(index, env, TaskType::CopSingleRead, option);
-            let table = evaluate_traced(table, env, TaskType::CopSingleRead, option);
-            let cost = ver2::index_lookup_reader_cost(
-                option,
-                *input,
-                (&index.cost, &table.cost),
-                (&env.factors, &env.cost_factors),
-                &env.session,
-                task,
-            );
-            CostedNode {
-                rows: input.table_rows,
-                row_size: table.row_size,
-                cost,
-                children: vec![index, table],
             }
         }
         Candidate::HashJoin {
@@ -545,6 +595,7 @@ pub fn evaluate_traced(
             build,
             probe,
             input,
+            output_rows,
             build_filters,
             probe_filters,
         } => {
@@ -566,7 +617,7 @@ pub fn evaluate_traced(
                 (&build_costed.cost, &probe_costed.cost),
             );
             CostedNode {
-                rows: input.build_rows * input.probe_rows_one,
+                rows: *output_rows,
                 row_size: build_costed.row_size + probe_costed.row_size,
                 cost,
                 children: vec![build_costed, probe_costed],
@@ -660,21 +711,6 @@ mod tests {
 
     fn env() -> CostEnv {
         CostEnv::default()
-    }
-
-    #[test]
-    fn a_costed_access_path_preserves_its_owner_computed_total() {
-        let path = Candidate::CostedAccess {
-            rows: 12.5,
-            row_size: 48.0,
-            cost: 345.75,
-            num_ranges: 3,
-        };
-        let costed = evaluate(&path, &env(), TaskType::Root);
-        assert_eq!(costed.rows, 12.5);
-        assert_eq!(costed.row_size, 48.0);
-        assert_eq!(costed.est_cost(), 345.75);
-        assert_eq!(number_of_ranges(&path), 3);
     }
 
     /// `EXPLAIN` prints two decimals, so agreement is asserted at the printed
@@ -779,6 +815,7 @@ mod tests {
                 is_semi_join: false,
                 kind: IndexJoinKind::IndexHashJoin,
             },
+            output_rows: 10000.0,
             build_filters: Vec::new(),
             probe_filters: Vec::new(),
         };
@@ -803,51 +840,6 @@ mod tests {
         assert_prints(&costed.children[1].children[0], "317.07");
         // └─IndexRangeScan_56 10010.01 254.63
         assert_prints(&costed.children[1].children[0].children[0], "254.63");
-    }
-
-    /// The non-covering secondary-index probe printed by the accepted Go
-    /// wide-row case. Its cost is per outer row even though `EXPLAIN` prints
-    /// the totals after multiplying by 8000 outer rows.
-    #[test]
-    fn a_secondary_index_join_probe_costs_the_recorded_double_read() {
-        let index = Candidate::Selection {
-            child: Box::new(Candidate::IndexScan {
-                rows: 1.2512512512512513,
-                row_size: RowSize::Fixed(32.0),
-                index_id: Some(2),
-                num_ranges: 1,
-                desc: false,
-            }),
-            input_rows: 1.2512512512512513,
-            conditions: vec![true],
-        };
-        let table = Candidate::TableScan {
-            rows: 1.25,
-            row_size: RowSize::Fixed(72.0),
-            is_child_of_inl: Some(true),
-            has_full_range_scan: false,
-            penalty: TableScanPenaltyInput::default(),
-            num_ranges: 0,
-            desc: false,
-        };
-        let lookup = Candidate::IndexLookup {
-            index: Box::new(index),
-            table: Box::new(table),
-            input: IndexLookUpInput {
-                index_rows: 1.25,
-                table_rows: 1.25,
-                index_row_size: 16.25,
-                table_row_size: 24.375,
-                pushed_limit: None,
-                expected_cnt: f64::MAX,
-            },
-        };
-        let costed = evaluate(&lookup, &env(), TaskType::Root);
-
-        assert_prints(&costed, "2444.77");
-        assert_prints(&costed.children[0], "317.07");
-        assert_prints(&costed.children[1], "313.89");
-        assert_eq!(number_of_ranges(&lookup), 1);
     }
 
     /// The HASH-join candidate at the SAME decision site, which a
@@ -972,6 +964,7 @@ mod tests {
                 is_semi_join: false,
                 kind: IndexJoinKind::IndexJoin,
             },
+            output_rows: 2.0,
             build_filters: Vec::new(),
             probe_filters: Vec::new(),
         };

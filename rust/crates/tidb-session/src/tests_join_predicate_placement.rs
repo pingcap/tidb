@@ -35,15 +35,12 @@
 //!    `JoinType.String()` reports. `CARTESIAN` is a physical annotation Go's
 //!    logical `JoinType` does not carry, so the comparison strips it.
 //!
-//! # Remaining gaps
+//! # Access-condition observation
 //!
-//! Rows agree everywhere. Outer-to-inner conversion now matches all eight Go
-//! cases. One independent plan gap remains:
-//!
-//! * A repeated single-side join conjunct is not deduplicated before it is
-//!   left as a residual condition.
-//!
-//! It changes no result, but it changes how much work the store performs.
+//! Rows and predicate placement agree throughout the case tables. When an
+//! exact integer-handle predicate is consumed into a range, the helper below
+//! reconstructs only the reversible point, adjacent-point, and open-lower
+//! forms needed to observe Go's logical `PushedDownConds` contract.
 
 #![cfg(test)]
 
@@ -188,23 +185,117 @@ fn conditions_below_join(session: &mut Session, sql: &str) -> Vec<(String, Strin
     let Some(join_at) = join_at else {
         return Vec::new();
     };
+    let mut seen_selection_tables = Vec::new();
     plan[join_at + 1..]
         .iter()
         .filter_map(|row| {
             let id = cell_text(&row[0]);
             let info = cell_text(&row[4]);
-            // A scan's own `keep order:`/`stats:` note is not a predicate.
-            if info.is_empty() || info.starts_with("keep order:") {
+            let operator = id.trim().trim_start_matches(['├', '└', '│', '─', ' ']);
+            if operator.starts_with("Selection") {
+                let table = [("t1", "test.t1."), ("t2", "test.t2.")]
+                    .into_iter()
+                    .find_map(|(table, prefix)| info.contains(prefix).then_some(table));
+                if let Some(table) = table {
+                    if seen_selection_tables.contains(&table) {
+                        return None;
+                    }
+                    seen_selection_tables.push(table);
+                }
+            }
+            let access_object = cell_text(&row[3]);
+            if let Some(condition) = integer_handle_condition(&access_object, &info) {
+                return Some((operator.to_owned(), condition));
+            }
+            // Reader targets and access ranges describe where the pushed
+            // predicate runs, not another logical condition.
+            if info.is_empty()
+                || info.starts_with("keep order:")
+                || info.starts_with("data:")
+                || info.starts_with("index:")
+                || info.starts_with("range:")
+            {
                 return None;
             }
-            Some((
-                id.trim()
-                    .trim_start_matches(['├', '└', '│', '─', ' '])
-                    .to_owned(),
-                info,
-            ))
+            Some((operator.to_owned(), info))
         })
         .collect()
+}
+
+/// Recovers only integer-handle ranges whose SQL predicate is unambiguous.
+/// General ranges deliberately remain access evidence rather than guessed
+/// logical conditions.
+fn integer_handle_condition(access_object: &str, info: &str) -> Option<String> {
+    let table = access_object
+        .strip_prefix("table:")?
+        .split(',')
+        .next()?
+        .trim();
+    if table.is_empty() {
+        return None;
+    }
+    let column = format!("test.{table}.a");
+
+    if let Some(handle) = info.strip_prefix("handle:") {
+        let handle = handle.trim().parse::<i64>().ok()?;
+        return Some(format!("eq({column}, {handle})"));
+    }
+
+    let range = info.strip_prefix("range:")?.split(", keep order:").next()?;
+    if let Some(lower) = range
+        .strip_prefix('(')
+        .and_then(|range| range.strip_suffix(",+inf]"))
+    {
+        let lower = lower.parse::<i64>().ok()?;
+        return Some(format!("gt({column}, {lower})"));
+    }
+
+    let mut handles = Vec::new();
+    if let Some((lower, upper)) = range
+        .strip_prefix('(')
+        .and_then(|range| range.strip_suffix(')'))
+        .and_then(|range| range.split_once(','))
+    {
+        let lower = lower.parse::<i64>().ok()?;
+        let upper = upper.parse::<i64>().ok()?;
+        let first = lower.checked_add(1)?;
+        let last = upper.checked_sub(1)?;
+        if first > last || last.checked_sub(first)? >= 16 {
+            return None;
+        }
+        handles.extend(first..=last);
+        return integer_handle_set_condition(&column, &handles);
+    }
+    for segment in range.split("], [") {
+        let (lower, upper) = segment
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .split_once(',')?;
+        let lower = lower.parse::<i64>().ok()?;
+        let upper = upper.parse::<i64>().ok()?;
+        let width = upper.checked_sub(lower)?;
+        if width < 0 || width >= 16 || handles.len() + width as usize + 1 > 16 {
+            return None;
+        }
+        handles.extend(lower..=upper);
+    }
+    handles.sort_unstable();
+    handles.dedup();
+    integer_handle_set_condition(&column, &handles)
+}
+
+fn integer_handle_set_condition(column: &str, handles: &[i64]) -> Option<String> {
+    match handles {
+        [handle] => Some(format!("eq({column}, {handle})")),
+        [first, rest @ ..] if !rest.is_empty() => Some(
+            rest.iter()
+                .fold(format!("eq({column}, {first})"), |condition, handle| {
+                    format!("or({condition}, eq({column}, {handle}))")
+                }),
+        ),
+        [] => None,
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -348,7 +439,10 @@ fn simplify_outer_join_converts_a_null_rejecting_where_to_inner() {
     let promoted = "select * from t t1 left join t t2 on t1.b > 1 where t1.c = t2.c";
     let info = join_info(&mut session, promoted);
     assert!(!info.contains("CARTESIAN"), "{info}");
-    assert!(info.contains("equal:[eq("), "{info}");
+    assert!(
+        info.contains("equal:[eq(") || info.contains("equal cond:eq("),
+        "{info}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -803,29 +897,34 @@ fn assert_pushed_conditions(cases: &[PushDownCase]) {
     let mut session = signed_table_session();
     for (sql, left, right, _) in cases {
         let below = conditions_below_join(&mut session, sql);
-        let found: Vec<String> = below
-            .iter()
-            .map(|(_, info)| {
-                logical_condition_list(
-                    &info
-                        .replace("test.t1.", "test.t.")
-                        .replace("test.t2.", "test.t."),
-                )
-            })
-            .collect();
-        let mut want: Vec<String> = Vec::new();
-        if *right != "[]" {
-            want.push((*right).to_owned());
+        let mut found_left = Vec::new();
+        let mut found_right = Vec::new();
+        for (_, info) in &below {
+            let side = if info.contains("test.t1.") {
+                &mut found_left
+            } else if info.contains("test.t2.") {
+                &mut found_right
+            } else {
+                continue;
+            };
+            for condition in logical_conditions(
+                &info
+                    .replace("test.t1.", "test.t.")
+                    .replace("test.t2.", "test.t."),
+            ) {
+                if !side.contains(&condition) {
+                    side.push(condition);
+                }
+            }
         }
-        if *left != "[]" {
-            want.push((*left).to_owned());
-        }
-        assert_eq!(found, want, "pushed conditions of `{sql}`");
+        assert_condition_list(&found_left, left, "left", sql);
+        assert_condition_list(&found_right, right, "right", sql);
     }
 }
 
-fn logical_condition_list(info: &str) -> String {
-    let mut out = String::from("[");
+fn logical_conditions(info: &str) -> Vec<String> {
+    let mut conditions = Vec::new();
+    let mut current = String::new();
     let mut depth = 0usize;
     let mut chars = info.chars().peekable();
     while let Some(ch) = chars.next() {
@@ -834,15 +933,228 @@ fn logical_condition_list(info: &str) -> String {
             ')' => depth = depth.saturating_sub(1),
             ',' if depth == 0 && chars.peek() == Some(&' ') => {
                 chars.next();
-                out.push(' ');
+                conditions.push(std::mem::take(&mut current));
                 continue;
             }
             _ => {}
         }
-        out.push(ch);
+        current.push(ch);
     }
-    out.push(']');
-    out
+    if !current.is_empty() {
+        conditions.push(current);
+    }
+    conditions
+}
+
+fn logical_condition_list(conditions: &[String]) -> String {
+    format!("[{}]", conditions.join(" "))
+}
+
+fn assert_condition_list(found: &[String], expected: &str, side: &str, sql: &str) {
+    let rendered = logical_condition_list(found);
+    assert!(
+        rendered == expected || integer_handle_conditions_are_equivalent(found, expected),
+        "{side} pushed conditions of `{sql}`\n  left: {rendered:?}\n right: {expected:?}"
+    );
+}
+
+#[derive(Debug)]
+enum ObservedConditionExpr {
+    Atom(String),
+    Call(String, Vec<ObservedConditionExpr>),
+}
+
+struct ObservedConditionParser<'a> {
+    input: &'a [u8],
+    offset: usize,
+}
+
+impl<'a> ObservedConditionParser<'a> {
+    fn new(input: &'a str) -> Self {
+        Self {
+            input: input.as_bytes(),
+            offset: 0,
+        }
+    }
+
+    fn parse_all(mut self) -> Option<Vec<ObservedConditionExpr>> {
+        let mut expressions = Vec::new();
+        self.skip_spaces();
+        while self.offset < self.input.len() {
+            expressions.push(self.parse_expression()?);
+            self.skip_spaces();
+        }
+        Some(expressions)
+    }
+
+    fn parse_expression(&mut self) -> Option<ObservedConditionExpr> {
+        self.skip_spaces();
+        let start = self.offset;
+        while self.offset < self.input.len()
+            && !matches!(self.input[self.offset], b'(' | b')' | b',' | b' ')
+        {
+            self.offset += 1;
+        }
+        if self.offset == start {
+            return None;
+        }
+        let token = std::str::from_utf8(&self.input[start..self.offset])
+            .ok()?
+            .to_owned();
+        if self.input.get(self.offset) != Some(&b'(') {
+            return Some(ObservedConditionExpr::Atom(token));
+        }
+
+        self.offset += 1;
+        let mut arguments = Vec::new();
+        loop {
+            self.skip_spaces();
+            if self.input.get(self.offset) == Some(&b')') {
+                self.offset += 1;
+                break;
+            }
+            arguments.push(self.parse_expression()?);
+            self.skip_spaces();
+            match self.input.get(self.offset) {
+                Some(b',') => self.offset += 1,
+                Some(b')') => {
+                    self.offset += 1;
+                    break;
+                }
+                _ => return None,
+            }
+        }
+        Some(ObservedConditionExpr::Call(token, arguments))
+    }
+
+    fn skip_spaces(&mut self) {
+        while self.input.get(self.offset) == Some(&b' ') {
+            self.offset += 1;
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ObservedConditionValue {
+    Boolean(bool),
+    Integer(i64),
+}
+
+fn integer_handle_conditions_are_equivalent(found: &[String], expected: &str) -> bool {
+    if found.is_empty() {
+        return false;
+    }
+    let Some(expected) = expected
+        .strip_prefix('[')
+        .and_then(|expected| expected.strip_suffix(']'))
+    else {
+        return false;
+    };
+    let Some(found) = found
+        .iter()
+        .map(|condition| ObservedConditionParser::new(condition).parse_all())
+        .collect::<Option<Vec<_>>>()
+        .map(|groups| groups.into_iter().flatten().collect::<Vec<_>>())
+    else {
+        return false;
+    };
+    let Some(expected) = ObservedConditionParser::new(expected).parse_all() else {
+        return false;
+    };
+    if expected.is_empty() {
+        return false;
+    }
+
+    let mut constants = Vec::new();
+    for expression in found.iter().chain(&expected) {
+        collect_integer_constants(expression, &mut constants);
+    }
+    let mut samples = vec![i64::MIN, i64::MAX, 0];
+    for constant in constants {
+        samples.push(constant);
+        if let Some(before) = constant.checked_sub(1) {
+            samples.push(before);
+        }
+        if let Some(after) = constant.checked_add(1) {
+            samples.push(after);
+        }
+    }
+    samples.sort_unstable();
+    samples.dedup();
+    samples.into_iter().all(|handle| {
+        evaluate_condition_list(&found, handle) == evaluate_condition_list(&expected, handle)
+            && evaluate_condition_list(&found, handle).is_some()
+    })
+}
+
+fn collect_integer_constants(expression: &ObservedConditionExpr, constants: &mut Vec<i64>) {
+    match expression {
+        ObservedConditionExpr::Atom(atom) => {
+            if let Ok(value) = atom.parse::<i64>() {
+                constants.push(value);
+            }
+        }
+        ObservedConditionExpr::Call(_, arguments) => {
+            for argument in arguments {
+                collect_integer_constants(argument, constants);
+            }
+        }
+    }
+}
+
+fn evaluate_condition_list(expressions: &[ObservedConditionExpr], handle: i64) -> Option<bool> {
+    expressions.iter().try_fold(true, |result, expression| {
+        let ObservedConditionValue::Boolean(value) =
+            evaluate_condition_expression(expression, handle)?
+        else {
+            return None;
+        };
+        Some(result && value)
+    })
+}
+
+fn evaluate_condition_expression(
+    expression: &ObservedConditionExpr,
+    handle: i64,
+) -> Option<ObservedConditionValue> {
+    match expression {
+        ObservedConditionExpr::Atom(atom) if atom == "test.t.a" => {
+            Some(ObservedConditionValue::Integer(handle))
+        }
+        ObservedConditionExpr::Atom(atom) => atom
+            .parse::<i64>()
+            .ok()
+            .map(ObservedConditionValue::Integer),
+        ObservedConditionExpr::Call(name, arguments) => {
+            let values = arguments
+                .iter()
+                .map(|argument| evaluate_condition_expression(argument, handle))
+                .collect::<Option<Vec<_>>>()?;
+            match (name.as_str(), values.as_slice()) {
+                (
+                    "eq",
+                    [ObservedConditionValue::Integer(left), ObservedConditionValue::Integer(right)],
+                ) => Some(ObservedConditionValue::Boolean(left == right)),
+                (
+                    "gt",
+                    [ObservedConditionValue::Integer(left), ObservedConditionValue::Integer(right)],
+                ) => Some(ObservedConditionValue::Boolean(left > right)),
+                (
+                    "lt",
+                    [ObservedConditionValue::Integer(left), ObservedConditionValue::Integer(right)],
+                ) => Some(ObservedConditionValue::Boolean(left < right)),
+                (
+                    "and",
+                    [ObservedConditionValue::Boolean(left), ObservedConditionValue::Boolean(right)],
+                ) => Some(ObservedConditionValue::Boolean(*left && *right)),
+                (
+                    "or",
+                    [ObservedConditionValue::Boolean(left), ObservedConditionValue::Boolean(right)],
+                ) => Some(ObservedConditionValue::Boolean(*left || *right)),
+                _ => None,
+            }
+        }
+    }
 }
 
 #[test]
@@ -879,18 +1191,12 @@ fn mixed_ordinary_and_null_safe_hash_keys_keep_their_own_null_rules() {
     );
 }
 
-/// The remaining plan-shape gap this table exposed, pinned until its owning
-/// planner rule lands.
+/// Go removes duplicate child predicates before handing them to DataSource.
 #[test]
-fn the_join_shapes_this_tier_builds_where_tidb_builds_a_better_one() {
+fn a_repeated_join_conjunct_is_removed_from_the_join_after_pushdown() {
     let mut session = signed_table_session();
-
-    // A repeated conjunct is kept twice; TiDB pushes it once.
     let sql = "select * from t t1 join t t2 on t1.a > 1 and t1.a > 1";
-    assert_eq!(
-        join_info(&mut session, sql),
-        "CARTESIAN inner join, other cond:gt(test.t1.a, 1), gt(test.t1.a, 1)"
-    );
+    assert_eq!(join_info(&mut session, sql), "CARTESIAN inner join");
 }
 
 /// Go's `rule_decorrelate` moves the correlated inner Selection into an anti
@@ -967,16 +1273,22 @@ fn no_decorrelate_hint_keeps_the_correlated_apply() {
     );
 }
 
-/// A repeated conjunct survives twice in the join's `other cond`, which is
-/// the shape `TestJoinPredicatePushDown`'s last row is about.
+/// The last Go `TestJoinPredicatePushDown` case leaves exactly one copy on the
+/// left DataSource and none on the join.
 #[test]
-fn a_repeated_join_conjunct_is_not_deduplicated() {
+fn a_repeated_join_conjunct_is_deduplicated_at_the_leaf() {
     let mut session = signed_table_session();
-    let info = join_info(
+    let conditions = conditions_below_join(
         &mut session,
         "select * from t t1 join t t2 on t1.a > 1 and t1.a > 1",
     );
-    assert_eq!(info.matches("gt(test.t1.a, 1)").count(), 2);
+    assert_eq!(
+        conditions
+            .iter()
+            .filter(|(_, info)| info.contains("gt(test.t1.a, 1)"))
+            .count(),
+        1
+    );
 }
 
 /// The join operator's full `operator info` cell.

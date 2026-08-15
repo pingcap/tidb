@@ -561,6 +561,20 @@ impl Catalog {
             .get(&name.to_lowercase())
     }
 
+    /// A mutable table handle for a read whose storage API advances internal
+    /// state. Unlike [`Self::get_mut_in`], a read does not move the catalog's
+    /// schema/data version.
+    pub(crate) fn get_mut_in_for_read(
+        &mut self,
+        database: &str,
+        name: &str,
+    ) -> Option<&mut TableEntry> {
+        self.databases
+            .get_mut(&database.to_ascii_lowercase())?
+            .tables
+            .get_mut(&name.to_ascii_lowercase())
+    }
+
     fn get(&self, name: &str) -> Option<&TableEntry> {
         self.get_in(DEFAULT_DATABASE, name)
     }
@@ -940,6 +954,10 @@ impl ColumnResolver for TableResolver<'_> {
 
     fn connection_charset_info(&self) -> (&str, &str) {
         self.constant_context.connection_charset_info()
+    }
+
+    fn like_default_escape(&self) -> u8 {
+        self.constant_context.like_default_escape()
     }
 
     fn no_unsigned_subtraction(&self) -> bool {

@@ -137,12 +137,14 @@
 //! # Shapes EXPLAIN refuses
 //!
 //! The driver executes more than this recorder has ever printed: derived
-//! tables, lateral joins, `WITH` clauses, and set operations other than the
-//! direct sequences of `UNION ALL` and `UNION DISTINCT`. Those build sites
-//! mark the trace refused rather
-//! than inventing a node. Operators the driver builds but the recorder has
+//! tables, lateral joins, `WITH` clauses, set operations. Those build sites
+//! mark the trace refused rather than inventing a node, and the entry points
+//! below answer with the refusal they have always answered with -- the
+//! surface EXPLAIN describes is unchanged by the fact that the trace now
+//! rides the real driver. Operators the driver builds but the recorder has
 //! never printed (an Apply for a correlated subquery, the window stage, an
-//! aggregate query's HAVING and final projection) record no node at all.
+//! aggregate query's HAVING and final projection) record no node at all,
+//! which is exactly the plan text this tier has always produced for them.
 //!
 //! # Where the estRows numbers come from
 //!
@@ -255,10 +257,7 @@ pub fn explain_select_stmt(
     Ok(render(recorded(trace)?, format))
 }
 
-/// Plain `EXPLAIN` over a direct sequence of `UNION ALL` and `UNION
-/// DISTINCT`. The planning trace records every operand subtree but stops
-/// before the materialized set result is drained, matching Go `ExplainExec`'s
-/// build-only path.
+/// Plain `EXPLAIN` over a supported set operation.
 pub fn explain_set_opr_stmt(
     set_opr: &tidb_ast::SetOprStmt,
     catalog: &Catalog,
@@ -298,12 +297,7 @@ pub fn explain_analyze_select_stmt(
     Ok(render_analyze(recorded(trace)?, format))
 }
 
-/// `EXPLAIN ANALYZE` over a direct sequence of `UNION ALL` and `UNION
-/// DISTINCT`. Go's generic Explain plan wraps a set-operation target just as
-/// it wraps a plain select; this tier records each already-built operand
-/// subtree and joins them under its
-/// real `Union` root. Other set operations remain refused by
-/// [`run_set_opr_traced`] until their distinct physical operators land.
+/// `EXPLAIN ANALYZE` over a supported set operation.
 pub fn explain_analyze_set_opr_stmt(
     set_opr: &tidb_ast::SetOprStmt,
     catalog: &Catalog,
@@ -483,6 +477,7 @@ struct IdNode {
     est_rows: Option<f64>,
     access: String,
     info: String,
+    task: &'static str,
     left_side_child: Option<usize>,
     info_tail: String,
     label: &'static str,
@@ -506,6 +501,7 @@ fn assign_ids(node: PlanNode, counter: &mut usize) -> IdNode {
         est_rows: node.est_rows,
         access: node.access,
         info: node.info,
+        task: node.task,
         left_side_child: node.left_side_child,
         info_tail: node.info_tail,
         label: node.label,
@@ -592,8 +588,7 @@ fn flatten(
     out.push(vec![
         text(&draw_id(node, &prefix, is_root, is_last, format)),
         text(&est_text(node.est_rows)),
-        // Divergence 1: every operator here runs in the TiDB process.
-        text("root"),
+        text(node.task),
         text(&node.access),
         text(&info_text(node, format)),
     ]);
@@ -622,7 +617,7 @@ fn flatten_analyze(
         text(&draw_id(node, &prefix, is_root, is_last, format)),
         text(&est_text(node.est_rows)),
         text(&act),
-        text("root"),
+        text(node.task),
         text(&node.access),
         text("N/A"),
         text(&info_text(node, format)),

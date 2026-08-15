@@ -57,10 +57,13 @@ pub use auto_id::{
 pub use auto_increment::{AutoIncrement, TableAutoId};
 pub use auto_random::{AutoRandom, AutoRandomError, AutoRandomSpec};
 
-pub use row_decoder::{DecodedRow, GeneratedColumnSelection, RowDecoder};
+pub use row_decoder::{
+    DecodedRow, GeneratedColumnSelection, PreparedPointGetRowDecoder, RowDecoder,
+};
 pub use table_meta::{
     index_ranges_estimated_memory_usage, intersect_index_ranges, FkAction, IndexRange, KvColumn,
-    KvForeignKey, KvIndex, RowDecodeContext, TableCharset, TableHandle,
+    KvForeignKey, KvIndex, PreparedPointGetDecodeContext, RowDecodeContext, TableCharset,
+    TableHandle,
 };
 pub use table_scan::{
     capture_decoded_column_ids, IndexRangeCursor, RemoteRowCursor, RowCursor, TableScanExec,
@@ -1110,6 +1113,31 @@ impl KvTable {
         &self.common_handle_offsets
     }
 
+    /// Encodes one complete clustered composite primary-key tuple as its
+    /// record handle.
+    ///
+    /// Index-join probes use this path because part of the tuple may come
+    /// from constants and the remainder from an outer row; routing the tuple
+    /// through the table's collation mode and `CommonHandle` padding keeps it
+    /// byte-identical to the handle created by an INSERT.
+    pub(crate) fn common_handle_of_values(
+        &self,
+        values: &[Datum],
+        zone: &SessionTimeZone,
+    ) -> Result<TableHandle, KvTableError> {
+        if self.common_handle_offsets.len() != values.len() {
+            return Err(KvTableError::Encode(
+                "a common handle probe does not cover every key column".to_owned(),
+            ));
+        }
+        let encoded = tidb_codec::Encoder::new(self.use_new_collation)
+            .encode_key_in_timezone(zone, values)
+            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+        let padded = tidb_txnkv::CommonHandle::new(encoded)
+            .map_err(|e| KvTableError::Encode(format!("{e:?}")))?;
+        Ok(TableHandle::Common(padded.encoded().to_vec()))
+    }
+
     /// Go `TableInfo.PKIsHandle` for one column: whether this offset IS the
     /// integer primary key that serves as the row handle, and so is
     /// addressable without an index of its own.
@@ -2039,6 +2067,20 @@ impl KvTable {
             Err(error) => return Err(KvTableError::Storage(format!("{error:?}"))),
         };
         Ok(Some(self.decode_row_entry(handle, &entry, context)?))
+    }
+
+    /// One stored-record read decoded by the immutable projection retained on
+    /// a prepared PointGet plan.
+    pub fn get_prepared_point_row(
+        &mut self,
+        handle: &TableHandle,
+        decoder: &PreparedPointGetRowDecoder,
+        context: &PreparedPointGetDecodeContext,
+    ) -> Result<Option<Vec<Datum>>, KvTableError> {
+        let Some((_, entry)) = self.stored_record(handle)? else {
+            return Ok(None);
+        };
+        decoder.decode(handle, &entry, context).map(Some)
     }
 
     /// Legacy zone-only point read retained for unmigrated DML/FK callers.

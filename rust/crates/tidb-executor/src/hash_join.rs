@@ -359,7 +359,22 @@ pub(crate) fn row_key(
 pub(crate) struct BuildTable {
     rows: RowContainer,
     buckets: HashMap<Vec<u8>, Vec<RowPtr>>,
+    bucket_bytes: i64,
 }
+
+// Go v1 allocates 320 concurrent-map shards before the first build row. On
+// the 64-bit target TiDB supports, `NewConcurrentMapHashTable` accounts:
+//
+// * 48 bytes for `concurrentMapHashTable`;
+// * 320 * (56-byte shard + 184-byte empty Swiss map);
+// * a 32-byte `entryStore` and its first 64 * 16-byte entries.
+//
+// These sizes are the current `unsafe.Sizeof`/`MemAwareMap.Bytes` values of
+// `pkg/executor/join/hash_table_v1.go` and `concurrent_map.go`. The Rust map is
+// not sharded, but query-quota behavior belongs to the transcreated Go
+// package contract, so the fixed Go allocation is charged alongside the
+// Rust map's retained dynamic allocation.
+const GO_V1_HASH_TABLE_FIXED_BYTES: usize = 48 + 320 * (56 + 184) + 32 + 64 * 16;
 
 impl BuildTable {
     /// An empty container over the build side's types, chunked at
@@ -373,6 +388,7 @@ impl BuildTable {
         BuildTable {
             rows: RowContainer::new(field_types, chunk_size, spill_storage),
             buckets: HashMap::new(),
+            bucket_bytes: 0,
         }
     }
 
@@ -412,7 +428,12 @@ impl BuildTable {
                     .push(RowPtr { chk_idx, row_idx });
             }
         }
-        self.rows.add(chunk).map_err(BuildError::disk)
+        self.rows.add(chunk).map_err(BuildError::disk)?;
+        // Go adds the chunk to RowContainer before it charges the hash-table
+        // delta. That order lets the registered spill action release build
+        // rows before the non-spillable bucket memory is checked again.
+        self.refresh_bucket_memory();
+        Ok(())
     }
 
     /// The build rows that could match `key`, in build order.
@@ -466,7 +487,36 @@ impl BuildTable {
 
     /// Go `hashRowContainer.Close`.
     pub(crate) fn close(&mut self) {
+        self.rows.mem_tracker().consume(-self.bucket_bytes);
+        self.bucket_bytes = 0;
+        self.buckets = HashMap::new();
         self.rows.close();
+    }
+
+    fn refresh_bucket_memory(&mut self) {
+        let map_slots = self.buckets.capacity().saturating_mul(
+            std::mem::size_of::<(Vec<u8>, Vec<RowPtr>)>() + std::mem::size_of::<usize>(),
+        );
+        let retained = GO_V1_HASH_TABLE_FIXED_BYTES
+            .saturating_add(map_slots)
+            .saturating_add(std::mem::size_of::<HashMap<Vec<u8>, Vec<RowPtr>>>())
+            .saturating_add(
+                self.buckets
+                    .iter()
+                    .map(|(key, pointers)| {
+                        key.capacity().saturating_add(
+                            pointers
+                                .capacity()
+                                .saturating_mul(std::mem::size_of::<RowPtr>()),
+                        )
+                    })
+                    .sum::<usize>(),
+            );
+        let retained = i64::try_from(retained).unwrap_or(i64::MAX);
+        self.rows
+            .mem_tracker()
+            .consume(retained.saturating_sub(self.bucket_bytes));
+        self.bucket_bytes = retained;
     }
 }
 

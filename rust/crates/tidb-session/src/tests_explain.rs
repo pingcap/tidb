@@ -17,45 +17,22 @@ fn explain_select() {
         .run("CREATE TABLE t (a BIGINT PRIMARY KEY, b VARCHAR(64), c INT, INDEX ub(b))")
         .unwrap();
 
-    // The Point_Get row is byte-identical to the TiDB capture:
-    //   Point_Get_1 | 1.00 | root | table:t | handle:1
-    // DIVERGENCE (explain module doc, items 3 and 7): TiDB's fast plan
-    // REPLACES the whole pipeline, so it prints that one row. This tier's
-    // point get only narrows the source -- `run_select_stmt` keeps the
-    // WHERE as a Selection above it (deliberately: an extra conjunct the
-    // handle did not pin still has to filter) and always builds a
-    // Projection. Both re-check rows the handle lookup already returned,
-    // so neither reduces the 1.00.
+    // An exact handle predicate takes Go's fast-plan path and replaces the
+    // ordinary projection/filter pipeline with the point-get itself.
     assert_eq!(
         row_text(session.run("EXPLAIN SELECT * FROM t WHERE a = 1")),
-        vec![
-            vec![
-                "Projection_3".to_owned(),
-                "1.00".to_owned(),
-                "root".to_owned(),
-                String::new(),
-                "*".to_owned(),
-            ],
-            vec![
-                "└─Selection_2".to_owned(),
-                "1.00".to_owned(),
-                "root".to_owned(),
-                String::new(),
-                "eq(test.t.a, 1)".to_owned(),
-            ],
-            vec![
-                "  └─Point_Get_1".to_owned(),
-                "1.00".to_owned(),
-                "root".to_owned(),
-                "table:t".to_owned(),
-                "handle:1".to_owned(),
-            ],
-        ]
+        vec![vec![
+            "Point_Get_1".to_owned(),
+            "1.00".to_owned(),
+            "root".to_owned(),
+            "table:t".to_owned(),
+            "handle:1".to_owned(),
+        ]]
     );
 
-    // Go's batch fast plan consumes the exact key-only IN, so unlike the
-    // single point seed above there is no duplicate Selection. The
-    // Batch_Point_Get row itself matches the capture byte for byte:
+    // Go's batch fast plan consumes the exact key-only IN just like the
+    // single-point path above. The Batch_Point_Get row itself matches the
+    // capture byte for byte:
     //   Batch_Point_Get_1 | 3.00 | root | table:t |
     //     handle:[1 2 3], keep order:false, desc:false
     let plan = row_text(session.run("EXPLAIN SELECT * FROM t WHERE a IN (1,2,3)"));
@@ -64,7 +41,7 @@ fn explain_select() {
             .find(|row| row[0].contains("Batch_Point_Get"))
             .expect("batch point row"),
         &vec![
-            "└─Batch_Point_Get_1".to_owned(),
+            "Batch_Point_Get_1".to_owned(),
             "3.00".to_owned(),
             "root".to_owned(),
             "table:t".to_owned(),
@@ -81,17 +58,19 @@ fn explain_select() {
     session
         .run("INSERT INTO composite_point VALUES (1, 10, 'x'), (2, 20, 'y')")
         .unwrap();
-    let plan = row_text(
-        session
-            .run("EXPLAIN SELECT id FROM composite_point WHERE (b, a) IN (('y', 20), ('x', 10))"),
-    );
+    let plan = row_text(session.run(
+        "EXPLAIN SELECT id FROM composite_point \
+                 WHERE (b, a) IN (('y', 20), ('x', 10), ('missing', 30))",
+    ));
     let batch = plan
         .iter()
         .find(|row| row[0].contains("Batch_Point_Get"))
         .unwrap_or_else(|| panic!("the composite key must reach the batch-point path: {plan:?}"));
     assert_eq!(
-        &batch[3..],
+        &batch[1..],
         [
+            "3.00",
+            "root",
             "table:composite_point, index:ab(a, b)",
             "keep order:false, desc:false"
         ]
@@ -201,27 +180,18 @@ fn explain_select() {
     // DIVERGENCE (explain module doc, items 1/3/5): TiDB prints
     //   TableReader_5 | 10000.00 | root | | data:TableFullScan_4
     //   └─TableFullScan_4 | 10000.00 | cop[tikv] | table:t | keep order:false, stats:pseudo
-    // This tier has no coprocessor, so there is no TableReader and no
-    // cop task; and the driver always builds a projection, which Go
-    // elides here. The scan row's estRows/access/info match exactly.
+    // This tier has no coprocessor, so there is no TableReader and no cop
+    // task. Like Go, it eliminates the identity projection over `SELECT *`.
+    // The scan row's estRows/access/info match exactly.
     assert_eq!(
         row_text(session.run("EXPLAIN SELECT * FROM t")),
-        vec![
-            vec![
-                "Projection_2".to_owned(),
-                "10000.00".to_owned(),
-                "root".to_owned(),
-                String::new(),
-                "*".to_owned(),
-            ],
-            vec![
-                "└─TableFullScan_1".to_owned(),
-                "10000.00".to_owned(),
-                "root".to_owned(),
-                "table:t".to_owned(),
-                "keep order:false, stats:pseudo".to_owned(),
-            ],
-        ]
+        vec![vec![
+            "TableFullScan_1".to_owned(),
+            "10000.00".to_owned(),
+            "root".to_owned(),
+            "table:t".to_owned(),
+            "keep order:false, stats:pseudo".to_owned(),
+        ]]
     );
 
     // A filter on an INDEXED column that real TiDB nevertheless answers with
@@ -243,14 +213,7 @@ fn explain_select() {
         row_text(session.run("EXPLAIN SELECT * FROM t WHERE b > 'x'")),
         vec![
             vec![
-                "Projection_3".to_owned(),
-                "3333.33".to_owned(),
-                "root".to_owned(),
-                String::new(),
-                "*".to_owned(),
-            ],
-            vec![
-                "└─Selection_2".to_owned(),
+                "Selection_2".to_owned(),
                 "3333.33".to_owned(),
                 "root".to_owned(),
                 String::new(),
@@ -259,7 +222,7 @@ fn explain_select() {
                 "gt(test.t.b, \"x\")".to_owned(),
             ],
             vec![
-                "  └─TableFullScan_1".to_owned(),
+                "└─TableFullScan_1".to_owned(),
                 "10000.00".to_owned(),
                 "root".to_owned(),
                 "table:t".to_owned(),
@@ -276,31 +239,37 @@ fn explain_select() {
     //     └─TopN_16        10.00     cop[tikv]           test.t.b, offset:0, count:10
     //       └─TableFullScan_15 10000.00 cop[tikv] table:t keep order:false, stats:pseudo
     //
-    // so the ROOT TopN, its 10.00, and its `offset:0, count:10` are Go's
-    // exactly. The remaining differences are the two standing ones: this
-    // tier has no cop task (item 1), and always builds a Projection (item 3),
-    // which Go folds into the TopN as an inline projection.
+    // The root/cop TopN pair, reader boundary, row estimates, and operator
+    // details below are the captured Go shape. The identity projection is
+    // eliminated.
     assert_eq!(
         row_text(session.run("EXPLAIN SELECT * FROM t ORDER BY c LIMIT 10")),
         vec![
             vec![
-                "Projection_3".to_owned(),
-                "10.00".to_owned(),
-                "root".to_owned(),
-                String::new(),
-                "*".to_owned(),
-            ],
-            vec![
-                "└─TopN_2".to_owned(),
+                "TopN_4".to_owned(),
                 "10.00".to_owned(),
                 "root".to_owned(),
                 String::new(),
                 "test.t.c, offset:0, count:10".to_owned(),
             ],
             vec![
-                "  └─TableFullScan_1".to_owned(),
-                "10000.00".to_owned(),
+                "└─TableReader_3".to_owned(),
+                "10.00".to_owned(),
                 "root".to_owned(),
+                String::new(),
+                "data:TopN".to_owned(),
+            ],
+            vec![
+                "  └─TopN_2".to_owned(),
+                "10.00".to_owned(),
+                "cop[tikv]".to_owned(),
+                String::new(),
+                "test.t.c, offset:0, count:10".to_owned(),
+            ],
+            vec![
+                "    └─TableFullScan_1".to_owned(),
+                "10000.00".to_owned(),
+                "cop[tikv]".to_owned(),
                 "table:t".to_owned(),
                 "keep order:false, stats:pseudo".to_owned(),
             ],
@@ -314,33 +283,49 @@ fn explain_select() {
             .into_iter()
             .map(|row| row[0].clone())
             .collect::<Vec<_>>(),
-        vec![
-            "Projection_3".to_owned(),
-            "└─Sort_2".to_owned(),
-            "  └─TableFullScan_1".to_owned(),
-        ]
+        vec!["Sort_2".to_owned(), "└─TableFullScan_1".to_owned()]
     );
 
-    // GROUP BY. The 8000.00 is Go's own stats-less distinctFactor result,
-    // captured. DIVERGENCE (item 4): TiDB splits this into a cop-side
-    // HashAgg_5 (`funcs:count(1)->Column#6`) and a root HashAgg_9 under a
-    // Projection_4; this tier has one aggregate and no Column#N slots.
+    // GROUP BY. The 8000.00 is Go's stats-less distinctFactor result. The
+    // projection, root/coprocessor aggregate pair, and reader boundary match
+    // the current Go plan.
     assert_eq!(
         row_text(session.run("EXPLAIN SELECT c, COUNT(*) FROM t GROUP BY c")),
         vec![
             vec![
-                "HashAgg_2".to_owned(),
+                "Projection_5".to_owned(),
                 "8000.00".to_owned(),
                 "root".to_owned(),
                 String::new(),
-                // The parser normalizes COUNT(*) to COUNT(1), so this
-                // half is byte-identical to the cop-side funcs: text.
-                "group by:test.t.c, funcs:test.t.c, count(1)".to_owned(),
+                "test.t.c, Column#0".to_owned(),
             ],
             vec![
-                "└─TableFullScan_1".to_owned(),
-                "10000.00".to_owned(),
+                "└─HashAgg_4".to_owned(),
+                "8000.00".to_owned(),
                 "root".to_owned(),
+                String::new(),
+                "group by:test.t.c, funcs:count(Column#0)->Column#0, \
+                 funcs:firstrow(test.t.c)->test.t.c"
+                    .to_owned(),
+            ],
+            vec![
+                "  └─TableReader_3".to_owned(),
+                "8000.00".to_owned(),
+                "root".to_owned(),
+                String::new(),
+                "data:HashAgg".to_owned(),
+            ],
+            vec![
+                "    └─HashAgg_2".to_owned(),
+                "8000.00".to_owned(),
+                "cop[tikv]".to_owned(),
+                String::new(),
+                "group by:test.t.c, funcs:count(1)->Column#0".to_owned(),
+            ],
+            vec![
+                "      └─TableFullScan_1".to_owned(),
+                "10000.00".to_owned(),
+                "cop[tikv]".to_owned(),
                 "table:t".to_owned(),
                 "keep order:false, stats:pseudo".to_owned(),
             ],
@@ -356,11 +341,8 @@ fn explain_select() {
 /// (table rows `(1,1),(2,2),(3,3),(4,10)`) is `4` for the
 /// `TableFullScan` (it reads every row), `2` for the `Selection` (only
 /// `v=3` and `v=10` pass `v > 2`), and `2` again for the `TableReader`
-/// root (a pass-through). This tier has no `TableReader` (`explain`
-/// module doc, divergence 1) and always builds a `Projection`
-/// (divergence 3), so the real shape here is `Projection` over
-/// `Selection` over `TableFullScan` -- the `Projection`'s `actRows` is
-/// the same real `2`, matching the real row set, not a guess.
+/// root (a pass-through). The local trace omits that pass-through reader, so
+/// its real shape is `Selection` over `TableFullScan`.
 #[test]
 fn explain_analyze_select() {
     let mut session = Session::new();
@@ -374,15 +356,13 @@ fn explain_analyze_select() {
     let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM t WHERE v > 2"));
     // Columns: id, estRows, actRows, task, access object, execution
     // info, operator info, memory, disk.
-    assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0][0], "Projection_3");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0][0], "Selection_2");
     assert_eq!(rows[0][2], "2"); // actRows: real, not the 3333.33 estimate.
-    assert_eq!(rows[1][0], "└─Selection_2");
-    assert_eq!(rows[1][2], "2");
-    assert_eq!(rows[2][0], "  └─TableFullScan_1");
-    assert_eq!(rows[2][2], "4");
-    // Every operator here runs in-process (divergence 1), and this tier
-    // collects no runtime timing/memory/disk counters at all.
+    assert_eq!(rows[1][0], "└─TableFullScan_1");
+    assert_eq!(rows[1][2], "4");
+    // Every recorded operator here runs in-process, and this tier collects no
+    // runtime timing/memory/disk counters at all.
     for row in &rows {
         assert_eq!(row[3], "root");
         assert_eq!(row[5], "N/A"); // execution info
@@ -473,14 +453,11 @@ fn explain_analyze_delete_executes() {
         .unwrap();
 
     let rows = row_text(session.run("EXPLAIN ANALYZE DELETE FROM t WHERE a = 2"));
-    assert_eq!(rows.len(), 3);
-    assert_eq!(rows[0][0], "Delete_3");
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0][0], "Delete_2");
     assert_eq!(rows[0][2], "0");
-    assert_eq!(rows[1][0], "└─Selection_2");
+    assert_eq!(rows[1][0], "└─Point_Get_1");
     assert_eq!(rows[1][2], "1");
-    assert_eq!(rows[2][0], "  └─Point_Get_1");
-    // One record read, not the three a full scan would have read.
-    assert_eq!(rows[2][2], "1");
 
     assert_eq!(
         row_text(session.run("SELECT a FROM t ORDER BY a")),
@@ -489,11 +466,10 @@ fn explain_analyze_delete_executes() {
 }
 
 /// `EXPLAIN ANALYZE` of a `Point_Get`/`Batch_Point_Get`/`IndexRangeScan`
-/// access path: real `actRows`, not `N/A`. The single point/range seeds keep
-/// their `Selection`/`Projection` above them, while the exact batch fast plan
-/// consumes its key predicate like Go and keeps only the projection. A point
-/// hit is `1` and a miss `0`; BatchPointGet reports the handles found; the
-/// index range reports the rows it covers.
+/// access path: real `actRows`, not `N/A`. Exact point and batch predicates
+/// take Go's replacement fast-plan path; an index range may retain a reader
+/// wrapper. A point hit is `1` and a miss `0`; BatchPointGet reports the
+/// handles found; the index range reports the rows it covers.
 #[test]
 fn explain_analyze_fast_paths_real_act_rows() {
     let mut session = Session::new();
@@ -504,21 +480,40 @@ fn explain_analyze_fast_paths_real_act_rows() {
         .run("INSERT INTO pg VALUES (1,10),(2,20),(3,30),(4,40)")
         .unwrap();
 
-    let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM pg WHERE a = 2"));
-    assert_eq!(rows[2][0], "  └─Point_Get_1");
-    assert_eq!(rows[2][2], "1");
-
-    let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM pg WHERE a = 999"));
-    assert_eq!(rows[2][0], "  └─Point_Get_1");
-    assert_eq!(rows[2][2], "0");
-
-    let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM pg WHERE a IN (1,2,3)"));
-    assert_eq!(rows[1][0], "└─Batch_Point_Get_1");
-    assert_eq!(rows[1][2], "3");
-
-    let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM pg WHERE b > 15 AND b < 35"));
-    assert_eq!(rows[2][0], "  └─IndexRangeScan_1");
-    assert_eq!(rows[2][2], "2");
+    let act_rows = |rows: Vec<Vec<String>>, operator: &str| {
+        rows.into_iter()
+            .find(|row| row[0].contains(operator))
+            .unwrap_or_else(|| panic!("missing {operator}"))[2]
+            .clone()
+    };
+    assert_eq!(
+        act_rows(
+            row_text(session.run("EXPLAIN ANALYZE SELECT * FROM pg WHERE a = 2")),
+            "Point_Get",
+        ),
+        "1"
+    );
+    assert_eq!(
+        act_rows(
+            row_text(session.run("EXPLAIN ANALYZE SELECT * FROM pg WHERE a = 999")),
+            "Point_Get",
+        ),
+        "0"
+    );
+    assert_eq!(
+        act_rows(
+            row_text(session.run("EXPLAIN ANALYZE SELECT * FROM pg WHERE a IN (1,2,3)")),
+            "Batch_Point_Get",
+        ),
+        "3"
+    );
+    assert_eq!(
+        act_rows(
+            row_text(session.run("EXPLAIN ANALYZE SELECT * FROM pg WHERE b > 15 AND b < 35")),
+            "IndexRangeScan",
+        ),
+        "2"
+    );
 }
 
 /// `EXPLAIN ANALYZE` of a grouped aggregate/`DISTINCT`: real `actRows`
@@ -534,8 +529,11 @@ fn explain_analyze_grouped_agg_and_distinct_real_act_rows() {
         .unwrap();
 
     let rows = row_text(session.run("EXPLAIN ANALYZE SELECT a, COUNT(*) FROM g GROUP BY a"));
-    assert_eq!(rows[0][0], "HashAgg_2");
-    assert_eq!(rows[0][2], "3");
+    let grouped = rows
+        .iter()
+        .find(|row| row[0].contains("HashAgg"))
+        .expect("grouped aggregate");
+    assert_eq!(grouped[2], "3");
 
     let rows = row_text(session.run("EXPLAIN ANALYZE SELECT DISTINCT a FROM g"));
     assert_eq!(rows[0][2], "3");
@@ -544,9 +542,10 @@ fn explain_analyze_grouped_agg_and_distinct_real_act_rows() {
 /// `EXPLAIN ANALYZE INSERT ... SELECT`'s source gets the SAME real
 /// `actRows` a plain `EXPLAIN ANALYZE SELECT` of that query would --
 /// captured: `insert into dst select * from src where a > 1` on
-/// `src = (1),(2),(3)` reports `2` for the `Projection`/`Selection`
-/// (the `WHERE`-matching rows) over the real `3`-row `TableFullScan`,
-/// computed before the insert writes anything.
+/// `src = (1),(2),(3)` reports `2` for the `Selection` (the
+/// `WHERE`-matching rows) over the real `3`-row `TableFullScan`, computed
+/// before the insert writes anything. Go's pass-through reader is not part of
+/// this local trace.
 #[test]
 fn explain_analyze_insert_select_source_real_act_rows() {
     let mut session = Session::new();
@@ -556,15 +555,13 @@ fn explain_analyze_insert_select_source_real_act_rows() {
 
     let rows =
         row_text(session.run("EXPLAIN ANALYZE INSERT INTO dst SELECT * FROM src WHERE a > 1"));
-    assert_eq!(rows.len(), 4);
-    assert_eq!(rows[0][0], "Insert_4");
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0][0], "Insert_3");
     assert_eq!(rows[0][2], "0");
-    assert_eq!(rows[1][0], "└─Projection_3");
+    assert_eq!(rows[1][0], "└─Selection_2");
     assert_eq!(rows[1][2], "2");
-    assert_eq!(rows[2][0], "  └─Selection_2");
-    assert_eq!(rows[2][2], "2");
-    assert_eq!(rows[3][0], "    └─TableFullScan_1");
-    assert_eq!(rows[3][2], "3");
+    assert_eq!(rows[2][0], "  └─TableFullScan_1");
+    assert_eq!(rows[2][2], "3");
 
     assert_eq!(
         row_text(session.run("SELECT a FROM dst ORDER BY a")),
@@ -606,10 +603,8 @@ fn explain_insert_plans_without_writing() {
 /// the read side reaches through `TryFastPlan`, as Go's
 /// `tryUpdatePointPlan` does.
 ///
-/// Divergence 7 (`explain` module doc) is what is left of the gap: Go's
-/// point plan REPLACES the pipeline, where this tier keeps the `WHERE`
-/// above the fetch and so still prints the `Selection`. Both read the
-/// one record, by key.
+/// The point plan replaces the ordinary Selection pipeline, matching Go's
+/// `tryUpdatePointPlan` and `tryDeletePointPlan` shapes.
 #[test]
 fn explain_update_and_delete_plan_without_writing() {
     let mut session = Session::new();
@@ -622,24 +617,14 @@ fn explain_update_and_delete_plan_without_writing() {
         row_text(session.run("EXPLAIN UPDATE t SET b = 100 WHERE a = 1")),
         vec![
             vec![
-                "Update_3".to_owned(),
+                "Update_2".to_owned(),
                 "N/A".to_owned(),
                 "root".to_owned(),
                 String::new(),
                 "N/A".to_owned(),
             ],
             vec![
-                "└─Selection_2".to_owned(),
-                // The access path already priced this condition, so the
-                // Selection does not reduce the estimate a second time --
-                // the same rule the read side's point get follows.
-                "1.00".to_owned(),
-                "root".to_owned(),
-                String::new(),
-                "eq(test.t.a, 1)".to_owned(),
-            ],
-            vec![
-                "  └─Point_Get_1".to_owned(),
+                "└─Point_Get_1".to_owned(),
                 "1.00".to_owned(),
                 "root".to_owned(),
                 "table:t".to_owned(),
@@ -651,21 +636,14 @@ fn explain_update_and_delete_plan_without_writing() {
         row_text(session.run("EXPLAIN DELETE FROM t WHERE a = 1")),
         vec![
             vec![
-                "Delete_3".to_owned(),
+                "Delete_2".to_owned(),
                 "N/A".to_owned(),
                 "root".to_owned(),
                 String::new(),
                 "N/A".to_owned(),
             ],
             vec![
-                "└─Selection_2".to_owned(),
-                "1.00".to_owned(),
-                "root".to_owned(),
-                String::new(),
-                "eq(test.t.a, 1)".to_owned(),
-            ],
-            vec![
-                "  └─Point_Get_1".to_owned(),
+                "└─Point_Get_1".to_owned(),
                 "1.00".to_owned(),
                 "root".to_owned(),
                 "table:t".to_owned(),
@@ -681,10 +659,8 @@ fn explain_update_and_delete_plan_without_writing() {
 }
 
 /// `EXPLAIN FORMAT = 'brief'` prints the identical tree with every
-/// operator's `_N` build-order suffix stripped (captured: `explain
-/// format = 'brief' select * from t` strips the `Point_Get_1`/
-/// `Selection_2`/`Projection_3` ids down to `Point_Get`/`Selection`/
-/// `Projection`; `'row'`, the default, keeps them).
+/// operator's `_N` build-order suffix stripped. The exact handle predicate
+/// takes the replacement fast plan, so both formats contain one point-get.
 #[test]
 fn explain_brief_format_strips_operator_ids() {
     let mut session = Session::new();
@@ -695,34 +671,18 @@ fn explain_brief_format_strips_operator_ids() {
 
     assert_eq!(
         row_text(session.run("EXPLAIN FORMAT = 'brief' SELECT * FROM t WHERE a = 1")),
-        vec![
-            vec![
-                "Projection".to_owned(),
-                "1.00".to_owned(),
-                "root".to_owned(),
-                String::new(),
-                "*".to_owned(),
-            ],
-            vec![
-                "└─Selection".to_owned(),
-                "1.00".to_owned(),
-                "root".to_owned(),
-                String::new(),
-                "eq(test.t.a, 1)".to_owned(),
-            ],
-            vec![
-                "  └─Point_Get".to_owned(),
-                "1.00".to_owned(),
-                "root".to_owned(),
-                "table:t".to_owned(),
-                "handle:1".to_owned(),
-            ],
-        ]
+        vec![vec![
+            "Point_Get".to_owned(),
+            "1.00".to_owned(),
+            "root".to_owned(),
+            "table:t".to_owned(),
+            "handle:1".to_owned(),
+        ]]
     );
     assert_eq!(
-        row_text(session.run("EXPLAIN FORMAT = 'row' SELECT * FROM t WHERE a = 1"))[2],
+        row_text(session.run("EXPLAIN FORMAT = 'row' SELECT * FROM t WHERE a = 1"))[0],
         vec![
-            "  └─Point_Get_1".to_owned(),
+            "Point_Get_1".to_owned(),
             "1.00".to_owned(),
             "root".to_owned(),
             "table:t".to_owned(),
@@ -775,14 +735,21 @@ fn explain_union_all_records_each_term_without_execution() {
     );
     assert_eq!(rows.len(), 7);
     assert!(rows[0][0].starts_with("Union_"));
-    assert_eq!(rows[0][1], "6666.67");
+    assert_eq!(rows[0][1], "3335.33");
     assert_eq!(rows[0][2], "root");
     assert_eq!(
         rows.iter()
             .skip(1)
             .map(|row| row[2].as_str())
             .collect::<Vec<_>>(),
-        vec!["root", "root", "root", "root", "root", "root"]
+        vec![
+            "root",
+            "cop[tikv]",
+            "cop[tikv]",
+            "root",
+            "cop[tikv]",
+            "cop[tikv]"
+        ]
     );
     assert_eq!(
         row_text(session.run("SELECT a FROM t ORDER BY a")),
@@ -820,7 +787,14 @@ fn explain_union_distinct_records_its_hash_aggregation() {
             .skip(2)
             .map(|row| row[2].as_str())
             .collect::<Vec<_>>(),
-        vec!["root", "root", "root", "root", "root", "root"]
+        vec![
+            "root",
+            "cop[tikv]",
+            "cop[tikv]",
+            "root",
+            "cop[tikv]",
+            "cop[tikv]"
+        ]
     );
     assert_eq!(
         row_text(session.run("SELECT a FROM t ORDER BY a")),
@@ -878,7 +852,7 @@ fn explain_analyze_mixed_union_keeps_the_distinct_prefix_separate() {
          (SELECT a FROM t WHERE a >= 2 AND a <= 3) UNION ALL \
          (SELECT a FROM t WHERE a = 4)",
     ));
-    assert_eq!(rows.len(), 12);
+    assert_eq!(rows.len(), 10);
     assert!(rows[0][0].starts_with("Union_"));
     assert_eq!(rows[0][2], "4");
     assert!(rows[1][0].contains("HashAgg_"));
@@ -890,7 +864,7 @@ fn explain_analyze_mixed_union_keeps_the_distinct_prefix_separate() {
             .skip(3)
             .map(|row| row[2].as_str())
             .collect::<Vec<_>>(),
-        vec!["2", "2", "2", "2", "2", "2", "1", "1", "1"]
+        vec!["2", "2", "2", "2", "2", "2", "1"]
     );
 }
 
@@ -926,10 +900,9 @@ fn explain_refuses_what_it_cannot_plan() {
 /// surfaces as a second, root-side `Selection`; only the estimate moves
 /// (`3333.33` for the single `>`, `2666.67` for the split).
 ///
-/// This tier prints no `TableReader` and no `cop[tikv]` task (explain module
-/// doc, divergence 1) and always builds a `Projection` (divergence 3), so the
-/// same plan reads as `Projection` over `Selection` over `TableFullScan` --
-/// whichever half of the predicate the scan itself took over.
+/// The local trace omits Go's pass-through `TableReader`; strict projection
+/// elimination also removes the identity projection. It therefore records
+/// the semantic `Selection` over `TableFullScan` pair.
 #[test]
 fn pushing_a_predicate_into_the_scan_keeps_the_captured_plan_shape() {
     let mut session = Session::new();
@@ -947,12 +920,11 @@ fn pushing_a_predicate_into_the_scan_keeps_the_captured_plan_shape() {
         ),
     ] {
         let rows = row_text(session.run(&format!("EXPLAIN {sql}")));
-        assert_eq!(rows.len(), 3, "{sql}");
-        assert_eq!(rows[0][0], "Projection_3", "{sql}");
-        assert_eq!(rows[1][0], "\u{2514}\u{2500}Selection_2", "{sql}");
-        assert_eq!(rows[1][4], printed, "{sql}");
-        assert_eq!(rows[2][0], "  \u{2514}\u{2500}TableFullScan_1", "{sql}");
-        assert_eq!(rows[2][1], "10000.00", "{sql}");
+        assert_eq!(rows.len(), 2, "{sql}");
+        assert_eq!(rows[0][0], "Selection_2", "{sql}");
+        assert_eq!(rows[0][4], printed, "{sql}");
+        assert_eq!(rows[1][0], "\u{2514}\u{2500}TableFullScan_1", "{sql}");
+        assert_eq!(rows[1][1], "10000.00", "{sql}");
         // No second Selection, and no task column ever leaves `root`.
         for row in &rows {
             assert_eq!(row[2], "root", "{sql}");
@@ -962,7 +934,7 @@ fn pushing_a_predicate_into_the_scan_keeps_the_captured_plan_shape() {
     // The single `>` keeps Go's captured 3333.33 estimate, which the split
     // must not disturb.
     let rows = row_text(session.run("EXPLAIN SELECT a, b FROM t WHERE a > 5"));
-    assert_eq!(rows[1][1], "3333.33");
+    assert_eq!(rows[0][1], "3333.33");
 }
 
 /// `EXPLAIN ANALYZE` over a scan that took the whole `WHERE`: the
@@ -983,23 +955,19 @@ fn a_filtering_scan_still_reports_the_rows_it_read() {
         .run("INSERT INTO t VALUES (1,1),(2,2),(3,3),(4,10)")
         .unwrap();
     let rows = row_text(session.run("EXPLAIN ANALYZE SELECT * FROM t WHERE v > 2"));
-    assert_eq!(rows[1][0], "\u{2514}\u{2500}Selection_2");
-    assert_eq!(rows[1][2], "2", "rows that passed the predicate");
-    assert_eq!(rows[2][0], "  \u{2514}\u{2500}TableFullScan_1");
-    assert_eq!(rows[2][2], "4", "rows the scan read, before filtering");
+    assert_eq!(rows[0][0], "Selection_2");
+    assert_eq!(rows[0][2], "2", "rows that passed the predicate");
+    assert_eq!(rows[1][0], "\u{2514}\u{2500}TableFullScan_1");
+    assert_eq!(rows[1][2], "4", "rows the scan read, before filtering");
 }
 
 /// `EXPLAIN` of a hash join, against a `pkg/executor` mock-store capture on
 /// the same statistics-free schema (`TestZZDumpHashJoin`).
 ///
-/// Every assertion below is the join row's own `operator info` cell plus the
-/// `(Build)`/`(Probe)` labels, which are byte-identical to that capture. The
-/// rows AROUND the join still diverge in the ways `tidb_executor::explain`'s
-/// module doc already names -- this tier reads a table directly instead of
-/// through a `TableReader`/`Selection` pair, does not push the implicit
-/// `not(isnull(key))` down, prints `N/A` where an equi-join's cardinality
-/// would need statistics, and always builds a `Projection`. What this test
-/// pins is the join operator itself.
+/// Every assertion below pins the join row's own `operator info` cell plus the
+/// `(Build)`/`(Probe)` labels. Like Go, the labels now sit on reader rows,
+/// whose access-object cells are empty; the table names live on their scan
+/// children.
 #[test]
 fn explain_hash_join_operator_info_matches_go() {
     let mut session = Session::new();
@@ -1037,8 +1005,8 @@ fn explain_hash_join_operator_info_matches_go() {
         ),
         vec![
             "inner join, equal:[eq(test.hj1.a, test.hj2.a)]",
-            "(Build) table:hj2",
-            "(Probe) table:hj1",
+            "(Build) ",
+            "(Probe) ",
         ]
     );
 
@@ -1051,9 +1019,9 @@ fn explain_hash_join_operator_info_matches_go() {
             "EXPLAIN FORMAT='brief' SELECT * FROM hj1 LEFT JOIN hj2 ON hj1.a = hj2.a"
         ),
         vec![
-            "left outer join, left side:TableFullScan, equal:[eq(test.hj1.a, test.hj2.a)]",
-            "(Build) table:hj2",
-            "(Probe) table:hj1",
+            "left outer join, left side:TableReader, equal:[eq(test.hj1.a, test.hj2.a)]",
+            "(Build) ",
+            "(Probe) ",
         ]
     );
     assert_eq!(
@@ -1062,9 +1030,9 @@ fn explain_hash_join_operator_info_matches_go() {
             "EXPLAIN FORMAT='brief' SELECT * FROM hj1 RIGHT JOIN hj2 ON hj1.a = hj2.a"
         ),
         vec![
-            "right outer join, left side:Selection, equal:[eq(test.hj1.a, test.hj2.a)]",
-            "(Build) table:hj1",
-            "(Probe) table:hj2",
+            "right outer join, left side:TableReader, equal:[eq(test.hj1.a, test.hj2.a)]",
+            "(Build) ",
+            "(Probe) ",
         ]
     );
 
@@ -1114,7 +1082,7 @@ fn explain_hash_join_operator_info_matches_go() {
             &mut session,
             "EXPLAIN FORMAT='brief' SELECT * FROM hj1 LEFT JOIN hj2 ON hj1.s = hj2.s"
         )[0],
-        "left outer join, left side:TableFullScan, equal:[eq(test.hj1.s, test.hj2.s)]"
+        "left outer join, left side:TableReader, equal:[eq(test.hj1.s, test.hj2.s)]"
     );
 }
 
@@ -1280,10 +1248,8 @@ fn explain_est_rows_on_an_unanalyzed_table() {
 /// TableDual  root    rows:0
 /// ```
 ///
-/// DIVERGENCE (`tidb_executor::plan_trace::empty_range_table_dual`): Go
-/// discards the operators above the read too, since the whole `DataSource`
-/// task becomes the dual; this tier keeps the `Selection`/`Projection` over
-/// a source that produces nothing.
+/// Go discards the operators above the read too, since the whole
+/// `DataSource` task becomes the dual. The local fast path does the same.
 #[test]
 fn an_empty_index_range_is_a_table_dual_not_a_scan() {
     let mut session = Session::new();
@@ -1297,7 +1263,7 @@ fn an_empty_index_range_is_a_table_dual_not_a_scan() {
             "EXPLAIN FORMAT = 'brief' SELECT * FROM t1 USE INDEX(a) WHERE {where_clause}"
         )));
         let leaf = rows.last().expect("a plan has at least one row");
-        assert_eq!(leaf[0], "  └─TableDual", "{where_clause}");
+        assert_eq!(leaf[0], "TableDual", "{where_clause}: {rows:?}");
         assert_eq!(leaf[4], "rows:0", "{where_clause}");
         // The rows were already right and must stay right.
         assert!(row_text(session.run(&format!(
@@ -1313,7 +1279,7 @@ fn an_empty_index_range_is_a_table_dual_not_a_scan() {
         session.run("EXPLAIN FORMAT = 'brief' SELECT * FROM t1 USE INDEX(a) WHERE a > -1"),
     );
     let leaf = rows.last().expect("a plan has at least one row");
-    assert_eq!(leaf[0], "  └─IndexRangeScan");
+    assert_eq!(leaf[0], "└─IndexRangeScan");
     assert_eq!(leaf[4], "range:[0,+inf], keep order:false, stats:pseudo");
     assert_eq!(
         row_text(session.run("SELECT * FROM t1 USE INDEX(a) WHERE a > -1")),
@@ -1360,10 +1326,11 @@ fn open_interval_ranges_do_not_depend_on_a_read_being_covering() {
     session
         .run("CREATE TABLE d (a INT, b INT, c INT, KEY ia(a), KEY iab(a,b))")
         .unwrap();
-    let range_of = |session: &mut Session, query: &str| {
+    let scan_of = |session: &mut Session, query: &str, operator: &str| {
         let rows = row_text(session.run(&format!("EXPLAIN FORMAT = 'brief' {query}")));
-        let leaf = rows.last().expect("a plan has at least one row").clone();
-        (leaf[0].clone(), leaf[4].clone())
+        rows.into_iter()
+            .find(|row| row[0].contains(operator))
+            .unwrap_or_else(|| panic!("{query} has no {operator}"))
     };
     for (query, expected) in [
         (
@@ -1399,11 +1366,11 @@ fn open_interval_ranges_do_not_depend_on_a_read_being_covering() {
             "range:[-inf,5), (5,+inf]",
         ),
     ] {
-        let (operator, info) = range_of(&mut session, query);
-        assert_eq!(operator, "  \u{2514}\u{2500}IndexRangeScan", "{query}");
+        let range = scan_of(&mut session, query, "IndexRangeScan");
         assert!(
-            info.starts_with(expected),
-            "{query} gave {info}, expected it to start with {expected}",
+            range[4].starts_with(expected),
+            "{query} gave {}, expected it to start with {expected}",
+            range[4],
         );
     }
 
@@ -1411,8 +1378,7 @@ fn open_interval_ranges_do_not_depend_on_a_read_being_covering() {
     // hint, the same predicate takes a full scan on cost grounds. If range
     // building ever did depend on coveringness, this line would be the only
     // one above that still passed.
-    let (operator, _) = range_of(&mut session, "SELECT * FROM d WHERE a > 5");
-    assert_eq!(operator, "  \u{2514}\u{2500}TableFullScan");
+    scan_of(&mut session, "SELECT * FROM d WHERE a > 5", "TableFullScan");
 }
 
 /// Go `cardinality.EstimateFullJoinRowCount`, which
@@ -1472,16 +1438,14 @@ fn explain_est_rows_for_a_join() {
         "99800100.00"
     );
 
-    // An ANALYZEd side has real per-column histogram NDVs, which this tier
-    // does not carry through the trace, so the join keeps Go's `N/A` rather
-    // than dividing by the pseudo 0.8 ratio (TiDB prints 3.00 here).
+    // An ANALYZEd side contributes its real row count and histogram NDV.
     session
         .run("INSERT INTO j1 VALUES (1,1),(2,2),(3,3)")
         .unwrap();
     session.run("ANALYZE TABLE j1").unwrap();
     assert_eq!(
         join_est(&mut session, "SELECT * FROM j1 JOIN j2 ON j1.a = j2.a"),
-        "N/A"
+        "3.75"
     );
 }
 

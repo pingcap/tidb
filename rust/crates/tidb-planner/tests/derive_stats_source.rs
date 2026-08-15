@@ -29,9 +29,10 @@
 //! all. The oracle is a default-format `EXPLAIN` of the same statements.
 
 use tidb_planner::cardinality::derive_stats::{
-    ColumnId, DeriveStatsContext, DerivedNode, LogicalNode, ProjectionExpr, calc_join_cum_cost,
-    derive_stats,
+    calc_join_cum_cost, derive_stats, ColumnId, DeriveStatsContext, DerivedNode, LogicalNode,
+    ProjectionExpr,
 };
+use tidb_planner::cardinality::ndv::GroupNdv;
 
 const T1_A: ColumnId = 1;
 const T1_B: ColumnId = 2;
@@ -56,9 +57,26 @@ const THRESHOLD: i32 = 10;
 fn table(columns: &[ColumnId], selectivity: f64) -> LogicalNode {
     LogicalNode::DataSource {
         realtime_count: 10000.0,
-        columns: columns.to_vec(),
+        column_ndvs: columns.iter().map(|id| (*id, 8000.0)).collect(),
+        group_ndvs: Vec::new(),
         selectivity,
     }
+}
+
+/// `cardinality.EstimateColumnNDV` installs analyzed NDVs in the data-source
+/// stats before predicate selectivity is applied.
+#[test]
+fn a_datasource_preserves_analyzed_column_ndvs() {
+    let source = LogicalNode::DataSource {
+        realtime_count: 300_000.0,
+        column_ndvs: [(T1_A, 10.0), (T1_B, 30_000.0)].into_iter().collect(),
+        group_ndvs: Vec::new(),
+        selectivity: 0.1,
+    };
+    let derived = derive_stats(&source, &ctx());
+    assert_row_counts(&derived, &[30_000.0]);
+    assert!((derived.stats.col_ndvs[&T1_A] - 1.0).abs() < 1e-9);
+    assert!((derived.stats.col_ndvs[&T1_B] - 3_000.0).abs() < 1e-9);
 }
 
 fn join(
@@ -84,6 +102,7 @@ fn projection(child: LogicalNode, exprs: &[(ColumnId, &[ColumnId])]) -> LogicalN
             .map(|(output, inputs)| ProjectionExpr {
                 output: *output,
                 inputs: inputs.to_vec(),
+                direct_input: (inputs.len() == 1).then_some(inputs[0]),
             })
             .collect(),
     }
@@ -145,6 +164,45 @@ fn a_two_table_equi_join_is_twelve_thousand_five_hundred_rows() {
     assert_row_counts(&derive_stats(&plan, &ctx()), &[12500.0, 10000.0, 10000.0]);
 }
 
+/// Exact composite index NDVs remove Go's multi-key correlation fallback.
+/// This is the cardinality contract used by TPCC condition 05's clustered
+/// `(warehouse, district, order)` primary-key join.
+#[test]
+fn a_composite_group_ndv_bounds_an_outer_join_by_its_preserved_side() {
+    let left = LogicalNode::DataSource {
+        realtime_count: 300_000.0,
+        column_ndvs: [(T1_A, 10.0), (T1_B, 10.0), (T1_C, 3_000.0)]
+            .into_iter()
+            .collect(),
+        group_ndvs: vec![GroupNdv {
+            columns: vec![T1_A as i64, T1_B as i64, T1_C as i64],
+            ndv: 299_264.0,
+        }],
+        selectivity: 0.1,
+    };
+    let right = LogicalNode::DataSource {
+        realtime_count: 90_000.0,
+        column_ndvs: [(T2_A, 10.0), (T2_B, 10.0), (T2_C, 900.0)]
+            .into_iter()
+            .collect(),
+        group_ndvs: vec![GroupNdv {
+            columns: vec![T2_A as i64, T2_B as i64, T2_C as i64],
+            ndv: 89_168.0,
+        }],
+        selectivity: 0.1,
+    };
+    let plan = LogicalNode::Join {
+        left: Box::new(left),
+        right: Box::new(right),
+        left_keys: vec![T1_A, T1_B, T1_C],
+        right_keys: vec![T2_A, T2_B, T2_C],
+        kind: tidb_planner::cardinality::derive_stats::JoinKind::LeftOuter,
+    };
+
+    let derived = derive_stats(&plan, &ctx());
+    assert_row_counts(&derived, &[30_000.0, 30_000.0, 9_000.0]);
+}
+
 /// `explain select * from t1, t2 where t1.b = t2.b` -> `Selection 9990.00`
 /// under each side and `HashJoin 12487.50`. The `not(isnull(col))` rewrite is
 /// a `0.999` factor *per column*, which is why the join is not `12500`.
@@ -189,6 +247,23 @@ fn a_logical_selection_is_a_flat_zero_point_eight() {
         child: Box::new(table(&[T1_A], 1.0)),
     };
     assert_row_counts(&derive_stats(&plan, &ctx()), &[8000.0, 10000.0]);
+}
+
+/// `LogicalAggregation.DeriveStats` uses the group-key NDV as both its row
+/// count and every output column's NDV. A pseudo equality leaves ten rows and
+/// an NDV of eight on the grouped column, matching TPCC condition 04's inner
+/// `GROUP BY ol_d_id` fixture.
+#[test]
+fn a_grouped_aggregation_uses_the_group_key_ndv_for_every_output() {
+    let plan = LogicalNode::Aggregation {
+        child: Box::new(table(&[T1_A, T1_B], 1.0 / 1000.0)),
+        group_by: vec![T1_B],
+        columns: vec![DT_KEY_A, DT_DOUBLED_B],
+    };
+    let derived = derive_stats(&plan, &ctx());
+    assert_row_counts(&derived, &[8.0, 10.0]);
+    assert_eq!(derived.stats.col_ndvs[&DT_KEY_A], 8.0);
+    assert_eq!(derived.stats.col_ndvs[&DT_DOUBLED_B], 8.0);
 }
 
 /// `LogicalJoin.DeriveStats` clamps every inherited column NDV to the join's
@@ -290,7 +365,12 @@ fn t5() -> LogicalNode {
 #[test]
 fn statement_1_plain_key_join_matches_the_recorded_est_rows() {
     let plan = join(
-        join(table(&[T1_A, T1_B, T1_C], 1.0), dt(1.0), &[T1_A], &[DT_KEY_A]),
+        join(
+            table(&[T1_A, T1_B, T1_C], 1.0),
+            dt(1.0),
+            &[T1_A],
+            &[DT_KEY_A],
+        ),
         table(&[T5_A], 1.0),
         &[DT_KEY_A],
         &[T5_A],
@@ -408,7 +488,12 @@ fn statement_3_two_computed_keys_apply_one_correlation_factor() {
 #[test]
 fn statement_4_a_filtered_derived_table_rescales_the_key_ndv() {
     let plan = join(
-        join(table(&[T1_A, T1_B, T1_C], 1.0), dt(0.8), &[T1_A], &[DT_KEY_A]),
+        join(
+            table(&[T1_A, T1_B, T1_C], 1.0),
+            dt(0.8),
+            &[T1_A],
+            &[DT_KEY_A],
+        ),
         table(&[T5_A], 1.0),
         &[DT_KEY_A],
         &[T5_A],

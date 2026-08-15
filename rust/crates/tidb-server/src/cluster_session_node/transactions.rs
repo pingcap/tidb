@@ -24,7 +24,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tidb_exec::cluster_table_storage::{
-    commit_staged_buffer, SessionTransaction, StatementSnapshot,
+    commit_staged_buffer, MaxTsSnapshot, PreparedStatementSnapshot, SessionTransaction,
+    StatementSnapshot,
 };
 use tidb_exec::pessimistic_lock_error::LockSqlError;
 use tidb_exec::real_tikv_read::RealOptimisticTransactionOpener;
@@ -56,11 +57,13 @@ pub(crate) fn sql_error(error: LockSqlError) -> SqlQueryError {
 /// implementation is [`RealClusterTransactions`]; the tests drive the same
 /// lifecycle against an in-memory committed store.
 pub trait ClusterTransactions: Send + Sync {
-    /// Opens one autocommit statement's read snapshot at its own timestamp.
-    ///
-    /// Called at the statement's FIRST read rather than when it binds, so a
-    /// statement that reads no cluster row never reaches here; see
-    /// [`DeferredSnapshot`].
+    /// Starts preparing one ordinary autocommit snapshot without waiting for
+    /// its timestamp. The first read consumes the returned future.
+    fn prepare_snapshot(&self) -> Result<Box<dyn PendingClusterSnapshot>, String>;
+
+    /// Synchronously opens one autocommit statement's read snapshot at its own
+    /// timestamp. This is the fail-closed fallback when no prepared future was
+    /// installed; ordinary statements use [`Self::prepare_snapshot`].
     fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String>;
 
     /// Opens one autocommit statement's read snapshot at `u64::MAX` -- the
@@ -128,6 +131,13 @@ impl AdvisoryLockService for ClusterAdvisoryLockService {
     }
 }
 
+/// One ordinary autocommit snapshot whose timestamp request is in flight.
+pub trait PendingClusterSnapshot: Send {
+    /// Waits for preparation and returns the snapshot every statement read
+    /// will share.
+    fn wait(self: Box<Self>) -> Result<Box<dyn ClusterSnapshot>, String>;
+}
+
 /// The transaction an explicit `BEGIN` holds open across its statements.
 ///
 /// Every statement of the transaction reads through [`Self::snapshot`], so they
@@ -153,8 +163,8 @@ pub trait OpenClusterTransaction: Send {
     fn rollback(self: Box<Self>) -> Result<(), String>;
 }
 
-/// The timestamp one autocommit statement is at: written by the statement's
-/// first read, read back by the statement's publication.
+/// The timestamp one autocommit statement is at: written when the first read
+/// waits for its prepared snapshot, read back by statement publication.
 ///
 /// The two halves cannot share the read transaction itself, because the read
 /// handle is unbound and dropped before the publication is decided — that
@@ -200,24 +210,17 @@ impl StatementReadTs {
     }
 }
 
-/// One autocommit statement's read snapshot, opened at its FIRST read rather
-/// than when the statement starts.
+/// One autocommit statement's read snapshot, prepared after planning and
+/// activated at its FIRST read.
 ///
 /// The session driver binds a statement's snapshot before the statement is
 /// planned, because the slot has to be in place before the executor exists.
-/// Opening the real read transaction there spends one PD timestamp
-/// unconditionally -- including for statements that read no cluster row at all
-/// (`SET`, a constant `SELECT`, a statement served entirely from the staged
-/// buffer), and before any plan exists for a timestamp policy to look at.
-/// Deferring the open to the first `get`/`scan` keeps the binding order
-/// exactly as it was while making the timestamp the property of a read, which
-/// is the only thing that needs one.
-///
-/// The deferral changes no read's timestamp: the first read still opens a
-/// fresh transaction, so it is the same "latest committed at the moment the
-/// statement reads" the eager open gave, only moved later inside the same
-/// statement. Nothing between the two points reads through the slot -- the
-/// statement's own execution is what does.
+/// Opening synchronously at bind time both precedes the plan-shape decision and
+/// serializes PD latency with executor setup. Go instead installs an oracle
+/// future after `AdviseOptimizeWithPlan`: planning chooses ordinary versus
+/// MaxTS first, ordinary TSO work overlaps executor construction, and `Txn()`
+/// waits only if execution needs a snapshot. `prepare_open` is that future;
+/// `with_open` is the wait/activation boundary.
 struct DeferredSnapshot {
     transactions: Arc<dyn ClusterTransactions>,
     /// Where the open publishes the statement's timestamp, so the publication
@@ -232,7 +235,9 @@ struct DeferredSnapshot {
 /// The statement's read transaction, and the shape it was declared with.
 #[derive(Default)]
 struct DeferredState {
-    /// `None` until the first read.
+    /// An ordinary timestamp request started after planning and not yet waited.
+    prepared: Option<Box<dyn PendingClusterSnapshot>>,
+    /// `None` until the first read waits for the prepared snapshot.
     opened: Option<Box<dyn ClusterSnapshot>>,
     /// Whether the statement declared its whole read is one point get on the
     /// clustered handle, which is what decides WHICH transaction the first
@@ -252,6 +257,7 @@ impl fmt::Debug for DeferredSnapshot {
         let state = self.state();
         formatter
             .debug_struct("DeferredSnapshot")
+            .field("prepared", &state.prepared.is_some())
             .field("opened", &state.opened.is_some())
             .field("max_ts", &state.max_ts)
             .finish()
@@ -273,6 +279,19 @@ impl DeferredSnapshot {
             .unwrap_or_else(|poison| poison.into_inner())
     }
 
+    fn prepare_open(&self) -> Result<(), StorageError> {
+        let mut state = self.state();
+        if state.max_ts || state.prepared.is_some() || state.opened.is_some() {
+            return Ok(());
+        }
+        state.prepared = Some(
+            self.transactions
+                .prepare_snapshot()
+                .map_err(StorageError::Backend)?,
+        );
+        Ok(())
+    }
+
     /// Runs `use_snapshot` against the statement's read transaction, opening
     /// it first if this is the statement's first read.
     ///
@@ -288,6 +307,8 @@ impl DeferredSnapshot {
         if guard.opened.is_none() {
             let opened = if guard.max_ts {
                 self.transactions.open_max_ts_snapshot()
+            } else if let Some(prepared) = guard.prepared.take() {
+                prepared.wait()
             } else {
                 self.transactions.open_snapshot()
             };
@@ -303,6 +324,10 @@ impl DeferredSnapshot {
 }
 
 impl ClusterSnapshot for DeferredSnapshot {
+    fn prepare(&mut self) -> Result<(), StorageError> {
+        self.prepare_open()
+    }
+
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
         self.with_open(|snapshot| snapshot.get(key))
     }
@@ -340,15 +365,18 @@ impl ClusterSnapshot for DeferredSnapshot {
         if state.opened.is_some() {
             return false;
         }
+        // Go chooses the MaxTS constant future before warmup. If a caller ever
+        // reverses those two operations, discard the ordinary future here.
+        state.prepared.take();
         state.max_ts = true;
         true
     }
 }
 
-/// Binds one autocommit statement's snapshot without spending a timestamp.
+/// Binds one autocommit statement's snapshot without starting a timestamp.
 ///
 /// `read_ts` is the statement's, and outlives the returned handle: whatever
-/// timestamp the statement's first read opens at is written there, and the
+/// timestamp the statement's first read waits for is written there, and the
 /// statement's publication reads it back after this handle has been dropped.
 pub(crate) fn deferred_snapshot(
     transactions: Arc<dyn ClusterTransactions>,
@@ -362,6 +390,17 @@ pub(crate) fn deferred_snapshot(
 pub struct RealClusterTransactions {
     opener: Arc<RealOptimisticTransactionOpener>,
     timeout: Duration,
+}
+
+struct RealPendingSnapshot(PreparedStatementSnapshot);
+
+impl PendingClusterSnapshot for RealPendingSnapshot {
+    fn wait(self: Box<Self>) -> Result<Box<dyn ClusterSnapshot>, String> {
+        self.0
+            .wait()
+            .map(|snapshot| Box::new(snapshot) as Box<dyn ClusterSnapshot>)
+            .map_err(|error| error.to_string())
+    }
 }
 
 impl RealClusterTransactions {
@@ -473,6 +512,14 @@ fn map_advisory_lock_failure(failure: PessimisticLockFailure) -> AdvisoryLockErr
 }
 
 impl ClusterTransactions for RealClusterTransactions {
+    fn prepare_snapshot(&self) -> Result<Box<dyn PendingClusterSnapshot>, String> {
+        StatementSnapshot::prepare(Arc::clone(&self.opener), self.timeout)
+            .map(|snapshot| {
+                Box::new(RealPendingSnapshot(snapshot)) as Box<dyn PendingClusterSnapshot>
+            })
+            .map_err(|error| error.to_string())
+    }
+
     fn open_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
         StatementSnapshot::open(Arc::clone(&self.opener), self.timeout)
             .map(|snapshot| Box::new(snapshot) as Box<dyn ClusterSnapshot>)
@@ -480,9 +527,10 @@ impl ClusterTransactions for RealClusterTransactions {
     }
 
     fn open_max_ts_snapshot(&self) -> Result<Box<dyn ClusterSnapshot>, String> {
-        StatementSnapshot::open_at_max_ts(Arc::clone(&self.opener), self.timeout)
-            .map(|snapshot| Box::new(snapshot) as Box<dyn ClusterSnapshot>)
-            .map_err(|error| error.to_string())
+        Ok(Box::new(MaxTsSnapshot::new(
+            Arc::clone(&self.opener),
+            self.timeout,
+        )))
     }
 
     fn commit(&self, buffer: &MutationBuffer, read_ts: Option<u64>) -> Result<(), SqlQueryError> {

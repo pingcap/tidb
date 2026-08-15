@@ -28,14 +28,16 @@
 //! Each autocommit statement that reads a cluster row therefore gets its own
 //! fresh timestamp, which is what Go's autocommit does too: `BEGIN` is
 //! implicit and ends with the statement. Two statements spend none. A
-//! statement that reads no cluster row never opens this transaction at all --
-//! the cluster session driver opens it at the statement's first read, not when
-//! it binds the slot. And a statement that DECLARED its whole read is one
-//! point get on the clustered handle opens through
-//! [`StatementSnapshot::open_at_max_ts`] instead, at `u64::MAX`, which is Go's
-//! `AdviseOptimizeWithPlan` shortcut; the declaration is a statement-level
-//! fact and never inferred from a read, because at this seam an `UPDATE`'s
-//! read-before-write is the same `get` on the same key.
+//! statement that reads no cluster row never activates this transaction at all:
+//! the cluster session driver starts the open asynchronously after planning,
+//! but only the first read waits for and exposes it. And a statement that
+//! DECLARED its whole read is one point get on the clustered handle uses
+//! [`MaxTsSnapshot`] instead, at `u64::MAX`, which is Go's
+//! `AdviseOptimizeWithPlan` shortcut. That reader runs directly on the
+//! connection worker and never opens a pinned transaction worker; the
+//! declaration is a statement-level fact and never inferred from a read,
+//! because at this seam an `UPDATE`'s read-before-write is the same `get` on
+//! the same key.
 //!
 //! **Explicit `BEGIN` ... `COMMIT`.** [`SessionTransaction`] opens *one*
 //! transaction at `BEGIN` and keeps it open. Every statement in between reads
@@ -66,6 +68,7 @@ use tidb_executor::cluster_storage::{
     ClusterSnapshot, ClusterTableStorage, MutationBuffer, SnapshotPairs,
 };
 use tidb_executor::storage::StorageError;
+use tidb_pd_client::PdTimestampFuture;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticCoordinatorError, OptimisticMutation,
@@ -101,6 +104,9 @@ enum TransactionRequest {
     Finish {
         reply: Sender<Result<(), StorageError>>,
     },
+    /// Ends a read-only statement snapshot without putting its caller on the
+    /// worker's cleanup path.
+    FinishDetached,
 }
 
 /// One real transaction pinned to the thread it was opened on.
@@ -116,25 +122,57 @@ enum TransactionRequest {
 /// is why the transaction still owns a thread for its whole life without every
 /// statement paying to create one. A statement that opens a snapshot and
 /// finishes it costs one channel handshake instead of a `pthread_create` plus a
-/// `join`; on the cluster path, where every statement -- `SELECT 1` included --
-/// opens one, that is roughly 17 microseconds each.
+/// `join`; a statement that never reads storage keeps only its PD timestamp
+/// future and does not borrow a worker.
 struct TransactionThread {
     requests: Option<Sender<TransactionRequest>>,
     start_ts: u64,
 }
 
+/// A transaction thread whose worker-local open result has not been waited for.
+struct PreparedTransactionThread {
+    requests: Option<Sender<TransactionRequest>>,
+    opened: Receiver<Result<u64, OptimisticCoordinatorError>>,
+}
+
+impl PreparedTransactionThread {
+    fn wait(mut self) -> Result<TransactionThread, OptimisticCoordinatorError> {
+        let start_ts = self
+            .opened
+            .recv()
+            .map_err(|_| {
+                OptimisticCoordinatorError::SnapshotGet(
+                    "the transaction thread ended before opening a transaction".to_owned(),
+                )
+            })
+            .and_then(|result| result)?;
+        Ok(TransactionThread {
+            requests: self.requests.take(),
+            start_ts,
+        })
+    }
+}
+
+impl Drop for PreparedTransactionThread {
+    fn drop(&mut self) {
+        // Closing the request channel lets a transaction that already opened
+        // finish itself; if opening is still in flight, the worker observes the
+        // closed channel immediately after it publishes the result.
+        self.requests.take();
+    }
+}
+
 /// Which transaction a [`TransactionThread`] opens, and therefore what its
 /// `start_ts` costs.
 ///
-/// [`TransactionOpen::ReadOnlyAtMaxTs`] is the only one that spends no PD
-/// timestamp, and it is reachable only from a statement that has DECLARED it
-/// reads one row once; see
-/// [`StatementSnapshot::open_at_max_ts`].
+/// MaxTS point reads are deliberately absent: [`MaxTsSnapshot`] sends those
+/// directly from the connection worker instead of opening a transaction
+/// worker.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TransactionOpen {
     Writable,
     ReadOnly,
-    ReadOnlyAtMaxTs,
+    ReadOnlyAt(u64),
 }
 
 impl TransactionOpen {
@@ -173,6 +211,15 @@ impl TransactionThread {
         open: TransactionOpen,
         name: &str,
     ) -> Result<Self, OptimisticCoordinatorError> {
+        Self::prepare_with(opener, timeout, open, name)?.wait()
+    }
+
+    fn prepare_with(
+        opener: &Arc<RealOptimisticTransactionOpener>,
+        timeout: Duration,
+        open: TransactionOpen,
+        name: &str,
+    ) -> Result<PreparedTransactionThread, OptimisticCoordinatorError> {
         let (requests, incoming) = mpsc::channel::<TransactionRequest>();
         let (opened, opened_reply) = mpsc::channel::<Result<u64, OptimisticCoordinatorError>>();
         let opener = Arc::clone(opener);
@@ -185,7 +232,9 @@ impl TransactionThread {
                             opener.begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
                         }
                         TransactionOpen::ReadOnly => opener.begin_read_only(),
-                        TransactionOpen::ReadOnlyAtMaxTs => opener.begin_read_only_at_max_ts(),
+                        TransactionOpen::ReadOnlyAt(start_ts) => {
+                            opener.begin_read_only_at(start_ts)
+                        }
                     };
                     let transaction = match begun {
                         Ok(transaction) => {
@@ -206,17 +255,9 @@ impl TransactionThread {
                 }),
             )
             .map_err(OptimisticCoordinatorError::SnapshotGet)?;
-        let start_ts = opened_reply
-            .recv()
-            .map_err(|_| {
-                OptimisticCoordinatorError::SnapshotGet(
-                    "the transaction thread ended before opening a transaction".to_owned(),
-                )
-            })
-            .and_then(|result| result)?;
-        Ok(Self {
+        Ok(PreparedTransactionThread {
             requests: Some(requests),
-            start_ts,
+            opened: opened_reply,
         })
     }
 
@@ -238,6 +279,16 @@ impl TransactionThread {
             // transaction on its way out.
             Err(_) => Ok(()),
         }
+    }
+
+    /// Hands read-only cleanup to the transaction worker without waiting for
+    /// its local state transition. This is reserved for statement snapshots:
+    /// they cannot have mutations or pessimistic locks to clean up.
+    fn finish_detached(&mut self) {
+        let Some(requests) = self.requests.take() else {
+            return;
+        };
+        let _ = requests.send(TransactionRequest::FinishDetached);
     }
 
     /// Publishes `mutations` on this very transaction, so the prewrite carries
@@ -349,6 +400,10 @@ fn serve_transaction(
                 );
                 return;
             }
+            TransactionRequest::FinishDetached => {
+                let _ = transaction.finish_without_writes();
+                return;
+            }
         }
     }
     let _ = transaction.finish_without_writes();
@@ -364,6 +419,35 @@ pub struct StatementSnapshot {
     thread: TransactionThread,
 }
 
+/// One statement snapshot whose ordinary PD timestamp request is in flight.
+///
+/// Unlike [`StatementSnapshot`], this owns no pinned transaction worker. Go's
+/// warmup stores only an oracle future; the worker-local transaction is opened
+/// when [`Self::wait`] activates the snapshot for the first storage read.
+pub struct PreparedStatementSnapshot {
+    opener: Arc<RealOptimisticTransactionOpener>,
+    timeout: Duration,
+    start_ts: PdTimestampFuture,
+}
+
+impl PreparedStatementSnapshot {
+    /// Waits for the transaction prepared after planning.
+    pub fn wait(self) -> Result<StatementSnapshot, OptimisticCoordinatorError> {
+        let start_ts = self
+            .start_ts
+            .wait()
+            .map_err(|error| OptimisticCoordinatorError::Timestamp(error.to_string()))?;
+        Ok(StatementSnapshot {
+            thread: TransactionThread::open_with(
+                &self.opener,
+                self.timeout,
+                TransactionOpen::ReadOnlyAt(start_ts),
+                "cluster-statement-snapshot",
+            )?,
+        })
+    }
+}
+
 impl fmt::Debug for StatementSnapshot {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -375,6 +459,20 @@ impl fmt::Debug for StatementSnapshot {
 }
 
 impl StatementSnapshot {
+    /// Starts fetching one ordinary read-only transaction's PD timestamp
+    /// without opening its worker-local transaction.
+    pub fn prepare(
+        opener: Arc<RealOptimisticTransactionOpener>,
+        timeout: Duration,
+    ) -> Result<PreparedStatementSnapshot, OptimisticCoordinatorError> {
+        let start_ts = opener.prepare_read_only_start_ts()?;
+        Ok(PreparedStatementSnapshot {
+            opener,
+            timeout,
+            start_ts,
+        })
+    }
+
     /// Opens one read-only transaction on its own thread, spending exactly one
     /// PD timestamp.
     pub fn open(
@@ -383,29 +481,6 @@ impl StatementSnapshot {
     ) -> Result<Self, OptimisticCoordinatorError> {
         Ok(Self {
             thread: TransactionThread::open(&opener, timeout, false, "cluster-statement-snapshot")?,
-        })
-    }
-
-    /// Opens one read-only transaction at `u64::MAX` on its own thread,
-    /// spending NO PD timestamp.
-    ///
-    /// Reachable only from a statement that declared, before its first read,
-    /// that its whole read is one autocommit point get on the clustered handle
-    /// — Go's `IsPointGetWithPKOrUniqueKeyByAutoCommit` plus
-    /// `AdviseOptimizeWithPlan`. `MaxUint64` ignores snapshot isolation, so a
-    /// statement with a second read would see two different snapshots through
-    /// one handle; the declaration, not this method, is what forbids that.
-    pub fn open_at_max_ts(
-        opener: Arc<RealOptimisticTransactionOpener>,
-        timeout: Duration,
-    ) -> Result<Self, OptimisticCoordinatorError> {
-        Ok(Self {
-            thread: TransactionThread::open_with(
-                &opener,
-                timeout,
-                TransactionOpen::ReadOnlyAtMaxTs,
-                "cluster-statement-snapshot-max-ts",
-            )?,
         })
     }
 
@@ -420,6 +495,16 @@ impl StatementSnapshot {
     /// Calling it twice is a no-op: the statement is already finished.
     pub fn finish(&mut self) -> Result<(), StorageError> {
         self.thread.finish()
+    }
+}
+
+impl Drop for StatementSnapshot {
+    fn drop(&mut self) {
+        // Go abandons an autocommit read snapshot after the statement: there
+        // are no writes or locks whose cleanup the foreground must observe.
+        // Keep the worker-owned transaction lifecycle ordered, but do not put
+        // the next statement behind its local read-only state transition.
+        self.thread.finish_detached();
     }
 }
 
@@ -450,6 +535,76 @@ impl ClusterSnapshot for StatementSnapshot {
 
     fn start_ts(&self) -> u64 {
         self.thread.start_ts
+    }
+}
+
+/// One direct latest-committed point read with no transaction-worker state.
+///
+/// The session creates this only after the root plan has declared Go's
+/// autocommit point-get shape. A second read would not have snapshot isolation
+/// at `u64::MAX`, so this handle consumes exactly one Get and refuses every
+/// scan or later Get. Each accepted read opens only a thread-local read runtime;
+/// region retries, lock recovery, GC visibility, and the call deadline remain
+/// those of the transaction snapshot reader.
+pub struct MaxTsSnapshot {
+    opener: Arc<RealOptimisticTransactionOpener>,
+    timeout: Duration,
+    consumed: bool,
+}
+
+impl MaxTsSnapshot {
+    /// Binds the direct read to the process transaction/read authority.
+    #[must_use]
+    pub fn new(opener: Arc<RealOptimisticTransactionOpener>, timeout: Duration) -> Self {
+        Self {
+            opener,
+            timeout,
+            consumed: false,
+        }
+    }
+
+    fn consume(&mut self) -> Result<(), StorageError> {
+        if std::mem::replace(&mut self.consumed, true) {
+            return Err(StorageError::Backend(
+                "a MaxTS point snapshot cannot serve a second read".to_owned(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Debug for MaxTsSnapshot {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MaxTsSnapshot")
+            .field("consumed", &self.consumed)
+            .finish_non_exhaustive()
+    }
+}
+
+impl ClusterSnapshot for MaxTsSnapshot {
+    fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
+        self.consume()?;
+        let call = UnaryCallContext::with_timeout(self.timeout);
+        self.opener
+            .snapshot_get_at_max_ts(key.as_bytes(), &call)
+            .map_err(classify)
+    }
+
+    fn scan(
+        &mut self,
+        _start: &Key,
+        _end: &Key,
+        _limit: Option<usize>,
+    ) -> Result<SnapshotPairs, StorageError> {
+        self.consume()?;
+        Err(StorageError::Backend(
+            "a MaxTS point snapshot cannot serve a range scan".to_owned(),
+        ))
+    }
+
+    fn start_ts(&self) -> u64 {
+        u64::MAX
     }
 }
 
@@ -741,6 +896,8 @@ fn engine_sql_error(detail: impl fmt::Display) -> LockSqlError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc::RecvTimeoutError;
+    use std::thread;
 
     /// The handle crosses threads even though the transaction it drives never
     /// does; that is the whole reason for the thread-owned shape.
@@ -755,6 +912,46 @@ mod tests {
     fn the_snapshot_handle_is_sendable() {
         assert_send::<StatementSnapshot>();
         assert_send::<ClusterTableStorage>();
+    }
+
+    #[test]
+    fn dropping_a_statement_snapshot_does_not_wait_for_worker_cleanup() {
+        let (requests, incoming) = mpsc::channel();
+        let (dropped, drop_finished) = mpsc::channel();
+        let dropper = thread::spawn(move || {
+            drop(StatementSnapshot {
+                thread: TransactionThread {
+                    requests: Some(requests),
+                    start_ts: 42,
+                },
+            });
+            dropped.send(()).expect("report snapshot drop");
+        });
+
+        let synchronous_reply = match incoming
+            .recv_timeout(Duration::from_secs(1))
+            .expect("snapshot drop must ask the worker to finish")
+        {
+            TransactionRequest::Finish { reply } => Some(reply),
+            TransactionRequest::FinishDetached => None,
+            _ => panic!("snapshot drop sent a non-finish request"),
+        };
+        let returned_without_cleanup = match drop_finished.recv_timeout(Duration::from_millis(50)) {
+            Ok(()) => true,
+            Err(RecvTimeoutError::Timeout) => false,
+            Err(RecvTimeoutError::Disconnected) => panic!("snapshot dropper stopped unexpectedly"),
+        };
+
+        if let Some(reply) = synchronous_reply {
+            reply
+                .send(Ok(()))
+                .expect("release synchronous snapshot drop");
+        }
+        dropper.join().expect("snapshot dropper");
+        assert!(
+            returned_without_cleanup,
+            "read-only statement cleanup blocked the foreground thread"
+        );
     }
 
     #[test]

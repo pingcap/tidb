@@ -93,6 +93,34 @@ fn answers_bare(sql: &str, catalog: &Catalog) -> Vec<Answer> {
     ANSWERS.with(|answers| answers.borrow().clone())
 }
 
+/// Property-aware candidate costing may rebuild an equivalent physical subtree
+/// more than once. Keep the first occurrence of each complete answer, including
+/// the requested property and chosen family.
+fn distinct_answers(answers: Vec<Answer>) -> Vec<Answer> {
+    let mut distinct = Vec::new();
+    for answer in answers {
+        if !distinct.contains(&answer) {
+            distinct.push(answer);
+        }
+    }
+    distinct
+}
+
+/// Keep one estimate per logical join site. Go may ask the same site for
+/// several physical properties, but its logical child and joined cardinalities
+/// do not change between those visits.
+fn distinct_row_sites(answers: Vec<Answer>) -> Vec<Answer> {
+    let mut distinct = Vec::new();
+    for answer in answers {
+        if !distinct.iter().any(|seen: &Answer| {
+            seen.left == answer.left && seen.right == answer.right && seen.rows == answer.rows
+        }) {
+            distinct.push(answer);
+        }
+    }
+    distinct
+}
+
 /// THE ROW SOURCE, against TiDB's own numbers.
 ///
 /// `EXPLAIN FORMAT='cost_trace'` from a `tidb-server` built from this tree,
@@ -117,7 +145,7 @@ fn answers_bare(sql: &str, catalog: &Catalog) -> Vec<Answer> {
 #[test]
 fn the_row_source_reproduces_every_row_count_tidb_records_for_result_1042() {
     let catalog = tables();
-    let answers = answers_explained(RESULT_1042, &catalog);
+    let answers = distinct_row_sites(answers_explained(RESULT_1042, &catalog));
     let sites: Vec<String> = answers
         .iter()
         .map(|answer| {
@@ -158,8 +186,8 @@ fn the_row_source_reproduces_every_row_count_tidb_records_for_result_1042() {
 #[test]
 fn the_choice_is_the_same_under_explain_and_bare_execution() {
     let catalog = tables();
-    let explained = answers_explained(RESULT_1042, &catalog);
-    let bare = answers_bare(RESULT_1042, &catalog);
+    let explained = distinct_answers(answers_explained(RESULT_1042, &catalog));
+    let bare = distinct_answers(answers_bare(RESULT_1042, &catalog));
     assert!(!bare.is_empty(), "the bare statement reached no join site");
     assert_eq!(
         explained, bare,
@@ -186,7 +214,7 @@ fn the_choice_is_the_same_under_explain_and_bare_execution() {
 #[test]
 fn result_1042_requires_an_order_of_its_bottom_site_and_reaches_the_index_join() {
     let catalog = tables();
-    let census: Vec<String> = answers_explained(RESULT_1042, &catalog)
+    let census: Vec<String> = distinct_answers(answers_explained(RESULT_1042, &catalog))
         .iter()
         .map(|answer| {
             format!(
@@ -214,6 +242,11 @@ fn result_1042_requires_an_order_of_its_bottom_site_and_reaches_the_index_join()
             "outer_t,t2 x t4 ordered=true Refused(MergeAlsoEnumerated)",
             // The TOP join is asked for nothing, so hash is enumerated again.
             "outer_t,t2,t4 x t3 ordered=false Refused(HashAlsoEnumerated)",
+            // The same middle site is rebuilt for the unordered candidate
+            // tree; Go's search records the hash alternative separately.
+            "outer_t,t2 x t4 ordered=false Refused(HashAlsoEnumerated)",
+            // The bottom site is likewise revisited without the merge order.
+            "outer_t x t2 ordered=false Refused(HashAlsoEnumerated)",
         ],
     );
 }

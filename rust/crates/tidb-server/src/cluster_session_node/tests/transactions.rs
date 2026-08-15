@@ -574,16 +574,13 @@ fn a_refused_publication_drops_the_staged_writes() {
     );
 }
 
-/// The autocommit timestamp belongs to the statement's first READ, not to the
-/// binding that precedes planning: a statement that reads no cluster row
-/// spends nothing.
+/// Binding starts no transaction. Post-plan warmup may request a timestamp, but
+/// a statement that reads no cluster row never waits for or opens its snapshot.
 ///
-/// This is what deferring the bind buys. The eager open charged a timestamp
-/// before the statement was planned, which is also why a plan-shape timestamp
-/// policy could never be consulted here -- the timestamp was already spent by
-/// the time a plan existed.
+/// This is what the pending handle buys: the timestamp policy is settled before
+/// warmup, and an unused future never becomes session transaction state.
 #[test]
-fn a_statement_that_reads_no_cluster_row_spends_no_timestamp() {
+fn a_statement_that_reads_no_cluster_row_opens_no_snapshot() {
     let (mut session, cluster) = open_session();
     let opened_before = cluster.opened.load(Ordering::Acquire);
     assert_eq!(rows(&mut session, "SELECT 1").len(), 1);

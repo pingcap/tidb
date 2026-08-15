@@ -50,7 +50,8 @@
 //! `APPROX_PERCENTILE` ranks the group's values -- see each [`AggKind`]
 //! variant for the exact Go rule and its captured edges.
 //!
-//! DEFERRED (documented): the parallel partial/final worker pipeline.
+//! DEFERRED (documented): the parallel partial/final worker pipeline and Go's
+//! `Round(retTp.GetDecimal())` display step on the AVG result.
 //!
 //! `APPROX_COUNT_DISTINCT` ports Go's `BJKST` sketch
 //! (`func_count_distinct.go`'s `partialResult4ApproxCountDistinct`, see
@@ -59,8 +60,12 @@
 //! `evalAndEncode`/`appendInt64`/etc, ported in
 //! [`crate::farmhash`]), so results match Go's exactly, including above the
 //! 65536-distinct-value threshold where the sketch stops being exact and
-//! starts extrapolating. Its per-type encodings, including `TIME`, `DURATION`,
-//! and recursive JSON hash values, match Go's sketch input.
+//! starts extrapolating. Only the encodings for `INT`/`REAL`/`DECIMAL`/
+//! `STRING`/`BINARY`/vector arguments are byte-identical to Go's; `TIME`,
+//! `DURATION`, and `JSON` arguments fall back to the datum's generic hash
+//! key, which dedupes correctly but does not hash identically to Go's raw
+//! struct layout / recursive `BinaryJSON.HashValue` -- a documented,
+//! narrower divergence than before.
 
 use crate::agg_spill::AggSpillDiskAction;
 
@@ -76,10 +81,7 @@ use std::sync::Arc;
 use tidb_chunk::chunk::Chunk;
 use tidb_chunk::chunk_in_disk::DataInDiskByChunks;
 use tidb_codec::{encode_bytes, encode_compact_bytes};
-use tidb_datatype::{
-    BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, FieldType, FieldTypeCode, TimeType,
-    MAX_DECIMAL_SCALE, UNSPECIFIED_LENGTH,
-};
+use tidb_datatype::{BinaryJSON, BinaryJSONValue, Collation, Datum, Decimal, FieldType, TimeType};
 use tidb_expr::compare_datums;
 use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
@@ -110,6 +112,9 @@ impl Selectable for DatumSelection<'_> {
 pub enum AggKind {
     /// `COUNT(expr)` / `COUNT(*)` (no argument).
     Count,
+    /// Root final stage for a pushed partial `COUNT`: add the per-region
+    /// counts instead of counting the number of partial rows.
+    FinalCount,
     /// `SUM(expr)`.
     Sum,
     /// `FIRST_ROW(expr)`: the first row's value (the planner's group-column
@@ -229,11 +234,10 @@ pub struct AggFunc {
 }
 
 /// One row's aggregate input. `GROUP_CONCAT(DISTINCT ...)` needs the rendered
-/// value and its deduplication key separately: Go encodes every argument under
-/// that argument's own collation before joining the key fields.
-pub(crate) struct AggInput {
-    pub(crate) value: Option<Datum>,
-    pub(crate) distinct_key: Option<Vec<u8>>,
+/// value and its per-argument collation key separately.
+struct AggInput {
+    value: Option<Datum>,
+    distinct_key: Option<Vec<u8>>,
 }
 
 impl AggFunc {
@@ -254,6 +258,7 @@ impl AggFunc {
 /// One group's partial results, in agg-func order.
 enum Partial {
     Count(i64),
+    FinalCount(i64),
     /// `None` until the first non-NULL input (an empty sum is NULL). Go
     /// sums an integer or decimal argument exactly, in the decimal domain --
     /// `SUM` over a BIGINT column is a DECIMAL in MySQL.
@@ -328,24 +333,14 @@ enum Partial {
 /// value set encodes under the same collator). It is not the column's
 /// collation: a computed argument such as `UPPER(s)` derives its own, which
 /// is why the aggregate cannot re-read the datum and has to be told.
-pub(crate) struct AggState {
+struct AggState {
     partial: Partial,
     seen: Option<MemorySet<Vec<u8>>>,
     collation: tidb_datatype::Collation,
-    /// Go's non-DISTINCT GROUP_CONCAT retains only rows that can still affect
-    /// its bounded result. Ordered input uses the same byte budget through a
-    /// per-group TopN; DISTINCT must retain its value set separately.
-    group_concat_limit: Option<usize>,
-    /// The aggregate-local ORDER BY comparison, empty for arrival order.
-    group_concat_order: Vec<(tidb_datatype::Collation, bool)>,
-    group_concat_was_truncated: bool,
-    /// Go `topNRows.isSepTruncated`: dropping a whole least-preferred row
-    /// leaves the separator byte prefix that still fits the result budget.
-    group_concat_separator_truncated: bool,
 }
 
 impl AggState {
-    pub(crate) fn new(func: &AggFunc, group_concat_max_len: u64) -> AggState {
+    fn new(func: &AggFunc) -> AggState {
         let collation = func
             .arg
             .as_ref()
@@ -354,17 +349,6 @@ impl AggState {
             partial: Partial::new(&func.kind),
             seen: func.distinct.then(MemorySet::new),
             collation,
-            group_concat_limit: matches!(func.kind, AggKind::GroupConcat { .. })
-                .then(|| usize::try_from(group_concat_max_len).unwrap_or(usize::MAX))
-                .filter(|limit| *limit > 0)
-                .filter(|_| !func.distinct || !func.order_by.is_empty()),
-            group_concat_order: func
-                .order_by
-                .iter()
-                .map(|(expr, desc)| (expr_collation(expr), *desc))
-                .collect(),
-            group_concat_was_truncated: false,
-            group_concat_separator_truncated: false,
         }
     }
 
@@ -380,7 +364,7 @@ impl AggState {
     /// Returns the bytes this row ADDED to the group's state, which the
     /// aggregation reports to its memory tracker (Go's `UpdatePartialResult`
     /// returns the same `memDelta`).
-    pub(crate) fn update(
+    fn update(
         &mut self,
         value: Option<Datum>,
         extra: &[Datum],
@@ -409,98 +393,17 @@ impl AggState {
                 delta += key_bytes + map_delta;
             }
         }
-        let bounded_group_concat = self.group_concat_limit.is_some();
-        let retained_before = if bounded_group_concat {
-            self.partial.group_concat_memory_bytes()
-        } else {
-            0
-        };
-        if !bounded_group_concat {
-            delta += self.partial.retained_row_bytes(value.as_ref());
-        }
+        delta += self.partial.retained_row_bytes(value.as_ref());
         self.partial
             .update(value, extra, sort_key, self.collation)?;
-        if let Some(limit) = self.group_concat_limit {
-            let (retained_after, truncated, separator_truncated) = self
-                .partial
-                .compact_group_concat(limit, &self.group_concat_order);
-            delta += retained_after.saturating_sub(retained_before);
-            self.group_concat_was_truncated |= truncated;
-            self.group_concat_separator_truncated |= separator_truncated;
-        }
         Ok(delta)
     }
-
-    /// Finalizes one aggregate's current group with the exact output shaping
-    /// shared by hash and stream aggregation.
-    pub(crate) fn finish<C: Columns>(
-        &mut self,
-        func: &AggFunc,
-        field_type: &FieldType,
-        ctx: &C,
-        truncated: &mut bool,
-    ) -> Result<Datum, ExecError> {
-        if self.group_concat_was_truncated && !*truncated {
-            handle_group_concat_cut(func, ctx, truncated)?;
-        }
-        let mut value = self
-            .partial
-            .finish(&func.order_by, ctx.div_precision_increment())?;
-        if matches!(func.kind, AggKind::Avg) {
-            value = match value {
-                Datum::Decimal(decimal) => {
-                    let declared_scale = field_type.decimal();
-                    let result_scale = if declared_scale == UNSPECIFIED_LENGTH {
-                        MAX_DECIMAL_SCALE
-                    } else {
-                        declared_scale
-                    };
-                    Datum::Decimal(
-                        decimal.round_to_scale(
-                            i32::try_from(result_scale)
-                                .expect("AVG result scale must fit MySQL decimal metadata"),
-                        ),
-                    )
-                }
-                other => other,
-            };
-        }
-        if let Datum::Bytes(joined) = &mut value {
-            let max_len = group_concat_max_len(ctx);
-            if self.group_concat_separator_truncated {
-                if let AggKind::GroupConcat { separator } = &func.kind {
-                    joined.extend_from_slice(separator.as_bytes());
-                }
-            }
-            if matches!(func.kind, AggKind::GroupConcat { .. })
-                && max_len > 0
-                && joined.len() as u64 > max_len
-            {
-                joined.truncate(max_len as usize);
-                if !*truncated {
-                    handle_group_concat_cut(func, ctx, truncated)?;
-                }
-            }
-        }
-        Ok(value)
-    }
-}
-
-fn handle_group_concat_cut<C: Columns>(
-    func: &AggFunc,
-    ctx: &C,
-    truncated: &mut bool,
-) -> Result<(), ExecError> {
-    *truncated = true;
-    let text = group_concat_arg_text(func);
-    ctx.handle_group_concat_cut(&format!("Some rows were cut by GROUPCONCAT({text})"))?;
-    Ok(())
 }
 
 /// The bytes one `GROUP_CONCAT` input contributes, which Go produces by
 /// casting the argument to a string.
 /// The derived collation of a group-by expression.
-pub(crate) fn expr_collation(expr: &Expression) -> tidb_datatype::Collation {
+fn expr_collation(expr: &Expression) -> tidb_datatype::Collation {
     tidb_expr::collation_derive::collation_of_node(expr)
 }
 
@@ -524,7 +427,7 @@ pub(crate) fn group_key_part(collation: &tidb_datatype::Collation, datum: &Datum
 }
 
 /// Go `SessionVars.GroupConcatMaxLen` as this statement sees it.
-pub(crate) fn group_concat_max_len<C: Columns>(ctx: &C) -> u64 {
+fn group_concat_max_len<C: Columns>(ctx: &C) -> u64 {
     match ctx.sysvar(None, "group_concat_max_len") {
         Some(Datum::UInt(value)) => value,
         Some(Datum::Int(value)) if value >= 0 => value as u64,
@@ -550,66 +453,20 @@ fn group_concat_arg_text(func: &AggFunc) -> String {
     }
 }
 
-fn group_concat_bytes(value: &Datum, field_type: Option<&FieldType>) -> Result<Vec<u8>, ExecError> {
-    // `WrapCastForAggArgs` wraps GROUP_CONCAT arguments with CAST AS STRING.
-    // YEAR has one cast-only spelling rule that the datum alone cannot carry.
-    if field_type.is_some_and(|field_type| field_type.code() == FieldTypeCode::Year)
-        && matches!(value, Datum::Int(0) | Datum::UInt(0))
-    {
-        return Ok(b"0000".to_vec());
-    }
-    value.sql_bytes().map_err(|_| {
-        ExecError::unsupported("GROUP_CONCAT over this datum kind is not yet supported")
-    })
-}
-
-fn append_group_concat_prefix(
-    output: &mut Vec<u8>,
-    input: &[u8],
-    max_len: usize,
-    truncated: &mut bool,
-) {
-    let remaining = max_len.saturating_sub(output.len());
-    if input.len() > remaining {
-        *truncated = true;
-    }
-    output.extend_from_slice(&input[..input.len().min(remaining)]);
-}
-
-fn group_concat_size(values: &[(Vec<u8>, Vec<Datum>)], separator_len: usize) -> usize {
-    values
-        .iter()
-        .fold(0usize, |size, (value, _)| size.saturating_add(value.len()))
-        .saturating_add(separator_len.saturating_mul(values.len().saturating_sub(1)))
-}
-
-/// Put GROUP_CONCAT candidates in their final aggregate-local order.  The
-/// last element is exactly the TopN row Go removes when it needs to release
-/// bytes, so an ordinary stable sort gives this vector the same ownership
-/// direction as Go's heap.
-fn sort_group_concat_values(
-    values: &mut [(Vec<u8>, Vec<Datum>)],
-    order: &[(tidb_datatype::Collation, bool)],
-) {
-    values.sort_by(|left, right| group_concat_row_order(left, right, order));
-}
-
-fn group_concat_row_order(
-    left: &(Vec<u8>, Vec<Datum>),
-    right: &(Vec<u8>, Vec<Datum>),
-    order: &[(tidb_datatype::Collation, bool)],
-) -> Ordering {
-    for (position, (collation, desc)) in order.iter().enumerate() {
-        let (Some(a), Some(b)) = (left.1.get(position), right.1.get(position)) else {
-            continue;
-        };
-        let ordering =
-            tidb_expr::compare_datums_with_collation(a, b, *collation).unwrap_or(Ordering::Equal);
-        if ordering != Ordering::Equal {
-            return if *desc { ordering.reverse() } else { ordering };
+fn group_concat_bytes(value: &Datum) -> Result<Vec<u8>, ExecError> {
+    Ok(match value {
+        Datum::Bytes(bytes) => bytes.clone(),
+        Datum::String(text) => text.bytes().to_vec(),
+        Datum::Int(number) => number.to_string().into_bytes(),
+        Datum::UInt(number) => number.to_string().into_bytes(),
+        Datum::Real(number) => number.to_string().into_bytes(),
+        Datum::Decimal(number) => number.to_string().into_bytes(),
+        _ => {
+            return Err(ExecError::unsupported(
+                "GROUP_CONCAT over this datum kind is not yet supported",
+            ))
         }
-    }
-    Ordering::Equal
+    })
 }
 
 /// The value Go's real aggregate implementations consume.
@@ -617,7 +474,7 @@ fn group_concat_row_order(
 /// `WrapCastForAggArgs` chooses `EvalReal` whenever `SUM`/`AVG` inferred a
 /// DOUBLE result. That includes character, temporal, and duration arguments,
 /// not merely FLOAT columns. Keep the conversion at the aggregate boundary so
-/// every serial and spill round uses the same rule.
+/// hash and stream aggregation use the same rule.
 fn real_aggregate_value(value: &Datum, function: &'static str) -> Result<f64, ExecError> {
     value
         .to_f64()
@@ -726,6 +583,7 @@ impl Partial {
     fn new(kind: &AggKind) -> Partial {
         match kind {
             AggKind::Count => Partial::Count(0),
+            AggKind::FinalCount => Partial::FinalCount(0),
             // The sum's domain is chosen lazily from the first non-NULL input.
             AggKind::Sum => Partial::SumDecimal(None),
             AggKind::GroupConcat { separator } => Partial::GroupConcat {
@@ -845,45 +703,44 @@ impl Partial {
             (Partial::Count(n), None) => *n += 1,
             (Partial::Count(_), Some(Datum::Null)) => {}
             (Partial::Count(n), Some(_)) => *n += 1,
+            (Partial::FinalCount(_), None | Some(Datum::Null)) => {}
+            (Partial::FinalCount(total), Some(Datum::Int(value))) => *total += value,
+            (Partial::FinalCount(total), Some(Datum::UInt(value))) => {
+                *total += i64::try_from(value)
+                    .map_err(|_| ExecError::unsupported("partial COUNT exceeds i64"))?;
+            }
+            (Partial::FinalCount(_), Some(_)) => {
+                return Err(ExecError::unsupported(
+                    "final COUNT requires integer partial results",
+                ))
+            }
             (Partial::SumDecimal(_) | Partial::SumReal(_), None) => {
                 return Err(ExecError::unsupported("SUM requires an argument"))
             }
             (Partial::SumDecimal(_) | Partial::SumReal(_), Some(Datum::Null)) => {}
-            // `calculateSum` selects DOUBLE for every non-integer/non-decimal
-            // input. The lazy state therefore promotes when the first actual
-            // value has that source domain.
             (this @ Partial::SumDecimal(None), Some(input))
                 if !matches!(input, Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_)) =>
             {
+                // Go's `calculateSum` selects DOUBLE for every
+                // non-integer/non-decimal input.
                 *this = Partial::SumReal(Some(real_aggregate_value(&input, "SUM")?));
             }
-            (Partial::SumDecimal(acc), Some(input)) => match input {
-                Datum::Int(v) => {
-                    let addend = Decimal::from_int(v);
-                    *acc = Some(match acc.take() {
-                        Some(sum) => sum.add(&addend),
-                        None => addend,
-                    });
-                }
-                Datum::UInt(v) => {
-                    let addend = Decimal::from_uint(v);
-                    *acc = Some(match acc.take() {
-                        Some(sum) => sum.add(&addend),
-                        None => addend,
-                    });
-                }
-                Datum::Decimal(addend) => {
-                    *acc = Some(match acc.take() {
-                        Some(sum) => sum.add(&addend),
-                        None => addend,
-                    });
-                }
-                _ => {
-                    return Err(ExecError::unsupported(
-                        "SUM over this datum kind is not yet supported",
-                    ))
-                }
-            },
+            (Partial::SumDecimal(acc), Some(input)) => {
+                let addend = match input {
+                    Datum::Int(v) => Decimal::from_int(v),
+                    Datum::UInt(v) => Decimal::from_uint(v),
+                    Datum::Decimal(d) => d,
+                    _ => {
+                        return Err(ExecError::unsupported(
+                            "SUM over this datum kind is not yet supported",
+                        ))
+                    }
+                };
+                *acc = Some(match acc.take() {
+                    Some(sum) => sum.add(&addend),
+                    None => addend,
+                });
+            }
             (Partial::SumReal(acc), Some(input)) => {
                 *acc = Some(acc.unwrap_or(0.0) + real_aggregate_value(&input, "SUM")?);
             }
@@ -894,7 +751,7 @@ impl Partial {
             }
             (Partial::GroupConcat { .. }, Some(Datum::Null)) => {}
             (Partial::GroupConcat { values, .. }, Some(input)) => {
-                values.push((group_concat_bytes(&input, None)?, sort_key));
+                values.push((group_concat_bytes(&input)?, sort_key));
             }
             (Partial::FirstRow(slot), value) => {
                 if slot.is_none() {
@@ -926,36 +783,30 @@ impl Partial {
                 return Err(ExecError::unsupported("AVG requires an argument"))
             }
             (Partial::AvgDecimal { .. } | Partial::AvgReal { .. }, Some(Datum::Null)) => {}
-            // `calculateSum` returns a float datum for every non-integer/
-            // non-decimal input, and AVG keeps that domain through its final
-            // division.
             (this @ Partial::AvgDecimal { count: 0, .. }, Some(input))
                 if !matches!(input, Datum::Int(_) | Datum::UInt(_) | Datum::Decimal(_)) =>
             {
+                // `calculateSum` returns a float datum for every
+                // non-integer/non-decimal input, and AVG keeps that domain.
                 *this = Partial::AvgReal {
                     sum: real_aggregate_value(&input, "AVG")?,
                     count: 1,
                 };
             }
-            (Partial::AvgDecimal { sum, count }, Some(input)) => match input {
-                Datum::Int(v) => {
-                    *sum = sum.add(&Decimal::from_int(v));
-                    *count += 1;
-                }
-                Datum::UInt(v) => {
-                    *sum = sum.add(&Decimal::from_uint(v));
-                    *count += 1;
-                }
-                Datum::Decimal(addend) => {
-                    *sum = sum.add(&addend);
-                    *count += 1;
-                }
-                _ => {
-                    return Err(ExecError::unsupported(
-                        "AVG over this datum kind is not yet supported",
-                    ))
-                }
-            },
+            (Partial::AvgDecimal { sum, count }, Some(input)) => {
+                let addend = match input {
+                    Datum::Int(v) => Decimal::from_int(v),
+                    Datum::UInt(v) => Decimal::from_uint(v),
+                    Datum::Decimal(d) => d,
+                    _ => {
+                        return Err(ExecError::unsupported(
+                            "AVG over this datum kind is not yet supported",
+                        ))
+                    }
+                };
+                *sum = sum.add(&addend);
+                *count += 1;
+            }
             // Go's bit functions cast the argument to `UNSIGNED BIGINT` and
             // skip NULL, so an all-NULL group keeps the identity.
             (Partial::Bit { .. }, None) => {
@@ -1011,98 +862,6 @@ impl Partial {
         Ok(())
     }
 
-    /// Bytes retained by the ordinary GROUP_CONCAT row buffer. This is kept
-    /// separate from [`Self::retained_row_bytes`] because a bounded buffer may
-    /// release old row allocations after the update.
-    fn group_concat_memory_bytes(&self) -> i64 {
-        let Partial::GroupConcat { values, .. } = self else {
-            return 0;
-        };
-        let value_bytes = values.iter().fold(0usize, |bytes, (value, key)| {
-            bytes
-                .saturating_add(value.capacity())
-                .saturating_add(key.capacity())
-        });
-        values
-            .capacity()
-            .saturating_mul(std::mem::size_of::<(Vec<u8>, Vec<Datum>)>())
-            .saturating_add(value_bytes)
-            .try_into()
-            .unwrap_or(i64::MAX)
-    }
-
-    /// Keeps only the GROUP_CONCAT state that can affect a bounded result.
-    ///
-    /// Without aggregate-local ordering, Go's buffer is already a prefix and
-    /// can collapse to one byte vector. With ordering, Go's `topNRows`
-    /// repeatedly discards its least-preferred row (or trims it when it is
-    /// the last partial contribution). The Vec implementation uses the same
-    /// ordering and byte accounting directly; the candidate set is bounded
-    /// by the output budget rather than by input cardinality.
-    fn compact_group_concat(
-        &mut self,
-        max_len: usize,
-        order: &[(tidb_datatype::Collation, bool)],
-    ) -> (i64, bool, bool) {
-        let Partial::GroupConcat { values, separator } = self else {
-            return (0, false, false);
-        };
-        if values.is_empty() {
-            return (0, false, false);
-        }
-        if !order.is_empty() {
-            let mut total = group_concat_size(values, separator.len());
-            let truncated = total > max_len;
-            let mut separator_truncated = false;
-            while total > max_len && !values.is_empty() {
-                sort_group_concat_values(values, order);
-                let worst = values.len() - 1;
-                let debt = total - max_len;
-                if values[worst].0.len() > debt {
-                    let new_len = values[worst].0.len() - debt;
-                    values[worst].0.truncate(new_len);
-                    total -= debt;
-                } else {
-                    total -= values[worst].0.len().saturating_add(separator.len());
-                    values.pop();
-                    separator_truncated = true;
-                }
-            }
-            return (
-                self.group_concat_memory_bytes(),
-                truncated,
-                separator_truncated,
-            );
-        }
-        let mut compact = Vec::with_capacity(
-            max_len.min(
-                values
-                    .iter()
-                    .map(|(value, _)| value.len())
-                    .sum::<usize>()
-                    .saturating_add(
-                        separator
-                            .len()
-                            .saturating_mul(values.len().saturating_sub(1)),
-                    ),
-            ),
-        );
-        let mut truncated = false;
-        for (index, (value, _)) in values.iter().enumerate() {
-            if index > 0 {
-                append_group_concat_prefix(
-                    &mut compact,
-                    separator.as_bytes(),
-                    max_len,
-                    &mut truncated,
-                );
-            }
-            append_group_concat_prefix(&mut compact, value, max_len, &mut truncated);
-        }
-        *values = vec![(compact, Vec::new())];
-        (self.group_concat_memory_bytes(), truncated, false)
-    }
-
     /// The bytes this partial GROWS BY when it takes one more row, which is
     /// the aggregate half of Go's `memDelta`.
     ///
@@ -1137,7 +896,7 @@ impl Partial {
         div_precision_increment: u32,
     ) -> Result<Datum, ExecError> {
         Ok(match self {
-            Partial::Count(n) => Datum::Int(*n),
+            Partial::Count(n) | Partial::FinalCount(n) => Datum::Int(*n),
             // An empty group is SQL NULL, not the empty document `[]`/`{}`.
             Partial::JsonArrayAgg(entries, _) if entries.is_empty() => Datum::Null,
             Partial::JsonArrayAgg(entries, _) => encode_json(BinaryJSONValue::Array(
@@ -1187,20 +946,25 @@ impl Partial {
                         .iter()
                         .map(|(expr, _)| expr_collation(expr))
                         .collect();
-                    let order = order_by
-                        .iter()
-                        .enumerate()
-                        .map(|(position, (_, desc))| {
-                            (
-                                collations
-                                    .get(position)
-                                    .copied()
-                                    .unwrap_or(tidb_datatype::Collation::DEFAULT),
-                                *desc,
-                            )
-                        })
-                        .collect::<Vec<_>>();
-                    sort_group_concat_values(&mut values, &order);
+                    values.sort_by(|left, right| {
+                        for (position, (_, desc)) in order_by.iter().enumerate() {
+                            let (Some(a), Some(b)) = (left.1.get(position), right.1.get(position))
+                            else {
+                                continue;
+                            };
+                            let collation = collations
+                                .get(position)
+                                .copied()
+                                .unwrap_or(tidb_datatype::Collation::DEFAULT);
+                            let ordering =
+                                tidb_expr::compare_datums_with_collation(a, b, collation)
+                                    .unwrap_or(Ordering::Equal);
+                            if ordering != Ordering::Equal {
+                                return if *desc { ordering.reverse() } else { ordering };
+                            }
+                        }
+                        Ordering::Equal
+                    });
                 }
                 let mut joined = Vec::new();
                 for (index, (value, _)) in values.iter().enumerate() {
@@ -1323,6 +1087,350 @@ pub(crate) fn aggregate_rows(
         partial.update(value, &extra, Vec::new(), collation)?;
     }
     partial.finish(&[], div_precision_increment)
+}
+
+/// Finishes one aggregate state, including GROUP_CONCAT's statement warning
+/// and byte limit. Both hash and stream aggregation use this exact path so a
+/// physical algorithm choice cannot change an aggregate's value semantics.
+fn finish_agg_value<C: Columns>(
+    state: &mut AggState,
+    func: &AggFunc,
+    ctx: &C,
+    truncated: &mut bool,
+) -> Result<Datum, ExecError> {
+    let mut value = state
+        .partial
+        .finish(&func.order_by, ctx.div_precision_increment())?;
+    if let Datum::Bytes(joined) = &mut value {
+        if matches!(func.kind, AggKind::GroupConcat { .. }) {
+            let max_len = group_concat_max_len(ctx);
+            if max_len > 0 && joined.len() as u64 > max_len {
+                joined.truncate(max_len as usize);
+                if !*truncated {
+                    *truncated = true;
+                    let text = group_concat_arg_text(func);
+                    ctx.handle_group_concat_cut(&format!(
+                        "Some rows were cut by GROUPCONCAT({text})"
+                    ))?;
+                }
+            }
+        }
+    }
+    Ok(value)
+}
+
+/// Go `StreamAggExec` for a global aggregate (an empty group-by list).
+///
+/// A global aggregate is already one ordered group, so no hash table or row
+/// materialization is needed: each child row is folded into the one vector of
+/// partial results and that vector emits exactly once, including for empty
+/// input. The driver selects this executor only for Go plan shapes that choose
+/// StreamAgg; grouped input continues through [`HashAggExec`].
+pub struct StreamAggExec<C: Columns> {
+    meta: ExecutorMeta,
+    agg_funcs: Vec<AggFunc>,
+    child: Box<dyn Executor>,
+    ctx: C,
+    child_chunk: Chunk,
+    states: Vec<AggState>,
+    truncated: Vec<bool>,
+    emitted: bool,
+    child_returned_empty: bool,
+}
+
+impl<C: Columns> StreamAggExec<C> {
+    /// Builds a one-group streaming aggregation over `child`.
+    #[must_use]
+    pub fn new(
+        meta: ExecutorMeta,
+        agg_funcs: Vec<AggFunc>,
+        child: Box<dyn Executor>,
+        ctx: C,
+    ) -> Self {
+        let child_chunk = child.new_chunk();
+        let states = agg_funcs.iter().map(AggState::new).collect();
+        let truncated = vec![false; agg_funcs.len()];
+        Self {
+            meta,
+            agg_funcs,
+            child,
+            ctx,
+            child_chunk,
+            states,
+            truncated,
+            emitted: false,
+            child_returned_empty: true,
+        }
+    }
+
+    fn update_row(
+        agg_funcs: &[AggFunc],
+        ctx: &C,
+        states: &mut [AggState],
+        row: tidb_chunk::row::Row<'_>,
+    ) -> Result<(), ExecError> {
+        for index in 0..agg_funcs.len() {
+            let func = &agg_funcs[index];
+            let mut extra_values = Vec::new();
+            let input = eval_agg_input(func, ctx, row, &mut extra_values)?;
+            let mut sort_key = Vec::with_capacity(func.order_by.len());
+            for (expr, _) in &func.order_by {
+                sort_key.push(expr.eval(ctx, row)?);
+            }
+            states[index].update(input.value, &extra_values, sort_key, input.distinct_key)?;
+        }
+        Ok(())
+    }
+}
+
+impl<C: Columns> Executor for StreamAggExec<C> {
+    fn agg_tree_input_empty(&self) -> bool {
+        self.child_returned_empty
+    }
+
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.child.open()?;
+        self.child_chunk.reset();
+        self.states = self.agg_funcs.iter().map(AggState::new).collect();
+        self.truncated.fill(false);
+        self.emitted = false;
+        self.child_returned_empty = true;
+        Ok(())
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        if self.emitted {
+            return Ok(());
+        }
+        loop {
+            self.child.next(&mut self.child_chunk)?;
+            let rows = self.child_chunk.num_rows();
+            if rows == 0 {
+                break;
+            }
+            self.child_returned_empty = false;
+            for row_index in 0..rows {
+                Self::update_row(
+                    &self.agg_funcs,
+                    &self.ctx,
+                    &mut self.states,
+                    self.child_chunk.get_row(row_index),
+                )?;
+            }
+            self.child_chunk.reset();
+        }
+        if self.agg_funcs.is_empty() {
+            req.set_num_virtual_rows(1);
+        } else {
+            for index in 0..self.agg_funcs.len() {
+                let value = finish_agg_value(
+                    &mut self.states[index],
+                    &self.agg_funcs[index],
+                    &self.ctx,
+                    &mut self.truncated[index],
+                )?;
+                req.append_datum(index, &value);
+            }
+        }
+        self.emitted = true;
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        self.states.clear();
+        self.child.close()
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
+}
+
+/// Go `StreamAggExec` for input already ordered by every `GROUP BY` item.
+///
+/// Unlike [`HashAggExec`], this operator holds one group at a time. A change
+/// in the encoded group key finishes the current aggregate states before the
+/// first row of the next group is folded. The driver constructs it only after
+/// the child reports the required physical order, so equal keys are contiguous
+/// and a completed group can never reappear later in the stream.
+pub struct GroupedStreamAggExec<C: Columns> {
+    meta: ExecutorMeta,
+    group_by: Vec<Expression>,
+    agg_funcs: Vec<AggFunc>,
+    /// Output column for each aggregate state. This separates TiKV's
+    /// function-first physical state order from the aggregation schema order
+    /// Go exposes without an extra Projection.
+    output_positions: Vec<usize>,
+    child: Box<dyn Executor>,
+    ctx: C,
+    child_chunk: Chunk,
+    child_at: usize,
+    states: Vec<AggState>,
+    truncated: Vec<bool>,
+    current_key: Option<Vec<u8>>,
+    child_done: bool,
+    child_returned_empty: bool,
+}
+
+impl<C: Columns> GroupedStreamAggExec<C> {
+    /// Builds a grouped streaming aggregation over an already ordered child.
+    #[must_use]
+    pub fn new(
+        meta: ExecutorMeta,
+        group_by: Vec<Expression>,
+        agg_funcs: Vec<AggFunc>,
+        output_positions: Vec<usize>,
+        child: Box<dyn Executor>,
+        ctx: C,
+    ) -> Self {
+        debug_assert!(!group_by.is_empty());
+        debug_assert_eq!(agg_funcs.len(), output_positions.len());
+        debug_assert!(output_positions
+            .iter()
+            .copied()
+            .all(|position| position < agg_funcs.len()));
+        debug_assert!((0..agg_funcs.len()).all(|position| output_positions.contains(&position)));
+        let child_chunk = child.new_chunk();
+        let states = agg_funcs.iter().map(AggState::new).collect();
+        let truncated = vec![false; agg_funcs.len()];
+        Self {
+            meta,
+            group_by,
+            agg_funcs,
+            output_positions,
+            child,
+            ctx,
+            child_chunk,
+            child_at: 0,
+            states,
+            truncated,
+            current_key: None,
+            child_done: false,
+            child_returned_empty: true,
+        }
+    }
+
+    fn group_key(&self, row: tidb_chunk::row::Row<'_>) -> Result<Vec<u8>, ExecError> {
+        let mut key = Vec::new();
+        for expr in &self.group_by {
+            let datum = expr.eval(&self.ctx, row)?;
+            key.extend_from_slice(&group_key_part(&expr_collation(expr), &datum));
+            key.push(0xff);
+        }
+        Ok(key)
+    }
+
+    fn emit_current(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        for index in 0..self.states.len() {
+            let value = finish_agg_value(
+                &mut self.states[index],
+                &self.agg_funcs[index],
+                &self.ctx,
+                &mut self.truncated[index],
+            )?;
+            req.append_datum(self.output_positions[index], &value);
+        }
+        Ok(())
+    }
+}
+
+impl<C: Columns> Executor for GroupedStreamAggExec<C> {
+    fn agg_tree_input_empty(&self) -> bool {
+        self.child_returned_empty
+    }
+
+    fn open(&mut self) -> Result<(), ExecError> {
+        self.child.open()?;
+        self.child_chunk.reset();
+        self.child_at = 0;
+        self.states = self.agg_funcs.iter().map(AggState::new).collect();
+        self.truncated.fill(false);
+        self.current_key = None;
+        self.child_done = false;
+        self.child_returned_empty = true;
+        Ok(())
+    }
+
+    fn next(&mut self, req: &mut Chunk) -> Result<(), ExecError> {
+        req.reset();
+        let cap = self.meta.max_chunk_size();
+        while req.num_rows() < cap {
+            if self.child_done {
+                if self.current_key.take().is_some() {
+                    self.emit_current(req)?;
+                }
+                break;
+            }
+            if self.child_at >= self.child_chunk.num_rows() {
+                self.child_chunk.reset();
+                self.child.next(&mut self.child_chunk)?;
+                self.child_at = 0;
+                if self.child_chunk.num_rows() == 0 {
+                    self.child_done = true;
+                    continue;
+                }
+            }
+
+            let key = self.group_key(self.child_chunk.get_row(self.child_at))?;
+            if self
+                .current_key
+                .as_ref()
+                .is_some_and(|current| current != &key)
+            {
+                self.emit_current(req)?;
+                self.states = self.agg_funcs.iter().map(AggState::new).collect();
+            }
+            self.current_key = Some(key);
+            let row = self.child_chunk.get_row(self.child_at);
+            StreamAggExec::<C>::update_row(&self.agg_funcs, &self.ctx, &mut self.states, row)?;
+            self.child_at += 1;
+            self.child_returned_empty = false;
+        }
+        Ok(())
+    }
+
+    fn close(&mut self) -> Result<(), ExecError> {
+        self.states.clear();
+        self.current_key = None;
+        self.child.close()
+    }
+
+    fn schema(&self) -> &Schema {
+        self.meta.schema()
+    }
+
+    fn ret_field_types(&self) -> &[FieldType] {
+        self.meta.ret_field_types()
+    }
+
+    fn init_cap(&self) -> usize {
+        self.meta.init_cap()
+    }
+
+    fn max_chunk_size(&self) -> usize {
+        self.meta.max_chunk_size()
+    }
+
+    fn new_chunk(&self) -> Chunk {
+        self.meta.new_chunk()
+    }
 }
 
 /// Go `HashAggExec` (serial `unparallelExec`): hash aggregation over the
@@ -1478,12 +1586,8 @@ impl<C: Columns> HashAggExec<C> {
                     self.tracker
                         .consume(new_group_bytes(key.len(), self.agg_funcs.len()));
                     self.groups.insert(key, idx);
-                    self.ordered.push(
-                        self.agg_funcs
-                            .iter()
-                            .map(|func| AggState::new(func, group_concat_max_len(&self.ctx)))
-                            .collect(),
-                    );
+                    self.ordered
+                        .push(self.agg_funcs.iter().map(AggState::new).collect());
                     idx
                 }
             };
@@ -1523,10 +1627,9 @@ impl<C: Columns> HashAggExec<C> {
     /// Appends group `idx`'s final values to `req`.
     fn emit_group(&mut self, idx: usize, req: &mut Chunk) -> Result<(), ExecError> {
         for c in 0..self.ordered[idx].len() {
-            let func = self.agg_funcs[c].clone();
-            let value = self.ordered[idx][c].finish(
-                &func,
-                &self.meta.ret_field_types()[c],
+            let value = finish_agg_value(
+                &mut self.ordered[idx][c],
+                &self.agg_funcs[c],
                 &self.ctx,
                 &mut self.truncated[c],
             )?;
@@ -1612,12 +1715,8 @@ impl<C: Columns> Executor for HashAggExec<C> {
             self.execute()?;
             // No group-by and no data: one empty group, so a global COUNT is 0.
             if self.ordered.is_empty() && self.group_by.is_empty() {
-                self.ordered.push(
-                    self.agg_funcs
-                        .iter()
-                        .map(|func| AggState::new(func, group_concat_max_len(&self.ctx)))
-                        .collect(),
-                );
+                self.ordered
+                    .push(self.agg_funcs.iter().map(AggState::new).collect());
             }
             self.prepared = true;
         }
@@ -1662,7 +1761,7 @@ impl<C: Columns> Executor for HashAggExec<C> {
 /// values it keeps separate. Go evaluates these inside
 /// `UpdatePartialResult`, per function; this port evaluates them once at the
 /// call site and hands the result to [`AggState::update`].
-pub(crate) fn eval_agg_input<C: Columns>(
+fn eval_agg_input<C: Columns>(
     f: &AggFunc,
     ctx: &C,
     row: tidb_chunk::row::Row<'_>,
@@ -1763,7 +1862,7 @@ pub(crate) fn eval_agg_input<C: Columns>(
                 break;
             }
             if let Some(buf) = &mut concatenated {
-                let rendered = group_concat_bytes(&datum, expr.static_type())?;
+                let rendered = group_concat_bytes(&datum)?;
                 buf.extend_from_slice(&rendered);
                 if let Some(key) = &mut distinct_key {
                     encode_bytes(key, &expr_collation(expr).immutable_key(&rendered));
@@ -1855,34 +1954,6 @@ mod tests {
         }
         Box::new(OneChunkSource {
             meta: ExecutorMeta::new(Schema::new(cols), 0, rows.len().max(1), 1024),
-            data: Some(data),
-        })
-    }
-
-    fn decimal_source(values: &[&str], field_type: &FieldType) -> Box<dyn Executor> {
-        let fields = vec![field_type.clone()];
-        let mut data = Chunk::new_with_capacity(&fields, values.len().max(1));
-        for value in values {
-            data.append_datum(0, &Datum::Decimal(Decimal::from_literal(value)));
-        }
-        let mut column = Column::new(1, field_type.clone());
-        column.index = 0;
-        Box::new(OneChunkSource {
-            meta: ExecutorMeta::new(Schema::new(vec![column]), 0, values.len().max(1), 1024),
-            data: Some(data),
-        })
-    }
-
-    fn datum_source(values: &[Datum], field_type: &FieldType) -> Box<dyn Executor> {
-        let mut data =
-            Chunk::new_with_capacity(std::slice::from_ref(field_type), values.len().max(1));
-        for value in values {
-            data.append_datum(0, value);
-        }
-        let mut column = Column::new(1, field_type.clone());
-        column.index = 0;
-        Box::new(OneChunkSource {
-            meta: ExecutorMeta::new(Schema::new(vec![column]), 0, values.len().max(1), 1024),
             data: Some(data),
         })
     }
@@ -1994,7 +2065,7 @@ mod tests {
     /// implementation in this repository.
     #[test]
     fn avg_over_integers_is_decimal_scaled_by_the_precision_increment() {
-        let types = [decimal().with_decimal(4)];
+        let types = [decimal()];
         for (values, want) in [
             (vec![1i64, 2, 3], "2.0000"),
             (vec![1, 2, 4], "2.3333"),
@@ -2020,35 +2091,6 @@ mod tests {
     }
 
     #[test]
-    fn decimal_avg_rounds_to_the_static_result_scale() {
-        let input_type = FieldType::new(FieldTypeCode::NewDecimal)
-            .with_flen(10)
-            .with_decimal(2);
-        let result_type = FieldType::new(FieldTypeCode::NewDecimal)
-            .with_flen(14)
-            .with_decimal(6);
-        let mut input_column = Column::new(1, input_type.clone());
-        input_column.index = 0;
-        let agg = HashAggExec::new(
-            out_meta_typed(std::slice::from_ref(&result_type)),
-            vec![],
-            vec![AggFunc::new(
-                AggKind::Avg,
-                Some(Expression::Column(input_column)),
-            )],
-            decimal_source(&["1", "2"], &input_type),
-            NoColumns,
-            StatementMemory::default(),
-        );
-
-        let rows = run_typed(agg, &[result_type]);
-        let Datum::Decimal(value) = &rows[0][0] else {
-            panic!("AVG must return DECIMAL, got {:?}", rows[0][0]);
-        };
-        assert_eq!(value.to_string(), "1.500000");
-    }
-
-    #[test]
     fn avg_of_an_all_null_group_is_null() {
         let types = [decimal()];
         let agg = HashAggExec::new(
@@ -2060,164 +2102,6 @@ mod tests {
             StatementMemory::default(),
         );
         assert_eq!(run_typed(agg, &types), vec![vec![Datum::Null]]);
-    }
-
-    /// Go's `calculateSum` selects DOUBLE for real, temporal, and duration
-    /// arguments. Every one of those paths must promote the lazy aggregate
-    /// state out of its integer/decimal shape before folding the first value.
-    #[test]
-    fn real_aggregates_use_the_real_domain_from_the_first_non_null_input() {
-        use tidb_datatype::{CoreTime, MySqlDuration, Time, TimeType};
-
-        let date_type = FieldType::new(FieldTypeCode::Date);
-        let mut date_column = Column::new(1, date_type.clone());
-        date_column.index = 0;
-        let dates = [
-            Datum::Time(
-                Time::new(
-                    CoreTime::from_date(2020, 1, 2, 0, 0, 0, 0),
-                    TimeType::Date,
-                    0,
-                )
-                .unwrap(),
-            ),
-            Datum::Time(
-                Time::new(
-                    CoreTime::from_date(2020, 1, 3, 0, 0, 0, 0),
-                    TimeType::Date,
-                    0,
-                )
-                .unwrap(),
-            ),
-        ];
-        let real = FieldType::new(FieldTypeCode::Double);
-        let sum = HashAggExec::new(
-            out_meta_typed(std::slice::from_ref(&real)),
-            vec![],
-            vec![AggFunc::new(
-                AggKind::Sum,
-                Some(Expression::Column(date_column)),
-            )],
-            datum_source(&dates, &date_type),
-            NoColumns,
-            StatementMemory::default(),
-        );
-        assert_eq!(
-            run_typed(sum, std::slice::from_ref(&real)),
-            vec![vec![Datum::Real(40_400_205.0)]]
-        );
-
-        let mut duration_type = FieldType::new(FieldTypeCode::Duration);
-        duration_type.set_decimal(0);
-        let mut duration_column = Column::new(1, duration_type.clone());
-        duration_column.index = 0;
-        let hours = [
-            Datum::Duration(MySqlDuration::from_nanoseconds(3_600_000_000_000, 0).unwrap()),
-            Datum::Duration(MySqlDuration::from_nanoseconds(10_800_000_000_000, 0).unwrap()),
-        ];
-        let avg = HashAggExec::new(
-            out_meta_typed(std::slice::from_ref(&real)),
-            vec![],
-            vec![AggFunc::new(
-                AggKind::Avg,
-                Some(Expression::Column(duration_column)),
-            )],
-            datum_source(&hours, &duration_type),
-            NoColumns,
-            StatementMemory::default(),
-        );
-        assert_eq!(
-            run_typed(avg, std::slice::from_ref(&real)),
-            vec![vec![Datum::Real(20_000.0)]]
-        );
-
-        let double_type = FieldType::new(FieldTypeCode::Double);
-        let mut double_column = Column::new(1, double_type.clone());
-        double_column.index = 0;
-        let doubles = [Datum::Null, Datum::Real(1.25), Datum::Real(2.5)];
-        let sum_and_avg = HashAggExec::new(
-            out_meta_typed(&[real.clone(), real.clone()]),
-            vec![],
-            vec![
-                AggFunc::new(
-                    AggKind::Sum,
-                    Some(Expression::Column(double_column.clone())),
-                ),
-                AggFunc::new(AggKind::Avg, Some(Expression::Column(double_column))),
-            ],
-            datum_source(&doubles, &double_type),
-            NoColumns,
-            StatementMemory::default(),
-        );
-        assert_eq!(
-            run_typed(sum_and_avg, &[real.clone(), real]),
-            vec![vec![Datum::Real(3.75), Datum::Real(1.875)]]
-        );
-    }
-
-    #[test]
-    fn group_concat_uses_the_year_zero_cast_spelling() {
-        let year = FieldType::new(FieldTypeCode::Year);
-        assert_eq!(
-            group_concat_bytes(&Datum::Int(0), Some(&year)).unwrap(),
-            b"0000"
-        );
-    }
-
-    #[test]
-    fn group_concat_keeps_only_the_bounded_result_prefix() {
-        let func = AggFunc::new(
-            AggKind::GroupConcat {
-                separator: ",".to_owned(),
-            },
-            Some(col(1)),
-        );
-        let mut state = AggState::new(&func, 4);
-        for _ in 0..128 {
-            state
-                .update(Some(Datum::Bytes(vec![b'x'; 128])), &[], Vec::new(), None)
-                .unwrap();
-        }
-        assert!(state.group_concat_was_truncated);
-        assert!(
-            state.partial.group_concat_memory_bytes() <= 128,
-            "the partial state must not grow with rows beyond group_concat_max_len"
-        );
-        assert_eq!(
-            state.partial.finish(&[], 4).unwrap(),
-            Datum::Bytes(b"xxxx".to_vec())
-        );
-    }
-
-    #[test]
-    fn ordered_group_concat_keeps_only_the_best_bounded_candidates() {
-        let mut func = AggFunc::new(
-            AggKind::GroupConcat {
-                separator: ",".to_owned(),
-            },
-            Some(col(1)),
-        );
-        func.order_by = vec![(col(1), false)];
-        let mut state = AggState::new(&func, 4);
-        for key in (0..128).rev() {
-            state
-                .update(
-                    Some(Datum::Bytes(vec![b'x'; 128])),
-                    &[],
-                    vec![Datum::Int(key)],
-                    None,
-                )
-                .unwrap();
-        }
-        assert!(state.group_concat_was_truncated);
-        assert!(
-            state.partial.group_concat_memory_bytes() <= 512,
-            "ordered state must retain candidates, not every input row"
-        );
-        assert_eq!(
-            state.partial.finish(&func.order_by, 4).unwrap(),
-            Datum::Bytes(vec![b'x'; 4])
-        );
     }
 
     /// DISTINCT folds repeated inputs once per group, and the de-duplication
@@ -2266,7 +2150,7 @@ mod tests {
     fn distinct_memory_delta_includes_value_set_growth() {
         let mut count = AggFunc::new(AggKind::Count, None);
         count.distinct = true;
-        let mut state = AggState::new(&count, 1024);
+        let mut state = AggState::new(&count);
         let mut retained_key_bytes = 0_i64;
         let mut total_delta = 0_i64;
         for byte in 0..128_u8 {

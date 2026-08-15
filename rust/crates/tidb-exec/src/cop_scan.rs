@@ -604,7 +604,7 @@ fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
 #[must_use]
 pub fn requests_extra_handle(request: &PushdownScanRequest) -> bool {
     request
-        .columns
-        .get(request.handle_index)
+        .handle_index
+        .and_then(|index| request.columns.get(index))
         .is_some_and(|column| column.id == EXTRA_HANDLE_COLUMN_ID)
 }

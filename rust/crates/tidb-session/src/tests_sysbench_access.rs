@@ -11,12 +11,10 @@
 //! assertion so a plan that regresses is compared against Go rather than
 //! against whatever this tier last printed.
 //!
-//! Two of Go's rows can never appear here and are not defects: Go's
-//! `cop[tikv]`/`TableReader` task split, which this tier does not print
-//! (`tidb_executor::explain` divergence 1), and its always-present
-//! `Projection` (divergence 3). What IS compared is the ACCESS PATH: which
-//! source the plan reads through, the range it reads, and the row estimate
-//! that choice was made on.
+//! Generated operator IDs are not part of the contract. What IS compared is
+//! the ACCESS PATH: which source the plan reads through, the range it reads,
+//! and the row estimate that choice was made on. Any remaining difference
+//! from the captured Go plan is called out at the assertion that retains it.
 //!
 //! # What makes the three range shapes work
 //!
@@ -58,7 +56,7 @@
 //! id not between 0 and 200    6666.67     [-inf,0), (200,+inf]
 //! id between 100 and 199 and c = 'c150'
 //!                               99.00     [100,199]   + cop Selection
-//! id > 0 and k = 4            3333.33     (0,+inf]    + cop Selection
+//! id > 0 and k = 4              33.33     IndexLookUp over k_1 + row probe
 //! id in (-1, 2, 150)                      Batch_Point_Get handle:[-1 2 150]
 //! id = 150 or id = 1                      Batch_Point_Get handle:[1 150]
 //! id > 100 and id < 100                   TableDual rows:0
@@ -317,21 +315,16 @@ fn the_handle_range_corpus_matches_go() {
         ("id >= 199", "TableRangeScan", "3333.33", "range:[199,+inf]"),
         ("id < 5", "TableRangeScan", "3333.33", "range:[-inf,5)"),
         ("id < 0", "TableRangeScan", "3333.33", "range:[-inf,0)"),
-        // CLASSIFIED DIVERGENCE, the only two in this corpus. Go prints
-        // 10000.00 for both. Its `CountAfterAccess` here is the same 3333.33
-        // this tier computes; what lifts it is `adjustCountAfterAccess`,
+        // Go's `CountAfterAccess` here starts at 3333.33; what lifts it is
+        // `adjustCountAfterAccess`,
         // which raises a path's estimate to `ds.StatsInfo().RowCount /
         // SelectionFactor` -- and `RowCount` reaches 10000 only because
         // `Selectivity` estimates the UNCONVERTED range, whose `-inf` low
         // makes the estimator read `-1`'s bits as `u64::MAX` and call
-        // `[-inf,-1)` the whole domain. That adjustment is not ported while
-        // this tier's `RowCount` is not yet Go's under pseudo statistics
-        // (`tidb_executor::access_cost::source_row_count` holds the reason
-        // and the live differential that forced it). The direction is
-        // conservative: an UNDER-estimate of a range this tier reads in full
-        // anyway, so it can only lose an optimization, never a row.
-        ("id < -1", "TableRangeScan", "3333.33", "range:[-inf,-1)"),
-        ("id <= -1", "TableRangeScan", "3333.33", "range:[-inf,-1]"),
+        // `[-inf,-1)` the whole domain. The access-path estimator now applies
+        // that same lower bound, so both values match Go's recorded 10000.00.
+        ("id < -1", "TableRangeScan", "10000.00", "range:[-inf,-1)"),
+        ("id <= -1", "TableRangeScan", "10000.00", "range:[-inf,-1]"),
         (
             "id < -100000",
             "TableRangeScan",
@@ -369,41 +362,6 @@ fn the_handle_range_corpus_matches_go() {
             "TableRangeScan",
             "99.00",
             "range:[100,199]",
-        ),
-        // CLASSIFIED DIVERGENCE, and NOT one this range work introduced: Go
-        // reads `TableRangeScan (0,+inf] 3333.33` with a cop `Selection` for
-        // `k = 4`, where this tier takes `k_1` and looks the rows up. The
-        // handle range only made the table path CHEAPER than it was before
-        // (3333.33 rows instead of 10000), so the index path had already won
-        // this comparison and still does. What separates them is the pseudo
-        // estimate of an equality on a non-covering index, which is the same
-        // pseudo-selectivity gap `source_row_count` records; the row set is
-        // identical either way and is pinned by
-        // `narrowed_ranges_return_the_same_rows_as_a_full_scan`, which runs
-        // this very predicate.
-        //
-        // The RANGE half of that divergence closed: `k_1` is a non-unique
-        // index on a table whose `id` is the clustered integer handle, so
-        // Go's `fillIndexPath` appends the handle to `path.IdxCols` and the
-        // ranger narrows on BOTH columns. Captured from real TiDB with the
-        // index forced, which is the only way to see the path it costed out:
-        //
-        // ```text
-        // explain select c from sbtest1 use index(k_1) where id > 0 and k = 4
-        //   IndexRangeScan_6(Build) | 41.67 | index:k_1(k)
-        //                           | range:(4 0,4 +inf], keep order:false
-        // ```
-        //
-        // The estRows still differ (Go's 41.67 is its `adjustCountAfterAccess`
-        // raising the pruned `[4,4]` estimate of 10 to `RowCount / 0.8`, an
-        // adjustment `index_path` deliberately holds out -- see
-        // `source_row_count`), and the operator choice still differs for the
-        // reason above.
-        (
-            "id > 0 AND k = 4",
-            "IndexRangeScan",
-            "10.00",
-            "range:(4 0,4 +inf]",
         ),
         // CLASSIFIED DIVERGENCE, in the direction of Go rather than away from
         // it. Go settles a `WHERE` that PINS handles before costing and
@@ -458,6 +416,36 @@ fn the_handle_range_corpus_matches_go() {
             row[3]
         );
     }
+
+    // Go chooses the same complete non-covering-index path for the mixed
+    // predicate. A fresh pseudo-statistics capture from the Go server is:
+    //
+    // ```text
+    // IndexLookUp                 33.33  root
+    // |-IndexRangeScan(Build)     33.33  range:(4 0,4 +inf]
+    // `-TableRowIDScan(Probe)     33.33
+    // ```
+    //
+    // This tier retains a classified estimate/residual-selection difference
+    // and prints 10.00, but the former source-only assertion was obsolete: a
+    // lookup has two physical source children, and its deepest node is the
+    // row probe rather than the index range. Pin the complete lookup shape so
+    // the access choice and compound range remain visible.
+    let rows = row_text(session.run("EXPLAIN SELECT c FROM sbtest1 WHERE id > 0 AND k = 4"));
+    let lookup = rows
+        .iter()
+        .position(|row| row[0].contains("IndexLookUp_"))
+        .expect("the mixed predicate uses a non-covering index lookup");
+    let lookup_rows = &rows[lookup..lookup + 3];
+    assert!(lookup_rows[0][0].contains("IndexLookUp_"));
+    assert_eq!(lookup_rows[0][1], "10.00");
+    assert!(lookup_rows[1][0].contains("IndexRangeScan_"));
+    assert!(lookup_rows[1][0].ends_with("(Build)"));
+    assert_eq!(lookup_rows[1][1], "10.00");
+    assert!(lookup_rows[1][4].starts_with("range:(4 0,4 +inf]"));
+    assert!(lookup_rows[2][0].contains("TableRowIDScan_"));
+    assert!(lookup_rows[2][0].ends_with("(Probe)"));
+    assert_eq!(lookup_rows[2][1], "10.00");
 }
 
 /// The sysbench WRITE shapes, as the source row of their plan.

@@ -166,8 +166,6 @@ pub(crate) fn agg_kind_and_type(
     agg_kind_and_type_with_div_precision(name, args, DEFAULT_DIV_PRECISION_INCREMENT as u32)
 }
 
-/// As [`agg_kind_and_type`], but infer `AVG` from this statement's session
-/// `div_precision_increment` rather than the default used by isolated callers.
 pub(crate) fn agg_kind_and_type_with_div_precision(
     name: &str,
     args: &[Expression],
@@ -216,8 +214,8 @@ pub(crate) fn agg_kind_and_type_with_div_precision(
             };
             (kind, t)
         }
-        // Go `typeInfer4Avg`, using the statement's
-        // `div_precision_increment`.
+        // Go `typeInfer4Avg`, using the source default
+        // `div_precision_increment` of 4.
         "AVG" => (
             AggKind::Avg,
             infer_avg_type(arg, i64::from(div_precision_increment)),
@@ -398,6 +396,56 @@ pub(crate) fn agg_kind_and_type_with_div_precision(
     })
 }
 
+/// Go `typeInfer4Sum`: the result type and DECIMAL widening used both by the
+/// aggregate executor and by aggregation elimination's replacement cast.
+pub(super) fn sum_result_type(argument: Option<&FieldType>) -> FieldType {
+    const MAX_REAL_WIDTH: i64 = 23;
+
+    let Some(argument) = argument else {
+        let mut result = FieldType::new(FieldTypeCode::Double);
+        result.set_flen(MAX_REAL_WIDTH);
+        result.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+        result.add_flags(FieldTypeFlags::BINARY);
+        return result;
+    };
+    let mut result = match argument.code() {
+        FieldTypeCode::Tiny
+        | FieldTypeCode::Short
+        | FieldTypeCode::Int24
+        | FieldTypeCode::Long
+        | FieldTypeCode::LongLong
+        | FieldTypeCode::Year => {
+            let mut result = FieldType::new(FieldTypeCode::NewDecimal);
+            if argument.flen() < 0 {
+                result.set_flen(tidb_datatype::MAX_DECIMAL_WIDTH);
+            } else {
+                result.set_flen_under_limit(argument.flen() + 21);
+            }
+            result.set_decimal(0);
+            result
+        }
+        FieldTypeCode::NewDecimal => {
+            let mut result = FieldType::new(FieldTypeCode::NewDecimal);
+            result.update_flen_and_decimal_under_limit(argument, 0, 22);
+            result
+        }
+        FieldTypeCode::Double | FieldTypeCode::Float => {
+            let mut result = FieldType::new(FieldTypeCode::Double);
+            result.set_flen(MAX_REAL_WIDTH);
+            result.set_decimal(argument.decimal());
+            result
+        }
+        _ => {
+            let mut result = FieldType::new(FieldTypeCode::Double);
+            result.set_flen(MAX_REAL_WIDTH);
+            result.set_decimal(tidb_datatype::UNSPECIFIED_LENGTH);
+            result
+        }
+    };
+    result.add_flags(FieldTypeFlags::BINARY);
+    result
+}
+
 /// Go `mysql.MaxDecimalWidth`, the width `APPROX_PERCENTILE` gives a DECIMAL
 /// result.
 const MAX_DECIMAL_WIDTH: i64 = 65;
@@ -531,6 +579,14 @@ impl ColumnResolver for AggOutputResolver {
         self.constant_context.connection_charset_info()
     }
 
+    fn tidb_info_len(&self) -> usize {
+        self.constant_context.tidb_info_len()
+    }
+
+    fn like_default_escape(&self) -> u8 {
+        self.constant_context.like_default_escape()
+    }
+
     fn no_unsigned_subtraction(&self) -> bool {
         self.no_unsigned_subtraction
     }
@@ -577,7 +633,7 @@ struct AggregateSubstitutor<'a, 'r> {
     names: &'a mut Vec<String>,
     types: &'a mut Vec<FieldType>,
     grouping_specs: &'a mut Vec<GroupingSpec>,
-    group_by_exprs: &'a [String],
+    group_by_names: &'a [String],
     resolver: &'a ScopeResolver<'r>,
     div_precision_increment: u32,
     /// The first failure, which stops the walk.
@@ -601,7 +657,7 @@ impl AggregateSubstitutor<'_, '_> {
                 self.names,
                 self.types,
                 self.grouping_specs,
-                self.group_by_exprs,
+                self.group_by_names,
             )?;
             *expr = Expr::Column(vec![name]);
             return Ok(false);
@@ -728,14 +784,13 @@ impl tidb_ast::Visitor for AggregateSubstitutor<'_, '_> {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn substitute_aggregates(
     expr: &tidb_ast::Expr,
     agg_funcs: &mut Vec<AggFunc>,
     names: &mut Vec<String>,
     types: &mut Vec<FieldType>,
     grouping_specs: &mut Vec<GroupingSpec>,
-    group_by_exprs: &[String],
+    group_by_names: &[String],
     resolver: &ScopeResolver<'_>,
     div_precision_increment: u32,
 ) -> Result<tidb_ast::Expr, DriverError> {
@@ -745,7 +800,7 @@ pub(crate) fn substitute_aggregates(
         names,
         types,
         grouping_specs,
-        group_by_exprs,
+        group_by_names,
         resolver,
         div_precision_increment,
         error: None,

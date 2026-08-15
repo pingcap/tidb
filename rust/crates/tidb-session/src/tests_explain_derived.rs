@@ -24,11 +24,9 @@
 //! (the property `difftests/result-tests` compares -- operator, access
 //! object, range, statistics source) agrees with that capture.
 //!
-//! What this tier prints ABOVE the leaves diverges from Go by construction
-//! (no `cop[tikv]` task, no `TableReader` wrapper, an always-present
-//! `Projection` -- see `tidb_executor::explain`'s module doc), so the
-//! assertions below are on this tier's own rows and the comparison to Go is
-//! made on the access leaf.
+//! The assertions below pin this tier's complete trace. Identity projections
+//! are eliminated like Go; reader/cop layers are retained where the physical
+//! plan needs them, while a single local leaf may still be printed directly.
 
 #![cfg(test)]
 
@@ -70,11 +68,7 @@ fn a_derived_table_is_its_subquery_s_own_plan() {
     let mut session = derived_session();
     assert_eq!(
         plan(&mut session, "explain select * from (select * from t) x"),
-        vec![
-            "Projection_3|10000.00|root||*",
-            "└─Projection_2|10000.00|root||*",
-            "  └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
-        ]
+        vec!["TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo"]
     );
     // The rows the same query returns are unchanged by being described: a
     // plan-only trace stops before the drain, but an ordinary run still
@@ -102,12 +96,7 @@ fn a_nested_derived_table_nests_the_subtree() {
             &mut session,
             "explain select * from (select * from (select * from t) y) x"
         ),
-        vec![
-            "Projection_4|10000.00|root||*",
-            "└─Projection_3|10000.00|root||*",
-            "  └─Projection_2|10000.00|root||*",
-            "    └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
-        ]
+        vec!["TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo"]
     );
 }
 
@@ -126,9 +115,8 @@ fn a_derived_table_over_no_table_reaches_table_dual() {
     assert_eq!(
         plan(&mut session, "explain select * from (select 1 as one) x"),
         vec![
-            "Projection_3|1.00|root||*",
-            "└─Projection_2|1.00|root||1",
-            "  └─TableDual_1|1.00|root||rows:1",
+            "Projection_2|1.00|root||1",
+            "└─TableDual_1|1.00|root||rows:1",
         ]
     );
     assert_eq!(
@@ -158,19 +146,11 @@ fn a_derived_table_over_no_table_reaches_table_dual() {
 /// used to read `CARTESIAN inner join` -- the same hash join off the same
 /// key that Go's capture shows.
 ///
-/// DIVERGENCE, above the leaves and narrowed to two things. Go MOVES the
-/// predicate; this tier COPIES it, so the `Selection` stays printed above the
-/// join (it is redundant, which is what makes the copy safe -- see
-/// `driver::predicate_push_down`'s own doc). And Go derives
-/// `not(isnull(...))` on each side and names the columns by their BASE table
-/// (`test.t.a`) after eliminating the derived tables, while this tier names
-/// them by the derived alias (`test.x.a`). Both read the same rows --
-/// asserted here, not inferred.
-///
-/// The JOIN ESTIMATE is `EstimateFullJoinRowCount` on both sides now, and the
-/// remaining 0.1% -- 12500.00 against Go's 12487.50 -- is that same missing
-/// `not(isnull(...))`: Go divides 9990 * 9990 by 7992 where this divides
-/// 10000 * 10000 by 8000. Nothing else separates the two numbers.
+/// The root JOIN METHOD and estimate agree, and the derived wildcards leave
+/// no identity Projection in either plan. This tier still carries the
+/// null-rejection inside the join estimate instead of printing Go's two
+/// coprocessor Selections, so its reader children point directly at the full
+/// scans. Both read the same rows, asserted below rather than inferred.
 #[test]
 fn two_derived_tables_join_without_a_base_table() {
     let mut session = derived_session();
@@ -180,13 +160,11 @@ fn two_derived_tables_join_without_a_base_table() {
             "explain select * from (select * from t) x, (select * from t) y where x.a = y.b"
         ),
         vec![
-            "Projection_7|12500.00|root||*",
-            "└─Selection_6|12500.00|root||eq(test.x.a, test.y.b)",
-            "  └─HashJoin_5|12500.00|root||inner join, equal:[eq(test.x.a, test.y.b)]",
-            "    ├─Projection_2(Build)|10000.00|root||*",
-            "    │ └─TableFullScan_1|10000.00|root|table:t|keep order:false, stats:pseudo",
-            "    └─Projection_4(Probe)|10000.00|root||*",
-            "      └─TableFullScan_3|10000.00|root|table:t|keep order:false, stats:pseudo",
+            "HashJoin_5|12487.50|root||inner join, equal:[eq(test.x.a, test.y.b)]",
+            "├─TableReader_2(Build)|10000.00|root||data:TableFullScan",
+            "│ └─TableFullScan_1|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
+            "└─TableReader_4(Probe)|10000.00|root||data:TableFullScan",
+            "  └─TableFullScan_3|10000.00|cop[tikv]|table:t|keep order:false, stats:pseudo",
         ]
     );
     // Go's captured rows for the same join, verbatim: 1|1|1|1|1|1 and so on.
@@ -224,19 +202,17 @@ fn two_derived_tables_join_without_a_base_table() {
 /// The OBJECT now agrees: `ia(a)` covers `select a`, so this tier reads the
 /// whole index too (`skylinePruning`'s `path.IsSingleScan`).
 ///
-/// DIVERGENCE, narrowed to the ORDER: Go reads `ia(a)` BACKWARDS because the
-/// index already supplies `a desc`, so it needs no ordering operator at all
-/// and prints a plain `Limit` over a `keep order:true, desc` scan (captured):
+/// Go reads `ia(a)` backwards because the index already supplies `a desc`,
+/// so it needs no ordering operator and prints a plain `Limit` over a
+/// `keep order:true, desc` scan (captured):
 ///
 ///   Limit_13            2.00  root                 offset:0, count:2
 ///   └─IndexReader_26    2.00  root                 index:Limit_25
 ///     └─Limit_25        2.00  cop[tikv]            offset:0, count:2
 ///       └─IndexFullScan_24 2.00 cop[tikv] table:t, index:ia(a) keep order:true, desc, stats:pseudo
 ///
-/// This tier scans the index forwards and orders with the fused `TopN`, which
-/// is the correct shape for a scan that cannot keep order. Closing the gap is
-/// the keep-order scan work (#241), not anything about derived tables. The
-/// rows, and their order, agree with Go's `3;2`.
+/// This tier now has the same physical property flow and plan shape. The rows
+/// and their order agree with Go's `3;2` as well.
 #[test]
 fn a_derived_table_keeps_its_own_order_by_limit() {
     let mut session = derived_session();
@@ -246,10 +222,11 @@ fn a_derived_table_keeps_its_own_order_by_limit() {
             "explain select x.a from (select a from t order by a desc limit 2) x"
         ),
         vec![
-            "Projection_4|2.00|root||test.x.a",
-            "└─Projection_3|2.00|root||test.t.a",
-            "  └─TopN_2|2.00|root||test.t.a:desc, offset:0, count:2",
-            "    └─IndexFullScan_1|10000.00|root|table:t, index:ia(a)|keep order:false, stats:pseudo",
+            "Projection_5|2.00|root||test.t.a",
+            "└─Limit_4|2.00|root||offset:0, count:2",
+            "  └─IndexReader_3|2.00|root||index:Limit",
+            "    └─Limit_2|2.00|cop[tikv]||offset:0, count:2",
+            "      └─IndexFullScan_1|10000.00|cop[tikv]|table:t, index:ia(a)|keep order:true, stats:pseudo, desc",
         ]
     );
     assert_eq!(
@@ -284,11 +261,10 @@ fn explain_analyze_meters_inside_the_derived_table() {
     assert_eq!(
         act_rows,
         vec![
-            ("Projection_5".to_owned(), "1".to_owned()),
             ("Selection_4".to_owned(), "1".to_owned()),
-            ("Projection_3".to_owned(), "2".to_owned()),
-            ("Selection_2".to_owned(), "2".to_owned()),
-            ("TableFullScan_1".to_owned(), "3".to_owned()),
+            ("IndexLookUp_3".to_owned(), "2".to_owned()),
+            ("├─IndexRangeScan_1(Build)".to_owned(), "1".to_owned()),
+            ("TableRowIDScan_2(Probe)".to_owned(), "1".to_owned()),
         ]
     );
 }

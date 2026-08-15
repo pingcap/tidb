@@ -23,8 +23,8 @@
 //! module derives.
 //!
 //! Node kinds are the ones a `t1, t5, (select ... from t2 join t3) dt` shape
-//! reaches: `DataSource`, `Selection`, `Projection` and inner `Join`. Each
-//! rule below is the Go body, not a re-derivation:
+//! reaches: `DataSource`, `Selection`, `Projection`, `Aggregation` and inner
+//! `Join`. Each rule below is the Go body, not a re-derivation:
 //!
 //! * `DataSource` -- `deriveStats4DataSource` (`core/stats.go:110-168`) sets
 //!   `ds.stats = ds.TableStats.Scale(vars, Selectivity(pushedDownConds))`,
@@ -38,15 +38,19 @@
 //! * `Projection` -- `LogicalProjection.DeriveStats`
 //!   (`logicalop/logical_projection.go:278-305`) passes the child's row count
 //!   through unchanged and re-derives one NDV per output expression.
+//! * `Aggregation` -- `LogicalAggregation.DeriveStats`
+//!   (`logicalop/logical_aggregation.go:219-246`) estimates the group-key NDV
+//!   and uses that number as both its row count and every output column's NDV.
 //! * `Join` -- `LogicalJoin.DeriveStats` (`logicalop/logical_join.go:560-616`)
 //!   takes `EstimateFullJoinRowCount` for an inner join and clamps every
 //!   inherited column NDV to the join's own row count.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::cardinality::join::{
     estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
 };
+use crate::cardinality::ndv::GroupNdv;
 use crate::cost_factors::SELECTION_FACTOR;
 
 /// Go `cardinality.distinctFactor` (`cardinality/ndv.go:35`), the NDV a column
@@ -65,14 +69,16 @@ pub const DEF_SCALE_NDV_SKEW_RATIO: f64 = 1.0;
 /// A column identity. Go uses `expression.Column.UniqueID`.
 pub type ColumnId = u64;
 
-/// Go `property.StatsInfo`, reduced to the two fields the DP cost reads and the
-/// NDV map every rule above needs to propagate.
+/// Go `property.StatsInfo`, reduced to the fields the DP cost and NDV rules
+/// read.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StatsInfo {
     /// `StatsInfo.RowCount`.
     pub row_count: f64,
     /// `StatsInfo.ColNDVs`, keyed by column unique ID.
     pub col_ndvs: BTreeMap<ColumnId, f64>,
+    /// Exact NDVs of composite column groups supplied by indexes.
+    pub group_ndvs: Vec<GroupNdv>,
 }
 
 /// Go `cardinality.ScaleNDV` (`cardinality/ndv.go:215-262`).
@@ -139,9 +145,18 @@ impl StatsInfo {
                 )
             })
             .collect();
+        let group_ndvs = self
+            .group_ndvs
+            .iter()
+            .map(|group| GroupNdv {
+                columns: group.columns.clone(),
+                ndv: scale_ndv(group.ndv, self.row_count, scaled_row_count, skew_ratio),
+            })
+            .collect();
         Self {
             row_count: scaled_row_count,
             col_ndvs,
+            group_ndvs,
         }
     }
 }
@@ -156,11 +171,8 @@ impl StatsInfo {
 /// (`vardef/tidb_vars.go:1472`), so the `skewRatio > 0` branch is not taken and
 /// the *conservative* (naive max) estimate is returned with `matched_len = 1`.
 ///
-/// Two source behaviors are deliberately out of scope here and are the module's
-/// known gaps: an exact `GroupNDV` match (this module derives no `GroupNDVs`,
-/// which `LogicalJoin.ExtractColGroups` only populates for multi-column equi
-/// joins) and the exponential-backoff blend behind a non-zero skew ratio -- the
-/// backoff itself is already ported as
+/// The exponential-backoff blend behind a non-zero group-NDV skew ratio is
+/// deliberately out of scope here. The backoff itself is already ported as
 /// [`apply_exponential_backoff`](crate::cardinality::apply_exponential_backoff),
 /// but nothing calls it from here because the production ratio is zero.
 #[must_use]
@@ -168,6 +180,16 @@ pub fn estimate_cols_ndv_with_matched_len(cols: &[ColumnId], profile: &StatsInfo
     if cols.is_empty() {
         return (1.0, 1);
     }
+    let mut sorted_cols = cols.iter().map(|id| *id as i64).collect::<Vec<_>>();
+    sorted_cols.sort_unstable();
+    if let Some(group) = profile.group_ndvs.iter().find(|group| {
+        let mut group_cols = group.columns.clone();
+        group_cols.sort_unstable();
+        group_cols == sorted_cols
+    }) {
+        return (group.ndv.max(1.0), group.columns.len());
+    }
+
     let mut max_ndv = 1.0_f64;
     for col in cols {
         if let Some(ndv) = profile.col_ndvs.get(col) {
@@ -187,6 +209,8 @@ pub struct ProjectionExpr {
     /// Every column the expression reads, Go's
     /// `ExtractAllColumnsFromExpressionsInUsedSlices`.
     pub inputs: Vec<ColumnId>,
+    /// The child column when this expression is a direct column reference.
+    pub direct_input: Option<ColumnId>,
 }
 
 /// The logical node kinds a derived-table join group is built from.
@@ -196,8 +220,10 @@ pub enum LogicalNode {
     DataSource {
         /// `StatisticTable.RealtimeCount`; `10000` for a pseudo table.
         realtime_count: f64,
-        /// The schema columns, each of which gets an `EstimateColumnNDV`.
-        columns: Vec<ColumnId>,
+        /// Go `DataSource.TableStats.ColNDVs`, keyed by column unique ID.
+        column_ndvs: BTreeMap<ColumnId, f64>,
+        /// Exact composite-index NDVs from `DataSource.TableStats.GroupNDVs`.
+        group_ndvs: Vec<GroupNdv>,
         /// `Selectivity(ds.PushedDownConds)`, already computed.
         selectivity: f64,
     },
@@ -212,6 +238,15 @@ pub enum LogicalNode {
         child: Box<LogicalNode>,
         /// One entry per output column.
         exprs: Vec<ProjectionExpr>,
+    },
+    /// A `LogicalAggregation`.
+    Aggregation {
+        /// The single child.
+        child: Box<LogicalNode>,
+        /// Every input column extracted from the `GROUP BY` expressions.
+        group_by: Vec<ColumnId>,
+        /// The aggregation's output schema columns.
+        columns: Vec<ColumnId>,
     },
     /// A `LogicalJoin`.
     Join {
@@ -324,18 +359,48 @@ impl DeriveStatsContext {
 /// the node's own rule.
 #[must_use]
 pub fn derive_stats(node: &LogicalNode, ctx: &DeriveStatsContext) -> DerivedNode {
+    derive_stats_with_groups(node, ctx, &[])
+}
+
+fn derive_stats_with_groups(
+    node: &LogicalNode,
+    ctx: &DeriveStatsContext,
+    requested_groups: &[Vec<ColumnId>],
+) -> DerivedNode {
     match node {
         LogicalNode::DataSource {
             realtime_count,
-            columns,
+            column_ndvs,
+            group_ndvs,
             selectivity,
         } => {
+            let group_ndvs = group_ndvs
+                .iter()
+                .filter(|group| {
+                    let mut group_columns = group.columns.clone();
+                    group_columns.sort_unstable();
+                    for requested in requested_groups {
+                        if requested.len() != group.columns.len() {
+                            break;
+                        }
+                        let mut requested = requested.clone();
+                        requested.sort_unstable();
+                        if requested
+                            .iter()
+                            .map(|column| *column as i64)
+                            .eq(group_columns.iter().copied())
+                        {
+                            return true;
+                        }
+                    }
+                    false
+                })
+                .cloned()
+                .collect();
             let table_stats = StatsInfo {
                 row_count: *realtime_count,
-                col_ndvs: columns
-                    .iter()
-                    .map(|id| (*id, realtime_count * DISTINCT_FACTOR))
-                    .collect(),
+                col_ndvs: column_ndvs.clone(),
+                group_ndvs,
             };
             DerivedNode {
                 stats: table_stats.scale(*selectivity, ctx.scale_ndv_skew_ratio),
@@ -343,17 +408,55 @@ pub fn derive_stats(node: &LogicalNode, ctx: &DeriveStatsContext) -> DerivedNode
             }
         }
         LogicalNode::Selection { child } => {
-            let child = derive_stats(child, ctx);
-            let stats = child
+            let child = derive_stats_with_groups(child, ctx, requested_groups);
+            let mut stats = child
                 .stats
                 .scale(ctx.selection_factor, ctx.scale_ndv_skew_ratio);
+            // LogicalSelection does not preserve GroupNDVs in Go.
+            stats.group_ndvs.clear();
             DerivedNode {
                 stats,
                 children: vec![child],
             }
         }
         LogicalNode::Projection { child, exprs } => {
-            let child = derive_stats(child, ctx);
+            let child_groups = requested_groups
+                .iter()
+                .filter_map(|group| {
+                    group
+                        .iter()
+                        .map(|column| {
+                            exprs
+                                .iter()
+                                .find(|expr| expr.output == *column)
+                                .and_then(|expr| expr.direct_input)
+                        })
+                        .collect::<Option<Vec<_>>>()
+                })
+                .collect::<Vec<_>>();
+            let child = derive_stats_with_groups(child, ctx, &child_groups);
+            let group_ndvs = child
+                .stats
+                .group_ndvs
+                .iter()
+                .filter_map(|group| {
+                    let mut columns = group
+                        .columns
+                        .iter()
+                        .map(|column| {
+                            exprs
+                                .iter()
+                                .find(|expr| expr.direct_input == Some(*column as ColumnId))
+                                .map(|expr| expr.output as i64)
+                        })
+                        .collect::<Option<Vec<_>>>()?;
+                    columns.sort_unstable();
+                    Some(GroupNdv {
+                        columns,
+                        ndv: group.ndv,
+                    })
+                })
+                .collect();
             let stats = StatsInfo {
                 row_count: child.stats.row_count,
                 col_ndvs: exprs
@@ -363,6 +466,43 @@ pub fn derive_stats(node: &LogicalNode, ctx: &DeriveStatsContext) -> DerivedNode
                             estimate_cols_ndv_with_matched_len(&expr.inputs, &child.stats);
                         (expr.output, ndv)
                     })
+                    .collect(),
+                group_ndvs,
+            };
+            DerivedNode {
+                stats,
+                children: vec![child],
+            }
+        }
+        LogicalNode::Aggregation {
+            child,
+            group_by,
+            columns,
+        } => {
+            let child_groups = (group_by.len() > 1).then(|| group_by.clone());
+            let child = derive_stats_with_groups(
+                child,
+                ctx,
+                child_groups.as_ref().map_or(&[], std::slice::from_ref),
+            );
+            let (ndv, _) = estimate_cols_ndv_with_matched_len(group_by, &child.stats);
+            let stats = StatsInfo {
+                row_count: ndv,
+                // Go deliberately uses the conservative group NDV for every
+                // aggregate output, including FIRST_ROW carriers.
+                col_ndvs: columns.iter().map(|id| (*id, ndv)).collect(),
+                group_ndvs: child
+                    .stats
+                    .group_ndvs
+                    .iter()
+                    .filter(|group| {
+                        let mut columns = group.columns.clone();
+                        columns.sort_unstable();
+                        let mut grouped = group_by.iter().map(|id| *id as i64).collect::<Vec<_>>();
+                        grouped.sort_unstable();
+                        columns == grouped
+                    })
+                    .cloned()
                     .collect(),
             };
             DerivedNode {
@@ -377,8 +517,26 @@ pub fn derive_stats(node: &LogicalNode, ctx: &DeriveStatsContext) -> DerivedNode
             right_keys,
             kind,
         } => {
-            let left = derive_stats(left, ctx);
-            let right = derive_stats(right, ctx);
+            let mut child_groups = Vec::new();
+            if left_keys.len() > 1 {
+                child_groups.push(left_keys.clone());
+                child_groups.push(right_keys.clone());
+            }
+            let outer_columns = match kind {
+                JoinKind::LeftOuter => Some(logical_columns(left)),
+                JoinKind::RightOuter => Some(logical_columns(right)),
+                JoinKind::Inner => None,
+            };
+            if let Some(outer_columns) = outer_columns {
+                child_groups.extend(
+                    requested_groups
+                        .iter()
+                        .filter(|group| group.iter().all(|column| outer_columns.contains(column)))
+                        .cloned(),
+                );
+            }
+            let left = derive_stats_with_groups(left, ctx, &child_groups);
+            let right = derive_stats_with_groups(right, ctx, &child_groups);
             let (left_ndv, left_matched) =
                 estimate_cols_ndv_with_matched_len(left_keys, &left.stats);
             let (right_ndv, right_matched) =
@@ -410,14 +568,33 @@ pub fn derive_stats(node: &LogicalNode, ctx: &DeriveStatsContext) -> DerivedNode
                 .chain(right.stats.col_ndvs.iter())
                 .map(|(id, ndv)| (*id, ndv.min(count)))
                 .collect();
+            let group_ndvs = match kind {
+                JoinKind::LeftOuter => left.stats.group_ndvs.clone(),
+                JoinKind::RightOuter => right.stats.group_ndvs.clone(),
+                JoinKind::Inner => Vec::new(),
+            };
             DerivedNode {
                 stats: StatsInfo {
                     row_count: count,
                     col_ndvs,
+                    group_ndvs,
                 },
                 children: vec![left, right],
             }
         }
+    }
+}
+
+fn logical_columns(node: &LogicalNode) -> BTreeSet<ColumnId> {
+    match node {
+        LogicalNode::DataSource { column_ndvs, .. } => column_ndvs.keys().copied().collect(),
+        LogicalNode::Selection { child } => logical_columns(child),
+        LogicalNode::Projection { exprs, .. } => exprs.iter().map(|expr| expr.output).collect(),
+        LogicalNode::Aggregation { columns, .. } => columns.iter().copied().collect(),
+        LogicalNode::Join { left, right, .. } => logical_columns(left)
+            .into_iter()
+            .chain(logical_columns(right))
+            .collect(),
     }
 }
 

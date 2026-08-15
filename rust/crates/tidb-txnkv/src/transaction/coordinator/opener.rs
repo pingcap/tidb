@@ -23,7 +23,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tidb_pd_client::PdClient;
+use tidb_pd_client::{PdClient, PdTimestampFuture};
 
 use crate::gc_state::{GcStateCache, TxnSafePointLoader, TxnSafePointRefresher};
 use crate::lock::TimestampSource;
@@ -198,6 +198,29 @@ impl RealOptimisticTransactionOpener {
         self.open(0, 0)
     }
 
+    /// Dispatches an ordinary autocommit transaction's timestamp request
+    /// without opening a worker-local transaction.
+    ///
+    /// Go stores the corresponding `oracle.Future` during transaction warmup;
+    /// a statement that never reaches storage can drop it without activating a
+    /// transaction.
+    pub fn prepare_read_only_start_ts(
+        &self,
+    ) -> Result<PdTimestampFuture, OptimisticCoordinatorError> {
+        self.pd
+            .get_timestamp_async()
+            .map_err(|error| OptimisticCoordinatorError::Timestamp(error.to_string()))
+    }
+
+    /// Opens a read-only transaction at a timestamp already obtained by
+    /// [`Self::prepare_read_only_start_ts`].
+    pub fn begin_read_only_at(
+        &self,
+        start_ts: u64,
+    ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
+        self.begin_at(start_ts, 0, 0)
+    }
+
     /// Opens a read-only transaction at `u64::MAX` — the latest committed
     /// version — without asking PD for a timestamp at all.
     ///
@@ -217,6 +240,39 @@ impl RealOptimisticTransactionOpener {
         &self,
     ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
         self.open_at(Some(u64::MAX), 0, 0)
+    }
+
+    /// Reads one point key at `u64::MAX` without activating a transaction.
+    ///
+    /// Go's optimistic provider returns `math.MaxUint64` directly for this
+    /// plan shape; it does not call `Txn()`. Keep that distinction here too:
+    /// open a thread-local read runtime and run the snapshot RPC directly,
+    /// rather than handing the read to the pinned transaction worker used by
+    /// ordinary statements. The snapshot reader still owns the normal region
+    /// recovery, lock resolution, GC visibility, and call-deadline checks.
+    pub fn snapshot_get_at_max_ts(
+        &self,
+        key: &[u8],
+        call: &crate::rpc::UnaryCallContext,
+    ) -> Result<Option<Vec<u8>>, OptimisticCoordinatorError> {
+        let runtime = self
+            .opener
+            .open_session()
+            .map_err(|error| OptimisticCoordinatorError::SnapshotGet(error.to_string()))?;
+        if runtime.cluster_id() != self.pd.cluster_id() {
+            return Err(OptimisticCoordinatorError::ClusterMismatch {
+                pd: self.pd.cluster_id(),
+                region_cache: runtime.cluster_id(),
+            });
+        }
+        super::snapshot_read::direct_snapshot_get(
+            &runtime,
+            &PdLockTimestampSource(self.pd.clone()),
+            self.gc_state.cache().as_ref(),
+            key,
+            call,
+        )
+        .map(|result| result.value)
     }
 
     fn open(

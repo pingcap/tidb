@@ -445,6 +445,56 @@ fn wrap_year_operand_for_datetime_compare(left: &mut Expression, right: &mut Exp
     ));
 }
 
+/// Wraps the integer side of a DECIMAL-vs-INT comparison the same way Go's
+/// `newBaseBuiltinFuncWithTp(..., ETDecimal, ETDecimal)` does.
+fn wrap_integer_operand_for_decimal_compare(left: &mut Expression, right: &mut Expression) {
+    let eval_type = |expression: &Expression| expression.static_type().map(FieldType::eval_type);
+    let integer = match (eval_type(left), eval_type(right)) {
+        (Some(EvalType::Decimal), Some(EvalType::Int))
+            if !matches!(right, Expression::Constant(_)) =>
+        {
+            right
+        }
+        (Some(EvalType::Int), Some(EvalType::Decimal))
+            if !matches!(left, Expression::Constant(_)) =>
+        {
+            left
+        }
+        _ => return,
+    };
+    let Some(source_type) = integer.static_type().cloned() else {
+        return;
+    };
+    let precision = match source_type.code() {
+        FieldTypeCode::Tiny => 3,
+        FieldTypeCode::Short => 5,
+        FieldTypeCode::Int24 => 8,
+        FieldTypeCode::Long => 10,
+        FieldTypeCode::LongLong => 20,
+        FieldTypeCode::Year => 4,
+        _ => return,
+    };
+    let mut target = FieldType::new(FieldTypeCode::NewDecimal);
+    target.set_flen(precision);
+    target.set_decimal(0);
+    target.add_flags(
+        FieldTypeFlags::BINARY
+            | (source_type.flags() & (FieldTypeFlags::UNSIGNED | FieldTypeFlags::NOT_NULL)),
+    );
+    let argument = std::mem::replace(
+        integer,
+        Expression::Constant(Constant::new(
+            Datum::Null,
+            FieldType::new(FieldTypeCode::Null),
+        )),
+    );
+    *integer = Expression::ScalarFunction(crate::expression::ScalarFunction::new(
+        tidb_ast::CiString::new("cast_decimal"),
+        target,
+        vec![argument],
+    ));
+}
+
 /// Go `compareFunctionClass.refineArgs` (`builtin_compare.go:1778`), applied
 /// to every comparison in an already-built expression tree.
 ///
@@ -484,6 +534,7 @@ pub fn refine_comparisons(expr: &mut Expression, ctx: &dyn Columns) -> Result<()
     // Go's own order: `getFunction` runs `refineArgs` first and only then
     // derives the comparison type -- and the argument casts that go with it --
     // from the arguments that survived it (`builtin_compare.go:1984-1989`).
+    wrap_integer_operand_for_decimal_compare(left, right);
     wrap_year_operand_for_datetime_compare(left, right);
     prepare_json_comparison_args(&mut function.args);
     Ok(())
@@ -814,6 +865,32 @@ mod tests {
             refine_comparisons(&mut expr, &StrictSink),
             Err(EvalError::TruncatedWrongValue(_))
         ));
+    }
+
+    #[test]
+    fn a_decimal_column_compared_with_bigint_casts_bigint_to_decimal_20() {
+        let mut decimal = crate::column::Column::new(1, FieldType::new(FieldTypeCode::NewDecimal));
+        decimal.index = 0;
+        let mut integer = crate::column::Column::new(2, FieldType::new(FieldTypeCode::LongLong));
+        integer.index = 1;
+        let (expr, warnings) = refine(
+            "ne",
+            Expression::Column(decimal),
+            Expression::Column(integer),
+        );
+        assert!(warnings.is_empty());
+        let Expression::ScalarFunction(comparison) = expr else {
+            panic!("comparison was not a scalar function");
+        };
+        let Expression::ScalarFunction(cast) = &comparison.args[1] else {
+            panic!("BIGINT operand was not cast: {:?}", comparison.args[1]);
+        };
+        assert_eq!(cast.func_name.lowercase(), "cast_decimal");
+        let target = cast.ret_type.as_ref().unwrap();
+        assert_eq!(target.code(), FieldTypeCode::NewDecimal);
+        assert_eq!(target.flen(), 20);
+        assert_eq!(target.decimal(), 0);
+        assert_ne!(target.flags() & FieldTypeFlags::BINARY, 0);
     }
 
     /// The reported statement, structurally: `a > '10ab'` compares INT TO INT

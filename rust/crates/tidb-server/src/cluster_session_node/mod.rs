@@ -43,7 +43,7 @@
 //! connection opens one [`StatementSnapshot`] per statement, at its own
 //! timestamp, and publishes that statement's writes right after: Go's implicit
 //! per-statement transaction. The bind itself costs nothing -- the snapshot is
-//! opened at the statement's FIRST read -- and one statement shape skips the
+//! prepared after planning and waited at the statement's FIRST read -- and one statement shape skips the
 //! timestamp entirely: an autocommit point get on the clustered handle, which
 //! [`ClusterServerSession::declare_read_shape`] declares to the bound snapshot
 //! before the statement runs, and which then reads at `u64::MAX`. That
@@ -184,7 +184,9 @@ use tidb_executor::remote_scan::PushdownScanner;
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_session::process::ProcessRegistry;
-use tidb_session::{GlobalSysvars, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange};
+use tidb_session::{
+    GlobalSysvars, PreparedAst, Session, StmtKind, StmtOutput, StmtResult, StoredStateChange,
+};
 
 use crate::cluster_account_seam::ClusterAccountWriter;
 use crate::cluster_analyze_seam::ClusterAnalyze;
@@ -590,8 +592,8 @@ pub struct ClusterServerSession {
     /// tells the connection its statistics moved.
     statistics: Arc<tidb_exec::stats_watch::StatsSnapshot>,
     /// The transaction an explicit `BEGIN` holds open. `None` is autocommit,
-    /// where a statement gets a timestamp of its own at its first read -- and
-    /// none at all if it reads no cluster row.
+    /// where a statement prepares a timestamp of its own after planning and
+    /// waits for it at its first read.
     explicit: Option<Box<dyn OpenClusterTransaction>>,
     /// The transaction's savepoints, oldest first: for each, the name
     /// lowercased and the buffer image taken when it was declared.
@@ -636,9 +638,8 @@ impl ClusterServerSession {
     /// opened, so it sees exactly what `BEGIN` saw -- repeatable read, and the
     /// timestamp the eventual prewrite will carry. Outside one, autocommit
     /// opens a fresh read transaction per statement, which is Go's implicit
-    /// per-statement transaction -- opened at the statement's first read, so
-    /// binding costs nothing and the timestamp is spent only by a statement
-    /// that actually reads a cluster row.
+    /// per-statement transaction. Like Go's oracle future, it starts after the
+    /// plan-shape decision and is waited only by the first cluster read.
     ///
     /// An autocommit statement that loses the race is RUN AGAIN rather than
     /// refused, up to [`AUTOCOMMIT_RETRY_LIMIT`] times: see
@@ -744,10 +745,9 @@ impl ClusterServerSession {
             // The transaction's timestamp is already spent; its per-statement
             // read handle costs nothing, so there is nothing to defer.
             Some(transaction) => transaction.snapshot().map_err(SqlQueryError::unknown)?,
-            // Autocommit's timestamp is spent by the statement's first read,
-            // not by the binding: a statement that reads no cluster row --
-            // and a statement whose plan does not exist yet at this point --
-            // must not have paid for one already.
+            // Binding is still timestamp-free. After the statement's shape is
+            // declared below, preparation starts the ordinary future; the
+            // first read is what waits for and exposes its snapshot.
             None => {
                 transactions::deferred_snapshot(Arc::clone(&self.transactions), read_ts.clone())
             }
@@ -758,6 +758,7 @@ impl ClusterServerSession {
             drop(stale);
         }
         self.declare_read_shape(shape);
+        self.prepare_snapshot()?;
         let outcome = run(&mut self.session);
         let finished = self.finish_snapshot();
         let result = (|| match outcome {
@@ -860,6 +861,14 @@ impl ClusterServerSession {
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
             .declare_autocommit_point_get();
+    }
+
+    fn prepare_snapshot(&self) -> Result<(), SqlQueryError> {
+        self.slot
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .prepare()
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))
     }
 
     fn bind(&self, snapshot: Box<dyn ClusterSnapshot>) -> Option<Box<dyn ClusterSnapshot>> {
@@ -1095,11 +1104,26 @@ impl ClusterServerSession {
     /// a table-scoped `GRANT` is a `mysql.*` row shape the account writer does
     /// not encode (which it reports at persist time, where it knows).
     fn schema_route(&self, sql: &str) -> Result<StatementRoute, SqlQueryError> {
-        match self
+        let change = self
             .session
             .statement_stored_state_change(sql)
-            .map_err(map_error)?
-        {
+            .map_err(map_error)?;
+        self.schema_route_for_change(sql, change)
+    }
+
+    fn schema_route_prepared(
+        &self,
+        prepared: &PreparedAst,
+    ) -> Result<StatementRoute, SqlQueryError> {
+        self.schema_route_for_change(prepared.sql(), prepared.stored_state_change())
+    }
+
+    fn schema_route_for_change(
+        &self,
+        sql: &str,
+        change: StoredStateChange,
+    ) -> Result<StatementRoute, SqlQueryError> {
+        match change {
             StoredStateChange::None => Ok(StatementRoute::Ordinary),
             StoredStateChange::Accounts => Ok(StatementRoute::Accounts),
             StoredStateChange::GlobalVars => Ok(StatementRoute::GlobalVars),
@@ -1394,31 +1418,35 @@ impl QuerySession for ClusterServerSession {
         if classify_transaction_control(sql).is_some() {
             return Ok(PreparedGeneral::new(sql.to_owned(), 0, Vec::new()));
         }
-        let parameter_count = self.session.parameter_count(sql).map_err(map_error)?;
-        let kind = self.session.statement_kind(sql).map_err(map_error)?;
+        let prepared_ast = self.session.prepare_ast(sql).map_err(map_error)?;
+        let parameter_count = prepared_ast.parameter_count();
+        let kind = prepared_ast.statement_kind(&self.session);
         if kind == StmtKind::Write {
             // A prepared DDL is admitted here and executed at EXECUTE, so a
             // refusal -- an unsupported shape, an unsupported column type --
             // is reported at PREPARE, where Go reports it too.
-            self.schema_route(sql)?;
-            return Ok(PreparedGeneral::new(
-                sql.to_owned(),
-                parameter_count,
-                Vec::new(),
-            ));
+            self.schema_route_prepared(&prepared_ast)?;
+            return Ok(
+                PreparedGeneral::new(sql.to_owned(), parameter_count, Vec::new())
+                    .with_prepared_ast(prepared_ast),
+            );
         }
         // Go reports a query's result columns at PREPARE time, which it gets
         // by planning the statement with every marker bound to NULL. Planning
         // reads the catalog and may read rows, so it takes a snapshot like any
         // other statement.
-        let owned = sql.to_owned();
         // The PREPARE probe runs the statement with every marker NULL, which
         // is not the statement the client will execute; it declares nothing,
         // and -- see `probe_statement` -- it opens no transaction either.
-        let result_columns = self.probe_statement(StatementReadShape::Unknown, move |session| {
-            let probe: Vec<tidb_datatype::Datum> =
-                std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
-            match session.run_with_params(&owned, &probe) {
+        let probe: Vec<tidb_datatype::Datum> =
+            std::iter::repeat_n(tidb_datatype::Datum::Null, parameter_count).collect();
+        let mut bound_probe = Some(prepared_ast.bind(&probe).map_err(map_error)?);
+        let result_columns = self.probe_statement(StatementReadShape::Unknown, |session| {
+            let bound = match bound_probe.take() {
+                Some(bound) => bound,
+                None => prepared_ast.bind(&probe).map_err(map_error)?,
+            };
+            match session.run_bound_prepared(bound) {
                 Ok(StmtOutput::Rows { columns, .. }) => {
                     Ok(crate::pipeline_session::select_columns(&columns))
                 }
@@ -1431,11 +1459,10 @@ impl QuerySession for ClusterServerSession {
                 _ => Ok(Vec::new()),
             }
         })?;
-        Ok(PreparedGeneral::new(
-            sql.to_owned(),
-            parameter_count,
-            result_columns,
-        ))
+        Ok(
+            PreparedGeneral::new(sql.to_owned(), parameter_count, result_columns)
+                .with_prepared_ast(prepared_ast),
+        )
     }
 
     fn execute_general<'a>(
@@ -1449,14 +1476,20 @@ impl QuerySession for ClusterServerSession {
         // state disagreeing, with every following statement reading at a fresh
         // timestamp and a racing writer never detected. Routed here the state
         // cannot diverge, whoever calls this.
-        if classify_transaction_control(statement.sql()).is_some() {
+        if statement.prepared_ast().is_none()
+            && classify_transaction_control(statement.sql()).is_some()
+        {
             self.control_transaction(statement.sql())?;
             return Ok(GeneralExecuteOutcome::Write(WriteOutcome {
                 affected_rows: 0,
                 last_insert_id: 0,
             }));
         }
-        match self.schema_route(statement.sql())? {
+        let route = match statement.prepared_ast() {
+            Some(prepared) => self.schema_route_prepared(prepared)?,
+            None => self.schema_route(statement.sql())?,
+        };
+        match route {
             StatementRoute::Ddl(ddl) => {
                 return self
                     .run_ddl(statement.sql(), &ddl)
@@ -1478,13 +1511,35 @@ impl QuerySession for ClusterServerSession {
             StatementRoute::Ordinary => {}
         }
         let params = crate::pipeline_session::prepared_parameters(values);
-        let sql = statement.sql().to_owned();
-        let shape = self.session.statement_read_shape(&sql, &params);
-        let (output, result_authority) = self.with_statement(shape, move |session| {
-            session
-                .run_with_params_and_result_authority(&sql, &params)
-                .map_err(map_error)
-        })?;
+        let (output, result_authority) = match statement.prepared_ast() {
+            Some(prepared) => {
+                let mut bound = prepared
+                    .bind_for_execution(&self.session, &params)
+                    .map_err(map_error)?;
+                let shape = bound.statement_read_shape(&self.session);
+                let mut bound = Some(bound);
+                self.with_statement(shape, move |session| {
+                    let bound = match bound.take() {
+                        Some(bound) => bound,
+                        None => prepared
+                            .bind_for_execution(session, &params)
+                            .map_err(map_error)?,
+                    };
+                    session
+                        .run_bound_prepared_with_result_authority(bound)
+                        .map_err(map_error)
+                })?
+            }
+            None => {
+                let sql = statement.sql().to_owned();
+                let shape = self.session.statement_read_shape(&sql, &params);
+                self.with_statement(shape, move |session| {
+                    session
+                        .run_with_params_and_result_authority(&sql, &params)
+                        .map_err(map_error)
+                })?
+            }
+        };
         Ok(match output {
             StmtOutput::Rows { columns, rows } => {
                 let field_types = columns.iter().map(|(_, field)| field.clone()).collect();

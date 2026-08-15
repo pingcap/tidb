@@ -227,11 +227,29 @@ impl Session {
     pub fn parse_at_statement_boundary(&mut self, sql: &str) -> Result<Stmt, DriverError> {
         let previous = std::mem::take(&mut self.warnings);
         let stmt = self.parse(sql)?;
-        self.in_show_warning = reports_warnings(&stmt);
+        self.install_statement_warning_state(&stmt, previous);
+        Ok(stmt)
+    }
+
+    /// Starts a statement boundary for an AST retained by PREPARE.
+    pub(crate) fn begin_prepared_statement_boundary(&mut self, stmt: &Stmt) {
+        let previous = std::mem::take(&mut self.warnings);
+        self.install_statement_warning_state(stmt, previous);
+    }
+
+    /// Starts the boundary for the cached prepared PointGet path. That path is
+    /// known to be a SELECT rather than SHOW WARNINGS, so the previous buffer
+    /// is discarded without revisiting the retained AST.
+    pub(crate) fn begin_cached_prepared_query_boundary(&mut self) {
+        self.warnings.clear();
+        self.in_show_warning = false;
+    }
+
+    fn install_statement_warning_state(&mut self, stmt: &Stmt, previous: Vec<SqlWarning>) {
+        self.in_show_warning = reports_warnings(stmt);
         if self.in_show_warning {
             self.warnings = previous;
         }
-        Ok(stmt)
     }
 
     /// Go `clientConn.initResultEncoder`'s read:

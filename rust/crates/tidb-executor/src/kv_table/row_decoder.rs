@@ -21,7 +21,7 @@ use tidb_datatype::{new_collation_enabled, Datum, FieldType, SessionTimeZone};
 use tidb_tablecodec::decode_table_row_to_map;
 
 use super::table_meta::NOT_NULL_FLAG;
-use super::{KvColumn, KvTableError, RowDecodeContext, TableHandle};
+use super::{KvColumn, KvTableError, PreparedPointGetDecodeContext, RowDecodeContext, TableHandle};
 
 /// Which generated columns a decoder evaluates.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -75,6 +75,103 @@ pub struct RowDecoder {
     use_new_collation: bool,
     keep: Option<Vec<usize>>,
     context: RowDecodeContext,
+}
+
+#[derive(Clone, Debug)]
+struct PreparedPointGetColumn {
+    column: KvColumn,
+    from_handle: bool,
+}
+
+/// Immutable row-decoder metadata retained by a cached prepared PointGet.
+///
+/// It contains only the projected ordinary columns admitted by the point-plan
+/// gate. Building the general [`RowDecoder`] on every execute would clone the
+/// complete table schema and reconstruct its generated-column dependency
+/// maps even though this path reads one handle and no expressions.
+#[derive(Clone, Debug)]
+pub struct PreparedPointGetRowDecoder {
+    columns: Vec<PreparedPointGetColumn>,
+    stored_column_types: BTreeMap<i64, FieldType>,
+}
+
+impl PreparedPointGetRowDecoder {
+    /// Compiles the schema-versioned projection stored on the point plan.
+    pub fn new(
+        columns: &[KvColumn],
+        pk_handle_offset: usize,
+        output_offsets: &[usize],
+    ) -> Result<Self, KvTableError> {
+        let projected = output_offsets
+            .iter()
+            .map(|offset| {
+                let column = columns.get(*offset).cloned().ok_or_else(|| {
+                    KvTableError::Decode(
+                        "prepared point-get projection is outside the table schema".to_owned(),
+                    )
+                })?;
+                if column.generated.is_some() {
+                    return Err(KvTableError::Decode(
+                        "prepared point-get projection contains a generated column".to_owned(),
+                    ));
+                }
+                Ok(PreparedPointGetColumn {
+                    column,
+                    from_handle: *offset == pk_handle_offset,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let stored_column_types = projected
+            .iter()
+            .filter(|column| !column.from_handle)
+            .map(|column| (column.column.id, column.column.field_type.clone()))
+            .collect();
+        Ok(Self {
+            columns: projected,
+            stored_column_types,
+        })
+    }
+
+    pub(crate) fn decode(
+        &self,
+        handle: &TableHandle,
+        value: &[u8],
+        context: &PreparedPointGetDecodeContext,
+    ) -> Result<Vec<Datum>, KvTableError> {
+        let decoded =
+            decode_table_row_to_map(value, &self.stored_column_types, Some(context.zone()))
+                .map_err(|error| KvTableError::Decode(format!("{error:?}")))?;
+        self.columns
+            .iter()
+            .map(|output| {
+                if output.from_handle {
+                    let TableHandle::Int(value) = handle else {
+                        return Err(KvTableError::Decode(
+                            "prepared point-get plan requires an integer handle".to_owned(),
+                        ));
+                    };
+                    return tidb_tablecodec::unflatten_datum(
+                        Datum::Int(*value),
+                        &output.column.field_type,
+                        Some(context.zone()),
+                    )
+                    .map_err(|error| KvTableError::Decode(format!("{error:?}")));
+                }
+                if let Some(value) = decoded.get(&output.column.id) {
+                    return Ok(value.clone());
+                }
+                if output.column.origin_default.is_none()
+                    && output.column.field_type.flags() & NOT_NULL_FLAG != 0
+                {
+                    return Err(KvTableError::Decode("Miss column".to_owned()));
+                }
+                output
+                    .column
+                    .origin_default_value(context.origin_default_flags(), context.zone())
+                    .map_err(|error| KvTableError::Decode(error.to_string()))
+            })
+            .collect()
+    }
 }
 
 impl RowDecoder {

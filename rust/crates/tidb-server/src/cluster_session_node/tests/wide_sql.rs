@@ -5,7 +5,69 @@
 
 use super::super::*;
 use super::node_fixture::*;
+use crate::resultset_source::ResultSetSource;
 use tidb_datatype::Datum;
+use tidb_protocol::PreparedValue;
+
+fn execute_prepared_rows(
+    session: &mut ClusterServerSession,
+    statement: &PreparedGeneral,
+    values: &[PreparedValue],
+) -> Vec<Vec<Datum>> {
+    let outcome = session
+        .execute_general(statement, values)
+        .expect("execute prepared statement");
+    let GeneralExecuteOutcome::Rows(mut result) = outcome else {
+        panic!("a prepared query must answer with rows");
+    };
+    let source = result.source();
+    let mut rows = Vec::new();
+    loop {
+        let batch = source.next_batch(8).expect("batch");
+        if batch.is_empty() {
+            break;
+        }
+        rows.extend(batch);
+    }
+    source.finish().expect("finish");
+    source.close().expect("close");
+    rows
+}
+
+/// Go retains `PlanCacheStmt.PreparedAst`, so changing `sql_mode` after
+/// PREPARE cannot re-lex the prepared text. Captured from Go TiDB:
+///
+/// ```sql
+/// set sql_mode='';
+/// prepare s from 'select "literal", ?';
+/// set sql_mode='ANSI_QUOTES';
+/// execute s using @p; -- literal, 7
+/// ```
+///
+/// Re-parsing at EXECUTE would instead treat `"literal"` as an identifier.
+#[test]
+fn prepared_execution_uses_the_ast_parsed_at_prepare_time() {
+    let (mut session, _) = open_session();
+    session
+        .execute_write("SET sql_mode = ''")
+        .expect("default quote mode");
+    let statement = session
+        .prepare_general("SELECT \"literal\", ?")
+        .expect("prepare");
+
+    session
+        .execute_write("SET sql_mode = 'ANSI_QUOTES'")
+        .expect("change scanner mode after prepare");
+
+    assert_eq!(
+        execute_prepared_rows(
+            &mut session,
+            &statement,
+            &[PreparedValue::SignedLongLong(7)],
+        ),
+        vec![vec![Datum::new_string("literal"), Datum::Int(7)]]
+    );
+}
 
 #[test]
 fn cluster_sessions_share_the_transaction_tier_advisory_lock_authority() {

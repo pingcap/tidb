@@ -1654,17 +1654,22 @@ pub(crate) fn run_update_traced(
     // key, otherwise the handle intervals it implies. See
     // `access::write_read_path` for the Go functions this mirrors and for why
     // neither narrowing can change which rows the statement acts on.
-    let read_path = super::access::write_read_path(
-        catalog,
-        &database,
-        &name,
-        &super::access::PointPlanStmt::of_write(
-            update.where_clause.as_ref(),
-            &update.order_by,
-            update.limit.as_ref(),
+    let point_plan = super::access::PointPlanStmt::of_write(
+        update.where_clause.as_ref(),
+        &update.order_by,
+        update.limit.as_ref(),
+    );
+    let read_path = super::access::write_read_path(catalog, &database, &name, &point_plan, ctx)?;
+    let predicate_consumed = match catalog.get_in(&database, &name) {
+        Some(TableEntry::Kv(table)) => super::access::write_read_path_consumes_predicate(
+            read_path.as_ref(),
+            &point_plan,
+            table,
+            &column_list,
+            &zone,
         ),
-        ctx,
-    )?;
+        _ => false,
+    };
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
             trace,
@@ -1677,13 +1682,17 @@ pub(crate) fn run_update_traced(
             &column_list,
             &update.where_clause,
             read_path.as_ref(),
+            predicate_consumed,
             current_db,
+            &zone,
+            ctx,
         );
         trace.write("Update", true);
         if trace.is_plan_only() {
             return Ok(0);
         }
     }
+    let predicate = if predicate_consumed { None } else { predicate };
     enum SourceRows {
         Mem(Vec<Vec<Datum>>),
         Kv {
@@ -2130,17 +2139,22 @@ pub(crate) fn run_delete_traced(
     let row_limit = dml_row_limit(&delete.limit)?;
     // As in UPDATE: the key or the handle intervals the `WHERE` implies are
     // the records this write fetches.
-    let read_path = super::access::write_read_path(
-        catalog,
-        &database,
-        &name,
-        &super::access::PointPlanStmt::of_write(
-            delete.where_clause.as_ref(),
-            &delete.order_by,
-            delete.limit.as_ref(),
+    let point_plan = super::access::PointPlanStmt::of_write(
+        delete.where_clause.as_ref(),
+        &delete.order_by,
+        delete.limit.as_ref(),
+    );
+    let read_path = super::access::write_read_path(catalog, &database, &name, &point_plan, ctx)?;
+    let predicate_consumed = match catalog.get_in(&database, &name) {
+        Some(TableEntry::Kv(table)) => super::access::write_read_path_consumes_predicate(
+            read_path.as_ref(),
+            &point_plan,
+            table,
+            &column_list,
+            &zone,
         ),
-        ctx,
-    )?;
+        _ => false,
+    };
     if let Some(trace) = trace.as_deref_mut() {
         trace_dml_source(
             trace,
@@ -2153,13 +2167,17 @@ pub(crate) fn run_delete_traced(
             &column_list,
             &delete.where_clause,
             read_path.as_ref(),
+            predicate_consumed,
             current_db,
+            &zone,
+            ctx,
         );
         trace.write("Delete", true);
         if trace.is_plan_only() {
             return Ok(0);
         }
     }
+    let predicate = if predicate_consumed { None } else { predicate };
     enum SourceRows {
         Mem(Vec<Vec<Datum>>),
         Kv(Vec<(crate::kv_table::TableHandle, Vec<Datum>)>),
@@ -2314,6 +2332,15 @@ fn fetch_write_rows(
         Some(super::access::WriteReadPath::Ranges(ranges, _)) => kv
             .scan_rows_with_handles_in(Some(ranges), zone)
             .map_err(decode_failed),
+        Some(super::access::WriteReadPath::Batch(handles)) => {
+            let mut rows = Vec::with_capacity(handles.len());
+            for handle in handles {
+                if let Some(row) = kv.get_row_by_handle(handle, zone).map_err(decode_failed)? {
+                    rows.push((handle.clone(), row));
+                }
+            }
+            Ok(rows)
+        }
         Some(super::access::WriteReadPath::IndexRanges(index_id, ranges, _)) => {
             // The index range narrows WHICH records are fetched, in index
             // order; the row is then read by its handle, and the `WHERE` above
@@ -2340,8 +2367,8 @@ fn fetch_write_rows(
 
 /// Records the read plan a single-table write performs to find its target
 /// rows: the read `access::write_read_path` chose -- a `Point_Get`, a
-/// `TableRangeScan`, or the full scan neither narrowed -- with a `Selection`
-/// above it for the `WHERE` (`explain`'s divergences 7 and 8).
+/// `TableRangeScan`, or the full scan neither narrowed. A `Selection` remains
+/// only for the part of the `WHERE` the chosen access path did not consume.
 ///
 /// The table a single-table write reads, as the statement names it.
 struct DmlTarget<'a> {
@@ -2393,7 +2420,10 @@ fn trace_dml_source(
     columns: &[(String, FieldType)],
     where_clause: &Option<tidb_ast::Expr>,
     read_path: Option<&super::access::WriteReadPath>,
+    predicate_consumed: bool,
     current_db: &str,
+    zone: &tidb_datatype::SessionTimeZone,
+    ctx: &crate::StmtContext,
 ) {
     let DmlTarget {
         table_ref,
@@ -2417,6 +2447,9 @@ fn trace_dml_source(
     match read_path {
         Some(super::access::WriteReadPath::Ranges(ranges, range_estimate)) => {
             trace.table_range_scan(&visible, ranges, *range_estimate);
+            if predicate_consumed {
+                trace.scan_reader();
+            }
         }
         Some(super::access::WriteReadPath::IndexRanges(index_id, ranges, range_estimate)) => {
             trace_write_index_scan(
@@ -2430,12 +2463,20 @@ fn trace_dml_source(
                 *range_estimate,
             );
         }
+        Some(super::access::WriteReadPath::Batch(handles)) => {
+            if let Some(super::catalog::TableEntry::Kv(table)) = catalog.get_in(database, name) {
+                let partitions = table.handle_partition_names(handles, zone, ctx);
+                trace.batch_point_get(&visible, table, handles, handles.len(), &partitions);
+            }
+        }
         Some(super::access::WriteReadPath::Point(handle)) => {
-            trace.point_get(&visible, handle.as_ref());
+            if let Some(super::catalog::TableEntry::Kv(table)) = catalog.get_in(database, name) {
+                trace.point_get(&visible, table, handle.as_ref());
+            }
         }
         None => {}
     }
-    let Some(predicate) = where_clause else {
+    let Some(predicate) = where_clause.as_ref().filter(|_| !predicate_consumed) else {
         return;
     };
     let scope = PlanTrace::single_table_scope(
@@ -2449,6 +2490,7 @@ fn trace_dml_source(
         &Qualifier {
             db: current_db,
             scope: &scope,
+            catalog: Some(catalog),
         },
         selectivity,
     );

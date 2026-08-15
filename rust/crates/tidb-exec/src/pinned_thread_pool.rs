@@ -27,8 +27,9 @@
 //! a `pthread_create` plus a `join`. On the cluster statement path -- one
 //! read-only transaction per statement, each pinned to a thread because the
 //! TiKV transport is worker-local -- that is the difference between roughly 28
-//! and 4 microseconds per statement, charged to *every* statement including
-//! ones that read no table at all.
+//! and 4 microseconds per transaction activation. Ordinary statement warmup
+//! dispatches only a PD timestamp future, so statements that read no table do
+//! not borrow a worker.
 //!
 //! The pool never queues. A submission takes an idle worker if there is one and
 //! spawns a new thread if there is not, so a job can never wait behind another

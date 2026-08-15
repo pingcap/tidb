@@ -37,6 +37,44 @@ fn schema_of(width: usize) -> Schema {
     )
 }
 
+#[test]
+fn grouped_index_lookup_count_and_max_match_go_null_semantics() {
+    let aggregation = IndexLookupAggregation {
+        group_offsets: vec![0],
+        input_offsets: vec![1],
+        outputs: vec![
+            IndexLookupAggregateOutput::Column(0),
+            IndexLookupAggregateOutput::Count(None),
+            IndexLookupAggregateOutput::Count(Some(1)),
+            IndexLookupAggregateOutput::Max {
+                offset: 1,
+                collation: Collation::Binary,
+            },
+        ],
+        pruned_row_count: false,
+    };
+    let rows = vec![
+        vec![Datum::Int(1), Datum::Null],
+        vec![Datum::Int(1), Datum::Int(3)],
+        vec![Datum::Int(1), Datum::Int(2)],
+        vec![Datum::Int(2), Datum::Null],
+    ];
+    assert_eq!(
+        aggregation.apply(rows.clone(), false).unwrap(),
+        vec![
+            vec![Datum::Int(1), Datum::Int(3), Datum::Int(2), Datum::Int(3)],
+            vec![Datum::Int(2), Datum::Int(1), Datum::Int(0), Datum::Null],
+        ]
+    );
+    assert_eq!(
+        aggregation.apply(rows, true).unwrap(),
+        vec![
+            vec![Datum::Int(1), Datum::Int(3), Datum::Int(2), Datum::Int(3)],
+            vec![Datum::Int(2), Datum::Int(1), Datum::Int(0), Datum::Null],
+        ]
+    );
+}
+
 /// A source that hands out prebuilt rows in `max_chunk_size` batches, so
 /// the probe side really is pulled incrementally rather than in one go.
 struct RowSource {
@@ -249,37 +287,6 @@ fn cross_join_falls_back_to_the_nested_loop() {
     let mut join = join_of(JoinKind::Inner, Vec::new(), fixture(4, 7), fixture(4, 5), 2);
     assert!(!join.is_hash_join());
     assert_eq!(run(&mut join).len(), 16);
-}
-
-#[test]
-fn cartesian_join_follows_the_costed_build_side_and_bucket_order() {
-    let left = vec![
-        vec![Datum::Int(1), Datum::Int(1)],
-        vec![Datum::Int(2), Datum::Int(2)],
-    ];
-    let right = vec![
-        vec![Datum::Int(7), Datum::Int(7)],
-        vec![Datum::Int(8), Datum::Int(8)],
-    ];
-    let mut join = join_of(JoinKind::Inner, Vec::new(), left, right, 2);
-    assert_eq!(
-        run(&mut join),
-        vec![
-            vec![1, 1, 8, 8],
-            vec![1, 1, 7, 7],
-            vec![2, 2, 8, 8],
-            vec![2, 2, 7, 7],
-        ],
-    );
-
-    let left = vec![vec![Datum::Int(1), Datum::Int(1)]];
-    let right = vec![
-        vec![Datum::Int(7), Datum::Int(7)],
-        vec![Datum::Int(8), Datum::Int(8)],
-    ];
-    let mut join = join_of(JoinKind::Inner, Vec::new(), left, right, 2);
-    join.set_cartesian_build_side(true);
-    assert_eq!(run(&mut join), vec![vec![1, 1, 7, 7], vec![1, 1, 8, 8]]);
 }
 
 /// The scaling claim, asserted on the cost the hash table exists to

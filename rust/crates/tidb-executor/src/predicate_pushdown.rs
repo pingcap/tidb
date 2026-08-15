@@ -269,6 +269,81 @@ impl PushedScanFilter {
         }
         Ok(true)
     }
+
+    fn remapped_columns(&self, keep: &[usize]) -> Option<Self> {
+        let mut predicates = self.predicates.clone();
+        for predicate in &mut predicates {
+            remap_scan_predicate(predicate, keep)?;
+        }
+        let mut filters = self.filters.clone();
+        for filter in &mut filters {
+            remap_expression(filter, keep)?;
+        }
+        Some(Self {
+            predicates,
+            filters,
+        })
+    }
+}
+
+fn remapped_offset(offset: u32, keep: &[usize]) -> Option<u32> {
+    keep.iter()
+        .position(|kept| *kept == offset as usize)
+        .and_then(|offset| u32::try_from(offset).ok())
+}
+
+fn remap_scan_predicate(predicate: &mut ScanPredicate, keep: &[usize]) -> Option<()> {
+    match predicate {
+        ScanPredicate::Compare(comparison) => {
+            comparison.column_offset = remapped_offset(comparison.column_offset, keep)?;
+        }
+        ScanPredicate::IsNull { column_offset, .. } | ScanPredicate::In { column_offset, .. } => {
+            *column_offset = remapped_offset(*column_offset, keep)?;
+        }
+        ScanPredicate::Builtin(scalar) => remap_pb_scalar(scalar, keep)?,
+        ScanPredicate::Or(branches) => {
+            for branch in branches {
+                remap_scan_predicate(branch, keep)?;
+            }
+        }
+        ScanPredicate::Not(inner) => remap_scan_predicate(inner, keep)?,
+    }
+    Some(())
+}
+
+fn remap_pb_scalar(
+    scalar: &mut tidb_expr::pushdown_catalog::PbScalar,
+    keep: &[usize],
+) -> Option<()> {
+    match scalar {
+        tidb_expr::pushdown_catalog::PbScalar::Column { offset, .. } => {
+            *offset = remapped_offset(*offset, keep)?;
+        }
+        tidb_expr::pushdown_catalog::PbScalar::Call { args, .. } => {
+            for argument in args {
+                remap_pb_scalar(argument, keep)?;
+            }
+        }
+        tidb_expr::pushdown_catalog::PbScalar::IntLiteral(_) => {}
+    }
+    Some(())
+}
+
+fn remap_expression(expression: &mut Expression, keep: &[usize]) -> Option<()> {
+    match expression {
+        Expression::Column(column) => {
+            let old = usize::try_from(column.index).ok()?;
+            column.index = i64::try_from(keep.iter().position(|kept| *kept == old)?).ok()?;
+        }
+        Expression::ScalarFunction(function) => {
+            for argument in &mut function.args {
+                remap_expression(argument, keep)?;
+            }
+        }
+        Expression::Constant(_) => {}
+        Expression::CorrelatedColumn(_) => return None,
+    }
+    Some(())
 }
 
 /// A one-row staging area an in-process source filters through.
@@ -298,6 +373,18 @@ impl ScanFilterProbe {
             self.scratch.append_datum(column, value);
         }
         self.filter.matches(&self.ctx, self.scratch.get_row(0))
+    }
+
+    pub(crate) fn remapped_columns(&self, keep: &[usize], scratch: Chunk) -> Option<Self> {
+        Some(Self {
+            filter: self.filter.remapped_columns(keep)?,
+            ctx: self.ctx.clone(),
+            scratch,
+        })
+    }
+
+    pub(crate) fn predicates(&self) -> &[ScanPredicate] {
+        self.filter.predicates()
     }
 }
 

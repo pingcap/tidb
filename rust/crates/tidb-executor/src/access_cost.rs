@@ -59,12 +59,9 @@
 //! Go enumerates more paths than this. Each one below is left OUT rather
 //! than costed with a formula this tier cannot honour:
 //!
-//! * **Index merge variants outside the runnable OR path**
-//!   (`generateIndexMergePath`): the access driver costs the ordinary
-//!   top-level, non-MV OR reader after building its handle-only partials. MV,
-//!   nested-DNF, common-handle, and composed intersection candidates still
-//!   stay out of generic enumeration because their source-shaped partial
-//!   builders are not present yet.
+//! * **Index merge** (`generateIndexMergePath`): needs a union/intersection
+//!   reader this tier has no executor for, so a costed candidate could be
+//!   chosen and then not run.
 //! * **Multi-valued indexes** (`generateMVIndexPartialPath`): the JSON path
 //!   extraction and its `IndexMerge`-only lowering are both absent.
 //! * **Partitioned tables**: the session catalog refuses them upstream
@@ -125,18 +122,17 @@
 //! SELECT group_concat(a) FROM t WHERE b LIKE '%'  ->  2,1,3
 //! ```
 //!
-//! What is still deferred is the ORDER a covering index can supply: Go reads
-//! it backwards for an `ORDER BY ... DESC` and stops at the `LIMIT`
-//! (`keep order:true, desc`), where this tier scans forwards and sorts.
+//! A covering index can also supply descending order. Like Go, the executor
+//! reads it backwards for `ORDER BY ... DESC`, preserves that physical
+//! property (`keep order:true, desc`), and can stop at the pushed `LIMIT`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tidb_chunk::codec::estimate_type_width;
 use tidb_datatype::{Datum, FieldType, FieldTypeCode};
 use tidb_planner::cardinality::pseudo::{
-    pseudo_row_count_by_index_ranges, pseudo_row_count_by_scalar_ranges, pseudo_selectivity,
-    IndexRange as PseudoIndexRange, PseudoBoundKind, PseudoColumn, PseudoFunctionKind, PseudoIndex,
-    PseudoPredicate, ScalarRange,
+    pseudo_row_count_by_index_ranges, pseudo_selectivity, IndexRange as PseudoIndexRange,
+    PseudoBoundKind, PseudoColumn, PseudoFunctionKind, PseudoIndex, PseudoPredicate, ScalarRange,
 };
 use tidb_planner::cardinality::row_count_column::RowEstimate;
 use tidb_planner::cardinality::row_count_estimator::{
@@ -144,10 +140,10 @@ use tidb_planner::cardinality::row_count_estimator::{
     EstimatorOptions, IndexRangeDatums, IndexStats,
 };
 use tidb_planner::cardinality::row_size::{
-    get_avg_row_size, get_table_avg_row_size, RowSizeColumn, RowSizeColumnStats, RowSizeStore,
-    RowSizeType,
+    get_index_avg_row_size, get_table_avg_row_size, RowSizeColumn, RowSizeColumnStats,
+    RowSizeStore, RowSizeType,
 };
-use tidb_planner::plan_cost_ver2::plan_avg_row_size;
+use tidb_planner::cost_factors::TOLERANCE_FACTOR;
 use tidb_planner::selectivity_greedy::{
     combine_selectivity, ConditionKind, SelectivityDefaults, StatsNode, StatsNodeType,
 };
@@ -300,6 +296,51 @@ impl TableStatistics {
             indexes,
         }
     }
+
+    /// Go `cardinality.EstimateColumnNDV` and its `getTotalRowCount` helper.
+    ///
+    /// Lite statistics initialization keeps every histogram's NDV metadata but
+    /// loads buckets and TopN only for the items the query needs. An evicted
+    /// column therefore borrows the analyzed row count from the first fully
+    /// loaded, same-version index, then from a column. The Rust catalog keeps
+    /// the payloads eagerly, so callers pass the items Go's predicate-statistics
+    /// collection would have marked fully loaded for this query.
+    pub(crate) fn estimate_column_ndv(
+        &self,
+        column_id: i64,
+        full_loaded_columns: &BTreeSet<i64>,
+        full_loaded_indexes: &BTreeSet<i64>,
+    ) -> Option<f64> {
+        let column = self.columns.get(&column_id)?;
+        let version = column.histogram.last_update_version;
+        let analyzed_count = if full_loaded_columns.contains(&column_id) {
+            column.total_row_count() as i64
+        } else {
+            self.indexes
+                .iter()
+                .find(|(id, index)| {
+                    full_loaded_indexes.contains(id)
+                        && index.histogram.last_update_version == version
+                })
+                .map_or_else(
+                    || {
+                        self.columns
+                            .iter()
+                            .find(|(id, candidate)| {
+                                full_loaded_columns.contains(id)
+                                    && candidate.histogram.last_update_version == version
+                            })
+                            .map_or(0, |(_, candidate)| candidate.total_row_count() as i64)
+                    },
+                    |(_, index)| index.total_row_count() as i64,
+                )
+        };
+        let mut ndv = column.histogram.ndv as f64;
+        if analyzed_count > 0 {
+            ndv *= self.row_count as f64 / analyzed_count as f64;
+        }
+        Some(ndv)
+    }
 }
 
 /// The estimate one committed access path carries into `EXPLAIN`.
@@ -321,6 +362,21 @@ impl ScanEstimate {
     }
 }
 
+/// Go `StatsInfo::ScaleByExpectCnt`'s row-count result for a physical scan.
+///
+/// The access path retains its own (possibly fractional) estimate for path
+/// comparison. The physical TableScan/IndexScan is initialized from the
+/// table's statistics and Go deliberately refuses to scale a table of at
+/// most one estimated row any lower, avoiding an unstable division by a
+/// tiny cardinality.
+fn physical_scan_row_count(table_rows: f64, path_rows: f64) -> f64 {
+    if path_rows >= table_rows || table_rows <= 1.0 {
+        table_rows
+    } else {
+        path_rows
+    }
+}
+
 /// The `LIMIT` a candidate index path may carry into its cost, Go's
 /// `PhysicalIndexLookUpReader.PushedLimit` / `PhysicalIndexReader`'s
 /// `ExpectedCnt` property.
@@ -333,6 +389,11 @@ impl ScanEstimate {
 pub(crate) struct PushedLimit<'a> {
     /// `offset + count`: the rows the reader must still produce.
     pub(crate) cap: f64,
+    /// Whether the property carries an ORDER BY. A plain LIMIT still lowers
+    /// the expected count but does not activate Go's ordering-risk ratio.
+    pub(crate) has_order: bool,
+    /// Go `SessionVars.OptOrderingIdxSelRatio`.
+    pub(crate) ordering_selectivity_ratio: f64,
     /// Whether an index over these column offsets and exact ranges
     /// establishes the order the `LIMIT` selects from -- Go's physical
     /// `SortItems` property on the index task.
@@ -357,8 +418,15 @@ pub(crate) struct AccessPath {
     pub(crate) table_ranges: Option<Vec<IndexRange>>,
     /// The estimate `EXPLAIN` prints for the scan node.
     pub(crate) estimate: ScanEstimate,
+    /// Go `AccessPath.CountAfterAccess`, before the physical scan applies
+    /// `StatsInfo::ScaleByExpectCnt` to produce [`Self::estimate`].
+    pub(crate) count_after_access: f64,
     /// `plan_cost_ver2.go`'s cost of the reader this path lowers to.
     pub(crate) cost: f64,
+    /// The same scan/reader task before its cost is folded to [`Self::cost`].
+    /// Parent physical alternatives use this receipt when they insert a
+    /// pushed coprocessor operator between the scan and reader.
+    pub(crate) planner_candidate: tidb_planner::candidate_cost::Candidate,
     /// How far the estimator admits [`ScanEstimate::rows`] could be wrong, and
     /// the rows left after the index's own filters -- Go's `AccessPath`
     /// `MinCountAfterAccess` / `MaxCountAfterAccess` / `CountAfterIndex`. Only
@@ -368,15 +436,8 @@ pub(crate) struct AccessPath {
 }
 
 /// Go `GetPlanCostVer24PhysicalIndexMergeReader` for a non-MV, root-level
-/// merge. Each partial is an index-only path over the row handle, so its
-/// already-computed cost is precisely the index-side `(child + net) /
-/// DistSQLScanConcurrency`. The merge performs one table-side read for its
-/// deduplicated handles, priced as `BuildIndexMergeTableScan` does.
-///
-/// The caller owns the merged-row cardinality. For the automatic OR shape it
-/// is the same DNF predicate that Go passes to `cardinality.Selectivity` when
-/// it sets `AccessPath.CountAfterAccess`; this function deliberately does no
-/// second selectivity calculation.
+/// merge. Each partial is an index-only handle path; the merge then performs
+/// one table-side read for its deduplicated handles.
 pub(crate) fn index_merge_cost(
     table: &KvTable,
     needed_columns: &[usize],
@@ -440,6 +501,122 @@ pub(crate) fn schema_avg_row_size(types: &[FieldType]) -> f64 {
         .map(|field_type| RowSizeColumn::without_stats(estimate_type_width(field_type) as f64))
         .collect();
     tidb_planner::plan_cost_ver2::plan_avg_row_size(&columns, None)
+}
+
+/// Go `getAvgRowSize(ds.StatsInfo(), ds.Schema().Columns)` after logical
+/// column pruning. A base-table leaf still owns its `HistColl`, so its
+/// physical candidate must use analyzed average widths rather than the
+/// static widths used above for operators that no longer carry histograms.
+pub(crate) fn data_source_avg_row_size(
+    table: &KvTable,
+    needed_columns: &[usize],
+    stats: Option<&TableStatistics>,
+) -> f64 {
+    let columns = needed_columns
+        .iter()
+        .filter_map(|offset| table.columns.get(*offset))
+        .map(|column| row_size_column(column, stats))
+        .collect::<Vec<_>>();
+    tidb_planner::plan_cost_ver2::plan_avg_row_size(
+        &columns,
+        Some((is_pseudo(stats), realtime_row_count(stats) as i64)),
+    )
+}
+
+/// Costs the reader task below one dynamic IndexJoin range. `rows` is the
+/// number of storage rows one outer key reads before residual filters and
+/// `after_filter` is what leaves the coprocessor. `output_row_size` is the
+/// pruned logical schema the reader transfers; it is deliberately independent
+/// of the scan's on-disk row width.
+///
+/// This is the same scan, Selection, net, and double-read arithmetic used by
+/// [`table_scan_path`] and [`index_path`], without the full-scan penalty because
+/// a dynamic range is never full.
+pub(crate) fn index_join_probe_cost(
+    table: &KvTable,
+    object: &crate::access_path::LookupObject,
+    rows: f64,
+    after_filter: f64,
+    needed_columns: &[usize],
+    table_scan_columns: &[usize],
+    output_row_size: f64,
+    filter_count: usize,
+    stats: Option<&TableStatistics>,
+) -> f64 {
+    let realtime = realtime_row_count(stats);
+    let rows = rows.max(MIN_NUM_ROWS);
+    let selection = rows * filter_count as f64 * TIKV_CPU_FACTOR;
+    let transferred = net_cost(after_filter, output_row_size);
+    match object {
+        crate::access_path::LookupObject::Handle
+        | crate::access_path::LookupObject::CommonHandle => {
+            // Go's TiKV PhysicalTableScan prices `DataSource.TblCols`, which
+            // LogicalSchemaProducer.PruneColumns has already reduced to the
+            // source columns this physical probe needs.
+            let columns = table_scan_columns
+                .iter()
+                .filter_map(|offset| table.columns.get(*offset))
+                .map(|column| row_size_column(column, stats))
+                .collect::<Vec<_>>();
+            let row_size = get_table_avg_row_size(
+                &columns,
+                is_pseudo(stats),
+                realtime as i64,
+                RowSizeStore::TiKv,
+                table.pk_handle_offset().is_some(),
+                false,
+            )
+            .max(MIN_ROW_SIZE);
+            (scan_cost(rows, row_size) + selection + transferred) / DIST_SQL_SCAN_CONCURRENCY
+        }
+        crate::access_path::LookupObject::Index(index_id) => {
+            let Some(index) = table.indexes().iter().find(|index| index.id == *index_id) else {
+                return f64::INFINITY;
+            };
+            let index_columns = index
+                .column_offsets
+                .iter()
+                .filter_map(|offset| table.columns.get(*offset))
+                .map(|column| row_size_column(column, stats))
+                .collect::<Vec<_>>();
+            let index_row_size = get_index_avg_row_size(
+                &index_columns,
+                is_pseudo(stats),
+                realtime as i64,
+                index.unique,
+                false,
+            );
+            let index_scan =
+                scan_cost(rows, index_row_size) + (index.id % 100) as f64 / 1_000_000.0;
+            let index_side = (index_scan + selection + transferred) / DIST_SQL_SCAN_CONCURRENCY;
+            if index_is_covering(table, *index_id, needed_columns) {
+                return index_side;
+            }
+
+            // The table side of an IndexLookUp is another TiKV table scan and
+            // therefore uses the same unpruned `TblCols` row width.
+            let table_columns = needed_columns
+                .iter()
+                .filter_map(|offset| table.columns.get(*offset))
+                .map(|column| row_size_column(column, stats))
+                .collect::<Vec<_>>();
+            let table_row_size = get_table_avg_row_size(
+                &table_columns,
+                is_pseudo(stats),
+                realtime as i64,
+                RowSizeStore::TiKv,
+                table.pk_handle_offset().is_some(),
+                false,
+            )
+            .max(MIN_ROW_SIZE);
+            let table_side = scan_cost(after_filter, table_row_size) / DIST_SQL_SCAN_CONCURRENCY;
+            let double_read_cpu = after_filter * TIKV_CPU_FACTOR;
+            let double_read_request =
+                after_filter * DOUBLE_READ_REQUESTS_PER_ROW * TIDB_REQUEST_FACTOR;
+            index_side
+                + (table_side + double_read_cpu + double_read_request) / INDEX_LOOKUP_CONCURRENCY
+        }
+    }
 }
 
 /// Go `getAvgRowSize`'s per-column input for one table column.
@@ -673,13 +850,28 @@ pub(crate) fn enumerate_paths(
         crate::handle_range::build_handle_ranges(table, clause, &resolver.time_zone())
     });
     let handle_ranges = handle.as_ref().map(|built| built.ranges.clone());
+    let table_order: Vec<usize> = if table.common_handle_offsets().is_empty() {
+        table.pk_handle_offset().into_iter().collect()
+    } else {
+        table.common_handle_offsets().to_vec()
+    };
+    let full_range = [IndexRange::full()];
+    let table_ranges_for_order = handle_ranges.as_deref().unwrap_or(&full_range);
+    let table_limit_matches_order = limit.is_some_and(|limit| {
+        limit.has_order
+            && !table_order.is_empty()
+            && (limit.satisfied_by)(&table_order, table_ranges_for_order)
+    });
     let table_scan = table_scan_path(
         table,
         needed_columns,
         where_clause,
         resolver,
         stats,
+        realtime,
         handle_ranges.as_deref(),
+        limit,
+        table_limit_matches_order,
         // Go's `hasFullRangeScan`: only a table path the ranger narrowed
         // NOTHING on is penalized -- with a handle bound the path carries its
         // own ranges, and the range is the evidence the penalty demands.
@@ -696,14 +888,24 @@ pub(crate) fn enumerate_paths(
     );
     // Go's `getTableCandidate`: a table path is always a single scan, and it
     // is the full range exactly when the ranger built nothing. Its access
-    // column is the handle itself, which is what lets skyline pruning see
-    // that a narrowed table path accesses a column an unrelated index does
-    // not.
+    // columns are the handle KEY PARTS actually constrained by its access
+    // conditions. A common handle `(w,d,o)` narrowed only on `w` must not
+    // claim `d` and `o`: doing so lets the table path skyline-prune an index
+    // that has the same `w` range but is materially cheaper to scan.
+    let handle_key_offsets = table.pk_handle_offset().map_or_else(
+        || table.common_handle_offsets().to_vec(),
+        |offset| vec![offset],
+    );
     let handle_access_columns: ColSet = handle
         .as_ref()
-        .and_then(|_| table.pk_handle_offset())
-        .into_iter()
-        .collect();
+        .map(|built| {
+            built
+                .access_columns
+                .iter()
+                .filter_map(|position| handle_key_offsets.get(*position).copied())
+                .collect()
+        })
+        .unwrap_or_default();
     // Go's `available`: a `USE`/`FORCE INDEX` that named an index deletes the
     // table path outright, so the cost model never gets to prefer the scan
     // (or the point get, which is the same path) over the hinted index.
@@ -715,7 +917,7 @@ pub(crate) fn enumerate_paths(
             single_scan: true,
             eq_or_in_count: handle.as_ref().map_or(0, |built| built.eq_or_in_count),
             full_range: handle_ranges.is_none(),
-            count_after_access: table_scan.estimate.rows,
+            count_after_access: table_scan.count_after_access,
             max_count_after_access: table_scan.risk.max,
             min_count_after_access: table_scan.risk.min,
             count_after_index: table_scan.risk.after_index,
@@ -738,7 +940,17 @@ pub(crate) fn enumerate_paths(
     let substitution = crate::generated_column_substitute::SubstitutionMap::collect(table);
     let substituted = where_clause.and_then(|clause| substitution.substitute_condition(clause));
     let range_clause = substituted.as_ref().or(where_clause);
+    let common_handle_primary =
+        crate::handle_range::common_handle_primary(table).map(|index| index.id);
     for index in table.plan_indexes() {
+        // Go represents a clustered common-handle PRIMARY as the table path:
+        // its ranges read `_r<common_handle>` records directly. Treating the
+        // same metadata as a secondary index creates an index lookup and one
+        // point read per row, which is both the wrong physical plan and
+        // catastrophic for broad primary-key prefixes.
+        if common_handle_primary == Some(index.id) {
+            continue;
+        }
         // Go's restricted `available` and `removeIgnoredPaths`: an index a
         // `USE`/`FORCE` did not name, or an `IGNORE` did, is not a path.
         if !hints.allows_index(index.id) {
@@ -827,8 +1039,9 @@ pub(crate) fn enumerate_paths(
         let (index_columns_map, index_filters, table_filter_count) =
             split_index_filter_conditions(&built.residual, &full_index_columns, resolver);
         let index_filter_count = index_filters.len();
-        let index_filter_selectivity = (!index_filters.is_empty())
-            .then(|| selectivity_of_conjuncts(&index_filters, table, resolver, stats));
+        let index_filter_selectivity = (!index_filters.is_empty()).then(|| {
+            selectivity_of_conjuncts_without_paths(&index_filters, table, resolver, stats)
+        });
         let path = index_path(
             table,
             index,
@@ -849,7 +1062,7 @@ pub(crate) fn enumerate_paths(
             single_scan: is_covering(index, table, needed_columns),
             eq_or_in_count: built.eq_or_in_count,
             full_range: false,
-            count_after_access: path.estimate.rows,
+            count_after_access: path.count_after_access,
             max_count_after_access: path.risk.max,
             min_count_after_access: path.risk.min,
             count_after_index: path.risk.after_index,
@@ -925,7 +1138,7 @@ fn full_scan_candidate(
         split_index_filter_conditions(&residual, &full_index_columns(index, table), resolver);
     let index_filter_count = index_filters.len();
     let index_filter_selectivity = (!index_filters.is_empty())
-        .then(|| selectivity_of_conjuncts(&index_filters, table, resolver, stats));
+        .then(|| selectivity_of_conjuncts_without_paths(&index_filters, table, resolver, stats));
     let source_rows = source_row_count(table, where_clause, resolver, stats, realtime);
     let ranges = vec![IndexRange::full()];
     let path = index_path(
@@ -945,7 +1158,7 @@ fn full_scan_candidate(
         single_scan: covering,
         eq_or_in_count: 0,
         full_range: true,
-        count_after_access: path.estimate.rows,
+        count_after_access: path.count_after_access,
         max_count_after_access: path.risk.max,
         min_count_after_access: path.risk.min,
         count_after_index: path.risk.after_index,
@@ -1007,6 +1220,89 @@ fn split_index_filter_conditions<'a>(
     (columns, index_filters, table_filters)
 }
 
+/// The predicates left after the chosen index path's access conditions have
+/// been detached. Go keeps exactly this set as `IndexFilters` plus
+/// `TableFilters`; none of the access conditions are evaluated by a second
+/// `Selection`.
+pub(crate) fn index_residual_filters_for_path(
+    table: &KvTable,
+    index_id: i64,
+    where_clause: Option<&tidb_ast::Expr>,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+) -> Vec<tidb_ast::Expr> {
+    let Some(where_clause) = where_clause else {
+        return Vec::new();
+    };
+    let Some(index) = table.indexes().iter().find(|index| index.id == index_id) else {
+        let mut all = Vec::new();
+        crate::plan_trace::collect_and(where_clause, &mut all);
+        return all.into_iter().cloned().collect();
+    };
+    let index_columns = index
+        .column_offsets
+        .iter()
+        .enumerate()
+        .map(|(position, offset)| {
+            let Some(column) = table.columns.get(*offset) else {
+                return None;
+            };
+            Some(crate::index_range::RangeColumn {
+                name: column.name.clone(),
+                field_type: column.field_type.clone(),
+                prefix_len: index.prefix_length(position),
+            })
+        })
+        .collect::<Option<Vec<_>>>();
+    let Some(mut index_columns) = index_columns else {
+        let mut all = Vec::new();
+        crate::plan_trace::collect_and(where_clause, &mut all);
+        return all.into_iter().cloned().collect();
+    };
+    if let Some((handle, _)) = appended_handle_column(index, table) {
+        index_columns.push(handle);
+    }
+    let residual =
+        match crate::index_range::detach_cond_and_build_range_for_index_with_like_default_escape(
+            &index_columns,
+            where_clause,
+            &resolver.time_zone(),
+            resolver.like_default_escape(),
+        ) {
+            Some(built) => built.residual,
+            None => {
+                let mut all = Vec::new();
+                crate::plan_trace::collect_and(where_clause, &mut all);
+                all
+            }
+        };
+    residual.into_iter().cloned().collect()
+}
+
+/// The residual predicates Go places in the cop-side Selection over one
+/// chosen index path. Access-path costing already classifies this set; the
+/// physical leaf builder asks for it again after the winning path is known so
+/// its executor trace describes the same Selection rather than only the
+/// narrowed ranges.
+pub(crate) fn index_filter_for_path(
+    table: &KvTable,
+    index_id: i64,
+    where_clause: Option<&tidb_ast::Expr>,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+) -> Option<tidb_ast::Expr> {
+    let index = table.indexes().iter().find(|index| index.id == index_id)?;
+    let residual = index_residual_filters_for_path(table, index_id, where_clause, resolver);
+    let residual = residual.iter().collect::<Vec<_>>();
+    let (_, index_filters, _) =
+        split_index_filter_conditions(&residual, &full_index_columns(index, table), resolver);
+    index_filters.into_iter().cloned().reduce(|left, right| {
+        tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::LogicAnd,
+            Box::new(left),
+            Box::new(right),
+        )
+    })
+}
+
 /// The table candidate: a `PhysicalTableReader` over a `PhysicalTableScan`,
 /// reading the handle ranges `where_clause` implies and every row when it
 /// implies none.
@@ -1023,18 +1319,18 @@ fn table_scan_path(
     where_clause: Option<&tidb_ast::Expr>,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
+    realtime: f64,
     ranges: Option<&[IndexRange]>,
+    limit: Option<&PushedLimit<'_>>,
+    limit_matches_order: bool,
     // Go `getTableScanPenalty`'s answer, computed by the caller because the
     // hint and partition facts it reads are the caller's. Always `0.0` for a
     // NARROWED table path -- Go gates the penalty on `hasFullRangeScan`.
     penalty_rows: f64,
 ) -> AccessPath {
-    let realtime = realtime_row_count(stats);
-    // Cost model v2 prices two different physical schemas here. The scan's
-    // `TblCols` contains every stored table column plus `_tidb_rowid` on a
-    // non-clustered table, while the reader transfers only the statement's
-    // output columns. Both use `getAvgRowSize` (`DataInDiskByRows`), not the
-    // encoded-record-size helper used by cost model v1.
+    // Cost model v2 prices two physical schemas here. The TiKV table scan
+    // reads every stored column plus the hidden row ID on a nonclustered
+    // table, while the reader transfers only the projected output columns.
     let mut scan_columns: Vec<RowSizeColumn> = table
         .columns
         .iter()
@@ -1049,67 +1345,94 @@ fn table_scan_path(
         .map(|column| row_size_column(column, stats))
         .collect();
     let hist_coll = Some((is_pseudo(stats), realtime as i64));
-    let scan_row_size = plan_avg_row_size(&scan_columns, hist_coll);
-    let output_row_size = plan_avg_row_size(&output_columns, hist_coll);
+    let scan_row_size = tidb_planner::plan_cost_ver2::plan_avg_row_size(&scan_columns, hist_coll);
+    let output_row_size =
+        tidb_planner::plan_cost_ver2::plan_avg_row_size(&output_columns, hist_coll);
     // Go `deriveTablePathStats`: with no access condition the range is the
     // full one and `CountAfterAccess` is the realtime count, taken without
     // consulting the estimator at all ("Skip the expensive
     // GetRowCountByIntColumnRanges call in this case"). With one, it is the
     // estimate over the CONVERTED ranges.
-    let count_after_access = match ranges {
+    let unadjusted_count_after_access = match ranges {
         None => realtime,
         Some(ranges) => crate::handle_range::handle_range_row_count(table, ranges, stats),
     };
+    let after_filter = source_row_count(table, where_clause, resolver, stats, realtime);
+    let count_after_access =
+        adjust_count_after_access(unadjusted_count_after_access, after_filter, realtime);
+    let physical_count = limit.map_or(count_after_access, |limit| {
+        adjust_table_scan_row_count_by_limit(
+            count_after_access,
+            after_filter,
+            limit.cap,
+            limit_matches_order,
+            limit.ordering_selectivity_ratio,
+        )
+    });
     // Go costs the scan at the rows it READS and the reader's net transfer at
     // the rows that leave the cop task, which is after the pushed Selection.
-    let scan_rows = count_after_access.max(MIN_NUM_ROWS);
+    let scan_rows = physical_count.max(MIN_NUM_ROWS);
     let scanned = scan_cost(scan_rows + penalty_rows, scan_row_size.max(MIN_ROW_SIZE));
-    let after_filter = source_row_count(table, where_clause, resolver, stats, realtime);
-    let transferred = net_cost(after_filter, output_row_size.max(MIN_ROW_SIZE));
+    let output_rows = limit.map_or(after_filter, |limit| after_filter.min(limit.cap));
+    let transferred = net_cost(output_rows, output_row_size.max(MIN_ROW_SIZE));
+    let num_ranges = ranges.map_or(1, <[IndexRange]>::len);
+    let planner_candidate = tidb_planner::candidate_cost::Candidate::Reader {
+        child: Box::new(tidb_planner::candidate_cost::Candidate::Fixed {
+            rows: scan_rows,
+            row_size: scan_row_size,
+            cost: scanned,
+            num_ranges,
+        }),
+        rows: output_rows,
+        row_size: tidb_planner::candidate_cost::RowSize::Fixed(output_row_size),
+        kind: tidb_planner::candidate_cost::ReaderKind::Table,
+    };
     AccessPath {
         index: None,
         table_ranges: ranges.map(<[IndexRange]>::to_vec),
         estimate: ScanEstimate {
-            rows: count_after_access,
+            rows: physical_scan_row_count(realtime, physical_count),
             pseudo: is_pseudo(stats),
         },
+        count_after_access,
         cost: (scanned + transferred) / DIST_SQL_SCAN_CONCURRENCY,
-        // Go leaves all three at zero for a table path, and
-        // `adjustCountAfterAccess` -- the only thing that could move them --
-        // is not ported here (see [`source_row_count`]). `CountAfterIndex` is
-        // documented as meaningless for a table path either way.
+        planner_candidate,
+        // Go's skyline comparison does not use the index-risk interval for a
+        // table path; `CountAfterIndex` is meaningless there as well.
         risk: RowRisk::default(),
     }
+}
+
+/// Go `cardinality.AdjustRowCountForTableScanByLimit` without histogram
+/// cross-correlation. The expected count is expanded by the DataSource/path
+/// selectivity, then an order-preserving scan pays the configured fraction of
+/// the remaining range as protection against finding the first row late.
+pub(crate) fn adjust_table_scan_row_count_by_limit(
+    count_after_access: f64,
+    source_rows: f64,
+    expected_count: f64,
+    matches_order: bool,
+    ordering_selectivity_ratio: f64,
+) -> f64 {
+    let mut rows = count_after_access;
+    if expected_count < source_rows && count_after_access > 0.0 && source_rows > 0.0 {
+        let selectivity = source_rows / count_after_access;
+        rows = count_after_access.min(expected_count / selectivity);
+    }
+    if matches_order && count_after_access > rows && ordering_selectivity_ratio > 0.0 {
+        rows += (count_after_access - rows) * ordering_selectivity_ratio;
+    }
+    rows
 }
 
 /// The rows the whole data source is estimated to produce, Go's
 /// `ds.StatsInfo().RowCount`: the table's realtime count narrowed by EVERY
 /// pushed condition, estimated per column.
 ///
-/// # Why `adjustCountAfterAccess` is NOT ported on top of this
-///
-/// Go's `adjustCountAfterAccess` (`pkg/planner/core/stats.go`) raises a path's
-/// `CountAfterAccess` to `RowCount / SelectionFactor` whenever the path's own
-/// access estimate falls BELOW this number, and keeps the pre-adjustment value
-/// as `MinCountAfterAccess`. It is excluded here because THIS number is not
-/// yet Go's.
-///
-/// Under pseudo statistics Go reaches its min-based `pseudoSelectivity` only
-/// when the `HistColl` has no column and no index entry at all; otherwise it
-/// runs the full `Selectivity`, which MULTIPLIES the pseudo rates. This tier
-/// always takes the min. On `t(bucket, rare)` with 2000 rows and no analyzed
-/// histogram, `WHERE bucket = 1 AND rare = 7` gives Go `0.01` rows for the
-/// data source and this tier `10`, so a ported adjustment fires here where
-/// Go's does not: the live differential showed the chosen path's `estRows`
-/// going to `10 / 0.8 = 12.50` against Go's `0.10`, with both nodes still
-/// choosing `idx_cover`.
-///
-/// So the adjustment is held out until the pseudo selectivity it reads is
-/// Go's. Direction of the exclusion, for `compareRiskRatio`: a path's
-/// `MinCountAfterAccess` stays at the estimator's own minimum instead of the
-/// pre-adjustment estimate, which only narrows Go's second branch -- the one
-/// that needs `MinCountAfterAccess > 0` AND a lower interval. It cannot make
-/// this port prune a path Go keeps.
+/// This feeds [`adjust_count_after_access`]. It uses the same ordinary
+/// selectivity-node combination as Go, including pseudo histograms and the
+/// one-row floor, so the lower-bound adjustment compares estimates formed
+/// under the same assumptions.
 fn source_row_count(
     table: &KvTable,
     where_clause: Option<&tidb_ast::Expr>,
@@ -1120,6 +1443,19 @@ fn source_row_count(
     match where_clause {
         Some(predicate) => realtime * selectivity(predicate, table, resolver, stats),
         None => realtime,
+    }
+}
+
+/// Go `adjustCountAfterAccess`: all access paths must estimate at least the
+/// logical data source's row count (with the planner's selection-factor
+/// tolerance), even when the range estimator used a more optimistic set of
+/// assumptions. The unadjusted value remains in [`RowRisk`] for skyline
+/// comparison; this return value is the physical scan's `estRows` and cost.
+pub(crate) fn adjust_count_after_access(count: f64, source_rows: f64, realtime: f64) -> f64 {
+    if count + TOLERANCE_FACTOR < source_rows {
+        (source_rows / crate::plan_trace::SELECTIVITY_FACTOR).min(realtime)
+    } else {
+        count
     }
 }
 
@@ -1160,7 +1496,7 @@ fn index_path(
     // out of the plan that TiDB's own recording chooses.
     let estimate_ranges = prune_estimate_range(&ranges, index.column_offsets.len());
     let bounds = index_row_count(index, table, &estimate_ranges, stats, realtime);
-    let estimated = bounds.est;
+    let estimated = adjust_count_after_access(bounds.est, source_row_count, realtime);
     // Go `deriveIndexPathStats`: with index filters the post-index count is
     // the access count narrowed by them, floored at the data source's own row
     // count; with none it is the access count itself.
@@ -1178,10 +1514,12 @@ fn index_path(
         _ => estimated,
     };
     let covering = is_covering(index, table, needed_columns);
+    // Go cost model v2 prices `PhysicalIndexScan.Schema().Columns`, not the
+    // encoded key size returned by `PhysicalIndexScan.GetScanRowSize`. Build
+    // that schema the same way `PhysicalIndexScan.InitSchema` does: declared
+    // index columns, followed by the handle when the index entry or a double
+    // read needs it.
     let mut physical_offsets = index.column_offsets.clone();
-    // `PhysicalIndexScan.InitSchema` carries common handles on every index
-    // path. A non-unique integer-handle index carries its appended handle key
-    // part, and a double read must return whichever handle addresses the row.
     for offset in table.common_handle_offsets() {
         if !physical_offsets.contains(offset) {
             physical_offsets.push(*offset);
@@ -1205,15 +1543,21 @@ fn index_path(
     if !covering && table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty() {
         index_row_columns.push(RowSizeColumn::without_stats(8.0));
     }
-    let output_row_columns: Vec<RowSizeColumn> = needed_columns
+    let index_row_size = tidb_planner::plan_cost_ver2::plan_avg_row_size(
+        &index_row_columns,
+        Some((is_pseudo(stats), realtime as i64)),
+    );
+    let output_columns: Vec<RowSizeColumn> = needed_columns
         .iter()
         .filter_map(|offset| table.columns.get(*offset))
         .map(|column| row_size_column(column, stats))
         .collect();
-    let hist_coll = Some((is_pseudo(stats), realtime as i64));
-    let index_scan_row_size = plan_avg_row_size(&index_row_columns, hist_coll);
-    let output_row_size = plan_avg_row_size(&output_row_columns, hist_coll);
-    let index_scan = scan_cost(rows.max(MIN_NUM_ROWS), index_scan_row_size)
+    let output_row_size = tidb_planner::plan_cost_ver2::plan_avg_row_size(
+        &output_columns,
+        Some((is_pseudo(stats), realtime as i64)),
+    )
+    .max(MIN_ROW_SIZE);
+    let index_scan = scan_cost(rows.max(MIN_NUM_ROWS), index_row_size)
         // Go's deterministic tie-breaker between two indexes that cost the
         // same, from the last two digits of the index ID.
         + (index.id % 100) as f64 / 1_000_000.0;
@@ -1223,76 +1567,77 @@ fn index_path(
     // there is one. That is the same rule [`table_scan_path`] applies with its
     // own `after_filter`; applying it to only one of the two made an index
     // that filters look no cheaper to ship than one that does not.
+    // A covering path lowers to PhysicalIndexReader: the index scan reads its
+    // complete physical key schema, but the reader transfers only the
+    // projected output schema. A double read still transfers its index-plan
+    // schema (including the handle) before fetching table rows.
     let index_net_row_size = if covering {
         output_row_size
     } else {
-        // `PhysicalIndexLookUpReader` ships the index plan's encoded-key
-        // schema to TiDB, not the final table row. Chunk RPC is enabled by
-        // this server just as it is in TiDB's default session.
-        get_avg_row_size(
-            &index_row_columns,
-            is_pseudo(stats),
-            realtime as i64,
-            true,
-            false,
-            true,
-        )
+        index_row_size
     };
     let index_net = net_cost(after_index.min(rows), index_net_row_size);
     let index_side = (index_scan + index_net) / DIST_SQL_SCAN_CONCURRENCY;
 
-    let point_get = index.unique
-        && !index.has_prefix()
-        && !ranges.is_empty()
-        && ranges
-            .iter()
-            .all(|range| range.low.len() == index.column_offsets.len() && range.is_point(false));
-    let cost = if point_get {
-        net_cost(ranges.len() as f64, output_row_size)
-    } else if covering {
-        index_side
+    let (cost, planner_candidate) = if covering {
+        (
+            index_side,
+            tidb_planner::candidate_cost::Candidate::Reader {
+                child: Box::new(tidb_planner::candidate_cost::Candidate::Fixed {
+                    rows,
+                    row_size: index_row_size,
+                    cost: index_scan,
+                    num_ranges: ranges.len(),
+                }),
+                rows: after_index.min(rows),
+                row_size: tidb_planner::candidate_cost::RowSize::Fixed(output_row_size),
+                kind: tidb_planner::candidate_cost::ReaderKind::Index,
+            },
+        )
     } else {
-        let mut table_scan_columns: Vec<RowSizeColumn> = table
-            .columns
-            .iter()
-            .map(|column| row_size_column(column, stats))
-            .collect();
-        if table.pk_handle_offset().is_none() && table.common_handle_offsets().is_empty() {
-            table_scan_columns.push(RowSizeColumn::without_stats(8.0));
-        }
-        let table_output_columns: Vec<RowSizeColumn> = needed_columns
+        let table_row_columns: Vec<RowSizeColumn> = needed_columns
             .iter()
             .filter_map(|offset| table.columns.get(*offset))
             .map(|column| row_size_column(column, stats))
             .collect();
-        let table_scan_row_size =
-            plan_avg_row_size(&table_scan_columns, hist_coll).max(MIN_ROW_SIZE);
-        let table_net_row_size = get_avg_row_size(
-            &table_output_columns,
+        let table_row_size = get_table_avg_row_size(
+            &table_row_columns,
             is_pseudo(stats),
             realtime as i64,
+            RowSizeStore::TiKv,
+            table.pk_handle_offset().is_some(),
             false,
-            false,
-            true,
         )
         .max(MIN_ROW_SIZE);
         // The table side reads one row per index row it looked up.
-        let table_scan = scan_cost(rows.max(MIN_NUM_ROWS), table_scan_row_size);
-        let table_net = net_cost(rows, table_net_row_size);
+        let table_scan = scan_cost(rows.max(MIN_NUM_ROWS), table_row_size);
+        let table_net = net_cost(rows, table_row_size);
         let table_side = (table_scan + table_net) / DIST_SQL_SCAN_CONCURRENCY;
         let double_read_cpu = rows * TIKV_CPU_FACTOR;
         let double_read_tasks = rows * DOUBLE_READ_REQUESTS_PER_ROW;
         let double_read_request = double_read_tasks * TIDB_REQUEST_FACTOR;
-        index_side + (table_side + double_read_cpu + double_read_request) / INDEX_LOOKUP_CONCURRENCY
+        let cost = index_side
+            + (table_side + double_read_cpu + double_read_request) / INDEX_LOOKUP_CONCURRENCY;
+        (
+            cost,
+            tidb_planner::candidate_cost::Candidate::Fixed {
+                rows: physical_scan_row_count(realtime, estimated),
+                row_size: table_row_size,
+                cost,
+                num_ranges: ranges.len(),
+            },
+        )
     };
     AccessPath {
         index: Some((index.id, ranges)),
         table_ranges: None,
         estimate: ScanEstimate {
-            rows: estimated,
+            rows: physical_scan_row_count(realtime, estimated),
             pseudo: is_pseudo(stats),
         },
+        count_after_access: estimated,
         cost,
+        planner_candidate,
         risk: RowRisk {
             min: bounds.min_est,
             max: bounds.max_est,
@@ -1305,7 +1650,9 @@ fn index_path(
 /// index, so no row lookup is needed.
 ///
 /// An integer primary key is stored in every index entry as its handle, so a
-/// path over such a table covers the handle column too.
+/// path over such a table covers the handle column too. A clustered common
+/// handle is carried in the same way and covers each of its component
+/// columns.
 ///
 /// A PREFIX key part does not count: its entry holds `'abc'` where the row
 /// holds `'abcdef'`, so answering from it is the truncation this feature
@@ -1337,7 +1684,9 @@ fn is_covering(index: &KvIndex, table: &KvTable, needed_columns: &[usize]) -> bo
             .columns
             .get(*offset)
             .map_or(-1, |column| column.field_type.flen());
-        index.covers(*offset, flen) || table.pk_handle_offset() == Some(*offset)
+        index.covers(*offset, flen)
+            || table.pk_handle_offset() == Some(*offset)
+            || table.common_handle_offsets().contains(offset)
     })
 }
 
@@ -1394,6 +1743,20 @@ fn index_row_count(
     );
     estimate.clamp(0.0, realtime.max(0.0));
     estimate
+}
+
+/// The primary-index estimate used by a common-handle table path.
+///
+/// Go's `deriveCommonHandleTablePathStats` estimates its table path through
+/// the PRIMARY index histogram even though execution scans record keys.
+pub(crate) fn index_range_row_count(
+    index: &KvIndex,
+    table: &KvTable,
+    ranges: &[IndexRange],
+    stats: Option<&TableStatistics>,
+    realtime: f64,
+) -> f64 {
+    index_row_count(index, table, ranges, stats, realtime).est
 }
 
 /// The stats-less index estimate: Go `getPseudoRowCountByIndexRanges`
@@ -1495,9 +1858,7 @@ fn datum_ordinal(value: &Datum) -> f64 {
 /// conjuncts it can turn into single-column ranges, and gives every other
 /// conjunct Go's `selectionFactor` fallback for an uncovered condition.
 ///
-/// DEFERRED (documented): the index nodes of Go's greedy cover (a multi-column
-/// index can be a better estimator than the product of its columns), and
-/// `crossValidationSelectivity`.
+/// DEFERRED (documented): `crossValidationSelectivity`.
 pub(crate) fn selectivity(
     predicate: &tidb_ast::Expr,
     table: &KvTable,
@@ -1526,6 +1887,28 @@ pub(crate) fn selectivity_of_conjuncts(
     table: &KvTable,
     resolver: &dyn tidb_expr::rewriter::ColumnResolver,
     stats: Option<&TableStatistics>,
+) -> f64 {
+    selectivity_of_conjuncts_with_path_context(conjuncts, table, resolver, stats, true)
+}
+
+/// Go `cardinality.Selectivity(..., nil)` for filters estimated after an
+/// access path has already been selected. Without `filledPaths`, clustered
+/// PRIMARY statistics participate like every other index statistic.
+pub(crate) fn selectivity_of_conjuncts_without_paths(
+    conjuncts: &[&tidb_ast::Expr],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+) -> f64 {
+    selectivity_of_conjuncts_with_path_context(conjuncts, table, resolver, stats, false)
+}
+
+fn selectivity_of_conjuncts_with_path_context(
+    conjuncts: &[&tidb_ast::Expr],
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+    has_filled_paths: bool,
 ) -> f64 {
     let realtime = realtime_row_count(stats);
     // `selectivity.go:61`: no rows or no conditions is 100% selectivity.
@@ -1564,11 +1947,24 @@ pub(crate) fn selectivity_of_conjuncts(
     // 10.00 rows for `a = 1 and b = 2` where TiDB prints 1.00.)
     let loaded = stats.filter(|stats| !stats.pseudo);
 
+    let extracted_offsets = extracted_column_offsets(&conjuncts, table, resolver);
+    let extracted_offset_set: BTreeSet<usize> = extracted_offsets.iter().copied().collect();
     let mut nodes = Vec::new();
-    for offset in extracted_column_offsets(&conjuncts, table, resolver) {
+    for offset in extracted_offsets {
         let Some(column) = table.columns.get(offset) else {
             continue;
         };
+        // `conditionChecker` correctly refuses `IS NOT NULL` as an INDEX
+        // access condition because `(NULL,+inf]` does not narrow the scan.
+        // `cardinality.Selectivity` uses a different ranger entry point: the
+        // same interval is still a COLUMN statistics node and removes the
+        // NULL bucket. Recover that mask here instead of treating the
+        // condition as the generic 0.8 fallback.
+        let not_null_mask = conjuncts
+            .iter()
+            .enumerate()
+            .filter(|(_, conjunct)| is_not_null_on_column(conjunct, offset, resolver))
+            .fold(0_i64, |mask, (index, _)| mask | (1_i64 << index));
         // Go `getMaskAndRanges` down the `ranger.ColumnRangeType` arm: a range
         // over the COLUMN itself, so no index prefix length is in play.
         let built = crate::index_range::detach_conds_for_column(
@@ -1577,20 +1973,30 @@ pub(crate) fn selectivity_of_conjuncts(
             &resolver.time_zone(),
         );
         // `BuildColumnRange` with no access condition returns the full range
-        // and an empty mask, which the greedy cover can never select.
-        if built.access_count == 0 {
+        // and an empty mask, which the greedy cover can never select. `IS NOT
+        // NULL` is the one full range the statistics path still consumes.
+        if built.access_count == 0 && not_null_mask == 0 {
             continue;
         }
-        let ranges: Vec<ColumnRange> = built
-            .ranges
-            .iter()
-            .map(|range| ColumnRange {
-                low: range.low.first().cloned().unwrap_or(Datum::MinNotNull),
-                high: range.high.first().cloned().unwrap_or(Datum::MaxValue),
-                low_exclude: range.low_exclusive,
-                high_exclude: range.high_exclusive,
-            })
-            .collect();
+        let ranges: Vec<ColumnRange> = if built.access_count == 0 {
+            vec![ColumnRange {
+                low: Datum::MinNotNull,
+                high: Datum::MaxValue,
+                low_exclude: false,
+                high_exclude: false,
+            }]
+        } else {
+            built
+                .ranges
+                .iter()
+                .map(|range| ColumnRange {
+                    low: range.low.first().cloned().unwrap_or(Datum::MinNotNull),
+                    high: range.high.first().cloned().unwrap_or(Datum::MaxValue),
+                    low_exclude: range.low_exclusive,
+                    high_exclude: range.high_exclusive,
+                })
+                .collect()
+        };
         let is_handle = table.pk_handle_offset() == Some(offset);
         let row_count = match loaded {
             Some(stats) => {
@@ -1605,12 +2011,23 @@ pub(crate) fn selectivity_of_conjuncts(
                 )
                 .est
             }
+            // A pseudo handle column uses Go's signed/unsigned integer range
+            // estimator, not the ordinary scalar BETWEEN rate. The former
+            // clamps a finite handle span to its numeric width: `[1,100]`
+            // estimates 99 rows on a 10,000-row pseudo table, while a normal
+            // column estimates 250. `GetRowCountByColumnRanges` owns that
+            // `pkIsHandle` dispatch for both loaded and pseudo statistics.
             None => {
-                let scalar: Vec<ScalarRange> = ranges
-                    .iter()
-                    .map(|range| scalar_range(Some(&range.low), Some(&range.high)))
-                    .collect();
-                pseudo_row_count_by_scalar_ranges(&scalar, realtime)
+                get_row_count_by_column_ranges(
+                    None,
+                    &ranges,
+                    column.field_type.collation(),
+                    realtime as i64,
+                    0,
+                    is_handle,
+                    estimator_options(),
+                )
+                .est
             }
         };
         nodes.push(StatsNode {
@@ -1624,8 +2041,70 @@ pub(crate) fn selectivity_of_conjuncts(
                     StatsNodeType::Column
                 },
                 column.id,
-                covered_mask(&conjuncts, &built.residual),
+                covered_mask(&conjuncts, &built.residual) | not_null_mask,
                 1,
+            )
+        });
+    }
+
+    // `selectivity.go:144-211`: build one statistics node for every index
+    // whose leading column prefix occurs in the extracted condition columns.
+    // The range and row-count estimators are the same ones used by physical
+    // access paths; only the resulting mask participates in this greedy
+    // logical selectivity cover.
+    let mut indexes: Vec<&KvIndex> = table.indexes().iter().collect();
+    indexes.sort_by_key(|index| index.id);
+    for index in indexes {
+        // With DataSource `filledPaths`, Go maps a clustered PRIMARY to its
+        // table path. That path has no cached `IdxCols` yet, so the index node
+        // is unavailable. Calls with nil paths (notably IndexFilters) use
+        // `Idx2ColUniqueIDs` instead and must retain the PRIMARY statistic.
+        if has_filled_paths
+            && index.name.eq_ignore_ascii_case("PRIMARY")
+            && index.column_offsets == table.common_handle_offsets()
+        {
+            continue;
+        }
+        let prefix_len = index
+            .column_offsets
+            .iter()
+            .take_while(|offset| extracted_offset_set.contains(offset))
+            .count();
+        if prefix_len == 0 {
+            continue;
+        }
+        let index_columns: Option<Vec<crate::index_range::RangeColumn>> = index
+            .column_offsets
+            .iter()
+            .take(prefix_len)
+            .enumerate()
+            .map(|(position, offset)| {
+                let column = table.columns.get(*offset)?;
+                Some(crate::index_range::RangeColumn {
+                    name: column.name.clone(),
+                    field_type: column.field_type.clone(),
+                    prefix_len: index.prefix_length(position),
+                })
+            })
+            .collect();
+        let Some(index_columns) = index_columns else {
+            continue;
+        };
+        let Some(built) = crate::index_range::detach_conjuncts_and_build_range_for_index(
+            &index_columns,
+            &conjuncts,
+            &resolver.time_zone(),
+        ) else {
+            continue;
+        };
+        let row_count = index_row_count(index, table, &built.ranges, stats, realtime).est;
+        nodes.push(StatsNode {
+            selectivity: (row_count / realtime).clamp(0.0, 1.0),
+            ..StatsNode::new(
+                StatsNodeType::Index,
+                index.id,
+                covered_mask(&conjuncts, &built.residual),
+                index.column_offsets.len(),
             )
         });
     }
@@ -1641,6 +2120,28 @@ pub(crate) fn selectivity_of_conjuncts(
         realtime as i64,
         SelectivityDefaults::default(),
     )
+}
+
+/// Whether one statistics condition is `column IS NOT NULL` for `offset`.
+fn is_not_null_on_column(
+    conjunct: &tidb_ast::Expr,
+    offset: usize,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+) -> bool {
+    let tidb_ast::Expr::Is {
+        expr,
+        target: tidb_ast::IsTarget::Null,
+        not: true,
+    } = strip_parens(conjunct)
+    else {
+        return false;
+    };
+    let tidb_ast::Expr::Column(path) = strip_parens(expr) else {
+        return false;
+    };
+    resolver
+        .resolve(path)
+        .is_some_and(|(resolved, _, _)| resolved == offset)
 }
 
 /// Go's `expression.ExtractColumnsMapFromExpressions` over the whole condition
@@ -1750,6 +2251,68 @@ fn dnf_selectivity(
     (selectivity != 0.0).then_some(selectivity)
 }
 
+/// Go's row-valued `IN` rewrite as the DNF estimator sees it.
+///
+/// The expression rewriter lowers
+///
+/// ```text
+/// (a, b) IN ((1, 2), (3, 4))
+/// ```
+///
+/// to `(a = 1 AND b = 2) OR (a = 3 AND b = 4)` before
+/// `cardinality.Selectivity` classifies the condition.  This AST deliberately
+/// retains the compact row-valued `IN`, so reproduce that rewrite only for
+/// estimation.  Each tuple is estimated through the ordinary CNF entry point;
+/// importantly, that applies Go's one-row floor *per tuple* before the DNF
+/// inclusion-exclusion step.  On a 10,000-row pseudo table, ten distinct
+/// common-handle prefixes therefore produce
+/// `10000 * (1 - (1 - 1/10000)^10) = 9.995501...` logical rows, which is the
+/// lower bound consumed by `adjustCountAfterAccess`.
+fn row_in_selectivity(
+    conjunct: &tidb_ast::Expr,
+    table: &KvTable,
+    resolver: &dyn tidb_expr::rewriter::ColumnResolver,
+    stats: Option<&TableStatistics>,
+) -> Option<f64> {
+    let tidb_ast::Expr::In { expr, list, not } = strip_parens(conjunct) else {
+        return None;
+    };
+    if *not {
+        return None;
+    }
+    let tidb_ast::Expr::Row(left) = strip_parens(expr) else {
+        return None;
+    };
+    if left.is_empty() || list.is_empty() {
+        return None;
+    }
+
+    let mut selectivity = 0.0_f64;
+    for candidate in list {
+        let tidb_ast::Expr::Row(right) = strip_parens(candidate) else {
+            return None;
+        };
+        if right.len() != left.len() {
+            return None;
+        }
+        let equalities: Vec<tidb_ast::Expr> = left
+            .iter()
+            .zip(right)
+            .map(|(lhs, rhs)| {
+                tidb_ast::Expr::Binary(
+                    tidb_ast::BinaryOp::Eq,
+                    Box::new(lhs.clone()),
+                    Box::new(rhs.clone()),
+                )
+            })
+            .collect();
+        let conjuncts: Vec<&tidb_ast::Expr> = equalities.iter().collect();
+        let current = selectivity_of_conjuncts(&conjuncts, table, resolver, stats);
+        selectivity = selectivity + current - selectivity * current;
+    }
+    (selectivity != 0.0).then_some(selectivity)
+}
+
 /// Which leftover bucket one uncovered condition falls in
 /// (`selectivity.go:238-304`).
 ///
@@ -1774,6 +2337,9 @@ fn condition_kind(
         }
         tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, _, _) => {
             ConditionKind::Disjunction(dnf_selectivity(conjunct, table, resolver, stats))
+        }
+        tidb_ast::Expr::In { .. } => {
+            ConditionKind::Disjunction(row_in_selectivity(conjunct, table, resolver, stats))
         }
         _ => ConditionKind::Other,
     }
@@ -1895,25 +2461,6 @@ pub(crate) fn choose_access_path(
     stats: Option<&TableStatistics>,
     has_limit: bool,
 ) -> Option<AccessPath> {
-    let mut best: Option<AccessPath> = None;
-    for path in pruned_access_paths(candidates, stats, has_limit) {
-        let better = best.as_ref().is_none_or(|current| path.cost < current.cost);
-        if better {
-            best = Some(path);
-        }
-    }
-    best
-}
-
-/// The access paths that survive Go's skyline pruning, before cost chooses
-/// one. A recursive parent planner needs the whole survivor set because a
-/// required order can make a non-cheapest leaf path the cheapest complete
-/// join tree.
-pub(crate) fn pruned_access_paths(
-    candidates: Vec<Candidate<AccessPath>>,
-    stats: Option<&TableStatistics>,
-    has_limit: bool,
-) -> Vec<AccessPath> {
     let context = PruningContext {
         table_pseudo: is_pseudo(stats),
         row_count: realtime_row_count(stats),
@@ -1922,10 +2469,15 @@ pub(crate) fn pruned_access_paths(
         prefer_range: true,
         has_limit,
     };
-    skyline_pruning(candidates, &context)
-        .into_iter()
-        .map(|candidate| candidate.path)
-        .collect()
+    let mut best: Option<AccessPath> = None;
+    for candidate in skyline_pruning(candidates, &context) {
+        let path = candidate.path;
+        let better = best.as_ref().is_none_or(|current| path.cost < current.cost);
+        if better {
+            best = Some(path);
+        }
+    }
+    best
 }
 
 #[cfg(test)]
@@ -1933,7 +2485,43 @@ mod tests {
     use super::*;
     use crate::kv_table::KvColumn;
     use crate::storage::MemTableStorage;
-    use tidb_expr::rewriter::NoResolver;
+    use tidb_expr::rewriter::{ColumnResolver, NoResolver};
+
+    #[test]
+    fn ordered_limit_scan_estimate_applies_the_go_risk_ratio() {
+        assert_eq!(
+            adjust_table_scan_row_count_by_limit(1_000.0, 1_000.0, 1.0, true, 0.01),
+            10.99,
+        );
+        assert_eq!(
+            adjust_table_scan_row_count_by_limit(1_000.0, 1_000.0, 1.0, true, 0.0),
+            1.0,
+        );
+        assert_eq!(
+            adjust_table_scan_row_count_by_limit(1_000.0, 1_000.0, 1.0, false, 0.01),
+            1.0,
+        );
+    }
+
+    struct NamedColumnResolver<'a> {
+        table: &'a KvTable,
+    }
+
+    impl ColumnResolver for NamedColumnResolver<'_> {
+        fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+            let name = path.last()?;
+            self.table
+                .columns
+                .iter()
+                .enumerate()
+                .find(|(_, column)| column.name.eq_ignore_ascii_case(name))
+                .map(|(offset, column)| (offset, column.field_type.clone(), column.id))
+        }
+
+        fn time_zone(&self) -> tidb_datatype::SessionTimeZone {
+            tidb_datatype::SessionTimeZone::utc()
+        }
+    }
 
     fn long_column(name: &str, id: i64) -> KvColumn {
         KvColumn {
@@ -1945,6 +2533,72 @@ mod tests {
             origin_default: None,
             generated: None,
         }
+    }
+
+    fn histogram_with_count(id: i64, ndv: i64, count: i64, version: u64) -> tidb_stats::Histogram {
+        tidb_stats::Histogram {
+            id,
+            ndv,
+            last_update_version: version,
+            buckets: vec![tidb_stats::Bucket {
+                count,
+                repeat: 1,
+                ndv,
+                lower_bound: Datum::Int(1),
+                upper_bound: Datum::Int(ndv),
+            }],
+            ..tidb_stats::Histogram::default()
+        }
+    }
+
+    #[test]
+    fn estimate_column_ndv_borrows_a_same_version_full_load_count() {
+        let target_id = 1;
+        let predicate_id = 2;
+        let index_id = 3;
+        let version = 42;
+        let column = |id, ndv, count| ColumnStats {
+            histogram: histogram_with_count(id, ndv, count, version),
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            unsigned: false,
+        };
+        let statistics = TableStatistics::new(
+            300_000,
+            0,
+            [
+                (target_id, column(target_id, 3_000, 300_000)),
+                (predicate_id, column(predicate_id, 10, 299_995)),
+            ]
+            .into_iter()
+            .collect(),
+            [(
+                index_id,
+                IndexStats {
+                    histogram: histogram_with_count(index_id, 10, 299_995, version),
+                    topn: None,
+                    cms: None,
+                    stats_ver: 2,
+                    num_columns: 1,
+                    unique: false,
+                },
+            )]
+            .into_iter()
+            .collect(),
+        );
+        let full_columns = [predicate_id].into_iter().collect();
+        let full_indexes = [index_id].into_iter().collect();
+        let ndv = statistics
+            .estimate_column_ndv(target_id, &full_columns, &full_indexes)
+            .unwrap();
+        assert!((ndv - 3000.0500008333474).abs() < 1e-12, "{ndv:.17}");
+
+        let target_full = [target_id].into_iter().collect();
+        assert_eq!(
+            statistics.estimate_column_ndv(target_id, &target_full, &BTreeSet::new()),
+            Some(3000.0)
+        );
     }
 
     #[test]
@@ -1997,6 +2651,304 @@ mod tests {
         assert!(is_covering(&index(20), &table, &[0]));
     }
 
+    /// Every secondary-index entry carries the clustered common handle, so
+    /// its primary-key columns are covering even when they are not declared
+    /// as secondary-index key parts. Go relies on this for TPCC's
+    /// `idx_customer(..., c_first)` to return `c_id` as an IndexReader.
+    #[test]
+    fn a_secondary_index_covers_common_handle_columns() {
+        let mut table = KvTable::with_storage(
+            79,
+            vec![
+                long_column("w_id", 1),
+                long_column("d_id", 2),
+                long_column("c_id", 3),
+                long_column("last", 4),
+                long_column("balance", 5),
+            ],
+            Box::new(MemTableStorage::new()),
+        );
+        table.set_common_handle_offsets(vec![0, 1, 2]);
+        let secondary = KvIndex {
+            id: 2,
+            name: "idx_customer".to_owned(),
+            comment: String::new(),
+            unique: false,
+            column_offsets: vec![0, 1, 3],
+            prefix_lengths: vec![
+                crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+                crate::ddl::index_prefix::UNSPECIFIED_LENGTH,
+            ],
+            visible: true,
+            global: false,
+        };
+
+        assert!(is_covering(&secondary, &table, &[0, 1, 2, 3]));
+        assert!(!is_covering(&secondary, &table, &[4]));
+    }
+
+    #[test]
+    fn count_after_access_uses_the_logical_row_count_lower_bound() {
+        assert_eq!(adjust_count_after_access(0.001, 1.0, 10_000.0), 1.25);
+        assert_eq!(adjust_count_after_access(2.0, 1.0, 10_000.0), 2.0);
+        assert_eq!(adjust_count_after_access(0.0, 1.0, 1.0), 1.0);
+    }
+
+    /// Go lowers row-valued IN to DNF before cardinality estimation and
+    /// applies the one-row floor independently to every tuple.  Keeping the
+    /// compact AST must not lose that floor: this is the exact logical row
+    /// count behind TPCC delivery's 12.49-row common-handle range scan.
+    #[test]
+    fn row_in_selectivity_applies_the_one_row_floor_per_tuple() {
+        let table = KvTable::with_storage(
+            80,
+            vec![
+                long_column("w_id", 1),
+                long_column("d_id", 2),
+                long_column("o_id", 3),
+            ],
+            Box::new(MemTableStorage::new()),
+        );
+        let left = tidb_ast::Expr::Row(
+            ["w_id", "d_id", "o_id"]
+                .into_iter()
+                .map(|name| tidb_ast::Expr::Column(vec![name.to_owned()]))
+                .collect(),
+        );
+        let list = (1..=10)
+            .map(|district| {
+                tidb_ast::Expr::Row(vec![
+                    tidb_ast::Expr::Int("1".to_owned()),
+                    tidb_ast::Expr::Int(district.to_string()),
+                    tidb_ast::Expr::Int("1".to_owned()),
+                ])
+            })
+            .collect();
+        let predicate = tidb_ast::Expr::In {
+            expr: Box::new(left),
+            list,
+            not: false,
+        };
+
+        let actual = selectivity(
+            &predicate,
+            &table,
+            &NamedColumnResolver { table: &table },
+            None,
+        );
+        let expected = 1.0_f64 - (1.0_f64 - 1.0_f64 / 10_000.0_f64).powi(10);
+        assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+    }
+
+    #[test]
+    fn pseudo_integer_handle_range_uses_its_numeric_span() {
+        let mut table = KvTable::with_storage(
+            81,
+            vec![long_column("id", 1)],
+            Box::new(MemTableStorage::new()),
+        );
+        table.set_pk_handle_offset(0);
+        let predicate = tidb_ast::Expr::Between {
+            expr: Box::new(tidb_ast::Expr::Column(vec!["id".to_owned()])),
+            low: Box::new(tidb_ast::Expr::Int("1".to_owned())),
+            high: Box::new(tidb_ast::Expr::Int("100".to_owned())),
+            not: false,
+        };
+
+        let actual = selectivity(
+            &predicate,
+            &table,
+            &NamedColumnResolver { table: &table },
+            None,
+        );
+        assert!((actual - 99.0 / 10_000.0).abs() < 1e-12, "{actual}");
+    }
+
+    /// Go's DataSource call supplies `filledPaths`, so a clustered PRIMARY
+    /// mapped to the not-yet-filled table path cannot replace the secondary
+    /// composite estimate. The later IndexFilters call supplies nil paths and
+    /// therefore does use that same PRIMARY statistic.
+    #[test]
+    fn secondary_index_statistics_combine_with_a_remaining_column_node() {
+        let mut table = KvTable::with_storage(
+            81,
+            vec![
+                long_column("w_id", 1),
+                long_column("d_id", 2),
+                long_column("c_id", 3),
+            ],
+            Box::new(MemTableStorage::new()),
+        );
+        table.set_common_handle_offsets(vec![0, 1, 2]);
+        table.add_index(KvIndex {
+            id: 7,
+            name: "PRIMARY".to_owned(),
+            comment: String::new(),
+            unique: true,
+            column_offsets: vec![0, 1, 2],
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 3],
+            visible: true,
+            global: false,
+        });
+        table.add_index(KvIndex {
+            id: 8,
+            name: "idx_ab".to_owned(),
+            comment: String::new(),
+            unique: false,
+            column_offsets: vec![0, 1],
+            prefix_lengths: vec![crate::ddl::index_prefix::UNSPECIFIED_LENGTH; 2],
+            visible: true,
+            global: false,
+        });
+
+        let column_stats = |id| ColumnStats {
+            histogram: tidb_stats::Histogram {
+                id,
+                ndv: 10,
+                buckets: vec![tidb_stats::Bucket {
+                    count: 100,
+                    repeat: 10,
+                    ndv: 10,
+                    lower_bound: Datum::Int(1),
+                    upper_bound: Datum::Int(10),
+                }],
+                ..tidb_stats::Histogram::default()
+            },
+            topn: None,
+            cms: None,
+            stats_ver: 2,
+            unsigned: false,
+        };
+        let index_stats = |id, point: &[Datum], count, num_columns, unique| {
+            let mut topn = tidb_stats::cmsketch::TopN::new(1);
+            topn.append(&tidb_codec::encode_key(point).unwrap(), count);
+            topn.sort();
+            IndexStats {
+                histogram: tidb_stats::Histogram {
+                    id,
+                    ndv: 20,
+                    buckets: vec![tidb_stats::Bucket {
+                        count: 100 - count as i64,
+                        repeat: 5,
+                        ndv: 20,
+                        lower_bound: Datum::Bytes(
+                            tidb_codec::encode_key(
+                                &std::iter::repeat_n(Datum::Int(1), num_columns)
+                                    .collect::<Vec<_>>(),
+                            )
+                            .unwrap(),
+                        ),
+                        upper_bound: Datum::Bytes(
+                            tidb_codec::encode_key(
+                                &std::iter::repeat_n(Datum::Int(10), num_columns)
+                                    .collect::<Vec<_>>(),
+                            )
+                            .unwrap(),
+                        ),
+                    }],
+                    ..tidb_stats::Histogram::default()
+                },
+                topn: Some(topn),
+                cms: None,
+                stats_ver: 2,
+                num_columns,
+                unique,
+            }
+        };
+        let stats = TableStatistics::new(
+            100,
+            0,
+            BTreeMap::from([
+                (1, column_stats(1)),
+                (2, column_stats(2)),
+                (3, column_stats(3)),
+            ]),
+            BTreeMap::from([
+                (
+                    7,
+                    index_stats(
+                        7,
+                        &[Datum::Int(1), Datum::Int(2), Datum::Int(3)],
+                        1,
+                        3,
+                        true,
+                    ),
+                ),
+                (
+                    8,
+                    index_stats(8, &[Datum::Int(1), Datum::Int(2)], 20, 2, false),
+                ),
+            ]),
+        );
+        let equality = |name: &str, value: i64| {
+            tidb_ast::Expr::Binary(
+                tidb_ast::BinaryOp::Eq,
+                Box::new(tidb_ast::Expr::Column(vec![name.to_owned()])),
+                Box::new(tidb_ast::Expr::Int(value.to_string())),
+            )
+        };
+        let conditions = [
+            equality("w_id", 1),
+            equality("d_id", 2),
+            equality("c_id", 3),
+        ];
+        let conjuncts: Vec<&tidb_ast::Expr> = conditions.iter().collect();
+
+        let actual = selectivity_of_conjuncts(
+            &conjuncts,
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+        );
+        assert!((actual - 0.02).abs() < 1e-12, "{actual} != 0.02");
+
+        let without_paths = selectivity_of_conjuncts_without_paths(
+            &conjuncts,
+            &table,
+            &NamedColumnResolver { table: &table },
+            Some(&stats),
+        );
+        assert!(
+            (without_paths - 0.01).abs() < 1e-12,
+            "{without_paths} != 0.01"
+        );
+    }
+
+    /// `cardinality.Selectivity` treats `IS NOT NULL` as the pseudo column
+    /// range `(NULL,+inf]`. It is not an index access condition, but it still
+    /// owns a statistics node and therefore removes one pseudo NULL bucket.
+    #[test]
+    fn pseudo_not_null_is_a_column_statistics_range() {
+        let table = KvTable::with_storage(
+            82,
+            vec![long_column("a", 1), long_column("b", 2)],
+            Box::new(MemTableStorage::new()),
+        );
+        let predicate = tidb_ast::Expr::Binary(
+            tidb_ast::BinaryOp::LogicAnd,
+            Box::new(tidb_ast::Expr::Binary(
+                tidb_ast::BinaryOp::Eq,
+                Box::new(tidb_ast::Expr::Column(vec!["a".to_owned()])),
+                Box::new(tidb_ast::Expr::Int("1".to_owned())),
+            )),
+            Box::new(tidb_ast::Expr::Is {
+                expr: Box::new(tidb_ast::Expr::Column(vec!["b".to_owned()])),
+                target: tidb_ast::IsTarget::Null,
+                not: true,
+            }),
+        );
+
+        let actual = selectivity(
+            &predicate,
+            &table,
+            &NamedColumnResolver { table: &table },
+            None,
+        );
+        let expected = 1.0 / 1_000.0 * (1.0 - 1.0 / 1_000.0);
+        assert!((actual - expected).abs() < 1e-12, "{actual} != {expected}");
+    }
+
     /// `t(a, b, c)` with a non-unique index on `b`, the shape
     /// [`crate::access_path`]'s tests use.
     fn table_with_index() -> KvTable {
@@ -2035,6 +2987,16 @@ mod tests {
             low_exclusive: false,
             high_exclusive: false,
         }
+    }
+
+    /// `StatsInfo::ScaleByExpectCnt` refuses to scale a one-row table below
+    /// one. The access path still owns its fractional `CountAfterAccess`, but
+    /// the physical scan displayed by EXPLAIN owns the scaled table stats.
+    #[test]
+    fn a_physical_scan_keeps_gos_one_row_estimate_floor() {
+        assert_eq!(physical_scan_row_count(1.0, 0.025), 1.0);
+        assert_eq!(physical_scan_row_count(10_000.0, 250.0), 250.0);
+        assert_eq!(physical_scan_row_count(10_000.0, 20_000.0), 10_000.0);
     }
 
     /// Go's `keepIndex` in `skylinePruning` (`find_best_task.go:1830`):
@@ -2172,7 +3134,18 @@ mod tests {
         // test measuring the term it names. The penalized scan is asserted
         // separately below.
         let all_columns: Vec<usize> = (0..table.columns.len()).collect();
-        let scan = table_scan_path(&table, &all_columns, None, &NoResolver, None, None, 0.0);
+        let scan = table_scan_path(
+            &table,
+            &all_columns,
+            None,
+            &NoResolver,
+            None,
+            realtime,
+            None,
+            None,
+            false,
+            0.0,
+        );
         assert!(
             non_covering.cost < scan.cost,
             "a one-row lookup must beat a {realtime}-row scan: index {} vs \
@@ -2229,7 +3202,10 @@ mod tests {
             None,
             &NoResolver,
             None,
+            realtime,
             None,
+            None,
+            false,
             table_scan_penalty_rows(None, realtime, false, false),
         );
         assert!(penalized.cost > scan.cost);

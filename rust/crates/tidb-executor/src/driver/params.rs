@@ -52,6 +52,22 @@ pub fn bind_parameters(
     Ok(stmt.restore())
 }
 
+/// Binds execute-time values into a clone of the AST retained by PREPARE.
+///
+/// Go stores `PlanCacheStmt.PreparedAst` and assigns values to its parameter
+/// markers without lexing the SQL text again. Cloning before binding keeps the
+/// retained tree immutable across executions and retries while preserving the
+/// SQL mode that gave the statement its meaning at PREPARE time.
+pub fn bind_prepared_statement(stmt: &Stmt, values: &[Datum]) -> Result<Stmt, DriverError> {
+    let mut bound_stmt = stmt.clone();
+    let mut bound = 0usize;
+    bind_statement_markers(&mut bound_stmt, values, &mut bound)?;
+    if bound != values.len() {
+        return Err(DriverError::WrongParamCount);
+    }
+    Ok(bound_stmt)
+}
+
 /// The number of `?` markers a statement carries, which `COM_STMT_PREPARE`
 /// reports to the client.
 pub fn parameter_count(sql: &str, sql_mode: tidb_parser::SqlMode) -> Result<usize, DriverError> {
@@ -61,6 +77,15 @@ pub fn parameter_count(sql: &str, sql_mode: tidb_parser::SqlMode) -> Result<usiz
     // Counting binds nothing: every marker reports itself and stays put.
     count_statement_markers(&mut stmt, &mut counted);
     Ok(counted)
+}
+
+/// Counts markers on an already parsed statement without changing its tree.
+#[must_use]
+pub fn parsed_parameter_count(stmt: &Stmt) -> usize {
+    let mut stmt = stmt.clone();
+    let mut counted = 0usize;
+    count_statement_markers(&mut stmt, &mut counted);
+    counted
 }
 
 /// Walks a statement's expressions, applying `visit` to every marker.
@@ -140,5 +165,27 @@ mod tests {
         assert_eq!(parameter_count(&bound, mode).unwrap(), 0);
         assert!(bound.contains("`ol`.`ol_o_id`=7"), "{bound}");
         assert!(bound.contains("`o`.`o_w_id`=3"), "{bound}");
+    }
+
+    #[test]
+    fn markers_inside_row_in_are_bound_in_order() {
+        let sql = "SELECT o_d_id FROM orders WHERE (o_w_id, o_d_id, o_id) IN ((?,?,?),(?,?,?))";
+        let mode = tidb_parser::SqlMode::default();
+        let bound = bind_parameters(
+            sql,
+            &[
+                Datum::Int(1),
+                Datum::Int(2),
+                Datum::Int(3),
+                Datum::Int(4),
+                Datum::Int(5),
+                Datum::Int(6),
+            ],
+            mode,
+        )
+        .unwrap();
+        assert_eq!(parameter_count(&bound, mode).unwrap(), 0);
+        assert!(bound.contains("ROW(1,2,3)"), "{bound}");
+        assert!(bound.contains("ROW(4,5,6)"), "{bound}");
     }
 }

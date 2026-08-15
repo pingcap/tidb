@@ -41,6 +41,7 @@ use crate::node_config::NodeConfig;
 use crate::resultset_source::ResultSetSource;
 use crate::wire_status::WireStatus;
 use tidb_session::process::ProcessKillTarget;
+use tidb_session::PreparedAst;
 
 const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const DEFAULT_SHUTDOWN_GRACE: Duration = Duration::from_secs(10);
@@ -505,6 +506,7 @@ pub struct PreparedGeneral {
     sql: String,
     parameter_count: usize,
     result_columns: Vec<ColumnInfo>,
+    prepared_ast: Option<PreparedAst>,
 }
 
 impl PreparedGeneral {
@@ -515,7 +517,17 @@ impl PreparedGeneral {
             sql,
             parameter_count,
             result_columns,
+            prepared_ast: None,
         }
+    }
+
+    /// Retains the AST parsed at PREPARE for a session that can execute it
+    /// directly. Generic query-session implementations may continue to keep
+    /// only text and use the compatibility fallback.
+    #[must_use]
+    pub fn with_prepared_ast(mut self, prepared_ast: PreparedAst) -> Self {
+        self.prepared_ast = Some(prepared_ast);
+        self
     }
 
     /// The statement text, whose markers an execute binds.
@@ -535,6 +547,12 @@ impl PreparedGeneral {
     #[must_use]
     pub fn result_columns(&self) -> &[ColumnInfo] {
         &self.result_columns
+    }
+
+    /// The source-shaped prepared definition, when this session retained one.
+    #[must_use]
+    pub fn prepared_ast(&self) -> Option<&PreparedAst> {
+        self.prepared_ast.as_ref()
     }
 }
 
