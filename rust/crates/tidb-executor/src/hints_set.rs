@@ -539,6 +539,26 @@ pub fn parse_hints_set(sql: &str, db: &str) -> Result<(HintsSet, tidb_ast::Stmt)
                 .and_then(|slot| slot.clone())
                 .map(|name| name.to_lowercase())
                 .unwrap_or_default();
+            // Go `isHint4View`: with no view registrations, an unnamed,
+            // table-LESS hint still answers true (the all-tables loop over
+            // zero tables), so statement hints like MAX_EXECUTION_TIME are
+            // kept without a query-block stamp.
+            let view_probe = crate::qb_hint::QbHint {
+                name: hint.name.to_lowercase(),
+                qb_name: qb_reference.clone(),
+                tables: hint_tables_mut(&mut hint)
+                    .iter()
+                    .map(|table| crate::qb_hint::QbHintTable {
+                        name: table.name.to_lowercase(),
+                        qb_name: table.qb_name.as_deref().unwrap_or_default().to_lowercase(),
+                    })
+                    .collect(),
+                restored: String::new(),
+            };
+            if handler.is_hint_for_view(&view_probe) {
+                new_hints.push(hint);
+                continue;
+            }
             let offset = handler.hint_offset(&qb_reference, cur_offset);
             let table_qb_names: Vec<crate::qb_hint::QbHintTable> = hint_tables_mut(&mut hint)
                 .iter()
@@ -723,6 +743,13 @@ mod tests {
             "{restored}"
         );
         assert!(!restored.contains("qb_name"), "{restored}");
+
+        // A table-less statement hint is a "view hint" to Go's zero-table
+        // loop and is kept without a query-block stamp.
+        let (set, _stmt) =
+            parse_hints_set("SELECT /*+ MAX_EXECUTION_TIME(100) */ * FROM t1", "d").unwrap();
+        let restored = set.restore();
+        assert_eq!(restored, "max_execution_time(100)");
 
         // An unknown block name is the source's exact error.
         let error =

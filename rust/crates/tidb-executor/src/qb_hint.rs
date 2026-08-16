@@ -285,6 +285,103 @@ impl QbHintHandler {
         }
     }
 
+    /// Go's private `handleViewHints`: pulls the view-form `QB_NAME` hints
+    /// and the hints that target them out of a block's hint list, returning
+    /// what is left on the block.
+    ///
+    /// Pass one registers each `QB_NAME(name, view...)`: an empty name is
+    /// consumed silently, a repeated name warns and keeps the first, and —
+    /// when the block is not the first — a first view entry without its own
+    /// `@sel_N` is stamped with the block's offset. Pass two routes every
+    /// other hint that names a registered view (at hint level, or uniformly
+    /// across its tables) into the view-hint registry, warning when tables
+    /// mix query blocks. Whatever neither pass consumed stays on the block.
+    pub fn handle_view_hints(
+        &mut self,
+        hints: Vec<QbHint>,
+        offset: i64,
+        warnings: &mut HintWarnCollector,
+    ) -> Vec<QbHint> {
+        if hints.is_empty() {
+            return hints;
+        }
+        let mut hints = hints;
+        let mut used = vec![false; hints.len()];
+
+        for (i, hint) in hints.iter_mut().enumerate() {
+            if hint.name != HINT_QB_NAME || hint.tables.is_empty() {
+                continue;
+            }
+            used[i] = true;
+            let qb_name = hint.qb_name.clone();
+            if qb_name.is_empty() {
+                continue;
+            }
+            match self.view_qb_name_to_table.entry(qb_name) {
+                std::collections::btree_map::Entry::Occupied(occupied) => {
+                    let qb_name = occupied.key();
+                    warnings.set_hint_warning(format!(
+                        "Duplicate query block name {qb_name} for view's query block hint, only the first one is effective"
+                    ));
+                }
+                std::collections::btree_map::Entry::Vacant(vacant) => {
+                    if offset != 1 && hint.tables[0].qb_name.is_empty() {
+                        hint.tables[0].qb_name = format!("{DEFAULT_SELECT_BLOCK_PREFIX}{offset}");
+                    }
+                    vacant.insert(hint.tables.clone());
+                }
+            }
+        }
+
+        for (i, hint) in hints.iter().enumerate() {
+            if used[i] || hint.name == HINT_QB_NAME {
+                continue;
+            }
+            let mut ok = false;
+            let mut qb_name = hint.qb_name.clone();
+            if !qb_name.is_empty() {
+                ok = self.view_qb_name_to_table.contains_key(&qb_name);
+            } else if !hint.tables.is_empty() {
+                // Only tables of one query block may share a view hint.
+                qb_name = hint.tables[0].qb_name.clone();
+                ok = self.view_qb_name_to_table.contains_key(&qb_name);
+                if ok && hint.tables.iter().any(|table| table.qb_name != qb_name) {
+                    warnings.set_hint_warning(
+                        "Only one query block name is allowed in a view hint, otherwise the hint will be invalid",
+                    );
+                    used[i] = true;
+                    ok = false;
+                }
+            }
+            if ok {
+                used[i] = true;
+                self.view_qb_name_to_hints
+                    .entry(qb_name)
+                    .or_default()
+                    .push(hint.clone());
+            }
+        }
+
+        hints
+            .into_iter()
+            .zip(used)
+            .filter_map(|(hint, was_used)| (!was_used).then_some(hint))
+            .collect()
+    }
+
+    /// Go's private `isHint4View`: a hint-level name checks registration
+    /// directly; an unnamed hint is a view hint only when EVERY table's
+    /// query block is registered.
+    #[must_use]
+    pub fn is_hint_for_view(&self, hint: &QbHint) -> bool {
+        if !hint.qb_name.is_empty() {
+            return self.view_qb_name_to_table.contains_key(&hint.qb_name);
+        }
+        hint.tables
+            .iter()
+            .all(|table| self.view_qb_name_to_table.contains_key(&table.qb_name))
+    }
+
     /// Go `HandleUnusedViewHints`: replaces the warning list with one entry
     /// per view `qb_name` the build never used. Go truncates the incoming
     /// slice first, so nothing passed in survives.
@@ -548,5 +645,84 @@ mod tests {
             generate_qb_name(NodeType::Invalid, 0).unwrap_err(),
             "Unexpected NodeType 0 when block offset is 0"
         );
+    }
+    // Go handleViewHints: registration, duplicate warning, offset stamping,
+    // routing, and the mixed-block rejection.
+    #[test]
+    fn view_hints_register_route_and_reject_mixed_blocks() {
+        let mut handler = QbHintHandler::new();
+        let mut warnings = HintWarnCollector::default();
+        let view_table = |qb: &str| QbHintTable {
+            name: "v1".to_owned(),
+            qb_name: qb.to_owned(),
+        };
+        let qb_view = |name: &str, tables: Vec<QbHintTable>| QbHint {
+            name: HINT_QB_NAME.to_owned(),
+            qb_name: name.to_owned(),
+            tables,
+            restored: String::new(),
+        };
+
+        // Registration on a non-first block stamps the bare first entry.
+        let left =
+            handler.handle_view_hints(vec![qb_view("qv", vec![view_table("")])], 2, &mut warnings);
+        assert!(left.is_empty());
+        assert_eq!(handler.view_qb_name_to_table["qv"][0].qb_name, "sel_2");
+
+        // A repeated name warns and keeps the first registration.
+        let _ = handler.handle_view_hints(
+            vec![qb_view("qv", vec![view_table("sel_9")])],
+            1,
+            &mut warnings,
+        );
+        assert_eq!(
+            warnings.warnings(),
+            ["Duplicate query block name qv for view's query block hint, only the first one is effective"]
+        );
+        assert_eq!(handler.view_qb_name_to_table["qv"][0].qb_name, "sel_2");
+
+        // A hint naming the view at hint level routes into the registry.
+        let named = QbHint {
+            name: "merge_join".to_owned(),
+            qb_name: "qv".to_owned(),
+            tables: Vec::new(),
+            restored: String::new(),
+        };
+        let left = handler.handle_view_hints(vec![named.clone()], 1, &mut warnings);
+        assert!(left.is_empty());
+        assert_eq!(handler.view_qb_name_to_hints["qv"], vec![named.clone()]);
+        assert!(handler.is_hint_for_view(&named));
+
+        // Tables mixing query blocks reject the hint with the warning.
+        let mixed = QbHint {
+            name: "hash_join".to_owned(),
+            qb_name: String::new(),
+            tables: vec![
+                QbHintTable {
+                    name: "t1".to_owned(),
+                    qb_name: "qv".to_owned(),
+                },
+                QbHintTable {
+                    name: "t2".to_owned(),
+                    qb_name: "other".to_owned(),
+                },
+            ],
+            restored: String::new(),
+        };
+        let left = handler.handle_view_hints(vec![mixed], 1, &mut warnings);
+        assert!(left.is_empty());
+        assert_eq!(handler.view_qb_name_to_hints["qv"].len(), 1);
+        assert!(warnings.warnings()[1].contains("Only one query block name is allowed"));
+
+        // A hint targeting no registered view stays on the block.
+        let plain = QbHint {
+            name: "hash_agg".to_owned(),
+            qb_name: String::new(),
+            tables: Vec::new(),
+            restored: String::new(),
+        };
+        assert!(handler.is_hint_for_view(&plain));
+        let left = handler.handle_view_hints(vec![plain.clone()], 1, &mut warnings);
+        assert_eq!(left, vec![plain]);
     }
 }
