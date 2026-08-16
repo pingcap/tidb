@@ -593,6 +593,7 @@ mod non_prepared_plan_cache;
 mod noop;
 mod prepared_ast;
 mod prepared_statements;
+pub mod session_vars;
 mod stmt_ctx;
 mod table_privilege;
 mod txn;
