@@ -1096,6 +1096,9 @@ func isScatterRegionFinished(resp *pdpb.GetOperatorResponse) (
 
 // CheckRegionEpoch check region epoch.
 func CheckRegionEpoch(_new, _old *RegionInfo) bool {
+	if _new == nil || _old == nil {
+		return false
+	}
 	return _new.Region.GetId() == _old.Region.GetId() &&
 		_new.Region.GetRegionEpoch().GetVersion() == _old.Region.GetRegionEpoch().GetVersion() &&
 		_new.Region.GetRegionEpoch().GetConfVer() == _old.Region.GetRegionEpoch().GetConfVer()
