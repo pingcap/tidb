@@ -351,6 +351,7 @@ mod context;
 pub mod convert_charset;
 pub mod evaluator;
 pub mod expr_collation;
+pub mod exprctx;
 pub mod expression;
 mod field_name;
 mod func;
