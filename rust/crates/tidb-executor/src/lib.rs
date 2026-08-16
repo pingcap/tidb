@@ -101,6 +101,7 @@ pub mod sort;
 pub mod sort_partition;
 pub mod statement_pushdown;
 mod stmt_context;
+pub mod stmt_hints;
 pub mod storage;
 pub mod table_access;
 pub mod table_dual;
