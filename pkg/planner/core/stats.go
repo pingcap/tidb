@@ -414,7 +414,11 @@ func detachCondAndBuildRangeForPath(
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges)
+	idxCols := path.IdxCols
+	if len(idxCols) > len(path.Index.Columns) {
+		idxCols = idxCols[:len(path.Index.Columns)]
+	}
+	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges, idxCols)
 	return err
 }
 

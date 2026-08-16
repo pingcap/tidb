@@ -31,7 +31,9 @@ import (
 func init() {
 	statistics.GetRowCountByColumnRanges = GetRowCountByColumnRanges
 	statistics.GetRowCountByIntColumnRanges = GetRowCountByIntColumnRanges
-	statistics.GetRowCountByIndexRanges = GetRowCountByIndexRanges
+	statistics.GetRowCountByIndexRanges = func(sctx planctx.PlanContext, coll *statistics.HistColl, idxID int64, indexRanges []*ranger.Range) (float64, error) {
+		return GetRowCountByIndexRanges(sctx, coll, idxID, indexRanges, nil)
+	}
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
