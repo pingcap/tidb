@@ -12,20 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/store/mockstore/unistore/lockstore` lands as a complete package:
-//! the arena-backed skiplist unistore keeps its in-memory locks in.
+//! Unistore's in-memory lock machinery: two Go packages land here as complete
+//! packages.
 //!
-//! The Go package has zero internal TiDB imports and no external ones beyond
-//! logging and error wrapping; so does this crate, which has no dependencies
-//! at all. It is a self-contained ordered map from byte string to byte string,
-//! with a bounded memory footprint: nodes are carved out of fixed-size arena
-//! blocks and drained blocks are recycled rather than dropped.
+//! - `pkg/store/mockstore/unistore/lockstore` — the arena-backed skiplist
+//!   unistore keeps its in-memory locks in.
+//! - `pkg/store/mockstore/unistore/util/lockwaiter` — the manager that parks a
+//!   pessimistic-lock waiter until the lock holder commits, the deadlock
+//!   detector answers, or the wait times out. See [`lockwaiter`] for its own
+//!   boundaries; the rest of this header is about `lockstore`.
+//!
+//! Neither Go package has internal TiDB imports beyond a config struct, and no
+//! external ones beyond logging, error wrapping and one kvproto message; this
+//! crate has no dependencies at all. `lockstore` is a self-contained ordered
+//! map from byte string to byte string, with a bounded memory footprint: nodes
+//! are carved out of fixed-size arena blocks and drained blocks are recycled
+//! rather than dropped.
 //!
 //! File mapping (one Rust module per Go file):
 //! - [`lockstore`] <- `lockstore.go`
 //! - [`arena`] <- `arena.go`
 //! - [`iterator`] <- `iterator.go`
 //! - [`load_dump`] <- `load_dump.go`
+//! - [`lockwaiter`] <- `util/lockwaiter/lockwaiter.go`
 //!
 //! # The one structural narrowing: no `unsafe`
 //!
@@ -96,6 +105,7 @@ pub mod arena;
 pub mod iterator;
 pub mod load_dump;
 pub mod lockstore;
+pub mod lockwaiter;
 #[cfg(test)]
 mod testutil;
 
