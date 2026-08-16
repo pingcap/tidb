@@ -109,10 +109,12 @@ pub mod storage;
 pub mod table_access;
 pub mod table_dual;
 pub mod tblctx;
+pub mod tblsession;
 #[cfg(test)]
 mod tests_index_join;
 #[cfg(test)]
 mod tests_join_search;
+pub mod tiflash_recorder;
 pub mod topn;
 pub mod topn_spill;
 pub mod vec_group_checker;
