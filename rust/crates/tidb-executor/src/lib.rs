@@ -88,6 +88,7 @@ pub mod partition_routing;
 pub(crate) mod ranger_detacher;
 mod tidb_decode_key;
 pub use partition_routing::{PartitionDef, PartitionKind, PartitionSpec, RangeBound};
+pub mod plan_hints;
 mod plan_trace;
 pub mod point_get;
 pub mod predicate_pushdown;
