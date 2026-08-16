@@ -84,6 +84,7 @@ pub mod dag_request;
 pub mod ddl_job_comments;
 pub mod delete_rows_col_multiply;
 pub mod distsql_recordset;
+pub mod domainutil;
 pub mod effective_auth_plugin;
 mod error;
 pub use tidb_executor::error_context;
