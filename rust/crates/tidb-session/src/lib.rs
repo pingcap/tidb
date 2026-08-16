@@ -597,6 +597,7 @@ mod stmt_ctx;
 mod table_privilege;
 mod txn;
 mod variables;
+pub mod varsutil;
 mod warnings;
 pub(crate) use classify::{statement_kind_of, StatementKind};
 pub use classify::{StmtKind, StoredStateChange};

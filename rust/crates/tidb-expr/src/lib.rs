@@ -372,6 +372,7 @@ mod string_packet;
 mod string_signature;
 mod time_fn;
 mod time_literal;
+pub mod user_vars;
 
 pub use field_name::{find_field_name, find_field_name_index_by_column, NonUniqueFieldName};
 

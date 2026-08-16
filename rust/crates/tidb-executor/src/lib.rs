@@ -112,6 +112,7 @@ pub mod topn_spill;
 pub mod vec_group_checker;
 pub mod view;
 mod window;
+pub mod write_stmt_bufs;
 pub mod zero_date;
 
 pub use apply::ApplyExec;
