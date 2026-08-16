@@ -24,6 +24,7 @@ pub mod base_traits;
 pub mod by_item;
 pub mod candidate_cost;
 pub mod cardinality;
+pub mod cascades_base;
 pub mod column_length;
 pub mod column_pruning;
 pub mod columnar_index_extra;
