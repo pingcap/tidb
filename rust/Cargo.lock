@@ -2535,6 +2535,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-placement"
+version = "0.0.0"
+dependencies = [
+ "base64",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tidb-ast",
+ "tidb-codec",
+ "tidb-model",
+ "tidb-tablecodec",
+]
+
+[[package]]
 name = "tidb-planner"
 version = "0.0.0"
 dependencies = [

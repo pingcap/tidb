@@ -37,6 +37,7 @@ members = [
     "crates/tidb-tablecodec",
     "crates/tidb-expr",
     "crates/tidb-schemacmp",
+    "crates/tidb-placement",
     "crates/tidb-exec",
     "crates/tidb-server",
     "crates/tidb-session",
