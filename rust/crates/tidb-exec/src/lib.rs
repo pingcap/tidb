@@ -188,6 +188,7 @@ pub mod sysvar_scope;
 pub mod sysvar_type;
 pub mod table_info_build;
 pub mod tagged_ptr;
+pub mod tiflash_stats;
 pub mod traffic_form;
 pub mod txn_read_ts;
 pub mod txn_running_state;
