@@ -12,12 +12,45 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Memory-budgeted apply-cache policy from `pkg/executor/internal/applycache`.
+//! Go `pkg/executor/internal/applycache` lands as a complete package: the
+//! memory-budgeted cache that lets an Apply executor reuse a previously
+//! computed inner relation when the outer row repeats a correlated value.
 //!
-//! The Go owner charges each key/value pair as `len(key) + value memory`,
-//! rejects an item larger than the quota, evicts the oldest LRU entries until
-//! the item fits, and then stores it. `tidb-kvcache` owns the generic LRU order;
-//! this module owns Apply's retained-byte quota and synchronization.
+//! Every production symbol of `apply_cache.go` is here. `ApplyCache`
+//! ([`ApplyCache`]), `NewApplyCache` ([`ApplyCache::new`]), `applyCacheKVMem`
+//! ([`apply_cache_kv_mem`]), `Get` ([`ApplyCache::get`]), `Set`
+//! ([`ApplyCache::set`]), and the file-private `get`/`put`/`removeOldest`
+//! trio, which Rust folds into the single [`ApplyCache::lock`] critical
+//! section. `applyCacheKey` and its `Hash()` method are not a distinct type:
+//! they exist in Go only to satisfy `kvcache.Key`, whose `Hash()` returns the
+//! key bytes unchanged, so the byte slice *is* the key here. Both upstream
+//! tests are ported in `tests/apply_cache_source.rs`.
+//!
+//! The policy the source owns, reproduced exactly: charge each pair as
+//! `len(key) + value memory`; reject outright an item larger than the quota;
+//! otherwise evict oldest-first until the item fits, then store it. Note that
+//! Go re-charges a replaced key without refunding the old entry, which the
+//! Rust keeps — see `replacing_a_key_preserves_the_source_tracker_charge`.
+//!
+//! Narrowed dependencies:
+//!
+//! - `// boundary:` Go `pkg/sessionctx.Context`. `NewApplyCache` touches the
+//!   session for exactly one read — `GetSessionVars().MemQuotaApplyCache`,
+//!   the `tidb_mem_quota_apply_cache` sysvar — so [`ApplyCache::new`] takes
+//!   that quota as its only parameter instead of a session handle. It also
+//!   drops Go's always-nil `error` return.
+//! - `// boundary:` Go `pkg/util/memory.Tracker` and `GetMemTracker`. The Go
+//!   cache owns a tracker built with `memory.LabelForApplyCache` so Apply can
+//!   attach it to the session's tracker tree; `tidb-util`'s ported
+//!   `memory::Tracker` has no such label constant yet, so the retained-byte
+//!   count is a plain `i64` ([`ApplyCache::memory_consumed`]). Admission and
+//!   eviction read the same number the Go tracker would report, so the policy
+//!   is unaffected — only the reporting hookup is deferred.
+//!
+//! `tidb_util::kvcache`'s `SimpleLruCache` owns the generic LRU order (Go
+//! builds it with `mathutil.MaxUint` capacity precisely to disable its own
+//! memory control); this module owns Apply's retained-byte quota and the
+//! synchronization Go gets from `syncutil.Mutex`.
 
 use std::sync::{Arc, Mutex, MutexGuard};
 use tidb_util::kvcache::SimpleLruCache;

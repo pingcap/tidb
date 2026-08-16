@@ -110,6 +110,7 @@ pub mod keydecoder;
 pub mod lack_handles;
 pub mod lazy_txn_state;
 pub mod lead_lag;
+pub mod lock_stats_exec;
 pub mod minmax_deque;
 pub mod mock_global_accessor;
 pub mod multi_statement_transaction;
