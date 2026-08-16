@@ -263,3 +263,44 @@ func ngramConfigForTest() AnalyzerConfig {
 		NgramTokenSize:       2,
 	}
 }
+
+// TestCompileBooleanQueryMultiTokenTerm covers a boolean term the analyzer
+// splits into several words, such as `foo.bar`. Each word is required: a
+// document matching the original term contains all of them. Previously such a
+// term was dropped, which made the whole query match no document at all.
+func TestCompileBooleanQueryMultiTokenTerm(t *testing.T) {
+	config := AnalyzerConfig{
+		ParserType:           model.FullTextParserTypeStandardV1,
+		InnodbFtMinTokenSize: 1,
+		InnodbFtMaxTokenSize: 84,
+	}
+	analyzer, err := GetAnalyzer(config)
+	require.NoError(t, err)
+	matches := func(search, text string) bool {
+		query, err := CompileBooleanQuery(search, config)
+		require.NoError(t, err)
+		require.False(t, query.MatchesNothing(), "%q must not collapse to match-nothing", search)
+		doc, err := BuildDocument([]ColumnInput{{Text: text}}, analyzer)
+		require.NoError(t, err)
+		return query.Match(doc)
+	}
+
+	require.True(t, matches("+foo.bar", "foo bar baz"))
+	require.False(t, matches("+foo.bar", "foo only"), "every analyzed word is required")
+	require.False(t, matches("+foo.bar", "bar only"))
+
+	// A split term combines with other clauses as one required unit.
+	require.True(t, matches("+foo.bar +baz", "foo bar baz"))
+	require.False(t, matches("+foo.bar +baz", "foo bar"))
+
+	// Optional position: the term still needs all of its words.
+	require.True(t, matches("foo.bar qux", "qux alone"))
+	require.True(t, matches("foo.bar qux", "foo bar"))
+
+	// A term the analyzer removes entirely still constrains nothing.
+	stopConfig := config
+	stopConfig.InnodbFtMinTokenSize = 5
+	query, err := CompileBooleanQuery("+abc", stopConfig)
+	require.NoError(t, err)
+	require.True(t, query.MatchesNothing(), "a required term that analyzes away can match nothing")
+}

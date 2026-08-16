@@ -461,10 +461,25 @@ func normalizeBooleanTerm(term *matchagainst.BooleanTerm, config AnalyzerConfig,
 	}
 	switch config.ParserType {
 	case model.FullTextParserTypeStandardV1:
-		if len(tokens) != 1 {
+		switch len(tokens) {
+		case 0:
+			// The analyzer removed the term entirely - a stop word, or outside
+			// the token-size bounds - so it constrains nothing.
 			return nil, nil
+		case 1:
+			return termNode{token: tokens[0].Text}, nil
+		default:
+			// The analyzer split one boolean term into several words, as it
+			// does for `foo.bar`. Require all of them: a document matching the
+			// original term contains every word it analyzed into. Returning
+			// nothing here instead made the enclosing query match no document
+			// at all.
+			must := make([]queryNode, 0, len(tokens))
+			for _, token := range tokens {
+				must = append(must, termNode{token: token.Text})
+			}
+			return groupNode{must: must}, nil
 		}
-		return termNode{token: tokens[0].Text}, nil
 	case model.FullTextParserTypeNgramV1:
 		return buildPhraseNode(tokens), nil
 	default:
