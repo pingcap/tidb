@@ -157,6 +157,7 @@ mod result_schema_projection;
 pub mod retry_info;
 pub mod runtime_stats;
 pub mod ruv2_metrics;
+pub mod schema_validator;
 pub mod sequence_state;
 pub mod session_commit_protocol;
 pub mod session_context_key;
