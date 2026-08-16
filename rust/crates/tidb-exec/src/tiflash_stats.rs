@@ -57,16 +57,15 @@
 //!   `util.RUDetails.UpdateTiFlash`/`Merge`; neither the kvproto
 //!   `resource_manager` decoder nor the live `RUDetails` accumulator exists
 //!   here.
-//! - The Go tests (`TestCopRuntimeStatsForTiFlash`, `TestVectorSearchStats`,
-//!   `TestColumnarScanContextStats`) drive these types through
-//!   `runtime_stats.go`'s `RuntimeStatsColl.RecordOneCopTask`/
-//!   `RecordCopStats`, `CopRuntimeStats.String`,
-//!   `basicCopRuntimeStats.String`, and `StmtCopRuntimeStats` — whose
-//!   TiFlash arms [`crate::runtime_stats`] deliberately left open. Those
-//!   arms are mirrored locally inside this module's `#[cfg(test)]` harness
-//!   (see the `// boundary:` comments there) so the Go assertion literals
-//!   stay byte-exact; production wiring into `runtime_stats.rs` remains
-//!   open.
+//!
+//! The Go tests (`TestCopRuntimeStatsForTiFlash`, `TestVectorSearchStats`,
+//! `TestColumnarScanContextStats`) drive these types through
+//! `runtime_stats.go`'s `RuntimeStatsColl.RecordOneCopTask`/
+//! `RecordCopStats`, `CopRuntimeStats.String`,
+//! `basicCopRuntimeStats.String`, and `StmtCopRuntimeStats`; those TiFlash
+//! arms are wired in [`crate::runtime_stats`], and this module's
+//! `#[cfg(test)]` harness drives the production types there with the Go
+//! assertion literals byte-exact.
 
 use std::collections::HashMap;
 
@@ -308,7 +307,7 @@ pub struct TiFlashNetworkSummarySnapshot {
 }
 
 /// Go `TiflashStats`: contains tiflash execution stats. The Go fields are
-/// package-private; they are `pub` here for the pending `runtime_stats`
+/// package-private; they are `pub` here for the [`crate::runtime_stats`]
 /// wiring.
 #[derive(Clone, Debug, Default)]
 pub struct TiflashStats {
@@ -1307,357 +1306,9 @@ mod tests {
     use super::*;
     use crate::exec_details::ScanDetail;
     use crate::runtime_stats::{
-        format_duration, CopScanDetail, CopTimeDetail, Duration, Percentile, StoreType,
+        CopScanDetail, CopTimeDetail, ExecutionSummaryDetailInfo, ExecutorExecutionSummarySnapshot,
+        RuntimeStats as _, RuntimeStatsColl, StoreType,
     };
-    use std::collections::HashSet;
-    use std::time::Duration as StdDuration;
-
-    // boundary: the Go tests drive `tiflash_stats.go` through
-    // `runtime_stats.go`'s TiFlash arms, which `runtime_stats.rs`
-    // deliberately left open. The harness below mirrors exactly those arms —
-    // `basicCopRuntimeStats` (its `tiflashStats` field, `String`, and
-    // `mergeExecSummary`; the unread `rows` field is dropped),
-    // `CopRuntimeStats` (`String` with `printTiFlashSpecificInfo`),
-    // `StmtCopRuntimeStats` (+ `mergeExecSummary`), and
-    // `RuntimeStatsColl.RecordOneCopTask`/`RecordCopStats`/`GetCopStats`/
-    // `GetRootStats`/`ExistsRootStats`/`ExistsCopStats`/
-    // `GetStmtCopRuntimeStats`/`getPlanIDFromExecutionSummary` — reusing
-    // `runtime_stats.rs`'s public `Percentile`/`Duration`/
-    // `format_duration`/`StoreType`/`CopScanDetail`/`CopTimeDetail`.
-
-    /// Go `tipb.ExecutorExecutionSummary.DetailInfo` oneof, narrowed to the
-    /// two variants these tests build.
-    #[expect(
-        clippy::large_enum_variant,
-        reason = "test-only mirror of the Go oneof; the wide scan snapshot \
-                  variant is intentional"
-    )]
-    enum FlashDetailInfo {
-        Scan(TiFlashScanContextSnapshot),
-        Columnar(ColumnarScanContextSnapshot),
-    }
-
-    /// The `*tipb.ExecutorExecutionSummary` slice the TiFlash recording
-    /// path reads, mirroring Go's getters (`GetTiflashScanContext` yields
-    /// nil unless `DetailInfo` holds the scan variant, etc.).
-    struct FlashExecSummary {
-        time_processed_ns: u64,
-        #[expect(
-            dead_code,
-            reason = "Go NumProducedRows feeds basicCopRuntimeStats.rows, which \
-                      these tests never read; kept for the mock's Go signature"
-        )]
-        num_produced_rows: u64,
-        num_iterations: u64,
-        concurrency: u64,
-        executor_id: String,
-        detail_info: Option<FlashDetailInfo>,
-        tiflash_wait_summary: Option<TiFlashWaitSummarySnapshot>,
-        tiflash_network_summary: Option<TiFlashNetworkSummarySnapshot>,
-    }
-
-    /// Go `basicCopRuntimeStats`' TiFlash slice.
-    #[derive(Default)]
-    struct FlashBasicCopStats {
-        loops: i32,
-        threads: i32,
-        proc_times: Percentile<Duration>,
-        tiflash_stats: Option<TiflashStats>,
-    }
-
-    impl FlashBasicCopStats {
-        /// Go `basicCopRuntimeStats.mergeExecSummary` (TiFlash arms
-        /// included).
-        #[expect(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-        fn merge_exec_summary(&mut self, summary: &FlashExecSummary) {
-            self.loops += summary.num_iterations as i32;
-            // Go also accumulates `rows` from NumProducedRows; these tests
-            // never read it, so the harness drops the field.
-            self.threads += summary.concurrency as i32;
-            self.proc_times
-                .add(Duration(summary.time_processed_ns as i64));
-            match &summary.detail_info {
-                Some(FlashDetailInfo::Scan(scan)) => {
-                    self.tiflash_stats
-                        .get_or_insert_with(TiflashStats::default)
-                        .scan_context
-                        .merge_exec_summary(Some(scan));
-                }
-                Some(FlashDetailInfo::Columnar(columnar)) => {
-                    self.tiflash_stats
-                        .get_or_insert_with(TiflashStats::default)
-                        .columnar_scan_context
-                        .merge_exec_summary(Some(columnar));
-                }
-                None => {}
-            }
-            if let Some(wait) = &summary.tiflash_wait_summary {
-                self.tiflash_stats
-                    .get_or_insert_with(TiflashStats::default)
-                    .wait_summary
-                    .merge_exec_summary(Some(wait), summary.time_processed_ns);
-            }
-            if let Some(network) = &summary.tiflash_network_summary {
-                self.tiflash_stats
-                    .get_or_insert_with(TiflashStats::default)
-                    .network_summary
-                    .merge_exec_summary(Some(network));
-            }
-        }
-
-        /// Go `basicCopRuntimeStats.String` (TiFlash arms included).
-        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        fn string(&self) -> String {
-            let mut buf = String::with_capacity(16);
-            buf.push_str("time:");
-            buf.push_str(&format_duration(StdDuration::from_nanos(
-                (self.proc_times.sum() as i64).max(0) as u64,
-            )));
-            buf.push_str(", loops:");
-            buf.push_str(&self.loops.to_string());
-            if let Some(tiflash_stats) = &self.tiflash_stats {
-                buf.push_str(", threads:");
-                buf.push_str(&self.threads.to_string());
-                if !tiflash_stats.wait_summary.can_be_ignored() {
-                    buf.push_str(", ");
-                    buf.push_str(&tiflash_stats.wait_summary.string());
-                }
-                if !tiflash_stats.network_summary.empty() {
-                    buf.push_str(", ");
-                    buf.push_str(&tiflash_stats.network_summary.string());
-                }
-                buf.push_str(", ");
-                buf.push_str(&tiflash_stats.scan_context.string());
-            }
-            buf
-        }
-    }
-
-    /// Go `CopRuntimeStats`' TiFlash slice.
-    struct FlashCopRuntimeStats {
-        stats: FlashBasicCopStats,
-        scan_detail: CopScanDetail,
-        time_detail: CopTimeDetail,
-        store_type: StoreType,
-    }
-
-    impl FlashCopRuntimeStats {
-        fn new(store_type: StoreType) -> FlashCopRuntimeStats {
-            FlashCopRuntimeStats {
-                stats: FlashBasicCopStats::default(),
-                scan_detail: CopScanDetail::default(),
-                time_detail: CopTimeDetail::default(),
-                store_type,
-            }
-        }
-
-        /// Go `CopRuntimeStats.String` (with `printTiFlashSpecificInfo`).
-        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        fn string(&self) -> String {
-            let mut proc_times = self.stats.proc_times.clone();
-            let total_tasks = proc_times.size();
-            let is_tiflash_cop = self.store_type == StoreType::TiFlash;
-            let mut buf = String::with_capacity(16);
-            let print_tiflash_specific_info = |buf: &mut String| {
-                if is_tiflash_cop {
-                    buf.push_str(", ");
-                    buf.push_str("threads:");
-                    buf.push_str(&self.stats.threads.to_string());
-                    buf.push('}');
-                    if let Some(tiflash_stats) = &self.stats.tiflash_stats {
-                        if !tiflash_stats.wait_summary.can_be_ignored() {
-                            buf.push_str(", ");
-                            buf.push_str(&tiflash_stats.wait_summary.string());
-                        }
-                        if !tiflash_stats.network_summary.empty() {
-                            buf.push_str(", ");
-                            buf.push_str(&tiflash_stats.network_summary.string());
-                        }
-                        if !tiflash_stats.columnar_scan_context.empty() {
-                            buf.push_str(", ");
-                            buf.push_str(&tiflash_stats.columnar_scan_context.string());
-                        } else if !tiflash_stats.scan_context.empty() {
-                            buf.push_str(", ");
-                            buf.push_str(&tiflash_stats.scan_context.string());
-                        }
-                    }
-                } else {
-                    buf.push('}');
-                }
-            };
-            if total_tasks == 1 {
-                buf.push_str(self.store_type.name());
-                buf.push_str("_task:{time:");
-                buf.push_str(&format_duration(StdDuration::from_nanos(
-                    (proc_times.get_percentile(0.0) as i64).max(0) as u64,
-                )));
-                buf.push_str(", loops:");
-                buf.push_str(&self.stats.loops.to_string());
-                print_tiflash_specific_info(&mut buf);
-            } else if total_tasks > 0 {
-                buf.push_str(self.store_type.name());
-                buf.push_str("_task:{proc max:");
-                buf.push_str(&format_duration(StdDuration::from_nanos(
-                    (proc_times.get_max().0).max(0) as u64,
-                )));
-                buf.push_str(", min:");
-                buf.push_str(&format_duration(StdDuration::from_nanos(
-                    (proc_times.get_min().0).max(0) as u64,
-                )));
-                buf.push_str(", avg: ");
-                buf.push_str(&format_duration(StdDuration::from_nanos(
-                    ((proc_times.sum() as i64) / (total_tasks as i64)).max(0) as u64,
-                )));
-                buf.push_str(", p80:");
-                buf.push_str(&format_duration(StdDuration::from_nanos(
-                    (proc_times.get_percentile(0.8) as i64).max(0) as u64,
-                )));
-                buf.push_str(", p95:");
-                buf.push_str(&format_duration(StdDuration::from_nanos(
-                    (proc_times.get_percentile(0.95) as i64).max(0) as u64,
-                )));
-                buf.push_str(", iters:");
-                buf.push_str(&self.stats.loops.to_string());
-                buf.push_str(", tasks:");
-                buf.push_str(&total_tasks.to_string());
-                print_tiflash_specific_info(&mut buf);
-            }
-            if !is_tiflash_cop {
-                let detail = self.scan_detail.string();
-                if !detail.is_empty() {
-                    buf.push_str(", ");
-                    buf.push_str(&detail);
-                }
-                if self.time_detail != CopTimeDetail::default() {
-                    let time_detail_str = self.time_detail.string();
-                    if !time_detail_str.is_empty() {
-                        buf.push_str(", ");
-                        buf.push_str(&time_detail_str);
-                    }
-                }
-            }
-            buf
-        }
-    }
-
-    /// Go `StmtCopRuntimeStats`.
-    #[derive(Default)]
-    struct StmtCopRuntimeStats {
-        tiflash_network_stats: Option<TiFlashNetworkTrafficSummary>,
-    }
-
-    impl StmtCopRuntimeStats {
-        /// Go `StmtCopRuntimeStats.mergeExecSummary`.
-        fn merge_exec_summary(&mut self, summary: &FlashExecSummary) {
-            if let Some(network) = &summary.tiflash_network_summary {
-                self.tiflash_network_stats
-                    .get_or_insert_with(TiFlashNetworkTrafficSummary::default)
-                    .merge_exec_summary(Some(network));
-            }
-        }
-    }
-
-    /// Go `RuntimeStatsColl`'s TiFlash-recording slice (root stats narrowed
-    /// to the existence set these tests check).
-    #[derive(Default)]
-    struct FlashRuntimeStatsColl {
-        root_stats: HashSet<i64>,
-        cop_stats: std::collections::HashMap<i64, FlashCopRuntimeStats>,
-        stmt_cop_stats: StmtCopRuntimeStats,
-    }
-
-    impl FlashRuntimeStatsColl {
-        /// Go `getPlanIDFromExecutionSummary`.
-        fn plan_id_from_summary(summary: &FlashExecSummary) -> Option<i64> {
-            if summary.executor_id.is_empty() {
-                return None;
-            }
-            summary
-                .executor_id
-                .split('_')
-                .next_back()
-                .and_then(|last| last.parse::<i64>().ok())
-        }
-
-        /// Go `RuntimeStatsColl.RecordOneCopTask`.
-        fn record_one_cop_task(
-            &mut self,
-            mut plan_id: i64,
-            store_type: StoreType,
-            summary: &FlashExecSummary,
-        ) -> i64 {
-            if let Some(id) = Self::plan_id_from_summary(summary) {
-                plan_id = id;
-            }
-            let cop_stats = self
-                .cop_stats
-                .entry(plan_id)
-                .or_insert_with(|| FlashCopRuntimeStats::new(store_type));
-            cop_stats.stats.merge_exec_summary(summary);
-            self.stmt_cop_stats.merge_exec_summary(summary);
-            plan_id
-        }
-
-        /// Go `RuntimeStatsColl.RecordCopStats`.
-        fn record_cop_stats(
-            &mut self,
-            mut plan_id: i64,
-            store_type: StoreType,
-            scan: Option<&CopScanDetail>,
-            time: CopTimeDetail,
-            summary: Option<&FlashExecSummary>,
-        ) -> i64 {
-            if let Some(cop_stats) = self.cop_stats.get_mut(&plan_id) {
-                if let Some(scan) = scan {
-                    cop_stats.scan_detail.merge(scan);
-                }
-                cop_stats.time_detail.merge(&time);
-            } else {
-                let mut cop_stats = FlashCopRuntimeStats::new(store_type);
-                cop_stats.time_detail = time;
-                if let Some(scan) = scan {
-                    cop_stats.scan_detail = scan.clone();
-                }
-                self.cop_stats.insert(plan_id, cop_stats);
-            }
-            if let Some(summary) = summary {
-                if let Some(id) = Self::plan_id_from_summary(summary) {
-                    if id != plan_id {
-                        plan_id = id;
-                        self.cop_stats
-                            .entry(plan_id)
-                            .or_insert_with(|| FlashCopRuntimeStats::new(store_type));
-                    }
-                }
-                if let Some(cop_stats) = self.cop_stats.get_mut(&plan_id) {
-                    cop_stats.stats.merge_exec_summary(summary);
-                }
-                self.stmt_cop_stats.merge_exec_summary(summary);
-            }
-            plan_id
-        }
-
-        /// Go `RuntimeStatsColl.GetCopStats`.
-        fn get_cop_stats(&self, plan_id: i64) -> Option<&FlashCopRuntimeStats> {
-            self.cop_stats.get(&plan_id)
-        }
-
-        /// Go `RuntimeStatsColl.GetRootStats` (creates when missing; the Go
-        /// `require.NotNil` on its result collapses to the existence set).
-        fn get_root_stats(&mut self, plan_id: i64) {
-            self.root_stats.insert(plan_id);
-        }
-
-        /// Go `RuntimeStatsColl.ExistsRootStats`.
-        fn exists_root_stats(&self, plan_id: i64) -> bool {
-            self.root_stats.contains(&plan_id)
-        }
-
-        /// Go `RuntimeStatsColl.ExistsCopStats`.
-        fn exists_cop_stats(&self, plan_id: i64) -> bool {
-            self.cop_stats.contains_key(&plan_id)
-        }
-    }
 
     /// Go `mockExecutorExecutionSummaryForTiFlash` (execdetails_test.go).
     /// NOTE: as in Go, `pipeline_breaker_wait_time` feeds
@@ -1687,7 +1338,7 @@ mod tests {
         inner_zone_receive_bytes: u64,
         inter_zone_receive_bytes: u64,
         executor_id: &str,
-    ) -> FlashExecSummary {
+    ) -> ExecutorExecutionSummarySnapshot {
         let tiflash_scan_context = TiFlashScanContextSnapshot {
             dmfile_data_scanned_rows: dmfile_scanned_rows,
             dmfile_data_skipped_rows: dmfile_skipped_rows,
@@ -1712,13 +1363,15 @@ mod tests {
             inner_zone_receive_bytes,
             inter_zone_receive_bytes,
         };
-        FlashExecSummary {
+        ExecutorExecutionSummarySnapshot {
             time_processed_ns,
             num_produced_rows,
             num_iterations,
             concurrency,
             executor_id: executor_id.to_owned(),
-            detail_info: Some(FlashDetailInfo::Scan(tiflash_scan_context)),
+            detail_info: Some(ExecutionSummaryDetailInfo::TiflashScanContext(
+                tiflash_scan_context,
+            )),
             tiflash_wait_summary: Some(tiflash_wait_summary),
             tiflash_network_summary: Some(tiflash_network_summary),
         }
@@ -1752,7 +1405,7 @@ mod tests {
         total_segments: u64,
         total_deserialize_block_ms: u64,
         executor_id: &str,
-    ) -> FlashExecSummary {
+    ) -> ExecutorExecutionSummarySnapshot {
         let columnar_scan_context = ColumnarScanContextSnapshot {
             regions,
             read_tasks,
@@ -1774,27 +1427,29 @@ mod tests {
             total_segments,
             total_deserialize_block_ms,
         };
-        FlashExecSummary {
+        ExecutorExecutionSummarySnapshot {
             time_processed_ns,
             num_produced_rows,
             num_iterations,
             concurrency,
             executor_id: executor_id.to_owned(),
-            detail_info: Some(FlashDetailInfo::Columnar(columnar_scan_context)),
+            detail_info: Some(ExecutionSummaryDetailInfo::ColumnarScanContext(
+                columnar_scan_context,
+            )),
             tiflash_wait_summary: None,
             tiflash_network_summary: None,
         }
     }
 
-    /// Go `TestCopRuntimeStatsForTiFlash`, driven through the local harness
-    /// mirror of `runtime_stats.go`'s TiFlash arms (see the boundary note
-    /// above); the assertion literals are byte-exact copies of the Go
-    /// test's. `require.NotNil(copStats)` collapses to the direct field
-    /// access, and the extra scan/time-detail equality checks replace the
-    /// unread Go fields to pin `RecordCopStats`' merge-into-empty behavior.
+    /// Go `TestCopRuntimeStatsForTiFlash` (execdetails_test.go), driven
+    /// through [`crate::runtime_stats`]'s production TiFlash arms; the
+    /// assertion literals are byte-exact copies of the Go test's.
+    /// `require.NotNil(copStats)` collapses to the direct field access, and
+    /// the extra scan/time-detail equality checks replace the unread Go
+    /// fields to pin `RecordCopStats`' merge-into-empty behavior.
     #[test]
     fn test_cop_runtime_stats_for_tiflash() {
-        let mut stats = FlashRuntimeStatsColl::default();
+        let mut stats = RuntimeStatsColl::new(None);
         let table_scan_id = 1i64;
         let agg_id = 2i64;
         let table_reader_id = 3i64;
@@ -1944,32 +1599,36 @@ mod tests {
             "time:3ns, loops:3, threads:2, tiflash_wait: {minTSO_wait: 20ms, pipeline_breaker_wait: 5ms, pipeline_queue_wait: 10ms}, tiflash_network: {inner_zone_send_bytes: 11000, inter_zone_send_bytes: 22000, inner_zone_receive_bytes: 33000, inter_zone_receive_bytes: 44000}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, local_regions:10, remote_regions:4, tot_learner_read:1ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:40ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:8192, data_skipped_rows:0, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:15ms, tot_read:202ms, disagg_cache_hit_bytes: 100, disagg_cache_miss_bytes: 50}}",
             cop_stats.string()
         );
-        // Not in the Go test: pins the harness `RecordCopStats` merge (the
-        // Go fields are recorded but unread there).
+        // Not in the Go test: pins the `RecordCopStats` merge (the Go
+        // fields are recorded but unread there).
         assert_eq!(cop.scan_detail, scan_detail);
         assert_eq!(cop.time_detail, CopTimeDetail::default());
 
         let expected = "tiflash_task:{proc max:4ns, min:3ns, avg: 3ns, p80:4ns, p95:4ns, iters:7, tasks:2, threads:2}, tiflash_scan:{mvcc_input_rows:0, mvcc_input_bytes:0, mvcc_output_rows:0, local_regions:6, remote_regions:2, tot_learner_read:0ms, region_balance:none, delta_rows:0, delta_bytes:0, segments:0, stale_read_regions:0, tot_build_snapshot:50ms, tot_build_bitmap:0ms, tot_build_inputstream:0ms, min_local_stream:0ms, max_local_stream:0ms, dtfile:{data_scanned_rows:20192, data_skipped_rows:86000, mvcc_scanned_rows:0, mvcc_skipped_rows:0, lm_filter_scanned_rows:0, lm_filter_skipped_rows:0, tot_rs_index_check:100ms, tot_read:3000ms, disagg_cache_hit_bytes: 20, disagg_cache_miss_bytes: 0}}";
         assert_eq!(expected, stats.get_cop_stats(agg_id).unwrap().string());
 
-        stats.get_root_stats(table_reader_id);
+        let root_stats = stats.get_root_stats(table_reader_id);
+        let _ = root_stats;
         assert!(stats.exists_root_stats(table_reader_id));
 
-        let stmt_network_stats = stats.stmt_cop_stats.tiflash_network_stats.as_ref().unwrap();
+        let stmt_network_stats = stats
+            .get_stmt_cop_runtime_stats()
+            .tiflash_network_stats
+            .unwrap();
         assert_eq!(stmt_network_stats.inner_zone_send_bytes, 11000u64);
         assert_eq!(stmt_network_stats.inter_zone_send_bytes, 22000u64);
         assert_eq!(stmt_network_stats.inner_zone_receive_bytes, 33000u64);
         assert_eq!(stmt_network_stats.inter_zone_receive_bytes, 44000u64);
     }
 
-    /// Go `TestVectorSearchStats`, driven through the local harness mirror
-    /// (see the boundary note above); the assertion literal is a byte-exact
-    /// copy of the Go test's. Go's
+    /// Go `TestVectorSearchStats` (execdetails_test.go), driven through
+    /// [`crate::runtime_stats`]'s production TiFlash arms; the assertion
+    /// literal is a byte-exact copy of the Go test's. Go's
     /// `execSummary.DetailInfo.(*tipb.ExecutorExecutionSummary_TiflashScanContext)`
-    /// type assertion collapses to the harness enum match.
+    /// type assertion collapses to the enum match.
     #[test]
     fn test_vector_search_stats() {
-        let mut stats = FlashRuntimeStatsColl::default();
+        let mut stats = RuntimeStatsColl::new(None);
 
         let v = 1u64;
 
@@ -1977,7 +1636,9 @@ mod tests {
             0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, "",
         );
         match &mut exec_summary.detail_info {
-            Some(FlashDetailInfo::Scan(scan)) => scan.vector_idx_load_from_s3 = v,
+            Some(ExecutionSummaryDetailInfo::TiflashScanContext(scan)) => {
+                scan.vector_idx_load_from_s3 = v;
+            }
             _ => unreachable!("mock builds the scan variant"),
         }
         stats.record_one_cop_task(1, StoreType::TiFlash, &exec_summary);
@@ -1988,12 +1649,12 @@ mod tests {
         );
     }
 
-    /// Go `TestColumnarScanContextStats`, driven through the local harness
-    /// mirror (see the boundary note above); the assertion literals are
-    /// byte-exact copies of the Go test's.
+    /// Go `TestColumnarScanContextStats` (execdetails_test.go), driven
+    /// through [`crate::runtime_stats`]'s production TiFlash arms; the
+    /// assertion literals are byte-exact copies of the Go test's.
     #[test]
     fn test_columnar_scan_context_stats() {
-        let mut stats = FlashRuntimeStatsColl::default();
+        let mut stats = RuntimeStatsColl::new(None);
         let exec_summary = mock_executor_execution_summary_for_tiflash_columnar(
             1,
             10,
@@ -2057,7 +1718,7 @@ mod tests {
             s.string()
         );
 
-        let mut zero_stats = FlashRuntimeStatsColl::default();
+        let mut zero_stats = RuntimeStatsColl::new(None);
         let zero_exec_summary = mock_executor_execution_summary_for_tiflash_columnar(
             1,
             0,

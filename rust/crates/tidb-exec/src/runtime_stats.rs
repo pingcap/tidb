@@ -15,7 +15,8 @@
 //! SEED of Go `pkg/util/execdetails`, covering `runtime_stats.go` and
 //! `util.go`: the `Tp*` runtime-stats kind constants, the [`RuntimeStats`]
 //! interface, `basicCopRuntimeStats`/[`CopRuntimeStats`]/
-//! [`BasicRuntimeStats`]/[`RootRuntimeStats`]/[`RuntimeStatsColl`]/
+//! [`StmtCopRuntimeStats`]/[`BasicRuntimeStats`]/[`RootRuntimeStats`]/
+//! [`RuntimeStatsColl`]/
 //! [`ConcurrencyInfo`]/[`RuntimeStatsWithConcurrencyInfo`]/
 //! [`RuntimeStatsWithCommit`]/[`RuRuntimeStats`] with their byte-exact
 //! `String()` renderings, `getPlanIDFromExecutionSummary`, and `util.go`'s
@@ -27,9 +28,12 @@
 //!   only the fields the ported code reads (`TimeProcessedNs`,
 //!   `NumProducedRows`, `NumIterations`, `GetConcurrency()`,
 //!   `GetExecutorId()`), with proto optionals collapsed to Go's
-//!   zero-defaulted getter results. The `DetailInfo` payloads
-//!   (`TiflashScanContext`, `ColumnarScanContext`), `TiflashWaitSummary`,
-//!   and `TiflashNetworkSummary` stay open with `tiflash_stats.go` (below).
+//!   zero-defaulted getter results. The `DetailInfo` oneof narrows to
+//!   [`ExecutionSummaryDetailInfo`] (the `TiflashScanContext`/
+//!   `ColumnarScanContext` variants the ported arms read), and
+//!   `TiflashWaitSummary`/`TiflashNetworkSummary` ride along as the
+//!   [`crate::tiflash_stats`] snapshot narrowings, `Option`-wrapped like
+//!   Go's nil-checked getters.
 //! - client-go `util.ScanDetail` → [`CopScanDetail`]: composition over the
 //!   already-ported [`crate::exec_details::ScanDetail`] plus the
 //!   `ProcessedKeysSize` field only this module reads. Its `String()` is
@@ -68,19 +72,17 @@
 //! - `kv.StoreType` → [`StoreType`] with the `Name()` spellings from
 //!   `pkg/kv/kv.go`.
 //!
+//! The TiFlash arms — `basicCopRuntimeStats.tiflashStats` with the TiFlash
+//! sub-blocks of `basicCopRuntimeStats.String`/`Clone`/`Merge`/
+//! `mergeExecSummary` and `CopRuntimeStats.String`'s
+//! `printTiFlashSpecificInfo`, plus [`StmtCopRuntimeStats`] and
+//! `RuntimeStatsColl.stmtCopStats`/`GetStmtCopRuntimeStats` — are wired
+//! against the [`crate::tiflash_stats`] types. Their Go tests
+//! (`TestCopRuntimeStatsForTiFlash`, `TestVectorSearchStats`,
+//! `TestColumnarScanContextStats`) live in [`crate::tiflash_stats`]'s test
+//! module and drive these production types.
+//!
 //! Boundaries:
-//! - `tiflash_stats.go` is not ported: `basicCopRuntimeStats.tiflashStats`
-//!   (`TiflashStats` with its scan/columnar/wait/network summaries) and
-//!   every arm reading it — the TiFlash sub-blocks of
-//!   `basicCopRuntimeStats.String`/`Clone`/`Merge`/`mergeExecSummary` and of
-//!   `CopRuntimeStats.String` — are omitted (the `threads:` rendering,
-//!   whose counter lives in `runtime_stats.go` itself, is kept).
-//!   `StmtCopRuntimeStats` (whose only field is the TiFlash network
-//!   summary), its `mergeExecSummary`, and
-//!   `RuntimeStatsColl.GetStmtCopRuntimeStats`/`stmtCopStats` are omitted
-//!   with it. Go `TestCopRuntimeStatsForTiFlash`, `TestVectorSearchStats`,
-//!   and `TestColumnarScanContextStats` need those internals and are not
-//!   ported.
 //! - `util.go`'s `context.Context` plumbing has no Rust context here:
 //!   `ContextWithInitializedExecDetails`,
 //!   `ContextWithMissingExecDetailsInitialized`,
@@ -116,6 +118,10 @@ use crate::exec_details::{
     format_go_duration, format_seconds_3, CommitDetails, LockKeysDetails, ScanDetail, TimeDetail,
 };
 use crate::slow_log_format::{RuDetailsSnapshot, RuV2MetricsSnapshot, RuV2Weights};
+use crate::tiflash_stats::{
+    ColumnarScanContextSnapshot, TiFlashNetworkSummarySnapshot, TiFlashNetworkTrafficSummary,
+    TiFlashScanContextSnapshot, TiFlashWaitSummarySnapshot, TiflashStats,
+};
 
 /// Go `TpBasicRuntimeStats`: the tp for `BasicRuntimeStats`.
 pub const TP_BASIC_RUNTIME_STATS: i32 = 0;
@@ -522,10 +528,28 @@ fn format_bytes(num_bytes: i64) -> String {
     format!("{v:.decimal$} {unit_str}")
 }
 
+/// Go `tipb.ExecutorExecutionSummary.DetailInfo` oneof, narrowed to the
+/// two variants the ported TiFlash arms read (Go's
+/// `summary.GetTiflashScanContext()`/`summary.GetColumnarScanContext()`
+/// yield nil unless `DetailInfo` holds the matching variant).
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "narrowing of the Go oneof; the wide scan snapshot variant is \
+              intentional"
+)]
+pub enum ExecutionSummaryDetailInfo {
+    /// Go `*tipb.ExecutorExecutionSummary_TiflashScanContext`.
+    TiflashScanContext(TiFlashScanContextSnapshot),
+    /// Go `*tipb.ExecutorExecutionSummary_ColumnarScanContext`.
+    ColumnarScanContext(ColumnarScanContextSnapshot),
+}
+
 /// The fields this module reads off a `*tipb.ExecutorExecutionSummary`,
 /// with proto optionals collapsed to Go's zero-defaulted getter results.
-/// The TiFlash `DetailInfo`/wait/network payloads stay open with
-/// `tiflash_stats.go`.
+/// The TiFlash `DetailInfo`/wait/network payloads carry the
+/// [`crate::tiflash_stats`] snapshot narrowings, `Option`-wrapped like
+/// Go's nil-checked getters.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExecutorExecutionSummarySnapshot {
     /// Go `summary.TimeProcessedNs`.
@@ -538,6 +562,12 @@ pub struct ExecutorExecutionSummarySnapshot {
     pub concurrency: u64,
     /// Go `summary.GetExecutorId()` (`""` when unset).
     pub executor_id: String,
+    /// Go `summary.DetailInfo` (`None` when unset).
+    pub detail_info: Option<ExecutionSummaryDetailInfo>,
+    /// Go `summary.GetTiflashWaitSummary()` (`None` when unset).
+    pub tiflash_wait_summary: Option<TiFlashWaitSummarySnapshot>,
+    /// Go `summary.GetTiflashNetworkSummary()` (`None` when unset).
+    pub tiflash_network_summary: Option<TiFlashNetworkSummarySnapshot>,
 }
 
 /// client-go `util.ScanDetail` as `runtime_stats.go` reads it: the
@@ -726,9 +756,7 @@ pub trait RuntimeStats: Any {
 }
 
 /// Go `basicCopRuntimeStats` (package-private): the per-executor cop task
-/// accumulator. The `tiflashStats` field and every arm reading it stay open
-/// with `tiflash_stats.go`; the `threads` counter itself lives here and is
-/// kept.
+/// accumulator.
 #[derive(Clone, Debug, Default)]
 pub struct BasicCopRuntimeStats {
     /// Go `basicCopRuntimeStats.loop`.
@@ -739,12 +767,13 @@ pub struct BasicCopRuntimeStats {
     threads: i32,
     /// Go `basicCopRuntimeStats.procTimes`.
     proc_times: Percentile<Duration>,
+    /// Go `basicCopRuntimeStats.tiflashStats` ("executor extra infos").
+    tiflash_stats: Option<TiflashStats>,
 }
 
 impl BasicCopRuntimeStats {
     /// Go `basicCopRuntimeStats.mergeExecSummary`: merges an
-    /// `ExecutorExecutionSummary` directly. The TiFlash detail arms stay
-    /// open with `tiflash_stats.go`.
+    /// `ExecutorExecutionSummary` directly.
     #[expect(
         clippy::cast_possible_truncation,
         clippy::cast_possible_wrap,
@@ -756,11 +785,38 @@ impl BasicCopRuntimeStats {
         self.threads += summary.concurrency as i32;
         self.proc_times
             .add(Duration(summary.time_processed_ns as i64));
+        match &summary.detail_info {
+            Some(ExecutionSummaryDetailInfo::TiflashScanContext(tiflash_scan_context)) => {
+                self.tiflash_stats
+                    .get_or_insert_with(TiflashStats::default)
+                    .scan_context
+                    .merge_exec_summary(Some(tiflash_scan_context));
+            }
+            Some(ExecutionSummaryDetailInfo::ColumnarScanContext(columnar_scan_context)) => {
+                self.tiflash_stats
+                    .get_or_insert_with(TiflashStats::default)
+                    .columnar_scan_context
+                    .merge_exec_summary(Some(columnar_scan_context));
+            }
+            None => {}
+        }
+        if let Some(tiflash_wait_summary) = &summary.tiflash_wait_summary {
+            self.tiflash_stats
+                .get_or_insert_with(TiflashStats::default)
+                .wait_summary
+                .merge_exec_summary(Some(tiflash_wait_summary), summary.time_processed_ns);
+        }
+        if let Some(tiflash_network_summary) = &summary.tiflash_network_summary {
+            self.tiflash_stats
+                .get_or_insert_with(TiflashStats::default)
+                .network_summary
+                .merge_exec_summary(Some(tiflash_network_summary));
+        }
     }
 }
 
 impl RuntimeStats for BasicCopRuntimeStats {
-    /// Go `basicCopRuntimeStats.String` (minus the open TiFlash arms).
+    /// Go `basicCopRuntimeStats.String`.
     #[expect(
         clippy::cast_possible_truncation,
         reason = "Go time.Duration(float64) conversion"
@@ -773,6 +829,20 @@ impl RuntimeStats for BasicCopRuntimeStats {
         )));
         buf.push_str(", loops:");
         buf.push_str(&self.loops.to_string());
+        if let Some(tiflash_stats) = &self.tiflash_stats {
+            buf.push_str(", threads:");
+            buf.push_str(&self.threads.to_string());
+            if !tiflash_stats.wait_summary.can_be_ignored() {
+                buf.push_str(", ");
+                buf.push_str(&tiflash_stats.wait_summary.string());
+            }
+            if !tiflash_stats.network_summary.empty() {
+                buf.push_str(", ");
+                buf.push_str(&tiflash_stats.network_summary.string());
+            }
+            buf.push_str(", ");
+            buf.push_str(&tiflash_stats.scan_context.string());
+        }
         buf
     }
 
@@ -786,6 +856,21 @@ impl RuntimeStats for BasicCopRuntimeStats {
         if tmp.proc_times.size() > 0 {
             self.proc_times.merge_percentile(&tmp.proc_times);
         }
+        if let Some(tmp_tiflash_stats) = &tmp.tiflash_stats {
+            let tiflash_stats = self.tiflash_stats.get_or_insert_with(TiflashStats::default);
+            tiflash_stats
+                .scan_context
+                .merge(&tmp_tiflash_stats.scan_context);
+            tiflash_stats
+                .columnar_scan_context
+                .merge(&tmp_tiflash_stats.columnar_scan_context);
+            tiflash_stats
+                .wait_summary
+                .merge(&tmp_tiflash_stats.wait_summary);
+            tiflash_stats
+                .network_summary
+                .merge(&tmp_tiflash_stats.network_summary);
+        }
     }
 
     fn clone_box(&self) -> Box<dyn RuntimeStats> {
@@ -794,6 +879,7 @@ impl RuntimeStats for BasicCopRuntimeStats {
             rows: self.rows,
             threads: self.threads,
             proc_times: self.proc_times.clone(),
+            tiflash_stats: self.tiflash_stats.clone(),
         })
     }
 
@@ -806,15 +892,38 @@ impl RuntimeStats for BasicCopRuntimeStats {
     }
 }
 
+/// Go `StmtCopRuntimeStats`: stores the cop runtime stats of the total
+/// statement.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct StmtCopRuntimeStats {
+    /// Go `StmtCopRuntimeStats.TiflashNetworkStats`: stats all mpp tasks'
+    /// network traffic info, `None` if no any mpp tasks' network traffic.
+    pub tiflash_network_stats: Option<TiFlashNetworkTrafficSummary>,
+}
+
+impl StmtCopRuntimeStats {
+    /// Go `StmtCopRuntimeStats.mergeExecSummary`: merges an
+    /// `ExecutorExecutionSummary` into stmt cop runtime stats directly.
+    fn merge_exec_summary(&mut self, summary: &ExecutorExecutionSummarySnapshot) {
+        if let Some(tiflash_network_summary) = &summary.tiflash_network_summary {
+            self.tiflash_network_stats
+                .get_or_insert_with(TiFlashNetworkTrafficSummary::default)
+                .merge_exec_summary(Some(tiflash_network_summary));
+        }
+    }
+}
+
 /// Go `CopRuntimeStats`: collects cop tasks' execution info for one plan.
+/// The fields are Go-package-private; `pub(crate)` is the Go
+/// same-package-test seam for [`crate::tiflash_stats`]'s test module.
 #[derive(Clone, Debug, Default)]
 pub struct CopRuntimeStats {
     /// Go `CopRuntimeStats.stats`.
-    stats: BasicCopRuntimeStats,
+    pub(crate) stats: BasicCopRuntimeStats,
     /// Go `CopRuntimeStats.scanDetail`.
-    scan_detail: CopScanDetail,
+    pub(crate) scan_detail: CopScanDetail,
     /// Go `CopRuntimeStats.timeDetail`.
-    time_detail: CopTimeDetail,
+    pub(crate) time_detail: CopTimeDetail,
     /// Go `CopRuntimeStats.storeType`.
     store_type: StoreType,
 }
@@ -833,8 +942,7 @@ impl CopRuntimeStats {
         self.stats.proc_times.size as i32
     }
 
-    /// Go `CopRuntimeStats.String` (the TiFlash summary sub-blocks stay
-    /// open with `tiflash_stats.go`; the `threads:` rendering is kept).
+    /// Go `CopRuntimeStats.String`.
     #[must_use]
     #[expect(
         clippy::cast_possible_truncation,
@@ -846,13 +954,32 @@ impl CopRuntimeStats {
         let total_tasks = proc_times.size();
         let is_tiflash_cop = self.store_type == StoreType::TiFlash;
         let mut buf = String::with_capacity(16);
-        let tiflash_tail = |buf: &mut String, threads: i32| {
+        let print_tiflash_specific_info = |buf: &mut String| {
             if is_tiflash_cop {
                 buf.push_str(", ");
                 buf.push_str("threads:");
-                buf.push_str(&threads.to_string());
+                buf.push_str(&self.stats.threads.to_string());
+                buf.push('}');
+                if let Some(tiflash_stats) = &self.stats.tiflash_stats {
+                    if !tiflash_stats.wait_summary.can_be_ignored() {
+                        buf.push_str(", ");
+                        buf.push_str(&tiflash_stats.wait_summary.string());
+                    }
+                    if !tiflash_stats.network_summary.empty() {
+                        buf.push_str(", ");
+                        buf.push_str(&tiflash_stats.network_summary.string());
+                    }
+                    if !tiflash_stats.columnar_scan_context.empty() {
+                        buf.push_str(", ");
+                        buf.push_str(&tiflash_stats.columnar_scan_context.string());
+                    } else if !tiflash_stats.scan_context.empty() {
+                        buf.push_str(", ");
+                        buf.push_str(&tiflash_stats.scan_context.string());
+                    }
+                }
+            } else {
+                buf.push('}');
             }
-            buf.push('}');
         };
         if total_tasks == 1 {
             buf.push_str(self.store_type.name());
@@ -862,7 +989,7 @@ impl CopRuntimeStats {
             )));
             buf.push_str(", loops:");
             buf.push_str(&self.stats.loops.to_string());
-            tiflash_tail(&mut buf, self.stats.threads);
+            print_tiflash_specific_info(&mut buf);
         } else if total_tasks > 0 {
             buf.push_str(self.store_type.name());
             buf.push_str("_task:{proc max:");
@@ -889,7 +1016,7 @@ impl CopRuntimeStats {
             buf.push_str(&self.stats.loops.to_string());
             buf.push_str(", tasks:");
             buf.push_str(&total_tasks.to_string());
-            tiflash_tail(&mut buf, self.stats.threads);
+            print_tiflash_specific_info(&mut buf);
         }
         if !is_tiflash_cop {
             let detail = self.scan_detail.string();
@@ -1109,6 +1236,8 @@ pub struct RuntimeStatsColl {
     root_stats: HashMap<i64, RootRuntimeStats>,
     /// Go `RuntimeStatsColl.copStats`.
     cop_stats: HashMap<i64, CopRuntimeStats>,
+    /// Go `RuntimeStatsColl.stmtCopStats`.
+    stmt_cop_stats: StmtCopRuntimeStats,
 }
 
 impl RuntimeStatsColl {
@@ -1163,6 +1292,14 @@ impl RuntimeStatsColl {
         stats.basic.clone()
     }
 
+    /// Go `RuntimeStatsColl.GetStmtCopRuntimeStats`: gets execStat for a
+    /// executor. Go returns the struct by value; its network pointer
+    /// aliasing collapses to the `Copy` of the snapshot-side summary.
+    #[must_use]
+    pub fn get_stmt_cop_runtime_stats(&self) -> StmtCopRuntimeStats {
+        self.stmt_cop_stats
+    }
+
     /// Go `RuntimeStatsColl.GetRootStats`: the root stats for an executor,
     /// created when missing.
     pub fn get_root_stats(&mut self, plan_id: i64) -> &RootRuntimeStats {
@@ -1197,8 +1334,7 @@ impl RuntimeStatsColl {
 
     /// Go `RuntimeStatsColl.RecordCopStats`: records one cop task's
     /// execution detail, returning the (possibly executor-id-overridden)
-    /// plan id. The `stmtCopStats` TiFlash network merge stays open with
-    /// `tiflash_stats.go`.
+    /// plan id.
     pub fn record_cop_stats(
         &mut self,
         mut plan_id: i64,
@@ -1240,6 +1376,7 @@ impl RuntimeStatsColl {
             if let Some(cop_stats) = self.cop_stats.get_mut(&plan_id) {
                 cop_stats.stats.merge_exec_summary(summary);
             }
+            self.stmt_cop_stats.merge_exec_summary(summary);
         }
         plan_id
     }
@@ -1264,6 +1401,7 @@ impl RuntimeStatsColl {
                 ..CopRuntimeStats::default()
             });
         cop_stats.stats.merge_exec_summary(summary);
+        self.stmt_cop_stats.merge_exec_summary(summary);
         plan_id
     }
 
