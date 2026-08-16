@@ -420,6 +420,164 @@ impl RuntimeFilterMode {
     }
 }
 
+use crate::vars::SessionVars;
+use crate::varsutil::{tidb_opt_int64, tidb_opt_positive_int32};
+use tidb_vardef::tidb_vars as names;
+
+/// The stored text a Go `SetSession` closure would receive: the session's
+/// value where one is set, else the registry default. Every default here
+/// round-trips through its closure to the `NewSessionVars` field default, so
+/// deriving from stored-or-default text reproduces the field lifecycle.
+fn stored(vars: &SessionVars, name: &str) -> String {
+    vars.get_system(name).unwrap_or_default()
+}
+
+impl Concurrency {
+    /// Derives the typed concurrency state from a session's stored
+    /// variables, applying each Go `SetSession` closure body
+    /// (`newExecConcurrencySysVar`'s `tidbOptPositiveInt32(val,
+    /// ConcurrencyUnset)` for the deprecated per-operator variables, and the
+    /// dedicated closures for the executor/dist-SQL ones) to the stored
+    /// text. This is the observable contract of Go `SetSystemVar` followed
+    /// by the getters; the closure runs at set time there and at read time
+    /// here, over the same normalized text.
+    #[must_use]
+    pub fn from_vars(vars: &SessionVars) -> Self {
+        let unset = |name: &str| tidb_opt_positive_int32(&stored(vars, name), CONCURRENCY_UNSET);
+        Self {
+            index_lookup_concurrency: unset(names::TIDB_INDEX_LOOKUP_CONCURRENCY),
+            index_lookup_join_concurrency: unset(names::TIDB_INDEX_LOOKUP_JOIN_CONCURRENCY),
+            dist_sql_scan_concurrency: tidb_opt_positive_int32(
+                &stored(vars, names::TIDB_DIST_SQL_SCAN_CONCURRENCY),
+                defaults::DEF_DIST_SQL_SCAN_CONCURRENCY,
+            ),
+            analyze_dist_sql_scan_concurrency: tidb_opt_positive_int32(
+                &stored(vars, names::TIDB_ANALYZE_DIST_SQL_SCAN_CONCURRENCY),
+                defaults::DEF_ANALYZE_DIST_SQL_SCAN_CONCURRENCY,
+            ),
+            hash_join_concurrency: unset(names::TIDB_HASH_JOIN_CONCURRENCY),
+            projection_concurrency: unset(names::TIDB_PROJECTION_CONCURRENCY),
+            hash_agg_partial_concurrency: unset(names::TIDB_HASH_AGG_PARTIAL_CONCURRENCY),
+            hash_agg_final_concurrency: unset(names::TIDB_HASH_AGG_FINAL_CONCURRENCY),
+            window_concurrency: unset(names::TIDB_WINDOW_CONCURRENCY),
+            merge_join_concurrency: unset(names::TIDB_MERGE_JOIN_CONCURRENCY),
+            stream_agg_concurrency: unset(names::TIDB_STREAM_AGG_CONCURRENCY),
+            index_merge_intersection_concurrency: unset(
+                names::TIDB_INDEX_MERGE_INTERSECTION_CONCURRENCY,
+            ),
+            executor_concurrency: tidb_opt_positive_int32(
+                &stored(vars, names::TIDB_EXECUTOR_CONCURRENCY),
+                defaults::DEF_EXECUTOR_CONCURRENCY,
+            ),
+            source_addr: None,
+            idle_transaction_timeout: 0,
+        }
+    }
+}
+
+impl MemQuota {
+    /// Derives the memory quotas: Go's two `TidbOptInt64` closures over the
+    /// stored text.
+    #[must_use]
+    pub fn from_vars(vars: &SessionVars) -> Self {
+        Self {
+            mem_quota_query: tidb_opt_int64(
+                &stored(vars, names::TIDB_MEM_QUOTA_QUERY),
+                defaults::DEF_TIDB_MEM_QUOTA_QUERY,
+            ),
+            mem_quota_apply_cache: tidb_opt_int64(
+                &stored(vars, names::TIDB_MEM_QUOTA_APPLY_CACHE),
+                defaults::DEF_TIDB_MEM_QUOTA_APPLY_CACHE,
+            ),
+        }
+    }
+}
+
+impl BatchSize {
+    /// Derives the batch sizes: each field's Go closure is
+    /// `tidbOptPositiveInt32(val, its default)`.
+    #[must_use]
+    pub fn from_vars(vars: &SessionVars) -> Self {
+        let positive =
+            |name: &str, default: i64| tidb_opt_positive_int32(&stored(vars, name), default);
+        Self {
+            index_join_batch_size: positive(
+                names::TIDB_INDEX_JOIN_BATCH_SIZE,
+                defaults::DEF_INDEX_JOIN_BATCH_SIZE,
+            ),
+            index_lookup_size: positive(
+                names::TIDB_INDEX_LOOKUP_SIZE,
+                defaults::DEF_INDEX_LOOKUP_SIZE,
+            ),
+            init_chunk_size: positive(names::TIDB_INIT_CHUNK_SIZE, defaults::DEF_INIT_CHUNK_SIZE),
+            max_chunk_size: positive(names::TIDB_MAX_CHUNK_SIZE, defaults::DEF_MAX_CHUNK_SIZE),
+            min_paging_size: positive(names::TIDB_MIN_PAGING_SIZE, defaults::DEF_MIN_PAGING_SIZE),
+            max_paging_size: positive(names::TIDB_MAX_PAGING_SIZE, defaults::DEF_MAX_PAGING_SIZE),
+        }
+    }
+}
+
+#[cfg(test)]
+mod closure_tests {
+    use super::*;
+
+    // Go `TestConcurrencyVariables`, now through the real SET path: setting
+    // the variable changes the derived field; unset ones follow the raised
+    // executor concurrency.
+    #[test]
+    fn set_system_var_drives_the_derived_concurrency() {
+        let mut vars = SessionVars::new();
+
+        // Untouched session derives exactly NewSessionVars' defaults.
+        assert_eq!(Concurrency::from_vars(&vars), Concurrency::default());
+        assert_eq!(MemQuota::from_vars(&vars), MemQuota::default());
+        assert_eq!(BatchSize::from_vars(&vars), BatchSize::default());
+
+        vars.set_system(names::TIDB_WINDOW_CONCURRENCY, "2".to_owned())
+            .unwrap();
+        vars.set_system(names::TIDB_MERGE_JOIN_CONCURRENCY, "2".to_owned())
+            .unwrap();
+        vars.set_system(names::TIDB_STREAM_AGG_CONCURRENCY, "2".to_owned())
+            .unwrap();
+        let concurrency = Concurrency::from_vars(&vars);
+        assert_eq!(concurrency.window_concurrency(), 2);
+        assert_eq!(concurrency.merge_join_concurrency(), 2);
+        assert_eq!(concurrency.stream_agg_concurrency(), 2);
+
+        // Raising the executor concurrency moves the still-unset getters.
+        let raised = defaults::DEF_EXECUTOR_CONCURRENCY + 1;
+        vars.set_system(names::TIDB_EXECUTOR_CONCURRENCY, raised.to_string())
+            .unwrap();
+        let concurrency = Concurrency::from_vars(&vars);
+        assert_eq!(concurrency.executor_concurrency, raised);
+        assert_eq!(concurrency.index_lookup_concurrency(), raised);
+        assert_eq!(concurrency.index_lookup_join_concurrency(), raised);
+        assert_eq!(concurrency.hash_join_concurrency(), raised);
+        assert_eq!(concurrency.window_concurrency(), 2);
+        assert_eq!(concurrency.merge_join_concurrency(), 2);
+    }
+
+    // The mem-quota and batch-size closures parse the stored text with their
+    // Go defaults as the fallback.
+    #[test]
+    fn set_system_var_drives_quotas_and_batch_sizes() {
+        let mut vars = SessionVars::new();
+        vars.set_system(names::TIDB_MEM_QUOTA_QUERY, "2097152".to_owned())
+            .unwrap();
+        vars.set_system(names::TIDB_INDEX_JOIN_BATCH_SIZE, "123".to_owned())
+            .unwrap();
+        vars.set_system(names::TIDB_MAX_CHUNK_SIZE, "2048".to_owned())
+            .unwrap();
+
+        assert_eq!(MemQuota::from_vars(&vars).mem_quota_query, 2_097_152);
+        let batch = BatchSize::from_vars(&vars);
+        assert_eq!(batch.index_join_batch_size, 123);
+        assert_eq!(batch.max_chunk_size, 2048);
+        // Untouched fields keep their defaults.
+        assert_eq!(batch.index_lookup_size, defaults::DEF_INDEX_LOOKUP_SIZE);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
