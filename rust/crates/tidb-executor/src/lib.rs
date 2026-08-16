@@ -107,6 +107,7 @@ pub mod stmt_hints;
 pub mod storage;
 pub mod table_access;
 pub mod table_dual;
+pub mod tblctx;
 #[cfg(test)]
 mod tests_index_join;
 #[cfg(test)]
