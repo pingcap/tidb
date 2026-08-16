@@ -626,6 +626,14 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			require.Equal(t, *m, src)
 		}
 		{
+			backupPath := r.filePath + ".backup"
+			require.NoError(t, os.Rename(r.filePath, backupPath))
+			m, err := r.Load()
+			require.NoError(t, err)
+			require.Nil(t, m)
+			require.NoError(t, os.Rename(backupPath, r.filePath))
+		}
+		{
 			f, err := os.OpenFile(r.filePath, os.O_WRONLY, 0666)
 			require.NoError(t, err)
 			_, err = f.Write([]byte("??????"))
@@ -636,6 +644,16 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			m, err := r.Load()
 			require.Error(t, err)
 			require.True(t, m == nil)
+		}
+		{
+			failureRecorder := newMemStateRecorder(t.TempDir())
+			require.NoError(t, os.Mkdir(failureRecorder.filePath, 0750))
+			require.Error(t, failureRecorder.Store(&src))
+			entries, err := os.ReadDir(failureRecorder.baseDir)
+			require.NoError(t, err)
+			for _, entry := range entries {
+				require.False(t, strings.HasPrefix(entry.Name(), ".mem-state.") && strings.HasSuffix(entry.Name(), ".tmp"))
+			}
 		}
 	}
 	{ // test implicitly start global mem arbitrator

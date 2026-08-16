@@ -21,7 +21,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -554,70 +553,61 @@ func newMemStateRecorder(baseDir string) *runtimeMemStateRecorder {
 }
 
 func (m *runtimeMemStateRecorder) Store(memState *RuntimeMemStateV1) error {
-	if _, err := os.Stat(m.baseDir); err != nil && !os.IsExist(err) {
-		err = os.MkdirAll(m.baseDir, 0750)
-		if err != nil {
-			return fmt.Errorf("failed to create dir `%s`, err: %v", m.baseDir, err)
+	if err := os.MkdirAll(m.baseDir, 0750); err != nil {
+		return fmt.Errorf("failed to create dir %q: %w", m.baseDir, err)
+	}
+
+	data, err := json.Marshal(memState)
+	if err != nil {
+		return fmt.Errorf("failed to marshal mem state: %w", err)
+	}
+
+	f, err := os.CreateTemp(m.baseDir, ".mem-state.*.tmp")
+	if err != nil {
+		return fmt.Errorf("failed to create mem state temp file: %w", err)
+	}
+	tmpPath := f.Name()
+	closed := false
+	renamed := false
+	defer func() {
+		if !closed {
+			_ = f.Close()
 		}
+		if !renamed {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("failed to write mem state: %w", err)
 	}
-
-	buff, err := json.Marshal(memState)
-	if err != nil {
-		return err
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("failed to close mem state: %w", err)
 	}
+	closed = true
 
-	f, err := os.CreateTemp(m.baseDir, ".mem_state.*.json")
-
-	if err != nil {
-		return err
+	if err := os.Rename(tmpPath, m.filePath); err != nil {
+		return fmt.Errorf("failed to rename mem state: %w", err)
 	}
-
-	_, err = f.Write(buff)
-
-	f.Close()
-
-	if err != nil {
-		return err
-	}
-
-	return os.Rename(f.Name(), m.filePath)
+	renamed = true
+	return nil
 }
 
 func (m *runtimeMemStateRecorder) Load() (*RuntimeMemStateV1, error) {
-	entries, err := os.ReadDir(m.baseDir)
+	data, err := os.ReadFile(m.filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read dir `%s`: %w", m.baseDir, err)
-	}
-	var realPath string
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		if name := entry.Name(); len(name) >= len(memStateStoreNamePrefix) && name[:len(memStateStoreNamePrefix)] == memStateStoreNamePrefix {
-			suffix := name[len(memStateStoreNamePrefix):]
-			suffixes := strings.Split(suffix, ".")
-			if len(suffixes) < 2 {
-				continue
+		if os.IsNotExist(err) {
+			if _, statErr := os.Stat(m.baseDir); statErr != nil {
+				return nil, fmt.Errorf("failed to read dir %q: %w", m.baseDir, statErr)
 			}
-			if suffixes[0] == memStateVer { // v1
-				realPath = filepath.Join(m.baseDir, name)
-				break
-			}
+			return nil, nil
 		}
+		return nil, fmt.Errorf("failed to read file %q: %w", m.filePath, err)
 	}
 
-	if realPath == "" {
-		return nil, nil
+	memState := new(RuntimeMemStateV1)
+	if err := json.Unmarshal(data, memState); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal mem state from %q: %w", m.filePath, err)
 	}
-
-	buff, err := os.ReadFile(realPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file `%s`: %w", realPath, err)
-	}
-	memState := RuntimeMemStateV1{}
-	err = json.Unmarshal(buff, &memState)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal mem state: %w", err)
-	}
-	return &memState, nil
+	return memState, nil
 }
