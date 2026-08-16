@@ -214,7 +214,11 @@ pub use fmsketch_codec::{
 pub use gc_batch_count::gc_batch_count;
 pub use global_stats_layout::{new_global_stats_layout, GlobalStatsLayout};
 pub use global_stats_sql_index::to_sql_index;
-pub use global_topn::{merge_histogram_free_topn, GlobalTopNMerge};
+pub use global_topn::{
+    merge_global_stats_topn, merge_global_stats_topn_by_concurrency, merge_part_topn_2_global_topn,
+    GlobalTopNMerge, GlobalTopNMergeError, StatsWrapper, TopNMergeOptions, TopnStatsMergeResponse,
+    TopnStatsMergeWorker, MAX_PARTITION_MERGE_BATCH_SIZE,
+};
 pub use healthy_metrics::{
     healthy_bucket_configs, HealthyBucketConfig, HEALTHY_BUCKET_CONFIGS,
     STATS_HEALTHY_BUCKET_0_TO_50, STATS_HEALTHY_BUCKET_100_TO_100, STATS_HEALTHY_BUCKET_50_TO_55,

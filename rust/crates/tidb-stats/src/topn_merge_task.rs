@@ -12,12 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! TopN merge task range from `pkg/statistics/handle/globalstats/merge_worker.go`.
+//! Go `TopnStatsMergeTask` from
+//! `pkg/statistics/handle/globalstats/merge_worker.go`.
 //!
 //! The Go global-statistics worker passes a start/end partition range through
-//! a task channel. This leaf owns only that immutable range descriptor;
-//! channel scheduling, TopN/histogram values, cancellation, and merge logic
-//! remain external.
+//! a task channel. This module owns only that immutable range descriptor; the
+//! rest of `merge_worker.go` — the worker, its response, and `StatsWrapper` —
+//! is transcreated in [`crate::global_topn`], which also consumes this type.
 
 /// Identifies the half-open range of TopN partitions handled by one worker.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
