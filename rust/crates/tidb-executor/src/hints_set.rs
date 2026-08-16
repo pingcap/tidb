@@ -274,6 +274,148 @@ pub fn bind_hint<N: Visitable>(node: &mut N, hints_set: &HintsSet) {
     node.accept(&mut processor);
 }
 
+/// Go `RestoreTableOptimizerHint`: the hint's canonical text, lowercased.
+#[must_use]
+pub fn restore_table_optimizer_hint(hint: &Hint) -> String {
+    hint.restore().to_lowercase()
+}
+
+/// Go `RestoreIndexHint`: the index hint's canonical text, lowercased. The
+/// spelling is the one `TableRef`'s own restore writes.
+#[must_use]
+pub fn restore_index_hint(hint: &IndexHint) -> String {
+    use tidb_ast::{IndexHintKind, IndexHintScope};
+    let mut out = String::new();
+    out.push_str(match hint.kind {
+        IndexHintKind::Use => "USE INDEX",
+        IndexHintKind::Force => "FORCE INDEX",
+        IndexHintKind::Ignore => "IGNORE INDEX",
+    });
+    out.push_str(match hint.scope {
+        IndexHintScope::All => "",
+        IndexHintScope::Join => " FOR JOIN",
+        IndexHintScope::OrderBy => " FOR ORDER BY",
+        IndexHintScope::GroupBy => " FOR GROUP BY",
+    });
+    out.push_str(" (");
+    for (i, name) in hint.indexes.iter().enumerate() {
+        if i > 0 {
+            out.push_str(", ");
+        }
+        out.push('`');
+        out.push_str(name);
+        out.push('`');
+    }
+    out.push(')');
+    out.to_lowercase()
+}
+
+/// Go `RestoreOptimizerHints`: each hint restored once (first occurrence
+/// wins), joined with `, `.
+#[must_use]
+pub fn restore_optimizer_hints(hints: &[Hint]) -> String {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut restored = Vec::with_capacity(hints.len());
+    for hint in hints {
+        let text = restore_table_optimizer_hint(hint);
+        if seen.insert(text.clone()) {
+            restored.push(text);
+        }
+    }
+    restored.join(", ")
+}
+
+impl HintsSet {
+    /// Go `HintsSet.Restore`: every table hint then every index hint, in
+    /// block order, joined with `, `.
+    #[must_use]
+    pub fn restore(&self) -> String {
+        let mut restored = Vec::new();
+        for block in &self.table_hints {
+            for hint in block {
+                restored.push(restore_table_optimizer_hint(hint));
+            }
+        }
+        for block in &self.index_hints {
+            for hint in block {
+                restored.push(restore_index_hint(hint));
+            }
+        }
+        restored.join(", ")
+    }
+}
+
+/// Go's private `bindableChecker`.
+struct BindableChecker {
+    complete: bool,
+    reason: &'static str,
+    tables: std::collections::BTreeSet<String>,
+}
+
+impl Visitor for BindableChecker {
+    fn enter(&mut self, node: &mut dyn Any) -> bool {
+        if let Some(expr) = node.downcast_mut::<tidb_ast::Expr>() {
+            // Go stops at *ast.ExistsSubqueryExpr and *ast.SubqueryExpr; in
+            // this AST the subquery node is embedded per variant, so every
+            // variant that carries one is the same stop.
+            if matches!(
+                expr,
+                tidb_ast::Expr::Exists { .. }
+                    | tidb_ast::Expr::Subquery(_)
+                    | tidb_ast::Expr::InSubquery { .. }
+                    | tidb_ast::Expr::CompareSubquery { .. }
+            ) {
+                self.complete = false;
+                self.reason = "auto-generated hint for queries with sub queries might not be complete, the plan might change even after creating this binding";
+                return true;
+            }
+        } else if let Some(table) = node.downcast_mut::<tidb_ast::TableRef>() {
+            // Faithful to the source's own quirk: membership is checked
+            // against the SCHEMA name, but what is inserted is the TABLE
+            // name.
+            let (schema, name) = match table.name.as_slice() {
+                [schema, name] => (schema.clone(), name.clone()),
+                [name] => (String::new(), name.clone()),
+                _ => (String::new(), String::new()),
+            };
+            if !self.tables.contains(&schema) {
+                self.tables.insert(name);
+            }
+            if self.tables.len() >= 3 {
+                self.complete = false;
+                self.reason = "auto-generated hint for queries with more than 3 table join might not be complete, the plan might change even after creating this binding";
+                return true;
+            }
+        }
+        false
+    }
+
+    fn leave(&mut self, _node: &mut dyn Any) -> bool {
+        self.complete
+    }
+}
+
+/// Go `CheckBindingFromHistoryComplete`: whether an auto-generated binding's
+/// AST and hint text are complete enough to bind.
+pub fn check_binding_from_history_complete<N: Visitable>(
+    node: &mut N,
+    hint_str: &str,
+) -> (bool, &'static str) {
+    if hint_str.contains("tiflash") {
+        return (
+            false,
+            "auto-generated hint for queries accessing TiFlash might not be complete, the plan might change even after creating this binding",
+        );
+    }
+    let mut checker = BindableChecker {
+        complete: true,
+        reason: "",
+        tables: std::collections::BTreeSet::new(),
+    };
+    node.accept(&mut checker);
+    (checker.complete, checker.reason)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,5 +490,48 @@ mod tests {
             NodeType::Select
         );
         assert_eq!(node_type_for_stmt(&1_i64), NodeType::Invalid);
+    }
+    // Go `RestoreOptimizerHints` deduplicates on restored text; the restore
+    // family lowercases.
+    #[test]
+    fn restores_lowercase_and_deduplicate() {
+        let mut stmt = select("SELECT /*+ HASH_JOIN(t1), HASH_JOIN(t1), MERGE_JOIN(t2) */ 1");
+        let set = collect_hint(&mut stmt);
+        let hints = &set.table_hints[0];
+        assert_eq!(restore_table_optimizer_hint(&hints[0]), "hash_join(`t1`)");
+        assert_eq!(
+            restore_optimizer_hints(hints),
+            "hash_join(`t1`), merge_join(`t2`)"
+        );
+
+        let mut indexed = select("SELECT * FROM t1 USE INDEX FOR ORDER BY (Idx_A)");
+        let indexed_set = collect_hint(&mut indexed);
+        let rendered = indexed_set.restore();
+        assert_eq!(rendered, "use index for order by (`idx_a`)");
+    }
+
+    // Go `CheckBindingFromHistoryComplete`: tiflash text, subqueries, and
+    // three-table joins each make a binding incomplete.
+    #[test]
+    fn binding_completeness_checks() {
+        let mut simple = select("SELECT * FROM t1, t2 WHERE t1.a = t2.a");
+        let (complete, reason) =
+            check_binding_from_history_complete(&mut simple, "hash_join(`t1`)");
+        assert!(complete, "{reason}");
+
+        let (complete, reason) =
+            check_binding_from_history_complete(&mut simple, "read_from_storage(tiflash[`t1`])");
+        assert!(!complete);
+        assert!(reason.contains("TiFlash"));
+
+        let mut subquery = select("SELECT * FROM t1 WHERE EXISTS (SELECT 1 FROM t2)");
+        let (complete, reason) = check_binding_from_history_complete(&mut subquery, "");
+        assert!(!complete);
+        assert!(reason.contains("sub queries"));
+
+        let mut wide = select("SELECT * FROM t1, t2, t3 WHERE t1.a = t2.a AND t2.b = t3.b");
+        let (complete, reason) = check_binding_from_history_complete(&mut wide, "");
+        assert!(!complete);
+        assert!(reason.contains("more than 3 table join"));
     }
 }

@@ -366,6 +366,14 @@ fn restore_leading_elements(out: &mut String, elements: &[LeadingElement]) {
 }
 
 impl Hint {
+    /// The hint's canonical SQL text (Go `TableOptimizerHint.Restore`).
+    #[must_use]
+    pub fn restore(&self) -> String {
+        let mut out = String::new();
+        self.restore_into(&mut out);
+        out
+    }
+
     pub(crate) fn restore_into(&self, out: &mut String) {
         // `ReadFromStorage` bypasses the generic `NAME(...)` wrapper
         // below entirely — see its own doc for why one written
