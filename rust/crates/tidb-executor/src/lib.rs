@@ -73,6 +73,7 @@ pub mod hash_agg;
 #[cfg(test)]
 mod hash_agg_spill_tests;
 mod hash_join;
+pub mod hints_set;
 mod index_hints;
 mod index_prefix_cut;
 mod index_range;
