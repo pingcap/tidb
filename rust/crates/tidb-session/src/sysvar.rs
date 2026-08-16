@@ -671,6 +671,220 @@ impl SysVarDef {
     }
 }
 
+/// The wire flags Go `GetNativeValType` returns alongside the datum. Go
+/// spells them as `mysql.UnsignedFlag | mysql.BinaryFlag` numeric masks; the
+/// two facts are carried by name here.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct NativeValFlags {
+    /// Go `mysql.UnsignedFlag`.
+    pub unsigned: bool,
+    /// Go `mysql.BinaryFlag`.
+    pub binary: bool,
+}
+
+impl SysVarDef {
+    /// Go `SysVar.GetNativeValType`: the datum domain a `@@var` read reports,
+    /// decided by the registry's `Type`, never the variable's name.
+    ///
+    /// `TypeUnsigned` parses the stored string as u64 (unparsable becomes 0)
+    /// and reports `LONGLONG UNSIGNED BINARY`; `TypeBool` reports the signed
+    /// `1`/`0` of `TiDBOptOn` as `LONGLONG BINARY`; everything else stays the
+    /// stored string as `VAR_STRING` with no flags.
+    #[must_use]
+    pub fn native_val_type(
+        &self,
+        val: &str,
+    ) -> (
+        tidb_datatype::Datum,
+        tidb_datatype::FieldTypeCode,
+        NativeValFlags,
+    ) {
+        use tidb_datatype::{Datum, FieldTypeCode};
+        match self.var_type {
+            VarType::Unsigned => (
+                Datum::UInt(val.parse::<u64>().unwrap_or(0)),
+                FieldTypeCode::LongLong,
+                NativeValFlags {
+                    unsigned: true,
+                    binary: true,
+                },
+            ),
+            VarType::Bool => {
+                // Go `TiDBOptOn`: "ON" case-folded, or exactly "1".
+                let on = val.eq_ignore_ascii_case("ON") || val == "1";
+                (
+                    Datum::Int(i64::from(on)),
+                    FieldTypeCode::LongLong,
+                    NativeValFlags {
+                        unsigned: false,
+                        binary: true,
+                    },
+                )
+            }
+            _ => (
+                Datum::new_string(val.as_bytes().to_vec()),
+                FieldTypeCode::VarString,
+                NativeValFlags::default(),
+            ),
+        }
+    }
+
+    /// Go `SysVar.SkipSysvarCache`: the GC variables and the external
+    /// timestamp live in TiKV-backed tables, so peers must not re-execute
+    /// them through the sysvar cache.
+    #[must_use]
+    pub fn skip_sysvar_cache(&self) -> bool {
+        matches!(
+            self.name,
+            tidb_vardef::tidb_vars::TIDB_GC_ENABLE
+                | tidb_vardef::tidb_vars::TIDB_GC_RUN_INTERVAL
+                | tidb_vardef::tidb_vars::TIDB_GC_LIFETIME
+                | tidb_vardef::tidb_vars::TIDB_GC_CONCURRENCY
+                | tidb_vardef::tidb_vars::TIDB_GC_SCAN_LOCK_MODE
+                | tidb_vardef::tidb_vars::TIDB_EXTERNAL_TS
+        )
+    }
+}
+
+/// The variables `sysvar.go` marks `Depended: true` — other variables refuse
+/// to load correctly until these are set, so session-state decode orders them
+/// first. The generated catalog does not carry the flag, so the source's four
+/// carriers are pinned here.
+pub const DEPENDED_SYSVARS: [&str; 4] = [
+    tidb_vardef::tidb_vars::TIDB_ENABLE_LOCAL_TXN,
+    tidb_vardef::tidb_vars::TIDB_ENABLE_HISTORICAL_STATS,
+    tidb_vardef::tidb_vars::TIDB_ALLOW_MPP_EXECUTION,
+    tidb_vardef::tidb_vars::TIDB_ENABLE_NOOP_FUNCS,
+];
+
+/// Go `OrderByDependency`: the depended variables move to the front; unknown
+/// names count as not depended. Go iterates a map, so order within each group
+/// is unspecified; input order is preserved here, a determinism refinement.
+#[must_use]
+pub fn order_by_dependency<S: AsRef<str>>(names: &[S]) -> Vec<String> {
+    let mut depended = Vec::new();
+    let mut not_depended = Vec::new();
+    for name in names {
+        let name = name.as_ref();
+        let is_depended = get_sys_var(name).is_some() && DEPENDED_SYSVARS.contains(&name);
+        if is_depended {
+            depended.push(name.to_owned());
+        } else {
+            not_depended.push(name.to_owned());
+        }
+    }
+    depended.extend(not_depended);
+    depended
+}
+
+#[cfg(test)]
+mod variable_core_tests {
+    use super::*;
+    use tidb_datatype::{Datum, FieldTypeCode};
+
+    fn sysvar_of_type(var_type: VarType) -> SysVarDef {
+        SysVarDef {
+            var_type,
+            ..SysVarDef::PLACEHOLDER
+        }
+    }
+
+    // Go `TestGetNativeValType`.
+    #[test]
+    fn native_val_types_follow_the_registry_type() {
+        let boolean = sysvar_of_type(VarType::Bool);
+        let (val, code, flags) = boolean.native_val_type("ON");
+        assert_eq!(val, Datum::Int(1));
+        assert_eq!(code, FieldTypeCode::LongLong);
+        assert_eq!(
+            flags,
+            NativeValFlags {
+                unsigned: false,
+                binary: true
+            }
+        );
+        assert_eq!(boolean.native_val_type("OFF").0, Datum::Int(0));
+        assert_eq!(boolean.native_val_type("bogus").0, Datum::Int(0));
+        assert_eq!(boolean.native_val_type("1").0, Datum::Int(1));
+
+        let unsigned = sysvar_of_type(VarType::Unsigned);
+        let (val, code, flags) = unsigned.native_val_type("1234");
+        assert_eq!(val, Datum::UInt(1234));
+        assert_eq!(code, FieldTypeCode::LongLong);
+        assert_eq!(
+            flags,
+            NativeValFlags {
+                unsigned: true,
+                binary: true
+            }
+        );
+        // Unparsable converts to zero.
+        assert_eq!(unsigned.native_val_type("bogus").0, Datum::UInt(0));
+
+        let string = sysvar_of_type(VarType::Str);
+        let (val, code, flags) = string.native_val_type("1234");
+        assert_eq!(val, Datum::new_string(b"1234".to_vec()));
+        assert_eq!(code, FieldTypeCode::VarString);
+        assert_eq!(flags, NativeValFlags::default());
+    }
+
+    // Go `TestSkipSysvarCache`.
+    #[test]
+    fn only_the_tikv_backed_variables_skip_the_cache() {
+        for name in [
+            "tidb_gc_enable",
+            "tidb_gc_run_interval",
+            "tidb_gc_life_time",
+            "tidb_gc_concurrency",
+            "tidb_gc_scan_lock_mode",
+            "tidb_external_ts",
+        ] {
+            let sv = get_sys_var(name).unwrap_or_else(|| panic!("{name} in catalog"));
+            assert!(sv.skip_sysvar_cache(), "{name}");
+        }
+        assert!(!get_sys_var("require_secure_transport")
+            .unwrap()
+            .skip_sysvar_cache());
+        assert!(!get_sys_var("tidb_enable_async_commit")
+            .unwrap()
+            .skip_sysvar_cache());
+    }
+
+    // Go `TestOrderByDependency`: depended names come first, unknown names
+    // survive as not depended.
+    #[test]
+    fn depended_variables_order_first() {
+        let names = [
+            "unknown",
+            "tx_read_only",
+            "sql_auto_is_null",
+            "tidb_enable_noop_functions",
+            "tidb_enforce_mpp",
+            "tidb_allow_mpp",
+            "tidb_enable_local_txn",
+            "tidb_enable_plan_replayer_continuous_capture",
+            "tidb_enable_historical_stats",
+        ];
+        let ordered = order_by_dependency(&names);
+        let index = |name: &str| {
+            ordered
+                .iter()
+                .position(|n| n == name)
+                .unwrap_or_else(|| panic!("{name}"))
+        };
+
+        assert!(index("tx_read_only") > index("tidb_enable_noop_functions"));
+        assert!(index("sql_auto_is_null") > index("tidb_enable_noop_functions"));
+        assert!(index("tidb_enforce_mpp") > index("tidb_allow_mpp"));
+        assert!(
+            index("tidb_enable_plan_replayer_continuous_capture")
+                > index("tidb_enable_historical_stats")
+        );
+        assert!(ordered.contains(&"unknown".to_owned()));
+        assert_eq!(ordered.len(), names.len());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
