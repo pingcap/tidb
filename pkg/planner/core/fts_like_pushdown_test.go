@@ -133,3 +133,31 @@ func TestFTSLocalMatchPreFilterNullColumn(t *testing.T) {
 	tk.MustQuery("select id from articles where match(body) against('+storage -relational' in boolean mode) order by id").
 		Check(testkit.Rows("3"))
 }
+
+// TestFTSLocalMatchPreFilterSkipsBinaryColumn covers a case where narrowing
+// would be wrong. LOWER is a no-op on a binary string, so a lowercased token
+// would not match mixed-case content and the pre-filter would discard rows the
+// MATCH accepts. The query must fall back to evaluating every row in TiDB.
+func TestFTSLocalMatchPreFilterSkipsBinaryColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_local_match_against = ON")
+	tk.MustExec("create table b (id int primary key, body varbinary(255))")
+	tk.MustExec("insert into b values (1, 'Distributed SQL'), (2, 'distributed sql')")
+
+	// Both rows match: the analyzer lowercases the document as well as the query.
+	tk.MustQuery("select id from b where match(body) against('+distributed' in boolean mode) order by id").
+		Check(testkit.Rows("1", "2"))
+
+	var plan strings.Builder
+	for _, row := range tk.MustQuery(
+		"explain format='brief' select id from b where match(body) against('+distributed' in boolean mode)").Rows() {
+		for _, cell := range row {
+			plan.WriteString(cell.(string) + " ")
+		}
+		plan.WriteString("\n")
+	}
+	require.NotContains(t, strings.ToLower(plan.String()), "like",
+		"no pre-filter may be pushed for a binary column:\n"+plan.String())
+}

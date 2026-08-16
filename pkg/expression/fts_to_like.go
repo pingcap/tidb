@@ -484,7 +484,15 @@ func BuildFTSLocalMatchPreFilters(
 	if !ok {
 		return nil, nil
 	}
-	lowered, err := NewFunction(ctx, ast.Lower, column.GetType(ctx.GetEvalCtx()).Clone(), column)
+	// LOWER is a no-op on a binary string, so the lowercased tokens the
+	// analyzer produces would not match mixed-case content and the pre-filter
+	// would discard rows the MATCH accepts. Skip it rather than narrow
+	// incorrectly; the MATCH still evaluates every row, just in TiDB.
+	colTp := column.GetType(ctx.GetEvalCtx())
+	if types.IsBinaryStr(colTp) {
+		return nil, nil
+	}
+	lowered, err := NewFunction(ctx, ast.Lower, colTp.Clone(), column)
 	if err != nil {
 		return nil, err
 	}
