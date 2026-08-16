@@ -2325,6 +2325,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-dxf"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "tidb-error"
 version = "0.0.0"
 dependencies = [
@@ -2723,6 +2732,10 @@ dependencies = [
  "tokio-stream",
  "tonic",
 ]
+
+[[package]]
+name = "tidb-unistore"
+version = "0.0.0"
 
 [[package]]
 name = "tidb-util"
