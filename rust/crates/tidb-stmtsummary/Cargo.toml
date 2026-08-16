@@ -1,0 +1,17 @@
+[package]
+name = "tidb-stmtsummary"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/util/stmtsummary (v1): the statement-summary LRU, its evicted-digest rollup, and the reader that turns both into information_schema rows."
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+tidb-exec = { path = "../tidb-exec" }
+tidb-kvcache = { path = "../tidb-kvcache" }
+tidb-util = { path = "../tidb-util" }

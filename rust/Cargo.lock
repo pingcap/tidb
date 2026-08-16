@@ -2689,6 +2689,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-stmtsummary"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "tidb-exec",
+ "tidb-kvcache",
+ "tidb-util",
+]
+
+[[package]]
 name = "tidb-tablecodec"
 version = "0.0.0"
 dependencies = [
