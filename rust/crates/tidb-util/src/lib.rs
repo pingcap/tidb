@@ -44,6 +44,7 @@ pub mod kvcache;
 pub mod layered_io;
 pub mod logutil;
 pub mod mathutil;
+pub mod membuf;
 pub mod memory;
 pub mod mvmap;
 pub use tidb_naming as naming;
