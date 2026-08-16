@@ -575,6 +575,18 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	return copStats
 }
 
+// GetCopScanDetail returns a value snapshot of the scan detail collected for
+// the cop plan identified by planID.
+func (e *RuntimeStatsColl) GetCopScanDetail(planID int) (util.ScanDetail, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	copStats, ok := e.copStats[planID]
+	if !ok {
+		return util.ScanDetail{}, false
+	}
+	return copStats.scanDetail, true
+}
+
 // GetCopCountAndRows returns the total cop-tasks count and total rows of all cop-tasks.
 func (e *RuntimeStatsColl) GetCopCountAndRows(planID int) (int32, int64) {
 	e.mu.Lock()

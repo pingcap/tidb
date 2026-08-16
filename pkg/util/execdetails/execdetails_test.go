@@ -392,6 +392,15 @@ func TestCopRuntimeStats(t *testing.T) {
 	}
 	stats.RecordCopStats(tableScanID, kv.TiKV, scanDetail, util.TimeDetail{}, nil, nil)
 	require.True(t, stats.ExistsCopStats(tableScanID))
+	scanSnapshot, ok := stats.GetCopScanDetail(tableScanID)
+	require.True(t, ok)
+	require.Equal(t, *scanDetail, scanSnapshot)
+	scanSnapshot.TotalKeys = 0
+	scanSnapshot, ok = stats.GetCopScanDetail(tableScanID)
+	require.True(t, ok)
+	require.Equal(t, int64(15), scanSnapshot.TotalKeys)
+	_, ok = stats.GetCopScanDetail(999)
+	require.False(t, ok)
 
 	cop := stats.GetCopStats(tableScanID)
 	expected := "tikv_task:{proc max:2ns, min:1ns, avg: 1ns, p80:2ns, p95:2ns, iters:3, tasks:2}, " +

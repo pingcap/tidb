@@ -231,8 +231,8 @@ func TestManagerMethodsSetDeadlineAndMetrics(t *testing.T) {
 			},
 		},
 		{
-			name: "RegisterTTLTask",
-			call: func(m *manager) error { return m.RegisterTTLTask(context.Background(), 11, true) },
+			name: "RegisterTTLTableInfo",
+			call: func(m *manager) error { return m.RegisterTTLTableInfo(context.Background(), 11, true) },
 			check: func(cli *fakeClient) {
 				require.Equal(t, "RegisterTTLTask", cli.call)
 				require.Equal(t, int64(11), cli.tableID)
@@ -301,7 +301,7 @@ func TestManagerMethodErrorPropagation(t *testing.T) {
 	boom := errors.New("boom")
 	cli := &fakeClient{err: boom}
 	mgr := &manager{cli: cli}
-	require.ErrorIs(t, mgr.RegisterTTLTask(context.Background(), 1, true), boom)
+	require.ErrorIs(t, mgr.RegisterTTLTableInfo(context.Background(), 1, true), boom)
 }
 
 func requireLabels(t *testing.T, cli *fakeClient, workerType, action string) {

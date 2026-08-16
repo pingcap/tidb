@@ -22,6 +22,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/kvproto/pkg/apipb"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -201,6 +202,10 @@ func (c *mockPDServiceDiscovery) Close() {}
 func (c *mockPDServiceDiscovery) GetClusterID() uint64 { return 0 }
 
 func (c *mockPDServiceDiscovery) GetKeyspaceID() uint32 { return 0 }
+
+func (c *mockPDServiceDiscovery) GetKeyspaceIdentity() *apipb.KeyspaceIdentity { return nil }
+
+func (c *mockPDServiceDiscovery) SetKeyspaceIdentity(*apipb.KeyspaceIdentity) {}
 
 func (c *mockPDServiceDiscovery) SetKeyspaceID(uint32) {}
 
