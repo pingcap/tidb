@@ -796,11 +796,10 @@ mod tests {
     use tidb_log::Value;
 
     // The Go test binary runs these sequentially; the global-logger state
-    // demands the same here.
-    static GLOBAL_TEST_GUARD: Mutex<()> = Mutex::new(());
-    fn guard() -> std::sync::MutexGuard<'static, ()> {
-        GLOBAL_TEST_GUARD.lock().unwrap_or_else(|e| e.into_inner())
-    }
+    // demands the same here. The guard is crate-wide because any test that
+    // logs through the global logger can land a line in the file these tests
+    // read back.
+    use crate::global_logger_test_guard as guard;
 
     // Log-line patterns from Go main_test.go (adapted: the caller is a
     // Rust source file).

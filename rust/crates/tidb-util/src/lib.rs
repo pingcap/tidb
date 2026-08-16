@@ -18,9 +18,24 @@
 //! added only when that package's production files, tests, and support
 //! obligations move together.
 
+/// Serializes tests that touch the process-wide logger.
+///
+/// `logutil`'s tests point the global logger at a file and then read that file
+/// back, so any test that logs through the global logger — the ported code
+/// does, wherever Go called `log.Info` — must not run alongside them.
+#[cfg(test)]
+pub(crate) fn global_logger_test_guard() -> std::sync::MutexGuard<'static, ()> {
+    static GLOBAL_TEST_GUARD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    GLOBAL_TEST_GUARD
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
 pub mod arena;
 pub mod backoff;
 pub mod bitmap;
+pub mod br_key_utils;
+pub mod br_summary;
 pub mod cgroup;
 pub mod channel;
 pub mod checksum;
@@ -45,6 +60,7 @@ pub mod kvcache;
 pub mod layered_io;
 pub mod lightning_verification;
 pub mod logutil;
+pub mod master_key;
 pub mod mathutil;
 pub mod membuf;
 pub mod memory;
