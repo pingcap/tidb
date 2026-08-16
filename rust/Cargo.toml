@@ -38,6 +38,8 @@ members = [
     "crates/tidb-expr",
     "crates/tidb-schemacmp",
     "crates/tidb-placement",
+    "crates/tidb-timer",
+    "crates/tidb-ttl",
     "crates/tidb-exec",
     "crates/tidb-server",
     "crates/tidb-session",

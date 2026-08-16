@@ -2685,6 +2685,29 @@ name = "tidb-tikvutil"
 version = "0.0.0"
 
 [[package]]
+name = "tidb-timer"
+version = "0.0.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "getrandom 0.3.4",
+ "tidb-log",
+ "tidb-parser",
+ "tidb-util",
+]
+
+[[package]]
+name = "tidb-ttl"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-util",
+]
+
+[[package]]
 name = "tidb-txnkv"
 version = "0.0.0"
 dependencies = [

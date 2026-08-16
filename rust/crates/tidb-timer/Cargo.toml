@@ -1,0 +1,19 @@
+[package]
+name = "tidb-timer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/timer/api: timer records, schedule policies, store and client."
+
+[lints]
+workspace = true
+
+[dependencies]
+chrono.workspace = true
+chrono-tz.workspace = true
+getrandom.workspace = true
+tidb-log = { path = "../tidb-log" }
+tidb-parser = { path = "../tidb-parser" }
+tidb-util = { path = "../tidb-util" }
