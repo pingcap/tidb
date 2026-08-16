@@ -13,7 +13,8 @@
 // limitations under the License.
 
 //! SEED of Go `pkg/expression/exprctx`, covering `optional.go` in full plus
-//! `context.go`'s plan-column-ID allocator.
+//! `context.go`'s plan-column-ID allocator and `param.go`'s
+//! `ErrParamIndexExceedParamCounts`.
 //!
 //! This is a seed, not a completed package. `context.go`'s `EvalContext` and
 //! `BuildContext` umbrella interfaces and the `CtxWithHandleTruncateErrLevel`
@@ -32,6 +33,10 @@
 //! until the umbrella interfaces above land here.
 
 use std::sync::atomic::{AtomicI64, Ordering};
+
+/// Go `ErrParamIndexExceedParamCounts` (`param.go`), an `errors.New` value
+/// whose message is its whole contract.
+pub const ERR_PARAM_INDEX_EXCEED_PARAM_COUNTS: &str = "Param index exceed param counts";
 
 /// Go `OptionalEvalPropKey`: the key of one optional evaluation property.
 ///

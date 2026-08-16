@@ -354,6 +354,7 @@ pub mod expr_collation;
 pub mod exprctx;
 pub mod expression;
 pub mod expropt;
+pub mod exprstatic;
 mod field_name;
 mod func;
 mod grouping;

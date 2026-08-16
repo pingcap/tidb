@@ -26,11 +26,8 @@
 //!   (`GetEvalCtx`, `GetDefaultCollationForUTF8MB4`, `GetCharsetInfo`,
 //!   `SQLMode`, `AppendWarning`, `AppendNote`). The crate-local
 //!   `exprctx` module is still a seed without these interfaces.
-//! - `// boundary:` Go `pkg/expression/exprstatic.ExprContext` — modeled as
-//!   [`StaticExprContext`], a snapshot providing only the defaults metabuild
-//!   observes (default charset/collation, default SQL mode, the
-//!   `WithSQLMode` override used by `NewNonStrictContext`, and a
-//!   `StaticWarnHandler`-backed warning sink).
+//!   Both are implemented for the real [`crate::exprstatic`] contexts, which
+//!   is what Go's `NewContext`/`NewNonStrictContext` default to.
 //! - `// boundary:` Go `pkg/infoschema/context.MetaOnlyInfoSchema` — modeled
 //!   as the local [`MetaOnlyInfoSchema`] trait; metabuild only stores and
 //!   returns the value, so a single identifying method suffices.
@@ -91,88 +88,31 @@ pub trait MetaOnlyInfoSchema {
     fn schema_meta_version(&self) -> i64;
 }
 
-/// boundary: Go `pkg/expression/exprstatic.ExprContext` — the static
-/// expression context metabuild falls back to, narrowed to the defaults it
-/// observes.
-///
-/// Defaults mirror `exprstatic.NewExprContext()`: the default
-/// charset/collation pair, `mysql.GetSQLMode(mysql.DefaultSQLMode)` as the
-/// SQL mode, and `mysql.DefaultCollationName` for utf8mb4. Warnings and
-/// notes land in a [`tidb_util::context::StaticWarnHandler`].
-pub struct StaticExprContext {
-    sql_mode: SqlMode,
-    charset: &'static str,
-    collation: &'static str,
-    default_collation_for_utf8mb4: &'static str,
-    warn_handler: tidb_util::context::StaticWarnHandler,
-}
-
-impl StaticExprContext {
-    /// Go `exprstatic.NewExprContext()` with default options.
-    #[must_use]
-    pub fn new() -> Self {
-        let (charset, collation) = tidb_datatype::get_default_charset_and_collate();
-        StaticExprContext {
-            sql_mode: tidb_mysql::consts::get_sql_mode(tidb_mysql::consts::DefaultSQLMode)
-                .expect("mysql.DefaultSQLMode always parses"),
-            charset,
-            collation,
-            default_collation_for_utf8mb4: tidb_mysql::charset::DefaultCollationName,
-            warn_handler: tidb_util::context::StaticWarnHandler::new(0),
-        }
-    }
-
-    /// Go `exprstatic.NewExprContext(exprstatic.WithEvalCtx(
-    /// exprstatic.NewEvalContext(exprstatic.WithSQLMode(mode))))`.
-    #[must_use]
-    pub fn with_sql_mode(mode: SqlMode) -> Self {
-        StaticExprContext {
-            sql_mode: mode,
-            ..StaticExprContext::new()
-        }
-    }
-
-    /// The warning store backing [`EvalContext::append_warning`] /
-    /// [`EvalContext::append_note`].
-    #[must_use]
-    pub fn warn_handler(&self) -> &tidb_util::context::StaticWarnHandler {
-        &self.warn_handler
-    }
-}
-
-impl Default for StaticExprContext {
-    fn default() -> Self {
-        StaticExprContext::new()
-    }
-}
-
-impl EvalContext for StaticExprContext {
+impl EvalContext for crate::exprstatic::EvalContext {
     fn sql_mode(&self) -> SqlMode {
-        self.sql_mode
+        crate::exprstatic::EvalContext::sql_mode(self)
     }
 
     fn append_warning(&self, err: WarnErr) {
-        use tidb_util::context::WarnAppender as _;
-        self.warn_handler.append_warning(err);
+        crate::exprstatic::EvalContext::append_warning(self, err);
     }
 
     fn append_note(&self, note: WarnErr) {
-        use tidb_util::context::WarnAppender as _;
-        self.warn_handler.append_note(note);
+        crate::exprstatic::EvalContext::append_note(self, note);
     }
 }
 
-impl ExprContext for StaticExprContext {
+impl ExprContext for crate::exprstatic::ExprContext {
     fn get_eval_ctx(&self) -> &dyn EvalContext {
-        self
+        crate::exprstatic::ExprContext::get_eval_ctx(self).as_ref()
     }
 
     fn get_default_collation_for_utf8mb4(&self) -> &str {
-        self.default_collation_for_utf8mb4
+        crate::exprstatic::ExprContext::get_default_collation_for_utf8mb4(self)
     }
 
     fn get_charset_info(&self) -> (&str, &str) {
-        (self.charset, self.collation)
+        crate::exprstatic::ExprContext::get_charset_info(self)
     }
 }
 
@@ -279,7 +219,7 @@ impl Context {
         }
 
         if ctx.expr_ctx.is_none() {
-            ctx.expr_ctx = Some(Arc::new(StaticExprContext::new()));
+            ctx.expr_ctx = Some(Arc::new(crate::exprstatic::ExprContext::new([])));
         }
 
         ctx
@@ -290,9 +230,16 @@ impl Context {
     /// datetime `0000-00-00 00:00:00`.
     #[must_use]
     pub fn new_non_strict() -> Context {
-        Context::new([with_expr_ctx(Arc::new(StaticExprContext::with_sql_mode(
+        // Go `exprstatic.NewExprContext(WithEvalCtx(
+        // exprstatic.NewEvalContext(WithSQLMode(mysql.ModeNone))))`.
+        let eval_ctx = crate::exprstatic::EvalContext::new([crate::exprstatic::with_sql_mode(
             tidb_mysql::consts::ModeNone,
-        )))])
+        )]);
+        Context::new([with_expr_ctx(Arc::new(
+            crate::exprstatic::ExprContext::new([crate::exprstatic::with_eval_ctx(Arc::new(
+                eval_ctx,
+            ))]),
+        ))])
     }
 
     /// Go `GetExprCtx`: returns the expression context of the session.
@@ -449,7 +396,7 @@ mod tests {
 
     #[test]
     fn option_of_expr_ctx() {
-        let expr_ctx: Arc<dyn ExprContext> = Arc::new(StaticExprContext::new());
+        let expr_ctx: Arc<dyn ExprContext> = Arc::new(crate::exprstatic::ExprContext::new([]));
         let ctx = Context::new([with_expr_ctx(Arc::clone(&expr_ctx))]);
         assert!(Arc::ptr_eq(ctx.get_expr_ctx(), &expr_ctx));
     }
