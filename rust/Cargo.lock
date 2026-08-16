@@ -2420,6 +2420,7 @@ dependencies = [
  "tidb-parser",
  "tidb-proto",
  "tidb-util",
+ "tidb-vardef",
 ]
 
 [[package]]

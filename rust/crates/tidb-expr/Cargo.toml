@@ -20,6 +20,7 @@ tidb-mysql = { path = "../tidb-mysql" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-proto = { path = "../tidb-proto" }
 tidb-util = { path = "../tidb-util" }
+tidb-vardef = { path = "../tidb-vardef" }
 flate2 = { workspace = true }
 getrandom = { workspace = true }
 chrono = { workspace = true }
