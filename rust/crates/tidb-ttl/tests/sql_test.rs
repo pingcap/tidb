@@ -29,7 +29,7 @@
 
 use tidb_ast::CiString;
 use tidb_datatype::{Datum, FieldType, FieldTypeBuilder, FieldTypeCode, FieldTypeFlags};
-use tidb_model::{ColumnInfo, PartitionDefinition, TableInfo};
+use tidb_model::{ColumnInfo, GoShared, PartitionDefinition, TableInfo};
 use tidb_ttl::sql_builder::{
     build_delete_sql, format_sql_datum, PhysicalTable, ScanQueryGenerator, SqlBuilder,
 };
@@ -80,11 +80,11 @@ fn col(name: &str, field_type: FieldType) -> ColumnInfo {
     }
 }
 
-fn table(name: &str) -> TableInfo {
-    TableInfo {
+fn table(name: &str) -> GoShared<TableInfo> {
+    GoShared::new(TableInfo {
         name: CiString::new(name),
         ..Default::default()
-    }
+    })
 }
 
 fn datetime() -> FieldType {

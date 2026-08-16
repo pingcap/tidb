@@ -12,43 +12,38 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/ttl/sqlbuilder` lands as a complete package: every SQL statement
-//! TiDB's TTL worker issues to scan expired rows and delete them.
+//! TiDB's time-to-live subsystem: the SQL a TTL job issues, the session it
+//! issues it through, and the cached view of which tables have TTL at all.
 //!
-//! File mapping (one Rust module per Go file):
-//! - `sql_builder.rs` <- `sql.go`
+//! Packages covered, each with its own header stating what did and did not come
+//! across:
+//! - [`sql_builder`] <- Go `pkg/ttl/sqlbuilder` — complete package.
+//! - [`session`] <- Go `pkg/ttl/session` — complete package.
+//! - [`cache`] <- Go `pkg/ttl/cache` — SEED.
 //!
-//! Narrowings, each named at its own definition site:
-//! - [`PhysicalTable`] redeclares `pkg/ttl/cache.PhysicalTable` locally. Go
-//!   imports it from a sibling package that pulls in the whole TTL cache,
-//!   info-schema and statistics stack; `sqlbuilder` reads only `Schema`, the
-//!   embedded `TableInfo.Name`, `PartitionDef`, `KeyColumns`, `TimeColumn`, and
-//!   the `ValidateKeyPrefix` method, so exactly those come across.
-//! - Every `expire time.Time` parameter becomes an `expire_unix: i64`. Go calls
-//!   `expire.Unix()` and nothing else on that value, so the Unix second is the
-//!   whole of the contract and this crate needs no calendar dependency.
-//! - `writeDatum`'s fallback restores an `ast.NewValueExpr(...)` in Go. This
-//!   workspace's `tidb-ast` has no `ValueExpr` node, so the restore body is
-//!   transcreated directly from `pkg/types/parser_driver/value_expr.go`.
-//! - `writeTblName` restores an `ast.TableName` in Go; with no such node here,
-//!   the schema and table names are written directly, which is what
-//!   `TableName.restoreName` does for a node carrying no index hints or
-//!   partition names.
-//! - Go's `strings.Builder` accepts arbitrary bytes while Rust's `RestoreCtx`
-//!   writes through `std::fmt::Write`. A string datum that is not valid UTF-8
-//!   after escaping is therefore reported as an error rather than emitted
-//!   verbatim; binary-flagged and blob-typed columns already take the hex
-//!   branch, so no key column the scan/delete paths build reaches that case.
+//! # One crate-wide constraint
 //!
-//! Test boundary: Go's `TestFormatSQLDatum` uses `testkit` to create a table,
-//! round-trip every value through a live session, and re-query with the
-//! formatted literal. That oracle needs a running TiDB, which this workspace
-//! has no counterpart for, so `format_sql_datum` is covered here by direct
-//! assertions over the same field types and values instead.
+//! `rust/Cargo.lock` pins this crate's dependencies to `tidb-ast`,
+//! `tidb-datatype`, `tidb-model`, `tidb-mysql` and `tidb-util`; the validation
+//! gates run `--locked`, and both `rust/Cargo.toml` and `rust/Cargo.lock` are
+//! owned outside this crate, so no dependency edge may be added here. Several
+//! packages these two Go packages import are already transcreated —
+//! `tidb-chunk` (`pkg/util/chunk`), `tidb-codec` (`pkg/util/codec`),
+//! `tidb-tablecodec`, `tidb-txnkv` (`pkg/kv`), `tidb-expr` (`pkg/expression`
+//! and `pkg/expression/exprstatic`) and `tidb-exec`
+//! (`pkg/infoschema/context`) — but are unreachable from here for that reason.
+//! Every place that constraint bites is named with a `// boundary:` comment at
+//! its own definition site, and the crate-wide consequences are spelled out in
+//! [`cache`]'s header. Resolving the ownership of `Cargo.toml`/`Cargo.lock`
+//! would let `cache::table`'s expiry evaluation, `cache::task`'s range
+//! encoding, and the private `cache::table::keycodec` module be replaced by the
+//! real transcreations.
 
+pub mod cache;
+pub mod session;
 pub mod sql_builder;
 
+pub use cache::table::PhysicalTable;
 pub use sql_builder::{
-    build_delete_sql, format_sql_datum, PhysicalTable, Result, ScanQueryGenerator, SqlBuilder,
-    SqlBuilderError,
+    build_delete_sql, format_sql_datum, Result, ScanQueryGenerator, SqlBuilder, SqlBuilderError,
 };

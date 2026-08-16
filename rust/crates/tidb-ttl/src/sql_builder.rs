@@ -17,10 +17,12 @@
 
 use std::fmt::Write as _;
 
-use tidb_ast::{CiString, RestoreCtx, RestoreFlags, RestoreWriter};
+use tidb_ast::{RestoreCtx, RestoreFlags, RestoreWriter};
 use tidb_datatype::{Datum, FieldType};
-use tidb_model::{ColumnInfo, PartitionDefinition, TableInfo};
+use tidb_model::ColumnInfo;
 use tidb_util::sqlescape::escape_string;
+
+pub use crate::cache::table::PhysicalTable;
 
 /// This package's error, standing in for Go's `errors.New`/`errors.Errorf`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,56 +43,12 @@ fn error(text: impl Into<String>) -> SqlBuilderError {
     SqlBuilderError(text.into())
 }
 
-/// `boundary:` `pkg/ttl/cache.PhysicalTable`, which lives in a sibling package
-/// and reaches the whole TTL cache, info-schema and statistics stack.
-///
-/// `sqlbuilder` uses exactly six of its members — `Schema`, the embedded
-/// `TableInfo.Name`, `PartitionDef`, `KeyColumns`, `TimeColumn`, and the
-/// `ValidateKeyPrefix` method — so those come across here and the rest of the
-/// cache does not. `ID`, `Partition` and `KeyColumnTypes` are carried for shape
-/// but never read by this module, exactly as in Go.
-#[derive(Debug, Clone, Default)]
-pub struct PhysicalTable {
-    /// Go `ID`: the physical id of the table.
-    pub id: i64,
-    /// Go `Schema`: the database name of the table.
-    pub schema: CiString,
-    /// Go's embedded `*model.TableInfo`; only `Name` is read here.
-    pub table_info: TableInfo,
-    /// Go `Partition`: the partition name.
-    pub partition: CiString,
-    /// Go `PartitionDef`.
-    pub partition_def: Option<PartitionDefinition>,
-    /// Go `KeyColumns`: the cluster-index key columns.
-    pub key_columns: Vec<ColumnInfo>,
-    /// Go `KeyColumnTypes`.
-    pub key_column_types: Vec<FieldType>,
-    /// Go `TimeColumn`: the time column used for TTL.
-    pub time_column: Option<ColumnInfo>,
-}
-
-impl PhysicalTable {
-    /// Go's promoted `TableInfo.Name`.
-    pub fn name(&self) -> &CiString {
-        &self.table_info.name
-    }
-
-    /// Go `(*PhysicalTable).ValidateKeyPrefix`.
-    pub fn validate_key_prefix(&self, key: &[Datum]) -> Result<()> {
-        if key.len() > self.key_columns.len() {
-            return Err(error(format!(
-                "invalid key length: {}, expected {}",
-                key.len(),
-                self.key_columns.len()
-            )));
-        }
-        Ok(())
-    }
-
-    fn time_column_ref(&self) -> Result<&ColumnInfo> {
-        self.time_column
-            .as_ref()
-            .ok_or_else(|| error("the table has no TTL time column"))
+/// Go's `sqlbuilder` imports `PhysicalTable` from `pkg/ttl/cache`; that package
+/// is transcreated in this crate, so the real type is used here rather than a
+/// local redeclaration.
+impl From<crate::cache::CacheError> for SqlBuilderError {
+    fn from(error: crate::cache::CacheError) -> Self {
+        Self(error.0)
     }
 }
 
@@ -427,7 +385,7 @@ impl SqlBuilder {
     /// `restoreName` does for a node with no index hints or partition names.
     fn write_tbl_name(&mut self) {
         let schema = self.tbl.schema.original().to_string();
-        let name = self.tbl.name().original().to_string();
+        let name = self.tbl.name_original();
         if !schema.is_empty() {
             self.restore_ctx.write_name(&schema);
             self.restore_ctx.write_plain(".");
