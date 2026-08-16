@@ -91,6 +91,7 @@ mod plan_trace;
 pub mod point_get;
 pub mod predicate_pushdown;
 pub mod projection;
+pub mod qb_hint;
 pub mod remote_scan;
 pub mod selection;
 pub mod sequence;
