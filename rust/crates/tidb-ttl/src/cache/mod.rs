@@ -19,32 +19,28 @@
 //! File mapping (one Rust module per Go file):
 //! - [`base`] <- `base.go` — complete.
 //! - [`infoschema`] <- `infoschema.go`
-//! - [`table`] <- `table.go`
+//! - [`table`] <- `table.go` — complete.
 //! - [`task`] <- `task.go`
 //! - [`ttlstatus`] <- `ttlstatus.go`
 //!
 //! This is labelled a SEED rather than a complete package, and the reason is
-//! *not* that most of Go's tests need `testkit`: `base.go`'s whole content, all
-//! of `table.go`'s key-space arithmetic, both row decoders, and every SQL
-//! statement builder that does not encode datums came across, and they are
-//! covered by direct assertions here. It is a seed because three pieces of
-//! production behaviour could not:
+//! *not* that most of Go's tests need `testkit`: `base.go`'s and `table.go`'s
+//! whole content, both row decoders, and every SQL statement builder that does
+//! not encode datums came across, and they are covered by direct assertions
+//! here. It is a seed because two pieces of production behaviour are still
+//! missing:
 //!
-//! - `table.go`'s `EvalExpireTime` and `(*PhysicalTable).EvalExpireTime`. Go
-//!   evaluates `FROM_UNIXTIME(0) + INTERVAL n MICROSECOND - INTERVAL i unit`
-//!   through `expression.ParseSimpleExpr` on an `exprstatic` context. That
-//!   evaluator is transcreated in `tidb-expr`, but this crate cannot reach it:
-//!   `rust/Cargo.lock` pins `tidb-ttl`'s dependencies to `tidb-ast`,
-//!   `tidb-datatype`, `tidb-model`, `tidb-mysql` and `tidb-util`, the gates run
-//!   `--locked`, and both `rust/Cargo.toml` and `rust/Cargo.lock` are owned
-//!   elsewhere, so no dependency edge may be added here. The same constraint
-//!   keeps `tidb-chunk`, `tidb-codec`, `tidb-tablecodec` and `tidb-txnkv` out.
-//! - `task.go`'s `InsertIntoTTLTask`, which memcomparable-encodes the scan
-//!   range bounds through `codec.EncodeKey`, and the `encoding/json` decode of
-//!   `TTLTaskState`. Both need dependencies unavailable for the same reason.
 //! - The `Update` methods of [`infoschema::InfoSchemaCache`] and
 //!   [`ttlstatus::TableStatusCache`], whose info-schema traversal is expressed
 //!   against trait boundaries rather than the real `infoschema.InfoSchema`.
+//!   This is a genuine boundary: `pkg/infoschema` has no transcreation to
+//!   depend on.
+//! - `task.go`'s `InsertIntoTTLTask`, which memcomparable-encodes the scan
+//!   range bounds through `codec.EncodeKey`, and the `encoding/json` decode of
+//!   `TTLTaskState`. These are NOT blocked any more — `tidb-codec` is now a
+//!   dependency of this crate — they are simply unported work in a module this
+//!   change did not touch, and [`task`]'s own header still describes them as
+//!   dependency-blocked.
 //!
 //! Every narrowing is named at its own definition site with a `// boundary:`
 //! comment identifying the Go symbol it stands for.

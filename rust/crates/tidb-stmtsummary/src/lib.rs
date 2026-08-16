@@ -12,23 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! SEED of Go `pkg/util/stmtsummary`, covering `statement_summary.go`: the
-//! statement-summary LRU keyed by `StmtDigestKey`, the per-digest and
-//! per-interval statistics it accumulates, and the option surface the system
-//! variables drive.
+//! SEED of Go `pkg/util/stmtsummary`, covering `statement_summary.go` and
+//! `evicted.go`: the statement-summary LRU keyed by `StmtDigestKey`, the
+//! per-digest and per-interval statistics it accumulates, the option surface
+//! the system variables drive, and the rollup of the digests the LRU evicts.
+//!
+//! `AddStatement`'s eviction path reaches the rollup through the named
+//! [`statement_summary::EvictedSink`] boundary, which
+//! `Arc<Mutex<`[`evicted::StmtSummaryByDigestEvicted`]`>>` implements;
+//! [`statement_summary::StmtSummaryByDigestMap::new`] wires that implementation
+//! in, as Go's `newStmtSummaryByDigestMap` does.
+//! [`statement_summary::NoopEvictedSink`] remains for maps built through
+//! [`statement_summary::StmtSummaryByDigestMap::with_sinks`].
 //!
 //! Not yet covered from the same Go package:
 //!
-//! - `evicted.go` (`stmtSummaryByDigestEvicted` and its element/rollup types).
-//!   `AddStatement`'s eviction path reaches it through the named
-//!   [`statement_summary::EvictedSink`] boundary, whose only implementation
-//!   here is [`statement_summary::NoopEvictedSink`].
 //! - `reader.go` (`stmtSummaryReader`, the column-value factories, and the
 //!   `information_schema` row builders). The `*stmtSummaryChecker` parameter
 //!   of Go's `collectHistorySummaries` is dropped until that file lands, and
 //!   the reader-only helpers (`avgInt`, `avgFloat`, `avgFloat4Uint`,
 //!   `avgSumFloat`, `convertEmptyToNil`, `formatBackoffTypes`) are ported as
 //!   free functions with no in-crate caller yet.
+//!   `evicted.go`'s `(*stmtSummaryByDigestEvicted).collectHistorySummaries`
+//!   likewise has no in-crate caller until then.
 //!
 //! Narrowings applied to `statement_summary.go` itself:
 //!
@@ -50,5 +56,20 @@
 //!   plain field reads.
 //! - Go's `sql[:maxSQLLength]` byte slice becomes a UTF-8 boundary-safe
 //!   truncation in [`statement_summary::format_sql`].
+//!
+//! Narrowings applied to `evicted.go`:
+//!
+//! - Go's embedded `sync.Mutex` on `stmtSummaryByDigestEvicted` moves outside
+//!   the type: the map holds it as `Arc<Mutex<..>>`, and the inherent methods
+//!   take `&mut self`.
+//! - Go's `container/list` history becomes a `VecDeque`, and `AddEvicted`'s
+//!   carried `h` list cursor becomes an index. Go's detached-node behavior
+//!   after a trim (`Prev()` nil, `InsertAfter` a no-op, a match added into an
+//!   unreachable node) is observationally equal to dropping the cursor.
+//! - `evictedValue.history == nil` collapses into the empty-`VecDeque` case.
+//! - `types.MakeDatums` / `types.NewTime` / `mysql.TypeTimestamp` narrow to
+//!   `tidb-datatype`'s `Datum`, `Time`, and `TimeType::Timestamp`; Go renders
+//!   `time.Unix` in the process-local zone, this crate stays in UTC.
 
+pub mod evicted;
 pub mod statement_summary;

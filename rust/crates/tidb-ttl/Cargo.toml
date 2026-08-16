@@ -11,8 +11,16 @@ description = "Go pkg/ttl/sqlbuilder: SQL construction for TTL scan and delete t
 workspace = true
 
 [dependencies]
+chrono = { workspace = true }
 tidb-ast = { path = "../tidb-ast" }
+tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-expr = { path = "../tidb-expr" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-txnkv = { path = "../tidb-txnkv" }
 tidb-util = { path = "../tidb-util" }
+
+[dev-dependencies]
+chrono-tz = { workspace = true }

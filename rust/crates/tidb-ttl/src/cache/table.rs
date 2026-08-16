@@ -12,36 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! SEED of Go `pkg/ttl/cache/table.go`: the physical table a TTL job runs
-//! against, and the arithmetic that cuts its key space into scan ranges.
+//! Go `pkg/ttl/cache/table.go`, complete: the physical table a TTL job runs
+//! against, the arithmetic that cuts its key space into scan ranges, and the
+//! evaluation of its TTL interval into an expiry instant.
 //!
-//! [`PhysicalTable`] and its two constructors, `getTableKeyColumns`,
-//! `ValidateKeyPrefix`, `FullName`, `ScanRange`, the whole split family
-//! (`SplitScanRanges`, `splitIntRanges`, `splitCommonHandleRanges`,
-//! `splitRawKeyRanges`, `unsignedEdge`) and all four key-decoding helpers
-//! (`GetNextIntHandle`, `GetNextIntDatumFromCommonHandle`,
-//! `GetNextBytesHandleDatum`, `GetASCIIPrefixDatumFromBytes`) come across.
+//! Every symbol of the Go file is present. [`PhysicalTable`] and its two
+//! constructors, `getTableKeyColumns`, `ValidateKeyPrefix`, `FullName`,
+//! `ScanRange`, the whole split family (`SplitScanRanges`, `splitIntRanges`,
+//! `splitCommonHandleRanges`, `splitRawKeyRanges`, `unsignedEdge`), all four
+//! key-decoding helpers (`GetNextIntHandle`,
+//! `GetNextIntDatumFromCommonHandle`, `GetNextBytesHandleDatum`,
+//! `GetASCIIPrefixDatumFromBytes`) and the expiry family ([`eval_expire_time`],
+//! [`PhysicalTable::eval_expire_time`], [`set_mock_expire_time`],
+//! [`MockExpireTimeKey`]) come across.
+//!
+//! Go's `init()` derives `commonHandleBytesByte`/`IntByte`/`UintByte` by
+//! encoding a sample datum through `codec.EncodeKey` and taking the leading
+//! flag byte; here those bytes are `tidb_codec`'s `BYTES_FLAG`, `INT_FLAG` and
+//! `UINT_FLAG` directly — the same values from the same authority, so the
+//! derivation has nothing left to do.
 //!
 //! Narrowings, each named at its own definition site:
-//! - `EvalExpireTime` and `(*PhysicalTable).EvalExpireTime` are **absent**.
-//!   `// boundary:` `pkg/expression.ParseSimpleExpr` on a
-//!   `pkg/expression/exprstatic` context, evaluating
-//!   `FROM_UNIXTIME(0) + INTERVAL n MICROSECOND - INTERVAL i unit` and reading
-//!   the result back with `EvalTime`. That evaluator is transcreated in
-//!   `tidb-expr`, which this crate may not depend on (see the package header).
-//!   Reimplementing MySQL interval arithmetic locally would fork behaviour that
-//!   already has one authority, so those two functions, `SetMockExpireTime` and
-//!   `mockExpireTimeKey` are deliberately missing rather than approximated;
-//!   `TTLInfo.IntervalExprStr`/`IntervalTimeUnit` stay reachable through
-//!   [`PhysicalTable::table_info`].
 //! - [`RegionCache`] `// boundary:` `tikv.Storage`/`tikv.RegionCache`.
 //! - [`find_primary_index`] `// boundary:` `pkg/table/tables.FindPrimaryIndex`.
-//! - [`keycodec`] `// boundary:` the slice of `pkg/util/codec` and
-//!   `pkg/tablecodec` these functions need. Both are transcreated in
-//!   `tidb-codec`/`tidb-tablecodec`, but this crate may not add a dependency
-//!   edge to them (see the package header), so the exact bytes those two
-//!   packages produce for the int, uint and bytes flags are reproduced here and
-//!   nowhere else in the crate.
+//! - [`TimeUnitType`] `// boundary:` `pkg/parser/ast.TimeUnitType`, not yet in
+//!   `tidb-ast`.
+//! - [`MockExpireTimeKey`] `// boundary:` Go's `context.Context`, which this
+//!   crate does not carry.
+//! - [`eval_expire_time`] carries two further boundaries at its own definition:
+//!   the zone type its DST correctness depends on, and the fact that Go's one
+//!   `exprstatic.ExprContext` serves as both build and eval context where Rust
+//!   splits the two roles across traits it does not implement.
 //! - Go's `kv.Handle` return of `GetNextIntHandle` becomes `Option<i64>`: the
 //!   function only ever yields `nil` or a `kv.IntHandle`, and every caller
 //!   reads `IntValue()`.
@@ -53,9 +54,17 @@
 
 use std::cmp::Ordering;
 
+use chrono::{DateTime, Duration, FixedOffset, Local, TimeZone as _, Utc};
 use tidb_ast::CiString;
-use tidb_datatype::{Collation, Datum, FieldType};
+use tidb_codec::{decode_cmp_uint_to_int, decode_one, BYTES_FLAG, INT_FLAG, UINT_FLAG};
+use tidb_datatype::{Collation, Datum, FieldType, SessionTimeZone};
+use tidb_expr::exprstatic::ExprContext;
+use tidb_expr::rewriter::ZonedNoResolver;
+use tidb_expr::simple_expr::{parse_simple_expr, BuildOptions};
+use tidb_expr::{eval_expression_once, ZonedNoColumns};
 use tidb_model::{ColumnInfo, GoShared, IndexInfo, PartitionDefinition, SchemaState, TableInfo};
+use tidb_tablecodec::table_key;
+use tidb_txnkv::Key;
 
 use super::{error, Result};
 
@@ -464,8 +473,8 @@ impl PhysicalTable {
 
     /// Go `(*PhysicalTable).splitIntRanges`.
     fn split_int_ranges(&self, store: &dyn RegionCache, split_cnt: i64) -> Result<Vec<ScanRange>> {
-        let record_prefix = keycodec::gen_table_record_prefix(self.id);
-        let (start_key, end_key) = keycodec::get_table_handle_key_range(self.id);
+        let record_prefix = table_key::gen_table_record_prefix(self.id);
+        let (start_key, end_key) = table_key::get_table_handle_key_range(self.id);
         let key_ranges = self.split_raw_key_ranges(store, &start_key, &end_key, split_cnt)?;
 
         if key_ranges.len() <= 1 {
@@ -534,9 +543,11 @@ impl PhysicalTable {
         unsigned: bool,
         decode: Option<fn(&[u8]) -> Datum>,
     ) -> Result<Vec<ScanRange>> {
-        let record_prefix = keycodec::gen_table_record_prefix(self.id);
+        let record_prefix = table_key::gen_table_record_prefix(self.id);
         let start_key = record_prefix.clone();
-        let end_key = keycodec::prefix_next(&record_prefix);
+        let end_key = Key::from_bytes(record_prefix.clone())
+            .prefix_next()
+            .into_bytes();
         let key_ranges = self.split_raw_key_ranges(store, &start_key, &end_key, split_cnt)?;
 
         if key_ranges.len() <= 1 {
@@ -678,7 +689,7 @@ pub fn get_next_int_handle(key: &[u8], record_prefix: &[u8]) -> Option<i64> {
 
     let find_next = suffix.len() > 8;
 
-    let u = keycodec::decode_cmp_uint_to_int(u64::from_be_bytes(encoded_val));
+    let u = decode_cmp_uint_to_int(u64::from_be_bytes(encoded_val));
     if !find_next {
         return Some(u);
     }
@@ -705,11 +716,7 @@ pub fn get_next_int_datum_from_common_handle(
         return Datum::Null;
     }
 
-    let type_byte = if unsigned {
-        keycodec::UINT_FLAG
-    } else {
-        keycodec::INT_FLAG
-    };
+    let type_byte = if unsigned { UINT_FLAG } else { INT_FLAG };
 
     let min_datum = if unsigned {
         Datum::new_uint(0)
@@ -735,7 +742,7 @@ pub fn get_next_int_datum_from_common_handle(
         encoded_val.resize(9, 0);
     }
 
-    let Ok((_, mut v)) = keycodec::decode_one(&encoded_val) else {
+    let Ok((_, mut v)) = decode_one(&encoded_val) else {
         // should never happen; Go logs the annotated error and returns null.
         return null_datum();
     };
@@ -773,17 +780,17 @@ pub fn get_next_bytes_handle_datum(key: &[u8], record_prefix: &[u8]) -> Datum {
     }
 
     let encoded_val = &key[record_prefix.len()..];
-    if encoded_val[0] < keycodec::BYTES_FLAG {
+    if encoded_val[0] < BYTES_FLAG {
         return Datum::new_bytes(Vec::new());
     }
 
-    if encoded_val[0] > keycodec::BYTES_FLAG {
+    if encoded_val[0] > BYTES_FLAG {
         return Datum::Null;
     }
 
-    if let Ok((remain, mut v)) = keycodec::decode_one(encoded_val) {
+    if let Ok((remain, mut v)) = decode_one(encoded_val) {
         if !remain.is_empty() {
-            v = Datum::new_bytes(keycodec::key_next(v.go_bytes()));
+            v = Datum::new_bytes(Key::from_bytes(v.go_bytes().to_vec()).next().into_bytes());
         }
         return v;
     }
@@ -848,238 +855,350 @@ pub fn get_ascii_prefix_datum_from_bytes(bs: &[u8]) -> Datum {
     Datum::new_string(bs.to_vec())
 }
 
-/// `// boundary:` the slice of `pkg/util/codec` and `pkg/tablecodec` the
-/// key-decoding helpers above need.
+// -------------------------------------------------------------------------
+// Expiry evaluation
+// -------------------------------------------------------------------------
+
+/// Go `ast.TimeUnitType`, the closed set of `INTERVAL` units.
 ///
-/// Both packages are transcreated — `tidb-codec` and `tidb-tablecodec` — but
-/// this crate may not add a dependency edge to either (see the package header),
-/// so the exact bytes they produce for the memcomparable int, uint and bytes
-/// flags are reproduced here. Nothing outside this module reproduces codec
-/// behaviour, and the round-trip is pinned by the tests that build keys with
-/// [`encode_key`] and read them back through the `get_next_*` helpers.
-pub mod keycodec {
-    use tidb_datatype::Datum;
+/// `// boundary:` `pkg/parser/ast.TimeUnitType` itself. `tidb-ast` does not
+/// carry that enum yet, and `TTLInfo.IntervalTimeUnit` is the raw `int` Go
+/// stores, so the discriminants below are pinned to Go's `iota` order and
+/// [`TimeUnitType::as_str`] reproduces Go's `String()` exactly — those two
+/// properties are the whole of what `EvalExpireTime` reads. When the enum
+/// lands in `tidb-ast`, this becomes a re-export.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i64)]
+pub enum TimeUnitType {
+    /// Go `TimeUnitInvalid`.
+    Invalid = 0,
+    /// Go `TimeUnitMicrosecond`.
+    Microsecond = 1,
+    /// Go `TimeUnitSecond`.
+    Second = 2,
+    /// Go `TimeUnitMinute`.
+    Minute = 3,
+    /// Go `TimeUnitHour`.
+    Hour = 4,
+    /// Go `TimeUnitDay`.
+    Day = 5,
+    /// Go `TimeUnitWeek`.
+    Week = 6,
+    /// Go `TimeUnitMonth`.
+    Month = 7,
+    /// Go `TimeUnitQuarter`.
+    Quarter = 8,
+    /// Go `TimeUnitYear`.
+    Year = 9,
+    /// Go `TimeUnitSecondMicrosecond`.
+    SecondMicrosecond = 10,
+    /// Go `TimeUnitMinuteMicrosecond`.
+    MinuteMicrosecond = 11,
+    /// Go `TimeUnitMinuteSecond`.
+    MinuteSecond = 12,
+    /// Go `TimeUnitHourMicrosecond`.
+    HourMicrosecond = 13,
+    /// Go `TimeUnitHourSecond`.
+    HourSecond = 14,
+    /// Go `TimeUnitHourMinute`.
+    HourMinute = 15,
+    /// Go `TimeUnitDayMicrosecond`.
+    DayMicrosecond = 16,
+    /// Go `TimeUnitDaySecond`.
+    DaySecond = 17,
+    /// Go `TimeUnitDayMinute`.
+    DayMinute = 18,
+    /// Go `TimeUnitDayHour`.
+    DayHour = 19,
+    /// Go `TimeUnitYearMonth`.
+    YearMonth = 20,
+}
 
-    use crate::cache::CacheError;
-
-    /// The failure `codec.DecodeOne`/`codec.DecodeBytes` raise on a key that is
-    /// not a well-formed memcomparable encoding.
-    fn malformed() -> CacheError {
-        CacheError("insufficient bytes to decode value".to_owned())
-    }
-
-    /// Go `codec.bytesFlag`.
-    pub const BYTES_FLAG: u8 = 1;
-    /// Go `codec.intFlag`.
-    pub const INT_FLAG: u8 = 3;
-    /// Go `codec.uintFlag`.
-    pub const UINT_FLAG: u8 = 4;
-
-    /// Go `codec.encGroupSize`.
-    const ENC_GROUP_SIZE: usize = 8;
-    /// Go `codec.encMarker`.
-    const ENC_MARKER: u8 = 0xFF;
-    /// Go `codec.signMask`.
-    const SIGN_MASK: u64 = 0x8000_0000_0000_0000;
-
-    /// Go `tablecodec.tablePrefix`.
-    const TABLE_PREFIX: &[u8] = b"t";
-    /// Go `tablecodec.recordPrefixSep`.
-    const RECORD_PREFIX_SEP: &[u8] = b"_r";
-
-    /// Go `codec.DecodeCmpUintToInt`.
+impl TimeUnitType {
+    /// Go's `ast.TimeUnitType(t.TTLInfo.IntervalTimeUnit)` conversion. An
+    /// out-of-range value becomes `TimeUnitInvalid`, which is what Go's
+    /// numeric conversion of an unknown `int` behaves as everywhere the unit
+    /// is only rendered.
     #[must_use]
-    pub const fn decode_cmp_uint_to_int(value: u64) -> i64 {
-        (value ^ SIGN_MASK) as i64
-    }
-
-    /// Go `codec.EncodeIntToCmpUint`.
-    #[must_use]
-    pub const fn encode_int_to_cmp_uint(value: i64) -> u64 {
-        (value as u64) ^ SIGN_MASK
-    }
-
-    /// Go `codec.EncodeInt`: the 8-byte memcomparable form of a signed int.
-    #[must_use]
-    pub fn encode_int(value: i64) -> Vec<u8> {
-        encode_int_to_cmp_uint(value).to_be_bytes().to_vec()
-    }
-
-    /// Go `tablecodec.GenTablePrefix`.
-    #[must_use]
-    pub fn gen_table_prefix(table_id: i64) -> Vec<u8> {
-        let mut key = Vec::with_capacity(TABLE_PREFIX.len() + 8);
-        key.extend_from_slice(TABLE_PREFIX);
-        key.extend_from_slice(&encode_int(table_id));
-        key
-    }
-
-    /// Go `tablecodec.GenTableRecordPrefix`.
-    #[must_use]
-    pub fn gen_table_record_prefix(table_id: i64) -> Vec<u8> {
-        let mut key = gen_table_prefix(table_id);
-        key.extend_from_slice(RECORD_PREFIX_SEP);
-        key
-    }
-
-    /// Go `tablecodec.EncodeRowKey`.
-    #[must_use]
-    pub fn encode_row_key(table_id: i64, encoded_handle: &[u8]) -> Vec<u8> {
-        let mut key = gen_table_record_prefix(table_id);
-        key.extend_from_slice(encoded_handle);
-        key
-    }
-
-    /// Go `tablecodec.EncodeRowKeyWithHandle` for a `kv.IntHandle`.
-    #[must_use]
-    pub fn encode_row_key_with_int_handle(table_id: i64, handle: i64) -> Vec<u8> {
-        encode_row_key(table_id, &encode_int(handle))
-    }
-
-    /// Go `tablecodec.GetTableHandleKeyRange`.
-    #[must_use]
-    pub fn get_table_handle_key_range(table_id: i64) -> (Vec<u8>, Vec<u8>) {
-        (
-            encode_row_key_with_int_handle(table_id, i64::MIN),
-            encode_row_key_with_int_handle(table_id, i64::MAX),
-        )
-    }
-
-    /// Go `kv.Key.Next`.
-    #[must_use]
-    pub fn key_next(key: &[u8]) -> Vec<u8> {
-        let mut next = Vec::with_capacity(key.len() + 1);
-        next.extend_from_slice(key);
-        next.push(0);
-        next
-    }
-
-    /// Go `kv.Key.PrefixNext`.
-    #[must_use]
-    pub fn prefix_next(key: &[u8]) -> Vec<u8> {
-        let mut buf = key.to_vec();
-        let mut i = buf.len();
-        while i > 0 {
-            i -= 1;
-            buf[i] = buf[i].wrapping_add(1);
-            if buf[i] != 0 {
-                return buf;
-            }
-        }
-        // Every byte wrapped: Go returns the all-`0xFF` key of the same length.
-        vec![0xFF; key.len()]
-    }
-
-    /// Go `codec.encodeBytes` prefixed with `bytesFlag`, and the int/uint
-    /// counterparts — together they are `codec.EncodeKey` for the datum kinds
-    /// a TTL common handle can hold.
-    #[must_use]
-    pub fn encode_key(values: &[Datum]) -> Vec<u8> {
-        let mut buf = Vec::new();
-        for value in values {
-            match value {
-                Datum::Int(v) => {
-                    buf.push(INT_FLAG);
-                    buf.extend_from_slice(&encode_int(*v));
-                }
-                Datum::UInt(v) => {
-                    buf.push(UINT_FLAG);
-                    buf.extend_from_slice(&v.to_be_bytes());
-                }
-                Datum::Bytes(v) => {
-                    buf.push(BYTES_FLAG);
-                    encode_bytes(&mut buf, v);
-                }
-                Datum::String(v) => {
-                    buf.push(BYTES_FLAG);
-                    encode_bytes(&mut buf, v.bytes());
-                }
-                other => panic!("unsupported datum kind for a TTL handle: {other:?}"),
-            }
-        }
-        buf
-    }
-
-    /// Go `codec.encodeBytes`.
-    fn encode_bytes(buf: &mut Vec<u8>, data: &[u8]) {
-        let d_len = data.len();
-        let mut idx = 0;
-        loop {
-            let remain = d_len - idx;
-            let pad_count;
-            if remain >= ENC_GROUP_SIZE {
-                buf.extend_from_slice(&data[idx..idx + ENC_GROUP_SIZE]);
-                pad_count = 0;
-            } else {
-                pad_count = ENC_GROUP_SIZE - remain;
-                buf.extend_from_slice(&data[idx..]);
-                buf.extend(std::iter::repeat_n(0u8, pad_count));
-            }
-            buf.push(ENC_MARKER - pad_count as u8);
-            idx += ENC_GROUP_SIZE;
-            if idx > d_len {
-                break;
-            }
+    pub const fn from_i64(value: i64) -> Self {
+        match value {
+            1 => Self::Microsecond,
+            2 => Self::Second,
+            3 => Self::Minute,
+            4 => Self::Hour,
+            5 => Self::Day,
+            6 => Self::Week,
+            7 => Self::Month,
+            8 => Self::Quarter,
+            9 => Self::Year,
+            10 => Self::SecondMicrosecond,
+            11 => Self::MinuteMicrosecond,
+            12 => Self::MinuteSecond,
+            13 => Self::HourMicrosecond,
+            14 => Self::HourSecond,
+            15 => Self::HourMinute,
+            16 => Self::DayMicrosecond,
+            17 => Self::DaySecond,
+            18 => Self::DayMinute,
+            19 => Self::DayHour,
+            20 => Self::YearMonth,
+            _ => Self::Invalid,
         }
     }
 
-    /// Go `codec.DecodeOne`, limited to the flags a TTL handle can carry.
+    /// Go `(TimeUnitType).String()`.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Invalid => "",
+            Self::Microsecond => "MICROSECOND",
+            Self::Second => "SECOND",
+            Self::Minute => "MINUTE",
+            Self::Hour => "HOUR",
+            Self::Day => "DAY",
+            Self::Week => "WEEK",
+            Self::Month => "MONTH",
+            Self::Quarter => "QUARTER",
+            Self::Year => "YEAR",
+            Self::SecondMicrosecond => "SECOND_MICROSECOND",
+            Self::MinuteMicrosecond => "MINUTE_MICROSECOND",
+            Self::MinuteSecond => "MINUTE_SECOND",
+            Self::HourMicrosecond => "HOUR_MICROSECOND",
+            Self::HourSecond => "HOUR_SECOND",
+            Self::HourMinute => "HOUR_MINUTE",
+            Self::DayMicrosecond => "DAY_MICROSECOND",
+            Self::DaySecond => "DAY_SECOND",
+            Self::DayMinute => "DAY_MINUTE",
+            Self::DayHour => "DAY_HOUR",
+            Self::YearMonth => "YEAR_MONTH",
+        }
+    }
+}
+
+impl std::fmt::Display for TimeUnitType {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
+/// Go `mockExpireTimeKey`: the unexported `context.Context` key the test-only
+/// expiry override is stored under.
+///
+/// `// boundary:` Go's `context.Context`. This crate carries no context (see
+/// [`crate::session`]'s header for the same narrowing on `PhaseTracer`), so
+/// the key becomes the value type the context would have carried, passed
+/// explicitly to [`PhysicalTable::eval_expire_time`]. The empty default is the
+/// "context carries no mock time" case Go's type assertion fails on, and
+/// [`set_mock_expire_time`] is the only way to fill it — so, exactly as in Go,
+/// a caller that never calls it cannot observe the override.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MockExpireTimeKey<Tz: chrono::TimeZone>(Option<DateTime<Tz>>);
+
+impl<Tz: chrono::TimeZone> Default for MockExpireTimeKey<Tz> {
+    fn default() -> Self {
+        Self(None)
+    }
+}
+
+impl<Tz: chrono::TimeZone> MockExpireTimeKey<Tz> {
+    /// Go's `ctx.Value(mockExpireTimeKey{}).(time.Time)`, whose comma-ok is
+    /// this `Option`.
+    #[must_use]
+    pub fn get(&self) -> Option<&DateTime<Tz>> {
+        self.0.as_ref()
+    }
+}
+
+/// Go `SetMockExpireTime`: can only be used in test.
+#[must_use]
+pub fn set_mock_expire_time<Tz: chrono::TimeZone>(
+    ctx: &MockExpireTimeKey<Tz>,
+    tm: DateTime<Tz>,
+) -> MockExpireTimeKey<Tz> {
+    // Go derives a child context from `ctx`; the parent carries nothing else
+    // this crate reads, so deriving is replacing.
+    let _ = ctx;
+    MockExpireTimeKey(Some(tm))
+}
+
+/// Go's `time.Time.Truncate(time.Second)`.
+///
+/// Go truncates toward the zero time, which is a whole number of seconds
+/// before every instant reachable here, so this is "drop the sub-second part,
+/// rounding down" — not "round toward zero", which would differ before 1970.
+fn truncate_to_second<Tz: chrono::TimeZone>(value: DateTime<Tz>) -> DateTime<Tz> {
+    let nanos = i64::from(value.timestamp_subsec_nanos());
+    value - Duration::nanoseconds(nanos)
+}
+
+/// Go `EvalExpireTime`: the expired time.
+///
+/// Go builds `FROM_UNIXTIME(0) + INTERVAL <start micros> MICROSECOND -
+/// INTERVAL <interval> <unit>` with `expression.ParseSimpleExpr` on an
+/// `exprstatic.NewExprContext()`, reads the result back with `EvalTime`, and
+/// shifts `now` by the difference. Both halves of the evaluator are
+/// transcreated: [`tidb_expr::simple_expr::parse_simple_expr`] and
+/// [`tidb_expr::exprstatic`].
+///
+/// # The zone parameter is Go's `*time.Location`
+///
+/// Go's `time.Time` carries its location, and `now.Add(d)` re-derives the
+/// offset at the NEW instant — which is the entire point of the "avoid time
+/// shift caused by DST" comment this function is built around. `chrono`
+/// reconstructs a `DateTime`'s zone from its `Offset`, so that property holds
+/// only for a `Tz` whose `Offset` carries the zone back: `chrono_tz::Tz` (Go's
+/// `time.LoadLocation`), [`chrono::FixedOffset`] (Go's `time.FixedZone`),
+/// `Utc` and `Local` all do.
+///
+/// `// boundary:` [`tidb_datatype::SessionTimeZone`] does NOT — its
+/// `Offset::from_offset` rebuilds a `Fixed` zone, so a `Named` arm silently
+/// freezes its offset across the arithmetic below and answers `01:31` where Go
+/// answers `00:31` for `2024-03-10 03:01:00 America/Los_Angeles` less ninety
+/// minutes. [`PhysicalTable::eval_expire_time`] therefore splits the session's
+/// [`tidb_util::timeutil::TimeZone`] into a concrete `Tz` before calling here
+/// rather than passing that union through.
+///
+/// `// boundary:` Go passes the one `exprstatic.ExprContext` as both the build
+/// and the eval context. In Rust the two roles are separate traits
+/// (`tidb_expr::rewriter::ColumnResolver` and `tidb_expr::Columns`) that
+/// `exprstatic::ExprContext` does not implement, so the context is still built
+/// here — it is what pins the evaluation zone, and Go asserts exactly that
+/// (`intest.Assert(exprCtx.GetEvalCtx().Location() == time.UTC)`) — and its
+/// location is threaded into the zone-carrying resolver/eval pair.
+pub fn eval_expire_time<Tz: chrono::TimeZone>(
+    now: &DateTime<Tz>,
+    interval: &str,
+    unit: TimeUnitType,
+) -> Result<DateTime<Tz>> {
+    // Firstly, we should use the UTC time zone to compute the expired time to
+    // avoid time shift caused by DST. The start time should be a time with the
+    // same datetime string as `now` but it is in the UTC timezone.
+    let start = Utc
+        .from_local_datetime(&now.naive_local())
+        .single()
+        .ok_or_else(|| error("the current time has no UTC representation"))?;
+
+    let expr_ctx = ExprContext::new([]);
+    // we need to set the location to UTC to make sure the time is in the same
+    // timezone as the start time.
+    let location = to_session_time_zone(expr_ctx.get_eval_ctx().location());
+    debug_assert!(location.is_utc(), "exprstatic's default location is UTC");
+
+    let sql = format!(
+        "FROM_UNIXTIME(0) + INTERVAL {} MICROSECOND - INTERVAL {interval} {unit}",
+        start.timestamp_micros()
+    );
+
+    let expr = parse_simple_expr(
+        &ZonedNoResolver::new(location.clone()),
+        &sql,
+        &BuildOptions::new(),
+    )
+    .map_err(|err| error(err.to_string()))?;
+
+    // Go `expr.EvalTime(exprCtx.GetEvalCtx(), chunk.Row{})`.
+    let value = eval_expression_once(&expr, &ZonedNoColumns(location))
+        .map_err(|err| error(format!("{err:?}")))?;
+    let Datum::Time(time) = value else {
+        return Err(error(format!(
+            "the TTL interval expression did not evaluate to a time: {value:?}"
+        )));
+    };
+
+    // Go `tm.GoTime(time.UTC)`.
+    let end = time
+        .core_time()
+        .to_datetime(&Utc)
+        .map_err(|err| error(err.to_string()))?;
+
+    // Then we should add the duration between the time get from the previous
+    // SQL and the start time to the now time. Truncate to second to make sure
+    // the precision is always the same with the one stored in a table to avoid
+    // some comparing problems in testing.
+    Ok(truncate_to_second(now.clone() + (end - start)))
+}
+
+/// `tidb_util::timeutil::TimeZone` -> `tidb_datatype::SessionTimeZone`: Go's
+/// one `*time.Location` split across two Rust types, joined arm for arm.
+fn to_session_time_zone(zone: &tidb_util::timeutil::TimeZone) -> SessionTimeZone {
+    match zone {
+        tidb_util::timeutil::TimeZone::Local => SessionTimeZone::Local,
+        tidb_util::timeutil::TimeZone::Named(zone) => SessionTimeZone::Named(*zone),
+        tidb_util::timeutil::TimeZone::Fixed { name, offset_secs } => SessionTimeZone::Fixed {
+            name: name.clone(),
+            offset_secs: *offset_secs,
+        },
+    }
+}
+
+impl PhysicalTable {
+    /// Go `(*PhysicalTable).EvalExpireTime`: the expired time for the current
+    /// time.
     ///
-    /// Returns the remaining bytes and the decoded datum, as Go does.
-    pub fn decode_one(input: &[u8]) -> Result<(&[u8], Datum), CacheError> {
-        let (&flag, rest) = input.split_first().ok_or_else(malformed)?;
-        match flag {
-            INT_FLAG => {
-                if rest.len() < 8 {
-                    return Err(malformed());
-                }
-                let mut bytes = [0u8; 8];
-                bytes.copy_from_slice(&rest[..8]);
-                Ok((
-                    &rest[8..],
-                    Datum::new_int(decode_cmp_uint_to_int(u64::from_be_bytes(bytes))),
-                ))
-            }
-            UINT_FLAG => {
-                if rest.len() < 8 {
-                    return Err(malformed());
-                }
-                let mut bytes = [0u8; 8];
-                bytes.copy_from_slice(&rest[..8]);
-                Ok((&rest[8..], Datum::new_uint(u64::from_be_bytes(bytes))))
-            }
-            BYTES_FLAG => {
-                let (remain, data) = decode_bytes(rest)?;
-                Ok((remain, Datum::new_bytes(data)))
-            }
-            _ => Err(malformed()),
+    /// It uses the global timezone in session to evaluate the context and the
+    /// returned time is in the same timezone as the `now` argument.
+    pub fn eval_expire_time<Tz, S>(
+        &self,
+        ctx: &MockExpireTimeKey<Tz>,
+        se: &S,
+        now: &DateTime<Tz>,
+    ) -> Result<DateTime<Tz>>
+    where
+        Tz: chrono::TimeZone,
+        S: crate::session::Session,
+    {
+        // Go guards this on `intest.InTest`; the value only exists when a test
+        // put it there, so the guard and the lookup collapse into one.
+        if let Some(tm) = ctx.get() {
+            return Ok(tm.clone());
         }
-    }
 
-    /// Go `codec.DecodeBytes`.
-    fn decode_bytes(mut input: &[u8]) -> Result<(&[u8], Vec<u8>), CacheError> {
-        let mut data = Vec::with_capacity(input.len());
-        loop {
-            if input.len() < ENC_GROUP_SIZE + 1 {
-                return Err(malformed());
+        // Use the global time zone to compute expire time. Different timezones
+        // may have different results even with the same "now" time and TTL
+        // expression. Consider a TTL setting with the expiration
+        // `INTERVAL 1 MONTH`. If the current timezone is `Asia/Shanghai` and
+        // now is `2021-03-01 00:00:00 +0800` the expired time should be
+        // `2021-02-01 00:00:00 +0800`, corresponding to UTC time
+        // `2021-01-31 16:00:00 UTC`. But if we use the `UTC` time zone, the
+        // current time is `2021-02-28 16:00:00 UTC`, and the expired time
+        // should be `2021-01-28 16:00:00 UTC` that is not the same as the
+        // previous one.
+        let global_tz = se
+            .global_time_zone()
+            .map_err(|err| error(err.to_string()))?;
+
+        let (interval, unit) = {
+            let info = self.table_info.read();
+            let ttl_info = info
+                .ttl_info
+                .as_ref()
+                .ok_or_else(|| error("the table has no TTL info"))?;
+            let ttl_info = ttl_info.read();
+            (
+                ttl_info.interval_expr_str.clone(),
+                TimeUnitType::from_i64(ttl_info.interval_time_unit),
+            )
+        };
+
+        // Go's `now.In(globalTz)` on a single `*time.Location`. The union is
+        // split into a concrete zone type here so daylight saving survives the
+        // arithmetic -- see [`eval_expire_time`]'s zone boundary.
+        let instant = now.naive_utc().and_utc();
+        let expire = match &global_tz {
+            tidb_util::timeutil::TimeZone::Named(zone) => {
+                eval_expire_time(&instant.with_timezone(zone), &interval, unit)?.naive_utc()
             }
-            let group = &input[..ENC_GROUP_SIZE];
-            let marker = input[ENC_GROUP_SIZE];
-            let pad_count = usize::from(ENC_MARKER - marker);
-            if pad_count > ENC_GROUP_SIZE {
-                return Err(malformed());
+            tidb_util::timeutil::TimeZone::Local => {
+                eval_expire_time(&instant.with_timezone(&Local), &interval, unit)?.naive_utc()
             }
-            let real_group_size = ENC_GROUP_SIZE - pad_count;
-            data.extend_from_slice(&group[..real_group_size]);
-            input = &input[ENC_GROUP_SIZE + 1..];
-            if pad_count != 0 {
-                // Go verifies the padding bytes are all zero.
-                if group[real_group_size..].iter().any(|byte| *byte != 0) {
-                    return Err(malformed());
-                }
-                break;
+            tidb_util::timeutil::TimeZone::Fixed { offset_secs, .. } => {
+                let offset = FixedOffset::east_opt(*offset_secs)
+                    .ok_or_else(|| error("the global time zone offset is out of range"))?;
+                eval_expire_time(&instant.with_timezone(&offset), &interval, unit)?.naive_utc()
             }
-        }
-        Ok((input, data))
+        };
+
+        // Go `expire.In(now.Location())`.
+        Ok(expire.and_utc().with_timezone(&now.timezone()))
     }
 }

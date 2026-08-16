@@ -21,29 +21,21 @@
 //! - [`session`] <- Go `pkg/ttl/session` — complete package.
 //! - [`cache`] <- Go `pkg/ttl/cache` — SEED.
 //!
-//! # One crate-wide constraint
+//! # Dependencies
 //!
-//! `rust/Cargo.lock` pins this crate's dependencies to `tidb-ast`,
-//! `tidb-datatype`, `tidb-model`, `tidb-mysql` and `tidb-util`; the validation
-//! gates run `--locked`, and both `rust/Cargo.toml` and `rust/Cargo.lock` are
-//! owned outside this crate, so no dependency edge may be added here. Several
-//! packages these two Go packages import are already transcreated —
-//! `tidb-chunk` (`pkg/util/chunk`), `tidb-codec` (`pkg/util/codec`),
-//! `tidb-tablecodec`, `tidb-txnkv` (`pkg/kv`), `tidb-expr` (`pkg/expression`
-//! and `pkg/expression/exprstatic`) and `tidb-exec`
-//! (`pkg/infoschema/context`) — but are unreachable from here for that reason.
-//! Every place that constraint bites is named with a `// boundary:` comment at
-//! its own definition site, and the crate-wide consequences are spelled out in
-//! [`cache`]'s header. Resolving the ownership of `Cargo.toml`/`Cargo.lock`
-//! would let `cache::table`'s expiry evaluation, `cache::task`'s range
-//! encoding, and the private `cache::table::keycodec` module be replaced by the
-//! real transcreations.
+//! The Go packages transcreated here import `pkg/util/codec`, `pkg/tablecodec`,
+//! `pkg/kv` and `pkg/expression`; this crate depends on their transcreations
+//! (`tidb-codec`, `tidb-tablecodec`, `tidb-txnkv`, `tidb-expr`) directly, so no
+//! encoding or expression behaviour is reproduced locally. `pkg/infoschema` has
+//! no transcreation, and that is the one import still expressed as a trait
+//! boundary — see [`cache`]'s header. Every place a narrowing remains is named
+//! with a `// boundary:` comment at its own definition site.
 
 pub mod cache;
 pub mod session;
 pub mod sql_builder;
 
-pub use cache::table::PhysicalTable;
+pub use cache::table::{eval_expire_time, PhysicalTable, TimeUnitType};
 pub use sql_builder::{
     build_delete_sql, format_sql_datum, Result, ScanQueryGenerator, SqlBuilder, SqlBuilderError,
 };

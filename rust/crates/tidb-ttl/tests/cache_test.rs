@@ -25,14 +25,13 @@
 //! mock PD answers `ScanRegions`.
 //!
 //! Skipped, with exactly what each would need:
-//! - `TestTableEvalTTLExpireTime` and `TestEvalTTLExpireTime` — both call
-//!   `EvalExpireTime`, which is absent from the port because its MySQL interval
-//!   evaluation lives in `tidb-expr` and this crate may not depend on it (see
-//!   the crate header). They need that dependency edge; `TestTableEvalTTLExpireTime`
-//!   additionally needs a live session for `SET @@global.time_zone`.
+//! - `TestTableEvalTTLExpireTime` is ported only in the half that does not need
+//!   a live session; the boundary is named on the test itself.
 //! - `TestInsertIntoTTLTask` — asserts the round trip of
-//!   `codec.EncodeKey`-encoded scan ranges through `mysql.tidb_ttl_task`. Needs
-//!   `tidb-codec` for the encoding and a live store for the round trip.
+//!   `codec.EncodeKey`-encoded scan ranges through `mysql.tidb_ttl_task`. The
+//!   encoding is now reachable (`tidb-codec` is a dependency); the round trip
+//!   still needs a live store, and `InsertIntoTTLTask` itself is still
+//!   unported.
 //! - `TestTTLStatusCache` and `TestInfoSchemaCache` — both build a mock server
 //!   (`server.CreateMockServer`/`CreateMockConn`), run DDL and DML, and assert
 //!   the caches pick the changes up. They need a live TiDB plus the real
@@ -46,16 +45,26 @@
 
 use std::time::Duration;
 
+use chrono::TimeZone as _;
+
 use tidb_datatype::{CoreTime, Datum, FieldType, FieldTypeCode, Time, TimeType};
 use tidb_model::table::TTLInfo;
 use tidb_model::{ColumnInfo, GoShared, TableInfo};
 
 use tidb_ast::CiString;
+use tidb_codec::{decode_cmp_uint_to_int, encode_key};
+use tidb_tablecodec::table_key::{
+    encode_row_key, encode_row_key_with_handle, gen_table_prefix, gen_table_record_prefix,
+    RecordHandle,
+};
 use tidb_ttl::cache::base::BaseCache;
 use tidb_ttl::cache::table::{
+    eval_expire_time, set_mock_expire_time, MockExpireTimeKey, TimeUnitType,
+};
+use tidb_ttl::cache::table::{
     get_ascii_prefix_datum_from_bytes, get_next_bytes_handle_datum,
-    get_next_int_datum_from_common_handle, get_next_int_handle, keycodec, new_physical_table,
-    KeyLocation, PhysicalTable, RegionCache, ScanRange,
+    get_next_int_datum_from_common_handle, get_next_int_handle, new_physical_table, KeyLocation,
+    PhysicalTable, RegionCache, ScanRange,
 };
 use tidb_ttl::cache::task::{
     peek_waiting_ttl_task, row_to_ttl_task, select_from_ttl_task_with_id,
@@ -64,7 +73,8 @@ use tidb_ttl::cache::task::{
 use tidb_ttl::cache::ttlstatus::{
     row_to_table_status, select_from_ttl_table_status_with_id, JobStatus,
 };
-use tidb_ttl::session::ResultRow;
+use tidb_ttl::session::{ResultRow, TtlSession};
+use tidb_txnkv::Key;
 
 // -------------------------------------------------------------------------
 // base_test.go
@@ -140,14 +150,14 @@ fn test_get_ascii_prefix_datum_from_bytes() {
 #[test]
 fn test_get_next_int_handle() {
     let tbl_id: i64 = 7;
-    let record_prefix = keycodec::gen_table_record_prefix(tbl_id);
-    let row_key = |handle: i64| keycodec::encode_row_key_with_int_handle(tbl_id, handle);
+    let record_prefix = gen_table_record_prefix(tbl_id);
+    let row_key = |handle: i64| encode_row_key_with_handle(tbl_id, &RecordHandle::Int(handle));
     let appended = |handle: i64, byte: u8| {
         let mut key = row_key(handle);
         key.push(byte);
         key
     };
-    let cmp = keycodec::decode_cmp_uint_to_int;
+    let cmp = decode_cmp_uint_to_int;
 
     let cases: Vec<(Vec<u8>, Option<i64>)> = vec![
         (row_key(0), Some(0)),
@@ -159,34 +169,33 @@ fn test_get_next_int_handle() {
         (appended(i64::MIN, 0), Some(i64::MIN + 1)),
         (Vec::new(), Some(i64::MIN)),
         (record_prefix.clone(), Some(i64::MIN)),
+        (gen_table_record_prefix(tbl_id - 1), Some(i64::MIN)),
         (
-            keycodec::gen_table_record_prefix(tbl_id - 1),
-            Some(i64::MIN),
-        ),
-        (
-            keycodec::prefix_next(&keycodec::gen_table_prefix(tbl_id)),
+            Key::from_bytes(gen_table_prefix(tbl_id))
+                .prefix_next()
+                .into_bytes(),
             None,
         ),
-        (keycodec::encode_row_key(tbl_id, &[0]), Some(cmp(0))),
+        (encode_row_key(tbl_id, &[0]), Some(cmp(0))),
         (
-            keycodec::encode_row_key(tbl_id, &[0, 1, 2, 3]),
+            encode_row_key(tbl_id, &[0, 1, 2, 3]),
             Some(cmp(0x0001_0203_0000_0000)),
         ),
         (
-            keycodec::encode_row_key(tbl_id, &[8, 1, 2, 3]),
+            encode_row_key(tbl_id, &[8, 1, 2, 3]),
             Some(cmp(0x0801_0203_0000_0000)),
         ),
         (
-            keycodec::encode_row_key(tbl_id, &[0, 1, 2, 3, 4, 5, 6, 7, 0]),
+            encode_row_key(tbl_id, &[0, 1, 2, 3, 4, 5, 6, 7, 0]),
             Some(cmp(0x0001_0203_0405_0607) + 1),
         ),
         (
-            keycodec::encode_row_key(tbl_id, &[8, 1, 2, 3, 4, 5, 6, 7, 0]),
+            encode_row_key(tbl_id, &[8, 1, 2, 3, 4, 5, 6, 7, 0]),
             Some(cmp(0x0801_0203_0405_0607) + 1),
         ),
-        (keycodec::encode_row_key(tbl_id, &[0xff; 8]), Some(i64::MAX)),
+        (encode_row_key(tbl_id, &[0xff; 8]), Some(i64::MAX)),
         (
-            keycodec::encode_row_key(tbl_id, &[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0]),
+            encode_row_key(tbl_id, &[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0]),
             None,
         ),
     ];
@@ -204,9 +213,11 @@ fn test_get_next_int_handle() {
 #[test]
 fn test_get_next_bytes_handle_datum() {
     let tbl_id: i64 = 7;
-    let record_prefix = keycodec::gen_table_record_prefix(tbl_id);
-    let build_handle_bytes = |data: &[u8]| keycodec::encode_key(&[Datum::new_bytes(data.to_vec())]);
-    let build_row_key = |handle_bytes: &[u8]| keycodec::encode_row_key(tbl_id, handle_bytes);
+    let record_prefix = gen_table_record_prefix(tbl_id);
+    let build_handle_bytes = |data: &[u8]| {
+        encode_key(&[Datum::new_bytes(data.to_vec())]).expect("a bytes datum is always encodable")
+    };
+    let build_row_key = |handle_bytes: &[u8]| encode_row_key(tbl_id, handle_bytes);
     let build_bytes_row_key = |data: &[u8]| build_row_key(&build_handle_bytes(data));
     let with_last = |data: &[u8], byte: u8| {
         let mut key = build_bytes_row_key(data);
@@ -258,9 +269,11 @@ fn test_get_next_bytes_handle_datum() {
         ),
         (Vec::new(), Some(vec![])),
         (record_prefix.clone(), Some(vec![])),
-        (keycodec::gen_table_record_prefix(tbl_id - 1), Some(vec![])),
+        (gen_table_record_prefix(tbl_id - 1), Some(vec![])),
         (
-            keycodec::prefix_next(&keycodec::gen_table_prefix(tbl_id)),
+            Key::from_bytes(gen_table_prefix(tbl_id))
+                .prefix_next()
+                .into_bytes(),
             None,
         ),
         (build_row_key(&[0]), Some(vec![])),
@@ -331,8 +344,8 @@ fn test_get_next_bytes_handle_datum() {
 #[test]
 fn test_get_next_int_datum_from_common_handle() {
     let tbl_id: i64 = 7;
-    let record_prefix = keycodec::gen_table_record_prefix(tbl_id);
-    let encode = |datums: &[Datum]| keycodec::encode_row_key(tbl_id, &keycodec::encode_key(datums));
+    let record_prefix = gen_table_record_prefix(tbl_id);
+    let encode = |datums: &[Datum]| encode_row_key(tbl_id, &common_handle(datums));
     let truncate_one = |datums: &[Datum]| {
         let key = encode(datums);
         key[..key.len() - 1].to_vec()
@@ -499,21 +512,21 @@ impl MockRegionCache {
     }
 
     fn add_region_begin_with_table_prefix(&mut self, table_id: i64, handle_end: &[u8]) {
-        let start = keycodec::gen_table_prefix(table_id);
-        let end = keycodec::encode_row_key(table_id, handle_end);
+        let start = gen_table_prefix(table_id);
+        let end = encode_row_key(table_id, handle_end);
         self.add_region(start, end);
     }
 
     fn add_region_end_with_table_prefix(&mut self, handle_start: &[u8], table_id: i64) {
-        let start = keycodec::encode_row_key(table_id, handle_start);
-        let end = keycodec::gen_table_prefix(table_id + 1);
+        let start = encode_row_key(table_id, handle_start);
+        let end = gen_table_prefix(table_id + 1);
         self.add_region(start, end);
     }
 
     fn add_region_with_table_prefix(&mut self, table_id: i64, start: &[u8], end: &[u8]) {
         self.add_region(
-            keycodec::encode_row_key(table_id, start),
-            keycodec::encode_row_key(table_id, end),
+            encode_row_key(table_id, start),
+            encode_row_key(table_id, end),
         );
     }
 
@@ -528,11 +541,7 @@ impl MockRegionCache {
         for i in 0..region_cnt {
             let start = offset + i * region_size;
             end = start + region_size;
-            self.add_region_with_table_prefix(
-                table_id,
-                &keycodec::encode_int(start),
-                &keycodec::encode_int(end),
-            );
+            self.add_region_with_table_prefix(table_id, &encode_int(start), &encode_int(end));
         }
         end
     }
@@ -566,12 +575,19 @@ impl RegionCache for MockRegionCache {
     }
 }
 
+/// Go `codec.EncodeInt(nil, value)`, whose Rust form appends into a buffer.
+fn encode_int(value: i64) -> Vec<u8> {
+    let mut buffer = Vec::new();
+    tidb_codec::encode_int(&mut buffer, value);
+    buffer
+}
+
 fn int_handle(value: i64) -> Vec<u8> {
-    keycodec::encode_int(value)
+    encode_int(value)
 }
 
 fn common_handle(datums: &[Datum]) -> Vec<u8> {
-    keycodec::encode_key(datums)
+    encode_key(datums).expect("a TTL handle datum is always encodable")
 }
 
 fn bytes_handle(data: &[u8]) -> Vec<u8> {
@@ -672,10 +688,7 @@ fn test_split_ttl_scan_ranges_with_signed_int() {
 
         // test share regions with other table
         store.clear_regions();
-        store.add_region(
-            keycodec::gen_table_prefix(tbl.id - 1),
-            keycodec::gen_table_prefix(tbl.id + 1),
-        );
+        store.add_region(gen_table_prefix(tbl.id - 1), gen_table_prefix(tbl.id + 1));
         let ranges = tbl.split_scan_ranges(Some(&store), 4).unwrap();
         assert_eq!(ranges.len(), 1);
         check_range(&ranges[0], &Datum::Null, &Datum::Null, "shared region");
@@ -752,10 +765,7 @@ fn test_split_ttl_scan_ranges_with_unsigned_int() {
         check_range(&ranges[0], &Datum::Null, &Datum::Null, "one region");
 
         store.clear_regions();
-        store.add_region(
-            keycodec::gen_table_prefix(tbl.id - 1),
-            keycodec::gen_table_prefix(tbl.id + 1),
-        );
+        store.add_region(gen_table_prefix(tbl.id - 1), gen_table_prefix(tbl.id + 1));
         let ranges = tbl.split_scan_ranges(Some(&store), 4).unwrap();
         assert_eq!(ranges.len(), 1);
         check_range(&ranges[0], &Datum::Null, &Datum::Null, "shared region");
@@ -856,10 +866,7 @@ fn test_split_ttl_scan_ranges_common_handle_signed_int() {
         check_range(&ranges[0], &Datum::Null, &Datum::Null, "one region");
 
         store.clear_regions();
-        store.add_region(
-            keycodec::gen_table_prefix(tbl.id - 1),
-            keycodec::gen_table_prefix(tbl.id + 1),
-        );
+        store.add_region(gen_table_prefix(tbl.id - 1), gen_table_prefix(tbl.id + 1));
         let ranges = tbl.split_scan_ranges(Some(&store), 4).unwrap();
         assert_eq!(ranges.len(), 1);
         check_range(&ranges[0], &Datum::Null, &Datum::Null, "shared region");
@@ -908,10 +915,7 @@ fn test_split_ttl_scan_ranges_common_handle_unsigned_int() {
         check_range(&ranges[0], &Datum::Null, &Datum::Null, "one region");
 
         store.clear_regions();
-        store.add_region(
-            keycodec::gen_table_prefix(tbl.id - 1),
-            keycodec::gen_table_prefix(tbl.id + 1),
-        );
+        store.add_region(gen_table_prefix(tbl.id - 1), gen_table_prefix(tbl.id + 1));
         let ranges = tbl.split_scan_ranges(Some(&store), 4).unwrap();
         assert_eq!(ranges.len(), 1);
         check_range(&ranges[0], &Datum::Null, &Datum::Null, "shared region");
@@ -1132,10 +1136,7 @@ fn test_no_ttl_split_support_tables() {
         check_range(&ranges[0], &Datum::Null, &Datum::Null, "one region");
 
         store.clear_regions();
-        store.add_region(
-            keycodec::gen_table_prefix(tbl.id - 1),
-            keycodec::gen_table_prefix(tbl.id + 1),
-        );
+        store.add_region(gen_table_prefix(tbl.id - 1), gen_table_prefix(tbl.id + 1));
         let ranges = tbl.split_scan_ranges(Some(&store), 4).unwrap();
         assert_eq!(ranges.len(), 1);
         check_range(&ranges[0], &Datum::Null, &Datum::Null, "shared region");
@@ -1387,8 +1388,8 @@ fn test_row_to_ttl_task() {
     assert_eq!(task.status, TaskStatus::default());
 
     // Go's second assertion: the ranges are updated to encoded `1` and `2`.
-    let range_start = keycodec::encode_key(&[Datum::new_int(1)]);
-    let range_end = keycodec::encode_key(&[Datum::new_int(2)]);
+    let range_start = encode_key(&[Datum::new_int(1)]).expect("an int datum is always encodable");
+    let range_end = encode_key(&[Datum::new_int(2)]).expect("an int datum is always encodable");
     let row = MockRow {
         cells: vec![
             Some(Cell::Text("test-job".to_owned())),
@@ -1503,4 +1504,283 @@ fn test_ttl_task_statements() {
     let (sql, args) = select_from_ttl_table_status_with_id(9);
     assert!(sql.ends_with(" WHERE table_id = %?"));
     assert_eq!(args, vec![9]);
+}
+
+// -------------------------------------------------------------------------
+// table_test.go: expiry evaluation
+// -------------------------------------------------------------------------
+
+/// Go's `time.ParseInLocation(time.DateTime, text, loc)`.
+///
+/// Go resolves an ambiguous local time (a fall-back repeated hour) to the
+/// FIRST of the two instants, which is `earliest()` here.
+fn parse_in_location<Tz: chrono::TimeZone>(text: &str, zone: &Tz) -> chrono::DateTime<Tz> {
+    let naive = chrono::NaiveDateTime::parse_from_str(text, "%Y-%m-%d %H:%M:%S")
+        .expect("the fixture text is a valid datetime");
+    zone.from_local_datetime(&naive)
+        .earliest()
+        .expect("the fixture instant exists in the fixture zone")
+}
+
+/// Go's `t.Format(time.DateTime)`.
+fn format_date_time<Tz: chrono::TimeZone>(value: &chrono::DateTime<Tz>) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    value.format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+/// Go `TestEvalTTLExpireTime`.
+///
+/// Go's `require.Same(t, tz, tm.Location())` asserts that the returned
+/// `time.Time` kept the argument's `*time.Location` pointer; `chrono` has no
+/// pointer to compare, so each case asserts the equivalent
+/// `tm.timezone() == tz`.
+#[test]
+fn test_eval_ttl_expire_time() {
+    let tz_shanghai = chrono_tz::Asia::Shanghai;
+    let tz_berlin = chrono_tz::Europe::Berlin;
+
+    let epoch = |zone: chrono_tz::Tz| zone.timestamp_millis_opt(0).single().unwrap();
+
+    let tm = eval_expire_time(&epoch(tz_shanghai), "1", TimeUnitType::Day).unwrap();
+    assert_eq!(tm.timestamp(), -86400);
+    assert_eq!(format_date_time(&tm), "1969-12-31 08:00:00");
+    assert_eq!(tm.timezone(), tz_shanghai);
+
+    let tm = eval_expire_time(&epoch(tz_berlin), "1", TimeUnitType::Day).unwrap();
+    assert_eq!(tm.timestamp(), -86400);
+    assert_eq!(
+        format_date_time(&tm.with_timezone(&tz_berlin)),
+        "1969-12-31 01:00:00"
+    );
+    assert_eq!(tm.timezone(), tz_berlin);
+
+    let tm = eval_expire_time(&epoch(tz_shanghai), "3", TimeUnitType::Month).unwrap();
+    assert_eq!(
+        format_date_time(&tm.with_timezone(&tz_shanghai)),
+        "1969-10-01 08:00:00"
+    );
+    assert_eq!(tm.timezone(), tz_shanghai);
+
+    let tm = eval_expire_time(&epoch(tz_berlin), "3", TimeUnitType::Month).unwrap();
+    assert_eq!(
+        format_date_time(&tm.with_timezone(&tz_berlin)),
+        "1969-10-01 01:00:00"
+    );
+    assert_eq!(tm.timezone(), tz_berlin);
+
+    // test cases for daylight saving time.
+    // When local standard time was about to reach Sunday, 10 March 2024,
+    // 02:00:00 clocks were turned forward 1 hour to Sunday, 10 March 2024,
+    // 03:00:00 local daylight time instead.
+    let tz_los_angeles = chrono_tz::America::Los_Angeles;
+    let now = parse_in_location("2024-03-11 19:49:59", &tz_los_angeles);
+    let tm = eval_expire_time(&now, "90", TimeUnitType::Minute).unwrap();
+    assert_eq!(format_date_time(&tm), "2024-03-11 18:19:59");
+    assert_eq!(tm.timezone(), tz_los_angeles);
+
+    // across day light-saving time
+    let now = parse_in_location("2024-03-10 03:01:00", &tz_los_angeles);
+    let tm = eval_expire_time(&now, "90", TimeUnitType::Minute).unwrap();
+    assert_eq!(format_date_time(&tm), "2024-03-10 00:31:00");
+    assert_eq!(tm.timezone(), tz_los_angeles);
+
+    let now = parse_in_location("2024-03-10 04:01:00", &tz_los_angeles);
+    let tm = eval_expire_time(&now, "90", TimeUnitType::Minute).unwrap();
+    assert_eq!(format_date_time(&tm), "2024-03-10 01:31:00");
+    assert_eq!(tm.timezone(), tz_los_angeles);
+
+    let now = parse_in_location("2024-11-03 03:00:00", &tz_los_angeles);
+    let tm = eval_expire_time(&now, "90", TimeUnitType::Minute).unwrap();
+    assert_eq!(format_date_time(&tm), "2024-11-03 01:30:00");
+    assert_eq!(tm.timezone(), tz_los_angeles);
+    // 2024-11-03 01:30:00 in America/Los_Angeles has two related time points:
+    // 2024-11-03 01:30:00 -0700 PDT
+    // 2024-11-03 01:30:00 -0800 PST
+    // We must use the earlier one to avoid deleting some unexpected rows.
+    assert_eq!(now.timestamp() - tm.timestamp(), 5400);
+
+    // time should be truncated to second to make the result simple
+    let now = chrono::Utc
+        .from_local_datetime(
+            &chrono::NaiveDateTime::parse_from_str(
+                "2023-01-02 15:00:01.986542",
+                "%Y-%m-%d %H:%M:%S%.f",
+            )
+            .unwrap(),
+        )
+        .single()
+        .unwrap();
+    let tm = eval_expire_time(&now, "1", TimeUnitType::Day).unwrap();
+    assert_eq!(
+        tm.format("%Y-%m-%d %H:%M:%S%.6f").to_string(),
+        "2023-01-01 15:00:01.000000"
+    );
+    assert_eq!(tm.timezone(), chrono::Utc);
+
+    // test for string interval format
+    let tm = eval_expire_time(&epoch(tz_berlin), "'1:3'", TimeUnitType::HourMinute).unwrap();
+    assert_eq!(
+        format_date_time(&tm.with_timezone(&chrono::Utc)),
+        "1969-12-31 22:57:00"
+    );
+    assert_eq!(tm.timezone(), tz_berlin);
+}
+
+/// A `sessionctx.Context` whose only scripted answer is the global
+/// `time_zone`, which is all `(*PhysicalTable).EvalExpireTime` reads.
+struct GlobalTimeZoneContext {
+    global_time_zone: &'static str,
+    killer: tidb_util::sqlkiller::SqlKiller,
+}
+
+impl GlobalTimeZoneContext {
+    fn new(global_time_zone: &'static str) -> Self {
+        Self {
+            global_time_zone,
+            killer: tidb_util::sqlkiller::SqlKiller::default(),
+        }
+    }
+}
+
+impl tidb_ttl::session::SessionContext for GlobalTimeZoneContext {
+    type Row = NoRow;
+    type Store = ();
+    type InfoSchema = ();
+
+    fn get_store(&self) {}
+    fn get_latest_info_schema(&self) {}
+    fn get_txn_info_schema(&self) {}
+
+    fn execute_internal(
+        &self,
+        _sql: &str,
+        _args: &[Datum],
+    ) -> Result<Option<Vec<NoRow>>, tidb_ttl::session::SessionError> {
+        Ok(None)
+    }
+
+    fn get_global_system_var(
+        &self,
+        _name: &str,
+    ) -> Result<String, tidb_ttl::session::SessionError> {
+        Ok(self.global_time_zone.to_owned())
+    }
+
+    fn get_session_or_global_system_var(
+        &self,
+        _name: &str,
+    ) -> Result<String, tidb_ttl::session::SessionError> {
+        Ok(self.global_time_zone.to_owned())
+    }
+
+    fn time_zone(&self) -> Option<tidb_util::timeutil::TimeZone> {
+        None
+    }
+
+    fn location(&self) -> tidb_util::timeutil::TimeZone {
+        tidb_util::timeutil::parse_time_zone(self.global_time_zone).unwrap()
+    }
+
+    fn sql_killer(&self) -> &tidb_util::sqlkiller::SqlKiller {
+        &self.killer
+    }
+}
+
+/// A `chunk.Row` this fixture never reads.
+struct NoRow;
+
+impl ResultRow for NoRow {
+    fn is_null(&self, _col_idx: usize) -> bool {
+        true
+    }
+    fn get_int64(&self, _col_idx: usize) -> i64 {
+        0
+    }
+    fn get_string(&self, _col_idx: usize) -> String {
+        String::new()
+    }
+    fn get_bytes(&self, _col_idx: usize) -> Vec<u8> {
+        Vec::new()
+    }
+    fn get_time(&self, _col_idx: usize) -> Time {
+        Time::new(CoreTime::default(), TimeType::DateTime, 0).unwrap()
+    }
+}
+
+/// A TTL table whose `TTLInfo` carries one interval expression and unit.
+fn ttl_interval_table(id: i64, interval: &str, unit: TimeUnitType) -> PhysicalTable {
+    let time_col = column(2, 1, "t", FieldType::new(FieldTypeCode::Datetime));
+    let tbl = GoShared::new(TableInfo {
+        id,
+        name: CiString::new("t"),
+        state: tidb_model::SchemaState::PUBLIC,
+        columns: tidb_model::GoSharedPointerSlice::from_handles(vec![
+            Some(column(1, 0, "a", FieldType::new(FieldTypeCode::Long))),
+            Some(time_col),
+        ]),
+        ttl_info: Some(GoShared::new(TTLInfo {
+            column_name: CiString::new("t"),
+            interval_expr_str: interval.to_owned(),
+            interval_time_unit: unit as i64,
+            enable: true,
+            job_interval: String::new(),
+        })),
+        ..Default::default()
+    });
+    new_physical_table(CiString::new("test"), &tbl, CiString::new("")).unwrap()
+}
+
+/// The session-independent half of Go `TestTableEvalTTLExpireTime`.
+///
+/// `// boundary:` the other half. Go drives the global zone with
+/// `SET @@global.time_zone = '+02:00'` on a live `testkit` session and closes
+/// by asserting `select @@time_zone` still reports the SESSION zone
+/// (`Asia/Tokyo`) — that the global-zone read did not leak into the session.
+/// Both need a real server. What is asserted here is everything
+/// `(*PhysicalTable).EvalExpireTime` itself owns: that it computes against the
+/// GLOBAL zone rather than the `now` argument's, that it returns in the `now`
+/// argument's zone, that a string-format interval works, and that the mock
+/// override short-circuits it.
+#[test]
+fn test_table_eval_ttl_expire_time() {
+    // the global timezone set to +02:00
+    let tz1 = chrono::FixedOffset::east_opt(2 * 3600).unwrap();
+    let se = TtlSession::new(GlobalTimeZoneContext::new("+02:00"), Box::new(|| {}));
+
+    // `create table test.t(a int, t datetime) ttl = `t` + interval 1 month`
+    let ttl_tbl = ttl_interval_table(101, "1", TimeUnitType::Month);
+
+    // the timezone of now argument is set to -02:00
+    let tz2 = chrono::FixedOffset::east_opt(-2 * 3600).unwrap();
+    let now = parse_in_location("1999-02-28 23:00:00", &tz2);
+    let tm = ttl_tbl
+        .eval_expire_time(&MockExpireTimeKey::default(), &se, &now)
+        .unwrap();
+    // The expired time should be calculated according to the global time zone
+    assert_eq!(
+        format_date_time(&tm.with_timezone(&tz1)),
+        "1999-02-01 03:00:00"
+    );
+    // The location of the expired time should be the same as the input
+    // argument `now`
+    assert_eq!(tm.timezone(), tz2);
+
+    // should support a string format interval
+    // `create table test.t2(a int, t datetime) ttl = `t` + interval '1:3' hour_minute`
+    let ttl_tbl2 = ttl_interval_table(102, "'1:3'", TimeUnitType::HourMinute);
+    let now = parse_in_location("2020-01-01 15:00:00", &tz1);
+    let tm = ttl_tbl2
+        .eval_expire_time(&MockExpireTimeKey::default(), &se, &now)
+        .unwrap();
+    assert_eq!(format_date_time(&tm), "2020-01-01 13:57:00");
+    assert_eq!(tm.timezone(), tz1);
+
+    // Go `SetMockExpireTime`: the context value short-circuits every read
+    // above, including the session's.
+    let mocked = parse_in_location("2021-06-07 08:09:10", &tz1);
+    let ctx = set_mock_expire_time(&MockExpireTimeKey::default(), mocked);
+    let tm = ttl_tbl2.eval_expire_time(&ctx, &se, &now).unwrap();
+    assert_eq!(format_date_time(&tm), "2021-06-07 08:09:10");
 }

@@ -28,6 +28,8 @@ use tidb_kvcache::{CacheKey, InvalidCapacity, SimpleLruCache};
 use tidb_util::plancodec::{BINARY_PLAN_DISCARDED_ENCODED, PLAN_DISCARDED_ENCODED};
 use tidb_util::ppcpuusage::CpuUsages;
 
+use crate::evicted::StmtSummaryByDigestEvicted;
+
 /// Go `MaxEncodedPlanSizeInBytes`: the upper limit of the size of the plan and
 /// the binary plan in the stmt summary. Go declares it as a mutable package
 /// variable, so it stays writable here.
@@ -423,7 +425,7 @@ impl StmtNetworkTrafficSummary {
 
 /// Go `stmtSummaryStats`: the collection of statistics tracked for each
 /// statement summary, both cumulatively and for each interval.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StmtSummaryStats {
     // basic
     /// Go `sampleSQL`.
@@ -1044,7 +1046,7 @@ fn nanos_to_duration(nanos: i64) -> Duration {
 
 /// Go `stmtSummaryByDigestElement`: the summary for each type of statements in
 /// the current interval.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct StmtSummaryByDigestElement {
     /// Go `beginTime`: each summary is summarized between `[beginTime, endTime)`.
     pub begin_time: i64,
@@ -1340,6 +1342,11 @@ pub struct StmtSummaryByDigestMap {
 
     /// Go `other`: stores the summary of evicted data.
     other: Arc<Mutex<Box<dyn EvictedSink>>>,
+    /// The same object as `other`, at its concrete type, whenever this map owns
+    /// the real `evicted.go` rollup (which Go's `newStmtSummaryByDigestMap`
+    /// always does). `None` only for a map built by [`Self::with_sinks`] with
+    /// some other sink.
+    other_evicted: Option<Arc<Mutex<StmtSummaryByDigestEvicted>>>,
     /// Go `currentWindowEvictedCount`: counts LRU evictions observed in the
     /// current interval.
     current_window_evicted_count: Arc<AtomicI64>,
@@ -1361,7 +1368,20 @@ impl StmtSummaryByDigestMap {
     /// `stmtSummaryByDigestMap`.
     #[must_use]
     pub fn new() -> Self {
-        Self::with_sinks(Box::new(NoopEvictedSink), Box::new(NoopWindowMetricsSink))
+        // Go's `other: newStmtSummaryByDigestEvicted()`.
+        let evicted = Arc::new(Mutex::new(StmtSummaryByDigestEvicted::new()));
+        let mut map = Self::with_sinks(
+            Box::new(Arc::clone(&evicted)),
+            Box::new(NoopWindowMetricsSink),
+        );
+        map.other_evicted = Some(evicted);
+        map
+    }
+
+    /// Go's `ssMap.other`, at the concrete type `evicted.go` declares.
+    #[must_use]
+    pub fn evicted(&self) -> Option<&Arc<Mutex<StmtSummaryByDigestEvicted>>> {
+        self.other_evicted.as_ref()
     }
 
     /// Go `newStmtSummaryByDigestMap` with the two narrowed collaborators
@@ -1405,6 +1425,7 @@ impl StmtSummaryByDigestMap {
             opt_max_sql_length: AtomicI32::new(32768),
             opt_group_by_user: AtomicBool::new(false),
             other,
+            other_evicted: None,
             current_window_evicted_count: evicted_count,
             metrics,
             mock_now: AtomicI64::new(-1),
@@ -1804,7 +1825,7 @@ pub fn convert_empty_to_nil(str: &str) -> Option<&str> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use std::thread;
 
     use tidb_exec::exec_details::{
@@ -1883,7 +1904,7 @@ mod tests {
     }
 
     /// Go `generateAnyExecInfo`.
-    fn generate_any_exec_info() -> StmtExecInfo {
+    pub(crate) fn generate_any_exec_info() -> StmtExecInfo {
         let sc = StmtSummaryStmtCtx {
             stmt_type: "Select".to_owned(),
             tables: vec![

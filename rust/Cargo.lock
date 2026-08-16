@@ -2693,6 +2693,7 @@ name = "tidb-stmtsummary"
 version = "0.0.0"
 dependencies = [
  "chrono",
+ "tidb-datatype",
  "tidb-exec",
  "tidb-kvcache",
  "tidb-util",
@@ -2729,10 +2730,16 @@ dependencies = [
 name = "tidb-ttl"
 version = "0.0.0"
 dependencies = [
+ "chrono",
+ "chrono-tz",
  "tidb-ast",
+ "tidb-codec",
  "tidb-datatype",
+ "tidb-expr",
  "tidb-model",
  "tidb-mysql",
+ "tidb-tablecodec",
+ "tidb-txnkv",
  "tidb-util",
 ]
 
