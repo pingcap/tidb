@@ -1268,6 +1268,51 @@ mod tests {
         );
     }
 
+    /// Regression: a column BENEATH a function keeps the schema column's
+    /// identity, not just its `(index, type, unique id)`.
+    ///
+    /// The rewriter wraps its resolver in a fold-mode child scope before
+    /// building a function's arguments; when that wrapper did not forward
+    /// [`ColumnResolver::resolve_column`], every column argument came back
+    /// with `ID`/`OrigName`/`VirtualExpr` cleared, which silently made a
+    /// virtual generated column look like an ordinary one to
+    /// `pkg/ddl/copr`'s `GetCondition`.
+    #[test]
+    fn a_column_under_a_function_keeps_its_identity() {
+        let table = vec![
+            TestColumnInfo::new("a", 0, FieldTypeCode::LongLong),
+            TestColumnInfo::new("b", 1, FieldTypeCode::LongLong),
+            TestColumnInfo::new("c", 2, FieldTypeCode::LongLong).generated("a + b"),
+        ];
+        let ids = SimplePlanColumnIdAllocator::new(0);
+        let (columns, names) = column_infos_to_columns_and_names(
+            &NoResolver,
+            &ids,
+            &IdentifierMetadata::new("test"),
+            &CiString::new("t"),
+            &table,
+        )
+        .expect("converts");
+
+        let options = BuildOptions::new().with_input_schema_and_names(Schema::new(columns), names);
+        let expr = parse_simple_expr(&NoResolver, "c > 1 and a > 0", &options).expect("builds");
+        let referenced = extract_columns(&expr);
+        assert_eq!(
+            referenced.iter().map(|c| c.id).collect::<Vec<_>>(),
+            vec![1, 3]
+        );
+        assert_eq!(
+            referenced
+                .iter()
+                .map(|c| c.orig_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["test.t.a", "test.t.c"]
+        );
+        // `c` is generated, so its expression must survive the binding.
+        assert!(referenced[0].virtual_expr.is_none());
+        assert!(referenced[1].virtual_expr.is_some());
+    }
+
     /// `resolve_indices_in_place` is what makes a SUBSET schema work: the
     /// column's `Index` is its table offset until the schema it will be
     /// evaluated against remaps it.

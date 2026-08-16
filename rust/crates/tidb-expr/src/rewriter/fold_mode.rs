@@ -49,6 +49,16 @@ impl ColumnResolver for FoldModeResolver<'_> {
         self.base.resolve(path)
     }
 
+    /// Forwarded, not inherited: the default rebuilds a `Column` from
+    /// `resolve`'s three fields, which would drop the base resolver's `ID`,
+    /// `OrigName`, `IsHidden` and `VirtualExpr` for every column that happens
+    /// to sit under a function -- Go's `toColumn` hands back the schema column
+    /// itself at every depth. Callers that read `VirtualExpr` off a built
+    /// expression (`pkg/ddl/copr`'s `GetCondition`) depend on this.
+    fn resolve_column(&self, path: &[String]) -> Option<crate::column::Column> {
+        self.base.resolve_column(path)
+    }
+
     fn resolve_default(&self, path: &[String]) -> Option<Expression> {
         self.base.resolve_default(path)
     }

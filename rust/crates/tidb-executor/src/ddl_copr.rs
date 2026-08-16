@@ -25,29 +25,14 @@
 //! [`collect_virtual_column_offsets_and_types`]. All three upstream tests are
 //! ported below.
 //!
-//! It stays a SEED because three `pkg/expression` entry points the file calls
-//! have no Rust owner yet, so they are narrowed onto one local boundary trait
-//! rather than reached:
-//!
-//! - `// boundary:` Go `pkg/expression/exprctx.BuildContext` — modeled as
-//!   [`CopBuildContext`]. `tidb_expr::exprctx` is itself a seed and does not
-//!   yet declare the umbrella `BuildContext` interface, so this trait carries
-//!   exactly the four things `copr_ctx.go` reaches through `exprCtx`:
-//!   `AllocPlanColumnID`, plus the three builders below (Go passes the same
-//!   one `exprCtx` value into each).
-//! - `// boundary:` Go `expression.BuildSimpleExpr` (the virtual-generated
-//!   column leg of `expression.ColumnInfos2ColumnsAndNamesWithCollate`) —
-//!   [`CopBuildContext::build_virtual_column_expr`]. The rest of
-//!   `ColumnInfos2ColumnsAndNamesWithCollate` is transcreated here as
-//!   [`column_infos_to_columns_and_names_with_collate`]; only the expression
-//!   build/resolve step crosses the boundary.
-//! - `// boundary:` Go `expression.ParseSimpleExpr` +
-//!   `expression.WithInputSchemaAndNames` —
-//!   [`CopBuildContext::parse_simple_expr`], used by both `GetCondition`
-//!   implementations for a partial index's pushed-down condition.
-//! - `// boundary:` Go `expression.ComposeDNFCondition` —
-//!   [`CopBuildContext::compose_dnf_condition`]; `tidb-expr` has no `OR`
-//!   composer yet.
+//! Every `pkg/expression` entry point `copr_ctx.go` calls is now REACHED, in
+//! `tidb_expr::simple_expr`, rather than narrowed onto a local stub:
+//! `ColumnInfos2ColumnsAndNamesWithCollate` (which subsumes the
+//! `BuildSimpleExpr` + `ResolveIndices` leg for a virtual generated column),
+//! `ParseSimpleExpr` with `WithInputSchemaAndNames`, `ComposeDNFCondition` and
+//! `ExtractColumns`. What remains of the old boundary trait is
+//! [`CopBuildContext`], now just the two accessors Go's single `exprCtx` value
+//! is used for, with [`CopExprContext`] as its production implementation.
 //!
 //! Reached rather than narrowed: `tables.FindPrimaryIndex` is a three-line
 //! scan inlined as [`find_primary_index`] (`pkg/table/tables` has no Rust
@@ -55,7 +40,30 @@
 //! `tables.DedupIndexColumns` is [`crate::kv_table::dedup_index_columns`], and
 //! `tables.ExtractColumnsFromCondition` is
 //! [`crate::kv_table::extract_columns_from_index_condition`].
-//! `expression.ExtractColumns` is the private [`extract_columns`] walk below.
+//!
+//! # Why this is still a SEED
+//!
+//! Three build options `copr_ctx.go` passes are carried but not yet honored by
+//! `tidb_expr::simple_expr` (itself a seed of `pkg/expression`), whose module
+//! header names them as ITS boundaries. All three change what this package
+//! observes, so they are named here too:
+//!
+//! - `// boundary:` `WithAllowCastArray(true)`. Go builds every virtual
+//!   generated column of a backfilled table with the ARRAY-cast leg enabled,
+//!   which is exactly how a MULTI-VALUED index's `cast(j as signed array)`
+//!   column is built. `tidb-expr`'s rewriter rejects every `CAST(.. AS ..
+//!   ARRAY)`, so a multi-valued-index backfill cannot be constructed through
+//!   this port yet; it errors instead of building.
+//! - `// boundary:` `WithUseNewCollate(useNewCollate)`. Go steers a generated
+//!   column's collation derivation with [`CopContextBase::use_new_collate`];
+//!   `tidb-expr` derives collation from the process-wide
+//!   `tidb_datatype::new_collation_enabled()` instead, so the flag reaches the
+//!   builder (it is passed through in full) but does not yet change the result.
+//! - `// boundary:` Go `WithInputSchemaAndNames(schema, names, tblInfo)`'s
+//!   third argument. It exists in Go only to resolve `DEFAULT(col)` inside the
+//!   built expression, a leg `tidb-expr` does not port; the `table` parameter
+//!   of [`CopBuildContext::parse_simple_expr`] is kept and unused so the
+//!   dropped argument stays greppable.
 //!
 //! Go's blank `_ "github.com/pingcap/tidb/pkg/infoschema"` import exists only
 //! so the test binary registers `mock.MockInfoschema`; nothing in the package
@@ -69,10 +77,14 @@
 
 use std::sync::Arc;
 
+use tidb_ast::CiString;
 use tidb_datatype::{FieldName, FieldNameMetadata, FieldType, IdentifierMetadata};
 use tidb_expr::column::Column;
+use tidb_expr::exprctx::{PlanColumnIdAllocator, SimplePlanColumnIdAllocator};
 use tidb_expr::expression::Expression;
+use tidb_expr::rewriter::ColumnResolver;
 use tidb_expr::schema::Schema;
+use tidb_expr::simple_expr::{self, BuildOptions, ColumnInfoSource};
 use tidb_model::column::{find_column_info, EXTRA_HANDLE_ID, EXTRA_HANDLE_NAME};
 use tidb_model::{ColumnInfo, GoShared, IndexColumn, IndexInfo, TableInfo};
 
@@ -87,45 +99,102 @@ pub type CopResult<T> = Result<T, String>;
 
 /// The slice of Go `exprctx.BuildContext` that `pkg/ddl/copr` reaches.
 ///
-/// boundary: Go `pkg/expression/exprctx.BuildContext`, plus the three
-/// `pkg/expression` free functions the package calls with it
-/// (`BuildSimpleExpr` inside `ColumnInfos2ColumnsAndNamesWithCollate`,
-/// `ParseSimpleExpr`, and `ComposeDNFCondition`). None of the four has a Rust
-/// owner yet; grouping them here keeps `copr_ctx.go`'s own logic complete and
-/// leaves one named seam to replace when `tidb-expr` grows the builders.
+/// Go threads ONE `exprCtx` value into every `pkg/expression` call this file
+/// makes. `tidb_expr::exprctx` does not declare the umbrella `BuildContext`
+/// interface, so the two halves that file actually uses are named separately:
+/// the build-time column/session view ([`ColumnResolver`]) and the plan-wide
+/// column-id counter ([`PlanColumnIdAllocator`]). The two `pkg/expression`
+/// entry points the `GetCondition` bodies call are provided methods with real
+/// bodies over those halves, because Go calls them as free functions taking
+/// `exprCtx` -- an implementor supplies the context, not the algorithm.
+/// (`ColumnInfos2ColumnsAndNamesWithCollate`, the third, is called directly in
+/// [`new_cop_context_base`] for the same reason.) [`CopExprContext`] is the
+/// production implementation.
 pub trait CopBuildContext: std::fmt::Debug + Send + Sync {
-    /// Go `BuildContext.AllocPlanColumnID`: the next plan-wide unique column id.
-    fn alloc_plan_column_id(&self) -> i64;
+    /// The context every expression build in this package runs under: Go's
+    /// `exprCtx` in its `expression.BuildContext` role.
+    fn column_resolver(&self) -> &dyn ColumnResolver;
 
-    /// Go `expression.BuildSimpleExpr(ctx, generatedExpr, WithInputSchemaAndNames(..),
-    /// WithAllowCastArray(true), WithUseNewCollate(useNewCollate))` followed by
-    /// `ResolveIndices(mockSchema)`, for one virtual generated column.
-    ///
-    /// `Ok(None)` mirrors Go's `e == nil` (the built expression is dropped and
-    /// `VirtualExpr` stays nil).
-    fn build_virtual_column_expr(
-        &self,
-        column: &ColumnInfo,
-        table: &TableInfo,
-        schema: &Schema,
-        names: &[FieldName],
-        use_new_collate: bool,
-    ) -> CopResult<Option<Expression>>;
+    /// Go `BuildContext.AllocPlanColumnID`'s owner.
+    fn plan_column_ids(&self) -> &dyn PlanColumnIdAllocator;
 
     /// Go `expression.ParseSimpleExpr(ctx, sql, WithInputSchemaAndNames(schema,
     /// names, tblInfo))`.
+    ///
+    /// boundary: `table` is Go's `tblInfo` argument, which
+    /// `WithInputSchemaAndNames` stores only to resolve `DEFAULT(col)` -- a leg
+    /// `tidb_expr::simple_expr` does not port. The parameter is kept so the
+    /// dropped argument is greppable at this call site.
     fn parse_simple_expr(
         &self,
         sql: &str,
         schema: &Schema,
         names: &[FieldName],
         table: &TableInfo,
-    ) -> CopResult<Expression>;
+    ) -> CopResult<Expression> {
+        let _ = table;
+        let options =
+            BuildOptions::new().with_input_schema_and_names(schema.clone(), names.to_vec());
+        simple_expr::parse_simple_expr(self.column_resolver(), sql, &options)
+            .map_err(|error| error.to_string())
+    }
 
     /// Go `expression.ComposeDNFCondition(ctx, exprs...)`: `OR` over the
     /// conditions. Go's own helper returns the single expression unchanged when
-    /// only one is given.
-    fn compose_dnf_condition(&self, exprs: Vec<Expression>) -> Expression;
+    /// only one is given, and nil for none -- which is [`Option::None`] here.
+    fn compose_dnf_condition(&self, exprs: Vec<Expression>) -> Option<Expression> {
+        simple_expr::compose_dnf_condition(exprs)
+    }
+}
+
+/// The production [`CopBuildContext`]: a build context plus a plan column-id
+/// allocator, which is what Go's `sessionctx.Context.GetExprCtx()` supplies to
+/// this package.
+///
+/// Go's allocator lives in the session and keeps counting across statements, so
+/// [`Self::with_id_offset`] exists for a caller that must continue an existing
+/// numbering rather than start at 1.
+pub struct CopExprContext<R> {
+    resolver: R,
+    ids: SimplePlanColumnIdAllocator,
+}
+
+impl<R> CopExprContext<R> {
+    /// A context whose plan column ids start at 1, Go's
+    /// `NewSimplePlanColumnIDAllocator(0)`.
+    pub const fn new(resolver: R) -> Self {
+        Self::with_id_offset(resolver, 0)
+    }
+
+    /// A context whose first allocated plan column id is `offset + 1`.
+    pub const fn with_id_offset(resolver: R, offset: i64) -> Self {
+        Self {
+            resolver,
+            ids: SimplePlanColumnIdAllocator::new(offset),
+        }
+    }
+}
+
+/// Written by hand because a [`ColumnResolver`] is a session view, not a value:
+/// [`CopContextBase`] derives `Debug`, and requiring `R: Debug` of every caller
+/// would push that on the session instead.
+impl<R> std::fmt::Debug for CopExprContext<R> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CopExprContext")
+            .field("last_plan_column_id", &self.ids.last_plan_column_id())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<R: ColumnResolver + Send + Sync> CopBuildContext for CopExprContext<R> {
+    fn column_resolver(&self) -> &dyn ColumnResolver {
+        &self.resolver
+    }
+
+    fn plan_column_ids(&self) -> &dyn PlanColumnIdAllocator {
+        &self.ids
+    }
 }
 
 /// Go `CopContext` (`copr_ctx.go:31`): everything needed to build a
@@ -275,16 +344,20 @@ pub fn new_cop_context_base(
         handle_ids = vec![EXTRA_HANDLE_ID];
     }
 
-    let (exp_col_infos, _names) = column_infos_to_columns_and_names_with_collate(
-        expr_ctx.as_ref(),
+    let col_views: Vec<CopColumnInfo> = col_infos
+        .iter()
+        .map(|col| CopColumnInfo::of(&col.read()))
+        .collect();
+    let (exp_col_infos, _names) = simple_expr::column_infos_to_columns_and_names_with_collate(
+        expr_ctx.column_resolver(),
+        expr_ctx.plan_column_ids(),
         // Go passes an unused empty `dbName` here.
-        "",
-        table.name.original(),
-        table.name.lowercase(),
-        &col_infos,
-        &table,
+        &IdentifierMetadata::default(),
+        &table.name,
+        &col_views,
         use_new_collate,
-    )?;
+    )
+    .map_err(|error| error.to_string())?;
     let hd_col_offsets = resolve_indices_for_handle(&exp_col_infos, &handle_ids);
     let (v_col_offsets, v_col_fts) = collect_virtual_column_offsets_and_types(&exp_col_infos);
 
@@ -509,41 +582,19 @@ impl CopContext for CopContextMultiIndex {
         if exprs.is_empty() {
             return Ok(None);
         }
-        Ok(Some(self.base.expr_ctx.compose_dnf_condition(exprs)))
+        Ok(self.base.expr_ctx.compose_dnf_condition(exprs))
     }
 }
 
 /// The shared tail of both `GetCondition` bodies: a condition that reads a
 /// virtual generated column cannot be pushed down, so it is dropped entirely.
 fn reject_virtual_columns(expr: Expression) -> Option<Expression> {
-    for col in extract_columns(&expr) {
+    for col in simple_expr::extract_columns(&expr) {
         if col.virtual_expr.is_some() {
             return None;
         }
     }
     Some(expr)
-}
-
-/// Go `expression.ExtractColumns`: every `*Column` node reachable in `expr`.
-///
-/// Private here because `tidb-expr` has not ported the `pkg/expression`
-/// extractor family yet; this is the one shape `copr_ctx.go` needs.
-fn extract_columns(expr: &Expression) -> Vec<&Column> {
-    let mut out = Vec::new();
-    collect_columns(expr, &mut out);
-    out
-}
-
-fn collect_columns<'a>(expr: &'a Expression, out: &mut Vec<&'a Column>) {
-    match expr {
-        Expression::Column(col) => out.push(col),
-        Expression::ScalarFunction(func) => {
-            for arg in &func.args {
-                collect_columns(arg, out);
-            }
-        }
-        Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
-    }
 }
 
 /// Go `fillUsedColumns` (`copr_ctx.go:346`): seeds the used-column set with the
@@ -687,110 +738,80 @@ impl CopContextBase {
     }
 }
 
-/// Go `expression.ColumnInfos2ColumnsAndNamesWithCollate`
-/// (`pkg/expression/expression.go:1115`).
+/// The `model.ColumnInfo` fields `expression.ColumnInfos2ColumnsAndNamesWithCollate`
+/// reads, as an owned snapshot.
 ///
-/// boundary: transcreated here rather than in `tidb-expr` because that crate
-/// has not ported the `pkg/expression` builder entry points; the one step that
-/// truly needs them -- building and index-resolving a virtual generated
-/// column's expression -- is delegated to
-/// [`CopBuildContext::build_virtual_column_expr`]. Go's
-/// `CtxWithHandleTruncateErrLevel(ctx, errctx.LevelIgnore)` wrapper around that
-/// step belongs to the same deferred surface and is the implementor's job.
-fn column_infos_to_columns_and_names_with_collate(
-    ctx: &dyn CopBuildContext,
-    db_name: &str,
-    tbl_name_original: &str,
-    tbl_name_lower: &str,
-    col_infos: &[GoShared<ColumnInfo>],
-    tbl_info: &TableInfo,
-    use_new_collate: bool,
-) -> CopResult<(Vec<Column>, Vec<FieldName>)> {
-    let table_name = IdentifierMetadata::from_parts(tbl_name_original, tbl_name_lower);
-    let db_name = IdentifierMetadata::new(db_name);
-    let mut columns = Vec::with_capacity(col_infos.len());
-    let mut names: Vec<FieldName> = Vec::with_capacity(col_infos.len());
-    for col in col_infos {
-        let col = col.read();
-        let col_name = IdentifierMetadata::from_parts(col.name.original(), col.name.lowercase());
-        let name = FieldName::new(FieldNameMetadata {
-            original_table: table_name.clone(),
-            original_column: col_name.clone(),
-            database: db_name.clone(),
-            table: table_name.clone(),
-            column: col_name,
-        });
-        let mut new_col = Column::default();
-        new_col.ret_type = Some(col.field_type.clone());
-        new_col.id = col.id;
-        new_col.unique_id = ctx.alloc_plan_column_id();
-        new_col.index = col.offset;
-        new_col.orig_name = name.display_name();
-        new_col.is_hidden = col.hidden;
-        names.push(name);
-        columns.push(new_col);
-    }
+/// `tidb-expr` sits below `tidb-model` and takes that metadata through its
+/// [`ColumnInfoSource`] view, so the impl for real column metadata has to live
+/// in a crate that sees both -- this one. It is a snapshot rather than a
+/// borrow of the [`GoShared<ColumnInfo>`] because the trait hands back
+/// references and `GoShared::read` yields a guard, not a reference; nothing in
+/// `copr_ctx.go` mutates a column between the snapshot and the build.
+struct CopColumnInfo {
+    name: CiString,
+    id: i64,
+    offset: i64,
+    field_type: FieldType,
+    hidden: bool,
+    /// Set only for a VIRTUAL generated column, which is the exact condition
+    /// under which Go builds `GeneratedExprString`.
+    virtual_generated_expr: Option<String>,
+}
 
-    // Resolve virtual generated columns against a schema of the columns above.
-    let mock_schema = Schema::new(columns.clone());
-    for (i, col) in col_infos.iter().enumerate() {
-        let col = col.read();
-        if col.is_virtual_generated() {
-            columns[i].virtual_expr = ctx
-                .build_virtual_column_expr(&col, tbl_info, &mock_schema, &names, use_new_collate)?
-                .map(Box::new);
+impl CopColumnInfo {
+    fn of(col: &ColumnInfo) -> Self {
+        Self {
+            name: col.name.clone(),
+            id: col.id,
+            offset: col.offset,
+            field_type: col.field_type.clone(),
+            hidden: col.hidden,
+            virtual_generated_expr: col
+                .is_virtual_generated()
+                .then(|| col.generated_expr_string.clone()),
         }
     }
-    Ok((columns, names))
+}
+
+impl ColumnInfoSource for CopColumnInfo {
+    fn column_name(&self) -> &CiString {
+        &self.name
+    }
+
+    fn column_id(&self) -> i64 {
+        self.id
+    }
+
+    fn column_offset(&self) -> i64 {
+        self.offset
+    }
+
+    fn column_field_type(&self) -> &FieldType {
+        &self.field_type
+    }
+
+    fn column_hidden(&self) -> bool {
+        self.hidden
+    }
+
+    fn virtual_generated_expr(&self) -> Option<&str> {
+        self.virtual_generated_expr.as_deref()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicI64, Ordering};
-    use tidb_ast::CiString;
     use tidb_datatype::FieldTypeCode;
     use tidb_expr::constant::Constant;
+    use tidb_expr::rewriter::NoResolver;
     use tidb_model::SchemaState;
 
-    /// Go `util/mock.NewContext().GetExprCtx()`, narrowed to the four calls
-    /// `pkg/ddl/copr` makes. The two builder legs are unreachable in these
-    /// tests -- none of the fixtures below carries a generated column or an
-    /// index condition -- so they report that rather than fabricating a result.
-    #[derive(Debug, Default)]
-    struct MockExprContext {
-        next_plan_column_id: AtomicI64,
-    }
-
-    impl CopBuildContext for MockExprContext {
-        fn alloc_plan_column_id(&self) -> i64 {
-            self.next_plan_column_id.fetch_add(1, Ordering::SeqCst) + 1
-        }
-
-        fn build_virtual_column_expr(
-            &self,
-            _column: &ColumnInfo,
-            _table: &TableInfo,
-            _schema: &Schema,
-            _names: &[FieldName],
-            _use_new_collate: bool,
-        ) -> CopResult<Option<Expression>> {
-            Err("mock context builds no generated-column expressions".to_owned())
-        }
-
-        fn parse_simple_expr(
-            &self,
-            _sql: &str,
-            _schema: &Schema,
-            _names: &[FieldName],
-            _table: &TableInfo,
-        ) -> CopResult<Expression> {
-            Err("mock context parses no expressions".to_owned())
-        }
-
-        fn compose_dnf_condition(&self, mut exprs: Vec<Expression>) -> Expression {
-            exprs.pop().expect("at least one condition")
-        }
+    /// Go `util/mock.NewContext().GetExprCtx()`: the production context over a
+    /// resolver that knows no columns of its own, since every column these
+    /// fixtures name is reached through the schema the cop context builds.
+    fn expr_context() -> Arc<dyn CopBuildContext> {
+        Arc::new(CopExprContext::new(NoResolver))
     }
 
     /// Direct port of `pkg/ddl/copr/copr_ctx_test.go::TestNewCopContextSingleIndex`.
@@ -888,9 +909,8 @@ mod tests {
                 }
             }
 
-            let sctx: Arc<dyn CopBuildContext> = Arc::new(MockExprContext::default());
             let cop_ctx = new_cop_context_single_index(
-                sctx,
+                expr_context(),
                 0,
                 mock_table_info,
                 mock_idx_info,
@@ -910,7 +930,210 @@ mod tests {
             for (i, col) in base.column_infos.iter().enumerate() {
                 assert_eq!(expected_cols[i], col.read().name.lowercase());
             }
+            // Not in Go's assertions, but only observable now that a real
+            // build context is used: the plan column ids come from this
+            // context's allocator, one per output column, in output order.
+            assert_eq!(
+                base.expr_column_infos
+                    .iter()
+                    .map(|col| col.unique_id)
+                    .collect::<Vec<_>>(),
+                (1..=expected_len as i64).collect::<Vec<_>>()
+            );
+            // Nothing here is generated, so nothing is virtual.
+            assert!(base.virtual_columns_output_offsets.is_empty());
+            assert!(base.virtual_columns_field_types.is_empty());
+            // No index carries a condition, so the whole table is scanned.
+            assert!(cop_ctx.get_condition().expect("no condition").is_none());
         }
+    }
+
+    /// A table whose third column `v` is `a + b`, VIRTUAL generated.
+    ///
+    /// Go's `TestNewCopContextSingleIndex` fixtures carry neither a generated
+    /// column nor an index condition, so the legs below are additional
+    /// coverage of `copr_ctx.go`'s own code -- `fillUsedColumns`' dependency
+    /// expansion, `collectVirtualColumnOffsetsAndTypes`, and both
+    /// `GetCondition` bodies -- which could not be reached at all while the
+    /// expression builders were stubbed out.
+    fn generated_column_table(indices: Vec<IndexInfo>) -> GoShared<TableInfo> {
+        let column = |id: i64, name: &str, generated: Option<&str>| {
+            GoShared::new(ColumnInfo {
+                id,
+                offset: id - 1,
+                name: CiString::new(name),
+                field_type: FieldType::new(FieldTypeCode::LongLong),
+                state: SchemaState::PUBLIC,
+                generated_expr_string: generated.unwrap_or_default().to_owned(),
+                dependences: if generated.is_some() {
+                    tidb_model::column::GoStringSet::allocated(["a", "b"])
+                } else {
+                    tidb_model::column::GoStringSet::default()
+                },
+                ..Default::default()
+            })
+        };
+        GoShared::new(TableInfo {
+            name: CiString::new("t"),
+            columns: tidb_model::GoSharedPointerSlice::from_handles(vec![
+                Some(column(1, "a", None)),
+                Some(column(2, "b", None)),
+                Some(column(3, "v", Some("a + b"))),
+            ]),
+            indices: tidb_model::GoSharedPointerSlice::from_handles(
+                indices
+                    .into_iter()
+                    .map(|idx| Some(GoShared::new(idx)))
+                    .collect(),
+            ),
+            ..Default::default()
+        })
+    }
+
+    fn index_on(id: i64, name: &str, column: &str, offset: i64, condition: &str) -> IndexInfo {
+        IndexInfo {
+            id,
+            name: CiString::new(name),
+            columns: vec![IndexColumn {
+                name: CiString::new(column),
+                offset,
+                ..Default::default()
+            }]
+            .into(),
+            state: SchemaState::PUBLIC,
+            condition_expr_string: condition.to_owned(),
+            ..Default::default()
+        }
+    }
+
+    /// An index over a virtual generated column: `fillUsedColumns` pulls in the
+    /// columns it depends on, and the built expression column carries the
+    /// resolved `VirtualExpr` that `collectVirtualColumnOffsetsAndTypes` reads.
+    #[test]
+    fn cop_context_builds_a_virtual_generated_column() {
+        let table = generated_column_table(vec![index_on(1, "iv", "v", 2, "")]);
+        let idx_info = table.read().indices.get(0).expect("index").clone();
+        let cop_ctx =
+            new_cop_context_single_index(expr_context(), 0, table, idx_info, String::new(), false)
+                .expect("cop context");
+        let base = cop_ctx.get_base();
+
+        // `v` depends on `a` and `b`, and the table has no clustered index, so
+        // `_tidb_rowid` is appended.
+        assert_eq!(
+            base.column_infos
+                .iter()
+                .map(|col| col.read().name.lowercase().to_owned())
+                .collect::<Vec<_>>(),
+            vec!["a", "b", "v", "_tidb_rowid"]
+        );
+        assert_eq!(base.virtual_columns_output_offsets, vec![2]);
+        assert_eq!(base.virtual_columns_field_types.len(), 1);
+        assert_eq!(
+            base.virtual_columns_field_types[0].code(),
+            FieldTypeCode::LongLong
+        );
+
+        // The virtual expression is `a + b` with its indices resolved against
+        // the schema of the columns built alongside it.
+        let virtual_expr = base.expr_column_infos[2]
+            .virtual_expr
+            .as_ref()
+            .expect("virtual expression");
+        let referenced = simple_expr::extract_columns(virtual_expr);
+        assert_eq!(
+            referenced.iter().map(|col| col.id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(
+            referenced.iter().map(|col| col.index).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        // The index column output offset still addresses `v` itself.
+        assert_eq!(cop_ctx.index_column_output_offsets(1), &[2]);
+    }
+
+    /// `(*CopContextSingleIndex).GetCondition`: a partial index's condition is
+    /// parsed against the cop request's own schema, unless it reads a virtual
+    /// generated column -- which cannot be pushed down.
+    #[test]
+    fn single_index_get_condition() {
+        for (condition, wants_expr) in [("a > 10", true), ("v > 10", false)] {
+            let table = generated_column_table(vec![index_on(1, "ia", "a", 0, condition)]);
+            let idx_info = table.read().indices.get(0).expect("index").clone();
+            let cop_ctx = new_cop_context_single_index(
+                expr_context(),
+                0,
+                table,
+                idx_info,
+                String::new(),
+                false,
+            )
+            .expect("cop context");
+
+            let got = cop_ctx.get_condition().expect("condition builds");
+            assert_eq!(got.is_some(), wants_expr, "condition {condition}");
+            let Some(expr) = got else { continue };
+            let columns = simple_expr::extract_columns(&expr);
+            assert_eq!(columns.len(), 1, "condition {condition}");
+            assert_eq!(columns[0].id, 1);
+            assert!(columns[0].virtual_expr.is_none());
+        }
+    }
+
+    /// `(*CopContextMultiIndex).GetCondition`: every index must carry a
+    /// condition, and the conditions are `OR`-ed together.
+    #[test]
+    fn multi_index_get_condition_composes_a_dnf() {
+        let table = generated_column_table(vec![
+            index_on(1, "ia", "a", 0, "a > 10"),
+            index_on(2, "ib", "b", 1, "b < 5"),
+        ]);
+        let all_idx_info: Vec<GoShared<IndexInfo>> = table.read().indices.iter_deref().collect();
+        let cop_ctx = new_cop_context_multi_index(
+            expr_context(),
+            0,
+            table.clone(),
+            &all_idx_info,
+            String::new(),
+            false,
+        )
+        .expect("cop context");
+
+        let expr = cop_ctx
+            .get_condition()
+            .expect("condition builds")
+            .expect("both indexes carry a condition");
+        let Expression::ScalarFunction(root) = &expr else {
+            panic!("a two-condition DNF is a scalar function")
+        };
+        assert_eq!(root.func_name.lowercase(), "or");
+        assert_eq!(
+            simple_expr::extract_columns(&expr)
+                .iter()
+                .map(|col| col.id)
+                .collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert_eq!(cop_ctx.index_column_output_offsets(2), &[1]);
+        assert_eq!(cop_ctx.index_info(2).expect("index").read().id, 2);
+
+        // One index without a condition means the whole table is scanned.
+        let table = generated_column_table(vec![
+            index_on(1, "ia", "a", 0, "a > 10"),
+            index_on(2, "ib", "b", 1, ""),
+        ]);
+        let all_idx_info: Vec<GoShared<IndexInfo>> = table.read().indices.iter_deref().collect();
+        let cop_ctx = new_cop_context_multi_index(
+            expr_context(),
+            0,
+            table,
+            &all_idx_info,
+            String::new(),
+            false,
+        )
+        .expect("cop context");
+        assert!(cop_ctx.get_condition().expect("no condition").is_none());
     }
 
     /// Direct port of `pkg/ddl/copr/copr_ctx_test.go::TestResolveIndicesForHandle`.
