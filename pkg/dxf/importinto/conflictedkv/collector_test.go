@@ -117,10 +117,7 @@ func (s *mockKVStore) GetCodec() tikv.Codec {
 	if kerneltype.IsClassic() {
 		return tikv.NewCodecV1(tikv.ModeTxn)
 	}
-	codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1}})
-	if err != nil {
-		panic(fmt.Errorf("create API V2 codec for conflicted KV test store: %w", err))
-	}
+	codec, _ := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 1}})
 	return codec
 }
 
