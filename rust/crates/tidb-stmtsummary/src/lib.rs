@@ -18,12 +18,11 @@
 //! the system variables drive, the rollup of the digests the LRU evicts, and
 //! the reader that turns both into `information_schema` rows.
 //!
-//! NOT YET COMPLETE, for one reason: `reader.go`'s own upstream tests
-//! (`TestToDatum`, `TestToDatumIAColumns`, `TestToDatumIAColumnsChunkRoundTrip`,
-//! `TestColumnValueFactoryDoubleUintMetrics`, `TestAccessPrivilege`) are not
-//! ported, so its production surface is present but unpinned. The other two
-//! files carry their upstream tests in full, and the assertions those tests
-//! had to weaken while the reader was absent are restored.
+//! The package lands complete: every production symbol of the three files is
+//! here, and so are all 31 of their upstream tests, one Rust test per Go test.
+//! The reader's own tests live in Go's `statement_summary_test.go` and are
+//! ported next to the reader; the assertions the other tests had to weaken
+//! while the reader was absent now go through it again.
 //!
 //! `AddStatement`'s eviction path reaches the rollup through the named
 //! [`statement_summary::EvictedSink`] boundary, which
@@ -92,6 +91,23 @@
 //!   `tidb_parser::auth::UserIdentity`.
 //! - `logutil.BgLogger()` has no boundary here: a `plancodec::DecodePlan`
 //!   failure is not logged, it only yields Go's empty plan string.
+//!
+//! Narrowings applied to the upstream tests:
+//!
+//! - Go's `match` compares `fmt.Sprintf("%v", …)` of each cell, so
+//!   `TestToDatum` compares the same rendering of both sides rather than
+//!   `Datum` equality; that keeps Go's laxity about which numeric kind a
+//!   column yields.
+//! - Go's `columnValueFactory(nil, nil, nil, stats)` becomes a call with a
+//!   column-less reader standing in for the nil receiver, which none of the
+//!   factories under test reads.
+//! - `TestStmtSummaryMetrics` and `TestStmtSummaryMetricsAfterCapacityChange`
+//!   read Go's process-global Prometheus gauges; here the map is built by
+//!   [`statement_summary::StmtSummaryByDigestMap::with_sinks`] over a
+//!   [`statement_summary::WindowMetricsSink`] that keeps the last values
+//!   published.
+//! - Go shares one reader across the goroutines of the parallel tests; the
+//!   borrowing reader is shared the same way through scoped threads.
 
 pub mod evicted;
 pub mod reader;

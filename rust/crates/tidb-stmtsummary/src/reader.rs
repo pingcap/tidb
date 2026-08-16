@@ -1204,3 +1204,778 @@ pub fn column_value_factory(name: &str) -> Option<ColumnValueFactory> {
     };
     Some(factory)
 }
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use std::sync::atomic::Ordering;
+
+    use chrono::Utc;
+    use tidb_ast::CiString;
+    use tidb_chunk::mutrow::MutRow;
+    use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+
+    use super::*;
+    use crate::statement_summary::tests::generate_any_exec_info;
+    use crate::statement_summary::StmtExecInfo;
+
+    /// Go `boTxnLockName`.
+    const BO_TXN_LOCK_NAME: &str = "txnlock";
+
+    /// Go's `NewStmtSummaryReader(nil, true, cols, "", time.UTC)` followed by
+    /// `reader.ssMap = ssMap`, which the ported reader allows through its
+    /// public `ss_map` field.
+    ///
+    /// Go passes a nil `*auth.UserIdentity`; here that is `None`.
+    pub(crate) fn new_stmt_summary_reader_with_column_names_for_test<'a>(
+        ss_map: &'a StmtSummaryByDigestMap,
+        column_names: &[&str],
+    ) -> StmtSummaryReader<'a> {
+        let cols = column_names
+            .iter()
+            .enumerate()
+            .map(|(i, name)| ColumnInfo {
+                id: i64::try_from(i).unwrap(),
+                name: CiString::new(*name),
+                offset: i64::try_from(i).unwrap(),
+                ..ColumnInfo::default()
+            })
+            .collect();
+        let mut reader: StmtSummaryReader<'a> =
+            StmtSummaryReader::new(None, true, cols, String::new(), Tz::UTC);
+        reader.ss_map = ss_map;
+        reader
+    }
+
+    /// Go `newStmtSummaryReaderForTest`: a reader over every column the
+    /// `information_schema` statements-summary table selects, in Go's order.
+    pub(crate) fn new_stmt_summary_reader_for_test(
+        ss_map: &StmtSummaryByDigestMap,
+    ) -> StmtSummaryReader<'_> {
+        let column_names = [
+            SUMMARY_BEGIN_TIME_STR,
+            SUMMARY_END_TIME_STR,
+            STMT_TYPE_STR,
+            SCHEMA_NAME_STR,
+            DIGEST_STR,
+            DIGEST_TEXT_STR,
+            BINDING_DIGEST_STR,
+            BINDING_DIGEST_TEXT_STR,
+            TABLE_NAMES_STR,
+            INDEX_NAMES_STR,
+            SAMPLE_USER_STR,
+            EXEC_COUNT_STR,
+            SUM_ERRORS_STR,
+            SUM_WARNINGS_STR,
+            SUM_LATENCY_STR,
+            MAX_LATENCY_STR,
+            MIN_LATENCY_STR,
+            AVG_LATENCY_STR,
+            AVG_PARSE_LATENCY_STR,
+            MAX_PARSE_LATENCY_STR,
+            AVG_COMPILE_LATENCY_STR,
+            MAX_COMPILE_LATENCY_STR,
+            SUM_COP_TASK_NUM_STR,
+            MAX_COP_PROCESS_TIME_STR,
+            MAX_COP_PROCESS_ADDRESS_STR,
+            MAX_COP_WAIT_TIME_STR,
+            MAX_COP_WAIT_ADDRESS_STR,
+            AVG_PROCESS_TIME_STR,
+            MAX_PROCESS_TIME_STR,
+            AVG_WAIT_TIME_STR,
+            MAX_WAIT_TIME_STR,
+            AVG_BACKOFF_TIME_STR,
+            MAX_BACKOFF_TIME_STR,
+            AVG_TOTAL_KEYS_STR,
+            MAX_TOTAL_KEYS_STR,
+            AVG_PROCESSED_KEYS_STR,
+            MAX_PROCESSED_KEYS_STR,
+            AVG_ROCKSDB_DELETE_SKIPPED_COUNT_STR,
+            MAX_ROCKSDB_DELETE_SKIPPED_COUNT_STR,
+            AVG_ROCKSDB_KEY_SKIPPED_COUNT_STR,
+            MAX_ROCKSDB_KEY_SKIPPED_COUNT_STR,
+            AVG_ROCKSDB_BLOCK_CACHE_HIT_COUNT_STR,
+            MAX_ROCKSDB_BLOCK_CACHE_HIT_COUNT_STR,
+            AVG_ROCKSDB_BLOCK_READ_COUNT_STR,
+            MAX_ROCKSDB_BLOCK_READ_COUNT_STR,
+            AVG_ROCKSDB_BLOCK_READ_BYTE_STR,
+            MAX_ROCKSDB_BLOCK_READ_BYTE_STR,
+            AVG_PREWRITE_TIME_STR,
+            MAX_PREWRITE_TIME_STR,
+            AVG_COMMIT_TIME_STR,
+            MAX_COMMIT_TIME_STR,
+            AVG_GET_COMMIT_TS_TIME_STR,
+            MAX_GET_COMMIT_TS_TIME_STR,
+            AVG_COMMIT_BACKOFF_TIME_STR,
+            MAX_COMMIT_BACKOFF_TIME_STR,
+            AVG_RESOLVE_LOCK_TIME_STR,
+            MAX_RESOLVE_LOCK_TIME_STR,
+            AVG_LOCAL_LATCH_WAIT_TIME_STR,
+            MAX_LOCAL_LATCH_WAIT_TIME_STR,
+            AVG_WRITE_KEYS_STR,
+            MAX_WRITE_KEYS_STR,
+            AVG_WRITE_SIZE_STR,
+            MAX_WRITE_SIZE_STR,
+            AVG_PREWRITE_REGIONS_STR,
+            MAX_PREWRITE_REGIONS_STR,
+            AVG_TXN_RETRY_STR,
+            MAX_TXN_RETRY_STR,
+            SUM_EXEC_RETRY_STR,
+            SUM_EXEC_RETRY_TIME_STR,
+            SUM_BACKOFF_TIMES_STR,
+            BACKOFF_TYPES_STR,
+            AVG_MEM_STR,
+            MAX_MEM_STR,
+            AVG_MEM_ARBITRATION_STR,
+            MAX_MEM_ARBITRATION_STR,
+            AVG_DISK_STR,
+            MAX_DISK_STR,
+            AVG_KV_TIME_STR,
+            AVG_PD_TIME_STR,
+            AVG_BACKOFF_TOTAL_TIME_STR,
+            AVG_WRITE_SQL_RESP_TIME_STR,
+            MAX_RESULT_ROWS_STR,
+            MIN_RESULT_ROWS_STR,
+            AVG_RESULT_ROWS_STR,
+            PREPARED_STR,
+            AVG_AFFECTED_ROWS_STR,
+            FIRST_SEEN_STR,
+            LAST_SEEN_STR,
+            PLAN_IN_CACHE_STR,
+            PLAN_CACHE_HITS_STR,
+            PLAN_IN_BINDING_STR,
+            QUERY_SAMPLE_TEXT_STR,
+            PREV_SAMPLE_TEXT_STR,
+            PLAN_DIGEST_STR,
+            PLAN_STR,
+            AVG_REQUEST_UNIT_READ_STR,
+            MAX_REQUEST_UNIT_READ_STR,
+            AVG_REQUEST_UNIT_WRITE_STR,
+            MAX_REQUEST_UNIT_WRITE_STR,
+            AVG_QUEUED_RC_TIME_STR,
+            MAX_QUEUED_RC_TIME_STR,
+            AVG_REQUEST_UNIT_V2_STR,
+            MAX_REQUEST_UNIT_V2_STR,
+            RESOURCE_GROUP_NAME,
+            AVG_TIDB_CPU_TIME_STR,
+            AVG_TIKV_CPU_TIME_STR,
+            STORAGE_KV_STR,
+            STORAGE_MPP_STR,
+        ];
+        new_stmt_summary_reader_with_column_names_for_test(ss_map, &column_names)
+    }
+
+    /// Go `TestColumnValueFactoryDoubleUintMetrics`.
+    ///
+    /// Go calls `factory(nil, nil, nil, stats)`; the ported factory takes the
+    /// reader by reference, so an otherwise unused column-less reader stands in
+    /// for Go's nil. None of the factories under test reads it.
+    #[test]
+    fn test_column_value_factory_double_uint_metrics() {
+        const UINT_METRIC_SUM: u64 = 1 << 63;
+        let ss_map = StmtSummaryByDigestMap::new();
+        let reader = new_stmt_summary_reader_with_column_names_for_test(&ss_map, &[]);
+
+        let stats = StmtSummaryStats {
+            exec_count: 2,
+            commit_count: 2,
+            sum_rocksdb_delete_skipped_count: UINT_METRIC_SUM,
+            sum_rocksdb_key_skipped_count: UINT_METRIC_SUM,
+            sum_rocksdb_block_cache_hit_count: UINT_METRIC_SUM,
+            sum_rocksdb_block_read_count: UINT_METRIC_SUM,
+            sum_rocksdb_block_read_byte: UINT_METRIC_SUM,
+            sum_ia_remote_read_segment_count: UINT_METRIC_SUM,
+            sum_ia_remote_read_segment_size: UINT_METRIC_SUM,
+            sum_write_keys: 246,
+            sum_write_size: 468,
+            sum_prewrite_region_num: 6,
+            sum_txn_retry: 4,
+            sum_affected_rows: UINT_METRIC_SUM,
+            ..StmtSummaryStats::default()
+        };
+        #[allow(clippy::cast_precision_loss)]
+        let uint_metric_sum = UINT_METRIC_SUM as f64;
+        #[allow(clippy::cast_precision_loss)]
+        let exec_count = stats.exec_count as f64;
+        #[allow(clippy::cast_precision_loss)]
+        let commit_count = stats.commit_count as f64;
+        let avg_uint_metric = uint_metric_sum / exec_count;
+        #[allow(clippy::cast_precision_loss)]
+        let sum_write_keys = stats.sum_write_keys as f64;
+        #[allow(clippy::cast_precision_loss)]
+        let sum_write_size = stats.sum_write_size as f64;
+        #[allow(clippy::cast_precision_loss)]
+        let sum_prewrite_region_num = stats.sum_prewrite_region_num as f64;
+        #[allow(clippy::cast_precision_loss)]
+        let sum_txn_retry = stats.sum_txn_retry as f64;
+
+        let cases: Vec<(&str, f64)> = vec![
+            (ROCKSDB_DELETE_SKIPPED_COUNT_STR, uint_metric_sum),
+            (AVG_ROCKSDB_DELETE_SKIPPED_COUNT_STR, avg_uint_metric),
+            (ROCKSDB_KEY_SKIPPED_COUNT_STR, uint_metric_sum),
+            (AVG_ROCKSDB_KEY_SKIPPED_COUNT_STR, avg_uint_metric),
+            (ROCKSDB_BLOCK_CACHE_HIT_COUNT_STR, uint_metric_sum),
+            (AVG_ROCKSDB_BLOCK_CACHE_HIT_COUNT_STR, avg_uint_metric),
+            (ROCKSDB_BLOCK_READ_COUNT_STR, uint_metric_sum),
+            (AVG_ROCKSDB_BLOCK_READ_COUNT_STR, avg_uint_metric),
+            (ROCKSDB_BLOCK_READ_BYTE_STR, uint_metric_sum),
+            (AVG_ROCKSDB_BLOCK_READ_BYTE_STR, avg_uint_metric),
+            (AVG_IA_REMOTE_READ_SEGMENT_COUNT_STR, avg_uint_metric),
+            (AVG_IA_REMOTE_READ_SEGMENT_SIZE_STR, avg_uint_metric),
+            (WRITE_KEYS_STR, sum_write_keys),
+            (AVG_WRITE_KEYS_STR, sum_write_keys / commit_count),
+            (WRITE_SIZE_STR, sum_write_size),
+            (AVG_WRITE_SIZE_STR, sum_write_size / commit_count),
+            (PREWRITE_REGIONS_STR, sum_prewrite_region_num),
+            (
+                AVG_PREWRITE_REGIONS_STR,
+                sum_prewrite_region_num / commit_count,
+            ),
+            (TXN_RETRY_STR, sum_txn_retry),
+            (AVG_TXN_RETRY_STR, sum_txn_retry / commit_count),
+            (AFFECTED_ROWS_STR, uint_metric_sum),
+            (AVG_AFFECTED_ROWS_STR, avg_uint_metric),
+        ];
+
+        for (name, expected) in cases {
+            let factory = column_value_factory(name)
+                .unwrap_or_else(|| panic!("missing column value factory: {name}"));
+            let datum = factory(&reader, None, None, &stats);
+            assert_eq!(datum, Datum::new_real(expected), "{name}");
+
+            let mut row = MutRow::from_types(&[FieldType::new(FieldTypeCode::Double)]);
+            row.set_datums(&[datum]);
+            assert!(
+                (row.to_row().get_float64(0) - expected).abs() < f64::EPSILON,
+                "{name}"
+            );
+        }
+
+        let chunk_stats = StmtSummaryStats {
+            exec_count: 1,
+            commit_count: 1,
+            sum_rocksdb_block_cache_hit_count: 60,
+            sum_rocksdb_block_read_count: 21103,
+            ..StmtSummaryStats::default()
+        };
+        let chunk_cases: Vec<(&str, f64)> = vec![
+            (ROCKSDB_BLOCK_CACHE_HIT_COUNT_STR, 60.0),
+            (AVG_ROCKSDB_BLOCK_CACHE_HIT_COUNT_STR, 60.0),
+            (ROCKSDB_BLOCK_READ_COUNT_STR, 21103.0),
+            (AVG_ROCKSDB_BLOCK_READ_COUNT_STR, 21103.0),
+        ];
+        for (name, expected) in chunk_cases {
+            let factory = column_value_factory(name)
+                .unwrap_or_else(|| panic!("missing column value factory: {name}"));
+            let datum = factory(&reader, None, None, &chunk_stats);
+
+            let mut row = MutRow::from_types(&[FieldType::new(FieldTypeCode::Double)]);
+            row.set_datums(&[datum]);
+            assert!(
+                (row.to_row().get_float64(0) - expected).abs() < f64::EPSILON,
+                "{name}"
+            );
+        }
+    }
+
+    /// Go `fmt.Sprintf("%v", datum.GetValue())`, the rendering Go's `match`
+    /// compares. Rendering both sides keeps Go's laxity about which numeric
+    /// kind a column yields, which is what the upstream assertions pin.
+    fn go_value_string(datum: &Datum) -> String {
+        match datum {
+            Datum::Null => "<nil>".to_owned(),
+            Datum::Int(value) => value.to_string(),
+            Datum::UInt(value) => value.to_string(),
+            Datum::Real(value) => value.to_string(),
+            Datum::String(value) => String::from_utf8_lossy(value.bytes()).into_owned(),
+            Datum::Time(value) => value.to_string(),
+            other => panic!("no statements-summary column yields {other:?}"),
+        }
+    }
+
+    /// Go `match`.
+    fn match_row(row: &[Datum], expected: &[Datum]) {
+        assert_eq!(expected.len(), row.len());
+        for (i, (got, need)) in row.iter().zip(expected.iter()).enumerate() {
+            assert_eq!(go_value_string(need), go_value_string(got), "column {i}");
+        }
+    }
+
+    /// Go `types.NewDatum(int64(d))` for a `time.Duration` column.
+    fn ns(duration: Duration) -> Datum {
+        Datum::new_int(i64::try_from(duration.as_nanos()).unwrap())
+    }
+
+    /// Go `TestToDatum`: tests `stmtSummaryByDigest.ToDatum`.
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn test_to_datum() {
+        let ss_map = StmtSummaryByDigestMap::new();
+        let now = Utc::now().timestamp();
+        // to disable expiration
+        ss_map.set_begin_time_for_cur_interval(now + 60);
+
+        let mut stmt_exec_info1 = generate_any_exec_info();
+        ss_map.add_statement(&stmt_exec_info1);
+        let reader = new_stmt_summary_reader_for_test(&ss_map);
+        let datums = reader.get_stmt_summary_current_rows();
+        assert_eq!(datums.len(), 1);
+        let n = timestamp_datum(unix_seconds_in(
+            ss_map.begin_time_for_cur_interval(),
+            Tz::UTC,
+        ));
+        let e = timestamp_datum(unix_seconds_in(
+            ss_map.begin_time_for_cur_interval() + 1800,
+            Tz::UTC,
+        ));
+        let f = timestamp_datum(stmt_exec_info1.start_time);
+        let is_tikv = i64::from(stmt_exec_info1.stmt_ctx.is_tikv.load(Ordering::SeqCst));
+        let is_tiflash = i64::from(stmt_exec_info1.stmt_ctx.is_tiflash.load(Ordering::SeqCst));
+        let (binding_sql, binding_digest) = stmt_exec_info1.lazy_info.binding_sql_and_digest();
+
+        let cop_tasks = stmt_exec_info1.cop_tasks.as_ref().unwrap();
+        let commit_detail = stmt_exec_info1.exec_detail.commit_detail.as_ref().unwrap();
+        let time_detail = &stmt_exec_info1.exec_detail.cop_exec_details.time_detail;
+        let scan_detail = stmt_exec_info1
+            .exec_detail
+            .cop_exec_details
+            .scan_detail
+            .as_ref()
+            .unwrap();
+        let ru_detail = stmt_exec_info1.ru_detail.as_ref().unwrap();
+
+        let mut expected_datum = vec![
+            n.clone(),
+            e.clone(),
+            Datum::new_string("Select"),
+            Datum::new_string(stmt_exec_info1.schema_name.as_bytes()),
+            Datum::new_string(stmt_exec_info1.digest.as_bytes()),
+            Datum::new_string(stmt_exec_info1.normalized_sql.as_bytes()),
+            Datum::new_string(binding_digest.as_bytes()),
+            Datum::new_string(binding_sql.as_bytes()),
+            Datum::new_string("db1.tb1,db2.tb2"),
+            Datum::new_string("a"),
+            Datum::new_string(stmt_exec_info1.user.as_bytes()),
+            Datum::new_int(1),
+            Datum::new_int(0),
+            Datum::new_int(0),
+            ns(stmt_exec_info1.total_latency),
+            ns(stmt_exec_info1.total_latency),
+            ns(stmt_exec_info1.total_latency),
+            ns(stmt_exec_info1.total_latency),
+            ns(stmt_exec_info1.parse_latency),
+            ns(stmt_exec_info1.parse_latency),
+            ns(stmt_exec_info1.compile_latency),
+            ns(stmt_exec_info1.compile_latency),
+            Datum::new_int(cop_tasks.num_cop_tasks),
+            ns(cop_tasks.max_process_time),
+            Datum::new_string(cop_tasks.max_process_address.as_bytes()),
+            ns(cop_tasks.max_wait_time),
+            Datum::new_string(cop_tasks.max_wait_address.as_bytes()),
+            ns(time_detail.process_time),
+            ns(time_detail.process_time),
+            ns(time_detail.wait_time),
+            ns(time_detail.wait_time),
+            ns(stmt_exec_info1.exec_detail.cop_exec_details.backoff_time),
+            ns(stmt_exec_info1.exec_detail.cop_exec_details.backoff_time),
+            Datum::new_int(scan_detail.total_keys),
+            Datum::new_int(scan_detail.total_keys),
+            Datum::new_int(scan_detail.processed_keys),
+            Datum::new_int(scan_detail.processed_keys),
+            Datum::new_uint(scan_detail.rocksdb_delete_skipped_count),
+            Datum::new_uint(scan_detail.rocksdb_delete_skipped_count),
+            Datum::new_uint(scan_detail.rocksdb_key_skipped_count),
+            Datum::new_uint(scan_detail.rocksdb_key_skipped_count),
+            Datum::new_uint(scan_detail.rocksdb_block_cache_hit_count),
+            Datum::new_uint(scan_detail.rocksdb_block_cache_hit_count),
+            Datum::new_uint(scan_detail.rocksdb_block_read_count),
+            Datum::new_uint(scan_detail.rocksdb_block_read_count),
+            Datum::new_uint(scan_detail.rocksdb_block_read_byte),
+            Datum::new_uint(scan_detail.rocksdb_block_read_byte),
+            ns(commit_detail.prewrite_time),
+            ns(commit_detail.prewrite_time),
+            ns(commit_detail.commit_time),
+            ns(commit_detail.commit_time),
+            ns(commit_detail.get_commit_ts_time),
+            ns(commit_detail.get_commit_ts_time),
+            Datum::new_int(commit_detail.commit_backoff_time),
+            Datum::new_int(commit_detail.commit_backoff_time),
+            Datum::new_int(commit_detail.resolve_lock.resolve_lock_time),
+            Datum::new_int(commit_detail.resolve_lock.resolve_lock_time),
+            ns(commit_detail.local_latch_time),
+            ns(commit_detail.local_latch_time),
+            Datum::new_int(commit_detail.write_keys),
+            Datum::new_int(commit_detail.write_keys),
+            Datum::new_int(commit_detail.write_size),
+            Datum::new_int(commit_detail.write_size),
+            Datum::new_int(i64::from(commit_detail.prewrite_region_num)),
+            Datum::new_int(i64::from(commit_detail.prewrite_region_num)),
+            Datum::new_int(commit_detail.txn_retry),
+            Datum::new_int(commit_detail.txn_retry),
+            Datum::new_int(0),
+            Datum::new_int(0),
+            Datum::new_int(1),
+            Datum::new_string(format!("{BO_TXN_LOCK_NAME}:1")),
+            Datum::new_int(stmt_exec_info1.mem_max),
+            Datum::new_int(stmt_exec_info1.mem_max),
+            Datum::new_real(stmt_exec_info1.mem_arbitration),
+            Datum::new_real(stmt_exec_info1.mem_arbitration),
+            Datum::new_int(stmt_exec_info1.disk_max),
+            Datum::new_int(stmt_exec_info1.disk_max),
+            Datum::new_int(0),
+            Datum::new_int(0),
+            Datum::new_int(0),
+            Datum::new_int(0),
+            Datum::new_int(0),
+            Datum::new_int(0),
+            Datum::new_int(0),
+            Datum::new_int(0),
+            Datum::new_uint(stmt_exec_info1.stmt_ctx.affected_rows()),
+            f.clone(),
+            f,
+            Datum::new_int(0),
+            Datum::new_int(0),
+            Datum::new_int(0),
+            Datum::new_string(stmt_exec_info1.lazy_info.original_sql().as_bytes()),
+            Datum::new_string(stmt_exec_info1.prev_sql.as_bytes()),
+            Datum::new_string("plan_digest"),
+            Datum::new_string(""),
+            Datum::new_real(ru_detail.rru),
+            Datum::new_real(ru_detail.rru),
+            Datum::new_real(ru_detail.wru),
+            Datum::new_real(ru_detail.wru),
+            ns(ru_detail.ru_wait_duration),
+            ns(ru_detail.ru_wait_duration),
+            Datum::new_real(stmt_exec_info1.total_ru_v2),
+            Datum::new_real(stmt_exec_info1.total_ru_v2),
+            Datum::new_string(stmt_exec_info1.resource_group_name.as_bytes()),
+            ns(stmt_exec_info1.cpu_usages.tidb_cpu_time),
+            ns(stmt_exec_info1.cpu_usages.tikv_cpu_time),
+            Datum::new_int(is_tikv),
+            Datum::new_int(is_tiflash),
+        ];
+        match_row(&datums[0], &expected_datum);
+        let datums = reader.get_stmt_summary_history_rows();
+        assert_eq!(datums.len(), 1);
+        match_row(&datums[0], &expected_datum);
+
+        // test evict
+        ss_map.set_max_stmt_count(1).unwrap();
+
+        // Go's `stmtExecInfo2 := stmtExecInfo1` copies the pointer, so the
+        // digest it overwrites is the one `stmtExecInfo1` carries too; every
+        // other expected value was already read out above.
+        stmt_exec_info1.digest = "bandit sei".to_owned();
+        let stmt_exec_info2 = &stmt_exec_info1;
+        ss_map.add_statement(stmt_exec_info2);
+        assert_eq!(ss_map.summary_map_size(), 1);
+        let datums = reader.get_stmt_summary_current_rows();
+        let expected_evicted_datum = vec![
+            n,
+            e,
+            Datum::new_string(""),
+            Datum::Null,
+            Datum::Null,
+            Datum::new_string(""),
+            Datum::Null,
+            Datum::new_string(""),
+            Datum::Null,
+            Datum::Null,
+            expected_datum[10].clone(),
+            expected_datum[11].clone(),
+            expected_datum[12].clone(),
+            expected_datum[13].clone(),
+            expected_datum[14].clone(),
+            expected_datum[15].clone(),
+            expected_datum[16].clone(),
+            expected_datum[17].clone(),
+            expected_datum[18].clone(),
+            expected_datum[19].clone(),
+            expected_datum[20].clone(),
+            expected_datum[21].clone(),
+            expected_datum[22].clone(),
+            expected_datum[23].clone(),
+            expected_datum[24].clone(),
+            expected_datum[25].clone(),
+            expected_datum[26].clone(),
+            expected_datum[27].clone(),
+            expected_datum[28].clone(),
+            expected_datum[29].clone(),
+            expected_datum[30].clone(),
+            expected_datum[31].clone(),
+            expected_datum[32].clone(),
+            expected_datum[33].clone(),
+            expected_datum[34].clone(),
+            expected_datum[35].clone(),
+            expected_datum[36].clone(),
+            expected_datum[37].clone(),
+            expected_datum[38].clone(),
+            expected_datum[39].clone(),
+            expected_datum[40].clone(),
+            expected_datum[41].clone(),
+            expected_datum[42].clone(),
+            expected_datum[43].clone(),
+            expected_datum[44].clone(),
+            expected_datum[45].clone(),
+            expected_datum[46].clone(),
+            expected_datum[47].clone(),
+            expected_datum[48].clone(),
+            expected_datum[49].clone(),
+            expected_datum[50].clone(),
+            expected_datum[51].clone(),
+            expected_datum[52].clone(),
+            expected_datum[53].clone(),
+            expected_datum[54].clone(),
+            expected_datum[55].clone(),
+            expected_datum[56].clone(),
+            expected_datum[57].clone(),
+            expected_datum[58].clone(),
+            expected_datum[59].clone(),
+            expected_datum[60].clone(),
+            expected_datum[61].clone(),
+            expected_datum[62].clone(),
+            expected_datum[63].clone(),
+            expected_datum[64].clone(),
+            expected_datum[65].clone(),
+            expected_datum[66].clone(),
+            expected_datum[67].clone(),
+            expected_datum[68].clone(),
+            expected_datum[69].clone(),
+            expected_datum[70].clone(),
+            expected_datum[71].clone(),
+            expected_datum[72].clone(),
+            expected_datum[73].clone(),
+            expected_datum[74].clone(),
+            expected_datum[75].clone(),
+            expected_datum[76].clone(),
+            expected_datum[77].clone(),
+            expected_datum[78].clone(),
+            expected_datum[79].clone(),
+            expected_datum[80].clone(),
+            expected_datum[81].clone(),
+            expected_datum[82].clone(),
+            expected_datum[83].clone(),
+            expected_datum[84].clone(),
+            expected_datum[85].clone(),
+            expected_datum[86].clone(),
+            expected_datum[87].clone(),
+            expected_datum[88].clone(),
+            expected_datum[89].clone(),
+            expected_datum[90].clone(),
+            Datum::new_string(""),
+            Datum::new_string(""),
+            Datum::new_string(""),
+            Datum::new_string(""),
+            expected_datum[95].clone(),
+            expected_datum[96].clone(),
+            expected_datum[97].clone(),
+            expected_datum[98].clone(),
+            expected_datum[99].clone(),
+            expected_datum[100].clone(),
+            expected_datum[101].clone(),
+            expected_datum[102].clone(),
+            expected_datum[103].clone(),
+            expected_datum[104].clone(),
+            expected_datum[105].clone(),
+            Datum::new_int(0),
+            Datum::new_int(0),
+        ];
+        expected_datum[4] = Datum::new_string(stmt_exec_info2.digest.as_bytes());
+        match_row(&datums[0], &expected_datum);
+        match_row(&datums[1], &expected_evicted_datum);
+
+        // clean up
+        ss_map.set_max_stmt_count(24).unwrap();
+    }
+
+    /// The six IA-remote-read columns both IA tests read, in Go's order.
+    const IA_COLUMN_NAMES: [&str; 6] = [
+        AVG_IA_REMOTE_READ_SEGMENT_COUNT_STR,
+        MAX_IA_REMOTE_READ_SEGMENT_COUNT_STR,
+        AVG_IA_REMOTE_READ_SEGMENT_SIZE_STR,
+        MAX_IA_REMOTE_READ_SEGMENT_SIZE_STR,
+        AVG_IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR,
+        MAX_IA_REMOTE_READ_SEGMENT_WAIT_TIME_STR,
+    ];
+
+    /// The two statements both IA tests add: Go's `stmtExecInfo1` and
+    /// `stmtExecInfo2`, differing only in their IA scan-detail counters.
+    fn ia_exec_infos() -> (StmtExecInfo, StmtExecInfo) {
+        let mut stmt_exec_info1 = generate_any_exec_info();
+        {
+            let scan_detail = stmt_exec_info1
+                .exec_detail
+                .cop_exec_details
+                .scan_detail
+                .as_mut()
+                .unwrap();
+            scan_detail.ia_remote_read_segment_count = 3;
+            scan_detail.ia_remote_read_segment_bytes = 4096;
+            scan_detail.ia_remote_read_segment_duration = Duration::from_millis(5);
+        }
+
+        let mut stmt_exec_info2 = generate_any_exec_info();
+        {
+            let scan_detail = stmt_exec_info2
+                .exec_detail
+                .cop_exec_details
+                .scan_detail
+                .as_mut()
+                .unwrap();
+            scan_detail.ia_remote_read_segment_count = 5;
+            scan_detail.ia_remote_read_segment_bytes = 8192;
+            scan_detail.ia_remote_read_segment_duration = Duration::from_millis(9);
+        }
+        (stmt_exec_info1, stmt_exec_info2)
+    }
+
+    /// Go `TestToDatumIAColumns`.
+    #[test]
+    fn test_to_datum_ia_columns() {
+        let ss_map = StmtSummaryByDigestMap::new();
+        let now = Utc::now().timestamp();
+        ss_map.set_begin_time_for_cur_interval(now + 60);
+
+        let (stmt_exec_info1, stmt_exec_info2) = ia_exec_infos();
+        ss_map.add_statement(&stmt_exec_info1);
+        ss_map.add_statement(&stmt_exec_info2);
+        let reader = new_stmt_summary_reader_with_column_names_for_test(&ss_map, &IA_COLUMN_NAMES);
+
+        let rows = reader.get_stmt_summary_current_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0], Datum::new_real(4.0));
+        assert_eq!(rows[0][1], Datum::new_uint(5));
+        assert_eq!(rows[0][2], Datum::new_real(6144.0));
+        assert_eq!(rows[0][3], Datum::new_uint(8192));
+        assert_eq!(
+            rows[0][4],
+            Datum::new_int(i64::try_from(Duration::from_millis(7).as_nanos()).unwrap())
+        );
+        assert_eq!(
+            rows[0][5],
+            Datum::new_int(i64::try_from(Duration::from_millis(9).as_nanos()).unwrap())
+        );
+    }
+
+    /// Go `TestToDatumIAColumnsChunkRoundTrip`.
+    #[test]
+    fn test_to_datum_ia_columns_chunk_round_trip() {
+        let ss_map = StmtSummaryByDigestMap::new();
+        let now = Utc::now().timestamp();
+        ss_map.set_begin_time_for_cur_interval(now + 60);
+
+        let (stmt_exec_info1, stmt_exec_info2) = ia_exec_infos();
+        ss_map.add_statement(&stmt_exec_info1);
+        ss_map.add_statement(&stmt_exec_info2);
+
+        let reader = new_stmt_summary_reader_with_column_names_for_test(&ss_map, &IA_COLUMN_NAMES);
+
+        let rows = reader.get_stmt_summary_current_rows();
+        assert_eq!(rows.len(), 1);
+
+        let mut max_unsigned_type = FieldType::new(FieldTypeCode::LongLong);
+        max_unsigned_type.set_flags(FieldTypeFlags::UNSIGNED);
+        let ret_types = [
+            FieldType::new(FieldTypeCode::Double),
+            max_unsigned_type.clone(),
+            FieldType::new(FieldTypeCode::Double),
+            max_unsigned_type,
+            FieldType::new(FieldTypeCode::LongLong),
+            FieldType::new(FieldTypeCode::LongLong),
+        ];
+        let mut mut_row = MutRow::from_types(&ret_types);
+        mut_row.set_datums(&rows[0]);
+        let row = mut_row.to_row();
+
+        assert!((row.get_float64(0) - 4.0).abs() < f64::EPSILON);
+        assert_eq!(row.get_uint64(1), 5);
+        assert!((row.get_float64(2) - 6144.0).abs() < f64::EPSILON);
+        assert_eq!(row.get_uint64(3), 8192);
+        assert_eq!(
+            row.get_int64(4),
+            i64::try_from(Duration::from_millis(7).as_nanos()).unwrap()
+        );
+        assert_eq!(
+            row.get_int64(5),
+            i64::try_from(Duration::from_millis(9).as_nanos()).unwrap()
+        );
+    }
+
+    /// Go `TestAccessPrivilege`.
+    #[test]
+    fn test_access_privilege() {
+        let ss_map = StmtSummaryByDigestMap::new();
+
+        let loops = 32;
+        let mut stmt_exec_info1 = generate_any_exec_info();
+
+        for i in 0..loops {
+            stmt_exec_info1.digest = format!("digest{i}");
+            ss_map.add_statement(&stmt_exec_info1);
+        }
+
+        let user = UserIdentity {
+            username: "user".to_owned(),
+            ..UserIdentity::default()
+        };
+        let bad_user = UserIdentity {
+            username: "bad_user".to_owned(),
+            ..UserIdentity::default()
+        };
+
+        let mut reader = new_stmt_summary_reader_for_test(&ss_map);
+        reader.user = Some(user.clone());
+        reader.has_process_priv = false;
+        let datums = reader.get_stmt_summary_current_rows();
+        assert_eq!(datums.len(), loops);
+        reader.user = Some(bad_user.clone());
+        reader.has_process_priv = false;
+        let datums = reader.get_stmt_summary_current_rows();
+        assert_eq!(datums.len(), 0);
+        reader.has_process_priv = true;
+        let datums = reader.get_stmt_summary_current_rows();
+        assert_eq!(datums.len(), loops);
+
+        reader.user = Some(user.clone());
+        reader.has_process_priv = false;
+        let datums = reader.get_stmt_summary_history_rows();
+        assert_eq!(datums.len(), loops);
+        reader.user = Some(bad_user);
+        reader.has_process_priv = false;
+        let datums = reader.get_stmt_summary_history_rows();
+        assert_eq!(datums.len(), 0);
+        reader.has_process_priv = true;
+        let datums = reader.get_stmt_summary_history_rows();
+        assert_eq!(datums.len(), loops);
+
+        // Test the same query digests, but run as a different user in a new
+        // statement summary interval. The old user should not be able to access
+        // the rows generated for the new user.
+        ss_map.set_begin_time_for_cur_interval(Utc::now().timestamp());
+        let mut stmt_exec_info2 = generate_any_exec_info();
+        stmt_exec_info2.user = "new_user".to_owned();
+
+        for i in 0..loops {
+            stmt_exec_info2.digest = format!("digest{i}");
+            ss_map.add_statement(&stmt_exec_info2);
+        }
+
+        let old_user = user;
+        let new_user = UserIdentity {
+            username: "new_user".to_owned(),
+            ..UserIdentity::default()
+        };
+
+        reader.user = Some(new_user);
+        reader.has_process_priv = false;
+        let datums = reader.get_stmt_summary_current_rows();
+        assert_eq!(datums.len(), loops);
+        reader.user = Some(old_user.clone());
+        reader.has_process_priv = false;
+        let datums = reader.get_stmt_summary_current_rows();
+        assert_eq!(datums.len(), 0);
+        reader.user = Some(old_user);
+        reader.has_process_priv = true;
+        let datums = reader.get_stmt_summary_current_rows();
+        assert_eq!(datums.len(), loops);
+    }
+}

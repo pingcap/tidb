@@ -1845,6 +1845,7 @@ pub(crate) mod tests {
     };
 
     use super::*;
+    use crate::reader::tests::new_stmt_summary_reader_for_test;
 
     /// Go `boTxnLockName`.
     const BO_TXN_LOCK_NAME: &str = "txnlock";
@@ -2725,35 +2726,38 @@ pub(crate) mod tests {
 
     /// Go `TestAddStatementParallel`.
     ///
-    /// Go asserts on `reader.GetStmtSummaryCurrentRows()`; `reader.go` is not
-    /// ported yet, so the record count is read off the map instead.
+    /// Go shares one reader across the goroutines; scoped threads let the
+    /// borrowing reader be shared the same way.
     #[test]
     fn test_add_statement_parallel() {
-        let ss_map = Arc::new(StmtSummaryByDigestMap::new());
+        let ss_map = StmtSummaryByDigestMap::new();
         let now = unix_now();
         // to disable expiration
         ss_map.set_begin_time_for_cur_interval(now + 60);
 
         let threads = 8;
         let loops = 32;
-        let handles: Vec<_> = (0..threads)
-            .map(|_| {
-                let ss_map = Arc::clone(&ss_map);
-                thread::spawn(move || {
+        let reader = new_stmt_summary_reader_for_test(&ss_map);
+        thread::scope(|scope| {
+            for _ in 0..threads {
+                scope.spawn(|| {
                     let mut info = generate_any_exec_info();
+
+                    // Add 32 times with different digest.
                     for i in 0..loops {
                         info.digest = format!("digest{i}");
                         ss_map.add_statement(&info);
                     }
-                    assert_eq!(ss_map.summary_map_size(), loops);
-                })
-            })
-            .collect();
-        for handle in handles {
-            handle.join().unwrap();
-        }
 
-        assert_eq!(ss_map.summary_map_size(), loops);
+                    // There would be 32 summaries.
+                    let datums = reader.get_stmt_summary_current_rows();
+                    assert_eq!(datums.len(), loops);
+                });
+            }
+        });
+
+        let datums = reader.get_stmt_summary_current_rows();
+        assert_eq!(datums.len(), loops);
     }
 
     /// Go `TestMaxStmtCount`.
@@ -2879,13 +2883,9 @@ pub(crate) mod tests {
     }
 
     /// Go `TestSetMaxStmtCountParallel`.
-    ///
-    /// Go asserts through the reader (one live record plus one evicted row);
-    /// with `reader.go` and `evicted.go` deferred, only the live record count
-    /// is checked.
     #[test]
     fn test_set_max_stmt_count_parallel() {
-        let ss_map = Arc::new(StmtSummaryByDigestMap::new());
+        let ss_map = StmtSummaryByDigestMap::new();
         let now = unix_now();
         // to disable expiration
         ss_map.set_begin_time_for_cur_interval(now + 60);
@@ -2894,43 +2894,113 @@ pub(crate) mod tests {
         const LOOPS: i32 = 20;
         fn add_stmt(ss_map: &StmtSummaryByDigestMap) {
             let mut info = generate_any_exec_info();
+
+            // Add 20 times with different digest.
             for i in 0..LOOPS {
                 info.digest = format!("digest{i}");
                 ss_map.add_statement(&info);
             }
         }
 
-        let mut handles: Vec<_> = (0..threads)
-            .map(|_| {
-                let ss_map = Arc::clone(&ss_map);
-                thread::spawn(move || add_stmt(&ss_map))
-            })
-            .collect();
-
-        {
-            let ss_map = Arc::clone(&ss_map);
-            handles.push(thread::spawn(move || {
+        thread::scope(|scope| {
+            for _ in 0..threads {
+                scope.spawn(|| add_stmt(&ss_map));
+            }
+            scope.spawn(|| {
                 // Turn down MaxStmtCount one by one.
                 for i in (1..=10).rev() {
                     ss_map.set_max_stmt_count(i).unwrap();
                 }
-            }));
-        }
-
-        for handle in handles {
-            handle.join().unwrap();
-        }
+            });
+        });
 
         // add stmt again to make sure evict occurs after SetMaxStmtCount.
         add_stmt(&ss_map);
 
-        assert_eq!(ss_map.summary_map_size(), 1);
+        let reader = new_stmt_summary_reader_for_test(&ss_map);
+        let datums = reader.get_stmt_summary_current_rows();
+        // due to evictions happened in cache, an additional record will be
+        // appended to the table.
+        assert_eq!(datums.len(), 2);
+
         ss_map.set_max_stmt_count(3000).unwrap();
     }
 
-    /// Go `TestDisableStmtSummary`.
+    /// Go's Prometheus gauges narrow to a sink that keeps the last values
+    /// published, which is what `readGaugeValue` reads back.
+    #[derive(Clone, Default)]
+    struct RecordingWindowMetricsSink(Arc<Mutex<(f64, f64)>>);
+
+    impl WindowMetricsSink for RecordingWindowMetricsSink {
+        fn set_window_metrics(&self, record_count: f64, evicted_count: f64) {
+            *self.0.lock().unwrap() = (record_count, evicted_count);
+        }
+    }
+
+    /// A map wired exactly as `StmtSummaryByDigestMap::new` wires one, except
+    /// that the window metrics land in a readable sink.
+    fn map_with_recorded_metrics() -> (StmtSummaryByDigestMap, RecordingWindowMetricsSink) {
+        let evicted = Arc::new(Mutex::new(StmtSummaryByDigestEvicted::new()));
+        let recorder = RecordingWindowMetricsSink::default();
+        let ss_map =
+            StmtSummaryByDigestMap::with_sinks(Box::new(evicted), Box::new(recorder.clone()));
+        (ss_map, recorder)
+    }
+
+    /// Go `TestStmtSummaryMetrics`.
     ///
-    /// Go counts reader rows; the record count is read off the map instead.
+    /// Go reads `metrics.StmtSummaryWindowRecordCount` /
+    /// `...WindowEvictedCount` off the process-global Prometheus registry; the
+    /// sink this map publishes to holds the same two numbers.
+    #[test]
+    fn test_stmt_summary_metrics() {
+        let (ss_map, metrics) = map_with_recorded_metrics();
+        ss_map.set_max_stmt_count(2).unwrap();
+
+        ss_map.set_begin_time_for_cur_interval(unix_now() + 60);
+        let mut info = generate_any_exec_info();
+
+        info.digest = "digest1".to_owned();
+        ss_map.add_statement(&info);
+        info.digest = "digest2".to_owned();
+        ss_map.add_statement(&info);
+        assert_eq!(*metrics.0.lock().unwrap(), (2.0, 0.0));
+
+        info.digest = "digest3".to_owned();
+        ss_map.add_statement(&info);
+        assert_eq!(*metrics.0.lock().unwrap(), (2.0, 1.0));
+
+        ss_map.set_begin_time_for_cur_interval(unix_now() - ss_map.refresh_interval() - 1);
+        info.digest = "digest3".to_owned();
+        ss_map.add_statement(&info);
+        assert_eq!(*metrics.0.lock().unwrap(), (2.0, 0.0));
+
+        ss_map.clear();
+        assert_eq!(*metrics.0.lock().unwrap(), (0.0, 0.0));
+    }
+
+    /// Go `TestStmtSummaryMetricsAfterCapacityChange`.
+    #[test]
+    fn test_stmt_summary_metrics_after_capacity_change() {
+        let (ss_map, metrics) = map_with_recorded_metrics();
+        ss_map.set_max_stmt_count(3).unwrap();
+
+        ss_map.set_begin_time_for_cur_interval(unix_now() + 60);
+        let mut info = generate_any_exec_info();
+
+        info.digest = "digest1".to_owned();
+        ss_map.add_statement(&info);
+        info.digest = "digest2".to_owned();
+        ss_map.add_statement(&info);
+        info.digest = "digest3".to_owned();
+        ss_map.add_statement(&info);
+        assert_eq!(*metrics.0.lock().unwrap(), (3.0, 0.0));
+
+        ss_map.set_max_stmt_count(1).unwrap();
+        assert_eq!(*metrics.0.lock().unwrap(), (1.0, 0.0));
+    }
+
+    /// Go `TestDisableStmtSummary`.
     #[test]
     fn test_disable_stmt_summary() {
         let ss_map = StmtSummaryByDigestMap::new();
@@ -2941,12 +3011,15 @@ pub(crate) mod tests {
 
         let mut info1 = generate_any_exec_info();
         ss_map.add_statement(&info1);
-        assert_eq!(ss_map.summary_map_size(), 0);
+        let reader = new_stmt_summary_reader_for_test(&ss_map);
+        let datums = reader.get_stmt_summary_current_rows();
+        assert_eq!(datums.len(), 0);
 
         ss_map.set_enabled(true);
 
         ss_map.add_statement(&info1);
-        assert_eq!(ss_map.summary_map_size(), 1);
+        let datums = reader.get_stmt_summary_current_rows();
+        assert_eq!(datums.len(), 1);
 
         ss_map.set_begin_time_for_cur_interval(now + 60);
 
@@ -2954,13 +3027,15 @@ pub(crate) mod tests {
         info1.normalized_sql = "normalized_sql2".to_owned();
         info1.digest = "digest2".to_owned();
         ss_map.add_statement(&info1);
-        assert_eq!(ss_map.summary_map_size(), 2);
+        let datums = reader.get_stmt_summary_current_rows();
+        assert_eq!(datums.len(), 2);
 
         // Unset
         ss_map.set_enabled(false);
         ss_map.set_begin_time_for_cur_interval(now + 60);
         ss_map.add_statement(&info1);
-        assert_eq!(ss_map.summary_map_size(), 0);
+        let datums = reader.get_stmt_summary_current_rows();
+        assert_eq!(datums.len(), 0);
 
         // Unset
         ss_map.set_enabled(false);
@@ -2968,26 +3043,24 @@ pub(crate) mod tests {
 
         ss_map.set_begin_time_for_cur_interval(now + 60);
         ss_map.add_statement(&info1);
-        assert_eq!(ss_map.summary_map_size(), 1);
+        let datums = reader.get_stmt_summary_current_rows();
+        assert_eq!(datums.len(), 1);
 
         // Set back.
         ss_map.set_enabled(true);
     }
 
     /// Go `TestEnableSummaryParallel`.
-    ///
-    /// Go's concurrent reader call is replaced by a concurrent read of the
-    /// cached values, which exercises the same lock ordering.
     #[test]
     fn test_enable_summary_parallel() {
-        let ss_map = Arc::new(StmtSummaryByDigestMap::new());
+        let ss_map = StmtSummaryByDigestMap::new();
 
         let threads = 8;
         let loops = 32;
-        let handles: Vec<_> = (0..threads)
-            .map(|_| {
-                let ss_map = Arc::clone(&ss_map);
-                thread::spawn(move || {
+        let reader = new_stmt_summary_reader_for_test(&ss_map);
+        thread::scope(|scope| {
+            for _ in 0..threads {
+                scope.spawn(|| {
                     let info = generate_any_exec_info();
                     // Add 32 times with the same digest.
                     for i in 0..loops {
@@ -2995,16 +3068,13 @@ pub(crate) mod tests {
                         ss_map.set_enabled(i % 2 == 0);
                         ss_map.add_statement(&info);
                         // Try to read it.
-                        let _ = ss_map.summary_map_values();
+                        let _ = reader.get_stmt_summary_history_rows();
                     }
                     ss_map.set_enabled(true);
-                })
-            })
-            .collect();
+                });
+            }
+        });
         // Ensure that there's no deadlock.
-        for handle in handles {
-            handle.join().unwrap();
-        }
 
         // Ensure that it's enabled at last.
         assert!(ss_map.enabled());
@@ -3085,9 +3155,6 @@ pub(crate) mod tests {
     }
 
     /// Go `TestSummaryHistory`.
-    ///
-    /// Go's reader-row and `ssMap.other` assertions belong to `reader.go` and
-    /// `evicted.go` and are dropped here.
     #[test]
     fn test_summary_history() {
         let ss_map = StmtSummaryByDigestMap::new();
@@ -3129,6 +3196,14 @@ pub(crate) mod tests {
             }
         }
 
+        let reader = new_stmt_summary_reader_for_test(&ss_map);
+        let datum = reader.get_stmt_summary_history_rows();
+        assert_eq!(datum.len(), 10);
+
+        ss_map.set_history_size(5);
+        let datum = reader.get_stmt_summary_history_rows();
+        assert_eq!(datum.len(), 5);
+
         // test eviction
         ss_map.clear();
         ss_map.set_max_stmt_count(1).unwrap();
@@ -3137,11 +3212,18 @@ pub(crate) mod tests {
             ss_map.set_begin_time_for_cur_interval(now + i * 10);
             ss_map.add_statement(&info1);
             assert_eq!(ss_map.summary_map_size(), 1);
+            assert_eq!(ss_map.evicted().unwrap().lock().unwrap().history().len(), 0);
         }
         // insert another digest to evict it
         info1.digest = "bandit digest".to_owned();
         ss_map.add_statement(&info1);
         assert_eq!(ss_map.summary_map_size(), 1);
+        // length of `other` should not longer than historySize.
+        assert_eq!(ss_map.evicted().unwrap().lock().unwrap().history().len(), 5);
+        let datum = reader.get_stmt_summary_history_rows();
+        // length of STATEMENT_SUMMARY_HISTORY == (history in cache) + (history
+        // evicted)
+        assert_eq!(datum.len(), 6);
 
         ss_map.set_max_stmt_count(3000).unwrap();
         ss_map.set_refresh_interval(1800);
