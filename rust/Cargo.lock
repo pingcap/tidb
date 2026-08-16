@@ -2570,6 +2570,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-schemacmp"
+version = "0.0.0"
+dependencies = [
+ "regex",
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-exec",
+ "tidb-model",
+ "tidb-mysql",
+ "tidb-parser",
+]
+
+[[package]]
 name = "tidb-server"
 version = "0.0.0"
 dependencies = [

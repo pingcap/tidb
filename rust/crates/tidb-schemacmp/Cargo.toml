@@ -1,0 +1,22 @@
+[package]
+name = "tidb-schemacmp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/util/schemacmp: schema comparison and joining over a lattice model."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }
+tidb-model = { path = "../tidb-model" }
+tidb-mysql = { path = "../tidb-mysql" }
+
+[dev-dependencies]
+regex.workspace = true
+tidb-exec = { path = "../tidb-exec" }
+tidb-parser = { path = "../tidb-parser" }
