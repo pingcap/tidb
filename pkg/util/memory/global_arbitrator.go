@@ -42,8 +42,7 @@ const (
 
 var (
 	globalArbitrator struct {
-		heapProfiler atomic.Pointer[heapProfileCollector]
-		softLimit    struct {
+		softLimit struct {
 			originText atomic.Value
 			sync.Mutex
 		}
@@ -53,6 +52,10 @@ var (
 		}
 		v struct {
 			atomic.Pointer[MemArbitrator]
+			sync.Mutex
+		}
+		runtimeHandler struct {
+			heapProfiler atomic.Pointer[heapProfileCollector]
 			sync.Mutex
 			reset atomic.Bool
 		}
@@ -211,8 +214,13 @@ func readRuntimeMemStats() memStats {
 
 // HandleGlobalMemArbitratorRuntime is used to handle runtime memory stats.
 func HandleGlobalMemArbitratorRuntime() {
-	profiler := globalArbitrator.heapProfiler.Load()
-	if globalArbitrator.v.reset.Load() && globalArbitrator.v.reset.Swap(false) {
+	if !globalArbitrator.runtimeHandler.TryLock() {
+		return
+	}
+	defer globalArbitrator.runtimeHandler.Unlock()
+
+	profiler := globalArbitrator.runtimeHandler.heapProfiler.Load()
+	if globalArbitrator.runtimeHandler.reset.Load() && globalArbitrator.runtimeHandler.reset.Swap(false) {
 		if profiler != nil {
 			profiler.resetTriggerState()
 		}
@@ -312,7 +320,7 @@ func CleanupGlobalMemArbitratorForTest() {
 	globalArbitrator.v.Lock()
 	defer globalArbitrator.v.Unlock()
 
-	globalArbitrator.heapProfiler.Store(nil)
+	globalArbitrator.runtimeHandler.heapProfiler.Store(nil)
 	m := globalArbitrator.v.Load()
 	if m == nil {
 		return
@@ -433,7 +441,7 @@ func SetGlobalMemArbitratorWorkMode(str string) bool {
 	if newMode == ArbitratorModeDisable {
 		m.SetWorkMode(newMode)
 		globalArbitrator.enable.Store(false)
-		globalArbitrator.v.reset.Store(true)
+		globalArbitrator.runtimeHandler.reset.Store(true)
 		return true
 	}
 
@@ -517,7 +525,7 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 		defTaskTickDur,
 	)
 
-	globalArbitrator.heapProfiler.Store(profiler)
+	globalArbitrator.runtimeHandler.heapProfiler.Store(profiler)
 	globalArbitrator.v.Store(m)
 	return
 }

@@ -315,7 +315,7 @@ func TestHandleGlobalMemArbitratorRuntimeWithoutCollector(t *testing.T) {
 	m := GlobalMemArbitrator()
 	require.NotNil(t, m)
 	m.stop()
-	globalArbitrator.heapProfiler.Store(nil)
+	globalArbitrator.runtimeHandler.heapProfiler.Store(nil)
 	m.heapController.heapInuse.Store(-1)
 
 	HandleGlobalMemArbitratorRuntime()
@@ -329,7 +329,7 @@ func TestHandleGlobalMemArbitratorRuntimeWithoutCollector(t *testing.T) {
 		lastCaptureThreshold: 85,
 		closed:               true,
 	}
-	globalArbitrator.heapProfiler.Store(profiler)
+	globalArbitrator.runtimeHandler.heapProfiler.Store(profiler)
 	require.True(t, SetGlobalMemArbitratorWorkMode(ArbitratorModeDisableName))
 	require.True(t, SetGlobalMemArbitratorWorkMode(ArbitratorModeStandardName))
 
