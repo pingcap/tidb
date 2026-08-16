@@ -235,7 +235,10 @@ fn normalize_exponent(mantissa: &str, exponent: i32) -> String {
     format!("{mantissa}e{sign}{:02}", exponent.unsigned_abs())
 }
 
-fn format_go_float64(value: f64) -> String {
+/// Go `strconv.FormatFloat(value, 'g', -1, 64)` — the spelling `%v` gives a
+/// float64. Public because it is the one Go-float formatter in the
+/// workspace; the slow-log rule encoder renders thresholds through it too.
+pub fn format_go_float64(value: f64) -> String {
     if value.is_nan() {
         return "NaN".to_owned();
     }
