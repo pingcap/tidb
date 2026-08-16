@@ -208,7 +208,9 @@ impl StmtSummaryByDigestEvicted {
             .collect()
     }
 
-    /// Go `(*stmtSummaryByDigestEvicted).collectHistorySummaries`.
+    /// Go `(*stmtSummaryByDigestEvicted).collectHistorySummaries`, called by
+    /// the reader's `getStmtEvictedOtherHistoryRow`. Go takes no checker here
+    /// (only `stmtSummaryByDigest`'s namesake does), and neither does this.
     #[must_use]
     pub fn collect_history_summaries(
         &self,

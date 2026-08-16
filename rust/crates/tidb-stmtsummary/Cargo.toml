@@ -12,7 +12,14 @@ workspace = true
 
 [dependencies]
 chrono.workspace = true
+chrono-tz.workspace = true
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-exec = { path = "../tidb-exec" }
 tidb-kvcache = { path = "../tidb-kvcache" }
+tidb-model = { path = "../tidb-model" }
+tidb-parser = { path = "../tidb-parser" }
 tidb-util = { path = "../tidb-util" }
+
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-chunk = { path = "../tidb-chunk" }

@@ -28,6 +28,8 @@ use tidb_kvcache::{CacheKey, InvalidCapacity, SimpleLruCache};
 use tidb_util::plancodec::{BINARY_PLAN_DISCARDED_ENCODED, PLAN_DISCARDED_ENCODED};
 use tidb_util::ppcpuusage::CpuUsages;
 
+use crate::reader::StmtSummaryChecker;
+
 use crate::evicted::StmtSummaryByDigestEvicted;
 
 /// Go `MaxEncodedPlanSizeInBytes`: the upper limit of the size of the plan and
@@ -1254,14 +1256,19 @@ impl StmtSummaryByDigest {
     /// Go `(*stmtSummaryByDigest).collectHistorySummaries`: puts at most
     /// `historySize` summaries into an array.
     ///
-    /// Go's `*stmtSummaryChecker` parameter lands with `reader.go`.
     #[must_use]
     pub fn collect_history_summaries(
         &self,
+        checker: Option<&StmtSummaryChecker>,
         history_size: usize,
     ) -> Vec<Arc<Mutex<StmtSummaryByDigestElement>>> {
         if !self.initialized {
             return Vec::new();
+        }
+        if let Some(checker) = checker {
+            if !checker.is_digest_valid(&self.digest) {
+                return Vec::new();
+            }
         }
         self.history
             .iter()
@@ -1271,8 +1278,9 @@ impl StmtSummaryByDigest {
     }
 }
 
-/// The boundary Go crosses into `evicted.go`'s `stmtSummaryByDigestEvicted`.
-/// That file is not ported yet, so only [`NoopEvictedSink`] implements it.
+/// The boundary Go crosses into `evicted.go`'s `stmtSummaryByDigestEvicted`,
+/// which `Arc<Mutex<`[`crate::evicted::StmtSummaryByDigestEvicted`]`>>`
+/// implements.
 pub trait EvictedSink: Send {
     /// Go `(*stmtSummaryByDigestEvicted).AddEvicted`.
     fn add_evicted(
@@ -1286,7 +1294,9 @@ pub trait EvictedSink: Send {
     fn clear(&mut self);
 }
 
-/// The default [`EvictedSink`]: drops everything until `evicted.go` lands.
+/// The [`EvictedSink`] for maps built through
+/// [`StmtSummaryByDigestMap::with_sinks`] that keep no rollup: drops
+/// everything.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoopEvictedSink;
 
@@ -1309,6 +1319,8 @@ pub trait WindowMetricsSink: Send + Sync {
 }
 
 /// The default [`WindowMetricsSink`]: publishes nowhere.
+///
+/// Go's `metrics.SetStmtSummaryWindowMetrics` has no in-crate equivalent.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NoopWindowMetricsSink;
 

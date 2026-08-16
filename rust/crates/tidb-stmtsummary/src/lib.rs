@@ -12,10 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! SEED of Go `pkg/util/stmtsummary`, covering `statement_summary.go` and
-//! `evicted.go`: the statement-summary LRU keyed by `StmtDigestKey`, the
+//! Go `pkg/util/stmtsummary`: `statement_summary.go`, `evicted.go`, and
+//! `reader.go`. The statement-summary LRU keyed by `StmtDigestKey`, the
 //! per-digest and per-interval statistics it accumulates, the option surface
-//! the system variables drive, and the rollup of the digests the LRU evicts.
+//! the system variables drive, the rollup of the digests the LRU evicts, and
+//! the reader that turns both into `information_schema` rows.
+//!
+//! NOT YET COMPLETE, for one reason: `reader.go`'s own upstream tests
+//! (`TestToDatum`, `TestToDatumIAColumns`, `TestToDatumIAColumnsChunkRoundTrip`,
+//! `TestColumnValueFactoryDoubleUintMetrics`, `TestAccessPrivilege`) are not
+//! ported, so its production surface is present but unpinned. The other two
+//! files carry their upstream tests in full, and the assertions those tests
+//! had to weaken while the reader was absent are restored.
 //!
 //! `AddStatement`'s eviction path reaches the rollup through the named
 //! [`statement_summary::EvictedSink`] boundary, which
@@ -24,17 +32,6 @@
 //! in, as Go's `newStmtSummaryByDigestMap` does.
 //! [`statement_summary::NoopEvictedSink`] remains for maps built through
 //! [`statement_summary::StmtSummaryByDigestMap::with_sinks`].
-//!
-//! Not yet covered from the same Go package:
-//!
-//! - `reader.go` (`stmtSummaryReader`, the column-value factories, and the
-//!   `information_schema` row builders). The `*stmtSummaryChecker` parameter
-//!   of Go's `collectHistorySummaries` is dropped until that file lands, and
-//!   the reader-only helpers (`avgInt`, `avgFloat`, `avgFloat4Uint`,
-//!   `avgSumFloat`, `convertEmptyToNil`, `formatBackoffTypes`) are ported as
-//!   free functions with no in-crate caller yet.
-//!   `evicted.go`'s `(*stmtSummaryByDigestEvicted).collectHistorySummaries`
-//!   likewise has no in-crate caller until then.
 //!
 //! Narrowings applied to `statement_summary.go` itself:
 //!
@@ -70,6 +67,32 @@
 //! - `types.MakeDatums` / `types.NewTime` / `mysql.TypeTimestamp` narrow to
 //!   `tidb-datatype`'s `Datum`, `Time`, and `TimeType::Timestamp`; Go renders
 //!   `time.Unix` in the process-local zone, this crate stays in UTC.
+//!
+//! Narrowings applied to `reader.go`:
+//!
+//! - Go's `ssMap *stmtSummaryByDigestMap` pointer becomes the borrow
+//!   [`reader::StmtSummaryReader`] carries; the constructor still points it at
+//!   [`statement_summary::STMT_SUMMARY_BY_DIGEST_MAP`], and the field stays
+//!   public because Go's tests reassign it.
+//! - Go reads `summaryMap.Values()`, `beginTimeForCurInterval` and `other`
+//!   under one `ssMap` lock; the ported map exposes each as its own locked
+//!   accessor, so a concurrent `AddStatement` can interleave between them.
+//! - Go drops `ssbd`'s lock before locking an element and then reads `ssbd`'s
+//!   immutable-after-init fields unlocked; the port holds the `ssbd` guard
+//!   across the element lock, in the order `AddStatement` already uses.
+//! - `set.StringSet` narrows to `HashSet<String>` in
+//!   [`reader::StmtSummaryChecker`].
+//! - Go's package-level `columnValueFactoryMap` becomes the lookup function
+//!   [`reader::column_value_factory`]; a factory returns the [`Datum`] that
+//!   Go's `types.NewDatum(any)` would build from its `any`.
+//!
+//!   [`Datum`]: tidb_datatype::Datum
+//! - `*time.Location` narrows to `chrono_tz::Tz`; `[]*model.ColumnInfo` and
+//!   `*auth.UserIdentity` are the real `tidb_model::ColumnInfo` and
+//!   `tidb_parser::auth::UserIdentity`.
+//! - `logutil.BgLogger()` has no boundary here: a `plancodec::DecodePlan`
+//!   failure is not logged, it only yields Go's empty plan string.
 
 pub mod evicted;
+pub mod reader;
 pub mod statement_summary;
