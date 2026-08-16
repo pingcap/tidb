@@ -189,7 +189,7 @@ pub type RestrictedHintChecker<'a> = &'a dyn Fn(&str) -> Option<String>;
 pub type SetVarHintChecker<'a> = &'a dyn Fn(&str, &str) -> (bool, Option<String>);
 
 /// Go's private `shouldWarnRestrictedHintInParseStmtHints`.
-fn should_warn_restricted(name: &str) -> bool {
+pub(crate) fn should_warn_restricted(name: &str) -> bool {
     matches!(
         name,
         HINT_MEMORY_QUOTA
