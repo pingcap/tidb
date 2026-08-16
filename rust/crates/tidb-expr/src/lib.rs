@@ -353,6 +353,7 @@ pub mod evaluator;
 pub mod expr_collation;
 pub mod exprctx;
 pub mod expression;
+pub mod expropt;
 mod field_name;
 mod func;
 mod grouping;

@@ -25,7 +25,11 @@
 //!
 //! The optional-property machinery is how an `EvalContext` advertises which
 //! optional providers it carries: each property has a key, the keys index a
-//! descriptor table, and a `u64` bitset says which are present.
+//! descriptor table, and a `u64` bitset says which are present. The providers
+//! those keys stand for — Go's `pkg/expression/expropt` — live in
+//! [`crate::expropt`], which is complete; the only piece of `EvalContext` it
+//! needs, `GetOptionalPropProvider`, it declares there as a boundary trait
+//! until the umbrella interfaces above land here.
 
 use std::sync::atomic::{AtomicI64, Ordering};
 
