@@ -68,6 +68,13 @@
 //! Go's `memoryStoreCore.List` iterates a map, so it returns records in a
 //! random order; the Rust port iterates a `HashMap` and is likewise unordered.
 //! Every caller either filters to a single record or compares order-insensitively.
+//!
+//! Two further Go packages build directly on `pkg/timer/api` and live here as
+//! their own module trees, each with its own header stating its completeness:
+//! - [`table_store`] <- `pkg/timer/tablestore` (SEED: `sql.go` and `store.go`
+//!   are complete; the etcd watch notifier in `notifier.go` is named and
+//!   deferred).
+//! - [`runtime`] <- `pkg/timer/runtime` (complete package).
 
 pub mod client;
 pub mod cron;
@@ -75,7 +82,9 @@ pub mod error;
 pub mod go_time;
 pub mod hook;
 pub mod mem_store;
+pub mod runtime;
 pub mod store;
+pub mod table_store;
 pub mod timer;
 pub mod uuid;
 

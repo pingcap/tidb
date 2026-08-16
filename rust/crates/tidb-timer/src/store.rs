@@ -85,6 +85,14 @@ pub trait Cond: Send + Sync {
     fn as_operator(&self) -> Option<&Operator> {
         None
     }
+
+    /// The other arm of Go's `switch c := cond.(type)` type switch, which
+    /// `pkg/timer/tablestore`'s `buildCondCriteria` performs over the same
+    /// interface. An implementation answering `None` to both this and
+    /// [`Cond::as_operator`] reaches Go's `unsupported condition type` error.
+    fn as_timer_cond(&self) -> Option<&TimerCond> {
+        None
+    }
 }
 
 /// Go `TimerCond`: the condition to filter a timer record.
@@ -170,6 +178,10 @@ impl Cond for TimerCond {
         }
 
         true
+    }
+
+    fn as_timer_cond(&self) -> Option<&TimerCond> {
+        Some(self)
     }
 }
 
@@ -516,6 +528,26 @@ impl Context {
             Some(state) => *state.done.lock().unwrap(),
             None => false,
         }
+    }
+
+    /// Go's `select { case <-ctx.Done(): case <-time.After(d): }`, which
+    /// `pkg/timer/runtime`'s `sleep` helper spells exactly. Returns whether the
+    /// context was cancelled before the deadline.
+    pub fn wait_done(&self, timeout: std::time::Duration) -> bool {
+        let Some(state) = &self.cancel else {
+            std::thread::sleep(timeout);
+            return false;
+        };
+
+        let done = state.done.lock().unwrap();
+        if *done {
+            return true;
+        }
+        let (done, _) = state
+            .changed
+            .wait_timeout_while(done, timeout, |done| !*done)
+            .unwrap();
+        *done
     }
 }
 

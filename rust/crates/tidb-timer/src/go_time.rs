@@ -152,11 +152,29 @@ impl GoTime {
         }
     }
 
-    /// Go `t.Sub(u)`, in nanoseconds.
+    /// Go `t.Sub(u)`, in nanoseconds. Go clamps an overflowing difference to
+    /// the maximum (or minimum) `time.Duration`, and so does this.
     pub fn sub(&self, other: &Self) -> i64 {
-        (self.instant - other.instant)
-            .num_nanoseconds()
-            .unwrap_or(i64::MAX)
+        match (self.instant - other.instant).num_nanoseconds() {
+            Some(nanoseconds) => nanoseconds,
+            None if self.instant > other.instant => i64::MAX,
+            None => i64::MIN,
+        }
+    }
+
+    /// Go `t.After(u)`.
+    pub fn after(&self, other: &Self) -> bool {
+        self.instant > other.instant
+    }
+
+    /// Go `t.Before(u)`.
+    pub fn before(&self, other: &Self) -> bool {
+        self.instant < other.instant
+    }
+
+    /// Go `t.Compare(u)`.
+    pub fn compare(&self, other: &Self) -> std::cmp::Ordering {
+        self.instant.cmp(&other.instant)
     }
 
     /// Go `t.In(loc)`.
