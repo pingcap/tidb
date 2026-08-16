@@ -99,6 +99,7 @@ pub mod first_row;
 pub use tidb_vardef::global_sysvar_initial;
 pub mod group_concat;
 pub mod hash_join_version;
+pub mod hash_table_v2;
 pub mod hint_updatable_vars;
 pub mod infoschema_context;
 pub mod insert_rows_col_multiply;
