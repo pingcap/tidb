@@ -370,6 +370,7 @@ pub mod rewriter;
 mod row;
 pub mod scalar_function;
 pub mod schema;
+pub mod simple_expr;
 mod string_fn;
 mod string_packet;
 mod string_signature;

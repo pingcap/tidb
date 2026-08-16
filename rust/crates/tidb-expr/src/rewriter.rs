@@ -48,6 +48,27 @@ pub trait ColumnResolver {
     /// `(row index, result type, unique id)`, or `None` when unknown.
     fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)>;
 
+    /// Resolves `path` to a COMPLETE output column rather than the three
+    /// fields [`Self::resolve`] reports.
+    ///
+    /// Go's `expressionRewriter.toColumn` hands back `schema.Columns[idx]`
+    /// itself, so the built expression keeps that column's `ID`, `OrigName`,
+    /// `IsHidden`, `VirtualExpr` and derived collation. A resolver that owns
+    /// real [`Column`] values (one built over a
+    /// [`Schema`](crate::schema::Schema), as
+    /// [`crate::simple_expr::build_simple_expr`] does) should override this so
+    /// none of that identity is dropped on the way into the tree.
+    ///
+    /// The default reproduces exactly what this rewriter did before the hook
+    /// existed, so a resolver that only knows `(index, type, unique id)` is
+    /// unaffected.
+    fn resolve_column(&self, path: &[String]) -> Option<Column> {
+        let (index, ret_type, unique_id) = self.resolve(path)?;
+        let mut col = Column::new(unique_id, ret_type);
+        col.index = index as i64;
+        Some(col)
+    }
+
     /// Resolves a `DEFAULT(column)` leaf to the statement-scoped constant its
     /// DML planner prepared. A default implementation keeps ordinary query
     /// resolvers unaware of write-only metadata; write resolvers override it
@@ -473,11 +494,9 @@ pub fn rewrite_expr_resolved(
             .ok_or(EvalError::Unsupported("unresolved DEFAULT column"));
     }
     if let Expr::Column(path) = expr {
-        let (index, ret_type, unique_id) = resolver
-            .resolve(path)
+        let col = resolver
+            .resolve_column(path)
             .ok_or(EvalError::Unsupported("unresolved column reference"))?;
-        let mut col = Column::new(unique_id, ret_type);
-        col.index = index as i64;
         return Ok(Expression::Column(col));
     }
     let mut built = rewrite_leaf(expr, resolver)?;
