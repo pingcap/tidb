@@ -115,10 +115,6 @@ func (b *builtinRepeatSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, re
 			result.AppendNull()
 			continue
 		}
-		if int64(byteLength) > int64(b.tp.GetFlen())/num {
-			result.AppendNull()
-			continue
-		}
 		result.AppendString(strings.Repeat(str, int(num)))
 	}
 	return nil
