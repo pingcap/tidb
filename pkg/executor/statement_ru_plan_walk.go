@@ -15,23 +15,45 @@
 package executor
 
 import (
+	"math"
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	plannercoreutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 type statementRUFinalOutcome uint32
+
+type statementRUOperatorState uint8
 
 const (
 	statementRUFinalOutcomeUnknown statementRUFinalOutcome = iota
 	statementRUFinalOutcomeSuccess
 	statementRUFinalOutcomeFailure
 )
+
+const (
+	statementRUOperatorUnknown statementRUOperatorState = iota
+	statementRUOperatorComplete
+	statementRUOperatorUnsupported
+	statementRUOperatorInvalid
+)
+
+// statementRUOperatorResult is a value-only occurrence result. Complete means
+// that this supported occurrence was calculated from the evidence currently
+// visible at finalization; it does not claim producer-side evidence coverage.
+type statementRUOperatorResult struct {
+	state      statementRUOperatorState
+	outputRows int64
+}
 
 // statementRUOwner owns the first-record-wins outcome and the first terminal
 // finalization for one ExecStmt. Its calculation setup is released when the
@@ -184,116 +206,314 @@ func calculateStatementRU(
 	setup statementRUCalculationSetup,
 	rootEOF bool,
 ) (statementRUFinalizedSnapshot, bool) {
-	if flat == nil || len(flat.Main) == 0 || len(flat.CTEs) != 0 || len(flat.ScalarSubQueries) != 0 {
+	if !rootEOF || flat == nil || len(flat.Main) == 0 || len(flat.CTEs) != 0 || len(flat.ScalarSubQueries) != 0 {
 		return statementRUFinalizedSnapshot{}, false
 	}
 	calculator := newStatementRUCalculator(setup)
-	evidenceComplete := rootEOF
 	// Transport bytes are statement evidence in both the current producer and
 	// the demo model. Read them once; do not attribute the same aggregate to
-	// every Reader occurrence.
-	if metrics == nil || metrics.Bypass() {
-		evidenceComplete = false
-	} else {
+	// every Reader occurrence. Missing evidence contributes zero to the
+	// best-effort ResultOnly value.
+	if metrics != nil && !metrics.Bypass() {
 		netBytes := metrics.TiKVCoprocessorResponseBytes()
-		switch {
-		case netBytes < 0:
-			calculator.invalidEvidence = true
-		case netBytes == 0:
-			evidenceComplete = false
-		default:
-			calculator.units.NetBytes = float64(netBytes)
+		if netBytes < 0 {
+			return statementRUFinalizedSnapshot{}, false
 		}
+		calculator.units.NetBytes = float64(netBytes)
 	}
 
-	planSupported, planEvidenceComplete := calculateStatementRUPlan(
+	planResult := calculateStatementRUPlan(
 		flat.Main,
 		0,
 		runtimeStatsColl,
 		&calculator,
 	)
-	if !planSupported {
+	if planResult.state != statementRUOperatorComplete {
 		return statementRUFinalizedSnapshot{}, false
 	}
-	evidenceComplete = evidenceComplete && planEvidenceComplete
-	return calculator.finalize(evidenceComplete), true
+	return calculator.finalize()
 }
 
 // calculateStatementRUPlan evaluates one subtree from a canonical
-// preorder-serialized tree, visiting children before their parent. A parent
-// that needs direct-child output as formula input can use each ChildrenIdx
-// occurrence's Origin.ID() with runtimeStatsColl; that evidence is not the
-// child's already-calculated RU and does not require a retained child-result
-// graph. FlatPhysicalPlan owns the
-// serialized layout; this calculation follows only its explicit child edges.
+// preorder-serialized tree, visiting children before their parent. ChildrenIdx
+// is the only production edge routing. Each parent receives its direct-child
+// value result, so later operators can consume child rows without changing the
+// traversal framework. FlatPhysicalPlan owns the serialized layout; this
+// calculation follows only its explicit child edges.
 func calculateStatementRUPlan(
 	tree plannercore.FlatPlanTree,
 	operatorIndex int,
 	runtimeStatsColl *execdetails.RuntimeStatsColl,
 	calculator *statementRUCalculator,
-) (supported bool, evidenceComplete bool) {
-	if operatorIndex < 0 || operatorIndex >= len(tree) || calculator == nil {
-		return false, false
+) statementRUOperatorResult {
+	return calculateStatementRUPlanChildFirst(
+		tree,
+		operatorIndex,
+		runtimeStatsColl,
+		calculator,
+		len(tree),
+	)
+}
+
+func calculateStatementRUPlanChildFirst(
+	tree plannercore.FlatPlanTree,
+	operatorIndex int,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	calculator *statementRUCalculator,
+	remainingDepth int,
+) statementRUOperatorResult {
+	if operatorIndex < 0 || operatorIndex >= len(tree) || calculator == nil || remainingDepth <= 0 {
+		return statementRUOperatorResult{state: statementRUOperatorInvalid}
 	}
 	operator := tree[operatorIndex]
 	if operator == nil || operator.Origin == nil {
-		return false, false
+		return statementRUOperatorResult{state: statementRUOperatorInvalid}
 	}
 
-	supported = true
-	evidenceComplete = true
-	for _, childIndex := range operator.ChildrenIdx {
-		childSupported, childEvidenceComplete := calculateStatementRUPlan(
+	children := make([]statementRUOperatorResult, len(operator.ChildrenIdx))
+	childState := statementRUOperatorComplete
+	for childOrdinal, childIndex := range operator.ChildrenIdx {
+		children[childOrdinal] = calculateStatementRUPlanChildFirst(
 			tree,
 			childIndex,
 			runtimeStatsColl,
 			calculator,
+			remainingDepth-1,
 		)
-		supported = supported && childSupported
-		evidenceComplete = evidenceComplete && childEvidenceComplete
+		childState = mergeStatementRUOperatorState(childState, children[childOrdinal].state)
+	}
+	if childState != statementRUOperatorComplete {
+		return statementRUOperatorResult{state: childState}
+	}
+
+	outputRows := int64(0)
+	if runtimeStatsColl != nil {
+		if operator.IsRoot {
+			outputRows = runtimeStatsColl.GetPlanActRows(operator.Origin.ID())
+		} else {
+			_, outputRows = runtimeStatsColl.GetCopCountAndRows(operator.Origin.ID())
+		}
+	}
+	if outputRows < 0 {
+		return statementRUOperatorResult{state: statementRUOperatorInvalid}
 	}
 
 	switch origin := operator.Origin.(type) {
 	case *physicalop.PhysicalTableReader:
+		// Scan-byte accounting is performed at Reader boundaries. A TableReader
+		// contributes scan evidence from its single TiKV table request exactly once.
 		if !operator.IsRoot || origin.StoreType != kv.TiKV || origin.ReadReqType != physicalop.Cop ||
 			origin.TablePlan == nil || len(operator.ChildrenIdx) != 1 {
-			return false, evidenceComplete
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
 		}
-		childIndex := operator.ChildrenIdx[0]
-		if childIndex < 0 || childIndex >= len(tree) || tree[childIndex] == nil ||
-			tree[childIndex].Origin != origin.TablePlan {
-			return false, evidenceComplete
+		if state := collectStatementRUReaderScanBytes(
+			tree, operator, runtimeStatsColl, calculator, []base.Plan{origin.TablePlan},
+		); state != statementRUOperatorComplete {
+			return statementRUOperatorResult{state: state}
+		}
+	case *physicalop.PhysicalIndexReader:
+		// Scan-byte accounting is performed at Reader boundaries. An IndexReader
+		// contributes scan evidence from its single TiKV index request exactly once.
+		if !operator.IsRoot || origin.IndexPlan == nil || len(operator.ChildrenIdx) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if state := collectStatementRUReaderScanBytes(
+			tree, operator, runtimeStatsColl, calculator, []base.Plan{origin.IndexPlan},
+		); state != statementRUOperatorComplete {
+			return statementRUOperatorResult{state: state}
+		}
+	case *physicalop.PhysicalIndexLookUpReader:
+		// An IndexLookUpReader owns distinct index/build and table/probe requests.
+		// Each request-root contribution is collected exactly once at this boundary.
+		if !operator.IsRoot || origin.IndexLookUpPushDown ||
+			origin.IndexPlan == nil || origin.TablePlan == nil || origin.IndexPlan == origin.TablePlan ||
+			len(operator.ChildrenIdx) != 2 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		indexChild := tree[operator.ChildrenIdx[0]]
+		tableChild := tree[operator.ChildrenIdx[1]]
+		if indexChild == nil || tableChild == nil ||
+			indexChild.Label != plannercore.BuildSide || indexChild.IsINLProbeChild ||
+			tableChild.Label != plannercore.ProbeSide || !tableChild.IsINLProbeChild {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if state := collectStatementRUReaderScanBytes(
+			tree,
+			operator,
+			runtimeStatsColl,
+			calculator,
+			[]base.Plan{origin.IndexPlan, origin.TablePlan},
+		); state != statementRUOperatorComplete {
+			return statementRUOperatorResult{state: state}
+		}
+	case *physicalop.PhysicalSelection:
+		// CPU work for Selection is defined as the child output-row count
+		// multiplied by the number of conditions evaluated per row.
+		if !statementRUOperatorRunsAtSupportedSite(operator) || len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if !addStatementRUCPUWork(calculator, float64(children[0].outputRows)*float64(len(origin.Conditions))) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+	case *physicalop.PhysicalSort:
+		// For n > 0, CPU work for Sort is defined as n * log2(max(n, 2)), where n
+		// is the child output-row count. Only root Sort is supported.
+		if !operator.IsRoot || len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		statementRUAssertOrderingMaterialized(origin.ByItems)
+		if !addStatementRUCPUWork(calculator, statementRUSortWork(children[0].outputRows, uint64(children[0].outputRows))) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+	case *physicalop.PhysicalTopN:
+		// For n > 0 and k > 0, CPU work for TopN is defined as
+		// n * log2(max(min(n, k), 2)). Root k is Offset + Count; for pushed TopN,
+		// the planner has already folded Offset into Count.
+		if !statementRUOperatorRunsAtSupportedSite(operator) || len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		statementRUAssertOrderingMaterialized(origin.ByItems)
+		var retainedRows uint64
+		if operator.IsRoot {
+			if origin.Count == 0 {
+				retainedRows = 0
+			} else {
+				if origin.Offset > math.MaxUint64-origin.Count {
+					return statementRUOperatorResult{state: statementRUOperatorInvalid}
+				}
+				retainedRows = origin.Offset + origin.Count
+			}
+		} else {
+			if origin.Offset != 0 {
+				return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+			}
+			retainedRows = origin.Count
+		}
+		if !addStatementRUCPUWork(calculator, statementRUSortWork(children[0].outputRows, retainedRows)) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+	case *physicalop.PhysicalLimit:
+		// CPU work for Limit is defined as its child output-row count.
+		if !statementRUOperatorRunsAtSupportedSite(operator) || len(children) != 1 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if !addStatementRUCPUWork(calculator, float64(children[0].outputRows)) {
+			return statementRUOperatorResult{state: statementRUOperatorInvalid}
+		}
+	case *physicalop.PhysicalTableScan, *physicalop.PhysicalIndexScan:
+		// TableScan and IndexScan do not contribute units directly. Their scan
+		// evidence is accounted for by the owning Reader boundary.
+		if operator.IsRoot || len(operator.ChildrenIdx) != 0 {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+		if operator.StoreType != kv.TiKV || operator.ReqType != physicalop.Cop {
+			return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+		}
+	default:
+		// Operators not listed above, including Projection, are outside the
+		// supported statement-RU model and therefore fail closed.
+		return statementRUOperatorResult{state: statementRUOperatorUnsupported}
+	}
+
+	return statementRUOperatorResult{state: statementRUOperatorComplete, outputRows: outputRows}
+}
+
+func mergeStatementRUOperatorState(left, right statementRUOperatorState) statementRUOperatorState {
+	if left == statementRUOperatorInvalid || right == statementRUOperatorInvalid {
+		return statementRUOperatorInvalid
+	}
+	if left != statementRUOperatorComplete || right != statementRUOperatorComplete {
+		return statementRUOperatorUnsupported
+	}
+	return statementRUOperatorComplete
+}
+
+func statementRUOperatorRunsAtSupportedSite(operator *plannercore.FlatOperator) bool {
+	return operator.IsRoot || (operator.StoreType == kv.TiKV && operator.ReqType == physicalop.Cop)
+}
+
+func collectStatementRUReaderScanBytes(
+	tree plannercore.FlatPlanTree,
+	operator *plannercore.FlatOperator,
+	runtimeStatsColl *execdetails.RuntimeStatsColl,
+	calculator *statementRUCalculator,
+	requestRoots []base.Plan,
+) statementRUOperatorState {
+	if len(operator.ChildrenIdx) != len(requestRoots) {
+		return statementRUOperatorUnsupported
+	}
+	for branchOrdinal, requestRoot := range requestRoots {
+		childIndex := operator.ChildrenIdx[branchOrdinal]
+		if childIndex < 0 || childIndex >= len(tree) || tree[childIndex] == nil {
+			return statementRUOperatorInvalid
+		}
+		child := tree[childIndex]
+		if child.Origin != requestRoot || child.IsRoot ||
+			child.StoreType != kv.TiKV || child.ReqType != physicalop.Cop {
+			return statementRUOperatorUnsupported
 		}
 		if runtimeStatsColl == nil {
-			return supported, false
+			continue
 		}
-		detail, found := runtimeStatsColl.GetCopScanDetail(origin.TablePlan.ID())
+		detail, found := runtimeStatsColl.GetCopScanDetail(requestRoot.ID())
 		if !found {
-			return supported, false
+			continue
 		}
-		scanBytes, state := statementRUScanBytes(
+		scanEvidence := classifyStatementRUScanEvidence(
 			detail.TotalKeys,
 			detail.ProcessedKeys,
 			detail.ProcessedKeysSize,
 		)
-		switch state {
-		case statementRUCalibrationUnknown:
-			calculator.invalidEvidence = true
-		case statementRUCalibrationIncomplete:
-			evidenceComplete = false
-		case statementRUCalibrationComplete:
-			calculator.units.ScanBytes += scanBytes
+		switch scanEvidence.state {
+		case statementRUScanEvidenceUnavailable:
+			continue
+		case statementRUScanEvidenceValid:
+			if !addStatementRUScanBytes(calculator, scanEvidence.scanBytes) {
+				return statementRUOperatorInvalid
+			}
+		default:
+			return statementRUOperatorInvalid
 		}
-	case *physicalop.PhysicalSelection:
-		if operator.IsRoot || len(operator.ChildrenIdx) != 1 {
-			return false, evidenceComplete
-		}
-	case *physicalop.PhysicalTableScan:
-		if operator.IsRoot || len(operator.ChildrenIdx) != 0 {
-			return false, evidenceComplete
-		}
-	default:
-		return false, evidenceComplete
 	}
-	return supported, evidenceComplete
+	return statementRUOperatorComplete
+}
+
+func statementRUSortWork(inputRows int64, retainedRows uint64) float64 {
+	if inputRows <= 0 || retainedRows == 0 {
+		return 0
+	}
+	rowsToRetain := math.Min(float64(inputRows), float64(retainedRows))
+	return float64(inputRows) * math.Log2(math.Max(rowsToRetain, 2))
+}
+
+// statementRUAssertOrderingMaterialized checks a planner invariant in intest
+// builds without making it another production RU eligibility condition.
+func statementRUAssertOrderingMaterialized(byItems []*plannercoreutil.ByItems) {
+	intest.AssertFunc(func() bool {
+		for _, item := range byItems {
+			if item == nil || item.Expr == nil {
+				return false
+			}
+			if _, scalar := item.Expr.(*expression.ScalarFunction); scalar {
+				return false
+			}
+		}
+		return true
+	}, "statement RU expects Sort/TopN ordering expressions to be materialized")
+}
+
+func addStatementRUCPUWork(calculator *statementRUCalculator, work float64) bool {
+	if calculator == nil || work < 0 || math.IsNaN(work) || math.IsInf(work, 0) {
+		return false
+	}
+	calculator.units.CPUWork += work
+	return !math.IsInf(calculator.units.CPUWork, 0)
+}
+
+func addStatementRUScanBytes(calculator *statementRUCalculator, scanBytes float64) bool {
+	if calculator == nil || scanBytes < 0 || math.IsNaN(scanBytes) || math.IsInf(scanBytes, 0) {
+		return false
+	}
+	calculator.units.ScanBytes += scanBytes
+	return !math.IsInf(calculator.units.ScanBytes, 0)
 }

@@ -18,16 +18,13 @@ import (
 	"testing"
 
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 )
 
 var (
 	statementRUExecStmtSink   *ExecStmt
 	statementRUCalculatorSink statementRUCalculator
 	statementRUFinalizedSink  statementRUFinalizedSnapshot
-	statementRUResultSink     statementRUResultOnly
-	statementRUScanBytesSink  float64
-	statementRUStateSink      statementRUCalibrationState
+	statementRUOperatorSink   statementRUOperatorResult
 	statementRUCalculatedSink bool
 )
 
@@ -58,103 +55,66 @@ func BenchmarkStatementRUNilHooks(b *testing.B) {
 	})
 }
 
-func BenchmarkStatementRUComponents(b *testing.B) {
+func BenchmarkStatementRUOperatorCalculation(b *testing.B) {
+	// This timer contains only representative occurrence-local formulas and
+	// typed accumulation. It excludes tree routing, runtime-stat lookup,
+	// finalization, and publication.
+	b.ReportAllocs()
+	for b.Loop() {
+		calculator := statementRUCalculator{}
+		valid := addStatementRUCPUWork(&calculator, statementRUSortWork(100, 10))
+		statementRUCalculatorSink = calculator
+		statementRUCalculatedSink = valid
+	}
+}
+
+func BenchmarkStatementRUTreeTraversal(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b)
 	flat := fixture.stmt.Ctx.GetSessionVars().StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
 	setup := fixture.owner.calculationSetup
+	stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
 
-	b.Run("calculator-setup", func(b *testing.B) {
-		b.ReportAllocs()
-		for b.Loop() {
-			statementRUCalculatorSink = newStatementRUCalculator(setup)
-		}
-	})
-
-	b.Run("calculate", func(b *testing.B) {
-		stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
-		metrics := fixture.stmt.Ctx.GetSessionVars().RUV2Metrics
-		b.ReportAllocs()
-		for b.Loop() {
-			statementRUFinalizedSink, statementRUCalculatedSink = calculateStatementRU(
-				flat,
-				stmtCtx.RuntimeStatsColl,
-				metrics,
-				setup,
-				true,
-			)
-		}
-	})
-
-	b.Run("scan-detail-lookup", func(b *testing.B) {
-		stmtCtx := fixture.stmt.Ctx.GetSessionVars().StmtCtx
-		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
-		b.ReportAllocs()
-		for b.Loop() {
-			detail, _ := stmtCtx.RuntimeStatsColl.GetCopScanDetail(reader.TablePlan.ID())
-			statementRUScanBytesSink = float64(detail.ProcessedKeysSize)
-		}
-	})
-
-	b.Run("scan-byte-estimate", func(b *testing.B) {
-		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
-		detail, _ := fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetCopScanDetail(reader.TablePlan.ID())
-		b.ReportAllocs()
-		for b.Loop() {
-			statementRUScanBytesSink, statementRUStateSink = statementRUScanBytes(
-				detail.TotalKeys,
-				detail.ProcessedKeys,
-				detail.ProcessedKeysSize,
-			)
-		}
-	})
-
-	b.Run("finalize", func(b *testing.B) {
-		calculator := statementRUCalculator{
-			units: statementRURawUnits{
-				ScanBytes:            10,
-				NetBytes:             20,
-				FrontendCompileBytes: setup.frontendCompileBytes,
-			},
-		}
-		b.ReportAllocs()
-		for b.Loop() {
-			statementRUFinalizedSink = calculator.finalize(true)
-		}
-	})
-
-	b.Run("result-construction", func(b *testing.B) {
-		units := statementRURawUnits{ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15}
-		b.ReportAllocs()
-		for b.Loop() {
-			statementRUResultSink = calculateStatementRUResultOnly(units)
-		}
-	})
-
-	b.Run("result-publication/ruv3-metrics", func(b *testing.B) {
-		finalized := statementRUFinalizedSnapshot{
-			units:     statementRURawUnits{ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15},
-			result:    statementRUResultOnly{TotalRU: 45},
-			hasResult: true,
-		}
-		b.ReportAllocs()
-		for b.Loop() {
-			publishStatementRUMetricsSafely(finalized)
-		}
-	})
-
-	b.Run("calibration-publication/dormant-consumer", func(b *testing.B) {
-		units := statementRURawUnits{ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15}
-		b.ReportAllocs()
-		for b.Loop() {
-			publishStatementRUCalibrationSafely(fixture.stmt, statementRUCalibrationSnapshot{
-				State: statementRUCalibrationComplete,
-				Units: units,
-			})
-		}
-	})
+	// This timer starts with the canonical root occurrence and ends after the
+	// single child-first walk. It includes runtime-stat lookups and typed
+	// accumulation, but excludes statement aggregates and finalization.
+	b.ReportAllocs()
+	for b.Loop() {
+		calculator := newStatementRUCalculator(setup)
+		statementRUOperatorSink = calculateStatementRUPlan(
+			flat.Main,
+			0,
+			stmtCtx.RuntimeStatsColl,
+			&calculator,
+		)
+		statementRUCalculatorSink = calculator
+	}
 }
 
-func BenchmarkStatementRUSyntheticFinalization(b *testing.B) {
+func BenchmarkStatementRUFinalizePublication(b *testing.B) {
+	fixture := newStatementRUSimpleSelectFixture(b)
+	calculator := statementRUCalculator{
+		units: statementRURawUnits{
+			CPUWork:              5,
+			ScanBytes:            10,
+			NetBytes:             20,
+			FrontendCompileBytes: fixture.owner.calculationSetup.frontendCompileBytes,
+		},
+	}
+
+	// This timer covers value-only freeze plus both existing publication
+	// boundaries. It excludes operator traversal and terminal lifecycle.
+	b.ReportAllocs()
+	for b.Loop() {
+		finalized, ok := calculator.finalize()
+		if !ok {
+			b.Fatal("valid benchmark units failed to finalize")
+		}
+		publishStatementRUFinalizedSnapshot(fixture.stmt, finalized)
+		statementRUFinalizedSink = finalized
+	}
+}
+
+func BenchmarkStatementRUSyntheticTerminal(b *testing.B) {
 	fixture := newStatementRUSimpleSelectFixture(b)
 	stmt := fixture.stmt
 	stmtCtx := stmt.Ctx.GetSessionVars().StmtCtx

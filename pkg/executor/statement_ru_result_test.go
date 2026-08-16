@@ -129,12 +129,22 @@ func observeStatementRUCalibrationForTest(
 	t.Helper()
 	testfailpoint.EnableCall(t, statementRUCalibrationFailpointForTest, func(
 		_ uint64,
-		state uint8,
-		scanBytes, netBytes, frontendCompileBytes float64,
+		stateName string,
+		cpuWork, scanBytes, netBytes, frontendCompileBytes float64,
 	) {
+		state := statementRUCalibrationUnknown
+		switch stateName {
+		case statementRUCalibrationComplete.String():
+			state = statementRUCalibrationComplete
+		case statementRUCalibrationIncomplete.String():
+			state = statementRUCalibrationIncomplete
+		default:
+			require.FailNow(t, "unexpected calibration state", stateName)
+		}
 		observe(statementRUCalibrationSnapshot{
-			State: statementRUCalibrationState(state),
+			State: state,
 			Units: statementRURawUnits{
+				CPUWork:              cpuWork,
 				ScanBytes:            scanBytes,
 				NetBytes:             netBytes,
 				FrontendCompileBytes: frontendCompileBytes,
@@ -147,13 +157,15 @@ func TestStatementRUResultFinalizationAndPublication(t *testing.T) {
 	fixture := newStatementRUSimpleSelectFixture(t)
 	var calibrationCount atomic.Int64
 	var snapshot statementRUCalibrationSnapshot
-	observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
-		calibrationCount.Add(1)
-		snapshot = published
-	})
 	totalBefore := testutil.ToFloat64(metrics.RUV3Total)
 	readBefore := testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))
 	tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))
+	var totalAtCalibration float64
+	observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
+		calibrationCount.Add(1)
+		snapshot = published
+		totalAtCalibration = testutil.ToFloat64(metrics.RUV3Total) - totalBefore
+	})
 
 	fixture.stmt.RecordStatementRUFinalOutcome(true)
 	const callers = 32
@@ -168,13 +180,14 @@ func TestStatementRUResultFinalizationAndPublication(t *testing.T) {
 	wg.Wait()
 
 	require.Equal(t, int64(1), calibrationCount.Load())
-	require.Equal(t, statementRUCalibrationComplete, snapshot.State)
+	require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
 	require.Equal(t, statementRURawUnits{
 		ScanBytes:            10,
 		NetBytes:             20,
 		FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
 	}, snapshot.Units)
 	expectedResult := calculateStatementRUResultOnly(snapshot.Units)
+	require.Equal(t, expectedResult.TotalRU, totalAtCalibration)
 	require.Equal(t, expectedResult.TotalRU, testutil.ToFloat64(metrics.RUV3Total)-totalBefore)
 	require.Equal(t, expectedResult.TotalRU,
 		testutil.ToFloat64(metrics.RUV3BySQLType.WithLabelValues(metrics.LblSQLTypeRead))-readBefore)
@@ -195,17 +208,17 @@ func TestStatementRUResultFinalizationAndPublication(t *testing.T) {
 
 func TestStatementRUResultProjectionCompleteness(t *testing.T) {
 	t.Run("frontend missing is zero only for ResultOnly", func(t *testing.T) {
-		finalized := (statementRUCalculator{units: statementRURawUnits{
+		finalized, ok := (statementRUCalculator{units: statementRURawUnits{
 			ScanBytes: 10,
 			NetBytes:  20,
-		}}).finalize(true)
-		require.True(t, finalized.hasResult)
+		}}).finalize()
+		require.True(t, ok)
 		require.Equal(t, statementRUResultOnly{TotalRU: 30}, finalized.result)
 		require.Equal(t, statementRUCalibrationIncomplete, finalized.calibrationState)
 		require.Zero(t, finalized.units.FrontendCompileBytes)
 	})
 
-	t.Run("scan missing suppresses RU v3 metrics", func(t *testing.T) {
+	t.Run("scan missing contributes zero to best effort result", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
 		var snapshot statementRUCalibrationSnapshot
@@ -215,13 +228,13 @@ func TestStatementRUResultProjectionCompleteness(t *testing.T) {
 		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
-		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
+		require.Equal(t, float64(35), testutil.ToFloat64(metrics.RUV3Total)-totalBefore)
 		require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
 		require.Zero(t, snapshot.Units.ScanBytes)
 		require.Equal(t, float64(20), snapshot.Units.NetBytes)
 	})
 
-	t.Run("net missing suppresses RU v3 metrics", func(t *testing.T) {
+	t.Run("net missing contributes zero to best effort result", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		fixture.stmt.Ctx.GetSessionVars().RUV2Metrics = execdetails.NewRUV2Metrics()
 		var snapshot statementRUCalibrationSnapshot
@@ -231,20 +244,35 @@ func TestStatementRUResultProjectionCompleteness(t *testing.T) {
 		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
 		fixture.stmt.RecordStatementRUFinalOutcome(true)
 		fixture.stmt.finishStatementRUForTest(nil)
-		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
+		require.Equal(t, float64(25), testutil.ToFloat64(metrics.RUV3Total)-totalBefore)
 		require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
 		require.Equal(t, float64(10), snapshot.Units.ScanBytes)
 		require.Zero(t, snapshot.Units.NetBytes)
+	})
+
+	t.Run("runtime stats missing contributes zero to best effort result", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		fixture.stmt.Ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = nil
+		var snapshot statementRUCalibrationSnapshot
+		observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
+			snapshot = published
+		})
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+		fixture.stmt.RecordStatementRUFinalOutcome(true)
+		fixture.stmt.finishStatementRUForTest(nil)
+		require.Equal(t, float64(35), testutil.ToFloat64(metrics.RUV3Total)-totalBefore)
+		require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
+		require.Zero(t, snapshot.Units.CPUWork)
+		require.Zero(t, snapshot.Units.ScanBytes)
+		require.Equal(t, float64(20), snapshot.Units.NetBytes)
 	})
 
 	t.Run("early close suppresses RU v3 metrics", func(t *testing.T) {
 		fixture := newStatementRUSimpleSelectFixture(t)
 		fixture.owner.rootEOF.Store(false)
 		var calibrationCount atomic.Int64
-		var snapshot statementRUCalibrationSnapshot
 		observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
 			calibrationCount.Add(1)
-			snapshot = published
 		})
 		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
 
@@ -253,13 +281,7 @@ func TestStatementRUResultProjectionCompleteness(t *testing.T) {
 		fixture.stmt.finishStatementRUForTest(nil)
 
 		require.Equal(t, totalBefore, testutil.ToFloat64(metrics.RUV3Total))
-		require.Equal(t, int64(1), calibrationCount.Load())
-		require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
-		require.Equal(t, statementRURawUnits{
-			ScanBytes:            10,
-			NetBytes:             20,
-			FrontendCompileBytes: float64(len(statementRUSimpleSelectSQLForTest)),
-		}, snapshot.Units)
+		require.Zero(t, calibrationCount.Load())
 	})
 
 	t.Run("invalid evidence suppresses both publications", func(t *testing.T) {
@@ -328,24 +350,98 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 	t.Run("calculator finalizes typed units without plan input", func(t *testing.T) {
 		calculator := statementRUCalculator{
 			units: statementRURawUnits{
+				CPUWork:              5,
 				ScanBytes:            10,
 				NetBytes:             20,
 				FrontendCompileBytes: 15,
 			},
 		}
-		finalized := calculator.finalize(true)
-		require.True(t, finalized.hasResult)
-		require.Equal(t, statementRUResultOnly{TotalRU: 45}, finalized.result)
+		finalized, ok := calculator.finalize()
+		require.True(t, ok)
+		require.Equal(t, statementRUResultOnly{TotalRU: 50}, finalized.result)
+		require.Equal(t, statementRUCalibrationIncomplete, finalized.calibrationState)
 	})
 
 	t.Run("placeholder formula stays pinned", func(t *testing.T) {
-		units := statementRURawUnits{ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15}
-		require.Equal(t, statementRUResultOnly{TotalRU: 45}, calculateStatementRUResultOnly(units))
+		units := statementRURawUnits{CPUWork: 5, ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15}
+		require.Equal(t, statementRUResultOnly{TotalRU: 50}, calculateStatementRUResultOnly(units))
+	})
+
+	t.Run("engine projection preserves the lower layer boundary", func(t *testing.T) {
+		units := statementRURawUnits{CPUWork: 5, ScanBytes: 10, NetBytes: 20, FrontendCompileBytes: 15}
+		finalized := statementRUFinalizedSnapshot{
+			units:  units,
+			result: calculateStatementRUResultOnly(units),
+		}
+		tikvBefore := testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))
+		publishStatementRUMetricsSafely(finalized)
+		require.Equal(t, float64(30),
+			testutil.ToFloat64(metrics.RUV3ByEngine.WithLabelValues(metrics.LblEngineTiKV))-tikvBefore)
+	})
+
+	t.Run("publisher uses the frozen snapshot after live evidence changes", func(t *testing.T) {
+		fixture := newStatementRUSimpleSelectFixture(t)
+		sessVars := fixture.stmt.Ctx.GetSessionVars()
+		flat := sessVars.StmtCtx.GetFlatPlan().(*plannercore.FlatPhysicalPlan)
+		finalized, ok := calculateStatementRU(
+			flat,
+			sessVars.StmtCtx.RuntimeStatsColl,
+			sessVars.RUV2Metrics,
+			fixture.owner.calculationSetup,
+			true,
+		)
+		require.True(t, ok)
+		require.Equal(t, float64(10), finalized.units.ScanBytes)
+		require.Equal(t, float64(20), finalized.units.NetBytes)
+
+		reader := fixture.stmt.Plan.(*physicalop.PhysicalTableReader)
+		fixture.recordReaderScanDetail(reader, 9, 3, 30)
+		sessVars.RUV2Metrics.AddTiKVCoprocessorResponseBytes(100)
+		liveDetail, found := sessVars.StmtCtx.RuntimeStatsColl.GetCopScanDetail(reader.TablePlan.ID())
+		require.True(t, found)
+		liveScanEvidence := classifyStatementRUScanEvidence(
+			liveDetail.TotalKeys,
+			liveDetail.ProcessedKeys,
+			liveDetail.ProcessedKeysSize,
+		)
+		require.Equal(t, statementRUScanEvidenceValid, liveScanEvidence.state)
+		require.NotEqual(t, finalized.units.ScanBytes, liveScanEvidence.scanBytes)
+		require.NotEqual(t, finalized.units.NetBytes, float64(sessVars.RUV2Metrics.TiKVCoprocessorResponseBytes()))
+
+		var calibrationCount atomic.Int64
+		var snapshot statementRUCalibrationSnapshot
+		observeStatementRUCalibrationForTest(t, func(published statementRUCalibrationSnapshot) {
+			calibrationCount.Add(1)
+			snapshot = published
+		})
+		totalBefore := testutil.ToFloat64(metrics.RUV3Total)
+		publishStatementRUFinalizedSnapshot(fixture.stmt, finalized)
+
+		require.Equal(t, int64(1), calibrationCount.Load())
+		require.Equal(t, statementRUCalibrationIncomplete, snapshot.State)
+		require.Equal(t, finalized.units, snapshot.Units)
+		require.Equal(t, finalized.result.TotalRU, testutil.ToFloat64(metrics.RUV3Total)-totalBefore)
+	})
+
+	t.Run("scan evidence has one valid unavailable invalid classification", func(t *testing.T) {
+		evidence := classifyStatementRUScanEvidence(10, 2, 6)
+		require.Equal(t, statementRUScanEvidenceValid, evidence.state)
+		require.Equal(t, float64(30), evidence.scanBytes)
+
+		evidence = classifyStatementRUScanEvidence(10, 0, 0)
+		require.Equal(t, statementRUScanEvidenceValid, evidence.state)
+		require.Zero(t, evidence.scanBytes)
+
+		require.Equal(t, statementRUScanEvidenceInvalid, classifyStatementRUScanEvidence(10, 0, 1).state)
+		require.Equal(t, statementRUScanEvidenceInvalid, classifyStatementRUScanEvidence(-1, 1, 1).state)
+		require.Equal(t, statementRUScanEvidenceUnavailable, classifyStatementRUScanEvidence(0, 1, 1).state)
+		require.Equal(t, statementRUScanEvidenceUnavailable, classifyStatementRUScanEvidence(1, 1, 0).state)
 	})
 
 	t.Run("finalized and published payloads contain no live references", func(t *testing.T) {
 		for _, value := range []any{
 			statementRUCalculator{},
+			statementRUOperatorResult{},
 			statementRURawUnits{},
 			statementRUFinalizedSnapshot{},
 			statementRUResultOnly{},
@@ -359,10 +455,9 @@ func TestStatementRUResultValueContracts(t *testing.T) {
 		calculatorType := reflect.TypeOf(statementRUCalculator{})
 		require.Equal(t, []string{
 			"units",
-			"invalidEvidence",
 		}, statementRUFieldNames(calculatorType))
 		unitsType := reflect.TypeOf(statementRURawUnits{})
-		require.Equal(t, []string{"ScanBytes", "NetBytes", "FrontendCompileBytes"}, statementRUFieldNames(unitsType))
+		require.Equal(t, []string{"CPUWork", "ScanBytes", "NetBytes", "FrontendCompileBytes"}, statementRUFieldNames(unitsType))
 		resultType := reflect.TypeOf(statementRUResultOnly{})
 		require.Equal(t, []string{"TotalRU"}, statementRUFieldNames(resultType))
 		snapshotType := reflect.TypeOf(statementRUCalibrationSnapshot{})
