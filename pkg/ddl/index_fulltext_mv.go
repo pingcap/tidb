@@ -75,6 +75,15 @@ func buildFullTextMVIndexSpec(
 		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack(
 			"FULLTEXT index requires a string column, but %s is %s", colInfo.Name, colInfo.FieldType.String())
 	}
+	// A binary column holds bytes, not text. The analyzer would still produce
+	// tokens from it - splitting whatever byte sequences happen to look like
+	// words - so the index would build and quietly contain nonsense. Refuse it
+	// rather than let that happen silently.
+	if types.IsBinaryStr(&colInfo.FieldType) {
+		return nil, dbterror.ErrUnsupportedIndexType.GenWithStack(
+			"FULLTEXT index requires a non-binary string column, but %s is %s",
+			colInfo.Name, colInfo.FieldType.String())
+	}
 
 	parserType := model.FullTextParserTypeStandardV1
 	if indexOption != nil && indexOption.ParserName.L != "" {

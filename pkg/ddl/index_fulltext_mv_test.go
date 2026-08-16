@@ -241,3 +241,28 @@ func TestFullTextIndexPreservesVisibilityAndComment(t *testing.T) {
 	tk.MustExec("insert into articles values (1, 'distributed sql')")
 	tk.MustExec("admin check table articles")
 }
+
+// TestFullTextIndexRejectsBinaryColumn covers a case where the index would
+// build successfully and be useless. A binary column holds bytes rather than
+// text, so the analyzer would tokenize whatever byte sequences resembled words
+// and the index would quietly contain nonsense.
+func TestFullTextIndexRejectsBinaryColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table b (id int primary key, blob_col blob, bin_col varbinary(255), " +
+		"txt varchar(255), bin_coll varchar(255) collate utf8mb4_bin)")
+
+	tk.MustContainErrMsg("alter table b add fulltext index idx_bin (bin_col)",
+		"FULLTEXT index requires a non-binary string column")
+	tk.MustContainErrMsg("alter table b add fulltext index idx_blob (blob_col)",
+		"FULLTEXT index requires a non-binary string column")
+	tk.MustContainErrMsg("create table b2 (id int primary key, bin_col varbinary(255), "+
+		"fulltext key idx_bin (bin_col))",
+		"FULLTEXT index requires a non-binary string column")
+
+	// A binary *collation* on a character column is still text, so it stays
+	// allowed - only the binary charset is rejected.
+	tk.MustExec("alter table b add fulltext index idx_txt (txt)")
+	tk.MustExec("alter table b add fulltext index idx_bin_coll (bin_coll)")
+}
