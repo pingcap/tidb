@@ -148,6 +148,8 @@ mod result;
 mod result_field_resolver;
 mod result_metadata;
 mod result_response;
+/// `stmtctx.go`'s `GetResultRowsCount` over [`runtime_stats`].
+pub mod result_rows_count;
 mod result_schema;
 mod result_schema_join_output;
 mod result_schema_multi;
@@ -170,6 +172,8 @@ pub mod slow_log_parse;
 pub mod slow_log_rules;
 pub mod slow_log_split;
 pub mod slow_log_threshold;
+/// `stmtctx.go`'s once-computed stale-read TSO provider seam.
+pub mod stale_tso;
 pub use tidb_executor::statement_pushdown;
 pub mod statement_refcount;
 pub mod statement_rows_reader;
@@ -180,6 +184,8 @@ pub mod status_registry;
 mod status_result;
 pub mod stddevpop;
 pub mod stddevsamp;
+/// `stmtctx.go`'s per-statement first-value-wins keyed cache.
+pub mod stmt_cache;
 pub mod storage_reader;
 pub mod system_db_filter;
 pub mod system_row_write;

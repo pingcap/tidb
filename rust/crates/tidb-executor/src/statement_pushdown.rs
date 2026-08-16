@@ -19,12 +19,14 @@
 //! `PushDownFlagsWithTypeFlagsAndErrLevels`: conversion flags and the
 //! divided-by-zero level become the source TiKV request bits, then statement
 //! kind and execution-mode bits are composed with the source precedence. It
-//! does not own a live `StatementContext`, parse SQL, construct a request, or
-//! execute anything in TiKV.
+//! also owns the inverse direction, `InitFromPBFlagAndTz`'s decoding of the
+//! same bits back into statement state ([`init_from_pb_flags`]). It does not
+//! own a live `StatementContext`, parse SQL, construct a request, or execute
+//! anything in TiKV.
 
-use tidb_datatype::ConversionFlags;
+use tidb_datatype::{ConversionFlags, DEFAULT_STATEMENT_FLAGS};
 
-use crate::error_context::{ErrGroup, Level, LevelMap};
+use crate::error_context::{resolve_err_level, ErrGroup, Level, LevelMap};
 
 /// TiKV request bit for ignored truncation errors.
 pub const FLAG_IGNORE_TRUNCATE: u64 = 1;
@@ -151,4 +153,76 @@ pub fn push_down_flags(input: PushDownFlagsInput) -> u64 {
         flags |= FLAG_IN_RESTRICTED_SQL;
     }
     flags
+}
+
+/// Statement state reconstructed from TiKV request bits by the source
+/// `StatementContext.InitFromPBFlagAndTz`
+/// (`pkg/sessionctx/stmtctx/stmtctx.go:1291-1307`), the inverse direction of
+/// [`push_down_flags`]. The `*time.Location` half of the Go method is a
+/// plain store on the statement context and stays with the context owner;
+/// this leaf owns only the flag mapping.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PbInitializedStatement {
+    /// Go `sc.InInsertStmt`, from `FlagInInsertStmt`.
+    pub in_insert_stmt: bool,
+    /// Go `sc.InSelectStmt`, from `FlagInSelectStmt`.
+    pub in_select_stmt: bool,
+    /// Go `sc.InDeleteStmt`: the shared UPDATE-or-DELETE bit lands on the
+    /// DELETE boolean, exactly as in the source.
+    pub in_delete_stmt: bool,
+    /// Go `sc.SetErrLevels(levels)`: the caller's levels with only the
+    /// divided-by-zero group resolved from `FlagDividedByZeroAsWarning`.
+    pub err_levels: LevelMap,
+    /// Go `sc.SetTypeFlags(...)`: `DefaultStmtFlags` plus the three
+    /// truncation/zero-date bits, with negative-to-unsigned allowed for
+    /// everything but INSERT.
+    pub type_flags: ConversionFlags,
+}
+
+impl PbInitializedStatement {
+    /// The [`StatementKind`] the reconstructed booleans produce back in
+    /// [`push_down_flags`], with the source else-if precedence
+    /// (INSERT, then UPDATE/DELETE, then SELECT).
+    #[must_use]
+    pub const fn statement_kind(&self) -> StatementKind {
+        if self.in_insert_stmt {
+            StatementKind::Insert
+        } else if self.in_delete_stmt {
+            StatementKind::UpdateOrDelete
+        } else if self.in_select_stmt {
+            StatementKind::Select
+        } else {
+            StatementKind::None
+        }
+    }
+}
+
+/// The flag half of the source `InitFromPBFlagAndTz`
+/// (`pkg/sessionctx/stmtctx/stmtctx.go:1291-1307`): decodes a
+/// `tipb.SelectRequest.Flags` bitfield into statement booleans, the
+/// divided-by-zero error level, and statement type flags.
+///
+/// `err_levels` plays Go's `sc.ErrLevels()`: every group except
+/// divided-by-zero passes through unchanged. `FlagInLoadDataStmt` and
+/// `FlagInRestrictedSQL` are not read, matching the source.
+#[must_use]
+pub fn init_from_pb_flags(flags: u64, err_levels: LevelMap) -> PbInitializedStatement {
+    let in_insert_stmt = (flags & FLAG_IN_INSERT_STMT) > 0;
+    let in_select_stmt = (flags & FLAG_IN_SELECT_STMT) > 0;
+    let in_delete_stmt = (flags & FLAG_IN_UPDATE_OR_DELETE_STMT) > 0;
+    let err_levels = err_levels.with_level(
+        ErrGroup::DividedByZero,
+        resolve_err_level(false, (flags & FLAG_DIVIDED_BY_ZERO_AS_WARNING) > 0),
+    );
+    PbInitializedStatement {
+        in_insert_stmt,
+        in_select_stmt,
+        in_delete_stmt,
+        err_levels,
+        type_flags: DEFAULT_STATEMENT_FLAGS
+            .with_ignore_truncate_err((flags & FLAG_IGNORE_TRUNCATE) > 0)
+            .with_truncate_as_warning((flags & FLAG_TRUNCATE_AS_WARNING) > 0)
+            .with_ignore_zero_in_date_err((flags & FLAG_IGNORE_ZERO_IN_DATE) > 0)
+            .with_allow_negative_to_unsigned(!in_insert_stmt),
+    }
 }
