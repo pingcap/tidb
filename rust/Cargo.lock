@@ -2264,6 +2264,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-br"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-codec",
+ "tidb-model",
+ "tidb-util",
+]
+
+[[package]]
 name = "tidb-chunk"
 version = "0.0.0"
 dependencies = [

@@ -1,0 +1,19 @@
+[package]
+name = "tidb-br"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go br/pkg/streamhelper/spans, br/pkg/rtree, and br/pkg/restore/utils: BR's interval maps, range trees, and restore rewrite rules."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-codec = { path = "../tidb-codec" }
+tidb-model = { path = "../tidb-model" }
+tidb-util = { path = "../tidb-util" }
+
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }

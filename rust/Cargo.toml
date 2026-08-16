@@ -40,6 +40,7 @@ members = [
     "crates/tidb-placement",
     "crates/tidb-unistore",
     "crates/tidb-dxf",
+    "crates/tidb-br",
     "crates/tidb-timer",
     "crates/tidb-ttl",
     "crates/tidb-exec",
