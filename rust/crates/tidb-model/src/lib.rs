@@ -22,6 +22,7 @@ pub mod bdr;
 pub mod cascades_hash;
 pub mod column;
 pub mod db;
+pub mod ddl_bdr;
 pub mod engine_attribute;
 pub mod flags;
 pub mod generated_expr;

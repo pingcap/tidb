@@ -584,6 +584,7 @@ mod binding;
 mod binding_arm;
 mod bootstrap;
 mod classify;
+pub mod cursor;
 mod dispatch;
 mod explain_arm;
 mod identity;
