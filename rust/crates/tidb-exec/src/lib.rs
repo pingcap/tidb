@@ -162,6 +162,7 @@ pub mod session_reuse_state;
 pub mod session_status;
 pub mod session_token_timing;
 pub mod setvar_hint_restore;
+pub mod slow_log_format;
 pub mod slow_log_match;
 pub mod slow_log_parse;
 pub mod slow_log_rules;
