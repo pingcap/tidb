@@ -153,6 +153,8 @@ mod result_schema_join_output;
 mod result_schema_multi;
 mod result_schema_projection;
 pub mod retry_info;
+pub mod runtime_stats;
+pub mod ruv2_metrics;
 pub mod sequence_state;
 pub mod session_commit_protocol;
 pub mod session_context_key;
