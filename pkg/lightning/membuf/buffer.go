@@ -14,7 +14,10 @@
 
 package membuf
 
-import "unsafe"
+import (
+	"sync"
+	"unsafe"
+)
 
 const (
 	defaultPoolSize  = 1024
@@ -47,6 +50,10 @@ type Pool struct {
 	blockSize  int
 	blockCache chan []byte
 	limiter    *Limiter
+
+	// mu protects blockCache against being used after close.
+	mu     sync.Mutex
+	closed bool
 }
 
 // Option configures a pool.
@@ -112,11 +119,18 @@ func (p *Pool) takeBlock() []byte {
 }
 
 func (p *Pool) release(b []byte) {
+	p.mu.Lock()
+	if p.closed {
+		p.mu.Unlock()
+		p.allocator.Free(b)
+		return
+	}
 	select {
 	case p.blockCache <- b:
 	default:
 		p.allocator.Free(b)
 	}
+	p.mu.Unlock()
 	if p.limiter != nil {
 		p.limiter.Release(p.blockSize)
 	}
@@ -124,7 +138,10 @@ func (p *Pool) release(b []byte) {
 
 // Destroy frees all buffers.
 func (p *Pool) Destroy() {
+	p.mu.Lock()
+	p.closed = true
 	close(p.blockCache)
+	p.mu.Unlock()
 	for b := range p.blockCache {
 		p.allocator.Free(b)
 	}
