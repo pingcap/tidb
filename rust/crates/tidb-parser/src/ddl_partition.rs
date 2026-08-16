@@ -283,12 +283,12 @@ fn parse_partition_columns(parser: &mut Parser, non_empty: bool) -> PResult<Vec<
 
 fn parse_partition_count(parser: &mut Parser, what: &str) -> PResult<u64> {
     let count = parse_partition_uint(parser, what)?;
-    // Keep the written zero on the primary partition clause so the DDL layer
-    // can return TiDB's typed `ErrNoParts` (1504), rather than turning a DDL
-    // validation error into a syntax error. The nested count and KEY
-    // algorithm forms have no equivalent DDL boundary in this node.
-    if count == 0 && what != "partitions" {
-        return Err(parser.err_here(&format!("{what} count must be positive")));
+    // Go's parser rejects a written zero itself with `ast.ErrNoParts`
+    // (`ddl_partition_parser.go`), for PARTITIONS and SUBPARTITIONS alike;
+    // the DDL layer's own `checkNoHashPartitions` remains only as a
+    // defensive check no SQL text can reach.
+    if count == 0 {
+        return Err(parser.err_here(&format!("Number of {what} = 0 is not an allowed value")));
     }
     Ok(count)
 }
@@ -353,8 +353,8 @@ fn validate_partitioning(
         method.count = definitions.len() as u64;
     }
     match method.kind {
-        // An OMITTED `PARTITIONS` means one partition; a WRITTEN zero means
-        // zero, and stays zero so DDL can report Go's 1504.
+        // An OMITTED `PARTITIONS` means one partition; a WRITTEN zero is a
+        // parse error above, so this arm only ever sees the omitted form.
         PartitionType::HASH | PartitionType::KEY if method.count == 0 && !partitions_written => {
             method.count = 1;
         }

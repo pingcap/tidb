@@ -333,9 +333,9 @@ pub fn build_table_partitioning(
     if definitions.len() as u64 > MAX_PARTITIONS {
         return Err(DriverError::PartitionTooMany);
     }
-    // Go `checkNoHashPartitions`, reached through `checkPartitionByHash`
-    // AFTER the definitions are built, which is why `PARTITIONS 0` is 1504
-    // rather than a name or type error. RANGE reaches 1492 earlier instead.
+    // Go `checkNoHashPartitions`. The parser now rejects a written
+    // `PARTITIONS 0` itself (as Go's does), so this check is defensive:
+    // no SQL text reaches it with zero definitions.
     if definitions.is_empty() {
         return Err(DriverError::PartitionNoParts("partitions"));
     }

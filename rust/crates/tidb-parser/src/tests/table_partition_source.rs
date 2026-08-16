@@ -129,7 +129,9 @@ fn test_table_partition_source_of_truth() {
         ("create table t1 (a int, b int) partition by range (a) subpartition by hash (b) subpartitions 2 (partition x values less than maxvalue (subpartition y))", None),
         ("create table t1 (a int, b int) partition by range (a) subpartition by hash (b) (partition x values less than (10) (subpartition y),partition a values less than (20) (subpartition b,subpartition c))", None),
         ("create table t1 (a int, b int) partition by range (a) (partition x values less than (10) (subpartition y))", None),
-        ("create table t1 (a int) partition by hash (a) partitions 0", Some("CREATE TABLE `t1` (`a` INT) PARTITION BY HASH (`a`)")),
+        // Go parser_test.go pins `ok: false`: a written PARTITIONS 0 is a
+        // parse error (`ast.ErrNoParts`), not a silently-dropped clause.
+        ("create table t1 (a int) partition by hash (a) partitions 0", None),
         ("create table t1 (a int, b int) partition by range (a) subpartition by hash (b) subpartitions 0 (partition x values less than (10))", None),
         ("create table t1 (a int) partition by system_time interval 7 day limit 50000 (partition x history, partition y current)", None),
     ] {
