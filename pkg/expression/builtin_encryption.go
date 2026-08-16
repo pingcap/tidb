@@ -958,7 +958,10 @@ func (b *builtinUncompressSig) Clone() builtinFunc {
 
 // RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
 func (b *builtinUncompressSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
-	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+	// getMemTracker() handles a missing OptPropSessionVars gracefully (returns
+	// a nil tracker).  Declaring it as required would make IMPORT INTO reject
+	// UNCOMPRESS in column assignments (see #70501), so we return an empty set.
+	return exprctx.OptionalEvalPropKeySet{}
 }
 
 func (b *builtinUncompressSig) getMemTracker(ctx EvalContext) (*memory.Tracker, error) {
