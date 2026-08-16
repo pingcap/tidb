@@ -82,6 +82,7 @@ pub use tidb_tikvutil as tikvutil;
 pub mod timeutil;
 pub mod tls;
 pub mod topsql_state;
+pub mod topsql_stmtstats;
 pub mod tracing;
 pub mod versioninfo;
 pub mod vitess;

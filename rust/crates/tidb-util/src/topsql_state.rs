@@ -221,14 +221,17 @@ pub fn reset_top_ru_item_interval() {
         .store(DEF_TIDB_TOP_RU_ITEM_INTERVAL_SECONDS, Ordering::SeqCst);
 }
 
+// The state is process-global. Go runs a package's tests sequentially; Rust
+// runs them in parallel, so every test that touches it serializes on this
+// lock — including `topsql_stmtstats`, whose aggregator reads the same flags.
+#[cfg(test)]
+pub(crate) static GLOBAL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
 
-    // The state is process-global. Go runs a package's tests sequentially;
-    // Rust runs them in parallel, so these serialize.
-    static GLOBAL: Mutex<()> = Mutex::new(());
+    use GLOBAL_TEST_LOCK as GLOBAL;
 
     fn reset() {
         GLOBAL_STATE.set_ru_consumer_count(0);
