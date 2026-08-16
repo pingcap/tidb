@@ -15,11 +15,12 @@
 package ddl_test
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
-	"strings"
-
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -116,14 +117,10 @@ func TestFullTextIndexShowCreateTableRoundTrip(t *testing.T) {
 	tk.MustExec("create table articles (id int primary key, body varchar(255))")
 	tk.MustExec("alter table articles add fulltext index idx_body (body)")
 
-	// The index is shown as the expression index it is stored as. Rendering it
-	// back as FULLTEXT KEY was withdrawn: the expression shape alone cannot
-	// prove the index came from FULLTEXT DDL, so a hand-written expression
-	// index over FTS_TOKENIZE was shown the same way and lost its literals.
 	createSQL := tk.MustQuery("show create table articles").Rows()[0][1].(string)
-	require.Contains(t, createSQL, "fts_tokenize(`body`")
-	require.Contains(t, createSQL, "array")
-	// The hidden column's generated name must not leak.
+	require.Contains(t, createSQL, "FULLTEXT KEY `idx_body` (`body`)")
+	// Neither the tokenize expression nor the hidden column may leak.
+	require.NotContains(t, createSQL, "fts_tokenize")
 	require.NotContains(t, strings.ToLower(createSQL), "_v$_")
 
 	// The definition recreates the same index, literals included.
@@ -131,12 +128,12 @@ func TestFullTextIndexShowCreateTableRoundTrip(t *testing.T) {
 	tk.MustExec(createSQL)
 	require.Equal(t, createSQL, tk.MustQuery("show create table articles").Rows()[0][1].(string))
 
-	// A non-default parser is recorded in the expression.
+	// A non-default parser is reported too.
 	tk.MustExec("create table ngram_articles (id int primary key, body varchar(255))")
 	tk.MustExec("alter table ngram_articles add fulltext index idx_body (body) with parser ngram")
 	require.Contains(t,
-		strings.ToUpper(tk.MustQuery("show create table ngram_articles").Rows()[0][1].(string)),
-		"NGRAM")
+		tk.MustQuery("show create table ngram_articles").Rows()[0][1].(string),
+		"WITH PARSER NGRAM")
 }
 
 // TestFullTextIndexInCreateTable covers the copy-paste contract: the output of
@@ -149,7 +146,7 @@ func TestFullTextIndexInCreateTable(t *testing.T) {
 	tk.MustExec("create table articles (id int primary key, body varchar(255), fulltext key idx_body (body))")
 
 	createSQL := tk.MustQuery("show create table articles").Rows()[0][1].(string)
-	require.Contains(t, createSQL, "fts_tokenize(`body`")
+	require.Contains(t, createSQL, "FULLTEXT KEY `idx_body` (`body`)")
 	tk.MustExec("drop table articles")
 	tk.MustExec(createSQL)
 	require.Equal(t, createSQL, tk.MustQuery("show create table articles").Rows()[0][1].(string))
@@ -227,7 +224,7 @@ func TestFullTextIndexPreservesVisibilityAndComment(t *testing.T) {
 	tk.MustExec("create table articles (id int primary key, body varchar(255))")
 	tk.MustExec("alter table articles add fulltext index idx_body (body) comment 'fts on body'")
 	altered := tk.MustQuery("show create table articles").Rows()[0][1].(string)
-	require.Contains(t, altered, "fts_tokenize(`body`")
+	require.Contains(t, altered, "FULLTEXT KEY `idx_body` (`body`)")
 	require.Contains(t, altered, "COMMENT 'fts on body'")
 
 	// The definition must recreate the same thing.
@@ -239,7 +236,7 @@ func TestFullTextIndexPreservesVisibilityAndComment(t *testing.T) {
 	tk.MustExec("create table inline_articles (id int primary key, body varchar(255), " +
 		"fulltext key idx_body (body) comment 'inline fts')")
 	inline := tk.MustQuery("show create table inline_articles").Rows()[0][1].(string)
-	require.Contains(t, inline, "fts_tokenize(`body`")
+	require.Contains(t, inline, "FULLTEXT KEY `idx_body` (`body`)")
 	require.Contains(t, inline, "COMMENT 'inline fts'")
 	tk.MustExec("drop table inline_articles")
 	tk.MustExec(inline)
@@ -305,4 +302,39 @@ func TestUserWrittenTokenizeIndexKeepsLiterals(t *testing.T) {
 	tk.MustExec("drop table u")
 	tk.MustExec(createSQL)
 	require.Equal(t, createSQL, tk.MustQuery("show create table u").Rows()[0][1].(string))
+}
+
+// TestFullTextIndexMarkerSurvivesSerialization checks the marker is durable.
+// It rides on IndexInfo.Tp, which is part of the serialized schema, so it must
+// survive a round trip through JSON as the real schema does on every reload.
+func TestFullTextIndexMarkerSurvivesSerialization(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table articles (id int primary key, body varchar(255))")
+	tk.MustExec("alter table articles add fulltext index idx_body (body)")
+
+	tbl, err := dom.InfoSchema().TableByName(t.Context(), ast.NewCIStr("test"), ast.NewCIStr("articles"))
+	require.NoError(t, err)
+	idx := tbl.Meta().FindIndexByName("idx_body")
+	require.Equal(t, ast.IndexTypeFulltext, idx.Tp, "the rewrite must record the declared type")
+	require.True(t, idx.MVIndex)
+	require.Nil(t, idx.FullTextInfo, "the index must stay a KV index, not a columnar one")
+
+	encoded, err := json.Marshal(idx)
+	require.NoError(t, err)
+	var decoded model.IndexInfo
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	require.Equal(t, ast.IndexTypeFulltext, decoded.Tp)
+	require.True(t, decoded.MVIndex)
+	require.Nil(t, decoded.FullTextInfo)
+
+	// A hand-written expression index over the same function must not carry it.
+	tk.MustExec("alter table articles add index idx_manual " +
+		"((cast(fts_tokenize(body, 'STANDARD', 2, 40, 0) as char(40) array)))")
+	tbl, err = dom.InfoSchema().TableByName(t.Context(), ast.NewCIStr("test"), ast.NewCIStr("articles"))
+	require.NoError(t, err)
+	manual := tbl.Meta().FindIndexByName("idx_manual")
+	require.NotEqual(t, ast.IndexTypeFulltext, manual.Tp)
+	require.True(t, manual.MVIndex, "both are multi-valued; only the marker separates them")
 }

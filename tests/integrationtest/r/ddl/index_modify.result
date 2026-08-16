@@ -68,7 +68,7 @@ fts_articles	CREATE TABLE `fts_articles` (
   `id` int NOT NULL,
   `body` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
-  KEY `idx_body` ((cast(fts_tokenize(`body`, _utf8mb4'STANDARD', 3, 84, 1) as char(84) array)))
+  FULLTEXT KEY `idx_body` (`body`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 select id from fts_articles use index (idx_body) order by id;
 id
@@ -83,7 +83,7 @@ fts_inline	CREATE TABLE `fts_inline` (
   `id` int NOT NULL,
   `body` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
-  KEY `idx_body` ((cast(fts_tokenize(`body`, _utf8mb4'STANDARD', 3, 84, 1) as char(84) array)))
+  FULLTEXT KEY `idx_body` (`body`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 insert into fts_inline values (1, 'distributed sql');
 admin check table fts_inline;
@@ -96,7 +96,7 @@ fts_ngram	CREATE TABLE `fts_ngram` (
   `id` int NOT NULL,
   `body` varchar(255) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
-  KEY `idx_body` ((cast(fts_tokenize(`body`, _utf8mb4'NGRAM', 2, 84, 1) as char(2) array)))
+  FULLTEXT KEY `idx_body` (`body`) WITH PARSER NGRAM
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table if exists mv_plain;
 create table mv_plain (id int primary key, j json, key idx((cast(j->'$.tags' as char(20) array))));

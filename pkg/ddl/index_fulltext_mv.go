@@ -167,24 +167,27 @@ func parseIndexExpr(exprStr string) (ast.ExprNode, error) {
 // fullTextMVIndexOption carries the parts of a FULLTEXT index definition that
 // still apply once it has been rewritten into an ordinary multi-valued index.
 //
-// Tp and ParserName are deliberately dropped: the first would send the index
-// back down the columnar path, and the second has already been consumed into
-// the tokenize expression. Comment describes the index the user asked for
-// rather than how it is stored, so it must survive the rewrite - SHOW CREATE
-// TABLE reports it, and losing it would stop that output round-tripping.
+// Tp is kept as IndexTypeFulltext, and is the marker that the index was
+// declared FULLTEXT rather than hand-written as an expression index over
+// FTS_TOKENIZE. It reaches IndexInfo.Tp, which is already part of the
+// serialized schema, so it survives restarts and schema reloads without a new
+// field. It does not send the index back down the columnar path: that is
+// selected by the caller's columnarIndexType, which the rewrite leaves unset,
+// and IsColumnarIndex keys off FullTextInfo rather than Tp.
+//
+// ParserName is dropped, having already been consumed into the tokenize
+// expression. Comment describes the index the user asked for rather than how
+// it is stored, so it must survive the rewrite - SHOW CREATE TABLE reports it,
+// and losing it would stop that output round-tripping.
 //
 // Visibility is carried for the same reason, though it is unreachable today:
 // INVISIBLE is rejected on a FULLTEXT index before the rewrite runs. Keeping it
 // means lifting that restriction does not silently drop the flag.
 func fullTextMVIndexOption(indexOption *ast.IndexOption) *ast.IndexOption {
-	if indexOption == nil {
-		return nil
+	normalized := &ast.IndexOption{Tp: ast.IndexTypeFulltext}
+	if indexOption != nil {
+		normalized.Comment = indexOption.Comment
+		normalized.Visibility = indexOption.Visibility
 	}
-	if indexOption.Comment == "" && indexOption.Visibility == ast.IndexVisibilityDefault {
-		return nil
-	}
-	return &ast.IndexOption{
-		Comment:    indexOption.Comment,
-		Visibility: indexOption.Visibility,
-	}
+	return normalized
 }

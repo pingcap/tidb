@@ -51,11 +51,16 @@ type ftsTokenizeFunctionClass struct {
 
 type builtinFTSTokenizeSig struct {
 	baseBuiltinFunc
+	// analyzer is resolved once at build time. The configuration arguments are
+	// required to be constant, so it cannot change between rows, and this
+	// function runs for every row of an index backfill and every write.
+	analyzer fulltext.Analyzer
 }
 
 func (b *builtinFTSTokenizeSig) Clone() builtinFunc {
 	newSig := &builtinFTSTokenizeSig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
+	newSig.analyzer = b.analyzer
 	return newSig
 }
 
@@ -77,13 +82,17 @@ func (c *ftsTokenizeFunctionClass) getFunction(ctx BuildContext, args []Expressi
 	if err != nil {
 		return nil, err
 	}
-	// Validate the configuration once at build time so a bad parser name or
-	// token-size bound is an error on CREATE INDEX rather than on every row.
-	if _, err := ftsTokenizeConfigFromArgs(ctx.GetEvalCtx(), bf.args); err != nil {
+	// Resolve the configuration once at build time. This also reports a bad
+	// parser name or token-size bound on CREATE INDEX rather than on every row.
+	config, err := ftsTokenizeConfigFromArgs(ctx.GetEvalCtx(), bf.args)
+	if err != nil {
 		return nil, err
 	}
-	sig := &builtinFTSTokenizeSig{bf}
-	return sig, nil
+	analyzer, err := fulltext.GetAnalyzer(config)
+	if err != nil {
+		return nil, err
+	}
+	return &builtinFTSTokenizeSig{baseBuiltinFunc: bf, analyzer: analyzer}, nil
 }
 
 func ftsTokenizeArgName(idx int) string {
@@ -187,13 +196,18 @@ func (b *builtinFTSTokenizeSig) evalJSON(ctx EvalContext, row chunk.Row) (types.
 		// so this keeps a row with a NULL text column present in the index.
 		return types.CreateBinaryJSON(nil), false, nil
 	}
-	config, err := ftsTokenizeConfigFromArgs(ctx, b.args)
-	if err != nil {
-		return types.BinaryJSON{}, false, err
-	}
-	analyzer, err := fulltext.GetAnalyzer(config)
-	if err != nil {
-		return types.BinaryJSON{}, false, err
+	analyzer := b.analyzer
+	if analyzer == nil {
+		// Defensive: a signature rebuilt outside getFunction has no cached
+		// analyzer. Resolving here keeps such a path correct rather than
+		// panicking, at the cost this field exists to avoid.
+		config, err := ftsTokenizeConfigFromArgs(ctx, b.args)
+		if err != nil {
+			return types.BinaryJSON{}, false, err
+		}
+		if analyzer, err = fulltext.GetAnalyzer(config); err != nil {
+			return types.BinaryJSON{}, false, err
+		}
 	}
 	tokens, err := analyzer.Analyze(text)
 	if err != nil {
