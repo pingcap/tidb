@@ -55,6 +55,7 @@ pub mod column_default;
 pub(crate) mod column_prune;
 pub mod cte_storage;
 pub mod ddl;
+pub mod ddl_copr;
 pub mod ddl_label;
 pub mod ddl_sequence;
 pub mod deadlock_history;
