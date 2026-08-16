@@ -12,17 +12,28 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/util/stmtsummary`: `statement_summary.go`, `evicted.go`, and
-//! `reader.go`. The statement-summary LRU keyed by `StmtDigestKey`, the
-//! per-digest and per-interval statistics it accumulates, the option surface
-//! the system variables drive, the rollup of the digests the LRU evicts, and
-//! the reader that turns both into `information_schema` rows.
+//! Go `pkg/util/stmtsummary` (v1) and `pkg/util/stmtsummary/v2`.
 //!
-//! The package lands complete: every production symbol of the three files is
-//! here, and so are all 31 of their upstream tests, one Rust test per Go test.
-//! The reader's own tests live in Go's `statement_summary_test.go` and are
-//! ported next to the reader; the assertions the other tests had to weaken
-//! while the reader was absent now go through it again.
+//! **v1 — `pkg/util/stmtsummary` — lands complete.** `statement_summary.go`,
+//! `evicted.go`, and `reader.go`: the statement-summary LRU keyed by
+//! `StmtDigestKey`, the per-digest and per-interval statistics it accumulates,
+//! the option surface the system variables drive, the rollup of the digests the
+//! LRU evicts, and the reader that turns both into `information_schema` rows.
+//! Every production symbol of the three files is here, and so are all 31 of
+//! their upstream tests, one Rust test per Go test. The reader's own tests live
+//! in Go's `statement_summary_test.go` and are ported next to the reader; the
+//! assertions the other tests had to weaken while the reader was absent now go
+//! through it again.
+//!
+//! **v2 — `pkg/util/stmtsummary/v2` — is IN PROGRESS and NOT complete.** The v1
+//! "lands complete" claim above covers v1 only, and must not be read as
+//! covering v2. Three of v2's five production files land complete —
+//! [`v2::record`] (`record.go`), [`v2::column`] (`column.go`) and
+//! [`v2::stmtsummary`] (`stmtsummary.go`), together with all twelve of their
+//! upstream tests — while `v2/reader.go`, `v2/logger.go` and `v2/tests/` are not
+//! ported. Two small `logger.go` carve-outs exist as SEED evidence because the
+//! three ported files call into them; see [`v2`]'s module header, and each v2
+//! module's own header for its narrowings.
 //!
 //! `AddStatement`'s eviction path reaches the rollup through the named
 //! [`statement_summary::EvictedSink`] boundary, which
@@ -112,3 +123,4 @@
 pub mod evicted;
 pub mod reader;
 pub mod statement_summary;
+pub mod v2;

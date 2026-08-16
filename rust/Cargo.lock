@@ -2694,8 +2694,11 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "serde",
+ "serde_json",
  "tidb-ast",
  "tidb-chunk",
+ "tidb-config",
  "tidb-datatype",
  "tidb-exec",
  "tidb-kvcache",
