@@ -64,14 +64,16 @@ admin check table fts_articles;
 select * from fts_articles order by id;
 show columns from fts_articles;
 
-# The index is reported as it was declared, not as the rewritten expression.
+# The index is reported as the expression index it is stored as: the shape of
+# the expression alone cannot prove FULLTEXT origin, so rendering it back as
+# FULLTEXT KEY would also claim hand-written FTS_TOKENIZE indexes and drop
+# their literals.
 show create table fts_articles;
 
 # The index carries real entries for rows added by backfill and by later writes.
 select id from fts_articles use index (idx_body) order by id;
 
-# An inline FULLTEXT KEY is rewritten too, so the definition above can be
-# pasted back to recreate the table.
+# An inline FULLTEXT KEY is rewritten too.
 drop table if exists fts_inline;
 create table fts_inline (id int primary key, body varchar(255), fulltext key idx_body (body));
 show create table fts_inline;

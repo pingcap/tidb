@@ -116,19 +116,27 @@ func TestFullTextIndexShowCreateTableRoundTrip(t *testing.T) {
 	tk.MustExec("create table articles (id int primary key, body varchar(255))")
 	tk.MustExec("alter table articles add fulltext index idx_body (body)")
 
+	// The index is shown as the expression index it is stored as. Rendering it
+	// back as FULLTEXT KEY was withdrawn: the expression shape alone cannot
+	// prove the index came from FULLTEXT DDL, so a hand-written expression
+	// index over FTS_TOKENIZE was shown the same way and lost its literals.
 	createSQL := tk.MustQuery("show create table articles").Rows()[0][1].(string)
-	require.Contains(t, createSQL, "FULLTEXT KEY `idx_body` (`body`)")
-	// The hidden tokenized column and its expression must not leak into the
-	// user-facing definition.
-	require.NotContains(t, createSQL, "fts_tokenize")
+	require.Contains(t, createSQL, "fts_tokenize(`body`")
+	require.Contains(t, createSQL, "array")
+	// The hidden column's generated name must not leak.
 	require.NotContains(t, strings.ToLower(createSQL), "_v$_")
 
-	// A non-default parser is reported too.
+	// The definition recreates the same index, literals included.
+	tk.MustExec("drop table articles")
+	tk.MustExec(createSQL)
+	require.Equal(t, createSQL, tk.MustQuery("show create table articles").Rows()[0][1].(string))
+
+	// A non-default parser is recorded in the expression.
 	tk.MustExec("create table ngram_articles (id int primary key, body varchar(255))")
 	tk.MustExec("alter table ngram_articles add fulltext index idx_body (body) with parser ngram")
 	require.Contains(t,
-		tk.MustQuery("show create table ngram_articles").Rows()[0][1].(string),
-		"WITH PARSER NGRAM")
+		strings.ToUpper(tk.MustQuery("show create table ngram_articles").Rows()[0][1].(string)),
+		"NGRAM")
 }
 
 // TestFullTextIndexInCreateTable covers the copy-paste contract: the output of
@@ -141,7 +149,7 @@ func TestFullTextIndexInCreateTable(t *testing.T) {
 	tk.MustExec("create table articles (id int primary key, body varchar(255), fulltext key idx_body (body))")
 
 	createSQL := tk.MustQuery("show create table articles").Rows()[0][1].(string)
-	require.Contains(t, createSQL, "FULLTEXT KEY `idx_body` (`body`)")
+	require.Contains(t, createSQL, "fts_tokenize(`body`")
 	tk.MustExec("drop table articles")
 	tk.MustExec(createSQL)
 	require.Equal(t, createSQL, tk.MustQuery("show create table articles").Rows()[0][1].(string))
@@ -219,7 +227,7 @@ func TestFullTextIndexPreservesVisibilityAndComment(t *testing.T) {
 	tk.MustExec("create table articles (id int primary key, body varchar(255))")
 	tk.MustExec("alter table articles add fulltext index idx_body (body) comment 'fts on body'")
 	altered := tk.MustQuery("show create table articles").Rows()[0][1].(string)
-	require.Contains(t, altered, "FULLTEXT KEY `idx_body` (`body`)")
+	require.Contains(t, altered, "fts_tokenize(`body`")
 	require.Contains(t, altered, "COMMENT 'fts on body'")
 
 	// The definition must recreate the same thing.
@@ -231,6 +239,7 @@ func TestFullTextIndexPreservesVisibilityAndComment(t *testing.T) {
 	tk.MustExec("create table inline_articles (id int primary key, body varchar(255), " +
 		"fulltext key idx_body (body) comment 'inline fts')")
 	inline := tk.MustQuery("show create table inline_articles").Rows()[0][1].(string)
+	require.Contains(t, inline, "fts_tokenize(`body`")
 	require.Contains(t, inline, "COMMENT 'inline fts'")
 	tk.MustExec("drop table inline_articles")
 	tk.MustExec(inline)

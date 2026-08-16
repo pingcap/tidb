@@ -1225,32 +1225,17 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	}
 
 	for i, idxInfo := range publicIndices {
-		// A FULLTEXT index on the classic kernel is stored as a multi-valued
-		// index over a hidden tokenized column. Render it the way it was
-		// written so the output stays MySQL-compatible and restorable.
+		// NOTE: a FULLTEXT index on the classic kernel is stored as a
+		// multi-valued index over a hidden tokenized column, and was rendered
+		// back as FULLTEXT KEY here. That was withdrawn: the shape of the
+		// generated expression is not proof of origin, so a hand-written
+		// expression index over FTS_TOKENIZE was also rendered as FULLTEXT KEY,
+		// silently dropping the analyzer literals the user chose and
+		// recreating a differently tokenized index.
 		//
-		// Note that the analyzer settings baked into the index are not shown:
-		// like MySQL, the recreated index picks up the server's innodb_ft_*
-		// variables at build time, so restoring this dump onto a differently
-		// configured server tokenizes differently.
-		if ftsOrigin, isFTS := fullTextMVIndexOrigin(tableInfo, idxInfo); isFTS {
-			fmt.Fprintf(buf, "  FULLTEXT KEY %s (%s)",
-				stringutil.Escape(idxInfo.Name.O, sqlMode),
-				stringutil.Escape(ftsOrigin.ColumnName.O, sqlMode))
-			if ftsOrigin.ParserType != model.FullTextParserTypeStandardV1 {
-				fmt.Fprintf(buf, " WITH PARSER %s", ftsOrigin.ParserType.SQLName())
-			}
-			if idxInfo.Invisible {
-				fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
-			}
-			if idxInfo.Comment != "" {
-				fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
-			}
-			if i != len(publicIndices)-1 {
-				buf.WriteString(",\n")
-			}
-			continue
-		}
+		// Showing the expression is always accurate and always round-trips.
+		// Restoring the MySQL-compatible display needs a marker persisted on
+		// the index at DDL time to distinguish the two.
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
 		} else if idxInfo.Unique {
@@ -2949,22 +2934,4 @@ func formatSplitValue(parser *parser.Parser, buf *bytes.Buffer, val string) erro
 		expr.Format(buf)
 	}
 	return err
-}
-
-// fullTextMVIndexOrigin reports whether idxInfo is a FULLTEXT index that was
-// materialised as a multi-valued index over a hidden tokenized column, and if
-// so recovers the column and parser it was declared with.
-func fullTextMVIndexOrigin(tableInfo *model.TableInfo, idxInfo *model.IndexInfo) (expression.FTSTokenizeIndexOrigin, bool) {
-	if !idxInfo.MVIndex || len(idxInfo.Columns) != 1 {
-		return expression.FTSTokenizeIndexOrigin{}, false
-	}
-	offset := idxInfo.Columns[0].Offset
-	if offset < 0 || offset >= len(tableInfo.Columns) {
-		return expression.FTSTokenizeIndexOrigin{}, false
-	}
-	col := tableInfo.Columns[offset]
-	if !col.Hidden {
-		return expression.FTSTokenizeIndexOrigin{}, false
-	}
-	return expression.ParseFTSTokenizeIndexExpr(col.GeneratedExprString)
 }
