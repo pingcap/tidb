@@ -29,17 +29,16 @@
 //! heap orders the pointers by [`SortByItem`] with the MAX at the root, so the
 //! worst retained row is the one a new row is measured against.
 //!
-//! KNOWN DUPLICATION, to be resolved: [`crate::topn::TopNExec`] was written
-//! before this file and carries its OWN executor-fused copy of the same store
-//! and sift rules (`heap_down`/`heap_up`/`heap_init`/`heap_pop`/
-//! `heap_fix_root`/`do_compaction`, over its inline `chunks`/`keys`/`row_ptrs`
-//! fields), because its spill path threads the store straight into
-//! [`crate::topn_spill::SpilledRun::write`]. The two agree rule for rule --
-//! this file's `go_heap` is the same algorithm `TopNExec` inlines, and
-//! `TopNExec`'s suite pins it against a recorded probe of Go's own heap -- but
-//! they are not yet ONE implementation. Folding `TopNExec` onto
-//! [`TopNChunkHeap`] is a follow-up refactor, deliberately not bundled with
-//! this port so the executor's spill tests move separately.
+//! SOLE IMPLEMENTATION. [`crate::topn::TopNExec`] once carried its own
+//! executor-fused copy of this store and these sift rules; it was folded onto
+//! this type and now holds a [`TopNChunkHeap`] field, so `topn.rs` keeps only
+//! what `topn.go` keeps (the phase order, the compaction trigger, the memory
+//! accounting, the spill segmentation, the merge). The spill path that
+//! motivated the fused copy reads [`TopNChunkHeap::chunks`] and
+//! [`TopNChunkHeap::row_ptrs`] straight into
+//! [`crate::topn_spill::SpilledRun::write`] rather than keeping a second store.
+//! `TopNExec`'s suite -- including its recorded probe of Go's own
+//! `container/heap` -- therefore now pins THIS file's [`go_heap`], unchanged.
 //!
 //! Why the sift rules are ported rather than delegated to [`std::collections::BinaryHeap`]:
 //! [`TopNChunkHeap::greater_keys`] returns FALSE for equal keys, so a tie never

@@ -26,23 +26,33 @@
 //!    least `offset + count` rows (or the child is exhausted), then take a
 //!    row pointer per stored row.
 //! 2. `executeTopN`: `heap.Init` over those pointers as a MAX-heap ordered by
-//!    [`TopNExec::greater`], `heap.Pop` down to exactly `offset + count`,
-//!    then stream the rest of the child through
-//!    [`topNChunkHeap.processChk`](https://github.com/pingcap/tidb): a row
-//!    strictly smaller than the heap's max replaces it and the heap is fixed.
+//!    [`TopNChunkHeap::greater_keys`], `heap.Pop` down to exactly
+//!    `offset + count`, then stream the rest of the child through
+//!    [`TopNChunkHeap::process_chk`]: a row strictly smaller than the heap's
+//!    max replaces it and the heap is fixed.
 //!    Go's `doCompaction` rebuilds the store when it grew past
 //!    `topNCompactionFactor` (4) times the retained row count.
 //! 3. `generateTopNResults`: sort the surviving pointers ASCENDING and emit
 //!    from index `offset`.
 //!
-//! # Why the heap is Go's, algorithm for algorithm
+//! # Where the heap lives
 //!
-//! [`TopNExec::greater`] returns FALSE for equal keys, so a tie never evicts
-//! the incumbent. Which of several tied rows survives at the `count` boundary
-//! is therefore decided by arrival order AND by the shape of the heap, so the
-//! sift rules are reproduced from Go's `container/heap` (`down`/`up`) rather
-//! than delegated to `BinaryHeap`, whose sift order differs. A query with
-//! ties at the boundary returns the rows Go returns.
+//! The store AND the heap over it are [`crate::topn_chunk_heap::TopNChunkHeap`],
+//! this crate's port of Go's own `topn_chunk_heap.go`; this file holds only what
+//! `topn.go` holds -- the phase order, the compaction trigger, the memory
+//! accounting, the spill segmentation, and the merge. An earlier revision
+//! carried an executor-fused SECOND copy of the store and the sift rules; it is
+//! gone, and the tests that pinned it (including
+//! `the_heap_retains_the_rows_gos_heap_retains`, the recorded probe of Go's own
+//! `container/heap`) now pin the ported heap through this operator.
+//!
+//! [`crate::topn_chunk_heap::TopNChunkHeap::greater_keys`] returns FALSE for
+//! equal keys, so a tie never evicts the incumbent. Which of several tied rows
+//! survives at the `count` boundary is therefore decided by arrival order AND by
+//! the shape of the heap, so the sift rules are reproduced from Go's
+//! `container/heap` (`down`/`up`) rather than delegated to `BinaryHeap`, whose
+//! sift order differs. A query with ties at the boundary returns the rows Go
+//! returns.
 //!
 //! # Divergences, deliberate and named
 //!
@@ -73,14 +83,12 @@ use tidb_util::memory::{ArcAction, Tracker};
 
 use crate::mem_quota::StatementMemory;
 use crate::sort::{less_by_items, SortByItem};
+use crate::topn_chunk_heap::TopNChunkHeap;
 use crate::topn_spill::{SpilledRun, TopNSpillAction, SPILL_CHUNK_SIZE};
 
 /// Go `topNCompactionFactor`: rebuild the row store once it holds more than
 /// this many times the retained row count.
 const TOP_N_COMPACTION_FACTOR: usize = 4;
-
-/// Go `chunk.RowPtr`: where a retained row lives in the store.
-type RowPtr = (usize, usize);
 
 /// Go `sortexec.TopNExec` (unparallel, in memory).
 pub struct TopNExec<C: Columns> {
@@ -97,19 +105,9 @@ pub struct TopNExec<C: Columns> {
     total_limit: u64,
     /// Go `fetched`: whether the whole child has been consumed.
     fetched: bool,
-    /// Go `chkHeap.rowChunks`: the retained rows, as a chunk list.
-    chunks: Vec<Chunk>,
-    /// The evaluated by-item keys, indexed exactly as `chunks` is, so a
-    /// `RowPtr` addresses a row and its key with the same pair.
-    keys: Vec<Vec<Vec<Datum>>>,
-    /// Go `chkHeap.rowPtrs`.
-    row_ptrs: Vec<RowPtr>,
-    /// Go `chkHeap.idx`, initialized to `Limit.Offset`: the emit cursor.
-    idx: usize,
-    /// The first comparison error seen while sifting or sorting. Go's
-    /// `keyCmpFuncs` reject unorderable key types up front, so an error here
-    /// likewise invalidates the whole result, and `next` returns it.
-    cmp_err: Option<ExecError>,
+    /// Go `TopNExec.chkHeap`: the retained rows, the pointers into them, the
+    /// sift rules, and the emit cursor -- all of `topn_chunk_heap.go`.
+    heap: TopNChunkHeap,
     memory: StatementMemory,
     /// Go `TopNExec.memTracker`.
     tracker: Arc<Tracker>,
@@ -167,11 +165,7 @@ impl<C: Columns> TopNExec<C> {
             offset,
             total_limit: offset + count,
             fetched: false,
-            chunks: Vec::new(),
-            keys: Vec::new(),
-            row_ptrs: Vec::new(),
-            idx: 0,
-            cmp_err: None,
+            heap: TopNChunkHeap::new(),
             memory,
             tracker,
             disk_tracker,
@@ -205,7 +199,27 @@ impl<C: Columns> TopNExec<C> {
 
     /// How many rows the store holds (Go `chunk.List.Len`).
     fn stored_len(&self) -> usize {
-        self.chunks.iter().map(Chunk::num_rows).sum()
+        self.heap.stored_len()
+    }
+
+    /// Go `chkHeap.init`, which Go performs from `TopNExec.Open` and again
+    /// after every spill (`chkHeap.clear` un-initializes it).
+    ///
+    /// The shape comes from the CHILD, not from `self`: Go's comment on `init`
+    /// spells out that an inline projection changes the TopN's own schema while
+    /// the store holds child rows.
+    fn ensure_heap_init(&mut self) {
+        if self.heap.is_initialized() {
+            return;
+        }
+        self.heap.init(
+            self.by_items.clone(),
+            self.child.ret_field_types().to_vec(),
+            self.child.init_cap(),
+            self.child.max_chunk_size(),
+            self.total_limit,
+            0,
+        );
     }
 
     /// Evaluates the by-item keys for one row.
@@ -217,211 +231,34 @@ impl<C: Columns> TopNExec<C> {
         Ok(key)
     }
 
+    /// The by-item keys of every row of `chunk`.
+    ///
+    /// The heap stores MATERIALIZED keys (see its module docs), and only the
+    /// executor holds the evaluation context, so the keys are evaluated here
+    /// and handed over with the rows.
+    fn eval_keys(&self, chunk: &Chunk) -> Result<Vec<Vec<Datum>>, ExecError> {
+        (0..chunk.num_rows())
+            .map(|r| self.eval_key(chunk.get_row(r)))
+            .collect()
+    }
+
     /// Go `chunk.List.Add`: takes a whole child chunk into the store, with the
     /// keys for its rows.
     fn add_chunk(&mut self, chunk: Chunk) -> Result<(), ExecError> {
-        let mut chunk_keys = Vec::with_capacity(chunk.num_rows());
-        for r in 0..chunk.num_rows() {
-            chunk_keys.push(self.eval_key(chunk.get_row(r))?);
-        }
-        self.chunks.push(chunk);
-        self.keys.push(chunk_keys);
+        let keys = self.eval_keys(&chunk)?;
+        self.heap.add_chunk(chunk, keys);
         Ok(())
-    }
-
-    /// Go `chunk.List.AppendRow`: appends into the last chunk while it has
-    /// capacity, else allocates one, and returns the row's pointer.
-    fn append_row(&mut self, row: tidb_chunk::row::Row<'_>, key: Vec<Datum>) -> RowPtr {
-        let need_new = match self.chunks.last() {
-            None => true,
-            Some(last) => last.num_rows() >= last.capacity(),
-        };
-        if need_new {
-            self.chunks.push(Chunk::new(
-                self.child.ret_field_types(),
-                self.child.init_cap(),
-                self.child.max_chunk_size(),
-            ));
-            self.keys.push(Vec::new());
-        }
-        let chk_idx = self.chunks.len() - 1;
-        let row_idx = self.chunks[chk_idx].num_rows();
-        self.chunks[chk_idx].append_row(row);
-        self.keys[chk_idx].push(key);
-        (chk_idx, row_idx)
-    }
-
-    /// Go `lessRow` for one key pair: the first non-equal by-item decides and
-    /// `Desc` negates it. Each key compares under its own derived collation,
-    /// exactly as [`crate::sort::SortExec`] does.
-    ///
-    /// A comparison error is captured (the caller checks [`Self::cmp_err`])
-    /// and reported as `Equal`, so the sift/sort routines stay total.
-    fn compare_keys(&mut self, a: &[Datum], b: &[Datum]) -> Ordering {
-        for (i, item) in self.by_items.iter().enumerate() {
-            let mut cmp = match tidb_expr::compare_datums_with_collation(
-                &a[i],
-                &b[i],
-                tidb_expr::collation_derive::collation_of_node(&item.expr),
-            ) {
-                Ok(cmp) => cmp,
-                Err(err) => {
-                    if self.cmp_err.is_none() {
-                        self.cmp_err = Some(err.into());
-                    }
-                    return Ordering::Equal;
-                }
-            };
-            if item.desc {
-                cmp = cmp.reverse();
-            }
-            if cmp != Ordering::Equal {
-                return cmp;
-            }
-        }
-        Ordering::Equal
-    }
-
-    /// Go `TopNExec.greaterRow`: strictly greater in by-item order. EQUAL is
-    /// FALSE, which is what keeps a tie from evicting the incumbent.
-    fn greater_keys(&mut self, a: &[Datum], b: &[Datum]) -> bool {
-        self.compare_keys(a, b) == Ordering::Greater
-    }
-
-    /// `Less` of Go's `topNChunkHeap`: the heap is a MAX-heap, so "less"
-    /// means "greater row".
-    fn heap_less(&mut self, i: usize, j: usize) -> bool {
-        let a = self.key_at(self.row_ptrs[i]);
-        let b = self.key_at(self.row_ptrs[j]);
-        self.greater_keys(&a, &b)
-    }
-
-    /// A copy of the key at `ptr`. Copying keeps the borrow checker out of the
-    /// sift routines; keys are short (one datum per `ORDER BY` item).
-    fn key_at(&self, ptr: RowPtr) -> Vec<Datum> {
-        self.keys[ptr.0][ptr.1].clone()
-    }
-
-    /// Go `container/heap.down`, verbatim in structure.
-    fn heap_down(&mut self, i0: usize, n: usize) -> bool {
-        let mut i = i0;
-        loop {
-            let j1 = 2 * i + 1;
-            if j1 >= n {
-                break;
-            }
-            let mut j = j1;
-            let j2 = j1 + 1;
-            if j2 < n && self.heap_less(j2, j1) {
-                j = j2;
-            }
-            if !self.heap_less(j, i) {
-                break;
-            }
-            self.row_ptrs.swap(i, j);
-            i = j;
-        }
-        i > i0
-    }
-
-    /// Go `container/heap.up`, verbatim in structure.
-    fn heap_up(&mut self, j0: usize) {
-        let mut j = j0;
-        loop {
-            // Go's `i := (j - 1) / 2` on a signed int gives 0 for j == 0
-            // (division truncates toward zero), which is what ends the walk at
-            // the root; an unsigned `j - 1` would wrap instead.
-            let i = if j == 0 { 0 } else { (j - 1) / 2 };
-            if i == j || !self.heap_less(j, i) {
-                break;
-            }
-            self.row_ptrs.swap(i, j);
-            j = i;
-        }
-    }
-
-    /// Go `container/heap.Init`.
-    fn heap_init(&mut self) {
-        let n = self.row_ptrs.len();
-        for i in (0..n / 2).rev() {
-            self.heap_down(i, n);
-        }
-    }
-
-    /// Go `container/heap.Pop`: swap the max to the end, sift, truncate.
-    fn heap_pop(&mut self) {
-        let n = self.row_ptrs.len() - 1;
-        self.row_ptrs.swap(0, n);
-        self.heap_down(0, n);
-        self.row_ptrs.truncate(n);
-    }
-
-    /// Go `container/heap.Fix(h, 0)`.
-    fn heap_fix_root(&mut self) {
-        let n = self.row_ptrs.len();
-        if !self.heap_down(0, n) {
-            self.heap_up(0);
-        }
-    }
-
-    /// Go `chkHeap.doCompaction`: rebuild the store from the retained rows
-    /// only, so a long scan that keeps evicting does not grow without bound.
-    fn do_compaction(&mut self) {
-        let old_chunks = std::mem::take(&mut self.chunks);
-        let old_keys = std::mem::take(&mut self.keys);
-        let old_ptrs = std::mem::take(&mut self.row_ptrs);
-        let fields = self.child.ret_field_types().to_vec();
-        let init_cap = self.child.init_cap();
-        let max_chunk_size = self.child.max_chunk_size();
-        let mut new_ptrs = Vec::with_capacity(old_ptrs.len());
-        for (c, r) in old_ptrs {
-            let need_new = match self.chunks.last() {
-                None => true,
-                Some(last) => last.num_rows() >= last.capacity(),
-            };
-            if need_new {
-                self.chunks
-                    .push(Chunk::new(&fields, init_cap, max_chunk_size));
-                self.keys.push(Vec::new());
-            }
-            let chk_idx = self.chunks.len() - 1;
-            let row_idx = self.chunks[chk_idx].num_rows();
-            self.chunks[chk_idx].append_row(old_chunks[c].get_row(r));
-            self.keys[chk_idx].push(old_keys[c][r].clone());
-            new_ptrs.push((chk_idx, row_idx));
-        }
-        self.row_ptrs = new_ptrs;
-    }
-
-    /// What the store currently holds, as bytes.
-    ///
-    /// Go tracks this incrementally through `chunk.List`'s own tracker and
-    /// `ReplaceChild` on compaction; recomputing the total and REPLACING the
-    /// tracker's value has the same effect at the only points where the total
-    /// moves, and cannot drift.
-    fn stored_bytes(&self) -> i64 {
-        let mut bytes: i64 = 0;
-        for chunk in &self.chunks {
-            bytes += chunk.memory_usage();
-            bytes +=
-                tidb_chunk::row::ROW_SIZE * i64::try_from(chunk.num_rows()).unwrap_or(i64::MAX);
-        }
-        for chunk_keys in &self.keys {
-            for key in chunk_keys {
-                bytes += i64::try_from(size_of::<Vec<Datum>>()).unwrap_or(i64::MAX);
-                for datum in key {
-                    bytes += i64::try_from(datum.estimated_mem_usage()).unwrap_or(i64::MAX);
-                }
-            }
-        }
-        bytes += i64::try_from(size_of::<RowPtr>() * self.row_ptrs.len()).unwrap_or(i64::MAX);
-        bytes
     }
 
     /// Reports the store's current size to the statement budget and checks the
     /// quota, which is where Go's `Consume` fires the OOM action.
+    ///
+    /// Go attaches the chunk list's own tracker to the TopN's and moves it
+    /// incrementally; this port asks the heap for its total and REPLACES the
+    /// tracked value at the only points where the total moves, so it cannot
+    /// drift.
     fn account(&mut self) -> Result<(), ExecError> {
-        let bytes = self.stored_bytes();
+        let bytes = self.heap.memory_usage();
         self.tracker.replace_bytes_used(bytes);
         self.memory.check()
     }
@@ -455,7 +292,7 @@ impl<C: Columns> TopNExec<C> {
         // Go `spillRemainingRowsWhenNeeded`: once ANY run exists, the rows
         // still in the heap have to join them on disk, or the merge would not
         // see them at all.
-        if !self.runs.is_empty() && !self.row_ptrs.is_empty() {
+        if !self.runs.is_empty() && !self.heap.is_empty() {
             self.spill_heap()?;
         }
         if !self.runs.is_empty() {
@@ -468,6 +305,8 @@ impl<C: Columns> TopNExec<C> {
     /// One segment. Returns `true` when the child is exhausted (no spill is
     /// pending), `false` when the segment stopped because a spill is needed.
     fn run_one_segment(&mut self) -> Result<bool, ExecError> {
+        self.ensure_heap_init();
+
         // Phase 1: fill the store to `totalLimit` rows.
         while (self.stored_len() as u64) < self.total_limit {
             let mut chunk = self.child.new_chunk();
@@ -483,18 +322,14 @@ impl<C: Columns> TopNExec<C> {
                 break;
             }
         }
-        self.row_ptrs = (0..self.chunks.len())
-            .flat_map(|c| (0..self.chunks[c].num_rows()).map(move |r| (c, r)))
-            .collect();
+        self.heap.init_ptrs();
         self.account()?;
 
         // Phase 2: heapify, trim to `totalLimit`, then stream the rest of the
         // child through the heap.
-        self.heap_init();
-        while self.row_ptrs.len() as u64 > self.total_limit {
-            self.heap_pop();
-        }
-        self.take_cmp_err()?;
+        self.heap.heap_init();
+        self.heap.trim_to_total_limit();
+        self.heap.take_cmp_err()?;
         if self.need_spill.load(SeqCst) {
             return Ok(false);
         }
@@ -506,20 +341,11 @@ impl<C: Columns> TopNExec<C> {
                 return Ok(true);
             }
             // Go `processChk`: one row at a time against the heap's max.
-            for r in 0..child_chunk.num_rows() {
-                let row = child_chunk.get_row(r);
-                let new_key = self.eval_key(row)?;
-                let max_key = self.key_at(self.row_ptrs[0]);
-                if self.greater_keys(&max_key, &new_key) {
-                    // Go `update`: the evicted max's slot takes the new row.
-                    let ptr = self.append_row(child_chunk.get_row(r), new_key);
-                    self.row_ptrs[0] = ptr;
-                    self.heap_fix_root();
-                }
-            }
-            self.take_cmp_err()?;
-            if self.stored_len() > self.row_ptrs.len() * TOP_N_COMPACTION_FACTOR {
-                self.do_compaction();
+            let keys = self.eval_keys(&child_chunk)?;
+            self.heap.process_chk(&child_chunk, keys);
+            self.heap.take_cmp_err()?;
+            if self.heap.stored_len() > self.heap.len() * TOP_N_COMPACTION_FACTOR {
+                self.heap.do_compaction();
             }
             self.account()?;
             if self.need_spill.load(SeqCst) {
@@ -532,12 +358,14 @@ impl<C: Columns> TopNExec<C> {
     /// as one run, and clear the heap (Go `chkHeap.clear`).
     fn spill_heap(&mut self) -> Result<(), ExecError> {
         self.sort_survivors_ascending()?;
-        if !self.row_ptrs.is_empty() {
+        if !self.heap.is_empty() {
             let field_types = self.child.ret_field_types().to_vec();
+            // The heap's store and its sorted pointers ARE the run: they are
+            // read straight out rather than copied into a second store.
             let run = SpilledRun::write(
                 &field_types,
-                &self.chunks,
-                &self.row_ptrs,
+                self.heap.chunks(),
+                self.heap.row_ptrs(),
                 self.spill_chunk_size,
                 &self.disk_tracker,
                 self.memory.spill_storage(),
@@ -545,10 +373,7 @@ impl<C: Columns> TopNExec<C> {
             self.runs.push(run);
             self.spilled_runs += 1;
         }
-        self.chunks.clear();
-        self.keys.clear();
-        self.row_ptrs.clear();
-        self.idx = 0;
+        self.heap.clear();
         self.tracker.replace_bytes_used(0);
         self.need_spill.store(false, SeqCst);
         Ok(())
@@ -557,44 +382,8 @@ impl<C: Columns> TopNExec<C> {
     /// Phase 3: ascending order over the survivors, then emit from `offset`
     /// (Go seeds `chkHeap.idx` with it).
     fn sort_survivors_ascending(&mut self) -> Result<(), ExecError> {
-        let mut ptrs = std::mem::take(&mut self.row_ptrs);
-        let mut order: Vec<usize> = (0..ptrs.len()).collect();
-        // `sort_by` cannot borrow `self` mutably, so the keys are lifted out
-        // first and the comparison error is captured as in `SortExec`.
-        let keys: Vec<Vec<Datum>> = ptrs.iter().map(|&ptr| self.key_at(ptr)).collect();
-        let by_items = &self.by_items;
-        let mut sort_err: Option<ExecError> = None;
-        order.sort_by(|&a, &b| {
-            for (i, item) in by_items.iter().enumerate() {
-                let mut cmp = match tidb_expr::compare_datums_with_collation(
-                    &keys[a][i],
-                    &keys[b][i],
-                    tidb_expr::collation_derive::collation_of_node(&item.expr),
-                ) {
-                    Ok(cmp) => cmp,
-                    Err(err) => {
-                        if sort_err.is_none() {
-                            sort_err = Some(err.into());
-                        }
-                        return Ordering::Equal;
-                    }
-                };
-                if item.desc {
-                    cmp = cmp.reverse();
-                }
-                if cmp != Ordering::Equal {
-                    return cmp;
-                }
-            }
-            Ordering::Equal
-        });
-        if let Some(err) = sort_err {
-            return Err(err);
-        }
-        ptrs = order.into_iter().map(|i| ptrs[i]).collect();
-        self.row_ptrs = ptrs;
-        self.idx = usize::try_from(self.offset).unwrap_or(usize::MAX);
-        Ok(())
+        let offset = usize::try_from(self.offset).unwrap_or(usize::MAX);
+        self.heap.sort_row_ptrs_ascending(offset)
     }
 
     /// Go `generateResultWithMultiWayMerge`: merge the sorted runs, drop the
@@ -648,24 +437,12 @@ impl<C: Columns> TopNExec<C> {
         self.runs = runs;
         result
     }
-
-    /// Surfaces the first comparison error a sift or sort captured.
-    fn take_cmp_err(&mut self) -> Result<(), ExecError> {
-        match self.cmp_err.take() {
-            Some(err) => Err(err),
-            None => Ok(()),
-        }
-    }
 }
 
 impl<C: Columns> Executor for TopNExec<C> {
     fn open(&mut self) -> Result<(), ExecError> {
         self.fetched = false;
-        self.chunks.clear();
-        self.keys.clear();
-        self.row_ptrs.clear();
-        self.idx = 0;
-        self.cmp_err = None;
+        self.heap.clear();
         for run in &mut self.runs {
             run.close();
         }
@@ -705,20 +482,17 @@ impl<C: Columns> Executor for TopNExec<C> {
         if !self.runs.is_empty() {
             return self.next_merged(req);
         }
-        let remaining = self.row_ptrs.len().saturating_sub(self.idx);
+        let remaining = self.heap.len().saturating_sub(self.heap.idx());
         let batch = req.required_rows().min(remaining);
         for _ in 0..batch {
-            let (c, r) = self.row_ptrs[self.idx];
-            req.append_row(self.chunks[c].get_row(r));
-            self.idx += 1;
+            req.append_row(self.heap.row_at(self.heap.idx()));
+            self.heap.advance_idx();
         }
         Ok(())
     }
 
     fn close(&mut self) -> Result<(), ExecError> {
-        self.chunks.clear();
-        self.keys.clear();
-        self.row_ptrs.clear();
+        self.heap.clear();
         for run in &mut self.runs {
             run.close();
         }
