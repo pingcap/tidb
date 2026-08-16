@@ -29,7 +29,10 @@ pub mod sum;
 pub mod variance;
 
 pub use avg::{AvgFloat64State, AvgState};
-pub use count::{CountDistinctIntState, CountState};
+pub use count::{
+    CountDistinctDecimalState, CountDistinctDurationState, CountDistinctIntState,
+    CountDistinctRealState, CountDistinctStringState, CountState, CountWithDistinctState,
+};
 pub use max_min::MaxMinState;
 pub use sum::{
     SumDecimalState, SumFloat64State, SumInt64State, SumIntError, SumState, SumUint64State,
