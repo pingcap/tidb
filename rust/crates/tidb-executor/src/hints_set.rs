@@ -416,6 +416,159 @@ pub fn check_binding_from_history_complete<N: Visitable>(
     (checker.complete, checker.reason)
 }
 
+/// The hint-level `@qb_name` slot, where the variant carries one that
+/// REFERENCES a block (the `QB_NAME` hint's own field DEFINES a name and is
+/// not this).
+fn hint_qb_name_mut(hint: &mut Hint) -> Option<&mut Option<String>> {
+    match &mut hint.kind {
+        HintKind::Nullary { qb_name }
+        | HintKind::Tables { qb_name, .. }
+        | HintKind::Leading { qb_name, .. }
+        | HintKind::Index { qb_name, .. }
+        | HintKind::Bool { qb_name, .. }
+        | HintKind::Name { qb_name, .. }
+        | HintKind::Keyword { qb_name, .. }
+        | HintKind::MemoryQuota { qb_name, .. }
+        | HintKind::Number { qb_name, .. }
+        | HintKind::ReadFromStorage { qb_name, .. } => Some(qb_name),
+        HintKind::SetVar { .. } | HintKind::TimeRange { .. } | HintKind::QbName { .. } => None,
+    }
+}
+
+fn collect_leading_tables<'h>(
+    elements: &'h mut [tidb_ast::LeadingElement],
+    tables: &mut Vec<&'h mut tidb_ast::HintTable>,
+) {
+    for element in elements {
+        match element {
+            tidb_ast::LeadingElement::Table(table) => tables.push(table),
+            tidb_ast::LeadingElement::Group(nested) => collect_leading_tables(nested, tables),
+        }
+    }
+}
+
+/// Go's flat `TableOptimizerHint.Tables` view: every table argument the hint
+/// carries, in written order.
+fn hint_tables_mut(hint: &mut Hint) -> Vec<&mut tidb_ast::HintTable> {
+    let mut result = Vec::new();
+    match &mut hint.kind {
+        HintKind::Tables { tables, .. } => result.extend(tables.iter_mut()),
+        HintKind::Index { table, .. } => result.push(table),
+        HintKind::Leading { elements, .. } => collect_leading_tables(elements, &mut result),
+        HintKind::ReadFromStorage { groups, .. } => {
+            for (_, tables) in groups {
+                result.extend(tables.iter_mut());
+            }
+        }
+        HintKind::QbName { views, .. } => result.extend(views.iter_mut()),
+        _ => {}
+    }
+    result
+}
+
+/// Go `ParseHintsSet`: parses one statement, collects its hints, and
+/// normalizes every hint onto generated query-block names with default
+/// databases filled in — the canonical form SQL bindings store.
+///
+/// Named seed boundaries: the source's charset/collation parameters ride
+/// Go's parser options and the returned parser warnings ride its
+/// out-of-range filter, neither of which this workspace's parser surface
+/// takes yet; and view `QB_NAME` hints are carried through unmodified since
+/// the view-hint registry (`handleViewHints`) is not ported — a handler
+/// without view hints answers `isHint4View` false, exactly as modeled here.
+pub fn parse_hints_set(sql: &str, db: &str) -> Result<(HintsSet, tidb_ast::Stmt), String> {
+    let mut stmt = tidb_parser::parse(sql)
+        .map_err(|error| format!("bind_sql must be a single statement: {sql}: {error:?}"))?;
+    let mut hs = collect_hint(&mut stmt);
+
+    // Drive the query-block handler as Go's Accept does: one offset per
+    // SELECT block, and every bare (non-view) QB_NAME hint registered at its
+    // block's offset. Go passes a nil warn handler here, so registration
+    // warnings are dropped.
+    let top_type = match &stmt {
+        tidb_ast::Stmt::Query(_) => NodeType::Select,
+        tidb_ast::Stmt::Dml(dml) => match &**dml {
+            tidb_ast::DmlStmt::Update(_) => NodeType::Update,
+            tidb_ast::DmlStmt::Delete(_) => NodeType::Delete,
+            tidb_ast::DmlStmt::Insert(_) => NodeType::Select,
+            _ => NodeType::Invalid,
+        },
+        _ => NodeType::Invalid,
+    };
+    let top_is_write = matches!(top_type, NodeType::Update | NodeType::Delete);
+    let select_blocks =
+        hs.table_hints.len() - usize::from(top_is_write && !hs.table_hints.is_empty());
+    let mut handler = crate::qb_hint::QbHintHandler::new();
+    for _ in 0..select_blocks {
+        handler.next_select_stmt_offset();
+    }
+    let mut dropped = crate::qb_hint::HintWarnCollector::default();
+    for (i, block) in hs.table_hints.iter().enumerate() {
+        let offset = if top_is_write { i as i64 } else { i as i64 + 1 };
+        let registrations: Vec<crate::qb_hint::QbHint> = block
+            .iter()
+            .filter_map(|hint| match &hint.kind {
+                HintKind::QbName { qb_name, views } if views.is_empty() => {
+                    Some(crate::qb_hint::QbHint {
+                        name: crate::qb_hint::HINT_QB_NAME.to_owned(),
+                        qb_name: qb_name.to_lowercase(),
+                        tables: Vec::new(),
+                        restored: String::new(),
+                    })
+                }
+                _ => None,
+            })
+            .collect();
+        handler.check_query_block_hints(&registrations, offset, &mut dropped);
+    }
+
+    // Go's normalization loop.
+    for (i, block) in hs.table_hints.iter_mut().enumerate() {
+        let cur_offset = if top_is_write { i as i64 } else { i as i64 + 1 };
+        let mut new_hints = Vec::with_capacity(block.len());
+        for mut hint in block.drain(..) {
+            if let HintKind::QbName { views, .. } = &hint.kind {
+                // A bare QB_NAME defined its block and is dropped; the view
+                // form is kept.
+                if !views.is_empty() {
+                    new_hints.push(hint);
+                }
+                continue;
+            }
+            let qb_reference = hint_qb_name_mut(&mut hint)
+                .and_then(|slot| slot.clone())
+                .map(|name| name.to_lowercase())
+                .unwrap_or_default();
+            let offset = handler.hint_offset(&qb_reference, cur_offset);
+            let table_qb_names: Vec<crate::qb_hint::QbHintTable> = hint_tables_mut(&mut hint)
+                .iter()
+                .map(|table| crate::qb_hint::QbHintTable {
+                    name: table.name.to_lowercase(),
+                    qb_name: table.qb_name.as_deref().unwrap_or_default().to_lowercase(),
+                })
+                .collect();
+            if offset < 0 || !handler.check_table_qb_name(&table_qb_names) {
+                return Err(format!(
+                    "Unknown query block name in hint {}",
+                    restore_table_optimizer_hint(&hint)
+                ));
+            }
+            let generated = crate::qb_hint::generate_qb_name(top_type, offset)?;
+            if let Some(slot) = hint_qb_name_mut(&mut hint) {
+                *slot = Some(generated);
+            }
+            for table in hint_tables_mut(&mut hint) {
+                if table.db_name.as_deref().unwrap_or_default().is_empty() {
+                    table.db_name = Some(db.to_owned());
+                }
+            }
+            new_hints.push(hint);
+        }
+        *block = new_hints;
+    }
+    Ok((hs, stmt))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -533,5 +686,50 @@ mod tests {
         let (complete, reason) = check_binding_from_history_complete(&mut wide, "");
         assert!(!complete);
         assert!(reason.contains("more than 3 table join"));
+    }
+    // Go `ParseHintsSet`: hints normalize onto generated block names with
+    // default databases filled in; unknown block names fail.
+    #[test]
+    fn parse_hints_set_normalizes_blocks_and_databases() {
+        let (set, _stmt) = parse_hints_set(
+            "SELECT /*+ HASH_JOIN(t1) */ * FROM t1 \
+             WHERE a IN (SELECT /*+ MERGE_JOIN(test2.t2) */ b FROM t2)",
+            "bind_db",
+        )
+        .unwrap();
+        assert_eq!(set.table_hints.len(), 2);
+        let restored = set.restore();
+        // Block one's hint gains @sel_1 and the default database; block
+        // two's keeps its written database and gains @sel_2.
+        assert!(
+            restored.contains("hash_join(@`sel_1` `bind_db`.`t1`)"),
+            "{restored}"
+        );
+        assert!(
+            restored.contains("merge_join(@`sel_2` `test2`.`t2`)"),
+            "{restored}"
+        );
+
+        // A registered QB_NAME resolves and the bare hint is dropped.
+        let (set, _stmt) = parse_hints_set(
+            "SELECT * FROM t1 WHERE a IN \
+             (SELECT /*+ QB_NAME(qb2), HASH_JOIN(t2) */ b FROM t2)",
+            "d",
+        )
+        .unwrap();
+        let restored = set.restore();
+        assert!(
+            restored.contains("hash_join(@`sel_2` `d`.`t2`)"),
+            "{restored}"
+        );
+        assert!(!restored.contains("qb_name"), "{restored}");
+
+        // An unknown block name is the source's exact error.
+        let error =
+            parse_hints_set("SELECT /*+ HASH_JOIN(@nope t1) */ * FROM t1", "d").unwrap_err();
+        assert!(
+            error.starts_with("Unknown query block name in hint "),
+            "{error}"
+        );
     }
 }
