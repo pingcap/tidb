@@ -296,15 +296,7 @@ impl Session {
             .count();
         let usage: i64 = all
             .iter()
-            .map(|binding| {
-                (binding.original_sql.len()
-                    + binding.db.len()
-                    + binding.bind_sql.len()
-                    + binding.status.len()
-                    + 2 * 16
-                    + binding.charset.len()
-                    + binding.collation.len()) as i64
-            })
+            .map(|binding| crate::binding_cache::binding_size(binding))
             .sum();
         let quota = self
             .vars

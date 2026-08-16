@@ -302,8 +302,13 @@ pub(crate) fn collect_cte_names(stmt: &Stmt) -> Vec<String> {
 /// Go's `bindinfo.Binding`, minus the fields only a stored global binding
 /// has (`PlanDigest` from a captured plan, `SourceHistory`, the usage
 /// counters `mysql.bind_info` carries).
-#[derive(Debug, Clone)]
-pub(crate) struct Binding {
+///
+/// `Default` is derived so [`crate::binding_cache`]'s ported Go tests can
+/// build the same partially-filled literals they do (`&Binding{BindSQL: ...,
+/// SQLDigest: ...}`); Go's zero value leaves every other field empty, and so
+/// does this one.
+#[derive(Debug, Clone, Default)]
+pub struct Binding {
     /// The NORMALIZED origin statement, DB-qualified. This is the text
     /// `SHOW BINDINGS` prints first, not the SQL the user typed.
     pub(crate) original_sql: String,
@@ -398,7 +403,7 @@ impl SessionBindings {
 /// the same wildcard binding answers `@@last_plan_from_binding` 1 with the
 /// switch on and 0 with it off, flipping live with `SET`. Among the
 /// candidates the fewest-wildcards binding wins, Go's own tie-break.
-fn cross_db_match<'a>(
+pub(crate) fn cross_db_match<'a>(
     candidates: impl Iterator<Item = &'a Binding>,
     table_names: &[(String, String)],
     current_db: &str,
