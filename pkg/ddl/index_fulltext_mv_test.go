@@ -275,3 +275,34 @@ func TestFullTextIndexRejectsBinaryColumn(t *testing.T) {
 	tk.MustExec("alter table b add fulltext index idx_txt (txt)")
 	tk.MustExec("alter table b add fulltext index idx_bin_coll (bin_coll)")
 }
+
+// TestUserWrittenTokenizeIndexKeepsLiterals covers the case that forced the
+// FULLTEXT KEY rendering to be withdrawn. FTS_TOKENIZE is usable in an
+// expression index by anyone, so an index a user wrote themselves must keep the
+// analyzer literals they chose - it must not be mistaken for one the FULLTEXT
+// DDL rewrite produced and re-described in terms of the server's current
+// innodb_ft_* values.
+func TestUserWrittenTokenizeIndexKeepsLiterals(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global innodb_ft_min_token_size = 3")
+	tk.MustExec("set global innodb_ft_max_token_size = 84")
+	tk.MustExec("create table u (id int primary key, body varchar(255))")
+
+	// Literals deliberately different from the server defaults above.
+	tk.MustExec("alter table u add index idx_manual " +
+		"((cast(fts_tokenize(body, 'STANDARD', 2, 40, 0) as char(40) array)))")
+
+	createSQL := tk.MustQuery("show create table u").Rows()[0][1].(string)
+	require.NotContains(t, createSQL, "FULLTEXT",
+		"a user-written expression index must not be reported as FULLTEXT:\n"+createSQL)
+	// The user's own literals, not the server's.
+	require.Contains(t, createSQL, "'STANDARD', 2, 40, 0")
+	require.Contains(t, createSQL, "char(40) array")
+
+	// And the printed definition rebuilds exactly that index.
+	tk.MustExec("drop table u")
+	tk.MustExec(createSQL)
+	require.Equal(t, createSQL, tk.MustQuery("show create table u").Rows()[0][1].(string))
+}
