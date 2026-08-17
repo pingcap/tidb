@@ -135,6 +135,7 @@ pub mod tiflash_recorder;
 pub mod topn;
 pub mod topn_chunk_heap;
 pub mod topn_spill;
+pub mod union_scan;
 pub mod vec_group_checker;
 pub mod view;
 mod window;

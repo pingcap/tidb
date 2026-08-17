@@ -97,10 +97,11 @@
 //! # Narrowings, every one named
 //!
 //! * **`compareExec`** (`pkg/executor/union_scan.go`) supplies `desc`,
-//!   `needExtraSorting` and `compare`. `union_scan.go` is not ported, so the
-//!   two flags are constructor inputs and `compare` is the
-//!   [`RowComparator`] trait. The `keepOrder && needExtraSorting` branch
-//!   (:100, :406, :176) is ported around it exactly.
+//!   `needExtraSorting` and `compare`. It IS now ported, as
+//!   [`crate::union_scan::CompareExec`], which implements [`RowComparator`];
+//!   the two flags stay constructor inputs because a mem reader is built
+//!   before the `UnionScanExec` that owns them. The `keepOrder &&
+//!   needExtraSorting` branch (:100, :406, :176) is ported around it exactly.
 //! * **`distsql.TableHandlesToKVRanges`** (`pkg/distsql/request_builder.go`)
 //!   turns the handles a partial reader found into record ranges (:769,
 //!   :1103). It is outside this Go package, so it is the
@@ -284,11 +285,13 @@ pub trait MemBufferSource {
     }
 }
 
-/// boundary: Go `pkg/executor/union_scan.go` `compareExec.compare`.
+/// Go `pkg/executor/union_scan.go` `compareExec.compare`: the ordering a
+/// `keepOrder` read restores -- index columns in `usedIndex` order, then the
+/// handle, each honoring `desc`.
 ///
-/// `union_scan.go` is not ported, so the ordering a `keepOrder` read restores
-/// (index columns in `usedIndex` order, then the handle, each honoring `desc`)
-/// is supplied by the caller. Which rows are sorted, and when, is ported.
+/// No longer a boundary: [`crate::union_scan::CompareExec`] is that Go struct,
+/// ported, and implements this trait. The trait remains because a mem reader
+/// is CONSTRUCTED before the `UnionScanExec` that embeds the comparator.
 pub trait RowComparator {
     /// Go `compareExec.compare(sc, a, b)`.
     fn compare(&self, left: &[Datum], right: &[Datum]) -> Result<Ordering, MemReaderError>;

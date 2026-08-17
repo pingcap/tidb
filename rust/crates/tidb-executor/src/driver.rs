@@ -319,7 +319,7 @@ mod subquery;
 #[cfg(test)]
 mod tests;
 mod through_proj;
-mod write_cast;
+pub(crate) mod write_cast;
 
 // Re-exported flat, so every caller inside and outside this module keeps
 // naming these as `driver::…` exactly as before the split.
