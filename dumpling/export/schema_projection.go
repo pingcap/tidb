@@ -19,9 +19,9 @@ func normalizedTableName(database, table string) tableName {
 func generateProjectedSchema(
 	originSQL string,
 	database string,
+	table string,
 	projected bool,
-	retainedColumns map[string]struct{},
-	schemaColumns map[tableName]map[string]struct{},
+	columnsByTable map[tableName]map[string]struct{},
 ) (string, error) {
 	stmt, err := parser.New().ParseOneStmt(originSQL, "", "")
 	if err != nil {
@@ -31,12 +31,13 @@ func generateProjectedSchema(
 	if !ok {
 		return "", errors.Errorf("expected CREATE TABLE for column projection, got %T", stmt)
 	}
+	retainedColumns := columnsByTable[normalizedTableName(database, table)]
 	columns := make([]*ast.ColumnDef, 0, len(createTable.Cols))
 	for _, column := range createTable.Cols {
 		if _, ok := retainedColumns[column.Name.Name.L]; !ok {
 			continue
 		}
-		options, err := filterColumnOptions(column, retainedColumns, database, schemaColumns)
+		options, err := filterColumnOptions(column, retainedColumns, database, columnsByTable)
 		if err != nil {
 			return "", err
 		}
@@ -51,7 +52,7 @@ func generateProjectedSchema(
 			constraint,
 			retainedColumns,
 			database,
-			schemaColumns,
+			columnsByTable,
 		)
 		if err != nil {
 			return "", err
@@ -115,7 +116,7 @@ func filterColumnOptions(
 	column *ast.ColumnDef,
 	retained map[string]struct{},
 	database string,
-	schemaColumns map[tableName]map[string]struct{},
+	columnsByTable map[tableName]map[string]struct{},
 ) ([]*ast.ColumnOption, error) {
 	options := make([]*ast.ColumnOption, 0, len(column.Options))
 	for _, option := range column.Options {
@@ -126,7 +127,7 @@ func filterColumnOptions(
 			}
 		case ast.ColumnOptionReference:
 			// MySQL 9.7 supports inline foreign keys as column-level REFERENCES options.
-			if err := validateForeignKeyReference(option.Refer, database, schemaColumns); err != nil {
+			if err := validateForeignKeyReference(option.Refer, database, columnsByTable); err != nil {
 				return nil, err
 			}
 		case ast.ColumnOptionDefaultValue, ast.ColumnOptionOnUpdate:
@@ -146,7 +147,7 @@ func filterTableConstraint(
 	constraint *ast.Constraint,
 	retained map[string]struct{},
 	database string,
-	schemaColumns map[tableName]map[string]struct{},
+	columnsByTable map[tableName]map[string]struct{},
 ) (bool, error) {
 	for _, key := range constraint.Keys {
 		if key.Column != nil {
@@ -164,7 +165,7 @@ func filterTableConstraint(
 	if constraint.Option != nil && !allReferencedColumnsCovered(constraint.Option.Condition, retained) {
 		return false, nil
 	}
-	if err := validateForeignKeyReference(constraint.Refer, database, schemaColumns); err != nil {
+	if err := validateForeignKeyReference(constraint.Refer, database, columnsByTable); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -173,7 +174,7 @@ func filterTableConstraint(
 func validateForeignKeyReference(
 	reference *ast.ReferenceDef,
 	database string,
-	schemaColumns map[tableName]map[string]struct{},
+	columnsByTable map[tableName]map[string]struct{},
 ) error {
 	if reference == nil || reference.Table == nil {
 		return nil
@@ -185,7 +186,7 @@ func validateForeignKeyReference(
 		referenceDatabase = database
 	}
 
-	targetColumns, ok := schemaColumns[normalizedTableName(referenceDatabase, referenceTable)]
+	targetColumns, ok := columnsByTable[normalizedTableName(referenceDatabase, referenceTable)]
 	if !ok {
 		return nil
 	}
