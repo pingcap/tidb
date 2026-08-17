@@ -16,3 +16,5 @@ tidb-codec = { path = "../tidb-codec" }
 # `Lock.ToLockInfo` answers the real `kvrpcpb.LockInfo`.
 tidb-proto = { path = "../tidb-proto" }
 prost.workspace = true
+tidb-tablecodec = { path = "../tidb-tablecodec" }
+tidb-datatype = { path = "../tidb-datatype" }

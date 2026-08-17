@@ -33,6 +33,8 @@ use prost::Message;
 use tidb_proto::coprocessor;
 use tidb_proto::tipb;
 
+use tidb_codec::table_key::RecordHandle;
+
 use crate::mvcc_store::MvccStore;
 
 /// Go `kv.ReqTypeDAG` / `ReqTypeAnalyze` / `ReqTypeChecksum`
@@ -105,11 +107,134 @@ fn handle_cop_dag_request(
         Ok(context) => context,
         Err(message) => return other_error(&message),
     };
-    let _ = &context;
-    // boundary: `buildClosureExecutor` (`closure_exec.go`) — the
-    // scan-and-evaluate machine is the next course; a parsed DAG cannot yet
-    // run.
-    other_error("buildClosureExecutor (cophandler/closure_exec.go) is a later course of this port")
+    exec_dag(_store, &context)
+}
+
+/// The execution slice of Go `buildClosureExecutor` + `handleCopDAGRequest`
+/// (`closure_exec.go`): a TABLE-SCAN-ONLY DAG runs; anything above the scan
+/// refuses by name until its course lands.
+fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Response {
+    validate_executor_list(&context.dag_req.executors);
+    if context.dag_req.executors.len() != 1 {
+        return other_error(
+            "closure_exec.go's non-scan executors (selection/limit/...) are later courses",
+        );
+    }
+    let scan = &context.dag_req.executors[0];
+    if scan.tp() != tipb::ExecType::TypeTableScan {
+        return other_error("index scans (closure_exec.go) are a later course of this port");
+    }
+    let Some(tbl_scan) = scan.tbl_scan.as_ref() else {
+        return other_error("executor missing tbl_scan body");
+    };
+    exec_table_scan(store, context, tbl_scan)
+}
+
+/// Go's chunk cut: `closure_exec.go` grows the output chunk to 1024 rows
+/// before starting the next.
+const CHUNK_MAX_ROWS: usize = 1024;
+
+/// The table-scan executor over the MVCC store: each range scanned at the
+/// request's start ts, each surviving row decoded into the REQUESTED columns
+/// in request order, datum-encoded into default-format chunks — the shape a
+/// distsql client decodes.
+///
+/// Narrowings, by name: common handles and partitioned reads follow their
+/// courses (`RecordHandle::Common`/`Partition` rows refuse); a requested
+/// column absent from the row answers its `default_val` when carried, else
+/// NULL — Go's `getDefaultValue` behavior for the null-capable slice.
+fn exec_table_scan(
+    store: &mut MvccStore,
+    context: &DagContext,
+    tbl_scan: &tipb::TableScan,
+) -> coprocessor::Response {
+    use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+    let mut column_types = std::collections::BTreeMap::new();
+    for column in &tbl_scan.columns {
+        let code = u8::try_from(column.tp()).unwrap_or(0);
+        column_types.insert(
+            column.column_id(),
+            FieldType::new(FieldTypeCode::from_mysql_type(code)),
+        );
+    }
+    let mut chunks: Vec<tipb::Chunk> = Vec::new();
+    let mut current = Vec::new();
+    let mut current_rows = 0_usize;
+    for range in &context.key_ranges {
+        let pairs = store.scan(&crate::mvcc_store::ScanReq {
+            start_key: range.start.clone(),
+            end_key: range.end.clone(),
+            limit: u32::MAX,
+            version: context.start_ts,
+            sample_step: 0,
+            reverse: false,
+        });
+        for pair in pairs {
+            if let Some(lock) = pair.error {
+                // Go: the FIRST lock met answers the whole response.
+                return coprocessor::Response {
+                    locked: Some(*lock),
+                    ..coprocessor::Response::default()
+                };
+            }
+            let handle = match tidb_codec::table_key::decode_row_key(&pair.key) {
+                Ok(RecordHandle::Int(handle)) => handle,
+                Ok(_) => {
+                    return other_error(
+                        "common-handle and partitioned scans are later courses of this port",
+                    )
+                }
+                Err(err) => return other_error(&format!("invalid record key: {err:?}")),
+            };
+            let decoded =
+                match tidb_tablecodec::decode_table_row_to_map(&pair.value, &column_types, None) {
+                    Ok(map) => map,
+                    Err(err) => return other_error(&format!("decode row failed: {err:?}")),
+                };
+            let mut row_datums = Vec::with_capacity(tbl_scan.columns.len());
+            for column in &tbl_scan.columns {
+                if column.pk_handle() {
+                    row_datums.push(Datum::Int(handle));
+                } else if let Some(datum) = decoded.get(&column.column_id()) {
+                    row_datums.push(datum.clone());
+                } else {
+                    // boundary: Go `getDefaultValue` decodes
+                    // `ColumnInfo.default_val`; absent both, NULL.
+                    row_datums.push(Datum::Null);
+                }
+            }
+            let encoded = match tidb_codec::encode_value(&row_datums) {
+                Ok(encoded) => encoded,
+                Err(err) => return other_error(&format!("encode row failed: {err:?}")),
+            };
+            current.extend_from_slice(&encoded);
+            current_rows += 1;
+            if current_rows == CHUNK_MAX_ROWS {
+                chunks.push(tipb::Chunk {
+                    rows_data: Some(std::mem::take(&mut current)),
+                    ..tipb::Chunk::default()
+                });
+                current_rows = 0;
+            }
+        }
+    }
+    if !current.is_empty() {
+        chunks.push(tipb::Chunk {
+            rows_data: Some(current),
+            ..tipb::Chunk::default()
+        });
+    }
+    let select = tipb::SelectResponse {
+        chunks,
+        encode_type: Some(tipb::EncodeType::TypeDefault as i32),
+        ..tipb::SelectResponse::default()
+    };
+    let mut data = Vec::new();
+    select.encode(&mut data).expect("a select response encodes");
+    coprocessor::Response {
+        data,
+        ..coprocessor::Response::default()
+    }
 }
 
 /// Go `buildDAG` (`cop_handler.go`), the guards and decode.
@@ -283,5 +408,146 @@ mod tests {
             ..tipb::Executor::default()
         };
         validate_executor_list(&[selection, scan]);
+    }
+
+    #[test]
+    fn a_table_scan_reads_back_what_a_transaction_wrote() {
+        // The milestone the store roadmap aims at: a row written through the
+        // TRANSACTION path, read back through the COPROCESSOR path — the
+        // exact two protocols a TiDB node speaks to its store, end to end
+        // in-process. The row value is the OLD row format (per-column
+        // `EncodeInt(colID) ++ EncodeDatum(value)`), which
+        // `decode_table_row_to_map` handles exactly as Go's decoder does.
+        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_datatype::Datum;
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+
+        let mut store = MvccStore::new();
+        let table_id = 42_i64;
+        // Two rows: (handle 1, b=77), (handle 2, b=88).
+        for (handle, b_value) in [(1_i64, 77_i64), (2, 88)] {
+            let key = encode_row_key_with_handle(table_id, &RecordHandle::Int(handle));
+            let value =
+                tidb_codec::encode_value(&[Datum::Int(2), Datum::Int(b_value)]).expect("row");
+            store
+                .prewrite(&crate::mvcc_store::PrewriteReq {
+                    mutations: vec![KvrpcMutation {
+                        op: KvrpcOp::Put as i32,
+                        key: key.clone(),
+                        value,
+                        ..KvrpcMutation::default()
+                    }],
+                    primary_lock: key.clone(),
+                    start_version: 10,
+                    ..crate::mvcc_store::PrewriteReq::default()
+                })
+                .expect("prewrites");
+            store.commit(&[key], 10, 11).expect("commits");
+        }
+
+        // The DAG a distsql client sends for `SELECT id, b FROM t`.
+        let scan = tipb::Executor {
+            tp: Some(tipb::ExecType::TypeTableScan as i32),
+            tbl_scan: Some(tipb::TableScan {
+                table_id: Some(table_id),
+                columns: vec![
+                    tipb::ColumnInfo {
+                        column_id: Some(1),
+                        tp: Some(8), // TypeLonglong
+                        pk_handle: Some(true),
+                        ..tipb::ColumnInfo::default()
+                    },
+                    tipb::ColumnInfo {
+                        column_id: Some(2),
+                        tp: Some(8),
+                        ..tipb::ColumnInfo::default()
+                    },
+                ],
+                ..tipb::TableScan::default()
+            }),
+            ..tipb::Executor::default()
+        };
+        let dag = tipb::DagRequest {
+            executors: vec![scan],
+            ..tipb::DagRequest::default()
+        };
+        let mut data = Vec::new();
+        dag.encode(&mut data).expect("encodes");
+        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(table_id);
+        let resp = handle_cop_request(
+            &mut store,
+            &coprocessor::Request {
+                tp: REQ_TYPE_DAG,
+                data,
+                ranges: vec![coprocessor::KeyRange {
+                    start: range_start,
+                    end: range_end,
+                }],
+                start_ts: 20,
+                ..coprocessor::Request::default()
+            },
+        );
+        assert!(resp.other_error.is_empty(), "{}", resp.other_error);
+        assert!(resp.locked.is_none());
+        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("a select response");
+        assert_eq!(
+            select.encode_type,
+            Some(tipb::EncodeType::TypeDefault as i32)
+        );
+        assert_eq!(select.chunks.len(), 1);
+        let rows_data = select.chunks[0].rows_data.as_deref().expect("rows");
+        // Decode the datum stream back: 2 rows x 2 columns.
+        let decoded = tidb_codec::decode(rows_data, 4).expect("four datums");
+        assert_eq!(
+            decoded,
+            vec![Datum::Int(1), Datum::Int(77), Datum::Int(2), Datum::Int(88)]
+        );
+    }
+
+    #[test]
+    fn a_lock_in_the_scanned_range_answers_locked() {
+        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+        let mut store = MvccStore::new();
+        let key = encode_row_key_with_handle(7, &RecordHandle::Int(1));
+        store
+            .prewrite(&crate::mvcc_store::PrewriteReq {
+                mutations: vec![KvrpcMutation {
+                    op: KvrpcOp::Put as i32,
+                    key: key.clone(),
+                    value: b"v".to_vec(),
+                    ..KvrpcMutation::default()
+                }],
+                primary_lock: key,
+                start_version: 5,
+                ..crate::mvcc_store::PrewriteReq::default()
+            })
+            .expect("prewrites");
+        let dag = tipb::DagRequest {
+            executors: vec![tipb::Executor {
+                tp: Some(tipb::ExecType::TypeTableScan as i32),
+                tbl_scan: Some(tipb::TableScan::default()),
+                ..tipb::Executor::default()
+            }],
+            ..tipb::DagRequest::default()
+        };
+        let mut data = Vec::new();
+        dag.encode(&mut data).expect("encodes");
+        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(7);
+        let resp = handle_cop_request(
+            &mut store,
+            &coprocessor::Request {
+                tp: REQ_TYPE_DAG,
+                data,
+                ranges: vec![coprocessor::KeyRange {
+                    start: range_start,
+                    end: range_end,
+                }],
+                start_ts: 9,
+                ..coprocessor::Request::default()
+            },
+        );
+        let locked = resp.locked.expect("the first lock answers the response");
+        assert_eq!(locked.lock_version, 5);
     }
 }
