@@ -295,3 +295,53 @@ fn a_source_without_table_stats_refuses_rather_than_guessing() {
     let error = derive(&mut source).expect_err("a stat-less source refuses");
     assert!(format!("{error:?}").contains("table_stats"));
 }
+
+#[test]
+fn a_pushed_equality_charges_gos_pseudo_rate() {
+    // `deriveStatsByFilter` over an unanalyzed table takes
+    // `pseudoSelectivity` (`selectivity.go:69`): one equality charges
+    // `1/pseudoEqualRate = 1/1000`, so 10000 pseudo rows estimate 10 — the
+    // number real TiDB prints for `a = 7` on an unanalyzed table.
+    let allocator = PlanIdAllocator::new();
+    let mut source = stated_source(&allocator, &[1], 10_000.0, &[(1, 8_000.0)]);
+    let LogicalPlan::DataSource(op) = &mut source else {
+        unreachable!()
+    };
+    op.columns = vec![super::data_source::DataSourceColumn {
+        id: 1,
+        name: "a".to_owned(),
+        is_primary_key: false,
+    }];
+    op.pushed_down_conds = vec![Expression::ScalarFunction(eq_condition_to_constant(1, 7))];
+
+    let (stats, _) = derive(&mut source).expect("an unanalyzed equality derives");
+    assert!(
+        (stats.row_count() - 10.0).abs() < f64::EPSILON,
+        "10000 / pseudoEqualRate, got {}",
+        stats.row_count()
+    );
+}
+
+#[test]
+fn no_conditions_still_answer_the_full_table() {
+    // `Selectivity` with no conditions is 100% (`selectivity.go:61`).
+    let allocator = PlanIdAllocator::new();
+    let mut source = stated_source(&allocator, &[1], 500.0, &[(1, 5.0)]);
+    let (stats, _) = derive(&mut source).expect("derives");
+    assert!((stats.row_count() - 500.0).abs() < f64::EPSILON);
+}
+
+/// `col = const`, the shape `getConstantColumnID` resolves.
+fn eq_condition_to_constant(col: i64, value: i64) -> ScalarFunction {
+    ScalarFunction::new(
+        CiString::new("eq"),
+        FieldType::new(FieldTypeCode::Long),
+        vec![
+            Expression::Column(column(col)),
+            Expression::Constant(tidb_expr::constant::Constant::new(
+                tidb_datatype::Datum::new_int(value),
+                FieldType::new(FieldTypeCode::Long),
+            )),
+        ],
+    )
+}

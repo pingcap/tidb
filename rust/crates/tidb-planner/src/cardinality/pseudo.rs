@@ -477,3 +477,84 @@ pub fn pseudo_selectivity(
     }
     min_factor
 }
+
+// ---------------------------------------------------------------------------
+// The classifier and the `deriveStatsByFilter` assembler (pseudo slice).
+// ---------------------------------------------------------------------------
+
+/// Go `getConstantColumnID` + the `fun.FuncName.L` switch of
+/// `pseudoSelectivity` (`pseudo.go:47-66`): one CNF item classified.
+///
+/// A predicate is [`PseudoPredicate::Resolved`] when it is a scalar function
+/// over exactly one column and one constant, in either order; everything
+/// else is [`PseudoPredicate::Unresolved`] and contributes nothing, exactly
+/// as Go `continue`s before the switch.
+///
+/// `resolve` answers Go's `coll.GetCol(colID)`: the column's lowered name
+/// and unique-key flag, or `None` when the collection has no entry — and the
+/// source charges an equality's rate BEFORE that nil check, which
+/// [`pseudo_selectivity`] reproduces.
+pub fn classify_pseudo_predicate(
+    expr: &tidb_expr::expression::Expression,
+    resolve: &dyn Fn(i64) -> Option<PseudoColumn>,
+) -> PseudoPredicate {
+    use tidb_expr::expression::Expression;
+    let Expression::ScalarFunction(function) = expr else {
+        return PseudoPredicate::Unresolved;
+    };
+    // Go `getConstantColumnID(fun.GetArgs())`: exactly two args, one Column
+    // and one Constant, either order.
+    let column_id = match function.args.as_slice() {
+        [Expression::Column(col), Expression::Constant(_)]
+        | [Expression::Constant(_), Expression::Column(col)] => col.unique_id,
+        _ => return PseudoPredicate::Unresolved,
+    };
+    let kind = match function.func_name.lowercase() {
+        // `ast.EQ`, `ast.NullEQ`, `ast.In` (`pseudo.go:55`).
+        "eq" | "nulleq" | "in" => PseudoFunctionKind::Equality,
+        // `ast.GE, ast.GT, ast.LE, ast.LT` (`pseudo.go:60`), with Go's own
+        // FIXME about the split BETWEEN.
+        "ge" | "gt" | "le" | "lt" => PseudoFunctionKind::Ordering,
+        _ => PseudoFunctionKind::Other,
+    };
+    PseudoPredicate::Resolved {
+        kind,
+        column: resolve(column_id),
+    }
+}
+
+/// Go `deriveStatsByFilter` (`core/stats.go`), the UNANALYZED-table slice:
+/// `Selectivity` over a collection with no column and no index statistics
+/// takes the `pseudoSelectivity` path unconditionally (`selectivity.go:69`),
+/// and the profile is `TableStats.Scale(selectivity)`.
+///
+/// Go's error fallback to `cost.SelectionFactor` is unreachable on this
+/// path — `pseudoSelectivity` cannot fail — and is therefore not modelled.
+/// The histogram-backed slice of `Selectivity` is the statistics handle's
+/// work and stays a named boundary at the caller.
+#[must_use]
+pub fn derive_stats_by_filter_pseudo(
+    table_stats: &crate::stats_info::StatsInfo,
+    conds: &[tidb_expr::expression::Expression],
+    resolve: &dyn Fn(i64) -> Option<PseudoColumn>,
+    indexes: &[PseudoIndex],
+    selectivity_factor: f64,
+    scale_ndv_skew_ratio: f64,
+) -> crate::stats_info::StatsInfo {
+    // `Selectivity`: zero rows or no conditions is 100% (`selectivity.go:61`).
+    let selectivity = if table_stats.row_count() == 0.0 || conds.is_empty() {
+        1.0
+    } else {
+        let predicates: Vec<PseudoPredicate> = conds
+            .iter()
+            .map(|cond| classify_pseudo_predicate(cond, resolve))
+            .collect();
+        pseudo_selectivity(
+            &predicates,
+            indexes,
+            table_stats.row_count() as i64,
+            selectivity_factor,
+        )
+    };
+    table_stats.scale(selectivity, scale_ndv_skew_ratio)
+}

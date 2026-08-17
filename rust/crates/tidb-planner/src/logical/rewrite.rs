@@ -1027,15 +1027,56 @@ impl OwnedRewrite for DeriveStatsFold {
 
         let outcome = match &mut node {
             // -- Overrides that exist in this port -------------------------
-            LogicalPlan::DataSource(op) => StatsOutcome::Done(op.derive_stats().ok_or_else(|| {
+            LogicalPlan::DataSource(op) => match op.table_stats.clone() {
                 // Go `initStats` (`core/stats.go`) always attaches at least
                 // the pseudo table before DeriveStats runs; a source with no
                 // `table_stats` means the builder skipped that step.
-                PlanError::internal(
+                None => StatsOutcome::Done(Err(PlanError::internal(
                     "recursive_derive_stats: DataSource.table_stats is absent; \
                      Go's initStats attaches at least the pseudo table first",
-                )
-            })),
+                ))),
+                Some(table_stats) => {
+                    // Go `deriveStats4DataSource`: `ds.stats =
+                    // deriveStatsByFilter(ds, ds.PushedDownConds, nil)`. With
+                    // no histograms loaded, `Selectivity` takes the
+                    // `pseudoSelectivity` path unconditionally
+                    // (`selectivity.go:69`), which is this tier's only slice.
+                    // The expression columns resolve POSITIONALLY through the
+                    // operator's schema into its column metas, Go's
+                    // schema-to-TblCols alignment.
+                    let schema_ids: Vec<i64> = self_schema
+                        .columns
+                        .iter()
+                        .map(|col| col.unique_id)
+                        .collect();
+                    let resolve = |unique_id: i64| {
+                        let position = schema_ids.iter().position(|id| *id == unique_id)?;
+                        let column = op.columns.get(position)?;
+                        Some(crate::cardinality::pseudo::PseudoColumn {
+                            lower_name: column.name.to_lowercase(),
+                            // boundary: `mysql.HasUniKeyFlag(col.Info.GetFlag())`
+                            // — neither catalog column type carries a
+                            // unique-key flag yet, so the unique shortcut
+                            // never fires from a column. Estimates stay
+                            // HIGHER, the conservative direction.
+                            unique_key_flag: false,
+                        })
+                    };
+                    let stats = crate::cardinality::pseudo::derive_stats_by_filter_pseudo(
+                        &table_stats,
+                        &op.pushed_down_conds,
+                        &resolve,
+                        // boundary: the operator does not yet carry its index
+                        // metas, so `pseudoSelectivity`'s composite-index
+                        // branch never fires; higher estimates, conservative.
+                        &[],
+                        crate::cost_factors::SELECTION_FACTOR,
+                        crate::cardinality::derive_stats::DEF_SCALE_NDV_SKEW_RATIO,
+                    );
+                    op.base.base.set_stats(Some(stats.clone()));
+                    StatsOutcome::Done(Ok((stats, op.all_conds.is_empty())))
+                }
+            },
             LogicalPlan::Selection(op) => StatsOutcome::Done(
                 op.derive_stats(&child_stats, &reloads)
                     .ok_or_else(|| stats_arity("LogicalSelection.DeriveStats")),
