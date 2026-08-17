@@ -28,10 +28,7 @@ func generateProjectedSchema(
 	if err != nil {
 		return "", err
 	}
-	retainedColumns, err := retainedSchemaColumnSet(createTable, projection.selectedColumns)
-	if err != nil {
-		return "", err
-	}
+	retainedColumns := makeColumnSet(projection.schemaColumns)
 
 	changed := false
 	columns := make([]*ast.ColumnDef, 0, len(createTable.Cols))

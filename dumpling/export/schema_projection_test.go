@@ -63,7 +63,7 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			projected:       true,
 		}
 
-		projectedSQL, err := generateProjectedSchema(createSQL, "test", projection, nil)
+		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
 		require.NoError(t, err)
 
 		stmt := parseCreateTableForTest(t, projectedSQL)
@@ -78,7 +78,7 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			projected:       true,
 		}
 
-		_, err := generateProjectedSchema(createSQL, "test", projection, nil)
+		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
 		require.ErrorContains(t, err, "partition definition references removed column `a`")
 	})
 
@@ -89,7 +89,7 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			projected:       true,
 		}
 
-		projectedSQL, err := generateProjectedSchema(createSQL, "test", projection, nil)
+		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
 		require.NoError(t, err)
 		require.Contains(t, projectedSQL, "PARTITION BY HASH (`a`) PARTITIONS 4")
 	})
@@ -102,7 +102,7 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			projected:       true,
 		}
 
-		_, err := generateProjectedSchema(createSQL, "test", projection, nil)
+		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
 		require.ErrorContains(t, err, "TTL definition references removed column `created_at`")
 	})
 
@@ -113,7 +113,7 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			projected:       true,
 		}
 
-		_, err := generateProjectedSchema(createSQL, "test", projection, nil)
+		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
 		require.ErrorContains(t, err, "column `b` expression references a removed column")
 	})
 
@@ -124,7 +124,7 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			projected:       true,
 		}
 
-		_, err := generateProjectedSchema(createSQL, "test", projection, nil)
+		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
 		require.ErrorContains(t, err, "column `a` loses the index required by its automatic ID option")
 	})
 
@@ -144,7 +144,7 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			},
 		}
 
-		_, err := generateProjectedSchema(createSQL, "test", projection, projections)
+		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, projections)
 		require.ErrorContains(t, err, "foreign key references removed column `test`.`parent`.`secret`")
 	})
 
@@ -164,7 +164,7 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			},
 		}
 
-		projectedSQL, err := generateProjectedSchema(createSQL, "test", projection, projections)
+		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, projections)
 		require.NoError(t, err)
 		require.Len(t, parseCreateTableForTest(t, projectedSQL).Constraints, 1)
 	})
@@ -176,7 +176,7 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			projected:       true,
 		}
 
-		_, err := generateProjectedSchema(createSQL, "test", projection, nil)
+		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
 		require.ErrorContains(t, err, "selected column `missing` is missing from CREATE TABLE")
 	})
 
@@ -184,10 +184,26 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		createSQL := "CREATE TABLE `t` (`a` INT, `b` INT GENERATED ALWAYS AS (`a` + 1) VIRTUAL)"
 		projection := columnProjection{selectedColumns: []string{"a"}}
 
-		projectedSQL, err := generateProjectedSchema(createSQL, "test", projection, nil)
+		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
 		require.NoError(t, err)
 		require.Equal(t, createSQL, projectedSQL)
 	})
+}
+
+func generateProjectedSchemaForTest(
+	t *testing.T,
+	originSQL string,
+	database string,
+	projection columnProjection,
+	projections map[tableName]columnProjection,
+) (string, error) {
+	t.Helper()
+	var err error
+	projection.schemaColumns, err = resolveProjectedSchemaColumns(originSQL, projection)
+	if err != nil {
+		return "", err
+	}
+	return generateProjectedSchema(originSQL, database, projection, projections)
 }
 
 func parseCreateTableForTest(t *testing.T, sql string) *ast.CreateTableStmt {
