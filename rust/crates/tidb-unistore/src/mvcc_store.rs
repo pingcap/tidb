@@ -53,7 +53,7 @@
 
 use std::collections::BTreeMap;
 
-use tidb_proto::{KvrpcLockInfo, KvrpcMutation, KvrpcOp};
+use tidb_proto::{KvrpcLockInfo, KvrpcMutation, KvrpcOp, KvrpcTxnAction};
 
 use crate::lockstore::MemStore;
 use crate::mvcc::{decode_lock, encode_extra_txn_status_key, DbUserMeta, Lock, LockHdr};
@@ -134,6 +134,21 @@ pub enum KvError {
     AlreadyCommitted(u64),
     /// `kverrors.BuildLockErr(key, lock)`: the blocking lock, kvrpcpb-shaped.
     Locked(Box<KvrpcLockInfo>),
+    /// `kverrors.ErrPrimaryMismatch`: the checked key carries a lock whose
+    /// primary is a DIFFERENT key.
+    PrimaryMismatch {
+        /// `Key`.
+        key: Vec<u8>,
+        /// `Lock`, kvrpcpb-shaped.
+        lock: Box<KvrpcLockInfo>,
+    },
+    /// `kverrors.ErrTxnNotFound`.
+    TxnNotFound {
+        /// `PrimaryKey`.
+        primary_key: Vec<u8>,
+        /// `StartTS`.
+        start_ts: u64,
+    },
     /// A refusal: the named Go symbol is a later course of this port.
     Unported(&'static str),
 }
@@ -714,6 +729,176 @@ impl MvccStore {
     }
 }
 
+/// Go `TxnStatus` (`mvcc.go`): what `CheckTxnStatus` learned about a
+/// transaction.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TxnStatus {
+    /// `commitTS`: non-zero means committed at that ts.
+    pub commit_ts: u64,
+    /// `action`: what the check DID about the lock.
+    pub action: KvrpcTxnAction,
+    /// `lockInfo`: the still-live lock, when one is.
+    pub lock_info: Option<Box<KvrpcLockInfo>>,
+}
+
+/// The `CheckTxnStatusRequest` fields Go reads.
+#[derive(Clone, Debug, Default)]
+pub struct CheckTxnStatusReq {
+    /// `PrimaryKey`.
+    pub primary_key: Vec<u8>,
+    /// `LockTs`.
+    pub lock_ts: u64,
+    /// `CallerStartTs`.
+    pub caller_start_ts: u64,
+    /// `CurrentTs`.
+    pub current_ts: u64,
+    /// `RollbackIfNotExist`.
+    pub rollback_if_not_exist: bool,
+    /// `ForceSyncCommit`.
+    pub force_sync_commit: bool,
+    /// `ResolvingPessimisticLock`.
+    pub resolving_pessimistic_lock: bool,
+}
+
+/// Go `oracle.ExtractPhysical`: the millisecond half of a TSO.
+const fn extract_physical(ts: u64) -> u64 {
+    ts >> 18
+}
+
+/// Go `maxSystemTS` (`mvcc.go`).
+const MAX_SYSTEM_TS: u64 = u64::MAX;
+
+impl MvccStore {
+    /// Go `MVCCStore.CheckTxnStatus` (`mvcc.go:497`): what a reader blocked
+    /// by a lock asks about the lock's PRIMARY — alive, expired, committed,
+    /// or gone — and what the store does about each answer.
+    pub fn check_txn_status(&mut self, req: &CheckTxnStatusReq) -> Result<TxnStatus, KvError> {
+        let buf = self.lock_bytes(&req.primary_key);
+        if !buf.is_empty() {
+            let mut lock = decode_lock(&buf);
+            if lock.hdr.start_ts == req.lock_ts {
+                if req.primary_key != lock.primary {
+                    return Err(KvError::PrimaryMismatch {
+                        key: req.primary_key.clone(),
+                        lock: Box::new(lock.to_lock_info(req.primary_key.clone())),
+                    });
+                }
+                // An async-commit lock is never rolled back or pushed here.
+                // (Unreachable until the async course lands, ported whole.)
+                if lock.hdr.use_async_commit && !req.force_sync_commit {
+                    return Ok(TxnStatus {
+                        commit_ts: 0,
+                        action: KvrpcTxnAction::NoAction,
+                        lock_info: Some(Box::new(lock.to_lock_info(req.primary_key.clone()))),
+                    });
+                }
+                // TTL, in TSO PHYSICAL milliseconds — not raw ts arithmetic.
+                if extract_physical(lock.hdr.start_ts) + u64::from(lock.hdr.ttl)
+                    < extract_physical(req.current_ts)
+                {
+                    if req.resolving_pessimistic_lock
+                        && lock.hdr.op == KvrpcOp::PessimisticLock as i32 as u8
+                    {
+                        // Go `batch.PessimisticRollback` (`write.go:284`):
+                        // the lock dies, nothing else is written.
+                        self.lock_store_delete(&req.primary_key);
+                        return Ok(TxnStatus {
+                            commit_ts: 0,
+                            action: KvrpcTxnAction::TtlExpirePessimisticRollback,
+                            lock_info: None,
+                        });
+                    }
+                    // Go `batch.Rollback(key, true)`.
+                    let status_key = encode_extra_txn_status_key(&req.primary_key, req.lock_ts);
+                    self.engine.set(
+                        &status_key,
+                        req.lock_ts,
+                        &[],
+                        DbUserMeta::new(req.lock_ts, 0),
+                    );
+                    self.lock_store_delete(&req.primary_key);
+                    return Ok(TxnStatus {
+                        commit_ts: 0,
+                        action: KvrpcTxnAction::TtlExpireRollback,
+                        lock_info: None,
+                    });
+                }
+                // Alive: maybe push the min commit ts forward.
+                let mut action = KvrpcTxnAction::NoAction;
+                if req.caller_start_ts == MAX_SYSTEM_TS {
+                    action = KvrpcTxnAction::MinCommitTsPushed;
+                } else if lock.hdr.min_commit_ts > 0 && !lock.hdr.use_async_commit {
+                    action = KvrpcTxnAction::MinCommitTsPushed;
+                    // "We *must* guarantee the invariance
+                    // lock.minCommitTS >= callerStartTS + 1".
+                    if lock.hdr.min_commit_ts < req.caller_start_ts + 1 {
+                        lock.hdr.min_commit_ts =
+                            std::cmp::max(req.caller_start_ts + 1, req.current_ts);
+                        // Go persists through `batch.PessimisticLock`, which
+                        // is a lock-store overwrite (`write.go:280`).
+                        self.lock_store_put(&req.primary_key, &lock.marshal_binary());
+                    }
+                }
+                return Ok(TxnStatus {
+                    commit_ts: 0,
+                    action,
+                    lock_info: Some(Box::new(lock.to_lock_info(req.primary_key.clone()))),
+                });
+            }
+        }
+        // No lock of ours: committed, rolled back, op-lock committed, or gone.
+        if let Some(commit_ts) = self.committed_version_of(&req.primary_key, req.lock_ts) {
+            return Ok(TxnStatus {
+                commit_ts,
+                action: KvrpcTxnAction::NoAction,
+                lock_info: None,
+            });
+        }
+        let status = self.check_extra_txn_status(&req.primary_key, req.lock_ts);
+        if status.is_rollback {
+            return Ok(TxnStatus {
+                commit_ts: 0,
+                action: KvrpcTxnAction::NoAction,
+                lock_info: None,
+            });
+        }
+        if status.is_op_lock_committed() {
+            return Ok(TxnStatus {
+                commit_ts: status.commit_ts,
+                action: KvrpcTxnAction::NoAction,
+                lock_info: None,
+            });
+        }
+        if req.rollback_if_not_exist {
+            if req.resolving_pessimistic_lock {
+                return Ok(TxnStatus {
+                    commit_ts: 0,
+                    action: KvrpcTxnAction::LockNotExistDoNothing,
+                    lock_info: None,
+                });
+            }
+            // Go `batch.Rollback(key, false)`: the tombstone that makes a
+            // late prewrite refuse, without a lock to delete.
+            let status_key = encode_extra_txn_status_key(&req.primary_key, req.lock_ts);
+            self.engine.set(
+                &status_key,
+                req.lock_ts,
+                &[],
+                DbUserMeta::new(req.lock_ts, 0),
+            );
+            return Ok(TxnStatus {
+                commit_ts: 0,
+                action: KvrpcTxnAction::LockNotExistRollback,
+                lock_info: None,
+            });
+        }
+        Err(KvError::TxnNotFound {
+            primary_key: req.primary_key.clone(),
+            start_ts: req.lock_ts,
+        })
+    }
+}
+
 /// Go `extraTxnStatus`.
 #[derive(Clone, Copy, Debug, Default)]
 struct ExtraTxnStatus {
@@ -1185,5 +1370,175 @@ mod tests {
         assert_eq!(pairs[0].value, b"v");
         assert_eq!(pairs[1].key, b"b");
         assert!(pairs[1].error.is_some());
+    }
+
+    #[test]
+    fn test_check_txn_status() {
+        // TRANSCREATED from Go `TestCheckTxnStatus` (`mvcc_test.go:619`),
+        // the optimistic body — the mismatching-primary tail requires a
+        // pessimistic lock and rides with that course.
+        let mut store = MvccStore::new();
+        let pk = b"tpk".as_slice();
+        let mut start_ts = 1_u64;
+        let caller_start_ts = 3_u64;
+        let mut current_ts = 5_u64;
+        let check = |store: &mut MvccStore, lock_ts, caller, current| {
+            store
+                .check_txn_status(&CheckTxnStatusReq {
+                    primary_key: pk.to_vec(),
+                    lock_ts,
+                    caller_start_ts: caller,
+                    current_ts: current,
+                    rollback_if_not_exist: true,
+                    ..CheckTxnStatusReq::default()
+                })
+                .expect("checks")
+        };
+        let ttl_of = |status: &TxnStatus| status.lock_info.as_ref().map_or(0, |l| l.lock_ttl);
+
+        // Try to check a not exist thing.
+        let status = check(&mut store, start_ts, caller_start_ts, current_ts);
+        assert_eq!(ttl_of(&status), 0);
+        assert_eq!(status.commit_ts, 0);
+        assert_eq!(status.action, KvrpcTxnAction::LockNotExistRollback);
+
+        // Using same startTs, prewrite fails: checkTxnStatus rollbacked it.
+        let (val, lock_ttl, min_commit_ts) = (b"val".as_slice(), 100_u64, 20_u64);
+        let err = store
+            .prewrite(&PrewriteReq {
+                mutations: vec![put(pk, val)],
+                primary_lock: pk.to_vec(),
+                start_version: start_ts,
+                lock_ttl,
+                min_commit_ts,
+                ..PrewriteReq::default()
+            })
+            .expect_err("rollbacked");
+        assert_eq!(err, KvError::AlreadyRollback);
+
+        // Prewrite a large txn at start ts 2.
+        start_ts = 2;
+        store
+            .prewrite(&PrewriteReq {
+                mutations: vec![put(pk, val)],
+                primary_lock: pk.to_vec(),
+                start_version: start_ts,
+                lock_ttl,
+                min_commit_ts,
+                ..PrewriteReq::default()
+            })
+            .expect("prewrites");
+        let status = check(&mut store, start_ts, caller_start_ts, current_ts);
+        assert_eq!(ttl_of(&status), lock_ttl);
+        assert_eq!(status.commit_ts, 0);
+        assert_eq!(status.action, KvrpcTxnAction::MinCommitTsPushed);
+
+        // caller 25, current 25: minCommitTs 20 -> 26 (callerStartTs + 1).
+        let new_caller_ts = 25_u64;
+        let status = check(&mut store, start_ts, new_caller_ts, new_caller_ts);
+        assert_eq!(ttl_of(&status), lock_ttl);
+        assert_eq!(status.action, KvrpcTxnAction::MinCommitTsPushed);
+        let lock = decode_lock(&store.lock_bytes(pk));
+        assert_eq!(lock.hdr.start_ts, start_ts);
+        assert_eq!(u64::from(lock.hdr.ttl), lock_ttl);
+        assert_eq!(lock.hdr.min_commit_ts, new_caller_ts + 1);
+
+        // caller 25 again: 25 < 26 already holds, no update.
+        let status = check(&mut store, start_ts, new_caller_ts, new_caller_ts);
+        assert_eq!(status.action, KvrpcTxnAction::MinCommitTsPushed);
+        assert_eq!(
+            decode_lock(&store.lock_bytes(pk)).hdr.min_commit_ts,
+            new_caller_ts + 1
+        );
+
+        // current 25 < minCommitTs 26 < caller 35: pushed to 36.
+        current_ts = 25;
+        let new_caller_ts = 35_u64;
+        let status = check(&mut store, start_ts, new_caller_ts, current_ts);
+        assert_eq!(status.action, KvrpcTxnAction::MinCommitTsPushed);
+        assert_eq!(
+            decode_lock(&store.lock_bytes(pk)).hdr.min_commit_ts,
+            new_caller_ts + 1
+        );
+
+        // current 40 has no effect: caller 35 < minCommitTs 36 already.
+        current_ts = 40;
+        let status = check(&mut store, start_ts, new_caller_ts, current_ts);
+        assert_eq!(status.action, KvrpcTxnAction::MinCommitTsPushed);
+        assert_eq!(
+            decode_lock(&store.lock_bytes(pk)).hdr.min_commit_ts,
+            new_caller_ts + 1
+        );
+
+        // Committing below minCommitTs 36 errors; at 41 it lands.
+        assert!(store.commit(&[pk.to_vec()], start_ts, 35).is_err());
+        store.commit(&[pk.to_vec()], start_ts, 41).expect("commits");
+
+        // The committed answer.
+        let status = check(&mut store, start_ts, 42, 42);
+        assert_eq!(ttl_of(&status), 0);
+        assert_eq!(status.commit_ts, 41);
+        assert_eq!(status.action, KvrpcTxnAction::NoAction);
+    }
+
+    #[test]
+    fn an_expired_lock_is_rolled_back_by_the_check() {
+        // The TTL arm compares PHYSICAL milliseconds (ts >> 18), not raw
+        // timestamps: a raw-ts comparison would expire nothing here.
+        let mut store = MvccStore::new();
+        let pk = b"pk".as_slice();
+        let start_ts = 5_u64 << 18;
+        store
+            .prewrite(&PrewriteReq {
+                mutations: vec![put(pk, b"v")],
+                primary_lock: pk.to_vec(),
+                start_version: start_ts,
+                lock_ttl: 10,
+                ..PrewriteReq::default()
+            })
+            .expect("prewrites");
+        // physical(start)=5, ttl=10; current physical 20 > 15: expired.
+        let status = store
+            .check_txn_status(&CheckTxnStatusReq {
+                primary_key: pk.to_vec(),
+                lock_ts: start_ts,
+                current_ts: 20 << 18,
+                rollback_if_not_exist: true,
+                ..CheckTxnStatusReq::default()
+            })
+            .expect("checks");
+        assert_eq!(status.action, KvrpcTxnAction::TtlExpireRollback);
+        assert!(store.lock_bytes(pk).is_empty(), "the lock died");
+        // And the rollback record now refuses the transaction forever.
+        assert_eq!(
+            store
+                .prewrite(&PrewriteReq {
+                    mutations: vec![put(pk, b"v")],
+                    primary_lock: pk.to_vec(),
+                    start_version: start_ts,
+                    ..PrewriteReq::default()
+                })
+                .expect_err("refused"),
+            KvError::AlreadyRollback
+        );
+    }
+
+    #[test]
+    fn check_without_rollback_flag_is_txn_not_found() {
+        let mut store = MvccStore::new();
+        let err = store
+            .check_txn_status(&CheckTxnStatusReq {
+                primary_key: b"nothing".to_vec(),
+                lock_ts: 9,
+                ..CheckTxnStatusReq::default()
+            })
+            .expect_err("not found");
+        assert_eq!(
+            err,
+            KvError::TxnNotFound {
+                primary_key: b"nothing".to_vec(),
+                start_ts: 9,
+            }
+        );
     }
 }
