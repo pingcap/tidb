@@ -13,7 +13,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 )
 
-func projectTableSchema(
+func generateProjectedSchema(
 	originSQL string,
 	database string,
 	projection columnProjection,
@@ -87,7 +87,7 @@ func projectTableSchema(
 	return buffer.String(), nil
 }
 
-func projectedTableSchemaColumns(originSQL string, projection columnProjection) ([]string, error) {
+func resolveProjectedSchemaColumns(originSQL string, projection columnProjection) ([]string, error) {
 	createTable, err := parseCreateTableForProjection(originSQL)
 	if err != nil {
 		return nil, err
