@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestProjectTableSchema(t *testing.T) {
+func TestGenerateProjectedSchema(t *testing.T) {
 	t.Run("schema is prepared before table metadata", func(t *testing.T) {
 		tctx, mock, baseConn := newMockDumpConn(t)
 		conf := DefaultConfig()
@@ -63,7 +63,7 @@ func TestProjectTableSchema(t *testing.T) {
 			projected:       true,
 		}
 
-		projectedSQL, err := projectTableSchema(createSQL, "test", projection, nil)
+		projectedSQL, err := generateProjectedSchema(createSQL, "test", projection, nil)
 		require.NoError(t, err)
 
 		stmt := parseCreateTableForTest(t, projectedSQL)
@@ -78,7 +78,7 @@ func TestProjectTableSchema(t *testing.T) {
 			projected:       true,
 		}
 
-		_, err := projectTableSchema(createSQL, "test", projection, nil)
+		_, err := generateProjectedSchema(createSQL, "test", projection, nil)
 		require.ErrorContains(t, err, "partition definition references removed column `a`")
 	})
 
@@ -89,7 +89,7 @@ func TestProjectTableSchema(t *testing.T) {
 			projected:       true,
 		}
 
-		projectedSQL, err := projectTableSchema(createSQL, "test", projection, nil)
+		projectedSQL, err := generateProjectedSchema(createSQL, "test", projection, nil)
 		require.NoError(t, err)
 		require.Contains(t, projectedSQL, "PARTITION BY HASH (`a`) PARTITIONS 4")
 	})
@@ -102,7 +102,7 @@ func TestProjectTableSchema(t *testing.T) {
 			projected:       true,
 		}
 
-		_, err := projectTableSchema(createSQL, "test", projection, nil)
+		_, err := generateProjectedSchema(createSQL, "test", projection, nil)
 		require.ErrorContains(t, err, "TTL definition references removed column `created_at`")
 	})
 
@@ -113,7 +113,7 @@ func TestProjectTableSchema(t *testing.T) {
 			projected:       true,
 		}
 
-		_, err := projectTableSchema(createSQL, "test", projection, nil)
+		_, err := generateProjectedSchema(createSQL, "test", projection, nil)
 		require.ErrorContains(t, err, "column `b` expression references a removed column")
 	})
 
@@ -124,7 +124,7 @@ func TestProjectTableSchema(t *testing.T) {
 			projected:       true,
 		}
 
-		_, err := projectTableSchema(createSQL, "test", projection, nil)
+		_, err := generateProjectedSchema(createSQL, "test", projection, nil)
 		require.ErrorContains(t, err, "column `a` loses the index required by its automatic ID option")
 	})
 
@@ -144,7 +144,7 @@ func TestProjectTableSchema(t *testing.T) {
 			},
 		}
 
-		_, err := projectTableSchema(createSQL, "test", projection, projections)
+		_, err := generateProjectedSchema(createSQL, "test", projection, projections)
 		require.ErrorContains(t, err, "foreign key references removed column `test`.`parent`.`secret`")
 	})
 
@@ -164,7 +164,7 @@ func TestProjectTableSchema(t *testing.T) {
 			},
 		}
 
-		projectedSQL, err := projectTableSchema(createSQL, "test", projection, projections)
+		projectedSQL, err := generateProjectedSchema(createSQL, "test", projection, projections)
 		require.NoError(t, err)
 		require.Len(t, parseCreateTableForTest(t, projectedSQL).Constraints, 1)
 	})
@@ -176,7 +176,7 @@ func TestProjectTableSchema(t *testing.T) {
 			projected:       true,
 		}
 
-		_, err := projectTableSchema(createSQL, "test", projection, nil)
+		_, err := generateProjectedSchema(createSQL, "test", projection, nil)
 		require.ErrorContains(t, err, "selected column `missing` is missing from CREATE TABLE")
 	})
 
@@ -184,7 +184,7 @@ func TestProjectTableSchema(t *testing.T) {
 		createSQL := "CREATE TABLE `t` (`a` INT, `b` INT GENERATED ALWAYS AS (`a` + 1) VIRTUAL)"
 		projection := columnProjection{selectedColumns: []string{"a"}}
 
-		projectedSQL, err := projectTableSchema(createSQL, "test", projection, nil)
+		projectedSQL, err := generateProjectedSchema(createSQL, "test", projection, nil)
 		require.NoError(t, err)
 		require.Equal(t, createSQL, projectedSQL)
 	})
