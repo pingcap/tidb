@@ -19,9 +19,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -121,65 +123,14 @@ func TestStmtFiles(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
 
-	func() {
-		files, err := newStmtFiles(context.Background(), nil)
-		require.NoError(t, err)
-		defer files.close()
-		require.Len(t, files.files, 2)
-		require.Equal(t, filename1, files.files[0].file.Name())
-		require.Equal(t, filename2, files.files[1].file.Name())
-	}()
-
-	func() {
-		files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
-			{Begin: t1.Unix() - 10, End: t1.Unix() - 9},
-		})
-		require.NoError(t, err)
-		defer files.close()
-		require.Len(t, files.files, 2)
-		require.Equal(t, filename1, files.files[0].file.Name())
-		require.Equal(t, filename2, files.files[1].file.Name())
-	}()
-
-	func() {
-		files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
-			{Begin: 0, End: t1.Unix() - 10},
-		})
-		require.NoError(t, err)
-		defer files.close()
-		require.Len(t, files.files, 2)
-		require.Equal(t, filename1, files.files[0].file.Name())
-		require.Equal(t, filename2, files.files[1].file.Name())
-	}()
-
-	func() {
-		files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
-			{Begin: 0, End: t1.Unix() - 11},
-		})
-		require.NoError(t, err)
-		defer files.close()
-		require.Len(t, files.files, 1)
-		require.Equal(t, filename1, files.files[0].file.Name())
-	}()
-
-	func() {
-		files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
-			{Begin: 0, End: 1},
-		})
-		require.NoError(t, err)
-		defer files.close()
-		require.Empty(t, files.files)
-	}()
-
-	func() {
-		files, err := newStmtFiles(context.Background(), []*StmtTimeRange{
-			{Begin: t1.Unix() + 1, End: 0},
-		})
-		require.NoError(t, err)
-		defer files.close()
-		require.Len(t, files.files, 1)
-		require.Equal(t, filename2, files.files[0].file.Name())
-	}()
+	files, err := newStmtFiles(context.Background())
+	require.NoError(t, err)
+	require.Len(t, files.files, 2)
+	require.Equal(t, filename1, files.files[0].path)
+	require.Equal(t, filename2, files.files[1].path)
+	for _, file := range files.files {
+		require.Nil(t, file.file)
+	}
 }
 
 func TestStmtChecker(t *testing.T) {
@@ -407,6 +358,57 @@ func TestHistoryReader(t *testing.T) {
 			require.Equal(t, len(columns), len(row))
 		}
 	}()
+
+	t.Run("bounds open file descriptors", func(t *testing.T) {
+		restore := config.RestoreFunc()
+		defer restore()
+
+		dir := t.TempDir()
+		filename := filepath.Join(dir, "tidb-statements.log")
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Instance.StmtSummaryFilename = filename
+		})
+
+		const fileCount = 32
+		base := time.Date(2022, 12, 27, 0, 0, 0, 0, time.Local)
+		for i := range fileCount {
+			begin := base.Add(time.Duration(i) * 2 * time.Hour)
+			end := begin.Add(10 * time.Minute)
+			path := filepath.Join(dir, fmt.Sprintf("tidb-statements-%s.log", end.Format(logFileTimeFormat)))
+			content := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"digest%d\",\"exec_count\":1}\n", begin.Unix(), end.Unix(), i)
+			require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+		}
+
+		t.Run("matching files", func(t *testing.T) {
+			before, canCount := countOpenFileDescriptors()
+			reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
+				{Begin: base.Unix(), End: 0},
+			}, 2)
+			require.NoError(t, err)
+			for _, file := range reader.files.files {
+				require.Nil(t, file.file)
+			}
+			if canCount {
+				after, _ := countOpenFileDescriptors()
+				require.LessOrEqual(t, after-before, 4)
+			}
+			require.NoError(t, reader.Close())
+		})
+
+		t.Run("rejected files", func(t *testing.T) {
+			before, canCount := countOpenFileDescriptors()
+			reader, err := NewHistoryReader(context.Background(), columns, "", timeLocation, nil, false, nil, []*StmtTimeRange{
+				{Begin: 0, End: base.Add(-time.Minute).Unix()},
+			}, 2)
+			require.NoError(t, err)
+			require.Empty(t, readAllRows(t, reader))
+			require.NoError(t, reader.Close())
+			if canCount {
+				after, _ := countOpenFileDescriptors()
+				require.LessOrEqual(t, after-before, 4)
+			}
+		})
+	})
 }
 
 func TestHistoryReaderInvalidLine(t *testing.T) {
@@ -457,4 +459,12 @@ func readAllRows(t *testing.T, reader *HistoryReader) [][]types.Datum {
 		results = append(results, rows...)
 	}
 	return results
+}
+
+func countOpenFileDescriptors() (int, bool) {
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return 0, false
+	}
+	return len(entries), true
 }

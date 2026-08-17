@@ -189,7 +189,7 @@ func NewHistoryReader(
 	timeRanges []*StmtTimeRange,
 	concurrent int,
 ) (*HistoryReader, error) {
-	files, err := newStmtFiles(ctx, timeRanges)
+	files, err := newStmtFiles(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +258,6 @@ func (r *HistoryReader) Rows() ([][]types.Datum, error) {
 
 // Close ends reading and closes all files.
 func (r *HistoryReader) Close() error {
-	r.files.close()
 	if r.cancel != nil {
 		r.cancel()
 	}
@@ -315,7 +314,8 @@ func (r *HistoryReader) scheduleTasks(
 	}
 
 	concurrent := r.concurrent
-	filesCh := make(chan *os.File, concurrent)
+	// Keep this channel unbuffered so the manager cannot accumulate open file handles.
+	filesCh := make(chan *stmtFile)
 	linesCh := make(chan [][]byte, concurrent)
 	innerErrCh := make(chan error, concurrent)
 
@@ -355,10 +355,23 @@ func (r *HistoryReader) scheduleTasks(
 		defer mgrWg.Done()
 
 		func() {
-			for _, file := range r.files.files {
+			for _, candidate := range r.files.files {
+				if isCtxDone(ctx) {
+					return
+				}
+				file, err := openStmtFile(candidate.path)
+				if err != nil {
+					logutil.BgLogger().Warn("failed to open or parse statements file", zap.Error(err), zap.String("path", candidate.path))
+					continue
+				}
+				if !r.checker.isTimeValid(file.begin, file.end) {
+					_ = file.close()
+					continue
+				}
 				select {
-				case filesCh <- file.file:
+				case filesCh <- file:
 				case <-ctx.Done():
+					_ = file.close()
 					return
 				}
 			}
@@ -454,6 +467,7 @@ type stmtPersistedRecord struct {
 }
 
 type stmtFile struct {
+	path  string
 	file  *os.File
 	begin int64
 	end   int64
@@ -478,6 +492,7 @@ func openStmtFile(path string) (*stmtFile, error) {
 	}
 
 	return &stmtFile{
+		path:  path,
 		file:  file,
 		begin: begin,
 		end:   end,
@@ -537,7 +552,9 @@ func parseEndTs(file *os.File) (int64, error) {
 
 func (f *stmtFile) close() error {
 	if f.file != nil {
-		return f.file.Close()
+		err := f.file.Close()
+		f.file = nil
+		return err
 	}
 	return nil
 }
@@ -546,10 +563,11 @@ type stmtFiles struct {
 	files []*stmtFile
 }
 
-func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles, error) {
+func newStmtFiles(ctx context.Context) (*stmtFiles, error) {
 	filename := config.GetGlobalConfig().Instance.StmtSummaryFilename
 	ext := filepath.Ext(filename)
 	prefix := filename[:len(filename)-len(ext)]
+	// Defer opening files until a scan worker is ready to consume them.
 	var files []*stmtFile
 	walkFn := func(path string, info os.DirEntry) error {
 		if info.IsDir() {
@@ -561,21 +579,7 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 		if isCtxDone(ctx) {
 			return ctx.Err()
 		}
-		file, err := openStmtFile(path)
-		if err != nil {
-			logutil.BgLogger().Warn("failed to open or parse statements file", zap.Error(err), zap.String("path", path))
-			return nil
-		}
-		if len(timeRanges) == 0 {
-			files = append(files, file)
-			return nil
-		}
-		for _, tr := range timeRanges {
-			if timeRangeOverlap(file.begin, file.end, tr.Begin, tr.End) {
-				files = append(files, file)
-				return nil
-			}
-		}
+		files = append(files, &stmtFile{path: path})
 		return nil
 	}
 
@@ -586,22 +590,13 @@ func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles,
 	}
 	for _, entry := range entries {
 		if err := walkFn(filepath.Join(dir, entry.Name()), entry); err != nil {
-			for _, f := range files {
-				_ = f.close()
-			}
 			return nil, err
 		}
 	}
 	slices.SortFunc(files, func(i, j *stmtFile) int {
-		return cmp.Compare(i.begin, j.begin)
+		return cmp.Compare(i.path, j.path)
 	})
 	return &stmtFiles{files: files}, nil
-}
-
-func (f *stmtFiles) close() {
-	for _, f := range f.files {
-		_ = f.close()
-	}
 }
 
 type stmtScanWorker struct {
@@ -611,7 +606,7 @@ type stmtScanWorker struct {
 }
 
 func (w *stmtScanWorker) run(
-	fileCh <-chan *os.File,
+	fileCh <-chan *stmtFile,
 	linesCh chan<- [][]byte,
 	errCh chan<- error,
 ) {
@@ -629,15 +624,16 @@ func (w *stmtScanWorker) run(
 }
 
 func (w *stmtScanWorker) handleFile(
-	file *os.File,
+	file *stmtFile,
 	linesCh chan<- [][]byte,
 	errCh chan<- error,
 ) {
-	if file == nil {
+	if file == nil || file.file == nil {
 		return
 	}
+	defer func() { _ = file.close() }()
 
-	reader := bufio.NewReader(file)
+	reader := bufio.NewReader(file.file)
 	for {
 		if isCtxDone(w.ctx) {
 			return

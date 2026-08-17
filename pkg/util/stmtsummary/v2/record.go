@@ -179,13 +179,18 @@ type StmtRecord struct {
 // statistics of the StmtExecInfo into the StmtRecord.
 func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 	// Use "," to separate table names to support FIND_IN_SET.
-	tableNames := make([]string, 0, len(info.StmtCtx.Tables))
+	var tableNames strings.Builder
 	for _, value := range info.StmtCtx.Tables {
 		// In `create database` statement, DB name is not empty but table name is empty.
 		if len(value.Table) == 0 {
 			continue
 		}
-		tableNames = append(tableNames, strings.ToLower(value.DB)+"."+strings.ToLower(value.Table))
+		if tableNames.Len() > 0 {
+			tableNames.WriteByte(',')
+		}
+		tableNames.WriteString(strings.ToLower(value.DB))
+		tableNames.WriteByte('.')
+		tableNames.WriteString(strings.ToLower(value.Table))
 	}
 	planDigest := info.PlanDigest
 	if len(planDigest) == 0 {
@@ -209,7 +214,7 @@ func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 		PlanDigest:    planDigest,
 		StmtType:      info.StmtCtx.StmtType,
 		NormalizedSQL: formatSQL(info.NormalizedSQL),
-		TableNames:    strings.Join(tableNames, ","),
+		TableNames:    tableNames.String(),
 		IsInternal:    info.IsInternal,
 		BindingSQL:    bindingSQL,
 		BindingDigest: bindingDigest,
