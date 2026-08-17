@@ -84,6 +84,7 @@ pub mod cte_first_error;
 pub mod cume_dist;
 pub mod dag_request;
 pub mod ddl_job_comments;
+pub mod ddl_job_merge;
 pub mod delete_rows_col_multiply;
 pub mod distsql_recordset;
 pub mod domainutil;
