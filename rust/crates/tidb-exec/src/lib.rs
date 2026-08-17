@@ -210,6 +210,7 @@ pub mod sysvar_error;
 pub mod sysvar_scope;
 pub mod sysvar_type;
 pub mod table_info_build;
+pub mod table_rule_selector;
 pub mod tagged_ptr;
 pub mod tiflash_stats;
 pub mod topn_slow_query;
