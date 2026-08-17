@@ -44,6 +44,13 @@ impl HandleColumnIdentity {
         }
     }
 
+    /// Go `Column.UniqueID`, which is how a handle identity is matched back to
+    /// the [`Column`](tidb_expr::column::Column) a plan's schema carries.
+    #[must_use]
+    pub const fn unique_id(&self) -> i64 {
+        self.unique_id
+    }
+
     /// Creates a column identity with normalized type metadata.
     #[must_use]
     pub const fn with_type_fingerprint(
@@ -100,6 +107,17 @@ impl CommonHandleIdentity {
         }
     }
 
+    /// The unique ids of this common handle's columns, in handle order.
+    #[must_use]
+    pub fn column_unique_ids(&self) -> Vec<i64> {
+        self.columns.as_ref().map_or_else(Vec::new, |columns| {
+            columns
+                .iter()
+                .map(HandleColumnIdentity::unique_id)
+                .collect()
+        })
+    }
+
     /// Computes source CommonHandleCols Hash64 field order.
     #[must_use]
     pub fn hash64(&self) -> u64 {
@@ -134,6 +152,16 @@ impl IntHandleIdentity {
     #[must_use]
     pub fn new(column: Option<HandleColumnIdentity>) -> Self {
         Self { column }
+    }
+
+    /// The unique id of this int handle's column, or nothing when it has none.
+    #[must_use]
+    pub fn column_unique_ids(&self) -> Vec<i64> {
+        self.column
+            .as_ref()
+            .map(HandleColumnIdentity::unique_id)
+            .into_iter()
+            .collect()
     }
 
     /// Computes source IntHandleCols Hash64 field order.

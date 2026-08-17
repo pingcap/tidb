@@ -245,6 +245,39 @@ pub trait TableSource {
     /// Go `is.SchemaByName(dbName) != nil`, so an unknown DATABASE reports
     /// `ErrBadDB` rather than `ErrNoSuchTable`.
     fn database_exists(&self, db_name: &str) -> bool;
+
+    /// Go `tableInfo.IsView()` plus `tableInfo.View`
+    /// (`logical_plan_builder.go:5047`): the stored definition
+    /// `BuildDataSourceFromView` expands.
+    ///
+    /// The default is `None` — an implementor that has no views at all needs
+    /// no view arm, and a `find_table` hit continues to mean a real table.
+    fn find_view(&self, _db_name: &str, _view_name: &str) -> Option<&SourceView> {
+        None
+    }
+}
+
+/// Go `model.ViewInfo` plus the `TableInfo` fields
+/// `BuildDataSourceFromView`/`buildProjUponView` read off the view itself.
+///
+/// The definition arrives as SQL TEXT, exactly as Go stores it: the view
+/// expander re-parses it so that the body resolves in the view's own schema
+/// rather than the reader's.
+#[derive(Clone, Debug, Default)]
+pub struct SourceView {
+    /// Go `dbName.O`.
+    pub db_name: String,
+    /// Go `TableInfo.Name.O`.
+    pub view_name: String,
+    /// Go `TableInfo.View.SelectStmt`.
+    pub select_sql: String,
+    /// Go `TableInfo.View.Cols`: the ORIGIN column names of the underlying
+    /// `SELECT` as they stood at `CREATE VIEW`. Empty when the view stores
+    /// none, which is the modern shape.
+    pub view_cols: Vec<String>,
+    /// Go `TableInfo.Cols()`: the view's own columns, whose names the
+    /// projection presents.
+    pub columns: Vec<SourceColumn>,
 }
 
 #[cfg(test)]

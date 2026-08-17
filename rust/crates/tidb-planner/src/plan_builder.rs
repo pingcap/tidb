@@ -161,6 +161,9 @@
 //!   handles belong to batch 6d.
 
 pub mod catalog;
+pub mod from;
+#[cfg(test)]
+mod from_tests;
 pub mod handle_col_helper;
 pub mod marker;
 #[cfg(test)]
@@ -351,6 +354,9 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     pub flags: RewriterSessionFlags,
     /// Go `b.TableHints()`, narrowed; see this module's boundaries.
     pub hints: RewriterHints,
+    /// Go `b.TableHints()`'s JOIN half, which `buildJoin` reads through
+    /// `SetPreferredJoinTypeAndOrder`; see [`from::JoinHints`].
+    pub join_hints: from::JoinHints,
 }
 
 /// The child's schema and output names, taken BEFORE the child is moved.
@@ -538,6 +544,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             is_for_update_read: false,
             flags: RewriterSessionFlags::default(),
             hints: RewriterHints::default(),
+            join_hints: from::JoinHints::default(),
         }
     }
 
@@ -894,46 +901,22 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn build_result_set_node(&mut self, node: &JoinNode) -> Result<LogicalPlan, PlanError> {
         match node {
             JoinNode::Table(table_ref) => self.build_data_source(table_ref),
-            JoinNode::Join(join) if join.right.is_none() => {
-                // The parser's single-table wrapper; Go's AST has the same
-                // `Join{Right: nil}` shape.
-                self.build_result_set_node(&join.left)
-            }
-            JoinNode::Join(_) => Err(PlanError::internal(
-                "buildJoin (logical_plan_builder.go:723) is a later batch",
-            )),
+            // Both the single-table wrapper (`Join{Right: nil}`) and a real
+            // join go to `buildJoin` (`:736`), which unwraps the former
+            // itself.
+            JoinNode::Join(join) => self.build_join(join),
             JoinNode::Derived {
-                subquery, alias, ..
-            } => {
-                let tidb_ast::QueryStmt::Select(select) = subquery.as_ref() else {
-                    return Err(PlanError::internal(
-                        "buildSetOpr (logical_plan_builder.go:2149) is a later batch",
-                    ));
-                };
-                // `:441` Go pushes the derived table's own query block, builds
-                // it, then RENAMES its output names to the alias.
-                let (plan, _) = self.build_select(select)?;
-                let Some(alias) = alias else {
-                    return Ok(plan);
-                };
-                Ok(self.rename_output_table(plan, alias))
-            }
+                subquery,
+                alias,
+                lateral,
+                column_names,
+            } => self.build_derived_source(
+                subquery.as_ref(),
+                alias.as_deref(),
+                *lateral,
+                column_names,
+            ),
         }
-    }
-
-    fn rename_output_table(&self, mut plan: LogicalPlan, alias: &str) -> LogicalPlan {
-        let renamed = plan
-            .output_names()
-            .iter()
-            .map(|name| {
-                let mut renamed = name.clone();
-                renamed.names.table = IdentifierMetadata::new(alias);
-                renamed.names.database = IdentifierMetadata::default();
-                renamed
-            })
-            .collect();
-        plan.set_output_names(renamed);
-        plan
     }
 
     /// Go `buildSelection(ctx, p, where, aggMapper)`
@@ -1442,10 +1425,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         }
 
         // `:4356` FROM.
-        let mut plan = match &select.from {
-            Some(join) => self.build_result_set_node(&JoinNode::Join(Box::new(join.clone())))?,
-            None => self.build_table_dual(),
-        };
+        // `buildTableRefs` (`:420`) is the FROM clause's own entry point; the
+        // `None` arm is its `buildTableDual`.
+        let mut plan = self.build_table_refs(select.from.as_ref())?;
         // `:4394` WHERE. No marker is bound yet: the passes that PRODUCE one
         // (aggregation, window) are later batches, and ORDER BY's markers are
         // produced below, after the select list is known.
