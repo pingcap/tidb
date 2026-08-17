@@ -143,6 +143,7 @@ pub mod placement_labels;
 pub mod plan_cache_params;
 pub mod privilege_set;
 pub mod process_info;
+pub mod queue;
 pub mod read_consistency;
 pub mod readable_size;
 pub mod real_tikv_analyze;
