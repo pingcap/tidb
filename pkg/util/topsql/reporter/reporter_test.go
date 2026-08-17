@@ -435,26 +435,26 @@ func TestCollectCapacity(t *testing.T) {
 
 	topsqlstate.GlobalState.MaxCollect.Store(10000)
 	registerSQL(5000)
-	require.Equal(t, int64(5000), tsr.normalizedSQLMap.length.Load())
+	require.Equal(t, int64(5000), tsr.normalizedSQLMap.size())
 	registerPlan(1000)
-	require.Equal(t, int64(1000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(1000), tsr.normalizedPlanMap.size())
 
 	registerSQL(20000)
-	require.Equal(t, int64(10000), tsr.normalizedSQLMap.length.Load())
+	require.Equal(t, int64(10000), tsr.normalizedSQLMap.size())
 	registerPlan(20000)
-	require.Equal(t, int64(10000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(10000), tsr.normalizedPlanMap.size())
 
 	topsqlstate.GlobalState.MaxCollect.Store(20000)
 	registerSQL(50000)
-	require.Equal(t, int64(20000), tsr.normalizedSQLMap.length.Load())
+	require.Equal(t, int64(20000), tsr.normalizedSQLMap.size())
 	registerPlan(50000)
-	require.Equal(t, int64(20000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(20000), tsr.normalizedPlanMap.size())
 
 	topsqlstate.GlobalState.MaxStatementCount.Store(5000)
 	tsr.processCPUTimeData(1, genRecord(20000))
 	require.Equal(t, 5001, len(tsr.collecting.records))
-	require.Equal(t, int64(20000), tsr.normalizedSQLMap.length.Load())
-	require.Equal(t, int64(20000), tsr.normalizedPlanMap.length.Load())
+	require.Equal(t, int64(20000), tsr.normalizedSQLMap.size())
+	require.Equal(t, int64(20000), tsr.normalizedPlanMap.size())
 }
 
 func TestCollectInternal(t *testing.T) {

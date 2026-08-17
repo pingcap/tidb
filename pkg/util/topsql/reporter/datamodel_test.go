@@ -25,6 +25,23 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func runConcurrently(count int, fn func(int)) {
+	start := make(chan struct{})
+	done := make(chan struct{}, count)
+	for i := range count {
+		i := i
+		go func() {
+			<-start
+			fn(i)
+			done <- struct{}{}
+		}()
+	}
+	close(start)
+	for range count {
+		<-done
+	}
+}
+
 func Test_tsItem_toProto(t *testing.T) {
 	item := &tsItem{
 		timestamp: 1,
@@ -329,7 +346,7 @@ func Test_normalizedSQLMap_register(t *testing.T) {
 	m.register([]byte("SQL-1"), "SQL-1", true)
 	m.register([]byte("SQL-2"), "SQL-2", false)
 	m.register([]byte("SQL-3"), "SQL-3", true)
-	require.Equal(t, int64(2), m.length.Load())
+	require.Equal(t, int64(2), m.size())
 	v, ok := m.data.Load().Load("SQL-1")
 	meta := v.(sqlMeta)
 	require.True(t, ok)
@@ -342,6 +359,20 @@ func Test_normalizedSQLMap_register(t *testing.T) {
 	require.False(t, meta.isInternal)
 	_, ok = m.data.Load().Load("SQL-3")
 	require.False(t, ok)
+
+	topsqlstate.GlobalState.MaxCollect.Store(1)
+	concurrentMap := newNormalizedSQLMap()
+	runConcurrently(256, func(i int) {
+		digest := []byte{byte(i), byte(i >> 8)}
+		concurrentMap.register(digest, string(digest), false)
+	})
+	require.Equal(t, int64(1), concurrentMap.size())
+	count := 0
+	concurrentMap.data.Load().Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	require.Equal(t, 1, count)
 }
 
 func Test_normalizedSQLMap_take(t *testing.T) {
@@ -351,8 +382,8 @@ func Test_normalizedSQLMap_take(t *testing.T) {
 	m1.register([]byte("SQL-2"), "SQL-2", false)
 	m1.register([]byte("SQL-3"), "SQL-3", true)
 	m2 := m1.take()
-	require.Equal(t, int64(0), m1.length.Load())
-	require.Equal(t, int64(3), m2.length.Load())
+	require.Equal(t, int64(0), m1.size())
+	require.Equal(t, int64(3), m2.size())
 	data1 := m1.data.Load()
 	_, ok := data1.Load("SQL-1")
 	require.False(t, ok)
@@ -408,7 +439,7 @@ func Test_normalizedPlanMap_register(t *testing.T) {
 	m.register([]byte("PLAN-1"), "PLAN-1", false)
 	m.register([]byte("PLAN-2"), "PLAN-2", true)
 	m.register([]byte("PLAN-3"), "PLAN-3", false)
-	require.Equal(t, int64(2), m.length.Load())
+	require.Equal(t, int64(2), m.size())
 	v, ok := m.data.Load().Load("PLAN-1")
 	require.True(t, ok)
 	require.Equal(t, planMeta{
@@ -423,6 +454,20 @@ func Test_normalizedPlanMap_register(t *testing.T) {
 	}, v.(planMeta))
 	_, ok = m.data.Load().Load("PLAN-3")
 	require.False(t, ok)
+
+	topsqlstate.GlobalState.MaxCollect.Store(1)
+	concurrentMap := newNormalizedPlanMap()
+	runConcurrently(256, func(i int) {
+		digest := []byte{byte(i), byte(i >> 8)}
+		concurrentMap.register(digest, string(digest), false)
+	})
+	require.Equal(t, int64(1), concurrentMap.size())
+	count := 0
+	concurrentMap.data.Load().Range(func(_, _ any) bool {
+		count++
+		return true
+	})
+	require.Equal(t, 1, count)
 }
 
 func Test_normalizedPlanMap_take(t *testing.T) {
@@ -432,8 +477,8 @@ func Test_normalizedPlanMap_take(t *testing.T) {
 	m1.register([]byte("PLAN-2"), "PLAN-2", false)
 	m1.register([]byte("PLAN-3"), "PLAN-3", false)
 	m2 := m1.take()
-	require.Equal(t, int64(0), m1.length.Load())
-	require.Equal(t, int64(3), m2.length.Load())
+	require.Equal(t, int64(0), m1.size())
+	require.Equal(t, int64(3), m2.size())
 	data1 := m1.data.Load()
 	_, ok := data1.Load("PLAN-1")
 	require.False(t, ok)
