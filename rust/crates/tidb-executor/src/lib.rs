@@ -99,6 +99,7 @@ pub mod memtable_reader;
 pub(crate) mod merge_join_plan;
 pub mod multi_way_merge;
 pub mod mutation_checker;
+pub mod parallel_sort_spill_helper;
 pub mod partition_pruning;
 pub mod partition_routing;
 pub(crate) mod ranger_detacher;
