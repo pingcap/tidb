@@ -311,32 +311,27 @@ func validateTTLColumns(options []*ast.TableOption, retained map[string]struct{}
 }
 
 func allReferencedColumnsRetained(expr ast.ExprNode, retained map[string]struct{}) bool {
-	return len(missingExpressionColumns(expr, retained)) == 0
-}
-
-func missingExpressionColumns(expr ast.ExprNode, retained map[string]struct{}) []string {
 	if expr == nil {
-		return nil
+		return true
 	}
-	collector := &columnNameCollector{columns: make(map[string]string)}
+	collector := &columnNameCollector{columns: make(map[string]struct{})}
 	expr.Accept(collector)
-	missing := make([]string, 0)
-	for lowerName, originalName := range collector.columns {
-		if _, ok := retained[lowerName]; !ok {
-			missing = append(missing, originalName)
+	for column := range collector.columns {
+		if _, ok := retained[column]; !ok {
+			return false
 		}
 	}
-	return missing
+	return true
 }
 
 type columnNameCollector struct {
-	columns map[string]string
+	columns map[string]struct{}
 }
 
 func (c *columnNameCollector) Enter(node ast.Node) (ast.Node, bool) {
 	column, ok := node.(*ast.ColumnNameExpr)
 	if ok {
-		c.columns[column.Name.Name.L] = column.Name.Name.O
+		c.columns[column.Name.Name.L] = struct{}{}
 	}
 	return node, false
 }
