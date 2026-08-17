@@ -12,6 +12,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 )
 
+func normalizedTableName(database, table string) tableName {
+	return tableName{db: strings.ToLower(database), table: strings.ToLower(table)}
+}
+
 func generateProjectedSchema(
 	originSQL string,
 	database string,
@@ -181,7 +185,7 @@ func validateForeignKeyReference(
 		referenceDatabase = database
 	}
 
-	targetColumns, ok := schemaColumns[tableName{db: referenceDatabase, table: referenceTable}]
+	targetColumns, ok := schemaColumns[normalizedTableName(referenceDatabase, referenceTable)]
 	if !ok {
 		return nil
 	}

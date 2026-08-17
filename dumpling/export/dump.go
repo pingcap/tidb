@@ -547,7 +547,10 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				return err
 			}
 			projection.schemaSQL = createTableSQL
-			schemaColumns[key], err = collectProjectedSchemaColumns(createTableSQL, columnNames(projection.selectedTypes))
+			schemaColumns[normalizedTableName(dbName, table.Name)], err = collectProjectedSchemaColumns(
+				createTableSQL,
+				columnNames(projection.selectedTypes),
+			)
 			if err != nil {
 				return errors.Annotatef(
 					err,
@@ -570,7 +573,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				projection.schemaSQL,
 				dbName,
 				projection.isProjected(),
-				schemaColumns[key],
+				schemaColumns[normalizedTableName(dbName, table.Name)],
 				schemaColumns,
 			)
 			if err != nil {
