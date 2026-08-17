@@ -136,15 +136,6 @@ func retainedSchemaColumnSet(createTable *ast.CreateTableStmt, selectedColumns [
 	return retainedColumns, nil
 }
 
-func hasProjectedTable(projections map[tableName]columnProjection) bool {
-	for _, projection := range projections {
-		if projection.projected {
-			return true
-		}
-	}
-	return false
-}
-
 func makeColumnSet(columns []string) map[string]struct{} {
 	set := make(map[string]struct{}, len(columns))
 	for _, column := range columns {
