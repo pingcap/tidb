@@ -12,24 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Dependency-closed physical-plan metadata.
+//! An EXPLAIN-only metadata view of a plan. NOT the plan representation.
 //!
-//! TiDB's Go `base.Plan` is the hand-off between optimization and execution:
-//! an executor needs the operator type, stable plan ID, query-block offset,
-//! estimated rows, and child relationships before it can choose a concrete
-//! execution implementation.  The full Go plan also owns expressions,
-//! schemas, session context, cost, and storage protobuf conversion.  Those
-//! owners are not in the seed workspace, so this module carries only the
-//! source-shaped metadata contract and does not pretend to execute a plan.
+//! DEMOTED. This module predates the plan tree and is no longer a candidate
+//! for it: [`crate::logical::LogicalPlan`] and [`crate::physical::PhysicalPlan`]
+//! are the plan representation, over [`crate::plan_base::BasePlan`]. Two
+//! rival trees would be two sources of truth, so this one is narrowed to what
+//! it is actually used for — the flat, string-typed row set that an
+//! `EXPLAIN` renderer and a metadata-dispatch seam consume.
+//!
+//! Its `operator: String` is the tell: a plan node whose type is a string
+//! cannot be matched on, which is exactly why the real tree is a closed enum.
+//!
+//! NEW CODE SHOULD NOT BUILD ON THIS. It is retained because
+//! `difftests/planner-tests/tests/plan.rs` pins its metadata pre-order
+//! output; a follow-up batch that rewrites that difftest against
+//! [`crate::physical::PhysicalPlan::walk_preorder`] can delete this module
+//! outright. Nothing in `crates/` reads it. (`tidb-executor` has its own,
+//! unrelated, crate-private `plan_trace::PlanNode`.)
 
-/// A physical-plan node's source-visible metadata and owned child tree.
+/// A flat metadata row set for EXPLAIN rendering, with its own child tree.
 ///
-/// This mirrors the dependency-closed portion of `baseimpl.Plan` and
-/// `BasePhysicalPlan`.  `operator` intentionally remains a string: Go's
-/// operator catalog is generated and evolves independently of this seed
-/// crate, so inventing a Rust enum here would silently create a second source
-/// of truth.  Unsupported operators can therefore remain explicit at the
-/// eventual executor dispatch boundary.
+/// This is NOT `baseimpl.Plan`; see the module header. The plan tree's base
+/// is [`crate::plan_base::BasePlan`], whose `tp` carries the same operator
+/// name that `operator` does here.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlanNode {
     operator: String,

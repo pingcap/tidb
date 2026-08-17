@@ -2576,6 +2576,7 @@ dependencies = [
  "tidb-codec",
  "tidb-datatype",
  "tidb-error",
+ "tidb-expr",
  "tidb-hash",
  "tidb-parser",
  "tidb-stats",

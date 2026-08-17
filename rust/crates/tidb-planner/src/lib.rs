@@ -12,11 +12,56 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Source-backed planner primitives.
+//! Source-backed planner primitives, rooted on a plan interface tree.
 //!
-//! The first leaves port dependency-closed cardinality formulas and the
-//! source-shaped physical-plan metadata hand-off without introducing an
-//! optimizer facade or claiming a complete plan representation.
+//! # The plan tree
+//!
+//! [`logical::LogicalPlan`] and [`physical::PhysicalPlan`] are this crate's
+//! plan representation, over the shared [`plan_base::BasePlan`]. They port
+//! Go's `pkg/planner/core/base.Plan` / `LogicalPlan` / `PhysicalPlan`
+//! interfaces and the `baseimpl` / `logicalop` / `physicalop` base structs.
+//!
+//! This SUPERSEDES the crate's earlier position that it would carry no plan
+//! representation. That position was written when the leaves here were
+//! dependency-closed formulas with no shared node type, and it is no longer
+//! the shape of the crate: without a tree, the ~40 `logical_*`/`physical_*`
+//! modules are standalone `*Identity` structs and cost formulas that no
+//! optimizer pass can be written against. The tree is what those become
+//! passes over.
+//!
+//! It is a SEED of `pkg/planner/core`: the tree and its method surface land
+//! complete; the operator set does not, and every operator not yet ported is
+//! an explicit `Todo` variant naming its Go type rather than a default arm.
+//!
+//! # Closed enums, not `Box<dyn LogicalPlan>`
+//!
+//! Both trees are closed enums with inherent methods and `match` dispatch.
+//!
+//! * Go's rule signatures return a REPLACEMENT node —
+//!   `PredicatePushDown(...) ([]expression.Expression, LogicalPlan, error)`,
+//!   `PruneColumns(...) (LogicalPlan, error)`. An owned enum expresses that
+//!   directly as `fn(self, ...) -> LogicalPlan`: the node is moved in and the
+//!   replacement moved out, with no clone and no interior mutability. Trait
+//!   objects need `Box<Self>` receivers for the same shape.
+//! * `Clone`, `Hash64`/`Equals`, and structural comparison come free. Go gets
+//!   them from `base.HashEquals` on concrete types; with `dyn` they fight
+//!   object safety, and every one of them is load-bearing for the cascades
+//!   memo.
+//! * The precedent is in-tree and has held: `tidb-expr::Expression` made
+//!   exactly this call for Go's `expression.Expression` interface.
+//!
+//! The price is that a new operator touches every `match`. That is the point —
+//! an unhandled operator becomes a compile error instead of a silently wrong
+//! plan. Children are owned rather than `Rc`, and the walks are all
+//! stack-explicit; the measurements behind both decisions are recorded in the
+//! [`logical`] module header.
+//!
+//! # What is NOT here
+//!
+//! No optimizer driver. Nothing in this crate runs a rule pass or picks a
+//! plan; the live query path still plans inside `tidb-executor`'s driver.
+//! [`plan::PlanNode`] remains as the explain-only metadata view it always
+//! was, and is not a second plan representation — see its module header.
 
 pub mod access_path;
 pub mod aggregation_descriptor;
@@ -53,6 +98,7 @@ pub mod index_columns;
 pub mod index_task;
 pub mod join_condition;
 pub mod join_reorder_projection_inline;
+pub mod logical;
 pub mod logical_aggregation;
 pub mod logical_cte_table;
 pub mod logical_data_source;
@@ -75,6 +121,7 @@ pub mod max_min_elimination;
 pub mod memo_group_id;
 pub mod pattern;
 pub mod pattern_engine;
+pub mod physical;
 pub mod physical_apply;
 pub mod physical_cte_table;
 pub mod physical_exchange_receiver;
@@ -98,6 +145,7 @@ pub mod physical_union_all;
 pub mod physical_union_scan;
 pub mod physical_window;
 pub mod plan;
+pub mod plan_base;
 pub mod plan_cache_constants;
 pub mod plan_context;
 pub mod plan_cost_ver2;

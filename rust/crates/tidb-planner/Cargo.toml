@@ -17,6 +17,7 @@ tidb-ast = { path = "../tidb-ast" }
 tidb-codec = { path = "../tidb-codec" }
 tidb-datatype = { path = "../tidb-datatype" }
 tidb-error = { path = "../tidb-error" }
+tidb-expr = { path = "../tidb-expr" }
 tidb-hash = { path = "../tidb-hash" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-stats = { path = "../tidb-stats" }
