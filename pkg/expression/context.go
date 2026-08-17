@@ -80,6 +80,10 @@ type assertionEvalContext struct {
 	fn builtinFunc
 }
 
+type allowOptionalEvalProps interface {
+	AllowedOptionalEvalProps() OptionalEvalPropKeySet
+}
+
 func wrapEvalAssert(ctx EvalContext, fn builtinFunc) (ret *assertionEvalContext) {
 	originalCtx := ctx
 	if assertCtx, ok := ctx.(*assertionEvalContext); ok {
@@ -104,14 +108,17 @@ func checkEvalCtx(ctx EvalContext) {
 }
 
 func (ctx *assertionEvalContext) GetOptionalPropProvider(key OptionalEvalPropKey) (OptionalEvalPropProvider, bool) {
-	var requiredOptionalProps OptionalEvalPropKeySet
+	var declaredOptionalProps OptionalEvalPropKeySet
 	if ctx.fn != nil {
-		requiredOptionalProps = ctx.fn.RequiredOptionalEvalProps()
+		declaredOptionalProps = ctx.fn.RequiredOptionalEvalProps()
+		if fn, ok := ctx.fn.(allowOptionalEvalProps); ok {
+			declaredOptionalProps |= fn.AllowedOptionalEvalProps()
+		}
 	}
 
 	intest.Assert(
-		requiredOptionalProps.Contains(key),
-		"optional property '%s' is read in function '%T' but not declared in RequiredOptionalEvalProps",
+		declaredOptionalProps.Contains(key),
+		"optional property '%s' is read in function '%T' but not declared in RequiredOptionalEvalProps or AllowedOptionalEvalProps",
 		key, ctx.fn,
 	)
 	return ctx.EvalContext.GetOptionalPropProvider(key)
