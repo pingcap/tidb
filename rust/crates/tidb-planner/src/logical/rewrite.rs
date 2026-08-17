@@ -37,9 +37,7 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
 use crate::base_arms;
-use crate::cardinality::derive_stats::{
-    estimate_cols_ndv_with_matched_len, StatsInfo as NdvProfile,
-};
+use crate::cardinality::derive_stats::estimate_cols_ndv_with_matched_len;
 use crate::cardinality::join::{
     estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
 };
@@ -954,24 +952,12 @@ fn stats_arity(go_symbol: &str) -> PlanError {
 /// [`estimate_full_join_row_count`] consumes.
 ///
 /// The body is NOT restated: the existing port in
-/// [`crate::cardinality::derive_stats`] is called through a converted
-/// profile. The conversion casts the `i64` unique ids of the surviving
-/// [`StatsInfo`] to that module's `u64` alias — the documented outlier — and
-/// carries no group NDVs, because the surviving profile has none to give;
-/// the group branch is therefore vacuous, exactly as it is for a Go profile
-/// whose `GroupNDVs` is nil.
+/// [`crate::cardinality::derive_stats`] is called directly — since the
+/// `StatsInfo` unification there is only one profile type and one column-id
+/// spelling, so the former u64 conversion detour is gone.
 fn join_key_estimate(keys: &[tidb_expr::column::Column], profile: &StatsInfo) -> JoinKeyEstimate {
-    let ids: Vec<u64> = keys.iter().map(|col| col.unique_id as u64).collect();
-    let converted = NdvProfile {
-        row_count: profile.row_count(),
-        col_ndvs: profile
-            .col_ndvs()
-            .iter()
-            .map(|(id, ndv)| (*id as u64, *ndv))
-            .collect(),
-        group_ndvs: Vec::new(),
-    };
-    let (ndv, matched_len) = estimate_cols_ndv_with_matched_len(&ids, &converted);
+    let ids: Vec<i64> = keys.iter().map(|col| col.unique_id).collect();
+    let (ndv, matched_len) = estimate_cols_ndv_with_matched_len(&ids, profile);
     JoinKeyEstimate {
         ndv,
         matched_len,

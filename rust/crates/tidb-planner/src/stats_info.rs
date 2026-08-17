@@ -21,25 +21,26 @@
 
 use std::collections::BTreeMap;
 
-/// Minimal statistics profile needed by `DeriveLimitStats`.
+use crate::cardinality::ndv::GroupNdv;
+
+/// Go `property.StatsInfo` — the ONE port, after the unification.
 ///
-/// This is the statistics profile that travels in a plan: `BasePlan.stats`
-/// holds it. [`crate::cardinality::derive_stats::StatsInfo`] is a SECOND port
-/// of the same Go type, local to that module, carrying more fields and keying
-/// its NDV map by `u64` where this one uses `i64`.
-///
-/// **THIS one is the survivor.** Its `i64` key is Go's
-/// `expression.Column.UniqueID` and matches
+/// This is the profile that travels in a plan (`BasePlan.stats`), the one
+/// the per-operator `DeriveStats` bodies build, and — since the merge — the
+/// one the DP cardinality rules read too. Its `i64` key is Go's
+/// `expression.Column.UniqueID`, matching
 /// [`tidb_expr::column::Column::unique_id`] and
-/// [`crate::cardinality::ndv::GroupNdv::columns`]; the other module's `u64`
-/// is the outlier and already pays for it in casts. Merging means adding
-/// `group_ndvs` and a `scale` method here and deleting the other. That is
-/// blocked on an out-of-crate consumer, not on a decision — see the other
-/// type's doc comment for the blocking call sites.
-#[derive(Clone, Debug, PartialEq)]
+/// [`crate::cardinality::ndv::GroupNdv::columns`]. The former second port in
+/// `cardinality::derive_stats` (keyed `u64`) is deleted; that module
+/// re-exports this type.
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct StatsInfo {
     row_count: f64,
     col_ndvs: BTreeMap<i64, f64>,
+    /// Go `StatsInfo.GroupNDVs`: exact NDVs of composite column groups
+    /// supplied by indexes. Empty for every profile whose source has no
+    /// loaded index statistics, which is Go's nil.
+    group_ndvs: Vec<GroupNdv>,
 }
 
 impl StatsInfo {
@@ -58,6 +59,65 @@ impl StatsInfo {
         Self {
             row_count,
             col_ndvs: col_ndvs.into_iter().collect(),
+            group_ndvs: Vec::new(),
+        }
+    }
+
+    /// The same profile carrying group NDVs — Go's `GroupNDVs` field, set by
+    /// the stats sources that have index statistics to give.
+    #[must_use]
+    pub fn with_group_ndvs(mut self, group_ndvs: Vec<GroupNdv>) -> Self {
+        self.group_ndvs = group_ndvs;
+        self
+    }
+
+    /// Returns the composite-group NDVs.
+    #[must_use]
+    pub fn group_ndvs(&self) -> &[GroupNdv] {
+        &self.group_ndvs
+    }
+
+    /// Replaces the composite-group NDVs in place.
+    pub fn set_group_ndvs(&mut self, group_ndvs: Vec<GroupNdv>) {
+        self.group_ndvs = group_ndvs;
+    }
+
+    /// Go `StatsInfo.Scale` (`property/stats_info.go:69-86`).
+    ///
+    /// Every column NDV is re-scaled through
+    /// [`scale_ndv`](crate::cardinality::derive_stats::scale_ndv) against the
+    /// row count BEFORE the factor was applied — not multiplied by the
+    /// factor. At the default skew ratio of `1.0` the two happen to coincide,
+    /// because the skewed branch is `ndv * selectedRows / originalRows` and
+    /// `selectedRows` is exactly `originalRows * factor`. That equivalence is
+    /// a property of the default, not of the rule, which is why the source
+    /// expression is kept rather than folded into a multiplication.
+    #[must_use]
+    pub fn scale(&self, factor: f64, skew_ratio: f64) -> Self {
+        let scale_ndv = crate::cardinality::derive_stats::scale_ndv;
+        let scaled_row_count = self.row_count * factor;
+        let col_ndvs = self
+            .col_ndvs
+            .iter()
+            .map(|(id, ndv)| {
+                (
+                    *id,
+                    scale_ndv(*ndv, self.row_count, scaled_row_count, skew_ratio),
+                )
+            })
+            .collect();
+        let group_ndvs = self
+            .group_ndvs
+            .iter()
+            .map(|group| GroupNdv {
+                columns: group.columns.clone(),
+                ndv: scale_ndv(group.ndv, self.row_count, scaled_row_count, skew_ratio),
+            })
+            .collect();
+        Self {
+            row_count: scaled_row_count,
+            col_ndvs,
+            group_ndvs,
         }
     }
 
@@ -91,6 +151,9 @@ impl StatsInfo {
         Self {
             row_count,
             col_ndvs,
+            // Go's DeriveLimitStats builds a fresh StatsInfo and never copies
+            // GroupNDVs into it.
+            group_ndvs: Vec::new(),
         }
     }
 }

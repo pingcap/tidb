@@ -67,23 +67,14 @@
 //! holds a [`logical::LogicalPlan`] and has no `expression::Expression`
 //! values to build one from, so it cannot be pointed at (1) by a local edit.
 //!
-//! It also reads `DerivedNode.stats.row_count` as a PUBLIC FIELD at six
-//! sites, which is why merging `derive_stats::StatsInfo` into
-//! [`stats_info::StatsInfo`] (private fields, accessor methods) is likewise
-//! not a `tidb-planner`-only change. See `cardinality::derive_stats`'s
-//! `LogicalNode` and `StatsInfo` doc comments for the full inventory and for
-//! the key-type verdict.
-//!
-//! So the "retarget (3) onto (1)" work is a TWO-CRATE change and needs an
-//! owner for `tidb-executor` as well. The alternative, if that driver is
-//! itself destined for deletion, is to move `LogicalNode` down into
-//! `tidb-executor` and delete it from here; that is a topology decision, not
-//! a local one.
-//!
-//! What remains before (3) can be deleted: the `StatsInfo`/`ColumnId`
-//! unification and the retarget of `join_reorder.rs`, a two-crate change
-//! whose recipe is written on the types themselves. Until then, do not add
-//! new producers of (2) or (3): project from (1), or derive on (1).
+//! The `StatsInfo`/`ColumnId` unification is DONE: one profile type
+//! ([`stats_info::StatsInfo`], keyed `i64`, now carrying group NDVs and
+//! `scale`), one column-id spelling, and the driver reads through
+//! accessors. What remains before (3) can be deleted is only the retarget
+//! of `join_reorder.rs`'s MODEL — its 14 `LogicalNode` construction sites
+//! build from a catalog, not from a plan tree — or moving the type down
+//! into that driver. Until then, do not add new producers of (2) or (3):
+//! project from (1), or derive on (1).
 //!
 //! # Closed enums, not `Box<dyn LogicalPlan>`
 //!

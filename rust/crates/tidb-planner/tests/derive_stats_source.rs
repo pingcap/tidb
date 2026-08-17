@@ -75,8 +75,8 @@ fn a_datasource_preserves_analyzed_column_ndvs() {
     };
     let derived = derive_stats(&source, &ctx());
     assert_row_counts(&derived, &[30_000.0]);
-    assert!((derived.stats.col_ndvs[&T1_A] - 1.0).abs() < 1e-9);
-    assert!((derived.stats.col_ndvs[&T1_B] - 3_000.0).abs() < 1e-9);
+    assert!((derived.stats.col_ndvs()[&T1_A] - 1.0).abs() < 1e-9);
+    assert!((derived.stats.col_ndvs()[&T1_B] - 3_000.0).abs() < 1e-9);
 }
 
 fn join(
@@ -138,7 +138,7 @@ fn assert_row_counts(node: &DerivedNode, expected: &[f64]) {
 fn full_scan_of_a_pseudo_table_is_ten_thousand_rows() {
     let derived = derive_stats(&table(&[T1_A, T1_B, T1_C], 1.0), &ctx());
     assert_row_counts(&derived, &[10000.0]);
-    assert_eq!(derived.stats.col_ndvs[&T1_A], 8000.0);
+    assert_eq!(derived.stats.col_ndvs()[&T1_A], 8000.0);
 }
 
 /// `explain select * from t1 where c = 'x'` -> `Selection 10.00`, the
@@ -149,7 +149,7 @@ fn a_datasource_scales_by_the_supplied_selectivity() {
     assert_row_counts(&derived, &[10.0]);
     // `Scale` re-derives the NDV; at the default skew ratio of 1.0 that is
     // `8000 * 10 / 10000`.
-    assert!((derived.stats.col_ndvs[&T1_C] - 8.0).abs() < 1e-9);
+    assert!((derived.stats.col_ndvs()[&T1_C] - 8.0).abs() < 1e-9);
 }
 
 /// `explain select * from t1, t2 where t1.a = t2.a` -> `MergeJoin 12500.00`.
@@ -262,8 +262,8 @@ fn a_grouped_aggregation_uses_the_group_key_ndv_for_every_output() {
     };
     let derived = derive_stats(&plan, &ctx());
     assert_row_counts(&derived, &[8.0, 10.0]);
-    assert_eq!(derived.stats.col_ndvs[&DT_KEY_A], 8.0);
-    assert_eq!(derived.stats.col_ndvs[&DT_DOUBLED_B], 8.0);
+    assert_eq!(derived.stats.col_ndvs()[&DT_KEY_A], 8.0);
+    assert_eq!(derived.stats.col_ndvs()[&DT_DOUBLED_B], 8.0);
 }
 
 /// `LogicalJoin.DeriveStats` clamps every inherited column NDV to the join's

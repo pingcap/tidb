@@ -66,75 +66,18 @@ pub const DISTINCT_FACTOR: f64 = 0.8;
 /// the variable is settable.
 pub const DEF_SCALE_NDV_SKEW_RATIO: f64 = 1.0;
 
-/// A column identity. Go uses `expression.Column.UniqueID`.
+/// A column identity: Go's `expression.Column.UniqueID`, an `int64`.
 ///
-/// **This alias disagrees with the rest of the crate and is the wrong one.**
-/// Go's `expression.Column.UniqueID` is an `int64`, and this port spells it
-/// `i64` everywhere else: [`tidb_expr::column::Column::unique_id`],
-/// [`crate::stats_info::StatsInfo`]'s `col_ndvs` key, and
-/// [`crate::cardinality::ndv::GroupNdv::columns`]. The mismatch is already
-/// being paid for inside this module, which casts `*id as i64` at three
-/// points purely to compare against `GroupNdv`.
-///
-/// It is left as `u64` here only because
-/// `crates/tidb-executor/src/driver/join_reorder.rs` imports this alias and
-/// builds its column maps against it; narrowing it is part of the two-crate
-/// change described on [`LogicalNode`], not a local edit.
-pub type ColumnId = u64;
+/// Formerly `u64` — the crate's one outlier spelling, kept only for the
+/// executor's DP driver. Unified to `i64` with the `StatsInfo` merge; the
+/// alias survives because that driver imports it by this name.
+pub type ColumnId = i64;
 
-/// Go `property.StatsInfo`, reduced to the fields the DP cost and NDV rules
-/// read.
-///
-/// # This is the SECOND port of `pkg/planner/property/stats_info.go`
-///
-/// [`crate::stats_info::StatsInfo`] is the other, and it is the one that
-/// actually travels in a plan: `BasePlan.stats` holds it, and the logical
-/// operators and the plan builder all name it. This one is local to this
-/// module and no other module imports it.
-///
-/// They are not interchangeable, and the difference is not only which fields
-/// they carry. **This one keys `col_ndvs` by [`ColumnId`] (`u64`); the plan's
-/// keys it by `i64`.** This one is also the richer of the two — it has
-/// `group_ndvs`, public fields and a `Default`, none of which the plan's has.
-///
-/// So when a cardinality rule eventually needs to write derived statistics
-/// back onto a plan node, the two must be reconciled: the key types converted,
-/// and a home found for `group_ndvs`.
-///
-/// # The verdict, so the next attempt does not re-derive it
-///
-/// **Keep [`crate::stats_info::StatsInfo`] and key it by `i64`.** It is the
-/// one that travels in `BasePlan.stats`, it already has ~10 producers across
-/// the logical operators (`join.rs`, `window.rs`, `max_one_row.rs`,
-/// `table_dual.rs`, `show.rs`, `union_all.rs`, `sequence.rs`, `cte.rs`,
-/// `mem_table.rs` and the base body in `logical/mod.rs`), and `i64` is what
-/// Go's `expression.Column.UniqueID` is and what
-/// [`tidb_expr::column::Column::unique_id`] and
-/// [`crate::cardinality::ndv::GroupNdv::columns`] already use. The `u64` here
-/// is the outlier; see [`ColumnId`].
-///
-/// The merge is then: add `group_ndvs: Vec<GroupNdv>` and [`StatsInfo::scale`]
-/// to `crate::stats_info::StatsInfo`, and delete this struct.
-///
-/// It was NOT done in the same pass as the `LogicalNode` retarget because it
-/// is blocked on the same out-of-crate consumer:
-/// `crates/tidb-executor/src/driver/join_reorder.rs` reads
-/// `DerivedNode.stats.row_count` as a PUBLIC FIELD at six sites (lines 2884,
-/// 3137-3138, 3160, 3198 and 3254 at this branch's pin), while
-/// `crate::stats_info::StatsInfo` has private fields and a `row_count()`
-/// accessor. Swapping the type in [`DerivedNode`] breaks that crate. Do the
-/// merge together with the retarget, under one owner for both crates — a
-/// half-merge that leaves two types with one set of fields moved is worse
-/// than either end state.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct StatsInfo {
-    /// `StatsInfo.RowCount`.
-    pub row_count: f64,
-    /// `StatsInfo.ColNDVs`, keyed by column unique ID.
-    pub col_ndvs: BTreeMap<ColumnId, f64>,
-    /// Exact NDVs of composite column groups supplied by indexes.
-    pub group_ndvs: Vec<GroupNdv>,
-}
+/// The statistics profile — ONE port now. This module's former private
+/// `StatsInfo` (the second port of `property/stats_info.go`, keyed `u64`)
+/// is deleted; what the DP rules read is the same profile every plan node
+/// carries.
+pub use crate::stats_info::StatsInfo;
 
 /// Go `cardinality.ScaleNDV` (`cardinality/ndv.go:215-262`).
 ///
@@ -175,47 +118,6 @@ fn estimate_skewed_ndv(original_ndv: f64, original_rows: f64, selected_rows: f64
     original_ndv * selected_rows / original_rows
 }
 
-impl StatsInfo {
-    /// Go `StatsInfo.Scale` (`property/stats_info.go:69-86`).
-    ///
-    /// Every column NDV is re-scaled through [`scale_ndv`] against the row
-    /// count *before* the factor was applied -- not multiplied by the factor.
-    ///
-    /// At the default skew ratio of `1.0` the two happen to coincide, because
-    /// the skewed branch is `ndv * selectedRows / originalRows` and
-    /// `selectedRows` is exactly `originalRows * factor`. That equivalence is
-    /// a property of the default, not of the rule: at any other ratio the
-    /// uniform branch contributes and the two diverge, which is why the source
-    /// expression is kept rather than folded into a multiplication.
-    #[must_use]
-    pub fn scale(&self, factor: f64, skew_ratio: f64) -> Self {
-        let scaled_row_count = self.row_count * factor;
-        let col_ndvs = self
-            .col_ndvs
-            .iter()
-            .map(|(id, ndv)| {
-                (
-                    *id,
-                    scale_ndv(*ndv, self.row_count, scaled_row_count, skew_ratio),
-                )
-            })
-            .collect();
-        let group_ndvs = self
-            .group_ndvs
-            .iter()
-            .map(|group| GroupNdv {
-                columns: group.columns.clone(),
-                ndv: scale_ndv(group.ndv, self.row_count, scaled_row_count, skew_ratio),
-            })
-            .collect();
-        Self {
-            row_count: scaled_row_count,
-            col_ndvs,
-            group_ndvs,
-        }
-    }
-}
-
 /// Go `EstimateColsNDVWithMatchedLen` (`cardinality/ndv.go:87-123`), production
 /// path.
 ///
@@ -235,9 +137,9 @@ pub fn estimate_cols_ndv_with_matched_len(cols: &[ColumnId], profile: &StatsInfo
     if cols.is_empty() {
         return (1.0, 1);
     }
-    let mut sorted_cols = cols.iter().map(|id| *id as i64).collect::<Vec<_>>();
+    let mut sorted_cols = cols.to_vec();
     sorted_cols.sort_unstable();
-    if let Some(group) = profile.group_ndvs.iter().find(|group| {
+    if let Some(group) = profile.group_ndvs().iter().find(|group| {
         let mut group_cols = group.columns.clone();
         group_cols.sort_unstable();
         group_cols == sorted_cols
@@ -247,7 +149,7 @@ pub fn estimate_cols_ndv_with_matched_len(cols: &[ColumnId], profile: &StatsInfo
 
     let mut max_ndv = 1.0_f64;
     for col in cols {
-        if let Some(ndv) = profile.col_ndvs.get(col) {
+        if let Some(ndv) = profile.col_ndvs().get(col) {
             if *ndv > 0.0 {
                 max_ndv = max_ndv.max(*ndv);
             }
@@ -402,13 +304,15 @@ impl DerivedNode {
     pub fn cum_cost(&self) -> f64 {
         self.children
             .iter()
-            .fold(self.stats.row_count, |cost, child| cost + child.cum_cost())
+            .fold(self.stats.row_count(), |cost, child| {
+                cost + child.cum_cost()
+            })
     }
 
     /// Every node's row count, parent before children, depth first.
     #[must_use]
     pub fn row_counts(&self) -> Vec<f64> {
-        let mut out = vec![self.stats.row_count];
+        let mut out = vec![self.stats.row_count()];
         for child in &self.children {
             out.extend(child.row_counts());
         }
@@ -482,7 +386,7 @@ fn derive_stats_with_groups(
                         requested.sort_unstable();
                         if requested
                             .iter()
-                            .map(|column| *column as i64)
+                            .map(|column| *column)
                             .eq(group_columns.iter().copied())
                         {
                             return true;
@@ -492,11 +396,11 @@ fn derive_stats_with_groups(
                 })
                 .cloned()
                 .collect();
-            let table_stats = StatsInfo {
-                row_count: *realtime_count,
-                col_ndvs: column_ndvs.clone(),
-                group_ndvs,
-            };
+            let table_stats = StatsInfo::new(
+                *realtime_count,
+                column_ndvs.iter().map(|(id, ndv)| (*id, *ndv)),
+            )
+            .with_group_ndvs(group_ndvs);
             DerivedNode {
                 stats: table_stats.scale(*selectivity, ctx.scale_ndv_skew_ratio),
                 children: Vec::new(),
@@ -508,7 +412,7 @@ fn derive_stats_with_groups(
                 .stats
                 .scale(ctx.selection_factor, ctx.scale_ndv_skew_ratio);
             // LogicalSelection does not preserve GroupNDVs in Go.
-            stats.group_ndvs.clear();
+            stats.set_group_ndvs(Vec::new());
             DerivedNode {
                 stats,
                 children: vec![child],
@@ -532,7 +436,7 @@ fn derive_stats_with_groups(
             let child = derive_stats_with_groups(child, ctx, &child_groups);
             let group_ndvs = child
                 .stats
-                .group_ndvs
+                .group_ndvs()
                 .iter()
                 .filter_map(|group| {
                     let mut columns = group
@@ -542,7 +446,7 @@ fn derive_stats_with_groups(
                             exprs
                                 .iter()
                                 .find(|expr| expr.direct_input == Some(*column as ColumnId))
-                                .map(|expr| expr.output as i64)
+                                .map(|expr| expr.output)
                         })
                         .collect::<Option<Vec<_>>>()?;
                     columns.sort_unstable();
@@ -552,18 +456,14 @@ fn derive_stats_with_groups(
                     })
                 })
                 .collect();
-            let stats = StatsInfo {
-                row_count: child.stats.row_count,
-                col_ndvs: exprs
-                    .iter()
-                    .map(|expr| {
-                        let (ndv, _) =
-                            estimate_cols_ndv_with_matched_len(&expr.inputs, &child.stats);
-                        (expr.output, ndv)
-                    })
-                    .collect(),
-                group_ndvs,
-            };
+            let stats = StatsInfo::new(
+                child.stats.row_count(),
+                exprs.iter().map(|expr| {
+                    let (ndv, _) = estimate_cols_ndv_with_matched_len(&expr.inputs, &child.stats);
+                    (expr.output, ndv)
+                }),
+            )
+            .with_group_ndvs(group_ndvs);
             DerivedNode {
                 stats,
                 children: vec![child],
@@ -581,25 +481,27 @@ fn derive_stats_with_groups(
                 child_groups.as_ref().map_or(&[], std::slice::from_ref),
             );
             let (ndv, _) = estimate_cols_ndv_with_matched_len(group_by, &child.stats);
-            let stats = StatsInfo {
-                row_count: ndv,
+            let stats = StatsInfo::new(
+                ndv,
                 // Go deliberately uses the conservative group NDV for every
                 // aggregate output, including FIRST_ROW carriers.
-                col_ndvs: columns.iter().map(|id| (*id, ndv)).collect(),
-                group_ndvs: child
+                columns.iter().map(|id| (*id, ndv)),
+            )
+            .with_group_ndvs(
+                child
                     .stats
-                    .group_ndvs
+                    .group_ndvs()
                     .iter()
                     .filter(|group| {
                         let mut columns = group.columns.clone();
                         columns.sort_unstable();
-                        let mut grouped = group_by.iter().map(|id| *id as i64).collect::<Vec<_>>();
+                        let mut grouped = group_by.to_vec();
                         grouped.sort_unstable();
                         columns == grouped
                     })
                     .cloned()
                     .collect(),
-            };
+            );
             DerivedNode {
                 stats,
                 children: vec![child],
@@ -637,8 +539,8 @@ fn derive_stats_with_groups(
             let (right_ndv, right_matched) =
                 estimate_cols_ndv_with_matched_len(right_keys, &right.stats);
             let count = estimate_full_join_row_count(&FullJoinRowCountInput {
-                left_row_count: left.stats.row_count,
-                right_row_count: right.stats.row_count,
+                left_row_count: left.stats.row_count(),
+                right_row_count: right.stats.row_count(),
                 is_cartesian: left_keys.is_empty() && right_keys.is_empty(),
                 left_join_keys: JoinKeyEstimate::new(left_ndv, left_matched, left_keys.len()),
                 right_join_keys: JoinKeyEstimate::new(right_ndv, right_matched, right_keys.len()),
@@ -651,29 +553,25 @@ fn derive_stats_with_groups(
             // only a FLOOR on the count, never a ceiling.
             let count = match kind {
                 JoinKind::Inner => count,
-                JoinKind::LeftOuter => count.max(left.stats.row_count),
-                JoinKind::RightOuter => count.max(right.stats.row_count),
+                JoinKind::LeftOuter => count.max(left.stats.row_count()),
+                JoinKind::RightOuter => count.max(right.stats.row_count()),
             };
             // `LogicalJoin.DeriveStats` clamps every inherited NDV to the
             // join's own row count (`logical_join.go:604-610`).
-            let col_ndvs = left
+            let col_ndvs: Vec<(ColumnId, f64)> = left
                 .stats
-                .col_ndvs
+                .col_ndvs()
                 .iter()
-                .chain(right.stats.col_ndvs.iter())
+                .chain(right.stats.col_ndvs().iter())
                 .map(|(id, ndv)| (*id, ndv.min(count)))
                 .collect();
             let group_ndvs = match kind {
-                JoinKind::LeftOuter => left.stats.group_ndvs.clone(),
-                JoinKind::RightOuter => right.stats.group_ndvs.clone(),
+                JoinKind::LeftOuter => left.stats.group_ndvs().to_vec(),
+                JoinKind::RightOuter => right.stats.group_ndvs().to_vec(),
                 JoinKind::Inner => Vec::new(),
             };
             DerivedNode {
-                stats: StatsInfo {
-                    row_count: count,
-                    col_ndvs,
-                    group_ndvs,
-                },
+                stats: StatsInfo::new(count, col_ndvs).with_group_ndvs(group_ndvs),
                 children: vec![left, right],
             }
         }
@@ -697,5 +595,5 @@ fn logical_columns(node: &LogicalNode) -> BTreeSet<ColumnId> {
 /// count plus both children's cumulative costs.
 #[must_use]
 pub fn calc_join_cum_cost(join: &DerivedNode, left_cum: f64, right_cum: f64) -> f64 {
-    join.stats.row_count + left_cum + right_cum
+    join.stats.row_count() + left_cum + right_cum
 }

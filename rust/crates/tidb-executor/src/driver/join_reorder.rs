@@ -2881,7 +2881,7 @@ impl RowSource {
     /// tree, after leaf predicates and join cardinality derivation.
     pub(crate) fn root_rows(&self) -> Option<f64> {
         let model = self.plan.model(self)?;
-        Some(derive_stats(&model, &self.context).stats.row_count)
+        Some(derive_stats(&model, &self.context).stats.row_count())
     }
 
     /// Whether installing every leaf-local filter and every join equality
@@ -3135,7 +3135,7 @@ impl RowSource {
                     &self.context,
                 )
                 .stats
-                .row_count
+                .row_count()
             };
             let left_ndv = grouped_rows(&left_model, &left_keys);
             let right_ndv = grouped_rows(&right_model, &right_keys);
@@ -3157,7 +3157,7 @@ impl RowSource {
             left: left_rows,
             right: right_rows,
             joined: outer_rows
-                .unwrap_or_else(|| derive_stats(&model, &self.context).stats.row_count),
+                .unwrap_or_else(|| derive_stats(&model, &self.context).stats.row_count()),
         })
     }
 
@@ -3195,7 +3195,7 @@ impl RowSource {
             // output, so an empty synthetic schema loses no input here.
             columns: Vec::new(),
         };
-        Some(derive_stats(&model, &self.context).stats.row_count)
+        Some(derive_stats(&model, &self.context).stats.row_count())
     }
 
     /// Resolves a column path against this row-count inventory with the same
@@ -3251,7 +3251,7 @@ impl RowSource {
             };
             joined.push(right);
         }
-        let rows = derive_stats(&model, &self.context).stats.row_count;
+        let rows = derive_stats(&model, &self.context).stats.row_count();
         Some((rows, model, at))
     }
 
