@@ -519,10 +519,14 @@ fn test_unknown_database_and_table_are_distinguished() {
 
 #[test]
 fn test_unported_clauses_name_their_go_symbol() {
+    // 6c landed GROUP BY, HAVING and DISTINCT, so what remains here is the
+    // two clauses whose builders are still later batches.
     for (sql, symbol) in [
-        ("SELECT a FROM t GROUP BY a", "buildAggregation"),
-        ("SELECT a FROM t HAVING a > 1", "resolveHavingAndOrderBy"),
-        ("SELECT DISTINCT a FROM t", "buildDistinct"),
+        (
+            "SELECT a FROM t WINDOW w AS (ORDER BY a)",
+            "buildWindowFunctions",
+        ),
+        ("WITH c AS (SELECT a FROM t) SELECT a FROM c", "buildWith"),
     ] {
         let harness = Harness::new();
         let mut builder = harness.builder();

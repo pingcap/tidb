@@ -115,10 +115,13 @@
 //!   (`logical_plan_builder.go:5808-6494`, `6705`) and
 //!   `ExtractTableList`/`tableListExtractor` (`:7450-7666`). Explicitly out of
 //!   scope; both are DML/privilege surfaces with no logical-tree consumer.
-//! * `buildAggregation` (`:212`), `resolveHavingAndOrderBy` (`:2913`),
-//!   `buildWindowFunctions` (`:6893`), `buildUnion`/`buildSetOpr` (`:2149`),
-//!   `buildJoin` (`:723`), `buildCte` (`:7900`). Batches 6b-6e. Each has its
-//!   `Todo` arm here rather than a silent fallthrough.
+//! * `buildWindowFunctions` (`:6893`), `buildUnion`/`buildSetOpr` (`:2149`),
+//!   `buildCte` (`:7900`). Batches 6d-6e; each is refused by name in
+//!   [`PlanBuilder::build_select`] rather than falling through silently.
+//!   `buildJoin` (`:723`) landed in 6b ([`from`]); `buildAggregation` (`:255`),
+//!   `resolveHavingAndOrderBy` (`:2905`), `buildDistinct` (`:1966`) and
+//!   `buildExpand` (`:144`) landed in 6c ([`aggregation`], [`expand`],
+//!   [`only_full_group_by`]).
 //! * `expression.EvalBool` on a folded predicate
 //!   (`buildSelection`'s always-false arm). The rewriter hands back a folded
 //!   [`Constant`](tidb_expr::constant::Constant); reading its truth needs an
@@ -160,12 +163,17 @@
 //!   bodies read. `*cteInfo`'s `storageID`, `cteClass` and the optimizer
 //!   handles belong to batch 6d.
 
+pub mod aggregation;
+#[cfg(test)]
+mod aggregation_tests;
 pub mod catalog;
+pub mod expand;
 pub mod from;
 #[cfg(test)]
 mod from_tests;
 pub mod handle_col_helper;
 pub mod marker;
+pub mod only_full_group_by;
 #[cfg(test)]
 mod tests;
 
@@ -267,10 +275,19 @@ pub struct ProjectionField {
 /// grouping-set columns the ported bodies read off a `*LogicalExpand`.
 #[derive(Clone, Debug, Default)]
 pub struct BlockExpand {
-    /// The `Expand`'s `GroupingIDCol`, when one has been allocated.
+    /// The `Expand`'s `GID`, when one has been allocated.
     pub grouping_id_col: Option<Column>,
-    /// The distinct grouping columns the block's `ROLLUP` produced.
+    /// The `Expand`'s `GPos`, present only when two grouping sets duplicate.
+    pub grouping_pos_col: Option<Column>,
+    /// Go `LogicalExpand.DistinctGroupByCol`: the grouping columns the block's
+    /// `ROLLUP` projected.
     pub distinct_group_by_cols: Vec<Column>,
+    /// Go `LogicalExpand.DistinctGbyColNames`, index-parallel to
+    /// [`Self::distinct_group_by_cols`].
+    pub distinct_group_by_names: Vec<FieldName>,
+    /// Go `LogicalExpand.DistinctGbyExprs`: the ORIGINAL group-by expressions,
+    /// which [`expand::PlanBuilder::replace_grouping_func`] matches against.
+    pub distinct_group_by_exprs: Vec<Expression>,
 }
 
 /// Go `schemaTableKey` (`planbuilder.go`), the recursion guard's key.
@@ -357,6 +374,17 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `b.TableHints()`'s JOIN half, which `buildJoin` reads through
     /// `SetPreferredJoinTypeAndOrder`; see [`from::JoinHints`].
     pub join_hints: from::JoinHints,
+
+    /// Go `b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy()`, which gates
+    /// [`only_full_group_by`]'s whole rule and `buildSortWithCheck`.
+    ///
+    /// Not a [`RewriterSessionFlags`] field: that struct is the EXPRESSION
+    /// rewriter's narrowing of `SessionVars` and nothing in it reads the SQL
+    /// mode. Go likewise reads the mode off `SQLMode`, not off the rewriter.
+    pub only_full_group_by: bool,
+    /// Go `b.ctx.GetSessionVars().EnableSkewDistinctAgg`
+    /// (`buildAggregation`, `:271`).
+    pub enable_skew_distinct_agg: bool,
 }
 
 /// The child's schema and output names, taken BEFORE the child is moved.
@@ -427,36 +455,40 @@ impl<'a> PlanScopeResolver<'a> {
             time_zone,
         }
     }
+}
 
-    /// Go `expression.FindFieldName(names, astCol)`: the unique index whose
-    /// name matches, or an error when several do.
-    fn find_field_name(&self, path: &[String]) -> Option<usize> {
-        let (db, table, column) = match path {
-            [column] => (None, None, column.as_str()),
-            [table, column] => (None, Some(table.as_str()), column.as_str()),
-            [db, table, column] => (Some(db.as_str()), Some(table.as_str()), column.as_str()),
-            _ => return None,
-        };
-        let mut found = None;
-        for (index, name) in self.names.iter().enumerate() {
-            if name.hidden || name.not_explicit_usable {
-                continue;
-            }
-            let matches = name.names.column.lower.eq_ignore_ascii_case(column)
-                && table.is_none_or(|t| name.names.table.lower.eq_ignore_ascii_case(t))
-                && db.is_none_or(|d| name.names.database.lower.eq_ignore_ascii_case(d));
-            if matches {
-                if found.is_some() {
-                    // Go raises ErrAmbiguous. The resolver interface has no
-                    // error channel, so an ambiguous name resolves to nothing
-                    // and the caller reports the unresolved column.
-                    return None;
-                }
-                found = Some(index);
-            }
+/// Go `expression.FindFieldName(names, astCol)`: the unique index whose name
+/// matches, or `None` when none or several do.
+///
+/// Go raises `ErrAmbiguous` for the "several" case. [`ColumnResolver`] has no
+/// error channel, so an ambiguous name resolves to nothing and the caller
+/// reports the unresolved column; the clause resolvers in
+/// [`aggregation`] and [`only_full_group_by`] read this directly and take the
+/// same permissive arm.
+#[must_use]
+pub fn find_field_name(names: &[FieldName], path: &[String]) -> Option<usize> {
+    let (db, table, column) = match path {
+        [column] => (None, None, column.as_str()),
+        [table, column] => (None, Some(table.as_str()), column.as_str()),
+        [db, table, column] => (Some(db.as_str()), Some(table.as_str()), column.as_str()),
+        _ => return None,
+    };
+    let mut found = None;
+    for (index, name) in names.iter().enumerate() {
+        if name.hidden || name.not_explicit_usable {
+            continue;
         }
-        found
+        let matches = name.names.column.lower.eq_ignore_ascii_case(column)
+            && table.is_none_or(|t| name.names.table.lower.eq_ignore_ascii_case(t))
+            && db.is_none_or(|d| name.names.database.lower.eq_ignore_ascii_case(d));
+        if matches {
+            if found.is_some() {
+                return None;
+            }
+            found = Some(index);
+        }
     }
+    found
 }
 
 impl ColumnResolver for PlanScopeResolver<'_> {
@@ -490,7 +522,7 @@ impl ColumnResolver for PlanScopeResolver<'_> {
                 // marker falls through to ordinary name resolution.
             }
         }
-        let index = self.find_field_name(path)?;
+        let index = find_field_name(self.names, path)?;
         let mut column = self.schema.columns.get(index)?.clone();
         column.index = index as i64;
         Some(column)
@@ -545,6 +577,9 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             flags: RewriterSessionFlags::default(),
             hints: RewriterHints::default(),
             join_hints: from::JoinHints::default(),
+            // Go's default `sql_mode` carries `ONLY_FULL_GROUP_BY`.
+            only_full_group_by: true,
+            enable_skew_distinct_agg: false,
         }
     }
 
@@ -1392,24 +1427,9 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     pub fn build_select(&mut self, select: &SelectStmt) -> Result<(LogicalPlan, u64), PlanError> {
         for (clause, present, go_symbol) in [
             (
-                "GROUP BY",
-                !select.group_by.is_empty(),
-                "buildAggregation (logical_plan_builder.go:212)",
-            ),
-            (
-                "HAVING",
-                select.having.is_some(),
-                "resolveHavingAndOrderBy (logical_plan_builder.go:2913)",
-            ),
-            (
                 "WINDOW",
                 !select.windows.is_empty(),
                 "buildWindowFunctions (logical_plan_builder.go:6893)",
-            ),
-            (
-                "DISTINCT",
-                select.distinct,
-                "buildDistinct (logical_plan_builder.go:1966)",
             ),
             (
                 "WITH",
@@ -1424,56 +1444,174 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             }
         }
 
-        // `:4356` FROM.
+        // `:4342` FROM.
         // `buildTableRefs` (`:420`) is the FROM clause's own entry point; the
         // `None` arm is its `buildTableDual`.
         let mut plan = self.build_table_refs(select.from.as_ref())?;
-        // `:4394` WHERE. No marker is bound yet: the passes that PRODUCE one
-        // (aggregation, window) are later batches, and ORDER BY's markers are
-        // produced below, after the select list is known.
-        let no_markers = BTreeMap::new();
+        let (source_schema, source_names) = snapshot_schema_and_names(&plan);
+
+        // `:4348` `unfoldWildStar`, then `:4360` `resolveGbyExprs` — GROUP BY
+        // is resolved against the SOURCE scope and the written select list,
+        // both of which exist before any operator above the FROM.
+        let mut fields = Self::expand_fields(&select.fields, &source_schema, &source_names);
+        let gby_exprs = self.resolve_gby_exprs(&select.group_by, &fields, &source_names)?;
+
+        // `:4370` "checkOnlyFullGroupBy should be executed before rewrite
+        // gbyExprs, because the field type of the fields may change."
+        self.check_only_full_group_by(select, &gby_exprs, &source_names)?;
+
+        let mut markers: BTreeMap<MarkerKind, Vec<Column>> = BTreeMap::new();
+        let group_by_items =
+            self.rewrite_gby_exprs(&gby_exprs, &source_schema, &source_names, &markers)?;
+
+        // `:4405` resolveHavingAndOrderBy: HAVING first (it may append
+        // auxiliary aggregate fields the ORDER BY half then sees), then
+        // `:4414` resolveCorrelatedAggregates.
+        let mut having = select.having.as_ref().map(Self::clause_scratch);
+        let having_aggs = match having.as_mut() {
+            Some(having) => self.resolve_having_and_order_by(having, &mut fields, &source_names)?,
+            None => Vec::new(),
+        };
+        let mut order_items: Vec<tidb_ast::OrderItem> = select.order_by.clone();
+        self.resolve_correlated_aggregates(
+            &mut fields,
+            having.as_mut(),
+            &mut order_items,
+            &source_names,
+        )?;
+        // 6a's ORDER BY half, which appends its own hidden fields past the
+        // select list.
+        let order_by = Self::resolve_order_by(&order_items, &mut fields);
+        // Go's `oldLen`, the third result of `buildProjection` (`:1767`): the
+        // select list WITHOUT the auxiliary fields every resolver above
+        // appended. `:4620`'s trailing projection trims back to it. Auxiliary
+        // fields only ever go on the END, so the count is that prefix.
+        let old_len = fields.iter().filter(|field| !field.hidden).count();
+
+        // `:4434` WHERE.
+        self.all_names.push(source_names.clone());
         if let Some(where_clause) = &select.where_clause {
-            plan = self.build_selection(plan, where_clause, &no_markers)?;
+            plan = self.build_selection(plan, where_clause, &markers)?;
         }
 
-        // `:4460` resolveHavingAndOrderBy, then `:4520` the select list.
-        let (source_schema, source_names) = snapshot_schema_and_names(&plan);
-        let mut fields = Self::expand_fields(&select.fields, &source_schema, &source_names);
-        let old_len = fields.len();
-        let order_by = Self::resolve_order_by(&select.order_by, &mut fields);
+        // `:4487` the aggregation. Go's `detectSelectAgg` is "an aggregate
+        // anywhere in the select list, HAVING or ORDER BY", which after the
+        // resolutions above is exactly "some clause produced an aggregate or a
+        // GROUP BY was written".
+        let mut select_aggs = self.extract_agg_funcs_in_select_fields(&mut fields);
+        let has_agg =
+            !select_aggs.is_empty() || !having_aggs.is_empty() || !select.group_by.is_empty();
+        let mut having_field_base = fields.len();
+        if has_agg {
+            // `agg_funcs` is Go's `aggFuncList`, and the marker index of every
+            // substitution above is a position in it: the select-list
+            // extractor numbered from 0, and HAVING's aggregates follow.
+            let having_offset = select_aggs.len();
+            let agg_funcs: Vec<Expr> = {
+                select_aggs.extend(having_aggs.iter().cloned());
+                select_aggs
+            };
+            // Go `havingWindowAndOrderbyExprResolver.Leave` (`:2788`) appends
+            // one AUXILIARY `sel_agg_<n>` field per HAVING aggregate, so that
+            // the PROJECTION computes it and the Selection above can read it
+            // as a column. The field's expression is the `#agg#k` marker the
+            // aggregation just bound, which is the same node Go's `havingMap`
+            // pointed at.
+            having_field_base = fields.len();
+            for (index, _) in having_aggs.iter().enumerate() {
+                let position = fields.len();
+                fields.push(ProjectionField {
+                    expr: PlanMarker::new(MarkerKind::Agg, having_offset + index).as_expr(),
+                    alias: Some(format!("sel_agg_{position}")),
+                    text: None,
+                    hidden: true,
+                });
+            }
 
-        let (projected, _) = self.build_projection(plan, &fields, &no_markers)?;
+            let mut group_by_items = group_by_items;
+            if select.rollup {
+                // `:4494` "if rollup syntax is specified, Expand OP is required
+                // to replicate the data to feed different grouping layout."
+                let (expanded, new_items) = self.build_expand(plan, group_by_items)?;
+                plan = expanded;
+                group_by_items = new_items;
+            }
+            let (aggregated, agg_index_map) =
+                self.build_aggregation(plan, &agg_funcs, group_by_items, &markers)?;
+            plan = aggregated;
+
+            // `:4514` the remap, as [`aggregation::agg_marker_columns`]'s own
+            // documentation sets out.
+            let agg_schema = plan.schema().cloned().unwrap_or_default();
+            let columns = aggregation::agg_marker_columns(&agg_index_map, &agg_schema);
+            // `Agg` is bound over the WHOLE list — the select list's markers
+            // index its head, and the auxiliary `sel_agg_<n>` fields appended
+            // above index its tail.
+            markers.insert(MarkerKind::Agg, columns.clone());
+            markers.insert(MarkerKind::Having, columns[having_offset..].to_vec());
+        }
+
+        // `:4523` the projection.
+        let (projected, _) = self.build_projection(plan, &fields, &markers)?;
         plan = projected;
 
-        // Both ORDER BY marker kinds index the projection's schema, so one map
-        // binds them; see [`Self::resolve_order_by`].
+        // Every remaining marker kind indexes the PROJECTION's schema.
         let projection_columns = plan
             .schema()
             .map(|schema| schema.columns.clone())
             .unwrap_or_default();
-        let mut markers = BTreeMap::new();
         markers.insert(MarkerKind::Column, projection_columns.clone());
-        markers.insert(MarkerKind::OrderBy, projection_columns);
+        markers.insert(MarkerKind::OrderBy, projection_columns.clone());
+        if has_agg {
+            // HAVING is built ABOVE the projection, so its aggregate markers
+            // must now name the projection column that carries each one; the
+            // auxiliary field the resolver appended IS that column.
+            let having_columns: Vec<Column> = (0..having_aggs.len())
+                .filter_map(|index| {
+                    let mut column = projection_columns.get(having_field_base + index).cloned()?;
+                    column.index = (having_field_base + index) as i64;
+                    Some(column)
+                })
+                .collect();
+            if having_columns.len() == having_aggs.len() {
+                markers.insert(MarkerKind::Having, having_columns);
+            }
+        }
 
-        // `:4600` ORDER BY, then `:4620` LIMIT.
+        // `:4533` HAVING, as a Selection ABOVE the Projection — see
+        // [`aggregation`]'s section 2.
+        if let Some(having) = &having {
+            self.cur_clause = ClauseCode::Having;
+            plan = self.build_selection(plan, having, &markers)?;
+        }
+
+        // `:4572` DISTINCT, then `:4579` ORDER BY, then `:4600` LIMIT.
+        if select.distinct {
+            plan = self.build_distinct(plan, old_len)?;
+        }
         if !order_by.is_empty() {
             let items: Vec<tidb_ast::OrderItem> = order_by
                 .into_iter()
-                .zip(&select.order_by)
+                .zip(&order_items)
                 .map(|(expr, original)| tidb_ast::OrderItem {
                     expr,
                     desc: original.desc,
                 })
                 .collect();
-            plan = self.build_sort(plan, &items, &markers)?;
+            plan = if self.only_full_group_by {
+                self.build_sort_with_check(plan, &items, &markers, select, &source_names)?
+            } else {
+                self.build_sort(plan, &items, &markers)?
+            };
         }
         if let Some(limit) = &select.limit {
             plan = self.build_limit(plan, limit)?;
         }
-        // `:4640` trim the hidden ORDER BY columns back off.
+        // `:4620` trim the hidden ORDER BY / HAVING columns back off.
         if fields.len() != old_len {
             plan = self.build_trim_projection(plan, old_len);
         }
+        self.all_names.pop();
         Ok((plan, self.get_opt_flag()))
     }
 }
