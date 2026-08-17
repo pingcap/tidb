@@ -15,6 +15,15 @@
 //! Materialization of one CTE body, Go `buildWith`/`buildRecursiveCTE` plus
 //! `CTEExec`'s iterative producer.
 //!
+//! # DOCUMENTED DIVERGENCE from Go's planner -- do not harvest
+//!
+//! This runs the fixpoint AT PLAN TIME over materialized rows, where Go
+//! builds a LogicalCTE whose executor (`CTEExec`) iterates at RUN time. The
+//! delta semantics below are captured against Go and are correct as row
+//! behavior; the shape is not Go's planner. The plan path's CTEs are
+//! `tidb-planner`'s `plan_builder/cte.rs`, built from Go directly -- never
+//! from this file. This module dies with the driver.
+//!
 //! Every CTE goes through [`materialize_cte_body`], which is ONE producer
 //! rather than a case per shape: a bare `SELECT` body runs once, a
 //! `UNION`-bodied one that never names itself runs once through the ordinary

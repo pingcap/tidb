@@ -15,6 +15,14 @@
 //! Set operations: `UNION`, `EXCEPT` and `INTERSECT`, Go's `buildSetOpr` over
 //! materialized rows.
 //!
+//! # DOCUMENTED DIVERGENCE from Go's planner -- do not harvest
+//!
+//! This is a ROW FOLD over materialized terms, not Go's operator tree: Go
+//! builds LogicalUnionAll/semi-join plans and never materializes. The plan
+//! path's set operations are `tidb-planner`'s `plan_builder/set_opr.rs`,
+//! built from `buildSetOpr` directly -- never from this file. This module
+//! dies with the driver.
+//!
 //! Go plans the terms left to right and folds each into the accumulated
 //! result, which is what [`run_set_opr_stmt`] does. The distinct forms
 //! deduplicate and the `ALL` forms keep multiplicity, so the fold is stated

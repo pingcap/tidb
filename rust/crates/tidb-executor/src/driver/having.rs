@@ -15,6 +15,15 @@
 //! `HAVING` for a non-aggregate `SELECT` -- Go's `LogicalSelection` above the
 //! select list's `Projection`.
 //!
+//! # DOCUMENTED DIVERGENCE from Go's planner -- do not harvest
+//!
+//! This module filters BEFORE the projection over source rows, where Go
+//! builds a Selection ABOVE the projection. The header below argues the row
+//! equivalence; the PLAN SHAPE is deliberately not Go's. The plan path's
+//! `HAVING` is `tidb-planner`'s `plan_builder/aggregation.rs`, built from
+//! `buildSelect` directly -- never from this file. This module dies with the
+//! driver.
+//!
 //! The aggregate pipeline has its own `HAVING` stage
 //! ([`super::agg_select::run_aggregate_select`]) because there the clause
 //! reads the AGGREGATION's output. Everything else -- no `GROUP BY`, no
