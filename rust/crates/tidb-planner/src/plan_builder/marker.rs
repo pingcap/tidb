@@ -155,6 +155,18 @@ impl MarkerKind {
         }
     }
 
+    /// Whether this kind's marker INDEX is also the producing operator's
+    /// schema index (spec rule 4).
+    ///
+    /// True for every kind but [`Self::Window`]: Go's `windowMapper` value IS
+    /// `schema.Len()` at insertion, but this port binds the kind to a vector
+    /// ordered by the k-th window CALL, so the marker index selects the column
+    /// and the column carries its own schema position.
+    #[must_use]
+    pub const fn index_is_schema_index(self) -> bool {
+        !matches!(self, Self::Window)
+    }
+
     fn from_tag(tag: &str) -> Option<Self> {
         Some(match tag {
             "agg" => Self::Agg,

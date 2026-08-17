@@ -519,11 +519,12 @@ fn test_unknown_database_and_table_are_distinguished() {
 
 #[test]
 fn test_unported_clauses_name_their_go_symbol() {
-    // 6c landed GROUP BY, HAVING and DISTINCT and 6d landed `WITH`
-    // (`buildWith`), so `WINDOW` is the one clause whose builder is still a
-    // later batch.
-    let sql = "SELECT a FROM t WINDOW w AS (ORDER BY a)";
-    let symbol = "buildWindowFunctions";
+    // 6c landed GROUP BY, HAVING and DISTINCT, 6d landed `WITH`
+    // (`buildWith`) and 6e landed `WINDOW` (`buildWindowFunctions`). What
+    // remains refused inside the window stage is the `windowAggMap` half of
+    // `resolveWindowFunction`; see [`super::window`]'s section 3.
+    let sql = "SELECT ROW_NUMBER() OVER (ORDER BY SUM(a)) FROM t GROUP BY b";
+    let symbol = "resolveWindowFunction";
     let harness = Harness::new();
     let mut builder = harness.builder();
     let error = builder

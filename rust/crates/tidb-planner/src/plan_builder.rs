@@ -115,8 +115,10 @@
 //!   (`logical_plan_builder.go:5808-6494`, `6705`) and
 //!   `ExtractTableList`/`tableListExtractor` (`:7450-7666`). Explicitly out of
 //!   scope; both are DML/privilege surfaces with no logical-tree consumer.
-//! * `buildWindowFunctions` (`:6893`). Batch 6e; refused by name in
-//!   [`PlanBuilder::build_select`] rather than falling through silently.
+//! * `buildWindowFunctions` (`:7064`) and the whole window stage landed in 6e
+//!   ([`window`]), whose own section 3 names what INSIDE that stage is still
+//!   refused — chiefly the `windowAggMap` half of `resolveWindowFunction`
+//!   (`:3048`).
 //!   `buildSetOpr` (`:2108`) and `buildCte`/`buildWith` (`:7714`, `:7994`)
 //!   landed in 6d ([`set_opr`], [`cte`]).
 //!   `buildJoin` (`:723`) landed in 6b ([`from`]); `buildAggregation` (`:255`),
@@ -181,6 +183,9 @@ pub mod set_opr;
 mod set_opr_tests;
 #[cfg(test)]
 mod tests;
+pub mod window;
+#[cfg(test)]
+mod window_tests;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -416,8 +421,14 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `currentBlockExpand`.
     pub current_block_expand: Option<BlockExpand>,
 
-    /// Go `windowSpecs map[string]*ast.WindowSpec`.
-    pub window_specs: BTreeMap<String, tidb_ast::WindowDef>,
+    /// Go `windowSpecs map[string]*ast.WindowSpec`, keyed by the LOWER-cased
+    /// window name. The value keeps the name in its written case because
+    /// `getWindowName` (`logical_plan_builder.go:6716`) reports errors under
+    /// it; [`WindowDef`](tidb_ast::WindowDef) alone carries no name.
+    pub window_specs: BTreeMap<String, window::NamedWindowSpec>,
+    /// Go `b.ctx.GetSessionVars().EnablePipelinedWindowExec`
+    /// (`handleDefaultFrame`, `:7276`). Go's variable defaults to ON.
+    pub enable_pipelined_window_exec: bool,
     /// Go `inStraightJoin`.
     pub in_straight_join: bool,
     /// Go `handleHelper`.
@@ -603,10 +614,12 @@ impl ColumnResolver for PlanScopeResolver<'_> {
                     .and_then(|columns| columns.get(marker.index))
                 {
                     let mut column = column.clone();
-                    // Spec rule 4: the marker index IS the producing
-                    // operator's schema index, which is also the evaluated
-                    // row position Go's `Column.Index` carries.
-                    column.index = marker.index as i64;
+                    if marker.kind.index_is_schema_index() {
+                        // Spec rule 4: the marker index IS the producing
+                        // operator's schema index, which is also the evaluated
+                        // row position Go's `Column.Index` carries.
+                        column.index = marker.index as i64;
+                    }
                     return Some(column);
                 }
                 // Rule 6 / the collision note: an undecodable-to-a-column
@@ -651,6 +664,7 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             outer_block_expand: Vec::new(),
             current_block_expand: None,
             window_specs: BTreeMap::new(),
+            enable_pipelined_window_exec: true,
             in_straight_join: false,
             handle_helper: HandleColHelper::new(),
             all_names: Vec::new(),
@@ -1350,7 +1364,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         let mut projection_names = Vec::with_capacity(fields.len());
         for field in fields {
             let scratch = Self::clause_scratch(&field.expr);
-            let built = self.rewrite_scalar(&scratch, &schema, &names, markers)?;
+            // `:1786` "when we build the projection for select fields, we need
+            // to skip the window function ... we add fake placeholders for
+            // window functions. These fake placeholders will be erased in
+            // column pruning." This is Go's `!considerWindow &&
+            // isWindowFuncField` arm; the real column arrives in
+            // [`Self::build_projection_consider_window`].
+            let built = if aggregation::has_window_flag(&scratch) {
+                Expression::Constant(Constant::new_zero())
+            } else {
+                self.rewrite_scalar(&scratch, &schema, &names, markers)?
+            };
             let resolved_index = match &built {
                 Expression::Column(column) => usize::try_from(column.index).ok(),
                 _ => None,
@@ -1377,6 +1401,79 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             .set_schema(Some(Schema::new(projection_columns)));
         projection.base.base.set_output_names(projection_names);
         Ok((LogicalPlan::Projection(projection), exprs))
+    }
+
+    /// Go `buildProjection(..., considerWindow = true)`
+    /// (`logical_plan_builder.go:1767`, the `:1791` arm): the projection
+    /// `buildSelect` builds a SECOND time, once the window operators exist.
+    ///
+    /// Go's rule, quoted at `:1786`: "When `considerWindow` is true, all the
+    /// non-window fields have been built, so we just use the schema columns."
+    /// A field that carries no window call therefore becomes the child's
+    /// column at the SAME index — never a re-rewrite, which would fail because
+    /// the first projection already renamed it. Only a field carrying a
+    /// [`marker::MarkerKind::Window`] marker is rewritten, and that marker
+    /// resolves to the `LogicalWindow`'s own output column.
+    ///
+    /// # Errors
+    ///
+    /// The expression build error for any window-carrying field.
+    fn build_projection_consider_window(
+        &mut self,
+        plan: LogicalPlan,
+        fields: &[ProjectionField],
+        markers: &BTreeMap<MarkerKind, Vec<Column>>,
+    ) -> Result<LogicalPlan, PlanError> {
+        self.opt_flag |= flags::ELIMINATE_PROJECTION;
+        self.cur_clause = ClauseCode::FieldList;
+        let (schema, names) = snapshot_schema_and_names(&plan);
+
+        let mut exprs = Vec::with_capacity(fields.len());
+        let mut projection_columns = Vec::with_capacity(fields.len());
+        let mut projection_names = Vec::with_capacity(fields.len());
+        for (index, field) in fields.iter().enumerate() {
+            // Go `ast.HasWindowFlag(field.Expr)`: the field CONTAINS a window
+            // call, at any depth. After [`window::extract_window_funcs`] the
+            // call is a marker, so the test is over markers.
+            if !window::expr_carries_window_marker(&field.expr) {
+                let Some(column) = schema.columns.get(index) else {
+                    return Err(PlanError::internal(
+                        "the window stage's child lost a select-list column",
+                    ));
+                };
+                let mut column = column.clone();
+                column.index = index as i64;
+                exprs.push(Expression::Column(column.clone()));
+                projection_columns.push(column);
+                projection_names.push(names.get(index).cloned().unwrap_or_default());
+                continue;
+            }
+            let built = self.rewrite_scalar(&field.expr, &schema, &names, markers)?;
+            let resolved_index = match &built {
+                Expression::Column(column) => usize::try_from(column.index).ok(),
+                _ => None,
+            };
+            let name = Self::projection_field_name(field, &names, resolved_index);
+            let ret_type = built
+                .static_type()
+                .cloned()
+                .unwrap_or_else(|| FieldType::new(FieldTypeCode::LongLong));
+            let mut output = Column::new(self.column_ids.alloc(), ret_type);
+            output.orig_name = name.display_name();
+            output.is_hidden = field.hidden;
+            projection_columns.push(output);
+            projection_names.push(name);
+            exprs.push(built);
+        }
+
+        let mut projection = LogicalProjection::new(self.base(LogicalProjection::TYPE), exprs);
+        projection.base.set_children(vec![plan]);
+        projection
+            .base
+            .base
+            .set_schema(Some(Schema::new(projection_columns)));
+        projection.base.base.set_output_names(projection_names);
+        Ok(LogicalPlan::Projection(projection))
     }
 
     /// Go `buildSelect`'s trailing projection (`logical_plan_builder.go:4640`):
@@ -1522,8 +1619,8 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     ///
     /// # Errors
     ///
-    /// Any clause's error, or an unported clause (GROUP BY, HAVING, WINDOW,
-    /// DISTINCT, locking, `INTO OUTFILE`), each naming its Go symbol.
+    /// Any clause's error, or an unported clause (locking, `INTO OUTFILE`) or
+    /// unported shape inside one, each naming its Go symbol.
     pub fn build_select(&mut self, select: &SelectStmt) -> Result<(LogicalPlan, u64), PlanError> {
         // `:4264` the recursive-query-block guards. Each is a shape whose
         // fixpoint is not defined, and Go refuses all four before building
@@ -1575,13 +1672,16 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// [`Self::build_select`] past its `WITH` prologue: the FROM / WHERE /
     /// GROUP BY / SELECT / HAVING / ORDER BY / LIMIT spine itself.
     fn build_select_body(&mut self, select: &SelectStmt) -> Result<(LogicalPlan, u64), PlanError> {
-        // boundary: `buildWindowFunctions` (`logical_plan_builder.go:6893`),
-        // batch 6e. 6d closed `buildWith`, so this is the last clause of the
-        // SELECT spine still refused by name.
-        if !select.windows.is_empty() {
-            return Err(PlanError::internal(
-                "WINDOW is a later batch: buildWindowFunctions (logical_plan_builder.go:6893)",
-            ));
+        // `:4392` the recursive-CTE guard for the window stage, which Go makes
+        // BEFORE `resolveWindowFunction` — see [`window`] for the rest.
+        let has_window_func_field = window::detect_select_window(select);
+        if (has_window_func_field || !select.windows.is_empty())
+            && self.building_recursive_part_for_cte
+        {
+            return Err(PlanError::internal(format!(
+                "Recursive Common Table Expression '{}' can contain neither aggregation nor window functions in recursive query block",
+                self.gen_cte_table_name_for_error()
+            )));
         }
 
         // `:4342` FROM.
@@ -1622,6 +1722,14 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         // 6a's ORDER BY half, which appends its own hidden fields past the
         // select list.
         let order_by = Self::resolve_order_by(&order_items, &mut fields);
+        // `:4397` `resolveWindowFunction`'s column half, which appends one
+        // auxiliary field per column a window specification names; see
+        // [`window::PlanBuilder::resolve_window_function`] for why it runs
+        // here and not at Go's exact position.
+        let mut windows = select.windows.clone();
+        if has_window_func_field || !windows.is_empty() {
+            self.resolve_window_function(&mut windows, &mut fields, &source_names)?;
+        }
         // Go's `oldLen`, the third result of `buildProjection` (`:1767`): the
         // select list WITHOUT the auxiliary fields every resolver above
         // appended. `:4620`'s trailing projection trims back to it. Auxiliary
@@ -1723,6 +1831,35 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
         if let Some(having) = &having {
             self.cur_clause = ClauseCode::Having;
             plan = self.build_selection(plan, having, &markers)?;
+        }
+
+        // `:4541` the named window specs, which Go builds AFTER HAVING — a
+        // duplicate or circular WINDOW clause is reported even when no window
+        // function uses it.
+        self.build_window_specs(&windows)?;
+
+        // `:4547` the window stage. Go's guard is
+        // `hasWindowFuncField || sel.WindowSpecs != nil`: "Some SQL statements
+        // define WINDOW but do not use them. But we also need to check the
+        // window specification list."
+        if has_window_func_field || !windows.is_empty() {
+            let (windowed, window_columns) =
+                self.build_window_stage(plan, &mut fields, &markers)?;
+            plan = windowed;
+            markers.insert(MarkerKind::Window, window_columns);
+            // `:4564` "`hasWindowFuncField == false` means there's only unused
+            // named window specs without window functions. In such case plan
+            // `p` is not changed, so we don't have to build another
+            // projection."
+            if has_window_func_field {
+                plan = self.build_projection_consider_window(plan, &fields, &markers)?;
+                let projection_columns = plan
+                    .schema()
+                    .map(|schema| schema.columns.clone())
+                    .unwrap_or_default();
+                markers.insert(MarkerKind::Column, projection_columns.clone());
+                markers.insert(MarkerKind::OrderBy, projection_columns);
+            }
         }
 
         // `:4572` DISTINCT, then `:4579` ORDER BY, then `:4600` LIMIT.
