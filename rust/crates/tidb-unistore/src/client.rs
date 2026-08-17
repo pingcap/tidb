@@ -37,11 +37,14 @@
 //!   call completes synchronously before any cancellation could land, the
 //!   same window Go's in-process dispatch has.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use prost::Message;
 use tidb_proto::coprocessor;
+use tidb_txnkv::rpc::{BatchCommandTag, TransactionBatchPublication, TransactionBatchResponse};
+use tidb_txnkv::transaction::{PublishedCommand, TransactionCommandClient};
 use tidb_txnkv::{
     DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, DirectUnaryResponse,
     UnaryCallContext,
@@ -58,6 +61,9 @@ pub const IN_PROCESS_ADDRESS: &str = "unistore-in-process";
 #[derive(Clone, Debug)]
 pub struct InProcessClient {
     handler: Arc<Mutex<KvHandler>>,
+    /// Monotone identity for typed-command publications, shared by clones so
+    /// two receipts never claim the same request.
+    request_ids: Arc<AtomicU64>,
 }
 
 impl InProcessClient {
@@ -72,6 +78,7 @@ impl InProcessClient {
     pub fn over(handler: KvHandler) -> Self {
         Self {
             handler: Arc::new(Mutex::new(handler)),
+            request_ids: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -239,6 +246,113 @@ impl tidb_txnkv::rpc::PendingRequest for ImmediatePending {
     }
 }
 
+/// Go `rpc.go`'s typed arms: `CmdGet`, `CmdScan`, `CmdPrewrite`, `CmdCommit`,
+/// `CmdBatchRollback`, `CmdPessimisticLock`, `CmdPessimisticRollback`,
+/// `CmdTxnHeartBeat` each dispatch the typed kvrpcpb request straight into the
+/// embedded store. Every command completes synchronously, so the publication
+/// receipt is minted here — the store DID see the command — with the
+/// in-process address and a client-monotone request identity.
+macro_rules! publish_in_process {
+    ($self:ident, $request:ident, $tag:ident, $method:ident) => {{
+        let response = $self
+            .handler
+            .lock()
+            .expect("the store lock")
+            .$method($request);
+        let request_id = $self.request_ids.fetch_add(1, Ordering::Relaxed);
+        PublishedCommand::Response(TransactionBatchResponse {
+            response,
+            publication: TransactionBatchPublication::in_process(
+                BatchCommandTag::$tag,
+                IN_PROCESS_ADDRESS,
+                request_id,
+            ),
+        })
+    }};
+}
+
+impl TransactionCommandClient for InProcessClient {
+    fn publish_transaction_get(
+        &mut self,
+        _address: &str,
+        request: &tidb_proto::KvrpcGetRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> PublishedCommand<tidb_proto::KvrpcGetResponse> {
+        publish_in_process!(self, request, Get, kv_get)
+    }
+
+    fn publish_transaction_scan(
+        &mut self,
+        _address: &str,
+        request: &tidb_proto::KvrpcScanRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> PublishedCommand<tidb_proto::KvrpcScanResponse> {
+        publish_in_process!(self, request, Scan, kv_scan)
+    }
+
+    fn publish_prewrite(
+        &mut self,
+        _address: &str,
+        request: &tidb_proto::KvrpcPrewriteRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> PublishedCommand<tidb_proto::KvrpcPrewriteResponse> {
+        publish_in_process!(self, request, Prewrite, kv_prewrite)
+    }
+
+    fn publish_commit(
+        &mut self,
+        _address: &str,
+        request: &tidb_proto::KvrpcCommitRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> PublishedCommand<tidb_proto::KvrpcCommitResponse> {
+        publish_in_process!(self, request, Commit, kv_commit)
+    }
+
+    fn publish_batch_rollback(
+        &mut self,
+        _address: &str,
+        request: &tidb_proto::KvrpcBatchRollbackRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> PublishedCommand<tidb_proto::KvrpcBatchRollbackResponse> {
+        publish_in_process!(self, request, BatchRollback, kv_batch_rollback)
+    }
+
+    fn publish_pessimistic_lock(
+        &mut self,
+        _address: &str,
+        request: &tidb_proto::KvrpcPessimisticLockRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> PublishedCommand<tidb_proto::KvrpcPessimisticLockResponse> {
+        publish_in_process!(self, request, PessimisticLock, kv_pessimistic_lock)
+    }
+
+    fn publish_pessimistic_rollback(
+        &mut self,
+        _address: &str,
+        request: &tidb_proto::KvrpcPessimisticRollbackRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> PublishedCommand<tidb_proto::KvrpcPessimisticRollbackResponse> {
+        publish_in_process!(self, request, PessimisticRollback, kv_pessimistic_rollback)
+    }
+
+    fn publish_txn_heart_beat(
+        &mut self,
+        _address: &str,
+        request: &tidb_proto::KvrpcTxnHeartBeatRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> PublishedCommand<tidb_proto::KvrpcTxnHeartBeatResponse> {
+        publish_in_process!(self, request, TxnHeartBeat, kv_txn_heart_beat)
+    }
+}
+
 impl tidb_txnkv::rpc::AsyncRequestDispatcher for InProcessClient {
     type Pending = ImmediatePending;
 
@@ -267,6 +381,65 @@ mod tests {
     use tidb_proto::tipb;
 
     // WRITTEN: rpc.go's coverage is the store integration suites.
+
+    /// The write-seam milestone: the REAL optimistic 2PC coordinator — the
+    /// same `RealOptimisticTransaction` the production node publishes
+    /// through — opens over the in-process triple (client, region loader,
+    /// PD capability), takes its timestamps from the embedded TSO, prewrites
+    /// and commits through `TransactionCommandClient`, and the row lands in
+    /// the store. Go's precedent: a transaction over mockstore runs the
+    /// identical client-go committer, only the RPC hop is elided.
+    #[test]
+    fn the_generic_opener_commits_through_the_in_process_store() {
+        use tidb_txnkv::gc_state::TxnSafePointRefresher;
+        use tidb_txnkv::region::RegionCache;
+        use tidb_txnkv::transaction::{OptimisticCommitOutcome, OptimisticMutation};
+
+        let client = InProcessClient::new();
+        let cache = RegionCache::new(crate::region_loader::InProcessRegionLoader);
+        let authority = tidb_txnkv::SharedReadAuthority::start(client.clone(), cache)
+            .expect("the read authority starts over the in-process plane");
+        let gc_state = TxnSafePointRefresher::start_with_source(|| Ok(0))
+            .expect("the static-zero safe point seeds");
+        let opener = tidb_txnkv::transaction::RealOptimisticTransactionOpener::from_capabilities(
+            authority.opener(),
+            crate::tso::InProcessPd::new(),
+            Duration::from_secs(1),
+            gc_state,
+        )
+        .expect("the opener derives from in-process capabilities");
+
+        let transaction = opener
+            .begin(16, 4096)
+            .expect("a timestamp comes from the embedded TSO");
+        let start_ts = transaction.start_ts();
+        assert!(start_ts > 0, "the TSO issued a real timestamp");
+
+        let key = b"the-write-seam-key".to_vec();
+        let value = b"the-write-seam-value".to_vec();
+        let call = UnaryCallContext::with_timeout(Duration::from_secs(1));
+        let outcome = transaction
+            .commit(
+                vec![OptimisticMutation::put_existing(key.clone(), value.clone())
+                    .expect("a valid mutation")],
+                &call,
+            )
+            .expect("the two-phase commit completes in-process");
+        let OptimisticCommitOutcome::Committed(committed) = outcome else {
+            panic!("the commit must land, got a non-committed outcome");
+        };
+        assert!(
+            committed.receipt.commit_ts > start_ts,
+            "commit_ts follows start_ts"
+        );
+
+        client.with_store(|store| {
+            let read = store
+                .get(&key, u64::MAX)
+                .expect("the committed key reads without lock errors");
+            assert_eq!(read, Some(value), "the committed value is the one written");
+        });
+    }
 
     #[test]
     fn a_cop_request_travels_the_client_seam_end_to_end() {

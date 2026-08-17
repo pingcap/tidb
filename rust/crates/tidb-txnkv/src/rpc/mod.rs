@@ -21,6 +21,7 @@ pub use async_completion::{
     CompletionRequest, CompletionRunLoop, CompletionRunLoopState, CompletionRunOutcome,
     CompletionSpawner, PendingRequest,
 };
+pub use batch::BatchCommandTag;
 pub use error::{
     DirectUnaryClientError, DirectUnaryConnectionError, DirectUnaryGrpcCode,
     DirectUnaryTransportClass, TransportShutdownError,

@@ -72,6 +72,21 @@ impl TransactionBatchPublication {
         })
     }
 
+    /// Publication identity for a command a store completed in-process.
+    ///
+    /// Go's unistore RPCClient answers every kvrpcpb command inside the
+    /// process; no BatchCommands stream exists, so the receipt names the
+    /// in-process address with generation zero. The identity is still
+    /// irrevocable and still truthful: the store DID see the command.
+    #[must_use]
+    pub fn in_process(tag: BatchCommandTag, address: &str, request_id: u64) -> Self {
+        Self {
+            tag,
+            route: BatchRoute::direct(address, 0),
+            request_id,
+        }
+    }
+
     /// Exact BatchCommands oneof tag used for this command.
     #[must_use]
     pub const fn tag(&self) -> BatchCommandTag {
