@@ -33,21 +33,26 @@
 //! complete; the operator set does not, and every operator not yet ported is
 //! an explicit `Todo` variant naming its Go type rather than a default arm.
 //!
-//! # THREE logical representations live here, and none is bridged
+//! # One tree is the truth; the two reduced views are bridged or dying
 //!
-//! [`logical::LogicalPlan`] is the tree the plan builder produces. It is NOT
-//! the tree the other passes consume. As of this writing there are three
-//! separate logical shapes in this crate:
+//! [`logical::LogicalPlan`] is the SINGLE SOURCE OF TRUTH (user-ratified),
+//! which is also Go's own shape: one `base.LogicalPlan` interface carries
+//! `RecursiveDeriveStats` and `findBestTask` alike. Three logical shapes
+//! still exist in this crate, but they are no longer three independent
+//! representations:
 //!
-//! 1. [`logical::LogicalPlan`] — the closed enum above, ~23 operators, built
-//!    by [`plan_builder`] and rewritten by [`logical::rule`].
-//! 2. `find_best_task::LogicalNode` — two variants, `Leaf` and `Join`, the
-//!    input to join enumeration. `find_best_task` does not name
-//!    `LogicalPlan` anywhere.
-//! 3. `cardinality::derive_stats::LogicalNode` — five variants
-//!    (`DataSource`, `Selection`, `Projection`, `Aggregation`, `Join`), the
-//!    input to statistics derivation. A different type from (2) despite the
-//!    identical name.
+//! 1. [`logical::LogicalPlan`] — the closed enum above, built by
+//!    [`plan_builder`], rewritten by [`logical::rule`], and now the tree the
+//!    passes run over: `LogicalPlan::recursive_derive_stats` derives and
+//!    writes statistics over it directly.
+//! 2. `find_best_task::LogicalNode` — the join enumeration's reduced view,
+//!    now PRODUCED FROM (1) by `find_best_task::project_join_spine`. Its
+//!    leaves still take caller-supplied access-path alternatives, because
+//!    access-path lists build empty — a named residue, not a hidden one.
+//! 3. `cardinality::derive_stats::LogicalNode` — the legacy reduced input to
+//!    the old statistics pass, kept ONLY for its out-of-crate producer (see
+//!    below). New code must use (1) and `recursive_derive_stats`; this type
+//!    is scheduled to die with the driver that feeds it.
 //!
 //! ## (3) is NOT a crate-local invention: it has an out-of-crate producer
 //!
@@ -75,19 +80,10 @@
 //! `tidb-executor` and delete it from here; that is a topology decision, not
 //! a local one.
 //!
-//! **Nothing converts (1) into (2) or (3).** Each consumer invented the
-//! reduced input it needed, and each is exercised only by tests that build
-//! that input by hand. So the builder can build a plan and the rules can
-//! rewrite it, but no plan the builder produces can currently be costed,
-//! enumerated, or physicalised — those passes are complete over inputs
-//! nothing produces.
-//!
-//! This is why the plan layer does not yet execute anything, and it is the
-//! real content of the "make the plan layer live" work: it needs BRIDGES, not
-//! just wiring into an executor. Whoever builds them should decide
-//! deliberately whether (2) and (3) survive as reduced views projected from
-//! (1), or whether their passes are retargeted onto (1) directly. Do not
-//! assume a `LogicalPlan` can be passed to either; it cannot.
+//! What remains before (3) can be deleted: the `StatsInfo`/`ColumnId`
+//! unification and the retarget of `join_reorder.rs`, a two-crate change
+//! whose recipe is written on the types themselves. Until then, do not add
+//! new producers of (2) or (3): project from (1), or derive on (1).
 //!
 //! # Closed enums, not `Box<dyn LogicalPlan>`
 //!

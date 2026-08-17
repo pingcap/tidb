@@ -184,6 +184,8 @@ fn join_1042() -> LogicalJoin {
         right_properties: vec![vec![T1_A]],
         force_merge: false,
         output_rows: None,
+        has_null_eq: false,
+        keys_contain_enum_or_set: false,
     }
 }
 
@@ -519,6 +521,8 @@ fn forced_merge_subtree() -> LogicalNode {
         right_properties: Vec::new(),
         force_merge: true,
         output_rows: None,
+        has_null_eq: false,
+        keys_contain_enum_or_set: false,
     }))
 }
 
@@ -584,6 +588,8 @@ fn a_child_merge_hint_does_not_force_the_parent_join_method() {
         right_properties: vec![vec![T3_A]],
         force_merge: false,
         output_rows: None,
+        has_null_eq: false,
+        keys_contain_enum_or_set: false,
     }));
 
     let best = find_best_task(
@@ -831,6 +837,8 @@ fn join_1169() -> LogicalJoin {
         right_properties: vec![vec![T1_A]],
         force_merge: false,
         output_rows: None,
+        has_null_eq: false,
+        keys_contain_enum_or_set: false,
     }
 }
 
@@ -1140,4 +1148,217 @@ fn the_sort_enforcer_is_priced_by_the_ver2_formula() {
         (added - expected).abs() < 1e-6,
         "added {added}, expected {expected}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// The projection bridge and the merge-join refusals (all WRITTEN; Go's
+// coverage of these paths is casetest-bound).
+// ---------------------------------------------------------------------------
+
+/// A reduced join whose properties WOULD admit a plain merge candidate, so
+/// the refusal under test is the only thing standing in the way.
+fn mergeable_join() -> LogicalJoin {
+    LogicalJoin {
+        join_type: LogicalJoinType::Inner,
+        left: Box::new(LogicalNode::Leaf(Vec::new())),
+        right: Box::new(LogicalNode::Leaf(Vec::new())),
+        left_keys: vec![1],
+        right_keys: vec![11],
+        left_schema: vec![1, 2],
+        right_schema: vec![11, 12],
+        left_properties: vec![vec![1]],
+        right_properties: vec![vec![11]],
+        force_merge: false,
+        output_rows: None,
+        has_null_eq: false,
+        keys_contain_enum_or_set: false,
+    }
+}
+
+#[test]
+fn a_null_eq_join_has_no_merge_candidate_in_either_form() {
+    // `physical_merge_join.go:70` and `:150`: both merge forms refuse
+    // null-eq keys, under the same TODO.
+    let mut join = mergeable_join();
+    let empty = PhysicalProperty::default();
+    assert!(
+        exhaust_join(&join, &empty)
+            .iter()
+            .any(|c| matches!(c.strategy, JoinStrategy::Merge { .. })),
+        "the fixture must be mergeable before the flag flips"
+    );
+    join.has_null_eq = true;
+    join.force_merge = true;
+    assert!(
+        !exhaust_join(&join, &empty)
+            .iter()
+            .any(|c| matches!(c.strategy, JoinStrategy::Merge { .. })),
+        "a <=> key admits no merge join, hinted or not"
+    );
+}
+
+#[test]
+fn enum_keys_block_plain_merge_but_not_the_hinted_form() {
+    // `GetMergeJoin` refuses ENUM/SET keys (`physical_merge_join.go:57-66`);
+    // `getEnforcedMergeJoin` checks only null-eq. The asymmetry is Go's own,
+    // reproduced deliberately.
+    let mut join = mergeable_join();
+    join.keys_contain_enum_or_set = true;
+    let empty = PhysicalProperty::default();
+    assert!(
+        !exhaust_join(&join, &empty)
+            .iter()
+            .any(|c| matches!(c.strategy, JoinStrategy::Merge { .. })),
+        "no plain merge candidate over an ENUM/SET key"
+    );
+    join.force_merge = true;
+    assert!(
+        exhaust_join(&join, &empty)
+            .iter()
+            .any(|c| matches!(c.strategy, JoinStrategy::Merge { .. })),
+        "Go's hint-enforced form does not test the key type"
+    );
+}
+
+mod projection {
+    use tidb_ast::CiString;
+    use tidb_datatype::{FieldType, FieldTypeCode};
+    use tidb_expr::column::Column;
+    use tidb_expr::expression::Expression;
+    use tidb_expr::scalar_function::ScalarFunction;
+    use tidb_expr::schema::Schema;
+
+    use crate::find_best_task::{
+        project_join_spine, LogicalJoinType, LogicalNode, PREFER_MERGE_JOIN,
+    };
+    use crate::logical::data_source::DataSource;
+    use crate::logical::join::LogicalJoin as RealJoin;
+    use crate::logical::{BaseLogicalPlan, LogicalPlan};
+    use crate::plan_base::{PlanError, PlanIdAllocator};
+    use crate::stats_info::StatsInfo;
+
+    fn typed_column(id: i64, code: FieldTypeCode) -> Column {
+        let mut col = Column::default();
+        col.unique_id = id;
+        col.ret_type = Some(FieldType::new(code));
+        col
+    }
+
+    fn schema_of(ids: &[i64]) -> Schema {
+        Schema::new(
+            ids.iter()
+                .map(|id| typed_column(*id, FieldTypeCode::Long))
+                .collect(),
+        )
+    }
+
+    fn base(allocator: &PlanIdAllocator, tp: &str, schema: Option<Schema>) -> BaseLogicalPlan {
+        let mut base = BaseLogicalPlan::new(allocator, tp, 0);
+        base.base.set_schema(schema);
+        base
+    }
+
+    fn source(allocator: &PlanIdAllocator, ids: &[i64], rows: f64) -> LogicalPlan {
+        let mut ds = DataSource::new(base(allocator, "DataSource", Some(schema_of(ids))), 1, "t");
+        ds.table_stats = Some(StatsInfo::new(rows, ids.iter().map(|id| (*id, rows))));
+        LogicalPlan::DataSource(ds)
+    }
+
+    fn condition(name: &str, left: Column, right: Column) -> ScalarFunction {
+        ScalarFunction::new(
+            CiString::new(name),
+            FieldType::new(FieldTypeCode::Long),
+            vec![Expression::Column(left), Expression::Column(right)],
+        )
+    }
+
+    /// Every leaf answers one empty alternative set — enough shape for the
+    /// spine walk without pretending access paths exist.
+    fn no_alternatives(_: &LogicalPlan) -> Result<Vec<super::LeafAlternative>, PlanError> {
+        Ok(Vec::new())
+    }
+
+    #[test]
+    fn the_projection_reads_the_real_operator() {
+        let allocator = PlanIdAllocator::new();
+        let left = source(&allocator, &[1, 2], 100.0);
+        let right = source(&allocator, &[11], 50.0);
+        let mut join = RealJoin::new(
+            base(&allocator, "Join", Some(schema_of(&[1, 2, 11]))),
+            LogicalJoinType::LeftOuter,
+        );
+        join.equal_conditions = vec![condition(
+            "eq",
+            typed_column(1, FieldTypeCode::Long),
+            typed_column(11, FieldTypeCode::Long),
+        )];
+        join.left_properties = vec![vec![typed_column(1, FieldTypeCode::Long)]];
+        join.prefer_join_type = PREFER_MERGE_JOIN;
+        let mut plan = LogicalPlan::Join(join);
+        plan.set_children(vec![left, right]);
+        plan.recursive_derive_stats(&[])
+            .expect("stats derive first");
+
+        let node = project_join_spine(&plan, &mut no_alternatives).expect("a join spine projects");
+        let LogicalNode::Join(reduced) = node else {
+            panic!("a join projects to a Join node");
+        };
+        assert_eq!(reduced.join_type, LogicalJoinType::LeftOuter);
+        assert_eq!(reduced.left_keys, vec![1]);
+        assert_eq!(reduced.right_keys, vec![11]);
+        assert_eq!(reduced.left_schema, vec![1, 2]);
+        assert_eq!(reduced.right_schema, vec![11]);
+        assert_eq!(reduced.left_properties, vec![vec![1]]);
+        assert!(reduced.force_merge, "PreferJoinType & PreferMergeJoin");
+        assert!(!reduced.has_null_eq);
+        assert!(!reduced.keys_contain_enum_or_set);
+        assert!(
+            reduced.output_rows.is_some(),
+            "the derived statistic flows into the reduced view"
+        );
+        assert!(matches!(*reduced.left, LogicalNode::Leaf(_)));
+    }
+
+    #[test]
+    fn null_eq_and_enum_keys_are_read_off_the_conditions() {
+        let allocator = PlanIdAllocator::new();
+        let left = source(&allocator, &[1], 10.0);
+        let right = source(&allocator, &[11], 10.0);
+        let mut join = RealJoin::new(
+            base(&allocator, "Join", Some(schema_of(&[1, 11]))),
+            LogicalJoinType::Inner,
+        );
+        join.equal_conditions = vec![condition(
+            "nulleq",
+            typed_column(1, FieldTypeCode::Enum),
+            typed_column(11, FieldTypeCode::Long),
+        )];
+        let mut plan = LogicalPlan::Join(join);
+        plan.set_children(vec![left, right]);
+
+        let node =
+            project_join_spine(&plan, &mut no_alternatives).expect("projection works unstated");
+        let LogicalNode::Join(reduced) = node else {
+            panic!("a join projects to a Join node");
+        };
+        assert!(reduced.has_null_eq, "Go's GetJoinKeys flags <=>");
+        assert!(
+            reduced.keys_contain_enum_or_set,
+            "an ENUM key on either side flags the merge refusal"
+        );
+        assert_eq!(
+            reduced.output_rows, None,
+            "no derived stats, no invented row count"
+        );
+    }
+
+    #[test]
+    fn a_leaf_failure_propagates_rather_than_planning_nothing() {
+        let allocator = PlanIdAllocator::new();
+        let mut refuse = |_: &LogicalPlan| -> Result<Vec<super::LeafAlternative>, PlanError> {
+            Err(PlanError::internal("no access paths for this table"))
+        };
+        let plan = source(&allocator, &[1], 10.0);
+        assert!(project_join_spine(&plan, &mut refuse).is_err());
+    }
 }

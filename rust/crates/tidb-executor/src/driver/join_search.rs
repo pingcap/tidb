@@ -291,6 +291,8 @@ fn logical_join(input: &SearchInput<'_>, orders: (&[Vec<usize>], &[Vec<usize>]))
         right_schema: (shift..input.width as i64).collect(),
         force_merge: false,
         output_rows: None,
+        has_null_eq: false,
+        keys_contain_enum_or_set: false,
         left_properties: orders
             .0
             .iter()

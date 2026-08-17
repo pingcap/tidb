@@ -69,7 +69,9 @@
 //! separate seam and deliberately absent here rather than approximated.
 
 use crate::candidate_cost::{self, Candidate, CostEnv, CostedNode};
+use crate::logical::LogicalPlan;
 use crate::physical_property::{PhysicalProperty, SortItem, TaskType};
+use crate::plan_base::PlanError;
 use crate::plan_cost_ver2::IndexJoinKind;
 /// The cost model's own task enum, which [`crate::candidate_cost`] reads.
 /// Every candidate a join chooser compares sits on the root task.
@@ -198,6 +200,21 @@ pub struct LogicalJoin {
     /// structural tests independent of the statistics layer; live callers
     /// provide the logical statistic.
     pub output_rows: Option<f64>,
+    /// `GetJoinKeys()`'s `hasNullEQ`: some key is `<=>`.
+    ///
+    /// Go refuses BOTH merge-join forms for it — `GetMergeJoin`
+    /// (`physical_merge_join.go:70`) and `getEnforcedMergeJoin` (`:150`),
+    /// each under the same `TODO: support null equal join keys for merge
+    /// join`.
+    pub has_null_eq: bool,
+    /// Whether some join key's type is ENUM or SET.
+    ///
+    /// Go refuses the PLAIN merge-join enumeration for these
+    /// (`physical_merge_join.go:57-66`, issues 24473/25669: merge join
+    /// conflicts with index order for them) — but NOT the hint-enforced
+    /// form, which checks only `hasNullEQ`. That asymmetry is Go's, and it
+    /// is reproduced, not repaired.
+    pub keys_contain_enum_or_set: bool,
 }
 
 /// A node of the logical tree the search runs over.
@@ -439,6 +456,11 @@ fn enforced_merge_join_candidates(
     join: &LogicalJoin,
     prop: &PhysicalProperty,
 ) -> Vec<EnumeratedJoin> {
+    // `getEnforcedMergeJoin` refuses null-eq keys (`physical_merge_join.go:150`)
+    // — and ONLY those; the ENUM/SET refusal guards the plain form alone.
+    if join.has_null_eq {
+        return Vec::new();
+    }
     if join.left_keys.is_empty() || join.left_keys.len() != join.right_keys.len() {
         return Vec::new();
     }
@@ -495,6 +517,11 @@ fn enforced_merge_join_candidates(
 /// `getEnforcedMergeJoin` reaches only under a `MERGE_JOIN` hint or with hash
 /// join disabled.
 fn merge_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<EnumeratedJoin> {
+    // `GetMergeJoin`'s two up-front refusals, in Go's order: ENUM/SET keys
+    // (`physical_merge_join.go:57-66`), then null-eq keys (`:70`).
+    if join.keys_contain_enum_or_set || join.has_null_eq {
+        return Vec::new();
+    }
     let mut out = Vec::new();
     for lhs_property in &join.left_properties {
         let offsets = max_sort_prefix(lhs_property, &join.left_keys);
@@ -828,6 +855,133 @@ fn provided_order(strategy: &JoinStrategy, children: [&Task; 2]) -> Vec<SortItem
         // side is read once per outer row and never reorders it.
         JoinStrategy::Index { outer_idx, .. } => children[*outer_idx].order.clone(),
     }
+}
+
+/// Go `hint.PreferMergeJoin`: bit 7 of the `1 << iota` block opened by
+/// `PreferINLJ` (`pkg/util/hint/hint.go:141`).
+pub const PREFER_MERGE_JOIN: u32 = 1 << 7;
+
+/// The bridge from the plan tree the builder produces to the reduced view
+/// this enumeration reads: one [`LogicalNode`] per node of a JOIN SPINE.
+///
+/// A `LogicalPlan::Join` becomes [`LogicalNode::Join`], with every field the
+/// enumeration reads extracted from the real operator:
+///
+/// * keys through `LogicalJoin::get_join_keys` (Go `GetJoinKeys`,
+///   `logical_join.go:1011`), which also answers `has_null_eq`;
+/// * `keys_contain_enum_or_set` from the key columns' own types, which is
+///   what lets [`merge_join_candidates`] apply `GetMergeJoin`'s refusal
+///   (`physical_merge_join.go:57-66`);
+/// * `force_merge` as `PreferJoinType & PreferMergeJoin`, Go's own test;
+/// * `output_rows` from the operator's derived statistics, which
+///   [`LogicalPlan::recursive_derive_stats`] has usually just written;
+/// * schemas and provided orders from the operator's fields.
+///
+/// Every NON-join node is a leaf, answered by the caller's `leaves` callback
+/// — Go's `DataSource.findBestTask` over its access paths, which this crate
+/// cannot yet enumerate (access-path lists build empty; a NAMED residue). A
+/// callback that cannot supply alternatives for a node returns `Err`, and
+/// the projection fails loudly rather than inventing an empty leaf that
+/// would silently plan nothing.
+///
+/// The walk is stack-explicit, per the crate rule; join spines are shallow,
+/// but the rule is cheap to keep.
+pub fn project_join_spine(
+    plan: &LogicalPlan,
+    leaves: &mut dyn FnMut(&LogicalPlan) -> Result<Vec<LeafAlternative>, PlanError>,
+) -> Result<LogicalNode, PlanError> {
+    enum Frame<'a> {
+        Enter(&'a LogicalPlan),
+        Exit(&'a crate::logical::LogicalJoin, &'a LogicalPlan),
+    }
+    let mut work = vec![Frame::Enter(plan)];
+    let mut done: Vec<LogicalNode> = Vec::new();
+    while let Some(frame) = work.pop() {
+        match frame {
+            Frame::Enter(node) => match node {
+                LogicalPlan::Join(join) => {
+                    let children = node.children();
+                    let (Some(left), Some(right)) = (children.first(), children.get(1)) else {
+                        return Err(PlanError::internal(
+                            "project_join_spine: a LogicalJoin without two children",
+                        ));
+                    };
+                    work.push(Frame::Exit(join, node));
+                    // Left is pushed LAST so it is entered first and its
+                    // result sits deeper in `done`.
+                    work.push(Frame::Enter(right));
+                    work.push(Frame::Enter(left));
+                }
+                other => done.push(LogicalNode::Leaf(leaves(other)?)),
+            },
+            Frame::Exit(join, node) => {
+                let right = done.pop();
+                let left = done.pop();
+                let (Some(left), Some(right)) = (left, right) else {
+                    return Err(PlanError::internal(
+                        "project_join_spine: child results missing at a join exit",
+                    ));
+                };
+                done.push(LogicalNode::Join(Box::new(project_one_join(
+                    join, node, left, right,
+                )?)));
+            }
+        }
+    }
+    done.pop().ok_or_else(|| {
+        PlanError::internal("project_join_spine: empty projection for a non-empty plan")
+    })
+}
+
+/// One `logical::LogicalJoin` reduced to what the enumeration reads.
+fn project_one_join(
+    join: &crate::logical::LogicalJoin,
+    node: &LogicalPlan,
+    left: LogicalNode,
+    right: LogicalNode,
+) -> Result<LogicalJoin, PlanError> {
+    let (left_key_cols, right_key_cols, _, has_null_eq) = join.get_join_keys();
+    // `GetMergeJoin` reads `RetType.GetType()` on every key of BOTH sides
+    // (`physical_merge_join.go:57-66`).
+    let is_enum_or_set = |col: &tidb_expr::column::Column| {
+        col.ret_type.as_ref().is_some_and(|ty| {
+            matches!(
+                ty.code(),
+                tidb_datatype::FieldTypeCode::Enum | tidb_datatype::FieldTypeCode::Set
+            )
+        })
+    };
+    let keys_contain_enum_or_set =
+        left_key_cols.iter().any(&is_enum_or_set) || right_key_cols.iter().any(&is_enum_or_set);
+    let schema_ids = |child: &LogicalPlan| -> Vec<i64> {
+        // Builder output carries a schema on or near every join child; the
+        // lookup recurses only through schema-less pass-throughs.
+        child
+            .schema()
+            .map(|schema| schema.columns.iter().map(|col| col.unique_id).collect())
+            .unwrap_or_default()
+    };
+    let children = node.children();
+    let ids = |cols: &[tidb_expr::column::Column]| -> Vec<i64> {
+        cols.iter().map(|col| col.unique_id).collect()
+    };
+    Ok(LogicalJoin {
+        join_type: join.join_type,
+        left: Box::new(left),
+        right: Box::new(right),
+        left_keys: ids(&left_key_cols),
+        right_keys: ids(&right_key_cols),
+        left_schema: children.first().map(|c| schema_ids(c)).unwrap_or_default(),
+        right_schema: children.get(1).map(|c| schema_ids(c)).unwrap_or_default(),
+        left_properties: join.left_properties.iter().map(|p| ids(p)).collect(),
+        right_properties: join.right_properties.iter().map(|p| ids(p)).collect(),
+        force_merge: join.prefer_join_type & PREFER_MERGE_JOIN != 0,
+        output_rows: node
+            .stats_info()
+            .map(crate::stats_info::StatsInfo::row_count),
+        has_null_eq,
+        keys_contain_enum_or_set,
+    })
 }
 
 /// `compareTaskCost`'s strict `<`: an exactly equal alternative never
