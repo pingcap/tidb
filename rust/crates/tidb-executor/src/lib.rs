@@ -81,6 +81,7 @@ mod index_hints;
 mod index_prefix_cut;
 mod index_range;
 pub mod join;
+pub mod joiner;
 pub mod keydecoder;
 pub mod kv_table;
 pub mod limit;
