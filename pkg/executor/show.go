@@ -2642,7 +2642,7 @@ func runningImportJobIDs(infos []*importer.JobInfo) []int64 {
 	return jobIDs
 }
 
-func isRawImportConflictStep(step proto.Step) bool {
+func isImportConflictStep(step proto.Step) bool {
 	return step == proto.ImportStepCollectConflicts || step == proto.ImportStepConflictResolution
 }
 
@@ -2753,7 +2753,7 @@ func buildRawImportJobStats(
 		step := jobstats.RawImportJobStepStats{
 			Name: proto.Step2Str(proto.ImportInto, runInfo.Step),
 		}
-		if isRawImportConflictStep(runInfo.Step) {
+		if isImportConflictStep(runInfo.Step) {
 			step.ProcessedConflicts = runInfo.Processed
 			step.TotalConflicts = runInfo.Total
 			step.SpeedConflictsPerSec = runInfo.Speed

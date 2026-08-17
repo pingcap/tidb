@@ -3530,6 +3530,10 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 }
 
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.Plan, error) {
+	if show.Tp == ast.ShowImportJobs && show.RawImportJob && !kerneltype.IsNextGen() {
+		return nil, dbterror.ErrNotSupportedYet.GenWithStackByArgs("SHOW RAW IMPORT JOB(S) in classic kernel")
+	}
+
 	tnW := b.resolveCtx.GetTableName(show.Table)
 	p := logicalop.LogicalShow{
 		ShowContents: logicalop.ShowContents{

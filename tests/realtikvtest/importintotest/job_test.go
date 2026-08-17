@@ -165,37 +165,39 @@ func (s *mockGCSSuite) TestShowJob() {
 	}
 	s.compareJobInfoWithoutTime(jobInfo, rows[0])
 
-	// SHOW RAW IMPORT JOB should return machine-friendly JSON stats for SDK/Lightning.
-	rawRows := s.tk.MustQuery(fmt.Sprintf("show raw import job %d", importer.TestLastImportJobID.Load())).Rows()
-	s.Len(rawRows, 1)
-	rawStatsBytes := []byte(fmt.Sprintf("%s", rawRows[0][2]))
-	var rawStats jobstats.RawImportJobStats
-	s.NoError(json.Unmarshal(rawStatsBytes, &rawStats))
-	s.Equal(strconv.Itoa(int(jobInfo.ID)), rawRows[0][0])
-	s.Equal("<nil>", fmt.Sprintf("%v", rawRows[0][1]))
-	s.Equal(jobstats.ContractVersion, rawStats.Version)
-	s.Zero(rawStats.JobID)
-	s.Empty(rawStats.GroupKey)
-	urlExpected, err := url.Parse(jobInfo.Parameters.FileLocation)
-	s.NoError(err)
-	urlGot, err := url.Parse(rawStats.DataSource)
-	s.NoError(err)
-	s.Equal(urlExpected.Query(), urlGot.Query())
-	urlExpected.RawQuery, urlGot.RawQuery = "", ""
-	s.Equal(urlExpected.String(), urlGot.String())
-	s.Equal(utils.EncloseDBAndTable(jobInfo.TableSchema, jobInfo.TableName), rawStats.TargetTable)
-	s.Equal(jobInfo.TableID, rawStats.TableID)
-	s.Equal(jobInfo.Step, rawStats.Phase)
-	s.Equal(jobInfo.Status, rawStats.Status)
-	s.Equal(jobstats.StatusCategoryTerminal, rawStats.StatusCategory)
-	s.True(rawStats.Terminal)
-	s.Equal(jobInfo.SourceFileSize, rawStats.SourceFileSizeBytes)
-	s.NotNil(rawStats.ImportedRows)
-	s.Equal(jobInfo.Summary.ImportedRows, *rawStats.ImportedRows)
-	s.NotNil(rawStats.Summary)
-	s.Equal(jobInfo.Summary.ImportedRows, rawStats.Summary.ImportedRows)
-	s.Equal(jobInfo.CreatedBy, rawStats.CreatedBy)
-	s.Nil(rawStats.CurrentStep)
+	if kerneltype.IsNextGen() {
+		// SHOW RAW IMPORT JOB should return machine-friendly JSON stats for SDK/Lightning.
+		rawRows := s.tk.MustQuery(fmt.Sprintf("show raw import job %d", importer.TestLastImportJobID.Load())).Rows()
+		s.Len(rawRows, 1)
+		rawStatsBytes := []byte(fmt.Sprintf("%s", rawRows[0][2]))
+		var rawStats jobstats.RawImportJobStats
+		s.NoError(json.Unmarshal(rawStatsBytes, &rawStats))
+		s.Equal(strconv.Itoa(int(jobInfo.ID)), rawRows[0][0])
+		s.Equal("<nil>", fmt.Sprintf("%v", rawRows[0][1]))
+		s.Equal(jobstats.ContractVersion, rawStats.Version)
+		s.Zero(rawStats.JobID)
+		s.Empty(rawStats.GroupKey)
+		urlExpected, err := url.Parse(jobInfo.Parameters.FileLocation)
+		s.NoError(err)
+		urlGot, err := url.Parse(rawStats.DataSource)
+		s.NoError(err)
+		s.Equal(urlExpected.Query(), urlGot.Query())
+		urlExpected.RawQuery, urlGot.RawQuery = "", ""
+		s.Equal(urlExpected.String(), urlGot.String())
+		s.Equal(utils.EncloseDBAndTable(jobInfo.TableSchema, jobInfo.TableName), rawStats.TargetTable)
+		s.Equal(jobInfo.TableID, rawStats.TableID)
+		s.Equal(jobInfo.Step, rawStats.Phase)
+		s.Equal(jobInfo.Status, rawStats.Status)
+		s.Equal(jobstats.StatusCategoryTerminal, rawStats.StatusCategory)
+		s.True(rawStats.Terminal)
+		s.Equal(jobInfo.SourceFileSize, rawStats.SourceFileSizeBytes)
+		s.NotNil(rawStats.ImportedRows)
+		s.Equal(jobInfo.Summary.ImportedRows, *rawStats.ImportedRows)
+		s.NotNil(rawStats.Summary)
+		s.Equal(jobInfo.Summary.ImportedRows, rawStats.Summary.ImportedRows)
+		s.Equal(jobInfo.CreatedBy, rawStats.CreatedBy)
+		s.Nil(rawStats.CurrentStep)
+	}
 
 	// test show job by id using test_show_job2
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job2", Hostname: "localhost"}, nil, nil, nil))
@@ -213,9 +215,11 @@ func (s *mockGCSSuite) TestShowJob() {
 	rows = s.tk.MustQuery("show import jobs").Rows()
 	s.Len(rows, 1)
 	s.Equal(result2, rows)
-	rawRows = s.tk.MustQuery("show raw import jobs").Rows()
-	s.Len(rawRows, 1)
-	s.Equal(result2[0][0], rawRows[0][0])
+	if kerneltype.IsNextGen() {
+		rawRows := s.tk.MustQuery("show raw import jobs").Rows()
+		s.Len(rawRows, 1)
+		s.Equal(result2[0][0], rawRows[0][0])
+	}
 
 	// show import jobs with root
 	checkJobsMatch := func(rows [][]any) {
@@ -236,15 +240,17 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	rows = s.tk.MustQuery("show import jobs").Rows()
 	checkJobsMatch(rows)
-	rawRows = s.tk.MustQuery("show raw import jobs").Rows()
-	rawJobIDs := make(map[any]struct{}, len(rawRows))
-	for _, row := range rawRows {
-		rawJobIDs[row[0]] = struct{}{}
+	if kerneltype.IsNextGen() {
+		rawRows := s.tk.MustQuery("show raw import jobs").Rows()
+		rawJobIDs := make(map[any]struct{}, len(rawRows))
+		for _, row := range rawRows {
+			rawJobIDs[row[0]] = struct{}{}
+		}
+		_, ok := rawJobIDs[result1[0][0]]
+		s.True(ok)
+		_, ok = rawJobIDs[result2[0][0]]
+		s.True(ok)
 	}
-	_, ok := rawJobIDs[result1[0][0]]
-	s.True(ok)
-	_, ok = rawJobIDs[result2[0][0]]
-	s.True(ok)
 	// show import job by id with root
 	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 	s.Len(rows, 1)
@@ -292,30 +298,32 @@ func (s *mockGCSSuite) TestShowJob() {
 				s.Len(rows, 1)
 				s.compareJobInfoWithoutTime(jobInfo, rows[0])
 
-				// Exercise both RAW runtime-info paths while the job is held in
-				// a deterministic running state.
-				rawByID := tk2.MustQuery(fmt.Sprintf("show raw import job %d", runningJobID)).Rows()
-				s.Len(rawByID, 1)
-				rawList := tk2.MustQuery("show raw import jobs").Rows()
-				var rawFromList []any
-				for _, row := range rawList {
-					if fmt.Sprintf("%s", row[0]) == strconv.FormatInt(runningJobID, 10) {
-						rawFromList = row
-						break
+				if kerneltype.IsNextGen() {
+					// Exercise both RAW runtime-info paths while the job is held in
+					// a deterministic running state.
+					rawByID := tk2.MustQuery(fmt.Sprintf("show raw import job %d", runningJobID)).Rows()
+					s.Len(rawByID, 1)
+					rawList := tk2.MustQuery("show raw import jobs").Rows()
+					var rawFromList []any
+					for _, row := range rawList {
+						if fmt.Sprintf("%s", row[0]) == strconv.FormatInt(runningJobID, 10) {
+							rawFromList = row
+							break
+						}
 					}
+					s.NotNil(rawFromList)
+					var singularStats, pluralStats jobstats.RawImportJobStats
+					s.NoError(json.Unmarshal([]byte(fmt.Sprintf("%s", rawByID[0][2])), &singularStats))
+					s.NoError(json.Unmarshal([]byte(fmt.Sprintf("%s", rawFromList[2])), &pluralStats))
+					s.Equal("running", singularStats.Status)
+					s.False(singularStats.Terminal)
+					s.NotNil(singularStats.CurrentStep)
+					s.NotEmpty(singularStats.CurrentStep.Name)
+					s.Positive(singularStats.CurrentStep.TotalBytes)
+					s.Equal(singularStats.Status, pluralStats.Status)
+					s.Equal(singularStats.Terminal, pluralStats.Terminal)
+					s.Equal(singularStats.CurrentStep, pluralStats.CurrentStep)
 				}
-				s.NotNil(rawFromList)
-				var singularStats, pluralStats jobstats.RawImportJobStats
-				s.NoError(json.Unmarshal([]byte(fmt.Sprintf("%s", rawByID[0][2])), &singularStats))
-				s.NoError(json.Unmarshal([]byte(fmt.Sprintf("%s", rawFromList[2])), &pluralStats))
-				s.Equal("running", singularStats.Status)
-				s.False(singularStats.Terminal)
-				s.NotNil(singularStats.CurrentStep)
-				s.NotEmpty(singularStats.CurrentStep.Name)
-				s.Positive(singularStats.CurrentStep.TotalBytes)
-				s.Equal(singularStats.Status, pluralStats.Status)
-				s.Equal(singularStats.Terminal, pluralStats.Terminal)
-				s.Equal(singularStats.CurrentStep, pluralStats.CurrentStep)
 
 				// show processlist, should be redacted too
 				procRows := tk2.MustQuery("show full processlist").Rows()
@@ -350,35 +358,37 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.tk.MustQuery(fmt.Sprintf(`import into t3 FROM 'gs://test-show-job/t*.csv?access-key=aaaaaa&secret-access-key=bbbbbb&endpoint=%s' with thread=1, __max_engine_size='1'`, gcsEndpoint))
 	s.tk.MustQuery("select * from t3").Sort().Check(testkit.Rows("1", "2", "3", "4"))
 
-	// SHOW RAW IMPORT JOBS should be filterable by GROUP_KEY for polling.
-	const groupKey = "test_show_raw_group"
-	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
-	s.tk.MustExec("CREATE TABLE t4 (i INT PRIMARY KEY);")
-	s.tk.MustExec("CREATE TABLE t5 (i INT PRIMARY KEY);")
-	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job2", Hostname: "localhost"}, nil, nil, nil))
-	s.tk.MustQuery(fmt.Sprintf(`import into t4 FROM 'gs://test-show-job/t.csv?endpoint=%s' with group_key='%s'`, gcsEndpoint, groupKey))
-	jobID4 := importer.TestLastImportJobID.Load()
-	s.tk.MustQuery(fmt.Sprintf(`import into t5 FROM 'gs://test-show-job/t.csv?endpoint=%s' with group_key='%s'`, gcsEndpoint, groupKey))
-	jobID5 := importer.TestLastImportJobID.Load()
+	if kerneltype.IsNextGen() {
+		// SHOW RAW IMPORT JOBS should be filterable by GROUP_KEY for polling.
+		const groupKey = "test_show_raw_group"
+		s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
+		s.tk.MustExec("CREATE TABLE t4 (i INT PRIMARY KEY);")
+		s.tk.MustExec("CREATE TABLE t5 (i INT PRIMARY KEY);")
+		s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_show_job2", Hostname: "localhost"}, nil, nil, nil))
+		s.tk.MustQuery(fmt.Sprintf(`import into t4 FROM 'gs://test-show-job/t.csv?endpoint=%s' with group_key='%s'`, gcsEndpoint, groupKey))
+		jobID4 := importer.TestLastImportJobID.Load()
+		s.tk.MustQuery(fmt.Sprintf(`import into t5 FROM 'gs://test-show-job/t.csv?endpoint=%s' with group_key='%s'`, gcsEndpoint, groupKey))
+		jobID5 := importer.TestLastImportJobID.Load()
 
-	rawList := s.tk.MustQuery(fmt.Sprintf(`show raw import jobs where group_key = '%s'`, groupKey)).Rows()
-	s.Len(rawList, 2)
-	wantJobIDs := map[int64]struct{}{jobID4: {}, jobID5: {}}
-	for _, r := range rawList {
-		b := []byte(fmt.Sprintf("%s", r[2]))
-		var st jobstats.RawImportJobStats
-		s.NoError(json.Unmarshal(b, &st))
-		s.Equal(groupKey, r[1])
-		jobID, err := strconv.ParseInt(fmt.Sprintf("%s", r[0]), 10, 64)
-		s.NoError(err)
-		_, ok := wantJobIDs[jobID]
-		s.True(ok)
-		s.Zero(st.JobID)
-		s.Empty(st.GroupKey)
-		s.Equal(jobstats.ContractVersion, st.Version)
-		delete(wantJobIDs, jobID)
+		rawList := s.tk.MustQuery(fmt.Sprintf(`show raw import jobs where group_key = '%s'`, groupKey)).Rows()
+		s.Len(rawList, 2)
+		wantJobIDs := map[int64]struct{}{jobID4: {}, jobID5: {}}
+		for _, r := range rawList {
+			b := []byte(fmt.Sprintf("%s", r[2]))
+			var st jobstats.RawImportJobStats
+			s.NoError(json.Unmarshal(b, &st))
+			s.Equal(groupKey, r[1])
+			jobID, err := strconv.ParseInt(fmt.Sprintf("%s", r[0]), 10, 64)
+			s.NoError(err)
+			_, ok := wantJobIDs[jobID]
+			s.True(ok)
+			s.Zero(st.JobID)
+			s.Empty(st.GroupKey)
+			s.Equal(jobstats.ContractVersion, st.Version)
+			delete(wantJobIDs, jobID)
+		}
+		s.Len(wantJobIDs, 0)
 	}
-	s.Len(wantJobIDs, 0)
 }
 
 func (s *mockGCSSuite) TestShowDetachedJob() {
