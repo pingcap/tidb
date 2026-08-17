@@ -51,22 +51,19 @@
 //!   bridge). What this module adds is the funcdep-facing shape -- one column
 //!   versus a whole nullified child schema -- and the boundary tests.
 //!
-//! # The duplicate that remains, and who retires it
+//! # One proof, reached three ways
 //!
-//! The executor's copies are STILL PRESENT and unchanged:
+//! The executor's duplicate copies have since been retired. `fd_graph` was a
+//! drop-in there, and `tidb-executor/src/driver/funcdep/null_reject.rs` now
+//! holds only a syntax-to-expression translation over
+//! [`null_reject::is_null_rejected_by`], because its callers pass
+//! `tidb_ast::Expr` with no schema in reach to resolve against.
 //!
-//! * `rust/crates/tidb-executor/src/driver/funcdep/fd_graph.rs`
-//! * `rust/crates/tidb-executor/src/driver/funcdep/null_reject.rs`
-//!
-//! They were left in place only because `tidb-executor` was being edited
-//! concurrently when this crate was split out. Whoever next owns
-//! `tidb-executor/src/driver/funcdep` MUST delete both files and repoint
-//! `rust/crates/tidb-executor/src/driver/funcdep.rs` at this crate:
-//! `fd_graph` is a drop-in (`use tidb_funcdep::fd_graph::{FdSet,
-//! OuterJoinOptions}` and `tidb_funcdep::ColSet`), while `null_reject`'s
-//! callers in that file pass `tidb_ast::Expr` and must either keep the AST
-//! form there or move to the expression tree first. Two divergent copies of
-//! one Go package is exactly the state `AGENTS.md` forbids.
+//! So the null-rejection proof exists once, in
+//! `tidb_expr::expression::is_null_rejected`. This module is the
+//! funcdep-facing shape over it, and the executor's module is the
+//! syntax-facing one. Neither carries proof logic of its own, which is the
+//! state `AGENTS.md` requires.
 
 pub mod fd_graph;
 pub mod null_reject;

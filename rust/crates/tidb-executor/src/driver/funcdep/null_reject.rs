@@ -12,51 +12,53 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Go `pkg/planner/util.IsNullRejected`: whether a predicate can be TRUE while
-//! the named column is NULL.
+//! Go `pkg/planner/util.IsNullRejected` for a WRITTEN predicate: whether it
+//! can be TRUE while the named column is NULL.
 //!
 //! A predicate that cannot proves the column NOT NULL for every surviving row,
 //! which is what promotes a nullable UNIQUE key to a candidate key in the
-//! `ONLY_FULL_GROUP_BY` rule. The distinction is exact, not conservative in
-//! the direction that matters: `WHERE a > 3` proves it, `WHERE a <=> NULL`
-//! does not, and the recording refuses the second with 1055.
+//! `ONLY_FULL_GROUP_BY` rule and what lets an outer join be simplified to an
+//! inner one. The distinction is exact, not conservative in the direction that
+//! matters: `WHERE a > 3` proves it, `WHERE a <=> NULL` does not, and the
+//! recording refuses the second with 1055.
 //!
-//! Go proves it with two bits per subexpression, over the column substituted
-//! by SQL NULL:
+//! # The proof lives elsewhere; this is only the translation
 //!
-//!  * `must_null` -- the subexpression evaluates to NULL.
-//!  * `non_true`  -- the subexpression cannot evaluate to TRUE.
+//! Go runs `IsNullRejected` on `expression.Expression`, AFTER the expression
+//! rewriter and after `PushDownNot`. `tidb-funcdep` carries that transcreation
+//! (delegating in turn to `tidb-expr`'s own port, which holds Go's complete
+//! `null_misc_builtins.go` NULL-preserving table). This tier still works on
+//! the written `tidb_ast::Expr`, so what remains here is exactly the missing
+//! step: the shape translation from written syntax into the operator tree the
+//! proof reads, standing in for Go's rewriter. No proof bit is computed here.
 //!
-//! `non_true` at the root IS null-rejection. The two bits are needed
-//! separately because the SQL tests (`IS TRUE`, `IS FALSE`) turn NULL into a
-//! definite FALSE: they are `non_true` without being `must_null`, so a `NOT`
-//! above them does NOT reject -- exactly why `a IS NOT TRUE` is refused while
-//! `a IS TRUE` is accepted.
+//! Two consequences of standing in for the rewriter:
+//!
+//!  * NEGATION IS PUSHED DOWN during translation ([`translate`]'s `negated`
+//!    flag), because Go's proof assumes `PushDownNot` already ran. De Morgan
+//!    is observable: `NOT (outer OR inner)` is rejected when the inner
+//!    disjunct becomes NULL, while `NOT (outer AND inner)` is not.
+//!  * A NODE WITH NO REWRITTEN COUNTERPART HERE BECOMES OPAQUE -- an unnamed
+//!    column that is never the nullified one. Go likewise treats an
+//!    unclassified builtin as proving nothing, and proving nothing only costs
+//!    a refusal this tier already makes, while a wrong proof would ACCEPT a
+//!    query TiDB refuses.
 
-/// The two proof bits for one subexpression, over the nullified column.
-#[derive(Clone, Copy, Default)]
-struct Proof {
-    /// The subexpression cannot be TRUE.
-    non_true: bool,
-    /// The subexpression is NULL.
-    must_null: bool,
-}
+use tidb_ast::CiString;
+use tidb_datatype::{Datum, FieldType, FieldTypeCode};
+use tidb_expr::expression::{Column, Constant, Expression, ScalarFunction};
 
-impl Proof {
-    /// A subexpression that is NULL is also never TRUE.
-    fn null() -> Self {
-        Proof {
-            non_true: true,
-            must_null: true,
-        }
-    }
-}
+/// The unique id standing for every nullified column. The proof only ever
+/// asks whether a column is in the nullified set, so one shared id is enough.
+const NULLIFIED: i64 = 1;
+/// The unique id standing for every column, subquery, or unmodelled node that
+/// is NOT nullified: an unknown value, which proves nothing.
+const OPAQUE: i64 = 2;
 
 /// Whether `predicate` rejects every row in which the column at `offset` is
 /// NULL, where `resolve` maps a written column path to its scope offset.
 ///
-/// Go `IsNullRejected`; [`prove_not`] supplies the observable part of Go's
-/// `PushDownNot` normalization without rebuilding the expression tree.
+/// Go `IsNullRejected` for a single nullified column.
 pub(crate) fn is_null_rejected(
     predicate: &tidb_ast::Expr,
     offset: usize,
@@ -75,214 +77,209 @@ pub(crate) fn is_null_rejected_by(
     predicate: &tidb_ast::Expr,
     nullified: &dyn Fn(&[String]) -> bool,
 ) -> bool {
-    prove(predicate, nullified).non_true
+    tidb_funcdep::null_reject::is_null_rejected_by(
+        &translate(predicate, false, nullified),
+        &[NULLIFIED],
+    )
 }
 
-/// The two proof bits for `expr` with the target column read as NULL.
-fn prove(expr: &tidb_ast::Expr, nullified: &dyn Fn(&[String]) -> bool) -> Proof {
+fn int_type() -> FieldType {
+    FieldType::new(FieldTypeCode::LongLong)
+}
+
+fn call(name: &str, args: Vec<Expression>) -> Expression {
+    Expression::ScalarFunction(ScalarFunction::new(CiString::new(name), int_type(), args))
+}
+
+fn constant(value: Datum) -> Expression {
+    Expression::Constant(Constant::new(value, int_type()))
+}
+
+/// An unknown value: neither NULL nor a definite FALSE.
+fn opaque() -> Expression {
+    Expression::Column(Column::new(OPAQUE, int_type()))
+}
+
+/// Wraps `expr` in Go's `not` builtin when `negated`.
+fn negate(expr: Expression, negated: bool) -> Expression {
+    if negated {
+        call("not", vec![expr])
+    } else {
+        expr
+    }
+}
+
+/// The written predicate as the rewritten operator tree Go's proof reads,
+/// with any enclosing `NOT` already pushed down (`negated`).
+fn translate(
+    expr: &tidb_ast::Expr,
+    negated: bool,
+    nullified: &dyn Fn(&[String]) -> bool,
+) -> Expression {
+    let sub = |expr: &tidb_ast::Expr| translate(expr, false, nullified);
     match expr {
-        tidb_ast::Expr::Paren(inner) => prove(inner, nullified),
+        tidb_ast::Expr::Paren(inner) => translate(inner, negated, nullified),
+
         // The target column reads as NULL; any other column is an unknown
         // value, which proves nothing.
-        tidb_ast::Expr::Column(path) => {
+        tidb_ast::Expr::Column(path) => negate(
             if nullified(path) {
-                Proof::null()
+                Expression::Column(Column::new(NULLIFIED, int_type()))
             } else {
-                Proof::default()
-            }
-        }
-        tidb_ast::Expr::Null => Proof::null(),
-        // A written FALSE / 0 is never TRUE but is not NULL.
-        tidb_ast::Expr::Bool(false) => Proof {
-            non_true: true,
-            must_null: false,
-        },
-        tidb_ast::Expr::Int(digits) if digits.chars().all(|c| c == '0') => Proof {
-            non_true: true,
-            must_null: false,
-        },
+                opaque()
+            },
+            negated,
+        ),
+        tidb_ast::Expr::Null => negate(constant(Datum::Null), negated),
+        // A written boolean or integer literal is a constant the proof reads
+        // directly: `FALSE` / `0` is never TRUE without being NULL.
+        tidb_ast::Expr::Bool(value) => negate(constant(Datum::Int(i64::from(*value))), negated),
+        tidb_ast::Expr::Int(digits) => negate(
+            digits
+                .parse::<i64>()
+                .map_or_else(|_| opaque(), |value| constant(Datum::Int(value))),
+            negated,
+        ),
 
+        // De Morgan, which is Go's `PushDownNot`.
+        tidb_ast::Expr::Binary(
+            op @ (tidb_ast::BinaryOp::LogicAnd | tidb_ast::BinaryOp::LogicOr),
+            lhs,
+            rhs,
+        ) => {
+            let is_and = (*op == tidb_ast::BinaryOp::LogicAnd) != negated;
+            call(
+                if is_and { "and" } else { "or" },
+                vec![
+                    translate(lhs, negated, nullified),
+                    translate(rhs, negated, nullified),
+                ],
+            )
+        }
         tidb_ast::Expr::Binary(op, lhs, rhs) => {
-            let left = prove(lhs, nullified);
-            let right = prove(rhs, nullified);
-            match op {
-                // AND is TRUE only if both are, so one non-TRUE side is
-                // enough; it is NULL only if both are.
-                tidb_ast::BinaryOp::LogicAnd => Proof {
-                    non_true: left.non_true || right.non_true,
-                    must_null: left.must_null && right.must_null,
-                },
-                tidb_ast::BinaryOp::LogicOr => Proof {
-                    non_true: left.non_true && right.non_true,
-                    must_null: left.must_null && right.must_null,
-                },
-                // `a <=> NULL` is the whole point of the NULL-safe operator:
-                // it answers TRUE for a NULL operand, so it proves nothing.
-                tidb_ast::BinaryOp::NullEq => Proof::default(),
-                // Every other operator here propagates NULL.
-                _ if left.must_null || right.must_null => Proof::null(),
-                _ => Proof::default(),
-            }
+            negate(call(binary_name(*op), vec![sub(lhs), sub(rhs)]), negated)
         }
 
-        // `NOT (x IS NULL)` is FALSE when x is NULL -- never TRUE, but not
-        // NULL either. A general `NOT` needs its child to be NULL, since
-        // `NOT FALSE` is TRUE.
         tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, inner) => {
-            prove_not(inner, nullified)
+            translate(inner, !negated, nullified)
         }
-        tidb_ast::Expr::Unary(_, inner) => {
-            let child = prove(inner, nullified);
-            if child.must_null {
-                Proof::null()
-            } else {
-                Proof::default()
-            }
+        // A unary `+` is notation; the other unary operators are the
+        // NULL-preserving builtins Go names.
+        tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Plus, inner) => {
+            translate(inner, negated, nullified)
         }
+        tidb_ast::Expr::Unary(op, inner) => negate(
+            call(
+                match op {
+                    tidb_ast::UnaryOp::BitNeg => "bitneg",
+                    _ => "unaryminus",
+                },
+                vec![sub(inner)],
+            ),
+            negated,
+        ),
 
-        // `x IS NULL` turns NULL into TRUE, so it proves nothing; `x IS NOT
-        // NULL` is FALSE for a NULL `x` -- never TRUE, but not NULL either,
-        // so a `NOT` above it would prove nothing in turn.
-        //
-        // Go `nullRejectRejectNullTests`: `IS TRUE` / `IS FALSE` likewise
-        // answer a definite FALSE for a NULL input, while `IS UNKNOWN` keeps
-        // NULL. `x IS NOT TRUE` is the case the recording pins: FALSE IS NOT
-        // TRUE is TRUE, so the predicate survives a NULL `x` and rejects
-        // nothing, and `WHERE a IS NOT TRUE GROUP BY a,b` stays 1055.
+        // Go names each SQL test as a builtin: `IS NULL` and `IS UNKNOWN`
+        // share `isnull`, and the negated forms are that builtin under `not`.
+        // `not(isnull(x))` is the one shape Go's proof special-cases, which is
+        // why `x IS NOT NULL` rejects while `x IS NOT TRUE` does not.
         tidb_ast::Expr::Is { expr, target, not } => {
-            let child = prove(expr, nullified);
-            match (target, not) {
-                (tidb_ast::IsTarget::Null, false) => Proof::default(),
-                (tidb_ast::IsTarget::Null, true)
-                | (tidb_ast::IsTarget::True | tidb_ast::IsTarget::False, false) => Proof {
-                    non_true: child.must_null,
-                    must_null: false,
-                },
-                // `IS UNKNOWN` is TRUE for a NULL input; `IS NOT UNKNOWN` is
-                // FALSE for it, which is non-TRUE but not NULL.
-                (tidb_ast::IsTarget::Unknown, false) => Proof::default(),
-                (tidb_ast::IsTarget::Unknown, true) => Proof {
-                    non_true: child.must_null,
-                    must_null: false,
-                },
-                (tidb_ast::IsTarget::True | tidb_ast::IsTarget::False, true) => Proof::default(),
-            }
+            let name = match target {
+                tidb_ast::IsTarget::Null | tidb_ast::IsTarget::Unknown => "isnull",
+                tidb_ast::IsTarget::True => "istrue",
+                tidb_ast::IsTarget::False => "isfalse",
+            };
+            negate(call(name, vec![sub(expr)]), *not != negated)
         }
 
         // Go `proveNullRejectedIn`: `IN` answers NULL for a NULL value, and
         // for a value with an all-NULL list.
-        tidb_ast::Expr::In { expr, list, .. } => {
-            if prove(expr, nullified).must_null {
-                return Proof::null();
-            }
-            if list.iter().all(|item| prove(item, nullified).must_null) {
-                return Proof::null();
-            }
-            Proof::default()
+        tidb_ast::Expr::In { expr, list, not } => {
+            let mut args = vec![sub(expr)];
+            args.extend(list.iter().map(sub));
+            negate(call("in", args), *not != negated)
         }
         // `a IN (SELECT ...)` compares `a` against the subquery's rows, and a
-        // NULL `a` matches nothing and answers NULL.
-        tidb_ast::Expr::InSubquery { expr, .. } => {
-            if prove(expr, nullified).must_null {
-                Proof::null()
-            } else {
-                Proof::default()
-            }
+        // NULL `a` matches nothing and answers NULL. The row set itself is
+        // unknown, so it stands in as one opaque list member.
+        tidb_ast::Expr::InSubquery { expr, not, .. } => {
+            negate(call("in", vec![sub(expr), opaque()]), *not != negated)
         }
 
-        // `BETWEEN` is `x >= lo AND x <= hi`, so it is NULL-preserving in
-        // every operand.
+        // Go rewrites `BETWEEN` into the conjunction it is defined as.
         tidb_ast::Expr::Between {
-            expr, low, high, ..
+            expr,
+            low,
+            high,
+            not,
         } => {
-            if [expr, low, high]
-                .into_iter()
-                .any(|part| prove(part, nullified).must_null)
-            {
-                Proof::null()
-            } else {
-                Proof::default()
-            }
+            let range = call(
+                "and",
+                vec![
+                    call("ge", vec![sub(expr), sub(low)]),
+                    call("le", vec![sub(expr), sub(high)]),
+                ],
+            );
+            negate(range, *not != negated)
         }
 
-        // `LIKE` / `REGEXP` answer NULL for a NULL operand.
-        tidb_ast::Expr::Like { expr, pattern, .. } => {
-            if prove(expr, nullified).must_null || prove(pattern, nullified).must_null {
-                Proof::null()
-            } else {
-                Proof::default()
-            }
-        }
-        tidb_ast::Expr::Regexp { expr, pattern, .. } => {
-            if prove(expr, nullified).must_null || prove(pattern, nullified).must_null {
-                Proof::null()
-            } else {
-                Proof::default()
-            }
-        }
+        tidb_ast::Expr::Like {
+            expr,
+            pattern,
+            not,
+            ilike,
+            escape,
+        } => negate(
+            call(
+                if *ilike { "ilike" } else { "like" },
+                vec![
+                    sub(expr),
+                    sub(pattern),
+                    constant(Datum::Int(i64::from(escape.unwrap_or(b'\\')))),
+                ],
+            ),
+            *not != negated,
+        ),
+        tidb_ast::Expr::Regexp { expr, pattern, not } => negate(
+            call("regexp", vec![sub(expr), sub(pattern)]),
+            *not != negated,
+        ),
 
-        // Go classifies each builtin explicitly and treats an unlisted one as
-        // opaque. An unlisted function here is likewise opaque: proving
-        // nothing only costs a refusal this tier already makes, while a wrong
-        // proof would ACCEPT a query TiDB refuses.
-        _ => Proof::default(),
+        // Every other node is opaque, exactly as Go treats an unlisted
+        // builtin: it proves nothing about the nullified column, and a `NOT`
+        // over it proves nothing either.
+        _ => opaque(),
     }
 }
 
-/// Proof for `NOT expr` after Go's `PushDownNot` normalization.
-fn prove_not(expr: &tidb_ast::Expr, nullified: &dyn Fn(&[String]) -> bool) -> Proof {
-    match strip_parens(expr) {
-        // De Morgan is observable for outer joins: `NOT (outer OR inner)` is
-        // rejected when the inner disjunct becomes NULL, while
-        // `NOT (outer AND inner)` is not.
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicOr, lhs, rhs) => {
-            let left = prove_not(lhs, nullified);
-            let right = prove_not(rhs, nullified);
-            Proof {
-                non_true: left.non_true || right.non_true,
-                must_null: left.must_null && right.must_null,
-            }
-        }
-        tidb_ast::Expr::Binary(tidb_ast::BinaryOp::LogicAnd, lhs, rhs) => {
-            let left = prove_not(lhs, nullified);
-            let right = prove_not(rhs, nullified);
-            Proof {
-                non_true: left.non_true && right.non_true,
-                must_null: left.must_null && right.must_null,
-            }
-        }
-        tidb_ast::Expr::Unary(tidb_ast::UnaryOp::Not | tidb_ast::UnaryOp::NotKeyword, inner) => {
-            prove(inner, nullified)
-        }
-        tidb_ast::Expr::Is { expr, target, not } => {
-            let child = prove(expr, nullified);
-            let rejects = match (target, not) {
-                // NOT(IS NULL/UNKNOWN) becomes IS NOT NULL/UNKNOWN.
-                (tidb_ast::IsTarget::Null | tidb_ast::IsTarget::Unknown, false) => child.must_null,
-                // NOT(IS NOT TRUE/FALSE) becomes IS TRUE/FALSE.
-                (tidb_ast::IsTarget::True | tidb_ast::IsTarget::False, true) => child.must_null,
-                _ => false,
-            };
-            Proof {
-                non_true: rejects,
-                must_null: false,
-            }
-        }
-        other => {
-            let child = prove(other, nullified);
-            Proof {
-                non_true: child.must_null,
-                must_null: child.must_null,
-            }
-        }
-    }
-}
-
-/// Parentheses are notation, not an operator.
-fn strip_parens(expr: &tidb_ast::Expr) -> &tidb_ast::Expr {
-    match expr {
-        tidb_ast::Expr::Paren(inner) => strip_parens(inner),
-        other => other,
+/// The builtin name Go's rewriter gives each written binary operator.
+fn binary_name(op: tidb_ast::BinaryOp) -> &'static str {
+    match op {
+        tidb_ast::BinaryOp::Plus => "plus",
+        tidb_ast::BinaryOp::Minus => "minus",
+        tidb_ast::BinaryOp::Mul => "mul",
+        tidb_ast::BinaryOp::Div => "div",
+        tidb_ast::BinaryOp::Mod => "mod",
+        tidb_ast::BinaryOp::IntDiv => "intdiv",
+        tidb_ast::BinaryOp::BitOr => "bitor",
+        tidb_ast::BinaryOp::BitAnd => "bitand",
+        tidb_ast::BinaryOp::BitXor => "bitxor",
+        tidb_ast::BinaryOp::LeftShift => "leftshift",
+        tidb_ast::BinaryOp::RightShift => "rightshift",
+        tidb_ast::BinaryOp::Eq => "eq",
+        // `a <=> NULL` is the whole point of the NULL-safe operator: it
+        // answers TRUE for a NULL operand, so Go's table leaves `nulleq` out
+        // of the NULL-preserving set and it proves nothing.
+        tidb_ast::BinaryOp::NullEq => "nulleq",
+        tidb_ast::BinaryOp::Ge => "ge",
+        tidb_ast::BinaryOp::Gt => "gt",
+        tidb_ast::BinaryOp::Le => "le",
+        tidb_ast::BinaryOp::Lt => "lt",
+        tidb_ast::BinaryOp::Ne => "ne",
+        tidb_ast::BinaryOp::LogicXor => "xor",
+        // Handled before this function is reached.
+        tidb_ast::BinaryOp::LogicAnd => "and",
+        tidb_ast::BinaryOp::LogicOr => "or",
     }
 }
 
@@ -341,5 +338,19 @@ mod tests {
         assert!(rejects("b < 1 AND a > 3"));
         assert!(rejects("a > 3 OR a < 1"));
         assert!(!rejects("a > 3 OR b < 1"));
+    }
+
+    /// Go's `PushDownNot` is observable through the translation: De Morgan
+    /// turns `NOT (x OR y)` into a conjunction, so one rejected disjunct is
+    /// enough, while `NOT (x AND y)` needs both.
+    #[test]
+    fn pushes_negation_down() {
+        assert!(rejects("NOT (a > 3 OR b < 1)"));
+        assert!(!rejects("NOT (a > 3 AND b < 1)"));
+        assert!(rejects("NOT (a > 3 AND a < 1)"));
+        assert!(rejects("NOT NOT (a > 3)"));
+        // `NOT (a IS NOT TRUE)` is `a IS TRUE`, which rejects.
+        assert!(rejects("NOT (a IS NOT TRUE)"));
+        assert!(!rejects("NOT (a IS TRUE)"));
     }
 }

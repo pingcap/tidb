@@ -15,9 +15,17 @@
 //! Go `pkg/planner/funcdep`: which columns of a query block determine which
 //! others.
 //!
-//! [`fd_graph`] is the graph itself, ported from Go's `fd_graph.go` and
-//! verified against Go's own test table. [`null_reject`] is the predicate test
-//! that promotes a lax dependency to a strict one.
+//! The graph itself lives in the `tidb-funcdep` crate
+//! ([`tidb_funcdep::fd_graph`]), not here. It is pure column-set arithmetic
+//! over Go's `fd_graph.go` and reads no AST, so it was lifted out to a leaf
+//! crate over `tidb-util`/`tidb-expr` where `tidb-planner` can reach it too --
+//! Go keeps `funcdep` under `pkg/planner`, BELOW every rule that reads it,
+//! while this tier sits above the planner. This module keeps only the part
+//! that is genuinely AST-shaped: turning a written `FROM`/`WHERE` into that
+//! graph's inputs. [`null_reject`] is the predicate test that promotes a lax
+//! dependency to a strict one; it too holds no proof logic of its own any
+//! more, only the translation from written syntax into the expression tree
+//! Go's `IsNullRejected` reads.
 //!
 //! [`scope_fd_set`] plays the role Go's `ExtractFD` methods play on the
 //! logical plan tree. Go builds the set bottom-up over `DataSource`,
@@ -30,12 +38,11 @@
 //!  * SELECTION -- what the `WHERE` proves NOT NULL, fixes to a constant, or
 //!    equates.
 
-pub(crate) mod fd_graph;
 pub(crate) mod null_reject;
 
 use super::{FromScope, FromTable};
-use fd_graph::{FdSet, OuterJoinOptions};
-pub(crate) use tidb_util::intset::FastIntSet as ColSet;
+pub(crate) use tidb_funcdep::ColSet;
+use tidb_funcdep::{FdSet, OuterJoinOptions};
 
 /// The dependencies a base table contributes on its own, as column offsets
 /// LOCAL to the table (Go `DataSource.ExtractFD`).

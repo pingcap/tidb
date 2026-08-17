@@ -2402,6 +2402,7 @@ dependencies = [
  "tidb-distsql",
  "tidb-error",
  "tidb-expr",
+ "tidb-funcdep",
  "tidb-metadef",
  "tidb-model",
  "tidb-mysql",

@@ -21,6 +21,7 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-error = { path = "../tidb-error" }
 tidb-expr = { path = "../tidb-expr" }
+tidb-funcdep = { path = "../tidb-funcdep" }
 tidb-metadef = { path = "../tidb-metadef" }
 tidb-model = { path = "../tidb-model" }
 tidb-mysql = { path = "../tidb-mysql" }
