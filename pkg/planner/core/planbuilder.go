@@ -3590,16 +3590,37 @@ func extractRawImportJobEqFilter(where ast.ExprNode) (jobID *int64, groupKey *st
 	}
 	switch column {
 	case "jobid":
-		id, err := strconv.ParseInt(value.GetString(), 10, 64)
-		if err != nil {
+		id, ok := rawImportJobIDValue(value)
+		if !ok {
 			return nil, nil, false
 		}
 		return &id, nil, true
 	case "groupkey":
+		if value.Kind() != types.KindString && value.Kind() != types.KindBytes {
+			return nil, nil, false
+		}
 		gk := value.GetString()
 		return nil, &gk, true
 	}
 	return nil, nil, false
+}
+
+func rawImportJobIDValue(value *driver.ValueExpr) (int64, bool) {
+	switch value.Kind() {
+	case types.KindInt64:
+		return value.GetInt64(), true
+	case types.KindUint64:
+		id := value.GetUint64()
+		if id > uint64(1<<63-1) {
+			return 0, false
+		}
+		return int64(id), true
+	case types.KindString, types.KindBytes:
+		id, err := strconv.ParseInt(value.GetString(), 10, 64)
+		return id, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func rawImportJobColumnAndValue(columnExpr, valueExpr ast.ExprNode) (column string, value *driver.ValueExpr, ok bool) {
@@ -3617,6 +3638,7 @@ func rawImportJobColumnAndValue(columnExpr, valueExpr ast.ExprNode) (column stri
 
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.Plan, error) {
 	tnW := b.resolveCtx.GetTableName(show.Table)
+	where := show.Where
 	p := logicalop.LogicalShow{
 		ShowContents: logicalop.ShowContents{
 			Tp:                    show.Tp,
@@ -3641,9 +3663,9 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			ImportGroupKey:        show.ShowGroupKey,
 		},
 	}.Init(b.ctx)
-	if show.Tp == ast.ShowImportJobs && show.ImportJobRaw && show.Where != nil {
+	if show.Tp == ast.ShowImportJobs && show.ImportJobRaw && where != nil {
 		var groupKey *string
-		p.ImportJobID, groupKey, show.Where = extractRawImportJobFilters(show.Where)
+		p.ImportJobID, groupKey, where = extractRawImportJobFilters(where)
 		if p.ImportJobID != nil && show.ImportJobID == nil {
 			p.ImportJobIDFilter = true
 		}
@@ -3778,8 +3800,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			return nil, err
 		}
 	}
-	if show.Where != nil {
-		np, err = b.buildSelection(ctx, np, show.Where, nil)
+	if where != nil {
+		np, err = b.buildSelection(ctx, np, where, nil)
 		if err != nil {
 			return nil, err
 		}
