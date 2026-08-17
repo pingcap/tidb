@@ -899,6 +899,70 @@ impl MvccStore {
     }
 }
 
+impl MvccStore {
+    /// Go `MVCCStore.ResolveLock` (`mvcc.go`): commit or roll back every one
+    /// of a transaction's locks in the range at once — what a reader does
+    /// after `check_txn_status` told it the transaction's fate.
+    ///
+    /// An EMPTY key list means "find them yourself": Go scans the region's
+    /// lock store for locks bearing the start ts. The region bounds narrow
+    /// to the whole keyspace here (no region context in this slice, named).
+    /// A key whose lock has since vanished or changed hands is silently
+    /// skipped — resolution races are the normal case, not an error.
+    pub fn resolve_lock(
+        &mut self,
+        lock_keys: &[Vec<u8>],
+        start_ts: u64,
+        commit_ts: u64,
+    ) -> Result<(), KvError> {
+        let mut keys = lock_keys.to_vec();
+        if keys.is_empty() {
+            let mut it = self.lock_store.new_iterator();
+            it.seek(&[]);
+            while it.valid() {
+                let lock = decode_lock(it.value());
+                if lock.hdr.start_ts == start_ts {
+                    keys.push(it.key().to_vec());
+                }
+                it.next();
+            }
+            if keys.is_empty() {
+                return Ok(());
+            }
+        }
+        for key in &keys {
+            let buf = self.lock_bytes(key);
+            if buf.is_empty() {
+                continue;
+            }
+            let lock = decode_lock(&buf);
+            if lock.hdr.start_ts != start_ts {
+                continue;
+            }
+            if commit_ts > 0 {
+                // Go `batch.Commit` (`write.go:256`).
+                let meta = DbUserMeta::new(start_ts, commit_ts);
+                if lock.hdr.op == KvrpcOp::PessimisticLock as i32 as u8 {
+                    // nothing: as if pessimistic-rollbacked
+                } else if lock.hdr.op != KvrpcOp::Lock as i32 as u8 {
+                    self.engine.set(key, commit_ts, &lock.value, meta);
+                } else if *key == lock.primary {
+                    let status_key = encode_extra_txn_status_key(key, start_ts);
+                    self.engine.set(&status_key, start_ts, &[], meta);
+                }
+                self.lock_store_delete(key);
+            } else {
+                // Go `batch.Rollback(key, true)`.
+                let status_key = encode_extra_txn_status_key(key, start_ts);
+                self.engine
+                    .set(&status_key, start_ts, &[], DbUserMeta::new(start_ts, 0));
+                self.lock_store_delete(key);
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Go `extraTxnStatus`.
 #[derive(Clone, Copy, Debug, Default)]
 struct ExtraTxnStatus {
@@ -1539,6 +1603,49 @@ mod tests {
                 primary_key: b"nothing".to_vec(),
                 start_ts: 9,
             }
+        );
+    }
+
+    #[test]
+    fn resolve_lock_commits_or_rolls_back_a_whole_transaction() {
+        // The reader's follow-through after check_txn_status: commit_ts > 0
+        // commits every lock of the txn, 0 rolls them back; an empty key
+        // list finds the locks itself.
+        let mut store = MvccStore::new();
+        for key in [b"ra".as_slice(), b"rb"] {
+            store
+                .prewrite(&PrewriteReq {
+                    mutations: vec![put(key, b"v")],
+                    primary_lock: b"ra".to_vec(),
+                    start_version: 7,
+                    ..PrewriteReq::default()
+                })
+                .expect("prewrites");
+        }
+        // A bystander lock from another txn survives untouched.
+        must_prewrite_optimistic(&mut store, b"rc", b"rc", b"w", 9, 200);
+        store.resolve_lock(&[], 7, 8).expect("resolves by scan");
+        assert_eq!(store.get(b"ra", 10).expect("v"), Some(b"v".to_vec()));
+        assert_eq!(store.get(b"rb", 10).expect("v"), Some(b"v".to_vec()));
+        assert!(store.get(b"rc", 10).is_err(), "the bystander still locks");
+
+        // And the rollback direction, by explicit keys.
+        let mut store = MvccStore::new();
+        must_prewrite_optimistic(&mut store, b"rx", b"rx", b"v", 20, 200);
+        store
+            .resolve_lock(&[b"rx".to_vec()], 20, 0)
+            .expect("rolls back");
+        assert!(store.lock_bytes(b"rx").is_empty());
+        assert_eq!(
+            store
+                .prewrite(&PrewriteReq {
+                    mutations: vec![put(b"rx", b"v")],
+                    primary_lock: b"rx".to_vec(),
+                    start_version: 20,
+                    ..PrewriteReq::default()
+                })
+                .expect_err("tombstoned"),
+            KvError::AlreadyRollback
         );
     }
 }
