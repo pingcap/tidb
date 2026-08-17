@@ -106,13 +106,56 @@ impl Tso {
     }
 }
 
-
 /// The [`Tso`] as the lock resolver's timestamp authority: every call a
 /// fresh real TSO, which is exactly the trait's admission rule — the oracle
 /// can never repeat or synthesize, by construction.
 impl tidb_txnkv::lock::TimestampSource for Tso {
     fn current_ts(&self) -> Result<u64, String> {
         Ok(self.get_composed_ts())
+    }
+}
+
+/// Go `MockPD` as the coordinator's PD surface: the embedded oracle behind
+/// [`tidb_txnkv::pd_capability::PdCapability`]. Cluster identity is the
+/// bootstrap cluster; a timestamp future is already answered, because the
+/// oracle dispatches nothing; and the GC safe point is ZERO — the embedded
+/// store never garbage-collects, so no read floor ever rises, which is
+/// Go's own unistore behavior for a store whose safe-point loop has no PD
+/// to ask.
+#[derive(Clone, Debug, Default)]
+pub struct InProcessPd {
+    tso: std::sync::Arc<Tso>,
+}
+
+impl InProcessPd {
+    /// A PD surface over a fresh oracle.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// The oracle beneath, shared.
+    #[must_use]
+    pub fn oracle(&self) -> std::sync::Arc<Tso> {
+        std::sync::Arc::clone(&self.tso)
+    }
+}
+
+impl tidb_txnkv::pd_capability::PdCapability for InProcessPd {
+    type TsFuture = tidb_txnkv::pd_capability::ReadyTimestamp;
+
+    fn cluster_id(&self) -> u64 {
+        crate::region_loader::IN_PROCESS_CLUSTER_ID
+    }
+
+    fn timestamp_future(&self) -> Result<Self::TsFuture, String> {
+        Ok(tidb_txnkv::pd_capability::ReadyTimestamp(
+            self.tso.get_composed_ts(),
+        ))
+    }
+
+    fn gc_safe_point(&self) -> Result<u64, String> {
+        Ok(0)
     }
 }
 
@@ -173,4 +216,25 @@ mod tests {
         assert!(second > first, "fresh on every call, never repeated");
     }
 
+    #[test]
+    fn the_embedded_pd_serves_the_coordinators_capability() {
+        use tidb_txnkv::pd_capability::{PdCapability, TimestampFutureWait};
+        let pd = InProcessPd::new();
+        assert_eq!(pd.cluster_id(), crate::region_loader::IN_PROCESS_CLUSTER_ID);
+        let first = pd
+            .timestamp_future()
+            .expect("dispatches")
+            .wait()
+            .expect("ts");
+        let second = pd
+            .timestamp_future()
+            .expect("dispatches")
+            .wait()
+            .expect("ts");
+        assert!(
+            second > first,
+            "the oracle stays monotonic through the seam"
+        );
+        assert_eq!(pd.gc_safe_point(), Ok(0), "no read floor ever rises");
+    }
 }

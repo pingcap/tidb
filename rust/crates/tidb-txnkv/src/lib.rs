@@ -62,6 +62,7 @@ mod mpp;
 mod mvcc_metadata;
 mod new_txn;
 mod option;
+pub mod pd_capability;
 mod pd_loader;
 mod prefix_ops;
 mod read_runtime;
