@@ -39,7 +39,9 @@ use std::collections::BTreeMap;
 use tidb_datatype::{Datum, FieldName, FieldTypeFlags};
 use tidb_expr::column::Column;
 use tidb_expr::expr_util::extract::is_col_op_col;
-use tidb_expr::expr_util::normal_form::derive_relaxed_filters_from_dnf;
+use tidb_expr::expr_util::normal_form::{
+    derive_relaxed_filters_from_dnf, extract_filters_from_dnfs,
+};
 use tidb_expr::expr_util::predicates::is_mutable_effects_expr;
 use tidb_expr::expr_util::substitute::{build_not_null_expr, SubstituteOptions};
 use tidb_expr::expression::{is_null_rejected, CorrelatedColumn, Expression};
@@ -142,6 +144,46 @@ impl Default for LogicalJoin {
             from_decorrelated_apply: false,
         }
     }
+}
+
+/// Go `LogicalJoin.PredicatePushDown`'s four locals, as
+/// [`LogicalJoin::predicate_push_down_local`] hands them to the driver.
+#[derive(Clone, Debug, Default)]
+pub struct JoinPredicatePushDown {
+    /// Go's `ret`: what stays ABOVE the join.
+    pub ret: Vec<Expression>,
+    /// Go's `leftCond`: what the LEFT child is asked to push.
+    pub left_cond: Vec<Expression>,
+    /// Go's `rightCond`: what the RIGHT child is asked to push.
+    pub right_cond: Vec<Expression>,
+    /// The condition list Go hands to `Conds2TableDual` at this point, when it
+    /// calls it at all. `None` means Go does not test for a dual here.
+    pub dual_conditions: Option<Vec<Expression>>,
+}
+
+/// Go `expression.ScalarFuncs2Exprs(funcs)`.
+fn scalar_funcs_to_exprs(funcs: &[ScalarFunction]) -> Vec<Expression> {
+    funcs
+        .iter()
+        .cloned()
+        .map(Expression::ScalarFunction)
+        .collect()
+}
+
+/// Go `expression.RemoveDupExprs(exprs)`: keep the first of each distinct
+/// `HashCode`.
+fn remove_dup_exprs(exprs: Vec<Expression>) -> Vec<Expression> {
+    let mut seen: Vec<Vec<u8>> = Vec::with_capacity(exprs.len());
+    let mut kept = Vec::with_capacity(exprs.len());
+    for mut expr in exprs {
+        let code = expr.hash_code().to_vec();
+        if seen.iter().any(|other| other == &code) {
+            continue;
+        }
+        seen.push(code);
+        kept.push(expr);
+    }
+    kept
 }
 
 /// The four condition buckets `ExtractOnCondition` sorts an `ON` clause into,
@@ -503,6 +545,180 @@ impl LogicalJoin {
                 right_cond.push(expr.clone());
             }
         }
+    }
+
+    /// Go `LogicalJoin.PredicatePushDown(predicates)`'s LOCAL half
+    /// (`logical_join.go:171`): the whole per-join-type attribution, without
+    /// the recursion into the children.
+    ///
+    /// `simplify` is `ruleutil.ApplyPredicateSimplification` /
+    /// `ApplyPredicateSimplificationForJoin`, injected because it is a
+    /// function POINTER in Go too — `rule/util/misc.go:214`, filled in by
+    /// `rule/rule_init.go`'s `init()` to break a package cycle.
+    ///
+    /// # What is ported
+    ///
+    /// The per-`JoinType` attribution, which is the rule: which conditions
+    /// become `EqualConditions`/`OtherConditions`, which travel to the left
+    /// child, which to the right, and which stay above the join (`ret`). For
+    /// the inner/semi case that is Go's full body: every bucket plus the
+    /// incoming predicates are gathered into one `tempCond`, DNF filters are
+    /// extracted, the whole set is simplified, and the result is re-split with
+    /// `deriveLeft` and `deriveRight` both set — so an `IS NOT NULL` derived
+    /// from an equality on one side becomes a filter on the other. That
+    /// attribution is the part the `tidb-executor` driver's
+    /// `predicate_push_down` prototype carried, and it is folded in here.
+    ///
+    /// # Narrowings, by exact blocking Go symbol
+    ///
+    /// * `simplifyOuterJoin(p, predicates)` (`logical_join.go:300`), which
+    ///   turns a left/right outer join into an inner join when a predicate is
+    ///   null-rejecting on the inner side. Blocked on `util.IsNullRejected`'s
+    ///   session-dependent half; `tidb_expr::expression::is_null_rejected`
+    ///   exists but Go's caller needs `p.SCtx()` for the plan-cache guard.
+    /// * `p.outerJoinPropConst(predicates, filter)` (`logical_join.go:1024`)
+    ///   and therefore `expression.PropagateConstantForJoin`. This is the
+    ///   `propagateConstant` half of the simplification hook; see
+    ///   [`crate::logical::rule::apply_predicate_simplification`].
+    /// * `DeriveOtherConditions(p, leftSchema, rightSchema, deriveLeft,
+    ///   deriveRight)` (`logical_join.go:1247`), which manufactures the
+    ///   `IS NOT NULL` filters an OUTER join may push to its inner side.
+    /// * `p.updateEQCond()` (`logical_join.go:920`) and `p.SemiJoinRewrite()`,
+    ///   which run after the children have been pushed into.
+    /// * `getAllJoinLeaf(p)` / `p.allJoinLeaf`, which only feeds the two
+    ///   `isVaildConstantPropagationExpression*` filters above.
+    ///
+    /// Every one of those only ever pushes MORE down or narrows a join type
+    /// further, so omitting them leaves conditions higher in the tree than Go
+    /// would — never lower.
+    #[must_use]
+    pub fn predicate_push_down_local(
+        &mut self,
+        predicates: Vec<Expression>,
+        left_schema: &Schema,
+        right_schema: &Schema,
+        opts: &SubstituteOptions<'_>,
+        simplify: impl Fn(Vec<Expression>) -> Vec<Expression>,
+    ) -> JoinPredicatePushDown {
+        // Go's leading `switch p.JoinType`: for everything but the semi/inner
+        // and outer-semi families, `OtherConditions` is simplified in place so
+        // an obvious logical constant cannot hide a join key.
+        match self.join_type {
+            LogicalJoinType::AntiLeftOuterSemi
+            | LogicalJoinType::LeftOuterSemi
+            | LogicalJoinType::AntiSemi
+            | LogicalJoinType::Semi
+            | LogicalJoinType::Inner => {}
+            LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter => {
+                let other = std::mem::take(&mut self.other_conditions);
+                self.other_conditions = simplify(other);
+            }
+        }
+
+        let mut result = JoinPredicatePushDown::default();
+        match self.join_type {
+            LogicalJoinType::LeftOuter
+            | LogicalJoinType::LeftOuterSemi
+            | LogicalJoinType::AntiLeftOuterSemi => {
+                let predicates = simplify(predicates);
+                if !predicates.is_empty() {
+                    result.dual_conditions = Some(predicates.clone());
+                }
+                let predicates = extract_filters_from_dnfs(predicates);
+                // Only the LEFT where-condition may be derived: a filter on the
+                // null-supplying side would change which rows are preserved.
+                let split = self.extract_on_condition(
+                    &predicates,
+                    left_schema,
+                    right_schema,
+                    true,
+                    false,
+                    opts,
+                );
+                let right_cond = std::mem::take(&mut self.right_conditions);
+                result.left_cond = split.left;
+                result.right_cond = right_cond;
+                result.ret = scalar_funcs_to_exprs(&split.equal);
+                result.ret.extend(split.other);
+                result.ret.extend(split.right);
+            }
+            LogicalJoinType::RightOuter => {
+                let predicates = simplify(predicates);
+                if !predicates.is_empty() {
+                    result.dual_conditions = Some(predicates.clone());
+                }
+                let predicates = extract_filters_from_dnfs(predicates);
+                let split = self.extract_on_condition(
+                    &predicates,
+                    left_schema,
+                    right_schema,
+                    false,
+                    true,
+                    opts,
+                );
+                let left_cond = std::mem::take(&mut self.left_conditions);
+                result.right_cond = split.right;
+                result.left_cond = left_cond;
+                result.ret = scalar_funcs_to_exprs(&split.equal);
+                result.ret.extend(split.other);
+                result.ret.extend(split.left);
+            }
+            LogicalJoinType::Semi | LogicalJoinType::Inner => {
+                let mut temp_cond = Vec::with_capacity(
+                    self.left_conditions.len()
+                        + self.right_conditions.len()
+                        + self.equal_conditions.len()
+                        + self.other_conditions.len()
+                        + predicates.len(),
+                );
+                temp_cond.extend(self.left_conditions.iter().cloned());
+                temp_cond.extend(self.right_conditions.iter().cloned());
+                temp_cond.extend(scalar_funcs_to_exprs(&self.equal_conditions));
+                temp_cond.extend(self.other_conditions.iter().cloned());
+                temp_cond.extend(predicates);
+                let temp_cond = simplify(extract_filters_from_dnfs(temp_cond));
+                if !temp_cond.is_empty() {
+                    result.dual_conditions = Some(temp_cond.clone());
+                }
+                let split = self.extract_on_condition(
+                    &temp_cond,
+                    left_schema,
+                    right_schema,
+                    true,
+                    true,
+                    opts,
+                );
+                self.left_conditions = Vec::new();
+                self.right_conditions = Vec::new();
+                self.equal_conditions = split.equal;
+                self.other_conditions = split.other;
+                result.left_cond = split.left;
+                result.right_cond = split.right;
+            }
+            LogicalJoinType::AntiSemi => {
+                let predicates = simplify(predicates);
+                if !predicates.is_empty() {
+                    result.dual_conditions = Some(predicates.clone());
+                }
+                let split = self.extract_on_condition(
+                    &predicates,
+                    left_schema,
+                    right_schema,
+                    true,
+                    true,
+                    opts,
+                );
+                // Go: do NOT derive `is not null` for an anti join; see the
+                // three counterexamples at `logical_join.go:273`.
+                result.left_cond = split.left;
+                let mut right_cond = std::mem::take(&mut self.right_conditions);
+                right_cond.extend(split.right);
+                result.right_cond = right_cond;
+            }
+        }
+        result.left_cond = remove_dup_exprs(result.left_cond);
+        result.right_cond = remove_dup_exprs(result.right_cond);
+        result
     }
 
     /// Go `LogicalJoin.ExtractUsedCols(parentUsedCols)`

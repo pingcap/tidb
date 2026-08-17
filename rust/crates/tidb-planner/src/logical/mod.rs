@@ -79,6 +79,21 @@
 //! is KEPT rather than merged, because `difftests/planner-tests` consumes each
 //! from outside this crate.
 //!
+//! # The rules that run over the tree
+//!
+//! Three modules beside this one carry the optimizer, and they are layered:
+//!
+//! * [`fold`] — the ONE owned post-order rewrite helper. Every rule uses it;
+//!   no rule writes its own stack or its own recursion. Read its header before
+//!   adding a rule.
+//! * [`rewrite`] — the tree-level halves of predicate pushdown, column
+//!   pruning, TopN pushdown and key-info building: the recursion and
+//!   child-replacement Go writes inline in each operator method.
+//! * [`rule`] — `base.LogicalOptRule`, `optRuleList`, `optRuleFlags`, the flag
+//!   bits, `logicalOptimize`, and `logicalop.AddSelection`. It also documents
+//!   the arm-listing convention (`base_arms!`) that keeps a 27-variant match
+//!   exhaustive without 27 lines per rule.
+//!
 //! # Why a closed enum and not `Box<dyn LogicalPlan>`
 //!
 //! Go's rule signatures return a REPLACEMENT node:
@@ -152,8 +167,11 @@ pub const APPLY_GEN_FROM_XF_DECORRELATE_RULE_FLAG: u64 = 1 << 0;
 ///   `(planIDsHash, prop) -> Task` table. `base.Task` is not transcreated, so
 ///   the table is absent rather than typed against a placeholder;
 ///   `roll_back_task_map` keeps its signature and is a `todo`.
-/// * `fdSet`. `pkg/planner/funcdep` is not transcreated; `ExtractFD` keeps
-///   its signature and is a `todo`.
+/// * `fdSet`. `pkg/planner/funcdep` IS transcreated — it lives outside this
+///   crate and this crate does not depend on it yet, so the field is absent
+///   rather than typed against a placeholder and `ExtractFD` keeps its
+///   signature as a `todo`. Wiring it in is a later batch; nothing here is
+///   blocked on the Go side.
 #[derive(Clone, Debug, Default)]
 pub struct BaseLogicalPlan {
     /// Go's embedded `baseimpl.Plan`.
@@ -321,6 +339,7 @@ pub mod apply;
 pub mod cte;
 pub mod data_source;
 pub mod expand;
+pub mod fold;
 pub mod index_scan;
 pub mod join;
 pub mod limit;
@@ -328,6 +347,8 @@ pub mod lock;
 pub mod max_one_row;
 pub mod mem_table;
 pub mod projection;
+pub mod rewrite;
+pub mod rule;
 pub mod schema_producer;
 pub mod selection;
 pub mod sequence;
@@ -630,35 +651,48 @@ impl LogicalPlan {
     /// that could NOT be pushed, plus a possibly-new root. Taking `self` by
     /// value is how the "possibly-new root" is expressed without a clone.
     ///
-    /// The base body (`base_logical_plan.go:128`) pushes everything into
-    /// `children[0]` and re-attaches a `Selection` for the remainder; the
-    /// `AddSelection` half needs `logicalop.LogicalSelection` construction
-    /// rules that are a later batch, so this returns the predicates unpushed
-    /// for a childless node and is otherwise a `todo`.
+    /// The whole dispatch — Go's base body plus every operator override —
+    /// lives in [`rewrite::predicate_push_down`], because the recursion needs
+    /// [`rule::RuleContext`] (Go reads it off `p.SCtx()`, which this enum has
+    /// no back-pointer to). This method is the same call with that context
+    /// supplied.
+    ///
+    /// # Errors
+    ///
+    /// The plan is returned alongside the error; see [`rule::LogicalOptRule`].
+    #[allow(clippy::result_large_err)]
     pub fn predicate_push_down(
         self,
+        ctx: &rule::RuleContext<'_>,
         predicates: Vec<Expression>,
-    ) -> Result<(Vec<Expression>, Self), PlanError> {
-        if self.base().child_len() == 0 {
-            return Ok((predicates, self));
+    ) -> Result<(Vec<Expression>, Self), (Self, PlanError)> {
+        let (plan, remaining, failure) = rewrite::predicate_push_down(ctx, self, predicates);
+        match failure {
+            None => Ok((remaining, plan)),
+            Some(error) => Err((plan, error)),
         }
-        Err(PlanError::internal(
-            "todo: LogicalPlan::predicate_push_down needs logicalop.AddSelection",
-        ))
     }
 
     /// Go `PruneColumns(parentUsedCols)` (`<2nd>`): prune, returning the new
     /// plan if it changed and the same one otherwise.
     ///
-    /// The base body recurses into `children[0]`; that recursion is safe to
-    /// port once the operators own their column sets, which is a later batch.
-    pub fn prune_columns(self, _parent_used_cols: &[Column]) -> Result<Self, PlanError> {
-        if self.base().child_len() == 0 {
-            return Ok(self);
+    /// The dispatch lives in [`rewrite::prune_columns`]; see
+    /// [`Self::predicate_push_down`] for why the context is threaded.
+    ///
+    /// # Errors
+    ///
+    /// The plan is returned alongside the error; see [`rule::LogicalOptRule`].
+    #[allow(clippy::result_large_err)]
+    pub fn prune_columns(
+        self,
+        ctx: &rule::RuleContext<'_>,
+        parent_used_cols: &[Column],
+    ) -> Result<Self, (Self, PlanError)> {
+        let (plan, failure) = rewrite::prune_columns(ctx, self, parent_used_cols.to_vec());
+        match failure {
+            None => Ok(plan),
+            Some(error) => Err((plan, error)),
         }
-        Err(PlanError::internal(
-            "todo: LogicalPlan::prune_columns needs the operator column sets",
-        ))
     }
 
     /// Go `BuildKeyInfo(selfSchema, childSchema)` (`<3rd>`), dispatched to the
@@ -724,10 +758,14 @@ impl LogicalPlan {
         }
     }
 
-    /// Go `PushDownTopN(topN)` (`<4th>`).
+    /// Go `PushDownTopN(topN)` (`<4th>`), dispatched by
+    /// [`rewrite::push_down_topn`].
+    ///
+    /// Go's parameter is a `base.LogicalPlan` that every body immediately
+    /// asserts to a `*LogicalTopN`; the assertion is in the type here.
     #[must_use]
-    pub fn push_down_topn(self, _topn: Option<Self>) -> Self {
-        self // todo: pushDownTopNForBaseLogicalPlan
+    pub fn push_down_topn(self, topn: Option<LogicalTopN>) -> Self {
+        rewrite::push_down_topn(self, topn)
     }
 
     /// Go `DeriveTopN()` (`<5th>`), gated on `AllowDeriveTopN`.
@@ -1040,7 +1078,8 @@ impl LogicalPlan {
     }
 
     /// Go `ExtractFD()` (`<20th>`): the functional-dependency set, derived
-    /// bottom-up. `pkg/planner/funcdep` is not transcreated; see the
+    /// bottom-up. `pkg/planner/funcdep` IS transcreated but lives outside
+    /// this crate and is not depended on here yet; see the
     /// [`BaseLogicalPlan`] header.
     pub const fn extract_fd(&self) {}
 
@@ -1237,5 +1276,7 @@ impl LogicalPlan {
 
 #[cfg(test)]
 mod operator_tests;
+#[cfg(test)]
+pub(crate) mod rule_tests;
 #[cfg(test)]
 mod tests;

@@ -238,6 +238,162 @@ impl LogicalAggregation {
         (cols, exprs)
     }
 
+    /// Go `LogicalAggregation.splitCondForAggregation(predicates)`
+    /// (`logical_aggregation.go:631`): the predicates an aggregate may pass to
+    /// its child, and those that must stay above it.
+    ///
+    /// Returns `(conds_to_push, ret)` in Go's order.
+    ///
+    /// # What is ported
+    ///
+    /// Go splits each predicate into CNF items and then runs each item through
+    /// `pushDownDNFPredicates` twice — once against the GROUP BY columns and
+    /// once against the `first_row` aggregate columns. The GROUP BY arm is the
+    /// soundness core and is ported: an item that reads ONLY group-by columns
+    /// has the same value for every row of a group, so filtering before the
+    /// aggregate removes exactly the groups it would have removed after. That
+    /// is what the `tidb-executor` driver's `agg_predicate_pushdown` prototype
+    /// established, and it is the arm folded in here.
+    ///
+    /// # Narrowings, by exact blocking Go symbol
+    ///
+    /// * `la.pushDownPredicatesByAggFuncs` with `getAggFuncsColsForFirstRow()`
+    ///   — a `first_row(c)` output is `c` itself, so a predicate on it may be
+    ///   rewritten onto `c` and pushed. Blocked on the argument SUBSTITUTION,
+    ///   `expression.ColumnSubstitute`, needing a builder this method is not
+    ///   given.
+    /// * `la.getAggFuncsColsForConstResult()` plus `expression.FoldConstant`,
+    ///   the const-result rewrite Go applies to each CNF item first.
+    /// * `la.pushDownDNFPredicates`, which relaxes a DNF whose every branch is
+    ///   pushable into a pushable disjunction.
+    ///
+    /// All three only ever push MORE down, so their absence leaves a filter
+    /// above the aggregate rather than below it.
+    #[must_use]
+    pub fn split_cond_for_aggregation(
+        &self,
+        predicates: &[Expression],
+    ) -> (Vec<Expression>, Vec<Expression>) {
+        let group_by_columns = Schema::new(self.get_group_by_cols());
+        let mut conds_to_push = Vec::new();
+        let mut ret = Vec::new();
+        for cond in predicates {
+            for item in tidb_expr::expr_util::normal_form::split_cnf_items(cond) {
+                if crate::expression_rewriter::expr_from_schema(&item, &group_by_columns) {
+                    conds_to_push.push(item);
+                } else {
+                    ret.push(item);
+                }
+            }
+        }
+        (conds_to_push, ret)
+    }
+
+    /// Go `LogicalAggregation.PruneColumns(parentUsedCols)`'s LOCAL half
+    /// (`logical_aggregation.go:113`): drop the unused aggregate outputs and
+    /// the constant group-by items, repair the two degenerate cases, and
+    /// report what the child must still produce.
+    ///
+    /// The two repairs are Go's, and both are about ROW COUNT rather than
+    /// values:
+    /// * an aggregate left with no functions, or whose only survivors are
+    ///   `first_row` when they were not all `first_row` to begin with, gains a
+    ///   `count(1)` — because `select agg(a) from t` returns one row over an
+    ///   empty table while `first_row` returns none, so the choice of repair
+    ///   function changes the result;
+    /// * an aggregate whose every GROUP BY item was a constant gains
+    ///   `group by 1`, because `select count(*) from t` and
+    ///   `select count(*) from t group by 1` differ on an empty table.
+    ///
+    /// # Narrowing
+    ///
+    /// The repair column Go appends carries a FRESH plan-column id from
+    /// `AllocPlanColumnID()`. There is no allocator on this operator, so the
+    /// column is given the sentinel id `i64::MIN`, the same device
+    /// [`super::LogicalProjection::build_schema_by_exprs`] uses: it can never
+    /// collide with a real allocation and can never match a child key.
+    /// `aggregation.NewAggFuncDesc`'s return-type inference is likewise not
+    /// reachable here, so the repair descriptor inherits the pruned schema's
+    /// type when there is one.
+    pub fn prune_columns_local(
+        &mut self,
+        parent_used_cols: &[Column],
+        self_schema: &mut Schema,
+    ) -> Vec<Column> {
+        let used = schema_producer::get_used_list(parent_used_cols, self_schema);
+        let mut all_first_row = true;
+        let mut all_remain_first_row = true;
+        for i in (0..used.len()).rev() {
+            let Some(func) = self.agg_funcs.get(i) else {
+                continue;
+            };
+            if func.name() != AGG_FUNC_FIRST_ROW {
+                all_first_row = false;
+            }
+            if !used[i] && !tidb_expr::expr_util::predicates::exprs_has_side_effects(func.args()) {
+                self_schema.columns.remove(i);
+                self.agg_funcs.remove(i);
+            } else if func.name() != AGG_FUNC_FIRST_ROW {
+                all_remain_first_row = false;
+            }
+        }
+
+        let mut self_used_cols: Vec<Column> = Vec::new();
+        for func in &self.agg_funcs {
+            for arg in func.args() {
+                self_used_cols.extend(extract_columns(arg));
+            }
+        }
+
+        if self.agg_funcs.is_empty() || (!all_first_row && all_remain_first_row) {
+            let name = if all_first_row {
+                AGG_FUNC_FIRST_ROW
+            } else {
+                AGG_FUNC_COUNT
+            };
+            let one = tidb_expr::constant::Constant::new_one();
+            let Some(ret_type) = one.ret_type.clone() else {
+                return self_used_cols;
+            };
+            self.agg_funcs.push(AggFuncDesc {
+                base: tidb_expr::aggregation::BaseFuncDesc {
+                    name: name.to_owned(),
+                    args: vec![Expression::Constant(one)],
+                    ret_type: ret_type.clone(),
+                },
+                mode: AggFunctionMode::Complete,
+                has_distinct: false,
+                order_by_items: Vec::new(),
+                grouping_id: 0,
+            });
+            let mut column = Column::default();
+            column.unique_id = i64::MIN;
+            column.ret_type = Some(ret_type);
+            self_schema.columns.push(column);
+        }
+
+        if !self.group_by_items.is_empty() {
+            for i in (0..self.group_by_items.len()).rev() {
+                let cols = extract_columns(&self.group_by_items[i]);
+                if cols.is_empty()
+                    && !tidb_expr::expr_util::predicates::expr_has_set_var_or_sleep(
+                        &self.group_by_items[i],
+                    )
+                {
+                    self.group_by_items.remove(i);
+                } else {
+                    self_used_cols.extend(cols);
+                }
+            }
+            if self.group_by_items.is_empty() {
+                self.group_by_items = vec![Expression::Constant(
+                    tidb_expr::constant::Constant::new_one(),
+                )];
+            }
+        }
+        self_used_cols
+    }
+
     /// Go `BuildSelfKeyInfo(selfSchema)` (`logical_aggregation.go:797`): the
     /// group-by columns are a key of the output, and a group-less aggregate is
     /// exactly one row.
