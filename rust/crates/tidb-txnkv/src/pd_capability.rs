@@ -82,6 +82,25 @@ impl PdCapability for PdClient {
     }
 }
 
+/// [`crate::lock::TimestampSource`] over any [`PdCapability`] — the generic
+/// twin of the opener's PD-bound lock timestamp source: dispatch a future,
+/// wait it out.
+pub struct CapabilityTimestampSource<P: PdCapability>(pub P);
+
+impl<P: PdCapability> std::fmt::Debug for CapabilityTimestampSource<P> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CapabilityTimestampSource")
+            .finish_non_exhaustive()
+    }
+}
+
+impl<P: PdCapability> crate::lock::TimestampSource for CapabilityTimestampSource<P> {
+    fn current_ts(&self) -> Result<u64, String> {
+        self.0.timestamp_future()?.wait()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

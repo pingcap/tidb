@@ -476,7 +476,17 @@ impl TxnSafePointRefresher {
     /// fails `NewKVStore` outright when it cannot read the txn safe point,
     /// because a store whose cache was never seeded rejects every read anyway.
     pub fn start(loader: TxnSafePointLoader) -> Result<Self, GcStateLoadError> {
-        let txn_safe_point = loader.load()?;
+        Self::start_with_source(move || loader.load())
+    }
+
+    /// Starts the same refresher over ANY safe-point source — the seam that
+    /// lets an embedded store poll its own capability instead of PD+etcd.
+    /// The production path above delegates here unchanged.
+    pub fn start_with_source<F>(source: F) -> Result<Self, GcStateLoadError>
+    where
+        F: Fn() -> Result<u64, GcStateLoadError> + Send + 'static,
+    {
+        let txn_safe_point = source()?;
         let cache = Arc::new(GcStateCache::seeded(txn_safe_point, Instant::now()));
         let stop = Arc::new(AtomicBool::new(false));
         let worker = std::thread::Builder::new()
@@ -484,7 +494,7 @@ impl TxnSafePointRefresher {
             .spawn({
                 let cache = Arc::clone(&cache);
                 let stop = Arc::clone(&stop);
-                move || refresh_loop(&loader, &cache, &stop)
+                move || refresh_loop_over(&source, &cache, &stop)
             })
             .map_err(|error| GcStateLoadError::Unavailable {
                 message: format!("cannot start the txn safe point updater: {error}"),
@@ -515,7 +525,12 @@ impl Drop for TxnSafePointRefresher {
 /// Granularity at which a sleeping refresh loop notices it was stopped.
 const REFRESH_STOP_POLL: Duration = Duration::from_millis(50);
 
-fn refresh_loop(loader: &TxnSafePointLoader, cache: &GcStateCache, stop: &AtomicBool) {
+/// The refresh loop over any safe-point source; the production path reaches
+/// it through `start`'s PD+etcd closure.
+fn refresh_loop_over<F>(source: &F, cache: &GcStateCache, stop: &AtomicBool)
+where
+    F: Fn() -> Result<u64, GcStateLoadError>,
+{
     let mut delay = POLL_TXN_SAFE_POINT_INTERVAL;
     while !stop.load(Ordering::Relaxed) {
         let mut waited = Duration::ZERO;
@@ -529,7 +544,7 @@ fn refresh_loop(loader: &TxnSafePointLoader, cache: &GcStateCache, stop: &Atomic
         }
         // The observation time is taken after the load returns, so a slow load
         // cannot make the cache look fresher than the data in it.
-        match loader.load() {
+        match source() {
             Ok(txn_safe_point) => {
                 cache.update(txn_safe_point, Instant::now());
                 delay = next_poll_delay(true);
