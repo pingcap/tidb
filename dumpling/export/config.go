@@ -385,9 +385,9 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringArray(
 		flagColumnFilter,
 		nil,
-		`Inline TOML column filter rule for data output projection. Can be specified multiple times. Example: --column-filter '{ matcher = ["db.tbl"], columns = ["*", "!col"] }'. Unmatched tables are dumped with all columns; column rules are case-insensitive. Mutually exclusive with --column-filter-file. Requires --no-schemas/-m and cannot be used with --sql`,
+		`Inline TOML column filter rule for data and schema projection. Can be specified multiple times. Example: --column-filter '{ matcher = ["db.tbl"], columns = ["*", "!col"] }'. Unmatched tables are dumped with all columns; column rules are case-insensitive. Mutually exclusive with --column-filter-file and cannot be used with --sql`,
 	)
-	flags.String(flagColumnFilterFile, "", "Path to the column filter TOML file for data output projection. Unmatched tables are dumped with all columns; column rules are case-insensitive. Requires --no-schemas/-m and cannot be used with --sql")
+	flags.String(flagColumnFilterFile, "", "Path to the column filter TOML file for data and schema projection. Unmatched tables are dumped with all columns; column rules are case-insensitive. Cannot be used with --sql")
 	flags.Bool(flagCaseSensitive, false, "whether the filter should be case-sensitive")
 	flags.Bool(flagDumpEmptyDatabase, true, "whether to dump empty database")
 	flags.Uint64(flagTidbMemQuotaQuery, UnspecifiedSize, "The maximum memory limit for a single SQL statement, in bytes.")
@@ -751,9 +751,6 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 func validateColumnFilterOptions(conf *Config, flagName string) error {
 	if conf.SQL != "" {
 		return errors.Errorf("can't specify both --sql and --%s at the same time", flagName)
-	}
-	if !conf.NoSchemas {
-		return errors.Errorf("--%s requires --no-schemas/-m", flagName)
 	}
 	return nil
 }

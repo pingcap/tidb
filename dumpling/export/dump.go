@@ -525,6 +525,68 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 			conf.columnProjection[tableName{db: dbName, table: table.Name}] = projection
 		}
 	}
+	if !conf.NoSchemas && hasProjectedTable(conf.columnProjection) {
+		for dbName, tables := range conf.Tables {
+			for _, table := range tables {
+				if table.Type == TableTypeView {
+					return errors.Errorf(
+						"column-filtered schema output does not support view `%s`.`%s`",
+						escapeString(dbName),
+						escapeString(table.Name),
+					)
+				}
+			}
+		}
+		for dbName, tables := range conf.Tables {
+			for _, table := range tables {
+				if table.Type != TableTypeBase {
+					continue
+				}
+				key := tableName{db: dbName, table: table.Name}
+				projection := conf.columnProjection[key]
+				createTableSQL, err := ShowCreateTable(tctx, conn, dbName, table.Name)
+				if err != nil {
+					return err
+				}
+				projection.schemaSQL = createTableSQL
+				projection.schemaColumns, err = projectedTableSchemaColumns(createTableSQL, projection)
+				if err != nil {
+					return errors.Annotatef(
+						err,
+						"failed to analyze schema projection for table `%s`.`%s`",
+						escapeString(dbName),
+						escapeString(table.Name),
+					)
+				}
+				conf.columnProjection[key] = projection
+			}
+		}
+		for dbName, tables := range conf.Tables {
+			for _, table := range tables {
+				if table.Type != TableTypeBase {
+					continue
+				}
+				key := tableName{db: dbName, table: table.Name}
+				projection := conf.columnProjection[key]
+				var err error
+				projection.schemaSQL, err = projectTableSchema(
+					projection.schemaSQL,
+					dbName,
+					projection,
+					conf.columnProjection,
+				)
+				if err != nil {
+					return errors.Annotatef(
+						err,
+						"failed to project schema for table `%s`.`%s`",
+						escapeString(dbName),
+						escapeString(table.Name),
+					)
+				}
+				conf.columnProjection[key] = projection
+			}
+		}
+	}
 	return nil
 }
 
@@ -555,7 +617,9 @@ func buildColumnProjection(
 	sourceFields := columnNamesToSelectFields(sourceColumns)
 	selectedFields := columnNamesToSelectFields(selectedColumns)
 	projection := columnProjection{
-		selectField: strings.Join(selectedFields, ","),
+		selectedColumns: selectedColumns,
+		selectField:     strings.Join(selectedFields, ","),
+		projected:       len(sourceColumns) != len(selectedColumns),
 	}
 	if !hasGeneratedColumn && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
 		projection.selectField = "*"
@@ -1480,9 +1544,12 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		return meta, nil
 	}
 
-	createTableSQL, err := ShowCreateTable(tctx, conn, db, tbl)
-	if err != nil {
-		return nil, err
+	createTableSQL := projection.schemaSQL
+	if createTableSQL == "" {
+		createTableSQL, err = ShowCreateTable(tctx, conn, db, tbl)
+		if err != nil {
+			return nil, err
+		}
 	}
 	meta.showCreateTable = createTableSQL
 	return meta, nil
