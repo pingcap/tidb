@@ -157,6 +157,7 @@ pub mod real_tikv_privileges;
 pub mod real_tikv_read;
 pub mod real_tikv_stats;
 pub mod recordset_lifecycle;
+pub mod regexpr_router;
 pub mod removed_sysvar;
 pub mod reserved_row_id;
 mod result;

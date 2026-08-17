@@ -180,6 +180,41 @@ pub struct SourceExtractor {
     pub source_regexp: String,
 }
 
+impl TableExtractor {
+    /// A `TableExtractor` as a Go composite literal writes it: the two exported
+    /// fields set, the unexported `regexp` still nil until
+    /// [`TableRule::valid`] compiles it.
+    pub fn new(target_column: impl Into<String>, table_regexp: impl Into<String>) -> Self {
+        TableExtractor {
+            regexp: None,
+            target_column: target_column.into(),
+            table_regexp: table_regexp.into(),
+        }
+    }
+}
+
+impl SchemaExtractor {
+    /// See [`TableExtractor::new`].
+    pub fn new(target_column: impl Into<String>, schema_regexp: impl Into<String>) -> Self {
+        SchemaExtractor {
+            regexp: None,
+            target_column: target_column.into(),
+            schema_regexp: schema_regexp.into(),
+        }
+    }
+}
+
+impl SourceExtractor {
+    /// See [`TableExtractor::new`].
+    pub fn new(target_column: impl Into<String>, source_regexp: impl Into<String>) -> Self {
+        SourceExtractor {
+            regexp: None,
+            target_column: target_column.into(),
+            source_regexp: source_regexp.into(),
+        }
+    }
+}
+
 /// Which of the three extractors a value is being pulled out of.
 ///
 /// boundary: stands for the `ext any` parameter of `(*TableRule).extractVal`
