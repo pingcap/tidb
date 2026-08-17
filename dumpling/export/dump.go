@@ -566,8 +566,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 			}
 			key := tableName{db: dbName, table: table.Name}
 			projection := conf.columnProjection[key]
-			var err error
-			projection.schemaSQL, err = generateProjectedSchema(
+			newSchemaSQL, err := generateProjectedSchema(
 				projection.schemaSQL,
 				dbName,
 				projection.isProjected(),
@@ -582,6 +581,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 					escapeString(table.Name),
 				)
 			}
+			projection.schemaSQL = newSchemaSQL
 			conf.columnProjection[key] = projection
 		}
 	}

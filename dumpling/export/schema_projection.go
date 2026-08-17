@@ -32,7 +32,7 @@ func generateProjectedSchema(
 		if _, ok := retainedColumns[column.Name.Name.L]; !ok {
 			continue
 		}
-		options, err := filterColumnOptions(column, retainedColumns, database, createTable.Table.Name.L, schemaColumns)
+		options, err := filterColumnOptions(column, retainedColumns, database, schemaColumns)
 		if err != nil {
 			return "", err
 		}
@@ -47,7 +47,6 @@ func generateProjectedSchema(
 			constraint,
 			retainedColumns,
 			database,
-			createTable.Table.Name.L,
 			schemaColumns,
 		)
 		if err != nil {
@@ -59,9 +58,6 @@ func generateProjectedSchema(
 		constraints = append(constraints, constraint)
 	}
 	createTable.Constraints = constraints
-	if err := validateAutomaticIDColumns(createTable.Cols, createTable.Constraints); err != nil {
-		return "", err
-	}
 
 	if err := validatePartitionColumns(createTable.Partition, retainedColumns); err != nil {
 		return "", err
@@ -96,13 +92,12 @@ func collectProjectedSchemaColumns(originSQL string, selectedColumns []string) (
 
 	retainedColumns := make(map[string]struct{}, len(selectedColumns))
 	for _, selectedColumn := range selectedColumns {
-		lowerName := strings.ToLower(selectedColumn)
-		retainedColumns[lowerName] = struct{}{}
+		retainedColumns[strings.ToLower(selectedColumn)] = struct{}{}
 	}
 	// A generated column can only depend on generated columns defined before it.
 	for _, column := range createTable.Cols {
 		for _, option := range column.Options {
-			if option.Tp == ast.ColumnOptionGenerated && allReferencedColumnsRetained(option.Expr, retainedColumns) {
+			if option.Tp == ast.ColumnOptionGenerated && allReferencedColumnsCovered(option.Expr, retainedColumns) {
 				retainedColumns[column.Name.Name.L] = struct{}{}
 				break
 			}
@@ -116,23 +111,22 @@ func filterColumnOptions(
 	column *ast.ColumnDef,
 	retained map[string]struct{},
 	database string,
-	table string,
 	schemaColumns map[tableName]map[string]struct{},
 ) ([]*ast.ColumnOption, error) {
 	options := make([]*ast.ColumnOption, 0, len(column.Options))
 	for _, option := range column.Options {
 		switch option.Tp {
 		case ast.ColumnOptionCheck:
-			if !allReferencedColumnsRetained(option.Expr, retained) {
+			if !allReferencedColumnsCovered(option.Expr, retained) {
 				continue
 			}
 		case ast.ColumnOptionReference:
 			// MySQL 9.7 supports inline foreign keys as column-level REFERENCES options.
-			if err := validateForeignKeyReference(option.Refer, database, table, retained, schemaColumns); err != nil {
+			if err := validateForeignKeyReference(option.Refer, database, schemaColumns); err != nil {
 				return nil, err
 			}
 		case ast.ColumnOptionDefaultValue, ast.ColumnOptionOnUpdate:
-			if !allReferencedColumnsRetained(option.Expr, retained) {
+			if !allReferencedColumnsCovered(option.Expr, retained) {
 				return nil, errors.Errorf(
 					"column `%s` expression references a removed column",
 					column.Name.Name.O,
@@ -148,7 +142,6 @@ func filterTableConstraint(
 	constraint *ast.Constraint,
 	retained map[string]struct{},
 	database string,
-	table string,
 	schemaColumns map[tableName]map[string]struct{},
 ) (bool, error) {
 	for _, key := range constraint.Keys {
@@ -157,77 +150,35 @@ func filterTableConstraint(
 				return false, nil
 			}
 		}
-		if !allReferencedColumnsRetained(key.Expr, retained) {
+		if !allReferencedColumnsCovered(key.Expr, retained) {
 			return false, nil
 		}
 	}
-	if !allReferencedColumnsRetained(constraint.Expr, retained) {
+	if !allReferencedColumnsCovered(constraint.Expr, retained) {
 		return false, nil
 	}
-	if constraint.Option != nil && !allReferencedColumnsRetained(constraint.Option.Condition, retained) {
+	if constraint.Option != nil && !allReferencedColumnsCovered(constraint.Option.Condition, retained) {
 		return false, nil
 	}
-	if err := validateForeignKeyReference(constraint.Refer, database, table, retained, schemaColumns); err != nil {
+	if err := validateForeignKeyReference(constraint.Refer, database, schemaColumns); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-func validateAutomaticIDColumns(columns []*ast.ColumnDef, constraints []*ast.Constraint) error {
-	indexedColumns := make(map[string]struct{})
-	for _, constraint := range constraints {
-		if len(constraint.Keys) == 0 || constraint.Keys[0].Column == nil {
-			continue
-		}
-		indexedColumns[constraint.Keys[0].Column.Name.L] = struct{}{}
-	}
-
-	for _, column := range columns {
-		requiresKey := false
-		hasInlineKey := false
-		for _, option := range column.Options {
-			switch option.Tp {
-			case ast.ColumnOptionAutoIncrement, ast.ColumnOptionAutoRandom:
-				requiresKey = true
-			case ast.ColumnOptionPrimaryKey, ast.ColumnOptionUniqKey:
-				hasInlineKey = true
-			}
-		}
-		if !requiresKey || hasInlineKey {
-			continue
-		}
-		if _, ok := indexedColumns[column.Name.Name.L]; !ok {
-			return errors.Errorf("column `%s` loses the index required by its automatic ID option", column.Name.Name.O)
-		}
-	}
-	return nil
-}
-
 func validateForeignKeyReference(
 	reference *ast.ReferenceDef,
 	database string,
-	table string,
-	retained map[string]struct{},
 	schemaColumns map[tableName]map[string]struct{},
 ) error {
 	if reference == nil || reference.Table == nil {
 		return nil
 	}
 
+	referenceTable := reference.Table.Name.O
 	referenceDatabase := reference.Table.Schema.O
 	if referenceDatabase == "" {
 		referenceDatabase = database
-	}
-	referenceTable := reference.Table.Name.O
-	if strings.EqualFold(referenceDatabase, database) && strings.EqualFold(referenceTable, table) {
-		for _, key := range reference.IndexPartSpecifications {
-			if key.Column != nil {
-				if _, ok := retained[key.Column.Name.L]; !ok {
-					return removedReferenceColumnError(referenceDatabase, referenceTable, key.Column.Name.O)
-				}
-			}
-		}
-		return nil
 	}
 
 	targetColumns, ok := schemaColumns[tableName{db: referenceDatabase, table: referenceTable}]
@@ -265,30 +216,26 @@ func validatePartitionColumns(partition *ast.PartitionOptions, retained map[stri
 }
 
 func partitionColumnsRetained(method *ast.PartitionMethod, retained map[string]struct{}) bool {
-	if !allReferencedColumnsRetained(method.Expr, retained) {
-		return false
-	}
 	for _, column := range method.ColumnNames {
 		if _, ok := retained[column.Name.L]; !ok {
 			return false
 		}
 	}
-	return true
+	return allReferencedColumnsCovered(method.Expr, retained)
 }
 
 func validateTTLColumns(options []*ast.TableOption, retained map[string]struct{}) error {
 	for _, option := range options {
-		if option.Tp != ast.TableOptionTTL || option.ColumnName == nil {
-			continue
-		}
-		if _, ok := retained[option.ColumnName.Name.L]; !ok {
-			return errors.Errorf("TTL definition references removed column `%s`", option.ColumnName.Name.O)
+		if option.Tp == ast.TableOptionTTL && option.ColumnName != nil {
+			if _, ok := retained[option.ColumnName.Name.L]; !ok {
+				return errors.Errorf("TTL definition references removed column `%s`", option.ColumnName.Name.O)
+			}
 		}
 	}
 	return nil
 }
 
-func allReferencedColumnsRetained(expr ast.ExprNode, retained map[string]struct{}) bool {
+func allReferencedColumnsCovered(expr ast.ExprNode, retained map[string]struct{}) bool {
 	if expr == nil {
 		return true
 	}
