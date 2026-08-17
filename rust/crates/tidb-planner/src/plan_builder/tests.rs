@@ -519,26 +519,21 @@ fn test_unknown_database_and_table_are_distinguished() {
 
 #[test]
 fn test_unported_clauses_name_their_go_symbol() {
-    // 6c landed GROUP BY, HAVING and DISTINCT, so what remains here is the
-    // two clauses whose builders are still later batches.
-    for (sql, symbol) in [
-        (
-            "SELECT a FROM t WINDOW w AS (ORDER BY a)",
-            "buildWindowFunctions",
-        ),
-        ("WITH c AS (SELECT a FROM t) SELECT a FROM c", "buildWith"),
-    ] {
-        let harness = Harness::new();
-        let mut builder = harness.builder();
-        let error = builder
-            .build_select(&parse_select(sql))
-            .expect_err("an unported clause is an explicit error");
-        assert!(
-            error.message().contains(symbol),
-            "`{sql}` must name {symbol}, said: {}",
-            error.message()
-        );
-    }
+    // 6c landed GROUP BY, HAVING and DISTINCT and 6d landed `WITH`
+    // (`buildWith`), so `WINDOW` is the one clause whose builder is still a
+    // later batch.
+    let sql = "SELECT a FROM t WINDOW w AS (ORDER BY a)";
+    let symbol = "buildWindowFunctions";
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+    let error = builder
+        .build_select(&parse_select(sql))
+        .expect_err("an unported clause is an explicit error");
+    assert!(
+        error.message().contains(symbol),
+        "`{sql}` must name {symbol}, said: {}",
+        error.message()
+    );
 }
 
 // ***** the marker scheme, through the resolver *****

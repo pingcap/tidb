@@ -115,9 +115,10 @@
 //!   (`logical_plan_builder.go:5808-6494`, `6705`) and
 //!   `ExtractTableList`/`tableListExtractor` (`:7450-7666`). Explicitly out of
 //!   scope; both are DML/privilege surfaces with no logical-tree consumer.
-//! * `buildWindowFunctions` (`:6893`), `buildUnion`/`buildSetOpr` (`:2149`),
-//!   `buildCte` (`:7900`). Batches 6d-6e; each is refused by name in
+//! * `buildWindowFunctions` (`:6893`). Batch 6e; refused by name in
 //!   [`PlanBuilder::build_select`] rather than falling through silently.
+//!   `buildSetOpr` (`:2108`) and `buildCte`/`buildWith` (`:7714`, `:7994`)
+//!   landed in 6d ([`set_opr`], [`cte`]).
 //!   `buildJoin` (`:723`) landed in 6b ([`from`]); `buildAggregation` (`:255`),
 //!   `resolveHavingAndOrderBy` (`:2905`), `buildDistinct` (`:1966`) and
 //!   `buildExpand` (`:144`) landed in 6c ([`aggregation`], [`expand`],
@@ -158,15 +159,16 @@
 //!   `renamingViewName`, `nonViableFTSMatch`, `predicateMatchSeen`,
 //!   `allowBuildCastArray` — no reader on the SELECT spine; each belongs to a
 //!   boundary above.
-//! * `outerCTEs []*cteInfo` becomes [`OuterCte`], holding the name, the
-//!   recursion flags and the built seed plan's schema/names — what the ported
-//!   bodies read. `*cteInfo`'s `storageID`, `cteClass` and the optimizer
-//!   handles belong to batch 6d.
+//! * `outerCTEs []*cteInfo` becomes [`OuterCte`], which 6d completed: the
+//!   seed and recursive plans, the storage ID, the shared `CTEClass` and every
+//!   recursion flag are all there now. The two fields that stay narrowed
+//!   (`ConsumerCount` and `limitLP`) are named in [`cte`]'s own narrowings.
 
 pub mod aggregation;
 #[cfg(test)]
 mod aggregation_tests;
 pub mod catalog;
+pub mod cte;
 pub mod expand;
 pub mod from;
 #[cfg(test)]
@@ -174,6 +176,9 @@ mod from_tests;
 pub mod handle_col_helper;
 pub mod marker;
 pub mod only_full_group_by;
+pub mod set_opr;
+#[cfg(test)]
+mod set_opr_tests;
 #[cfg(test)]
 mod tests;
 
@@ -235,20 +240,99 @@ impl From<EvalError> for PlanError {
     }
 }
 
-/// Go `PlanBuilder.outerCTEs []*cteInfo`, narrowed to the fields the SELECT
-/// spine reads; see this module's narrowings.
-#[derive(Clone, Debug, Default)]
+/// Go `cteInfo` (`planbuilder.go:190`), the per-CTE bookkeeping
+/// [`PlanBuilder::outer_ctes`] is a stack of.
+///
+/// Batch 6d replaced 6a's three-field placeholder with the whole struct; see
+/// [`cte`]'s header for the two fields that stayed narrowed
+/// (`ConsumerCount` and `limitLP`) and why, and for why every function that
+/// touches one of these takes an INDEX rather than a handle.
+///
+/// NOT [`Clone`]: it owns built [`LogicalPlan`] trees, and this crate does not
+/// deep-clone a plan (see [`crate::logical`]'s header).
+#[derive(Debug)]
 pub struct OuterCte {
     /// Go `cteInfo.def.Name.L`.
     pub name: String,
+    /// Go `cteInfo.def.Name.O`, which is what an error message prints.
+    pub name_original: String,
+    /// Go `cteInfo.def.ColNameList`.
+    pub col_name_list: Vec<String>,
+    /// Go `cteInfo.def.Query.Query`, kept because an INLINED CTE is rebuilt
+    /// from its AST at the reference site.
+    pub definition: Option<tidb_ast::QueryStmt>,
+    /// Go `cteInfo.nonRecursive`: the declaring `WITH` had no `RECURSIVE`.
+    pub non_recursive: bool,
     /// Go `cteInfo.isBuilding`.
     pub is_building: bool,
-    /// Go `cteInfo.isRecursive`.
-    pub is_recursive: bool,
-    /// Go `cteInfo.seedLP.Schema()`, snapshotted per rule 3.
-    pub seed_schema: Option<Schema>,
-    /// Go `cteInfo.seedLP.OutputNames()`, snapshotted per rule 3.
-    pub seed_names: Vec<FieldName>,
+    /// Go `cteInfo.useRecursive`: the term just built REFERENCED this CTE.
+    pub use_recursive: bool,
+    /// Go `cteInfo.recursiveRef`: a reference has already been taken in the
+    /// recursive part, so a second one is `ErrInvalidRequiresSingleReference`.
+    pub recursive_ref: bool,
+    /// Go `cteInfo.enterSubquery`.
+    pub enter_subquery: bool,
+    /// Go `cteInfo.isDistinct`: the seed/recursive union is `UNION` and not
+    /// `UNION ALL`.
+    pub is_distinct: bool,
+    /// Go `cteInfo.seedLP`.
+    pub seed_lp: Option<Box<LogicalPlan>>,
+    /// Go `cteInfo.recurLP`, `None` for a non-recursive CTE.
+    pub recur_lp: Option<Box<LogicalPlan>>,
+    /// Go `cteInfo.limitLP`, narrowed to the `(LimitBeg, LimitEnd)` pair that
+    /// is all `tryBuildCTE` reads off it; see [`cte`]'s narrowings.
+    pub limit_bounds: Option<(u64, u64)>,
+    /// Go `cteInfo.storageID`.
+    pub storage_id: i32,
+    /// Go `cteInfo.optFlag`: the flags the CTE's OWN build accumulated.
+    pub opt_flag: u64,
+    /// Go `cteInfo.seedStat`, aliased by every `LogicalCTE`/`LogicalCTETable`
+    /// for this CTE; see [`crate::logical::cte`]'s header.
+    pub seed_stat: std::rc::Rc<std::cell::RefCell<crate::stats_info::StatsInfo>>,
+    /// Go `cteInfo.cteClass`, created at the FIRST reference and shared.
+    pub cte_class: Option<std::rc::Rc<std::cell::RefCell<crate::logical::cte::CteClass>>>,
+    /// Go `cteInfo.isInline`.
+    pub is_inline: bool,
+    /// Go `cteInfo.forceInlineByHintOrVar`.
+    pub force_inline_by_hint_or_var: bool,
+    /// Go `cteInfo.consumerCount`; see [`cte`]'s `ConsumerCount` narrowing for
+    /// why this is always `0` here.
+    pub consumer_count: i32,
+    /// Go `cteInfo.containRecursiveForbiddenOperator`.
+    pub contain_recursive_forbidden_operator: bool,
+}
+
+impl Default for OuterCte {
+    /// Go's `&cteInfo{...}` zero value, except for `seedStat`, which
+    /// `buildWith` always constructs (`&property.StatsInfo{}`) because every
+    /// `LogicalCTE`/`LogicalCTETable` for this CTE aliases it.
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            name_original: String::new(),
+            col_name_list: Vec::new(),
+            definition: None,
+            non_recursive: false,
+            is_building: false,
+            use_recursive: false,
+            recursive_ref: false,
+            enter_subquery: false,
+            is_distinct: false,
+            seed_lp: None,
+            recur_lp: None,
+            limit_bounds: None,
+            storage_id: 0,
+            opt_flag: 0,
+            seed_stat: std::rc::Rc::new(std::cell::RefCell::new(
+                crate::stats_info::StatsInfo::new(0.0, []),
+            )),
+            cte_class: None,
+            is_inline: false,
+            force_inline_by_hint_or_var: false,
+            consumer_count: 0,
+            contain_recursive_forbidden_operator: false,
+        }
+    }
 }
 
 /// One select-list entry after wildcard expansion.
@@ -385,6 +469,13 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// Go `b.ctx.GetSessionVars().EnableSkewDistinctAgg`
     /// (`buildAggregation`, `:271`).
     pub enable_skew_distinct_agg: bool,
+    /// Go `b.ctx.GetSessionVars().EnableForceInlineCTE()` (`buildWith`,
+    /// `:8013`), which sets every CTE's `forceInlineByHintOrVar`.
+    pub enable_force_inline_cte: bool,
+    /// Go `b.ctx.GetSessionVars().EnableMPPSharedCTEExecution`
+    /// (`tryToBuildSequence`, `:4625`). Go's variable defaults to OFF, so a
+    /// `LogicalSequence` is not built unless a caller asks for one.
+    pub enable_mpp_shared_cte_execution: bool,
 }
 
 /// The child's schema and output names, taken BEFORE the child is moved.
@@ -580,6 +671,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             // Go's default `sql_mode` carries `ONLY_FULL_GROUP_BY`.
             only_full_group_by: true,
             enable_skew_distinct_agg: false,
+            enable_force_inline_cte: false,
+            enable_mpp_shared_cte_execution: false,
         }
     }
 
@@ -699,6 +792,13 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// `ErrBadDB` for an unknown database, `ErrNoSuchTable` for an unknown
     /// table.
     pub fn build_data_source(&mut self, table_ref: &TableRef) -> Result<LogicalPlan, PlanError> {
+        // `:4932` "Try CTE." An UNQUALIFIED name may name a CTE in scope, and
+        // a CTE shadows a real table of the same name.
+        if let [name] = table_ref.name.as_slice() {
+            if let Some(plan) = self.try_build_cte(name, table_ref.alias.as_deref())? {
+                return Ok(plan);
+            }
+        }
         let (db_name, table_name) = match table_ref.name.as_slice() {
             [table] => (self.source.current_database().to_owned(), table.clone()),
             [db, table] => (db.clone(), table.clone()),
@@ -1425,23 +1525,63 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
     /// Any clause's error, or an unported clause (GROUP BY, HAVING, WINDOW,
     /// DISTINCT, locking, `INTO OUTFILE`), each naming its Go symbol.
     pub fn build_select(&mut self, select: &SelectStmt) -> Result<(LogicalPlan, u64), PlanError> {
-        for (clause, present, go_symbol) in [
-            (
-                "WINDOW",
-                !select.windows.is_empty(),
-                "buildWindowFunctions (logical_plan_builder.go:6893)",
-            ),
-            (
-                "WITH",
-                select.with.is_some(),
-                "buildWith (logical_plan_builder.go:7900)",
-            ),
-        ] {
-            if present {
+        // `:4264` the recursive-query-block guards. Each is a shape whose
+        // fixpoint is not defined, and Go refuses all four before building
+        // anything. `b.buildingLateralSubquery` is a 6b narrowing (see
+        // [`cte`]'s narrowings), so the ORDER BY / LIMIT arm takes the strict
+        // side unconditionally.
+        if self.building_recursive_part_for_cte {
+            if select.distinct {
+                return Err(PlanError::internal(
+                    "This version of TiDB doesn't yet support 'SELECT DISTINCT in recursive query block of Common Table Expression'",
+                ));
+            }
+            if !select.order_by.is_empty() || select.limit.is_some() {
+                return Err(PlanError::internal(
+                    "This version of TiDB doesn't yet support 'ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)'",
+                ));
+            }
+            if !select.group_by.is_empty() {
                 return Err(PlanError::internal(format!(
-                    "{clause} is a later batch: {go_symbol}"
+                    "Recursive Common Table Expression '{}' can contain neither aggregation nor window functions in recursive query block",
+                    self.gen_cte_table_name_for_error()
                 )));
             }
+        }
+
+        // `:4266` the WITH clause, whose scope is truncated on EVERY exit path
+        // — Go's `defer func() { b.outerCTEs = b.outerCTEs[:l] }()`.
+        let outer_cte_depth = self.outer_ctes.len();
+        let current_layer_ctes = match &select.with {
+            Some(with) => match self.build_with(with) {
+                Ok(ctes) => ctes,
+                Err(error) => {
+                    self.outer_ctes.truncate(outer_cte_depth);
+                    return Err(error);
+                }
+            },
+            None => Vec::new(),
+        };
+        let built = self.build_select_body(select);
+        let result = built.map(|(plan, flag)| {
+            // `:4652` the trailing `return b.tryToBuildSequence(currentLayerCTEs, p)`,
+            // which Go evaluates BEFORE the deferred truncation runs.
+            (self.try_to_build_sequence(&current_layer_ctes, plan), flag)
+        });
+        self.outer_ctes.truncate(outer_cte_depth);
+        result
+    }
+
+    /// [`Self::build_select`] past its `WITH` prologue: the FROM / WHERE /
+    /// GROUP BY / SELECT / HAVING / ORDER BY / LIMIT spine itself.
+    fn build_select_body(&mut self, select: &SelectStmt) -> Result<(LogicalPlan, u64), PlanError> {
+        // boundary: `buildWindowFunctions` (`logical_plan_builder.go:6893`),
+        // batch 6e. 6d closed `buildWith`, so this is the last clause of the
+        // SELECT spine still refused by name.
+        if !select.windows.is_empty() {
+            return Err(PlanError::internal(
+                "WINDOW is a later batch: buildWindowFunctions (logical_plan_builder.go:6893)",
+            ));
         }
 
         // `:4342` FROM.

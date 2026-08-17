@@ -660,10 +660,12 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
                 self.opt_flag |= flags::CONSTANT_PROPAGATION;
                 self.build_select(select).map(|(plan, _)| plan)
             }
-            // boundary: `buildSetOpr` (`:2149`), batch 6d.
-            QueryStmt::SetOpr(_) => Err(PlanError::internal(
-                "buildSetOpr (logical_plan_builder.go:2149) is a later batch",
-            )),
+            // `buildResultSetNode`'s `*ast.SetOprStmt` arm (`:579`), which
+            // landed in 6d as [`super::set_opr`].
+            QueryStmt::SetOpr(set_opr) => {
+                self.opt_flag |= flags::CONSTANT_PROPAGATION;
+                self.build_set_opr(set_opr)
+            }
         };
 
         if let Some((saved_schemas, saved_names, saved_count)) = hidden {
