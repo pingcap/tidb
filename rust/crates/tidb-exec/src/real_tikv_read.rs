@@ -1131,7 +1131,27 @@ pub struct RealTiKvReadSession<T = ProductionReadTransport, S = PdTimestampSourc
     warnings: WarningCollector,
 }
 
-impl RealTiKvReadSession<ProductionReadTransport, PdTimestampSource> {
+/// Physical-transport observability, offered by any DirectUnary-shaped
+/// transport regardless of which client/loader pair drives it. The generic
+/// server session demands this instead of naming the production transport.
+pub trait TransportEvidenceSource {
+    /// Real region and physical transport observations for the most recently
+    /// bound query.
+    fn evidence(&self) -> DirectUnaryTransportEvidence;
+    /// A read-only handle that can observe the lazy physical attempt.
+    fn evidence_handle(&self) -> DirectUnaryTransportEvidenceHandle;
+}
+
+impl<C, L> TransportEvidenceSource for DirectUnaryQueryTransport<C, L> {
+    fn evidence(&self) -> DirectUnaryTransportEvidence {
+        DirectUnaryQueryTransport::evidence(self)
+    }
+    fn evidence_handle(&self) -> DirectUnaryTransportEvidenceHandle {
+        DirectUnaryQueryTransport::evidence_handle(self)
+    }
+}
+
+impl<T: TransportEvidenceSource, S> RealTiKvReadSession<T, S> {
     /// Returns real region and physical transport observations for the most
     /// recently bound query.
     #[must_use]

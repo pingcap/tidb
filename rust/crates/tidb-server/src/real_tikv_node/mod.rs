@@ -58,8 +58,8 @@ use tidb_exec::real_tikv_read::{
 use tidb_exec::real_tikv_stats::load_stats_snapshot_from_cluster;
 use tidb_exec::stats_watch::{SharedStats, StatsReloadError, StatsReloadStats, StatsReloader};
 use tidb_pd_client::{
-    EtcdClient, EtcdWatchStats, EtcdWatcher, DDL_GLOBAL_SCHEMA_VERSION_KEY, PRIVILEGE_UPDATE_KEY,
-    SYSVAR_UPDATE_KEY,
+    EtcdClient, EtcdWatchStats, EtcdWatcher, PdClient, DDL_GLOBAL_SCHEMA_VERSION_KEY,
+    PRIVILEGE_UPDATE_KEY, SYSVAR_UPDATE_KEY,
 };
 use tidb_planner::aggregation_descriptor::AggregateKind;
 use tidb_planner::prepared_dml::{ConfiguredPreparedWriteTemplate, PreparedBindValue};
@@ -70,6 +70,9 @@ use tidb_planner::read_only_scan::{
 };
 use tidb_planner::transaction_control::{classify_transaction_control, TransactionControl};
 use tidb_protocol::ColumnInfo;
+use tidb_txnkv::rpc::TonicCoprocessorClient;
+use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
+use tidb_txnkv::PdRegionLoader;
 
 use crate::aggregate_result_set::AggregateResultSetSource;
 use crate::cluster_privileges::PrivilegeReloader;
@@ -237,9 +240,15 @@ impl ActiveQueryCancellation for CancelHandle {
 }
 
 /// Cloneable session opener shared by the fixed connection workers.
-pub struct RealTiKvSessionFactory {
-    opener: RealTiKvReadSessionOpener<ProductionReadSessionFactory, PdTimestampSource>,
-    transaction_opener: RealOptimisticTransactionOpener,
+pub struct RealTiKvSessionFactory<
+    F = ProductionReadSessionFactory,
+    S = PdTimestampSource,
+    C = TonicCoprocessorClient,
+    L = PdRegionLoader,
+    P = PdClient,
+> {
+    opener: RealTiKvReadSessionOpener<F, S>,
+    transaction_opener: RealOptimisticTransactionOpener<C, L, P>,
     query_activity: Arc<QueryActivity>,
     read_authority_id: u64,
     /// Tables the cluster really has, that this node loaded and cannot serve.
@@ -378,7 +387,20 @@ impl RealTiKvSessionFactory {
             mem_arbitrator: None,
         }
     }
+}
 
+impl<F, S, C, L, P> RealTiKvSessionFactory<F, S, C, L, P>
+where
+    F: tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory + 'static,
+    F::Transport: tidb_distsql::query_runtime::QueryTransport
+        + tidb_exec::real_tikv_read::TransportEvidenceSource
+        + 'static,
+    <F::Transport as tidb_distsql::query_runtime::QueryTransport>::Response: 'static,
+    S: tidb_txnkv::lock::TimestampSource + Clone + Send + Sync + 'static,
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     pub(crate) fn with_spill_storage(
         mut self,
         spill_storage: Arc<tidb_util::disk::SpillStorage>,
@@ -465,8 +487,19 @@ impl RealTiKvSessionFactory {
     }
 }
 
-impl QuerySessionFactory for RealTiKvSessionFactory {
-    type Session = RealTiKvServerSession;
+impl<F, S, C, L, P> QuerySessionFactory for RealTiKvSessionFactory<F, S, C, L, P>
+where
+    F: tidb_exec::real_tikv_read::RealTiKvSessionTransportFactory + 'static,
+    F::Transport: tidb_distsql::query_runtime::QueryTransport
+        + tidb_exec::real_tikv_read::TransportEvidenceSource
+        + 'static,
+    <F::Transport as tidb_distsql::query_runtime::QueryTransport>::Response: 'static,
+    S: tidb_txnkv::lock::TimestampSource + Clone + Send + Sync + 'static,
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    type Session = RealTiKvServerSession<F::Transport, S, C, L, P>;
 
     fn open_session(&self, context: SessionContext) -> Result<Self::Session, SqlQueryError> {
         let inner = self
@@ -495,9 +528,19 @@ impl QuerySessionFactory for RealTiKvSessionFactory {
 }
 
 /// Worker-local server session around the executor session.
-pub struct RealTiKvServerSession {
-    inner: RealTiKvReadSession<ProductionReadTransport, PdTimestampSource>,
-    transaction_opener: RealOptimisticTransactionOpener,
+pub struct RealTiKvServerSession<
+    T = ProductionReadTransport,
+    S = PdTimestampSource,
+    C = TonicCoprocessorClient,
+    L = PdRegionLoader,
+    P = PdClient,
+> where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    inner: RealTiKvReadSession<T, S>,
+    transaction_opener: RealOptimisticTransactionOpener<C, L, P>,
     /// Loaded-but-unservable tables, consulted when a statement names one.
     table_refusals: Arc<Vec<LoadedTableRefusal>>,
     /// The factory's etcd client, so a catalog change this session commits
@@ -508,7 +551,7 @@ pub struct RealTiKvServerSession {
     next_query_id: u64,
     /// The session's explicit-transaction state, pinning one read snapshot for
     /// the duration of a `BEGIN`/`COMMIT` transaction.
-    transaction: SessionTransaction,
+    transaction: SessionTransaction<C, L, P>,
     /// This session's resolved `time_zone`.
     /// Threaded into every read's DAG request (`TimeZoneName`/`TimeZoneOffset`)
     /// and every write's `TIMESTAMP` literal-to-UTC conversion, so both sides
@@ -524,11 +567,21 @@ pub struct RealTiKvServerSession {
     statement_warnings: Vec<ConfiguredWriteWarning>,
 }
 
-impl RealTiKvServerSession {
+impl<T, S, C, L, P> RealTiKvServerSession<T, S, C, L, P>
+where
+    T: tidb_distsql::query_runtime::QueryTransport
+        + tidb_exec::real_tikv_read::TransportEvidenceSource
+        + 'static,
+    T::Response: 'static,
+    S: tidb_txnkv::lock::TimestampSource + Clone + Send + Sync + 'static,
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     /// Opens this session's explicit transaction on first use, if one is open.
     fn transaction_for_statement(
         &mut self,
-    ) -> Result<Option<&mut MultiStatementTransaction>, SqlQueryError> {
+    ) -> Result<Option<&mut MultiStatementTransaction<C, L, P>>, SqlQueryError> {
         // Cloned before the borrow because opening the transaction needs the
         // session's own opener and table while the transaction state is
         // mutably borrowed.
@@ -757,8 +810,8 @@ fn point_handles(plan: &ReadOnlyScanPlan) -> Vec<i64> {
 /// neither the clustered key nor a single point handle pins them down — is
 /// refused. Returning the snapshot's pre-transaction rows instead would
 /// silently break read-your-own-writes.
-fn resolve_overlay(
-    transaction: &MultiStatementTransaction,
+fn resolve_overlay<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    transaction: &MultiStatementTransaction<C, L, P>,
     plan: &ReadOnlyScanPlan,
     point_handles: &[i64],
 ) -> Result<Option<(StagedRowOverlay, OverlayHandleSource)>, SqlQueryError> {
@@ -877,8 +930,12 @@ pub(crate) fn lightweight_ddl_statement_context(
 /// implicit commit, so `in_transaction` makes it refuse instead: silently
 /// committing the catalog change while leaving the client's own transaction
 /// open would give a durability answer neither MySQL nor this node means.
-pub(crate) fn execute_cluster_ddl(
-    opener: &RealOptimisticTransactionOpener,
+pub(crate) fn execute_cluster_ddl<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
     sql: &str,
     default_schema: &str,
     context: &tidb_executor::StmtContext,
@@ -942,7 +999,17 @@ pub(crate) fn refusal_aware_error(
     SqlQueryError::unknown(message)
 }
 
-impl QuerySession for RealTiKvServerSession {
+impl<T, S, C, L, P> QuerySession for RealTiKvServerSession<T, S, C, L, P>
+where
+    T: tidb_distsql::query_runtime::QueryTransport
+        + tidb_exec::real_tikv_read::TransportEvidenceSource
+        + 'static,
+    T::Response: 'static,
+    S: tidb_txnkv::lock::TimestampSource + Clone + Send + Sync + 'static,
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     /// This session's status word: it owns a real explicit transaction (so the
     /// `SERVER_STATUS_IN_TRANS` bit is its own [`SessionTransaction`]'s answer)
     /// but no `autocommit` variable, so that bit is constant here.

@@ -34,7 +34,11 @@ use tidb_exec::global_sysvar_initial::{
 use tidb_exec::multi_statement_transaction::{
     MultiStatementTransaction, TransactionEnd, TransactionStatementError,
 };
+use tidb_pd_client::PdClient;
 use tidb_planner::txn_mode::{txn_mode_for_begin, SessionTxnMode, TransactionMode};
+use tidb_txnkv::rpc::TonicCoprocessorClient;
+use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
+use tidb_txnkv::PdRegionLoader;
 
 /// Whether `@@tidb_pessimistic_txn_fair_locking` is on for this node.
 ///
@@ -60,16 +64,36 @@ pub fn session_fair_locking() -> bool {
 }
 
 /// The explicit-transaction state of one session.
-#[derive(Default)]
-pub struct SessionTransaction {
+pub struct SessionTransaction<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     /// The mode the open transaction was opened in. `None` while no transaction
     /// is open, so it doubles as "is a transaction open".
     mode: Option<SessionTxnMode>,
     /// The real transaction, present once a statement has needed it.
-    open: Option<MultiStatementTransaction>,
+    open: Option<MultiStatementTransaction<C, L, P>>,
 }
 
-impl SessionTransaction {
+impl<C, L, P> Default for SessionTransaction<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<C, L, P> SessionTransaction<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     /// A session that starts outside any explicit transaction (autocommit).
     #[must_use]
     pub const fn new() -> Self {
@@ -151,12 +175,12 @@ impl SessionTransaction {
 
     /// The already-open real transaction, if a statement has needed one yet.
     #[must_use]
-    pub const fn opened(&self) -> Option<&MultiStatementTransaction> {
+    pub const fn opened(&self) -> Option<&MultiStatementTransaction<C, L, P>> {
         self.open.as_ref()
     }
 
     /// The already-open real transaction, for a statement that acts on it.
-    pub const fn opened_mut(&mut self) -> Option<&mut MultiStatementTransaction> {
+    pub const fn opened_mut(&mut self) -> Option<&mut MultiStatementTransaction<C, L, P>> {
         self.open.as_mut()
     }
 
@@ -168,8 +192,8 @@ impl SessionTransaction {
     /// as before.
     pub fn opened_or_begin<E>(
         &mut self,
-        begin: impl FnOnce(SessionTxnMode) -> Result<MultiStatementTransaction, E>,
-    ) -> Result<Option<&mut MultiStatementTransaction>, E> {
+        begin: impl FnOnce(SessionTxnMode) -> Result<MultiStatementTransaction<C, L, P>, E>,
+    ) -> Result<Option<&mut MultiStatementTransaction<C, L, P>>, E> {
         let Some(mode) = self.mode else {
             return Ok(None);
         };
@@ -192,7 +216,7 @@ mod tests {
 
     #[test]
     fn a_fresh_session_is_not_in_a_transaction_and_opens_none() {
-        let mut txn = SessionTransaction::new();
+        let mut txn: SessionTransaction = SessionTransaction::new();
         assert!(!txn.is_active());
         assert_eq!(txn.mode(), None);
         assert!(txn
@@ -203,7 +227,7 @@ mod tests {
 
     #[test]
     fn the_begin_keyword_decides_the_mode_and_ending_clears_it() {
-        let mut txn = SessionTransaction::new();
+        let mut txn: SessionTransaction = SessionTransaction::new();
         // No SET-able variable store here, so a bare BEGIN takes the registry
         // default of @@tidb_txn_mode.
         txn.begin(TransactionMode::Default).unwrap();
@@ -221,7 +245,7 @@ mod tests {
     fn a_transaction_that_never_ran_a_statement_costs_no_timestamp() {
         // BEGIN alone opens nothing: the coordinator (and its PD timestamp)
         // appears only when a statement needs it.
-        let mut txn = SessionTransaction::new();
+        let mut txn: SessionTransaction = SessionTransaction::new();
         txn.begin(TransactionMode::Optimistic).unwrap();
         assert!(txn.is_active());
         assert!(txn.opened().is_none());
@@ -232,7 +256,7 @@ mod tests {
 
     #[test]
     fn commit_and_rollback_outside_a_transaction_are_no_ops() {
-        let mut txn = SessionTransaction::new();
+        let mut txn: SessionTransaction = SessionTransaction::new();
         assert!(txn.end(true).is_ok());
         assert!(txn.end(false).is_ok());
         assert!(!txn.is_active());
@@ -240,7 +264,7 @@ mod tests {
 
     #[test]
     fn abandoning_a_failed_transaction_returns_the_session_to_autocommit() {
-        let mut txn = SessionTransaction::new();
+        let mut txn: SessionTransaction = SessionTransaction::new();
         txn.begin(TransactionMode::Pessimistic).unwrap();
         txn.abandon();
         assert!(!txn.is_active());

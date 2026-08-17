@@ -1349,7 +1349,7 @@ mod tests {
         );
         assert_eq!(TRANSACTION_END_TIMEOUT, Duration::from_secs(20));
         assert!(
-            MultiStatementTransaction::transaction_end_call().timeout() > Duration::from_secs(19),
+            <MultiStatementTransaction>::transaction_end_call().timeout() > Duration::from_secs(19),
             "commit, rollback and cleanup take the store's budget, not the statement's"
         );
     }
