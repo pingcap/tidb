@@ -111,6 +111,7 @@ pub mod mvcc;
 pub mod mvcc_store;
 #[cfg(test)]
 mod testutil;
+pub mod tso;
 
 pub use arena::{Arena, ArenaAddr, NULL_ARENA_ADDR, REUSE_SAFE_DURATION};
 pub use iterator::Iterator;
