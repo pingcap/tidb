@@ -54,6 +54,8 @@
 pub mod aggregate;
 pub mod alternative_plan_signals;
 pub mod analyze_panic_error;
+pub mod backfill_metrics;
+pub mod batch_flusher;
 pub mod bit_agg;
 pub mod broadcast_query_error;
 pub mod catalog_reload;
@@ -191,6 +193,7 @@ pub mod stddevpop;
 pub mod stddevsamp;
 /// `stmtctx.go`'s per-statement first-value-wins keyed cache.
 pub mod stmt_cache;
+pub mod storage_class;
 pub mod storage_reader;
 pub mod system_db_filter;
 pub mod system_row_write;
