@@ -9,7 +9,9 @@ go_library(
 
 go_test(
     name = "jobstats_test",
+    timeout = "short",
     srcs = ["model_test.go"],
     embed = [":jobstats"],
+    flaky = True,
     deps = ["@com_github_stretchr_testify//require"],
 )

@@ -139,7 +139,6 @@ func TestFillOneImportJobInfo(t *testing.T) {
 	jobInfo.SourceFileSize = 3
 	executor.FillOneImportJobInfo(c, jobInfo, nil)
 	require.Equal(t, "3B", c.GetRow(10).GetString(sourceFileSizeIdx))
-
 }
 
 func TestShow(t *testing.T) {
