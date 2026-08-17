@@ -15,6 +15,7 @@ import (
 func generateProjectedSchema(
 	originSQL string,
 	database string,
+	projected bool,
 	retainedColumns map[string]struct{},
 	schemaColumns map[tableName]map[string]struct{},
 ) (string, error) {
@@ -26,19 +27,16 @@ func generateProjectedSchema(
 	if !ok {
 		return "", errors.Errorf("expected CREATE TABLE for column projection, got %T", stmt)
 	}
-	changed := false
 	columns := make([]*ast.ColumnDef, 0, len(createTable.Cols))
 	for _, column := range createTable.Cols {
 		if _, ok := retainedColumns[column.Name.Name.L]; !ok {
-			changed = true
 			continue
 		}
-		options, optionsChanged, err := projectColumnOptions(column, retainedColumns, database, createTable.Table.Name.L, schemaColumns)
+		options, err := projectColumnOptions(column, retainedColumns, database, createTable.Table.Name.L, schemaColumns)
 		if err != nil {
 			return "", err
 		}
 		column.Options = options
-		changed = changed || optionsChanged
 		columns = append(columns, column)
 	}
 	createTable.Cols = columns
@@ -46,7 +44,6 @@ func generateProjectedSchema(
 	constraints := make([]*ast.Constraint, 0, len(createTable.Constraints))
 	for _, constraint := range createTable.Constraints {
 		if !constraintColumnsRetained(constraint, retainedColumns) {
-			changed = true
 			continue
 		}
 		if err := validateReferenceColumns(constraint.Refer, database, createTable.Table.Name.L, retainedColumns, schemaColumns); err != nil {
@@ -65,7 +62,7 @@ func generateProjectedSchema(
 	if err := validateTTLColumns(createTable.Options, retainedColumns); err != nil {
 		return "", err
 	}
-	if !changed {
+	if !projected {
 		return originSQL, nil
 	}
 
@@ -114,23 +111,21 @@ func projectColumnOptions(
 	database string,
 	table string,
 	schemaColumns map[tableName]map[string]struct{},
-) ([]*ast.ColumnOption, bool, error) {
+) ([]*ast.ColumnOption, error) {
 	options := make([]*ast.ColumnOption, 0, len(column.Options))
-	changed := false
 	for _, option := range column.Options {
 		switch option.Tp {
 		case ast.ColumnOptionCheck:
 			if !allReferencedColumnsRetained(option.Expr, retained) {
-				changed = true
 				continue
 			}
 		case ast.ColumnOptionReference:
 			if err := validateReferenceColumns(option.Refer, database, table, retained, schemaColumns); err != nil {
-				return nil, false, err
+				return nil, err
 			}
 		case ast.ColumnOptionDefaultValue, ast.ColumnOptionOnUpdate:
 			if !allReferencedColumnsRetained(option.Expr, retained) {
-				return nil, false, errors.Errorf(
+				return nil, errors.Errorf(
 					"column `%s` expression references a removed column",
 					column.Name.Name.O,
 				)
@@ -138,7 +133,7 @@ func projectColumnOptions(
 		}
 		options = append(options, option)
 	}
-	return options, changed, nil
+	return options, nil
 }
 
 func constraintColumnsRetained(constraint *ast.Constraint, retained map[string]struct{}) bool {

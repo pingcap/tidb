@@ -571,6 +571,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 			projection.schemaSQL, err = generateProjectedSchema(
 				projection.schemaSQL,
 				dbName,
+				projection.projected,
 				schemaColumns[key],
 				schemaColumns,
 			)
