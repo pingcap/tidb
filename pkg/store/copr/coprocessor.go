@@ -2414,7 +2414,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		}
 		//TODO: handle locks in batch
 		if lockErr := batchResp.GetLocked(); lockErr != nil {
-			if err := worker.handleLockErr(bo, resp.pbResp.GetLocked(), task); err != nil {
+			if err := worker.handleLockErr(bo, lockErr, task); err != nil {
 				return batchRespList, nil, err
 			}
 			task.meetLockFallback = true
