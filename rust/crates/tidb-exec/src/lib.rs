@@ -216,6 +216,7 @@ pub mod traffic_form;
 pub mod txn_read_ts;
 pub mod txn_running_state;
 pub mod txn_summary;
+pub mod txn_write_throughput_sli;
 pub mod upgrade_versions;
 pub mod used_stats;
 pub mod varpop;
