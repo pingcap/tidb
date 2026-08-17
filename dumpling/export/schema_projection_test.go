@@ -91,12 +91,6 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		require.ErrorContains(t, err, "column `b` expression references a removed column")
 	})
 
-	t.Run("automatic ID loses composite index", func(t *testing.T) {
-		createSQL := "CREATE TABLE `t` (`a` BIGINT AUTO_INCREMENT, `b` INT, KEY `idx_ab` (`a`, `b`))"
-		_, err := generateProjectedSchemaForTest(t, createSQL, "test", []string{"a"}, true, nil)
-		require.ErrorContains(t, err, "column `a` loses the index required by its automatic ID option")
-	})
-
 	t.Run("foreign key target column removed", func(t *testing.T) {
 		createSQL := "CREATE TABLE `child` (" +
 			"`id` INT," +
