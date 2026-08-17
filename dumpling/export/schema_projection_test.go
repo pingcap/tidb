@@ -108,6 +108,23 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		require.ErrorContains(t, err, "foreign key references removed column `test`.`parent`.`secret`")
 	})
 
+	t.Run("self foreign key is case insensitive", func(t *testing.T) {
+		createSQL := "CREATE TABLE `t` (" +
+			"`id` INT," +
+			"`parent_secret` INT," +
+			"`secret` INT," +
+			"FOREIGN KEY (`parent_secret`) REFERENCES `T` (`secret`)" +
+			")"
+		schemaColumns := map[tableName]map[string]struct{}{
+			{db: "test", table: "t"}: {"id": {}, "parent_secret": {}},
+		}
+
+		_, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id", "parent_secret"}, true, schemaColumns,
+		)
+		require.ErrorContains(t, err, "foreign key references removed column `test`.`T`.`secret`")
+	})
+
 	t.Run("foreign key target generated column retained", func(t *testing.T) {
 		createSQL := "CREATE TABLE `child` (" +
 			"`id` INT," +
