@@ -59,11 +59,25 @@
 //!   `logical_cte_table.go`
 //! * [`window::LogicalWindow`] — `logical_window.go`, which MERGES the crate's
 //!   former `window_frame` identity leaf
+//! * [`expand::LogicalExpand`] — `logical_expand.go`, which MERGES the crate's
+//!   former `logical_expand` identity leaf
+//! * [`mem_table::LogicalMemTable`] — `logical_mem_table.go`
+//! * [`show::LogicalShow`] — `logical_show.go`, which also carries that file's
+//!   `SHOW STATS_META` predicate extraction
+//! * [`show_ddl_jobs::LogicalShowDDLJobs`] — `logical_show_ddl_jobs.go`
+//! * [`table_dual::LogicalTableDual`] — `logical_table_dual.go`
 //!
-//! Still SKELETAL, carrying only their state: [`LogicalTableDual`].
+//! That is the WHOLE of `pkg/planner/core/operator/logicalop`'s operator set:
+//! no operator is skeletal and none is a [`TodoLogicalOp`] any more. The
+//! variant is kept because the enum's rule is that an unmodelled operator must
+//! be a distinct arm rather than a default one, and a later Go operator lands
+//! against it rather than against a `_ =>`.
 //!
-//! Still [`TodoLogicalOp`], i.e. not modelled at all:
-//! `LogicalExpand`, `LogicalMemTable`, `LogicalShow`, `LogicalShowDDLJobs`.
+//! Four of those operators have an identity leaf elsewhere in this crate —
+//! [`crate::logical_mem_table`], [`crate::logical_show`],
+//! [`crate::logical_show_ddl_jobs`] and [`crate::logical_table_dual`] — which
+//! is KEPT rather than merged, because `difftests/planner-tests` consumes each
+//! from outside this crate.
 //!
 //! # Why a closed enum and not `Box<dyn LogicalPlan>`
 //!
@@ -306,16 +320,21 @@ pub mod aggregation;
 pub mod apply;
 pub mod cte;
 pub mod data_source;
+pub mod expand;
 pub mod index_scan;
 pub mod join;
 pub mod limit;
 pub mod lock;
 pub mod max_one_row;
+pub mod mem_table;
 pub mod projection;
 pub mod schema_producer;
 pub mod selection;
 pub mod sequence;
+pub mod show;
+pub mod show_ddl_jobs;
 pub mod sort;
+pub mod table_dual;
 pub mod table_scan;
 pub mod tikv_single_gather;
 pub mod topn;
@@ -327,30 +346,26 @@ pub use aggregation::LogicalAggregation;
 pub use apply::LogicalApply;
 pub use cte::{LogicalCTE, LogicalCTETable};
 pub use data_source::DataSource;
+pub use expand::LogicalExpand;
 pub use index_scan::LogicalIndexScan;
 pub use join::LogicalJoin;
 pub use limit::LogicalLimit;
 pub use lock::LogicalLock;
 pub use max_one_row::LogicalMaxOneRow;
+pub use mem_table::LogicalMemTable;
 pub use projection::LogicalProjection;
 pub use selection::LogicalSelection;
 pub use sequence::LogicalSequence;
+pub use show::LogicalShow;
+pub use show_ddl_jobs::LogicalShowDDLJobs;
 pub use sort::LogicalSort;
+pub use table_dual::LogicalTableDual;
 pub use table_scan::LogicalTableScan;
 pub use tikv_single_gather::TiKVSingleGather;
 pub use topn::LogicalTopN;
 pub use union_all::{LogicalPartitionUnionAll, LogicalUnionAll};
 pub use union_scan::LogicalUnionScan;
 pub use window::LogicalWindow;
-
-/// Go `logicalop.LogicalTableDual`.
-#[derive(Clone, Debug, Default)]
-pub struct LogicalTableDual {
-    /// The shared logical base.
-    pub base: BaseLogicalPlan,
-    /// Go `RowCount`: 0 for an empty result, 1 for a constant row.
-    pub row_count: usize,
-}
 
 /// A logical operator whose own port is a later batch.
 ///
@@ -425,6 +440,14 @@ pub enum LogicalPlan {
     DataSource(DataSource),
     /// Go `logicalop.LogicalTableDual`.
     TableDual(LogicalTableDual),
+    /// Go `logicalop.LogicalExpand`.
+    Expand(LogicalExpand),
+    /// Go `logicalop.LogicalMemTable`.
+    MemTable(LogicalMemTable),
+    /// Go `logicalop.LogicalShow`.
+    Show(LogicalShow),
+    /// Go `logicalop.LogicalShowDDLJobs`.
+    ShowDDLJobs(LogicalShowDDLJobs),
     /// An operator whose port is a later batch; see [`TodoLogicalOp`].
     Todo(TodoLogicalOp),
 }
@@ -456,6 +479,10 @@ impl LogicalPlan {
             Self::IndexScan(op) => &op.base,
             Self::DataSource(op) => &op.base,
             Self::TableDual(op) => &op.base,
+            Self::Expand(op) => &op.base,
+            Self::MemTable(op) => &op.base,
+            Self::Show(op) => &op.base,
+            Self::ShowDDLJobs(op) => &op.base,
             Self::Todo(op) => &op.base,
         }
     }
@@ -485,6 +512,10 @@ impl LogicalPlan {
             Self::IndexScan(op) => &mut op.base,
             Self::DataSource(op) => &mut op.base,
             Self::TableDual(op) => &mut op.base,
+            Self::Expand(op) => &mut op.base,
+            Self::MemTable(op) => &mut op.base,
+            Self::Show(op) => &mut op.base,
+            Self::ShowDDLJobs(op) => &mut op.base,
             Self::Todo(op) => &mut op.base,
         }
     }
@@ -662,6 +693,17 @@ impl LogicalPlan {
             Self::TiKVSingleGather(_) => {
                 TiKVSingleGather::build_key_info(self_schema, child_schema);
             }
+            // Go `LogicalExpand.BuildKeyInfo` (`logical_expand.go:389`) DROPS
+            // every key rather than propagating the child's.
+            Self::Expand(_) => LogicalExpand::build_key_info(self_schema),
+            // Go `LogicalTableDual.BuildKeyInfo` (`logical_table_dual.go:89`)
+            // runs the base body and then marks `maxOneRow` for a one-row dual.
+            Self::TableDual(op) => {
+                if op.sets_max_one_row() {
+                    op.base.set_max_one_row(true);
+                }
+                schema_producer::propagate_child_keys(self_schema, child_schema);
+            }
             Self::Sort(_)
             | Self::Apply(_)
             | Self::UnionAll(_)
@@ -673,7 +715,9 @@ impl LogicalPlan {
             | Self::Lock(_)
             | Self::Sequence(_)
             | Self::UnionScan(_)
-            | Self::TableDual(_)
+            | Self::MemTable(_)
+            | Self::Show(_)
+            | Self::ShowDDLJobs(_)
             | Self::Todo(_) => {
                 schema_producer::propagate_child_keys(self_schema, child_schema);
             }
@@ -743,6 +787,10 @@ impl LogicalPlan {
             | Self::TableScan(_)
             | Self::IndexScan(_)
             | Self::TableDual(_)
+            | Self::Expand(_)
+            | Self::MemTable(_)
+            | Self::Show(_)
+            | Self::ShowDDLJobs(_)
             | Self::Todo(_) => Vec::new(),
         }
     }
@@ -836,6 +884,10 @@ impl LogicalPlan {
             | Self::TableScan(_)
             | Self::IndexScan(_)
             | Self::TableDual(_)
+            | Self::Expand(_)
+            | Self::MemTable(_)
+            | Self::Show(_)
+            | Self::ShowDDLJobs(_)
             | Self::Todo(_) => Vec::new(),
         }
     }
@@ -879,6 +931,7 @@ impl LogicalPlan {
             Self::TopN(op) => op.extract_correlated_cols(),
             Self::Window(op) => op.extract_correlated_cols(),
             Self::CTE(op) => op.extract_correlated_cols(),
+            Self::Expand(op) => op.extract_correlated_cols(),
             // Go `LogicalApply.ExtractCorrelatedCols` (`logical_apply.go:250`)
             // subtracts the columns the OUTER child already produces, which the
             // enum can supply and the operator alone cannot.
@@ -903,6 +956,9 @@ impl LogicalPlan {
             | Self::UnionAll(_)
             | Self::PartitionUnionAll(_)
             | Self::TableDual(_)
+            | Self::MemTable(_)
+            | Self::Show(_)
+            | Self::ShowDDLJobs(_)
             | Self::Todo(_) => Vec::new(),
         }
     }
@@ -928,6 +984,7 @@ impl LogicalPlan {
             Self::Sort(op) => op.explain_info(),
             Self::Limit(op) => op.explain_info(),
             Self::TopN(op) => op.explain_info(),
+            Self::TableDual(op) => op.explain_info(),
             Self::Selection(_)
             | Self::Projection(_)
             | Self::Aggregation(_)
@@ -939,7 +996,10 @@ impl LogicalPlan {
             | Self::MaxOneRow(_)
             | Self::Lock(_)
             | Self::Sequence(_)
-            | Self::TableDual(_)
+            | Self::Expand(_)
+            | Self::MemTable(_)
+            | Self::Show(_)
+            | Self::ShowDDLJobs(_)
             | Self::Todo(_) => BaseLogicalPlan::explain_info().to_owned(),
         }
     }
@@ -1077,10 +1137,11 @@ impl LogicalPlan {
             Self::CTE(op) => Self::CTE(op.clone_shallow()),
             Self::CTETable(op) => Self::CTETable(op.clone_shallow()),
             Self::DataSource(op) => Self::DataSource(op.clone_shallow()),
-            Self::TableDual(op) => Self::TableDual(LogicalTableDual {
-                base: op.base.shell(),
-                row_count: op.row_count,
-            }),
+            Self::TableDual(op) => Self::TableDual(op.clone_shallow()),
+            Self::Expand(op) => Self::Expand(op.clone_shallow()),
+            Self::MemTable(op) => Self::MemTable(op.clone_shallow()),
+            Self::Show(op) => Self::Show(op.clone_shallow()),
+            Self::ShowDDLJobs(op) => Self::ShowDDLJobs(op.clone_shallow()),
             Self::Todo(op) => Self::Todo(TodoLogicalOp {
                 base: op.base.shell(),
                 go_operator: op.go_operator.clone(),

@@ -434,6 +434,10 @@ pub fn find_child_full_schema(plan: &LogicalPlan) -> Option<&Schema> {
             | LogicalPlan::IndexScan(_)
             | LogicalPlan::DataSource(_)
             | LogicalPlan::TableDual(_)
+            | LogicalPlan::Expand(_)
+            | LogicalPlan::MemTable(_)
+            | LogicalPlan::Show(_)
+            | LogicalPlan::ShowDDLJobs(_)
             | LogicalPlan::Todo(_) => return None,
         }
     }

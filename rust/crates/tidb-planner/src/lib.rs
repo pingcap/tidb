@@ -102,7 +102,6 @@ pub mod logical;
 pub mod logical_cte_table;
 pub mod logical_data_source;
 pub mod logical_data_source_task;
-pub mod logical_expand;
 pub mod logical_limit;
 pub mod logical_lock;
 pub mod logical_max_one_row;

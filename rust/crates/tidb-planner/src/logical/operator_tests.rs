@@ -20,7 +20,7 @@
 //! no session for. Each test therefore states the CONTRACT of one ported Go
 //! body directly: what it classifies, what it keeps, what it drops.
 
-use tidb_datatype::{EvalType, FieldType, FieldTypeCode};
+use tidb_datatype::{Datum, EvalType, FieldType, FieldTypeCode};
 use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc, ByItems};
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
@@ -38,6 +38,7 @@ use super::cte::{
     LogicalCTETable,
 };
 use super::data_source::{DataSource, DataSourceColumn};
+use super::expand::{GroupingMode, LogicalExpand, RollupGroupingSet};
 use super::index_scan::{matches_indices_prop, LogicalIndexScan};
 use super::join::{is_eq_cond_from_in, LogicalJoin, OnConditionSplit};
 use super::limit::LogicalLimit;
@@ -46,13 +47,23 @@ use super::lock::{
     LogicalLock, SelectLockType,
 };
 use super::max_one_row::LogicalMaxOneRow;
+use super::mem_table::{
+    LogicalMemTable, MemTableColumn, MemTableTopNHints, CLUSTER_TABLE_SLOW_LOG, SLOW_LOG_TIME_STR,
+    TABLE_SLOW_QUERY,
+};
 use super::projection::LogicalProjection;
 use super::schema_producer;
 use super::selection::{is_valid_compare_constant_predicate, LogicalSelection, SELECTION_FACTOR};
 use super::sequence::LogicalSequence;
+use super::show::{
+    extract_stats_meta_filter_values, extract_stats_meta_filters, find_show_column_ids,
+    get_string_value_from_constant, LogicalShow, ShowContents,
+};
+use super::show_ddl_jobs::LogicalShowDDLJobs;
 use super::sort::{
     get_possible_property_from_by_items, prune_by_items, LogicalSort, SortTopNPushDown,
 };
+use super::table_dual::LogicalTableDual;
 use super::table_scan::LogicalTableScan;
 use super::tikv_single_gather::TiKVSingleGather;
 use super::topn::LogicalTopN;
@@ -3113,4 +3124,676 @@ fn index_scan_explain_names_its_index_columns() {
         is.explain_info(),
         format!("{table_only}, index:a, b, cond:1 exprs")
     );
+}
+
+// ***** LogicalExpand *****
+
+fn expand(distinct_group_by_ids: &[i64]) -> LogicalExpand {
+    let mut expand = LogicalExpand::new(BaseLogicalPlan::with_id(1, LogicalExpand::TYPE, 0));
+    expand.distinct_group_by_col = distinct_group_by_ids.iter().copied().map(column).collect();
+    expand
+}
+
+/// Go `LogicalExpand.PredicatePushDown` (`logical_expand.go:75`): NOTHING
+/// crosses an Expand, because a grouping column's nullability changes here.
+#[test]
+fn expand_pushes_no_predicate_through() {
+    let expand = expand(&[1]);
+    let remained = expand.predicate_push_down(vec![eq(col_expr(1), one())]);
+    assert_eq!(remained.len(), 1);
+}
+
+/// Go `LogicalExpand.PruneColumns` (`logical_expand.go:95`): the distinct
+/// group-by columns are re-appended for the child, and the operator's own
+/// schema loses whatever the widened set does not name.
+#[test]
+fn expand_pruning_re_adds_the_group_by_columns_and_narrows_its_schema() {
+    let expand = expand(&[2]);
+    let widened = expand.prune_columns_local(&[column(1)]);
+    assert_eq!(
+        widened.iter().map(|c| c.unique_id).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+
+    let mut own = schema(&[1, 2, 3]);
+    // Go walks BACKWARDS, so the removed positions come out descending.
+    assert_eq!(LogicalExpand::prune_schema(&mut own, &widened), vec![2]);
+    assert_eq!(
+        own.columns.iter().map(|c| c.unique_id).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    // Go's `GetUsedCols` answers nothing on purpose.
+    assert!(LogicalExpand::get_used_cols().is_empty());
+}
+
+/// Go `LogicalExpand.BuildKeyInfo` (`logical_expand.go:389`): row replication
+/// destroys every key, so the enum's dispatch must NOT propagate the child's.
+#[test]
+fn expand_build_key_info_drops_every_key() {
+    let mut child = schema(&[1, 2]);
+    child.set_keys(vec![vec![column(1)]]);
+    let mut self_schema = schema(&[1, 2]);
+    self_schema.set_keys(vec![vec![column(1)]]);
+    self_schema.set_unique_keys(vec![vec![column(2)]]);
+    let mut plan = LogicalPlan::Expand(expand(&[1]));
+    plan.set_children(vec![LogicalPlan::TableDual(LogicalTableDual::new(
+        BaseLogicalPlan::with_id(2, LogicalTableDual::TYPE, 0),
+        1,
+    ))]);
+    plan.build_key_info(&mut self_schema, std::slice::from_ref(&child));
+    assert!(self_schema.pk_or_uk.is_empty());
+    assert!(self_schema.nullable_uk.is_empty());
+}
+
+/// Go `LogicalExpand.GenerateGroupingIDModeBitAnd` (`logical_expand.go:349`)
+/// and `GenerateGroupingIDIncrementModeNumericSet` (`logical_expand.go:375`).
+#[test]
+fn expand_grouping_ids_are_a_bitmask_or_a_stored_index() {
+    // Distinct GBY (a, b, c) = (1, 2, 3); the set {a, c} is 0b101.
+    let mut expand = expand(&[1, 2, 3]);
+    assert_eq!(
+        expand.generate_grouping_id_mode_bit_and(&RollupGroupingSet::new([1, 3])),
+        0b101
+    );
+    assert_eq!(
+        expand.generate_grouping_id_mode_bit_and(&RollupGroupingSet::new([])),
+        0
+    );
+    // A duplicate set names the same columns and so shares the id.
+    assert_eq!(
+        expand.generate_grouping_id_mode_bit_and(&RollupGroupingSet::new([1, 1, 3])),
+        0b101
+    );
+
+    expand.rollup_grouping_ids = vec![7, 9];
+    assert_eq!(
+        expand.generate_grouping_id_increment_mode_numeric_set(1),
+        Some(9)
+    );
+    // Go would index past the end and panic.
+    assert_eq!(
+        expand.generate_grouping_id_increment_mode_numeric_set(2),
+        None
+    );
+}
+
+/// Go `LogicalExpand.GenerateGroupingMarks` (`logical_expand.go:246`): one
+/// single-column mark per argument in `ModeBitAnd`, the stored id set in
+/// `ModeNumericSet`.
+#[test]
+fn expand_grouping_marks_are_per_argument() {
+    let mut expand = expand(&[1, 2, 3]);
+    let marks = expand.generate_grouping_marks(&[column(1), column(3), column(99)]);
+    assert_eq!(marks[0], std::collections::BTreeSet::from([0b001]));
+    assert_eq!(marks[1], std::collections::BTreeSet::from([0b100]));
+    // A column that is not a group-by column marks as 0, as Go's zero value.
+    assert_eq!(marks[2], std::collections::BTreeSet::from([0]));
+
+    expand.grouping_mode = Some(GroupingMode::NumericSet);
+    expand.rollup_id_to_gids = std::collections::BTreeMap::from([(
+        1_i64,
+        std::collections::BTreeSet::from([0_u64, 1, 2]),
+    )]);
+    let marks = expand.generate_grouping_marks(&[column(1), column(2)]);
+    assert_eq!(marks[0], std::collections::BTreeSet::from([0, 1, 2]));
+    assert!(marks[1].is_empty());
+}
+
+/// Go `LogicalExpand.GenLevelProjections` (`logical_expand.go:191`): a column
+/// the current set does not group by is projected as a typed NULL, and the
+/// trailing generated columns become the gid — plus a gpos when two grouping
+/// sets are duplicates.
+#[test]
+fn expand_level_projections_null_out_ungrouped_columns() {
+    let mut expand = expand(&[1, 2]);
+    expand.rollup_grouping_sets = vec![RollupGroupingSet::new([1, 2]), RollupGroupingSet::new([1])];
+    expand.distinct_size = 2;
+    // Schema: the two group-by columns, an unrelated column, then gid.
+    let gid_schema = schema(&[1, 2, 5, 100]);
+    expand.gen_level_projections(&gid_schema);
+    let levels = expand.level_exprs.clone().expect("levels generated");
+    assert_eq!(levels.len(), 2);
+    // Set {a, b}: both columns are references, gid 0b11.
+    assert!(matches!(levels[0][0], Expression::Column(_)));
+    assert!(matches!(levels[0][1], Expression::Column(_)));
+    // The unrelated column is never nulled.
+    assert!(matches!(levels[0][2], Expression::Column(_)));
+    // Set {a}: b becomes NULL, gid 0b01.
+    assert!(matches!(levels[1][1], Expression::Constant(_)));
+    let gids: Vec<_> = levels
+        .iter()
+        .map(|level| match level.last() {
+            Some(Expression::Constant(c)) => c.value.clone(),
+            _ => panic!("gid is a constant"),
+        })
+        .collect();
+    assert_eq!(gids, vec![Datum::UInt(0b11), Datum::UInt(0b01)]);
+
+    // A duplicate grouping set adds gpos, so the LAST two columns are generated
+    // and the gpos value is the set's own offset.
+    let mut dup = expand;
+    dup.level_exprs = None;
+    dup.distinct_size = 1;
+    let gpos_schema = schema(&[1, 2, 5, 100, 101]);
+    dup.gen_level_projections(&gpos_schema);
+    let levels = dup.level_exprs.expect("levels generated");
+    assert_eq!(levels[1].len(), 5);
+    match levels[1].last() {
+        Some(Expression::Constant(c)) => assert_eq!(c.value, Datum::UInt(1)),
+        _ => panic!("gpos is a constant"),
+    }
+}
+
+/// Go `LogicalExpand.ExtractCorrelatedCols` (`logical_expand.go:138`): a NIL
+/// `LevelExprs` means the projections have not been generated and answers
+/// nothing, which is NOT the same as a generated but empty one.
+#[test]
+fn expand_extracts_correlated_cols_only_once_levels_exist() {
+    let mut expand = expand(&[1]);
+    assert!(expand.extract_correlated_cols().is_empty());
+    expand.level_exprs = Some(vec![vec![cor_expr(4)]]);
+    assert_eq!(expand.extract_correlated_cols().len(), 1);
+    assert_eq!(
+        LogicalPlan::Expand(expand).extract_correlated_cols().len(),
+        1
+    );
+}
+
+/// Go `LogicalExpand.TrySubstituteExprWithGroupingSetCol`
+/// (`logical_expand.go:290`) and `ResolveGroupingFuncArgsInGroupBy`
+/// (`logical_expand.go:304`).
+#[test]
+fn expand_resolves_grouping_arguments_to_grouping_set_columns() {
+    let mut expand = expand(&[11, 12]);
+    // The ORIGINAL group-by expressions, in the same order as the columns.
+    expand.distinct_gby_exprs = vec![eq(col_expr(1), one()), col_expr(2)];
+
+    let (substituted, found) = expand.try_substitute_expr_with_grouping_set_col(&col_expr(2));
+    assert!(found);
+    assert!(matches!(substituted, Expression::Column(c) if c.unique_id == 12));
+    let (unchanged, found) = expand.try_substitute_expr_with_grouping_set_col(&col_expr(9));
+    assert!(!found);
+    assert!(matches!(unchanged, Expression::Column(c) if c.unique_id == 9));
+
+    // An argument already rewritten to the grouping-set column resolves too.
+    let resolved = expand
+        .resolve_grouping_func_args_in_group_by(&[col_expr(2), col_expr(11)])
+        .expect("both arguments are group-by items");
+    assert_eq!(
+        resolved.iter().map(|c| c.unique_id).collect::<Vec<_>>(),
+        vec![12, 11]
+    );
+    // Anything else is Go's ErrFieldInGroupingNotGroupBy.
+    assert!(expand
+        .resolve_grouping_func_args_in_group_by(&[col_expr(77)])
+        .is_err());
+}
+
+/// Go `LogicalExpand.Hash64`/`Equals`, which the crate's former
+/// `logical_expand::LogicalExpandIdentity` modelled and this operator now
+/// carries: the schema, the two distinct lists, the size, the sets, the level
+/// projections' NIL state, and the two generated columns.
+#[test]
+fn expand_identity_covers_every_generated_field() {
+    let first = expand(&[1]);
+    let second = expand(&[1]);
+    assert_eq!(first.hash64(None), second.hash64(None));
+    assert!(first.equals(None, &second, None));
+
+    let mut differs = expand(&[2]);
+    assert_ne!(first.hash64(None), differs.hash64(None));
+    assert!(!first.equals(None, &differs, None));
+
+    // The schema is part of the identity.
+    let own = schema(&[1]);
+    assert_ne!(first.hash64(None), first.hash64(Some(&own)));
+    assert!(!first.equals(None, &second, Some(&own)));
+
+    // A nil `LevelExprs` and a generated-but-empty one are different.
+    differs = expand(&[1]);
+    differs.level_exprs = Some(Vec::new());
+    assert_ne!(first.hash64(None), differs.hash64(None));
+    assert!(!first.equals(None, &differs, None));
+
+    // So are the grouping sets, the distinct size, and the generated columns.
+    let mut sets = expand(&[1]);
+    sets.rollup_grouping_sets = vec![RollupGroupingSet::new([1])];
+    assert_ne!(first.hash64(None), sets.hash64(None));
+    let mut size = expand(&[1]);
+    size.distinct_size = 3;
+    assert_ne!(first.hash64(None), size.hash64(None));
+    let mut gid = expand(&[1]);
+    gid.gid = Some(Box::new(column(100)));
+    assert_ne!(first.hash64(None), gid.hash64(None));
+    assert!(!first.equals(None, &gid, None));
+    let mut gpos = expand(&[1]);
+    gpos.gpos = Some(Box::new(column(101)));
+    assert_ne!(first.hash64(None), gpos.hash64(None));
+}
+
+// ***** LogicalTableDual *****
+
+/// Go `LogicalTableDual.ExplainInfo` (`logical_table_dual.go:49`) and
+/// `HashCode` (`logical_table_dual.go:61`), which deliberately omits the plan
+/// id so two duals of the same shape hash alike.
+#[test]
+fn table_dual_explains_and_hashes_its_row_count() {
+    let one_row = LogicalTableDual::new(BaseLogicalPlan::with_id(1, LogicalTableDual::TYPE, 0), 1);
+    let other = LogicalTableDual::new(BaseLogicalPlan::with_id(7, LogicalTableDual::TYPE, 0), 1);
+    let empty = LogicalTableDual::new(BaseLogicalPlan::with_id(1, LogicalTableDual::TYPE, 0), 0);
+    assert_eq!(one_row.explain_info(), "rowcount:1");
+    assert_eq!(empty.explain_info(), "rowcount:0");
+    assert_eq!(one_row.hash_code(3), other.hash_code(3));
+    assert_ne!(one_row.hash_code(3), empty.hash_code(3));
+    assert_eq!(one_row.hash_code(3).len(), 12);
+    assert_eq!(
+        LogicalPlan::TableDual(one_row.clone()).explain_info(),
+        "rowcount:1"
+    );
+}
+
+/// Go `LogicalTableDual.BuildKeyInfo` (`logical_table_dual.go:89`): a one-row
+/// dual is `maxOneRow`, and an empty one is not.
+#[test]
+fn table_dual_marks_max_one_row_only_for_one_row() {
+    for (row_count, expected) in [(0, false), (1, true)] {
+        let mut plan = LogicalPlan::TableDual(LogicalTableDual::new(
+            BaseLogicalPlan::with_id(1, LogicalTableDual::TYPE, 0),
+            row_count,
+        ));
+        let mut self_schema = schema(&[1]);
+        plan.build_key_info(&mut self_schema, &[]);
+        assert_eq!(plan.max_one_row(), expected);
+    }
+}
+
+/// Go `LogicalTableDual.DeriveStats` (`logical_table_dual.go:109`) and
+/// `PruneColumns` (`logical_table_dual.go:76`).
+#[test]
+fn table_dual_stats_are_its_row_count_and_pruning_keeps_used_columns() {
+    let mut dual = LogicalTableDual::new(BaseLogicalPlan::with_id(1, LogicalTableDual::TYPE, 0), 1);
+    let self_schema = schema(&[1, 2]);
+    let (stats, reloaded) = dual.derive_stats(&self_schema, &[true]);
+    assert!(reloaded);
+    assert!((stats.row_count() - 1.0).abs() < f64::EPSILON);
+    assert_eq!(stats.col_ndvs().get(&2).copied(), Some(1.0));
+    // Without a reload the stored profile is returned unchanged.
+    let (again, reloaded) = dual.derive_stats(&self_schema, &[false]);
+    assert!(!reloaded);
+    assert!((again.row_count() - 1.0).abs() < f64::EPSILON);
+
+    let mut dual_schema = schema(&[1, 2, 3]);
+    assert_eq!(
+        LogicalTableDual::prune_columns(&mut dual_schema, &[column(2)]),
+        vec![2, 0]
+    );
+    assert_eq!(
+        dual_schema
+            .columns
+            .iter()
+            .map(|c| c.unique_id)
+            .collect::<Vec<_>>(),
+        vec![2]
+    );
+    // Go's dual has no child, so every predicate stays above it.
+    assert_eq!(
+        LogicalTableDual::predicate_push_down(vec![eq(col_expr(1), one())]).len(),
+        1
+    );
+}
+
+// ***** LogicalMemTable *****
+
+fn mem_table(table_name: &str) -> LogicalMemTable {
+    LogicalMemTable::new(
+        BaseLogicalPlan::with_id(1, LogicalMemTable::TYPE, 0),
+        "information_schema",
+        table_name,
+    )
+}
+
+/// Go `LogicalMemTable.PruneColumns` (`logical_mem_table.go:80`): the table
+/// switch is an ALLOW-list, and the last column is never pruned away.
+#[test]
+fn mem_table_prunes_only_the_listed_tables_and_keeps_one_column() {
+    let mut other = mem_table("COLUMNS");
+    assert!(!other.is_prunable());
+    let mut mem_schema = schema(&[1, 2, 3]);
+    assert!(other
+        .prune_columns(&mut mem_schema, &[column(1)])
+        .is_empty());
+    assert_eq!(mem_schema.len(), 3);
+
+    let mut slow = mem_table(TABLE_SLOW_QUERY);
+    slow.columns = vec![
+        MemTableColumn {
+            id: 1,
+            name: "Time".to_owned(),
+        },
+        MemTableColumn {
+            id: 2,
+            name: "Query".to_owned(),
+        },
+        MemTableColumn {
+            id: 3,
+            name: "Digest".to_owned(),
+        },
+    ];
+    assert!(slow.is_prunable());
+    assert_eq!(
+        slow.prune_columns(&mut mem_schema, &[column(2)]),
+        vec![2, 0]
+    );
+    assert_eq!(
+        mem_schema
+            .columns
+            .iter()
+            .map(|c| c.unique_id)
+            .collect::<Vec<_>>(),
+        vec![2]
+    );
+    assert_eq!(slow.columns.len(), 1);
+    assert_eq!(slow.columns[0].name, "Query");
+    // Nothing used at all still leaves the single remaining column.
+    assert!(slow.prune_columns(&mut mem_schema, &[]).is_empty());
+    assert_eq!(mem_schema.len(), 1);
+}
+
+/// Go `LogicalMemTable.PushDownTopN` (`logical_mem_table.go:114`),
+/// `pushDownRowLimit` (`logical_mem_table.go:145`) and `isSlowLogTopNByTime`
+/// (`logical_mem_table.go:153`).
+#[test]
+fn mem_table_pushes_hints_only_for_a_limit_or_a_slow_log_time_order() {
+    let mut slow = mem_table(TABLE_SLOW_QUERY);
+    // The table's own `Time` column, matched BY ID.
+    slow.table_columns = vec![MemTableColumn {
+        id: 42,
+        name: SLOW_LOG_TIME_STR.to_owned(),
+    }];
+
+    let mut limit = LogicalTopN::new(
+        BaseLogicalPlan::with_id(2, LogicalTopN::TYPE, 0),
+        Vec::new(),
+        5,
+        10,
+    );
+    assert_eq!(
+        slow.push_down_topn(&limit),
+        MemTableTopNHints {
+            row_limit_hint: Some(15),
+            desc: None
+        }
+    );
+    // Go detects the wrap explicitly and asks for everything.
+    limit.offset = u64::MAX;
+    assert_eq!(LogicalMemTable::push_down_row_limit(&limit), u64::MAX);
+    // A partitioned TopN pushes nothing at all.
+    limit.offset = 5;
+    limit.partition_by = vec![crate::physical_property::SortItem::new(1, false)];
+    assert_eq!(slow.push_down_topn(&limit), MemTableTopNHints::default());
+
+    let mut time_col = column(1);
+    time_col.id = 42;
+    let by_time = LogicalTopN::new(
+        BaseLogicalPlan::with_id(3, LogicalTopN::TYPE, 0),
+        vec![ByItems::new(Expression::Column(time_col.clone()), true)],
+        0,
+        10,
+    );
+    assert!(slow.is_slow_log_topn_by_time(&by_time));
+    assert_eq!(
+        slow.push_down_topn(&by_time),
+        MemTableTopNHints {
+            row_limit_hint: Some(10),
+            desc: Some(true)
+        }
+    );
+    // A different column id is not the ordering key, even under the same name.
+    let other_col = column(1);
+    let by_other = LogicalTopN::new(
+        BaseLogicalPlan::with_id(4, LogicalTopN::TYPE, 0),
+        vec![ByItems::new(Expression::Column(other_col), false)],
+        0,
+        10,
+    );
+    assert!(!slow.is_slow_log_topn_by_time(&by_other));
+    assert_eq!(slow.push_down_topn(&by_other), MemTableTopNHints::default());
+    // Nor is the same order on a non-slow-log table.
+    let mut summary = mem_table("STATEMENTS_SUMMARY");
+    summary.table_columns = slow.table_columns.clone();
+    assert!(!summary.is_slow_log_topn_by_time(&by_time));
+    // The cluster-wide slow log is the OTHER table this applies to.
+    let mut cluster = mem_table(CLUSTER_TABLE_SLOW_LOG);
+    cluster.table_columns = slow.table_columns.clone();
+    assert!(cluster.is_slow_log_topn_by_time(&by_time));
+}
+
+/// Go `LogicalMemTable.DeriveStats` (`logical_mem_table.go:181`): the pseudo
+/// table's realtime count, for the row count AND every column's NDV.
+#[test]
+fn mem_table_stats_follow_the_pseudo_realtime_count() {
+    let mut table = mem_table(TABLE_SLOW_QUERY);
+    let self_schema = schema(&[1, 2]);
+    let (stats, reloaded) = table.derive_stats(&self_schema, &[true], 10_000.0);
+    assert!(reloaded);
+    assert!((stats.row_count() - 10_000.0).abs() < f64::EPSILON);
+    assert_eq!(stats.col_ndvs().get(&1).copied(), Some(10_000.0));
+    let (_, reloaded) = table.derive_stats(&self_schema, &[false], 1.0);
+    assert!(!reloaded);
+}
+
+// ***** LogicalShow and LogicalShowDDLJobs *****
+
+fn field_name(column_name: &str) -> tidb_datatype::FieldName {
+    tidb_datatype::FieldName::new(tidb_datatype::FieldNameMetadata {
+        column: tidb_datatype::IdentifierMetadata::new(column_name),
+        ..tidb_datatype::FieldNameMetadata::default()
+    })
+}
+
+fn string_const(value: &str) -> Expression {
+    Expression::Constant(Constant::new(
+        Datum::String(tidb_datatype::StringDatum::new(
+            value.as_bytes().to_vec(),
+            tidb_datatype::Collation::Utf8Mb4GeneralCi,
+        )),
+        FieldType::new(FieldTypeCode::VarString),
+    ))
+}
+
+fn show(is_stats_meta: bool) -> LogicalShow {
+    LogicalShow::new(
+        BaseLogicalPlan::with_id(1, LogicalShow::TYPE, 0),
+        ShowContents {
+            is_stats_meta,
+            ..ShowContents::default()
+        },
+    )
+}
+
+/// Go `findShowColumnIDs` (`logical_show.go:266`) and
+/// `extractStatsMetaFilterValues` (`logical_show.go:279`).
+#[test]
+fn show_extracts_eq_in_and_or_filters_on_a_named_column() {
+    let show_schema = schema(&[1, 2]);
+    let names = [field_name("db_name"), field_name("table_name")];
+    let ids = find_show_column_ids(&show_schema, &names, "db_name");
+    assert_eq!(ids.len(), 1);
+    assert!(ids.contains(&1));
+    assert!(find_show_column_ids(&show_schema, &names, "missing").is_empty());
+
+    // `db_name = 'X'`, either way round.
+    let values = extract_stats_meta_filter_values(&eq(col_expr(1), string_const("X")), &ids);
+    assert_eq!(values, Some(vec!["X".to_owned()]));
+    assert_eq!(
+        extract_stats_meta_filter_values(&eq(string_const("X"), col_expr(1)), &ids),
+        Some(vec!["X".to_owned()])
+    );
+    // A predicate on some other column is not extractable.
+    assert_eq!(
+        extract_stats_meta_filter_values(&eq(col_expr(2), string_const("X")), &ids),
+        None
+    );
+    // `db_name IN ('a', 'b')`, with the column FIRST.
+    let in_expr = Expression::ScalarFunction(call(
+        "in",
+        vec![col_expr(1), string_const("a"), string_const("b")],
+    ));
+    assert_eq!(
+        extract_stats_meta_filter_values(&in_expr, &ids),
+        Some(vec!["a".to_owned(), "b".to_owned()])
+    );
+    // One unextractable OR branch makes the whole disjunction unextractable.
+    let good_or = Expression::ScalarFunction(call(
+        "or",
+        vec![
+            eq(col_expr(1), string_const("a")),
+            eq(col_expr(1), string_const("b")),
+        ],
+    ));
+    assert_eq!(
+        extract_stats_meta_filter_values(&good_or, &ids),
+        Some(vec!["a".to_owned(), "b".to_owned()])
+    );
+    let bad_or = Expression::ScalarFunction(call(
+        "or",
+        vec![eq(col_expr(1), string_const("a")), eq(col_expr(2), one())],
+    ));
+    assert_eq!(extract_stats_meta_filter_values(&bad_or, &ids), None);
+    // A constant with no usable value refuses.
+    assert_eq!(get_string_value_from_constant(&col_expr(1)), None);
+}
+
+/// Go `extractStatsMetaFilters` (`logical_show.go:210`): the INTERSECTION of
+/// every claimed predicate, lower-cased for `db_name`, and the two refusals
+/// that keep the original predicates.
+#[test]
+fn show_intersects_filters_and_keeps_contradictions_as_predicates() {
+    let show_schema = schema(&[1, 2]);
+    let names = [field_name("db_name"), field_name("table_name")];
+    let predicates = vec![
+        eq(col_expr(1), string_const("MyDB")),
+        eq(col_expr(2), string_const("t")),
+    ];
+    let (remained, filters) =
+        extract_stats_meta_filters(&show_schema, &names, predicates.clone(), "db_name", true);
+    assert_eq!(remained.len(), 1);
+    // `toLower` applies to db names only.
+    assert_eq!(
+        filters,
+        Some(std::collections::BTreeSet::from(["mydb".to_owned()]))
+    );
+    let (remained, filters) =
+        extract_stats_meta_filters(&show_schema, &names, remained, "table_name", false);
+    assert!(remained.is_empty());
+    assert_eq!(
+        filters,
+        Some(std::collections::BTreeSet::from(["t".to_owned()]))
+    );
+
+    // Two contradictory filters intersect to nothing, which Go keeps as
+    // ordinary predicates rather than handing over an empty filter set.
+    let contradiction = vec![
+        eq(col_expr(1), string_const("a")),
+        eq(col_expr(1), string_const("b")),
+    ];
+    let (remained, filters) =
+        extract_stats_meta_filters(&show_schema, &names, contradiction, "db_name", true);
+    assert_eq!(remained.len(), 2);
+    assert_eq!(filters, None);
+
+    // A column the schema does not name is not filterable at all.
+    let (remained, filters) =
+        extract_stats_meta_filters(&show_schema, &names, predicates, "no_such_col", false);
+    assert_eq!(remained.len(), 2);
+    assert_eq!(filters, None);
+}
+
+/// Go `LogicalShow.PredicatePushDown` (`logical_show.go:130`): only
+/// `ast.ShowStatsMeta` extracts, and the extractor is installed only when
+/// something was actually claimed.
+#[test]
+fn show_installs_an_extractor_only_when_it_claimed_a_predicate() {
+    let show_schema = schema(&[1, 2]);
+    let names = [field_name("db_name"), field_name("table_name")];
+
+    let mut not_stats_meta = show(false);
+    let remained = not_stats_meta.predicate_push_down(
+        &show_schema,
+        &names,
+        vec![eq(col_expr(1), string_const("d"))],
+    );
+    assert_eq!(remained.len(), 1);
+    assert!(not_stats_meta.extractor.is_none());
+
+    let mut claimed = show(true);
+    let remained = claimed.predicate_push_down(
+        &show_schema,
+        &names,
+        vec![
+            eq(col_expr(1), string_const("D")),
+            eq(col_expr(2), string_const("t")),
+        ],
+    );
+    assert!(remained.is_empty());
+    let extractor = claimed.extractor.clone().expect("extractor installed");
+    assert!(extractor.db.contains("d"));
+    assert!(extractor.table.contains("t"));
+
+    let mut unclaimed = show(true);
+    let remained =
+        // Column-to-column: nothing constant to claim.
+        unclaimed.predicate_push_down(&show_schema, &names, vec![eq(col_expr(1), col_expr(2))]);
+    assert_eq!(remained.len(), 1);
+    assert!(unclaimed.extractor.is_none());
+}
+
+/// Go `getFakeStats` (`logical_show.go:199`), shared by `LogicalShow`
+/// (`logical_show.go:163`) and `LogicalShowDDLJobs`
+/// (`logical_show_ddl_jobs.go:60`).
+#[test]
+fn both_show_operators_derive_the_same_fake_stats() {
+    let self_schema = schema(&[1, 2]);
+    let mut show = show(false);
+    let (stats, reloaded) = show.derive_stats(&self_schema, &[true]);
+    assert!(reloaded);
+    assert!((stats.row_count() - 1.0).abs() < f64::EPSILON);
+    assert_eq!(stats.col_ndvs().get(&2).copied(), Some(1.0));
+
+    let mut jobs =
+        LogicalShowDDLJobs::new(BaseLogicalPlan::with_id(1, LogicalShowDDLJobs::TYPE, 0), 10);
+    let (job_stats, reloaded) = jobs.derive_stats(&self_schema, &[true]);
+    assert!(reloaded);
+    assert_eq!(job_stats.col_ndvs(), stats.col_ndvs());
+    let (_, reloaded) = jobs.derive_stats(&self_schema, &[false]);
+    assert!(!reloaded);
+}
+
+/// The four operators this batch adds are reachable through every enum
+/// dispatch, and none of them claims an explain body Go does not have.
+#[test]
+fn the_last_operators_are_wired_into_the_enum() {
+    let plans = [
+        LogicalPlan::Expand(expand(&[1])),
+        LogicalPlan::MemTable(mem_table(TABLE_SLOW_QUERY)),
+        LogicalPlan::Show(show(false)),
+        LogicalPlan::ShowDDLJobs(LogicalShowDDLJobs::new(
+            BaseLogicalPlan::with_id(1, LogicalShowDDLJobs::TYPE, 0),
+            3,
+        )),
+    ];
+    for plan in &plans {
+        assert_eq!(plan.id(), 1);
+        assert!(plan.base().children().is_empty());
+        assert!(plan.extract_col_groups(&[]).is_empty());
+        assert!(plan.pull_up_constant_predicates().is_empty());
+        assert_eq!(plan.explain_info(), "");
+        let copy = plan.clone_shallow();
+        assert_eq!(copy.tp(), plan.tp());
+        assert!(find_child_full_schema(plan).is_none());
+    }
+    // Expand is the only one of the four with correlated columns of its own.
+    assert!(plans
+        .iter()
+        .all(|plan| plan.extract_correlated_cols().is_empty()));
 }
