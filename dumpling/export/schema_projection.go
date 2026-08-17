@@ -80,7 +80,7 @@ func generateProjectedSchema(
 	return buffer.String(), nil
 }
 
-func resolveProjectedSchemaColumns(originSQL string, projection columnProjection) (map[string]struct{}, error) {
+func collectProjectedSchemaColumns(originSQL string, selectedColumns []string) (map[string]struct{}, error) {
 	stmt, err := parser.New().ParseOneStmt(originSQL, "", "")
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to parse CREATE TABLE for column projection")
@@ -98,8 +98,8 @@ func resolveProjectedSchemaColumns(originSQL string, projection columnProjection
 			generatedColumns[column.Name.Name.L] = option.Expr
 		}
 	}
-	retainedColumns := make(map[string]struct{}, len(projection.selectedColumns))
-	for _, selectedColumn := range projection.selectedColumns {
+	retainedColumns := make(map[string]struct{}, len(selectedColumns))
+	for _, selectedColumn := range selectedColumns {
 		lowerName := strings.ToLower(selectedColumn)
 		if _, ok := definedColumns[lowerName]; !ok {
 			return nil, errors.Errorf(
