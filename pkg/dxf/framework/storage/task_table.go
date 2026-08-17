@@ -574,6 +574,35 @@ func (mgr *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string)
 	return Row2Task(rs[0]), nil
 }
 
+// GetTasksByKeysWithHistory gets tasks from both active and history tables in
+// two bulk reads. The returned map is keyed by task key.
+func (mgr *TaskManager) GetTasksByKeysWithHistory(ctx context.Context, keys []string) (map[string]*proto.Task, error) {
+	tasks := make(map[string]*proto.Task, len(keys))
+	if len(keys) == 0 {
+		return tasks, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("%?,", len(keys)), ",")
+	args := make([]any, 0, len(keys)*2)
+	for _, key := range keys {
+		args = append(args, key)
+	}
+	for _, key := range keys {
+		args = append(args, key)
+	}
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		"select "+TaskColumns+" from mysql.tidb_global_task t where task_key in ("+placeholders+") "+
+			"union select "+TaskColumns+" from mysql.tidb_global_task_history t where task_key in ("+placeholders+")",
+		args...)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rs {
+		task := Row2Task(row)
+		tasks[task.Key] = task
+	}
+	return tasks, nil
+}
+
 // GetTaskBaseByKeyWithHistory gets the task base from history table by the task key.
 func (mgr *TaskManager) GetTaskBaseByKeyWithHistory(ctx context.Context, key string) (task *proto.TaskBase, err error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+basicTaskColumns+" from mysql.tidb_global_task t where task_key = %?"+
@@ -700,6 +729,43 @@ func (mgr *TaskManager) GetAllSubtaskSummaryByStep(
 		summaries = append(summaries, summary)
 	}
 	return summaries, nil
+}
+
+// GetAllSubtaskSummariesByTaskSteps gets subtask summaries for multiple
+// task/step pairs in one read. It is intended for polling running tasks.
+func (mgr *TaskManager) GetAllSubtaskSummariesByTaskSteps(
+	ctx context.Context, taskSteps map[int64]proto.Step,
+) (map[int64][]*execute.SubtaskSummary, error) {
+	result := make(map[int64][]*execute.SubtaskSummary, len(taskSteps))
+	if len(taskSteps) == 0 {
+		return result, nil
+	}
+	var where strings.Builder
+	args := make([]any, 0, len(taskSteps)*2)
+	for taskID, step := range taskSteps {
+		if where.Len() > 0 {
+			where.WriteString(" or ")
+		}
+		where.WriteString("(task_key = %? and step = %?)")
+		args = append(args, TaskIDToKey(taskID), step)
+	}
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		"select task_key, summary from mysql.tidb_background_subtask where "+where.String(), args...)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range rs {
+		taskID, err := strconv.ParseInt(row.GetString(0), 10, 64)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		summary := &execute.SubtaskSummary{}
+		if err := json.Unmarshal(hack.Slice(row.GetJSON(1).String()), summary); err != nil {
+			return nil, errors.Trace(err)
+		}
+		result[taskID] = append(result[taskID], summary)
+	}
+	return result, nil
 }
 
 // GetSubtaskRowCount gets the subtask row count.

@@ -310,30 +310,76 @@ func GetRuntimeInfoForJob(
 		return nil, err
 	}
 
-	var (
-		taskMeta TaskMeta
-
-		latestTime time.Time
-		ri         = &RuntimeInfo{
-			Status: task.State,
-			Step:   task.Step,
-		}
-	)
-
-	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	if task.Error != nil {
-		ri.ErrorMsg = task.Error.Error()
-		return ri, nil
-	}
-
 	summaries, err := dxfTaskMgr.GetAllSubtaskSummaryByStep(ctx, task.ID, task.Step)
 	if err != nil {
 		return nil, err
 	}
+	return buildRuntimeInfo(task, summaries, location)
+}
 
+// GetRuntimeInfosForJobs gets runtime information for running import jobs with
+// a constant number of system-table reads.
+func GetRuntimeInfosForJobs(
+	ctx context.Context,
+	location *time.Location,
+	jobIDs []int64,
+) (map[int64]*RuntimeInfo, error) {
+	result := make(map[int64]*RuntimeInfo, len(jobIDs))
+	if len(jobIDs) == 0 {
+		return result, nil
+	}
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	dxfTaskMgr, err := storage.GetDXFSvcTaskMgr()
+	if err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(jobIDs))
+	for _, jobID := range jobIDs {
+		keys = append(keys, TaskKey(jobID))
+	}
+	tasks, err := dxfTaskMgr.GetTasksByKeysWithHistory(ctx, keys)
+	if err != nil {
+		return nil, err
+	}
+	taskSteps := make(map[int64]proto.Step, len(tasks))
+	for _, task := range tasks {
+		if task.Error == nil {
+			taskSteps[task.ID] = task.Step
+		}
+	}
+	summaries, err := dxfTaskMgr.GetAllSubtaskSummariesByTaskSteps(ctx, taskSteps)
+	if err != nil {
+		return nil, err
+	}
+	for _, jobID := range jobIDs {
+		task, ok := tasks[TaskKey(jobID)]
+		if !ok {
+			return nil, storage.ErrTaskNotFound
+		}
+		ri, err := buildRuntimeInfo(task, summaries[task.ID], location)
+		if err != nil {
+			return nil, err
+		}
+		result[jobID] = ri
+	}
+	return result, nil
+}
+
+func buildRuntimeInfo(
+	task *proto.Task,
+	summaries []*execute.SubtaskSummary,
+	location *time.Location,
+) (*RuntimeInfo, error) {
+	var taskMeta TaskMeta
+	ri := &RuntimeInfo{Status: task.State, Step: task.Step}
+	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
+		return nil, errors.Trace(err)
+	}
+	if task.Error != nil {
+		ri.ErrorMsg = task.Error.Error()
+		return ri, nil
+	}
+	var latestTime time.Time
 	currentTime := time.Now()
 	timeRange := execute.SubtaskSpeedUpdateInterval
 
@@ -374,6 +420,7 @@ func GetRuntimeInfoForJob(
 	}
 
 	if !latestTime.IsZero() {
+		var err error
 		ri.UpdateTime, err = convertToMySQLTime(latestTime, location)
 		if err != nil {
 			return nil, err

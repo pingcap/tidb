@@ -276,6 +276,8 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show full tables like '%lmn'").Check(testkit.Rows("abclmn BASE TABLE"))
 	tk.MustGetErrCode("show tables like T", errno.ErrBadField)
 	tk.MustGetErrCode("show tables like `T`", errno.ErrBadField)
+	tk.MustGetErrCode("show raw import jobs where job__id = 1", errno.ErrBadField)
+	tk.MustGetErrCode("show raw import jobs where x.job_id = 1", errno.ErrBadField)
 
 	tk.MustExec("drop database test;")
 	tk.MustExec("create database test;")

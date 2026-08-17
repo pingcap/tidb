@@ -118,11 +118,9 @@ type ShowExec struct {
 	Extended    bool // Used for `show extended columns from ...`
 
 	ImportJobID       *int64
-	ImportJobIDFilter bool
 	ImportJobRaw      bool
 	DistributionJobID *int64
-	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY> and SHOW RAW IMPORT JOBS WHERE GROUP_KEY = ...
-	ImportGroupKeySet bool
+	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY>
 }
 
 type showTableRegionRowItem struct {
@@ -2619,11 +2617,28 @@ func getRuntimeInfoForShowImportJob(
 	if err != nil {
 		return nil, err
 	}
+	updateImportJobFromRuntimeInfo(info, runInfo)
+	return runInfo, nil
+}
+
+func updateImportJobFromRuntimeInfo(info *importer.JobInfo, runInfo *importinto.RuntimeInfo) {
+	if runInfo == nil {
+		return
+	}
 	if runInfo.Status == proto.TaskStateAwaitingResolution {
 		info.Status = string(runInfo.Status)
 		info.ErrorMessage = runInfo.ErrorMsg
 	}
-	return runInfo, nil
+}
+
+func runningImportJobIDs(infos []*importer.JobInfo) []int64 {
+	jobIDs := make([]int64, 0, len(infos))
+	for _, info := range infos {
+		if info.Status == importer.JobStatusRunning {
+			jobIDs = append(jobIDs, info.ID)
+		}
+	}
+	return jobIDs
 }
 
 func isRawImportConflictStep(step proto.Step) bool {
@@ -3073,14 +3088,8 @@ func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
 		return err
 	}
 
-	// Use the internal session's timezone for Unix timestamp conversion, since
-	// the TIMESTAMP data is loaded via the internal session.
-	var loc *time.Location
-	appendJob := func(info *importer.JobInfo) error {
-		runInfo, err2 := getRuntimeInfoForShowImportJob(ctx, loc, info)
-		if err2 != nil {
-			return err2
-		}
+	loc := sctx.GetSessionVars().Location()
+	appendJob := func(info *importer.JobInfo, runInfo *importinto.RuntimeInfo) error {
 		stats, err2 := BuildRawImportJobStats(loc, info, runInfo)
 		if err2 != nil {
 			return err2
@@ -3107,39 +3116,37 @@ func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
 	if e.ImportJobID != nil {
 		var info *importer.JobInfo
 		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
-			loc = se.GetSessionVars().Location()
 			exec := se.GetSQLExecutor()
 			var err2 error
 			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, sctx.GetSessionVars().User.String(), hasSuperPriv)
 			return err2
 		}); err != nil {
-			if e.ImportJobIDFilter && exeerrors.ErrLoadDataJobNotFound.Equal(err) {
-				return nil
-			}
 			return err
 		}
-		if e.ImportGroupKeySet && info.GroupKey != e.ImportGroupKey {
-			return nil
+		runInfo, err := getRuntimeInfoForShowImportJob(ctx, loc, info)
+		if err != nil {
+			return err
 		}
-		return appendJob(info)
+		return appendJob(info, runInfo)
 	}
 
 	var infos []*importer.JobInfo
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
-		loc = se.GetSessionVars().Location()
 		exec := se.GetSQLExecutor()
 		var err2 error
-		if e.ImportGroupKeySet {
-			infos, err2 = importer.GetJobsByGroupKeyExact(ctx, exec, sctx.GetSessionVars().User.String(), e.ImportGroupKey, hasSuperPriv)
-		} else {
-			infos, err2 = importer.GetAllViewableJobs(ctx, exec, sctx.GetSessionVars().User.String(), hasSuperPriv)
-		}
+		infos, err2 = importer.GetAllViewableJobs(ctx, exec, sctx.GetSessionVars().User.String(), hasSuperPriv)
 		return err2
 	}); err != nil {
 		return err
 	}
+	runtimeInfos, err := importinto.GetRuntimeInfosForJobs(ctx, loc, runningImportJobIDs(infos))
+	if err != nil {
+		return err
+	}
 	for _, info := range infos {
-		if err2 := appendJob(info); err2 != nil {
+		runInfo := runtimeInfos[info.ID]
+		updateImportJobFromRuntimeInfo(info, runInfo)
+		if err2 := appendJob(info, runInfo); err2 != nil {
 			return err2
 		}
 	}

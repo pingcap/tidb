@@ -79,7 +79,7 @@ func TestGetJobStatus(t *testing.T) {
 	cols := []string{"Job_ID", "Group_Key", "Raw_Stats"}
 
 	// Case 1: Success
-	raw := []byte(`{"version":1,"status":"finished","status_category":"terminal","terminal":true,"source_file_size_bytes":100,"imported_rows":1000,"error_message":"success","summary":{"imported_rows":1000},"create_time_unix":1672567200,"created_by":"root@%"}`)
+	raw := []byte(`{"version":1,"status":"finished","status_category":"terminal","terminal":true,"source_file_size_bytes":100,"imported_rows":1000,"summary":{"imported_rows":1000,"conflict_rows":3,"too_many_conflicts":true},"create_time_unix":1672567200,"created_by":"root@%"}`)
 	rows := sqlmock.NewRows(cols).AddRow(jobID, nil, raw)
 	mock.ExpectQuery("SHOW RAW IMPORT JOB 123").WillReturnRows(rows)
 
@@ -89,7 +89,8 @@ func TestGetJobStatus(t *testing.T) {
 	require.Equal(t, "finished", status.Status)
 	require.Equal(t, int64(100), status.SourceFileSizeBytes)
 	require.Equal(t, int64(1000), status.ImportedRows)
-	require.Equal(t, "success", status.ResultMessage)
+	require.Equal(t, "100B", status.SourceFileSize)
+	require.Equal(t, "3 conflicted rows. Too many conflicted rows, checksum skipped.", status.ResultMessage)
 	require.Equal(t, importer.RawImportJobStatsContractVersion, status.ContractVersion)
 	require.Equal(t, importer.RawImportJobStatusCategoryTerminal, status.StatusCategory)
 	require.True(t, status.Terminal)
@@ -109,6 +110,55 @@ func TestGetJobStatus(t *testing.T) {
 	require.Error(t, err)
 
 	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRawJobStatusRejectsUnsupportedContractVersion(t *testing.T) {
+	for _, raw := range []string{
+		`{"status":"running"}`,
+		`{"version":0,"status":"running"}`,
+		`{"version":2,"status":"running"}`,
+	} {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		manager := NewJobManager(db)
+		rows := sqlmock.NewRows([]string{"Job_ID", "Group_Key", "Raw_Stats"}).AddRow(1, nil, []byte(raw))
+		mock.ExpectQuery("SHOW RAW IMPORT JOB 1").WillReturnRows(rows)
+		_, err = manager.GetJobStatus(context.Background(), 1)
+		require.ErrorContains(t, err, "unsupported SHOW RAW IMPORT JOB stats contract version")
+		require.NoError(t, mock.ExpectationsWereMet())
+	}
+}
+
+func TestJobStatusFromRawStatsPreservesLegacyFields(t *testing.T) {
+	remaining := int64(9)
+	status := jobStatusFromRawStats(&importer.RawImportJobStats{
+		Version:             importer.RawImportJobStatsContractVersion,
+		Status:              importer.JobStatusRunning,
+		SourceFileSizeBytes: 100 * 1024 * 1024,
+		CurrentStep: &importer.RawImportJobStepStats{
+			Name:             "import",
+			ProcessedBytes:   50 * 1024 * 1024,
+			TotalBytes:       100 * 1024 * 1024,
+			SpeedBytesPerSec: 10 * 1024 * 1024,
+			RemainingSeconds: &remaining,
+		},
+	})
+	require.Equal(t, "100MiB", status.SourceFileSize)
+	require.Equal(t, "50MiB", status.ProcessedSize)
+	require.Equal(t, "100MiB", status.TotalSize)
+	require.Equal(t, "50", status.Percent)
+	require.Equal(t, "10MiB/s", status.Speed)
+	require.Equal(t, "00:00:09", status.ETA)
+
+	status = jobStatusFromRawStats(&importer.RawImportJobStats{
+		Version: importer.RawImportJobStatsContractVersion,
+		Status:  importer.JobStatusFinished,
+		Summary: &importer.RawImportJobSummary{
+			ConflictRows:     2,
+			TooManyConflicts: true,
+		},
+	})
+	require.Equal(t, "2 conflicted rows. Too many conflicted rows, checksum skipped.", status.ResultMessage)
 }
 
 func TestGetJobStatusFallbackToLegacy(t *testing.T) {
@@ -247,7 +297,11 @@ func TestGetJobsByGroup(t *testing.T) {
 	require.Equal(t, "importing", jobs[1].Phase)
 	require.NotNil(t, jobs[1].CurrentStep)
 	require.Equal(t, "import", jobs[1].Step)
+	require.Equal(t, "50B", jobs[1].ProcessedSize)
+	require.Equal(t, "100B", jobs[1].TotalSize)
 	require.Equal(t, "50", jobs[1].Percent)
+	require.Equal(t, "0B/s", jobs[1].Speed)
+	require.Equal(t, "N/A", jobs[1].ETA)
 
 	// Case 2: Empty Group Key
 	_, err = manager.GetJobsByGroup(ctx, "")

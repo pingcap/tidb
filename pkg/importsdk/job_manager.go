@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 )
@@ -231,6 +232,12 @@ func scanRawJobStatus(rows *sql.Rows) (*JobStatus, error) {
 	if err := json.Unmarshal(rawStats, stats); err != nil {
 		return nil, errors.Trace(err)
 	}
+	if stats.Version != importer.RawImportJobStatsContractVersion {
+		return nil, errors.Errorf(
+			"unsupported SHOW RAW IMPORT JOB stats contract version %d (supported version: %d)",
+			stats.Version, importer.RawImportJobStatsContractVersion,
+		)
+	}
 	// Ensure the top-level columns and JSON are consistent.
 	stats.JobID = jobID
 	if groupKey.Valid {
@@ -276,7 +283,6 @@ func jobStatusFromRawStats(stats *importer.RawImportJobStats) *JobStatus {
 		StatusCategory:      stats.StatusCategory,
 		Terminal:            stats.Terminal,
 		SourceFileSizeBytes: stats.SourceFileSizeBytes,
-		ResultMessage:       stats.ErrorMessage,
 		ErrorMessage:        stats.ErrorMessage,
 		Error:               stats.Error,
 		Summary:             stats.Summary,
@@ -289,13 +295,20 @@ func jobStatusFromRawStats(stats *importer.RawImportJobStats) *JobStatus {
 	}
 	if stats.Error != nil && status.ErrorMessage == "" {
 		status.ErrorMessage = stats.Error.Message
-		status.ResultMessage = stats.Error.Message
 	}
 	if stats.ImportedRows != nil {
 		status.ImportedRows = *stats.ImportedRows
 	}
 	if stats.SourceFileSizeBytes > 0 {
-		status.SourceFileSize = strconv.FormatInt(stats.SourceFileSizeBytes, 10)
+		status.SourceFileSize = units.BytesSize(float64(stats.SourceFileSizeBytes))
+	} else if stats.Status == "pending" || (stats.Status == importer.JobStatusRunning && stats.Phase == importer.JobStepPreparing) {
+		status.SourceFileSize = "N/A"
+	} else {
+		status.SourceFileSize = units.BytesSize(0)
+	}
+	status.ResultMessage = legacyResultMessage(stats)
+	if status.ResultMessage == "" && stats.Status != importer.JobStatusFinished {
+		status.ResultMessage = status.ErrorMessage
 	}
 	status.CreateTime = unixTime(stats.CreateTimeUnix)
 	status.StartTime = unixTime(stats.StartTimeUnix)
@@ -309,19 +322,58 @@ func jobStatusFromRawStats(stats *importer.RawImportJobStats) *JobStatus {
 
 func fillLegacyStepFields(status *JobStatus, step *importer.RawImportJobStepStats) {
 	status.Step = step.Name
-	if step.TotalBytes > 0 {
-		status.ProcessedSize = strconv.FormatInt(step.ProcessedBytes, 10)
-		status.TotalSize = strconv.FormatInt(step.TotalBytes, 10)
-		status.Percent = strconv.FormatInt(int64(float64(step.ProcessedBytes)/float64(step.TotalBytes)*100), 10)
-		status.Speed = strconv.FormatInt(step.SpeedBytesPerSec, 10)
-		return
+	conflictStep := step.Name == "collect-conflicts" || step.Name == "conflict-resolution"
+	var processed, total int64
+	if conflictStep {
+		processed, total = step.ProcessedConflicts, step.TotalConflicts
+		status.ProcessedSize = fmt.Sprintf("%d conflicts", processed)
+		status.TotalSize = fmt.Sprintf("%d conflicts", total)
+		status.Speed = fmt.Sprintf("%d conflicts/s", step.SpeedConflictsPerSec)
+	} else {
+		processed, total = step.ProcessedBytes, step.TotalBytes
+		status.ProcessedSize = units.BytesSize(float64(processed))
+		status.TotalSize = units.BytesSize(float64(total))
+		status.Speed = fmt.Sprintf("%s/s", units.BytesSize(float64(step.SpeedBytesPerSec)))
 	}
-	if step.TotalConflicts > 0 {
-		status.ProcessedSize = strconv.FormatInt(step.ProcessedConflicts, 10)
-		status.TotalSize = strconv.FormatInt(step.TotalConflicts, 10)
-		status.Percent = strconv.FormatInt(int64(float64(step.ProcessedConflicts)/float64(step.TotalConflicts)*100), 10)
-		status.Speed = strconv.FormatInt(step.SpeedConflictsPerSec, 10)
+	if step.Name == "post-process" || step.Name == "init" {
+		status.Percent = "N/A"
+	} else {
+		percent := int64(0)
+		if total > 0 {
+			percent = min(int64(float64(processed)/float64(total)*100), 100)
+		}
+		status.Percent = strconv.FormatInt(percent, 10)
 	}
+	status.ETA = "N/A"
+	if step.RemainingSeconds != nil {
+		status.ETA = formatSecondAsTime(*step.RemainingSeconds)
+	}
+}
+
+func legacyResultMessage(stats *importer.RawImportJobStats) string {
+	if stats.Status != importer.JobStatusFinished {
+		return stats.ErrorMessage
+	}
+	if stats.Summary == nil {
+		return ""
+	}
+	items := make([]string, 0, 2)
+	if stats.Summary.ConflictRows > 0 {
+		items = append(items, fmt.Sprintf("%d conflicted rows.", stats.Summary.ConflictRows))
+	}
+	if stats.Summary.TooManyConflicts {
+		items = append(items, "Too many conflicted rows, checksum skipped.")
+	}
+	return strings.Join(items, " ")
+}
+
+func formatSecondAsTime(sec int64) string {
+	dur := time.Duration(sec) * time.Second
+	day := ""
+	if dur.Hours() >= 24 {
+		day = fmt.Sprintf("%d d ", int(dur.Hours()/24))
+	}
+	return fmt.Sprintf("%s%02d:%02d:%02d", day, int(dur.Hours())%24, int(dur.Minutes())%60, int(dur.Seconds())%60)
 }
 
 func scanLegacyJobStatus(rows *sql.Rows) (*JobStatus, error) {

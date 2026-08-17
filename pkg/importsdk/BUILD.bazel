@@ -30,6 +30,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/planner/core",
         "//pkg/table/tables",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],

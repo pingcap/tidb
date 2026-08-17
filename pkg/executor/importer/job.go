@@ -626,21 +626,6 @@ func GetJobsByGroupKey(ctx context.Context, conn sqlexec.SQLExecutor, user, grou
 	return getJobInfoFromSQL(ctx, conn, sql, args...)
 }
 
-// GetJobsByGroupKeyExact gets jobs whose group key exactly matches groupKey.
-func GetJobsByGroupKeyExact(ctx context.Context, conn sqlexec.SQLExecutor, user, groupKey string, hasSuperPriv bool) ([]*JobInfo, error) {
-	sql := baseQuerySQL
-	args := []any{}
-	whereClause := []string{"GROUP_KEY = %?"}
-	args = append(args, groupKey)
-	if !hasSuperPriv {
-		whereClause = append(whereClause, "created_by = %?")
-		args = append(args, user)
-	}
-
-	sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(whereClause, " AND "))
-	return getJobInfoFromSQL(ctx, conn, sql, args...)
-}
-
 // GetAllViewableJobs gets all viewable jobs.
 func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool) ([]*JobInfo, error) {
 	sql := baseQuerySQL

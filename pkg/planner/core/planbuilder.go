@@ -3529,116 +3529,8 @@ func splitWhere(where ast.ExprNode) []ast.ExprNode {
 	return conditions
 }
 
-func extractRawImportJobFilters(where ast.ExprNode) (jobID *int64, groupKey *string, remained ast.ExprNode) {
-	for _, condition := range splitWhere(where) {
-		conditionJobID, conditionGroupKey, ok := extractRawImportJobEqFilter(condition)
-		if !ok {
-			remained = combineWhereWithAnd(remained, condition)
-			continue
-		}
-
-		switch {
-		case conditionJobID != nil:
-			if jobID == nil {
-				id := *conditionJobID
-				jobID = &id
-				continue
-			}
-			if *jobID == *conditionJobID {
-				continue
-			}
-		case conditionGroupKey != nil:
-			if groupKey == nil {
-				gk := *conditionGroupKey
-				groupKey = &gk
-				continue
-			}
-			if *groupKey == *conditionGroupKey {
-				continue
-			}
-		}
-
-		// Keep conflicting duplicate filters in the remaining WHERE expression
-		// so normal SHOW selection preserves SQL semantics (for example
-		// GROUP_KEY = 'a' AND GROUP_KEY = 'b' should return no rows).
-		remained = combineWhereWithAnd(remained, condition)
-	}
-	return jobID, groupKey, remained
-}
-
-func combineWhereWithAnd(left, right ast.ExprNode) ast.ExprNode {
-	if left == nil {
-		return right
-	}
-	if right == nil {
-		return left
-	}
-	return &ast.BinaryOperationExpr{Op: opcode.LogicAnd, L: left, R: right}
-}
-
-func extractRawImportJobEqFilter(where ast.ExprNode) (jobID *int64, groupKey *string, ok bool) {
-	expr, ok := where.(*ast.BinaryOperationExpr)
-	if !ok || expr.Op != opcode.EQ {
-		return nil, nil, false
-	}
-	column, value, ok := rawImportJobColumnAndValue(expr.L, expr.R)
-	if !ok {
-		column, value, ok = rawImportJobColumnAndValue(expr.R, expr.L)
-	}
-	if !ok {
-		return nil, nil, false
-	}
-	switch column {
-	case "jobid":
-		id, ok := rawImportJobIDValue(value)
-		if !ok {
-			return nil, nil, false
-		}
-		return &id, nil, true
-	case "groupkey":
-		if value.Kind() != types.KindString && value.Kind() != types.KindBytes {
-			return nil, nil, false
-		}
-		gk := value.GetString()
-		return nil, &gk, true
-	}
-	return nil, nil, false
-}
-
-func rawImportJobIDValue(value *driver.ValueExpr) (int64, bool) {
-	switch value.Kind() {
-	case types.KindInt64:
-		return value.GetInt64(), true
-	case types.KindUint64:
-		id := value.GetUint64()
-		if id > uint64(1<<63-1) {
-			return 0, false
-		}
-		return int64(id), true
-	case types.KindString, types.KindBytes:
-		id, err := strconv.ParseInt(value.GetString(), 10, 64)
-		return id, err == nil
-	default:
-		return 0, false
-	}
-}
-
-func rawImportJobColumnAndValue(columnExpr, valueExpr ast.ExprNode) (column string, value *driver.ValueExpr, ok bool) {
-	columnName, ok := columnExpr.(*ast.ColumnNameExpr)
-	if !ok {
-		return "", nil, false
-	}
-	value, ok = valueExpr.(*driver.ValueExpr)
-	if !ok {
-		return "", nil, false
-	}
-	normalized := strings.ReplaceAll(columnName.Name.Name.L, "_", "")
-	return normalized, value, true
-}
-
 func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.Plan, error) {
 	tnW := b.resolveCtx.GetTableName(show.Table)
-	where := show.Where
 	p := logicalop.LogicalShow{
 		ShowContents: logicalop.ShowContents{
 			Tp:                    show.Tp,
@@ -3663,17 +3555,6 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			ImportGroupKey:        show.ShowGroupKey,
 		},
 	}.Init(b.ctx)
-	if show.Tp == ast.ShowImportJobs && show.ImportJobRaw && where != nil {
-		var groupKey *string
-		p.ImportJobID, groupKey, where = extractRawImportJobFilters(where)
-		if p.ImportJobID != nil && show.ImportJobID == nil {
-			p.ImportJobIDFilter = true
-		}
-		if groupKey != nil {
-			p.ImportGroupKey = *groupKey
-			p.ImportGroupKeySet = true
-		}
-	}
 	isView := false
 	isSequence := false
 	isTempTableLocal := false
@@ -3800,8 +3681,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			return nil, err
 		}
 	}
-	if where != nil {
-		np, err = b.buildSelection(ctx, np, where, nil)
+	if show.Where != nil {
+		np, err = b.buildSelection(ctx, np, show.Where, nil)
 		if err != nil {
 			return nil, err
 		}

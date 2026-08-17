@@ -384,6 +384,17 @@ func TestGetSubtaskSummaries(t *testing.T) {
 		require.EqualValues(t, 100, summary.RowCnt.Load())
 		require.EqualValues(t, 200, summary.Processed.Load())
 	}
+	tasksByKey, err := tm.GetTasksByKeysWithHistory(ctx, []string{"test", "missing"})
+	require.NoError(t, err)
+	require.Len(t, tasksByKey, 1)
+	require.Equal(t, taskID, tasksByKey["test"].ID)
+	bulkSummaries, err := tm.GetAllSubtaskSummariesByTaskSteps(ctx, map[int64]proto.Step{
+		taskID: proto.StepOne,
+		999999: proto.StepOne,
+	})
+	require.NoError(t, err)
+	require.Len(t, bulkSummaries[taskID], len(subtasks))
+	require.Empty(t, bulkSummaries[999999])
 
 	// If the JSON value is wrong, we still get an empty summary.
 	// This can only happen if the summary field is manually updated.
