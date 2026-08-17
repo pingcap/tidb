@@ -17,7 +17,7 @@ package importinto
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
@@ -34,7 +34,7 @@ func TestJobProgressEstimator_NonGlobalSort(t *testing.T) {
 		JobID:  jobID,
 		Status: "running",
 		Phase:  "importing",
-		CurrentStep: &importer.RawImportJobStepStats{
+		CurrentStep: &jobstats.RawImportJobStepStats{
 			Name:           "import",
 			ProcessedBytes: 50 * mb,
 			TotalBytes:     100 * mb,
@@ -67,7 +67,7 @@ func TestJobProgressEstimator_GlobalSort(t *testing.T) {
 		JobID:  jobID,
 		Status: "running",
 		Phase:  "global-sorting",
-		CurrentStep: &importer.RawImportJobStepStats{
+		CurrentStep: &jobstats.RawImportJobStepStats{
 			Name:           "encode",
 			ProcessedBytes: 50 * mb,
 			TotalBytes:     100 * mb,
@@ -93,7 +93,7 @@ func TestJobProgressEstimator_GlobalSort(t *testing.T) {
 		JobID:  jobID,
 		Status: "running",
 		Phase:  "global-sorting",
-		CurrentStep: &importer.RawImportJobStepStats{
+		CurrentStep: &jobstats.RawImportJobStepStats{
 			Name:           "merge-sort",
 			ProcessedBytes: 0,
 			TotalBytes:     100 * mb,
@@ -105,7 +105,7 @@ func TestJobProgressEstimator_GlobalSort(t *testing.T) {
 		JobID:  jobID,
 		Status: "running",
 		Phase:  "resolving-conflicts",
-		CurrentStep: &importer.RawImportJobStepStats{
+		CurrentStep: &jobstats.RawImportJobStepStats{
 			Name:               "conflict-resolution",
 			ProcessedConflicts: 3,
 			TotalConflicts:     4,

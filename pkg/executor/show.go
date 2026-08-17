@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -2599,6 +2600,7 @@ func handleImportJobInfo(
 	if err != nil {
 		return err
 	}
+	updateImportJobFromRuntimeInfo(info, runInfo)
 	FillOneImportJobInfo(result, info, runInfo)
 	return nil
 }
@@ -2617,7 +2619,6 @@ func getRuntimeInfoForShowImportJob(
 	if err != nil {
 		return nil, err
 	}
-	updateImportJobFromRuntimeInfo(info, runInfo)
 	return runInfo, nil
 }
 
@@ -2645,68 +2646,41 @@ func isRawImportConflictStep(step proto.Step) bool {
 	return step == proto.ImportStepCollectConflicts || step == proto.ImportStepConflictResolution
 }
 
-func rawImportJobTerminal(status string) bool {
-	return status == importer.JobStatusFinished || status == "failed" || status == "cancelled"
-}
-
-func rawImportJobStatusCategory(status string) string {
-	switch status {
-	case "pending":
-		return importer.RawImportJobStatusCategoryPending
-	case importer.JobStatusRunning:
-		return importer.RawImportJobStatusCategoryRunning
-	case importer.JobStatusFinished, "failed", "cancelled":
-		return importer.RawImportJobStatusCategoryTerminal
-	case string(proto.TaskStateAwaitingResolution):
-		return importer.RawImportJobStatusCategoryAttentionNeeded
-	default:
-		return importer.RawImportJobStatusCategoryUnknown
-	}
-}
-
 func rawBool(v bool) *bool {
 	return &v
 }
 
-func buildRawImportJobError(status, message string) *importer.RawImportJobError {
+func buildRawImportJobError(status, message string) *jobstats.RawImportJobError {
 	switch status {
 	case "failed":
-		return &importer.RawImportJobError{
-			Message:  message,
-			Category: importer.RawImportJobErrorCategoryFailed,
-			Terminal: true,
+		return &jobstats.RawImportJobError{
+			Message: message,
 		}
 	case "cancelled":
-		return &importer.RawImportJobError{
+		return &jobstats.RawImportJobError{
 			Message:   message,
-			Category:  importer.RawImportJobErrorCategoryCancelled,
-			Terminal:  true,
 			Retryable: rawBool(false),
 		}
 	case string(proto.TaskStateAwaitingResolution):
-		return &importer.RawImportJobError{
+		return &jobstats.RawImportJobError{
 			Message:            message,
-			Category:           importer.RawImportJobErrorCategoryUserActionRequired,
-			Terminal:           false,
 			UserActionRequired: true,
 		}
 	default:
 		if message == "" {
 			return nil
 		}
-		return &importer.RawImportJobError{
-			Message:  message,
-			Category: importer.RawImportJobErrorCategoryUnknown,
-			Terminal: rawImportJobTerminal(status),
+		return &jobstats.RawImportJobError{
+			Message: message,
 		}
 	}
 }
 
-func buildRawImportJobSummary(summary *importer.Summary) *importer.RawImportJobSummary {
+func buildRawImportJobSummary(summary *importer.Summary) *jobstats.RawImportJobSummary {
 	if summary == nil {
 		return nil
 	}
-	raw := &importer.RawImportJobSummary{
+	raw := &jobstats.RawImportJobSummary{
 		ImportedRows:     summary.ImportedRows,
 		ConflictRows:     summary.ConflictRowCnt,
 		TooManyConflicts: summary.TooManyConflicts,
@@ -2715,7 +2689,7 @@ func buildRawImportJobSummary(summary *importer.Summary) *importer.RawImportJobS
 		if summary.Bytes == 0 && summary.RowCnt == 0 {
 			return
 		}
-		step := importer.RawImportJobStepSummary{Name: name}
+		step := jobstats.RawImportJobStepSummary{Name: name}
 		if conflictStep {
 			step.InputConflicts = summary.RowCnt
 		} else {
@@ -2732,12 +2706,12 @@ func buildRawImportJobSummary(summary *importer.Summary) *importer.RawImportJobS
 	return raw
 }
 
-// BuildRawImportJobStats converts import job info (and optional runtime info) into a machine-friendly contract.
-func BuildRawImportJobStats(
+// buildRawImportJobStats converts import job info (and optional runtime info) into a machine-friendly contract.
+func buildRawImportJobStats(
 	location *time.Location,
 	info *importer.JobInfo,
 	runInfo *importinto.RuntimeInfo,
-) (*importer.RawImportJobStats, error) {
+) (*jobstats.RawImportJobStats, error) {
 	if location == nil {
 		location = time.UTC
 	}
@@ -2754,8 +2728,9 @@ func BuildRawImportJobStats(
 		return nil
 	}
 
-	stats := &importer.RawImportJobStats{
-		Version:             importer.RawImportJobStatsContractVersion,
+	statusCategory, terminal := jobstats.ClassifyStatus(info.Status)
+	stats := &jobstats.RawImportJobStats{
+		Version:             jobstats.ContractVersion,
 		JobID:               info.ID,
 		GroupKey:            info.GroupKey,
 		DataSource:          info.Parameters.FileLocation,
@@ -2763,10 +2738,9 @@ func BuildRawImportJobStats(
 		TableID:             info.TableID,
 		Phase:               info.Step,
 		Status:              info.Status,
-		StatusCategory:      rawImportJobStatusCategory(info.Status),
-		Terminal:            rawImportJobTerminal(info.Status),
+		StatusCategory:      statusCategory,
+		Terminal:            terminal,
 		SourceFileSizeBytes: info.SourceFileSize,
-		ErrorMessage:        info.ErrorMessage,
 		Error:               buildRawImportJobError(info.Status, info.ErrorMessage),
 		Summary:             buildRawImportJobSummary(info.Summary),
 		CreatedBy:           info.CreatedBy,
@@ -2776,7 +2750,7 @@ func BuildRawImportJobStats(
 		importedRows := runInfo.ImportRows
 		stats.ImportedRows = &importedRows
 
-		step := importer.RawImportJobStepStats{
+		step := jobstats.RawImportJobStepStats{
 			Name: proto.Step2Str(proto.ImportInto, runInfo.Step),
 		}
 		if isRawImportConflictStep(runInfo.Step) {
@@ -3088,9 +3062,11 @@ func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
 		return err
 	}
 
-	loc := sctx.GetSessionVars().Location()
+	// JobInfo timestamps are decoded by the internal session, so use the same
+	// session location when converting them to Unix seconds.
+	var loc *time.Location
 	appendJob := func(info *importer.JobInfo, runInfo *importinto.RuntimeInfo) error {
-		stats, err2 := BuildRawImportJobStats(loc, info, runInfo)
+		stats, err2 := buildRawImportJobStats(loc, info, runInfo)
 		if err2 != nil {
 			return err2
 		}
@@ -3116,6 +3092,7 @@ func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
 	if e.ImportJobID != nil {
 		var info *importer.JobInfo
 		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+			loc = se.GetSessionVars().Location()
 			exec := se.GetSQLExecutor()
 			var err2 error
 			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, sctx.GetSessionVars().User.String(), hasSuperPriv)
@@ -3127,11 +3104,13 @@ func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		updateImportJobFromRuntimeInfo(info, runInfo)
 		return appendJob(info, runInfo)
 	}
 
 	var infos []*importer.JobInfo
 	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
+		loc = se.GetSessionVars().Location()
 		exec := se.GetSQLExecutor()
 		var err2 error
 		infos, err2 = importer.GetAllViewableJobs(ctx, exec, sctx.GetSessionVars().User.String(), hasSuperPriv)

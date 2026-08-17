@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/lightning/pkg/importinto"
 	mockimport "github.com/pingcap/tidb/lightning/pkg/importinto/mock"
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	sdkmock "github.com/pingcap/tidb/pkg/importsdk/mock"
 	"github.com/pingcap/tidb/pkg/lightning/common"
@@ -59,7 +59,7 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 						JobID:  1,
 						Status: "running",
 						Phase:  "importing",
-						CurrentStep: &importer.RawImportJobStepStats{
+						CurrentStep: &jobstats.RawImportJobStepStats{
 							Name:           "import",
 							ProcessedBytes: 50 * mb,
 							TotalBytes:     100 * mb,
@@ -193,7 +193,7 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 						JobID:  1,
 						Status: "running",
 						Phase:  "importing",
-						CurrentStep: &importer.RawImportJobStepStats{
+						CurrentStep: &jobstats.RawImportJobStepStats{
 							Name:           "import",
 							ProcessedBytes: 100 * mb,
 							TotalBytes:     100 * mb,
@@ -212,7 +212,7 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 						JobID:  2,
 						Status: "running",
 						Phase:  "importing",
-						CurrentStep: &importer.RawImportJobStepStats{
+						CurrentStep: &jobstats.RawImportJobStepStats{
 							Name:           "import",
 							ProcessedBytes: 2 * mb,
 							TotalBytes:     400 * mb,

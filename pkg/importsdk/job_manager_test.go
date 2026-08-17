@@ -18,11 +18,12 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	drivermysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 	"github.com/stretchr/testify/require"
 )
 
@@ -91,8 +92,8 @@ func TestGetJobStatus(t *testing.T) {
 	require.Equal(t, int64(1000), status.ImportedRows)
 	require.Equal(t, "100B", status.SourceFileSize)
 	require.Equal(t, "3 conflicted rows. Too many conflicted rows, checksum skipped.", status.ResultMessage)
-	require.Equal(t, importer.RawImportJobStatsContractVersion, status.ContractVersion)
-	require.Equal(t, importer.RawImportJobStatusCategoryTerminal, status.StatusCategory)
+	require.Equal(t, jobstats.ContractVersion, status.ContractVersion)
+	require.Equal(t, jobstats.StatusCategoryTerminal, status.StatusCategory)
 	require.True(t, status.Terminal)
 	require.NotNil(t, status.Summary)
 	require.Equal(t, int64(1000), status.Summary.ImportedRows)
@@ -131,11 +132,11 @@ func TestRawJobStatusRejectsUnsupportedContractVersion(t *testing.T) {
 
 func TestJobStatusFromRawStatsPreservesLegacyFields(t *testing.T) {
 	remaining := int64(9)
-	status := jobStatusFromRawStats(&importer.RawImportJobStats{
-		Version:             importer.RawImportJobStatsContractVersion,
+	status := jobStatusFromRawStats(&jobstats.RawImportJobStats{
+		Version:             jobstats.ContractVersion,
 		Status:              importer.JobStatusRunning,
 		SourceFileSizeBytes: 100 * 1024 * 1024,
-		CurrentStep: &importer.RawImportJobStepStats{
+		CurrentStep: &jobstats.RawImportJobStepStats{
 			Name:             "import",
 			ProcessedBytes:   50 * 1024 * 1024,
 			TotalBytes:       100 * 1024 * 1024,
@@ -150,10 +151,37 @@ func TestJobStatusFromRawStatsPreservesLegacyFields(t *testing.T) {
 	require.Equal(t, "10MiB/s", status.Speed)
 	require.Equal(t, "00:00:09", status.ETA)
 
-	status = jobStatusFromRawStats(&importer.RawImportJobStats{
-		Version: importer.RawImportJobStatsContractVersion,
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+	legacyCols := []string{
+		"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
+		"Phase", "Status", "Source_File_Size", "Imported_Rows", "Result_Message",
+		"Create_Time", "Start_Time", "End_Time", "Created_By", "Update_Time",
+		"Step", "Processed_Size", "Total_Size", "Percent", "Speed", "ETA",
+	}
+	mock.ExpectQuery("legacy").WillReturnRows(sqlmock.NewRows(legacyCols).AddRow(
+		int64(0), nil, "", "", int64(0), "", "running", "100MiB", nil, nil,
+		"", nil, nil, "", nil, "import", "50MiB", "100MiB", "50", "10MiB/s", "00:00:09",
+	))
+	rows, err := db.Query("legacy")
+	require.NoError(t, err)
+	require.True(t, rows.Next())
+	legacyStatus, err := scanLegacyJobStatus(rows)
+	require.NoError(t, err)
+	require.Equal(t, legacyStatus.SourceFileSize, status.SourceFileSize)
+	require.Equal(t, legacyStatus.ProcessedSize, status.ProcessedSize)
+	require.Equal(t, legacyStatus.TotalSize, status.TotalSize)
+	require.Equal(t, legacyStatus.Percent, status.Percent)
+	require.Equal(t, legacyStatus.Speed, status.Speed)
+	require.Equal(t, legacyStatus.ETA, status.ETA)
+	require.NoError(t, rows.Close())
+	require.NoError(t, mock.ExpectationsWereMet())
+
+	status = jobStatusFromRawStats(&jobstats.RawImportJobStats{
+		Version: jobstats.ContractVersion,
 		Status:  importer.JobStatusFinished,
-		Summary: &importer.RawImportJobSummary{
+		Summary: &jobstats.RawImportJobSummary{
 			ConflictRows:     2,
 			TooManyConflicts: true,
 		},
@@ -169,28 +197,48 @@ func TestGetJobStatusFallbackToLegacy(t *testing.T) {
 	manager := NewJobManager(db)
 	ctx := context.Background()
 	jobID := int64(123)
-	rawUnsupported := errors.New("You have an error in your SQL syntax near 'RAW IMPORT JOB'")
+	rawUnsupported := &drivermysql.MySQLError{Number: 1064, Message: "syntax error near RAW IMPORT JOB"}
 	legacyCols := []string{
 		"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
 		"Phase", "Status", "Source_File_Size", "Imported_Rows", "Result_Message",
 		"Create_Time", "Start_Time", "End_Time", "Created_By", "Update_Time",
 		"Step", "Processed_Size", "Total_Size", "Percent", "Speed", "ETA",
 	}
-	rows := sqlmock.NewRows(legacyCols).AddRow(
-		jobID, "", "s3://bucket/file.csv", "db.table", int64(1),
-		"import", "finished", "100MB", int64(1000), "success",
-		"2023-01-01 10:00:00", "2023-01-01 10:00:01", "2023-01-01 10:00:02", "user", "2023-01-01 10:00:02",
-		"", "100MB", "100MB", "100", "10MB/s", "0s",
-	)
-
+	legacyRows := func() *sqlmock.Rows {
+		return sqlmock.NewRows(legacyCols).AddRow(
+			jobID, "", "s3://bucket/file.csv", "db.table", int64(1),
+			"import", "finished", "100MB", int64(1000), "success",
+			"2023-01-01 10:00:00", "2023-01-01 10:00:01", "2023-01-01 10:00:02", "user", "2023-01-01 10:00:02",
+			"", "100MB", "100MB", "100", "10MB/s", "0s",
+		)
+	}
 	mock.ExpectQuery("SHOW RAW IMPORT JOB 123").WillReturnError(rawUnsupported)
-	mock.ExpectQuery("SHOW IMPORT JOB 123").WillReturnRows(rows)
+	mock.ExpectQuery("SHOW IMPORT JOB 123").WillReturnRows(legacyRows())
 
 	status, err := manager.GetJobStatus(ctx, jobID)
 	require.NoError(t, err)
 	require.Equal(t, jobID, status.JobID)
 	require.Equal(t, "finished", status.Status)
 	require.Equal(t, int64(1000), status.ImportedRows)
+
+	// The unsupported capability is cached; subsequent polls skip RAW.
+	mock.ExpectQuery("SHOW IMPORT JOB 123").WillReturnRows(legacyRows())
+	status, err = manager.GetJobStatus(ctx, jobID)
+	require.NoError(t, err)
+	require.Equal(t, jobID, status.JobID)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestRawFallbackRequiresParseErrorCode(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db.Close()
+
+	manager := NewJobManager(db)
+	authErr := &drivermysql.MySQLError{Number: 1045, Message: "syntax is not supported for this user"}
+	mock.ExpectQuery("SHOW RAW IMPORT JOB 123").WillReturnError(authErr)
+	_, err = manager.GetJobStatus(context.Background(), 123)
+	require.Error(t, err)
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 

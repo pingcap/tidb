@@ -89,17 +89,9 @@ func (*jobProgressEstimator) isGlobalSortStatus(status *importsdk.JobStatus) boo
 	case "global-sorting", "resolving-conflicts":
 		return true
 	}
-	if status.CurrentStep != nil {
-		switch status.CurrentStep.Name {
-		case "encode", "merge-sort", "ingest", "collect-conflicts", "conflict-resolution":
-			return true
-		}
-	}
-	switch status.Step {
-	case "encode", "merge-sort", "ingest", "collect-conflicts", "conflict-resolution":
-		return true
-	}
-	return false
+	step := effectiveJobStep(status)
+	return stepInPhases(jobProgressPhases(true), step) &&
+		!stepInPhases(jobProgressPhases(false), step)
 }
 
 func jobProgressPhases(isGlobalSort bool) []jobProgressPhase {
@@ -158,6 +150,22 @@ func findStep(steps []string, step string) (int, bool) {
 	return 0, false
 }
 
+func effectiveJobStep(status *importsdk.JobStatus) string {
+	if status.CurrentStep != nil {
+		return status.CurrentStep.Name
+	}
+	return status.Step
+}
+
+func stepInPhases(phases []jobProgressPhase, step string) bool {
+	for _, phase := range phases {
+		if _, ok := findStep(phase.steps, step); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (e *jobProgressEstimator) jobProgress(status *importsdk.JobStatus) float64 {
 	isGlobalSort := e.isGlobalSort
 	phases := jobProgressPhases(isGlobalSort)
@@ -175,10 +183,7 @@ func (e *jobProgressEstimator) jobProgress(status *importsdk.JobStatus) float64 
 	}
 
 	ratio := e.stepRatio(status)
-	step := status.Step
-	if status.CurrentStep != nil {
-		step = status.CurrentStep.Name
-	}
+	step := effectiveJobStep(status)
 	stepIdx, ok := findStep(phases[phaseIdx].steps, step)
 	if !ok {
 		stepIdx = 0

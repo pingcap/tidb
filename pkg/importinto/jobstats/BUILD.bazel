@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "jobstats",
+    srcs = ["model.go"],
+    importpath = "github.com/pingcap/tidb/pkg/importinto/jobstats",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "jobstats_test",
+    srcs = ["model_test.go"],
+    embed = [":jobstats"],
+    deps = ["@com_github_stretchr_testify//require"],
+)

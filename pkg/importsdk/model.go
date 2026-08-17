@@ -17,7 +17,7 @@ package importsdk
 import (
 	"time"
 
-	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 )
@@ -109,12 +109,14 @@ type JobStatus struct {
 	ResultMessage       string
 	// ErrorMessage is populated by SHOW RAW IMPORT JOB(S). ResultMessage is kept
 	// for compatibility with the original human SHOW IMPORT JOB(S) parser.
-	ErrorMessage    string
+	ErrorMessage string
+	// ContractVersion is zero for a legacy SHOW response. In that case the
+	// structured fields below are unavailable and retain their zero values.
 	ContractVersion int
 	StatusCategory  string
 	Terminal        bool
-	Error           *importer.RawImportJobError
-	Summary         *importer.RawImportJobSummary
+	Error           *jobstats.RawImportJobError
+	Summary         *jobstats.RawImportJobSummary
 	CreateTime      time.Time
 	StartTime       time.Time
 	EndTime         time.Time
@@ -124,7 +126,7 @@ type JobStatus struct {
 	StartTimeUnix   int64
 	EndTimeUnix     int64
 	UpdateTimeUnix  int64
-	CurrentStep     *importer.RawImportJobStepStats
+	CurrentStep     *jobstats.RawImportJobStepStats
 	Step            string
 	ProcessedSize   string
 	TotalSize       string
@@ -150,5 +152,8 @@ func (s *JobStatus) IsCancelled() bool {
 
 // IsCompleted returns true if the job is in a terminal state.
 func (s *JobStatus) IsCompleted() bool {
+	if s.ContractVersion > 0 {
+		return s.Terminal
+	}
 	return s.IsFinished() || s.IsFailed() || s.IsCancelled()
 }

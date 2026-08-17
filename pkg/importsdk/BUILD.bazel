@@ -17,6 +17,7 @@ go_library(
     deps = [
         "//pkg/ddl",
         "//pkg/executor/importer",
+        "//pkg/importinto/jobstats",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
@@ -31,6 +32,7 @@ go_library(
         "//pkg/planner/core",
         "//pkg/table/tables",
         "@com_github_docker_go_units//:go-units",
+        "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
@@ -53,6 +55,7 @@ go_test(
     shard_count = 22,
     deps = [
         "//pkg/executor/importer",
+        "//pkg/importinto/jobstats",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
         "//pkg/lightning/mydump",
