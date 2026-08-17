@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,6 +48,26 @@ func TestGlueGetVersion(t *testing.T) {
 	require.Contains(t, version, `Release Version`)
 	require.Contains(t, version, `Git Commit Hash`)
 	require.Contains(t, version, `GoVersion`)
+}
+
+func TestBRIEKillMonitorHandlesWrappedQueryInterrupted(t *testing.T) {
+	sctx := mock.NewContext()
+	taskCtx, cancelTaskCtx := context.WithCancel(context.Background())
+	t.Cleanup(cancelTaskCtx)
+	checkCh := make(chan time.Time, 1)
+	cancelled := make(chan struct{})
+
+	go monitorBRIEKillSignal(taskCtx, sctx, checkCh, func() {
+		close(cancelled)
+	})
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	checkCh <- time.Now()
+
+	select {
+	case <-cancelled:
+	case <-time.After(time.Second):
+		t.Fatal("BRIE task was not cancelled after receiving QueryInterrupted")
+	}
 }
 
 func brieTaskInfoToResult(info *brieTaskInfo) string {

@@ -575,6 +575,23 @@ func (e *showMetaExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+func monitorBRIEKillSignal(taskCtx context.Context, sctx sessionctx.Context, checkCh <-chan time.Time, cancelTask func()) {
+	for {
+		select {
+		case _, ok := <-checkCh:
+			if !ok {
+				return
+			}
+			if exeerrors.ErrQueryInterrupted.Equal(sctx.GetSessionVars().SQLKiller.HandleSignal()) {
+				cancelTask()
+				return
+			}
+		case <-taskCtx.Done():
+			return
+		}
+	}
+}
+
 // Next implements the Executor Next interface.
 func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
@@ -600,17 +617,9 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	go func() {
 		ticker := time.NewTicker(3 * time.Second)
 		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if exeerrors.ErrQueryInterrupted.Equal(e.Ctx().GetSessionVars().SQLKiller.HandleSignal()) {
-					bq.cancelTask(taskID)
-					return
-				}
-			case <-taskCtx.Done():
-				return
-			}
-		}
+		monitorBRIEKillSignal(taskCtx, e.Ctx(), ticker.C, func() {
+			bq.cancelTask(taskID)
+		})
 	}()
 
 	progress, err := bq.acquireTask(taskCtx, taskID)

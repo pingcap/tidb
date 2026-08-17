@@ -25,8 +25,19 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIsSessionDoneHandlesWrappedQueryInterrupted(t *testing.T) {
+	sctx := mock.NewContext()
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+
+	done, killed := isSessionDone(sctx)
+	require.True(t, done)
+	require.Equal(t, uint32(1), killed)
+}
 
 func TestBuildQueryStringFromJobs(t *testing.T) {
 	testCases := []struct {

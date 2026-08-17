@@ -7212,6 +7212,12 @@ func (e *executor) doDDLJob2(ctx sessionctx.Context, job *model.Job, args model.
 	return e.DoDDLJobWrapper(ctx, NewJobWrapperWithArgs(job, args, false))
 }
 
+func isNonRetryableCancelDDLJobError(err error) bool {
+	return dbterror.ErrCancelFinishedDDLJob.Equal(err) ||
+		dbterror.ErrCannotCancelDDLJob.Equal(err) ||
+		dbterror.ErrDDLJobNotFound.Equal(err)
+}
+
 // DoDDLJobWrapper submit DDL job and wait it finishes.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
@@ -7350,16 +7356,23 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 					logutil.DDLLogger().Error("get session failed, check again", zap.Error(err))
 					continue
 				}
-				sessVars.StmtCtx.DDLJobID = 0 // Avoid repeat.
 				errs, err := CancelJobsBySystem(se, []int64{jobID})
 				e.sessPool.Put(se)
-				if len(errs) > 0 {
-					logutil.DDLLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
-				}
 				if err != nil {
 					logutil.DDLLogger().Warn("Kill command could not cancel DDL job", zap.Error(err))
 					continue
 				}
+				// CancelJobsBySystem returns one result per requested job; only
+				// non-nil entries need error handling.
+				if len(errs) > 0 && errs[0] != nil {
+					logutil.DDLLogger().Warn("error canceling DDL job", zap.Error(errs[0]))
+					if !isNonRetryableCancelDDLJobError(errs[0]) {
+						continue
+					}
+				}
+				// Stop retrying after the cancellation transaction commits without a
+				// per-job error, or after a non-retryable per-job result.
+				sessVars.StmtCtx.DDLJobID = 0
 			}
 		}
 
