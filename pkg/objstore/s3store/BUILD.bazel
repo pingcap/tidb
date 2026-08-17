@@ -51,7 +51,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",
-        "@com_github_tencentcloud_tencentcloud_sdk_go_tencentcloud_common//:go_default_library",
+        "@com_github_tencentcloud_tencentcloud_sdk_go_tencentcloud_common//:common",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -90,7 +90,7 @@ go_test(
         "@com_github_prometheus_client_golang//prometheus/testutil",
         "@com_github_spf13_pflag//:pflag",
         "@com_github_stretchr_testify//require",
-        "@com_github_tencentcloud_tencentcloud_sdk_go_tencentcloud_common//:go_default_library",
+        "@com_github_tencentcloud_tencentcloud_sdk_go_tencentcloud_common//:common",
         "@org_uber_go_mock//gomock",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zaptest/observer",
