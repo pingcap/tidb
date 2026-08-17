@@ -76,6 +76,7 @@ pub mod cluster_stats_write;
 pub mod cluster_sysvar_load;
 pub mod cluster_sysvar_write;
 pub mod cluster_table_storage;
+pub mod column_mapping;
 pub mod compiler;
 pub mod concurrent_entry_map;
 pub mod config_int_json;
