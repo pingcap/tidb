@@ -120,10 +120,19 @@ func TestCompileBooleanQueryStandard(t *testing.T) {
 			expect: false,
 		},
 		{
-			name:   "plain standard term that analyzes to multiple tokens is no-match",
+			// `-` is the prohibited operator, so this is "hello, not world"
+			// rather than one term the analyzer splits. For the latter see
+			// TestCompileBooleanQueryMultiTokenTerm, which uses `foo.bar`.
+			name:   "prohibited term excludes a document that contains it",
 			query:  "hello-world",
 			cols:   []ColumnInput{{Text: "hello world"}},
 			expect: false,
+		},
+		{
+			name:   "prohibited term admits a document without it",
+			query:  "hello-world",
+			cols:   []ColumnInput{{Text: "hello"}},
+			expect: true,
 		},
 		{
 			name:   "phrase matches within one column",
