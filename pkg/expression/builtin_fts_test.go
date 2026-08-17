@@ -223,16 +223,33 @@ func TestFTSMysqlMatchAgainstLocalEvalCloneMetadata(t *testing.T) {
 	require.Equal(t, float64(1), v)
 }
 
-// TestFTSMysqlMatchAgainstLocalEvalMatchNothing checks the short-circuit taken
-// when the planner already proved the query matches no document.
-func TestFTSMysqlMatchAgainstLocalEvalMatchNothing(t *testing.T) {
+// TestFTSMysqlMatchAgainstLocalEvalIgnoresStaleMatchNothing checks that the
+// plan-time MatchNothing flag does not override the query actually in hand. The
+// flag describes the search string seen when the plan was built, and a plan can
+// be re-executed with a different one, so evaluation reads match-nothing from
+// the compiled query instead.
+func TestFTSMysqlMatchAgainstLocalEvalIgnoresStaleMatchNothing(t *testing.T) {
 	ctx := mock.NewContext()
 	sf := newFTSMatchAgainstForTest(t, ctx, "+tidb", 1, ast.FulltextSearchModifierBooleanMode)
 	info := localEvalInfoForTest()
-	info.MatchNothing = true
+	info.MatchNothing = true // stale: "+tidb" does match documents
 	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, info))
 
 	v, isNull, err := sf.EvalReal(ctx, stringRow("TiDB storage"))
+	require.NoError(t, err)
+	require.False(t, isNull)
+	require.Equal(t, float64(1), v, "a stale flag must not suppress a real match")
+}
+
+// TestFTSMysqlMatchAgainstLocalEvalMatchNothingQuery covers a query that really
+// matches nothing: every required term is removed by the analyzer, so no
+// document can satisfy it.
+func TestFTSMysqlMatchAgainstLocalEvalMatchNothingQuery(t *testing.T) {
+	ctx := mock.NewContext()
+	sf := newFTSMatchAgainstForTest(t, ctx, "+ab", 1, ast.FulltextSearchModifierBooleanMode)
+	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, localEvalInfoForTest()))
+
+	v, isNull, err := sf.EvalReal(ctx, stringRow("ab abc abcd"))
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, float64(0), v)
