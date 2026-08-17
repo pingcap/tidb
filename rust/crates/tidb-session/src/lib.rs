@@ -583,6 +583,7 @@ mod analyze_arm;
 pub mod binding;
 mod binding_arm;
 pub mod binding_cache;
+pub mod binding_plan_evolution;
 pub mod binding_utils;
 mod bootstrap;
 mod classify;
