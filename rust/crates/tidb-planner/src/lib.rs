@@ -144,6 +144,7 @@ pub mod physical_union_scan;
 pub mod physical_window;
 pub mod plan;
 pub mod plan_base;
+pub mod plan_builder;
 pub mod plan_cache_constants;
 pub mod plan_context;
 pub mod plan_cost_ver2;
