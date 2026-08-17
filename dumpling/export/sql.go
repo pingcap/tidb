@@ -1062,9 +1062,13 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead b
 }
 
 type columnProjection struct {
-	sourceTypes   []*sql.ColumnType
-	selectedTypes []*sql.ColumnType
-	selectField   string
+	sourceTypes     []*sql.ColumnType
+	selectedTypes   []*sql.ColumnType
+	selectedColumns []string
+	selectField     string
+	schemaSQL       string
+	schemaColumns   []string
+	projected       bool
 }
 
 type tableName struct {

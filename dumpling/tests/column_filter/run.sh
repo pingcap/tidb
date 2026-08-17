@@ -12,8 +12,8 @@ export DUMPLING_TEST_DATABASE=""
 
 run_sql "drop database if exists \`$DB_NAME\`;"
 run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
-run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\` (id int primary key, name varchar(32), secret varchar(32));"
-run_sql "insert into \`$DB_NAME\`.\`$TABLE_NAME\` values (1, 'alice', 'hidden1'), (2, 'bob', 'hidden2');"
+run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\` (id int primary key, name varchar(32), secret varchar(32), generated_name varchar(32) generated always as (name) stored, generated_secret varchar(32) generated always as (secret) stored, key idx_generated_name (generated_name), key idx_secret (secret));"
+run_sql "insert into \`$DB_NAME\`.\`$TABLE_NAME\` (id, name, secret) values (1, 'alice', 'hidden1'), (2, 'bob', 'hidden2');"
 
 export DUMPLING_TEST_DATABASE="$DB_NAME"
 
@@ -28,6 +28,24 @@ check_csv_output() {
 		echo "column filter output contains filtered column data"
 		exit 1
 	fi
+}
+
+check_schema_output() {
+	schema_file="${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}-schema.sql"
+	file_should_exist "$schema_file"
+
+	for expected in '`id`' '`name`' '`generated_name`' '`idx_generated_name`'; do
+		if ! grep -Fq "$expected" "$schema_file"; then
+			echo "projected schema does not contain $expected"
+			exit 1
+		fi
+	done
+	for removed in '`secret`' '`generated_secret`' '`idx_secret`'; do
+		if grep -Fq "$removed" "$schema_file"; then
+			echo "projected schema contains removed object $removed"
+			exit 1
+		fi
+	done
 }
 
 echo "Test inline --column-filter."
@@ -46,3 +64,9 @@ columns = ["id", "name"]
 EOF
 run_dumpling --filetype csv -m --column-filter-file "$filter_file"
 check_csv_output
+
+echo "Test projected schema output."
+rm -rf "$DUMPLING_OUTPUT_DIR"
+run_dumpling --filetype csv --column-filter-file "$filter_file"
+check_csv_output
+check_schema_output
