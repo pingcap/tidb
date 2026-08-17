@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! Golden `estRows` fixtures for `tidb_planner::cardinality::derive_stats`.
+//! Golden `estRows` fixtures for the driver's `legacy_stats` model
+//! (formerly `tidb_planner::cardinality::derive_stats`).
 //!
 //! Every number asserted here was read off a real TiDB `EXPLAIN`, on the exact
 //! schema of `tests/integrationtest/t/planner/core/join_reorder_through_projection.test`:
@@ -28,7 +29,7 @@
 //! `EXPLAIN`s use `format = 'plan_tree'`, which prints no `estRows` column at
 //! all. The oracle is a default-format `EXPLAIN` of the same statements.
 
-use tidb_planner::cardinality::derive_stats::{
+use tidb_executor::driver::legacy_stats::{
     calc_join_cum_cost, derive_stats, ColumnId, DeriveStatsContext, DerivedNode, LogicalNode,
     ProjectionExpr,
 };
@@ -90,7 +91,7 @@ fn join(
         right: Box::new(right),
         left_keys: left_keys.to_vec(),
         right_keys: right_keys.to_vec(),
-        kind: tidb_planner::cardinality::derive_stats::JoinKind::Inner,
+        kind: tidb_executor::driver::legacy_stats::JoinKind::Inner,
     }
 }
 
@@ -196,7 +197,7 @@ fn a_composite_group_ndv_bounds_an_outer_join_by_its_preserved_side() {
         right: Box::new(right),
         left_keys: vec![T1_A, T1_B, T1_C],
         right_keys: vec![T2_A, T2_B, T2_C],
-        kind: tidb_planner::cardinality::derive_stats::JoinKind::LeftOuter,
+        kind: tidb_executor::driver::legacy_stats::JoinKind::LeftOuter,
     };
 
     let derived = derive_stats(&plan, &ctx());
@@ -744,4 +745,14 @@ fn an_asymmetric_group_does_not_tie() {
 fn the_derived_table_cum_cost_sums_its_whole_subtree() {
     // 12500 (projection) + 12500 (join) + 10000 (t2) + 10000 (t3).
     assert_eq!(derive_stats(&dt(1.0), &ctx()).cum_cost(), 45000.0);
+}
+
+#[test]
+fn selection_factor_matches_the_planner_constant() {
+    // The legacy model's default must track the package-owned constant, not
+    // a second literal that can drift independently.
+    assert_eq!(
+        tidb_executor::driver::legacy_stats::DeriveStatsContext::default().selection_factor,
+        tidb_planner::cost_factors::SELECTION_FACTOR
+    );
 }

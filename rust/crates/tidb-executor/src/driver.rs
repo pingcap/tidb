@@ -305,6 +305,7 @@ pub(crate) mod join_reorder;
 pub(crate) mod join_search;
 pub(crate) mod leaf_access;
 pub(crate) mod leaf_demand;
+pub mod legacy_stats;
 pub(crate) mod merge_decision;
 mod multi_dml;
 mod only_full_group_by;

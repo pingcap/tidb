@@ -33,48 +33,27 @@
 //! complete; the operator set does not, and every operator not yet ported is
 //! an explicit `Todo` variant naming its Go type rather than a default arm.
 //!
-//! # One tree is the truth; the two reduced views are bridged or dying
+//! # One tree is the truth
 //!
 //! [`logical::LogicalPlan`] is the SINGLE SOURCE OF TRUTH (user-ratified),
 //! which is also Go's own shape: one `base.LogicalPlan` interface carries
-//! `RecursiveDeriveStats` and `findBestTask` alike. Three logical shapes
-//! still exist in this crate, but they are no longer three independent
-//! representations:
+//! `RecursiveDeriveStats` and `findBestTask` alike.
 //!
-//! 1. [`logical::LogicalPlan`] — the closed enum above, built by
-//!    [`plan_builder`], rewritten by [`logical::rule`], and now the tree the
-//!    passes run over: `LogicalPlan::recursive_derive_stats` derives and
-//!    writes statistics over it directly.
-//! 2. `find_best_task::LogicalNode` — the join enumeration's reduced view,
-//!    now PRODUCED FROM (1) by `find_best_task::project_join_spine`. Its
-//!    leaves still take caller-supplied access-path alternatives, because
-//!    access-path lists build empty — a named residue, not a hidden one.
-//! 3. `cardinality::derive_stats::LogicalNode` — the legacy reduced input to
-//!    the old statistics pass, kept ONLY for its out-of-crate producer (see
-//!    below). New code must use (1) and `recursive_derive_stats`; this type
-//!    is scheduled to die with the driver that feeds it.
+//! * Statistics derive on the tree directly:
+//!   `LogicalPlan::recursive_derive_stats`, over the per-operator
+//!   `DeriveStats` bodies.
+//! * The join enumeration's reduced view (`find_best_task::LogicalNode`) is
+//!   PRODUCED FROM the tree by `find_best_task::project_join_spine`; its
+//!   leaves take caller-supplied access-path alternatives until access-path
+//!   enumeration is real — a named residue.
+//! * The third representation this crate once held — the DP join-reorder
+//!   driver's private catalog model — now lives WITH that driver
+//!   (`tidb-executor`'s `driver::legacy_stats`) and dies with it. This crate
+//!   keeps only the shared per-rule arithmetic in [`cardinality`], cited to
+//!   the same Go bodies both passes were read from.
 //!
-//! ## (3) is NOT a crate-local invention: it has an out-of-crate producer
-//!
-//! Retargeting (3) onto (1) was attempted and STOPPED, because
-//! `cardinality::derive_stats::LogicalNode` is not exercised only by tests
-//! that build it by hand. `tidb-executor`'s DP join-reorder driver
-//! (`crates/tidb-executor/src/driver/join_reorder.rs`) imports
-//! `derive_stats`, `LogicalNode`, `ProjectionExpr`, `JoinKind`, `ColumnId`
-//! and `DISTINCT_FACTOR` from this module and names `LogicalNode` at 29
-//! points, 14 of them CONSTRUCTING one out of its own `Rel`/`RowSource`
-//! catalog model rather than out of a plan tree. It never
-//! holds a [`logical::LogicalPlan`] and has no `expression::Expression`
-//! values to build one from, so it cannot be pointed at (1) by a local edit.
-//!
-//! The `StatsInfo`/`ColumnId` unification is DONE: one profile type
-//! ([`stats_info::StatsInfo`], keyed `i64`, now carrying group NDVs and
-//! `scale`), one column-id spelling, and the driver reads through
-//! accessors. What remains before (3) can be deleted is only the retarget
-//! of `join_reorder.rs`'s MODEL — its 14 `LogicalNode` construction sites
-//! build from a catalog, not from a plan tree — or moving the type down
-//! into that driver. Until then, do not add new producers of (2) or (3):
-//! project from (1), or derive on (1).
+//! Do not add reduced plan representations here: project from the tree, or
+//! derive on it.
 //!
 //! # Closed enums, not `Box<dyn LogicalPlan>`
 //!

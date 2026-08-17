@@ -239,13 +239,13 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
+use crate::driver::legacy_stats::{
+    derive_stats, DeriveStatsContext, JoinKind, LogicalNode, ProjectionExpr,
+};
 use tidb_ast::{BinaryOp, Expr, Join, JoinNode, JoinType, QueryStmt, SelectField};
 use tidb_datatype::FieldType;
 use tidb_expr::Columns as _;
-use tidb_planner::cardinality::derive_stats::{
-    derive_stats, ColumnId, DeriveStatsContext, JoinKind, LogicalNode, ProjectionExpr,
-    DISTINCT_FACTOR,
-};
+use tidb_planner::cardinality::derive_stats::{ColumnId, DISTINCT_FACTOR};
 
 use crate::driver::catalog::{Catalog, TableEntry};
 use crate::kv_table::KvTable;

@@ -14,7 +14,6 @@
 
 //! Source-backed contract for `pkg/planner/core/cost`.
 
-use tidb_planner::cardinality::derive_stats::DeriveStatsContext;
 use tidb_planner::cost_factors::{
     DEFAULT_AGGREGATION_FACTOR, DISTINCT_FACTOR, SELECTION_FACTOR, SMALL_SCAN_THRESHOLD,
     TOLERANCE_FACTOR, aggregation_factor, aggregation_factor_or_default,
@@ -28,12 +27,11 @@ fn planner_cost_constants_match_the_complete_go_package() {
     assert_eq!(SMALL_SCAN_THRESHOLD, 10_000.0);
     assert_eq!(DEFAULT_AGGREGATION_FACTOR, 1.5);
 
-    // The live logical-stats consumer must use the package-owned constant,
-    // not a second literal that can drift independently.
-    assert_eq!(
-        DeriveStatsContext::default().selection_factor,
-        SELECTION_FACTOR
-    );
+    // The live logical-stats consumer reads the package-owned constant
+    // directly (`logical/rewrite.rs`, `logical/selection.rs`); the legacy
+    // DP model that used to re-carry it moved to `tidb-executor`'s
+    // `driver::legacy_stats`, whose own default still equals this constant
+    // and is asserted there.
 }
 
 #[test]
