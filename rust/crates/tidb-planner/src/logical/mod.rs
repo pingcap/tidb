@@ -34,20 +34,36 @@
 //! * [`selection::LogicalSelection`] — `logical_selection.go`
 //! * [`projection::LogicalProjection`] — `logical_projection.go`
 //! * [`join::LogicalJoin`] — `logical_join.go`
+//! * [`apply::LogicalApply`] — `logical_apply.go`, BUILT ON the above rather
+//!   than beside it
 //! * [`aggregation::LogicalAggregation`] — `logical_aggregation.go`
 //! * [`data_source::DataSource`] — `logical_datasource.go`
 //! * [`schema_producer`] — `logical_schema_producer.go`, whose Go struct
 //!   becomes behaviour here rather than a third base struct
+//! * [`sort::LogicalSort`] — `logical_sort.go`, which also carries the
+//!   `ByItems` pruning of `logical_plans_misc.go`
+//! * [`limit::LogicalLimit`] — `logical_limit.go`
+//! * [`topn::LogicalTopN`] — `logical_top_n.go`
+//! * [`union_all::LogicalUnionAll`] and
+//!   [`union_all::LogicalPartitionUnionAll`] — `logical_union_all.go` and
+//!   `logical_partition_union_all.go`
+//! * [`max_one_row::LogicalMaxOneRow`] — `logical_max_one_row.go`
+//! * [`lock::LogicalLock`] — `logical_lock.go`
+//! * [`sequence::LogicalSequence`] — `logical_sequence.go`
+//! * [`union_scan::LogicalUnionScan`] — `logical_union_scan.go`
+//! * [`table_scan::LogicalTableScan`] — `logical_table_scan.go`
+//! * [`index_scan::LogicalIndexScan`] — `logical_index_scan.go`
+//! * [`tikv_single_gather::TiKVSingleGather`] —
+//!   `logical_tikv_single_gather.go`
+//! * [`cte::LogicalCTE`] and [`cte::LogicalCTETable`] — `logical_cte.go` and
+//!   `logical_cte_table.go`
+//! * [`window::LogicalWindow`] — `logical_window.go`, which MERGES the crate's
+//!   former `window_frame` identity leaf
 //!
-//! Still SKELETAL, carrying only their state: [`LogicalSort`],
-//! [`LogicalLimit`], [`LogicalTableDual`].
+//! Still SKELETAL, carrying only their state: [`LogicalTableDual`].
 //!
-//! Still [`TodoLogicalOp`], i.e. not modelled at all: `LogicalApply`,
-//! `LogicalCTE`, `LogicalCTETable`, `LogicalExpand`, `LogicalIndexScan`,
-//! `LogicalLock`, `LogicalMaxOneRow`, `LogicalMemTable`,
-//! `LogicalPartitionUnionAll`, `LogicalSequence`, `LogicalShow`,
-//! `LogicalShowDDLJobs`, `LogicalTableScan`, `LogicalTiKVSingleGather`,
-//! `LogicalTopN`, `LogicalUnionAll`, `LogicalUnionScan`, `LogicalWindow`.
+//! Still [`TodoLogicalOp`], i.e. not modelled at all:
+//! `LogicalExpand`, `LogicalMemTable`, `LogicalShow`, `LogicalShowDDLJobs`.
 //!
 //! # Why a closed enum and not `Box<dyn LogicalPlan>`
 //!
@@ -287,37 +303,45 @@ impl BaseLogicalPlan {
 }
 
 pub mod aggregation;
+pub mod apply;
+pub mod cte;
 pub mod data_source;
+pub mod index_scan;
 pub mod join;
+pub mod limit;
+pub mod lock;
+pub mod max_one_row;
 pub mod projection;
 pub mod schema_producer;
 pub mod selection;
+pub mod sequence;
+pub mod sort;
+pub mod table_scan;
+pub mod tikv_single_gather;
+pub mod topn;
+pub mod union_all;
+pub mod union_scan;
+pub mod window;
 
 pub use aggregation::LogicalAggregation;
+pub use apply::LogicalApply;
+pub use cte::{LogicalCTE, LogicalCTETable};
 pub use data_source::DataSource;
+pub use index_scan::LogicalIndexScan;
 pub use join::LogicalJoin;
+pub use limit::LogicalLimit;
+pub use lock::LogicalLock;
+pub use max_one_row::LogicalMaxOneRow;
 pub use projection::LogicalProjection;
 pub use selection::LogicalSelection;
-
-/// Go `logicalop.LogicalSort`.
-#[derive(Clone, Debug, Default)]
-pub struct LogicalSort {
-    /// The shared logical base.
-    pub base: BaseLogicalPlan,
-    /// Go `ByItems`, as `(expression, desc)` pairs.
-    pub by_items: Vec<(Expression, bool)>,
-}
-
-/// Go `logicalop.LogicalLimit`.
-#[derive(Clone, Debug, Default)]
-pub struct LogicalLimit {
-    /// The shared logical base.
-    pub base: BaseLogicalPlan,
-    /// Go `Offset`.
-    pub offset: u64,
-    /// Go `Count`.
-    pub count: u64,
-}
+pub use sequence::LogicalSequence;
+pub use sort::LogicalSort;
+pub use table_scan::LogicalTableScan;
+pub use tikv_single_gather::TiKVSingleGather;
+pub use topn::LogicalTopN;
+pub use union_all::{LogicalPartitionUnionAll, LogicalUnionAll};
+pub use union_scan::LogicalUnionScan;
+pub use window::LogicalWindow;
 
 /// Go `logicalop.LogicalTableDual`.
 #[derive(Clone, Debug, Default)]
@@ -363,12 +387,40 @@ pub enum LogicalPlan {
     Projection(LogicalProjection),
     /// Go `logicalop.LogicalJoin`.
     Join(LogicalJoin),
+    /// Go `logicalop.LogicalApply`, which EMBEDS the above.
+    Apply(LogicalApply),
     /// Go `logicalop.LogicalAggregation`.
     Aggregation(LogicalAggregation),
     /// Go `logicalop.LogicalSort`.
     Sort(LogicalSort),
     /// Go `logicalop.LogicalLimit`.
     Limit(LogicalLimit),
+    /// Go `logicalop.LogicalTopN`.
+    TopN(LogicalTopN),
+    /// Go `logicalop.LogicalUnionAll`.
+    UnionAll(LogicalUnionAll),
+    /// Go `logicalop.LogicalPartitionUnionAll`, which EMBEDS the above.
+    PartitionUnionAll(LogicalPartitionUnionAll),
+    /// Go `logicalop.LogicalWindow`.
+    Window(LogicalWindow),
+    /// Go `logicalop.LogicalCTE`.
+    CTE(LogicalCTE),
+    /// Go `logicalop.LogicalCTETable`.
+    CTETable(LogicalCTETable),
+    /// Go `logicalop.LogicalMaxOneRow`.
+    MaxOneRow(LogicalMaxOneRow),
+    /// Go `logicalop.LogicalLock`.
+    Lock(LogicalLock),
+    /// Go `logicalop.LogicalSequence`.
+    Sequence(LogicalSequence),
+    /// Go `logicalop.LogicalUnionScan`.
+    UnionScan(LogicalUnionScan),
+    /// Go `logicalop.TiKVSingleGather`.
+    TiKVSingleGather(TiKVSingleGather),
+    /// Go `logicalop.LogicalTableScan`.
+    TableScan(LogicalTableScan),
+    /// Go `logicalop.LogicalIndexScan`.
+    IndexScan(LogicalIndexScan),
     /// Go `logicalop.DataSource`.
     DataSource(DataSource),
     /// Go `logicalop.LogicalTableDual`.
@@ -385,9 +437,23 @@ impl LogicalPlan {
             Self::Selection(op) => &op.base,
             Self::Projection(op) => &op.base,
             Self::Join(op) => &op.base,
+            Self::Apply(op) => &op.join.base,
             Self::Aggregation(op) => &op.base,
             Self::Sort(op) => &op.base,
             Self::Limit(op) => &op.base,
+            Self::TopN(op) => &op.base,
+            Self::UnionAll(op) => &op.base,
+            Self::PartitionUnionAll(op) => &op.union_all.base,
+            Self::Window(op) => &op.base,
+            Self::CTE(op) => &op.base,
+            Self::CTETable(op) => &op.base,
+            Self::MaxOneRow(op) => &op.base,
+            Self::Lock(op) => &op.base,
+            Self::Sequence(op) => &op.base,
+            Self::UnionScan(op) => &op.base,
+            Self::TiKVSingleGather(op) => &op.base,
+            Self::TableScan(op) => &op.base,
+            Self::IndexScan(op) => &op.base,
             Self::DataSource(op) => &op.base,
             Self::TableDual(op) => &op.base,
             Self::Todo(op) => &op.base,
@@ -400,9 +466,23 @@ impl LogicalPlan {
             Self::Selection(op) => &mut op.base,
             Self::Projection(op) => &mut op.base,
             Self::Join(op) => &mut op.base,
+            Self::Apply(op) => &mut op.join.base,
             Self::Aggregation(op) => &mut op.base,
             Self::Sort(op) => &mut op.base,
             Self::Limit(op) => &mut op.base,
+            Self::TopN(op) => &mut op.base,
+            Self::UnionAll(op) => &mut op.base,
+            Self::PartitionUnionAll(op) => &mut op.union_all.base,
+            Self::Window(op) => &mut op.base,
+            Self::CTE(op) => &mut op.base,
+            Self::CTETable(op) => &mut op.base,
+            Self::MaxOneRow(op) => &mut op.base,
+            Self::Lock(op) => &mut op.base,
+            Self::Sequence(op) => &mut op.base,
+            Self::UnionScan(op) => &mut op.base,
+            Self::TiKVSingleGather(op) => &mut op.base,
+            Self::TableScan(op) => &mut op.base,
+            Self::IndexScan(op) => &mut op.base,
             Self::DataSource(op) => &mut op.base,
             Self::TableDual(op) => &mut op.base,
             Self::Todo(op) => &mut op.base,
@@ -573,8 +653,28 @@ impl LogicalPlan {
             Self::Aggregation(op) => op.build_key_info(self_schema, child_schema),
             // `DataSource::build_key_info` needs the index definitions, which
             // the catalogue owns; call it directly with them.
-            Self::DataSource(_) => {}
-            Self::Sort(_) | Self::Limit(_) | Self::TableDual(_) | Self::Todo(_) => {
+            // `LogicalTableScan` delegates to the source and `LogicalIndexScan`
+            // needs `ruleutil.CheckIndexCanBeKey`; both take the index
+            // definitions the catalogue owns, so call them directly with them.
+            Self::DataSource(_) | Self::TableScan(_) | Self::IndexScan(_) => {}
+            Self::Limit(op) => op.build_key_info(self_schema, child_schema),
+            Self::TopN(op) => op.build_key_info(self_schema, child_schema),
+            Self::TiKVSingleGather(_) => {
+                TiKVSingleGather::build_key_info(self_schema, child_schema);
+            }
+            Self::Sort(_)
+            | Self::Apply(_)
+            | Self::UnionAll(_)
+            | Self::PartitionUnionAll(_)
+            | Self::Window(_)
+            | Self::CTE(_)
+            | Self::CTETable(_)
+            | Self::MaxOneRow(_)
+            | Self::Lock(_)
+            | Self::Sequence(_)
+            | Self::UnionScan(_)
+            | Self::TableDual(_)
+            | Self::Todo(_) => {
                 schema_producer::propagate_child_keys(self_schema, child_schema);
             }
         }
@@ -628,6 +728,20 @@ impl LogicalPlan {
             | Self::DataSource(_)
             | Self::Sort(_)
             | Self::Limit(_)
+            | Self::Apply(_)
+            | Self::TopN(_)
+            | Self::UnionAll(_)
+            | Self::PartitionUnionAll(_)
+            | Self::Window(_)
+            | Self::CTE(_)
+            | Self::CTETable(_)
+            | Self::MaxOneRow(_)
+            | Self::Lock(_)
+            | Self::Sequence(_)
+            | Self::UnionScan(_)
+            | Self::TiKVSingleGather(_)
+            | Self::TableScan(_)
+            | Self::IndexScan(_)
             | Self::TableDual(_)
             | Self::Todo(_) => Vec::new(),
         }
@@ -707,6 +821,20 @@ impl LogicalPlan {
             | Self::DataSource(_)
             | Self::Sort(_)
             | Self::Limit(_)
+            | Self::Apply(_)
+            | Self::TopN(_)
+            | Self::UnionAll(_)
+            | Self::PartitionUnionAll(_)
+            | Self::Window(_)
+            | Self::CTE(_)
+            | Self::CTETable(_)
+            | Self::MaxOneRow(_)
+            | Self::Lock(_)
+            | Self::Sequence(_)
+            | Self::UnionScan(_)
+            | Self::TiKVSingleGather(_)
+            | Self::TableScan(_)
+            | Self::IndexScan(_)
             | Self::TableDual(_)
             | Self::Todo(_) => Vec::new(),
         }
@@ -747,7 +875,35 @@ impl LogicalPlan {
             Self::Join(op) => op.extract_correlated_cols(),
             Self::Aggregation(op) => op.extract_correlated_cols(),
             Self::DataSource(op) => op.extract_correlated_cols(),
-            Self::Sort(_) | Self::Limit(_) | Self::TableDual(_) | Self::Todo(_) => Vec::new(),
+            Self::Sort(op) => op.extract_correlated_cols(),
+            Self::TopN(op) => op.extract_correlated_cols(),
+            Self::Window(op) => op.extract_correlated_cols(),
+            Self::CTE(op) => op.extract_correlated_cols(),
+            // Go `LogicalApply.ExtractCorrelatedCols` (`logical_apply.go:250`)
+            // subtracts the columns the OUTER child already produces, which the
+            // enum can supply and the operator alone cannot.
+            Self::Apply(op) => op
+                .base()
+                .children()
+                .first()
+                .and_then(Self::schema)
+                .map_or_else(
+                    || op.join.extract_correlated_cols(),
+                    |outer| op.extract_correlated_cols(outer),
+                ),
+            Self::Limit(_)
+            | Self::CTETable(_)
+            | Self::MaxOneRow(_)
+            | Self::Lock(_)
+            | Self::Sequence(_)
+            | Self::UnionScan(_)
+            | Self::TiKVSingleGather(_)
+            | Self::TableScan(_)
+            | Self::IndexScan(_)
+            | Self::UnionAll(_)
+            | Self::PartitionUnionAll(_)
+            | Self::TableDual(_)
+            | Self::Todo(_) => Vec::new(),
         }
     }
 
@@ -763,12 +919,26 @@ impl LogicalPlan {
     pub fn explain_info(&self) -> String {
         match self {
             Self::Join(op) => op.explain_info(),
+            Self::UnionScan(op) => op.explain_info(),
+            Self::TiKVSingleGather(op) => op.explain_info(),
+            Self::TableScan(op) => op.explain_info(),
+            Self::IndexScan(op) => op.explain_info(),
+            Self::Apply(op) => op.explain_info(),
             Self::DataSource(op) => op.explain_info(),
+            Self::Sort(op) => op.explain_info(),
+            Self::Limit(op) => op.explain_info(),
+            Self::TopN(op) => op.explain_info(),
             Self::Selection(_)
             | Self::Projection(_)
             | Self::Aggregation(_)
-            | Self::Sort(_)
-            | Self::Limit(_)
+            | Self::UnionAll(_)
+            | Self::PartitionUnionAll(_)
+            | Self::Window(_)
+            | Self::CTE(_)
+            | Self::CTETable(_)
+            | Self::MaxOneRow(_)
+            | Self::Lock(_)
+            | Self::Sequence(_)
             | Self::TableDual(_)
             | Self::Todo(_) => BaseLogicalPlan::explain_info().to_owned(),
         }
@@ -845,7 +1015,9 @@ impl LogicalPlan {
     /// answer; `None` is that refusal without the panic.
     #[must_use]
     pub fn get_join_child_stats_and_schema(&self) -> Option<JoinChildStatsAndSchema<'_>> {
-        if !matches!(self, Self::Join(_)) {
+        // Go's override lives on `LogicalJoin` (`logical_join.go:775`), and
+        // `LogicalApply` PROMOTES it through the embedding.
+        if !matches!(self, Self::Join(_) | Self::Apply(_)) {
             return None;
         }
         let children = self.children();
@@ -887,16 +1059,23 @@ impl LogicalPlan {
             Self::Selection(op) => Self::Selection(op.clone_shallow()),
             Self::Projection(op) => Self::Projection(op.clone_shallow()),
             Self::Join(op) => Self::Join(op.clone_shallow()),
+            Self::Apply(op) => Self::Apply(op.clone_shallow()),
             Self::Aggregation(op) => Self::Aggregation(op.clone_shallow()),
-            Self::Sort(op) => Self::Sort(LogicalSort {
-                base: op.base.shell(),
-                by_items: op.by_items.clone(),
-            }),
-            Self::Limit(op) => Self::Limit(LogicalLimit {
-                base: op.base.shell(),
-                offset: op.offset,
-                count: op.count,
-            }),
+            Self::Sort(op) => Self::Sort(op.clone_shallow()),
+            Self::Limit(op) => Self::Limit(op.clone_shallow()),
+            Self::TopN(op) => Self::TopN(op.clone_shallow()),
+            Self::UnionAll(op) => Self::UnionAll(op.clone_shallow()),
+            Self::PartitionUnionAll(op) => Self::PartitionUnionAll(op.clone_shallow()),
+            Self::Window(op) => Self::Window(op.clone_shallow()),
+            Self::MaxOneRow(op) => Self::MaxOneRow(op.clone_shallow()),
+            Self::Lock(op) => Self::Lock(op.clone_shallow()),
+            Self::Sequence(op) => Self::Sequence(op.clone_shallow()),
+            Self::UnionScan(op) => Self::UnionScan(op.clone_shallow()),
+            Self::TiKVSingleGather(op) => Self::TiKVSingleGather(op.clone_shallow()),
+            Self::TableScan(op) => Self::TableScan(op.clone_shallow()),
+            Self::IndexScan(op) => Self::IndexScan(op.clone_shallow()),
+            Self::CTE(op) => Self::CTE(op.clone_shallow()),
+            Self::CTETable(op) => Self::CTETable(op.clone_shallow()),
             Self::DataSource(op) => Self::DataSource(op.clone_shallow()),
             Self::TableDual(op) => Self::TableDual(LogicalTableDual {
                 base: op.base.shell(),

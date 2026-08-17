@@ -174,7 +174,6 @@ pub mod telemetry;
 pub mod tikv_scan_spec;
 pub mod topn_push_down;
 pub mod typed_condition;
-pub mod window_frame;
 
 /// Typed Rust counterpart of Go `planner/util.SliceRecursiveFlattenIter`.
 ///

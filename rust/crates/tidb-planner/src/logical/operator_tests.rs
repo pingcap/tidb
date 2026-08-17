@@ -20,7 +20,7 @@
 //! no session for. Each test therefore states the CONTRACT of one ported Go
 //! body directly: what it classifies, what it keeps, what it drops.
 
-use tidb_datatype::{FieldType, FieldTypeCode};
+use tidb_datatype::{EvalType, FieldType, FieldTypeCode};
 use tidb_expr::aggregation::{AggFuncDesc, AggFunctionMode, BaseFuncDesc, ByItems};
 use tidb_expr::column::Column;
 use tidb_expr::constant::Constant;
@@ -32,13 +32,38 @@ use super::aggregation::{
     agg_func_result_matches_arg_for_non_empty_group, max_sort_prefix_len, LogicalAggregation,
     AGG_FUNC_FIRST_ROW, AGG_FUNC_MAX,
 };
+use super::apply::{find_child_full_schema, LogicalApply};
+use super::cte::{
+    extract_correlated_cols_for_plan, get_has_tiflash, CteClass, CtePredicatePushDown, LogicalCTE,
+    LogicalCTETable,
+};
 use super::data_source::{DataSource, DataSourceColumn};
+use super::index_scan::{matches_indices_prop, LogicalIndexScan};
 use super::join::{is_eq_cond_from_in, LogicalJoin, OnConditionSplit};
+use super::limit::LogicalLimit;
+use super::lock::{
+    is_select_for_share_lock_type, is_select_for_update_lock_type, is_supported_select_lock_type,
+    LogicalLock, SelectLockType,
+};
+use super::max_one_row::LogicalMaxOneRow;
 use super::projection::LogicalProjection;
 use super::schema_producer;
 use super::selection::{is_valid_compare_constant_predicate, LogicalSelection, SELECTION_FACTOR};
+use super::sequence::LogicalSequence;
+use super::sort::{
+    get_possible_property_from_by_items, prune_by_items, LogicalSort, SortTopNPushDown,
+};
+use super::table_scan::LogicalTableScan;
+use super::tikv_single_gather::TiKVSingleGather;
+use super::topn::LogicalTopN;
+use super::union_all::{LogicalPartitionUnionAll, LogicalUnionAll};
+use super::union_scan::{contains_virtual_column, LogicalUnionScan, EXTRA_PHYS_TBL_ID};
+use super::window::{
+    BoundType, FrameBound, FrameType, LogicalWindow, RangeCmpDataType, WindowFrame, WindowSortItem,
+};
 use super::{BaseLogicalPlan, LogicalPlan};
 use crate::find_best_task::LogicalJoinType;
+use crate::plan_base::PossiblePropertiesInfo;
 use crate::stats_info::StatsInfo;
 
 fn column(unique_id: i64) -> Column {
@@ -1191,4 +1216,1901 @@ fn enum_build_key_info_inherits_max_one_row_from_one_child() {
     let mut output = schema(&[100]);
     plan.build_key_info(&mut output, &[schema(&[1])]);
     assert!(plan.max_one_row());
+}
+
+// ***** LogicalSort / LogicalLimit / LogicalTopN *****
+
+fn by(expr: Expression, desc: bool) -> ByItems {
+    ByItems::new(expr, desc)
+}
+
+/// Go `getPossiblePropertyFromByItems` (`logical_sort.go:169`): the LEADING
+/// run of column items, truncated at the first expression.
+#[test]
+fn possible_property_stops_at_the_first_non_column_item() {
+    let items = vec![
+        by(col_expr(1), false),
+        by(col_expr(2), true),
+        by(
+            Expression::ScalarFunction(call("plus", vec![col_expr(3)])),
+            false,
+        ),
+        by(col_expr(4), false),
+    ];
+    let cols = get_possible_property_from_by_items(&items);
+    assert_eq!(
+        cols.iter().map(|c| c.unique_id).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+    // No leading column at all yields no offered order.
+    assert!(get_possible_property_from_by_items(&items[2..]).is_empty());
+}
+
+/// Go `pruneByItems` (`logical_plans_misc.go:139`): duplicates by `HashCode`
+/// and runtime constants go, real column items stay and widen the child's set.
+#[test]
+fn prune_by_items_drops_duplicates_and_constants() {
+    let items = vec![
+        by(col_expr(1), false),
+        // A duplicate of the first item: same HashCode, pruned.
+        by(col_expr(1), true),
+        // No column and runtime-constant: pruned.
+        by(one(), false),
+        by(col_expr(2), false),
+    ];
+    let (kept, used) = prune_by_items(&items);
+    assert_eq!(kept.len(), 2);
+    assert_eq!(kept[0].expr.as_column().unwrap().unique_id, 1);
+    assert!(!kept[0].desc);
+    assert_eq!(kept[1].expr.as_column().unwrap().unique_id, 2);
+    assert_eq!(
+        used.iter().map(|c| c.unique_id).collect::<Vec<_>>(),
+        vec![1, 2]
+    );
+}
+
+/// Go `LogicalSort.PruneColumns` (`logical_sort.go:67`): the parent's set is
+/// WIDENED by the surviving items, never replaced.
+#[test]
+fn sort_prune_columns_appends_by_item_columns_to_the_parent_set() {
+    let mut sort = LogicalSort::new(
+        BaseLogicalPlan::with_id(1, LogicalSort::TYPE, 0),
+        vec![by(col_expr(5), false), by(one(), true)],
+    );
+    let used = sort.prune_columns_local(&[column(9)]);
+    assert_eq!(
+        used.iter().map(|c| c.unique_id).collect::<Vec<_>>(),
+        vec![9, 5]
+    );
+    assert_eq!(sort.by_items.len(), 1);
+}
+
+/// Go `LogicalSort.PreparePossibleProperties` (`logical_sort.go:114`): the
+/// sort ESTABLISHES an order, so the child's is discarded, and `hasTiFlash`
+/// is the child's answer.
+#[test]
+fn sort_prepare_possible_properties_replaces_the_child_order() {
+    let mut sort = LogicalSort::new(
+        BaseLogicalPlan::with_id(1, LogicalSort::TYPE, 0),
+        vec![by(col_expr(5), false)],
+    );
+    let child = PossiblePropertiesInfo {
+        orders: vec![vec![column(77)]],
+        has_tiflash: true,
+    };
+    let info = sort.prepare_possible_properties(Some(&child));
+    assert_eq!(info.orders.len(), 1);
+    assert_eq!(info.orders[0][0].unique_id, 5);
+    assert!(info.has_tiflash);
+    assert!(sort.base.has_tiflash());
+    // No child at all: no TiFlash, and the sort still offers its own order.
+    let info = sort.prepare_possible_properties(None);
+    assert!(!info.has_tiflash);
+    assert_eq!(info.orders[0][0].unique_id, 5);
+}
+
+/// Go `LogicalSort.ExtractCorrelatedCols` (`logical_sort.go:133`).
+#[test]
+fn sort_extracts_correlated_cols_from_every_by_item() {
+    let cor = Expression::CorrelatedColumn(tidb_expr::column::CorrelatedColumn {
+        column: column(42),
+        data: None,
+    });
+    let sort = LogicalSort::new(
+        BaseLogicalPlan::with_id(1, LogicalSort::TYPE, 0),
+        vec![by(col_expr(1), false), by(cor, false)],
+    );
+    assert_eq!(sort.extract_correlated_cols().len(), 1);
+    // The enum dispatches to it.
+    assert_eq!(LogicalPlan::Sort(sort).extract_correlated_cols().len(), 1);
+}
+
+/// Go `LogicalSort.PushDownTopN` (`logical_sort.go:84`)'s three outcomes.
+#[test]
+fn sort_push_down_topn_decision_matches_gos_three_branches() {
+    assert_eq!(
+        LogicalSort::push_down_topn_decision(None),
+        SortTopNPushDown::KeepSort
+    );
+    assert_eq!(
+        LogicalSort::push_down_topn_decision(Some(true)),
+        SortTopNPushDown::AdoptByItemsAndDropSort
+    );
+    assert_eq!(
+        LogicalSort::push_down_topn_decision(Some(false)),
+        SortTopNPushDown::DropSort
+    );
+}
+
+/// Go `LogicalLimit.BuildKeyInfo` (`logical_limit.go:98`): only `LIMIT 1` is
+/// at most one row, and the child's keys carry forward either way.
+#[test]
+fn limit_build_key_info_marks_max_one_row_only_for_count_one() {
+    let mut child = schema(&[1, 2]);
+    child.pk_or_uk = vec![vec![column(1)]];
+
+    let mut limit = LogicalLimit::new(BaseLogicalPlan::with_id(1, LogicalLimit::TYPE, 0), 0, 1);
+    let mut output = schema(&[1, 2]);
+    limit.build_key_info(&mut output, std::slice::from_ref(&child));
+    assert!(limit.base.max_one_row());
+    assert_eq!(output.pk_or_uk.len(), 1);
+
+    let mut limit = LogicalLimit::new(BaseLogicalPlan::with_id(2, LogicalLimit::TYPE, 0), 0, 5);
+    let mut output = schema(&[1, 2]);
+    limit.build_key_info(&mut output, &[child]);
+    assert!(!limit.base.max_one_row());
+}
+
+/// Go `LogicalLimit.DeriveStats` (`logical_limit.go:129`): the count caps the
+/// rows and every NDV, and a second call without a reload is memoised.
+#[test]
+fn limit_derive_stats_caps_at_the_count_and_memoises() {
+    let mut limit = LogicalLimit::new(BaseLogicalPlan::with_id(1, LogicalLimit::TYPE, 0), 0, 10);
+    let child = StatsInfo::new(1000.0, [(1_i64, 500.0), (2, 3.0)]);
+    let (stats, derived) = limit
+        .derive_stats(std::slice::from_ref(&child), &[true])
+        .expect("a limit always has a child profile");
+    assert!(derived);
+    assert!((stats.row_count() - 10.0).abs() < 1e-9);
+    assert!((stats.col_ndvs()[&1] - 10.0).abs() < 1e-9);
+    assert!((stats.col_ndvs()[&2] - 3.0).abs() < 1e-9);
+    // Without a reload the stored profile comes back untouched.
+    let (_, derived) = limit.derive_stats(&[child], &[false]).unwrap();
+    assert!(!derived);
+}
+
+/// Go `LogicalLimit.ExplainInfo` (`logical_limit.go:48`).
+#[test]
+fn limit_explain_info_is_exact_without_partitioning() {
+    let mut limit = LogicalLimit::new(BaseLogicalPlan::with_id(1, LogicalLimit::TYPE, 0), 3, 7);
+    assert_eq!(limit.explain_info(), "offset:3, count:7");
+    limit.partition_by = vec![crate::physical_property::SortItem::new(1, false)];
+    assert_eq!(
+        limit.explain_info(),
+        "partition by 1 cols, offset:3, count:7"
+    );
+}
+
+/// Go `LogicalLimit.convertToTopN` (`logical_limit.go:172`): the result is a
+/// TopN with NO order — so `IsLimit()` — and does NOT carry `PartitionBy`.
+#[test]
+fn limit_converts_to_a_topn_that_is_still_a_limit() {
+    let mut limit = LogicalLimit::new(BaseLogicalPlan::with_id(1, LogicalLimit::TYPE, 4), 2, 9);
+    limit.prefer_limit_to_cop = true;
+    limit.partition_by = vec![crate::physical_property::SortItem::new(1, false)];
+    let topn = limit.convert_to_topn();
+    assert!(topn.is_limit());
+    assert_eq!(topn.offset, 2);
+    assert_eq!(topn.count, 9);
+    assert!(topn.prefer_limit_to_cop);
+    assert!(topn.partition_by.is_empty());
+    assert_eq!(topn.base.base.tp(), LogicalTopN::TYPE);
+    assert_eq!(topn.base.base.query_block_offset(), 4);
+}
+
+/// Go `LogicalTopN.AttachChild` (`logical_top_n.go:200`), dual branch: the
+/// dual absorbs the window and the TopN disappears.
+#[test]
+fn topn_attach_child_folds_into_a_table_dual() {
+    let dual = |rows: usize| {
+        LogicalPlan::TableDual(super::LogicalTableDual {
+            base: BaseLogicalPlan::with_id(1, "TableDual", 0),
+            row_count: rows,
+        })
+    };
+    let topn = LogicalTopN::new(
+        BaseLogicalPlan::with_id(2, LogicalTopN::TYPE, 0),
+        vec![],
+        2,
+        3,
+    );
+    let LogicalPlan::TableDual(folded) = topn.attach_child(dual(10)) else {
+        panic!("a dual child must absorb the TopN");
+    };
+    // min(10 - 2, 3) == 3.
+    assert_eq!(folded.row_count, 3);
+
+    let topn = LogicalTopN::new(
+        BaseLogicalPlan::with_id(2, LogicalTopN::TYPE, 0),
+        vec![],
+        5,
+        3,
+    );
+    let LogicalPlan::TableDual(folded) = topn.attach_child(dual(4)) else {
+        panic!("a dual child must absorb the TopN");
+    };
+    // The offset skips past the end: nothing is left.
+    assert_eq!(folded.row_count, 0);
+}
+
+/// Go `LogicalTopN.AttachChild` (`logical_top_n.go:213`), limit branch: with
+/// no `ByItems` the TopN becomes a `LogicalLimit` that DOES carry
+/// `PartitionBy`.
+#[test]
+fn topn_attach_child_degrades_to_a_limit_without_by_items() {
+    let mut topn = LogicalTopN::new(
+        BaseLogicalPlan::with_id(2, LogicalTopN::TYPE, 0),
+        vec![],
+        1,
+        4,
+    );
+    topn.partition_by = vec![crate::physical_property::SortItem::new(8, true)];
+    topn.prefer_limit_to_cop = true;
+    let child = LogicalPlan::TableDual(super::LogicalTableDual {
+        base: BaseLogicalPlan::with_id(1, "TableDual", 0),
+        row_count: 1,
+    });
+    // A dual would be absorbed, so use a selection to reach the limit branch.
+    let child = LogicalPlan::Selection(LogicalSelection::new(
+        {
+            let mut base = BaseLogicalPlan::with_id(3, LogicalSelection::TYPE, 0);
+            base.set_children(vec![child]);
+            base
+        },
+        vec![],
+    ));
+    let LogicalPlan::Limit(limit) = topn.attach_child(child) else {
+        panic!("a TopN with no ByItems must become a Limit");
+    };
+    assert_eq!(limit.offset, 1);
+    assert_eq!(limit.count, 4);
+    assert!(limit.prefer_limit_to_cop);
+    assert_eq!(limit.partition_by.len(), 1);
+    assert_eq!(limit.base.child_len(), 1);
+    assert_eq!(limit.base.base.tp(), LogicalLimit::TYPE);
+}
+
+/// Go `LogicalTopN.AttachChild` (`logical_top_n.go:224`), default branch.
+#[test]
+fn topn_attach_child_keeps_a_real_topn() {
+    let topn = LogicalTopN::new(
+        BaseLogicalPlan::with_id(2, LogicalTopN::TYPE, 0),
+        vec![by(col_expr(1), false)],
+        0,
+        4,
+    );
+    assert!(!topn.is_limit());
+    let child = LogicalPlan::Selection(LogicalSelection::new(
+        BaseLogicalPlan::with_id(3, LogicalSelection::TYPE, 0),
+        vec![],
+    ));
+    let attached = topn.attach_child(child);
+    assert!(matches!(attached, LogicalPlan::TopN(_)));
+    assert_eq!(attached.children().len(), 1);
+}
+
+/// Go `LogicalTopN.ExplainInfo` (`logical_top_n.go:50`): the offset/count
+/// suffix is exact and the two lists are never silently missing.
+#[test]
+fn topn_explain_info_reports_every_list_it_carries() {
+    let mut topn = LogicalTopN::new(
+        BaseLogicalPlan::with_id(1, LogicalTopN::TYPE, 0),
+        vec![by(col_expr(1), false)],
+        0,
+        5,
+    );
+    assert_eq!(topn.explain_info(), "1 by items, offset:0, count:5");
+    topn.partition_by = vec![crate::physical_property::SortItem::new(2, false)];
+    assert_eq!(
+        topn.explain_info(),
+        "partition by 1 cols order by 1 by items, offset:0, count:5"
+    );
+    topn.by_items.clear();
+    assert_eq!(
+        topn.explain_info(),
+        "partition by 1 cols, offset:0, count:5"
+    );
+}
+
+/// `LogicalTopN` reaches every enum dispatch the keystone requires.
+#[test]
+fn topn_is_wired_into_the_enum_dispatches() {
+    let mut plan = LogicalPlan::TopN(LogicalTopN::new(
+        BaseLogicalPlan::with_id(1, LogicalTopN::TYPE, 0),
+        vec![by(col_expr(1), false)],
+        0,
+        1,
+    ));
+    let mut output = schema(&[1]);
+    plan.build_key_info(&mut output, &[schema(&[1])]);
+    assert!(plan.max_one_row());
+    assert!(plan.extract_correlated_cols().is_empty());
+    assert!(plan.pull_up_constant_predicates().is_empty());
+    assert!(plan.extract_col_groups(&[]).is_empty());
+    assert!(plan.explain_info().contains("count:1"));
+    assert!(matches!(plan.clone_shallow(), LogicalPlan::TopN(_)));
+}
+
+// ***** LogicalUnionAll / LogicalPartitionUnionAll *****
+
+/// Go `LogicalUnionAll.PruneColumns` (`logical_union_all.go:60`): the parent's
+/// set reaches every child unchanged when it used something.
+#[test]
+fn union_all_pruning_pushes_the_parent_set_unchanged() {
+    let mut output = schema(&[1, 2, 3]);
+    let pruning = LogicalUnionAll::prune_columns_local(&[column(1), column(3)], &mut output);
+    assert!(pruning.has_been_used);
+    assert_eq!(
+        pruning
+            .child_used_cols
+            .iter()
+            .map(|c| c.unique_id)
+            .collect::<Vec<_>>(),
+        vec![1, 3]
+    );
+    // Column 2 is dropped from the union's own schema.
+    assert_eq!(
+        output
+            .columns
+            .iter()
+            .map(|c| c.unique_id)
+            .collect::<Vec<_>>(),
+        vec![1, 3]
+    );
+    assert_eq!(pruning.pruned_columns.len(), 1);
+    assert_eq!(pruning.pruned_columns[0].unique_id, 2);
+}
+
+/// Go's `!hasBeenUsed` escape (`logical_union_all.go:74`): a union that the
+/// parent reads nothing from keeps its WHOLE schema rather than collapsing.
+#[test]
+fn union_all_pruning_keeps_everything_when_the_parent_uses_nothing() {
+    let mut output = schema(&[1, 2, 3]);
+    let pruning = LogicalUnionAll::prune_columns_local(&[column(99)], &mut output);
+    assert!(!pruning.has_been_used);
+    assert_eq!(
+        pruning
+            .child_used_cols
+            .iter()
+            .map(|c| c.unique_id)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    assert!(pruning.pruned_columns.is_empty());
+    assert_eq!(output.len(), 3);
+}
+
+/// Go's repair test (`logical_union_all.go:136`).
+#[test]
+fn union_all_repairs_only_a_child_wider_than_itself() {
+    assert!(LogicalUnionAll::child_needs_pruning_projection(2, 3));
+    assert!(!LogicalUnionAll::child_needs_pruning_projection(3, 3));
+    assert!(!LogicalUnionAll::child_needs_pruning_projection(4, 3));
+}
+
+/// Go `LogicalUnionAll.PushDownTopN` (`logical_union_all.go:159`): the child
+/// copy folds the offset into the count and keeps no offset of its own.
+#[test]
+fn union_all_child_topn_folds_the_offset_into_the_count() {
+    let mut topn = LogicalTopN::new(
+        BaseLogicalPlan::with_id(1, LogicalTopN::TYPE, 2),
+        vec![by(col_expr(7), true)],
+        10,
+        5,
+    );
+    topn.prefer_limit_to_cop = true;
+    topn.partition_by = vec![crate::physical_property::SortItem::new(1, false)];
+    let child = LogicalUnionAll::push_down_topn_for_child(&topn);
+    assert_eq!(child.offset, 0);
+    assert_eq!(child.count, 15);
+    assert!(child.prefer_limit_to_cop);
+    assert_eq!(child.by_items.len(), 1);
+    assert!(child.by_items[0].desc);
+    // Go builds the copy from `LogicalTopN{Count, PreferLimitToCop}` alone, so
+    // PartitionBy does NOT travel with it.
+    assert!(child.partition_by.is_empty());
+    assert!(child.base.children().is_empty());
+}
+
+/// Go `LogicalUnionAll.DeriveStats` (`logical_union_all.go:187`): rows and
+/// NDVs both ADD across the branches, and a column a branch lacks contributes
+/// zero rather than being dropped.
+#[test]
+fn union_all_derive_stats_adds_rows_and_ndvs() {
+    let mut union = LogicalUnionAll::new(BaseLogicalPlan::with_id(1, LogicalUnionAll::TYPE, 0));
+    let output = schema(&[1, 2]);
+    let (stats, derived) = union.derive_stats(
+        &[
+            StatsInfo::new(100.0, [(1_i64, 10.0), (2, 4.0)]),
+            StatsInfo::new(50.0, [(1_i64, 7.0)]),
+        ],
+        &output,
+        &[true],
+    );
+    assert!(derived);
+    assert!((stats.row_count() - 150.0).abs() < 1e-9);
+    assert!((stats.col_ndvs()[&1] - 17.0).abs() < 1e-9);
+    assert!((stats.col_ndvs()[&2] - 4.0).abs() < 1e-9);
+    // Memoised without a reload.
+    let (_, derived) = union.derive_stats(&[], &output, &[false]);
+    assert!(!derived);
+}
+
+/// Go `LogicalUnionAll.PreparePossibleProperties` (`logical_union_all.go:206`):
+/// no order survives a union, and TiFlash needs EVERY branch.
+#[test]
+fn union_all_offers_no_order_and_needs_every_branch_on_tiflash() {
+    let mut union = LogicalUnionAll::new(BaseLogicalPlan::with_id(1, LogicalUnionAll::TYPE, 0));
+    let ordered = PossiblePropertiesInfo {
+        orders: vec![vec![column(5)]],
+        has_tiflash: true,
+    };
+    let info = union.prepare_possible_properties(&[Some(ordered.clone()), Some(ordered.clone())]);
+    assert!(info.orders.is_empty());
+    assert!(info.has_tiflash);
+    let mixed = PossiblePropertiesInfo {
+        orders: vec![],
+        has_tiflash: false,
+    };
+    assert!(
+        !union
+            .prepare_possible_properties(&[Some(ordered), Some(mixed)])
+            .has_tiflash
+    );
+    // No children at all is not TiFlash-capable.
+    assert!(!union.prepare_possible_properties(&[]).has_tiflash);
+}
+
+/// Go `LogicalUnionAll.PredicatePushDown` (`logical_union_all.go:45`) returns
+/// `nil` to its parent: a union never holds a predicate itself.
+#[test]
+fn union_all_keeps_no_predicate_for_its_parent() {
+    assert!(LogicalUnionAll::predicate_push_down_local().is_empty());
+}
+
+/// `LogicalPartitionUnionAll` is Go's embedding, and both variants reach every
+/// enum dispatch.
+#[test]
+fn partition_union_all_embeds_the_union_and_is_wired_into_the_enum() {
+    let partition = LogicalPartitionUnionAll::new(BaseLogicalPlan::with_id(
+        7,
+        LogicalPartitionUnionAll::TYPE,
+        1,
+    ));
+    let plan = LogicalPlan::PartitionUnionAll(partition);
+    assert_eq!(plan.id(), 7);
+    assert_eq!(plan.tp(), LogicalPartitionUnionAll::TYPE);
+    assert_eq!(plan.query_block_offset(), 1);
+    assert!(plan.extract_correlated_cols().is_empty());
+    assert!(plan.pull_up_constant_predicates().is_empty());
+    assert!(plan.extract_col_groups(&[]).is_empty());
+    assert_eq!(plan.explain_info(), "");
+    assert!(matches!(
+        plan.clone_shallow(),
+        LogicalPlan::PartitionUnionAll(_)
+    ));
+
+    let plan = LogicalPlan::UnionAll(LogicalUnionAll::new(BaseLogicalPlan::with_id(
+        8,
+        LogicalUnionAll::TYPE,
+        0,
+    )));
+    assert_eq!(plan.tp(), LogicalUnionAll::TYPE);
+    assert!(matches!(plan.clone_shallow(), LogicalPlan::UnionAll(_)));
+}
+
+// ***** LogicalApply *****
+
+fn apply(join_type: LogicalJoinType) -> LogicalApply {
+    LogicalApply::new(
+        BaseLogicalPlan::with_id(1, LogicalApply::TYPE, 0),
+        join_type,
+    )
+}
+
+fn cor(unique_id: i64) -> tidb_expr::column::CorrelatedColumn {
+    tidb_expr::column::CorrelatedColumn {
+        column: column(unique_id),
+        data: None,
+    }
+}
+
+/// Go's apply-elimination test (`logical_apply.go:110`): LATERAL is the veto,
+/// because it breaks the max-one-row guarantee the rewrite depends on.
+#[test]
+fn apply_elimination_is_vetoed_by_lateral() {
+    let mut la = apply(LogicalJoinType::LeftOuter);
+    assert!(la.can_eliminate_apply(true, true));
+    // The fix-control switch is off.
+    assert!(!la.can_eliminate_apply(false, true));
+    // The inner side still contributes a column.
+    assert!(!la.can_eliminate_apply(true, false));
+    la.is_lateral = true;
+    assert!(!la.can_eliminate_apply(true, true));
+    // Only LEFT OUTER may be eliminated.
+    assert!(!apply(LogicalJoinType::Inner).can_eliminate_apply(true, true));
+    assert!(!apply(LogicalJoinType::Semi).can_eliminate_apply(true, true));
+}
+
+/// Go `LogicalApply.ExtractCorrelatedCols` (`logical_apply.go:250`): a
+/// correlated column the OUTER child supplies is resolved here and does not
+/// travel further out.
+#[test]
+fn apply_hides_the_correlated_cols_its_outer_child_resolves() {
+    let mut la = apply(LogicalJoinType::Inner);
+    la.join.other_conditions = vec![
+        Expression::CorrelatedColumn(cor(1)),
+        Expression::CorrelatedColumn(cor(9)),
+    ];
+    let outer = schema(&[1, 2]);
+    let survivors = la.extract_correlated_cols(&outer);
+    assert_eq!(survivors.len(), 1);
+    assert_eq!(survivors[0].column.unique_id, 9);
+
+    // Through the enum, with the outer child supplying the schema.
+    let mut base = BaseLogicalPlan::with_id(2, LogicalApply::TYPE, 0);
+    let mut outer_base = BaseLogicalPlan::with_id(3, LogicalSelection::TYPE, 0);
+    outer_base.base.set_schema(Some(outer));
+    base.set_children(vec![
+        LogicalPlan::Selection(LogicalSelection::new(outer_base, vec![])),
+        LogicalPlan::Selection(LogicalSelection::new(
+            BaseLogicalPlan::with_id(4, LogicalSelection::TYPE, 0),
+            vec![],
+        )),
+    ]);
+    la.join.base = base;
+    let plan = LogicalPlan::Apply(la);
+    assert_eq!(plan.extract_correlated_cols().len(), 1);
+    // A two-child operator, so the join accessor answers.
+    assert!(plan.get_join_child_stats_and_schema().is_some());
+}
+
+/// Go `LogicalApply.DeriveStats` (`logical_apply.go:157`), scalar path: the
+/// row count is the OUTER child's, and every inner column's NDV becomes it.
+#[test]
+fn apply_derive_stats_keeps_the_outer_row_count_for_a_scalar_subquery() {
+    let mut la = apply(LogicalJoinType::LeftOuter);
+    let output = schema(&[1, 2, 30]);
+    let (stats, derived) = la
+        .derive_stats(
+            &[
+                StatsInfo::new(200.0, [(1_i64, 20.0), (2, 5.0)]),
+                StatsInfo::new(7.0, [(30_i64, 7.0)]),
+            ],
+            &output,
+            2,
+            None,
+            &[true],
+        )
+        .expect("both children have profiles");
+    assert!(derived);
+    assert!((stats.row_count() - 200.0).abs() < 1e-9);
+    assert!((stats.col_ndvs()[&1] - 20.0).abs() < 1e-9);
+    // The one inner column takes the apply's row count.
+    assert!((stats.col_ndvs()[&30] - 200.0).abs() < 1e-9);
+}
+
+/// Go's `SemiJoin`/`AntiSemiJoin` branch (`logical_apply.go:213`): an
+/// undecorrelatable `EXISTS` is scaled by the selection factor.
+#[test]
+fn apply_derive_stats_scales_a_semi_apply_by_the_selection_factor() {
+    let mut la = apply(LogicalJoinType::Semi);
+    let output = schema(&[1]);
+    let (stats, _) = la
+        .derive_stats(
+            &[
+                StatsInfo::new(100.0, [(1_i64, 10.0)]),
+                StatsInfo::new(3.0, []),
+            ],
+            &output,
+            1,
+            None,
+            &[true],
+        )
+        .unwrap();
+    assert!((stats.row_count() - 100.0 * SELECTION_FACTOR).abs() < 1e-9);
+}
+
+/// Go's `LeftOuterSemiJoin` branch (`logical_apply.go:230`): the marker column
+/// is two-valued, not row-count-valued.
+#[test]
+fn apply_derive_stats_marks_a_left_outer_semi_marker_at_two() {
+    let mut la = apply(LogicalJoinType::LeftOuterSemi);
+    let output = schema(&[1, 2, 99]);
+    let (stats, _) = la
+        .derive_stats(
+            &[
+                StatsInfo::new(40.0, [(1_i64, 4.0), (2, 2.0)]),
+                StatsInfo::new(9.0, []),
+            ],
+            &output,
+            2,
+            None,
+            &[true],
+        )
+        .unwrap();
+    assert!((stats.row_count() - 40.0).abs() < 1e-9);
+    assert!((stats.col_ndvs()[&99] - 2.0).abs() < 1e-9);
+}
+
+/// Go's LATERAL branch (`logical_apply.go:172`): the caller's estimate wins,
+/// floored at the outer count for a left outer apply, and the Cartesian
+/// fallback is Go's own third branch.
+#[test]
+fn apply_derive_stats_takes_the_lateral_estimate_and_floors_it() {
+    let output = schema(&[1, 50]);
+    let children = [
+        StatsInfo::new(80.0, [(1_i64, 8.0)]),
+        StatsInfo::new(3.0, [(50_i64, 3.0)]),
+    ];
+
+    let mut la = apply(LogicalJoinType::Inner);
+    la.is_lateral = true;
+    let (stats, _) = la
+        .derive_stats(&children, &output, 1, Some(500.0), &[true])
+        .unwrap();
+    assert!((stats.row_count() - 500.0).abs() < 1e-9);
+
+    // A left outer apply never drops below its outer count.
+    let mut la = apply(LogicalJoinType::LeftOuter);
+    la.is_lateral = true;
+    let (stats, _) = la
+        .derive_stats(&children, &output, 1, Some(5.0), &[true])
+        .unwrap();
+    assert!((stats.row_count() - 80.0).abs() < 1e-9);
+
+    // No estimate and no correlation: Go's Cartesian bound.
+    let mut la = apply(LogicalJoinType::Inner);
+    la.is_lateral = true;
+    let (stats, _) = la
+        .derive_stats(&children, &output, 1, None, &[true])
+        .unwrap();
+    assert!((stats.row_count() - 240.0).abs() < 1e-9);
+}
+
+/// `needs_lateral_row_count_estimate` names exactly Go's two estimator
+/// branches, so a caller cannot take the Cartesian fallback by accident.
+#[test]
+fn apply_reports_when_the_lateral_estimate_is_mandatory() {
+    let mut la = apply(LogicalJoinType::Inner);
+    // Not lateral at all.
+    assert!(!la.needs_lateral_row_count_estimate());
+    la.is_lateral = true;
+    // Lateral, but neither join keys nor correlation: Go's third branch.
+    assert!(!la.needs_lateral_row_count_estimate());
+    la.cor_cols = vec![cor(1)];
+    assert!(la.needs_lateral_row_count_estimate());
+    la.cor_cols.clear();
+    la.join.equal_conditions = vec![call("eq", vec![col_expr(1), col_expr(2)])];
+    assert!(la.needs_lateral_row_count_estimate());
+    // A semi apply is never on the lateral path.
+    la.join.join_type = LogicalJoinType::Semi;
+    assert!(!la.needs_lateral_row_count_estimate());
+}
+
+/// Go `LogicalApply.CanPullUpAgg` (`logical_apply.go:305`): no conditions, an
+/// inner or left-outer join type, and a key on the outer side.
+#[test]
+fn apply_can_pull_up_agg_only_with_a_keyed_unconditional_outer() {
+    let mut keyed = schema(&[1]);
+    keyed.pk_or_uk = vec![vec![column(1)]];
+
+    let la = apply(LogicalJoinType::Inner);
+    assert!(la.can_pull_up_agg(&keyed));
+    // No key on the outer side.
+    assert!(!la.can_pull_up_agg(&schema(&[1])));
+
+    let mut la = apply(LogicalJoinType::Inner);
+    la.join.other_conditions = vec![one()];
+    assert!(!la.can_pull_up_agg(&keyed));
+
+    assert!(!apply(LogicalJoinType::Semi).can_pull_up_agg(&keyed));
+}
+
+/// Go `LogicalApply.ExtractColGroups` (`logical_apply.go:228`): only an
+/// outer-preserving apply passes a group down, and never a right outer one —
+/// "Apply doesn't have RightOuterJoin".
+#[test]
+fn apply_passes_col_groups_only_through_a_preserved_outer_side() {
+    assert!(apply(LogicalJoinType::LeftOuter).col_groups_outer_side());
+    assert!(apply(LogicalJoinType::LeftOuterSemi).col_groups_outer_side());
+    assert!(apply(LogicalJoinType::AntiLeftOuterSemi).col_groups_outer_side());
+    assert!(!apply(LogicalJoinType::Inner).col_groups_outer_side());
+    assert!(!apply(LogicalJoinType::Semi).col_groups_outer_side());
+}
+
+/// Go `LogicalApply.DeCorColFromEqExpr` (`logical_apply.go:316`): both
+/// argument orders normalise to `decorrelated = col`, and a correlated column
+/// that does not resolve is refused.
+#[test]
+fn apply_decorrelates_an_equality_in_either_argument_order() {
+    let la = apply(LogicalJoinType::Inner);
+    let resolvable = schema(&[7]);
+    for expr in [
+        eq(col_expr(3), Expression::CorrelatedColumn(cor(7))),
+        eq(Expression::CorrelatedColumn(cor(7)), col_expr(3)),
+    ] {
+        let rewritten = la
+            .de_cor_col_from_eq_expr(&expr, &resolvable)
+            .expect("a resolvable correlated column decorrelates");
+        let Expression::ScalarFunction(function) = &rewritten else {
+            panic!("the result is an equality");
+        };
+        let args = function.get_args();
+        // Left is the decorrelated (left join key) side, right is the column.
+        assert_eq!(args[0].as_column().unwrap().unique_id, 7);
+        assert_eq!(args[1].as_column().unwrap().unique_id, 3);
+    }
+    // The schema does not contain the correlated column, so it stays correlated.
+    assert!(la
+        .de_cor_col_from_eq_expr(
+            &eq(col_expr(3), Expression::CorrelatedColumn(cor(7))),
+            &schema(&[100])
+        )
+        .is_none());
+    // Not an equality at all.
+    assert!(la
+        .de_cor_col_from_eq_expr(
+            &Expression::ScalarFunction(call("lt", vec![col_expr(3), col_expr(7)])),
+            &resolvable
+        )
+        .is_none());
+    // Two plain columns.
+    assert!(la
+        .de_cor_col_from_eq_expr(&eq(col_expr(3), col_expr(7)), &resolvable)
+        .is_none());
+}
+
+/// Go `findChildFullSchema` (`logical_apply.go:84`): sees THROUGH the
+/// selections an `ON` clause leaves behind, and stops at anything else.
+#[test]
+fn find_child_full_schema_sees_through_on_clause_selections() {
+    let mut join = LogicalJoin::new(
+        BaseLogicalPlan::with_id(1, LogicalJoin::TYPE, 0),
+        LogicalJoinType::Inner,
+    );
+    join.full_schema = Some(schema(&[1, 2, 3]));
+    let wrapped = LogicalPlan::Selection(LogicalSelection::new(
+        {
+            let mut base = BaseLogicalPlan::with_id(2, LogicalSelection::TYPE, 0);
+            base.set_children(vec![LogicalPlan::Join(join)]);
+            base
+        },
+        vec![],
+    ));
+    assert_eq!(find_child_full_schema(&wrapped).unwrap().len(), 3);
+
+    // A selection over something that is not a join has no full schema.
+    let plain = LogicalPlan::Selection(LogicalSelection::new(
+        {
+            let mut base = BaseLogicalPlan::with_id(3, LogicalSelection::TYPE, 0);
+            base.set_children(vec![LogicalPlan::TableDual(super::LogicalTableDual {
+                base: BaseLogicalPlan::with_id(4, "TableDual", 0),
+                row_count: 1,
+            })]);
+            base
+        },
+        vec![],
+    ));
+    assert!(find_child_full_schema(&plain).is_none());
+    // A childless selection stops rather than looping.
+    assert!(
+        find_child_full_schema(&LogicalPlan::Selection(LogicalSelection::new(
+            BaseLogicalPlan::with_id(5, LogicalSelection::TYPE, 0),
+            vec![]
+        )))
+        .is_none()
+    );
+}
+
+/// Every correlated column widens the OUTER child's used set
+/// (`logical_apply.go:130`).
+#[test]
+fn apply_widens_the_outer_used_set_by_its_correlated_cols() {
+    let mut la = apply(LogicalJoinType::Inner);
+    la.cor_cols = vec![cor(11), cor(12)];
+    let mut left_cols = vec![column(1)];
+    assert_eq!(la.widen_outer_used_cols(&mut left_cols), 2);
+    assert_eq!(
+        left_cols.iter().map(|c| c.unique_id).collect::<Vec<_>>(),
+        vec![1, 11, 12]
+    );
+}
+
+// ***** LogicalWindow *****
+
+fn window_desc(args: Vec<Expression>) -> tidb_expr::aggregation::WindowFuncDesc {
+    tidb_expr::aggregation::WindowFuncDesc {
+        base: BaseFuncDesc {
+            name: "row_number".to_owned(),
+            args,
+            ret_type: tiny(),
+        },
+    }
+}
+
+fn window(descs: usize) -> LogicalWindow {
+    LogicalWindow::new(
+        BaseLogicalPlan::with_id(1, LogicalWindow::TYPE, 0),
+        (0..descs).map(|_| window_desc(vec![])).collect(),
+    )
+}
+
+/// Go `LogicalWindow.PredicatePushDown` (`logical_window.go:334`): only a
+/// predicate written entirely in PARTITION BY columns may cross the window.
+#[test]
+fn window_pushes_down_only_partition_column_predicates() {
+    let mut w = window(1);
+    w.partition_by = vec![WindowSortItem::new(column(1), false)];
+    let (pushed, kept) = w.predicate_push_down(&[
+        eq(col_expr(1), one()),
+        eq(col_expr(2), one()),
+        eq(col_expr(1), col_expr(2)),
+    ]);
+    assert_eq!(pushed.len(), 1);
+    assert_eq!(kept.len(), 2);
+    // With no PARTITION BY at all, nothing crosses.
+    let w = window(1);
+    let (pushed, kept) = w.predicate_push_down(&[eq(col_expr(1), one())]);
+    assert!(pushed.is_empty());
+    assert_eq!(kept.len(), 1);
+}
+
+/// Go `LogicalWindow.GetWindowResultColumns` (`logical_window.go:558`): the
+/// TRAILING columns, one per descriptor.
+#[test]
+fn window_result_columns_are_the_trailing_schema_slots() {
+    let w = window(2);
+    let output = schema(&[1, 2, 90, 91]);
+    let result = w.get_window_result_columns(&output);
+    assert_eq!(
+        result.iter().map(|c| c.unique_id).collect::<Vec<_>>(),
+        vec![90, 91]
+    );
+}
+
+/// Go `LogicalWindow.PruneColumns` (`logical_window.go:352`): the window's own
+/// outputs are stripped from the parent's set before the child sees it, and
+/// everything the window reads is added.
+#[test]
+fn window_pruning_strips_its_own_outputs_and_adds_what_it_reads() {
+    let mut w = LogicalWindow::new(
+        BaseLogicalPlan::with_id(1, LogicalWindow::TYPE, 0),
+        vec![window_desc(vec![col_expr(5)])],
+    );
+    w.partition_by = vec![WindowSortItem::new(column(6), false)];
+    w.order_by = vec![WindowSortItem::new(column(7), true)];
+    let output = schema(&[1, 2, 90]);
+    // The parent asks for a child column and for the window's own output.
+    let used = w.prune_columns_local(&[column(1), column(90)], &output);
+    assert_eq!(
+        used.iter().map(|c| c.unique_id).collect::<Vec<_>>(),
+        vec![1, 5, 6, 7]
+    );
+
+    // The rebuild re-appends the window columns above the pruned child.
+    let rebuilt = w.rebuild_schema_after_pruning(&schema(&[1]), &[column(90)]);
+    assert_eq!(
+        rebuilt
+            .columns
+            .iter()
+            .map(|c| c.unique_id)
+            .collect::<Vec<_>>(),
+        vec![1, 90]
+    );
+}
+
+/// Go `LogicalWindow.DeriveStats` (`logical_window.go:398`): rows pass
+/// through, child NDVs pass through, and each window output is assumed
+/// distinct per row.
+#[test]
+fn window_derive_stats_gives_each_result_column_the_row_count() {
+    let mut w = window(1);
+    let output = schema(&[1, 2, 90]);
+    let (stats, derived) = w
+        .derive_stats(
+            &[StatsInfo::new(500.0, [(1_i64, 50.0), (2, 3.0)])],
+            &output,
+            &[true],
+        )
+        .unwrap();
+    assert!(derived);
+    assert!((stats.row_count() - 500.0).abs() < 1e-9);
+    assert!((stats.col_ndvs()[&1] - 50.0).abs() < 1e-9);
+    assert!((stats.col_ndvs()[&90] - 500.0).abs() < 1e-9);
+}
+
+/// Go `LogicalWindow.PreparePossibleProperties` (`logical_window.go:437`):
+/// PARTITION BY then ORDER BY, as one offered order.
+#[test]
+fn window_offers_partition_by_then_order_by() {
+    let mut w = window(1);
+    w.partition_by = vec![WindowSortItem::new(column(3), false)];
+    w.order_by = vec![WindowSortItem::new(column(4), true)];
+    let info = w.prepare_possible_properties(Some(&PossiblePropertiesInfo {
+        orders: vec![vec![column(99)]],
+        has_tiflash: true,
+    }));
+    assert!(info.has_tiflash);
+    assert_eq!(
+        info.orders[0]
+            .iter()
+            .map(|c| c.unique_id)
+            .collect::<Vec<_>>(),
+        vec![3, 4]
+    );
+    // Go builds the Orders slice unconditionally, so an unpartitioned,
+    // unordered window still offers ONE (empty) order.
+    let mut w = window(1);
+    let info = w.prepare_possible_properties(None);
+    assert_eq!(info.orders.len(), 1);
+    assert!(info.orders[0].is_empty());
+}
+
+/// Go `LogicalWindow.ExtractCorrelatedCols` (`logical_window.go:471`): the
+/// arguments and BOTH bounds' `CalcFuncs`, and NOT `CompareCols`.
+#[test]
+fn window_extracts_correlated_cols_from_args_and_frame_calc_funcs() {
+    let cor = |id| {
+        Expression::CorrelatedColumn(tidb_expr::column::CorrelatedColumn {
+            column: column(id),
+            data: None,
+        })
+    };
+    let mut w = LogicalWindow::new(
+        BaseLogicalPlan::with_id(1, LogicalWindow::TYPE, 0),
+        vec![window_desc(vec![cor(1)])],
+    );
+    w.frame = Some(WindowFrame {
+        frame_type: FrameType::Ranges,
+        start: Some(FrameBound {
+            calc_funcs: vec![cor(2)],
+            // Deliberately correlated, and deliberately NOT counted.
+            compare_cols: vec![cor(3)],
+            ..FrameBound::default()
+        }),
+        end: Some(FrameBound {
+            calc_funcs: vec![cor(4)],
+            ..FrameBound::default()
+        }),
+    });
+    let cor_cols = w.extract_correlated_cols();
+    assert_eq!(
+        cor_cols
+            .iter()
+            .map(|c| c.column.unique_id)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 4]
+    );
+    assert_eq!(LogicalPlan::Window(w).extract_correlated_cols().len(), 3);
+}
+
+/// Go `EqualPartitionBy` is a SET test and `EqualOrderBy` is a SEQUENCE test
+/// (`logical_window.go:500`, `:516`).
+#[test]
+fn window_partition_equality_ignores_order_but_order_equality_does_not() {
+    let mut a = window(1);
+    a.partition_by = vec![
+        WindowSortItem::new(column(1), false),
+        WindowSortItem::new(column(2), false),
+    ];
+    a.order_by = vec![
+        WindowSortItem::new(column(3), false),
+        WindowSortItem::new(column(4), true),
+    ];
+    let mut b = window(1);
+    b.partition_by = vec![
+        WindowSortItem::new(column(2), true),
+        WindowSortItem::new(column(1), false),
+    ];
+    b.order_by = a.order_by.clone();
+    assert!(a.equal_partition_by(&b));
+    assert!(a.equal_order_by(&b));
+
+    // Swapping the ORDER BY sequence breaks it.
+    b.order_by.swap(0, 1);
+    assert!(!a.equal_order_by(&b));
+    // A different direction breaks it too.
+    b.order_by = vec![
+        WindowSortItem::new(column(3), true),
+        WindowSortItem::new(column(4), true),
+    ];
+    assert!(!a.equal_order_by(&b));
+    // A different partition column set breaks partition equality.
+    b.partition_by = vec![
+        WindowSortItem::new(column(1), false),
+        WindowSortItem::new(column(9), false),
+    ];
+    assert!(!a.equal_partition_by(&b));
+}
+
+/// Go `LogicalWindow.EqualFrame` (`logical_window.go:530`) compares the frame
+/// SHAPE only — deliberately not `CompareCols`, `CmpFuncs` or `CmpDataType`.
+#[test]
+fn window_equal_frame_ignores_the_derived_comparison_fields() {
+    let bound = |num, tokens: Vec<&str>| FrameBound {
+        bound_type: BoundType::Preceding,
+        unbounded: false,
+        num,
+        calc_funcs: vec![col_expr(1)],
+        compare_cols: vec![],
+        cmp_func_tokens: tokens.into_iter().map(str::to_owned).collect(),
+        cmp_data_type: RangeCmpDataType::Int,
+        is_explicit_range: false,
+    };
+    let frame = |num, tokens: Vec<&str>| WindowFrame {
+        frame_type: FrameType::Ranges,
+        start: Some(bound(num, tokens)),
+        end: Some(bound(num, vec![])),
+    };
+    let mut a = window(1);
+    a.frame = Some(frame(1, vec!["0x1"]));
+    let mut b = window(1);
+    b.frame = Some(frame(1, vec!["0xdeadbeef"]));
+    assert!(a.equal_frame(&b));
+    // A different Num is a different frame.
+    b.frame = Some(frame(2, vec!["0x1"]));
+    assert!(!a.equal_frame(&b));
+    // One frame present, one absent.
+    b.frame = None;
+    assert!(!a.equal_frame(&b));
+    // Both absent.
+    a.frame = None;
+    assert!(a.equal_frame(&b));
+}
+
+/// Go `FrameBound.Hash64`/`Equals` (`logical_window.go:112`, `:148`), which
+/// this file merged from the crate's former `window_frame` leaf. The compare
+/// functions are part of the identity, by ADDRESS.
+#[test]
+fn frame_bound_identity_includes_the_compare_function_tokens() {
+    let base = FrameBound {
+        bound_type: BoundType::Following,
+        unbounded: true,
+        num: 3,
+        calc_funcs: vec![col_expr(1)],
+        compare_cols: vec![col_expr(2)],
+        cmp_func_tokens: vec!["CompareInt".to_owned()],
+        cmp_data_type: RangeCmpDataType::Int,
+        is_explicit_range: true,
+    };
+    let same = base.clone();
+    assert_eq!(base.hash64(), same.hash64());
+    assert!(base.equals(&same));
+
+    let mut different = base.clone();
+    different.cmp_func_tokens = vec!["CompareTime".to_owned()];
+    assert_ne!(base.hash64(), different.hash64());
+    assert!(!base.equals(&different));
+
+    // An empty CalcFuncs list takes the nil branch and hashes differently.
+    let mut empty = base.clone();
+    empty.calc_funcs.clear();
+    assert_ne!(base.hash64(), empty.hash64());
+}
+
+/// Go `FrameBound.UpdateCmpFuncsAndCmpDataType` (`logical_window.go:207`),
+/// including its deliberate fall-through for a type that matches no arm.
+#[test]
+fn frame_bound_update_cmp_maps_each_eval_type_and_ignores_the_rest() {
+    for (eval, token, data) in [
+        (EvalType::Int, "CompareInt", RangeCmpDataType::Int),
+        (
+            EvalType::Datetime,
+            "CompareTime",
+            RangeCmpDataType::DateTime,
+        ),
+        (
+            EvalType::Timestamp,
+            "CompareTime",
+            RangeCmpDataType::DateTime,
+        ),
+        (
+            EvalType::Duration,
+            "CompareDuration",
+            RangeCmpDataType::Duration,
+        ),
+        (EvalType::Real, "CompareReal", RangeCmpDataType::Float),
+        (
+            EvalType::Decimal,
+            "CompareDecimal",
+            RangeCmpDataType::Decimal,
+        ),
+    ] {
+        let mut bound = FrameBound {
+            cmp_func_tokens: vec![String::new()],
+            cmp_data_type: RangeCmpDataType::Float,
+            ..FrameBound::default()
+        };
+        bound.update_cmp_funcs_and_cmp_data_type(eval);
+        assert_eq!(bound.cmp_func_tokens[0], token);
+        assert_eq!(bound.cmp_data_type, data);
+    }
+    // ETString matches nothing and leaves the bound untouched.
+    let mut bound = FrameBound {
+        cmp_func_tokens: vec!["untouched".to_owned()],
+        cmp_data_type: RangeCmpDataType::Decimal,
+        ..FrameBound::default()
+    };
+    bound.update_cmp_funcs_and_cmp_data_type(EvalType::String);
+    assert_eq!(bound.cmp_func_tokens[0], "untouched");
+    assert_eq!(bound.cmp_data_type, RangeCmpDataType::Decimal);
+}
+
+/// Go `WindowFrame.Hash64` (`logical_window.go:50`) folds in only ONE bound —
+/// `Start` when it is present, `End` when it is not. That quirk is preserved,
+/// while `Equals` compares both.
+#[test]
+fn window_frame_hash_folds_one_bound_but_equals_compares_both() {
+    let bound = |num| FrameBound {
+        num,
+        ..FrameBound::default()
+    };
+    let a = WindowFrame {
+        frame_type: FrameType::Rows,
+        start: Some(bound(1)),
+        end: Some(bound(2)),
+    };
+    let b = WindowFrame {
+        frame_type: FrameType::Rows,
+        start: Some(bound(1)),
+        end: Some(bound(99)),
+    };
+    // Go's Hash64 never reaches `End` when `Start` is set.
+    assert_eq!(a.hash64(), b.hash64());
+    // Equals does reach it.
+    assert!(!a.equals(&b));
+    assert!(a.equals(&WindowFrame {
+        frame_type: FrameType::Rows,
+        start: Some(bound(1)),
+        end: Some(bound(2)),
+    }));
+    // A different frame type separates them everywhere.
+    assert!(!a.equals(&WindowFrame {
+        frame_type: FrameType::Ranges,
+        start: Some(bound(1)),
+        end: Some(bound(2)),
+    }));
+}
+
+/// Go `LogicalWindow.CheckComparisonForTiFlash` (`logical_window.go:568`):
+/// Duration against Datetime is refused in either direction.
+#[test]
+fn window_refuses_duration_against_datetime_on_tiflash() {
+    let typed = |code| Column::new(1, FieldType::new(code));
+    let bound = |code| FrameBound {
+        calc_funcs: vec![Expression::Column(Column::new(2, FieldType::new(code)))],
+        compare_cols: vec![col_expr(3)],
+        ..FrameBound::default()
+    };
+    let mut w = window(1);
+    w.order_by = vec![WindowSortItem::new(typed(FieldTypeCode::Duration), false)];
+    assert!(!w.check_comparison_for_tiflash(&bound(FieldTypeCode::Datetime)));
+    assert!(!w.check_comparison_for_tiflash(&bound(FieldTypeCode::Timestamp)));
+    assert!(w.check_comparison_for_tiflash(&bound(FieldTypeCode::LongLong)));
+
+    let mut w = window(1);
+    w.order_by = vec![WindowSortItem::new(typed(FieldTypeCode::Datetime), false)];
+    assert!(!w.check_comparison_for_tiflash(&bound(FieldTypeCode::Duration)));
+
+    // A bound with no CompareCols is not a range bound and is always fine.
+    assert!(w.check_comparison_for_tiflash(&FrameBound::default()));
+}
+
+/// `LogicalWindow` reaches every enum dispatch.
+#[test]
+fn window_is_wired_into_the_enum_dispatches() {
+    let plan = LogicalPlan::Window(window(1));
+    assert_eq!(plan.tp(), LogicalWindow::TYPE);
+    assert!(plan.pull_up_constant_predicates().is_empty());
+    assert!(plan.extract_col_groups(&[]).is_empty());
+    assert_eq!(plan.explain_info(), "");
+    assert!(matches!(plan.clone_shallow(), LogicalPlan::Window(_)));
+}
+
+// ***** LogicalCTE / LogicalCTETable *****
+
+fn cte_class(build: impl FnOnce(&mut CteClass)) -> std::rc::Rc<std::cell::RefCell<CteClass>> {
+    let mut class = CteClass {
+        is_outer_most_cte: true,
+        ..CteClass::default()
+    };
+    build(&mut class);
+    std::rc::Rc::new(std::cell::RefCell::new(class))
+}
+
+fn cte(class: std::rc::Rc<std::cell::RefCell<CteClass>>) -> LogicalCTE {
+    LogicalCTE::new(BaseLogicalPlan::with_id(1, LogicalCTE::TYPE, 0), class)
+}
+
+fn cor_expr(unique_id: i64) -> Expression {
+    Expression::CorrelatedColumn(tidb_expr::column::CorrelatedColumn {
+        column: column(unique_id),
+        data: None,
+    })
+}
+
+/// Go `LogicalCTE.PredicatePushDown` (`logical_cte.go:103`): a recursive or
+/// non-outermost CTE records nothing at all.
+#[test]
+fn cte_records_no_predicate_for_a_recursive_or_inner_cte() {
+    let dual = || {
+        Box::new(LogicalPlan::TableDual(super::LogicalTableDual {
+            base: BaseLogicalPlan::with_id(9, "TableDual", 0),
+            row_count: 1,
+        }))
+    };
+    let recursive = cte(cte_class(|c| c.recursive_part_logical_plan = Some(dual())));
+    assert!(matches!(
+        recursive.predicate_push_down(&[eq(col_expr(1), one())]),
+        CtePredicatePushDown::Unsupported
+    ));
+    let inner = cte(cte_class(|c| c.is_outer_most_cte = false));
+    assert!(matches!(
+        inner.predicate_push_down(&[eq(col_expr(1), one())]),
+        CtePredicatePushDown::Unsupported
+    ));
+}
+
+/// Go's correlated-column caution (`logical_cte.go:115`), which applies only
+/// OUTSIDE an apply.
+#[test]
+fn cte_drops_correlated_predicates_unless_it_is_inside_an_apply() {
+    let plain = cte(cte_class(|_| {}));
+    let predicates = [eq(col_expr(1), one()), eq(cor_expr(2), one())];
+    let CtePredicatePushDown::Record(recorded) = plain.predicate_push_down(&predicates) else {
+        panic!("an outermost non-recursive CTE records something");
+    };
+    assert_eq!(recorded.len(), 1);
+
+    let in_apply = cte(cte_class(|c| c.is_in_apply = true));
+    let CtePredicatePushDown::Record(recorded) = in_apply.predicate_push_down(&predicates) else {
+        panic!("inside an apply, correlation is expected");
+    };
+    assert_eq!(recorded.len(), 2);
+
+    // Every candidate dropped: Go records a literal `1` so this reference does
+    // not let the others restrict the shared seed.
+    assert!(matches!(
+        plain.predicate_push_down(&[eq(cor_expr(2), one())]),
+        CtePredicatePushDown::RecordAlwaysTrue
+    ));
+    // No predicates at all takes the same branch.
+    assert!(matches!(
+        plain.predicate_push_down(&[]),
+        CtePredicatePushDown::RecordAlwaysTrue
+    ));
+}
+
+/// Go `LogicalCTE.PushDownTopN` (`logical_cte.go:139`): the TopN is attached
+/// ABOVE the CTE, never pushed into it — and it may still collapse to a limit.
+#[test]
+fn cte_attaches_a_topn_above_itself() {
+    let plan = cte(cte_class(|_| {})).push_down_topn(None);
+    assert!(matches!(plan, LogicalPlan::CTE(_)));
+
+    let topn = LogicalTopN::new(
+        BaseLogicalPlan::with_id(2, LogicalTopN::TYPE, 0),
+        vec![by(col_expr(1), false)],
+        0,
+        5,
+    );
+    let plan = cte(cte_class(|_| {})).push_down_topn(Some(topn));
+    assert!(matches!(plan, LogicalPlan::TopN(_)));
+    assert!(matches!(plan.children()[0], LogicalPlan::CTE(_)));
+
+    // A TopN with no ByItems is a limit, and AttachChild says so.
+    let limit_shaped = LogicalTopN::new(
+        BaseLogicalPlan::with_id(3, LogicalTopN::TYPE, 0),
+        vec![],
+        0,
+        5,
+    );
+    let plan = cte(cte_class(|_| {})).push_down_topn(Some(limit_shaped));
+    assert!(matches!(plan, LogicalPlan::Limit(_)));
+}
+
+/// Go `LogicalCTE.DeriveStats` (`logical_cte.go:167`): the NDV mapping is
+/// POSITIONAL against the seed schema, and the seed profile is written THROUGH
+/// the shared pointer so every `LogicalCTETable` sees it.
+#[test]
+fn cte_derive_stats_maps_seed_ndvs_positionally_and_publishes_the_seed_stat() {
+    let seed_stat = std::rc::Rc::new(std::cell::RefCell::new(StatsInfo::new(0.0, [])));
+    let mut c = cte(cte_class(|_| {}));
+    c.seed_stat = Some(std::rc::Rc::clone(&seed_stat));
+
+    // The CTE renames: its output ids differ from the seed's, position by
+    // position.
+    let seed_schema = schema(&[10, 11]);
+    let self_schema = schema(&[20, 21]);
+    let seed = StatsInfo::new(300.0, [(10_i64, 30.0), (11, 7.0)]);
+    let (stats, derived) = c.derive_stats(&seed, &seed_schema, None, &self_schema, None, &[true]);
+    assert!(derived);
+    assert!((stats.row_count() - 300.0).abs() < 1e-9);
+    assert!((stats.col_ndvs()[&20] - 30.0).abs() < 1e-9);
+    assert!((stats.col_ndvs()[&21] - 7.0).abs() < 1e-9);
+    // The shared seed profile was published.
+    assert!((seed_stat.borrow().row_count() - 300.0).abs() < 1e-9);
+
+    // A LogicalCTETable on the same storage adopts it.
+    let mut table = LogicalCTETable::new(
+        BaseLogicalPlan::with_id(5, LogicalCTETable::TYPE, 0),
+        seed_stat,
+    );
+    let (table_stats, derived) = table.derive_stats(&[true]).unwrap();
+    assert!(derived);
+    assert!((table_stats.row_count() - 300.0).abs() < 1e-9);
+    // Memoised without a reload.
+    assert!(!table.derive_stats(&[false]).unwrap().1);
+}
+
+/// The recursive half (`logical_cte.go:203`): NDVs ADD, and `DISTINCT` takes
+/// the caller's estimate instead of the row sum.
+#[test]
+fn cte_derive_stats_adds_the_recursive_part_unless_distinct() {
+    let seed_schema = schema(&[10]);
+    let recur_schema = schema(&[30]);
+    let self_schema = schema(&[20]);
+    let seed = StatsInfo::new(100.0, [(10_i64, 10.0)]);
+    let recur = StatsInfo::new(40.0, [(30_i64, 4.0)]);
+
+    let mut c = cte(cte_class(|_| {}));
+    let (stats, _) = c.derive_stats(
+        &seed,
+        &seed_schema,
+        Some((&recur, &recur_schema)),
+        &self_schema,
+        None,
+        &[true],
+    );
+    assert!((stats.row_count() - 140.0).abs() < 1e-9);
+    assert!((stats.col_ndvs()[&20] - 14.0).abs() < 1e-9);
+
+    let mut c = cte(cte_class(|class| class.is_distinct = true));
+    let (stats, _) = c.derive_stats(
+        &seed,
+        &seed_schema,
+        Some((&recur, &recur_schema)),
+        &self_schema,
+        Some(120.0),
+        &[true],
+    );
+    assert!((stats.row_count() - 120.0).abs() < 1e-9);
+    // NDVs still add, DISTINCT or not.
+    assert!((stats.col_ndvs()[&20] - 14.0).abs() < 1e-9);
+}
+
+/// Go `LogicalCTE.PreparePossibleProperties` (`logical_cte.go:239`): nil
+/// children are IGNORED, and an all-nil child list falls through to the seed.
+#[test]
+fn cte_tiflash_comes_from_non_nil_children_or_else_the_seed() {
+    let with = |has_tiflash| {
+        Some(PossiblePropertiesInfo {
+            orders: vec![],
+            has_tiflash,
+        })
+    };
+    let mut c = cte(cte_class(|_| {}));
+    // A nil child is skipped entirely, so a single true child wins.
+    let info = c.prepare_possible_properties(&[None, with(true)], false);
+    assert!(info.has_tiflash);
+    assert!(info.orders.is_empty());
+    // Two children conjoin.
+    assert!(
+        !c.prepare_possible_properties(&[with(true), with(false)], true)
+            .has_tiflash
+    );
+    // All-nil falls through to the seed's answer.
+    assert!(
+        c.prepare_possible_properties(&[None, None], true)
+            .has_tiflash
+    );
+    // No children at all is the same fall-through, unlike every other operator.
+    assert!(c.prepare_possible_properties(&[], true).has_tiflash);
+    assert!(!c.prepare_possible_properties(&[], false).has_tiflash);
+}
+
+/// Go `LogicalCTE.ExtractCorrelatedCols` (`logical_cte.go:271`) reads the SEED
+/// subtree, not this operator's children — via
+/// `coreusage.ExtractCorrelatedCols4LogicalPlan`.
+#[test]
+fn cte_extracts_correlated_cols_from_the_seed_subtree() {
+    let seed = LogicalPlan::Selection(LogicalSelection::new(
+        {
+            let mut base = BaseLogicalPlan::with_id(8, LogicalSelection::TYPE, 0);
+            base.set_children(vec![LogicalPlan::Selection(LogicalSelection::new(
+                BaseLogicalPlan::with_id(9, LogicalSelection::TYPE, 0),
+                vec![eq(cor_expr(2), one())],
+            ))]);
+            base
+        },
+        vec![eq(cor_expr(1), one())],
+    ));
+    // The walk reaches BOTH levels.
+    assert_eq!(extract_correlated_cols_for_plan(&seed).len(), 2);
+
+    let c = cte(cte_class(|class| {
+        class.seed_part_logical_plan = Some(Box::new(seed));
+    }));
+    assert_eq!(c.extract_correlated_cols().len(), 2);
+    assert_eq!(LogicalPlan::CTE(c).extract_correlated_cols().len(), 2);
+}
+
+/// Go `logicalop.GetHasTiFlash` (`logical_plans_misc.go:128`).
+#[test]
+fn get_has_tiflash_reads_the_bit_prepare_possible_properties_left() {
+    assert!(!get_has_tiflash(None));
+    let mut plan = LogicalPlan::Selection(LogicalSelection::new(
+        BaseLogicalPlan::with_id(1, LogicalSelection::TYPE, 0),
+        vec![],
+    ));
+    assert!(!get_has_tiflash(Some(&plan)));
+    plan.base_mut().set_has_tiflash(true);
+    assert!(get_has_tiflash(Some(&plan)));
+}
+
+/// A shallow clone of a `LogicalCTE` still points at the SAME `CTEClass`, which
+/// is Go's pointer copy.
+#[test]
+fn cte_shallow_clone_shares_the_class() {
+    let class = cte_class(|_| {});
+    let plan = LogicalPlan::CTE(cte(std::rc::Rc::clone(&class)));
+    let LogicalPlan::CTE(cloned) = plan.clone_shallow() else {
+        panic!("the variant is preserved");
+    };
+    class.borrow_mut().push_down_predicates.push(one());
+    assert_eq!(cloned.cte.unwrap().borrow().push_down_predicates.len(), 1);
+    // Go's PruneColumns is an empty call: it never rewrites the plan.
+    assert!(!LogicalCTE::prune_columns_local());
+}
+
+// ***** LogicalMaxOneRow / LogicalLock / LogicalSequence / LogicalUnionScan /
+// ***** TiKVSingleGather
+
+/// Go `LogicalMaxOneRow.Schema` (`logical_max_one_row.go:41`): every column
+/// becomes nullable, because a childless run emits one row of NULLs.
+#[test]
+fn max_one_row_makes_every_child_column_nullable() {
+    let mut not_null = FieldType::new(FieldTypeCode::LongLong);
+    not_null.set_flags(tidb_datatype::FieldTypeFlags::NOT_NULL);
+    let child = Schema::new(vec![Column::new(1, not_null)]);
+    assert!(child.columns[0]
+        .ret_type
+        .as_ref()
+        .unwrap()
+        .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL));
+    let relaxed = LogicalMaxOneRow::schema(&child);
+    assert!(!relaxed.columns[0]
+        .ret_type
+        .as_ref()
+        .unwrap()
+        .has_flag(tidb_datatype::FieldTypeFlags::NOT_NULL));
+}
+
+/// Go `getSingletonStats` (`logical_max_one_row.go:117`) and
+/// `LogicalMaxOneRow.DeriveStats` (`:73`): one row, every NDV one, regardless
+/// of the child.
+#[test]
+fn max_one_row_derives_a_singleton_profile() {
+    let mut op = LogicalMaxOneRow::new(BaseLogicalPlan::with_id(1, LogicalMaxOneRow::TYPE, 0));
+    let output = schema(&[1, 2]);
+    let (stats, derived) = op.derive_stats(&output, &[true]);
+    assert!(derived);
+    assert!((stats.row_count() - 1.0).abs() < 1e-9);
+    assert!((stats.col_ndvs()[&1] - 1.0).abs() < 1e-9);
+    assert!((stats.col_ndvs()[&2] - 1.0).abs() < 1e-9);
+    assert!(!op.derive_stats(&output, &[false]).1);
+    // A filter never crosses it.
+    let predicates = vec![eq(col_expr(1), one())];
+    assert_eq!(LogicalMaxOneRow::predicate_push_down(predicates).len(), 1);
+}
+
+/// Go `IsSupportedSelectLockType` (`logical_lock.go:151`) and its two halves.
+#[test]
+fn lock_type_support_covers_for_update_and_for_share_only() {
+    for supported in [
+        SelectLockType::ForUpdate,
+        SelectLockType::ForUpdateNoWait,
+        SelectLockType::ForUpdateWaitN,
+        SelectLockType::ForShare,
+        SelectLockType::ForShareNoWait,
+    ] {
+        assert!(is_supported_select_lock_type(supported));
+    }
+    assert!(!is_supported_select_lock_type(SelectLockType::None));
+    assert!(is_select_for_update_lock_type(
+        SelectLockType::ForUpdateWaitN
+    ));
+    assert!(!is_select_for_update_lock_type(SelectLockType::ForShare));
+    assert!(is_select_for_share_lock_type(
+        SelectLockType::ForShareNoWait
+    ));
+}
+
+/// Go `LogicalLock.PruneColumns` (`logical_lock.go:52`): a supported lock
+/// forces its handle and partition-id columns to survive; an unsupported one
+/// forces nothing.
+#[test]
+fn lock_pruning_keeps_handles_only_for_a_supported_lock() {
+    let mut op = LogicalLock::new(
+        BaseLogicalPlan::with_id(1, LogicalLock::TYPE, 0),
+        SelectLockType::ForUpdate,
+    );
+    op.tbl_id_to_handle_cols
+        .insert(7, vec![column(70), column(71)]);
+    op.tbl_id_to_phys_tbl_id_col.insert(7, column(79));
+    // A table with a handle but no partition column contributes only handles.
+    op.tbl_id_to_handle_cols.insert(8, vec![column(80)]);
+
+    let used = op.prune_columns_local(&[column(1)]);
+    assert_eq!(
+        used.iter().map(|c| c.unique_id).collect::<Vec<_>>(),
+        vec![1, 70, 71, 79, 80]
+    );
+
+    op.lock_type = SelectLockType::None;
+    assert_eq!(op.prune_columns_local(&[column(1)]).len(), 1);
+    // A TopN always goes through the lock rather than removing it.
+    assert!(LogicalLock::pushes_topn_into_child(true));
+    assert!(!LogicalLock::pushes_topn_into_child(false));
+}
+
+/// Go `LogicalSequence`'s three single-child rules (`logical_sequence.go:47`,
+/// `:57`, `:65`): everything addresses the LAST child, the main query.
+#[test]
+fn sequence_addresses_only_its_last_child() {
+    let schemas = [schema(&[1]), schema(&[9])];
+    assert_eq!(
+        LogicalSequence::schema(&schemas).unwrap().columns[0].unique_id,
+        9
+    );
+    assert!(LogicalSequence::schema(&[]).is_none());
+    assert_eq!(LogicalSequence::predicate_push_down_child(4), Some(3));
+    assert_eq!(LogicalSequence::prune_columns_child(4), Some(3));
+    assert_eq!(LogicalSequence::predicate_push_down_child(0), None);
+}
+
+/// Go `LogicalSequence.DeriveStats` (`logical_sequence.go:82`): the LAST
+/// child's profile, and "sequence only care about the last child stats is
+/// changed or not" — so there is NO memoisation escape.
+#[test]
+fn sequence_adopts_the_last_child_profile_and_reports_its_reload_flag() {
+    let mut op = LogicalSequence::new(BaseLogicalPlan::with_id(1, LogicalSequence::TYPE, 0));
+    let children = [
+        StatsInfo::new(1.0, [(1_i64, 1.0)]),
+        StatsInfo::new(77.0, [(9_i64, 9.0)]),
+    ];
+    let (stats, reload) = op.derive_stats(&children, &[true, true]).unwrap();
+    assert!((stats.row_count() - 77.0).abs() < 1e-9);
+    assert!(reload);
+    // Only the LAST reload flag counts, and the profile is re-adopted anyway.
+    let (stats, reload) = op.derive_stats(&children, &[true, false]).unwrap();
+    assert!(!reload);
+    assert!((stats.row_count() - 77.0).abs() < 1e-9);
+    // No reload flags at all defaults to reloaded.
+    assert!(op.derive_stats(&children, &[]).unwrap().1);
+    assert!(op.derive_stats(&[], &[true]).is_none());
+
+    let info = op.prepare_possible_properties(&[
+        Some(PossiblePropertiesInfo {
+            orders: vec![vec![column(1)]],
+            has_tiflash: true,
+        }),
+        Some(PossiblePropertiesInfo {
+            orders: vec![],
+            has_tiflash: true,
+        }),
+    ]);
+    assert!(info.orders.is_empty());
+    assert!(info.has_tiflash);
+}
+
+/// Go `LogicalUnionScan.PredicatePushDown` (`logical_union_scan.go:58`): a
+/// predicate that reads a VIRTUAL column stays above, per issue #53951.
+#[test]
+fn union_scan_holds_back_virtual_column_predicates() {
+    let mut generated = column(2);
+    generated.virtual_expr = Some(Box::new(one()));
+    let split = LogicalUnionScan::predicate_push_down(&[
+        eq(col_expr(1), one()),
+        eq(Expression::Column(generated.clone()), one()),
+    ]);
+    assert_eq!(split.without_virtual_column.len(), 1);
+    assert_eq!(split.with_virtual_column.len(), 1);
+    assert!(contains_virtual_column(&eq(
+        Expression::Column(generated),
+        one()
+    )));
+    assert!(!contains_virtual_column(&eq(col_expr(1), one())));
+}
+
+/// Go `LogicalUnionScan.PruneColumns` (`logical_union_scan.go:88`): the handle,
+/// the partition-id column, and every condition column all survive.
+#[test]
+fn union_scan_pruning_keeps_the_handle_and_the_partition_column() {
+    let mut op = LogicalUnionScan::new(
+        BaseLogicalPlan::with_id(1, LogicalUnionScan::TYPE, 0),
+        vec![column(50)],
+    );
+    op.conditions = vec![eq(col_expr(60), one())];
+    let mut phys = column(70);
+    phys.id = EXTRA_PHYS_TBL_ID;
+    let output = Schema::new(vec![column(1), phys]);
+    let used = op.prune_columns_local(&[column(1)], &output);
+    assert_eq!(
+        used.iter().map(|c| c.unique_id).collect::<Vec<_>>(),
+        vec![1, 50, 70, 60]
+    );
+    assert_eq!(op.explain_info(), "conds:1 exprs, handle:1 cols");
+}
+
+/// Go `LogicalUnionScan.PreparePossibleProperties`
+/// (`logical_union_scan.go:120`): the child's orders pass through, TiFlash is
+/// unconditionally false.
+#[test]
+fn union_scan_passes_orders_through_but_never_tiflash() {
+    let mut op = LogicalUnionScan::new(
+        BaseLogicalPlan::with_id(1, LogicalUnionScan::TYPE, 0),
+        vec![],
+    );
+    let info = op.prepare_possible_properties(Some(&PossiblePropertiesInfo {
+        orders: vec![vec![column(5)]],
+        has_tiflash: true,
+    }));
+    assert_eq!(info.orders[0][0].unique_id, 5);
+    assert!(!info.has_tiflash);
+    assert!(!op.base.has_tiflash());
+    assert!(op.prepare_possible_properties(None).orders.is_empty());
+}
+
+/// Go `TiKVSingleGather.BuildKeyInfo` (`logical_tikv_single_gather.go:60`):
+/// the child's keys are adopted WHOLESALE, without the survival check the
+/// schema producer applies.
+#[test]
+fn tikv_single_gather_adopts_child_keys_wholesale() {
+    let mut child = schema(&[1, 2]);
+    // A key naming a column this operator's schema does NOT list still carries
+    // across, unlike `propagate_child_keys`.
+    child.pk_or_uk = vec![vec![column(1)], vec![column(999)]];
+    let mut output = schema(&[1]);
+    TiKVSingleGather::build_key_info(&mut output, std::slice::from_ref(&child));
+    assert_eq!(output.pk_or_uk.len(), 2);
+    // The schema-producer body would have dropped the second key.
+    let mut compare = schema(&[1]);
+    schema_producer::propagate_child_keys(&mut compare, &[child]);
+    assert_eq!(compare.pk_or_uk.len(), 1);
+
+    // No child leaves no keys rather than panicking.
+    let mut output = schema(&[1]);
+    output.pk_or_uk = vec![vec![column(1)]];
+    TiKVSingleGather::build_key_info(&mut output, &[]);
+    assert!(output.pk_or_uk.is_empty());
+}
+
+/// Go `TiKVSingleGather.PreparePossibleProperties`
+/// (`logical_tikv_single_gather.go:74`) and `ExplainInfo` (`:46`).
+#[test]
+fn tikv_single_gather_is_transparent_to_order_and_names_its_index() {
+    let mut op = TiKVSingleGather::new(BaseLogicalPlan::with_id(1, TiKVSingleGather::TYPE, 0));
+    let info = op.prepare_possible_properties(Some(&PossiblePropertiesInfo {
+        orders: vec![vec![column(5)]],
+        has_tiflash: true,
+    }));
+    assert_eq!(info.orders[0][0].unique_id, 5);
+    assert!(info.has_tiflash);
+    assert!(op.base.has_tiflash());
+    let info = op.prepare_possible_properties(None);
+    assert!(info.orders.is_empty());
+    assert!(!info.has_tiflash);
+
+    op.source = Some(Box::new(DataSource {
+        table_name: "t".to_owned(),
+        ..DataSource::default()
+    }));
+    let table_only = op.explain_info();
+    op.is_index_gather = true;
+    op.index_name = Some("idx_a".to_owned());
+    assert_eq!(op.explain_info(), format!("{table_only}, index:idx_a"));
+}
+
+/// The five small operators all reach the enum dispatches.
+#[test]
+fn the_small_operators_are_wired_into_the_enum() {
+    for plan in [
+        LogicalPlan::MaxOneRow(LogicalMaxOneRow::new(BaseLogicalPlan::with_id(
+            1,
+            LogicalMaxOneRow::TYPE,
+            0,
+        ))),
+        LogicalPlan::Lock(LogicalLock::new(
+            BaseLogicalPlan::with_id(2, LogicalLock::TYPE, 0),
+            SelectLockType::ForUpdate,
+        )),
+        LogicalPlan::Sequence(LogicalSequence::new(BaseLogicalPlan::with_id(
+            3,
+            LogicalSequence::TYPE,
+            0,
+        ))),
+        LogicalPlan::UnionScan(LogicalUnionScan::new(
+            BaseLogicalPlan::with_id(4, LogicalUnionScan::TYPE, 0),
+            vec![],
+        )),
+        LogicalPlan::TiKVSingleGather(TiKVSingleGather::new(BaseLogicalPlan::with_id(
+            5,
+            TiKVSingleGather::TYPE,
+            0,
+        ))),
+    ] {
+        assert!(plan.extract_correlated_cols().is_empty());
+        assert!(plan.pull_up_constant_predicates().is_empty());
+        assert!(plan.extract_col_groups(&[]).is_empty());
+        let shallow = plan.clone_shallow();
+        assert_eq!(shallow.id(), plan.id());
+        assert_eq!(shallow.tp(), plan.tp());
+    }
+}
+
+// ***** LogicalTableScan / LogicalIndexScan *****
+
+/// Go `LogicalTableScan.PreparePossibleProperties`
+/// (`logical_table_scan.go:77`): the HANDLE order, and TiFlash only when the
+/// source has it AND MPP is allowed.
+#[test]
+fn table_scan_offers_the_handle_order_and_gates_tiflash_on_mpp() {
+    let mut ts = LogicalTableScan::new(BaseLogicalPlan::with_id(1, LogicalTableScan::TYPE, 0));
+    ts.source = Some(Box::new(DataSource::default()));
+    ts.handle_cols = vec![column(1)];
+    let info = ts.prepare_possible_properties(true, true);
+    assert_eq!(info.orders[0][0].unique_id, 1);
+    assert!(info.has_tiflash);
+    assert!(ts.base.has_tiflash());
+    // MPP off, or a source with no TiFlash replica, both veto it.
+    assert!(!ts.prepare_possible_properties(true, false).has_tiflash);
+    assert!(!ts.prepare_possible_properties(false, true).has_tiflash);
+    // No handle: no offered order.
+    ts.handle_cols.clear();
+    assert!(ts.prepare_possible_properties(true, true).orders.is_empty());
+    // No source at all is never TiFlash-capable.
+    ts.source = None;
+    assert!(!ts.prepare_possible_properties(true, true).has_tiflash);
+}
+
+/// Go `LogicalTableScan.BuildKeyInfo` (`logical_table_scan.go:66`) delegates to
+/// the source, and `ExplainInfo` (`:46`) never drops a list silently.
+#[test]
+fn table_scan_delegates_keys_and_reports_every_explain_list() {
+    let mut ts = LogicalTableScan::new(BaseLogicalPlan::with_id(1, LogicalTableScan::TYPE, 0));
+    ts.source = Some(Box::new(DataSource {
+        table_name: "t".to_owned(),
+        ..DataSource::default()
+    }));
+    let mut output = schema(&[1, 2]);
+    ts.build_key_info(&mut output, vec![vec![column(1)]]);
+    assert_eq!(output.pk_or_uk.len(), 1);
+
+    let table_only = ts.explain_info();
+    ts.handle_cols = vec![column(1)];
+    ts.access_conds = vec![eq(col_expr(1), one())];
+    assert_eq!(
+        ts.explain_info(),
+        format!("{table_only}, pk col:1 cols, cond:1 exprs")
+    );
+}
+
+/// Go `LogicalIndexScan.PreparePossibleProperties`
+/// (`logical_index_scan.go:117`): `EqCondCount + 1` offered orders, one per
+/// equality-pinned prefix.
+#[test]
+fn index_scan_offers_one_order_per_equality_pinned_prefix() {
+    let mut is = LogicalIndexScan::new(BaseLogicalPlan::with_id(1, LogicalIndexScan::TYPE, 0));
+    is.source = Some(Box::new(DataSource::default()));
+    is.idx_cols = vec![column(1), column(2), column(3)];
+    is.eq_cond_count = 1;
+    let info = is.prepare_possible_properties(true, true);
+    // [a, b, c] and [b, c]: every row already agrees on `a`.
+    assert_eq!(info.orders.len(), 2);
+    assert_eq!(
+        info.orders[0]
+            .iter()
+            .map(|c| c.unique_id)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+    assert_eq!(
+        info.orders[1]
+            .iter()
+            .map(|c| c.unique_id)
+            .collect::<Vec<_>>(),
+        vec![2, 3]
+    );
+    // No equality at all still offers the whole index.
+    is.eq_cond_count = 0;
+    assert_eq!(is.prepare_possible_properties(true, true).orders.len(), 1);
+    // No index columns: nothing offered.
+    is.idx_cols.clear();
+    assert!(is.prepare_possible_properties(true, true).orders.is_empty());
+}
+
+/// Go `LogicalIndexScan.GetPKIsHandleCol` (`logical_index_scan.go:196`), which
+/// resolves against THIS operator's schema and not the source's columns.
+#[test]
+fn index_scan_finds_the_handle_in_its_own_schema() {
+    let mut is = LogicalIndexScan::new(BaseLogicalPlan::with_id(1, LogicalIndexScan::TYPE, 0));
+    is.source = Some(Box::new(DataSource {
+        pk_is_handle: true,
+        handle_cols: vec![column(1)],
+        ..DataSource::default()
+    }));
+    assert!(is.get_pk_is_handle_col(&schema(&[1, 2])).is_some());
+    // The handle was pruned out of this operator's schema.
+    assert!(is.get_pk_is_handle_col(&schema(&[2])).is_none());
+    // A clustered/non-PKIsHandle table has none.
+    is.source.as_mut().unwrap().pk_is_handle = false;
+    assert!(is.get_pk_is_handle_col(&schema(&[1, 2])).is_none());
+
+    // BuildKeyInfo appends it above the caller's index keys.
+    is.source.as_mut().unwrap().pk_is_handle = true;
+    let mut output = schema(&[1, 2]);
+    is.build_key_info(&mut output, vec![vec![column(2)]], vec![vec![column(2)]]);
+    assert_eq!(output.pk_or_uk.len(), 2);
+    assert_eq!(output.nullable_uk.len(), 1);
+}
+
+/// Go `matchIndicesProp` (`logical_index_scan.go:204`): a PREFIX index cannot
+/// satisfy an order on the whole column.
+#[test]
+fn index_prop_matching_rejects_prefix_indexes_and_short_indexes() {
+    let idx = [column(1), column(2)];
+    let full = [
+        tidb_datatype::UNSPECIFIED_LENGTH,
+        tidb_datatype::UNSPECIFIED_LENGTH,
+    ];
+    let prop = [
+        crate::physical_property::SortItem::new(1, false),
+        crate::physical_property::SortItem::new(2, false),
+    ];
+    assert!(matches_indices_prop(&idx, &full, &prop));
+    // A prefix length on the first column breaks it.
+    assert!(!matches_indices_prop(&idx, &[10, -1], &prop));
+    // A different column order breaks it.
+    assert!(!matches_indices_prop(
+        &idx,
+        &full,
+        &[
+            crate::physical_property::SortItem::new(2, false),
+            crate::physical_property::SortItem::new(1, false),
+        ]
+    ));
+    // Fewer index columns than required attributes.
+    assert!(!matches_indices_prop(&idx[..1], &full[..1], &prop));
+    // An empty requirement is always satisfied.
+    assert!(matches_indices_prop(&idx, &full, &[]));
+}
+
+/// Go `LogicalIndexScan.ExplainInfo()` (`logical_index_scan.go:58`): the index
+/// column names are exact.
+#[test]
+fn index_scan_explain_names_its_index_columns() {
+    let mut is = LogicalIndexScan::new(BaseLogicalPlan::with_id(1, LogicalIndexScan::TYPE, 0));
+    is.source = Some(Box::new(DataSource {
+        table_name: "t".to_owned(),
+        ..DataSource::default()
+    }));
+    let table_only = is.explain_info();
+    is.index_column_names = vec!["a".to_owned(), "b".to_owned()];
+    is.access_conds = vec![eq(col_expr(1), one())];
+    assert_eq!(
+        is.explain_info(),
+        format!("{table_only}, index:a, b, cond:1 exprs")
+    );
 }
