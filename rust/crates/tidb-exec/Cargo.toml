@@ -36,6 +36,7 @@ tidb-vardef = { path = "../tidb-vardef" }
 tidb-util = { path = "../tidb-util" }
 chrono.workspace = true
 prost.workspace = true
+regex.workspace = true
 serde_json = { workspace = true }
 
 [dev-dependencies]

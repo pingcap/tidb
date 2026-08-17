@@ -2338,6 +2338,8 @@ dependencies = [
 name = "tidb-domain"
 version = "0.0.0"
 dependencies = [
+ "chrono",
+ "chrono-tz",
  "tidb-error",
  "tidb-vardef",
 ]
@@ -2367,6 +2369,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "prost",
+ "regex",
  "serde_json",
  "sha2",
  "tidb-ast",

@@ -99,6 +99,7 @@ mod error_conversion;
 pub mod exec_details;
 pub mod executor_utils;
 pub mod explain;
+pub mod filter;
 pub mod first_row;
 /// Go `GlobalSystemVariableInitialValue`, which lives with the rest of the
 /// `vardef` policy in [`tidb_vardef`] because the SESSION tier needs it too:
@@ -211,6 +212,7 @@ pub mod sysvar_error;
 pub mod sysvar_scope;
 pub mod sysvar_type;
 pub mod table_info_build;
+pub mod table_router;
 pub mod table_rule_selector;
 pub mod tagged_ptr;
 pub mod tiflash_stats;
