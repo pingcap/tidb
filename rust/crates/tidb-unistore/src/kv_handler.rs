@@ -35,7 +35,7 @@
 //!   yet, so `convertToPBError`'s region arm is vacuous.
 
 use tidb_proto::kvrpcpb;
-use tidb_proto::{KvrpcKeyError, KvrpcMutation};
+use tidb_proto::KvrpcKeyError;
 
 use crate::mvcc_store::{
     CheckTxnStatusReq, KvError, MvccStore, PessimisticLockReq, PrewriteReq, ScanReq,
@@ -359,7 +359,7 @@ fn pair_to_proto(pair: crate::mvcc_store::KvPair) -> kvrpcpb::KvPair {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tidb_proto::KvrpcOp;
+    use tidb_proto::{KvrpcMutation, KvrpcOp};
 
     // All WRITTEN: server.go's own coverage is the RPC integration suites.
     // These pin the proto shapes a client parses.
