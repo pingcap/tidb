@@ -106,6 +106,16 @@ impl Tso {
     }
 }
 
+
+/// The [`Tso`] as the lock resolver's timestamp authority: every call a
+/// fresh real TSO, which is exactly the trait's admission rule — the oracle
+/// can never repeat or synthesize, by construction.
+impl tidb_txnkv::lock::TimestampSource for Tso {
+    fn current_ts(&self) -> Result<u64, String> {
+        Ok(self.get_composed_ts())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,4 +163,14 @@ mod tests {
         CLOCK.store(150, Ordering::SeqCst);
         assert_eq!(tso.get_ts(), (200, 1), "a BACKWARD clock only bumps");
     }
+
+    #[test]
+    fn the_oracle_serves_the_resolvers_timestamp_trait() {
+        use tidb_txnkv::lock::TimestampSource;
+        let tso = Tso::with_clock(|| 9);
+        let first = tso.current_ts().expect("a ts");
+        let second = tso.current_ts().expect("a ts");
+        assert!(second > first, "fresh on every call, never repeated");
+    }
+
 }
