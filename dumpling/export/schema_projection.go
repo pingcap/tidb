@@ -120,6 +120,7 @@ func filterColumnOptions(
 				continue
 			}
 		case ast.ColumnOptionReference:
+			// MySQL 9.7 supports inline foreign keys as column-level REFERENCES options.
 			if err := validateForeignKeyReference(option.Refer, database, table, retained, schemaColumns); err != nil {
 				return nil, err
 			}
