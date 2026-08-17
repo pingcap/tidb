@@ -365,13 +365,13 @@ func (r *HistoryReader) scheduleTasks(
 					continue
 				}
 				if !r.checker.isTimeValid(file.begin, file.end) {
-					_ = file.close()
+					file.closeAndLogError()
 					continue
 				}
 				select {
 				case filesCh <- file:
 				case <-ctx.Done():
-					_ = file.close()
+					file.closeAndLogError()
 					return
 				}
 			}
@@ -559,6 +559,12 @@ func (f *stmtFile) close() error {
 	return nil
 }
 
+func (f *stmtFile) closeAndLogError() {
+	if err := f.close(); err != nil {
+		logutil.BgLogger().Warn("failed to close statements file", zap.Error(err), zap.String("path", f.path))
+	}
+}
+
 type stmtFiles struct {
 	files []*stmtFile
 }
@@ -631,7 +637,7 @@ func (w *stmtScanWorker) handleFile(
 	if file == nil || file.file == nil {
 		return
 	}
-	defer func() { _ = file.close() }()
+	defer file.closeAndLogError()
 
 	reader := bufio.NewReader(file.file)
 	for {
