@@ -603,7 +603,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for {
 			select {
 			case <-ticker.C:
-				if e.Ctx().GetSessionVars().SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
+				if exeerrors.ErrQueryInterrupted.Equal(e.Ctx().GetSessionVars().SQLKiller.HandleSignal()) {
 					bq.cancelTask(taskID)
 					return
 				}

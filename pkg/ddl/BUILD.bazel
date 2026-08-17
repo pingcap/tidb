@@ -412,6 +412,7 @@ go_test(
         "//pkg/util/mock",
         "//pkg/util/sem/compat",
         "//pkg/util/sqlexec",
+        "//pkg/util/sqlkiller",
         "//pkg/util/timeutil",
         "@com_github_docker_go_units//:go-units",
         "@com_github_fsouza_fake_gcs_server//fakestorage",

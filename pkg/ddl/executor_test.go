@@ -20,7 +20,9 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -32,6 +34,8 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
@@ -139,6 +143,42 @@ func TestIsJobRollbackable(t *testing.T) {
 		re := job.IsRollbackable()
 		require.Equal(t, ca.result, re)
 	}
+}
+
+func TestKillCancelsDDLJob(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+
+	var cancellationObserved atomic.Bool
+	deadline := time.Now().Add(5 * time.Second)
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
+		if cancellationObserved.Load() {
+			return
+		}
+
+		checkTK := testkit.NewTestKit(t, store)
+		for time.Now().Before(deadline) {
+			jobs, err := ddl.GetAllDDLJobs(context.Background(), checkTK.Session())
+			require.NoError(t, err)
+			if slices.ContainsFunc(jobs, func(job *model.Job) bool {
+				return job.Type == model.ActionAddIndex && job.State == model.JobStateCancelling
+			}) {
+				cancellationObserved.Store(true)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted", func() {
+		tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	})
+
+	err := tk.ExecToErr("alter table t add index idx(a)")
+	require.True(t, dbterror.ErrCancelledDDLJob.Equal(err), err)
+	require.True(t, cancellationObserved.Load())
+	tk.MustQuery("show index from t").Check(testkit.Rows())
 }
 
 func enQueueDDLJobs(t *testing.T, sess sessionapi.Session, jobType model.ActionType, start, end int) {
