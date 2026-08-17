@@ -80,6 +80,7 @@ mod real_tikv_node;
 pub mod resultset_source;
 pub mod resultset_writer;
 mod secure_transport;
+pub mod signal_exit;
 mod session_transaction;
 mod sorting_result_set;
 mod sql_node;
