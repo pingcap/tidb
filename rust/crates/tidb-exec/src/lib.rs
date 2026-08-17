@@ -92,6 +92,7 @@ mod error;
 pub use tidb_executor::error_context;
 mod error_conversion;
 pub mod exec_details;
+pub mod executor_utils;
 pub mod explain;
 pub mod first_row;
 /// Go `GlobalSystemVariableInitialValue`, which lives with the rest of the
