@@ -1344,6 +1344,89 @@ fn build_pessimistic_lock(
     }))
 }
 
+/// Go `SecondaryLocksStatus` (`mvcc.go`): what became of a transaction's
+/// secondary keys — a commit timestamp, a rollback (zero), or the still-live
+/// locks.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SecondaryLocksStatus {
+    /// Non-zero: the transaction committed at this ts.
+    pub commit_ts: u64,
+    /// The still-live secondary locks, when neither committed nor rolled
+    /// back.
+    pub locks: Vec<KvrpcLockInfo>,
+}
+
+impl MvccStore {
+    /// Go `MVCCStore.CheckSecondaryLocks` (`mvcc.go`): the async-commit
+    /// resolver's question about a transaction's secondaries — and like the
+    /// primary's status check, a mutation wearing a query's face. A key
+    /// whose lock is gone answers from the committed record or the
+    /// extra-status record; a key with NEITHER gains the rollback tombstone
+    /// on the spot. A still-PESSIMISTIC lock among the secondaries is rolled
+    /// back immediately — the prewrite never reached it, so the transaction
+    /// cannot commit. Only when every key still holds our real lock do the
+    /// locks come back as the answer.
+    pub fn check_secondary_locks(
+        &mut self,
+        keys: &[Vec<u8>],
+        start_ts: u64,
+    ) -> Result<SecondaryLocksStatus, KvError> {
+        let mut keys = keys.to_vec();
+        keys.sort();
+        let mut locks = Vec::with_capacity(keys.len());
+        for key in &keys {
+            let buf = self.lock_bytes(key);
+            let lock = if buf.is_empty() {
+                None
+            } else {
+                Some(decode_lock(&buf))
+            };
+            let ours = lock
+                .as_ref()
+                .is_some_and(|lock| lock.hdr.start_ts == start_ts);
+            if !ours {
+                if let Some(commit_ts) = self.committed_version_of(key, start_ts) {
+                    return Ok(SecondaryLocksStatus {
+                        commit_ts,
+                        locks: Vec::new(),
+                    });
+                }
+                let status = self.check_extra_txn_status(key, start_ts);
+                if status.is_op_lock_committed() {
+                    return Ok(SecondaryLocksStatus {
+                        commit_ts: status.commit_ts,
+                        locks: Vec::new(),
+                    });
+                }
+                if !status.is_rollback {
+                    // Go `batch.Rollback(key, false)`: the tombstone lands
+                    // NOW, so the answer it gives is the answer that stays.
+                    let status_key = encode_extra_txn_status_key(key, start_ts);
+                    self.engine
+                        .set(&status_key, start_ts, &[], DbUserMeta::new(start_ts, 0));
+                }
+                return Ok(SecondaryLocksStatus::default());
+            }
+            let lock = lock.expect("checked ours above");
+            if lock.hdr.op == KvrpcOp::PessimisticLock as i32 as u8 {
+                // Go `batch.Rollback(key, true)`: tombstone AND the lock's
+                // death — the prewrite never replaced this lock, so the
+                // transaction cannot commit.
+                let status_key = encode_extra_txn_status_key(key, start_ts);
+                self.engine
+                    .set(&status_key, start_ts, &[], DbUserMeta::new(start_ts, 0));
+                self.lock_store_delete(key);
+                return Ok(SecondaryLocksStatus::default());
+            }
+            locks.push(lock.to_lock_info(key.clone()));
+        }
+        Ok(SecondaryLocksStatus {
+            commit_ts: 0,
+            locks,
+        })
+    }
+}
+
 /// Go `extraTxnStatus`.
 #[derive(Clone, Copy, Debug, Default)]
 struct ExtraTxnStatus {
@@ -2148,5 +2231,69 @@ mod tests {
                 .expect_err("tombstoned"),
             KvError::AlreadyRollback
         );
+    }
+
+    #[test]
+    fn test_check_secondary_locks_status() {
+        // TRANSCREATED from Go `TestCheckSecondaryLocksStatus`
+        // (`mvcc_test.go:729`), the optimistic body: commit at 3 for ts 1,
+        // rollback at 5, commit at 9 for ts 7 -- each answer read back, plus
+        // the tombstone the no-record arm writes.
+        let mut store = MvccStore::new();
+        let (pk, secondary, val) = (b"pk".as_slice(), b"secondary".as_slice(), b"val");
+        must_prewrite_optimistic(&mut store, pk, secondary, val, 1, 200);
+        store.commit(&[secondary.to_vec()], 1, 3).expect("commits");
+        store
+            .rollback(&[secondary.to_vec()], 5)
+            .expect("rolls back");
+        must_prewrite_optimistic(&mut store, pk, secondary, val, 7, 200);
+        store.commit(&[secondary.to_vec()], 7, 9).expect("commits");
+
+        // Lock is committed at 3.
+        let status = store
+            .check_secondary_locks(&[secondary.to_vec()], 1)
+            .expect("checks");
+        assert_eq!(status.locks.len(), 0);
+        assert_eq!(status.commit_ts, 3);
+        assert_eq!(store.get(secondary, 3).expect("v"), Some(val.to_vec()));
+
+        // Op_Lock-free commit at 9 answers 9 for ts 7.
+        let status = store
+            .check_secondary_locks(&[secondary.to_vec()], 7)
+            .expect("checks");
+        assert_eq!(status.locks.len(), 0);
+        assert_eq!(status.commit_ts, 9);
+
+        // The rollback at 5 answers zero.
+        let status = store
+            .check_secondary_locks(&[secondary.to_vec()], 5)
+            .expect("checks");
+        assert_eq!(status, SecondaryLocksStatus::default());
+
+        // A ts with no record at all gains the tombstone: the answer stays.
+        let status = store
+            .check_secondary_locks(&[secondary.to_vec()], 6)
+            .expect("checks");
+        assert_eq!(status, SecondaryLocksStatus::default());
+        assert_eq!(
+            store
+                .prewrite(&PrewriteReq {
+                    mutations: vec![put(secondary, val)],
+                    primary_lock: secondary.to_vec(),
+                    start_version: 6,
+                    ..PrewriteReq::default()
+                })
+                .expect_err("tombstoned"),
+            KvError::AlreadyRollback
+        );
+
+        // A live optimistic lock among the secondaries comes back AS a lock.
+        must_prewrite_optimistic(&mut store, pk, b"live", b"v", 20, 200);
+        let status = store
+            .check_secondary_locks(&[b"live".to_vec()], 20)
+            .expect("checks");
+        assert_eq!(status.commit_ts, 0);
+        assert_eq!(status.locks.len(), 1);
+        assert_eq!(status.locks[0].lock_version, 20);
     }
 }
