@@ -117,6 +117,7 @@ go_test(
         "//pkg/objstore/storeapi",
         "//pkg/parser",
         "//pkg/parser/ast",
+        "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//pkg/util/promutil",
         "//pkg/util/table-filter",

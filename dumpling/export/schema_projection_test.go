@@ -3,49 +3,48 @@
 package export
 
 import (
-	"fmt"
-	"regexp"
 	"testing"
 
-	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pingcap/tidb/br/pkg/version"
+	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
-func TestGenerateProjectedSchema(t *testing.T) {
-	t.Run("schema is prepared before table metadata", func(t *testing.T) {
-		tctx, mock, baseConn := newMockDumpConn(t)
-		conf := DefaultConfig()
-		conf.ServerInfo.ServerType = version.ServerTypeMySQL
-		conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
-		conf.columnFilter = newColumnFilterConfigForTest(t,
-			columnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"id", "name"}},
-		)
+func TestPrepareColumnProjectionSchema(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("CREATE DATABASE " + database)
+	tk.MustExec("CREATE TABLE " + database + "." + table + " (id INT PRIMARY KEY, name VARCHAR(12), secret VARCHAR(12))")
 
-		mock.ExpectQuery("SHOW COLUMNS FROM").
-			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
-				AddRow("id", "int(11)", "NO", "PRI", nil, "").
-				AddRow("name", "varchar(12)", "NO", "", nil, "").
-				AddRow("secret", "varchar(12)", "NO", "", nil, ""))
-		mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SELECT `id`,`name`,`secret` FROM `%s`.`%s` LIMIT 1", database, table))).
-			WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
-				sqlmock.NewColumn("id").OfType("INT", int64(0)),
-				sqlmock.NewColumn("name").OfType("VARCHAR", ""),
-				sqlmock.NewColumn("secret").OfType("VARCHAR", ""),
-			).AddRow(1, "alice", "hidden"))
-		createSQL := "CREATE TABLE `test_table` (`id` INT PRIMARY KEY, `name` VARCHAR(12), `secret` VARCHAR(12))"
-		mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf("SHOW CREATE TABLE `%s`.`%s`", database, table))).
-			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow(table, createSQL))
-
-		require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
-		meta, err := dumpTableMeta(tctx, conf, baseConn, database, &TableInfo{Type: TableTypeBase, Name: table})
-		require.NoError(t, err)
-		require.NotContains(t, meta.ShowCreateTable(), "`secret`")
-		require.NoError(t, mock.ExpectationsWereMet())
+	db := testkit.CreateMockDB(tk)
+	tctx := tcontext.Background()
+	conn, err := db.Conn(tctx)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, conn.Close())
+		require.NoError(t, db.Close())
 	})
+	baseConn := newBaseConn(conn, false, nil)
 
+	conf := DefaultConfig()
+	conf.Tables = NewDatabaseTables().AppendTables(database, []string{table}, []uint64{0})
+	conf.columnFilter = newColumnFilterConfigForTest(t,
+		columnFilterRule{Matcher: []string{database + "." + table}, Columns: []string{"id", "name"}},
+	)
+
+	require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+	tk.MustExec("DROP TABLE " + database + "." + table)
+
+	meta, err := dumpTableMeta(tctx, conf, baseConn, database, &TableInfo{Type: TableTypeBase, Name: table})
+	require.NoError(t, err)
+	require.Contains(t, meta.ShowCreateTable(), "`id`")
+	require.Contains(t, meta.ShowCreateTable(), "`name`")
+	require.NotContains(t, meta.ShowCreateTable(), "`secret`")
+}
+
+func TestGenerateProjectedSchema(t *testing.T) {
 	t.Run("generated column dependencies", func(t *testing.T) {
 		createSQL := "CREATE TABLE `t` (" +
 			"`a` INT," +
