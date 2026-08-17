@@ -183,7 +183,7 @@ func generateProjectedSchemaForTest(
 	if err != nil {
 		return "", err
 	}
-	return generateProjectedSchema(originSQL, database, retainedColumns, schemaColumns)
+	return generateProjectedSchema(originSQL, database, projection.projected, retainedColumns, schemaColumns)
 }
 
 func parseCreateTableForTest(t *testing.T, sql string) *ast.CreateTableStmt {
