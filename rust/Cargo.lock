@@ -2335,6 +2335,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-domain"
+version = "0.0.0"
+dependencies = [
+ "tidb-error",
+ "tidb-vardef",
+]
+
+[[package]]
 name = "tidb-dxf"
 version = "0.0.0"
 dependencies = [

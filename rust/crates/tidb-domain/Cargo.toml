@@ -1,0 +1,15 @@
+[package]
+name = "tidb-domain"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/domain (seed): sysvar cache, schema checker, domain context keys, optimize-trace file store."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-error = { path = "../tidb-error" }
+tidb-vardef = { path = "../tidb-vardef" }

@@ -48,6 +48,7 @@ members = [
     "crates/tidb-stmtsummary",
     "crates/tidb-server",
     "crates/tidb-session",
+    "crates/tidb-domain",
     "difftests",
     "difftests/parser-tests",
     "difftests/planner-tests",
