@@ -33,6 +33,36 @@
 //! complete; the operator set does not, and every operator not yet ported is
 //! an explicit `Todo` variant naming its Go type rather than a default arm.
 //!
+//! # THREE logical representations live here, and none is bridged
+//!
+//! [`logical::LogicalPlan`] is the tree the plan builder produces. It is NOT
+//! the tree the other passes consume. As of this writing there are three
+//! separate logical shapes in this crate:
+//!
+//! 1. [`logical::LogicalPlan`] — the closed enum above, ~23 operators, built
+//!    by [`plan_builder`] and rewritten by [`logical::rule`].
+//! 2. `find_best_task::LogicalNode` — two variants, `Leaf` and `Join`, the
+//!    input to join enumeration. `find_best_task` does not name
+//!    `LogicalPlan` anywhere.
+//! 3. `cardinality::derive_stats::LogicalNode` — five variants
+//!    (`DataSource`, `Selection`, `Projection`, `Aggregation`, `Join`), the
+//!    input to statistics derivation. A different type from (2) despite the
+//!    identical name.
+//!
+//! **Nothing converts (1) into (2) or (3).** Each consumer invented the
+//! reduced input it needed, and each is exercised only by tests that build
+//! that input by hand. So the builder can build a plan and the rules can
+//! rewrite it, but no plan the builder produces can currently be costed,
+//! enumerated, or physicalised — those passes are complete over inputs
+//! nothing produces.
+//!
+//! This is why the plan layer does not yet execute anything, and it is the
+//! real content of the "make the plan layer live" work: it needs BRIDGES, not
+//! just wiring into an executor. Whoever builds them should decide
+//! deliberately whether (2) and (3) survive as reduced views projected from
+//! (1), or whether their passes are retargeted onto (1) directly. Do not
+//! assume a `LogicalPlan` can be passed to either; it cannot.
+//!
 //! # Closed enums, not `Box<dyn LogicalPlan>`
 //!
 //! Both trees are closed enums with inherent methods and `match` dispatch.
