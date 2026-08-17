@@ -121,26 +121,27 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
     // break-at-count during the scan (`ce.limit`, `closure_exec.go:144`,
     // checked at `:597`).
     let mut limit = usize::MAX;
-    match context.dag_req.executors.len() {
-        1 => {}
-        2 => {
-            let above = &context.dag_req.executors[1];
-            if above.tp() == tipb::ExecType::TypeLimit {
-                let Some(body) = above.limit.as_ref() else {
-                    return other_error("executor missing limit body");
-                };
-                limit = usize::try_from(body.limit()).unwrap_or(usize::MAX);
-            } else {
-                return other_error(
-                    "selection above the scan needs the tipb expression converter \
-                     (cophandler's PBToExpr course)",
-                );
+    let mut conditions: Vec<SimpleExpr> = Vec::new();
+    for above in &context.dag_req.executors[1..] {
+        if above.tp() == tipb::ExecType::TypeLimit {
+            let Some(body) = above.limit.as_ref() else {
+                return other_error("executor missing limit body");
+            };
+            limit = usize::try_from(body.limit()).unwrap_or(usize::MAX);
+        } else if above.tp() == tipb::ExecType::TypeSelection {
+            let Some(body) = above.selection.as_ref() else {
+                return other_error("executor missing selection body");
+            };
+            for condition in &body.conditions {
+                match convert_expr(condition) {
+                    Ok(expr) => conditions.push(expr),
+                    Err(message) => return other_error(&message),
+                }
             }
-        }
-        _ => {
+        } else {
             return other_error(
-                "closure_exec.go's deeper executor stacks are later courses of this port",
-            )
+                "closure_exec.go's top-n and aggregation processors are later courses",
+            );
         }
     }
     let scan = &context.dag_req.executors[0];
@@ -150,7 +151,7 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
     let Some(tbl_scan) = scan.tbl_scan.as_ref() else {
         return other_error("executor missing tbl_scan body");
     };
-    exec_table_scan(store, context, tbl_scan, limit)
+    exec_table_scan(store, context, tbl_scan, &conditions, limit)
 }
 
 /// Go's chunk cut: `closure_exec.go` grows the output chunk to 1024 rows
@@ -170,6 +171,7 @@ fn exec_table_scan(
     store: &mut MvccStore,
     context: &DagContext,
     tbl_scan: &tipb::TableScan,
+    conditions: &[SimpleExpr],
     limit: usize,
 ) -> coprocessor::Response {
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
@@ -227,6 +229,14 @@ fn exec_table_scan(
                     // `ColumnInfo.default_val`; absent both, NULL.
                     row_datums.push(Datum::Null);
                 }
+            }
+            // Go `selectionProcessor`: a row survives only when EVERY
+            // condition evaluates non-null and non-zero.
+            if !conditions
+                .iter()
+                .all(|condition| eval_expr(condition, &row_datums).is_some_and(|v| v != 0))
+            {
+                continue;
             }
             let encoded = match tidb_codec::encode_value(&row_datums) {
                 Ok(encoded) => encoded,
@@ -319,6 +329,162 @@ pub fn validate_executor_list(executors: &[tipb::Executor]) {
                 parent_idx > i && parent_idx < len,
                 "invalid parentIdx: {parent_idx}, for index: {i}"
             );
+        }
+    }
+}
+
+/// Go `expression.PBToExpr` (`pkg/expression/distsql_builtin.go`), the
+/// INTEGER slice: column refs, null and int literals, the six int
+/// comparisons, three-valued AND/OR/NOT, and IS NULL. Everything else
+/// refuses naming that file — string comparisons wait on collation, casts
+/// on the cast tables, IN on its value-list decode.
+#[derive(Clone, Debug)]
+pub enum SimpleExpr {
+    /// `ExprType_Null`.
+    Null,
+    /// `ExprType_Int64`, val codec-int decoded.
+    Int(i64),
+    /// `ExprType_ColumnRef`, val codec-int decoded to the row OFFSET —
+    /// `distsql_builtin.go:1222`.
+    Column(usize),
+    /// `ExprType_ScalarFunc` over a supported signature.
+    Func(SimpleSig, Vec<SimpleExpr>),
+}
+
+/// The supported `ScalarFuncSig` subset.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SimpleSig {
+    /// `LtInt`/`LeInt`/`GtInt`/`GeInt`/`EqInt`/`NeInt`, by ordering.
+    LtInt,
+    /// See [`SimpleSig::LtInt`].
+    LeInt,
+    /// See [`SimpleSig::LtInt`].
+    GtInt,
+    /// See [`SimpleSig::LtInt`].
+    GeInt,
+    /// See [`SimpleSig::LtInt`].
+    EqInt,
+    /// See [`SimpleSig::LtInt`].
+    NeInt,
+    /// `LogicalAnd` — MySQL three-valued: `NULL AND FALSE` is FALSE.
+    LogicalAnd,
+    /// `LogicalOr` — `NULL OR TRUE` is TRUE.
+    LogicalOr,
+    /// `UnaryNotInt`.
+    UnaryNot,
+    /// `IntIsNull`.
+    IntIsNull,
+}
+
+/// Convert one wire expression, refusing what the slice does not carry.
+pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
+    let tp = expr.tp();
+    if tp == tipb::ExprType::Null {
+        return Ok(SimpleExpr::Null);
+    }
+    if tp == tipb::ExprType::Int64 {
+        let (_, value) = tidb_codec::decode_int(expr.val())
+            .map_err(|err| format!("invalid int literal: {err:?}"))?;
+        return Ok(SimpleExpr::Int(value));
+    }
+    if tp == tipb::ExprType::ColumnRef {
+        let (_, offset) = tidb_codec::decode_int(expr.val())
+            .map_err(|err| format!("invalid column offset: {err:?}"))?;
+        return Ok(SimpleExpr::Column(
+            usize::try_from(offset).map_err(|_| "negative column offset".to_owned())?,
+        ));
+    }
+    if tp == tipb::ExprType::ScalarFunc {
+        // `expr.sig()` decodes the wire integer, an UNRECOGNIZED value
+        // falling to `Unspecified` — which lands in the refusal arm, Go's
+        // unsupported-signature error.
+        let sig = match expr.sig() {
+            tipb::ScalarFuncSig::LtInt => SimpleSig::LtInt,
+            tipb::ScalarFuncSig::LeInt => SimpleSig::LeInt,
+            tipb::ScalarFuncSig::GtInt => SimpleSig::GtInt,
+            tipb::ScalarFuncSig::GeInt => SimpleSig::GeInt,
+            tipb::ScalarFuncSig::EqInt => SimpleSig::EqInt,
+            tipb::ScalarFuncSig::NeInt => SimpleSig::NeInt,
+            // `LogicalAnd` is absent from the trimmed proto build — and the
+            // wire rarely carries it: a WHERE conjunction arrives as SEPARATE
+            // selection conditions, the list itself being the AND. The
+            // evaluator keeps the semantics for that list.
+            tipb::ScalarFuncSig::LogicalOr => SimpleSig::LogicalOr,
+            tipb::ScalarFuncSig::UnaryNotInt => SimpleSig::UnaryNot,
+            tipb::ScalarFuncSig::IntIsNull => SimpleSig::IntIsNull,
+            other => {
+                return Err(format!(
+                    "scalar signature {other:?} waits on its distsql_builtin.go course"
+                ))
+            }
+        };
+        let children = expr
+            .children
+            .iter()
+            .map(convert_expr)
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(SimpleExpr::Func(sig, children));
+    }
+    Err(format!(
+        "expr type {tp:?} waits on its distsql_builtin.go course"
+    ))
+}
+
+/// Evaluate to MySQL's three-valued int: `Some(0/1/n)` or NULL.
+#[must_use]
+pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i64> {
+    use tidb_datatype::Datum;
+    match expr {
+        SimpleExpr::Null => None,
+        SimpleExpr::Int(value) => Some(*value),
+        SimpleExpr::Column(offset) => match row.get(*offset) {
+            Some(Datum::Int(value)) => Some(*value),
+            Some(Datum::Null) | None => None,
+            Some(_) => None, // non-int columns wait on their course
+        },
+        SimpleExpr::Func(sig, children) => {
+            let child = |i: usize| children.get(i).and_then(|c| eval_expr(c, row));
+            match sig {
+                SimpleSig::LtInt
+                | SimpleSig::LeInt
+                | SimpleSig::GtInt
+                | SimpleSig::GeInt
+                | SimpleSig::EqInt
+                | SimpleSig::NeInt => {
+                    let (left, right) = (child(0)?, child(1)?);
+                    let truth = match sig {
+                        SimpleSig::LtInt => left < right,
+                        SimpleSig::LeInt => left <= right,
+                        SimpleSig::GtInt => left > right,
+                        SimpleSig::GeInt => left >= right,
+                        SimpleSig::EqInt => left == right,
+                        SimpleSig::NeInt => left != right,
+                        _ => unreachable!(),
+                    };
+                    Some(i64::from(truth))
+                }
+                SimpleSig::LogicalAnd => {
+                    // MySQL: FALSE dominates NULL.
+                    let (left, right) = (child(0), child(1));
+                    match (left, right) {
+                        (Some(0), _) | (_, Some(0)) => Some(0),
+                        (Some(_), Some(_)) => Some(1),
+                        _ => None,
+                    }
+                }
+                SimpleSig::LogicalOr => {
+                    // MySQL: TRUE dominates NULL.
+                    let (left, right) = (child(0), child(1));
+                    match (left, right) {
+                        (Some(l), _) if l != 0 => Some(1),
+                        (_, Some(r)) if r != 0 => Some(1),
+                        (Some(_), Some(_)) => Some(0),
+                        _ => None,
+                    }
+                }
+                SimpleSig::UnaryNot => child(0).map(|v| i64::from(v == 0)),
+                SimpleSig::IntIsNull => Some(i64::from(child(0).is_none())),
+            }
         }
     }
 }
@@ -655,6 +821,155 @@ mod tests {
             decoded,
             vec![Datum::Int(1), Datum::Int(2)],
             "first two handles"
+        );
+    }
+
+    #[test]
+    fn a_selection_filters_rows_with_mysql_three_valued_logic() {
+        // `SELECT id, b FROM t WHERE b = 88` over three rows — only the
+        // matching row survives; a condition over NULL drops the row.
+        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_datatype::Datum;
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+        let mut store = MvccStore::new();
+        for (handle, b_value) in [
+            (1_i64, Datum::Int(77)),
+            (2, Datum::Int(88)),
+            (3, Datum::Null),
+        ] {
+            let key = encode_row_key_with_handle(11, &RecordHandle::Int(handle));
+            let value = tidb_codec::encode_value(&[Datum::Int(2), b_value]).expect("row");
+            store
+                .prewrite(&crate::mvcc_store::PrewriteReq {
+                    mutations: vec![KvrpcMutation {
+                        op: KvrpcOp::Put as i32,
+                        key: key.clone(),
+                        value,
+                        ..KvrpcMutation::default()
+                    }],
+                    primary_lock: key.clone(),
+                    start_version: 10,
+                    ..crate::mvcc_store::PrewriteReq::default()
+                })
+                .expect("prewrites");
+            store.commit(&[key], 10, 11).expect("commits");
+        }
+        // b = 88: EqInt(ColumnRef(1), Int64(88)).
+        let mut col_offset = Vec::new();
+        tidb_codec::encode_int(&mut col_offset, 1);
+        let mut lit = Vec::new();
+        tidb_codec::encode_int(&mut lit, 88);
+        let condition = tipb::Expr {
+            tp: Some(tipb::ExprType::ScalarFunc as i32),
+            sig: Some(tipb::ScalarFuncSig::EqInt as i32),
+            children: vec![
+                tipb::Expr {
+                    tp: Some(tipb::ExprType::ColumnRef as i32),
+                    val: Some(col_offset),
+                    ..tipb::Expr::default()
+                },
+                tipb::Expr {
+                    tp: Some(tipb::ExprType::Int64 as i32),
+                    val: Some(lit),
+                    ..tipb::Expr::default()
+                },
+            ],
+            ..tipb::Expr::default()
+        };
+        let dag = tipb::DagRequest {
+            executors: vec![
+                tipb::Executor {
+                    tp: Some(tipb::ExecType::TypeTableScan as i32),
+                    tbl_scan: Some(tipb::TableScan {
+                        table_id: Some(11),
+                        columns: vec![
+                            tipb::ColumnInfo {
+                                column_id: Some(1),
+                                tp: Some(8),
+                                pk_handle: Some(true),
+                                ..tipb::ColumnInfo::default()
+                            },
+                            tipb::ColumnInfo {
+                                column_id: Some(2),
+                                tp: Some(8),
+                                ..tipb::ColumnInfo::default()
+                            },
+                        ],
+                        ..tipb::TableScan::default()
+                    }),
+                    ..tipb::Executor::default()
+                },
+                tipb::Executor {
+                    tp: Some(tipb::ExecType::TypeSelection as i32),
+                    selection: Some(tipb::Selection {
+                        conditions: vec![condition],
+                    }),
+                    ..tipb::Executor::default()
+                },
+            ],
+            ..tipb::DagRequest::default()
+        };
+        let mut data = Vec::new();
+        dag.encode(&mut data).expect("encodes");
+        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(11);
+        let resp = handle_cop_request(
+            &mut store,
+            &coprocessor::Request {
+                tp: REQ_TYPE_DAG,
+                data,
+                ranges: vec![coprocessor::KeyRange {
+                    start: range_start,
+                    end: range_end,
+                }],
+                start_ts: 20,
+                ..coprocessor::Request::default()
+            },
+        );
+        assert!(resp.other_error.is_empty(), "{}", resp.other_error);
+        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("decodes");
+        let rows_data = select.chunks[0].rows_data.as_deref().expect("rows");
+        let decoded = tidb_codec::decode(rows_data, 2).expect("one row");
+        assert_eq!(decoded, vec![Datum::Int(2), Datum::Int(88)]);
+    }
+
+    #[test]
+    fn three_valued_logic_matches_mysql() {
+        use tidb_datatype::Datum;
+        let and = |l, r| SimpleExpr::Func(SimpleSig::LogicalAnd, vec![l, r]);
+        let or = |l, r| SimpleExpr::Func(SimpleSig::LogicalOr, vec![l, r]);
+        let row: [Datum; 0] = [];
+        // NULL AND FALSE = FALSE; NULL AND TRUE = NULL.
+        assert_eq!(
+            eval_expr(&and(SimpleExpr::Null, SimpleExpr::Int(0)), &row),
+            Some(0)
+        );
+        assert_eq!(
+            eval_expr(&and(SimpleExpr::Null, SimpleExpr::Int(1)), &row),
+            None
+        );
+        // NULL OR TRUE = TRUE; NULL OR FALSE = NULL.
+        assert_eq!(
+            eval_expr(&or(SimpleExpr::Null, SimpleExpr::Int(1)), &row),
+            Some(1)
+        );
+        assert_eq!(
+            eval_expr(&or(SimpleExpr::Null, SimpleExpr::Int(0)), &row),
+            None
+        );
+        // NOT NULL = NULL; IS NULL answers over null.
+        assert_eq!(
+            eval_expr(
+                &SimpleExpr::Func(SimpleSig::UnaryNot, vec![SimpleExpr::Null]),
+                &row
+            ),
+            None
+        );
+        assert_eq!(
+            eval_expr(
+                &SimpleExpr::Func(SimpleSig::IntIsNull, vec![SimpleExpr::Null]),
+                &row
+            ),
+            Some(1)
         );
     }
 }
