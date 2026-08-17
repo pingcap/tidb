@@ -91,6 +91,12 @@ pub struct DataSource {
     pub pushed_down_conds: Vec<Expression>,
     /// Go `AllConds`: every condition on this table, pushed down or not.
     pub all_conds: Vec<Expression>,
+    /// Go `getPossibleAccessPaths`' answer at BUILD time — the newborn form
+    /// (`crate::access_path::PossiblePath`), before ranger and statistics
+    /// grow it. Go mutates one `util.AccessPath` through both stages; this
+    /// port keeps the stages as two typed lists, and the grown lists below
+    /// stay empty until the costing seam fills them.
+    pub enumerated_paths: Vec<crate::access_path::PossiblePath>,
     /// Go `AllPossibleAccessPaths`, reusing this crate's own path model.
     pub all_possible_access_paths: Vec<DataSourceAccessPath>,
     /// Go `PossibleAccessPaths`: the pruned subset the optimizer enumerates.
@@ -392,6 +398,7 @@ impl DataSource {
             columns: self.columns.clone(),
             pushed_down_conds: self.pushed_down_conds.clone(),
             all_conds: self.all_conds.clone(),
+            enumerated_paths: self.enumerated_paths.clone(),
             all_possible_access_paths: self.all_possible_access_paths.clone(),
             possible_access_paths: self.possible_access_paths.clone(),
             pk_is_handle: self.pk_is_handle,

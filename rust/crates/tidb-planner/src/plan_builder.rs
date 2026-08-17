@@ -477,6 +477,9 @@ pub struct PlanBuilder<'a, S: TableSource, C: Columns> {
     /// rewriter's narrowing of `SessionVars` and nothing in it reads the SQL
     /// mode. Go likewise reads the mode off `SQLMode`, not off the rewriter.
     pub only_full_group_by: bool,
+    /// Go `SessionVars.OptimizerUseInvisibleIndexes` (default OFF): whether
+    /// `getPossibleAccessPaths` may enumerate invisible indexes.
+    pub optimizer_use_invisible_indexes: bool,
     /// Go `b.ctx.GetSessionVars().EnableSkewDistinctAgg`
     /// (`buildAggregation`, `:271`).
     pub enable_skew_distinct_agg: bool,
@@ -684,6 +687,8 @@ impl<'a, S: TableSource, C: Columns> PlanBuilder<'a, S, C> {
             join_hints: from::JoinHints::default(),
             // Go's default `sql_mode` carries `ONLY_FULL_GROUP_BY`.
             only_full_group_by: true,
+            // Go `DefTiDBOptimizerUseInvisibleIndexes = false`.
+            optimizer_use_invisible_indexes: false,
             enable_skew_distinct_agg: false,
             enable_force_inline_cte: false,
             enable_mpp_shared_cte_execution: false,
@@ -975,15 +980,17 @@ impl<S: TableSource, C: Columns> PlanBuilder<'_, S, C> {
             is_for_update_read: self.is_for_update_read,
             ..DataSource::default()
         };
-        // boundary: `getPossibleAccessPaths` (`:5042`). Every constructor on
-        // [`DataSourceAccessPath`] demands an already-PROVEN input — a
-        // `ResolvedTableDescriptor` plus a `TiKvTableScanSpec` for a table
-        // path, a `LiveIndexCandidate` with its `CountAfterAccess` for an
-        // index path — because that module deliberately fails closed rather
-        // than inventing statistics (see [`crate::access_path`]). Those inputs
-        // come from ranger and the statistics handle, neither of which is on
-        // this seam, so the path list is left EMPTY here rather than seeded
-        // with an unproven path the cost model would then trust.
+        // Go `getPossibleAccessPaths` (`:5042`): the ENUMERATION runs here,
+        // filling the newborn path list — the table path plus one per public
+        // index. The GROWN lists (`possible_access_paths` and friends) stay
+        // empty at build time deliberately: every constructor on
+        // [`DataSourceAccessPath`] demands an already-PROVEN ranger/statistics
+        // input, and that costing seam fills them later, as Go's
+        // `deriveStatsByFilter` stage does.
+        data_source.enumerated_paths = crate::access_path::get_possible_access_paths(
+            table,
+            self.optimizer_use_invisible_indexes,
+        );
         debug_assert!(data_source.possible_access_paths.is_empty());
 
         data_source

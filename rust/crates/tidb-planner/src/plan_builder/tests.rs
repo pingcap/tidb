@@ -664,3 +664,35 @@ impl Harness {
         &mut self.catalog.tables
     }
 }
+
+#[test]
+fn a_built_data_source_enumerates_its_access_paths() {
+    // Go `getPossibleAccessPaths` (`planbuilder.go:1320`) runs during
+    // `buildDataSource`: the fixture table (`a BIGINT PRIMARY KEY, KEY
+    // idx_b(b)`) yields the int-handle table path first, then `idx_b`.
+    use crate::access_path::PossiblePath;
+    let harness = Harness::new();
+    let mut builder = harness.builder();
+    let select = parse_select("SELECT * FROM t");
+    let plan = builder
+        .build_result_set_node(&tidb_ast::JoinNode::Join(Box::new(
+            select.from.clone().expect("a FROM clause"),
+        )))
+        .expect("the data source builds");
+
+    let LogicalPlan::DataSource(data_source) = &plan else {
+        panic!("expected a DataSource");
+    };
+    assert_eq!(
+        data_source.enumerated_paths,
+        vec![
+            PossiblePath::Table {
+                is_int_handle: true,
+                primary_index: None
+            },
+            PossiblePath::Index { index: 0 },
+        ]
+    );
+    // The GROWN lists stay empty at build time; the costing seam fills them.
+    assert!(data_source.possible_access_paths.is_empty());
+}
