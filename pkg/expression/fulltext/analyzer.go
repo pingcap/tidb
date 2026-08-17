@@ -212,14 +212,6 @@ type parserInfo struct {
 	stopwords            map[string]struct{}
 }
 
-func parserInfoFromSessionContext(sctx sessionctx.Context) (parserInfo, error) {
-	config, err := AnalyzerConfigFromSessionContext(sctx, model.FullTextParserTypeStandardV1)
-	if err != nil {
-		return parserInfo{}, err
-	}
-	return parserInfoFromConfig(config), nil
-}
-
 func parserInfoFromConfig(config AnalyzerConfig) parserInfo {
 	return parserInfo{
 		innodbFtMinTokenSize: config.InnodbFtMinTokenSize,
