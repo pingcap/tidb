@@ -114,8 +114,10 @@ pub enum KvError {
         /// `Key`.
         key: Vec<u8>,
     },
-    /// `kverrors.ErrConflict` with `WriteConflict_Optimistic`.
+    /// `kverrors.ErrConflict`, carrying Go's `kvrpcpb.WriteConflict` reason.
     Conflict {
+        /// `Reason`, the proto's `write_conflict::Reason`.
+        reason: tidb_proto::kvrpcpb::write_conflict::Reason,
         /// `StartTS`.
         start_ts: u64,
         /// `ConflictTS` — the conflicting version's START ts, Go's choice.
@@ -149,6 +151,13 @@ pub enum KvError {
         /// `StartTS`.
         start_ts: u64,
     },
+    /// Go `kverrors.ErrInvalidOp`: `Op_CheckNotExists` inside a pessimistic
+    /// prewrite.
+    InvalidOp,
+    /// Go's literal `errors.New("pessimistic lock not found")`.
+    PessimisticLockNotFound,
+    /// Go's literal `errors.New("lock type not match")`.
+    LockTypeNotMatch,
     /// A refusal: the named Go symbol is a later course of this port.
     Unported(&'static str),
 }
@@ -174,6 +183,12 @@ pub struct PrewriteReq {
     pub try_one_pc: bool,
     /// `Secondaries`.
     pub secondaries: Vec<Vec<u8>>,
+    /// `PessimisticActions`, positionally matching `mutations`; empty means
+    /// none. Values are Go's `PrewriteRequest_DO_PESSIMISTIC_CHECK` /
+    /// `DO_CONSTRAINT_CHECK` / `SKIP_PESSIMISTIC_CHECK`.
+    pub pessimistic_actions: Vec<tidb_proto::KvrpcPessimisticAction>,
+    /// `ForUpdateTsConstraints`: `(index, expected_for_update_ts)` pairs.
+    pub for_update_ts_constraints: Vec<(usize, u64)>,
 }
 
 /// Go `MVCCStore`, optimistic slice: the ported lock skiplist beside the
@@ -209,9 +224,7 @@ impl MvccStore {
         let mut mutations = req.mutations.clone();
         mutations.sort_by(|a, b| a.key.cmp(&b.key));
         if req.for_update_ts > 0 {
-            return Err(KvError::Unported(
-                "prewritePessimistic (mvcc.go:849) is a later course of this port",
-            ));
+            return self.prewrite_pessimistic(&mutations, req);
         }
         if req.use_async_commit || req.try_one_pc {
             return Err(KvError::Unported(
@@ -260,6 +273,7 @@ impl MvccStore {
             if let Some((_, meta)) = item {
                 if meta.commit_ts() > start_ts {
                     return Err(KvError::Conflict {
+                        reason: tidb_proto::kvrpcpb::write_conflict::Reason::Optimistic,
                         start_ts,
                         conflict_ts: meta.start_ts(),
                         conflict_commit_ts: meta.commit_ts(),
@@ -278,11 +292,11 @@ impl MvccStore {
             }
         }
         // Stage 3 — Go `prewriteMutations`: build each lock, batch, write.
-        for mutation in mutations {
+        for (mutation, item) in mutations.iter().zip(&items) {
             if mutation.op == KvrpcOp::CheckNotExists as i32 {
                 continue;
             }
-            let lock = build_prewrite_lock(mutation, req);
+            let lock = build_prewrite_lock(mutation, item.as_ref(), req)?;
             // Go `writeBatch.Prewrite` (`write.go:252`).
             self.lock_store_put(&mutation.key, &lock.marshal_binary());
         }
@@ -963,6 +977,373 @@ impl MvccStore {
     }
 }
 
+/// The `PessimisticLockRequest` fields the no-wait slice reads.
+#[derive(Clone, Debug, Default)]
+pub struct PessimisticLockReq {
+    /// `Mutations` — `Op_PessimisticLock` per key.
+    pub mutations: Vec<KvrpcMutation>,
+    /// `PrimaryLock`.
+    pub primary_lock: Vec<u8>,
+    /// `StartVersion`.
+    pub start_version: u64,
+    /// `ForUpdateTs`.
+    pub for_update_ts: u64,
+    /// `LockTtl`.
+    pub lock_ttl: u64,
+    /// `ReturnValues`.
+    pub return_values: bool,
+    /// `CheckExistence`.
+    pub check_existence: bool,
+    /// `LockOnlyIfExists`.
+    pub lock_only_if_exists: bool,
+}
+
+/// What `PessimisticLock` answers under `WakeUpModeNormal`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PessimisticLockResult {
+    /// `resp.Values`, when `return_values`.
+    pub values: Vec<Vec<u8>>,
+    /// `resp.NotFounds`, when `return_values` or `check_existence`.
+    pub not_founds: Vec<bool>,
+}
+
+impl MvccStore {
+    /// Go `MVCCStore.PessimisticLock` → `pessimisticLockInner`
+    /// (`mvcc.go:226`), the NO-WAIT slice under `WakeUpModeNormal`.
+    ///
+    /// Named narrowings: `lockWaiterManager` and
+    /// `handleCheckPessimisticErr` — a conflicting lock answers its lock
+    /// error immediately, Go's no-wait outcome, instead of parking a
+    /// waiter; `WakeUpModeForceLock` and `req.Force` refuse by name.
+    pub fn pessimistic_lock(
+        &mut self,
+        req: &PessimisticLockReq,
+    ) -> Result<PessimisticLockResult, KvError> {
+        let mut mutations = req.mutations.clone();
+        if !req.return_values {
+            mutations.sort_by(|a, b| a.key.cmp(&b.key));
+        }
+        let start_ts = req.start_version;
+        if req.lock_only_if_exists && !req.return_values {
+            return Err(KvError::Unported(
+                "LockOnlyIfExists without ReturnValues: Go errors here by contract",
+            ));
+        }
+        let mut dup = false;
+        for mutation in &mutations {
+            match self.check_conflict_in_lock_store(&mutation.key, start_ts) {
+                // boundary: `handleCheckPessimisticErr` + `lockWaiterManager`
+                // — the no-wait outcome is the lock error itself.
+                Err(err) => return Err(err),
+                Ok(Some(lock)) => {
+                    if lock.hdr.op != KvrpcOp::PessimisticLock as i32 as u8 {
+                        return Err(KvError::LockTypeNotMatch);
+                    }
+                    if lock.hdr.for_update_ts >= req.for_update_ts {
+                        // A duplicate command; values may still be wanted.
+                        dup = true;
+                        break;
+                    }
+                    // A single-statement-rollback leftover: overwritable.
+                }
+                Ok(None) => {}
+            }
+            if mutation.key == req.primary_lock {
+                let status = self.check_extra_txn_status(&mutation.key, start_ts);
+                if status.is_rollback {
+                    return Err(KvError::AlreadyRollback);
+                }
+                if status.is_op_lock_committed() {
+                    dup = true;
+                    break;
+                }
+            }
+        }
+        let items: Vec<Option<(Vec<u8>, DbUserMeta)>> = mutations
+            .iter()
+            .map(|mutation| {
+                self.engine
+                    .get_at(&mutation.key, u64::MAX)
+                    .map(|(value, meta)| (value.to_vec(), meta.clone()))
+            })
+            .collect();
+        if !dup {
+            for (mutation, item) in mutations.iter().zip(&items) {
+                let latest_extra = self.latest_extra_meta_for_key(&mutation.key);
+                if let Some(lock) =
+                    build_pessimistic_lock(mutation, item.as_ref(), latest_extra.as_ref(), req)?
+                {
+                    // Go `batch.PessimisticLock` (`write.go:280`).
+                    self.lock_store_put(&mutation.key, &lock.marshal_binary());
+                }
+            }
+        }
+        let mut result = PessimisticLockResult::default();
+        if req.return_values || req.check_existence {
+            for item in &items {
+                match item {
+                    None => {
+                        if req.return_values {
+                            result.values.push(Vec::new());
+                        }
+                        result.not_founds.push(true);
+                    }
+                    Some((value, _)) => {
+                        if req.return_values {
+                            result.values.push(value.clone());
+                        }
+                        result.not_founds.push(value.is_empty());
+                    }
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    /// Go `prewritePessimistic` (`mvcc.go:849`), whole.
+    fn prewrite_pessimistic(
+        &mut self,
+        mutations: &[KvrpcMutation],
+        req: &PrewriteReq,
+    ) -> Result<(), KvError> {
+        use tidb_proto::KvrpcPessimisticAction;
+        let start_ts = req.start_version;
+        let mut expected_for_update: std::collections::BTreeMap<usize, u64> =
+            std::collections::BTreeMap::new();
+        for (index, expected) in &req.for_update_ts_constraints {
+            if *index >= mutations.len() {
+                return Err(KvError::Unported(
+                    "prewrite request invalid: for_update_ts constraint index out of range",
+                ));
+            }
+            expected_for_update.insert(*index, *expected);
+        }
+        for (i, mutation) in mutations.iter().enumerate() {
+            if mutation.op == KvrpcOp::CheckNotExists as i32 {
+                return Err(KvError::InvalidOp);
+            }
+            let buf = self.lock_bytes(&mutation.key);
+            let lock = if buf.is_empty() {
+                None
+            } else {
+                Some(decode_lock(&buf))
+            };
+            let is_pessimistic_check = req
+                .pessimistic_actions
+                .get(i)
+                .is_some_and(|action| *action == KvrpcPessimisticAction::DoPessimisticCheck);
+            let need_constraint_check = req
+                .pessimistic_actions
+                .get(i)
+                .is_some_and(|action| *action == KvrpcPessimisticAction::DoConstraintCheck);
+            let lock_match = lock
+                .as_ref()
+                .is_some_and(|lock| lock.hdr.start_ts == start_ts);
+            let lock_constraint_passes = match (expected_for_update.get(&i), &lock) {
+                (Some(expected), Some(lock)) => lock.hdr.for_update_ts == *expected,
+                _ => true,
+            };
+            if is_pessimistic_check {
+                if lock.is_none() || !lock_match || !lock_constraint_passes {
+                    return Err(KvError::PessimisticLockNotFound);
+                }
+                let lock = lock.as_ref().expect("checked above");
+                if lock.hdr.op != KvrpcOp::PessimisticLock as i32 as u8 {
+                    // Duplicated command.
+                    return Ok(());
+                }
+                // Go keeps the LARGER ttl; the mutated request field becomes
+                // a local since the batch build reads it through the lock.
+            } else if need_constraint_check {
+                if let Some((_, meta)) = self.engine.get_at(&mutation.key, u64::MAX) {
+                    if meta.commit_ts() > start_ts {
+                        return Err(KvError::Conflict {
+                            reason:
+                                tidb_proto::kvrpcpb::write_conflict::Reason::LazyUniquenessCheck,
+                            start_ts,
+                            conflict_ts: meta.start_ts(),
+                            conflict_commit_ts: meta.commit_ts(),
+                            key: mutation.key.clone(),
+                        });
+                    }
+                }
+            } else {
+                // Non-pessimistic key in a pessimistic transaction.
+                if let Some(mut existing) = lock {
+                    if !lock_match {
+                        // Go zeroes the TTL: the owning transaction is
+                        // decided, so waiting on it is pointless.
+                        existing.hdr.ttl = 0;
+                        return Err(KvError::Locked(Box::new(
+                            existing.to_lock_info(mutation.key.clone()),
+                        )));
+                    }
+                    // Duplicate command.
+                    return Ok(());
+                }
+            }
+        }
+        let items: Vec<Option<(Vec<u8>, DbUserMeta)>> = mutations
+            .iter()
+            .map(|mutation| {
+                self.engine
+                    .get_at(&mutation.key, u64::MAX)
+                    .map(|(value, meta)| (value.to_vec(), meta.clone()))
+            })
+            .collect();
+        // Go `prewriteMutations`: the async/1PC arms were refused at entry.
+        for (mutation, item) in mutations.iter().zip(&items) {
+            let pessimistic_ttl = {
+                let buf = self.lock_bytes(&mutation.key);
+                if buf.is_empty() {
+                    0
+                } else {
+                    u64::from(decode_lock(&buf).hdr.ttl)
+                }
+            };
+            let mut effective = req.clone();
+            if pessimistic_ttl > effective.lock_ttl {
+                effective.lock_ttl = pessimistic_ttl;
+            }
+            let lock = build_prewrite_lock(mutation, item.as_ref(), &effective)?;
+            self.lock_store_put(&mutation.key, &lock.marshal_binary());
+        }
+        Ok(())
+    }
+
+    /// Go `MVCCStore.PessimisticRollback` (`mvcc.go:435`): only OUR
+    /// pessimistic locks with a for-update ts at or below the request's die;
+    /// everything else survives.
+    pub fn pessimistic_rollback(&mut self, keys: &[Vec<u8>], start_ts: u64, for_update_ts: u64) {
+        let mut keys = keys.to_vec();
+        keys.sort();
+        for key in &keys {
+            let buf = self.lock_bytes(key);
+            if buf.is_empty() {
+                continue;
+            }
+            let lock = decode_lock(&buf);
+            if lock.hdr.op == KvrpcOp::PessimisticLock as i32 as u8
+                && lock.hdr.start_ts == start_ts
+                && lock.hdr.for_update_ts <= for_update_ts
+            {
+                self.lock_store_delete(key);
+            }
+        }
+    }
+
+    /// Go `MVCCStore.TxnHeartBeat` (`mvcc.go:465`): advise the primary's TTL
+    /// upward; never downward.
+    pub fn txn_heart_beat(
+        &mut self,
+        primary: &[u8],
+        start_ts: u64,
+        advise_ttl: u64,
+    ) -> Result<u64, KvError> {
+        let buf = self.lock_bytes(primary);
+        if !buf.is_empty() {
+            let mut lock = decode_lock(&buf);
+            if lock.hdr.start_ts == start_ts {
+                if lock.primary != primary {
+                    return Err(KvError::Unported(
+                        "heartbeat on non-primary key: Go errors here by contract",
+                    ));
+                }
+                if u64::from(lock.hdr.ttl) < advise_ttl {
+                    lock.hdr.ttl = u32::try_from(advise_ttl).unwrap_or(u32::MAX);
+                    self.lock_store_put(primary, &lock.marshal_binary());
+                }
+                return Ok(u64::from(lock.hdr.ttl));
+            }
+        }
+        Err(KvError::Unported(
+            "lock doesn't exists: Go errors here by contract",
+        ))
+    }
+
+    /// Go `getLatestExtraMetaForKey` (`mvcc.go`): the newest extra-status
+    /// record's meta for a key, used by fair locking to see whether ANOTHER
+    /// transaction touched it — Go's own comment concedes rollback records
+    /// are indistinguishable here and a bigger commit ts only causes an
+    /// extra retry, which is safe.
+    fn latest_extra_meta_for_key(&self, key: &[u8]) -> Option<DbUserMeta> {
+        let start = encode_extra_txn_status_key(key, u64::MAX);
+        let end = encode_extra_txn_status_key(key, 0);
+        for ((entry_key, _), (_, meta)) in self.engine.entries.range((start, 0)..) {
+            if entry_key > &end {
+                break;
+            }
+            // Go filters to the table/meta extra prefixes ('u' and 'n').
+            match entry_key.first() {
+                Some(&b'u') | Some(&b'n') => return Some(meta.clone()),
+                _ => continue,
+            }
+        }
+        None
+    }
+}
+
+/// Go `buildPessimisticLock` (`mvcc.go`), `WakeUpModeNormal` arm: a commit
+/// newer than the for-update ts is a `PessimisticRetry` conflict; an
+/// `Assertion_NotExist` over a value is `ErrKeyAlreadyExists`;
+/// `doesNeedLock` may decline to lock at all (`LockOnlyIfExists` over an
+/// absent or deleted key). `req.Force` and the force-lock conflict carry
+/// are refused at the caller.
+fn build_pessimistic_lock(
+    mutation: &KvrpcMutation,
+    item: Option<&(Vec<u8>, DbUserMeta)>,
+    latest_extra: Option<&DbUserMeta>,
+    req: &PessimisticLockReq,
+) -> Result<Option<Lock>, KvError> {
+    if let Some((value, meta)) = item {
+        let mut meta = meta;
+        if let Some(extra) = latest_extra {
+            if extra.commit_ts() > meta.commit_ts() {
+                meta = extra;
+            }
+        }
+        if meta.commit_ts() > req.for_update_ts {
+            return Err(KvError::Conflict {
+                reason: tidb_proto::kvrpcpb::write_conflict::Reason::PessimisticRetry,
+                start_ts: req.start_version,
+                conflict_ts: meta.start_ts(),
+                conflict_commit_ts: meta.commit_ts(),
+                key: mutation.key.clone(),
+            });
+        }
+        if mutation.assertion == tidb_proto::KvrpcAssertion::NotExist as i32 && !value.is_empty() {
+            return Err(KvError::KeyAlreadyExists {
+                key: mutation.key.clone(),
+            });
+        }
+    }
+    // Go `doesNeedLock`.
+    if req.lock_only_if_exists {
+        match item {
+            None => return Ok(None),
+            Some((value, _)) if value.is_empty() => return Ok(None),
+            Some(_) => {}
+        }
+    }
+    Ok(Some(Lock {
+        hdr: LockHdr {
+            start_ts: req.start_version,
+            for_update_ts: req.for_update_ts,
+            op: KvrpcOp::PessimisticLock as i32 as u8,
+            ttl: u32::try_from(req.lock_ttl).unwrap_or(u32::MAX),
+            primary_len: u16::try_from(req.primary_lock.len())
+                .expect("primary key fits u16, as Go's cast assumes"),
+            min_commit_ts: 0,
+            use_async_commit: false,
+            secondary_num: 0,
+            has_old_ver: false,
+        },
+        primary: req.primary_lock.clone(),
+        value: Vec::new(),
+        secondaries: Vec::new(),
+    }))
+}
+
 /// Go `extraTxnStatus`.
 #[derive(Clone, Copy, Debug, Default)]
 struct ExtraTxnStatus {
@@ -990,11 +1371,31 @@ struct RollbackAction {
     delete_lock: bool,
 }
 
-/// Go `buildPrewriteLock` (`mvcc.go`), assertion arms excluded — assertions
-/// arrive with the pessimistic course. Named narrowing:
-/// `req.AssertionLevel` / `kverrors.ErrAssertionFailed`.
-fn build_prewrite_lock(mutation: &KvrpcMutation, req: &PrewriteReq) -> Lock {
-    Lock {
+/// Go `buildPrewriteLock` (`mvcc.go`). Named narrowings:
+/// `req.AssertionLevel` / `kverrors.ErrAssertionFailed` (assertion arms),
+/// and `rowcodec.IsRowKey` + `encodeFromOldRow` — the old-row-format
+/// re-encode of a row key's value, which needs the row codec.
+///
+/// `Op_Insert` is Go's tail: over an existing committed non-empty value it
+/// is `ErrKeyAlreadyExists`, and otherwise it BECOMES a `Put` — the lock
+/// never records Insert.
+fn build_prewrite_lock(
+    mutation: &KvrpcMutation,
+    existing: Option<&(Vec<u8>, DbUserMeta)>,
+    req: &PrewriteReq,
+) -> Result<Lock, KvError> {
+    let mut op = u8::try_from(mutation.op).expect("an op byte");
+    if op == KvrpcOp::Insert as i32 as u8 {
+        if let Some((value, _)) = existing {
+            if !value.is_empty() {
+                return Err(KvError::KeyAlreadyExists {
+                    key: mutation.key.clone(),
+                });
+            }
+        }
+        op = KvrpcOp::Put as i32 as u8;
+    }
+    Ok(Lock {
         hdr: LockHdr {
             start_ts: req.start_version,
             ttl: u32::try_from(req.lock_ttl).unwrap_or(u32::MAX),
@@ -1003,14 +1404,14 @@ fn build_prewrite_lock(mutation: &KvrpcMutation, req: &PrewriteReq) -> Lock {
             min_commit_ts: req.min_commit_ts,
             use_async_commit: req.use_async_commit,
             secondary_num: u32::try_from(req.secondaries.len()).expect("secondary count fits u32"),
-            op: u8::try_from(mutation.op).expect("an op byte"),
-            for_update_ts: 0,
+            op,
+            for_update_ts: req.for_update_ts,
             has_old_ver: false,
         },
         primary: req.primary_lock.clone(),
         value: mutation.value.clone(),
         secondaries: req.secondaries.clone(),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -1081,6 +1482,7 @@ mod tests {
         assert_eq!(
             err,
             KvError::Conflict {
+                reason: tidb_proto::kvrpcpb::write_conflict::Reason::Optimistic,
                 start_ts: 15,
                 conflict_ts: 10,
                 conflict_commit_ts: 20,
@@ -1293,18 +1695,117 @@ mod tests {
     }
 
     #[test]
-    fn the_pessimistic_and_async_paths_refuse_by_name() {
+    fn the_async_paths_refuse_by_name() {
         let mut store = MvccStore::new();
-        let refuse = store.prewrite(&PrewriteReq {
-            for_update_ts: 5,
-            ..PrewriteReq::default()
-        });
-        assert!(matches!(refuse, Err(KvError::Unported(_))));
         let refuse = store.prewrite(&PrewriteReq {
             use_async_commit: true,
             ..PrewriteReq::default()
         });
         assert!(matches!(refuse, Err(KvError::Unported(_))));
+    }
+
+    #[test]
+    fn a_pessimistic_transaction_locks_prewrites_and_commits() {
+        // The full pessimistic round trip: acquire the lock, prewrite with
+        // DO_PESSIMISTIC_CHECK, commit, read — and the prewrite keeps the
+        // pessimistic lock's LARGER ttl, Go's do-not-shrink rule.
+        use tidb_proto::KvrpcPessimisticAction;
+        let mut store = MvccStore::new();
+        let key = b"pess".as_slice();
+        store
+            .pessimistic_lock(&PessimisticLockReq {
+                mutations: vec![KvrpcMutation {
+                    op: KvrpcOp::PessimisticLock as i32,
+                    key: key.to_vec(),
+                    ..KvrpcMutation::default()
+                }],
+                primary_lock: key.to_vec(),
+                start_version: 10,
+                for_update_ts: 10,
+                lock_ttl: 5000,
+                ..PessimisticLockReq::default()
+            })
+            .expect("locks");
+        let lock = decode_lock(&store.lock_bytes(key));
+        assert_eq!(lock.hdr.op, KvrpcOp::PessimisticLock as i32 as u8);
+        assert_eq!(lock.hdr.for_update_ts, 10);
+        store
+            .prewrite(&PrewriteReq {
+                mutations: vec![put(key, b"v")],
+                primary_lock: key.to_vec(),
+                start_version: 10,
+                for_update_ts: 10,
+                lock_ttl: 100,
+                pessimistic_actions: vec![KvrpcPessimisticAction::DoPessimisticCheck],
+                ..PrewriteReq::default()
+            })
+            .expect("prewrites over the pessimistic lock");
+        let lock = decode_lock(&store.lock_bytes(key));
+        assert_eq!(lock.hdr.op, KvrpcOp::Put as i32 as u8, "now a real lock");
+        assert_eq!(u64::from(lock.hdr.ttl), 5000, "the larger ttl survives");
+        store.commit(&[key.to_vec()], 10, 12).expect("commits");
+        assert_eq!(store.get(key, 12).expect("v"), Some(b"v".to_vec()));
+
+        // And without the pessimistic lock, DO_PESSIMISTIC_CHECK refuses.
+        let err = store
+            .prewrite(&PrewriteReq {
+                mutations: vec![put(b"other", b"v")],
+                primary_lock: b"other".to_vec(),
+                start_version: 20,
+                for_update_ts: 20,
+                pessimistic_actions: vec![KvrpcPessimisticAction::DoPessimisticCheck],
+                ..PrewriteReq::default()
+            })
+            .expect_err("no lock to check");
+        assert_eq!(err, KvError::PessimisticLockNotFound);
+    }
+
+    #[test]
+    fn a_newer_commit_defeats_a_pessimistic_acquisition() {
+        // `buildPessimisticLock`: a commit newer than the for-update ts is a
+        // PessimisticRetry conflict; pessimistic rollback then leaves other
+        // txns' locks alone.
+        let mut store = MvccStore::new();
+        let key = b"k".as_slice();
+        must_prewrite_optimistic(&mut store, key, key, b"v", 10, 200);
+        store.commit(&[key.to_vec()], 10, 30).expect("commits");
+        let err = store
+            .pessimistic_lock(&PessimisticLockReq {
+                mutations: vec![KvrpcMutation {
+                    op: KvrpcOp::PessimisticLock as i32,
+                    key: key.to_vec(),
+                    ..KvrpcMutation::default()
+                }],
+                primary_lock: key.to_vec(),
+                start_version: 20,
+                for_update_ts: 25,
+                ..PessimisticLockReq::default()
+            })
+            .expect_err("the commit at 30 is newer than for-update 25");
+        assert!(matches!(
+            err,
+            KvError::Conflict {
+                reason: tidb_proto::kvrpcpb::write_conflict::Reason::PessimisticRetry,
+                conflict_commit_ts: 30,
+                ..
+            }
+        ));
+        // Succeeds once the for-update ts sees the commit.
+        store
+            .pessimistic_lock(&PessimisticLockReq {
+                mutations: vec![KvrpcMutation {
+                    op: KvrpcOp::PessimisticLock as i32,
+                    key: key.to_vec(),
+                    ..KvrpcMutation::default()
+                }],
+                primary_lock: key.to_vec(),
+                start_version: 20,
+                for_update_ts: 35,
+                ..PessimisticLockReq::default()
+            })
+            .expect("locks at 35");
+        store.pessimistic_rollback(&[key.to_vec()], 20, 35);
+        assert!(store.lock_bytes(key).is_empty(), "rolled back cleanly");
     }
 
     #[test]
