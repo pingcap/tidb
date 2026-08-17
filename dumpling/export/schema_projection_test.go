@@ -136,8 +136,8 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			")"
 		projection := columnProjection{selectedColumns: []string{"id", "parent_secret"}}
 		schemaColumns := map[tableName]map[string]struct{}{
-			{db: "test", table: "child"}:  makeColumnSet([]string{"id", "parent_secret"}),
-			{db: "test", table: "parent"}: makeColumnSet([]string{"id"}),
+			{db: "test", table: "child"}:  {"id": {}, "parent_secret": {}},
+			{db: "test", table: "parent"}: {"id": {}},
 		}
 
 		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, schemaColumns)
@@ -152,8 +152,8 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			")"
 		projection := columnProjection{selectedColumns: []string{"id", "parent_generated"}}
 		schemaColumns := map[tableName]map[string]struct{}{
-			{db: "test", table: "child"}:  makeColumnSet([]string{"id", "parent_generated"}),
-			{db: "test", table: "parent"}: makeColumnSet([]string{"id", "generated"}),
+			{db: "test", table: "child"}:  {"id": {}, "parent_generated": {}},
+			{db: "test", table: "parent"}: {"id": {}, "generated": {}},
 		}
 
 		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, schemaColumns)
