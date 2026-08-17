@@ -1097,12 +1097,12 @@ func TestStoreBatchTasksPreserveChildBucketsVersion(t *testing.T) {
 }
 
 func TestHandleBatchCopResponse(t *testing.T) {
-	t.Run("ignores a child lock", testHandleBatchCopResponseIgnoresChildLock)
+	t.Run("resolves a child lock", testHandleBatchCopResponseResolvesChildLock)
 	t.Run("updates child buckets on version mismatch", testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch)
 	t.Run("counts fallbacks after Region split", testHandleBatchCopResponseFallbackCountersAfterRegionSplit)
 }
 
-func testHandleBatchCopResponseIgnoresChildLock(t *testing.T) {
+func testHandleBatchCopResponseResolvesChildLock(t *testing.T) {
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	testutils.BootstrapWithSingleStore(cluster)
@@ -1137,9 +1137,7 @@ func testHandleBatchCopResponseIgnoresChildLock(t *testing.T) {
 		map[uint64]*batchedCopTask{child.taskID: {task: child}},
 	)
 	require.NoError(t, err)
-	// The parent response's lock, which is always nil here, is passed to
-	// handleLockErr, so the child's lock is not resolved.
-	require.Zero(t, kvClient.Stats.GetRPCStatsCount())
+	require.Equal(t, 1, kvClient.Stats.GetRPCStatsCount())
 }
 
 func testHandleBatchCopResponseUpdatesChildBucketsOnVersionNotMatch(t *testing.T) {
