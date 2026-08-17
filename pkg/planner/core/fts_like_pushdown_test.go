@@ -161,3 +161,46 @@ func TestFTSLocalMatchPreFilterSkipsBinaryColumn(t *testing.T) {
 	require.NotContains(t, strings.ToLower(plan.String()), "like",
 		"no pre-filter may be pushed for a binary column:\n"+plan.String())
 }
+
+// TestFTSLocalMatchPreFilterSkipsMultiColumn covers another case where
+// narrowing would be wrong. A multi-column MATCH is satisfied by a token in any
+// of its columns, so a pre-filter on one column would discard rows the MATCH
+// accepts.
+func TestFTSLocalMatchPreFilterSkipsMultiColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_local_match_against = ON")
+	tk.MustExec("create table m (id int primary key, title varchar(255), body varchar(255))")
+	tk.MustExec(`insert into m values
+		(1, 'nothing here', 'storage engine'),
+		(2, 'storage title', 'other text'),
+		(3, 'unrelated', 'unrelated')`)
+
+	// Row 1 has the token only in the second column, which a pre-filter on the
+	// first would have discarded.
+	tk.MustQuery("select id from m where match(title, body) against('+storage' in boolean mode) order by id").
+		Check(testkit.Rows("1", "2"))
+
+	var plan strings.Builder
+	for _, row := range tk.MustQuery(
+		"explain format='brief' select id from m where match(title, body) against('+storage' in boolean mode)").Rows() {
+		for _, cell := range row {
+			plan.WriteString(cell.(string) + " ")
+		}
+		plan.WriteString("\n")
+	}
+	require.NotContains(t, strings.ToLower(plan.String()), "like",
+		"no pre-filter may be pushed for a multi-column MATCH:\n"+plan.String())
+
+	// A single-column MATCH on the same table still gets one.
+	var single strings.Builder
+	for _, row := range tk.MustQuery(
+		"explain format='brief' select id from m where match(body) against('+storage' in boolean mode)").Rows() {
+		for _, cell := range row {
+			single.WriteString(cell.(string) + " ")
+		}
+	}
+	require.Contains(t, strings.ToLower(single.String()), "like",
+		"a single-column MATCH should still be narrowed:\n"+single.String())
+}

@@ -2593,7 +2593,12 @@ func (er *expressionRewriter) matchAgainstToLocalBuiltin(v *ast.MatchAgainst, nu
 	// shipped here for the exact check. Only possible when the search string is
 	// a stable constant, which is also when compiledQuery is non-nil.
 	result := fn
-	if compiledQuery != nil {
+	// Only for a single-column MATCH. The pre-filter tests one column, but a
+	// multi-column MATCH is satisfied by a token in any of them, so filtering
+	// on the first would discard rows the MATCH accepts. Narrowing must never
+	// change results, so decline rather than narrow wrongly. A disjunction over
+	// every matched column would be sound and is worth adding later.
+	if compiledQuery != nil && numCols == 1 {
 		preFilters, err := expression.BuildFTSLocalMatchPreFilters(
 			er.sctx, args[1], compiledQuery)
 		if err != nil {
