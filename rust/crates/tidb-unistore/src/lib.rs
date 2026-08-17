@@ -103,6 +103,7 @@
 
 pub mod arena;
 pub mod iterator;
+pub mod kv_handler;
 pub mod load_dump;
 pub mod lockstore;
 pub mod lockwaiter;
