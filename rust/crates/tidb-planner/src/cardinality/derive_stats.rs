@@ -45,12 +45,6 @@
 //!   takes `EstimateFullJoinRowCount` for an inner join and clamps every
 //!   inherited column NDV to the join's own row count.
 
-use std::collections::{BTreeMap, BTreeSet};
-
-use crate::cardinality::join::{
-    estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
-};
-use crate::cardinality::ndv::GroupNdv;
 use crate::cost_factors::SELECTION_FACTOR;
 
 /// Go `cardinality.distinctFactor` (`cardinality/ndv.go:35`), the NDV a column
