@@ -23,30 +23,31 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use tidb_pd_client::{PdClient, PdTimestampFuture};
+use tidb_pd_client::PdClient;
 
 use crate::gc_state::{GcStateCache, TxnSafePointLoader, TxnSafePointRefresher};
 use crate::lock::TimestampSource;
 use crate::rpc::{TonicCoprocessorClient, UnaryCallContext};
 use crate::{PdRegionLoader, SharedReadOpener, SharedReadRuntime};
 
-use super::super::command_client::{PublishedCommand, TransactionCommandClient};
+use super::super::command_client::PublishedCommand;
 use super::super::mutation::validate_plan;
 use super::super::region_batches::point_route;
 use super::super::ttl::{HeartBeatFailure, LockKeepAlive, TxnHeartBeatSender, MANAGED_LOCK_TTL_MS};
-use super::{
-    CommitProtocol, OptimisticCoordinatorError, ProductionOptimisticTransaction,
-    ProductionPessimisticTransaction, RealOptimisticTransaction,
-};
+use super::{CommitProtocol, OptimisticCoordinatorError, RealOptimisticTransaction};
 
 /// Process-level opener for concrete normal optimistic transactions.
 ///
 /// It holds only a cloneable session opener and the cloneable capability for
 /// the already-running PD worker. The unique RegionCache maintenance and TiKV
 /// transport lifecycle owners remain with the process that supplied them.
-pub struct RealOptimisticTransactionOpener {
-    opener: crate::SharedReadOpener<TonicCoprocessorClient, PdRegionLoader>,
-    pd: PdClient,
+pub struct RealOptimisticTransactionOpener<
+    C = TonicCoprocessorClient,
+    L = PdRegionLoader,
+    P = PdClient,
+> {
+    opener: crate::SharedReadOpener<C, L>,
+    pd: P,
     timeout: Duration,
     /// Keeps the shared txn safe point current for as long as any clone of this
     /// opener — and therefore any transaction it opened — can still read.
@@ -54,7 +55,7 @@ pub struct RealOptimisticTransactionOpener {
     protocol: CommitProtocol,
 }
 
-impl Clone for RealOptimisticTransactionOpener {
+impl<C: Clone, L, P: Clone> Clone for RealOptimisticTransactionOpener<C, L, P> {
     fn clone(&self) -> Self {
         Self {
             opener: self.opener.clone(),
@@ -69,6 +70,8 @@ impl Clone for RealOptimisticTransactionOpener {
 impl RealOptimisticTransactionOpener {
     /// Derives transaction-opening capability from the already-running shared
     /// read authority. This starts no PD, RegionCache, or transport worker.
+    /// The PRODUCTION constructor: the gc refresher rides the PD+etcd loader,
+    /// fallback included, exactly as before the opener went generic.
     pub fn from_process_capabilities(
         opener: SharedReadOpener<TonicCoprocessorClient, PdRegionLoader>,
         pd: PdClient,
@@ -88,6 +91,39 @@ impl RealOptimisticTransactionOpener {
             timeout,
         ))
         .map_err(|error| OptimisticCoordinatorError::GcState(error.to_string()))?;
+        Ok(Self {
+            opener,
+            pd,
+            timeout,
+            gc_state: Arc::new(gc_state),
+            protocol: CommitProtocol::two_phase_only(),
+        })
+    }
+}
+
+impl<C, L, P> RealOptimisticTransactionOpener<C, L, P>
+where
+    C: Clone
+        + crate::transaction::TransactionCommandClient
+        + crate::lock::LockRecoveryClient
+        + Send
+        + 'static,
+    L: crate::region::RegionRecoveryLoader + Send + 'static,
+    P: crate::pd_capability::PdCapability + Send + 'static,
+{
+    /// The generic constructor: the caller supplies the safe-point refresher
+    /// — an embedded store starts one over its own capability
+    /// (`TxnSafePointRefresher::start_with_source`), the production path
+    /// keeps its loader through `from_process_capabilities`.
+    pub fn from_capabilities(
+        opener: crate::SharedReadOpener<C, L>,
+        pd: P,
+        timeout: Duration,
+        gc_state: TxnSafePointRefresher,
+    ) -> Result<Self, OptimisticCoordinatorError> {
+        if pd.cluster_id() == 0 {
+            return Err(OptimisticCoordinatorError::ZeroClusterId);
+        }
         Ok(Self {
             opener,
             pd,
@@ -136,7 +172,10 @@ impl RealOptimisticTransactionOpener {
         &self,
         planned_mutation_count: usize,
         planned_aggregate_bytes: usize,
-    ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
+    ) -> Result<
+        RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
+        OptimisticCoordinatorError,
+    > {
         // Reject an invalid plan before opening a session or consuming a real
         // TSO; `new_injected` revalidates for callers that already hold one.
         validate_plan(planned_mutation_count, planned_aggregate_bytes)
@@ -170,7 +209,10 @@ impl RealOptimisticTransactionOpener {
         start_ts: u64,
         planned_mutation_count: usize,
         planned_aggregate_bytes: usize,
-    ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
+    ) -> Result<
+        RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
+        OptimisticCoordinatorError,
+    > {
         validate_plan(planned_mutation_count, planned_aggregate_bytes)
             .map_err(OptimisticCoordinatorError::Mutations)?;
         if start_ts == u64::MAX {
@@ -194,7 +236,10 @@ impl RealOptimisticTransactionOpener {
     /// to publish a mutation on this transaction is rejected.
     pub fn begin_read_only(
         &self,
-    ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
+    ) -> Result<
+        RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
+        OptimisticCoordinatorError,
+    > {
         self.open(0, 0)
     }
 
@@ -204,12 +249,10 @@ impl RealOptimisticTransactionOpener {
     /// Go stores the corresponding `oracle.Future` during transaction warmup;
     /// a statement that never reaches storage can drop it without activating a
     /// transaction.
-    pub fn prepare_read_only_start_ts(
-        &self,
-    ) -> Result<PdTimestampFuture, OptimisticCoordinatorError> {
+    pub fn prepare_read_only_start_ts(&self) -> Result<P::TsFuture, OptimisticCoordinatorError> {
         self.pd
-            .get_timestamp_async()
-            .map_err(|error| OptimisticCoordinatorError::Timestamp(error.to_string()))
+            .timestamp_future()
+            .map_err(OptimisticCoordinatorError::Timestamp)
     }
 
     /// Opens a read-only transaction at a timestamp already obtained by
@@ -217,7 +260,10 @@ impl RealOptimisticTransactionOpener {
     pub fn begin_read_only_at(
         &self,
         start_ts: u64,
-    ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
+    ) -> Result<
+        RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
+        OptimisticCoordinatorError,
+    > {
         self.begin_at(start_ts, 0, 0)
     }
 
@@ -238,7 +284,10 @@ impl RealOptimisticTransactionOpener {
     /// becomes visible to the second.
     pub fn begin_read_only_at_max_ts(
         &self,
-    ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
+    ) -> Result<
+        RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
+        OptimisticCoordinatorError,
+    > {
         self.open_at(Some(u64::MAX), 0, 0)
     }
 
@@ -267,7 +316,7 @@ impl RealOptimisticTransactionOpener {
         }
         super::snapshot_read::direct_snapshot_get(
             &runtime,
-            &PdLockTimestampSource(self.pd.clone()),
+            &crate::pd_capability::CapabilityTimestampSource(self.pd.clone()),
             self.gc_state.cache().as_ref(),
             key,
             call,
@@ -279,7 +328,10 @@ impl RealOptimisticTransactionOpener {
         &self,
         planned_mutation_count: usize,
         planned_aggregate_bytes: usize,
-    ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
+    ) -> Result<
+        RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
+        OptimisticCoordinatorError,
+    > {
         self.open_at(None, planned_mutation_count, planned_aggregate_bytes)
     }
 
@@ -290,7 +342,10 @@ impl RealOptimisticTransactionOpener {
         start_ts: Option<u64>,
         planned_mutation_count: usize,
         planned_aggregate_bytes: usize,
-    ) -> Result<ProductionOptimisticTransaction, OptimisticCoordinatorError> {
+    ) -> Result<
+        RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
+        OptimisticCoordinatorError,
+    > {
         let opened_at = Instant::now();
         let runtime = self
             .opener
@@ -304,10 +359,15 @@ impl RealOptimisticTransactionOpener {
         }
         let start_ts = match start_ts {
             Some(start_ts) => start_ts,
-            None => self
-                .pd
-                .get_timestamp()
-                .map_err(|error| OptimisticCoordinatorError::Timestamp(error.to_string()))?,
+            None => {
+                // The real client's `get_timestamp` IS `get_timestamp_async +
+                // wait`, so the seam changes nothing observable.
+                use crate::pd_capability::TimestampFutureWait;
+                self.pd
+                    .timestamp_future()
+                    .and_then(|future| future.wait())
+                    .map_err(OptimisticCoordinatorError::Timestamp)?
+            }
         };
         if start_ts == 0 {
             return Err(OptimisticCoordinatorError::Timestamp(
@@ -316,7 +376,7 @@ impl RealOptimisticTransactionOpener {
         }
         let mut transaction = RealOptimisticTransaction::new_opened(
             runtime,
-            PdLockTimestampSource(self.pd.clone()),
+            crate::pd_capability::CapabilityTimestampSource(self.pd.clone()),
             self.timeout,
             start_ts,
             opened_at,
@@ -337,7 +397,14 @@ impl RealOptimisticTransactionOpener {
         &self,
         planned_mutation_count: usize,
         planned_aggregate_bytes: usize,
-    ) -> Result<ProductionPessimisticTransaction, OptimisticCoordinatorError> {
+    ) -> Result<
+        super::super::RealPessimisticTransaction<
+            C,
+            L,
+            crate::pd_capability::CapabilityTimestampSource<P>,
+        >,
+        OptimisticCoordinatorError,
+    > {
         let opened_at = Instant::now();
         let two_pc = self.begin(planned_mutation_count, planned_aggregate_bytes)?;
         super::super::RealPessimisticTransaction::from_transaction(two_pc, opened_at)
@@ -389,16 +456,23 @@ impl RealOptimisticTransactionOpener {
     }
 }
 
-/// Production TxnHeartBeat sender bound to one keep-alive thread's session.
-struct SessionHeartBeatSender {
-    runtime: SharedReadRuntime<TonicCoprocessorClient, PdRegionLoader>,
-    pd: PdClient,
+/// TxnHeartBeat sender bound to one keep-alive thread's session, generic
+/// over the same seams as the opener that starts it.
+struct SessionHeartBeatSender<C, L, P> {
+    runtime: SharedReadRuntime<C, L>,
+    pd: P,
     timeout: Duration,
 }
 
-impl TxnHeartBeatSender for SessionHeartBeatSender {
+impl<C, L, P> TxnHeartBeatSender for SessionHeartBeatSender<C, L, P>
+where
+    C: crate::transaction::TransactionCommandClient,
+    L: crate::region::RegionLoader,
+    P: crate::pd_capability::PdCapability,
+{
     fn current_ts(&self) -> Result<u64, String> {
-        self.pd.get_timestamp().map_err(|error| error.to_string())
+        use crate::pd_capability::TimestampFutureWait;
+        self.pd.timestamp_future()?.wait()
     }
 
     fn send_heart_beat(

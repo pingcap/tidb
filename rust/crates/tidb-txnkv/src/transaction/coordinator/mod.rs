@@ -266,13 +266,16 @@ pub(super) struct PessimisticPrewritePlan {
 pub type ProductionPessimisticTransaction = super::RealPessimisticTransaction<
     TonicCoprocessorClient,
     PdRegionLoader,
-    PdLockTimestampSource,
+    crate::pd_capability::CapabilityTimestampSource<tidb_pd_client::PdClient>,
 >;
 
 /// The one production transaction: real TiKV transport, real PD-backed region
 /// topology, and real PD timestamps.
-pub type ProductionOptimisticTransaction =
-    RealOptimisticTransaction<TonicCoprocessorClient, PdRegionLoader, PdLockTimestampSource>;
+pub type ProductionOptimisticTransaction = RealOptimisticTransaction<
+    TonicCoprocessorClient,
+    PdRegionLoader,
+    crate::pd_capability::CapabilityTimestampSource<tidb_pd_client::PdClient>,
+>;
 
 impl<C, L, T> RealOptimisticTransaction<C, L, T>
 where
