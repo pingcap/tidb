@@ -349,6 +349,12 @@ pub mod mem_table;
 pub mod projection;
 pub mod rewrite;
 pub mod rule;
+pub mod rule_derive_topn_from_window;
+pub mod rule_eliminate_empty_selection;
+pub mod rule_eliminate_unionall_dual_item;
+pub mod rule_push_down_sequence;
+pub mod rule_resolve_expand;
+pub mod rule_result_reorder;
 pub mod schema_producer;
 pub mod selection;
 pub mod sequence;
@@ -1276,6 +1282,8 @@ impl LogicalPlan {
 
 #[cfg(test)]
 mod operator_tests;
+#[cfg(test)]
+pub(crate) mod rule_tail_tests;
 #[cfg(test)]
 pub(crate) mod rule_tests;
 #[cfg(test)]

@@ -59,6 +59,8 @@ pub(crate) fn test_context(allocator: &PlanIdAllocator) -> RuleContext<'_> {
         allocator,
         builder: &BUILDER,
         use_plan_cache: false,
+        // Go's `AllowDeriveTopN` defaults ON in `sessionVars`.
+        allow_derive_topn: true,
         disabled_rules: DisabledLogicalRules::default(),
     }
 }

@@ -40,11 +40,23 @@
 //!
 //! # Which rules actually run
 //!
-//! Go's list has 35 entries. This crate has the operator methods for four of
-//! them: [`ColumnPruner`] (#1 and #29), [`BuildKeySolver`] (#3),
-//! [`PpdSolver`] (#13) and [`PushDownTopNOptimizer`] (#21). The other 31 are
-//! present in [`OPT_RULE_LIST`] as their name and flag — the TABLE is ported,
-//! because the order is the semantics — but they have no body yet.
+//! Go's list has 35 entries and TEN of them have a body here. Four live in
+//! this file, because their tree walks are [`super::rewrite`]'s:
+//! [`ColumnPruner`] (#1 and #29), [`BuildKeySolver`] (#3), [`PpdSolver`] (#13)
+//! and [`PushDownTopNOptimizer`] (#21). Six more live in their own
+//! `rule_*.rs` beside this one, each one fold and one file:
+//!
+//! * [`super::rule_result_reorder::ResultReorder`] (#2)
+//! * [`super::rule_derive_topn_from_window::DeriveTopNFromWindow`] (#19)
+//! * [`super::rule_push_down_sequence::PushDownSequenceSolver`] (#30)
+//! * [`super::rule_eliminate_unionall_dual_item::EliminateUnionAllDualItem`]
+//!   (#31)
+//! * [`super::rule_eliminate_empty_selection::EmptySelectionEliminator`] (#32)
+//! * [`super::rule_resolve_expand::ResolveExpand`] (#34)
+//!
+//! The remaining 25 are present in [`OPT_RULE_LIST`] as their name and flag —
+//! the TABLE is ported, because the order is the semantics — but they have no
+//! body yet.
 //!
 //! [`logical_optimize`] does NOT silently skip those. It records each one it
 //! walked past in [`OptimizeOutcome::skipped`], so a caller can see exactly
@@ -295,7 +307,9 @@ impl RuleId {
         match self {
             Self::GcSubstituter => "generate_column_substitute",
             Self::ColumnPruner | Self::ColumnPrunerAgain => "column_prune",
-            Self::ResultReorder => "stabilize_results",
+            // Go's `(*ResultReorder).Name()`; "stabilize_results" is the FLAG
+            // constant's spelling, not the rule's name.
+            Self::ResultReorder => "result_reorder",
             Self::BuildKeySolver => "build_keys",
             Self::DecorrelateSolver => "decorrelate",
             Self::SemiJoinRewriter => "semi_join_rewrite",
@@ -323,8 +337,10 @@ impl RuleId {
             Self::OuterJoinToSemiJoin => "outer_join_to_semi_join",
             Self::CorrelateSolver => "correlate",
             Self::PushDownSequenceSolver => "push_down_sequence",
-            Self::EliminateUnionAllDualItem => "eliminate_union_all_dual_item",
-            Self::EmptySelectionEliminator => "empty_selection_eliminator",
+            // Both of these are Go's own `Name()`, which differs from the flag
+            // constant's spelling; `isLogicalRuleDisabled` matches `Name()`.
+            Self::EliminateUnionAllDualItem => "union_all_eliminate_dual_item",
+            Self::EmptySelectionEliminator => "eliminate_empty_selection",
             Self::FullTextIndexResolverRejectRemaining => "full_text_index_resolve_reject",
             Self::ResolveExpand => "resolve_expand",
         }
@@ -342,8 +358,21 @@ impl RuleId {
             Self::BuildKeySolver => Some(&BuildKeySolver),
             Self::PpdSolver => Some(&PpdSolver),
             Self::PushDownTopNOptimizer => Some(&PushDownTopNOptimizer),
+            Self::ResultReorder => Some(&super::rule_result_reorder::ResultReorder),
+            Self::DeriveTopNFromWindow => {
+                Some(&super::rule_derive_topn_from_window::DeriveTopNFromWindow)
+            }
+            Self::PushDownSequenceSolver => {
+                Some(&super::rule_push_down_sequence::PushDownSequenceSolver)
+            }
+            Self::EliminateUnionAllDualItem => {
+                Some(&super::rule_eliminate_unionall_dual_item::EliminateUnionAllDualItem)
+            }
+            Self::EmptySelectionEliminator => {
+                Some(&super::rule_eliminate_empty_selection::EmptySelectionEliminator)
+            }
+            Self::ResolveExpand => Some(&super::rule_resolve_expand::ResolveExpand),
             Self::GcSubstituter
-            | Self::ResultReorder
             | Self::DecorrelateSolver
             | Self::SemiJoinRewriter
             | Self::AggregationEliminator
@@ -358,7 +387,6 @@ impl RuleId {
             | Self::PartitionProcessor
             | Self::CollectPredicateColumnsPoint
             | Self::AggregationPushDownSolver
-            | Self::DeriveTopNFromWindow
             | Self::PredicateSimplification
             | Self::FullTextIndexResolverTopN
             | Self::FullTextIndexResolverProjection
@@ -367,11 +395,7 @@ impl RuleId {
             | Self::JoinReOrderSolver
             | Self::OuterJoinToSemiJoin
             | Self::CorrelateSolver
-            | Self::PushDownSequenceSolver
-            | Self::EliminateUnionAllDualItem
-            | Self::EmptySelectionEliminator
-            | Self::FullTextIndexResolverRejectRemaining
-            | Self::ResolveExpand => None,
+            | Self::FullTextIndexResolverRejectRemaining => None,
         }
     }
 }
@@ -520,6 +544,10 @@ pub struct RuleContext<'a> {
     /// Go `SCtx().GetSessionVars().StmtCtx.UseCache`, which
     /// `MaybeOverOptimized4PlanCache` gates on.
     pub use_plan_cache: bool,
+    /// Go `SCtx().GetSessionVars().AllowDeriveTopN`, which
+    /// `BaseLogicalPlan.DeriveTopN` (`base_logical_plan.go:169`) gates its
+    /// whole recursion on.
+    pub allow_derive_topn: bool,
     /// Go `DefaultDisabledLogicalRulesList`.
     pub disabled_rules: DisabledLogicalRules,
 }
