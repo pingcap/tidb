@@ -78,6 +78,15 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		require.Contains(t, projectedSQL, "PARTITION BY HASH (`a`) PARTITIONS 4")
 	})
 
+	t.Run("subpartition dependency", func(t *testing.T) {
+		createSQL := "CREATE TABLE `t` (`id` INT, `tenant_id` INT, PRIMARY KEY (`id`, `tenant_id`)) " +
+			"PARTITION BY RANGE (`id`) " +
+			"SUBPARTITION BY HASH (`tenant_id`) SUBPARTITIONS 2 " +
+			"(PARTITION `p0` VALUES LESS THAN (100), PARTITION `pmax` VALUES LESS THAN MAXVALUE)"
+		_, err := generateProjectedSchemaForTest(t, createSQL, "test", []string{"id"}, true, nil)
+		require.ErrorContains(t, err, "partition definition references a removed column")
+	})
+
 	t.Run("TTL dependency", func(t *testing.T) {
 		createSQL := "CREATE TABLE `t` (`created_at` DATETIME, `a` INT) " +
 			"TTL = `created_at` + INTERVAL 1 DAY"
@@ -85,10 +94,47 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		require.ErrorContains(t, err, "TTL definition references removed column `created_at`")
 	})
 
+	t.Run("TTL remains unchanged", func(t *testing.T) {
+		createSQL := "CREATE TABLE `t` (`id` INT PRIMARY KEY, `created_at` DATETIME, `secret` INT) " +
+			"TTL = `created_at` + INTERVAL 1 DAY"
+		projectedSQL, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id", "created_at"}, true, nil,
+		)
+		require.NoError(t, err)
+		require.Contains(t, projectedSQL, "/*T![ttl] TTL = `created_at` + INTERVAL 1 DAY */")
+	})
+
 	t.Run("retained default expression dependency", func(t *testing.T) {
 		createSQL := "CREATE TABLE `t` (`a` INT, `b` INT DEFAULT (`a`))"
 		_, err := generateProjectedSchemaForTest(t, createSQL, "test", []string{"b"}, true, nil)
 		require.ErrorContains(t, err, "column `b` expression references a removed column")
+	})
+
+	t.Run("default expression remains unchanged", func(t *testing.T) {
+		createSQL := "CREATE TABLE `t` (" +
+			"`id` INT PRIMARY KEY," +
+			"`token` VARCHAR(32) DEFAULT (UUID())," +
+			"`secret` INT" +
+			")"
+		projectedSQL, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id", "token"}, true, nil,
+		)
+		require.NoError(t, err)
+		require.Contains(t, projectedSQL, "`token` VARCHAR(32) DEFAULT (UUID())")
+	})
+
+	t.Run("composite primary key removed", func(t *testing.T) {
+		createSQL := "CREATE TABLE `t` (" +
+			"`tenant_id` INT," +
+			"`id` INT," +
+			"`name` VARCHAR(32)," +
+			"PRIMARY KEY (`tenant_id`, `id`)" +
+			")"
+		projectedSQL, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id", "name"}, true, nil,
+		)
+		require.NoError(t, err)
+		require.Empty(t, parseCreateTableForTest(t, projectedSQL).Constraints)
 	})
 
 	t.Run("foreign key target column removed", func(t *testing.T) {
@@ -141,6 +187,25 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		)
 		require.NoError(t, err)
 		require.Len(t, parseCreateTableForTest(t, projectedSQL).Constraints, 1)
+	})
+
+	t.Run("foreign key actions remain unchanged", func(t *testing.T) {
+		createSQL := "CREATE TABLE `child` (" +
+			"`id` INT PRIMARY KEY," +
+			"`parent_id` INT," +
+			"FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`) " +
+			"ON DELETE CASCADE ON UPDATE SET NULL" +
+			")"
+		columnsByTable := map[tableName]map[string]struct{}{
+			{db: "test", table: "child"}:  {"id": {}, "parent_id": {}},
+			{db: "test", table: "parent"}: {"id": {}},
+		}
+
+		projectedSQL, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id", "parent_id"}, true, columnsByTable,
+		)
+		require.NoError(t, err)
+		require.Contains(t, projectedSQL, "ON DELETE CASCADE ON UPDATE SET NULL")
 	})
 
 	t.Run("no writable column removed", func(t *testing.T) {
