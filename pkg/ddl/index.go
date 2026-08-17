@@ -3135,6 +3135,25 @@ func shouldAutoPauseExistingKVDiskFullTask(job *model.Job, task *proto.Task) boo
 		!job.HasResumeReason(model.JobResumeReasonKVDiskFull)
 }
 
+// resolveCloudStorageURI reloads the URI when a new DDL owner resumes the job.
+// UseCloudStorage is persisted in the job, but the URI loaded by loadCloudStorageURI
+// is cached only in the previous owner's in-memory ReorgContext.
+func (w *worker) resolveCloudStorageURI(job *model.Job, mergeTempIndex bool) (string, error) {
+	jc := w.jobContext(job.ID, job.ReorgMeta)
+	if mergeTempIndex || !job.ReorgMeta.UseCloudStorage || jc.cloudStorageURI != "" {
+		return jc.cloudStorageURI, nil
+	}
+
+	jc.cloudStorageURI = handle.GetCloudStorageURI(w.workCtx, w.store)
+	if jc.cloudStorageURI == "" {
+		// Recovering requires the user to restore the cloud storage URI. Retrying could leave the DDL job
+		// in write reorganization for a long time before the configuration problem is noticed, so fail it.
+		return "", dbterror.ErrIngestFailed.GenWithStackByArgs(
+			fmt.Sprintf("cloud storage URI is empty for add-index job %d with cloud storage enabled", job.ID))
+	}
+	return jc.cloudStorageURI, nil
+}
+
 func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *reorgInfo) error {
 	stepCtx := jobCtx.stepCtx
 	taskType := proto.Backfill
@@ -3239,11 +3258,15 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("required-slots", requiredSlots),
 			zap.String("task-key", taskKey))
 		rowSize := estimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
+		cloudStorageURI, err := w.resolveCloudStorageURI(job, reorgInfo.mergingTmpIdx)
+		if err != nil {
+			return err
+		}
 		taskMeta := &BackfillTaskMeta{
 			Job:             *job.Clone(),
 			EleIDs:          extractElemIDs(reorgInfo),
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
-			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
+			CloudStorageURI: cloudStorageURI,
 			MergeTempIndex:  reorgInfo.mergingTmpIdx,
 			EstimateRowSize: rowSize,
 			Version:         BackfillTaskMetaVersion1,
