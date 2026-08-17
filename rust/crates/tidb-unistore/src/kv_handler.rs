@@ -325,6 +325,27 @@ impl KvHandler {
         }
     }
 
+    /// Go `Server.KvCheckSecondaryLocks`.
+    pub fn kv_check_secondary_locks(
+        &mut self,
+        req: &kvrpcpb::CheckSecondaryLocksRequest,
+    ) -> kvrpcpb::CheckSecondaryLocksResponse {
+        match self
+            .store
+            .check_secondary_locks(&req.keys, req.start_version)
+        {
+            Ok(status) => kvrpcpb::CheckSecondaryLocksResponse {
+                locks: status.locks,
+                commit_ts: status.commit_ts,
+                ..kvrpcpb::CheckSecondaryLocksResponse::default()
+            },
+            Err(err) => kvrpcpb::CheckSecondaryLocksResponse {
+                error: Some(convert_to_key_error(&err)),
+                ..kvrpcpb::CheckSecondaryLocksResponse::default()
+            },
+        }
+    }
+
     /// Go `Server.KvResolveLock`.
     pub fn kv_resolve_lock(
         &mut self,

@@ -155,6 +155,112 @@ impl DirectUnaryClient for InProcessClient {
     }
 }
 
+/// Go `rpc.go`'s typed lock-recovery arms, over the same handler: the four
+/// calls the read path's lock resolver makes, each an in-process dispatch.
+impl tidb_txnkv::lock::LockRecoveryClient for InProcessClient {
+    fn check_txn_status_for_lock(
+        &mut self,
+        _address: &str,
+        request: &tidb_proto::KvrpcCheckTxnStatusRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcCheckTxnStatusResponse, DirectUnaryClientError> {
+        let mut handler = self.handler.lock().expect("the store lock");
+        Ok(handler.kv_check_txn_status(request))
+    }
+
+    fn check_secondary_locks_for_lock(
+        &mut self,
+        _address: &str,
+        request: &tidb_proto::KvrpcCheckSecondaryLocksRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcCheckSecondaryLocksResponse, DirectUnaryClientError> {
+        let mut handler = self.handler.lock().expect("the store lock");
+        Ok(handler.kv_check_secondary_locks(request))
+    }
+
+    fn resolve_lock_for_read(
+        &mut self,
+        _address: &str,
+        request: &tidb_proto::KvrpcResolveLockRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcResolveLockResponse, DirectUnaryClientError> {
+        let mut handler = self.handler.lock().expect("the store lock");
+        Ok(handler.kv_resolve_lock(request))
+    }
+
+    fn pessimistic_rollback_for_lock(
+        &mut self,
+        _address: &str,
+        request: &tidb_proto::KvrpcPessimisticRollbackRequest,
+        _context: &tidb_proto::KvrpcContext,
+        _call: &UnaryCallContext,
+    ) -> Result<tidb_proto::KvrpcPessimisticRollbackResponse, DirectUnaryClientError> {
+        let mut handler = self.handler.lock().expect("the store lock");
+        Ok(handler.kv_pessimistic_rollback(request))
+    }
+}
+
+/// An already-finished pending: the in-process dispatch completes inside
+/// `begin`, so the handle only hands the result out once. `publication`
+/// stays `None` by the trait's own rule — a synchronous pending cannot
+/// prove a transport publication and must not invent identity.
+#[derive(Debug)]
+pub struct ImmediatePending {
+    result: Option<Result<DirectUnaryResponse, DirectUnaryClientError>>,
+}
+
+impl tidb_txnkv::rpc::PendingRequest for ImmediatePending {
+    fn try_complete(
+        &mut self,
+    ) -> Result<
+        Option<Result<DirectUnaryResponse, DirectUnaryClientError>>,
+        tidb_txnkv::rpc::CompletionError,
+    > {
+        Ok(self.result.take())
+    }
+
+    fn complete(
+        &mut self,
+        _call: &UnaryCallContext,
+    ) -> Result<Result<DirectUnaryResponse, DirectUnaryClientError>, tidb_txnkv::rpc::CompletionError>
+    {
+        // A once-only handle whose result was already taken: the attempt no
+        // longer exists, which is the cancelled shape.
+        self.result
+            .take()
+            .ok_or(tidb_txnkv::rpc::CompletionError::Cancelled)
+    }
+
+    fn cancel(&mut self) {
+        self.result = None;
+    }
+}
+
+impl tidb_txnkv::rpc::AsyncRequestDispatcher for InProcessClient {
+    type Pending = ImmediatePending;
+
+    fn begin(
+        &mut self,
+        _physical_address: &str,
+        forwarded_host: Option<&str>,
+        request: &DirectUnaryRequest,
+        _call: &UnaryCallContext,
+    ) -> Result<Self::Pending, DirectUnaryClientError> {
+        if forwarded_host.is_some() {
+            // The trait's own fail-closed rule for direct-only clients.
+            return Err(DirectUnaryClientError::InvalidRequest(
+                "in-process client does not support request forwarding".to_owned(),
+            ));
+        }
+        Ok(ImmediatePending {
+            result: Some(self.dispatch(request)),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -243,5 +349,25 @@ mod tests {
         let rows = select.chunks[0].rows_data.as_deref().expect("rows");
         let datums = tidb_codec::decode(rows, 1).expect("one datum");
         assert_eq!(datums, vec![Datum::Int(7)]);
+    }
+
+    #[test]
+    fn the_full_transport_constructs_over_the_in_process_pair() {
+        // The decisive bound: `DirectUnaryQueryTransport::from_read_authority`
+        // demands the unary core PLUS lock recovery PLUS async dispatch.
+        // With all three implemented, the node's ACTUAL query transport
+        // constructs over a store with no network under it — the last type
+        // barrier between --store unistore and a running node.
+        use crate::region_loader::InProcessRegionLoader;
+        let cache = tidb_txnkv::region::RegionCache::new(InProcessRegionLoader);
+        let authority: tidb_txnkv::SharedReadAuthority<InProcessClient, InProcessRegionLoader> =
+            tidb_txnkv::SharedReadAuthority::start(InProcessClient::new(), cache)
+                .expect("the authority starts");
+        let transport = tidb_distsql::DirectUnaryQueryTransport::from_read_authority(
+            &authority.opener(),
+            tidb_distsql::DirectUnaryRuntimeConfig::default(),
+            tidb_txnkv::lock::FixedTimestampSource::new(42),
+        );
+        assert!(transport.is_ok(), "{:?}", transport.err());
     }
 }
