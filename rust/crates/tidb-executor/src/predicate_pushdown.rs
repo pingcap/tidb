@@ -351,7 +351,7 @@ fn remap_expression(expression: &mut Expression, keep: &[usize]) -> Option<()> {
 /// A source holds its rows as `Datum`s but the evaluator reads chunk rows, so
 /// each candidate row is appended here, tested, and only then copied into the
 /// output chunk.
-pub(crate) struct ScanFilterProbe {
+pub struct ScanFilterProbe {
     filter: PushedScanFilter,
     ctx: crate::StmtContext,
     scratch: Chunk,

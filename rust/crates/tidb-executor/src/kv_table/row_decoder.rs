@@ -389,7 +389,7 @@ impl RowDecoder {
         self.column_types.keys().copied()
     }
 
-    fn record_handle(&self, key: &[u8]) -> Result<TableHandle, KvTableError> {
+    pub(crate) fn record_handle(&self, key: &[u8]) -> Result<TableHandle, KvTableError> {
         if self.common_handle_offsets.is_empty() {
             return decode_int_handle(key).map(TableHandle::Int);
         }
