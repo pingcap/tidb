@@ -356,6 +356,7 @@ pub mod expression;
 pub mod expropt;
 pub mod exprstatic;
 mod field_name;
+pub mod fts;
 mod func;
 mod grouping;
 pub mod infer_pushdown;
