@@ -26,8 +26,16 @@ use std::collections::BTreeMap;
 /// This is the statistics profile that travels in a plan: `BasePlan.stats`
 /// holds it. [`crate::cardinality::derive_stats::StatsInfo`] is a SECOND port
 /// of the same Go type, local to that module, carrying more fields and keying
-/// its NDV map by `u64` where this one uses `i64`. See its doc comment for
-/// what reconciling them would require.
+/// its NDV map by `u64` where this one uses `i64`.
+///
+/// **THIS one is the survivor.** Its `i64` key is Go's
+/// `expression.Column.UniqueID` and matches
+/// [`tidb_expr::column::Column::unique_id`] and
+/// [`crate::cardinality::ndv::GroupNdv::columns`]; the other module's `u64`
+/// is the outlier and already pays for it in casts. Merging means adding
+/// `group_ndvs` and a `scale` method here and deleting the other. That is
+/// blocked on an out-of-crate consumer, not on a decision — see the other
+/// type's doc comment for the blocking call sites.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StatsInfo {
     row_count: f64,

@@ -49,6 +49,32 @@
 //!    input to statistics derivation. A different type from (2) despite the
 //!    identical name.
 //!
+//! ## (3) is NOT a crate-local invention: it has an out-of-crate producer
+//!
+//! Retargeting (3) onto (1) was attempted and STOPPED, because
+//! `cardinality::derive_stats::LogicalNode` is not exercised only by tests
+//! that build it by hand. `tidb-executor`'s DP join-reorder driver
+//! (`crates/tidb-executor/src/driver/join_reorder.rs`) imports
+//! `derive_stats`, `LogicalNode`, `ProjectionExpr`, `JoinKind`, `ColumnId`
+//! and `DISTINCT_FACTOR` from this module and names `LogicalNode` at 29
+//! points, 14 of them CONSTRUCTING one out of its own `Rel`/`RowSource`
+//! catalog model rather than out of a plan tree. It never
+//! holds a [`logical::LogicalPlan`] and has no `expression::Expression`
+//! values to build one from, so it cannot be pointed at (1) by a local edit.
+//!
+//! It also reads `DerivedNode.stats.row_count` as a PUBLIC FIELD at six
+//! sites, which is why merging `derive_stats::StatsInfo` into
+//! [`stats_info::StatsInfo`] (private fields, accessor methods) is likewise
+//! not a `tidb-planner`-only change. See `cardinality::derive_stats`'s
+//! `LogicalNode` and `StatsInfo` doc comments for the full inventory and for
+//! the key-type verdict.
+//!
+//! So the "retarget (3) onto (1)" work is a TWO-CRATE change and needs an
+//! owner for `tidb-executor` as well. The alternative, if that driver is
+//! itself destined for deletion, is to move `LogicalNode` down into
+//! `tidb-executor` and delete it from here; that is a topology decision, not
+//! a local one.
+//!
 //! **Nothing converts (1) into (2) or (3).** Each consumer invented the
 //! reduced input it needed, and each is exercised only by tests that build
 //! that input by hand. So the builder can build a plan and the rules can

@@ -67,6 +67,19 @@ pub const DISTINCT_FACTOR: f64 = 0.8;
 pub const DEF_SCALE_NDV_SKEW_RATIO: f64 = 1.0;
 
 /// A column identity. Go uses `expression.Column.UniqueID`.
+///
+/// **This alias disagrees with the rest of the crate and is the wrong one.**
+/// Go's `expression.Column.UniqueID` is an `int64`, and this port spells it
+/// `i64` everywhere else: [`tidb_expr::column::Column::unique_id`],
+/// [`crate::stats_info::StatsInfo`]'s `col_ndvs` key, and
+/// [`crate::cardinality::ndv::GroupNdv::columns`]. The mismatch is already
+/// being paid for inside this module, which casts `*id as i64` at three
+/// points purely to compare against `GroupNdv`.
+///
+/// It is left as `u64` here only because
+/// `crates/tidb-executor/src/driver/join_reorder.rs` imports this alias and
+/// builds its column maps against it; narrowing it is part of the two-crate
+/// change described on [`LogicalNode`], not a local edit.
 pub type ColumnId = u64;
 
 /// Go `property.StatsInfo`, reduced to the fields the DP cost and NDV rules
@@ -86,9 +99,33 @@ pub type ColumnId = u64;
 ///
 /// So when a cardinality rule eventually needs to write derived statistics
 /// back onto a plan node, the two must be reconciled: the key types converted,
-/// and a home found for `group_ndvs`. That is a crate-wide decision about
-/// column-id representation, not a local edit, and it has not been made. Until
-/// it is, do not assume a value of one type can stand in for the other.
+/// and a home found for `group_ndvs`.
+///
+/// # The verdict, so the next attempt does not re-derive it
+///
+/// **Keep [`crate::stats_info::StatsInfo`] and key it by `i64`.** It is the
+/// one that travels in `BasePlan.stats`, it already has ~10 producers across
+/// the logical operators (`join.rs`, `window.rs`, `max_one_row.rs`,
+/// `table_dual.rs`, `show.rs`, `union_all.rs`, `sequence.rs`, `cte.rs`,
+/// `mem_table.rs` and the base body in `logical/mod.rs`), and `i64` is what
+/// Go's `expression.Column.UniqueID` is and what
+/// [`tidb_expr::column::Column::unique_id`] and
+/// [`crate::cardinality::ndv::GroupNdv::columns`] already use. The `u64` here
+/// is the outlier; see [`ColumnId`].
+///
+/// The merge is then: add `group_ndvs: Vec<GroupNdv>` and [`StatsInfo::scale`]
+/// to `crate::stats_info::StatsInfo`, and delete this struct.
+///
+/// It was NOT done in the same pass as the `LogicalNode` retarget because it
+/// is blocked on the same out-of-crate consumer:
+/// `crates/tidb-executor/src/driver/join_reorder.rs` reads
+/// `DerivedNode.stats.row_count` as a PUBLIC FIELD at six sites (lines 2884,
+/// 3137-3138, 3160, 3198 and 3254 at this branch's pin), while
+/// `crate::stats_info::StatsInfo` has private fields and a `row_count()`
+/// accessor. Swapping the type in [`DerivedNode`] breaks that crate. Do the
+/// merge together with the retarget, under one owner for both crates — a
+/// half-merge that leaves two types with one set of fields moved is worse
+/// than either end state.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StatsInfo {
     /// `StatsInfo.RowCount`.
@@ -232,6 +269,46 @@ pub struct ProjectionExpr {
 }
 
 /// The logical node kinds a derived-table join group is built from.
+///
+/// # This is a SECOND logical tree, and deleting it is a two-crate change
+///
+/// [`crate::logical::LogicalPlan`] is the crate's one source of truth for a
+/// logical plan: a closed enum of 27 operators that [`crate::plan_builder`]
+/// produces and [`crate::logical::rule`] rewrites. This type is a reduced,
+/// five-variant invention of this port; Go has one `base.LogicalPlan` and
+/// `DeriveStats` is a method on it. It SHOULD go away, and this pass should
+/// consume `&LogicalPlan`.
+///
+/// That retarget was attempted and stopped at a blocker outside this crate.
+/// `crates/tidb-executor/src/driver/join_reorder.rs` imports [`derive_stats`],
+/// `LogicalNode`, [`ProjectionExpr`], [`JoinKind`], [`ColumnId`] and
+/// [`DISTINCT_FACTOR`] from here, naming `LogicalNode` at 29 points of which
+/// 14 BUILD one out of its own `Rel`/`RowSource` catalog model — `emit` (its
+/// `LogicalNode::DataSource` builder), `emit_tree` (its `Join` spine), and the
+/// test models below them. That driver holds no `LogicalPlan` and has no
+/// `expression::Expression` values with which to build one, so it cannot be
+/// repointed at `LogicalPlan` from inside `tidb-planner`.
+///
+/// What a real retarget needs, in order:
+///
+/// 1. An owner for `tidb-executor`, because its 14 construction sites move or
+///    die with this type.
+/// 2. A decision on which way the dependency runs: either that driver learns
+///    to build `LogicalPlan` values (it needs a `PlanIdAllocator`, a `Schema`
+///    per relation, and equi-join conditions as `Expression`s, none of which
+///    it currently has), or `LogicalNode` moves DOWN into `tidb-executor` as
+///    that driver's private cost model and leaves this crate entirely.
+/// 3. A caller-supplied statistics source keyed by `table_id` /
+///    `physical_table_id`. `logical::DataSource` carries `table_stats:
+///    Option<StatsInfo>` (Go `DataSource.TableStats`) but NOT `selectivity`
+///    (Go's `Selectivity(ds.PushedDownConds)`) and not `group_ndvs`, and this
+///    crate has no selectivity implementation — `selectivity` has always been
+///    a precomputed input here and must stay one.
+/// 4. The 27-vs-5 decision, with no `_ =>` arm: only operators whose Go
+///    `DeriveStats` provably leaves the row count unchanged may pass through,
+///    everything else must REFUSE. Silently treating a `Limit` or `TopN` as
+///    its child inflates the estimate, which is a silent wrong-answer bug in
+///    cost-based planning.
 #[derive(Clone, Debug, PartialEq)]
 pub enum LogicalNode {
     /// A base table after predicate pushdown.
