@@ -3550,7 +3550,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 			Extended:              show.Extended,
 			Limit:                 show.Limit,
 			ImportJobID:           show.ImportJobID,
-			ImportJobRaw:          show.ImportJobRaw,
+			RawImportJob:          show.RawImportJob,
 			DistributionJobID:     show.DistributionJobID,
 			ImportGroupKey:        show.ShowGroupKey,
 		},
@@ -6102,7 +6102,7 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Session_states", "Session_token"}
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
 	case ast.ShowImportJobs:
-		if s.ImportJobRaw {
+		if s.RawImportJob {
 			names = rawImportIntoSchemaNames
 			ftypes = rawImportIntoSchemaFTypes
 		} else {

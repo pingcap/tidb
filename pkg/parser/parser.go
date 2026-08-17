@@ -22981,7 +22981,7 @@ yynewstate:
 			parser.yyVAL.statement = &ast.ShowStmt{
 				Tp:           ast.ShowImportJobs,
 				ImportJobID:  &v,
-				ImportJobRaw: yyS[yypt-1].item.(bool),
+				RawImportJob: yyS[yypt-1].item.(bool),
 			}
 		}
 	case 2167:
@@ -23328,7 +23328,7 @@ yynewstate:
 		}
 	case 2238:
 		{
-			parser.yyVAL.item = &ast.ShowStmt{Tp: ast.ShowImportJobs, ImportJobRaw: yyS[yypt-0].item.(bool)}
+			parser.yyVAL.item = &ast.ShowStmt{Tp: ast.ShowImportJobs, RawImportJob: yyS[yypt-0].item.(bool)}
 		}
 	case 2239:
 		{

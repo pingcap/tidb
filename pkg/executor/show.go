@@ -119,7 +119,7 @@ type ShowExec struct {
 	Extended    bool // Used for `show extended columns from ...`
 
 	ImportJobID       *int64
-	ImportJobRaw      bool
+	RawImportJob      bool
 	DistributionJobID *int64
 	ImportGroupKey    string // Used for SHOW IMPORT GROUP <GROUP_KEY>
 }
@@ -290,7 +290,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 	case ast.ShowSessionStates:
 		return e.fetchShowSessionStates(ctx)
 	case ast.ShowImportJobs:
-		if e.ImportJobRaw {
+		if e.RawImportJob {
 			return e.fetchShowRawImportJobs(ctx)
 		}
 		return e.fetchShowImportJobs(ctx)

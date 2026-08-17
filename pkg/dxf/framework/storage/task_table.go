@@ -582,12 +582,10 @@ func (mgr *TaskManager) GetTasksByKeysWithHistory(ctx context.Context, keys []st
 		return tasks, nil
 	}
 	placeholders := strings.TrimSuffix(strings.Repeat("%?,", len(keys)), ",")
-	args := make([]any, 0, len(keys)*2)
-	for _, key := range keys {
-		args = append(args, key)
-	}
-	for _, key := range keys {
-		args = append(args, key)
+	args := make([]any, len(keys)*2)
+	for i, key := range keys {
+		args[i] = key
+		args[i+len(keys)] = key
 	}
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		"select "+TaskColumns+" from mysql.tidb_global_task t where task_key in ("+placeholders+") "+

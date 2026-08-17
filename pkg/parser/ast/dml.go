@@ -3287,7 +3287,7 @@ type ShowStmt struct {
 	ShowGroupKey string // Used for `SHOW IMPORT GROUP <GROUP_KEY>` syntax
 
 	ImportJobID  *int64 // Used for `SHOW IMPORT JOB <ID>` syntax
-	ImportJobRaw bool   // Used for `SHOW RAW IMPORT JOB(S)` syntax
+	RawImportJob bool   // Used for `SHOW RAW IMPORT JOB(S)` syntax
 
 	DistributionJobID *int64 // Used for `SHOW DISTRIBUTION JOB <ID>` syntax
 }
@@ -3512,7 +3512,7 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" PARTITION ")
 		ctx.WriteName(n.Partition.String())
 	case ShowImportJobs:
-		if n.ImportJobRaw {
+		if n.RawImportJob {
 			ctx.WriteKeyWord("RAW ")
 		}
 		if n.ImportJobID != nil {

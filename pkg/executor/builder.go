@@ -932,7 +932,7 @@ func (b *executorBuilder) buildShow(v *physicalop.PhysicalShow) exec.Executor {
 		Extended:              v.Extended,
 		Extractor:             v.Extractor,
 		ImportJobID:           v.ImportJobID,
-		ImportJobRaw:          v.ImportJobRaw,
+		RawImportJob:          v.RawImportJob,
 		DistributionJobID:     v.DistributionJobID,
 		ImportGroupKey:        v.ImportGroupKey,
 	}
