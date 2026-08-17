@@ -599,7 +599,7 @@ impl MvccStore {
             };
             lock_pairs = self.collect_range_lock(req.version, lo, hi);
         } else {
-            limit = req.sample_step * limit;
+            limit *= req.sample_step;
         }
         // Go `kvScanProcessor` over `dbreader.Scan`: newest version at or
         // below the read ts per key, sampled every `sample_step`-th key.
@@ -617,7 +617,7 @@ impl MvccStore {
             visited += 1;
             if req.sample_step > 0 {
                 scan_cnt += 1;
-                if (scan_cnt - 1) % req.sample_step != 0 {
+                if !(scan_cnt - 1).is_multiple_of(req.sample_step) {
                     return true;
                 }
             }
