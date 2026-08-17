@@ -54,6 +54,7 @@ pub mod ddl_event_match;
 pub mod ddl_physical_ids;
 pub mod ddl_queue_gate;
 pub mod ddl_stats_delta;
+pub mod ddl_subscriber;
 pub mod dynamic_partition_helpers;
 pub mod estimate;
 pub mod existence_map;
