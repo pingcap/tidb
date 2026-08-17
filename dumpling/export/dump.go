@@ -548,7 +548,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				return err
 			}
 			projection.schemaSQL = createTableSQL
-			schemaColumns[key], err = resolveProjectedSchemaColumns(createTableSQL, projection)
+			schemaColumns[key], err = collectProjectedSchemaColumns(createTableSQL, projection.selectedColumns)
 			if err != nil {
 				return errors.Annotatef(
 					err,

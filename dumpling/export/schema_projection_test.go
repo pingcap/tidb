@@ -194,7 +194,7 @@ func generateProjectedSchemaForTest(
 	schemaColumns map[tableName]map[string]struct{},
 ) (string, error) {
 	t.Helper()
-	retainedColumns, err := resolveProjectedSchemaColumns(originSQL, projection)
+	retainedColumns, err := collectProjectedSchemaColumns(originSQL, projection.selectedColumns)
 	if err != nil {
 		return "", err
 	}
