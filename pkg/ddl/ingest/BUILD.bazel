@@ -80,7 +80,7 @@ go_test(
     embed = [":ingest"],
     flaky = True,
     race = "on",
-    shard_count = 31,
+    shard_count = 32,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
