@@ -115,6 +115,7 @@ pub mod remote_scan;
 pub mod selection;
 pub mod sequence;
 pub mod show_stats;
+pub mod shuffle;
 mod skyline;
 pub mod sort;
 pub mod sort_partition;
