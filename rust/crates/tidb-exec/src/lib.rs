@@ -51,6 +51,7 @@
 //! keeps only the crate-level vocabulary the rest builds on (`Row`,
 //! `ResultSet`, `Outcome`, `ExecError`) and the re-export surface.
 
+pub mod adapter;
 pub mod aggregate;
 pub mod alternative_plan_signals;
 pub mod analyze_panic_error;
@@ -75,6 +76,7 @@ pub mod cluster_stats_write;
 pub mod cluster_sysvar_load;
 pub mod cluster_sysvar_write;
 pub mod cluster_table_storage;
+pub mod compiler;
 pub mod concurrent_entry_map;
 pub mod config_int_json;
 pub mod configured_inner_join;
