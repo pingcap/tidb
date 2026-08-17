@@ -128,6 +128,15 @@ pub struct MemoryArbitratorConfig {
     pub soft_limit: String,
 }
 
+/// Go `main.go`'s store dispatch: the engines this executable constructs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum StoreKind {
+    /// A real TiKV cluster through PD.
+    TiKv,
+    /// The embedded in-process store — Go's `--store unistore` (mockstore).
+    Unistore,
+}
+
 /// Complete startup input consumed by the concurrent SQL node.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodeConfig {
@@ -137,7 +146,10 @@ pub struct NodeConfig {
     pub port: u16,
     /// CPU indexes from Go's `--affinity-cpus` startup option.
     pub affinity_cpus: Vec<i64>,
-    /// Plaintext PD endpoints in configured order.
+    /// Go `--store`: which storage engine the node constructs over.
+    pub store_kind: StoreKind,
+    /// Plaintext PD endpoints in configured order. Empty for the in-process
+    /// store, which has no control plane to dial.
     pub pd_endpoints: Vec<String>,
     /// Checked tables exposed to the bounded planner in command-line order.
     pub read_tables: Vec<ConfiguredReadTable>,
@@ -265,6 +277,7 @@ pub enum NodeConfigError {
     },
     /// Only the real TiKV store is supported by this executable.
     UnsupportedStore(String),
+
     /// Configured-account mode must never bind a non-loopback address.
     NonLoopbackHost(IpAddr),
 }
@@ -291,7 +304,7 @@ impl fmt::Display for NodeConfigError {
             Self::UnsupportedStore(store) => {
                 write!(
                     formatter,
-                    "unsupported store {store:?}; only tikv is executable"
+                    "unsupported store {store:?}; tikv and unistore are executable"
                 )
             }
             Self::NonLoopbackHost(host) => write!(
@@ -732,10 +745,21 @@ impl NodeConfig {
         let port = parse_number("--port", port.as_deref().unwrap_or("4000"))?;
         let affinity_cpus = parse_affinity_cpus(affinity_cpus.as_deref().unwrap_or_default())?;
         let store = store.as_deref().unwrap_or("tikv");
-        if !store.eq_ignore_ascii_case("tikv") {
+        // Go `main.go` registers tikv, unistore and mocktikv; this
+        // executable constructs the first two, and anything else refuses.
+        let store_kind = if store.eq_ignore_ascii_case("tikv") {
+            StoreKind::TiKv
+        } else if store.eq_ignore_ascii_case("unistore") {
+            StoreKind::Unistore
+        } else {
             return Err(NodeConfigError::UnsupportedStore(store.to_owned()));
-        }
-        let pd_endpoints = parse_pd_endpoints(required(path, "--path")?)?;
+        };
+        // Go's unistore path ignores `--path` (the embedded store has no PD
+        // to dial); the tikv path requires it exactly as before.
+        let pd_endpoints = match store_kind {
+            StoreKind::TiKv => parse_pd_endpoints(required(path, "--path")?)?,
+            StoreKind::Unistore => Vec::new(),
+        };
         if cluster_session {
             // The bounded surface is described by naming tables; this one is
             // the cluster's whole catalog. Accepting both would leave two
@@ -871,6 +895,7 @@ impl NodeConfig {
             host,
             port,
             affinity_cpus,
+            store_kind,
             pd_endpoints,
             read_tables,
             load_tables,
@@ -1465,7 +1490,7 @@ mod tests {
 
     use super::{
         encoded_spill_path_for_identity, parse_column_descriptor, ConfiguredReadColumnKind,
-        NodeConfig, NodeConfigError,
+        NodeConfig, NodeConfigError, StoreKind,
     };
 
     #[test]
@@ -1894,5 +1919,58 @@ mod tests {
             Err(NodeConfigError::InvalidValue { option, .. })
                 if option == "--affinity-cpus"
         ));
+    }
+
+    #[test]
+    fn store_unistore_is_accepted_without_a_pd_path() {
+        // Go's unistore arm has no PD to dial, so `--path` is not required.
+        let config = NodeConfig::parse([
+            "tidb-server",
+            "--store",
+            "unistore",
+            "--auth-file",
+            "/tmp/users.tsv",
+            "--read-table",
+            "test",
+            "t",
+            "100",
+            "1",
+            "a:1:clustered-pk",
+        ])
+        .expect("unistore parses without --path");
+        assert_eq!(config.store_kind, StoreKind::Unistore);
+        assert!(config.pd_endpoints.is_empty());
+    }
+
+    #[test]
+    fn store_tikv_still_requires_the_pd_path() {
+        let err = NodeConfig::parse([
+            "tidb-server",
+            "--store",
+            "tikv",
+            "--auth-file",
+            "/tmp/users.tsv",
+            "--read-table",
+            "test",
+            "t",
+            "100",
+            "1",
+            "a:1:clustered-pk",
+        ])
+        .expect_err("tikv without --path refuses");
+        assert!(format!("{err}").contains("--path"));
+    }
+
+    #[test]
+    fn an_unknown_store_names_both_executables() {
+        let err = NodeConfig::parse([
+            "tidb-server",
+            "--store",
+            "mocktikv",
+            "--path",
+            "127.0.0.1:2379",
+        ])
+        .expect_err("unknown store refuses");
+        assert!(format!("{err}").contains("tikv and unistore are executable"));
     }
 }

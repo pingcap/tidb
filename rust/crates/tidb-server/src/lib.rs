@@ -200,6 +200,18 @@ pub use wire_status::{
 /// driver ([`cluster_session_node`]), so it is routed first.
 pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeError> {
     tidb_util::printer::print_tidb_info(&config.version_info, &config.startup_config_json());
+    if config.store_kind == node_config::StoreKind::Unistore {
+        // The in-process store exists end to end -- client, region plane,
+        // TSO, coprocessor (tidb-unistore) -- and holds the shared read
+        // authority's bounds. What remains is threading THIS run path's
+        // session factory over that pair instead of the PD-dialed one:
+        // main.go's `--store unistore` construction, the next course.
+        return Err(RunConfiguredNodeError::Engine(SqlQueryError::unknown(
+            "--store unistore: the in-process store is built (tidb-unistore) but this \
+             node's construction path is not yet threaded over it; use --store tikv"
+                .to_owned(),
+        )));
+    }
     let _system_time_monitor = start_system_time_monitor();
     let spill_storage = open_spill_storage(&config)?;
     let memory_arbitrator = MemoryArbitratorAuthority::open(&config)?;

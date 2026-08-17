@@ -1758,6 +1758,7 @@ mod tests {
 
     fn test_config() -> NodeConfig {
         NodeConfig {
+            store_kind: crate::node_config::StoreKind::TiKv,
             host: IpAddr::V4(Ipv4Addr::LOCALHOST),
             port: 0,
             affinity_cpus: Vec::new(),
