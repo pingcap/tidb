@@ -157,14 +157,19 @@ func generateProjectedSchemaForTest(
 	database string,
 	selectedColumns []string,
 	projected bool,
-	schemaColumns map[tableName]map[string]struct{},
+	columnsByTable map[tableName]map[string]struct{},
 ) (string, error) {
 	t.Helper()
 	retainedColumns, err := collectProjectedSchemaColumns(originSQL, selectedColumns)
 	if err != nil {
 		return "", err
 	}
-	return generateProjectedSchema(originSQL, database, projected, retainedColumns, schemaColumns)
+	if columnsByTable == nil {
+		columnsByTable = make(map[tableName]map[string]struct{})
+	}
+	table := parseCreateTableForTest(t, originSQL).Table.Name.O
+	columnsByTable[normalizedTableName(database, table)] = retainedColumns
+	return generateProjectedSchema(originSQL, database, table, projected, columnsByTable)
 }
 
 func parseCreateTableForTest(t *testing.T, sql string) *ast.CreateTableStmt {
