@@ -13,3 +13,10 @@ workspace = true
 [dependencies]
 tidb-error = { path = "../tidb-error" }
 tidb-vardef = { path = "../tidb-vardef" }
+# `ru_stats.go` computes interval buckets from local midnight and documents
+# DST as load-bearing; chrono replaces Go's time.Time/time.Location.
+chrono.workspace = true
+
+[dev-dependencies]
+# The upstream ru_stats test pins Asia/Shanghai and Australia/Lord_Howe.
+chrono-tz.workspace = true

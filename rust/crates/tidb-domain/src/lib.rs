@@ -13,8 +13,8 @@
 // limitations under the License.
 
 //! A SEED of Go `pkg/domain`. This crate is NOT the package; it is the
-//! first four leaf files of it, landed so that the 3,070-line `domain.go`
-//! has somewhere to arrive.
+//! leaf files of it that carry behavior, landed so that the 3,070-line
+//! `domain.go` has somewhere to arrive.
 //!
 //! `pkg/domain` is what `cmd/tidb-server` bootstraps: the schema reloader,
 //! the stats handle, DDL ownership, the sysvar cache. Nothing of that
@@ -32,11 +32,13 @@
 //! | `optimize_trace.go` | [`optimize_trace`] | complete |
 //! | `domain_sysvars.go` | [`domain_sysvars`] | partial — `initDomainSysVars` absent |
 //! | `historical_stats.go` | [`historical_stats`] | complete |
+//! | `ru_stats.go` | [`ru_stats`] | complete except `NewRUStatsWriter` and `requestUnitsWriterLoop`, both `*Domain` wiring — see the module doc |
+//! | `plan_replayer.go` | [`plan_replayer`] | complete — every production symbol, against named boundaries for `extstore`, `sessionctx`, `infosync` and `DumpPlanReplayerInfo` |
 //!
 //! ## Not in this crate
 //!
 //! Every other file of `pkg/domain`, including `domain.go` itself,
-//! `plan_replayer*.go`, `extract.go`, `runaway.go`, `ru_stats.go`,
+//! `plan_replayer_dump.go`, `extract.go`, `runaway.go`, `test_helper.go`,
 //! `infosync/`, and `domainctx.go`.
 //!
 //! `runaway.go` was screened and declined. Its only symbol,
@@ -69,7 +71,43 @@
 //! `Domain` is a *composition root*: it has almost no logic of its own,
 //! so it cannot land before its parts. The next batch should attack the
 //! parts with genuine behavior — `plan_replayer.go`'s task status and
-//! dump-file GC, or `ru_stats.go` — rather than the struct.
+//! dump-file GC, or `ru_stats.go` — rather than the struct. Both of those
+//! have since landed ([`plan_replayer`], [`ru_stats`]); the advice stands
+//! for whatever comes next.
+//!
+//! `plan_replayer_dump.go` (1,004 lines) was screened and NOT started: it is
+//! several batches, not one, and starting it now would leave a half-file.
+//! Its 40 functions fall into five groups, each blocked on a different
+//! absent package:
+//!
+//! 1. *Zip layout and the self-contained dumpers* — the eleven
+//!    `PlanReplayer*File` constants plus `dumpSQLMeta`, `dumpConfig`,
+//!    `dumpMeta`, `dumpSQLs`, `dumpErrorMsgs`, `dumpDebugTrace`,
+//!    `dumpOneDebugTrace`. Blocking symbols: `archive/zip.Writer`,
+//!    `github.com/BurntSushi/toml.NewEncoder`, `config.GetGlobalConfig`,
+//!    `printer.GetTiDBInfo`. This is the one group that could land on its
+//!    own, behind a zip-writer boundary trait — roughly one batch.
+//! 2. *Table-name extraction* — `tableNamePair`, `tableNameExtractor` with
+//!    its `Enter`/`Leave` visitor, `getTablesAndViews`, `handleIsView`,
+//!    `findFK`, `extractTableNames`. Blocking symbols:
+//!    `infoschema.InfoSchema` (unported), `ast.Visitor` over whole statement
+//!    trees, and re-parsing a view's `SelectStmt`.
+//! 3. *Statistics* — `dumpStatsMemStatus`, `dumpStats`, `getStatsForTable`.
+//!    Blocking symbols: `Domain.StatsHandle()`, `statistics/util.JSONTable`,
+//!    `statistics.Table`, historical-stats reads.
+//! 4. *Bindings and session state* — `dumpSessionBindRecords`,
+//!    `dumpSessionBindings`, `dumpGlobalBindings`, `dumpVariables`.
+//!    Blocking symbols: `bindinfo.Binding`, `variable.SessionVars`.
+//! 5. *Live execution* — `dumpExplain`, `dumpEncodedPlan`,
+//!    `dumpPlanReplayerExplain`, `getShowCreateTable`,
+//!    `resultSetToStringSlice`, `getRows`, `dumpTiFlashReplica`,
+//!    `dumpSchemas`, `dumpSchemaMeta`, plus the 180-line orchestrator
+//!    `DumpPlanReplayerInfo` and `setTaskPresignedURL`/`getPresignedURL`.
+//!    Blocking symbols: `sqlexec.RecordSet`, `sessionctx.Context` executing
+//!    `explain`/`show create table`, and `objstore` presigned URLs.
+//!
+//! The orchestrator sits on top of all four other groups, so it is last.
+//! [`plan_replayer::PlanReplayerDumper`] is the boundary it will implement.
 //!
 //! `domainctx.go` was screened and deliberately declined. Its only symbol,
 //! `GetDomain`, is a two-line downcast: `v, ok :=
@@ -88,5 +126,7 @@
 pub mod domain_sysvars;
 pub mod historical_stats;
 pub mod optimize_trace;
+pub mod plan_replayer;
+pub mod ru_stats;
 pub mod schema_checker;
 pub mod sysvar_cache;
