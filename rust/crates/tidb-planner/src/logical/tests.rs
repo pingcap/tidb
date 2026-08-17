@@ -39,7 +39,7 @@ fn source(id: i32, columns: &[i64]) -> LogicalPlan {
     LogicalPlan::DataSource(DataSource {
         base,
         table_id: i64::from(id),
-        pushed_down_conds: Vec::new(),
+        ..DataSource::default()
     })
 }
 

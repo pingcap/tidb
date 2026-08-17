@@ -20,11 +20,34 @@
 //! * `pkg/planner/core/operator/logicalop/base_logical_plan.go` — the
 //!   `BaseLogicalPlan` struct and its default bodies (lines 42-481).
 //!
-//! SEED of `pkg/planner/core`: the tree and its method surface land here; the
-//! operator set does not. Every method below carries Go's signature, and the
-//! bodies are either Go's base body (where it is dependency-closed) or an
-//! explicit `todo`. A `todo` body is one that a later batch fills; it is
-//! never a body that silently answers.
+//! SEED of `pkg/planner/core`: the tree and its method surface land here, and
+//! the operator set is now PARTIAL rather than empty. Every method below
+//! carries Go's signature, and the bodies are either Go's base body (where it
+//! is dependency-closed) or an explicit `todo`. A `todo` body is one that a
+//! later batch fills; it is never a body that silently answers.
+//!
+//! # Which operators have landed
+//!
+//! Ported, each in its own submodule beside this one, with its own state and
+//! its dependency-closed member bodies:
+//!
+//! * [`selection::LogicalSelection`] — `logical_selection.go`
+//! * [`projection::LogicalProjection`] — `logical_projection.go`
+//! * [`join::LogicalJoin`] — `logical_join.go`
+//! * [`aggregation::LogicalAggregation`] — `logical_aggregation.go`
+//! * [`data_source::DataSource`] — `logical_datasource.go`
+//! * [`schema_producer`] — `logical_schema_producer.go`, whose Go struct
+//!   becomes behaviour here rather than a third base struct
+//!
+//! Still SKELETAL, carrying only their state: [`LogicalSort`],
+//! [`LogicalLimit`], [`LogicalTableDual`].
+//!
+//! Still [`TodoLogicalOp`], i.e. not modelled at all: `LogicalApply`,
+//! `LogicalCTE`, `LogicalCTETable`, `LogicalExpand`, `LogicalIndexScan`,
+//! `LogicalLock`, `LogicalMaxOneRow`, `LogicalMemTable`,
+//! `LogicalPartitionUnionAll`, `LogicalSequence`, `LogicalShow`,
+//! `LogicalShowDDLJobs`, `LogicalTableScan`, `LogicalTiKVSingleGather`,
+//! `LogicalTopN`, `LogicalUnionAll`, `LogicalUnionScan`, `LogicalWindow`.
 //!
 //! # Why a closed enum and not `Box<dyn LogicalPlan>`
 //!
@@ -77,7 +100,6 @@ use tidb_expr::column::Column;
 use tidb_expr::expression::{CorrelatedColumn, Expression};
 use tidb_expr::schema::Schema;
 
-use crate::find_best_task::LogicalJoinType;
 use crate::physical::PhysicalPlan;
 use crate::physical_property::PhysicalProperty;
 use crate::physical_table_reader::StoreType;
@@ -196,6 +218,28 @@ impl BaseLogicalPlan {
         self.has_tiflash
     }
 
+    /// Go's `p.hasTiFlash = ...`, which every operator's
+    /// `PreparePossibleProperties` writes directly on the embedded base.
+    pub const fn set_has_tiflash(&mut self, value: bool) {
+        self.has_tiflash = value;
+    }
+
+    /// This base's own state with NO children.
+    ///
+    /// The building block of every operator's `clone_shallow`; see the module
+    /// header for why the child edge is never cloned implicitly.
+    #[must_use]
+    pub fn shell(&self) -> Self {
+        Self {
+            base: self.base.clone(),
+            children: Vec::new(),
+            max_one_row: self.max_one_row,
+            has_tiflash: self.has_tiflash,
+            plan_ids_hash: self.plan_ids_hash,
+            flag: self.flag,
+        }
+    }
+
     /// Go `GetPlanIDsHash()` (`<26th>`).
     #[must_use]
     pub const fn plan_ids_hash(&self) -> u64 {
@@ -242,63 +286,18 @@ impl BaseLogicalPlan {
     }
 }
 
-/// Go `logicalop.LogicalSelection`: a filter over its single child.
-#[derive(Clone, Debug, Default)]
-pub struct LogicalSelection {
-    /// The shared logical base.
-    pub base: BaseLogicalPlan,
-    /// Go `Conditions`: the conjuncts this operator applies.
-    pub conditions: Vec<Expression>,
-}
+pub mod aggregation;
+pub mod data_source;
+pub mod join;
+pub mod projection;
+pub mod schema_producer;
+pub mod selection;
 
-/// Go `logicalop.LogicalProjection`.
-#[derive(Clone, Debug, Default)]
-pub struct LogicalProjection {
-    /// The shared logical base.
-    pub base: BaseLogicalPlan,
-    /// Go `Exprs`: one expression per output column.
-    pub exprs: Vec<Expression>,
-}
-
-/// Go `logicalop.LogicalJoin`.
-#[derive(Clone, Debug)]
-pub struct LogicalJoin {
-    /// The shared logical base.
-    pub base: BaseLogicalPlan,
-    /// Go `JoinType`, reusing the port in [`crate::find_best_task`] rather
-    /// than introducing a second copy of `base.JoinType`.
-    pub join_type: LogicalJoinType,
-    /// Go `EqualConditions`, flattened to their expression form.
-    pub equal_conditions: Vec<Expression>,
-    /// Go `LeftConditions`.
-    pub left_conditions: Vec<Expression>,
-    /// Go `RightConditions`.
-    pub right_conditions: Vec<Expression>,
-    /// Go `OtherConditions`.
-    pub other_conditions: Vec<Expression>,
-}
-
-impl Default for LogicalJoin {
-    fn default() -> Self {
-        Self {
-            base: BaseLogicalPlan::default(),
-            join_type: LogicalJoinType::Inner,
-            equal_conditions: Vec::new(),
-            left_conditions: Vec::new(),
-            right_conditions: Vec::new(),
-            other_conditions: Vec::new(),
-        }
-    }
-}
-
-/// Go `logicalop.LogicalAggregation`.
-#[derive(Clone, Debug, Default)]
-pub struct LogicalAggregation {
-    /// The shared logical base.
-    pub base: BaseLogicalPlan,
-    /// Go `GroupByItems`.
-    pub group_by_items: Vec<Expression>,
-}
+pub use aggregation::LogicalAggregation;
+pub use data_source::DataSource;
+pub use join::LogicalJoin;
+pub use projection::LogicalProjection;
+pub use selection::LogicalSelection;
 
 /// Go `logicalop.LogicalSort`.
 #[derive(Clone, Debug, Default)]
@@ -318,17 +317,6 @@ pub struct LogicalLimit {
     pub offset: u64,
     /// Go `Count`.
     pub count: u64,
-}
-
-/// Go `logicalop.DataSource`: the leaf that reads a table.
-#[derive(Clone, Debug, Default)]
-pub struct DataSource {
-    /// The shared logical base.
-    pub base: BaseLogicalPlan,
-    /// Go `TableInfo.ID`.
-    pub table_id: i64,
-    /// Go `PushedDownConds`.
-    pub pushed_down_conds: Vec<Expression>,
 }
 
 /// Go `logicalop.LogicalTableDual`.
@@ -562,19 +550,34 @@ impl LogicalPlan {
         ))
     }
 
-    /// Go `BuildKeyInfo(selfSchema, childSchema)` (`<3rd>`).
+    /// Go `BuildKeyInfo(selfSchema, childSchema)` (`<3rd>`), dispatched to the
+    /// ported operators.
     ///
-    /// The base body sets `maxOneRow` from `HasMaxOneRow(self, childMaxOneRow)`,
-    /// whose table is per-operator and is a later batch. The child fan-in it
-    /// reads is available and preserved here.
-    pub fn build_key_info(&mut self, _self_schema: &Schema, _child_schema: &[Schema]) {
-        let child_max_one_row: Vec<bool> = self
-            .base()
-            .children()
-            .iter()
-            .map(|child| child.base().max_one_row())
-            .collect();
-        let _ = child_max_one_row; // todo: logicalop.HasMaxOneRow
+    /// The base half — `maxOneRow` from `HasMaxOneRow(self, childMaxOneRow)` —
+    /// still needs `logicalop.HasMaxOneRow`, whose table covers operators this
+    /// batch does not port; the single-child propagation it performs is
+    /// preserved here, and the per-operator overrides run on top.
+    pub fn build_key_info(&mut self, self_schema: &mut Schema, child_schema: &[Schema]) {
+        // Go `BaseLogicalPlan.BuildKeyInfo` (`base_logical_plan.go:196`): a
+        // single-child operator inherits its child's `maxOneRow`.
+        if self.base().child_len() == 1 {
+            let inherited = self.base().children()[0].base().max_one_row();
+            if inherited {
+                self.base_mut().set_max_one_row(true);
+            }
+        }
+        match self {
+            Self::Selection(op) => op.build_key_info(child_schema),
+            Self::Projection(op) => op.build_key_info(self_schema, child_schema),
+            Self::Join(op) => op.build_key_info(self_schema, child_schema),
+            Self::Aggregation(op) => op.build_key_info(self_schema, child_schema),
+            // `DataSource::build_key_info` needs the index definitions, which
+            // the catalogue owns; call it directly with them.
+            Self::DataSource(_) => {}
+            Self::Sort(_) | Self::Limit(_) | Self::TableDual(_) | Self::Todo(_) => {
+                schema_producer::propagate_child_keys(self_schema, child_schema);
+            }
+        }
     }
 
     /// Go `PushDownTopN(topN)` (`<4th>`).
@@ -611,10 +614,23 @@ impl LogicalPlan {
     /// Go `PullUpConstantPredicates()` (`<8th>`).
     ///
     /// Go's base body returns `nil`; only `LogicalProjection` and
-    /// `LogicalSelection` override it. The empty vector is Go's answer.
+    /// `LogicalSelection` override it. `LogicalProjection`'s override reads
+    /// its CHILD's answer and rewrites it through the projection, so it lives
+    /// on the driver rather than on the operator; the empty vector is Go's
+    /// answer everywhere else.
     #[must_use]
     pub fn pull_up_constant_predicates(&self) -> Vec<Expression> {
-        Vec::new()
+        match self {
+            Self::Selection(op) => op.pull_up_constant_predicates(),
+            Self::Projection(_)
+            | Self::Join(_)
+            | Self::Aggregation(_)
+            | Self::DataSource(_)
+            | Self::Sort(_)
+            | Self::Limit(_)
+            | Self::TableDual(_)
+            | Self::Todo(_) => Vec::new(),
+        }
     }
 
     /// Go `RecursiveDeriveStats(colGroups)` (`<9th>`): derive bottom-up, then
@@ -675,9 +691,25 @@ impl LogicalPlan {
 
     /// Go `ExtractColGroups(colGroups)` (`<11th>`). The base body returns
     /// `nil`, which is Go's answer, not a `todo`.
+    ///
+    /// `LogicalAggregation` DISCARDS the parent's groups and asks only for its
+    /// own group-by columns; that override is dispatched here. The
+    /// `LogicalProjection` and `LogicalJoin` overrides need
+    /// `Schema.ExtractColGroups`, which `tidb-expr` lists as deferred, so they
+    /// fall through to the base answer rather than to a guess.
     #[must_use]
     pub fn extract_col_groups(&self, _col_groups: &[Vec<Column>]) -> Vec<Vec<Column>> {
-        Vec::new()
+        match self {
+            Self::Aggregation(op) => op.extract_col_groups(),
+            Self::Selection(_)
+            | Self::Projection(_)
+            | Self::Join(_)
+            | Self::DataSource(_)
+            | Self::Sort(_)
+            | Self::Limit(_)
+            | Self::TableDual(_)
+            | Self::Todo(_) => Vec::new(),
+        }
     }
 
     /// Go `PreparePossibleProperties(schema, childrenProperties...)` (`<12th>`).
@@ -704,10 +736,42 @@ impl LogicalPlan {
         }
     }
 
-    /// Go `ExtractCorrelatedCols()` (`<13th>`). The base body returns `nil`.
+    /// Go `ExtractCorrelatedCols()` (`<13th>`), dispatched to the ported
+    /// operators. The base body returns `nil`, which is what an operator
+    /// without expressions of its own answers.
     #[must_use]
     pub fn extract_correlated_cols(&self) -> Vec<CorrelatedColumn> {
-        Vec::new()
+        match self {
+            Self::Selection(op) => op.extract_correlated_cols(),
+            Self::Projection(op) => op.extract_correlated_cols(),
+            Self::Join(op) => op.extract_correlated_cols(),
+            Self::Aggregation(op) => op.extract_correlated_cols(),
+            Self::DataSource(op) => op.extract_correlated_cols(),
+            Self::Sort(_) | Self::Limit(_) | Self::TableDual(_) | Self::Todo(_) => Vec::new(),
+        }
+    }
+
+    /// Go `Plan.ExplainInfo()` (`base/plan_base.go`), dispatched to the ported
+    /// operators.
+    ///
+    /// Every operator whose Go body renders an expression list through
+    /// `expression.SortedExplainExpressionList` needs an `EvalContext` that
+    /// this crate does not have; those arms answer with
+    /// `BaseLogicalPlan::explain_info`, the empty string, exactly as an
+    /// operator without an override does.
+    #[must_use]
+    pub fn explain_info(&self) -> String {
+        match self {
+            Self::Join(op) => op.explain_info(),
+            Self::DataSource(op) => op.explain_info(),
+            Self::Selection(_)
+            | Self::Projection(_)
+            | Self::Aggregation(_)
+            | Self::Sort(_)
+            | Self::Limit(_)
+            | Self::TableDual(_)
+            | Self::Todo(_) => BaseLogicalPlan::explain_info().to_owned(),
+        }
     }
 
     /// Go `MaxOneRow()` (`<14th>`).
@@ -819,57 +883,27 @@ impl LogicalPlan {
     /// a rule wants when it rebuilds a node around moved children.
     #[must_use]
     pub fn clone_shallow(&self) -> Self {
-        fn base_of(base: &BaseLogicalPlan) -> BaseLogicalPlan {
-            BaseLogicalPlan {
-                base: base.base.clone(),
-                children: Vec::new(),
-                max_one_row: base.max_one_row,
-                has_tiflash: base.has_tiflash,
-                plan_ids_hash: base.plan_ids_hash,
-                flag: base.flag,
-            }
-        }
         match self {
-            Self::Selection(op) => Self::Selection(LogicalSelection {
-                base: base_of(&op.base),
-                conditions: op.conditions.clone(),
-            }),
-            Self::Projection(op) => Self::Projection(LogicalProjection {
-                base: base_of(&op.base),
-                exprs: op.exprs.clone(),
-            }),
-            Self::Join(op) => Self::Join(LogicalJoin {
-                base: base_of(&op.base),
-                join_type: op.join_type,
-                equal_conditions: op.equal_conditions.clone(),
-                left_conditions: op.left_conditions.clone(),
-                right_conditions: op.right_conditions.clone(),
-                other_conditions: op.other_conditions.clone(),
-            }),
-            Self::Aggregation(op) => Self::Aggregation(LogicalAggregation {
-                base: base_of(&op.base),
-                group_by_items: op.group_by_items.clone(),
-            }),
+            Self::Selection(op) => Self::Selection(op.clone_shallow()),
+            Self::Projection(op) => Self::Projection(op.clone_shallow()),
+            Self::Join(op) => Self::Join(op.clone_shallow()),
+            Self::Aggregation(op) => Self::Aggregation(op.clone_shallow()),
             Self::Sort(op) => Self::Sort(LogicalSort {
-                base: base_of(&op.base),
+                base: op.base.shell(),
                 by_items: op.by_items.clone(),
             }),
             Self::Limit(op) => Self::Limit(LogicalLimit {
-                base: base_of(&op.base),
+                base: op.base.shell(),
                 offset: op.offset,
                 count: op.count,
             }),
-            Self::DataSource(op) => Self::DataSource(DataSource {
-                base: base_of(&op.base),
-                table_id: op.table_id,
-                pushed_down_conds: op.pushed_down_conds.clone(),
-            }),
+            Self::DataSource(op) => Self::DataSource(op.clone_shallow()),
             Self::TableDual(op) => Self::TableDual(LogicalTableDual {
-                base: base_of(&op.base),
+                base: op.base.shell(),
                 row_count: op.row_count,
             }),
             Self::Todo(op) => Self::Todo(TodoLogicalOp {
-                base: base_of(&op.base),
+                base: op.base.shell(),
                 go_operator: op.go_operator.clone(),
             }),
         }
@@ -961,5 +995,7 @@ impl LogicalPlan {
     }
 }
 
+#[cfg(test)]
+mod operator_tests;
 #[cfg(test)]
 mod tests;
