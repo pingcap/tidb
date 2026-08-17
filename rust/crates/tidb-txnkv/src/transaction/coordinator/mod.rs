@@ -58,7 +58,10 @@ use super::state::{
     TransactionAttemptReceipt, TransactionAttemptResult, TransactionCause,
 };
 
-pub use opener::{PdLockTimestampSource, RealOptimisticTransactionOpener};
+pub use opener::{
+    PdLockTimestampSource, RealOptimisticTransactionOpener, StorePdCapability, StoreWriteClient,
+    StoreWriteLoader,
+};
 pub use snapshot_read::SnapshotGetResult;
 
 const DEFAULT_LOCK_TTL_MS: u64 = 3_000;

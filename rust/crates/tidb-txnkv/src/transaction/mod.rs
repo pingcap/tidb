@@ -27,7 +27,8 @@ pub use command_client::{PublishedCommand, TransactionCommandClient};
 pub use coordinator::{
     CommitProtocol, OptimisticCoordinatorError, PdLockTimestampSource,
     ProductionOptimisticTransaction, ProductionPessimisticTransaction, RealOptimisticTransaction,
-    RealOptimisticTransactionOpener, SnapshotGetResult,
+    RealOptimisticTransactionOpener, SnapshotGetResult, StorePdCapability, StoreWriteClient,
+    StoreWriteLoader,
 };
 pub use mutation::{
     MutationSetError, OptimisticMutation, OptimisticMutationKind, MAX_OPTIMISTIC_KEY_BYTES,

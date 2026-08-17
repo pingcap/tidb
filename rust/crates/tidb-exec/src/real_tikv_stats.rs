@@ -27,6 +27,7 @@ use std::time::Duration;
 
 use tidb_datatype::FieldType;
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
 use crate::cluster_catalog::load_cluster_catalog;
 use crate::cluster_stats_load::{ClusterStatsLoader, ClusterTableStats};
@@ -40,8 +41,12 @@ use crate::stats_watch::{StatsSnapshot, TableStatsState};
 /// bounds are decoded at are the types the table had when the rows were read.
 ///
 /// `Ok(None)` means the table has no `mysql.stats_meta` row: never analyzed.
-pub fn load_table_stats_from_cluster(
-    opener: &RealOptimisticTransactionOpener,
+pub fn load_table_stats_from_cluster<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
     schema: &str,
     table: &str,
@@ -93,8 +98,12 @@ pub fn load_table_stats_from_cluster(
 /// it *asked* and the cluster said "never analyzed", which is a different
 /// fact from never having asked at all (see the [`crate::stats_watch`]
 /// module doc).
-pub fn load_stats_snapshot_from_cluster(
-    opener: &RealOptimisticTransactionOpener,
+pub fn load_stats_snapshot_from_cluster<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
     tables: &[(i64, BTreeMap<i64, FieldType>)],
 ) -> Result<StatsSnapshot, SystemTableError> {

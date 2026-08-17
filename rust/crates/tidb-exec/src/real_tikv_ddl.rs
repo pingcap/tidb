@@ -38,6 +38,7 @@ use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, OptimisticCoordinatorError, RealOptimisticTransactionOpener,
     TransactionCause, MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
+use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
 use crate::cluster_ddl::{
     lower_ddl_with_context, plan_ddl, DdlAdmissionError, DdlPlan, DdlPlanError, DdlStatement,
@@ -235,8 +236,8 @@ impl SchemaVersionNotifier for tidb_pd_client::EtcdClient {
 ///
 /// `notifier` is the etcd leg. `None` keeps the tick-only behaviour, which is
 /// what a node started without a reachable etcd falls back to.
-pub fn commit_cluster_ddl(
-    opener: &RealOptimisticTransactionOpener,
+pub fn commit_cluster_ddl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
     statement: &DdlStatement,
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,
@@ -336,8 +337,12 @@ pub trait IndexBackfiller {
 /// from "no concurrent DDL" to "no concurrent WRITE to the table being
 /// indexed", and it is the one thing to fix before this tier serves a second
 /// writer.
-pub fn commit_cluster_ddl_with_backfill(
-    opener: Arc<RealOptimisticTransactionOpener>,
+pub fn commit_cluster_ddl_with_backfill<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     statement: &DdlStatement,
     timeout: Duration,
     notifier: Option<&dyn SchemaVersionNotifier>,

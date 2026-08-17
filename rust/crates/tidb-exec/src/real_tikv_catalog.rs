@@ -24,6 +24,7 @@ use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     RealOptimisticTransaction, RealOptimisticTransactionOpener, TransactionCommandClient,
 };
+use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 use tidb_txnkv::Key;
 
 use crate::catalog_reload::{reload_cluster_catalog, ReloadedCatalog};
@@ -128,8 +129,8 @@ impl MetaSnapshot for SnapshotMetaSnapshot {
 ///
 /// The transaction is opened for reading only and finished without writes, so
 /// the load leaves no locks behind and consumes exactly one PD timestamp.
-pub fn load_catalog_from_cluster(
-    opener: &RealOptimisticTransactionOpener,
+pub fn load_catalog_from_cluster<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
 ) -> Result<ClusterCatalog, ClusterCatalogError> {
     let mut transaction = opener
@@ -151,8 +152,12 @@ pub fn load_catalog_from_cluster(
 /// diffs, and any object a diff points at are all read at that one timestamp,
 /// so a pass never publishes a blend of two schema versions. The transaction
 /// is read-only and finished without writes, leaving no locks behind.
-pub fn reload_catalog_from_cluster(
-    opener: &RealOptimisticTransactionOpener,
+pub fn reload_catalog_from_cluster<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
     current: &ClusterCatalog,
 ) -> Result<ReloadedCatalog, ClusterCatalogError> {

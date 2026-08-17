@@ -34,6 +34,7 @@ use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
     OptimisticCommitOutcome, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
+use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
 use crate::cluster_analyze::{analyze_table, lower_analyze, AnalyzeError, AnalyzeStatement};
 use crate::cluster_catalog::load_cluster_catalog;
@@ -147,8 +148,8 @@ fn realtime_count_of(row_count: u64) -> i64 {
 }
 
 /// Runs and commits one `ANALYZE TABLE`.
-pub fn commit_cluster_analyze(
-    opener: &RealOptimisticTransactionOpener,
+pub fn commit_cluster_analyze<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
     statement: &AnalyzeStatement,
     timeout: Duration,
 ) -> Result<ClusterAnalyzeReport, ClusterAnalyzeError> {

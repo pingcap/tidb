@@ -101,15 +101,44 @@ impl RealOptimisticTransactionOpener {
     }
 }
 
-impl<C, L, P> RealOptimisticTransactionOpener<C, L, P>
-where
-    C: Clone
+/// Everything the write path demands of a store client, under one name.
+///
+/// Go's `kv.Storage` is one interface and every layer above it is
+/// store-agnostic; these three aliases are that interface's client half,
+/// so a helper generic over a store writes one bound instead of restating
+/// the five-trait bundle. Blanket-implemented: any type with the parts IS one.
+pub trait StoreWriteClient:
+    Clone
+    + crate::transaction::TransactionCommandClient
+    + crate::lock::LockRecoveryClient
+    + Send
+    + Sync
+    + 'static
+{
+}
+impl<T> StoreWriteClient for T where
+    T: Clone
         + crate::transaction::TransactionCommandClient
         + crate::lock::LockRecoveryClient
         + Send
-        + 'static,
-    L: crate::region::RegionRecoveryLoader + Send + 'static,
-    P: crate::pd_capability::PdCapability + Send + 'static,
+        + Sync
+        + 'static
+{
+}
+
+/// The region-routing half of a store, under one name (see [`StoreWriteClient`]).
+pub trait StoreWriteLoader: crate::region::RegionRecoveryLoader + Send + Sync + 'static {}
+impl<T> StoreWriteLoader for T where T: crate::region::RegionRecoveryLoader + Send + Sync + 'static {}
+
+/// The control-plane half of a store, under one name (see [`StoreWriteClient`]).
+pub trait StorePdCapability: crate::pd_capability::PdCapability + Send + Sync + 'static {}
+impl<T> StorePdCapability for T where T: crate::pd_capability::PdCapability + Send + Sync + 'static {}
+
+impl<C, L, P> RealOptimisticTransactionOpener<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
 {
     /// The generic constructor: the caller supplies the safe-point refresher
     /// — an embedded store starts one over its own capability

@@ -56,6 +56,7 @@ use tidb_planner::{
     },
 };
 use tidb_tablecodec::{decode_table_row_to_map, encode_table_row, TableRowError};
+use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 use tidb_txnkv::{
     lock::{LockRecoveryClient, TimestampSource},
     region::RegionRecoveryLoader,
@@ -1835,8 +1836,8 @@ pub struct ConfiguredWriteReport {
 ///
 /// Every other terminal state — rolled back, cleanup failed, or undetermined —
 /// is an error here, because an OK packet asserts durable rows.
-pub fn commit_configured_write(
-    opener: &RealOptimisticTransactionOpener,
+pub fn commit_configured_write<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
     write: &ConfiguredPreparedWrite,
     timeout: Duration,
     session_tz: &SessionTimeZone,

@@ -24,6 +24,7 @@
 use std::time::Duration;
 
 use tidb_txnkv::transaction::RealOptimisticTransactionOpener;
+use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
 
 use crate::cluster_catalog::{load_cluster_catalog, MetaSnapshot};
 use crate::cluster_privilege_load::{
@@ -63,8 +64,12 @@ pub struct ClusterStartupVariables {
 /// The transaction is finished without writes, so the load leaves no locks
 /// behind and consumes exactly one PD timestamp — the same contract
 /// [`crate::real_tikv_catalog::load_catalog_from_cluster`] keeps.
-pub fn load_accounts_from_cluster(
-    opener: &RealOptimisticTransactionOpener,
+pub fn load_accounts_from_cluster<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
 ) -> Result<ClusterAccounts, SystemTableError> {
     let mut transaction = opener
@@ -106,8 +111,8 @@ pub fn load_accounts_from_cluster(
 /// Keeping this separate from [`load_accounts_from_cluster`] lets recovery
 /// mode preserve that ordering without consulting any account or grant row.
 /// An unbootstrapped or partially bootstrapped keyspace returns no overrides.
-pub fn load_sysvars_from_cluster(
-    opener: &RealOptimisticTransactionOpener,
+pub fn load_sysvars_from_cluster<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
 ) -> Result<Vec<(String, String)>, SystemTableError> {
     let mut transaction = opener
@@ -125,8 +130,12 @@ pub fn load_sysvars_from_cluster(
 
 /// Reads the bootstrap-persisted system time zone and global variables from
 /// one consistent read-only snapshot.
-pub fn load_startup_variables_from_cluster(
-    opener: &RealOptimisticTransactionOpener,
+pub fn load_startup_variables_from_cluster<
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
 ) -> Result<ClusterStartupVariables, SystemTableError> {
     let mut transaction = opener
