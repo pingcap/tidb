@@ -29,9 +29,13 @@ use crate::physical_table_scan::PhysicalTableScanPlan;
 pub const PLAN_TYPE: &str = "TableReader";
 
 /// Opaque storage kind copied by the source Clone implementation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+///
+/// `TiKv` is the default because Go's `kv.StoreType` zero value is `kv.TiKV`
+/// and `CopTask.GetStoreType` answers it for every non-TiFlash shape.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum StoreType {
     /// TiKV storage.
+    #[default]
     TiKv,
     /// TiFlash storage.
     TiFlash,

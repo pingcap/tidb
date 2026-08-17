@@ -235,6 +235,9 @@ pub struct PhysicalTableScan {
     pub base: BasePhysicalPlan,
     /// Go `Table.ID`.
     pub table_id: i64,
+    /// Go `StoreType`: which engine serves this scan. `CopTask.GetStoreType`
+    /// reads it at the leaf.
+    pub store_type: crate::physical_table_reader::StoreType,
 }
 
 /// Go `physicalop.PhysicalTableDual`.
@@ -626,6 +629,7 @@ impl PhysicalPlan {
             Self::TableScan(op) => Self::TableScan(PhysicalTableScan {
                 base: base_of(&op.base),
                 table_id: op.table_id,
+                store_type: op.store_type,
             }),
             Self::TableDual(op) => Self::TableDual(PhysicalTableDual {
                 base: base_of(&op.base),

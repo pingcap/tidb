@@ -21,9 +21,14 @@
 //! owned by future planner layers.
 
 /// MPP exchange partitioning requirement.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+///
+/// `Any` is the default: Go's `AnyType` is the iota zero value
+/// (`property/physical_property.go:110`), which is what a zero
+/// `MppTask.partTp` reads as.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum MppPartitionType {
     /// No special partitioning requirement.
+    #[default]
     Any,
     /// Broadcast rows to every MPP worker.
     Broadcast,
