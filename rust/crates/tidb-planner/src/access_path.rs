@@ -667,3 +667,179 @@ mod tests {
         ));
     }
 }
+
+// ---------------------------------------------------------------------------
+// Go `getPossibleAccessPaths` (`planbuilder.go:1320`): the ENUMERATION step.
+// ---------------------------------------------------------------------------
+
+/// What one enumerated path reads, at enumeration time.
+///
+/// Go's `util.AccessPath` is born nearly empty — `{StoreType, Index,
+/// IsIntHandlePath/IsCommonHandlePath}` — and only later grows ranges and
+/// counts (`deriveStatsByFilter`). This type is that newborn form;
+/// [`DataSourceAccessPath`] above is the grown, costing-time form the bounded
+/// scanner builds. Two stages, as in Go, where one struct mutates through
+/// both.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PossiblePath {
+    /// The table path, always first (`publicPaths[0]`).
+    Table {
+        /// Go `IsIntHandlePath`: the table is not common-handle.
+        is_int_handle: bool,
+        /// Go `fillContentForTablePath`: a common-handle table path carries
+        /// its PRIMARY index, by offset into the catalog's index list.
+        primary_index: Option<usize>,
+    },
+    /// One public index, by offset into the catalog's index list.
+    Index {
+        /// The offset into `SourceTable::indexes`.
+        index: usize,
+    },
+}
+
+/// Go `getPossibleAccessPaths` (`planbuilder.go:1320-1441`) without hints —
+/// the enumeration Go performs before any hint filtering.
+///
+/// Reproduced, in Go's order:
+/// * the table path first, with `fillContentForTablePath`'s int-vs-common
+///   handle split (`planbuilder.go:1520-1532`);
+/// * one path per PUBLIC index (`index.State == model.StatePublic`);
+/// * an invisible index is skipped unless
+///   `OptimizerUseInvisibleIndexes` (`:1378`);
+/// * a common-handle table's PRIMARY index is skipped as an index path
+///   (`:1382`) — it already rode in on the table path;
+/// * a columnar index is skipped, because using one requires an available
+///   TiFlash replica (`:1399-1404`) and this catalog carries no replica
+///   state.
+///
+/// Named boundaries, absent rather than approximated:
+/// * TiFlash replica paths (`genTiFlashPath`, `:1332-1347`) — no replica
+///   state on [`crate::plan_builder::catalog::SourceTable`];
+/// * `kv.TiDB` for cluster tables (`:1324-1326`) — no cluster-table flag;
+/// * inverted indexes (`:1396-1398`) — no inverted flag on
+///   [`crate::plan_builder::catalog::SourceIndex`], so an inverted index
+///   would enumerate here where Go skips it; the catalog does not model one
+///   today;
+/// * hypo indexes (`:1419-1441`) — explain-only session state;
+/// * the read-committed `GetLatestIndexInfo` re-check (`:1385-1395`) —
+///   schema-validator machinery;
+/// * USE/IGNORE/FORCE INDEX and comment-style hints (`:1443` onward) — with
+///   no hints Go returns every public path available, which is exactly this
+///   answer.
+#[must_use]
+pub fn get_possible_access_paths(
+    table: &crate::plan_builder::catalog::SourceTable,
+    optimizer_use_invisible_indexes: bool,
+) -> Vec<PossiblePath> {
+    // Go splits ONLY on `tblInfo.IsCommonHandle` (`planbuilder.go:1521`):
+    // a table with no explicit handle column is still an int-handle path,
+    // through the implicit `_tidb_rowid`. `handle_is_int()` would misread
+    // that case — the first version of this port did, and the test caught it.
+    let is_common_handle = table.is_common_handle;
+    let mut paths = Vec::with_capacity(table.indexes.len() + 1);
+    paths.push(PossiblePath::Table {
+        is_int_handle: !is_common_handle,
+        primary_index: if is_common_handle {
+            table.indexes.iter().position(|index| index.primary)
+        } else {
+            None
+        },
+    });
+    for (offset, index) in table.indexes.iter().enumerate() {
+        if !index.is_public {
+            continue;
+        }
+        if !optimizer_use_invisible_indexes && !index.is_visible {
+            continue;
+        }
+        if is_common_handle && index.primary {
+            continue;
+        }
+        if index.is_columnar {
+            continue;
+        }
+        paths.push(PossiblePath::Index { index: offset });
+    }
+    paths
+}
+
+#[cfg(test)]
+mod enumeration_tests {
+    use super::{get_possible_access_paths, PossiblePath};
+    use crate::plan_builder::catalog::{SourceIndex, SourceTable};
+
+    // All WRITTEN: Go's coverage of getPossibleAccessPaths is
+    // planner-integration bound. Each expectation cites the Go line it
+    // checks.
+
+    fn index(name: &str) -> SourceIndex {
+        SourceIndex {
+            id: 1,
+            name: name.to_string(),
+            columns: Vec::new(),
+            unique: false,
+            primary: false,
+            is_public: true,
+            is_visible: true,
+            is_columnar: false,
+            is_multi_valued: false,
+        }
+    }
+
+    fn table(indexes: Vec<SourceIndex>) -> SourceTable {
+        SourceTable {
+            indexes,
+            ..SourceTable::default()
+        }
+    }
+
+    #[test]
+    fn the_table_path_comes_first_and_is_int_handle_by_default() {
+        // `publicPaths[0]` is the table path (`planbuilder.go:1327-1329`),
+        // int-handle when the table is not common-handle (`:1530`).
+        let paths = get_possible_access_paths(&table(vec![index("i1")]), false);
+        assert_eq!(
+            paths[0],
+            PossiblePath::Table {
+                is_int_handle: true,
+                primary_index: None
+            }
+        );
+        assert_eq!(paths.len(), 2);
+    }
+
+    #[test]
+    fn an_invisible_index_needs_the_session_flag() {
+        // `!optimizerUseInvisibleIndexes && index.Invisible` skips
+        // (`planbuilder.go:1378`).
+        let mut hidden = index("hidden");
+        hidden.is_visible = false;
+        let t = table(vec![hidden]);
+        assert_eq!(get_possible_access_paths(&t, false).len(), 1);
+        assert_eq!(get_possible_access_paths(&t, true).len(), 2);
+    }
+
+    #[test]
+    fn a_non_public_index_never_enumerates() {
+        // `index.State == model.StatePublic` guards the whole arm
+        // (`planbuilder.go:1376`).
+        let mut building = index("building");
+        building.is_public = false;
+        assert_eq!(
+            get_possible_access_paths(&table(vec![building]), true).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_columnar_index_is_skipped_without_replica_state() {
+        // Go admits a columnar index only with an available TiFlash replica
+        // (`planbuilder.go:1399-1404`); this catalog has no replica state.
+        let mut columnar = index("v");
+        columnar.is_columnar = true;
+        assert_eq!(
+            get_possible_access_paths(&table(vec![columnar]), false).len(),
+            1
+        );
+    }
+}
