@@ -398,7 +398,9 @@ impl Executor for HandleSourceExec {
                     .table
                     .get_row_by_handle_with_context(handle, &self.decode_context),
             }
-            .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+            .map_err(|error| {
+                ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+            })?;
             if let Some(row) = row {
                 let visible = visible_of(&self.table, &row);
                 if let Some(offsets) = &self.output_offsets {
@@ -806,7 +808,9 @@ impl IndexRangeSourceExec {
                     Some(&self.keep),
                     &self.decode_context,
                 )
-                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+                .map_err(|error| {
+                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+                })?;
             let Some(row) = row else {
                 continue;
             };
@@ -1095,7 +1099,9 @@ impl Executor for IndexRangeSourceExec {
                     Some(&self.keep),
                     &self.decode_context,
                 )
-                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+                .map_err(|error| {
+                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+                })?;
             // An index entry whose row is gone is not a row: the same
             // `if let Some(row)` the materializing path had.
             if let Some(row) = row {
@@ -1436,7 +1442,9 @@ impl Executor for IndexMergeSourceExec {
             let row = self
                 .table
                 .get_row_by_handle_with_context(&handle, &self.decode_context)
-                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+                .map_err(|error| {
+                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+                })?;
             if let Some(row) = row {
                 for (column, value) in visible_of(&self.table, &row).iter().enumerate() {
                     req.append_datum(column, value);
@@ -1742,9 +1750,9 @@ impl IndexJoinLookupExec {
     fn next_common_handle_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
         loop {
             if let Some(cursor) = self.record_cursor.as_mut() {
-                let row = cursor
-                    .next_row()
-                    .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+                let row = cursor.next_row().map_err(|error| {
+                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+                })?;
                 if let Some((_, row)) = row {
                     return Ok(Some(row));
                 }
@@ -1793,7 +1801,11 @@ impl IndexJoinLookupExec {
                             self.decode_offsets.as_deref(),
                             &self.decode_context,
                         )
-                        .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+                        .map_err(|error| {
+                            ExecError::unsupported(format!(
+                                "table bytes failed to decode: {error:?}"
+                            ))
+                        })?;
                     if row.is_some() {
                         return Ok(row);
                     }
@@ -1812,7 +1824,9 @@ impl IndexJoinLookupExec {
                     self.decode_offsets.as_deref(),
                     &self.decode_context,
                 )
-                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+                .map_err(|error| {
+                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+                })?;
             if row.is_some() {
                 return Ok(row);
             }

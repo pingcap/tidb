@@ -374,6 +374,13 @@ pub enum SimpleSig {
     UnaryNot,
     /// `IntIsNull`.
     IntIsNull,
+    /// `InInt` — n-ary membership, `tested IN (e1, e2, ...)`.
+    ///
+    /// Go's cop evaluates this through the shared `expression` package
+    /// (`builtinInIntSig`), whose null rule is MySQL's: a match answers TRUE;
+    /// no match answers NULL when the tested value or any list element is
+    /// NULL, FALSE otherwise.
+    InInt,
 }
 
 /// Convert one wire expression, refusing what the slice does not carry.
@@ -412,6 +419,7 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::LogicalOr => SimpleSig::LogicalOr,
             tipb::ScalarFuncSig::UnaryNotInt => SimpleSig::UnaryNot,
             tipb::ScalarFuncSig::IntIsNull => SimpleSig::IntIsNull,
+            tipb::ScalarFuncSig::InInt => SimpleSig::InInt,
             other => {
                 return Err(format!(
                     "scalar signature {other:?} waits on its distsql_builtin.go course"
@@ -484,6 +492,24 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i64>
                 }
                 SimpleSig::UnaryNot => child(0).map(|v| i64::from(v == 0)),
                 SimpleSig::IntIsNull => Some(i64::from(child(0).is_none())),
+                SimpleSig::InInt => {
+                    // `builtinInIntSig.evalInt`: TRUE on any match; otherwise
+                    // NULL if the tested value or any element was NULL.
+                    let tested = child(0);
+                    let mut saw_null = tested.is_none();
+                    for index in 1..children.len() {
+                        match (tested, child(index)) {
+                            (Some(left), Some(right)) if left == right => return Some(1),
+                            (_, None) => saw_null = true,
+                            _ => {}
+                        }
+                    }
+                    if saw_null {
+                        None
+                    } else {
+                        Some(0)
+                    }
+                }
             }
         }
     }
@@ -494,6 +520,34 @@ mod tests {
     use super::*;
 
     // All WRITTEN: Go's cop_handler coverage rides the store's RPC suites.
+
+    /// `builtinInIntSig.evalInt`'s null rule, pinned: match wins, then NULL
+    /// poisons a miss, then FALSE.
+    #[test]
+    fn in_int_follows_mysqls_null_rule() {
+        use tidb_datatype::Datum;
+        let col = SimpleExpr::Column(0);
+        let in_list = |elems: Vec<SimpleExpr>| {
+            let mut children = vec![col.clone()];
+            children.extend(elems);
+            SimpleExpr::Func(SimpleSig::InInt, children)
+        };
+        let row_int = [Datum::Int(300)];
+        let row_null = [Datum::Null];
+
+        // A match answers TRUE even with a NULL elsewhere in the list.
+        let with_null = in_list(vec![SimpleExpr::Null, SimpleExpr::Int(300)]);
+        assert_eq!(eval_expr(&with_null, &row_int), Some(1));
+        // A miss with a NULL element is NULL, not FALSE.
+        let miss_with_null = in_list(vec![SimpleExpr::Null, SimpleExpr::Int(7)]);
+        assert_eq!(eval_expr(&miss_with_null, &row_int), None);
+        // A plain miss is FALSE.
+        let plain_miss = in_list(vec![SimpleExpr::Int(7), SimpleExpr::Int(8)]);
+        assert_eq!(eval_expr(&plain_miss, &row_int), Some(0));
+        // A NULL tested value never answers TRUE or FALSE.
+        let any = in_list(vec![SimpleExpr::Int(300)]);
+        assert_eq!(eval_expr(&any, &row_null), None);
+    }
 
     #[test]
     fn unknown_request_types_answer_gos_exact_message() {
