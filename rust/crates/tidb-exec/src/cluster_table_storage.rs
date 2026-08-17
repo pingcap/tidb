@@ -580,7 +580,7 @@ impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> MaxTsSnapsh
     }
 }
 
-impl fmt::Debug for MaxTsSnapshot {
+impl<C, L, P> fmt::Debug for MaxTsSnapshot<C, L, P> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("MaxTsSnapshot")
@@ -589,7 +589,9 @@ impl fmt::Debug for MaxTsSnapshot {
     }
 }
 
-impl ClusterSnapshot for MaxTsSnapshot {
+impl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability> ClusterSnapshot
+    for MaxTsSnapshot<C, L, P>
+{
     fn get(&mut self, key: &Key) -> Result<Option<Vec<u8>>, StorageError> {
         self.consume()?;
         let call = UnaryCallContext::with_timeout(self.timeout);

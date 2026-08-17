@@ -22,6 +22,10 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tidb_pd_client::PdClient;
+use tidb_txnkv::rpc::TonicCoprocessorClient;
+use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
+use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_table_storage::{
     commit_staged_buffer, MaxTsSnapshot, PreparedStatementSnapshot, SessionTransaction,
@@ -36,7 +40,7 @@ use tidb_executor::cluster_storage::{ClusterSnapshot, MutationBuffer, SnapshotPa
 use tidb_executor::storage::StorageError;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    LockKeepAlive, LockWaitTime, PessimisticLockFailure, ProductionPessimisticTransaction,
+    LockKeepAlive, LockWaitTime, PessimisticLockFailure, RealPessimisticTransaction,
 };
 use tidb_txnkv::Key;
 
@@ -387,14 +391,28 @@ pub(crate) fn deferred_snapshot(
 
 /// The production transaction tier: real read-only transactions and the
 /// optimistic 2PC, both over the node's one process authority.
-pub struct RealClusterTransactions {
-    opener: Arc<RealOptimisticTransactionOpener>,
+pub struct RealClusterTransactions<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     timeout: Duration,
 }
 
-struct RealPendingSnapshot(PreparedStatementSnapshot);
+struct RealPendingSnapshot<C, L, P>(PreparedStatementSnapshot<C, L, P>)
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability;
 
-impl PendingClusterSnapshot for RealPendingSnapshot {
+impl<C, L, P> PendingClusterSnapshot for RealPendingSnapshot<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn wait(self: Box<Self>) -> Result<Box<dyn ClusterSnapshot>, String> {
         self.0
             .wait()
@@ -403,10 +421,15 @@ impl PendingClusterSnapshot for RealPendingSnapshot {
     }
 }
 
-impl RealClusterTransactions {
+impl<C, L, P> RealClusterTransactions<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     /// Binds the tier to an already-connected authority's write capability.
     #[must_use]
-    pub fn new(opener: RealOptimisticTransactionOpener, timeout: Duration) -> Self {
+    pub fn new(opener: RealOptimisticTransactionOpener<C, L, P>, timeout: Duration) -> Self {
         Self {
             opener: Arc::new(opener),
             timeout,
@@ -417,7 +440,7 @@ impl RealClusterTransactions {
         &self,
         name: &str,
         timeout: Duration,
-    ) -> Result<RealAdvisoryLockLease, AdvisoryLockError> {
+    ) -> Result<RealAdvisoryLockLease<C, L, P>, AdvisoryLockError> {
         let key = tidb_exec::mysql_bootstrap::advisory_lock_key(name)
             .map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
         let mut transaction = self
@@ -461,13 +484,25 @@ impl RealClusterTransactions {
     }
 }
 
-struct RealAdvisoryLockLease {
-    transaction: Option<ProductionPessimisticTransaction>,
+struct RealAdvisoryLockLease<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    transaction: Option<
+        RealPessimisticTransaction<C, L, tidb_txnkv::pd_capability::CapabilityTimestampSource<P>>,
+    >,
     keep_alive: Option<LockKeepAlive>,
     end_timeout: Duration,
 }
 
-impl RealAdvisoryLockLease {
+impl<C, L, P> RealAdvisoryLockLease<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn finish(&mut self) {
         if let Some(keep_alive) = self.keep_alive.take() {
             keep_alive.close();
@@ -480,8 +515,12 @@ impl RealAdvisoryLockLease {
     }
 }
 
-fn finish_advisory_transaction(
-    mut transaction: ProductionPessimisticTransaction,
+fn finish_advisory_transaction<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
+    mut transaction: RealPessimisticTransaction<
+        C,
+        L,
+        tidb_txnkv::pd_capability::CapabilityTimestampSource<P>,
+    >,
     keys: &[Vec<u8>],
     timeout: Duration,
 ) {
@@ -490,13 +529,23 @@ fn finish_advisory_transaction(
     let _ = transaction.into_two_pc().finish_without_writes();
 }
 
-impl Drop for RealAdvisoryLockLease {
+impl<C, L, P> Drop for RealAdvisoryLockLease<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn drop(&mut self) {
         self.finish();
     }
 }
 
-impl AdvisoryLockLease for RealAdvisoryLockLease {
+impl<C, L, P> AdvisoryLockLease for RealAdvisoryLockLease<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn release(mut self: Box<Self>) {
         self.finish();
     }
@@ -511,7 +560,12 @@ fn map_advisory_lock_failure(failure: PessimisticLockFailure) -> AdvisoryLockErr
     }
 }
 
-impl ClusterTransactions for RealClusterTransactions {
+impl<C, L, P> ClusterTransactions for RealClusterTransactions<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn prepare_snapshot(&self) -> Result<Box<dyn PendingClusterSnapshot>, String> {
         StatementSnapshot::prepare(Arc::clone(&self.opener), self.timeout)
             .map(|snapshot| {

@@ -167,7 +167,11 @@ where
             .map_err(OptimisticCoordinatorError::Visibility)?;
         return Ok(SnapshotGetResult {
             start_ts,
-            value: if response.response.not_found {
+            // client-go's rule, verbatim: a zero-length value IS not-found.
+            // TiKV sets `not_found` explicitly; Go's unistore never does and
+            // relies on this mapping, so honoring only the flag would turn
+            // every missing key into Some(empty) over an embedded store.
+            value: if response.response.not_found || response.response.value.is_empty() {
                 None
             } else {
                 Some(response.response.value)
@@ -305,7 +309,8 @@ where
                 )));
             }
             self.check_visibility_at(read_ts)?;
-            let value = if response.response.not_found {
+            // Same client-go zero-length rule as the optimistic read above.
+            let value = if response.response.not_found || response.response.value.is_empty() {
                 None
             } else {
                 Some(response.response.value)

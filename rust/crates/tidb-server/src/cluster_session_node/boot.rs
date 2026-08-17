@@ -83,7 +83,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // parallel); it must stay alive for the node's run and drop before the
     // authority's shutdown drain, like the catalog reloader below.
     let (users, privilege_reloader) = node_accounts(&config, &authority)?;
-    crate::real_tikv_node::load_cluster_startup_variables(&users, &authority)?;
+    crate::real_tikv_node::load_cluster_startup_variables(&users, &authority.transaction_opener())?;
     // The cluster-session path owns one process-wide sysvar reloader below.
     // Its persisted boot image was installed synchronously above, before this
     // reloader and, crucially, before bind. This is independent of
@@ -98,7 +98,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // freezing the boot image.
     let (stats, stats_reloader) = crate::real_tikv_node::spawn_node_stats(
         Arc::clone(&catalog),
-        &authority,
+        authority.transaction_opener(),
         config.schema_lease,
         CONTROL_PLANE_TIMEOUT,
     )

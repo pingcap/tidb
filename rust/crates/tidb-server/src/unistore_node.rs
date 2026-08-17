@@ -92,6 +92,42 @@ pub type UnistoreSessionFactory = RealTiKvSessionFactory<
     InProcessPd,
 >;
 
+/// The embedded write stack: one store, its region plane, its TSO, and the
+/// generic transaction opener over all three. Every unistore surface --
+/// single-table and cluster-session alike -- derives from this one build.
+type InProcessOpener =
+    RealOptimisticTransactionOpener<InProcessClient, InProcessRegionLoader, InProcessPd>;
+
+fn in_process_write_stack() -> Result<
+    (
+        SharedReadAuthority<InProcessClient, InProcessRegionLoader>,
+        InProcessPd,
+        InProcessOpener,
+    ),
+    SqlQueryError,
+> {
+    let client = InProcessClient::new();
+    let pd = InProcessPd::new();
+    let cache = RegionCache::new(InProcessRegionLoader);
+    let read_authority = SharedReadAuthority::start(client, cache)
+        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+    // The embedded store never garbage-collects, so the read floor is a
+    // static zero -- Go's unistore behavior for a store with no PD to ask.
+    let gc_state = TxnSafePointRefresher::start_with_source(|| Ok(0))
+        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+    // The opener's default protocol -- classic two-phase only -- stands: the
+    // embedded store names its async-commit/1PC refusal in prewrite, so the
+    // node must not offer what the store will abort.
+    let transaction_opener = RealOptimisticTransactionOpener::from_capabilities(
+        read_authority.opener(),
+        pd.clone(),
+        IN_PROCESS_TIMEOUT,
+        gc_state,
+    )
+    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+    Ok((read_authority, pd, transaction_opener))
+}
+
 /// Builds the whole in-process node: store, region plane, TSO, transaction
 /// opener, session factory. Fails closed on any flag that needs a cluster
 /// catalog, naming the flag.
@@ -129,25 +165,7 @@ pub(crate) fn unistore_session_factory(
         }
     };
 
-    let client = InProcessClient::new();
-    let pd = InProcessPd::new();
-    let cache = RegionCache::new(InProcessRegionLoader);
-    let read_authority = SharedReadAuthority::start(client, cache)
-        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-    // The embedded store never garbage-collects, so the read floor is a
-    // static zero -- Go's unistore behavior for a store with no PD to ask.
-    let gc_state = TxnSafePointRefresher::start_with_source(|| Ok(0))
-        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-    let transaction_opener = RealOptimisticTransactionOpener::from_capabilities(
-        read_authority.opener(),
-        pd.clone(),
-        IN_PROCESS_TIMEOUT,
-        gc_state,
-    )
-    .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
-    // The opener's default protocol -- classic two-phase only -- stands: the
-    // embedded store names its async-commit/1PC refusal in prewrite, so the
-    // node must not offer what the store will abort.
+    let (read_authority, pd, transaction_opener) = in_process_write_stack()?;
 
     let transport_factory = InProcessReadSessionFactory {
         read_opener: read_authority.opener(),
@@ -203,6 +221,144 @@ pub(crate) fn run_unistore_node(
     // The admission owner and read authority outlive every session by
     // construction; drop order alone ends the store with the node.
     drop(admission);
+    drop(read_authority);
+    result
+}
+
+/// Runs the wide cluster-session surface over the embedded store.
+///
+/// Go's `--store unistore` path in full: the store starts empty on every
+/// run, so the boot FIRST publishes the `mysql` schema bootstrap --
+/// `session.BootstrapSession`'s work -- then loads the catalog it just
+/// wrote and serves the same session driver the cluster node serves.
+/// There is no etcd and no peer, so the watch legs are simply absent;
+/// the reload ticks still run, against this process's own store.
+pub(crate) fn run_unistore_cluster_session(
+    config: crate::node_config::NodeConfig,
+    spill_storage: Arc<tidb_util::disk::SpillStorage>,
+    memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
+) -> Result<(), crate::real_tikv_node::RunConfiguredNodeError> {
+    use crate::cluster_session_node::{
+        ClusterSessionFactory, RealClusterDdl, RealClusterTransactions,
+    };
+    use crate::real_tikv_node::RunConfiguredNodeError;
+
+    let engine = RunConfiguredNodeError::Engine;
+    let users = configured_account_store(&config)?;
+    let users = Arc::new(users);
+    let (read_authority, _pd, opener) = in_process_write_stack().map_err(engine)?;
+
+    // The bootstrap: every boot, because the store is empty every boot.
+    let (outcome, schema_version) =
+        crate::bootstrap_publish::publish_bootstrap(&opener, IN_PROCESS_TIMEOUT)
+            .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+    let schema_version =
+        crate::bootstrap_publish::notify_committed_bootstrap(&outcome, schema_version, None)
+            .map_err(|error| engine(SqlQueryError::unknown(error)))?;
+    eprintln!("{{\"event\":\"bootstrap_committed\",\"schema_version\":{schema_version}}}");
+
+    let startup =
+        tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, IN_PROCESS_TIMEOUT)
+            .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
+
+    // The bootstrap persisted the system time zone and the global-variable
+    // rows this instant; reading them back through the same seam is the
+    // production boot's own order.
+    crate::real_tikv_node::load_cluster_startup_variables(&users, &opener)?;
+
+    let (catalog, reloader) =
+        crate::real_tikv_node::spawn_catalog_reloader(startup, opener.clone(), config.schema_lease)
+            .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
+    let (stats, stats_reloader) = crate::real_tikv_node::spawn_node_stats(
+        Arc::clone(&catalog),
+        opener.clone(),
+        config.schema_lease,
+        IN_PROCESS_TIMEOUT,
+    )
+    .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
+
+    let sysvar_publication_fence = crate::cluster_sysvar_seam::SysvarPublicationFence::default();
+    let sysvar_reloader = crate::cluster_sysvar_seam::SysvarReloader::spawn(
+        users.global_vars(),
+        opener.clone(),
+        crate::real_tikv_node::sysvar_reload_interval(config.schema_lease),
+        IN_PROCESS_TIMEOUT,
+        sysvar_publication_fence.clone(),
+    )
+    .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
+
+    let transport_factory = Arc::new(InProcessReadSessionFactory {
+        read_opener: read_authority.opener(),
+        lock_timestamp_source: CapabilityTimestampSource(_pd.clone()),
+    });
+    let cop_scans: Arc<dyn tidb_executor::remote_scan::PushdownScanner> =
+        Arc::new(tidb_exec::cop_scan::CopScanSource::new(transport_factory));
+
+    let factory = ClusterSessionFactory::new(
+        Arc::new(RealClusterTransactions::new(
+            opener.clone(),
+            IN_PROCESS_TIMEOUT,
+        )),
+        Arc::new(RealClusterDdl::new(
+            opener.clone(),
+            Arc::clone(&catalog),
+            IN_PROCESS_TIMEOUT,
+            // No etcd: schema changes announce themselves to nobody, and the
+            // reload tick above is the only follower -- correct for one node.
+            None,
+        )),
+        Arc::new(crate::cluster_account_seam::RealClusterAccountWriter::new(
+            Arc::new(opener.clone()),
+            users.accounts(),
+            IN_PROCESS_TIMEOUT,
+            None,
+        )),
+        Arc::new(crate::cluster_sysvar_seam::RealClusterSysvarWriter::new(
+            Arc::new(opener.clone()),
+            users.global_vars(),
+            IN_PROCESS_TIMEOUT,
+            None,
+            sysvar_publication_fence,
+        )),
+        Arc::new(crate::cluster_analyze_seam::RealClusterAnalyze::new(
+            Arc::new(opener.clone()),
+            Arc::clone(&stats),
+            IN_PROCESS_TIMEOUT,
+        )),
+        catalog,
+        users.accounts(),
+        users.global_vars(),
+        Arc::clone(&stats),
+        Arc::new(crate::cluster_auto_id_seam::ClusterTableAutoIds::new(
+            opener,
+            IN_PROCESS_TIMEOUT,
+        )),
+    )
+    .with_cop_scans(cop_scans)
+    .with_spill_storage(spill_storage);
+    let factory = match memory_arbitrator {
+        Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
+        None => factory,
+    };
+    let factory = Arc::new(factory);
+    let stats_receipt = stats.receipt();
+
+    let node = ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users))
+        .map_err(RunConfiguredNodeError::Node)?;
+    let address = node.local_addr().map_err(RunConfiguredNodeError::Node)?;
+    let shutdown = node.shutdown_handle();
+    ctrlc::set_handler(move || shutdown.shutdown()).map_err(RunConfiguredNodeError::Signal)?;
+    eprintln!(
+        "{{\"event\":\"cluster_session_node_ready\",\"address\":\"{address}\",\"store\":\"unistore\",\"schema_version\":{schema_version},\"max_connections\":{},\"account_count\":{},\"stats_loaded\":{},\"stats_pseudo\":{}}}",
+        config.max_connections,
+        users.len(),
+        stats_receipt.loaded,
+        stats_receipt.pseudo,
+    );
+    let result = node.run().map_err(RunConfiguredNodeError::Node);
+    drop(reloader);
+    drop(sysvar_reloader);
+    drop(stats_reloader);
     drop(read_authority);
     result
 }

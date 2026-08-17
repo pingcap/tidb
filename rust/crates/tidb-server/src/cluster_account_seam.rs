@@ -57,6 +57,10 @@
 
 use std::sync::Arc;
 use std::time::Duration;
+use tidb_pd_client::PdClient;
+use tidb_txnkv::rpc::TonicCoprocessorClient;
+use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
+use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_account_write::plan_account_write;
 use tidb_exec::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
@@ -67,7 +71,7 @@ use tidb_pd_client::EtcdClient;
 use tidb_session::privilege::PrivilegeRegistry;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    ProductionOptimisticTransaction, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_MUTATIONS,
+    RealOptimisticTransaction, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_MUTATIONS,
     MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 
@@ -107,8 +111,13 @@ pub trait PendingAccountChange {
 
 /// The production account writer: one real transaction per statement, the
 /// optimistic 2PC, then the live table and the etcd announcement.
-pub struct RealClusterAccountWriter {
-    opener: Arc<RealOptimisticTransactionOpener>,
+pub struct RealClusterAccountWriter<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     /// The node's LIVE account table -- the one every session, the login path
     /// and `SHOW GRANTS` already hold a clone of. Published into only after a
     /// commit.
@@ -120,12 +129,17 @@ pub struct RealClusterAccountWriter {
     notifier: Option<Arc<EtcdClient>>,
 }
 
-impl RealClusterAccountWriter {
+impl<C, L, P> RealClusterAccountWriter<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     /// Binds the writer to an already-connected authority and the live
     /// account table a successful change publishes into.
     #[must_use]
     pub fn new(
-        opener: Arc<RealOptimisticTransactionOpener>,
+        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         live: PrivilegeRegistry,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
@@ -139,7 +153,12 @@ impl RealClusterAccountWriter {
     }
 }
 
-impl ClusterAccountWriter for RealClusterAccountWriter {
+impl<C, L, P> ClusterAccountWriter for RealClusterAccountWriter<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn begin(&self) -> Result<Box<dyn PendingAccountChange>, String> {
         let mut transaction = self
             .opener
@@ -180,9 +199,16 @@ impl ClusterAccountWriter for RealClusterAccountWriter {
     }
 }
 
-struct RealPendingAccountChange {
+struct RealPendingAccountChange<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     /// `None` only after [`PendingAccountChange::commit`] has taken it.
-    transaction: Option<ProductionOptimisticTransaction>,
+    transaction: Option<
+        RealOptimisticTransaction<C, L, tidb_txnkv::pd_capability::CapabilityTimestampSource<P>>,
+    >,
     catalog: ClusterCatalog,
     scratch: PrivilegeRegistry,
     live: PrivilegeRegistry,
@@ -190,7 +216,12 @@ struct RealPendingAccountChange {
     notifier: Option<Arc<EtcdClient>>,
 }
 
-impl PendingAccountChange for RealPendingAccountChange {
+impl<C, L, P> PendingAccountChange for RealPendingAccountChange<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn registry(&self) -> PrivilegeRegistry {
         self.scratch.clone()
     }

@@ -246,6 +246,38 @@ pub fn plan_mysql_bootstrap<S: MetaSnapshot>(
 
     rows::seed(&created_tables, environment, &mut mutations)?;
 
+    // Go `bootstrap.go:418`: `CREATE DATABASE IF NOT EXISTS test`, run as
+    // ordinary DDL inside the bootstrap session. Being ordinary DDL, its id
+    // comes from `NextGlobalID` -- the plan bumps the max-used key exactly as
+    // `cluster_ddl`'s allocator does, so the first user object continues
+    // after it instead of colliding with it.
+    let test_db_id = {
+        let current = match snapshot.get(&key::next_global_id_kv_key())? {
+            Some(stored) => value::parse_int_value(&stored)
+                .map_err(|error| BootstrapError::Encode(format!("NextGlobalID: {error}")))?,
+            // Go's `Inc` treats a missing key as zero.
+            None => 0,
+        };
+        let allocated = current + 1;
+        mutations.push(OptimisticMutation::meta_put(
+            key::next_global_id_kv_key(),
+            value::encode_int_value(allocated),
+        )?);
+        allocated
+    };
+    let test_database = DBInfo {
+        id: test_db_id,
+        name: CiString::new("test"),
+        charset: SYSTEM_DB_CHARSET.to_owned(),
+        collate: SYSTEM_DB_COLLATION.to_owned(),
+        state: SchemaState::PUBLIC,
+        ..DBInfo::default()
+    };
+    mutations.push(OptimisticMutation::meta_put(
+        key::database_kv_key(test_db_id),
+        value::serialize_db_info(&test_database).map_err(encode_error)?,
+    )?);
+
     // Go `InitTiDBSchemaCacheSize`: publish the source default only when no
     // persisted setting exists.
     if read_schema_cache_size(snapshot)?.is_none() {

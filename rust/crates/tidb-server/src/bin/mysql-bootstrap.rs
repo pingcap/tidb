@@ -35,17 +35,11 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use tidb_exec::cluster_catalog::configure_loaded_table;
-use tidb_exec::mysql_bootstrap::{
-    bootstrap_mysql_schema, read_ddl_table_version, utc_now_timestamp, BootstrapEnvironment,
-};
-use tidb_exec::pessimistic_lock_error::commit_outcome_to_sql_error;
-use tidb_exec::real_tikv_catalog::{load_catalog_from_cluster, TransactionMetaSnapshot};
-use tidb_exec::real_tikv_ddl::{notify_schema_version, SchemaVersionNotifier};
+use tidb_exec::real_tikv_catalog::load_catalog_from_cluster;
+use tidb_exec::real_tikv_ddl::SchemaVersionNotifier;
 use tidb_exec::real_tikv_read::ProductionReadProcessAuthority;
 use tidb_pd_client::EtcdClient;
-use tidb_txnkv::rpc::UnaryCallContext;
-use tidb_txnkv::transaction::{OptimisticCommitOutcome, RealOptimisticTransactionOpener};
-use tidb_util::timeutil::infer_system_tz;
+use tidb_server::bootstrap_publish::{notify_committed_bootstrap, publish_bootstrap};
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -79,7 +73,7 @@ fn run() -> Result<(), String> {
     // just published -- which is also the first proof our own loader reads it.
     let mut authority =
         ProductionReadProcessAuthority::connect_with_catalog([pd], TIMEOUT, |opener| {
-            let (outcome, schema_version) = publish_bootstrap(opener)?;
+            let (outcome, schema_version) = publish_bootstrap(opener, TIMEOUT)?;
             let schema_version = notify_committed_bootstrap(
                 &outcome,
                 schema_version,
@@ -103,139 +97,4 @@ fn run() -> Result<(), String> {
         })
         .map_err(|error| error.to_string())?;
     authority.shutdown().map_err(|error| error.to_string())
-}
-
-/// Plans and commits the bootstrap on one transaction.
-///
-/// A first read-only pass exists only to size the write budget the coordinator
-/// insists on knowing before it spends a timestamp; the plan that is published
-/// is re-made on the writing transaction itself, so the freshness check and the
-/// commit share one `start_ts`.
-fn publish_bootstrap(
-    opener: &RealOptimisticTransactionOpener,
-) -> Result<(OptimisticCommitOutcome, i64), String> {
-    let call = UnaryCallContext::with_timeout(TIMEOUT);
-    let mut sizing = opener
-        .begin_read_only()
-        .map_err(|error| error.to_string())?;
-    let mut environment = BootstrapEnvironment {
-        system_tz: infer_system_tz(),
-        // Go's `new_collations_enabled_on_first_bootstrap` default, which this
-        // row then freezes for the life of the cluster.
-        new_collation_enabled: true,
-        cluster_id: opener.cluster_id(),
-        current_timestamp: utc_now_timestamp(),
-        ddl_table_version: 0,
-    };
-    let planned = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut sizing, TIMEOUT);
-        environment.ddl_table_version =
-            read_ddl_table_version(&mut snapshot).map_err(|error| error.to_string())?;
-        // `u64::MAX` is not a placeholder timestamp: the plan's size depends on
-        // how wide `update_ts` prints in each table's JSON, so sizing at the
-        // widest possible timestamp is what makes this budget a ceiling for
-        // whatever timestamp PD hands the writing transaction.
-        bootstrap_mysql_schema(&mut snapshot, u64::MAX, &environment)
-            .map_err(|error| error.to_string())?
-    };
-    sizing
-        .finish_without_writes()
-        .map_err(|error| error.to_string())?;
-    let bytes: usize = planned
-        .mutations
-        .iter()
-        .map(|mutation| mutation.key().len() + mutation.value().len())
-        .sum();
-
-    let mut transaction = opener
-        .begin(planned.mutations.len(), bytes)
-        .map_err(|error| error.to_string())?;
-    let start_ts = transaction.start_ts();
-    let write = {
-        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, TIMEOUT);
-        bootstrap_mysql_schema(&mut snapshot, start_ts, &environment)
-            .map_err(|error| error.to_string())?
-    };
-    println!(
-        "bootstrapping {} tables at schema version {} (start_ts {start_ts})",
-        write.created_tables.len(),
-        write.schema_version
-    );
-    let schema_version = write.schema_version;
-    let outcome = transaction
-        .commit(write.mutations, &call)
-        .map_err(|error| error.to_string())?;
-    Ok((outcome, schema_version))
-}
-
-fn notify_committed_bootstrap(
-    outcome: &OptimisticCommitOutcome,
-    schema_version: i64,
-    notifier: Option<&dyn SchemaVersionNotifier>,
-) -> Result<i64, String> {
-    commit_outcome_to_sql_error(outcome).map_err(|error| error.message)?;
-    notify_schema_version(notifier, schema_version);
-    Ok(schema_version)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{notify_committed_bootstrap, SchemaVersionNotifier};
-    use std::cell::Cell;
-    use tidb_txnkv::region::RegionBackoffKind;
-    use tidb_txnkv::transaction::{
-        CommittedTransaction, OptimisticCommitOutcome, OptimisticTransactionReceipt,
-        RolledBackTransaction, TransactionCause, UndeterminedTransaction,
-    };
-
-    struct RecordingNotifier(Cell<usize>);
-
-    impl SchemaVersionNotifier for RecordingNotifier {
-        fn notify(&self, _: i64) -> Result<(), String> {
-            self.0.set(self.0.get() + 1);
-            Ok(())
-        }
-    }
-
-    fn receipt() -> OptimisticTransactionReceipt {
-        OptimisticTransactionReceipt::new(1, 2, b"bootstrap".to_vec(), 1)
-    }
-
-    #[test]
-    fn bootstrap_side_effects_require_a_committed_outcome() {
-        let notifier = RecordingNotifier(Cell::new(0));
-        let rolled_back = OptimisticCommitOutcome::RolledBack(RolledBackTransaction {
-            receipt: receipt(),
-            cause: TransactionCause::BackoffExhausted {
-                kind: RegionBackoffKind::RegionMiss,
-                detail: "regionMiss backoffer exhausted".to_owned(),
-            },
-        });
-        let error = notify_committed_bootstrap(&rolled_back, 61, Some(&notifier))
-            .expect_err("a rolled-back bootstrap must not be announced");
-        assert!(error.contains("Region is unavailable"), "{error}");
-        assert_eq!(notifier.0.get(), 0);
-
-        let undetermined = OptimisticCommitOutcome::Undetermined(UndeterminedTransaction {
-            receipt: receipt(),
-            cause: TransactionCause::Transport {
-                detail: "commit response lost".to_owned(),
-            },
-        });
-        let error = notify_committed_bootstrap(&undetermined, 61, Some(&notifier))
-            .expect_err("an undetermined bootstrap must not be announced");
-        assert_eq!(error, "execution result undetermined");
-        assert_eq!(notifier.0.get(), 0);
-
-        let committed = OptimisticCommitOutcome::Committed(CommittedTransaction {
-            receipt: receipt(),
-            secondary_failures: Vec::new(),
-        });
-        assert_eq!(
-            notify_committed_bootstrap(&committed, 61, Some(&notifier))
-                .expect("only a confirmed commit is announced"),
-            61
-        );
-        assert_eq!(notifier.0.get(), 1);
-    }
 }

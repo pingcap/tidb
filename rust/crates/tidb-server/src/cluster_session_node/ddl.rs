@@ -20,6 +20,10 @@
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tidb_pd_client::PdClient;
+use tidb_txnkv::rpc::TonicCoprocessorClient;
+use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
+use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::catalog_reload::ReloadedCatalog;
 use tidb_exec::catalog_watch::SharedCatalog as SharedClusterCatalog;
@@ -55,8 +59,13 @@ pub trait ClusterDdl: Send + Sync {
 
 /// The production catalog writer: the optimistic 2PC over the node's one
 /// process authority, followed by an inline reload of the node's own catalog.
-pub struct RealClusterDdl {
-    opener: Arc<RealOptimisticTransactionOpener>,
+pub struct RealClusterDdl<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     catalog: Arc<SharedClusterCatalog>,
     timeout: Duration,
     /// The etcd client this node announces its catalog changes through, so
@@ -65,12 +74,17 @@ pub struct RealClusterDdl {
     notifier: Option<Arc<EtcdClient>>,
 }
 
-impl RealClusterDdl {
+impl<C, L, P> RealClusterDdl<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     /// Binds the writer to an already-connected authority and the catalog slot
     /// the reload thread publishes into.
     #[must_use]
     pub fn new(
-        opener: RealOptimisticTransactionOpener,
+        opener: RealOptimisticTransactionOpener<C, L, P>,
         catalog: Arc<SharedClusterCatalog>,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
@@ -112,7 +126,12 @@ impl RealClusterDdl {
     }
 }
 
-impl ClusterDdl for RealClusterDdl {
+impl<C, L, P> ClusterDdl for RealClusterDdl<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn execute(&self, statement: &DdlStatement) -> Result<ClusterDdlReport, SqlQueryError> {
         let notifier = self
             .notifier

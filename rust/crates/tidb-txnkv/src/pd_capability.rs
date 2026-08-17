@@ -51,7 +51,7 @@ impl TimestampFutureWait for ReadyTimestamp {
 /// The coordinator's PD surface.
 pub trait PdCapability: Clone {
     /// This capability's future type.
-    type TsFuture: TimestampFutureWait;
+    type TsFuture: TimestampFutureWait + Send;
 
     /// The cluster identity every routed request carries.
     fn cluster_id(&self) -> u64;

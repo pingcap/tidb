@@ -54,6 +54,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
+use tidb_pd_client::PdClient;
+use tidb_txnkv::rpc::TonicCoprocessorClient;
+use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
+use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_analyze::AnalyzeStatement;
 use tidb_exec::cluster_catalog::load_cluster_catalog;
@@ -83,20 +87,30 @@ pub trait ClusterAnalyze: Send + Sync {
 
 /// The production analyzer: one real transaction per table, the optimistic
 /// 2PC, then this node's own statistics reload.
-pub struct RealClusterAnalyze {
-    opener: Arc<RealOptimisticTransactionOpener>,
+pub struct RealClusterAnalyze<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     /// This node's LIVE statistics -- the snapshot every session's estimator
     /// reads. Republished only after a commit.
     stats: Arc<SharedStats>,
     timeout: Duration,
 }
 
-impl RealClusterAnalyze {
+impl<C, L, P> RealClusterAnalyze<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     /// Binds the analyzer to an already-connected authority and the live
     /// statistics a successful analysis republishes into.
     #[must_use]
     pub fn new(
-        opener: Arc<RealOptimisticTransactionOpener>,
+        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         stats: Arc<SharedStats>,
         timeout: Duration,
     ) -> Self {
@@ -156,7 +170,12 @@ impl RealClusterAnalyze {
     }
 }
 
-impl ClusterAnalyze for RealClusterAnalyze {
+impl<C, L, P> ClusterAnalyze for RealClusterAnalyze<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn execute(&self, statement: &AnalyzeStatement) -> Result<ClusterAnalyzeReport, SqlQueryError> {
         let report = commit_cluster_analyze(&self.opener, statement, self.timeout)
             .map_err(cluster_analyze_error)?;

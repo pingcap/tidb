@@ -55,6 +55,7 @@ mod auth_plugin_registry;
 mod auth_session;
 mod auth_token;
 mod bootstrap;
+pub mod bootstrap_publish;
 pub mod cluster_account_seam;
 pub mod cluster_analyze_seam;
 pub mod cluster_auto_id_seam;
@@ -207,6 +208,13 @@ pub fn run_configured_node(config: NodeConfig) -> Result<(), RunConfiguredNodeEr
         let _system_time_monitor = start_system_time_monitor();
         let spill_storage = open_spill_storage(&config)?;
         let memory_arbitrator = MemoryArbitratorAuthority::open(&config)?;
+        if config.cluster_session {
+            return unistore_node::run_unistore_cluster_session(
+                config,
+                spill_storage,
+                memory_arbitrator.arbitrator(),
+            );
+        }
         return unistore_node::run_unistore_node(
             config,
             spill_storage,

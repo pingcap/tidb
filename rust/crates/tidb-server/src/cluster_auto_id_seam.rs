@@ -31,6 +31,10 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::Duration;
+use tidb_pd_client::PdClient;
+use tidb_txnkv::rpc::TonicCoprocessorClient;
+use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
+use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_auto_id::ClusterAutoIdStore;
 use tidb_executor::kv_table::{TableAutoId, DEFAULT_AUTO_ID_STEP};
@@ -46,13 +50,23 @@ use crate::cluster_session::TableAutoIds;
 /// the entry a dropped table leaves behind can never be handed to a different
 /// table, and a truncated table gets a new id and so a new allocator whose
 /// counter key has never been written.
-pub struct ClusterTableAutoIds {
-    opener: RealOptimisticTransactionOpener,
+pub struct ClusterTableAutoIds<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    opener: RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
     allocators: Mutex<HashMap<(i64, bool), (i64, TableAutoId)>>,
 }
 
-impl std::fmt::Debug for ClusterTableAutoIds {
+impl<C, L, P> std::fmt::Debug for ClusterTableAutoIds<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let held = self.allocators.lock().map_or(0, |map| map.len());
         formatter
@@ -62,11 +76,16 @@ impl std::fmt::Debug for ClusterTableAutoIds {
     }
 }
 
-impl ClusterTableAutoIds {
+impl<C, L, P> ClusterTableAutoIds<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     /// Allocators reserving through `opener`, giving each meta-key
     /// transaction `timeout` to finish.
     #[must_use]
-    pub fn new(opener: RealOptimisticTransactionOpener, timeout: Duration) -> Self {
+    pub fn new(opener: RealOptimisticTransactionOpener<C, L, P>, timeout: Duration) -> Self {
         ClusterTableAutoIds {
             opener,
             timeout,
@@ -75,7 +94,12 @@ impl ClusterTableAutoIds {
     }
 }
 
-impl TableAutoIds for ClusterTableAutoIds {
+impl<C, L, P> TableAutoIds for ClusterTableAutoIds<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn allocator_for(&self, db_id: i64, table: &TableInfo) -> TableAutoId {
         self.allocator(db_id, table, false)
     }
@@ -85,7 +109,12 @@ impl TableAutoIds for ClusterTableAutoIds {
     }
 }
 
-impl ClusterTableAutoIds {
+impl<C, L, P> ClusterTableAutoIds<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn allocator(&self, db_id: i64, table: &TableInfo, random: bool) -> TableAutoId {
         let mut allocators = self
             .allocators

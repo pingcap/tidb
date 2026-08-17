@@ -286,6 +286,12 @@ where
 
     /// Opens a read-only transaction at a timestamp already obtained by
     /// [`Self::prepare_read_only_start_ts`].
+    ///
+    /// Like [`Self::begin_read_only`], the zero budget is not validated as a
+    /// mutation plan — it IS the read-only contract. Routing this through
+    /// [`Self::begin_at`] would refuse every prepared-timestamp read as an
+    /// empty transaction, which is exactly the failure an autocommit
+    /// statement's first storage read would then report.
     pub fn begin_read_only_at(
         &self,
         start_ts: u64,
@@ -293,7 +299,7 @@ where
         RealOptimisticTransaction<C, L, crate::pd_capability::CapabilityTimestampSource<P>>,
         OptimisticCoordinatorError,
     > {
-        self.begin_at(start_ts, 0, 0)
+        self.open_at(Some(start_ts), 0, 0)
     }
 
     /// Opens a read-only transaction at `u64::MAX` — the latest committed

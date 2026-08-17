@@ -44,6 +44,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
+use tidb_pd_client::PdClient;
+use tidb_txnkv::rpc::TonicCoprocessorClient;
+use tidb_txnkv::transaction::{StorePdCapability, StoreWriteClient, StoreWriteLoader};
+use tidb_txnkv::PdRegionLoader;
 
 use tidb_exec::cluster_catalog::{load_cluster_catalog, ClusterCatalog};
 use tidb_exec::cluster_sysvar_load::load_cluster_sysvars;
@@ -54,7 +58,7 @@ use tidb_pd_client::EtcdClient;
 use tidb_session::vars::GlobalSysvars;
 use tidb_txnkv::rpc::UnaryCallContext;
 use tidb_txnkv::transaction::{
-    ProductionOptimisticTransaction, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_MUTATIONS,
+    RealOptimisticTransaction, RealOptimisticTransactionOpener, MAX_OPTIMISTIC_MUTATIONS,
     MAX_OPTIMISTIC_TRANSACTION_BYTES,
 };
 
@@ -316,8 +320,13 @@ fn remember_local_commits(
 
 /// The production sysvar writer: one real transaction per statement, the
 /// optimistic 2PC, then the live table and the etcd announcement.
-pub struct RealClusterSysvarWriter {
-    opener: Arc<RealOptimisticTransactionOpener>,
+pub struct RealClusterSysvarWriter<C = TonicCoprocessorClient, L = PdRegionLoader, P = PdClient>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
     /// The node's LIVE sysvar table -- the one every session shares a clone
     /// of. Published into only after a commit.
     live: GlobalSysvars,
@@ -329,12 +338,17 @@ pub struct RealClusterSysvarWriter {
     publication_fence: SysvarPublicationFence,
 }
 
-impl RealClusterSysvarWriter {
+impl<C, L, P> RealClusterSysvarWriter<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     /// Binds the writer to an already-connected authority and the live
     /// sysvar table a successful change publishes into.
     #[must_use]
     pub fn new(
-        opener: Arc<RealOptimisticTransactionOpener>,
+        opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
         live: GlobalSysvars,
         timeout: Duration,
         notifier: Option<Arc<EtcdClient>>,
@@ -350,7 +364,12 @@ impl RealClusterSysvarWriter {
     }
 }
 
-impl ClusterSysvarWriter for RealClusterSysvarWriter {
+impl<C, L, P> ClusterSysvarWriter for RealClusterSysvarWriter<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn begin(&self) -> Result<Box<dyn PendingSysvarChange>, String> {
         let mut transaction = self
             .opener
@@ -377,19 +396,31 @@ impl ClusterSysvarWriter for RealClusterSysvarWriter {
     }
 }
 
-struct RealPendingSysvarChange {
+struct RealPendingSysvarChange<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     /// `None` only after [`PendingSysvarChange::commit`] has taken it.
-    transaction: Option<ProductionOptimisticTransaction>,
+    transaction: Option<
+        RealOptimisticTransaction<C, L, tidb_txnkv::pd_capability::CapabilityTimestampSource<P>>,
+    >,
     catalog: ClusterCatalog,
     scratch: GlobalSysvars,
     live: GlobalSysvars,
     timeout: Duration,
     notifier: Option<Arc<EtcdClient>>,
     publication_fence: SysvarPublicationFence,
-    reload_opener: Arc<RealOptimisticTransactionOpener>,
+    reload_opener: Arc<RealOptimisticTransactionOpener<C, L, P>>,
 }
 
-impl PendingSysvarChange for RealPendingSysvarChange {
+impl<C, L, P> PendingSysvarChange for RealPendingSysvarChange<C, L, P>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     fn table(&self) -> GlobalSysvars {
         self.scratch.clone()
     }
@@ -578,9 +609,9 @@ pub type SysvarReloadRead =
 impl SysvarReloader {
     /// Starts the reload thread ticking every `interval`, republishing into
     /// `live` (the node's LIVE table every session already holds a clone of).
-    pub fn spawn(
+    pub fn spawn<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCapability>(
         live: GlobalSysvars,
-        opener: RealOptimisticTransactionOpener,
+        opener: RealOptimisticTransactionOpener<C, L, P>,
         interval: Duration,
         timeout: Duration,
         publication_fence: SysvarPublicationFence,

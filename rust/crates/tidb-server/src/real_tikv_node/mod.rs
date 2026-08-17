@@ -324,7 +324,7 @@ impl RealTiKvSessionFactory {
                 .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                 let (stats, stats_reloader) = spawn_node_stats(
                     Arc::clone(&catalog),
-                    &authority,
+                    authority.transaction_opener(),
                     config.schema_lease,
                     PRODUCTION_CONTROL_PLANE_TIMEOUT,
                 )
@@ -1585,7 +1585,7 @@ pub(crate) fn prepare_cluster_sysvar_runtime(
     users: &ConfiguredUserStore,
     authority: &ProductionReadProcessAuthority,
 ) -> Result<Option<crate::cluster_sysvar_seam::SysvarReloader>, RunConfiguredNodeError> {
-    load_cluster_startup_variables(users, authority)?;
+    load_cluster_startup_variables(users, &authority.transaction_opener())?;
     let reload_opener = authority.transaction_opener();
     spawn_cluster_sysvar_reloader_with_read(
         config,
@@ -1600,13 +1600,17 @@ pub(crate) fn prepare_cluster_sysvar_runtime(
     )
 }
 
-pub(crate) fn load_cluster_startup_variables(
+pub(crate) fn load_cluster_startup_variables<C, L, P>(
     users: &ConfiguredUserStore,
-    authority: &ProductionReadProcessAuthority,
-) -> Result<(), RunConfiguredNodeError> {
-    let opener = authority.transaction_opener();
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+) -> Result<(), RunConfiguredNodeError>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
     let variables = tidb_exec::real_tikv_privileges::load_startup_variables_from_cluster(
-        &opener,
+        opener,
         PRODUCTION_CONTROL_PLANE_TIMEOUT,
     )
     .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
@@ -1743,7 +1747,7 @@ pub(crate) fn connect_loaded_catalog_authority(
                     .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
                     let (stats, stats_reloader) = spawn_node_stats(
                         Arc::clone(&catalog),
-                        &authority,
+                        authority.transaction_opener(),
                         config.schema_lease,
                         PRODUCTION_CONTROL_PLANE_TIMEOUT,
                     )

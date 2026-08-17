@@ -195,23 +195,26 @@ fn current_stats_targets(
 /// not halved -- see the [`tidb_exec::stats_watch`] module doc for why there
 /// is no watch to keep prompt the way the catalog's `lease/2` tick is backed
 /// by an etcd watch: Go's own stats refresh has no such key either).
-pub(crate) fn spawn_node_stats(
+pub(crate) fn spawn_node_stats<C, L, P>(
     catalog: Arc<SharedCatalog>,
-    authority: &ProductionReadProcessAuthority,
+    opener: tidb_txnkv::transaction::RealOptimisticTransactionOpener<C, L, P>,
     schema_lease: Duration,
     timeout: Duration,
-) -> Result<(Arc<SharedStats>, StatsReloader), StatsReloadError> {
+) -> Result<(Arc<SharedStats>, StatsReloader), StatsReloadError>
+where
+    C: tidb_txnkv::transaction::StoreWriteClient,
+    L: tidb_txnkv::transaction::StoreWriteLoader,
+    P: tidb_txnkv::transaction::StorePdCapability,
+{
     let targets = current_stats_targets(&catalog);
-    let snapshot =
-        load_stats_snapshot_from_cluster(&authority.transaction_opener(), timeout, &targets)
-            .map_err(|error| StatsReloadError::Spawn(std::io::Error::other(error.to_string())))?;
+    let snapshot = load_stats_snapshot_from_cluster(&opener, timeout, &targets)
+        .map_err(|error| StatsReloadError::Spawn(std::io::Error::other(error.to_string())))?;
     let receipt = tidb_exec::stats_watch::receipt_of(&snapshot);
     eprintln!(
         "{{\"event\":\"stats_loaded\",\"loaded\":{},\"pseudo\":{}}}",
         receipt.loaded, receipt.pseudo
     );
     let shared = Arc::new(SharedStats::new(snapshot));
-    let opener = authority.transaction_opener();
     let reloader = StatsReloader::spawn(
         Arc::clone(&shared),
         schema_lease,
@@ -232,11 +235,16 @@ pub(crate) fn spawn_node_stats(
 /// A failed pass is not fatal and does not stop the thread: the previously
 /// published catalog stays in force and the next tick tries again, which is
 /// what Go's reload loop does with a failed `Reload`.
-pub(crate) fn spawn_catalog_reloader(
+pub(crate) fn spawn_catalog_reloader<C, L, P>(
     startup: ClusterCatalog,
-    transaction_opener: RealOptimisticTransactionOpener,
+    transaction_opener: RealOptimisticTransactionOpener<C, L, P>,
     schema_lease: Duration,
-) -> Result<(Arc<SharedCatalog>, CatalogReloader), CatalogReloadError> {
+) -> Result<(Arc<SharedCatalog>, CatalogReloader), CatalogReloadError>
+where
+    C: tidb_txnkv::transaction::StoreWriteClient,
+    L: tidb_txnkv::transaction::StoreWriteLoader,
+    P: tidb_txnkv::transaction::StorePdCapability,
+{
     let catalog = Arc::new(SharedCatalog::new(startup));
     let reloader = CatalogReloader::spawn(
         Arc::clone(&catalog),
