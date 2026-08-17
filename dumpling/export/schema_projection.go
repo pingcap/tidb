@@ -91,11 +91,11 @@ func resolveProjectedSchemaColumns(originSQL string, projection columnProjection
 	}
 
 	definedColumns := make(map[string]struct{}, len(createTable.Cols))
-	generatedColumns := make(map[string]*ast.ColumnDef)
+	generatedColumns := make(map[string]ast.ExprNode)
 	for _, column := range createTable.Cols {
 		definedColumns[column.Name.Name.L] = struct{}{}
-		if generatedColumnOption(column) != nil {
-			generatedColumns[column.Name.Name.L] = column
+		if option := generatedColumnOption(column); option != nil {
+			generatedColumns[column.Name.Name.L] = option.Expr
 		}
 	}
 	retainedColumns := make(map[string]struct{}, len(projection.selectedColumns))
@@ -123,15 +123,15 @@ func generatedColumnOption(column *ast.ColumnDef) *ast.ColumnOption {
 	return nil
 }
 
-func retainGeneratedColumns(retained map[string]struct{}, generated map[string]*ast.ColumnDef) {
+func retainGeneratedColumns(retained map[string]struct{}, generated map[string]ast.ExprNode) {
 	changed := true
 	for changed {
 		changed = false
-		for name, column := range generated {
+		for name, expr := range generated {
 			if _, ok := retained[name]; ok {
 				continue
 			}
-			if allReferencedColumnsRetained(generatedColumnOption(column).Expr, retained) {
+			if allReferencedColumnsRetained(expr, retained) {
 				retained[name] = struct{}{}
 				changed = true
 			}
