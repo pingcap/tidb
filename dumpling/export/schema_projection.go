@@ -24,9 +24,13 @@ func generateProjectedSchema(
 		return originSQL, nil
 	}
 
-	createTable, err := parseCreateTableForProjection(originSQL)
+	stmt, err := parser.New().ParseOneStmt(originSQL, "", "")
 	if err != nil {
-		return "", err
+		return "", errors.Annotate(err, "failed to parse CREATE TABLE for column projection")
+	}
+	createTable, ok := stmt.(*ast.CreateTableStmt)
+	if !ok {
+		return "", errors.Errorf("expected CREATE TABLE for column projection, got %T", stmt)
 	}
 	retainedColumns := makeColumnSet(projection.schemaColumns)
 
@@ -85,11 +89,7 @@ func generateProjectedSchema(
 }
 
 func resolveProjectedSchemaColumns(originSQL string, projection columnProjection) ([]string, error) {
-	createTable, err := parseCreateTableForProjection(originSQL)
-	if err != nil {
-		return nil, err
-	}
-	retainedColumns, err := retainedSchemaColumnSet(createTable, projection.selectedColumns)
+	createTable, retainedColumns, err := retainedSchemaColumnSet(originSQL, projection.selectedColumns)
 	if err != nil {
 		return nil, err
 	}
@@ -102,19 +102,19 @@ func resolveProjectedSchemaColumns(originSQL string, projection columnProjection
 	return columns, nil
 }
 
-func parseCreateTableForProjection(originSQL string) (*ast.CreateTableStmt, error) {
+func retainedSchemaColumnSet(
+	originSQL string,
+	selectedColumns []string,
+) (*ast.CreateTableStmt, map[string]struct{}, error) {
 	stmt, err := parser.New().ParseOneStmt(originSQL, "", "")
 	if err != nil {
-		return nil, errors.Annotate(err, "failed to parse CREATE TABLE for column projection")
+		return nil, nil, errors.Annotate(err, "failed to parse CREATE TABLE for column projection")
 	}
 	createTable, ok := stmt.(*ast.CreateTableStmt)
 	if !ok {
-		return nil, errors.Errorf("expected CREATE TABLE for column projection, got %T", stmt)
+		return nil, nil, errors.Errorf("expected CREATE TABLE for column projection, got %T", stmt)
 	}
-	return createTable, nil
-}
 
-func retainedSchemaColumnSet(createTable *ast.CreateTableStmt, selectedColumns []string) (map[string]struct{}, error) {
 	retainedColumns := makeColumnSet(selectedColumns)
 	definedColumns := make(map[string]struct{}, len(createTable.Cols))
 	generatedColumns := make(map[string]*ast.ColumnDef)
@@ -126,11 +126,14 @@ func retainedSchemaColumnSet(createTable *ast.CreateTableStmt, selectedColumns [
 	}
 	for selectedColumn := range retainedColumns {
 		if _, ok := definedColumns[selectedColumn]; !ok {
-			return nil, errors.Errorf("selected column `%s` is missing from CREATE TABLE", selectedColumn)
+			return nil, nil, errors.Errorf(
+				"selected column `%s` is missing from CREATE TABLE; concurrent DDL during export is not supported",
+				selectedColumn,
+			)
 		}
 	}
 	retainGeneratedColumns(retainedColumns, generatedColumns)
-	return retainedColumns, nil
+	return createTable, retainedColumns, nil
 }
 
 func makeColumnSet(columns []string) map[string]struct{} {

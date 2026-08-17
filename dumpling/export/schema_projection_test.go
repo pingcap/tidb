@@ -177,7 +177,11 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		}
 
 		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
-		require.ErrorContains(t, err, "selected column `missing` is missing from CREATE TABLE")
+		require.ErrorContains(
+			t,
+			err,
+			"selected column `missing` is missing from CREATE TABLE; concurrent DDL during export is not supported",
+		)
 	})
 
 	t.Run("no writable column removed", func(t *testing.T) {
