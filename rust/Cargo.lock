@@ -2796,6 +2796,7 @@ dependencies = [
 name = "tidb-unistore"
 version = "0.0.0"
 dependencies = [
+ "prost",
  "tidb-codec",
  "tidb-proto",
 ]

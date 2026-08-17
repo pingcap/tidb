@@ -15,3 +15,4 @@ workspace = true
 tidb-codec = { path = "../tidb-codec" }
 # `Lock.ToLockInfo` answers the real `kvrpcpb.LockInfo`.
 tidb-proto = { path = "../tidb-proto" }
+prost.workspace = true
