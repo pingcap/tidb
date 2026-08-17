@@ -161,21 +161,6 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		require.Len(t, parseCreateTableForTest(t, projectedSQL).Constraints, 1)
 	})
 
-	t.Run("selected column missing from DDL", func(t *testing.T) {
-		createSQL := "CREATE TABLE `t` (`a` INT)"
-		projection := columnProjection{
-			selectedColumns: []string{"a", "missing"},
-			projected:       true,
-		}
-
-		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
-		require.ErrorContains(
-			t,
-			err,
-			"selected column `missing` is missing from CREATE TABLE; concurrent DDL during export is not supported",
-		)
-	})
-
 	t.Run("no writable column removed", func(t *testing.T) {
 		createSQL := "CREATE TABLE `t` (`a` INT, `b` INT GENERATED ALWAYS AS (`a` + 1) VIRTUAL)"
 		projection := columnProjection{selectedColumns: []string{"a"}}

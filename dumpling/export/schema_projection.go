@@ -90,10 +90,8 @@ func collectProjectedSchemaColumns(originSQL string, selectedColumns []string) (
 		return nil, errors.Errorf("expected CREATE TABLE for column projection, got %T", stmt)
 	}
 
-	definedColumns := make(map[string]struct{}, len(createTable.Cols))
 	generatedColumns := make(map[string]ast.ExprNode)
 	for _, column := range createTable.Cols {
-		definedColumns[column.Name.Name.L] = struct{}{}
 		if option := generatedColumnOption(column); option != nil {
 			generatedColumns[column.Name.Name.L] = option.Expr
 		}
@@ -101,12 +99,6 @@ func collectProjectedSchemaColumns(originSQL string, selectedColumns []string) (
 	retainedColumns := make(map[string]struct{}, len(selectedColumns))
 	for _, selectedColumn := range selectedColumns {
 		lowerName := strings.ToLower(selectedColumn)
-		if _, ok := definedColumns[lowerName]; !ok {
-			return nil, errors.Errorf(
-				"selected column `%s` is missing from CREATE TABLE; concurrent DDL during export is not supported",
-				selectedColumn,
-			)
-		}
 		retainedColumns[lowerName] = struct{}{}
 	}
 	retainGeneratedColumns(retainedColumns, generatedColumns)
