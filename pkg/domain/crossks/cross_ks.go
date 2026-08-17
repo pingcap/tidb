@@ -522,6 +522,9 @@ func (m *SessionManager) close() {
 	close(m.exitCh)
 	m.cancel()
 	m.wg.Wait()
+	if m.svrInfoSyncer != nil {
+		m.svrInfoSyncer.RemoveServerInfo()
+	}
 	m.schemaVerSyncer.Close()
 	if err := m.etcdCli.Close(); err != nil {
 		logger.Warn("failed to close etcd client", zap.Error(err))

@@ -103,6 +103,10 @@ func TestManager(t *testing.T) {
 		require.Fail(t, "cannot find etcd client for keyspace %s", ks)
 		return nil
 	}
+	serverInfoObserver := getETCDCli(keyspace.System, keyspaceIDs[keyspace.System])
+	defer func() {
+		require.NoError(t, serverInfoObserver.Close())
+	}()
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/injectETCDCli",
 		func(cliP **clientv3.Client, ks string) {
 			id, ok := keyspaceIDs[ks]
@@ -120,6 +124,24 @@ func TestManager(t *testing.T) {
 	t.Run("same keyspace access", func(t *testing.T) {
 		_, err := sysKSDom.GetKSSessPool(keyspace.System)
 		require.ErrorContains(t, err, "cross keyspace is not available in classic kernel or current keyspace")
+	})
+
+	t.Run("close removes virtual server info", func(t *testing.T) {
+		const userKS = "ks-server-info"
+		_, userKSDom := testkit.CreateMockStoreAndDomainForKS(t, userKS)
+		sessMgr, ok := userKSDom.GetCrossKSMgr().Get(keyspace.System)
+		require.True(t, ok)
+
+		serverInfoKey := "/tidb/server/info/" + sessMgr.ServerInfoID()
+		resp, err := serverInfoObserver.Get(context.Background(), serverInfoKey)
+		require.NoError(t, err)
+		require.Len(t, resp.Kvs, 1)
+		require.Contains(t, string(resp.Kvs[0].Value), `"assumed_keyspace":"SYSTEM"`)
+
+		userKSDom.GetCrossKSMgr().CloseKS(keyspace.System)
+		resp, err = serverInfoObserver.Get(context.Background(), serverInfoKey)
+		require.NoError(t, err)
+		require.Empty(t, resp.Kvs, "virtual server info should be removed when the runtime closes")
 	})
 
 	t.Run("failed to get store in cross keyspace manager", func(t *testing.T) {
