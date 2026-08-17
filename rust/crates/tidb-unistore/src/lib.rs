@@ -107,6 +107,7 @@ pub mod load_dump;
 pub mod lockstore;
 pub mod lockwaiter;
 pub mod mvcc;
+pub mod mvcc_store;
 #[cfg(test)]
 mod testutil;
 
