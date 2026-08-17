@@ -47,7 +47,49 @@ func setHeapProfileMemInuse(m *MemArbitrator, value int64) {
 	})
 }
 
+func heapProfileTestStartTime() time.Time {
+	return time.Date(2026, time.August, 14, 10, 0, 0, 0, time.FixedZone("CST", 8*60*60))
+}
+
+type heapProfileTestEnv struct {
+	m        *MemArbitrator
+	p        *heapProfileCollector
+	now      time.Time
+	writes   int
+	writeErr error
+}
+
+func newHeapProfileTestEnv(t *testing.T) *heapProfileTestEnv {
+	t.Helper()
+	return newHeapProfileTestEnvAt(t, filepath.Join(t.TempDir(), heapProfileDirName))
+}
+
+func newHeapProfileTestEnvAt(t *testing.T, dir string) *heapProfileTestEnv {
+	t.Helper()
+	e := &heapProfileTestEnv{
+		m:   newHeapProfileArbitratorForTest(1000),
+		now: heapProfileTestStartTime(),
+	}
+	e.p = newHeapProfileCollector(dir)
+	e.p.now = func() time.Time { return e.now }
+	e.p.writeProfile = func(w io.Writer) error {
+		e.writes++
+		if e.writeErr != nil {
+			return e.writeErr
+		}
+		_, err := io.WriteString(w, "profile")
+		return err
+	}
+	return e
+}
+
+func (e *heapProfileTestEnv) tryCapture(memInuse int64) {
+	setHeapProfileMemInuse(e.m, memInuse)
+	e.p.tryCapture(e.m)
+}
+
 func heapProfileNames(t *testing.T, dir string) []string {
+	t.Helper()
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	names := make([]string, 0, len(entries))
@@ -58,117 +100,140 @@ func heapProfileNames(t *testing.T, dir string) []string {
 }
 
 func TestHeapProfileTriggerState(t *testing.T) {
-	m := newHeapProfileArbitratorForTest(1000)
-	p := newHeapProfileCollector(filepath.Join(t.TempDir(), heapProfileDirName))
-	var writeCount int
-	p.writeProfile = func(w io.Writer) error {
-		writeCount++
-		_, err := io.WriteString(w, "profile")
-		return err
-	}
+	t.Run("capture reached thresholds and reset", func(t *testing.T) {
+		e := newHeapProfileTestEnv(t)
+		start := e.now
+		e.tryCapture(600)
+		require.Zero(t, e.writes)
 
-	start := time.Date(2026, time.August, 14, 10, 0, 0, 0, time.FixedZone("CST", 8*60*60))
-	currentTime := start
-	p.now = func() time.Time { return currentTime }
-	setHeapProfileMemInuse(m, 600)
-	p.tryCapture(m)
-	require.Equal(t, 0, writeCount)
+		e.now = start.Add(time.Minute)
+		e.tryCapture(720)
+		e.now = start.Add(time.Minute + 10*time.Second)
+		e.tryCapture(820)
+		e.now = start.Add(time.Minute + 20*time.Second)
+		e.tryCapture(870)
+		require.Equal(t, 3, e.writes)
+		names := heapProfileNames(t, e.p.dir)
+		require.Contains(t, names, "2026-08-14T10-01-00+0800.70pct.pprof")
+		require.Contains(t, names, "2026-08-14T10-01-10+0800.80pct.pprof")
+		require.Contains(t, names, "2026-08-14T10-01-20+0800.85pct.pprof")
 
-	currentTime = start.Add(time.Minute)
-	setHeapProfileMemInuse(m, 720)
-	p.tryCapture(m)
-	currentTime = start.Add(time.Minute + 10*time.Second)
-	setHeapProfileMemInuse(m, 820)
-	p.tryCapture(m)
-	currentTime = start.Add(time.Minute + 20*time.Second)
-	setHeapProfileMemInuse(m, 870)
-	p.tryCapture(m)
-	require.Equal(t, 3, writeCount)
-	require.Contains(t, heapProfileNames(t, p.dir), "2026-08-14T10-01-00+0800.70pct.pprof")
-	require.Contains(t, heapProfileNames(t, p.dir), "2026-08-14T10-01-10+0800.80pct.pprof")
-	require.Contains(t, heapProfileNames(t, p.dir), "2026-08-14T10-01-20+0800.85pct.pprof")
+		e.now = start.Add(4 * time.Minute)
+		e.tryCapture(760)
+		require.Equal(t, 3, e.writes)
+		e.now = start.Add(5 * time.Minute)
+		e.tryCapture(640)
+		e.now = start.Add(6 * time.Minute)
+		e.tryCapture(740)
+		require.Equal(t, 4, e.writes)
+	})
 
-	currentTime = start.Add(4 * time.Minute)
-	setHeapProfileMemInuse(m, 760)
-	p.tryCapture(m)
-	require.Equal(t, 3, writeCount)
-	currentTime = start.Add(5 * time.Minute)
-	setHeapProfileMemInuse(m, 640)
-	p.tryCapture(m)
-	currentTime = start.Add(6 * time.Minute)
-	setHeapProfileMemInuse(m, 740)
-	p.tryCapture(m)
-	require.Equal(t, 4, writeCount)
+	t.Run("capture highest reached threshold", func(t *testing.T) {
+		e := newHeapProfileTestEnv(t)
+		e.tryCapture(870)
+		require.Equal(t, 1, e.writes)
+		require.ElementsMatch(t, []string{
+			"2026-08-14T10-00-00+0800.85pct.pprof",
+			"2026-08-14T10-00-00+0800.85pct.meta.json",
+		}, heapProfileNames(t, e.p.dir))
+	})
 
-	m2 := newHeapProfileArbitratorForTest(1000)
-	p2 := newHeapProfileCollector(filepath.Join(t.TempDir(), heapProfileDirName))
-	p2.writeProfile = p.writeProfile
-	p2.now = func() time.Time { return start }
-	setHeapProfileMemInuse(m2, 870)
-	p2.tryCapture(m2)
-	require.Equal(t, 5, writeCount)
-	names := heapProfileNames(t, p2.dir)
-	require.Len(t, names, 2)
-	require.Contains(t, names, "2026-08-14T10-00-00+0800.85pct.pprof")
-	require.Contains(t, names, "2026-08-14T10-00-00+0800.85pct.meta.json")
+	t.Run("enforce cooldown", func(t *testing.T) {
+		e := newHeapProfileTestEnv(t)
+		start := e.now
+		e.tryCapture(720)
+		require.Equal(t, 1, e.writes)
 
-	m3 := newHeapProfileArbitratorForTest(1000)
-	p3 := newHeapProfileCollector(filepath.Join(t.TempDir(), heapProfileDirName))
-	cooldownTime := start
-	p3.now = func() time.Time { return cooldownTime }
-	cooldownWrites := 0
-	p3.writeProfile = func(w io.Writer) error {
-		cooldownWrites++
-		_, err := io.WriteString(w, "profile")
-		return err
-	}
-	setHeapProfileMemInuse(m3, 720)
-	p3.tryCapture(m3)
-	require.Equal(t, 1, cooldownWrites)
+		e.now = start.Add(10 * time.Second)
+		e.tryCapture(640)
+		e.now = start.Add(20 * time.Second)
+		e.tryCapture(720)
+		require.Equal(t, 1, e.writes)
 
-	cooldownTime = start.Add(10 * time.Second)
-	setHeapProfileMemInuse(m3, 640)
-	p3.tryCapture(m3)
-	cooldownTime = start.Add(20 * time.Second)
-	setHeapProfileMemInuse(m3, 720)
-	p3.tryCapture(m3)
-	require.Equal(t, 1, cooldownWrites)
+		e.now = start.Add(30 * time.Second)
+		e.tryCapture(870)
+		require.Equal(t, 2, e.writes)
+		require.Contains(t, heapProfileNames(t, e.p.dir), "2026-08-14T10-00-30+0800.85pct.pprof")
 
-	cooldownTime = start.Add(30 * time.Second)
-	setHeapProfileMemInuse(m3, 870)
-	p3.tryCapture(m3)
-	require.Equal(t, 2, cooldownWrites)
-	require.Contains(t, heapProfileNames(t, p3.dir), "2026-08-14T10-00-30+0800.85pct.pprof")
+		e.now = start.Add(40 * time.Second)
+		e.tryCapture(640)
+		e.now = start.Add(50 * time.Second)
+		e.tryCapture(870)
+		require.Equal(t, 2, e.writes)
+		e.now = start.Add(80 * time.Second)
+		e.tryCapture(720)
+		require.Equal(t, 2, e.writes)
+		e.now = start.Add(91 * time.Second)
+		e.tryCapture(720)
+		require.Equal(t, 3, e.writes)
+	})
 
-	cooldownTime = start.Add(40 * time.Second)
-	setHeapProfileMemInuse(m3, 640)
-	p3.tryCapture(m3)
-	cooldownTime = start.Add(50 * time.Second)
-	setHeapProfileMemInuse(m3, 870)
-	p3.tryCapture(m3)
-	require.Equal(t, 2, cooldownWrites)
-	cooldownTime = start.Add(80 * time.Second)
-	setHeapProfileMemInuse(m3, 720)
-	p3.tryCapture(m3)
-	require.Equal(t, 2, cooldownWrites)
-	cooldownTime = start.Add(91 * time.Second)
-	p3.tryCapture(m3)
-	require.Equal(t, 3, cooldownWrites)
+	t.Run("retry after memory risk", func(t *testing.T) {
+		e := newHeapProfileTestEnv(t)
+		e.m.heapController.memRisk.startTime.unixMilli.Store(1)
+		e.tryCapture(700)
+		require.Zero(t, e.writes)
+		require.Zero(t, e.p.trigger.attempted)
+
+		e.m.heapController.memRisk.startTime.unixMilli.Store(0)
+		e.tryCapture(700)
+		require.Equal(t, 1, e.writes)
+		require.Equal(t, uint32(0b001), e.p.trigger.attempted)
+	})
+
+	t.Run("retry setup failure after cooldown", func(t *testing.T) {
+		blockedDir := filepath.Join(t.TempDir(), heapProfileDirName)
+		require.NoError(t, os.WriteFile(blockedDir, []byte("not a directory"), 0600))
+		e := newHeapProfileTestEnvAt(t, blockedDir)
+		start := e.now
+		e.tryCapture(700)
+		require.Zero(t, e.writes)
+		require.Zero(t, e.p.trigger.attempted)
+		require.Equal(t, start, e.p.trigger.lastCaptureAt)
+		require.Equal(t, 70, e.p.trigger.lastCaptureThreshold)
+
+		require.NoError(t, os.Remove(blockedDir))
+		e.now = start.Add(100 * time.Millisecond)
+		e.tryCapture(700)
+		require.Zero(t, e.writes)
+		e.now = start.Add(heapProfileMinInterval)
+		e.tryCapture(700)
+		require.Equal(t, 1, e.writes)
+		require.Equal(t, uint32(0b001), e.p.trigger.attempted)
+	})
+
+	t.Run("consume threshold after write starts", func(t *testing.T) {
+		e := newHeapProfileTestEnv(t)
+		e.writeErr = io.ErrClosedPipe
+		e.tryCapture(700)
+		e.tryCapture(700)
+		require.Equal(t, 1, e.writes)
+		require.Equal(t, uint32(0b001), e.p.trigger.attempted)
+	})
+
+	t.Run("higher threshold bypasses cooldown", func(t *testing.T) {
+		blockedDir := filepath.Join(t.TempDir(), heapProfileDirName)
+		require.NoError(t, os.WriteFile(blockedDir, []byte("not a directory"), 0600))
+		e := newHeapProfileTestEnvAt(t, blockedDir)
+		start := e.now
+		e.tryCapture(700)
+		require.Zero(t, e.writes)
+		require.Zero(t, e.p.trigger.attempted)
+
+		require.NoError(t, os.Remove(blockedDir))
+		e.now = start.Add(100 * time.Millisecond)
+		e.tryCapture(800)
+		require.Equal(t, 1, e.writes)
+		require.Equal(t, uint32(0b011), e.p.trigger.attempted)
+	})
 }
 
 func TestHeapProfileCaptureMetadata(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), heapProfileDirName)
-	p := newHeapProfileCollector(dir)
-	start := time.Date(2026, time.August, 14, 10, 0, 0, 0, time.FixedZone("CST", 8*60*60))
-	p.now = func() time.Time { return start.Add(time.Millisecond) }
-	p.writeProfile = func(w io.Writer) error {
-		_, err := io.WriteString(w, "profile")
-		return err
-	}
-	m := newHeapProfileArbitratorForTest(1000)
-	setHeapProfileMemInuse(m, 700)
+	e := newHeapProfileTestEnvAt(t, dir)
+	setHeapProfileMemInuse(e.m, 700)
 
-	p.capture(m, 70)
+	require.True(t, e.p.capture(e.m, 70))
 
 	base := "2026-08-14T10-00-00+0800.70pct"
 	profilePath := filepath.Join(dir, base+".pprof")
@@ -185,7 +250,7 @@ func TestHeapProfileCaptureMetadata(t *testing.T) {
 	var metadata heapProfileMetadata
 	require.NoError(t, json.Unmarshal(metadataBytes, &metadata))
 	require.Equal(t, 1, metadata.Version)
-	require.Equal(t, start.Format(time.RFC3339), metadata.StartTime)
+	require.Equal(t, e.now.Format(time.RFC3339), metadata.StartTime)
 	require.Equal(t, 70, metadata.ThresholdPct)
 	require.Equal(t, int64(700), metadata.StartState.MemInuse)
 	require.Equal(t, int64(0), metadata.DurationMs)
@@ -197,73 +262,65 @@ func TestHeapProfileCaptureMetadata(t *testing.T) {
 }
 
 func TestHeapProfileTriggerCutoffAndLimitChange(t *testing.T) {
-	m := newHeapProfileArbitratorForTest(1000)
-	p := newHeapProfileCollector(filepath.Join(t.TempDir(), heapProfileDirName))
-	writeCount := 0
-	p.writeProfile = func(w io.Writer) error {
-		writeCount++
-		_, err := io.WriteString(w, "profile")
-		return err
-	}
-	currentTime := time.Date(2026, time.August, 14, 10, 0, 0, 0, time.FixedZone("CST", 8*60*60))
-	p.now = func() time.Time { return currentTime }
-	setHeapProfileMemInuse(m, 910)
-	p.tryCapture(m)
-	setHeapProfileMemInuse(m, 820)
-	p.tryCapture(m)
-	require.Equal(t, 0, writeCount)
+	e := newHeapProfileTestEnv(t)
+	e.tryCapture(910)
+	e.tryCapture(820)
+	require.Zero(t, e.writes)
 
-	setHeapProfileMemInuse(m, 640)
-	p.tryCapture(m)
-	setHeapProfileMemInuse(m, 700)
-	p.tryCapture(m)
-	require.Equal(t, 1, writeCount)
+	e.tryCapture(640)
+	e.tryCapture(700)
+	require.Equal(t, 1, e.writes)
 
-	currentTime = currentTime.Add(heapProfileMinInterval)
-	m.SetLimit(2000)
-	setHeapProfileMemInuse(m, 1400)
-	p.tryCapture(m)
-	require.Equal(t, 2, writeCount)
+	e.now = e.now.Add(heapProfileMinInterval)
+	e.m.SetLimit(2000)
+	e.tryCapture(1400)
+	require.Equal(t, 2, e.writes)
 }
 
 func TestHeapProfileCaptureFailureAndSkip(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), heapProfileDirName)
-	p := newHeapProfileCollector(dir)
-	p.writeProfile = func(io.Writer) error {
-		return io.ErrClosedPipe
-	}
-	m := newHeapProfileArbitratorForTest(1000)
-	setHeapProfileMemInuse(m, 700)
-	p.capture(m, 70)
-	entries, err := os.ReadDir(dir)
-	require.NoError(t, err)
-	require.Empty(t, entries)
+	t.Run("write failure", func(t *testing.T) {
+		e := newHeapProfileTestEnv(t)
+		e.writeErr = io.ErrClosedPipe
+		setHeapProfileMemInuse(e.m, 700)
+		require.True(t, e.p.capture(e.m, 70))
+		require.Empty(t, heapProfileNames(t, e.p.dir))
+	})
 
-	writeCount := 0
-	p.writeProfile = func(io.Writer) error {
-		writeCount++
-		return nil
-	}
-	m.SetWorkMode(ArbitratorModeDisable)
-	p.capture(m, 70)
-	require.Equal(t, 0, writeCount)
+	t.Run("disabled", func(t *testing.T) {
+		e := newHeapProfileTestEnv(t)
+		e.m.SetWorkMode(ArbitratorModeDisable)
+		setHeapProfileMemInuse(e.m, 700)
+		require.False(t, e.p.capture(e.m, 70))
+		require.Zero(t, e.writes)
+	})
 
-	m.SetWorkMode(ArbitratorModeStandard)
-	m.heapController.memRisk.startTime.unixMilli.Store(1)
-	p.capture(m, 70)
-	require.Equal(t, 0, writeCount)
+	t.Run("memory risk", func(t *testing.T) {
+		e := newHeapProfileTestEnv(t)
+		e.m.heapController.memRisk.startTime.unixMilli.Store(1)
+		setHeapProfileMemInuse(e.m, 700)
+		require.False(t, e.p.capture(e.m, 70))
+		require.Zero(t, e.writes)
+	})
+
+	t.Run("cutoff", func(t *testing.T) {
+		e := newHeapProfileTestEnv(t)
+		setHeapProfileMemInuse(e.m, 900)
+		require.False(t, e.p.capture(e.m, 70))
+		require.Zero(t, e.writes)
+	})
 }
 
 func TestHeapProfileRetention(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), heapProfileDirName)
 	require.NoError(t, os.MkdirAll(dir, 0750))
-	start := time.Date(2026, time.August, 14, 10, 0, 0, 0, time.FixedZone("CST", 8*60*60))
-	for i := 0; i < 12; i++ {
+	start := heapProfileTestStartTime()
+	groupCount := heapProfileMaxGroups + 2
+	for i := range groupCount {
 		base := start.Add(time.Duration(i)*time.Minute).Format(heapProfileTimestampLayout) + ".70pct"
 		require.NoError(t, os.WriteFile(filepath.Join(dir, base+".pprof"), []byte("profile"), 0600))
 		require.NoError(t, os.WriteFile(filepath.Join(dir, base+heapProfileMetadataSuffix), []byte("{}"), 0600))
 	}
-	orphanMetadata := start.Add(12*time.Minute).Format(heapProfileTimestampLayout) + ".70pct" + heapProfileMetadataSuffix
+	orphanMetadata := start.Add(time.Duration(groupCount)*time.Minute).Format(heapProfileTimestampLayout) + ".70pct" + heapProfileMetadataSuffix
 	require.NoError(t, os.WriteFile(filepath.Join(dir, orphanMetadata), []byte("{}"), 0600))
 	unknownFiles := []string{
 		"heap-manual.pprof",
@@ -279,12 +336,12 @@ func TestHeapProfileRetention(t *testing.T) {
 	p := &heapProfileCollector{dir: dir}
 	p.enforceRetention()
 	names := heapProfileNames(t, dir)
-	for i := 0; i < 12-heapProfileMaxGroups; i++ {
+	for i := 0; i < groupCount-heapProfileMaxGroups; i++ {
 		base := start.Add(time.Duration(i)*time.Minute).Format(heapProfileTimestampLayout) + ".70pct"
 		require.NotContains(t, names, base+".pprof")
 		require.NotContains(t, names, base+heapProfileMetadataSuffix)
 	}
-	for i := 12 - heapProfileMaxGroups; i < 12; i++ {
+	for i := groupCount - heapProfileMaxGroups; i < groupCount; i++ {
 		base := start.Add(time.Duration(i)*time.Minute).Format(heapProfileTimestampLayout) + ".70pct"
 		require.Contains(t, names, base+".pprof")
 		require.Contains(t, names, base+heapProfileMetadataSuffix)
@@ -307,7 +364,7 @@ func TestHeapProfileRetention(t *testing.T) {
 	require.False(t, ok)
 }
 
-func TestHandleGlobalMemArbitratorRuntimeWithoutCollector(t *testing.T) {
+func TestHandleGlobalMemArbitratorRuntime(t *testing.T) {
 	baseDir := t.TempDir()
 	SetupGlobalMemArbitratorForTest(baseDir)
 	defer CleanupGlobalMemArbitratorForTest()
@@ -334,9 +391,5 @@ func TestHandleGlobalMemArbitratorRuntimeWithoutCollector(t *testing.T) {
 	require.True(t, SetGlobalMemArbitratorWorkMode(ArbitratorModeStandardName))
 
 	HandleGlobalMemArbitratorRuntime()
-	require.True(t, profiler.trigger.lastCaptureAt.IsZero())
-	require.Equal(t, m.limit(), profiler.trigger.lastLimit)
-	require.Zero(t, profiler.trigger.attempted)
-	require.Zero(t, profiler.trigger.lastCaptureThreshold)
-	require.False(t, profiler.trigger.closed)
+	require.Equal(t, heapProfileTriggerState{lastLimit: m.limit()}, profiler.trigger)
 }

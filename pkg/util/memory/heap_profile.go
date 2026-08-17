@@ -180,27 +180,34 @@ func (p *heapProfileCollector) tryCapture(m *MemArbitrator) {
 		return
 	}
 
-	// Mark thresholds before capturing so a failed capture is not retried every tick.
-	state.attempted |= reachedMask
-	p.capture(m, level.threshold)
+	if p.capture(m, level.threshold) {
+		state.attempted |= reachedMask
+	}
 }
 
-func (p *heapProfileCollector) capture(m *MemArbitrator, threshold int) {
+// capture returns true once writeProfile has been called, even if the profile
+// cannot be persisted afterward.
+func (p *heapProfileCollector) capture(m *MemArbitrator, threshold int) bool {
 	snapshot := m.heapProfileSnapshot()
 	if m.WorkMode() == ArbitratorModeDisable ||
 		m.AtMemRisk() ||
 		snapshot.Limit <= 0 ||
 		snapshot.MemInuse >= snapshot.captureCutoff ||
 		p.writeProfile == nil {
-		return
+		return false
 	}
+
+	// Record the attempt before file initialization so failures do not retry on
+	// every runtime tick.
+	p.trigger.lastCaptureAt = p.currentTime()
+	p.trigger.lastCaptureThreshold = threshold
 	if err := os.MkdirAll(p.dir, 0750); err != nil {
-		return
+		return false
 	}
 
 	tmp, err := os.CreateTemp(p.dir, ".heap-profile.*.tmp")
 	if err != nil {
-		return
+		return false
 	}
 	tmpPath := tmp.Name()
 	closed := false
@@ -215,25 +222,24 @@ func (p *heapProfileCollector) capture(m *MemArbitrator, threshold int) {
 	}()
 
 	if err := tmp.Chmod(0600); err != nil {
-		return
+		return false
 	}
 
 	startTime := p.currentTime()
 	p.trigger.lastCaptureAt = startTime
-	p.trigger.lastCaptureThreshold = threshold
 	timestamp := startTime.Format(heapProfileTimestampLayout)
 	base := timestamp + "." + strconv.Itoa(threshold) + "pct"
 	profilePath := filepath.Join(p.dir, base+".pprof")
 
 	if err := p.writeProfile(tmp); err != nil {
-		return
+		return true
 	}
 	if err := tmp.Close(); err != nil {
-		return
+		return true
 	}
 	closed = true
 	if err := os.Rename(tmpPath, profilePath); err != nil {
-		return
+		return true
 	}
 	renamed = true
 
@@ -246,6 +252,7 @@ func (p *heapProfileCollector) capture(m *MemArbitrator, threshold int) {
 	}
 	_ = p.writeMetadataAtomically(base+heapProfileMetadataSuffix, metadata)
 	p.enforceRetention()
+	return true
 }
 
 func (p *heapProfileCollector) writeMetadataAtomically(name string, metadata heapProfileMetadata) error {
