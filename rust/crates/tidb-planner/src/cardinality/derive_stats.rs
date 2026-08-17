@@ -71,6 +71,24 @@ pub type ColumnId = u64;
 
 /// Go `property.StatsInfo`, reduced to the fields the DP cost and NDV rules
 /// read.
+///
+/// # This is the SECOND port of `pkg/planner/property/stats_info.go`
+///
+/// [`crate::stats_info::StatsInfo`] is the other, and it is the one that
+/// actually travels in a plan: `BasePlan.stats` holds it, and the logical
+/// operators and the plan builder all name it. This one is local to this
+/// module and no other module imports it.
+///
+/// They are not interchangeable, and the difference is not only which fields
+/// they carry. **This one keys `col_ndvs` by [`ColumnId`] (`u64`); the plan's
+/// keys it by `i64`.** This one is also the richer of the two — it has
+/// `group_ndvs`, public fields and a `Default`, none of which the plan's has.
+///
+/// So when a cardinality rule eventually needs to write derived statistics
+/// back onto a plan node, the two must be reconciled: the key types converted,
+/// and a home found for `group_ndvs`. That is a crate-wide decision about
+/// column-id representation, not a local edit, and it has not been made. Until
+/// it is, do not assume a value of one type can stand in for the other.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StatsInfo {
     /// `StatsInfo.RowCount`.

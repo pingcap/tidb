@@ -22,6 +22,12 @@
 use std::collections::BTreeMap;
 
 /// Minimal statistics profile needed by `DeriveLimitStats`.
+///
+/// This is the statistics profile that travels in a plan: `BasePlan.stats`
+/// holds it. [`crate::cardinality::derive_stats::StatsInfo`] is a SECOND port
+/// of the same Go type, local to that module, carrying more fields and keying
+/// its NDV map by `u64` where this one uses `i64`. See its doc comment for
+/// what reconciling them would require.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StatsInfo {
     row_count: f64,
