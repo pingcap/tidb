@@ -347,6 +347,18 @@ func (b *builtinFtsMysqlMatchAgainstSig) getOrBuildLocalNoScorePlan(search strin
 		return nil, err
 	}
 	b.localPlan = &ftsLocalEvalPlan{search: search, query: query, analyzer: analyzer}
+
+	// Re-derive the search-dependent metadata from the query just compiled, so
+	// it describes the search string this signature last saw rather than the
+	// one present when the plan was built. Only the planner reads it today, and
+	// only for a stable constant, so this changes nothing in practice; it keeps
+	// the two from being able to disagree if that ever stops holding.
+	if b.localEvalInfo != nil {
+		refreshed := *b.localEvalInfo
+		refreshed.MatchNothing = query.MatchesNothing()
+		refreshed.SelectivityTerm, _ = query.SelectivityTerm()
+		b.localEvalInfo = &refreshed
+	}
 	return b.localPlan, nil
 }
 
