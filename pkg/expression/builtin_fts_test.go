@@ -289,3 +289,45 @@ func twoStringRow(a, b string) chunk.Row {
 func nullStringRow() chunk.Row {
 	return chunk.MutRowFromDatums([]types.Datum{types.NewDatum(nil)}).ToRow()
 }
+
+// TestFTSMysqlMatchAgainstLocalEvalInfoTracksSearch checks the search-dependent
+// metadata follows the search string the signature last evaluated, rather than
+// staying at whatever the plan was built with. Only the planner reads it today,
+// and only for a stable constant, so this pins the guarantee rather than a
+// currently reachable bug.
+func TestFTSMysqlMatchAgainstLocalEvalInfoTracksSearch(t *testing.T) {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().PlanCacheParams.Reset()
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewStringDatum("tidb"))
+	stringTp := types.NewFieldType(mysql.TypeVarchar)
+	search := &Constant{RetType: stringTp, ParamMarker: &ParamMarker{order: 0}}
+	col := &Column{Index: 0, RetType: stringTp}
+	fn, err := NewFunction(ctx, ast.FTSMysqlMatchAgainst, types.NewFieldType(mysql.TypeDouble), search, col)
+	require.NoError(t, err)
+	sf := fn.(*ScalarFunction)
+	require.NoError(t, SetFTSMysqlMatchAgainstModifier(sf, ast.FulltextSearchModifierBooleanMode))
+
+	// Deliberately stale to start with, as if the plan were built elsewhere.
+	stale := localEvalInfoForTest()
+	stale.MatchNothing = true
+	stale.SelectivityTerm = "stale"
+	require.NoError(t, SetFTSMysqlMatchAgainstLocalEvalInfo(sf, stale))
+
+	evalWith := func(bind string) *FTSLocalEvalInfo {
+		ctx.GetSessionVars().PlanCacheParams.Reset()
+		ctx.GetSessionVars().PlanCacheParams.Append(types.NewStringDatum(bind))
+		_, _, err := sf.EvalReal(ctx, stringRow("TiDB storage"))
+		require.NoError(t, err)
+		info, ok := FTSMysqlMatchAgainstLocalEvalInfo(sf)
+		require.True(t, ok)
+		return info
+	}
+
+	info := evalWith("tidb")
+	require.False(t, info.MatchNothing, "metadata must follow the evaluated search")
+	require.Equal(t, "tidb", info.SelectivityTerm)
+
+	// A required term the analyzer drops leaves a query that matches nothing.
+	info = evalWith("+ab")
+	require.True(t, info.MatchNothing)
+}
