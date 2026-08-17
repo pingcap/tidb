@@ -511,11 +511,8 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 }
 
 func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
-	tableCount := 0
-	for _, tables := range conf.Tables {
-		tableCount += len(tables)
-	}
-	conf.columnProjection = make(map[tableName]columnProjection, tableCount)
+	conf.columnProjection = make(map[tableName]columnProjection, calculateTableCount(conf.Tables))
+	hasProjection := false
 	for dbName, tables := range conf.Tables {
 		for _, table := range tables {
 			projection, err := buildColumnProjection(tctx, conf, conn, dbName, table)
@@ -523,68 +520,67 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				return err
 			}
 			conf.columnProjection[tableName{db: dbName, table: table.Name}] = projection
+			hasProjection = hasProjection || projection.projected
 		}
 	}
-	if !conf.NoSchemas && hasProjectedTable(conf.columnProjection) {
-		for dbName, tables := range conf.Tables {
-			for _, table := range tables {
-				if table.Type == TableTypeView {
-					return errors.Errorf(
-						"column-filtered schema output does not support view `%s`.`%s`",
-						escapeString(dbName),
-						escapeString(table.Name),
-					)
-				}
-			}
-		}
-		for dbName, tables := range conf.Tables {
-			for _, table := range tables {
-				if table.Type != TableTypeBase {
-					continue
-				}
-				key := tableName{db: dbName, table: table.Name}
-				projection := conf.columnProjection[key]
-				createTableSQL, err := ShowCreateTable(tctx, conn, dbName, table.Name)
-				if err != nil {
-					return err
-				}
-				projection.schemaSQL = createTableSQL
-				projection.schemaColumns, err = projectedTableSchemaColumns(createTableSQL, projection)
-				if err != nil {
-					return errors.Annotatef(
-						err,
-						"failed to analyze schema projection for table `%s`.`%s`",
-						escapeString(dbName),
-						escapeString(table.Name),
-					)
-				}
-				conf.columnProjection[key] = projection
-			}
-		}
-		for dbName, tables := range conf.Tables {
-			for _, table := range tables {
-				if table.Type != TableTypeBase {
-					continue
-				}
-				key := tableName{db: dbName, table: table.Name}
-				projection := conf.columnProjection[key]
-				var err error
-				projection.schemaSQL, err = projectTableSchema(
-					projection.schemaSQL,
-					dbName,
-					projection,
-					conf.columnProjection,
+	if conf.NoSchemas || !hasProjection {
+		return nil
+	}
+
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type == TableTypeView {
+				return errors.Errorf(
+					"column-filtered schema output does not support view `%s`.`%s`",
+					escapeString(dbName),
+					escapeString(table.Name),
 				)
-				if err != nil {
-					return errors.Annotatef(
-						err,
-						"failed to project schema for table `%s`.`%s`",
-						escapeString(dbName),
-						escapeString(table.Name),
-					)
-				}
-				conf.columnProjection[key] = projection
 			}
+			if table.Type != TableTypeBase {
+				continue
+			}
+			key := tableName{db: dbName, table: table.Name}
+			projection := conf.columnProjection[key]
+			createTableSQL, err := ShowCreateTable(tctx, conn, dbName, table.Name)
+			if err != nil {
+				return err
+			}
+			projection.schemaSQL = createTableSQL
+			projection.schemaColumns, err = projectedTableSchemaColumns(createTableSQL, projection)
+			if err != nil {
+				return errors.Annotatef(
+					err,
+					"failed to analyze schema projection for table `%s`.`%s`",
+					escapeString(dbName),
+					escapeString(table.Name),
+				)
+			}
+			conf.columnProjection[key] = projection
+		}
+	}
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type != TableTypeBase {
+				continue
+			}
+			key := tableName{db: dbName, table: table.Name}
+			projection := conf.columnProjection[key]
+			var err error
+			projection.schemaSQL, err = projectTableSchema(
+				projection.schemaSQL,
+				dbName,
+				projection,
+				conf.columnProjection,
+			)
+			if err != nil {
+				return errors.Annotatef(
+					err,
+					"failed to project schema for table `%s`.`%s`",
+					escapeString(dbName),
+					escapeString(table.Name),
+				)
+			}
+			conf.columnProjection[key] = projection
 		}
 	}
 	return nil
