@@ -360,7 +360,7 @@ pub(super) fn binary_literal_type(byte_len: usize, unsigned: bool) -> FieldType 
 /// `GROUP_CONCAT` is an aggregate; `DATE_ADD`-family take an `Expr::Interval`
 /// argument that is not an expression at all.
 ///
-pub(super) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
+pub(crate) fn builtin_return_type(name: &str, args: &[Expression]) -> Option<FieldType> {
     let mut ft = builtin_return_type_before_ret_tp(name, args)?;
     promote_wide_string_result(&mut ft);
     Some(ft)

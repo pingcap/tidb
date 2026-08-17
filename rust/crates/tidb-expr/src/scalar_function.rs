@@ -167,7 +167,8 @@ fn unary_op_for_name(name: &str) -> Option<UnaryOp> {
 
 /// Go `unFoldableFunctions`: calls whose result cannot be frozen during
 /// constant folding even when every argument is a strict literal.
-fn is_unfoldable_function(name: &str) -> bool {
+#[must_use]
+pub fn is_unfoldable_function(name: &str) -> bool {
     name.starts_with("getvar_")
         || matches!(
             name,
@@ -289,6 +290,17 @@ impl ScalarFunction {
             }
         }
         &self.hashcode
+    }
+
+    /// Go `ScalarFunction.CleanHashCode` (`scalar_function.go:604`): drops the
+    /// cached hash code so the next [`Self::hash_code`] recomputes it.
+    ///
+    /// Required by every rewrite that mutates [`Self::args`] in place --
+    /// `SetExprColumnInOperand` and `ColumnSubstituteImpl`'s grouping arm both
+    /// call it in Go. Go also clears `canonicalhashcode`; this crate does not
+    /// cache one yet, so there is nothing else to drop.
+    pub fn clean_hash_code(&mut self) {
+        self.hashcode.clear();
     }
 
     /// Go `ConstLevel`.

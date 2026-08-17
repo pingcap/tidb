@@ -339,7 +339,7 @@ mod builtin_cast_semantics;
 pub mod builtin_compare;
 mod builtin_ext;
 pub mod builtin_op;
-mod builtin_registry;
+pub mod builtin_registry;
 mod cast;
 mod coerce;
 pub mod collation_derive;
@@ -351,6 +351,7 @@ mod context;
 pub mod convert_charset;
 pub mod evaluator;
 pub mod expr_collation;
+pub mod expr_util;
 pub mod exprctx;
 pub mod expression;
 pub mod expropt;
@@ -363,6 +364,12 @@ pub mod infer_pushdown;
 mod like;
 mod math_fn;
 pub mod metabuild;
+pub mod new_function;
+pub use new_function::{
+    new_function, new_function_base, new_function_impl, new_function_internal,
+    new_function_try_fold, new_function_with_init, scalar_funcs_to_exprs, type_infer_for_null,
+    ScalarFunctionCallBack,
+};
 mod ops;
 pub mod pb_predicate;
 pub mod pushdown_catalog;
