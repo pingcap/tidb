@@ -36,6 +36,7 @@ members = [
     "crates/tidb-txnkv",
     "crates/tidb-tablecodec",
     "crates/tidb-expr",
+    "crates/tidb-funcdep",
     "crates/tidb-schemacmp",
     "crates/tidb-placement",
     "crates/tidb-unistore",

@@ -1,0 +1,19 @@
+[package]
+name = "tidb-funcdep"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Go pkg/planner/funcdep: the functional-dependency graph and the null-rejection proof, shared by the planner and the executor's driver."
+
+[lints]
+workspace = true
+
+[dependencies]
+tidb-expr = { path = "../tidb-expr" }
+tidb-util = { path = "../tidb-util" }
+
+[dev-dependencies]
+tidb-ast = { path = "../tidb-ast" }
+tidb-datatype = { path = "../tidb-datatype" }

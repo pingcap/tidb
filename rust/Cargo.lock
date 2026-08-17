@@ -2444,6 +2444,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidb-funcdep"
+version = "0.0.0"
+dependencies = [
+ "tidb-ast",
+ "tidb-datatype",
+ "tidb-expr",
+ "tidb-util",
+]
+
+[[package]]
 name = "tidb-hack"
 version = "0.0.0"
 dependencies = [
