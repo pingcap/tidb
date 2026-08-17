@@ -90,42 +90,23 @@ func collectProjectedSchemaColumns(originSQL string, selectedColumns []string) (
 		return nil, errors.Errorf("expected CREATE TABLE for column projection, got %T", stmt)
 	}
 
-	generatedColumns := make(map[string]ast.ExprNode)
-	for _, column := range createTable.Cols {
-		if option := generatedColumnOption(column); option != nil {
-			generatedColumns[column.Name.Name.L] = option.Expr
-		}
-	}
 	retainedColumns := make(map[string]struct{}, len(selectedColumns))
 	for _, selectedColumn := range selectedColumns {
 		lowerName := strings.ToLower(selectedColumn)
 		retainedColumns[lowerName] = struct{}{}
 	}
-	retainGeneratedColumns(retainedColumns, generatedColumns)
+	collectGeneratedColumns(retainedColumns, createTable.Cols)
 
 	return retainedColumns, nil
 }
 
-func generatedColumnOption(column *ast.ColumnDef) *ast.ColumnOption {
-	for _, option := range column.Options {
-		if option.Tp == ast.ColumnOptionGenerated {
-			return option
-		}
-	}
-	return nil
-}
-
-func retainGeneratedColumns(retained map[string]struct{}, generated map[string]ast.ExprNode) {
-	changed := true
-	for changed {
-		changed = false
-		for name, expr := range generated {
-			if _, ok := retained[name]; ok {
-				continue
-			}
-			if allReferencedColumnsRetained(expr, retained) {
-				retained[name] = struct{}{}
-				changed = true
+func collectGeneratedColumns(retained map[string]struct{}, columns []*ast.ColumnDef) {
+	// A generated column can only depend on generated columns defined before it.
+	for _, column := range columns {
+		for _, option := range column.Options {
+			if option.Tp == ast.ColumnOptionGenerated && allReferencedColumnsRetained(option.Expr, retained) {
+				retained[column.Name.Name.L] = struct{}{}
+				break
 			}
 		}
 	}
