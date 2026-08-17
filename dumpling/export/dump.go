@@ -528,6 +528,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 		return nil
 	}
 
+	schemaColumns := make(map[tableName]map[string]struct{}, calculateTableCount(conf.Tables))
 	for dbName, tables := range conf.Tables {
 		for _, table := range tables {
 			if table.Type == TableTypeView {
@@ -547,7 +548,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				return err
 			}
 			projection.schemaSQL = createTableSQL
-			projection.schemaColumns, err = resolveProjectedSchemaColumns(createTableSQL, projection)
+			schemaColumns[key], err = resolveProjectedSchemaColumns(createTableSQL, projection)
 			if err != nil {
 				return errors.Annotatef(
 					err,
@@ -570,8 +571,8 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 			projection.schemaSQL, err = generateProjectedSchema(
 				projection.schemaSQL,
 				dbName,
-				projection,
-				conf.columnProjection,
+				schemaColumns[key],
+				schemaColumns,
 			)
 			if err != nil {
 				return errors.Annotatef(

@@ -15,14 +15,9 @@ import (
 func generateProjectedSchema(
 	originSQL string,
 	database string,
-	projection columnProjection,
-	projections map[tableName]columnProjection,
+	retainedColumns map[string]struct{},
+	schemaColumns map[tableName]map[string]struct{},
 ) (string, error) {
-	// An unchanged table may still reference a projected table through a foreign key.
-	if !projection.projected && len(projections) == 0 {
-		return originSQL, nil
-	}
-
 	stmt, err := parser.New().ParseOneStmt(originSQL, "", "")
 	if err != nil {
 		return "", errors.Annotate(err, "failed to parse CREATE TABLE for column projection")
@@ -31,8 +26,6 @@ func generateProjectedSchema(
 	if !ok {
 		return "", errors.Errorf("expected CREATE TABLE for column projection, got %T", stmt)
 	}
-	retainedColumns := makeColumnSet(projection.schemaColumns)
-
 	changed := false
 	columns := make([]*ast.ColumnDef, 0, len(createTable.Cols))
 	for _, column := range createTable.Cols {
@@ -40,7 +33,7 @@ func generateProjectedSchema(
 			changed = true
 			continue
 		}
-		options, optionsChanged, err := projectColumnOptions(column, retainedColumns, database, createTable.Table.Name.L, projections)
+		options, optionsChanged, err := projectColumnOptions(column, retainedColumns, database, createTable.Table.Name.L, schemaColumns)
 		if err != nil {
 			return "", err
 		}
@@ -56,7 +49,7 @@ func generateProjectedSchema(
 			changed = true
 			continue
 		}
-		if err := validateReferenceColumns(constraint.Refer, database, createTable.Table.Name.L, retainedColumns, projections); err != nil {
+		if err := validateReferenceColumns(constraint.Refer, database, createTable.Table.Name.L, retainedColumns, schemaColumns); err != nil {
 			return "", err
 		}
 		constraints = append(constraints, constraint)
@@ -87,7 +80,7 @@ func generateProjectedSchema(
 	return buffer.String(), nil
 }
 
-func resolveProjectedSchemaColumns(originSQL string, projection columnProjection) ([]string, error) {
+func resolveProjectedSchemaColumns(originSQL string, projection columnProjection) (map[string]struct{}, error) {
 	stmt, err := parser.New().ParseOneStmt(originSQL, "", "")
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to parse CREATE TABLE for column projection")
@@ -116,13 +109,7 @@ func resolveProjectedSchemaColumns(originSQL string, projection columnProjection
 	}
 	retainGeneratedColumns(retainedColumns, generatedColumns)
 
-	columns := make([]string, 0, len(retainedColumns))
-	for _, column := range createTable.Cols {
-		if _, ok := retainedColumns[column.Name.Name.L]; ok {
-			columns = append(columns, column.Name.Name.O)
-		}
-	}
-	return columns, nil
+	return retainedColumns, nil
 }
 
 func makeColumnSet(columns []string) map[string]struct{} {
@@ -163,7 +150,7 @@ func projectColumnOptions(
 	retained map[string]struct{},
 	database string,
 	table string,
-	projections map[tableName]columnProjection,
+	schemaColumns map[tableName]map[string]struct{},
 ) ([]*ast.ColumnOption, bool, error) {
 	options := make([]*ast.ColumnOption, 0, len(column.Options))
 	changed := false
@@ -175,7 +162,7 @@ func projectColumnOptions(
 				continue
 			}
 		case ast.ColumnOptionReference:
-			if err := validateReferenceColumns(option.Refer, database, table, retained, projections); err != nil {
+			if err := validateReferenceColumns(option.Refer, database, table, retained, schemaColumns); err != nil {
 				return nil, false, err
 			}
 		case ast.ColumnOptionDefaultValue, ast.ColumnOptionOnUpdate:
@@ -243,7 +230,7 @@ func validateReferenceColumns(
 	database string,
 	table string,
 	retained map[string]struct{},
-	projections map[tableName]columnProjection,
+	schemaColumns map[tableName]map[string]struct{},
 ) error {
 	if reference == nil || reference.Table == nil {
 		return nil
@@ -265,11 +252,10 @@ func validateReferenceColumns(
 		return nil
 	}
 
-	target, ok := projections[tableName{db: referenceDatabase, table: referenceTable}]
-	if !ok || !target.projected {
+	targetColumns, ok := schemaColumns[tableName{db: referenceDatabase, table: referenceTable}]
+	if !ok {
 		return nil
 	}
-	targetColumns := makeColumnSet(target.schemaColumns)
 	for _, key := range reference.IndexPartSpecifications {
 		if key.Column != nil {
 			if _, ok := targetColumns[key.Column.Name.L]; !ok {

@@ -135,16 +135,12 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			"CONSTRAINT `fk_secret` FOREIGN KEY (`parent_secret`) REFERENCES `parent` (`secret`)" +
 			")"
 		projection := columnProjection{selectedColumns: []string{"id", "parent_secret"}}
-		projections := map[tableName]columnProjection{
-			{db: "test", table: "child"}: projection,
-			{db: "test", table: "parent"}: {
-				selectedColumns: []string{"id"},
-				schemaColumns:   []string{"id"},
-				projected:       true,
-			},
+		schemaColumns := map[tableName]map[string]struct{}{
+			{db: "test", table: "child"}:  makeColumnSet([]string{"id", "parent_secret"}),
+			{db: "test", table: "parent"}: makeColumnSet([]string{"id"}),
 		}
 
-		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, projections)
+		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, schemaColumns)
 		require.ErrorContains(t, err, "foreign key references removed column `test`.`parent`.`secret`")
 	})
 
@@ -155,16 +151,12 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			"CONSTRAINT `fk_generated` FOREIGN KEY (`parent_generated`) REFERENCES `parent` (`generated`)" +
 			")"
 		projection := columnProjection{selectedColumns: []string{"id", "parent_generated"}}
-		projections := map[tableName]columnProjection{
-			{db: "test", table: "child"}: projection,
-			{db: "test", table: "parent"}: {
-				selectedColumns: []string{"id"},
-				schemaColumns:   []string{"id", "generated"},
-				projected:       true,
-			},
+		schemaColumns := map[tableName]map[string]struct{}{
+			{db: "test", table: "child"}:  makeColumnSet([]string{"id", "parent_generated"}),
+			{db: "test", table: "parent"}: makeColumnSet([]string{"id", "generated"}),
 		}
 
-		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, projections)
+		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, schemaColumns)
 		require.NoError(t, err)
 		require.Len(t, parseCreateTableForTest(t, projectedSQL).Constraints, 1)
 	})
@@ -199,15 +191,14 @@ func generateProjectedSchemaForTest(
 	originSQL string,
 	database string,
 	projection columnProjection,
-	projections map[tableName]columnProjection,
+	schemaColumns map[tableName]map[string]struct{},
 ) (string, error) {
 	t.Helper()
-	var err error
-	projection.schemaColumns, err = resolveProjectedSchemaColumns(originSQL, projection)
+	retainedColumns, err := resolveProjectedSchemaColumns(originSQL, projection)
 	if err != nil {
 		return "", err
 	}
-	return generateProjectedSchema(originSQL, database, projection, projections)
+	return generateProjectedSchema(originSQL, database, retainedColumns, schemaColumns)
 }
 
 func parseCreateTableForTest(t *testing.T, sql string) *ast.CreateTableStmt {

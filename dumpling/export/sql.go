@@ -1067,7 +1067,6 @@ type columnProjection struct {
 	selectedColumns []string
 	selectField     string
 	schemaSQL       string
-	schemaColumns   []string
 	projected       bool
 }
 
