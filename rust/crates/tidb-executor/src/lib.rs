@@ -81,6 +81,8 @@ mod hash_agg_spill_tests;
 mod hash_join;
 pub mod hints_set;
 mod index_hints;
+pub mod index_lookup_hash_join;
+pub mod index_lookup_join;
 pub mod index_merge_reader;
 mod index_prefix_cut;
 mod index_range;
