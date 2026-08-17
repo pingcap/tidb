@@ -161,7 +161,10 @@ func TestKillCancelsDDLJob(t *testing.T) {
 		checkTK := testkit.NewTestKit(t, store)
 		for time.Now().Before(deadline) {
 			jobs, err := ddl.GetAllDDLJobs(context.Background(), checkTK.Session())
-			require.NoError(t, err)
+			if err != nil {
+				t.Errorf("get all DDL jobs: %v", err)
+				return
+			}
 			if slices.ContainsFunc(jobs, func(job *model.Job) bool {
 				return job.Type == model.ActionAddIndex && job.State == model.JobStateCancelling
 			}) {
