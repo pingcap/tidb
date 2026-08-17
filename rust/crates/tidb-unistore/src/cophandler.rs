@@ -115,10 +115,33 @@ fn handle_cop_dag_request(
 /// refuses by name until its course lands.
 fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Response {
     validate_executor_list(&context.dag_req.executors);
-    if context.dag_req.executors.len() != 1 {
-        return other_error(
-            "closure_exec.go's non-scan executors (selection/limit/...) are later courses",
-        );
+    // Go's composition contract (`closure_exec.go:166`):
+    // `tableScan|indexScan [selection] [topN | limit | agg]`. This slice
+    // runs the scan and a LIMIT above it — Go's limit is nothing but a
+    // break-at-count during the scan (`ce.limit`, `closure_exec.go:144`,
+    // checked at `:597`).
+    let mut limit = usize::MAX;
+    match context.dag_req.executors.len() {
+        1 => {}
+        2 => {
+            let above = &context.dag_req.executors[1];
+            if above.tp() == tipb::ExecType::TypeLimit {
+                let Some(body) = above.limit.as_ref() else {
+                    return other_error("executor missing limit body");
+                };
+                limit = usize::try_from(body.limit()).unwrap_or(usize::MAX);
+            } else {
+                return other_error(
+                    "selection above the scan needs the tipb expression converter \
+                     (cophandler's PBToExpr course)",
+                );
+            }
+        }
+        _ => {
+            return other_error(
+                "closure_exec.go's deeper executor stacks are later courses of this port",
+            )
+        }
     }
     let scan = &context.dag_req.executors[0];
     if scan.tp() != tipb::ExecType::TypeTableScan {
@@ -127,7 +150,7 @@ fn exec_dag(store: &mut MvccStore, context: &DagContext) -> coprocessor::Respons
     let Some(tbl_scan) = scan.tbl_scan.as_ref() else {
         return other_error("executor missing tbl_scan body");
     };
-    exec_table_scan(store, context, tbl_scan)
+    exec_table_scan(store, context, tbl_scan, limit)
 }
 
 /// Go's chunk cut: `closure_exec.go` grows the output chunk to 1024 rows
@@ -147,6 +170,7 @@ fn exec_table_scan(
     store: &mut MvccStore,
     context: &DagContext,
     tbl_scan: &tipb::TableScan,
+    limit: usize,
 ) -> coprocessor::Response {
     use tidb_datatype::{Datum, FieldType, FieldTypeCode};
     let mut column_types = std::collections::BTreeMap::new();
@@ -160,7 +184,8 @@ fn exec_table_scan(
     let mut chunks: Vec<tipb::Chunk> = Vec::new();
     let mut current = Vec::new();
     let mut current_rows = 0_usize;
-    for range in &context.key_ranges {
+    let mut emitted = 0_usize;
+    'ranges: for range in &context.key_ranges {
         let pairs = store.scan(&crate::mvcc_store::ScanReq {
             start_key: range.start.clone(),
             end_key: range.end.clone(),
@@ -209,12 +234,17 @@ fn exec_table_scan(
             };
             current.extend_from_slice(&encoded);
             current_rows += 1;
+            emitted += 1;
             if current_rows == CHUNK_MAX_ROWS {
                 chunks.push(tipb::Chunk {
                     rows_data: Some(std::mem::take(&mut current)),
                     ..tipb::Chunk::default()
                 });
                 current_rows = 0;
+            }
+            // Go `e.rowCount == e.limit` (`closure_exec.go:597`).
+            if emitted == limit {
+                break 'ranges;
             }
         }
     }
@@ -549,5 +579,82 @@ mod tests {
         );
         let locked = resp.locked.expect("the first lock answers the response");
         assert_eq!(locked.lock_version, 5);
+    }
+
+    #[test]
+    fn a_limit_above_the_scan_breaks_at_the_count() {
+        // Go `ce.limit`: nothing but a break during the scan.
+        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_datatype::Datum;
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+        let mut store = MvccStore::new();
+        for handle in 1..=3_i64 {
+            let key = encode_row_key_with_handle(9, &RecordHandle::Int(handle));
+            let value =
+                tidb_codec::encode_value(&[Datum::Int(2), Datum::Int(handle * 10)]).expect("row");
+            store
+                .prewrite(&crate::mvcc_store::PrewriteReq {
+                    mutations: vec![KvrpcMutation {
+                        op: KvrpcOp::Put as i32,
+                        key: key.clone(),
+                        value,
+                        ..KvrpcMutation::default()
+                    }],
+                    primary_lock: key.clone(),
+                    start_version: 10,
+                    ..crate::mvcc_store::PrewriteReq::default()
+                })
+                .expect("prewrites");
+            store.commit(&[key], 10, 11).expect("commits");
+        }
+        let dag = tipb::DagRequest {
+            executors: vec![
+                tipb::Executor {
+                    tp: Some(tipb::ExecType::TypeTableScan as i32),
+                    tbl_scan: Some(tipb::TableScan {
+                        table_id: Some(9),
+                        columns: vec![tipb::ColumnInfo {
+                            column_id: Some(1),
+                            tp: Some(8),
+                            pk_handle: Some(true),
+                            ..tipb::ColumnInfo::default()
+                        }],
+                        ..tipb::TableScan::default()
+                    }),
+                    ..tipb::Executor::default()
+                },
+                tipb::Executor {
+                    tp: Some(tipb::ExecType::TypeLimit as i32),
+                    limit: Some(tipb::Limit { limit: Some(2) }),
+                    ..tipb::Executor::default()
+                },
+            ],
+            ..tipb::DagRequest::default()
+        };
+        let mut data = Vec::new();
+        dag.encode(&mut data).expect("encodes");
+        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(9);
+        let resp = handle_cop_request(
+            &mut store,
+            &coprocessor::Request {
+                tp: REQ_TYPE_DAG,
+                data,
+                ranges: vec![coprocessor::KeyRange {
+                    start: range_start,
+                    end: range_end,
+                }],
+                start_ts: 20,
+                ..coprocessor::Request::default()
+            },
+        );
+        assert!(resp.other_error.is_empty(), "{}", resp.other_error);
+        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("decodes");
+        let rows_data = select.chunks[0].rows_data.as_deref().expect("rows");
+        let decoded = tidb_codec::decode(rows_data, 2).expect("two datums");
+        assert_eq!(
+            decoded,
+            vec![Datum::Int(1), Datum::Int(2)],
+            "first two handles"
+        );
     }
 }
