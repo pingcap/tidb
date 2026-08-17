@@ -187,6 +187,12 @@ impl RootTask {
         self.plan = Some(Box::new(plan));
     }
 
+    /// Takes the plan out, for the ownership handoff `attachPlan2Task`'s
+    /// `p.SetChildren(v.GetPlan()); v.SetPlan(p)` pair performs.
+    pub fn take_plan(&mut self) -> Option<PhysicalPlan> {
+        self.plan.take().map(|plan| *plan)
+    }
+
     /// Go `Copy` (`task_base.go:131-142`): same plan, warnings COPIED so the
     /// two instances never share a slice. Go copies the plan POINTER where
     /// this clones the owned tree; observably equal until someone mutates a
@@ -577,5 +583,203 @@ mod tests {
         let converted = task.convert_to_root_task().expect("root -> root");
         assert!(!converted.invalid());
         assert!((converted.count() - 3.0).abs() < f64::EPSILON);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Go `Attach2Task`: how a physical operator composes onto a child task.
+// ---------------------------------------------------------------------------
+
+/// Go `attachPlan2Task` (`core/task.go`): wrap the task's plan with `plan`.
+///
+/// * a root task: `p.SetChildren(v.GetPlan()); v.SetPlan(p)`;
+/// * an MPP task: the same wrap on its plan;
+/// * a cop task: the plan attaches to whichever half is still OPEN — the
+///   index half before `FinishIndexPlan`, the table half after.
+///
+/// Go's `inheritStatsFromBottomTaskForIndexJoinInner` hook runs first there;
+/// it reads `IndexJoinInfo`, a field this port's tasks do not carry (module
+/// header), so the hook is vacuous here and not restated.
+#[must_use]
+pub fn attach_plan_to_task(mut plan: PhysicalPlan, mut task: Task) -> Task {
+    match &mut task {
+        Task::Root(root) => {
+            let child = root.take_plan();
+            plan.base_mut().set_children(child.into_iter().collect());
+            root.set_plan(plan);
+        }
+        Task::Mpp(mpp) => {
+            let child = mpp.plan.take().map(|boxed| *boxed);
+            plan.base_mut().set_children(child.into_iter().collect());
+            mpp.plan = Some(Box::new(plan));
+        }
+        Task::Cop(cop) => {
+            if cop.index_plan_finished {
+                let child = cop.table_plan.take().map(|boxed| *boxed);
+                plan.base_mut().set_children(child.into_iter().collect());
+                cop.table_plan = Some(Box::new(plan));
+            } else {
+                let child = cop.index_plan.take().map(|boxed| *boxed);
+                plan.base_mut().set_children(child.into_iter().collect());
+                cop.index_plan = Some(Box::new(plan));
+            }
+        }
+    }
+    task
+}
+
+/// Go `Attach2Task` per operator — the ROOT-TASK slice.
+///
+/// Every ported arm reproduces its Go body exactly for a root child task.
+/// The cop and MPP branches each need machinery that is not here —
+/// `expression.CanExprsPushDown` for the push-down decisions,
+/// `convertToRootTaskImpl` to finish a cop task into readers, the pushed
+/// TopN/Limit constructions — and REFUSE naming those symbols rather than
+/// composing something Go would not compose. A wrong push-down is a silent
+/// wrong plan; a refusal is a loud gap.
+pub fn attach2_task(plan: PhysicalPlan, mut tasks: Vec<Task>) -> Result<Task, PlanError> {
+    let first = tasks
+        .drain(..1)
+        .next()
+        .ok_or_else(|| PlanError::internal("attach2_task with no child task"))?;
+    match &plan {
+        // `attach2Task4PhysicalSort` (`task.go:843`): copy, attach. No
+        // conversion — findBestTask only asks a Sort under a root property.
+        PhysicalPlan::Sort(_) => Ok(attach_plan_to_task(plan, first.copy())),
+        // `attach2Task4PhysicalSelection` (`task.go:1598`): the MPP branch
+        // needs `CanExprsPushDown`; the tail is convert-then-attach.
+        PhysicalPlan::Selection(_) => match &first {
+            Task::Root(_) => {
+                let converted = first.convert_to_root_task()?;
+                Ok(attach_plan_to_task(plan, converted))
+            }
+            Task::Cop(_) | Task::Mpp(_) => Err(PlanError::internal(
+                "attach2Task4PhysicalSelection: the cop/MPP branches need \
+                 expression.CanExprsPushDown and convertToRootTaskImpl",
+            )),
+        },
+        // `attach2Task4PhysicalProjection` (`task.go:1506`): copy; the cop
+        // branch needs `CanExprsPushDown`/`canPushToIndexPlan`, the MPP
+        // branch `CanExprsPushDown`; the tail is convert-then-attach.
+        PhysicalPlan::Projection(_) => match &first {
+            Task::Root(_) => {
+                let converted = first.copy().convert_to_root_task()?;
+                Ok(attach_plan_to_task(plan, converted))
+            }
+            Task::Cop(_) | Task::Mpp(_) => Err(PlanError::internal(
+                "attach2Task4PhysicalProjection: the cop/MPP branches need \
+                 expression.CanExprsPushDown and canPushToIndexPlan",
+            )),
+        },
+        // `attach2Task4PhysicalLimit` (`task.go:625`): copy; the cop branch
+        // builds a pushed-down limit; the tail is convert-then-attach.
+        PhysicalPlan::Limit(_) => match &first {
+            Task::Root(_) => {
+                let converted = first.copy().convert_to_root_task()?;
+                Ok(attach_plan_to_task(plan, converted))
+            }
+            Task::Cop(_) | Task::Mpp(_) => Err(PlanError::internal(
+                "attach2Task4PhysicalLimit: the cop/MPP branches build a \
+                 pushed-down PhysicalLimit over DeriveLimitStats",
+            )),
+        },
+        // Operators whose Go bodies are not yet ported refuse by name.
+        PhysicalPlan::HashJoin(_) => Err(PlanError::internal(
+            "attach2Task4PhysicalHashJoin (task.go) is not ported",
+        )),
+        PhysicalPlan::TableScan(_) => Err(PlanError::internal(
+            "a PhysicalTableScan is born inside a cop task by findBestTask, \
+             never attached (convertToTableScan, find_best_task.go)",
+        )),
+        PhysicalPlan::TableDual(_) => Err(PlanError::internal(
+            "a PhysicalTableDual is born inside its own root task by \
+             findBestTask (logical_table_dual.go), never attached",
+        )),
+        PhysicalPlan::Todo(op) => Err(PlanError::internal(format!(
+            "attach2_task: {} is not ported",
+            op.go_operator
+        ))),
+    }
+}
+
+#[cfg(test)]
+mod attach_tests {
+    use super::*;
+    use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSelection, PhysicalSort};
+    use crate::plan_base::PlanIdAllocator;
+    use crate::stats_info::StatsInfo;
+
+    // All WRITTEN: Go's Attach2Task coverage is planner-integration bound.
+
+    fn op_with_stats(tp: &str, rows: f64) -> BasePhysicalPlan {
+        let allocator = PlanIdAllocator::new();
+        let mut base = BasePhysicalPlan::default();
+        base.base = crate::plan_base::BasePlan::new(&allocator, tp, 0);
+        base.base.set_stats(Some(StatsInfo::new(rows, [])));
+        base
+    }
+
+    fn root_task_over(rows: f64) -> Task {
+        let mut root = RootTask::default();
+        root.set_plan(PhysicalPlan::TableDual(
+            crate::physical::PhysicalTableDual {
+                base: op_with_stats("Dual", rows),
+                row_count: 0,
+            },
+        ));
+        Task::Root(root)
+    }
+
+    #[test]
+    fn a_selection_wraps_the_root_plan_and_keeps_its_own_stats() {
+        // `attachPlan2Task`'s root arm: the old plan becomes the child, the
+        // new plan becomes the task's, and Count reads the NEW top's stats.
+        let selection = PhysicalPlan::Selection(PhysicalSelection {
+            base: op_with_stats("Selection", 8.0),
+            ..PhysicalSelection::default()
+        });
+        let task = attach2_task(selection, vec![root_task_over(10.0)]).expect("root attaches");
+        assert!((task.count() - 8.0).abs() < f64::EPSILON);
+        let plan = task.plan().expect("a plan");
+        assert!(matches!(plan, PhysicalPlan::Selection(_)));
+        assert_eq!(plan.children().len(), 1, "the old plan became the child");
+    }
+
+    #[test]
+    fn a_sort_attaches_without_conversion() {
+        // `attach2Task4PhysicalSort` is copy-then-attach, nothing else.
+        let sort = PhysicalPlan::Sort(PhysicalSort {
+            base: op_with_stats("Sort", 10.0),
+            ..PhysicalSort::default()
+        });
+        let task = attach2_task(sort, vec![root_task_over(10.0)]).expect("attaches");
+        assert!(matches!(task.plan(), Some(PhysicalPlan::Sort(_))));
+    }
+
+    #[test]
+    fn attaching_onto_a_cop_task_refuses_by_name() {
+        let selection = PhysicalPlan::Selection(PhysicalSelection {
+            base: op_with_stats("Selection", 8.0),
+            ..PhysicalSelection::default()
+        });
+        let error = attach2_task(selection, vec![Task::Cop(CopTask::default())])
+            .expect_err("the cop branch is unported");
+        assert!(format!("{error:?}").contains("CanExprsPushDown"));
+    }
+
+    #[test]
+    fn the_attach_copies_so_the_child_task_survives() {
+        // Go's bodies `Copy()` the incoming task; the caller's task must not
+        // observe the wrap.
+        let original = root_task_over(10.0);
+        let selection = PhysicalPlan::Selection(PhysicalSelection {
+            base: op_with_stats("Selection", 8.0),
+            ..PhysicalSelection::default()
+        });
+        let _ = attach2_task(selection, vec![original.copy()]).expect("attaches");
+        assert!(
+            matches!(original.plan(), Some(PhysicalPlan::TableDual(_))),
+            "the original task keeps its own plan"
+        );
     }
 }

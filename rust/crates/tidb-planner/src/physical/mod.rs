@@ -442,9 +442,9 @@ impl PhysicalPlan {
         ))
     }
 
-    /// Go `Attach2Task(...Task) Task` (`<2nd>`). See the module header: the
-    /// task layer is not transcreated.
-    pub const fn attach2_task(&self) {}
+    // Go `Attach2Task(...Task) Task` (`<2nd>`) lives at
+    // [`crate::task::attach2_task`], beside the task representation it
+    // composes onto.
 
     /// Go `ToPB(ctx, storeType)` (`<3rd>`). Go's base body is exactly this
     /// error, so the refusal is ported, not invented.
