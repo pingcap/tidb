@@ -89,33 +89,16 @@ func generateProjectedSchema(
 }
 
 func resolveProjectedSchemaColumns(originSQL string, projection columnProjection) ([]string, error) {
-	createTable, retainedColumns, err := retainedSchemaColumnSet(originSQL, projection.selectedColumns)
-	if err != nil {
-		return nil, err
-	}
-	columns := make([]string, 0, len(retainedColumns))
-	for _, column := range createTable.Cols {
-		if _, ok := retainedColumns[column.Name.Name.L]; ok {
-			columns = append(columns, column.Name.Name.O)
-		}
-	}
-	return columns, nil
-}
-
-func retainedSchemaColumnSet(
-	originSQL string,
-	selectedColumns []string,
-) (*ast.CreateTableStmt, map[string]struct{}, error) {
 	stmt, err := parser.New().ParseOneStmt(originSQL, "", "")
 	if err != nil {
-		return nil, nil, errors.Annotate(err, "failed to parse CREATE TABLE for column projection")
+		return nil, errors.Annotate(err, "failed to parse CREATE TABLE for column projection")
 	}
 	createTable, ok := stmt.(*ast.CreateTableStmt)
 	if !ok {
-		return nil, nil, errors.Errorf("expected CREATE TABLE for column projection, got %T", stmt)
+		return nil, errors.Errorf("expected CREATE TABLE for column projection, got %T", stmt)
 	}
 
-	retainedColumns := makeColumnSet(selectedColumns)
+	retainedColumns := makeColumnSet(projection.selectedColumns)
 	definedColumns := make(map[string]struct{}, len(createTable.Cols))
 	generatedColumns := make(map[string]*ast.ColumnDef)
 	for _, column := range createTable.Cols {
@@ -126,14 +109,21 @@ func retainedSchemaColumnSet(
 	}
 	for selectedColumn := range retainedColumns {
 		if _, ok := definedColumns[selectedColumn]; !ok {
-			return nil, nil, errors.Errorf(
+			return nil, errors.Errorf(
 				"selected column `%s` is missing from CREATE TABLE; concurrent DDL during export is not supported",
 				selectedColumn,
 			)
 		}
 	}
 	retainGeneratedColumns(retainedColumns, generatedColumns)
-	return createTable, retainedColumns, nil
+
+	columns := make([]string, 0, len(retainedColumns))
+	for _, column := range createTable.Cols {
+		if _, ok := retainedColumns[column.Name.Name.L]; ok {
+			columns = append(columns, column.Name.Name.O)
+		}
+	}
+	return columns, nil
 }
 
 func makeColumnSet(columns []string) map[string]struct{} {
