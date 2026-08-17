@@ -297,12 +297,13 @@ func (b *builtinFtsMysqlMatchAgainstSig) evalReal(ctx EvalContext, row chunk.Row
 	if err != nil || isNull {
 		return 0, isNull, err
 	}
-	if b.localEvalInfo.MatchNothing {
-		// The compiled query has already proved it matches no document (empty
-		// query, all required terms removed by the analyzer, or a purely
-		// negative filter). Skip tokenizing every row to prove it again.
-		return 0, false, nil
-	}
+	// Note there is deliberately no short-circuit on
+	// localEvalInfo.MatchNothing here. That flag is derived from the search
+	// string seen at plan time, and a plan can be re-executed with a different
+	// one; MatchesNothing below is read from the query compiled for the search
+	// string actually in hand, so it cannot go stale. The flag saves nothing at
+	// runtime either, since the compiled query is cached per search string and
+	// the check below short-circuits before any document is analyzed.
 	plan, err := b.getOrBuildLocalNoScorePlan(search)
 	if err != nil {
 		return 0, false, err
