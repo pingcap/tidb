@@ -102,6 +102,7 @@
 //! `testsetup` for the Go test binary, neither of which has an analogue here.
 
 pub mod arena;
+pub mod client;
 pub mod cophandler;
 pub mod iterator;
 pub mod kv_handler;

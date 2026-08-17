@@ -1,0 +1,247 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! Go `pkg/store/mockstore/unistore/rpc.go`'s `RPCClient`, restated against
+//! this workspace's client seam: the in-process implementor of
+//! [`tidb_txnkv::DirectUnaryClient`], answering the SAME encoded
+//! `coprocessor.Request` bodies the gRPC client carries to a real TiKV —
+//! which is exactly Go's trick, `RPCClient` implementing client-go's
+//! `tikv.Client` over the embedded store.
+//!
+//! This is the piece that lets the node's read path hold a store with no
+//! network under it: `DirectUnaryQueryTransport<C, R>` is generic over the
+//! client, and this type is a `C`.
+//!
+//! # Narrowings, by name
+//!
+//! * `rpc.go`'s non-coprocessor arms (`CmdGet`, `CmdPrewrite`, ...) dispatch
+//!   TYPED requests; this seam carries only the coprocessor body
+//!   (`DirectUnaryRequest.encoded_request` is an exact `coprocessor.Request`),
+//!   so the KV commands ride [`crate::kv_handler::KvHandler`] directly
+//!   rather than through this client.
+//! * Channel generations and liveness are gRPC concerns an in-process call
+//!   does not have: `close_address*` succeed as no-ops and `liveness` always
+//!   answers reachable, Go's own behavior for its in-process client.
+//! * The cancellation carrier is honored by CONSTRUCTION — an in-process
+//!   call completes synchronously before any cancellation could land, the
+//!   same window Go's in-process dispatch has.
+
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use prost::Message;
+use tidb_proto::coprocessor;
+use tidb_txnkv::{
+    DirectUnaryClient, DirectUnaryClientError, DirectUnaryRequest, DirectUnaryResponse,
+    UnaryCallContext,
+};
+
+use crate::kv_handler::KvHandler;
+use crate::mvcc_store::MvccStore;
+
+/// The address every in-process response reports; Go's client reports its
+/// store path the same way.
+pub const IN_PROCESS_ADDRESS: &str = "unistore-in-process";
+
+/// Go `RPCClient` over the embedded store.
+#[derive(Clone, Debug)]
+pub struct InProcessClient {
+    handler: Arc<Mutex<KvHandler>>,
+}
+
+impl InProcessClient {
+    /// A client over a fresh store.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::over(KvHandler::default())
+    }
+
+    /// A client over an existing handler — the store a test seeded.
+    #[must_use]
+    pub fn over(handler: KvHandler) -> Self {
+        Self {
+            handler: Arc::new(Mutex::new(handler)),
+        }
+    }
+
+    /// The store beneath, for seeding and inspection.
+    pub fn with_store<T>(&self, body: impl FnOnce(&mut MvccStore) -> T) -> T {
+        let mut handler = self.handler.lock().expect("the store lock");
+        body(&mut handler.store)
+    }
+
+    fn dispatch(
+        &mut self,
+        request: &DirectUnaryRequest,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        let decoded =
+            coprocessor::Request::decode(request.encoded_request.as_slice()).map_err(|err| {
+                DirectUnaryClientError::InvalidRequest(format!(
+                    "invalid coprocessor request body: {err}"
+                ))
+            })?;
+        let mut handler = self.handler.lock().expect("the store lock");
+        let response = crate::cophandler::handle_cop_request(&mut handler.store, &decoded);
+        let mut encoded = Vec::new();
+        response.encode(&mut encoded).map_err(|err| {
+            DirectUnaryClientError::InvalidRequest(format!(
+                "coprocessor response failed to encode: {err}"
+            ))
+        })?;
+        Ok(DirectUnaryResponse::new(encoded, IN_PROCESS_ADDRESS, 1))
+    }
+}
+
+impl Default for InProcessClient {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DirectUnaryClient for InProcessClient {
+    fn send_request(
+        &mut self,
+        _address: &str,
+        request: &DirectUnaryRequest,
+        _timeout: Duration,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        self.dispatch(request)
+    }
+
+    fn send_request_with_context(
+        &mut self,
+        _address: &str,
+        request: &DirectUnaryRequest,
+        _call: &UnaryCallContext,
+    ) -> Result<DirectUnaryResponse, DirectUnaryClientError> {
+        // The carrier is honored by construction: the call completes
+        // synchronously (module header).
+        self.dispatch(request)
+    }
+
+    fn close_address(&mut self, _address: &str) -> Result<(), DirectUnaryClientError> {
+        Ok(())
+    }
+
+    fn close_address_version(
+        &mut self,
+        _address: &str,
+        _version: u64,
+    ) -> Result<(), DirectUnaryClientError> {
+        Ok(())
+    }
+
+    fn liveness(
+        &self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<tidb_txnkv::region::StoreLiveness, DirectUnaryClientError> {
+        Ok(tidb_txnkv::region::StoreLiveness::Reachable)
+    }
+
+    fn close(&mut self) -> Result<(), DirectUnaryClientError> {
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tidb_proto::tipb;
+
+    // WRITTEN: rpc.go's coverage is the store integration suites.
+
+    #[test]
+    fn a_cop_request_travels_the_client_seam_end_to_end() {
+        // The final joint: the SAME encoded body the gRPC client would carry
+        // to TiKV goes through the trait and comes back as an encoded
+        // coprocessor.Response with rows in it.
+        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_datatype::Datum;
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+
+        let mut client = InProcessClient::new();
+        client.with_store(|store| {
+            let key = encode_row_key_with_handle(5, &RecordHandle::Int(1));
+            let value = tidb_codec::encode_value(&[Datum::Int(2), Datum::Int(7)]).expect("row");
+            store
+                .prewrite(&crate::mvcc_store::PrewriteReq {
+                    mutations: vec![KvrpcMutation {
+                        op: KvrpcOp::Put as i32,
+                        key: key.clone(),
+                        value,
+                        ..KvrpcMutation::default()
+                    }],
+                    primary_lock: key.clone(),
+                    start_version: 10,
+                    ..crate::mvcc_store::PrewriteReq::default()
+                })
+                .expect("prewrites");
+            store.commit(&[key], 10, 11).expect("commits");
+        });
+
+        let dag = tipb::DagRequest {
+            executors: vec![tipb::Executor {
+                tp: Some(tipb::ExecType::TypeTableScan as i32),
+                tbl_scan: Some(tipb::TableScan {
+                    table_id: Some(5),
+                    columns: vec![tipb::ColumnInfo {
+                        column_id: Some(2),
+                        tp: Some(8),
+                        ..tipb::ColumnInfo::default()
+                    }],
+                    ..tipb::TableScan::default()
+                }),
+                ..tipb::Executor::default()
+            }],
+            ..tipb::DagRequest::default()
+        };
+        let mut dag_data = Vec::new();
+        dag.encode(&mut dag_data).expect("encodes");
+        let (start, end) = tidb_codec::table_key::get_table_handle_key_range(5);
+        let cop = coprocessor::Request {
+            tp: crate::cophandler::REQ_TYPE_DAG,
+            data: dag_data,
+            ranges: vec![coprocessor::KeyRange { start, end }],
+            start_ts: 20,
+            ..coprocessor::Request::default()
+        };
+        let mut encoded_request = Vec::new();
+        cop.encode(&mut encoded_request).expect("encodes");
+
+        let request = DirectUnaryRequest {
+            endpoint: tidb_txnkv::EndpointType::TiKv,
+            replica_read_type: tidb_txnkv::ClientReplicaReadType::Leader,
+            replica_read: false,
+            stale_read: false,
+            input_request_source: String::new(),
+            predicted_read_bytes: 0,
+            read_replica_scope: String::new(),
+            txn_scope: String::new(),
+            context: tidb_proto::KvrpcContext::default(),
+            encoded_request,
+        };
+        let response = client
+            .send_request(IN_PROCESS_ADDRESS, &request, Duration::from_secs(1))
+            .expect("the in-process store answers");
+        let decoded = coprocessor::Response::decode(response.encoded_response.as_slice())
+            .expect("a coprocessor response");
+        assert!(decoded.other_error.is_empty(), "{}", decoded.other_error);
+        let select =
+            tipb::SelectResponse::decode(decoded.data.as_slice()).expect("a select response");
+        let rows = select.chunks[0].rows_data.as_deref().expect("rows");
+        let datums = tidb_codec::decode(rows, 1).expect("one datum");
+        assert_eq!(datums, vec![Datum::Int(7)]);
+    }
+}

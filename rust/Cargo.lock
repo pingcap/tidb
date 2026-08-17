@@ -2801,6 +2801,7 @@ dependencies = [
  "tidb-datatype",
  "tidb-proto",
  "tidb-tablecodec",
+ "tidb-txnkv",
 ]
 
 [[package]]

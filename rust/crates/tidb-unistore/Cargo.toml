@@ -18,3 +18,4 @@ tidb-proto = { path = "../tidb-proto" }
 prost.workspace = true
 tidb-tablecodec = { path = "../tidb-tablecodec" }
 tidb-datatype = { path = "../tidb-datatype" }
+tidb-txnkv = { path = "../tidb-txnkv" }
