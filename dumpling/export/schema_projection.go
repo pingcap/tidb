@@ -32,7 +32,7 @@ func generateProjectedSchema(
 		if _, ok := retainedColumns[column.Name.Name.L]; !ok {
 			continue
 		}
-		options, err := projectColumnOptions(column, retainedColumns, database, createTable.Table.Name.L, schemaColumns)
+		options, err := filterColumnOptions(column, retainedColumns, database, createTable.Table.Name.L, schemaColumns)
 		if err != nil {
 			return "", err
 		}
@@ -46,7 +46,7 @@ func generateProjectedSchema(
 		if !constraintColumnsRetained(constraint, retainedColumns) {
 			continue
 		}
-		if err := validateReferenceColumns(constraint.Refer, database, createTable.Table.Name.L, retainedColumns, schemaColumns); err != nil {
+		if err := validateForeignKeyReference(constraint.Refer, database, createTable.Table.Name.L, retainedColumns, schemaColumns); err != nil {
 			return "", err
 		}
 		constraints = append(constraints, constraint)
@@ -105,7 +105,7 @@ func collectProjectedSchemaColumns(originSQL string, selectedColumns []string) (
 	return retainedColumns, nil
 }
 
-func projectColumnOptions(
+func filterColumnOptions(
 	column *ast.ColumnDef,
 	retained map[string]struct{},
 	database string,
@@ -120,7 +120,7 @@ func projectColumnOptions(
 				continue
 			}
 		case ast.ColumnOptionReference:
-			if err := validateReferenceColumns(option.Refer, database, table, retained, schemaColumns); err != nil {
+			if err := validateForeignKeyReference(option.Refer, database, table, retained, schemaColumns); err != nil {
 				return nil, err
 			}
 		case ast.ColumnOptionDefaultValue, ast.ColumnOptionOnUpdate:
@@ -183,7 +183,7 @@ func validateAutomaticIDColumns(columns []*ast.ColumnDef, constraints []*ast.Con
 	return nil
 }
 
-func validateReferenceColumns(
+func validateForeignKeyReference(
 	reference *ast.ReferenceDef,
 	database string,
 	table string,
