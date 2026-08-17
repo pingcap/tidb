@@ -521,7 +521,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				return err
 			}
 			conf.columnProjection[tableName{db: dbName, table: table.Name}] = projection
-			hasProjection = hasProjection || projection.projected
+			hasProjection = hasProjection || projection.isProjected()
 		}
 	}
 	if conf.NoSchemas || !hasProjection {
@@ -548,7 +548,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				return err
 			}
 			projection.schemaSQL = createTableSQL
-			schemaColumns[key], err = collectProjectedSchemaColumns(createTableSQL, projection.selectedColumns)
+			schemaColumns[key], err = collectProjectedSchemaColumns(createTableSQL, columnNames(projection.selectedTypes))
 			if err != nil {
 				return errors.Annotatef(
 					err,
@@ -571,7 +571,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 			projection.schemaSQL, err = generateProjectedSchema(
 				projection.schemaSQL,
 				dbName,
-				projection.projected,
+				projection.isProjected(),
 				schemaColumns[key],
 				schemaColumns,
 			)
@@ -616,9 +616,7 @@ func buildColumnProjection(
 	sourceFields := columnNamesToSelectFields(sourceColumns)
 	selectedFields := columnNamesToSelectFields(selectedColumns)
 	projection := columnProjection{
-		selectedColumns: selectedColumns,
-		selectField:     strings.Join(selectedFields, ","),
-		projected:       len(sourceColumns) != len(selectedColumns),
+		selectField: strings.Join(selectedFields, ","),
 	}
 	if !hasGeneratedColumn && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
 		projection.selectField = "*"

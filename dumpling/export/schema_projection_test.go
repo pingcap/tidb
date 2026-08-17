@@ -58,12 +58,7 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			"KEY `idx_ab` (`a`, `b`)," +
 			"CONSTRAINT `chk_b` CHECK (`b` > 0)" +
 			") ENGINE=InnoDB"
-		projection := columnProjection{
-			selectedColumns: []string{"a"},
-			projected:       true,
-		}
-
-		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
+		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", []string{"a"}, true, nil)
 		require.NoError(t, err)
 
 		stmt := parseCreateTableForTest(t, projectedSQL)
@@ -73,23 +68,13 @@ func TestGenerateProjectedSchema(t *testing.T) {
 
 	t.Run("partition dependency", func(t *testing.T) {
 		createSQL := "CREATE TABLE `t` (`a` INT, `b` INT) PARTITION BY HASH (`a`) PARTITIONS 4"
-		projection := columnProjection{
-			selectedColumns: []string{"b"},
-			projected:       true,
-		}
-
-		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
+		_, err := generateProjectedSchemaForTest(t, createSQL, "test", []string{"b"}, true, nil)
 		require.ErrorContains(t, err, "partition definition references a removed column")
 	})
 
 	t.Run("partition remains unchanged", func(t *testing.T) {
 		createSQL := "CREATE TABLE `t` (`a` INT, `b` INT) PARTITION BY HASH (`a`) PARTITIONS 4"
-		projection := columnProjection{
-			selectedColumns: []string{"a"},
-			projected:       true,
-		}
-
-		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
+		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", []string{"a"}, true, nil)
 		require.NoError(t, err)
 		require.Contains(t, projectedSQL, "PARTITION BY HASH (`a`) PARTITIONS 4")
 	})
@@ -97,34 +82,19 @@ func TestGenerateProjectedSchema(t *testing.T) {
 	t.Run("TTL dependency", func(t *testing.T) {
 		createSQL := "CREATE TABLE `t` (`created_at` DATETIME, `a` INT) " +
 			"TTL = `created_at` + INTERVAL 1 DAY"
-		projection := columnProjection{
-			selectedColumns: []string{"a"},
-			projected:       true,
-		}
-
-		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
+		_, err := generateProjectedSchemaForTest(t, createSQL, "test", []string{"a"}, true, nil)
 		require.ErrorContains(t, err, "TTL definition references removed column `created_at`")
 	})
 
 	t.Run("retained default expression dependency", func(t *testing.T) {
 		createSQL := "CREATE TABLE `t` (`a` INT, `b` INT DEFAULT (`a`))"
-		projection := columnProjection{
-			selectedColumns: []string{"b"},
-			projected:       true,
-		}
-
-		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
+		_, err := generateProjectedSchemaForTest(t, createSQL, "test", []string{"b"}, true, nil)
 		require.ErrorContains(t, err, "column `b` expression references a removed column")
 	})
 
 	t.Run("automatic ID loses composite index", func(t *testing.T) {
 		createSQL := "CREATE TABLE `t` (`a` BIGINT AUTO_INCREMENT, `b` INT, KEY `idx_ab` (`a`, `b`))"
-		projection := columnProjection{
-			selectedColumns: []string{"a"},
-			projected:       true,
-		}
-
-		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
+		_, err := generateProjectedSchemaForTest(t, createSQL, "test", []string{"a"}, true, nil)
 		require.ErrorContains(t, err, "column `a` loses the index required by its automatic ID option")
 	})
 
@@ -134,13 +104,14 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			"`parent_secret` INT," +
 			"CONSTRAINT `fk_secret` FOREIGN KEY (`parent_secret`) REFERENCES `parent` (`secret`)" +
 			")"
-		projection := columnProjection{selectedColumns: []string{"id", "parent_secret"}}
 		schemaColumns := map[tableName]map[string]struct{}{
 			{db: "test", table: "child"}:  {"id": {}, "parent_secret": {}},
 			{db: "test", table: "parent"}: {"id": {}},
 		}
 
-		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, schemaColumns)
+		_, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id", "parent_secret"}, false, schemaColumns,
+		)
 		require.ErrorContains(t, err, "foreign key references removed column `test`.`parent`.`secret`")
 	})
 
@@ -150,22 +121,21 @@ func TestGenerateProjectedSchema(t *testing.T) {
 			"`parent_generated` INT," +
 			"CONSTRAINT `fk_generated` FOREIGN KEY (`parent_generated`) REFERENCES `parent` (`generated`)" +
 			")"
-		projection := columnProjection{selectedColumns: []string{"id", "parent_generated"}}
 		schemaColumns := map[tableName]map[string]struct{}{
 			{db: "test", table: "child"}:  {"id": {}, "parent_generated": {}},
 			{db: "test", table: "parent"}: {"id": {}, "generated": {}},
 		}
 
-		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, schemaColumns)
+		projectedSQL, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id", "parent_generated"}, false, schemaColumns,
+		)
 		require.NoError(t, err)
 		require.Len(t, parseCreateTableForTest(t, projectedSQL).Constraints, 1)
 	})
 
 	t.Run("no writable column removed", func(t *testing.T) {
 		createSQL := "CREATE TABLE `t` (`a` INT, `b` INT GENERATED ALWAYS AS (`a` + 1) VIRTUAL)"
-		projection := columnProjection{selectedColumns: []string{"a"}}
-
-		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
+		projectedSQL, err := generateProjectedSchemaForTest(t, createSQL, "test", []string{"a"}, false, nil)
 		require.NoError(t, err)
 		require.Equal(t, createSQL, projectedSQL)
 	})
@@ -175,15 +145,16 @@ func generateProjectedSchemaForTest(
 	t *testing.T,
 	originSQL string,
 	database string,
-	projection columnProjection,
+	selectedColumns []string,
+	projected bool,
 	schemaColumns map[tableName]map[string]struct{},
 ) (string, error) {
 	t.Helper()
-	retainedColumns, err := collectProjectedSchemaColumns(originSQL, projection.selectedColumns)
+	retainedColumns, err := collectProjectedSchemaColumns(originSQL, selectedColumns)
 	if err != nil {
 		return "", err
 	}
-	return generateProjectedSchema(originSQL, database, projection.projected, retainedColumns, schemaColumns)
+	return generateProjectedSchema(originSQL, database, projected, retainedColumns, schemaColumns)
 }
 
 func parseCreateTableForTest(t *testing.T, sql string) *ast.CreateTableStmt {
