@@ -508,6 +508,212 @@ impl MvccStore {
     }
 }
 
+/// Go `InternalKeyPrefix` (`region.go:44`): scans never cross into the
+/// store's internal keyspace.
+pub const INTERNAL_KEY_PREFIX: &[u8] = &[0xff];
+
+/// One `kvrpcpb.KvPair` reduced to what this slice produces: a key with a
+/// value, or a key with the blocking lock as its error.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KvPair {
+    /// The key.
+    pub key: Vec<u8>,
+    /// The committed value; empty when `error` carries the answer.
+    pub value: Vec<u8>,
+    /// Go `Error *kvrpcpb.KeyError`, reduced to the locked case this slice's
+    /// isolation narrowing can produce.
+    pub error: Option<Box<KvrpcLockInfo>>,
+}
+
+/// The `ScanRequest` fields Go's `Scan` reads.
+#[derive(Clone, Debug, Default)]
+pub struct ScanReq {
+    /// `StartKey`.
+    pub start_key: Vec<u8>,
+    /// `EndKey`; empty falls to [`INTERNAL_KEY_PREFIX`] (the region-bound
+    /// fallback is a narrowing: no region context in this slice).
+    pub end_key: Vec<u8>,
+    /// `Limit`.
+    pub limit: u32,
+    /// `Version`.
+    pub version: u64,
+    /// `SampleStep`.
+    pub sample_step: u32,
+    /// `Reverse`.
+    pub reverse: bool,
+}
+
+impl MvccStore {
+    /// Go `MVCCStore.BatchGet` (`mvcc.go`), snapshot-isolation arm with the
+    /// empty resolved/committed narrowing: a locked key becomes an ERROR
+    /// PAIR — the batch never fails as a whole — and the rest read at the
+    /// version. Pairs with empty values are dropped, Go's
+    /// `len(value) != 0` guard.
+    #[must_use]
+    pub fn batch_get(&self, keys: &[Vec<u8>], version: u64) -> Vec<KvPair> {
+        let mut pairs = Vec::with_capacity(keys.len());
+        for key in keys {
+            match self.get(key, version) {
+                Err(KvError::Locked(info)) => pairs.push(KvPair {
+                    key: key.clone(),
+                    value: Vec::new(),
+                    error: Some(info),
+                }),
+                Err(_) | Ok(None) => {}
+                Ok(Some(value)) => pairs.push(KvPair {
+                    key: key.clone(),
+                    value,
+                    error: None,
+                }),
+            }
+        }
+        pairs
+    }
+
+    /// Go `MVCCStore.Scan` (`mvcc.go:1985`): lock errors collected over the
+    /// range first, the committed data scanned second, then Go's merge —
+    /// stable sort by key (reversed under `Reverse`), first pair per key
+    /// wins (a lock pair beats the data pair, because it was appended
+    /// first), empty values dropped, capped at the limit.
+    #[must_use]
+    pub fn scan(&self, req: &ScanReq) -> Vec<KvPair> {
+        let (start_key, end_key) = if req.reverse {
+            // boundary: `reqCtx.regCtx.RawStart()` — no region context; an
+            // empty reverse end stays empty, the keyspace floor.
+            (req.end_key.clone(), req.start_key.clone())
+        } else {
+            let end = if req.end_key.is_empty() {
+                INTERNAL_KEY_PREFIX.to_vec()
+            } else {
+                req.end_key.clone()
+            };
+            (req.start_key.clone(), end)
+        };
+        let mut limit = req.limit;
+        let mut lock_pairs = Vec::new();
+        if req.sample_step == 0 {
+            let (lo, hi) = if start_key <= end_key {
+                (&start_key, &end_key)
+            } else {
+                (&end_key, &start_key)
+            };
+            lock_pairs = self.collect_range_lock(req.version, lo, hi);
+        } else {
+            limit = req.sample_step * limit;
+        }
+        // Go `kvScanProcessor` over `dbreader.Scan`: newest version at or
+        // below the read ts per key, sampled every `sample_step`-th key.
+        let mut scanned = Vec::new();
+        let mut scan_cnt: u32 = 0;
+        let mut visited: u32 = 0;
+        let mut visit = |key: &[u8], value: &[u8]| -> bool {
+            // Go's `dbreader.Scan` counts every PROCESSED entry against the
+            // limit — sampled-out and deleted entries included. That is what
+            // makes `SampleStep * Limit` visit exactly that many keys and
+            // emit `Limit` of them.
+            if visited >= limit {
+                return false;
+            }
+            visited += 1;
+            if req.sample_step > 0 {
+                scan_cnt += 1;
+                if (scan_cnt - 1) % req.sample_step != 0 {
+                    return true;
+                }
+            }
+            scanned.push(KvPair {
+                key: key.to_vec(),
+                value: value.to_vec(),
+                error: None,
+            });
+            true
+        };
+        if req.reverse {
+            let mut keys: Vec<Vec<u8>> = self.committed_keys_in(&start_key, &end_key);
+            keys.reverse();
+            for key in keys {
+                if let Some((value, _)) = self.engine.get_at(&key, req.version) {
+                    if !visit(&key, value) {
+                        break;
+                    }
+                }
+            }
+        } else {
+            for key in self.committed_keys_in(&start_key, &end_key) {
+                if let Some((value, _)) = self.engine.get_at(&key, req.version) {
+                    if !visit(&key, value) {
+                        break;
+                    }
+                }
+            }
+        }
+        let mut pairs = lock_pairs;
+        pairs.extend(scanned);
+        pairs.sort_by(|a, b| {
+            if req.reverse {
+                b.key.cmp(&a.key)
+            } else {
+                a.key.cmp(&b.key)
+            }
+        });
+        let mut valid = Vec::new();
+        let mut prev: Option<&[u8]> = None;
+        for pair in &pairs {
+            if prev == Some(pair.key.as_slice()) {
+                continue;
+            }
+            prev = Some(pair.key.as_slice());
+            if pair.error.is_some() || !pair.value.is_empty() {
+                valid.push(pair.clone());
+                if valid.len() >= limit as usize {
+                    break;
+                }
+            }
+        }
+        valid
+    }
+
+    /// Go `collectRangeLock`, SI arm with empty resolved/committed lists:
+    /// each blocking lock in `[start, end)` becomes an error pair.
+    fn collect_range_lock(&self, start_ts: u64, start_key: &[u8], end_key: &[u8]) -> Vec<KvPair> {
+        let mut pairs = Vec::new();
+        let mut it = self.lock_store.new_iterator();
+        it.seek(start_key);
+        while it.valid() {
+            if it.key() >= end_key {
+                break;
+            }
+            let lock = decode_lock(it.value());
+            let invisible = lock.hdr.op == KvrpcOp::Lock as i32 as u8
+                || lock.hdr.op == KvrpcOp::PessimisticLock as i32 as u8;
+            if !invisible && lock.hdr.start_ts <= start_ts {
+                pairs.push(KvPair {
+                    key: it.key().to_vec(),
+                    value: Vec::new(),
+                    error: Some(Box::new(lock.to_lock_info(it.key().to_vec()))),
+                });
+            }
+            it.next();
+        }
+        pairs
+    }
+
+    /// The distinct user keys with any committed version in `[start, end)`,
+    /// ascending — the engine walk `dbreader`'s iterator performs.
+    fn committed_keys_in(&self, start_key: &[u8], end_key: &[u8]) -> Vec<Vec<u8>> {
+        let mut keys: Vec<Vec<u8>> = Vec::new();
+        for (key, _) in self.engine.entries.range((start_key.to_vec(), 0)..) {
+            if key.0.as_slice() >= end_key {
+                break;
+            }
+            if keys.last().map(Vec::as_slice) != Some(key.0.as_slice()) {
+                keys.push(key.0.clone());
+            }
+        }
+        keys
+    }
+}
+
 /// Go `extraTxnStatus`.
 #[derive(Clone, Copy, Debug, Default)]
 struct ExtraTxnStatus {
@@ -850,5 +1056,134 @@ mod tests {
             ..PrewriteReq::default()
         });
         assert!(matches!(refuse, Err(KvError::Unported(_))));
+    }
+
+    #[test]
+    fn test_scan_sample_step() {
+        // TRANSCREATED from Go `TestScanSampleStep` (`mvcc_test.go:1492`):
+        // 1000 committed keys t0000..t0999, scan [t0100, t0900) step 10 —
+        // 80 pairs at limit 100, each the i*10th key; 20 at limit 20.
+        let mut store = MvccStore::new();
+        let gen = |i: usize| format!("t{i:04}").into_bytes();
+        for i in 0..1000 {
+            let k = gen(i);
+            must_prewrite_optimistic(&mut store, &k, &k, &k, 1, 200);
+            store.commit(&[k], 1, 2).expect("commits");
+        }
+        let mut req = ScanReq {
+            start_key: gen(100),
+            end_key: gen(900),
+            limit: 100,
+            version: 2,
+            sample_step: 10,
+            ..ScanReq::default()
+        };
+        let pairs = store.scan(&req);
+        assert_eq!(pairs.len(), 80);
+        for (i, pair) in pairs.iter().enumerate() {
+            assert_eq!(pair.key, gen(100 + i * 10));
+        }
+        req.limit = 20;
+        let pairs = store.scan(&req);
+        assert_eq!(pairs.len(), 20);
+        for (i, pair) in pairs.iter().enumerate() {
+            assert_eq!(pair.key, gen(100 + i * 10));
+        }
+    }
+
+    #[test]
+    fn scan_reports_locks_as_error_pairs_and_data_beside_them() {
+        // `collectRangeLock` + the merge: a locked key yields an error pair
+        // IN PLACE, other keys their values, sorted together.
+        let mut store = MvccStore::new();
+        for (key, ts) in [(b"a".as_slice(), 10_u64), (b"c", 12)] {
+            must_prewrite_optimistic(&mut store, key, key, b"v", ts, 200);
+            store.commit(&[key.to_vec()], ts, ts + 1).expect("commits");
+        }
+        must_prewrite_optimistic(&mut store, b"b", b"b", b"w", 15, 200);
+        let pairs = store.scan(&ScanReq {
+            start_key: b"a".to_vec(),
+            end_key: b"z".to_vec(),
+            limit: 10,
+            version: 20,
+            ..ScanReq::default()
+        });
+        assert_eq!(pairs.len(), 3);
+        assert_eq!(pairs[0].key, b"a");
+        assert!(pairs[0].error.is_none());
+        assert_eq!(pairs[1].key, b"b");
+        assert!(pairs[1].error.is_some(), "the lock is the answer for b");
+        assert_eq!(pairs[2].key, b"c");
+        // Below the lock's start ts the same scan sees no lock at all.
+        let pairs = store.scan(&ScanReq {
+            start_key: b"a".to_vec(),
+            end_key: b"z".to_vec(),
+            limit: 10,
+            version: 14,
+            ..ScanReq::default()
+        });
+        assert_eq!(pairs.len(), 2, "only committed data below the lock");
+    }
+
+    #[test]
+    fn scan_drops_deleted_rows_and_respects_reverse() {
+        let mut store = MvccStore::new();
+        for key in [b"a".as_slice(), b"b", b"c"] {
+            must_prewrite_optimistic(&mut store, key, key, b"v", 10, 200);
+            store.commit(&[key.to_vec()], 10, 11).expect("commits");
+        }
+        // Delete b: a committed empty value, dropped by the valid-pairs walk.
+        store
+            .prewrite(&PrewriteReq {
+                mutations: vec![KvrpcMutation {
+                    op: KvrpcOp::Del as i32,
+                    key: b"b".to_vec(),
+                    ..KvrpcMutation::default()
+                }],
+                primary_lock: b"b".to_vec(),
+                start_version: 20,
+                ..PrewriteReq::default()
+            })
+            .expect("prewrites");
+        store.commit(&[b"b".to_vec()], 20, 21).expect("commits");
+        let forward = store.scan(&ScanReq {
+            start_key: b"a".to_vec(),
+            end_key: Vec::new(), // falls to INTERNAL_KEY_PREFIX
+            limit: 10,
+            version: 30,
+            ..ScanReq::default()
+        });
+        assert_eq!(
+            forward.iter().map(|p| p.key.clone()).collect::<Vec<_>>(),
+            vec![b"a".to_vec(), b"c".to_vec()]
+        );
+        let reverse = store.scan(&ScanReq {
+            start_key: b"z".to_vec(),
+            end_key: b"a".to_vec(),
+            limit: 10,
+            version: 30,
+            reverse: true,
+            ..ScanReq::default()
+        });
+        assert_eq!(
+            reverse.iter().map(|p| p.key.clone()).collect::<Vec<_>>(),
+            vec![b"c".to_vec(), b"a".to_vec()]
+        );
+    }
+
+    #[test]
+    fn batch_get_isolates_lock_errors_per_key() {
+        // `BatchGet` never fails as a whole: the locked key carries its
+        // error, its neighbours their values, absents nothing.
+        let mut store = MvccStore::new();
+        must_prewrite_optimistic(&mut store, b"a", b"a", b"v", 10, 200);
+        store.commit(&[b"a".to_vec()], 10, 11).expect("commits");
+        must_prewrite_optimistic(&mut store, b"b", b"b", b"w", 15, 200);
+        let pairs = store.batch_get(&[b"a".to_vec(), b"b".to_vec(), b"missing".to_vec()], 20);
+        assert_eq!(pairs.len(), 2);
+        assert_eq!(pairs[0].key, b"a");
+        assert_eq!(pairs[0].value, b"v");
+        assert_eq!(pairs[1].key, b"b");
+        assert!(pairs[1].error.is_some());
     }
 }
