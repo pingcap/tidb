@@ -43,11 +43,18 @@ func generateProjectedSchema(
 
 	constraints := make([]*ast.Constraint, 0, len(createTable.Constraints))
 	for _, constraint := range createTable.Constraints {
-		if !constraintColumnsRetained(constraint, retainedColumns) {
-			continue
-		}
-		if err := validateForeignKeyReference(constraint.Refer, database, createTable.Table.Name.L, retainedColumns, schemaColumns); err != nil {
+		keep, err := filterTableConstraint(
+			constraint,
+			retainedColumns,
+			database,
+			createTable.Table.Name.L,
+			schemaColumns,
+		)
+		if err != nil {
 			return "", err
+		}
+		if !keep {
+			continue
 		}
 		constraints = append(constraints, constraint)
 	}
@@ -137,21 +144,33 @@ func filterColumnOptions(
 	return options, nil
 }
 
-func constraintColumnsRetained(constraint *ast.Constraint, retained map[string]struct{}) bool {
+func filterTableConstraint(
+	constraint *ast.Constraint,
+	retained map[string]struct{},
+	database string,
+	table string,
+	schemaColumns map[tableName]map[string]struct{},
+) (bool, error) {
 	for _, key := range constraint.Keys {
 		if key.Column != nil {
 			if _, ok := retained[key.Column.Name.L]; !ok {
-				return false
+				return false, nil
 			}
 		}
 		if !allReferencedColumnsRetained(key.Expr, retained) {
-			return false
+			return false, nil
 		}
 	}
 	if !allReferencedColumnsRetained(constraint.Expr, retained) {
-		return false
+		return false, nil
 	}
-	return constraint.Option == nil || allReferencedColumnsRetained(constraint.Option.Condition, retained)
+	if constraint.Option != nil && !allReferencedColumnsRetained(constraint.Option.Condition, retained) {
+		return false, nil
+	}
+	if err := validateForeignKeyReference(constraint.Refer, database, table, retained, schemaColumns); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func validateAutomaticIDColumns(columns []*ast.ColumnDef, constraints []*ast.Constraint) error {
