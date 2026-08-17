@@ -79,7 +79,7 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		}
 
 		_, err := generateProjectedSchemaForTest(t, createSQL, "test", projection, nil)
-		require.ErrorContains(t, err, "partition definition references removed column `a`")
+		require.ErrorContains(t, err, "partition definition references a removed column")
 	})
 
 	t.Run("partition remains unchanged", func(t *testing.T) {
