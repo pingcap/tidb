@@ -16,7 +16,6 @@ package s3store
 
 import (
 	"context"
-	"errors"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -75,9 +74,7 @@ func TestAutoNewCredPrecedence(t *testing.T) {
 
 func TestTencentCVMRoleCredentialsProvider(t *testing.T) {
 	sdkCredential := &rotatingTencentCredential{Credential: common.NewTokenCredential("", "", "")}
-	sdkProvider := &fakeTencentProvider{credential: sdkCredential}
-	provider, err := createTencentCVMRoleCredFromProvider(sdkProvider)
-	require.NoError(t, err)
+	provider := &tencentCVMRoleCredentialsProvider{credential: sdkCredential}
 	cache := aws.NewCredentialsCache(provider)
 
 	first, err := cache.Retrieve(t.Context())
@@ -94,25 +91,18 @@ func TestTencentCVMRoleCredentialsProvider(t *testing.T) {
 	require.Equal(t, "temporary-id-2", second.AccessKeyID)
 	require.Equal(t, "temporary-key-2", second.SecretAccessKey)
 	require.Equal(t, "temporary-token-2", second.SessionToken)
-	require.Equal(t, int32(1), sdkProvider.calls.Load())
 	require.Equal(t, int32(2), sdkCredential.calls.Load())
 }
 
 func TestTencentCVMRoleCredentialsProviderErrors(t *testing.T) {
 	t.Run("incomplete credentials", func(t *testing.T) {
-		provider := newTencentCVMRoleCredentialsProvider(common.NewTokenCredential("id", "", "token"))
+		provider := &tencentCVMRoleCredentialsProvider{credential: common.NewTokenCredential("id", "", "token")}
 		_, err := provider.Retrieve(t.Context())
 		require.EqualError(t, err, "tencent CVM role returned incomplete credentials")
 	})
 
-	t.Run("SDK provider error keeps AWS fallback", func(t *testing.T) {
-		provider, err := createTencentCVMRoleCredFromProvider(&fakeTencentProvider{err: errors.New("metadata unavailable")})
-		require.NoError(t, err)
-		require.Nil(t, provider)
-	})
-
 	t.Run("canceled context", func(t *testing.T) {
-		provider := newTencentCVMRoleCredentialsProvider(common.NewTokenCredential("id", "key", "token"))
+		provider := &tencentCVMRoleCredentialsProvider{credential: common.NewTokenCredential("id", "key", "token")}
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		_, err := provider.Retrieve(ctx)
@@ -129,15 +119,4 @@ func (c *rotatingTencentCredential) GetCredential() (string, string, string) {
 	call := c.calls.Add(1)
 	suffix := strconv.Itoa(int(call))
 	return "temporary-id-" + suffix, "temporary-key-" + suffix, "temporary-token-" + suffix
-}
-
-type fakeTencentProvider struct {
-	credential common.CredentialIface
-	err        error
-	calls      atomic.Int32
-}
-
-func (p *fakeTencentProvider) GetCredential() (common.CredentialIface, error) {
-	p.calls.Add(1)
-	return p.credential, p.err
 }

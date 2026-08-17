@@ -34,22 +34,14 @@ type tencentCVMRoleCredentialsProvider struct {
 }
 
 func createTencentCVMRoleCred() (aws.CredentialsProvider, error) {
-	return createTencentCVMRoleCredFromProvider(common.DefaultCvmRoleProvider())
-}
-
-func createTencentCVMRoleCredFromProvider(provider common.Provider) (aws.CredentialsProvider, error) {
-	credential, err := provider.GetCredential()
+	credential, err := common.DefaultCvmRoleProvider().GetCredential()
 	if err != nil {
 		// Keep the AWS default credential chain as a fallback, matching the
 		// existing Alibaba RAM role behavior in createOssRAMCred.
 		log.Warn("failed to get Tencent CVM role credential", zap.Error(err))
 		return nil, nil
 	}
-	return newTencentCVMRoleCredentialsProvider(credential), nil
-}
-
-func newTencentCVMRoleCredentialsProvider(credential common.CredentialIface) aws.CredentialsProvider {
-	return &tencentCVMRoleCredentialsProvider{credential: credential}
+	return &tencentCVMRoleCredentialsProvider{credential: credential}, nil
 }
 
 func (p *tencentCVMRoleCredentialsProvider) Retrieve(ctx context.Context) (aws.Credentials, error) {
