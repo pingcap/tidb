@@ -842,14 +842,24 @@ impl LogicalPlan {
     /// Go `RecursiveDeriveStats(colGroups)` (`<9th>`): derive bottom-up, then
     /// call this node's `DeriveStats` with the children's results.
     ///
-    /// The recursion is written with an explicit stack; see the module header.
+    /// The recursion is [`rewrite::recursive_derive_stats`], over
+    /// [`fold::fold_owned`], so depth costs no host stack. Each operator's
+    /// body writes its own stats, so after this returns `Ok` every node in
+    /// the tree carries a profile.
+    ///
+    /// // boundary: `SCtx().GetSessionVars().TiDBOptJoinReorderThreshold` —
+    /// Go reads it ambiently inside `EstimateFullJoinRowCount`; this method
+    /// passes `DefTiDBOptJoinReorderThreshold` (`0`,
+    /// `vardef/tidb_vars.go`). A caller with live session variables uses
+    /// [`rewrite::recursive_derive_stats`] directly.
     pub fn recursive_derive_stats(
         &mut self,
-        _col_groups: &[Vec<Column>],
+        col_groups: &[Vec<Column>],
     ) -> Result<(StatsInfo, bool), PlanError> {
-        Err(PlanError::internal(
-            "todo: LogicalPlan::recursive_derive_stats needs the per-operator DeriveStats",
-        ))
+        let plan = std::mem::replace(self, Self::TableDual(LogicalTableDual::default()));
+        let (plan, result) = rewrite::recursive_derive_stats(plan, col_groups.to_vec(), 0);
+        *self = plan;
+        result
     }
 
     /// Go `DeriveStats(childStats, selfSchema, childSchema, reloads)` (`<10th>`).
@@ -1281,6 +1291,8 @@ impl LogicalPlan {
 }
 
 #[cfg(test)]
+#[cfg(test)]
+mod derive_stats_tests;
 mod operator_tests;
 #[cfg(test)]
 pub(crate) mod rule_tail_tests;

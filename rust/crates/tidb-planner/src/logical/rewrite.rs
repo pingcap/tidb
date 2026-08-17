@@ -37,7 +37,14 @@ use tidb_expr::expression::Expression;
 use tidb_expr::schema::Schema;
 
 use crate::base_arms;
+use crate::cardinality::derive_stats::{
+    estimate_cols_ndv_with_matched_len, StatsInfo as NdvProfile,
+};
+use crate::cardinality::join::{
+    estimate_full_join_row_count, FullJoinRowCountInput, JoinKeyEstimate,
+};
 use crate::plan_base::PlanError;
+use crate::stats_info::StatsInfo;
 
 use super::fold::{fold_owned, Descend, OwnedRewrite, RewriteFailure};
 use super::rule::{
@@ -878,4 +885,339 @@ pub fn build_key_info_portal(plan: LogicalPlan) -> LogicalPlan {
 #[must_use]
 pub fn split_cnf(predicates: &[Expression]) -> Vec<Expression> {
     predicates.iter().flat_map(split_cnf_items).collect()
+}
+
+// ---------------------------------------------------------------------------
+// Go `RecursiveDeriveStats`: the post-order statistics derivation driver.
+// ---------------------------------------------------------------------------
+
+/// Go `BaseLogicalPlan.RecursiveDeriveStats(colGroups)`
+/// (`base_logical_plan.go`): derive every child bottom-up, then hand this
+/// node's `DeriveStats` the children's profiles, schemas, and reload flags.
+///
+/// The recursion is [`fold_owned`], so a 60k-deep chain derives without
+/// touching the host stack. `Down` is Go's `cumColGroups` — each node passes
+/// `ExtractColGroups`' answer to every child — and `Up` is Go's
+/// `(*StatsInfo, bool)` return, with the error travelling in the
+/// [`RewriteFailure`] slot as the module header prescribes.
+///
+/// # Fidelity boundaries, each named at its arm
+///
+/// * Operators whose Go `DeriveStats` override is not yet ported REFUSE with
+///   an error naming the Go symbol, rather than falling back to the base
+///   body. The base body would silently adopt the child's row count, and for
+///   an operator like `LogicalTopN` — whose override clamps the count to the
+///   limit — that fabricates an estimate. Refusing is the safe direction.
+/// * `LogicalCTE` refuses by construction: Go derives a CTE's stats by
+///   running `utilfuncp.DoOptimize` over the seed and reading the OPTIMIZED
+///   seed's physical plan (`logical_cte.go`), which no stats-only walk can
+///   reproduce honestly.
+/// * `SessionVars.TiDBOptJoinReorderThreshold` arrives as a parameter;
+///   `DefTiDBOptJoinReorderThreshold` is `0`, which is what
+///   [`LogicalPlan::recursive_derive_stats`] passes.
+struct DeriveStatsFold {
+    /// The first failure, per the module header's first-failure discipline.
+    failure: RewriteFailure,
+    /// Go `SCtx().GetSessionVars().TiDBOptJoinReorderThreshold`, read by
+    /// `cardinality.EstimateFullJoinRowCount`.
+    join_reorder_threshold: i32,
+}
+
+/// What one `ascend` arm decided.
+enum StatsOutcome {
+    /// The operator's own override ran (or refused).
+    Done(Result<(StatsInfo, bool), PlanError>),
+    /// Go inherits `BaseLogicalPlan.DeriveStats`; run the enum's base body.
+    Base,
+}
+
+/// A refusal naming the unported Go symbol. Deriving THROUGH an operator
+/// whose override is missing would fabricate a row count silently, which is
+/// the wrong-answer direction; a named error is the safe one.
+fn unported_stats(go_symbol: &str) -> Result<(StatsInfo, bool), PlanError> {
+    Err(PlanError::internal(format!(
+        "recursive_derive_stats: {go_symbol} is not ported; \
+         deriving through it would fabricate a row count"
+    )))
+}
+
+/// The arity failure Go cannot reach (its callers guarantee child count); the
+/// ported operators answer `None` there, which becomes a loud error here.
+fn stats_arity(go_symbol: &str) -> PlanError {
+    PlanError::internal(format!(
+        "recursive_derive_stats: {go_symbol} saw the wrong child count"
+    ))
+}
+
+/// Go `cardinality.EstimateColsNDVWithMatchedLen(cols, schema, profile)` over
+/// the join keys, packaged as the [`JoinKeyEstimate`] the ported
+/// [`estimate_full_join_row_count`] consumes.
+///
+/// The body is NOT restated: the existing port in
+/// [`crate::cardinality::derive_stats`] is called through a converted
+/// profile. The conversion casts the `i64` unique ids of the surviving
+/// [`StatsInfo`] to that module's `u64` alias — the documented outlier — and
+/// carries no group NDVs, because the surviving profile has none to give;
+/// the group branch is therefore vacuous, exactly as it is for a Go profile
+/// whose `GroupNDVs` is nil.
+fn join_key_estimate(keys: &[tidb_expr::column::Column], profile: &StatsInfo) -> JoinKeyEstimate {
+    let ids: Vec<u64> = keys.iter().map(|col| col.unique_id as u64).collect();
+    let converted = NdvProfile {
+        row_count: profile.row_count(),
+        col_ndvs: profile
+            .col_ndvs()
+            .iter()
+            .map(|(id, ndv)| (*id as u64, *ndv))
+            .collect(),
+        group_ndvs: Vec::new(),
+    };
+    let (ndv, matched_len) = estimate_cols_ndv_with_matched_len(&ids, &converted);
+    JoinKeyEstimate {
+        ndv,
+        matched_len,
+        key_len: ids.len(),
+    }
+}
+
+impl OwnedRewrite for DeriveStatsFold {
+    /// Go's `cumColGroups`, one copy per child.
+    type Down = Vec<Vec<tidb_expr::column::Column>>;
+    /// Go's `(*property.StatsInfo, bool)` return, plus the node's
+    /// materialized schema. Go's `LogicalSchemaProducer.Schema()` MEMOISES a
+    /// schema-less operator's answer into the node; this walk must not write
+    /// schemas, so the memo travels UP the fold instead — otherwise asking a
+    /// 60k-deep schema-less chain for its schema would recurse the host
+    /// stack.
+    type Up = (StatsInfo, bool, Schema);
+
+    fn descend(
+        &mut self,
+        node: &mut LogicalPlan,
+        down: Self::Down,
+    ) -> Descend<Self::Down, Self::Up> {
+        if self.failure.is_failed() {
+            // Dead walk: the fold pads missing downs with Default, and every
+            // ascend below short-circuits.
+            return Descend::Children(Vec::new());
+        }
+        // Go: `cumColGroups := p.self.ExtractColGroups(colGroups)`, handed to
+        // EVERY child.
+        let cum = node.extract_col_groups(&down);
+        Descend::Children(vec![cum; node.children().len()])
+    }
+
+    fn ascend(
+        &mut self,
+        mut node: LogicalPlan,
+        child_ups: Vec<Self::Up>,
+    ) -> (LogicalPlan, Self::Up) {
+        let dead = || {
+            (
+                StatsInfo::new(0.0, std::iter::empty()),
+                true,
+                Schema::default(),
+            )
+        };
+        if self.failure.is_failed() {
+            return (node, dead());
+        }
+        let child_stats: Vec<StatsInfo> = child_ups
+            .iter()
+            .map(|(stats, _, _)| stats.clone())
+            .collect();
+        let reloads: Vec<bool> = child_ups.iter().map(|(_, reload, _)| *reload).collect();
+        let child_schemas: Vec<Schema> = child_ups
+            .iter()
+            .map(|(_, _, schema)| schema.clone())
+            .collect();
+        // Go `p.self.Schema()`, memoised: own schema, else the single
+        // child's, carried up by the fold rather than recomputed by a
+        // recursive walk.
+        let self_schema = schema_producer::materialized_schema(
+            node.base().base.schema(),
+            &child_schemas.iter().collect::<Vec<_>>(),
+        );
+
+        let outcome = match &mut node {
+            // -- Overrides that exist in this port -------------------------
+            LogicalPlan::DataSource(op) => StatsOutcome::Done(op.derive_stats().ok_or_else(|| {
+                // Go `initStats` (`core/stats.go`) always attaches at least
+                // the pseudo table before DeriveStats runs; a source with no
+                // `table_stats` means the builder skipped that step.
+                PlanError::internal(
+                    "recursive_derive_stats: DataSource.table_stats is absent; \
+                     Go's initStats attaches at least the pseudo table first",
+                )
+            })),
+            LogicalPlan::Selection(op) => StatsOutcome::Done(
+                op.derive_stats(&child_stats, &reloads)
+                    .ok_or_else(|| stats_arity("LogicalSelection.DeriveStats")),
+            ),
+            LogicalPlan::Projection(op) => StatsOutcome::Done(
+                op.derive_stats(&child_stats, &self_schema, &reloads)
+                    .ok_or_else(|| stats_arity("LogicalProjection.DeriveStats")),
+            ),
+            LogicalPlan::Join(op) => {
+                // Go `logical_join.go` DeriveStats: EqualCondOutCnt is
+                // computed from the children BEFORE the per-join-type
+                // branches, with `is_cartesian = (0 == len(p.EqualConditions))`
+                // and nil NA-key slices.
+                match (child_stats.first(), child_stats.get(1)) {
+                    (Some(left), Some(right)) => {
+                        let (left_keys, right_keys, _, _) = op.get_join_keys();
+                        let input = FullJoinRowCountInput {
+                            left_row_count: left.row_count(),
+                            right_row_count: right.row_count(),
+                            is_cartesian: op.equal_conditions.is_empty(),
+                            left_join_keys: join_key_estimate(&left_keys, left),
+                            right_join_keys: join_key_estimate(&right_keys, right),
+                            // Go passes `nil, nil` for the NA keys here.
+                            left_non_equi_keys: join_key_estimate(&[], left),
+                            right_non_equi_keys: join_key_estimate(&[], right),
+                            join_reorder_threshold: self.join_reorder_threshold,
+                        };
+                        let equal_cond_out_cnt = estimate_full_join_row_count(&input);
+                        StatsOutcome::Done(
+                            op.derive_stats(
+                                &child_stats,
+                                &self_schema,
+                                equal_cond_out_cnt,
+                                &reloads,
+                            )
+                            .ok_or_else(|| stats_arity("LogicalJoin.DeriveStats")),
+                        )
+                    }
+                    _ => StatsOutcome::Done(Err(stats_arity("LogicalJoin.DeriveStats"))),
+                }
+            }
+            LogicalPlan::Apply(op) => {
+                if op.needs_lateral_row_count_estimate() {
+                    // The first two `IsLateral` branches of Go's body; see
+                    // the operator's own doc for what they need.
+                    StatsOutcome::Done(unported_stats(
+                        "LogicalApply.DeriveStats' IsLateral row-count branches (logical_apply.go)",
+                    ))
+                } else {
+                    let outer_len = child_schemas
+                        .first()
+                        .map_or(0, |schema| schema.columns.len());
+                    StatsOutcome::Done(
+                        op.derive_stats(&child_stats, &self_schema, outer_len, None, &reloads)
+                            .ok_or_else(|| stats_arity("LogicalApply.DeriveStats")),
+                    )
+                }
+            }
+            LogicalPlan::Aggregation(op) => StatsOutcome::Done(
+                op.derive_stats(&child_stats, &self_schema, &reloads)
+                    .ok_or_else(|| stats_arity("LogicalAggregation.DeriveStats")),
+            ),
+            LogicalPlan::Limit(op) => StatsOutcome::Done(
+                op.derive_stats(&child_stats, &reloads)
+                    .ok_or_else(|| stats_arity("LogicalLimit.DeriveStats")),
+            ),
+            LogicalPlan::UnionAll(op) => {
+                StatsOutcome::Done(Ok(op.derive_stats(&child_stats, &self_schema, &reloads)))
+            }
+            // Go `LogicalPartitionUnionAll` embeds `LogicalUnionAll` and
+            // inherits its DeriveStats (`logical_partition_union_all.go`).
+            LogicalPlan::PartitionUnionAll(op) => StatsOutcome::Done(Ok(op
+                .union_all
+                .derive_stats(&child_stats, &self_schema, &reloads))),
+            LogicalPlan::Window(op) => StatsOutcome::Done(
+                op.derive_stats(&child_stats, &self_schema, &reloads)
+                    .ok_or_else(|| stats_arity("LogicalWindow.DeriveStats")),
+            ),
+            LogicalPlan::MaxOneRow(op) => {
+                StatsOutcome::Done(Ok(op.derive_stats(&self_schema, &reloads)))
+            }
+            LogicalPlan::Sequence(op) => StatsOutcome::Done(
+                op.derive_stats(&child_stats, &reloads)
+                    .ok_or_else(|| stats_arity("LogicalSequence.DeriveStats")),
+            ),
+            LogicalPlan::TableDual(op) => {
+                StatsOutcome::Done(Ok(op.derive_stats(&self_schema, &reloads)))
+            }
+            LogicalPlan::MemTable(op) => {
+                // Go builds `statistics.PseudoTable(p.TableInfo, ..)` and
+                // reads its `RealtimeCount`, which is `PseudoRowCount = 10000`
+                // (`statistics/table.go:42`) for every pseudo table.
+                const PSEUDO_ROW_COUNT: f64 = 10_000.0;
+                StatsOutcome::Done(Ok(op.derive_stats(
+                    &self_schema,
+                    &reloads,
+                    PSEUDO_ROW_COUNT,
+                )))
+            }
+            LogicalPlan::Show(op) => {
+                StatsOutcome::Done(Ok(op.derive_stats(&self_schema, &reloads)))
+            }
+            LogicalPlan::ShowDDLJobs(op) => {
+                StatsOutcome::Done(Ok(op.derive_stats(&self_schema, &reloads)))
+            }
+
+            // -- Go overrides NOT yet ported: refuse, never fall through ---
+            LogicalPlan::TopN(_) => StatsOutcome::Done(unported_stats(
+                "logicalop.LogicalTopN.DeriveStats (logical_top_n.go)",
+            )),
+            LogicalPlan::CTE(_) => StatsOutcome::Done(unported_stats(
+                "utilfuncp.DoOptimize: Go derives a CTE's stats from its \
+                 OPTIMIZED seed's physical plan (logical_cte.go)",
+            )),
+            LogicalPlan::CTETable(_) => StatsOutcome::Done(unported_stats(
+                "logicalop.LogicalCTETable.DeriveStats (logical_cte_table.go)",
+            )),
+            LogicalPlan::TableScan(_) => StatsOutcome::Done(unported_stats(
+                "logicalop.LogicalTableScan.DeriveStats (logical_table_scan.go)",
+            )),
+            LogicalPlan::IndexScan(_) => StatsOutcome::Done(unported_stats(
+                "logicalop.LogicalIndexScan.DeriveStats (logical_index_scan.go)",
+            )),
+            LogicalPlan::Todo(op) => {
+                let go_operator = op.go_operator.clone();
+                StatsOutcome::Done(unported_stats(&go_operator))
+            }
+
+            // -- Go inherits the base body ---------------------------------
+            // `logical_expand.go:133` says so explicitly; the others have no
+            // DeriveStats in their files.
+            LogicalPlan::Sort(_)
+            | LogicalPlan::Lock(_)
+            | LogicalPlan::UnionScan(_)
+            | LogicalPlan::TiKVSingleGather(_)
+            | LogicalPlan::Expand(_) => StatsOutcome::Base,
+        };
+
+        let result = match outcome {
+            StatsOutcome::Done(result) => result,
+            StatsOutcome::Base => {
+                node.derive_stats(&child_stats, &self_schema, &child_schemas, &reloads)
+            }
+        };
+        match result {
+            Ok((stats, reload)) => (node, (stats, reload, self_schema)),
+            Err(error) => {
+                self.failure.record(error);
+                (node, dead())
+            }
+        }
+    }
+}
+
+/// Go `RecursiveDeriveStats(colGroups)` at tree level: derives and WRITES the
+/// statistics onto every node (each operator's body calls its own
+/// `set_stats`), and returns the root's `(profile, reload)` answer.
+pub fn recursive_derive_stats(
+    plan: LogicalPlan,
+    col_groups: Vec<Vec<tidb_expr::column::Column>>,
+    join_reorder_threshold: i32,
+) -> (LogicalPlan, Result<(StatsInfo, bool), PlanError>) {
+    let mut fold = DeriveStatsFold {
+        failure: RewriteFailure::default(),
+        join_reorder_threshold,
+    };
+    let (plan, (stats, reload, _schema)) = fold_owned(&mut fold, plan, col_groups);
+    match fold.failure.take() {
+        Some(error) => (plan, Err(error)),
+        None => (plan, Ok((stats, reload))),
+    }
 }
