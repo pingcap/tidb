@@ -106,6 +106,7 @@ pub mod iterator;
 pub mod load_dump;
 pub mod lockstore;
 pub mod lockwaiter;
+pub mod mvcc;
 #[cfg(test)]
 mod testutil;
 

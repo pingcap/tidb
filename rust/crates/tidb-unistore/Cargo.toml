@@ -9,3 +9,9 @@ description = "Go pkg/store/mockstore/unistore/lockstore: the arena-backed skipl
 
 [lints]
 workspace = true
+
+[dependencies]
+# `tikv.go`'s value encodings are built from `pkg/util/codec`'s primitives.
+tidb-codec = { path = "../tidb-codec" }
+# `Lock.ToLockInfo` answers the real `kvrpcpb.LockInfo`.
+tidb-proto = { path = "../tidb-proto" }

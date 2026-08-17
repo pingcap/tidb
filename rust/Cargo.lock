@@ -2795,6 +2795,10 @@ dependencies = [
 [[package]]
 name = "tidb-unistore"
 version = "0.0.0"
+dependencies = [
+ "tidb-codec",
+ "tidb-proto",
+]
 
 [[package]]
 name = "tidb-util"
