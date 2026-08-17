@@ -262,3 +262,92 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 		})
 	}
 }
+
+func TestJobMonitorVersionedTerminalStates(t *testing.T) {
+	tests := []struct {
+		name       string
+		statuses   [][]*importsdk.JobStatus
+		wantStatus importinto.CheckpointStatus
+		wantErr    bool
+	}{
+		{
+			name: "finished",
+			statuses: [][]*importsdk.JobStatus{{
+				{JobID: 1, Status: "finished", ContractVersion: jobstats.ContractVersion, Terminal: true},
+			}},
+			wantStatus: importinto.CheckpointStatusFinished,
+		},
+		{
+			name: "failed",
+			statuses: [][]*importsdk.JobStatus{{
+				{JobID: 1, Status: "failed", ContractVersion: jobstats.ContractVersion, Terminal: true},
+			}},
+			wantStatus: importinto.CheckpointStatusFailed,
+			wantErr:    true,
+		},
+		{
+			name: "cancelled",
+			statuses: [][]*importsdk.JobStatus{{
+				{JobID: 1, Status: "cancelled", ContractVersion: jobstats.ContractVersion, Terminal: true},
+			}},
+			wantStatus: importinto.CheckpointStatusFailed,
+			wantErr:    true,
+		},
+		{
+			name: "awaiting resolution is not terminal",
+			statuses: [][]*importsdk.JobStatus{
+				{{JobID: 1, Status: "awaiting-resolution", ContractVersion: jobstats.ContractVersion, Terminal: false}},
+				{{JobID: 1, Status: "finished", ContractVersion: jobstats.ContractVersion, Terminal: true}},
+			},
+			wantStatus: importinto.CheckpointStatusFinished,
+		},
+		{
+			name: "unknown terminal status is an error",
+			statuses: [][]*importsdk.JobStatus{{
+				{JobID: 1, Status: "future-terminal", ContractVersion: jobstats.ContractVersion, Terminal: true},
+			}},
+			wantStatus: importinto.CheckpointStatusFailed,
+			wantErr:    true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			mockSDK := sdkmock.NewMockSDK(ctrl)
+			mockCpMgr := mockimport.NewMockCheckpointManager(ctrl)
+			mockPU := mockimport.NewMockProgressUpdater(ctrl)
+			for _, statuses := range tt.statuses {
+				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return(statuses, nil)
+				mockPU.EXPECT().UpdateTotalSize(int64(100))
+				if statuses[0].IsFinished() {
+					mockPU.EXPECT().UpdateFinishedSize(int64(100))
+				} else {
+					mockPU.EXPECT().UpdateFinishedSize(int64(0))
+				}
+			}
+			mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(
+				func(_ context.Context, cp *importinto.TableCheckpoint) error {
+					require.Equal(t, tt.wantStatus, cp.Status)
+					return nil
+				},
+			)
+
+			monitor := importinto.NewJobMonitor(mockSDK, mockCpMgr, time.Millisecond, time.Hour, log.L(), mockPU)
+			err := monitor.WaitForJobs(context.Background(), []*importinto.ImportJob{{
+				JobID:    1,
+				GroupKey: "g1",
+				TableMeta: &importsdk.TableMeta{
+					Database:  "db",
+					Table:     "t",
+					TotalSize: 100,
+				},
+			}})
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}

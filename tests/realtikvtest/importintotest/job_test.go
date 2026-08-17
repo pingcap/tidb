@@ -269,8 +269,9 @@ func (s *mockGCSSuite) TestShowJob() {
 		func() {
 			newVal := counter.Add(1)
 			if newVal == 1 {
+				runningJobID := importer.TestLastImportJobID.Load()
 				jobInfo = &importer.JobInfo{
-					ID:          importer.TestLastImportJobID.Load(),
+					ID:          runningJobID,
 					TableSchema: "test_show_job",
 					TableName:   "t3",
 					TableID:     tableID3,
@@ -290,6 +291,32 @@ func (s *mockGCSSuite) TestShowJob() {
 				rows = tk2.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 				s.Len(rows, 1)
 				s.compareJobInfoWithoutTime(jobInfo, rows[0])
+
+				// Exercise both RAW runtime-info paths while the job is held in
+				// a deterministic running state.
+				rawByID := tk2.MustQuery(fmt.Sprintf("show raw import job %d", runningJobID)).Rows()
+				s.Len(rawByID, 1)
+				rawList := tk2.MustQuery("show raw import jobs").Rows()
+				var rawFromList []any
+				for _, row := range rawList {
+					if fmt.Sprintf("%s", row[0]) == strconv.FormatInt(runningJobID, 10) {
+						rawFromList = row
+						break
+					}
+				}
+				s.NotNil(rawFromList)
+				var singularStats, pluralStats jobstats.RawImportJobStats
+				s.NoError(json.Unmarshal([]byte(fmt.Sprintf("%s", rawByID[0][2])), &singularStats))
+				s.NoError(json.Unmarshal([]byte(fmt.Sprintf("%s", rawFromList[2])), &pluralStats))
+				s.Equal("running", singularStats.Status)
+				s.False(singularStats.Terminal)
+				s.NotNil(singularStats.CurrentStep)
+				s.NotEmpty(singularStats.CurrentStep.Name)
+				s.Positive(singularStats.CurrentStep.TotalBytes)
+				s.Equal(singularStats.Status, pluralStats.Status)
+				s.Equal(singularStats.Terminal, pluralStats.Terminal)
+				s.Equal(singularStats.CurrentStep, pluralStats.CurrentStep)
+
 				// show processlist, should be redacted too
 				procRows := tk2.MustQuery("show full processlist").Rows()
 

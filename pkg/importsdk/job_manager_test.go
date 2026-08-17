@@ -369,6 +369,61 @@ func TestGetJobsByGroup(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
+func TestGetJobsByGroupLegacyCompatibility(t *testing.T) {
+	legacyCols := []string{
+		"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
+		"Phase", "Status", "Source_File_Size", "Imported_Rows", "Result_Message",
+		"Create_Time", "Start_Time", "End_Time", "Created_By", "Update_Time",
+		"Step", "Processed_Size", "Total_Size", "Percent", "Speed", "ETA",
+	}
+	legacyRows := func() *sqlmock.Rows {
+		return sqlmock.NewRows(legacyCols).AddRow(
+			int64(1), "test_group", "s3://bucket/file.csv", "db.table", int64(1),
+			"import", "finished", "100MB", int64(1000), "success",
+			"2023-01-01 10:00:00", "2023-01-01 10:00:01", "2023-01-01 10:00:02", "user", "2023-01-01 10:00:02",
+			"", "100MB", "100MB", "100", "10MB/s", "0s",
+		)
+	}
+
+	t.Run("unsupported RAW capability is cached", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		manager := NewJobManager(db)
+		rawUnsupported := &drivermysql.MySQLError{Number: 1064, Message: "syntax error near RAW IMPORT JOBS"}
+		mock.ExpectQuery("SHOW RAW IMPORT JOBS WHERE GROUP_KEY = 'test_group'").WillReturnError(rawUnsupported)
+		mock.ExpectQuery("SHOW IMPORT JOBS WHERE GROUP_KEY = 'test_group'").WillReturnRows(legacyRows())
+
+		jobs, err := manager.GetJobsByGroup(context.Background(), "test_group")
+		require.NoError(t, err)
+		require.Len(t, jobs, 1)
+		require.Equal(t, int64(1), jobs[0].JobID)
+
+		// A later poll skips the unsupported RAW statement.
+		mock.ExpectQuery("SHOW IMPORT JOBS WHERE GROUP_KEY = 'test_group'").WillReturnRows(legacyRows())
+		jobs, err = manager.GetJobsByGroup(context.Background(), "test_group")
+		require.NoError(t, err)
+		require.Len(t, jobs, 1)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+
+	t.Run("RAW query accepts legacy columns during rolling upgrade", func(t *testing.T) {
+		db, mock, err := sqlmock.New()
+		require.NoError(t, err)
+		defer db.Close()
+
+		manager := NewJobManager(db)
+		mock.ExpectQuery("SHOW RAW IMPORT JOBS WHERE GROUP_KEY = 'test_group'").WillReturnRows(legacyRows())
+		jobs, err := manager.GetJobsByGroup(context.Background(), "test_group")
+		require.NoError(t, err)
+		require.Len(t, jobs, 1)
+		require.Zero(t, jobs[0].ContractVersion)
+		require.Equal(t, "finished", jobs[0].Status)
+		require.NoError(t, mock.ExpectationsWereMet())
+	})
+}
+
 func TestRawJSONBytesScan(t *testing.T) {
 	raw := []byte(`{"job_id":123,"status":"finished"}`)
 
