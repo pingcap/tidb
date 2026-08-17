@@ -401,6 +401,33 @@ where
     L: StoreWriteLoader,
     P: StorePdCapability,
 {
+    /// Assembles a factory over already-built store capabilities, with no
+    /// cluster-catalog legs: no etcd watch, no reloader, no loaded stats.
+    /// This is how an embedded store's node builds itself -- Go's
+    /// `--store unistore` runs the same session code with the mock driver
+    /// underneath and no schema-following machinery of its own.
+    pub(crate) fn from_opener_parts(
+        opener: RealTiKvReadSessionOpener<F, S>,
+        transaction_opener: RealOptimisticTransactionOpener<C, L, P>,
+        read_authority_id: u64,
+    ) -> Self {
+        Self {
+            opener,
+            transaction_opener,
+            query_activity: Arc::new(QueryActivity::default()),
+            read_authority_id,
+            table_refusals: Arc::new(Vec::new()),
+            catalog: None,
+            watcher: None,
+            reloader: None,
+            schema_notifier: None,
+            stats: None,
+            stats_reloader: None,
+            spill_storage: None,
+            mem_arbitrator: None,
+        }
+    }
+
     pub(crate) fn with_spill_storage(
         mut self,
         spill_storage: Arc<tidb_util::disk::SpillStorage>,

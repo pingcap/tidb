@@ -27,6 +27,7 @@ tidb-datatype = { path = "../tidb-datatype" }
 tidb-distsql = { path = "../tidb-distsql" }
 tidb-exec = { path = "../tidb-exec" }
 tidb-planner = { path = "../tidb-planner" }
+tidb-unistore = { path = "../tidb-unistore" }
 tidb-executor = { path = "../tidb-executor" }
 tidb-error = { path = "../tidb-error" }
 tidb-model = { path = "../tidb-model" }
