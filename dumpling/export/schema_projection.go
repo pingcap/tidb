@@ -95,21 +95,17 @@ func collectProjectedSchemaColumns(originSQL string, selectedColumns []string) (
 		lowerName := strings.ToLower(selectedColumn)
 		retainedColumns[lowerName] = struct{}{}
 	}
-	collectGeneratedColumns(retainedColumns, createTable.Cols)
-
-	return retainedColumns, nil
-}
-
-func collectGeneratedColumns(retained map[string]struct{}, columns []*ast.ColumnDef) {
 	// A generated column can only depend on generated columns defined before it.
-	for _, column := range columns {
+	for _, column := range createTable.Cols {
 		for _, option := range column.Options {
-			if option.Tp == ast.ColumnOptionGenerated && allReferencedColumnsRetained(option.Expr, retained) {
-				retained[column.Name.Name.L] = struct{}{}
+			if option.Tp == ast.ColumnOptionGenerated && allReferencedColumnsRetained(option.Expr, retainedColumns) {
+				retainedColumns[column.Name.Name.L] = struct{}{}
 				break
 			}
 		}
 	}
+
+	return retainedColumns, nil
 }
 
 func projectColumnOptions(
