@@ -1283,6 +1283,7 @@ func (w *worker) checkTiFlashReplicaCount(replicaCount uint64) error {
 }
 
 func (w *worker) checkColumnarStorageEnabled(replicaCount uint64, internal bool) error {
+	// Removing TiFlash replica or setting TiFlash replica with internal=true does not require tidb_columnar_storage_enabled to be enabled.
 	if replicaCount == 0 || internal {
 		return nil
 	}

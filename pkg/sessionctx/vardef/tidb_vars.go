@@ -794,7 +794,7 @@ const (
 	TiDBRestrictedReadOnly = "tidb_restricted_read_only"
 
 	// TiDBColumnarStorageEnabled is the cluster-level gate for adding TiFlash replicas
-	// on columnar / both store types. Control plane writes it via SET GLOBAL.
+	// when cse.columnar-store-type = "columnar" / "both".
 	TiDBColumnarStorageEnabled = "tidb_columnar_storage_enabled"
 
 	// TiDBSuperReadOnly is tidb's variant of mysql's super_read_only, which has some differences from mysql's super_read_only.

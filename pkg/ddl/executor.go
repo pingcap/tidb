@@ -4058,12 +4058,12 @@ func checkColumnarStorageEnabled(ctx sessionctx.Context) error {
 	})
 	do, ok := ctx.GetDomain().(globalVarGetter)
 	if !ok || do == nil {
-		logutil.DDLLogger().Error("failed to read tidb_columnar_storage_enabled for columnar storage check: domain is unavailable")
+		logutil.DDLLogger().Warn("failed to read tidb_columnar_storage_enabled for columnar storage check: domain is unavailable")
 		return dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace)
 	}
 	val, err := do.GetGlobalVar(vardef.TiDBColumnarStorageEnabled)
 	if err != nil {
-		logutil.DDLLogger().Error("failed to read tidb_columnar_storage_enabled for columnar storage check",
+		logutil.DDLLogger().Warn("failed to read tidb_columnar_storage_enabled for columnar storage check",
 			zap.Error(err))
 		return dbterror.ErrTiFlashColumnarStorageCheckFailed.GenWithStackByArgs(keyspace)
 	}
@@ -4082,14 +4082,12 @@ func tableHasColumnarIndex(tbInfo *model.TableInfo) bool {
 	return false
 }
 
-const columnarStorageDisabledHint = "Columnar Storage is not enabled, please enable it in the TiDB Cloud console first"
-
 func wrapColumnarStorageGateForColumnarIndex(err error) error {
 	if err == nil {
 		return nil
 	}
 	if dbterror.ErrTiFlashColumnarStorageNotEnabled.Equal(err) {
-		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(columnarStorageDisabledHint)
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("Columnar Storage is not enabled")
 	}
 	return err
 }

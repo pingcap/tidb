@@ -60,6 +60,8 @@ func createTable(w *worker, jobCtx *jobContext, job *model.Job, r autoid.Require
 	schemaID := job.SchemaID
 	tbInfo, fkCheck := args.TableInfo, args.FKCheck
 
+	// Create table ... / Create table like ... / BR BatchCreateTableWithInfo need to check whether
+	// columnar storage is enabled or not.
 	if err := w.checkCreateTableColumnarStorage(job, tbInfo); err != nil {
 		return tbInfo, errors.Trace(err)
 	}

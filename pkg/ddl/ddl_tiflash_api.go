@@ -618,7 +618,8 @@ func (d *ddl) refreshTiFlashPlacementRules(sctx sessionctx.Context, tick uint64)
 				SQLMode:        sctx.GetSessionVars().SQLMode,
 			}
 			// We should reset tiflash replica available to false so that the user can wait before
-			// tiflash replica is built after fixing the placement rules.
+			// tiflash replica is built after fixing the placement rules. Mark as an internal job
+			// for skipping `tidb_columnar_storage_enabled` check.
 			args := model.SetTiFlashReplicaArgs{TiflashReplica: ast.TiFlashReplicaSpec{
 				Count:  replica.TableInfo.TiFlashReplica.Count,
 				Labels: replica.TableInfo.TiFlashReplica.LocationLabels,
