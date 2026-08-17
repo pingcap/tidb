@@ -127,12 +127,11 @@ fn the_base_body_adopts_the_single_child_for_a_sort() {
 }
 
 #[test]
-fn an_unported_override_refuses_by_its_go_name() {
-    // `logical_top_n.go` HAS a DeriveStats override; falling back to the
-    // base body would adopt the child's full row count and silently ignore
-    // the limit. The driver must refuse instead.
+fn a_topn_clamps_to_its_count_like_gos_derive_limit_stats() {
+    // `logical_top_n.go:134`: `DeriveLimitStats(childStats[0], Count)` —
+    // the row count caps at the limit and every NDV caps at that count.
     let allocator = PlanIdAllocator::new();
-    let source = stated_source(&allocator, &[1], 100.0, &[(1, 10.0)]);
+    let source = stated_source(&allocator, &[1], 100.0, &[(1, 50.0)]);
     let mut topn = LogicalPlan::TopN(LogicalTopN::new(
         base(&allocator, "TopN", None),
         Vec::new(),
@@ -141,10 +140,29 @@ fn an_unported_override_refuses_by_its_go_name() {
     ));
     topn.set_children(vec![source]);
 
-    let error = derive(&mut topn).expect_err("an unported override must refuse");
+    let (stats, _) = derive(&mut topn).expect("a top-n derives");
+    assert!((stats.row_count() - 5.0).abs() < f64::EPSILON);
+    assert_eq!(
+        stats.col_ndvs().get(&1).copied(),
+        Some(5.0),
+        "NDV clamps to the limited count"
+    );
+}
+
+#[test]
+fn an_unported_override_still_refuses_by_its_go_name() {
+    // The scan overrides remain refused: they bottom out in
+    // `deriveStatsByFilter` + the ranger, which is access-path work.
+    let allocator = PlanIdAllocator::new();
+    let mut scan = LogicalPlan::TableScan(super::table_scan::LogicalTableScan::new(base(
+        &allocator,
+        "TableScan",
+        None,
+    )));
+    let error = derive(&mut scan).expect_err("an unported override must refuse");
     let rendered = format!("{error:?}");
     assert!(
-        rendered.contains("LogicalTopN"),
+        rendered.contains("deriveStats4LogicalTableScan"),
         "the error names the Go symbol, got {rendered}"
     );
 }

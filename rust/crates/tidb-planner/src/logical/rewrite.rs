@@ -903,9 +903,10 @@ pub fn split_cnf(predicates: &[Expression]) -> Vec<Expression> {
 ///
 /// * Operators whose Go `DeriveStats` override is not yet ported REFUSE with
 ///   an error naming the Go symbol, rather than falling back to the base
-///   body. The base body would silently adopt the child's row count, and for
-///   an operator like `LogicalTopN` — whose override clamps the count to the
-///   limit — that fabricates an estimate. Refusing is the safe direction.
+///   body. The base body would silently adopt the child's row count — for
+///   the two scans that means fabricating an estimate, so they refuse until
+///   the access-path/selectivity machinery lands. Refusing is the safe
+///   direction.
 /// * `LogicalCTE` refuses by construction: Go derives a CTE's stats by
 ///   running `utilfuncp.DoOptimize` over the seed and reading the OPTIMIZED
 ///   seed's physical plan (`logical_cte.go`), which no stats-only walk can
@@ -1141,22 +1142,35 @@ impl OwnedRewrite for DeriveStatsFold {
                 StatsOutcome::Done(Ok(op.derive_stats(&self_schema, &reloads)))
             }
 
+            LogicalPlan::TopN(op) => StatsOutcome::Done(
+                op.derive_stats(&child_stats, &reloads)
+                    .ok_or_else(|| stats_arity("LogicalTopN.DeriveStats")),
+            ),
+            LogicalPlan::CTETable(op) => {
+                StatsOutcome::Done(op.derive_stats(&reloads).ok_or_else(|| {
+                    // Go carries a nil SeedStat into a later nil-deref;
+                    // failing here is the loud spelling of the same absence.
+                    PlanError::internal(
+                        "LogicalCTETable.DeriveStats: SeedStat is nil — the owning \
+                         LogicalCTE has not derived (or its stats path is refused)",
+                    )
+                }))
+            }
+
             // -- Go overrides NOT yet ported: refuse, never fall through ---
-            LogicalPlan::TopN(_) => StatsOutcome::Done(unported_stats(
-                "logicalop.LogicalTopN.DeriveStats (logical_top_n.go)",
-            )),
             LogicalPlan::CTE(_) => StatsOutcome::Done(unported_stats(
                 "utilfuncp.DoOptimize: Go derives a CTE's stats from its \
                  OPTIMIZED seed's physical plan (logical_cte.go)",
             )),
-            LogicalPlan::CTETable(_) => StatsOutcome::Done(unported_stats(
-                "logicalop.LogicalCTETable.DeriveStats (logical_cte_table.go)",
-            )),
             LogicalPlan::TableScan(_) => StatsOutcome::Done(unported_stats(
-                "logicalop.LogicalTableScan.DeriveStats (logical_table_scan.go)",
+                "deriveStats4LogicalTableScan (core/stats.go): needs \
+                 deriveStatsByFilter and ranger.BuildTableRange — the \
+                 access-path/selectivity machinery",
             )),
             LogicalPlan::IndexScan(_) => StatsOutcome::Done(unported_stats(
-                "logicalop.LogicalIndexScan.DeriveStats (logical_index_scan.go)",
+                "deriveStats4LogicalIndexScan (core/stats.go): needs \
+                 deriveStatsByFilter, ranger.FullRange and \
+                 util.IndexInfo2Cols — the access-path/selectivity machinery",
             )),
             LogicalPlan::Todo(op) => {
                 let go_operator = op.go_operator.clone();
