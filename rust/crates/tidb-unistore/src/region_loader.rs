@@ -166,3 +166,23 @@ mod tests {
         assert!(loader.load_store(99).expect("loads").is_none(), "tombstone");
     }
 }
+
+#[cfg(test)]
+mod authority_tests {
+    use super::*;
+    use crate::client::InProcessClient;
+
+    /// The integration pin: the in-process pair satisfies the REAL transport
+    /// machinery's bounds — the shared read authority starts its maintenance
+    /// worker over a region cache holding this loader, with this client as
+    /// its `C`. This is the exact type the node will hold in place of
+    /// `SharedReadAuthority<TonicCoprocessorClient, PdRegionLoader>`.
+    #[test]
+    fn the_in_process_pair_starts_the_shared_read_authority() {
+        let cache = tidb_txnkv::region::RegionCache::new(InProcessRegionLoader);
+        let authority: tidb_txnkv::SharedReadAuthority<InProcessClient, InProcessRegionLoader> =
+            tidb_txnkv::SharedReadAuthority::start(InProcessClient::new(), cache)
+                .expect("the maintenance worker starts over the in-process plane");
+        drop(authority);
+    }
+}
