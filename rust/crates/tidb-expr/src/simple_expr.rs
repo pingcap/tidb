@@ -517,7 +517,10 @@ pub fn build_simple_expr(
 /// eval type with a wider class -- keep their own cast, exactly as Go's
 /// per-type `castAs*` selection does. The result type is the caller's own
 /// `target`, so its flen/decimal/charset drive evaluation.
-fn build_cast_function(expr: Expression, target: FieldType) -> Result<Expression, EvalError> {
+pub(crate) fn build_cast_function(
+    expr: Expression,
+    target: FieldType,
+) -> Result<Expression, EvalError> {
     let unsigned = target.flags() & FieldTypeFlags::UNSIGNED != 0;
     let name = match target.code() {
         FieldTypeCode::Year => "cast_year",

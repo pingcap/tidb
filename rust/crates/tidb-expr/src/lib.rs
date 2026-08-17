@@ -330,6 +330,7 @@
 //! file's `eval_in`, the single recursive expression evaluator every other
 //! module calls back into for its own subexpressions.
 
+pub mod aggregation;
 mod arg_eval_type;
 mod binary_literal;
 mod build;
