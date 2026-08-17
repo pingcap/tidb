@@ -103,6 +103,7 @@ pub mod first_row;
 /// and `tidb-session` sits below this crate.
 pub use tidb_vardef::global_sysvar_initial;
 pub mod group_concat;
+pub mod hash_join_v2;
 pub mod hash_join_version;
 pub mod hash_table_v2;
 pub mod hint_updatable_vars;
