@@ -4,7 +4,6 @@ package export
 
 import (
 	"bytes"
-	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -151,7 +150,7 @@ func retainGeneratedColumns(retained map[string]struct{}, generated map[string]*
 			if _, ok := retained[name]; ok {
 				continue
 			}
-			if expressionColumnsRetained(generatedColumnOption(column).Expr, retained) {
+			if allReferencedColumnsRetained(generatedColumnOption(column).Expr, retained) {
 				retained[name] = struct{}{}
 				changed = true
 			}
@@ -171,7 +170,7 @@ func projectColumnOptions(
 	for _, option := range column.Options {
 		switch option.Tp {
 		case ast.ColumnOptionCheck:
-			if !expressionColumnsRetained(option.Expr, retained) {
+			if !allReferencedColumnsRetained(option.Expr, retained) {
 				changed = true
 				continue
 			}
@@ -180,7 +179,7 @@ func projectColumnOptions(
 				return nil, false, err
 			}
 		case ast.ColumnOptionDefaultValue, ast.ColumnOptionOnUpdate:
-			if !expressionColumnsRetained(option.Expr, retained) {
+			if !allReferencedColumnsRetained(option.Expr, retained) {
 				return nil, false, errors.Errorf(
 					"column `%s` expression references a removed column",
 					column.Name.Name.O,
@@ -199,14 +198,14 @@ func constraintColumnsRetained(constraint *ast.Constraint, retained map[string]s
 				return false
 			}
 		}
-		if !expressionColumnsRetained(key.Expr, retained) {
+		if !allReferencedColumnsRetained(key.Expr, retained) {
 			return false
 		}
 	}
-	if !expressionColumnsRetained(constraint.Expr, retained) {
+	if !allReferencedColumnsRetained(constraint.Expr, retained) {
 		return false
 	}
-	return constraint.Option == nil || expressionColumnsRetained(constraint.Option.Condition, retained)
+	return constraint.Option == nil || allReferencedColumnsRetained(constraint.Option.Condition, retained)
 }
 
 func validateAutomaticIDColumns(columns []*ast.ColumnDef, constraints []*ast.Constraint) error {
@@ -294,25 +293,23 @@ func validatePartitionColumns(partition *ast.PartitionOptions, retained map[stri
 	if partition == nil {
 		return nil
 	}
-	missing := missingPartitionColumns(&partition.PartitionMethod, retained)
-	if partition.Sub != nil {
-		missing = append(missing, missingPartitionColumns(partition.Sub, retained)...)
+	if !partitionColumnsRetained(&partition.PartitionMethod, retained) ||
+		(partition.Sub != nil && !partitionColumnsRetained(partition.Sub, retained)) {
+		return errors.New("partition definition references a removed column")
 	}
-	if len(missing) == 0 {
-		return nil
-	}
-	slices.Sort(missing)
-	return errors.Errorf("partition definition references removed column `%s`", missing[0])
+	return nil
 }
 
-func missingPartitionColumns(method *ast.PartitionMethod, retained map[string]struct{}) []string {
-	missing := missingExpressionColumns(method.Expr, retained)
+func partitionColumnsRetained(method *ast.PartitionMethod, retained map[string]struct{}) bool {
+	if !allReferencedColumnsRetained(method.Expr, retained) {
+		return false
+	}
 	for _, column := range method.ColumnNames {
 		if _, ok := retained[column.Name.L]; !ok {
-			missing = append(missing, column.Name.O)
+			return false
 		}
 	}
-	return missing
+	return true
 }
 
 func validateTTLColumns(options []*ast.TableOption, retained map[string]struct{}) error {
@@ -327,7 +324,7 @@ func validateTTLColumns(options []*ast.TableOption, retained map[string]struct{}
 	return nil
 }
 
-func expressionColumnsRetained(expr ast.ExprNode, retained map[string]struct{}) bool {
+func allReferencedColumnsRetained(expr ast.ExprNode, retained map[string]struct{}) bool {
 	return len(missingExpressionColumns(expr, retained)) == 0
 }
 
