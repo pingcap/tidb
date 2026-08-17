@@ -121,35 +121,18 @@ pub enum IndexOrderingRequirement {
 
 /// The type of execution task a required property demands.
 ///
-/// Ported from `pkg/planner/property/task_type.go`.  Two tasks of different
-/// types cannot be compared by cost directly -- a cop task must still be
-/// finished, and the finishing cost is not in its number yet -- so the type
-/// travels WITH the required property rather than beside it.
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub enum TaskType {
-    /// Executed in the TiDB layer.
-    #[default]
-    Root,
-    /// A single `TableScan`/`IndexScan` in the coprocessor layer.
-    CopSingleRead,
-    /// An `IndexLookUp` in the coprocessor layer.
-    CopMultiRead,
-    /// Executed on MPP (TiFlash) nodes.
-    Mpp,
-}
-
-impl TaskType {
-    /// `TaskType.String()`: the name the property's own `String()` prints.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Root => "rootTask",
-            Self::CopSingleRead => "copSingleReadTask",
-            Self::CopMultiRead => "copMultiReadTask",
-            Self::Mpp => "mppTask",
-        }
-    }
-}
+/// `pkg/planner/property/task_type.go` declares ONE `TaskType`, and Go uses
+/// that single type both here -- as `PhysicalProperty.TaskTp` -- and in the
+/// cost functions. This module used to declare a second, four-variant copy of
+/// it, which meant one Go file was ported twice at two fidelities: the copy
+/// could not represent Go's `String()` fallthrough for an unrecognised integer,
+/// and [`find_best_task`](crate::find_best_task) had to import both and alias
+/// them apart. They are now the same type, as in Go.
+///
+/// Two tasks of different types cannot be compared by cost directly -- a cop
+/// task must still be finished, and the finishing cost is not in its number yet
+/// -- so the type travels WITH the required property rather than beside it.
+pub use crate::task_type::TaskType;
 
 /// One column of a required order, and the direction it is required in.
 ///
@@ -293,7 +276,7 @@ impl std::fmt::Display for PhysicalProperty {
             f,
             "Prop{{cols: [{}], TaskTp: {}, expectedCount: {}}}",
             items.join(" "),
-            self.task_tp.name(),
+            self.task_tp.as_str(),
             self.expected_cnt
         )
     }

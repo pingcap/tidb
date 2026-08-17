@@ -22,9 +22,14 @@
 use std::fmt;
 
 /// Execution location used by planner physical tasks.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub enum TaskType {
     /// TiDB root-layer execution.
+    ///
+    /// This is also the default: Go's `RootTaskType` is the zero value of
+    /// `property.TaskType`, so a zero-valued `PhysicalProperty` demands a root
+    /// task.
+    #[default]
     Root,
     /// Single-read coprocessor task.
     CopSingleRead,
