@@ -251,6 +251,12 @@ Plan cache lookup matches by `(cacheKey, paramTypes)`:
   parameter type vectors.
 - param type extraction differs by protocol (binary vs text-protocol user vars);
   be careful when changing typing rules.
+- decimal parameter types are compatible only when the cached type has enough
+  integer and fractional digits; total precision alone does not imply this.
+- temporal parameter types are compatible only when their fractional-seconds
+  precision matches; expressions such as `COALESCE` can derive result precision
+  from parameters, so reusing a plan across different FSP values can change
+  result semantics.
 
 Even on a hit, planner MUST rebuild param-dependent ranges for current values
 before executing:

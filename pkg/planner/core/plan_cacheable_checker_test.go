@@ -392,6 +392,8 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		"select * from test.t where a+b=13",      // '+'
 		"select * from test.t where mod(a, 3)=1", // mod
 		"select * from test.t where d>now()",     // now
+		"select coalesce(a, 0) from test.t where a<13",
+		"select * from test.t where a=coalesce(1, b)",
 		"select a+1 from test.t where a<13",
 		"select mod(a, 10) from test.t where a<13",
 		"select * from test.t limit 1",                                  // limit

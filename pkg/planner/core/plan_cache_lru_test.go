@@ -42,6 +42,35 @@ func randomPlanCacheValue(types []*types.FieldType) *PlanCacheValue {
 	}
 }
 
+func TestCheckTypesCompatibility4PCDecimalCapacity(t *testing.T) {
+	decimalType := func(flen, decimal int) *types.FieldType {
+		return types.NewFieldTypeBuilder().
+			SetType(mysql.TypeNewDecimal).
+			SetFlen(flen).
+			SetDecimal(decimal).
+			BuildP()
+	}
+
+	testCases := []struct {
+		name     string
+		expected *types.FieldType
+		actual   *types.FieldType
+		match    bool
+	}{
+		{name: "same metadata", expected: decimalType(10, 8), actual: decimalType(10, 8), match: true},
+		{name: "smaller integer capacity", expected: decimalType(10, 8), actual: decimalType(9, 8), match: true},
+		{name: "smaller fractional capacity", expected: decimalType(10, 8), actual: decimalType(9, 7), match: true},
+		{name: "larger integer capacity", expected: decimalType(10, 8), actual: decimalType(9, 0), match: false},
+		{name: "larger fractional capacity", expected: decimalType(10, 8), actual: decimalType(11, 9), match: false},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			require.Equal(t, testCase.match, checkTypesCompatibility4PC(
+				[]*types.FieldType{testCase.expected}, []*types.FieldType{testCase.actual}))
+		})
+	}
+}
+
 func TestLRUPCPut(t *testing.T) {
 	// test initialize
 	mockCtx := MockContext()

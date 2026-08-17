@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -263,6 +264,97 @@ func TestIssue53872(t *testing.T) {
 	tk.MustExec(`set @a=100, @b=100`)
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // no error
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
+}
+
+func TestPreparedPlanCacheCoalesce(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	runPreparedPlanCacheCoalesce(t, tk)
+}
+
+func runPreparedPlanCacheCoalesce(t *testing.T, tk *testkit.TestKit) {
+	t.Helper()
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_prepare_coalesce")
+	tk.MustExec("create table t_prepare_coalesce (a int primary key, b int, key(b))")
+	tk.MustExec("insert into t_prepare_coalesce values (1, null), (2, 20)")
+
+	tk.MustExec(`prepare st_coalesce_expr from 'select a, coalesce(b, ?) from t_prepare_coalesce where a = coalesce(?, 1)'`)
+	tk.MustExec("set @fallback=100, @key=1")
+	tk.MustQuery("execute st_coalesce_expr using @fallback, @key").Check(testkit.Rows("1 100"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set @fallback=200, @key=2")
+	tk.MustQuery("execute st_coalesce_expr using @fallback, @key").Check(testkit.Rows("2 20"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("deallocate prepare st_coalesce_expr")
+
+	tk.MustExec(`prepare st_coalesce_datetime from
+		'select coalesce(cast(null as datetime(0)), ?) from t_prepare_coalesce where a = 1'`)
+	tk.MustExec("set @fallback_dt=cast('2024-01-01 00:00:00' as datetime(0))")
+	tk.MustQuery("execute st_coalesce_datetime using @fallback_dt").Check(testkit.Rows("2024-01-01 00:00:00"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set @fallback_dt=cast('2024-01-01 00:00:01' as datetime(0))")
+	tk.MustQuery("execute st_coalesce_datetime using @fallback_dt").Check(testkit.Rows("2024-01-01 00:00:01"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @fallback_dt=cast('2024-01-01 00:00:00.123456' as datetime(6))")
+	tk.MustQuery("execute st_coalesce_datetime using @fallback_dt").Check(testkit.Rows("2024-01-01 00:00:00.123456"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("deallocate prepare st_coalesce_datetime")
+
+	tk.MustExec(`prepare st_coalesce_duration from
+		'select coalesce(cast(null as time(0)), ?) from t_prepare_coalesce where a = 1'`)
+	tk.MustExec("set @fallback_duration=cast('00:00:01' as time(0))")
+	tk.MustQuery("execute st_coalesce_duration using @fallback_duration").Check(testkit.Rows("00:00:01"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set @fallback_duration=cast('00:00:02' as time(0))")
+	tk.MustQuery("execute st_coalesce_duration using @fallback_duration").Check(testkit.Rows("00:00:02"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @fallback_duration=cast('00:00:03.123456' as time(6))")
+	tk.MustQuery("execute st_coalesce_duration using @fallback_duration").Check(testkit.Rows("00:00:03.123456"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("deallocate prepare st_coalesce_duration")
+
+	tk.MustExec(`prepare st_coalesce_decimal from
+		'select coalesce(cast(null as decimal(2,0)), ?) from t_prepare_coalesce where a = 1'`)
+	checkDecimalResult := func(value, expectedValue string, expectedFlen, expectedDecimal int) {
+		tk.MustExec("set @fallback_decimal=" + value)
+		rs, err := tk.Exec("execute st_coalesce_decimal using @fallback_decimal")
+		require.NoError(t, err)
+		fields := rs.Fields()
+		require.Len(t, fields, 1)
+		fieldType := fields[0].Column.FieldType
+		require.Equal(t, byte(mysql.TypeNewDecimal), fieldType.GetType())
+		require.Equal(t, expectedFlen, fieldType.GetFlen())
+		require.Equal(t, expectedDecimal, fieldType.GetDecimal())
+		tk.ResultSetToResult(rs, value).Check(testkit.Rows(expectedValue))
+	}
+	checkDecimalResult("cast(0.12345678 as decimal(10,8))", "0.12345678", 11, 8)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	checkDecimalResult("cast(0.87654321 as decimal(10,8))", "0.87654321", 11, 8)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	checkDecimalResult("cast(123456789 as decimal(9,0))", "123456789", 10, 0)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	checkDecimalResult("cast(987654321 as decimal(9,0))", "987654321", 10, 0)
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("deallocate prepare st_coalesce_decimal")
+
+	tk.MustExec("drop table if exists t_prepare_coalesce_outer, t_prepare_coalesce_inner")
+	tk.MustExec("create table t_prepare_coalesce_outer (a int primary key)")
+	tk.MustExec("create table t_prepare_coalesce_inner (a int primary key, b int)")
+	tk.MustExec("insert into t_prepare_coalesce_outer values (1), (2)")
+	tk.MustExec("insert into t_prepare_coalesce_inner values (2, 5)")
+	tk.MustExec(`prepare st_coalesce_left_join from
+		'select o.a, i.b
+		 from t_prepare_coalesce_outer o left join t_prepare_coalesce_inner i on o.a = i.a
+		 where coalesce(i.b, ?) > 0
+		 order by o.a'`)
+	tk.MustExec("set @fallback=0")
+	tk.MustQuery("execute st_coalesce_left_join using @fallback").Check(testkit.Rows("2 5"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set @fallback=1")
+	tk.MustQuery("execute st_coalesce_left_join using @fallback").Check(testkit.Rows("1 <nil>", "2 5"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("deallocate prepare st_coalesce_left_join")
 }
 
 func TestIssue38269(t *testing.T) {
@@ -1696,6 +1788,48 @@ func TestIssue54652(t *testing.T) {
 	tk.MustExec(`execute st using @pk`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't reuse since it's in txn now.
 	tk.MustExec(`commit`)
+}
+
+func TestNonPreparedPlanCacheCoalesce(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	nonPreparedCache := tk.MustQuery("select @@session.tidb_enable_non_prepared_plan_cache").Rows()[0][0]
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_enable_non_prepared_plan_cache=%v", nonPreparedCache))
+	}()
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+
+	runNonPreparedPlanCacheCoalesce(t, tk, "t_support_coalesce")
+}
+
+func runNonPreparedPlanCacheCoalesce(t *testing.T, tk *testkit.TestKit, tableName string) {
+	t.Helper()
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(fmt.Sprintf("create table %s (a int primary key, b int, key(b))", tableName))
+	tk.MustExec(fmt.Sprintf("insert into %s values (1, null), (2, 20)", tableName))
+
+	tk.MustQuery(fmt.Sprintf("select a, coalesce(b, 100) from %s where a = coalesce(1, a)", tableName)).
+		Check(testkit.Rows("1 100"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf("select a, coalesce(b, 100) from %s where a = coalesce(2, a)", tableName)).
+		Check(testkit.Rows("2 20"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	outerTable := tableName + "_outer"
+	innerTable := tableName + "_inner"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s, %s", outerTable, innerTable))
+	tk.MustExec(fmt.Sprintf("create table %s (a int primary key)", outerTable))
+	tk.MustExec(fmt.Sprintf("create table %s (a int primary key, b int)", innerTable))
+	tk.MustExec(fmt.Sprintf("insert into %s values (1), (2)", outerTable))
+	tk.MustExec(fmt.Sprintf("insert into %s values (2, 5)", innerTable))
+
+	query := "select o.a, i.b from %s o left join %s i on o.a = i.a where coalesce(i.b, %d) > 0 order by o.a"
+	tk.MustQuery(fmt.Sprintf(query, outerTable, innerTable, 0)).Check(testkit.Rows("2 5"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(fmt.Sprintf(query, outerTable, innerTable, 1)).Check(testkit.Rows("1 <nil>", "2 5"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
 func TestPreparedPlanCacheWorkWithoutMetadataLock(t *testing.T) {
