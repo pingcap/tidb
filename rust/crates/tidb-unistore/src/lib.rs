@@ -111,6 +111,7 @@ pub mod lockstore;
 pub mod lockwaiter;
 pub mod mvcc;
 pub mod mvcc_store;
+pub mod region_loader;
 #[cfg(test)]
 mod testutil;
 pub mod tso;
