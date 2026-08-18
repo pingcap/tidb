@@ -46,24 +46,15 @@ func prepareFTSLikeTable(t *testing.T) *testkit.TestKit {
 func TestFTSLocalMatchPreFilterPushesDown(t *testing.T) {
 	tk := prepareFTSLikeTable(t)
 
-	var plan strings.Builder
-	for _, row := range tk.MustQuery(
-		"explain select id from articles where match(body) against('+distributed +sql' in boolean mode)").Rows() {
-		for _, cell := range row {
-			plan.WriteString(cell.(string) + " ")
-		}
-		plan.WriteString("\n")
-	}
-	out := plan.String()
+	cop, root := planPredicates(t, tk,
+		"select id from articles where match(body) against('+distributed +sql' in boolean mode)")
 
-	require.Contains(t, out, "cop[tikv]", "the pre-filter should reach the coprocessor:\n"+out)
-	require.Contains(t, strings.ToLower(out), "like", "a LIKE pre-filter should be pushed:\n"+out)
-	// Both terms should be pushed, not just one.
-	require.Contains(t, strings.ToLower(out), "%distributed%", out)
-	require.Contains(t, strings.ToLower(out), "%sql%", out)
-	// The exact check must remain in TiDB.
-	require.Contains(t, strings.ToLower(out), "match_against",
-		"MATCH must remain as the exact residual:\n"+out)
+	// Both entailed predicates must be evaluated by the coprocessor.
+	require.Contains(t, cop, "%distributed%", "cop task predicates:\n"+cop)
+	require.Contains(t, cop, "%sql%", "cop task predicates:\n"+cop)
+	// And the exact check must stay in TiDB, not be pushed with them.
+	require.Contains(t, root, "match_against", "root predicates:\n"+root)
+	require.NotContains(t, cop, "match_against", "MATCH must not reach the coprocessor:\n"+cop)
 }
 
 // TestFTSLocalMatchPreFilterKeepsResults is the correctness property: the
@@ -150,16 +141,12 @@ func TestFTSLocalMatchPreFilterSkipsBinaryColumn(t *testing.T) {
 	tk.MustQuery("select id from b where match(body) against('+distributed' in boolean mode) order by id").
 		Check(testkit.Rows("1", "2"))
 
-	var plan strings.Builder
-	for _, row := range tk.MustQuery(
-		"explain format='brief' select id from b where match(body) against('+distributed' in boolean mode)").Rows() {
-		for _, cell := range row {
-			plan.WriteString(cell.(string) + " ")
-		}
-		plan.WriteString("\n")
-	}
-	require.NotContains(t, strings.ToLower(plan.String()), "like",
-		"no pre-filter may be pushed for a binary column:\n"+plan.String())
+	cop, root := planPredicates(t, tk,
+		"select id from b where match(body) against('+distributed' in boolean mode)")
+	require.NotContains(t, cop, "like",
+		"no pre-filter may be pushed for a binary column:\n"+cop)
+	require.Contains(t, root, "match_against",
+		"the MATCH still decides, in TiDB:\n"+root)
 }
 
 // TestFTSLocalMatchPreFilterSkipsMultiColumn covers another case where
@@ -182,25 +169,35 @@ func TestFTSLocalMatchPreFilterSkipsMultiColumn(t *testing.T) {
 	tk.MustQuery("select id from m where match(title, body) against('+storage' in boolean mode) order by id").
 		Check(testkit.Rows("1", "2"))
 
-	var plan strings.Builder
-	for _, row := range tk.MustQuery(
-		"explain format='brief' select id from m where match(title, body) against('+storage' in boolean mode)").Rows() {
-		for _, cell := range row {
-			plan.WriteString(cell.(string) + " ")
-		}
-		plan.WriteString("\n")
-	}
-	require.NotContains(t, strings.ToLower(plan.String()), "like",
-		"no pre-filter may be pushed for a multi-column MATCH:\n"+plan.String())
+	cop, root := planPredicates(t, tk,
+		"select id from m where match(title, body) against('+storage' in boolean mode)")
+	require.NotContains(t, cop, "like",
+		"no pre-filter may be pushed for a multi-column MATCH:\n"+cop)
+	require.Contains(t, root, "match_against",
+		"the MATCH still decides, in TiDB:\n"+root)
 
-	// A single-column MATCH on the same table still gets one.
-	var single strings.Builder
-	for _, row := range tk.MustQuery(
-		"explain format='brief' select id from m where match(body) against('+storage' in boolean mode)").Rows() {
-		for _, cell := range row {
-			single.WriteString(cell.(string) + " ")
+	// A single-column MATCH on the same table still gets one, so the guard is
+	// scoped to the multi-column case rather than disabling the optimisation.
+	singleCop, _ := planPredicates(t, tk,
+		"select id from m where match(body) against('+storage' in boolean mode)")
+	require.Contains(t, singleCop, "%storage%",
+		"a single-column MATCH should still be narrowed:\n"+singleCop)
+}
+
+// planPredicates splits an EXPLAIN into the operator info of coprocessor tasks
+// and of root tasks. Asserting against these separately matters: the whole plan
+// text always contains "cop[tikv]" because the table scan runs there, so a
+// substring check on it proves nothing about where a predicate ended up.
+func planPredicates(t *testing.T, tk *testkit.TestKit, sql string) (cop, root string) {
+	t.Helper()
+	var copB, rootB strings.Builder
+	for _, row := range tk.MustQuery("explain format='brief' " + sql).Rows() {
+		task, info := row[2].(string), row[4].(string)
+		if strings.Contains(task, "cop[") {
+			copB.WriteString(info + "\n")
+			continue
 		}
+		rootB.WriteString(info + "\n")
 	}
-	require.Contains(t, strings.ToLower(single.String()), "like",
-		"a single-column MATCH should still be narrowed:\n"+single.String())
+	return strings.ToLower(copB.String()), strings.ToLower(rootB.String())
 }
