@@ -265,11 +265,8 @@ fn find_best_task_uncached(
                 ctx.allocator,
             ));
         }
-        LogicalPlan::DataSource(_) => {
-            return Err(PlanError::internal(
-                "findBestTask4LogicalDataSource is the access-path chooser; \
-                 this crate carries it separately from the dispatcher",
-            ));
+        LogicalPlan::DataSource(op) => {
+            return find_best_task_4_logical_data_source(op, prop, ctx);
         }
         LogicalPlan::MemTable(_) => {
             return Err(PlanError::internal(
@@ -312,6 +309,111 @@ fn find_best_task_uncached(
         return Ok(cur_task);
     }
     Ok(best_task)
+}
+
+/// Go `tryToGetDualTask` (`find_best_task.go:749`): a pushed-down constant
+/// that evaluates false turns the whole source into a dual — Go's
+/// `WHERE FALSE` short-circuit, before any path is considered.
+///
+/// Go runs `expression.EvalBool`, which coerces EVERY constant type; this
+/// port answers the spellings the rewriter produces for a constant-false
+/// predicate — integer zero and NULL — and leaves other constant types
+/// unshort-circuited rather than mis-coercing them (the source still plans,
+/// just without the dual fast path).
+fn try_to_get_dual_task(
+    ds: &crate::logical::DataSource,
+    ctx: &DispatchContext<'_>,
+) -> Option<Task> {
+    use tidb_expr::expression::Expression;
+    for cond in &ds.pushed_down_conds {
+        let Expression::Constant(constant) = cond else {
+            continue;
+        };
+        if constant.deferred_expr.is_some() || constant.param_marker.is_some() {
+            continue;
+        }
+        let is_false = matches!(constant.value, tidb_datatype::Datum::Null)
+            || constant.value.as_int() == Some(0);
+        if is_false {
+            let mut base = crate::physical::BasePhysicalPlan::new(
+                ctx.allocator,
+                crate::logical::LogicalTableDual::TYPE,
+                ds.base.base.query_block_offset(),
+            );
+            base.base.set_stats(ds.base.base.stats_info().cloned());
+            base.base.set_schema(ds.base.base.schema().cloned());
+            let dual = PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
+                base,
+                row_count: 0,
+            });
+            let mut root = crate::task::RootTask::default();
+            root.set_plan(dual);
+            return Some(Task::Root(root));
+        }
+    }
+    None
+}
+
+/// Go `findBestTask4LogicalDataSource` (`find_best_task.go:2027`), the
+/// TABLE-PATH slice: the dual short-circuit, then one cop-task candidate
+/// per TABLE access path (`convertToTableScan` without ranger — the scan is
+/// the full range the enumerated path carries), finished through
+/// [`crate::task::Task::convert_to_root_task`]'s table branch.
+///
+/// # Narrowings, each naming its Go symbol
+///
+/// * A non-empty required order answers the invalid task: the
+///   `isMatchProp` handle-order admission of `convertToTableScan`
+///   (`:2834`) is keep-order work over ranges this slice does not build.
+/// * INDEX paths (`convertToIndexScan`), `PointGet`/`BatchPointGet`, and
+///   index merge enumerate NO candidate here — fewer candidates than Go,
+///   the same class of narrowing as the projection's cop branch. The
+///   skyline prune (`skylinePruning`) has nothing to prune with one
+///   candidate shape.
+/// * `isolation read engines`, `IsForUpdateRead` filtering (`:2036`), and
+///   the TiFlash arms narrow with the absent tiers.
+fn find_best_task_4_logical_data_source(
+    ds: &crate::logical::DataSource,
+    prop: &PhysicalProperty,
+    ctx: &mut DispatchContext<'_>,
+) -> Result<Task, PlanError> {
+    if prop.task_tp != TaskType::Root {
+        return Ok(Task::invalid_task());
+    }
+    if let Some(dual) = try_to_get_dual_task(ds, ctx) {
+        return Ok(dual);
+    }
+    if !prop.is_sort_item_empty() {
+        return Ok(Task::invalid_task());
+    }
+    let mut best = Task::invalid_task();
+    for path in &ds.enumerated_paths {
+        let crate::access_path::PossiblePath::Table { .. } = path else {
+            continue;
+        };
+        let mut base = crate::physical::BasePhysicalPlan::new(
+            ctx.allocator,
+            "TableScan",
+            ds.base.base.query_block_offset(),
+        );
+        base.base.set_stats(ds.base.base.stats_info().cloned());
+        base.base.set_schema(ds.base.base.schema().cloned());
+        let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+            base,
+            table_id: ds.physical_table_id,
+            store_type: crate::physical_table_reader::StoreType::TiKv,
+        });
+        let cop = Task::Cop(crate::task::CopTask {
+            table_plan: Some(Box::new(scan)),
+            index_plan_finished: true,
+            ..crate::task::CopTask::default()
+        });
+        let cur = cop.convert_to_root_task()?;
+        if best.invalid() || compare_task_cost(ctx.coster, &cur, &best)? {
+            best = cur;
+        }
+    }
+    Ok(best)
 }
 
 /// Go `enumeratePhysicalPlans4Task` + helper (`find_best_task.go:112,156`),
@@ -496,6 +598,109 @@ mod tests {
             plan.children()[0].children().first(),
             Some(PhysicalPlan::CTETable(_))
         ));
+    }
+
+    #[test]
+    fn a_data_source_plans_a_table_reader_through_the_dispatcher() {
+        // The table-path slice end to end: DataSource -> TableScan in a cop
+        // task -> convertToRootTaskImpl's reader -> the Selection attaches
+        // above it. The first table query plannable start to finish.
+        use crate::access_path::PossiblePath;
+        use crate::logical::DataSource;
+
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let source = {
+            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+            base.base.set_stats(Some(StatsInfo::new(50.0, [])));
+            base.base.set_schema(Some(tidb_expr::schema::Schema::default()));
+            LogicalPlan::DataSource(DataSource {
+                base,
+                physical_table_id: 42,
+                enumerated_paths: vec![PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                }],
+                ..DataSource::default()
+            })
+        };
+        let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 0);
+        base.base.set_stats(Some(StatsInfo::new(10.0, [])));
+        base.set_children(vec![source]);
+        let selection = LogicalPlan::Selection(LogicalSelection::new(base, Vec::new()));
+
+        let task = find_best_task(&selection, &PhysicalProperty::default(), &mut ctx)
+            .expect("plans");
+        let plan = task.plan().expect("a plan");
+        assert!(matches!(plan, PhysicalPlan::Selection(_)));
+        let Some(PhysicalPlan::TableReader(reader)) = plan.children().first() else {
+            panic!("a TableReader under the selection, got {:?}", plan.children());
+        };
+        let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref() else {
+            panic!("the scan hangs off TablePlan");
+        };
+        assert_eq!(scan.table_id, 42);
+    }
+
+    #[test]
+    fn a_false_pushed_constant_short_circuits_into_a_dual() {
+        // `tryToGetDualTask` (`find_best_task.go:749`): WHERE FALSE never
+        // touches a path.
+        use crate::logical::DataSource;
+        use tidb_datatype::Datum;
+        use tidb_expr::constant::Constant;
+        use tidb_expr::expression::Expression;
+
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let source = {
+            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+            base.base.set_stats(Some(StatsInfo::new(50.0, [])));
+            LogicalPlan::DataSource(DataSource {
+                base,
+                pushed_down_conds: vec![Expression::Constant(Constant::new(
+                    Datum::Int(0),
+                    tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+                ))],
+                ..DataSource::default()
+            })
+        };
+        let task = find_best_task(&source, &PhysicalProperty::default(), &mut ctx)
+            .expect("answers");
+        assert!(
+            matches!(task.plan(), Some(PhysicalPlan::TableDual(_))),
+            "the dual short-circuit, got {:?}",
+            task.plan()
+        );
+    }
+
+    #[test]
+    fn a_sorted_requirement_over_the_table_slice_is_invalid() {
+        // The keep-order admission (`convertToTableScan:2834`) is a later
+        // slice; a required order refuses rather than mis-ordering.
+        use crate::access_path::PossiblePath;
+        use crate::logical::DataSource;
+
+        let allocator = PlanIdAllocator::new();
+        let coster = CountCoster;
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let source = {
+            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+            base.base.set_stats(Some(StatsInfo::new(50.0, [])));
+            LogicalPlan::DataSource(DataSource {
+                base,
+                enumerated_paths: vec![PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                }],
+                ..DataSource::default()
+            })
+        };
+        let prop = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
+        let task = find_best_task(&source, &prop, &mut ctx).expect("answers");
+        assert!(task.invalid());
     }
 
     #[test]
