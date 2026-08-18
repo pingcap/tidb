@@ -537,3 +537,53 @@ fn a_transaction_keeps_the_schema_its_begin_saw() {
     // Once the transaction is over the connection follows the node again.
     assert!(reader.execute("SELECT id FROM t").is_err());
 }
+
+/// Every catalog refusal already rendered Go's own message, but only two
+/// variants carried a CODE, so the rest reached a client as 1105 -- the code
+/// a MySQL client reads as "unknown error" rather than the specific one it
+/// switches on. `pkg/errno` names each; these pin the pairing.
+#[test]
+fn a_catalog_refusal_carries_the_code_mysql_clients_switch_on() {
+    use tidb_exec::cluster_ddl::DdlPlanError;
+
+    let coded = |error: DdlPlanError| {
+        let query_error = cluster_ddl_error(tidb_exec::real_tikv_ddl::ClusterDdlError::Plan(error));
+        (query_error.code, query_error.message)
+    };
+
+    let (code, message) = coded(DdlPlanError::UnknownDatabase("nope".to_owned()));
+    assert_eq!(code, 1049);
+    assert_eq!(message, "Unknown database 'nope'");
+
+    let (code, message) = coded(DdlPlanError::DatabaseExists("dup".to_owned()));
+    assert_eq!(code, 1007);
+    assert_eq!(message, "Can't create database 'dup'; database exists");
+
+    let (code, message) = coded(DdlPlanError::UnknownTable {
+        schema: "s".to_owned(),
+        table: "t".to_owned(),
+    });
+    assert_eq!(code, 1051);
+    assert_eq!(message, "Unknown table 's.t'");
+
+    let (code, message) = coded(DdlPlanError::TableExists {
+        schema: "s".to_owned(),
+        table: "t".to_owned(),
+    });
+    assert_eq!(code, 1050);
+    assert_eq!(message, "Table 's.t' already exists");
+
+    let (code, message) = coded(DdlPlanError::DuplicateColumnName("a".to_owned()));
+    assert_eq!(code, 1060);
+    assert_eq!(message, "Duplicate column name 'a'");
+
+    let (code, message) = coded(DdlPlanError::DuplicateKeyName("ix".to_owned()));
+    assert_eq!(code, 1061);
+    assert_eq!(message, "Duplicate key name 'ix'");
+
+    let (code, _) = coded(DdlPlanError::UnknownIndexColumn {
+        column: "c".to_owned(),
+        index: "ix".to_owned(),
+    });
+    assert_eq!(code, 1072);
+}

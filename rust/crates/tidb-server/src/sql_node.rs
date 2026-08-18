@@ -324,6 +324,7 @@ pub(crate) fn lock_sql_error(error: &LockSqlError) -> SqlQueryError {
 /// Preserves the one DDL outcome that is not a failure verdict while mapping
 /// every determinate catalog error to its ordinary client diagnostic.
 pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
+    use tidb_exec::cluster_ddl::DdlPlanError;
     match error {
         ClusterDdlError::Undetermined(_) => SqlQueryError::result_undetermined(),
         ClusterDdlError::Commit(error) => lock_sql_error(&error),
@@ -336,6 +337,30 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
                 *b"HY000",
                 "Failed to read auto-increment value from storage engine",
             )
+        }
+        // Each of these already renders Go's own message; only the CODE was
+        // missing, so every one of them reached a client as 1105 instead of
+        // the code MySQL clients switch on. `pkg/errno` names them.
+        ClusterDdlError::Plan(error @ DdlPlanError::UnknownDatabase(_)) => {
+            SqlQueryError::new(1049, *b"42000", error.to_string())
+        }
+        ClusterDdlError::Plan(error @ DdlPlanError::DatabaseExists(_)) => {
+            SqlQueryError::new(1007, *b"HY000", error.to_string())
+        }
+        ClusterDdlError::Plan(error @ DdlPlanError::UnknownTable { .. }) => {
+            SqlQueryError::new(1051, *b"42S02", error.to_string())
+        }
+        ClusterDdlError::Plan(error @ DdlPlanError::TableExists { .. }) => {
+            SqlQueryError::new(1050, *b"42S01", error.to_string())
+        }
+        ClusterDdlError::Plan(error @ DdlPlanError::DuplicateKeyName(_)) => {
+            SqlQueryError::new(1061, *b"42000", error.to_string())
+        }
+        ClusterDdlError::Plan(error @ DdlPlanError::DuplicateColumnName(_)) => {
+            SqlQueryError::new(1060, *b"42S21", error.to_string())
+        }
+        ClusterDdlError::Plan(error @ DdlPlanError::UnknownIndexColumn { .. }) => {
+            SqlQueryError::new(1072, *b"42000", error.to_string())
         }
         other => SqlQueryError::unknown(other.to_string()),
     }
