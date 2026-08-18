@@ -305,14 +305,29 @@ fn show_create_table_text(
         clauses.push(clause);
     }
 
-    // Go emits a clustered primary key here, because a clustered key -- an
-    // int handle or a common handle -- is not in the index list.
-    let clustered: Vec<usize> = match table.pk_handle_offset() {
+    // Go `ShowCreateTable` (`show.go:1193`) emits the primary key from the
+    // COLUMN only when `PKIsHandle`, because that key alone is absent from
+    // `tb.Indices()`; every other primary key is printed once by the index
+    // loop below.
+    //
+    // A common handle reaches this function from two tiers that disagree
+    // about where it lives: a table loaded from a stored `TableInfo` keeps
+    // a PRIMARY entry in its index list, while one configured in-process
+    // records only the handle offsets. Emitting from the handle offsets
+    // unconditionally therefore printed the key TWICE for the first tier --
+    // a `SHOW CREATE TABLE` that is not valid SQL. Print it here only when
+    // the index list does not already carry it.
+    let index_carries_primary = table
+        .indexes()
+        .iter()
+        .any(|index| index.name.eq_ignore_ascii_case("PRIMARY"));
+    let handle_columns: Vec<usize> = match table.pk_handle_offset() {
         Some(offset) => vec![offset],
+        None if index_carries_primary => Vec::new(),
         None => table.common_handle_offsets().to_vec(),
     };
-    if !clustered.is_empty() {
-        let columns = clustered
+    if !handle_columns.is_empty() {
+        let columns = handle_columns
             .iter()
             .map(|offset| escape_name(&table.columns[*offset].name))
             .collect::<Vec<_>>()
@@ -333,9 +348,15 @@ fn show_create_table_text(
             .collect::<Vec<_>>()
             .join(",");
         let mut clause = if index.name.eq_ignore_ascii_case("PRIMARY") {
-            // A primary key that is not the handle is non-clustered here,
-            // since this seed builds no clustered common handle.
-            format!("  PRIMARY KEY ({columns}) /*T![clustered_index] NONCLUSTERED */")
+            // Go `idxInfo.Primary`: the comment follows
+            // `tableInfo.HasClusteredIndex()`, which a common handle
+            // satisfies.
+            let clustered = if table.common_handle_offsets().is_empty() {
+                "NONCLUSTERED"
+            } else {
+                "CLUSTERED"
+            };
+            format!("  PRIMARY KEY ({columns}) /*T![clustered_index] {clustered} */")
         } else if index.unique {
             format!("  UNIQUE KEY {} ({columns})", escape_name(&index.name))
         } else {

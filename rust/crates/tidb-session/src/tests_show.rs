@@ -533,6 +533,25 @@ fn show_create_table() {
              ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
     );
 
+    // A COMPOSITE clustered primary key prints ONE line, marked CLUSTERED.
+    // It used to print two -- one from the handle offsets and one from the
+    // index list, the second wrongly NONCLUSTERED -- which is not valid SQL.
+    let composite = create(
+        &mut session,
+        "create table c1 (a int, b int, c int, primary key (a, b))",
+        "c1",
+    );
+    assert_eq!(
+        composite.matches("PRIMARY KEY").count(),
+        1,
+        "exactly one primary key clause: {composite}"
+    );
+    assert!(
+        composite.contains("PRIMARY KEY (`a`,`b`) /*T![clustered_index] CLUSTERED */"),
+        "{composite}"
+    );
+    assert!(!composite.contains("NONCLUSTERED"), "{composite}");
+
     // AUTO_INCREMENT, captured from TiDB verbatim.
     assert_eq!(
         create(
