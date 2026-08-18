@@ -59,7 +59,6 @@ func parseProjectedTableSchema(
 }
 
 func (s *projectedTableSchema) applyLocalProjection() error {
-	s.tableInfo = nil
 	columns := make([]*ast.ColumnDef, 0, len(s.createTable.Cols))
 	for _, column := range s.createTable.Cols {
 		if _, ok := s.retainedColumns[column.Name.Name.L]; !ok {
@@ -76,11 +75,9 @@ func (s *projectedTableSchema) applyLocalProjection() error {
 
 	constraints := make([]*ast.Constraint, 0, len(s.createTable.Constraints))
 	for _, constraint := range s.createTable.Constraints {
-		keep := filterTableConstraint(constraint, s.retainedColumns)
-		if !keep {
-			continue
+		if filterTableConstraint(constraint, s.retainedColumns) {
+			constraints = append(constraints, constraint)
 		}
-		constraints = append(constraints, constraint)
 	}
 	s.createTable.Constraints = constraints
 
@@ -222,9 +219,6 @@ func validateForeignKeyReference(reference *ast.ReferenceDef, database string, s
 			return removedReferenceColumnError(referenceDatabase, referenceTable, key.Column.Name.O)
 		}
 		referencedColumns = append(referencedColumns, key.Column.Name)
-	}
-	if len(referencedColumns) == 0 {
-		return nil
 	}
 	targetTableInfo, err := targetSchema.getTableInfo()
 	if err != nil {
