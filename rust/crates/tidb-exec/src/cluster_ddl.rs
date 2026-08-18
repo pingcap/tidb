@@ -157,6 +157,16 @@ impl CreateTableBuild {
     }
 }
 
+/// A `StmtContext` wrapper carrying the Debug the statement enum derives.
+#[derive(Clone)]
+pub struct DdlStatementContext(pub tidb_executor::StmtContext);
+
+impl std::fmt::Debug for DdlStatementContext {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("DdlStatementContext")
+    }
+}
+
 /// One catalog change this node knows how to perform.
 #[derive(Clone, Debug)]
 pub enum DdlStatement {
@@ -223,6 +233,27 @@ pub enum DdlStatement {
         range_bits: u64,
         /// Signedness written by the new column definition.
         unsigned: bool,
+    },
+    /// The single-action `ALTER TABLE ... ADD COLUMN` this node serves:
+    /// one nullable, defaultless column appended at the end. Existing rows
+    /// read the implicit NULL with no rewrite, which is MySQL's answer for
+    /// the same shape; everything needing a row rewrite is refused by name
+    /// at admission (`build_added_column`).
+    AddColumn {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// Whether an existing column of the same name is a no-op.
+        if_not_exists: bool,
+        /// The column as written; built against the stored table's charset
+        /// at plan time, exactly as Go's add-column job builds it.
+        column: Box<tidb_ast::ColumnDef>,
+        /// The statement context the plan-time build resolves defaults under.
+        /// `StmtContext` carries no Debug; the build recipe pattern above
+        /// (`CreateTableBuild`) hides it the same way.
+        #[allow(missing_docs)]
+        context: DdlStatementContext,
     },
     /// `DROP TABLE [IF EXISTS] [schema.]table`.
     DropTable {
@@ -512,6 +543,28 @@ fn lower_alter_table_catalog(
                 shard_bits: auto_random.shard_bits.unwrap_or(5),
                 range_bits: auto_random.range_bits.unwrap_or(64),
                 unsigned: column.ty.unsigned,
+            }))
+        }
+        tidb_ast::AlterTableAction::AddColumn {
+            if_not_exists,
+            column,
+            position,
+        } => {
+            // Go's job appends at the end unless FIRST/AFTER reorders; the
+            // reorder rewrites every row's offset map, so it is refused by
+            // name rather than silently appended.
+            if !matches!(position, tidb_ast::ColumnPosition::Default) {
+                return Err(DdlAdmissionError::unsupported(
+                    "ADD COLUMN FIRST/AFTER reorders stored offsets; this node appends only",
+                ));
+            }
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::AddColumn {
+                schema,
+                table,
+                if_not_exists: *if_not_exists,
+                column: Box::new(column.clone()),
+                context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
             }))
         }
         _ => Ok(None),
@@ -808,6 +861,8 @@ pub enum DdlPlanError {
     },
     /// The table already has an index of that name (Go 1061).
     DuplicateKeyName(String),
+    /// The table already has a column of that name (Go 1060).
+    DuplicateColumnName(String),
     /// The named index is not on the named table (Go 1091).
     UnknownIndex(String),
     /// The index names a column the table does not have (Go 1072).
@@ -848,6 +903,9 @@ impl fmt::Display for DdlPlanError {
                 write!(formatter, "Table '{schema}.{table}' already exists")
             }
             Self::DuplicateKeyName(name) => write!(formatter, "Duplicate key name '{name}'"),
+            Self::DuplicateColumnName(name) => {
+                write!(formatter, "Duplicate column name '{name}'")
+            }
             Self::UnknownIndex(name) => {
                 write!(formatter, "index {name} doesn't exist")
             }
@@ -1392,6 +1450,55 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 }
             }
             diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::AddColumn {
+            schema,
+            table,
+            if_not_exists,
+            column,
+            context,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let wanted = column.name.to_lowercase();
+            if stored
+                .columns
+                .iter_deref()
+                .any(|candidate| candidate.read().name.lowercase() == wanted)
+            {
+                if *if_not_exists {
+                    return Ok(already(format!(
+                        "column `{}` already exists on `{schema}`.`{table}`",
+                        column.name
+                    )));
+                }
+                return Err(DdlPlanError::DuplicateColumnName(column.name.clone()));
+            }
+            let mut added = crate::table_info_build::build_added_column(
+                column,
+                &stored.charset,
+                &stored.collate,
+                &context.0,
+            )
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            let mut info = stored.clone_like_go();
+            // Go `AllocateColumnID`: ids only ever grow, so a dropped
+            // column's id is never reused.
+            info.max_column_id += 1;
+            added.id = info.max_column_id;
+            added.offset = info.columns.len() as i64;
+            added.state = tidb_model::SchemaState::PUBLIC;
+            info.columns.push_handle_go(Some(GoShared::new(added)));
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_ADD_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }

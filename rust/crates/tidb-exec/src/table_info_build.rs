@@ -559,6 +559,49 @@ fn index_type_of(options: &IndexOptions) -> Option<IndexType> {
     })
 }
 
+/// Builds the one column an `ALTER TABLE ... ADD COLUMN` appends, against the
+/// stored table's charset pair — Go `buildColumnAndConstraint` run by the
+/// add-column DDL job. The nullable-no-default shape is the one this tier
+/// serves: existing rows then read the implicit NULL default with no rewrite,
+/// which is also MySQL's answer. Every option that would need a row rewrite
+/// or a second allocator is refused BY NAME.
+pub fn build_added_column(
+    column: &ColumnDef,
+    table_charset: &str,
+    table_collate: &str,
+    context: &tidb_executor::StmtContext,
+) -> Refusal<ColumnInfo> {
+    for option in &column.options {
+        match option {
+            ColumnOption::Null | ColumnOption::Comment(_) => {}
+            ColumnOption::NotNull => {
+                return Err(DdlAdmissionError::unsupported(
+                    "ADD COLUMN ... NOT NULL: existing rows would need an origin default; \
+                     add the column nullable on this node",
+                ))
+            }
+            ColumnOption::Default(_) => {
+                return Err(DdlAdmissionError::unsupported(
+                    "ADD COLUMN with DEFAULT: existing rows would read NULL instead of the \
+                     default until origin defaults land; add the column without one",
+                ))
+            }
+            other => {
+                return Err(DdlAdmissionError::unsupported(format!(
+                    "ADD COLUMN option {other:?} waits on its DDL course"
+                )))
+            }
+        }
+    }
+    let (info, constraints) = build_column(0, column, None, table_charset, table_collate, context)?;
+    if !constraints.is_empty() {
+        return Err(DdlAdmissionError::unsupported(
+            "ADD COLUMN must not introduce constraints on this node",
+        ));
+    }
+    Ok(info)
+}
+
 /// Go `buildColumnAndConstraint` + `columnDefToCol` for one column.
 fn build_column(
     offset: usize,

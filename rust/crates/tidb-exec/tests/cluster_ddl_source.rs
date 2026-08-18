@@ -935,7 +935,10 @@ fn a_statement_this_module_does_not_own_is_left_to_its_own_path() {
     for sql in [
         "SELECT 1",
         "INSERT INTO u6.t VALUES (1, 2)",
-        "ALTER TABLE u6.t ADD COLUMN c BIGINT NOT NULL",
+        // ADD COLUMN left this list when the module took ownership of the
+        // single-action append; its rewrite-needing shapes are now refused
+        // at plan time by name rather than silently left behind.
+        "ALTER TABLE u6.t DROP COLUMN c",
     ] {
         let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
         assert!(
@@ -1740,5 +1743,64 @@ fn a_non_numeric_auto_increment_column_is_refused_the_way_go_refuses_it() {
     ] {
         let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
         assert!(lower_ddl(&parsed, "u6").is_ok(), "`{sql}` must be admitted");
+    }
+}
+
+#[test]
+fn add_column_appends_a_public_nullable_column_and_refuses_rewrites() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, v BIGINT NOT NULL)",
+        100,
+    );
+    apply(&mut store, &write);
+
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+
+    let write = plan(&mut store, "ALTER TABLE u6.t ADD COLUMN note VARCHAR(32)", 200);
+    apply(&mut store, &write);
+    let stored = stored_table(&write, table_id);
+    let columns = stored["cols"].as_array().expect("columns array");
+    assert_eq!(columns.len(), 3, "the new column is appended");
+    let added = &columns[2];
+    assert_eq!(added["name"]["O"], "note");
+    // Go `AllocateColumnID`: past the existing max, never reused.
+    assert_eq!(added["id"], 3);
+    assert_eq!(added["offset"], 2);
+    assert_eq!(added["state"], 5, "public immediately: no backfill was needed");
+    assert_eq!(stored["max_col_id"], 3);
+
+    // A duplicate is MySQL's own message; IF NOT EXISTS is a no-op. Both are
+    // plan-time answers: only the stored table knows its columns.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t ADD COLUMN note VARCHAR(8)"),
+        300,
+    )
+    .expect_err("a duplicate column is refused")
+    .to_string();
+    assert!(error.contains("Duplicate column name 'note'"), "{error}");
+    match plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t ADD COLUMN IF NOT EXISTS note VARCHAR(8)"),
+        300,
+    )
+    .expect("the no-op plans")
+    {
+        DdlPlan::AlreadySatisfied { .. } => {}
+        DdlPlan::Write(_) => panic!("IF NOT EXISTS over an existing column must be a no-op"),
+    }
+
+    // Every shape needing a row rewrite is refused by name, at plan time,
+    // before any mutation is staged.
+    for sql in [
+        "ALTER TABLE u6.t ADD COLUMN flag BIGINT NOT NULL",
+        "ALTER TABLE u6.t ADD COLUMN flag BIGINT DEFAULT 7",
+    ] {
+        let error = plan_ddl(&mut store, &statement(sql), 300)
+            .expect_err("a rewrite-needing shape is refused")
+            .to_string();
+        assert!(error.contains("ADD COLUMN"), "{error}");
     }
 }
