@@ -774,6 +774,25 @@ pub trait QuerySession {
     /// Starts one sequential query and returns its lazy result owner.
     fn execute<'a>(&'a mut self, sql: &str) -> Result<QueryResult<'a>, SqlQueryError>;
 
+    /// Splits one COM_QUERY text into the statements the connection runs in
+    /// order — Go `handleQuery` parses the whole text and loops the result
+    /// (`conn.go:1861`). More than one statement is admitted by the client's
+    /// `CLIENT_MULTI_STATEMENTS` bit, else by the session's
+    /// `@@tidb_multi_statement_mode`. Sessions without a parser keep the
+    /// default: the text is one statement, exactly as before.
+    fn split_statements(
+        &mut self,
+        sql: &str,
+        _client_multi_statements: bool,
+    ) -> Result<Vec<String>, SqlQueryError> {
+        Ok(vec![sql.to_owned()])
+    }
+
+    /// Called once after a multi-statement chain's LAST statement completes;
+    /// Go appends the admission's parser warnings there (`conn.go:2262`).
+    /// An aborted chain is never flushed, as Go's error return drops them.
+    fn flush_multi_statement_warning(&mut self) {}
+
     /// The command-scoped cancellation authority installed before parsing.
     fn query_cancellation(&self) -> Option<Arc<dyn ActiveQueryCancellation>> {
         None

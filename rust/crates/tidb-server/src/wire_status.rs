@@ -71,6 +71,11 @@ pub const SERVER_MORE_RESULTS_EXISTS: u16 = 0x0008;
 /// `ServerStatusCursorExists` (`pkg/parser/mysql/const.go:125`): a read-only
 /// cursor opened by `COM_STMT_EXECUTE` with `CURSOR_TYPE_READ_ONLY` is still
 /// open, so the client fetches with `COM_STMT_FETCH` instead of reading rows.
+/// Go `mysql.ServerMoreResultsExists`: this response is not the last of its
+/// COM_QUERY — a multi-statement query sets it on every result but the
+/// final one (`conn.go:2269`).
+pub const SERVER_STATUS_MORE_RESULTS_EXISTS: u16 = 0x0008;
+
 pub const SERVER_STATUS_CURSOR_EXISTS: u16 = 0x0040;
 /// `ServerStatusLastRowSend` (`pkg/parser/mysql/const.go:126`): the fetch that
 /// carried this EOF drained the cursor, which is retired in the same breath --

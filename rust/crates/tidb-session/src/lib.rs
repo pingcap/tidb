@@ -346,6 +346,11 @@ pub struct Session {
     /// The warnings the last statement produced, which Go keeps in
     /// `StmtCtx.warnings` and `SHOW WARNINGS` reads.
     warnings: Vec<SqlWarning>,
+    /// Go `handleQuery`'s `parserWarns`: the multi-statement 8130 warning is
+    /// carried OUTSIDE the per-statement warning buffer and appended to the
+    /// LAST statement's context after it runs (`conn.go:2262`), so the reset
+    /// each statement performs cannot clear it.
+    deferred_multi_statement_warning: bool,
     /// Go `StatementContext.InShowWarning`: set for exactly the statements
     /// that inherit the buffer, and the reason `WarningCount()` reports 0 for
     /// them. See [`Session::wire_warning_count`].
@@ -520,6 +525,7 @@ impl Default for Session {
             txn: None,
             vars: SessionVars::new(),
             warnings: Vec::new(),
+            deferred_multi_statement_warning: false,
             in_show_warning: false,
             current_user: None,
             login_user: None,
@@ -885,6 +891,81 @@ impl Session {
 
     /// Runs one SQL statement (Go `session.ExecuteStmt`): parses, dispatches by
     /// statement kind, and executes over the session catalog.
+    /// Go `handleQuery`'s multi-statement admission (`conn.go:1861-1904`).
+    ///
+    /// The COM_QUERY text parses as a WHOLE, and a text holding more than one
+    /// statement is admitted by the client's `CLIENT_MULTI_STATEMENTS`
+    /// capability; without it, `@@tidb_multi_statement_mode` decides — `OFF`
+    /// (the default) refuses with server error 8130, `ON` admits, and any
+    /// other value is Go's `default:` arm, admitting with warning 8130. Each
+    /// admitted statement's own source text — the parser records it,
+    /// delimiter included — is returned for the caller to run in order.
+    ///
+    /// A parse failure is NOT reported here: the text is handed back whole,
+    /// so the ordinary single-statement path parses it again and its error
+    /// carries the session's full diagnostic shape.
+    pub fn split_statements(
+        &mut self,
+        sql: &str,
+        client_multi_statements: bool,
+    ) -> Result<Vec<String>, DriverError> {
+        const DISABLED: &str = "client has multi-statement capability disabled. Run SET \
+                                GLOBAL tidb_multi_statement_mode='ON' after you understand \
+                                the security risk";
+        let mode = crate::stmt_ctx::scanner_sql_mode_of(
+            &self.vars().get_system("sql_mode").unwrap_or_default(),
+        );
+        let Ok(statements) = tidb_parser::parse_multi_with_sql_mode(sql, mode) else {
+            return Ok(vec![sql.to_owned()]);
+        };
+        if statements.len() <= 1 {
+            return Ok(vec![sql.to_owned()]);
+        }
+        if !client_multi_statements {
+            match self
+                .vars()
+                .get_system("tidb_multi_statement_mode")
+                .unwrap_or_default()
+                .to_uppercase()
+                .as_str()
+            {
+                "OFF" => {
+                    return Err(DriverError::ParseCoded {
+                        errno: 8130,
+                        message: DISABLED.to_owned(),
+                    })
+                }
+                "ON" => {}
+                _ => {
+                    self.deferred_multi_statement_warning = true;
+                }
+            }
+        }
+        Ok(statements
+            .iter()
+            .map(|statement| String::from_utf8_lossy(statement.text()).into_owned())
+            .collect())
+    }
+
+    /// Go `conn.go:2262`: after the LAST statement of a multi-statement
+    /// COM_QUERY runs, the parser-level warnings its admission produced are
+    /// appended to that statement's context, where the next `SHOW WARNINGS`
+    /// reads them. An aborted chain never reaches this, exactly as Go's
+    /// error return drops `parserWarns`.
+    pub fn flush_multi_statement_warning(&mut self) {
+        if std::mem::take(&mut self.deferred_multi_statement_warning) {
+            self.append_warning(
+                WarningLevel::Warning,
+                8130,
+                "client has multi-statement capability disabled. Run SET GLOBAL \
+                 tidb_multi_statement_mode='ON' after you understand the security risk"
+                    .to_owned(),
+            );
+        }
+    }
+
+    /// Parses and executes one SQL statement, reducing the output to rows
+    /// or an affected count.
     pub fn run(&mut self, sql: &str) -> Result<StmtResult, DriverError> {
         Ok(match self.run_with_columns(sql)? {
             StmtOutput::Rows { rows, .. } => StmtResult::Rows(rows),

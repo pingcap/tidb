@@ -1298,6 +1298,20 @@ impl QuerySession for ClusterServerSession {
         self.session.wait_timeout()
     }
 
+    fn split_statements(
+        &mut self,
+        sql: &str,
+        client_multi_statements: bool,
+    ) -> Result<Vec<String>, SqlQueryError> {
+        self.session
+            .split_statements(sql, client_multi_statements)
+            .map_err(map_error)
+    }
+
+    fn flush_multi_statement_warning(&mut self) {
+        self.session.flush_multi_statement_warning();
+    }
+
     /// The live status word Go reads with `cc.ctx.Status()` before every
     /// OK/EOF packet. The driver session owns the transaction state this tier
     /// acts on, so the wire word and the tier's behaviour cannot disagree.

@@ -1145,3 +1145,83 @@ fn a_syntax_error_carries_gos_sentence_and_position() {
         assert!(wire.message.starts_with(PREFIX), "{sql}: {}", wire.message);
     }
 }
+
+/// Go `handleQuery`'s multi-statement admission (`conn.go:1861-1904`) and
+/// the deferred parser warning (`conn.go:2262`).
+#[test]
+fn multi_statement_admission_follows_capability_then_sysvar() {
+    let mut session = Session::new();
+
+    // One statement never consults the gate, capability or not.
+    assert_eq!(
+        session.split_statements("SELECT 1", false).unwrap(),
+        vec!["SELECT 1".to_owned()]
+    );
+
+    // The client capability admits without touching the sysvar.
+    let split = session
+        .split_statements("SELECT 1; SELECT 2", true)
+        .unwrap();
+    assert_eq!(split, vec!["SELECT 1;".to_owned(), "SELECT 2".to_owned()]);
+
+    // Without it, the sysvar's default (OFF) refuses with Go's 8130.
+    let error = session
+        .split_statements("SELECT 1; SELECT 2", false)
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(error.code, 8130);
+    assert!(
+        error
+            .message
+            .starts_with("client has multi-statement capability disabled"),
+        "{}",
+        error.message
+    );
+
+    // ON admits silently.
+    session
+        .run("SET SESSION tidb_multi_statement_mode='ON'")
+        .unwrap();
+    assert_eq!(
+        session
+            .split_statements("SELECT 1; SELECT 2", false)
+            .unwrap()
+            .len(),
+        2
+    );
+
+    // WARN admits and DEFERS the warning: it must survive the statements'
+    // own warning resets and land after the LAST one runs, where the next
+    // SHOW WARNINGS reads it (Go appends parserWarns to the last StmtCtx).
+    session
+        .run("SET SESSION tidb_multi_statement_mode='WARN'")
+        .unwrap();
+    assert_eq!(
+        session
+            .split_statements("SELECT 1; SELECT 2", false)
+            .unwrap()
+            .len(),
+        2
+    );
+    session.run("SELECT 1").unwrap();
+    session.run("SELECT 2").unwrap();
+    assert_eq!(session.warnings().len(), 0, "not yet flushed");
+    session.flush_multi_statement_warning();
+    let warnings = warnings_of(&session);
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(warnings[0].0, 8130);
+
+    // The flush is one-shot: nothing left for a second chain's flush.
+    session.run("SELECT 3").unwrap();
+    session.flush_multi_statement_warning();
+    assert_eq!(session.warnings().len(), 0);
+
+    // A text that does not parse is handed back WHOLE, so the ordinary
+    // path's own diagnostic reports it.
+    assert_eq!(
+        session
+            .split_statements("SELEC 1; SELECT 2", false)
+            .unwrap(),
+        vec!["SELEC 1; SELECT 2".to_owned()]
+    );
+}

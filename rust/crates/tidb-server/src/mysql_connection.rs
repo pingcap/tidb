@@ -148,6 +148,14 @@ fn write_bind_parameters(values: Vec<PreparedValue>) -> Vec<PreparedBindValue> {
 }
 
 const CLIENT_DEPRECATE_EOF: u32 = 1 << 24;
+/// `CLIENT_MULTI_STATEMENTS`: the client may send several statements in one
+/// COM_QUERY. Go's server advertises it (`defaultCapability`), and
+/// `handleQuery` consults the CLIENT's bit before running a split text.
+const CLIENT_MULTI_STATEMENTS: u32 = 1 << 16;
+/// `CLIENT_MULTI_RESULTS`: the client understands
+/// `SERVER_MORE_RESULTS_EXISTS` chains. Advertised alongside
+/// `CLIENT_MULTI_STATEMENTS`, as Go does.
+const CLIENT_MULTI_RESULTS: u32 = 1 << 17;
 /// Go's `defaultCapability` (`pkg/server/server.go`) restricted to what this
 /// node actually serves.
 ///
@@ -164,7 +172,9 @@ const SERVER_CAPABILITIES: u32 = CLIENT_PROTOCOL_41
     | CLIENT_PLUGIN_AUTH
     | CLIENT_CONNECT_ATTRS
     | CLIENT_DEPRECATE_EOF
-    | CLIENT_ZSTD_COMPRESSION_ALGORITHM;
+    | CLIENT_ZSTD_COMPRESSION_ALGORITHM
+    | CLIENT_MULTI_STATEMENTS
+    | CLIENT_MULTI_RESULTS;
 const ER_ACCESS_DENIED_ERROR: u16 = 1045;
 const ER_UNKNOWN_COM_ERROR: u16 = 1047;
 /// SQLSTATE `08S01` for [`ER_UNKNOWN_COM_ERROR`]. Go resolves every ERR
@@ -1142,87 +1152,131 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         continue;
                     }
                 };
-                // BEGIN/COMMIT/ROLLBACK update the session's transaction state and
-                // answer with an OK packet carrying the transaction status, not a
-                // result set; every other statement runs as an ordinary query.
-                match engine.control_transaction(sql) {
-                    Ok(Some(_)) => {
-                        // The session has already applied the statement, so its
-                        // own status is the answer -- there is no separate
-                        // transaction flag for this packet to get wrong.
-                        write_ok(
-                            &mut output,
-                            1,
-                            engine.wire_status(),
-                            engine.warning_count(),
-                            protocol_41,
-                        )?;
-                        queries += 1;
-                        continue;
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        write_query_error(&mut output, &error, protocol_41)?;
-                        continue;
-                    }
-                }
-                // A DML write or DDL answers with an OK packet carrying its
-                // affected-row count, as MySQL does on the text protocol;
-                // everything else runs as an ordinary result-set query.
-                match engine.execute_write(sql) {
-                    Ok(Some(outcome)) => {
-                        write_affected_rows_ok(
-                            &mut output,
-                            1,
-                            outcome.affected_rows,
-                            outcome.last_insert_id,
-                            engine.wire_status(),
-                            engine.warning_count(),
-                            protocol_41,
-                        )?;
-                        queries += 1;
-                        continue;
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        write_query_error(&mut output, &error, protocol_41)?;
-                        continue;
-                    }
-                }
-                let mut result = match engine.execute(sql) {
-                    Ok(result) => result,
+                // Go `handleQuery` (`conn.go:1861`): the text parses as a
+                // whole, and each admitted statement runs in order. Every
+                // response but the LAST carries SERVER_MORE_RESULTS_EXISTS
+                // (`conn.go:2269`); an execution error aborts the remainder,
+                // as Go's loop returns on error.
+                let statements = match engine
+                    .split_statements(sql, capabilities & CLIENT_MULTI_STATEMENTS != 0)
+                {
+                    Ok(statements) => statements,
                     Err(error) => {
                         write_query_error(&mut output, &error, protocol_41)?;
                         continue;
                     }
                 };
-                let write_result = {
-                    let statement_options = framing.result_set(
-                        result.wire_status(),
-                        result.warning_count(),
-                        result_encoder,
-                    );
-                    let mut sink = TcpResultSetSink::new(&mut output, 1);
-                    write_connection_result_set_to_sink(
-                        result.source(),
-                        &mut sink,
-                        statement_options,
-                        RESULT_BATCH_SIZE,
-                    )
-                };
-                match write_result {
-                    Ok(_) => queries += 1,
-                    Err(error) if !error.bytes_escaped => {
-                        write_error(
-                            &mut output,
-                            1,
-                            ER_UNKNOWN_ERROR,
-                            *b"HY000",
-                            error.message,
-                            protocol_41,
-                        )?;
+                let last_index = statements.len().saturating_sub(1);
+                // One COM_QUERY, one packet numbering: the chained results
+                // CONTINUE the sequence rather than restarting at 1.
+                let mut sequence: u8 = 1;
+                let mut aborted = false;
+                for (statement_index, sql) in statements.iter().enumerate() {
+                    let sql = sql.as_str();
+                    let more_results = statement_index < last_index;
+                    let stamp = |status: WireStatus| {
+                        if more_results {
+                            status.with(crate::wire_status::SERVER_STATUS_MORE_RESULTS_EXISTS)
+                        } else {
+                            status
+                        }
+                    };
+                    // BEGIN/COMMIT/ROLLBACK update the session's transaction state and
+                    // answer with an OK packet carrying the transaction status, not a
+                    // result set; every other statement runs as an ordinary query.
+                    match engine.control_transaction(sql) {
+                        Ok(Some(_)) => {
+                            // The session has already applied the statement, so its
+                            // own status is the answer -- there is no separate
+                            // transaction flag for this packet to get wrong.
+                            write_ok(
+                                &mut output,
+                                sequence,
+                                stamp(engine.wire_status()),
+                                engine.warning_count(),
+                                protocol_41,
+                            )?;
+                            sequence = sequence.wrapping_add(1);
+                            queries += 1;
+                            continue;
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                            aborted = true;
+                            break;
+                        }
                     }
-                    Err(error) => return Err(MysqlConnectionError::PartialResult(error.message)),
+                    // A DML write or DDL answers with an OK packet carrying its
+                    // affected-row count, as MySQL does on the text protocol;
+                    // everything else runs as an ordinary result-set query.
+                    match engine.execute_write(sql) {
+                        Ok(Some(outcome)) => {
+                            write_affected_rows_ok(
+                                &mut output,
+                                sequence,
+                                outcome.affected_rows,
+                                outcome.last_insert_id,
+                                stamp(engine.wire_status()),
+                                engine.warning_count(),
+                                protocol_41,
+                            )?;
+                            sequence = sequence.wrapping_add(1);
+                            queries += 1;
+                            continue;
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                            aborted = true;
+                            break;
+                        }
+                    }
+                    let mut result = match engine.execute(sql) {
+                        Ok(result) => result,
+                        Err(error) => {
+                            write_query_error_at(&mut output, sequence, &error, protocol_41)?;
+                            aborted = true;
+                            break;
+                        }
+                    };
+                    let (write_result, next_sequence) = {
+                        let statement_options = framing.result_set(
+                            stamp(result.wire_status()),
+                            result.warning_count(),
+                            result_encoder,
+                        );
+                        let mut sink = TcpResultSetSink::new(&mut output, sequence);
+                        let written = write_connection_result_set_to_sink(
+                            result.source(),
+                            &mut sink,
+                            statement_options,
+                            RESULT_BATCH_SIZE,
+                        );
+                        (written, sink.next_sequence())
+                    };
+                    sequence = next_sequence;
+                    match write_result {
+                        Ok(_) => queries += 1,
+                        Err(error) if !error.bytes_escaped => {
+                            write_error(
+                                &mut output,
+                                1,
+                                ER_UNKNOWN_ERROR,
+                                *b"HY000",
+                                error.message,
+                                protocol_41,
+                            )?;
+                            aborted = true;
+                            break;
+                        }
+                        Err(error) => {
+                            return Err(MysqlConnectionError::PartialResult(error.message))
+                        }
+                    }
+                }
+                if !aborted {
+                    engine.flush_multi_statement_warning();
                 }
             }
             Command::StmtPrepare(bytes) => {

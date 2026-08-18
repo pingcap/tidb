@@ -315,6 +315,13 @@ impl<'a, O: ConnectionPacketOutput + ?Sized> TcpResultSetSink<'a, O> {
             packets: 0,
         }
     }
+
+    /// The sequence the NEXT packet on this connection must carry — a
+    /// multi-statement COM_QUERY's later results continue the numbering
+    /// rather than restarting it.
+    pub(crate) const fn next_sequence(&self) -> u8 {
+        self.sequence
+    }
 }
 
 impl<O: ConnectionPacketOutput + ?Sized> ResultSetSink for TcpResultSetSink<'_, O> {
