@@ -592,6 +592,19 @@ impl MvccStore {
                 check_lock_rc_check_ts(&decode_lock(&buf), key, version, &ctx.resolved_locks)?;
             }
         }
+        // Go `dbreader.Get`: under `RcCheckTS` the read ts becomes
+        // `math.MaxUint64` — the LATEST version is read, then
+        // `CheckWriteItemForRcCheckTSRead` refuses one committed past the
+        // caller's ts.
+        if ctx.is_rc_check_ts() {
+            return match self.engine.get_at(key, u64::MAX) {
+                None => Ok(None),
+                Some((value, meta)) => {
+                    check_write_meta_rc_check_ts(version, meta)?;
+                    Ok(Some(value.to_vec()).filter(|value| !value.is_empty()))
+                }
+            };
+        }
         // Go `dbreader.Get(key, version)`: the newest committed version at or
         // below the read ts; an empty value is a delete, read as absent.
         Ok(self
@@ -715,6 +728,23 @@ fn check_lock(
     Ok(None)
 }
 
+/// Go `dbreader.CheckWriteItemForRcCheckTSRead` (`db_reader.go:362`): the
+/// reader serves the LATEST version under `RcCheckTS`, and one committed
+/// past the caller's read ts is an `RcCheckTs` conflict — carrying NO key,
+/// exactly Go's error shape.
+fn check_write_meta_rc_check_ts(read_ts: u64, meta: &DbUserMeta) -> Result<(), KvError> {
+    if meta.commit_ts() > read_ts {
+        return Err(KvError::Conflict {
+            reason: tidb_proto::kvrpcpb::write_conflict::Reason::RcCheckTs,
+            start_ts: read_ts,
+            conflict_ts: meta.start_ts(),
+            conflict_commit_ts: meta.commit_ts(),
+            key: Vec::new(),
+        });
+    }
+    Ok(())
+}
+
 /// Go `checkLockForRcCheckTS` (`mvcc.go:1453`): any unresolved write lock —
 /// visible or not — is an `RcCheckTs` write conflict.
 fn check_lock_rc_check_ts(
@@ -809,13 +839,28 @@ impl MvccStore {
                 remain.push(key);
             }
         }
+        // Go `dbreader.BatchGet`: under `RcCheckTS` the latest version is
+        // read and a too-new commit rides the pair as its error; either way
+        // only non-empty values append (`len(value) != 0`).
+        let read_ts = if ctx.is_rc_check_ts() {
+            u64::MAX
+        } else {
+            version
+        };
         for key in remain {
-            if let Some((value, _)) = self.engine.get_at(key, version) {
+            if let Some((value, meta)) = self.engine.get_at(key, read_ts) {
                 if !value.is_empty() {
+                    let error = if ctx.is_rc_check_ts() {
+                        check_write_meta_rc_check_ts(version, meta)
+                            .err()
+                            .map(Box::new)
+                    } else {
+                        None
+                    };
                     pairs.push(KvPair {
                         key: key.clone(),
                         value: value.to_vec(),
-                        error: None,
+                        error,
                     });
                 }
             }
@@ -891,22 +936,32 @@ impl MvccStore {
             });
             true
         };
+        // Go `dbreader.Scan` under `RcCheckTS` walks LATEST versions and
+        // errors on one committed past the read ts; the Scan caller then
+        // answers a SINGLE keyless error pair, discarding the lock pairs
+        // and everything scanned so far.
+        let read_ts = if ctx.is_rc_check_ts() {
+            u64::MAX
+        } else {
+            req.version
+        };
+        let mut keys: Vec<Vec<u8>> = self.committed_keys_in(&start_key, &end_key);
         if req.reverse {
-            let mut keys: Vec<Vec<u8>> = self.committed_keys_in(&start_key, &end_key);
             keys.reverse();
-            for key in keys {
-                if let Some((value, _)) = self.engine.get_at(&key, req.version) {
-                    if !visit(&key, value) {
-                        break;
+        }
+        for key in keys {
+            if let Some((value, meta)) = self.engine.get_at(&key, read_ts) {
+                if ctx.is_rc_check_ts() {
+                    if let Err(err) = check_write_meta_rc_check_ts(req.version, meta) {
+                        return vec![KvPair {
+                            key: Vec::new(),
+                            value: Vec::new(),
+                            error: Some(Box::new(err)),
+                        }];
                     }
                 }
-            }
-        } else {
-            for key in self.committed_keys_in(&start_key, &end_key) {
-                if let Some((value, _)) = self.engine.get_at(&key, req.version) {
-                    if !visit(&key, value) {
-                        break;
-                    }
+                if !visit(&key, value) {
+                    break;
                 }
             }
         }
@@ -3762,5 +3817,101 @@ mod tests {
             assert!(pair.error.is_none());
             assert_eq!(pair.value, value.expect("only committed keys answer"));
         }
+    }
+
+    // Go `getConflictErr` (`mvcc_test.go:1690`): the first conflict error
+    // among the scan pairs.
+    fn get_conflict_err(pairs: &[KvPair]) -> Option<&KvError> {
+        pairs
+            .iter()
+            .filter_map(|pair| pair.error.as_deref())
+            .find(|error| matches!(error, KvError::Conflict { .. }))
+    }
+
+    /// Go `TestRcReadCheckTS` (`mvcc_test.go:1614`): under `RCCheckTS` a
+    /// point read serves only data committed at or before the read ts — a
+    /// NEWER committed version is a conflict carrying its timestamps, a
+    /// standing write lock is a conflict carrying the lock's start ts —
+    /// and a scan (either direction) surfaces the same conflicts.
+    #[test]
+    fn test_rc_read_check_ts() {
+        let mut store = MvccStore::new();
+        let (k1, v1) = (b"tk1".as_slice(), b"v1".as_slice());
+        must_prewrite_optimistic(&mut store, k1, k1, v1, 1, 100);
+        must_commit(&mut store, k1, 1, 2);
+        let (k2, v2) = (b"tk2".as_slice(), b"v2".as_slice());
+        must_prewrite_optimistic(&mut store, k2, k2, v2, 5, 100);
+        must_commit(&mut store, k2, 5, 6);
+        let (k3, v3) = (b"tk3".as_slice(), b"v3".as_slice());
+        must_prewrite_optimistic(&mut store, k3, k3, v3, 10, 100);
+
+        let ctx = ReadContext {
+            isolation_level: tidb_proto::KvrpcIsolationLevel::RcCheckTs as i32,
+            ..ReadContext::default()
+        };
+        assert_eq!(
+            store.get_with(&ctx, k1, 3).expect("committed at 2 serves"),
+            Some(v1.to_vec())
+        );
+        // A version committed PAST the read ts is a conflict with its
+        // timestamps.
+        let err = store.get_with(&ctx, k2, 3).expect_err("commit 6 > read 3");
+        let KvError::Conflict {
+            start_ts: 3,
+            conflict_ts: 5,
+            conflict_commit_ts: 6,
+            ..
+        } = err
+        else {
+            panic!("wrong conflict shape: {err:?}");
+        };
+        // A standing write lock is a conflict with the lock's start ts.
+        let err = store.get_with(&ctx, k3, 3).expect_err("locked at 10");
+        let KvError::Conflict {
+            start_ts: 3,
+            conflict_ts: 10,
+            ..
+        } = err
+        else {
+            panic!("wrong conflict shape: {err:?}");
+        };
+
+        let scan = |store: &MvccStore, version: u64, reverse: bool| {
+            store.scan_with(
+                &ctx,
+                &ScanReq {
+                    start_key: b"a".to_vec(),
+                    end_key: b"z".to_vec(),
+                    limit: 100,
+                    version,
+                    reverse,
+                    ..ScanReq::default()
+                },
+            )
+        };
+        // The error is reported from the more recent version.
+        let pairs = scan(&store, 3, false);
+        let Some(KvError::Conflict {
+            start_ts: 3,
+            conflict_ts: 5,
+            conflict_commit_ts: 6,
+            ..
+        }) = get_conflict_err(&pairs)
+        else {
+            panic!("wrong scan conflict: {pairs:?}");
+        };
+        // The error is reported from the lock.
+        let pairs = scan(&store, 15, false);
+        let Some(KvError::Conflict {
+            start_ts: 15,
+            conflict_ts: 10,
+            ..
+        }) = get_conflict_err(&pairs)
+        else {
+            panic!("wrong scan conflict: {pairs:?}");
+        };
+        // Reverse scans surface the same conflicts.
+        assert!(get_conflict_err(&scan(&store, 3, true)).is_some());
+        assert!(get_conflict_err(&scan(&store, 15, true)).is_some());
     }
 }
