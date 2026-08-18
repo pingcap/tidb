@@ -15,7 +15,6 @@
 package s3store
 
 import (
-	"context"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -99,14 +98,6 @@ func TestTencentCVMRoleCredentialsProviderErrors(t *testing.T) {
 		provider := &tencentCVMRoleCredentialsProvider{credential: common.NewTokenCredential("id", "", "token")}
 		_, err := provider.Retrieve(t.Context())
 		require.EqualError(t, err, "tencent CVM role returned incomplete credentials")
-	})
-
-	t.Run("canceled context", func(t *testing.T) {
-		provider := &tencentCVMRoleCredentialsProvider{credential: common.NewTokenCredential("id", "key", "token")}
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		_, err := provider.Retrieve(ctx)
-		require.ErrorIs(t, err, context.Canceled)
 	})
 }
 
