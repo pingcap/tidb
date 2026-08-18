@@ -258,12 +258,25 @@ fn charset_from_collation_id(id: u16) -> Option<ResultCharset> {
 fn encode_with_charset(src: &[u8], charset: ResultCharset) -> Vec<u8> {
     match charset {
         // Go's FindEncodingTakeUTF8AsNoop deliberately uses the binary
-        // encoder for UTF-8, and TiDB's Latin-1 compatibility encoder is also
-        // a byte-preserving NOP. Keep all of these paths allocation-only.
-        ResultCharset::Binary
-        | ResultCharset::Latin1
-        | ResultCharset::Utf8
-        | ResultCharset::Utf8Mb4 => src.to_vec(),
+        // encoder for UTF-8. Keep these paths allocation-only.
+        ResultCharset::Binary | ResultCharset::Utf8 | ResultCharset::Utf8Mb4 => src.to_vec(),
+        // Go's Latin-1 encoder is ALSO a byte-preserving NOP — because Go's
+        // internal bytes under a latin1 connection ARE the raw latin1 bytes.
+        // This stack's internal text is UTF-8 (the wire decodes latin1 input
+        // to UTF-8, `decode_client_sql`), so the symmetric half re-encodes
+        // here: codepoints at or below U+00FF become their latin1 byte,
+        // anything else Go's replacement `?`. The client-visible round trip
+        // is identical to Go's; only internal byte spellings differ (the
+        // named HEX narrowing beside the input decode).
+        ResultCharset::Latin1 => match std::str::from_utf8(src) {
+            Ok(text) => text
+                .chars()
+                .map(|c| u8::try_from(u32::from(c)).unwrap_or(b'?'))
+                .collect(),
+            // Non-UTF-8 source bytes are already client-charset bytes
+            // (a binary column); pass them through as Go does.
+            Err(_) => src.to_vec(),
+        },
         ResultCharset::Ascii | ResultCharset::Gbk | ResultCharset::Gb18030 => {
             find_encoding(match charset {
                 ResultCharset::Ascii => "ascii",

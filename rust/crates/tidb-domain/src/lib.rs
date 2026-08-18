@@ -54,6 +54,13 @@
 //! are testkit-bound (`CreateMockStoreAndDomain`). Like `runaway.go`,
 //! there is no decision left to port until those packages exist.
 //!
+//! `domainctx.go` was screened and declined (2026-08-18): a typed
+//! downcast accessor over Go's context-value idiom (`GetDomain(ctx)`
+//! returning nil for a cross-keyspace session), whose only referent is
+//! the unbuilt `Domain` composition root. There is no decision to carry
+//! until that root exists; its test binds a mock context, another
+//! Go-runtime shape.
+//!
 //! `runaway.go` was screened and declined. Its only symbol,
 //! `(*Domain).initResourceGroupsController`, is nothing but wiring between
 //! things that do not exist in Rust: the blocking Go symbols are

@@ -62,6 +62,39 @@ use tidb_planner::prepared_dml::PreparedBindValue;
 use tidb_planner::transaction_control::classify_transaction_control;
 use tidb_session::privilege::plugin_needs_cleartext;
 
+/// Decodes one client SQL payload per `@@character_set_client`.
+///
+/// Go keeps COM_QUERY bytes raw — the parser scans them and string literals
+/// stay tagged with the client charset; TiDB's Latin-1 is a byte-preserving
+/// compatibility encoding end to end (`FindEncodingTakeUTF8AsNoop`). This
+/// pipeline's SQL text is a Rust `String`, so the wire transcodes instead:
+/// client bytes decode to UTF-8 here, and `ResultEncoder` encodes results
+/// back per `@@character_set_results` — the same client-visible round trip.
+///
+/// NAMED NARROWING: for a latin1 client sending non-ASCII bytes, Go stores
+/// the RAW latin1 bytes while this path stores their UTF-8 spelling, so
+/// `HEX()` over such data diverges (Go `E9`, here `C3A9`); the text a
+/// client reads back is identical.
+///
+/// `gbk`/`gb18030` decode through the ported encoding registry with Go's
+/// strict `OpDecode` (an invalid group is refused, not replaced). Every
+/// other charset requires valid UTF-8, as before.
+fn decode_client_sql(bytes: &[u8], charset: &str) -> Result<String, ()> {
+    match charset {
+        "latin1" => Ok(bytes.iter().map(|&b| char::from(b)).collect()),
+        "gbk" | "gb18030" => {
+            let result = tidb_datatype::find_encoding(charset)
+                .transform(bytes, tidb_datatype::TransformOp::DECODE);
+            if result.error().is_some() {
+                return Err(());
+            }
+            String::from_utf8(result.bytes().to_vec()).map_err(|_| ())
+        }
+        _ => std::str::from_utf8(bytes).map(str::to_owned).map_err(|_| ()),
+    }
+}
+
+
 /// Extracts the signed-integer parameters a point read requires, rejecting a
 /// string parameter (a point read binds only a clustered integer handle).
 fn point_read_integer_parameters(values: Vec<PreparedValue>) -> Result<Vec<i64>, String> {
@@ -1144,9 +1177,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                 // `decode_command` has already trimmed exactly one terminal
                 // NUL for issue 1989. Embedded and repeated NUL bytes remain
                 // parser-visible here.
-                let sql = match std::str::from_utf8(&bytes) {
+                let sql = match decode_client_sql(&bytes, &engine.input_charset()) {
                     Ok(sql) => sql,
-                    Err(_) => {
+                    Err(()) => {
                         write_error(
                             &mut output,
                             1,
@@ -1158,6 +1191,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         continue;
                     }
                 };
+                let sql = sql.as_str();
                 // Go `handleQuery` (`conn.go:1861`): the text parses as a
                 // whole, and each admitted statement runs in order. Every
                 // response but the LAST carries SERVER_MORE_RESULTS_EXISTS
@@ -1287,9 +1321,9 @@ fn serve_connection_inner<F: QuerySessionFactory>(
             }
             Command::StmtPrepare(bytes) => {
                 commands.stmt_prepare_commands += 1;
-                let sql = match std::str::from_utf8(&bytes) {
+                let sql = match decode_client_sql(&bytes, &engine.input_charset()) {
                     Ok(sql) => sql,
-                    Err(_) => {
+                    Err(()) => {
                         write_error(
                             &mut output,
                             1,
@@ -1301,6 +1335,7 @@ fn serve_connection_inner<F: QuerySessionFactory>(
                         continue;
                     }
                 };
+                let sql = sql.as_str();
                 // Transaction control is claimed before any planner sees the
                 // statement, because a prepared `BEGIN` is a `BEGIN`: its
                 // meaning is the connection's transaction, not a plan. Left to
@@ -2209,5 +2244,36 @@ mod undetermined_tests {
         assert!(!same_code_different_text.is_result_undetermined());
         let different_code = SqlQueryError::new(1062, *b"23000", RESULT_UNDETERMINED_MESSAGE);
         assert!(!different_code.is_result_undetermined());
+    }
+}
+
+#[cfg(test)]
+mod decode_client_sql_tests {
+    use super::decode_client_sql;
+
+    #[test]
+    fn latin1_bytes_decode_one_to_one() {
+        // 0xE9 is latin1 'é' — Go admits the raw byte (byte-preserving
+        // latin1); here it becomes the UTF-8 spelling of U+00E9.
+        let sql = decode_client_sql(b"SELECT 'h\xe9llo'", "latin1").expect("decodes");
+        assert_eq!(sql, "SELECT 'héllo'");
+    }
+
+    #[test]
+    fn utf8_clients_still_require_valid_utf8() {
+        assert!(decode_client_sql(b"SELECT '\xe9'", "utf8mb4").is_err());
+        assert_eq!(
+            decode_client_sql(b"SELECT 1", "utf8mb4").as_deref(),
+            Ok("SELECT 1")
+        );
+    }
+
+    #[test]
+    fn gbk_decodes_through_the_registry_strictly() {
+        // 0xC4 0xE3 is GBK for U+4F60 (ni). An invalid group refuses rather
+        // than replaces — Go's OpDecode.
+        let sql = decode_client_sql(b"SELECT '\xc4\xe3'", "gbk").expect("decodes");
+        assert_eq!(sql, "SELECT '你'");
+        assert!(decode_client_sql(b"SELECT '\x81\x20'", "gbk").is_err());
     }
 }
