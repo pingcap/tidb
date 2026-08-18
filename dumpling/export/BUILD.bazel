@@ -50,6 +50,7 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/format",
         "//pkg/parser/mysql",
+        "//pkg/planner/core",
         "//pkg/store/helper",
         "//pkg/tablecodec",
         "//pkg/util",
