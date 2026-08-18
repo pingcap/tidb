@@ -190,12 +190,21 @@ func validateForeignKeyReference(reference *ast.ReferenceDef, database string, s
 		// The referenced table is outside this dump and is not rewritten here.
 		return nil
 	}
+	referencedColumns := make([]string, 0, len(reference.IndexPartSpecifications))
 	for _, key := range reference.IndexPartSpecifications {
 		if key.Column != nil {
 			if _, ok := targetSchema.retainedColumns[key.Column.Name.L]; !ok {
 				return removedReferenceColumnError(referenceDatabase, referenceTable, key.Column.Name.O)
 			}
+			referencedColumns = append(referencedColumns, key.Column.Name.L)
 		}
+	}
+	if len(referencedColumns) > 0 && !hasForeignKeyIndex(targetSchema.createTable, referencedColumns) {
+		return errors.Errorf(
+			"foreign key referenced columns are not indexed in table `%s`.`%s`",
+			escapeString(referenceDatabase),
+			escapeString(referenceTable),
+		)
 	}
 	return nil
 }
@@ -220,6 +229,49 @@ func (schemas projectedTableSchemas) lookup(database, table string) (*projectedT
 		matched = schema
 	}
 	return matched, matched != nil, nil
+}
+
+func hasForeignKeyIndex(createTable *ast.CreateTableStmt, referencedColumns []string) bool {
+	if len(referencedColumns) == 1 {
+		for _, column := range createTable.Cols {
+			if column.Name.Name.L != referencedColumns[0] {
+				continue
+			}
+			for _, option := range column.Options {
+				if option.Tp == ast.ColumnOptionPrimaryKey || option.Tp == ast.ColumnOptionUniqKey {
+					return true
+				}
+			}
+		}
+	}
+
+	for _, constraint := range createTable.Constraints {
+		switch constraint.Tp {
+		case ast.ConstraintPrimaryKey,
+			ast.ConstraintKey,
+			ast.ConstraintIndex,
+			ast.ConstraintUniq,
+			ast.ConstraintUniqKey,
+			ast.ConstraintUniqIndex:
+		default:
+			continue
+		}
+		if len(constraint.Keys) < len(referencedColumns) {
+			continue
+		}
+		matched := true
+		for i, referencedColumn := range referencedColumns {
+			key := constraint.Keys[i]
+			if key.Column == nil || key.Column.Name.L != referencedColumn {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 func removedReferenceColumnError(database, table, column string) error {
