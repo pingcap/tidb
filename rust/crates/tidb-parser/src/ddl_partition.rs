@@ -288,7 +288,11 @@ fn parse_partition_count(parser: &mut Parser, what: &str) -> PResult<u64> {
     // the DDL layer's own `checkNoHashPartitions` remains only as a
     // defensive check no SQL text can reach.
     if count == 0 {
-        return Err(parser.err_here(&format!("Number of {what} = 0 is not an allowed value")));
+        // Go `ast.ErrNoParts`: [ddl:1504], raised by the grammar action.
+        return Err(parser.err_coded(
+            1504,
+            &format!("Number of {what} = 0 is not an allowed value"),
+        ));
     }
     Ok(count)
 }

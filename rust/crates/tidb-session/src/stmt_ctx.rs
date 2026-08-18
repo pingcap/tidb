@@ -353,8 +353,13 @@ impl Session {
     }
 
     pub(crate) fn parse(&self, sql: &str) -> Result<tidb_ast::Stmt, DriverError> {
-        tidb_parser::parse_with_sql_mode(sql, self.scanner_sql_mode())
-            .map_err(|e| DriverError::Parse(format!("{e:?}")))
+        tidb_parser::parse_with_sql_mode(sql, self.scanner_sql_mode()).map_err(|e| match e.errno {
+            Some(errno) => DriverError::ParseCoded {
+                errno,
+                message: e.message,
+            },
+            None => DriverError::Parse(format!("{e:?}")),
+        })
     }
 
     /// The statement context a session-aware DDL front end must carry through

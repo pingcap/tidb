@@ -161,6 +161,7 @@ impl Parser {
                     message: format!("unsupported masking policy restrict operation: {name}"),
                     offset: token.offset,
                     near_offset: token.offset,
+                    errno: None,
                 });
             }
             if !self.is_op(",") {

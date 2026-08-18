@@ -52,6 +52,7 @@ fn expression_shape_error(sql: &str) -> tidb_parser::ParseError {
         message: "metadata expression did not produce one SELECT expression".to_owned(),
         offset: sql.len(),
         near_offset: sql.len(),
+        errno: None,
     }
 }
 

@@ -22,6 +22,15 @@ use crate::executor::ExecError;
 pub enum DriverError {
     /// The SQL failed to parse.
     Parse(String),
+    /// A grammar-action refusal that carries its own errno, the way Go's
+    /// parser raises `ast.ErrNoParts` as `[ddl:1504]` rather than yacc's
+    /// 1064.
+    ParseCoded {
+        /// The classed errno the grammar action names.
+        errno: u16,
+        /// Go's message, verbatim.
+        message: String,
+    },
     /// The general refusal: this tier does not implement what the statement
     /// asked for, and the carried text says which part.
     ///

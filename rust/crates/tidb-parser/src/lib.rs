@@ -90,6 +90,10 @@ pub struct ParseError {
     pub offset: usize,
     /// Byte offset where Go's `near` excerpt begins.
     pub near_offset: usize,
+    /// Go's parser raises SOME refusals through classed terrors rather than
+    /// yacc's 1064 — `ast.ErrNoParts` is `[ddl:1504]` straight from the
+    /// grammar action. `None` is the ordinary 1064 syntax error.
+    pub errno: Option<u16>,
 }
 
 impl ParseError {
@@ -281,6 +285,7 @@ fn decode_client_sql<'a>(
                 message: "invalid UTF-8 in client SQL".to_owned(),
                 offset: 0,
                 near_offset: 0,
+                errno: None,
             }),
         "ascii" if sql.is_ascii() => Ok(std::borrow::Cow::Borrowed(
             std::str::from_utf8(sql).expect("ASCII is UTF-8"),
@@ -289,6 +294,7 @@ fn decode_client_sql<'a>(
             message: "invalid ASCII in client SQL".to_owned(),
             offset: 0,
             near_offset: 0,
+            errno: None,
         }),
         "latin1" => Ok(std::borrow::Cow::Owned(
             sql.iter().map(|byte| char::from(*byte)).collect(),
@@ -601,6 +607,16 @@ impl Parser {
             message: msg.to_string(),
             offset: self.peek().end_offset,
             near_offset: self.peek().offset,
+            errno: None,
+        }
+    }
+
+    /// A grammar-action refusal that carries its own errno, the way Go's
+    /// parser raises `ast.ErrNoParts` as `[ddl:1504]` rather than 1064.
+    fn err_coded(&self, errno: u16, msg: &str) -> ParseError {
+        ParseError {
+            errno: Some(errno),
+            ..self.err_here(msg)
         }
     }
 
@@ -694,6 +710,7 @@ impl Parser {
                 message: format!("expected '{op}'"),
                 offset: unexpected.end_offset,
                 near_offset: unexpected.offset,
+                errno: None,
             })
         }
     }
@@ -708,6 +725,7 @@ impl Parser {
                 message: format!("expected keyword {kw}"),
                 offset: unexpected.end_offset,
                 near_offset: unexpected.offset,
+                errno: None,
             })
         }
     }

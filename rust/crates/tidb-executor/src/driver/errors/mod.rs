@@ -126,6 +126,9 @@ impl DriverError {
             *b"42000",
             format!("You have an error in your SQL syntax: {message}"),
         ),
+        DriverError::ParseCoded { errno, message } => {
+            MysqlError::new(errno, *b"HY000", message)
+        }
         DriverError::Unsupported(message) => MysqlError::unknown(message),
         DriverError::TableOptionUnionUnsupported => MysqlError::new(
             tidb_error::tidb::errcode::ErrTableOptionUnionUnsupported,
