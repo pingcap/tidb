@@ -51,6 +51,23 @@ pub enum SelectLockType {
     ForShareNoWait,
 }
 
+impl std::fmt::Display for SelectLockType {
+    /// Go `ast.SelectLockType.String()` (`parser/ast/dml.go:724`), over the
+    /// ported variants; the source's two SkipLocked variants are not
+    /// distinguished by `logical_lock.go` and are absent here with them.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let text = match self {
+            Self::None => "none",
+            Self::ForUpdate => "for update",
+            Self::ForShare => "for share",
+            Self::ForUpdateNoWait => "for update nowait",
+            Self::ForUpdateWaitN => "for update wait",
+            Self::ForShareNoWait => "for share nowait",
+        };
+        f.write_str(text)
+    }
+}
+
 /// Go `isSelectForUpdateLockType(lockType)` (`logical_lock.go:131`).
 #[must_use]
 pub const fn is_select_for_update_lock_type(lock_type: SelectLockType) -> bool {

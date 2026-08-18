@@ -92,6 +92,21 @@ impl StatsInfo {
     /// `selectedRows` is exactly `originalRows * factor`. That equivalence is
     /// a property of the default, not of the rule, which is why the source
     /// expression is kept rather than folded into a multiplication.
+    /// Go `StatsInfo.ScaleByExpectCnt` (`property/stats_info.go:91`): scale
+    /// down to `expect_cnt` — but only when it is genuinely smaller, and only
+    /// when the row count is above 1.0, Go's own overflow guard ("if
+    /// s.RowCount is too small, it will cause overflow").
+    #[must_use]
+    pub fn scale_by_expect_cnt(&self, expect_cnt: f64, skew_ratio: f64) -> Self {
+        if expect_cnt >= self.row_count {
+            return self.clone();
+        }
+        if self.row_count > 1.0 {
+            return self.scale(expect_cnt / self.row_count, skew_ratio);
+        }
+        self.clone()
+    }
+
     #[must_use]
     pub fn scale(&self, factor: f64, skew_ratio: f64) -> Self {
         let scale_ndv = crate::cardinality::derive_stats::scale_ndv;

@@ -51,6 +51,60 @@ pub struct LogicalProjection {
 }
 
 impl LogicalProjection {
+    /// Go `tryTransformSortItems` (`logical_projection.go:553`): map each
+    /// required-order column through this projection's exprs — a bare
+    /// `Column` maps to the child column it projects, a `ScalarFunction`
+    /// cannot preserve order and fails the whole transform. Go's switch has
+    /// NO arm for `Constant`/`CorrelatedColumn`: such an item is silently
+    /// DROPPED from the transformed list. That is a quirk visible through
+    /// the API and is reproduced, not fixed.
+    ///
+    /// Go indexes `p.Exprs[idx]` with `Schema().ColumnIndex(col)` and would
+    /// panic on a column absent from the schema; this returns failure for
+    /// that impossible input instead.
+    #[must_use]
+    pub fn try_transform_sort_items(
+        &self,
+        items: &[crate::physical_property::SortItem],
+    ) -> Option<Vec<crate::physical_property::SortItem>> {
+        let schema = self.base.base.schema()?;
+        let mut new_items = Vec::with_capacity(items.len());
+        for item in items {
+            let idx = schema
+                .columns
+                .iter()
+                .position(|c| c.unique_id == item.col)?;
+            match self.exprs.get(idx)? {
+                Expression::Column(col) => {
+                    new_items.push(crate::physical_property::SortItem::new(
+                        col.unique_id,
+                        item.desc,
+                    ));
+                }
+                Expression::ScalarFunction(_) => return None,
+                Expression::Constant(_) | Expression::CorrelatedColumn(_) => {}
+            }
+        }
+        Some(new_items)
+    }
+
+    /// Go `TryToGetChildProp` (`logical_projection.go:524`): the parent's
+    /// property expressed over this projection's child, or `None` when a
+    /// required order runs through a computed expression. The
+    /// `PartialOrderInfo` and `AdvisorySortItems` passes narrow with those
+    /// unported fields.
+    #[must_use]
+    pub fn try_to_get_child_prop(
+        &self,
+        prop: &crate::physical_property::PhysicalProperty,
+    ) -> Option<crate::physical_property::PhysicalProperty> {
+        let mut new_prop = prop.clone_essential_fields();
+        if !prop.sort_items.is_empty() {
+            new_prop.sort_items = self.try_transform_sort_items(&prop.sort_items)?;
+        }
+        Some(new_prop)
+    }
+
     /// Go `plancodec.TypeProj`.
     pub const TYPE: &'static str = "Projection";
 

@@ -39,7 +39,7 @@ fn scan(id: i32, columns: &[i64]) -> PhysicalPlan {
 fn selection(id: i32, child: PhysicalPlan) -> PhysicalPlan {
     let mut base = BasePhysicalPlan::with_id(id, "Selection", 0);
     base.set_children(vec![child]);
-    PhysicalPlan::Selection(PhysicalSelection { base })
+    PhysicalPlan::Selection(PhysicalSelection { base, ..PhysicalSelection::default() })
 }
 
 fn hash_join(id: i32, left: PhysicalPlan, right: PhysicalPlan) -> PhysicalPlan {
@@ -296,4 +296,280 @@ fn a_table_dual_is_born_inside_its_own_root_task() {
     assert!(
         (built.base.base.stats_info().expect("stats").row_count() - 1.0).abs() < f64::EPSILON
     );
+}
+
+#[test]
+fn a_cte_table_promises_no_order_and_is_born_in_a_root_task() {
+    // `findBestTask4LogicalCTETable` (`physical_cte_table.go:56`): ANY
+    // required sort answers the invalid task (unlike the dual there is no
+    // 1-row escape); the built plan carries stats, schema, IDForStorage and
+    // Go's fixed query-block offset 0, and explains as `Scan on CTE_N`.
+    use crate::logical::{BaseLogicalPlan, LogicalCTETable};
+    use crate::physical_property::SortItem;
+    use crate::stats_info::StatsInfo;
+
+    let allocator = PlanIdAllocator::new();
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalCTETable::TYPE, 5);
+    base.base.set_stats(Some(StatsInfo::new(4.0, [])));
+    base.base.set_schema(Some(Schema::default()));
+    let cte = LogicalCTETable {
+        base,
+        seed_stat: None,
+        name: "cte0".to_owned(),
+        id_for_storage: 7,
+        seed_schema: None,
+    };
+
+    let sorted = PhysicalProperty {
+        sort_items: vec![SortItem::new(1, false)],
+        ..PhysicalProperty::default()
+    };
+    assert!(find_best_task_4_logical_cte_table(&cte, &sorted, &allocator).invalid());
+
+    let task = find_best_task_4_logical_cte_table(&cte, &PhysicalProperty::default(), &allocator);
+    let Some(PhysicalPlan::CTETable(built)) = task.plan() else {
+        panic!("a PhysicalCTETable, got {:?}", task.plan());
+    };
+    assert_eq!(built.id_for_storage, 7);
+    assert_eq!(built.explain_info(), "Scan on CTE_7");
+    assert_eq!(built.base.base.query_block_offset(), 0, "Go inits at offset 0");
+    assert!(built.base.base.schema().is_some());
+    assert!(
+        (built.base.base.stats_info().expect("stats").row_count() - 4.0).abs() < f64::EPSILON
+    );
+}
+
+#[test]
+fn a_show_and_its_ddl_jobs_twin_are_born_in_root_tasks() {
+    // `findBestTask4LogicalShow{,DDLJobs}` (`physical_show.go:75,91`): any
+    // required sort answers the invalid task; the built plans carry the
+    // logical contents/extractor/JobNumber and schema over Go's fixed
+    // one-row pseudo stats at query-block offset 0.
+    use crate::logical::{
+        BaseLogicalPlan, LogicalShow, LogicalShowDDLJobs, ShowContents,
+        ShowStatsMetaPredicateExtractor,
+    };
+    use crate::physical_property::SortItem;
+
+    let allocator = PlanIdAllocator::new();
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalShow::TYPE, 0);
+    base.base.set_schema(Some(Schema::default()));
+    let mut show = LogicalShow::new(base, ShowContents::default());
+    show.extractor = Some(ShowStatsMetaPredicateExtractor::default());
+
+    let sorted = PhysicalProperty {
+        sort_items: vec![SortItem::new(1, false)],
+        ..PhysicalProperty::default()
+    };
+    assert!(find_best_task_4_logical_show(&show, &sorted, &allocator).invalid());
+
+    let task = find_best_task_4_logical_show(&show, &PhysicalProperty::default(), &allocator);
+    let Some(PhysicalPlan::Show(built)) = task.plan() else {
+        panic!("a PhysicalShow, got {:?}", task.plan());
+    };
+    assert!(built.extractor.is_some(), "the extractor rides across");
+    assert!(built.base.base.schema().is_some());
+    assert!(
+        (built.base.base.stats_info().expect("stats").row_count() - 1.0).abs() < f64::EPSILON,
+        "Go's one-row pseudo stats"
+    );
+
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalShowDDLJobs::TYPE, 0);
+    base.base.set_schema(Some(Schema::default()));
+    let jobs = LogicalShowDDLJobs::new(base, 30);
+    assert!(find_best_task_4_logical_show_ddl_jobs(&jobs, &sorted, &allocator).invalid());
+    let task =
+        find_best_task_4_logical_show_ddl_jobs(&jobs, &PhysicalProperty::default(), &allocator);
+    let Some(PhysicalPlan::ShowDDLJobs(built)) = task.plan() else {
+        panic!("a PhysicalShowDDLJobs, got {:?}", task.plan());
+    };
+    assert_eq!(built.job_number, 30);
+    assert_eq!(built.base.base.query_block_offset(), 0);
+}
+
+#[test]
+fn a_selection_enumerates_one_root_candidate_with_scaled_stats() {
+    // `ExhaustPhysicalPlans4LogicalSelection` (`physical_selection.go:54`):
+    // one root-side candidate; stats scale to the parent's expected count
+    // (ScaleByExpectCnt) and the child property drops CanAddEnforcer
+    // (CloneEssentialFields does not copy it).
+    use crate::logical::{BaseLogicalPlan, LogicalSelection};
+    use crate::stats_info::StatsInfo;
+
+    let allocator = PlanIdAllocator::new();
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalSelection::TYPE, 2);
+    base.base.set_stats(Some(StatsInfo::new(100.0, [])));
+    let selection = LogicalSelection::new(base, Vec::new());
+
+    let prop = PhysicalProperty {
+        expected_cnt: 10.0,
+        can_add_enforcer: true,
+        ..PhysicalProperty::default()
+    };
+    let plans = exhaust_physical_plans_4_logical_selection(&selection, &prop, &allocator, 1.0);
+    assert_eq!(plans.len(), 1);
+    let PhysicalPlan::Selection(built) = &plans[0] else {
+        panic!("a Selection, got {:?}", plans[0]);
+    };
+    assert!(
+        (built.base.base.stats_info().expect("stats").row_count() - 10.0).abs() < f64::EPSILON,
+        "scaled 100 -> 10"
+    );
+    let child_prop = built.base.child_req_prop(0).expect("child prop");
+    assert!(
+        !child_prop.can_add_enforcer,
+        "CloneEssentialFields drops CanAddEnforcer"
+    );
+    assert!((child_prop.expected_cnt - 10.0).abs() < f64::EPSILON);
+}
+
+#[test]
+fn a_projection_maps_the_order_or_refuses_and_drops_constant_items() {
+    // `TryToGetChildProp` + `tryTransformSortItems`
+    // (`logical_projection.go:524,553`): a bare column maps through, a
+    // scalar function refuses the enumeration, and Go's switch silently
+    // DROPS an item projected from a Constant — a quirk reproduced, not
+    // fixed.
+    use crate::logical::{BaseLogicalPlan, LogicalProjection};
+    use tidb_datatype::Datum;
+    use tidb_expr::column::Column;
+    use tidb_expr::expression::{Constant, Expression, ScalarFunction};
+    use tidb_expr::schema::Schema;
+
+    let allocator = PlanIdAllocator::new();
+    let out = |id| Column::new(id, tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong));
+    let mut schema = Schema::default();
+    schema.columns = vec![out(101), out(102), out(103)];
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalProjection::TYPE, 0);
+    base.base.set_schema(Some(schema));
+    let exprs = vec![
+        Expression::Column(out(1)),
+        Expression::Constant(Constant::new(Datum::Null, tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong))),
+        Expression::ScalarFunction(ScalarFunction::default()),
+    ];
+    let projection = LogicalProjection::new(base, exprs);
+
+    // Column item 101 maps to child column 1; constant item 102 is DROPPED.
+    let prop = PhysicalProperty::new(TaskType::Root, &[101, 102], false, f64::MAX, false);
+    let child = projection
+        .try_to_get_child_prop(&prop)
+        .expect("column+constant order crosses");
+    assert_eq!(child.sort_items.len(), 1, "the constant item vanished");
+    assert_eq!(child.sort_items[0].col, 1);
+
+    // A scalar-function item refuses the enumeration entirely.
+    let prop = PhysicalProperty::new(TaskType::Root, &[103], false, f64::MAX, false);
+    assert!(
+        exhaust_physical_plans_4_logical_projection(&projection, &prop, &allocator, 1.0)
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_limit_enumerates_the_three_task_types_in_order() {
+    // `ExhaustPhysicalPlans4LogicalLimit` (`physical_limit.go:53`): no
+    // required order admitted; one candidate per task type in Go's fixed
+    // order, each child property capped at Count + Offset.
+    use crate::logical::{BaseLogicalPlan, LogicalLimit};
+
+    let allocator = PlanIdAllocator::new();
+    let base = BaseLogicalPlan::new(&allocator, LogicalLimit::TYPE, 0);
+    let limit = LogicalLimit::new(base, 5, 20);
+
+    let sorted = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
+    assert!(exhaust_physical_plans_4_logical_limit(&limit, &sorted, &allocator).is_empty());
+
+    let plans =
+        exhaust_physical_plans_4_logical_limit(&limit, &PhysicalProperty::default(), &allocator);
+    assert_eq!(plans.len(), 3);
+    let expected = [TaskType::CopSingleRead, TaskType::CopMultiRead, TaskType::Root];
+    for (plan, tp) in plans.iter().zip(expected) {
+        let PhysicalPlan::Limit(built) = plan else {
+            panic!("a Limit, got {plan:?}");
+        };
+        assert_eq!(built.offset, 5);
+        assert_eq!(built.count, 20);
+        let child = built.base.child_req_prop(0).expect("child prop");
+        assert_eq!(child.task_tp, tp);
+        assert!((child.expected_cnt - 25.0).abs() < f64::EPSILON, "Count + Offset");
+    }
+}
+
+#[test]
+fn a_lock_enumerates_one_candidate_and_explains_go_style() {
+    // `ExhaustPhysicalPlans4LogicalLock` (`physical_lock.go:44`) + the
+    // `{LockType} {WaitSec}` ExplainInfo — Go prints WaitSec even for lock
+    // types that carry none.
+    use crate::logical::{BaseLogicalPlan, LogicalLock, SelectLockType};
+    use crate::stats_info::StatsInfo;
+
+    let allocator = PlanIdAllocator::new();
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalLock::TYPE, 0);
+    base.base.set_stats(Some(StatsInfo::new(50.0, [])));
+    let mut lock = LogicalLock::new(base, SelectLockType::ForUpdate);
+    lock.wait_sec = 3;
+
+    let mut mpp = PhysicalProperty::default();
+    mpp.task_tp = TaskType::Mpp;
+    assert!(exhaust_physical_plans_4_logical_lock(&lock, &mpp, &allocator, 1.0).is_empty());
+
+    let plans =
+        exhaust_physical_plans_4_logical_lock(&lock, &PhysicalProperty::default(), &allocator, 1.0);
+    assert_eq!(plans.len(), 1);
+    let PhysicalPlan::Lock(built) = &plans[0] else {
+        panic!("a Lock, got {:?}", plans[0]);
+    };
+    assert_eq!(built.explain_info(), "for update 3");
+    assert_eq!(built.base.base.query_block_offset(), 0, "Go inits at offset 0");
+}
+
+#[test]
+fn a_union_all_fans_one_child_property_per_child() {
+    // `ExhaustPhysicalPlans4LogicalUnionAll` (`physical_union_all.go:77`):
+    // no order promised; one candidate with one per-child property carrying
+    // the parent's expected count. The partition form re-stamps the type.
+    use crate::logical::{
+        BaseLogicalPlan, LogicalPartitionUnionAll, LogicalPlan, LogicalTableDual,
+        LogicalUnionAll,
+    };
+
+    let allocator = PlanIdAllocator::new();
+    let child = |offset| {
+        LogicalPlan::TableDual(LogicalTableDual::new(
+            BaseLogicalPlan::new(&allocator, LogicalTableDual::TYPE, offset),
+            1,
+        ))
+    };
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalUnionAll::TYPE, 0);
+    base.set_children(vec![child(0), child(0)]);
+    let union = LogicalUnionAll::new(base);
+
+    let sorted = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
+    assert!(
+        exhaust_physical_plans_4_logical_union_all(&union, &sorted, &allocator, 1.0).is_empty()
+    );
+
+    let prop = PhysicalProperty {
+        expected_cnt: 7.0,
+        ..PhysicalProperty::default()
+    };
+    let plans = exhaust_physical_plans_4_logical_union_all(&union, &prop, &allocator, 1.0);
+    assert_eq!(plans.len(), 1);
+    let PhysicalPlan::UnionAll(built) = &plans[0] else {
+        panic!("a UnionAll, got {:?}", plans[0]);
+    };
+    assert!(!built.mpp);
+    assert!(built.base.child_req_prop(0).is_some() && built.base.child_req_prop(1).is_some());
+    assert!(
+        (built.base.child_req_prop(1).expect("prop").expected_cnt - 7.0).abs() < f64::EPSILON
+    );
+
+    let partition = LogicalPartitionUnionAll { union_all: union };
+    let plans = exhaust_physical_plans_4_logical_partition_union_all(
+        &partition,
+        &prop,
+        &allocator,
+        1.0,
+    );
+    assert_eq!(plans[0].base().base.tp(), "PartitionUnion", "re-stamped");
 }

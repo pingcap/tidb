@@ -176,18 +176,118 @@ impl BasePhysicalPlan {
     }
 }
 
-/// Go `physicalop.PhysicalSelection`.
+/// Go `physicalop.PhysicalSelection` (`physical_selection.go`, whole file):
+/// a filter.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalSelection {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
+    /// Go `Conditions`: the CNF conjuncts this filter applies.
+    pub conditions: Vec<tidb_expr::expression::Expression>,
+    /// Go `FromDataSource`: "whether this Selection is from a DataSource",
+    /// read only by the cost model for compatibility (Go names issue
+    /// #36243 for its planned removal).
+    pub from_data_source: bool,
 }
 
-/// Go `physicalop.PhysicalProjection`.
+/// Go `ExhaustPhysicalPlans4LogicalSelection` (`physical_selection.go:54`):
+/// one root-side Selection per admitted child property, its stats scaled to
+/// the parent's expected count.
+///
+/// Go builds up to TWO child properties. The second is the MPP property,
+/// admitted only when `canPushDownToTiFlash` — a guard over TiFlash
+/// replicas (`GetHasTiFlash`), virtual columns, and
+/// `expression.CanExprsPushDown`. With no TiFlash tier in this port that
+/// guard evaluates false exactly as it does on a TiFlash-less Go cluster,
+/// so the MPP branch is structurally absent rather than refused.
+/// `admitIndexJoinProps` narrows the same way: with no index-join property
+/// on the ported [`PhysicalProperty`], Go's function returns the property
+/// list unchanged, which is this body.
+#[must_use]
+pub fn exhaust_physical_plans_4_logical_selection(
+    p: &crate::logical::LogicalSelection,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+) -> Vec<PhysicalPlan> {
+    let child_prop = prop.clone_essential_fields();
+    let stats = p
+        .base
+        .base
+        .stats_info()
+        .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
+    let mut base = BasePhysicalPlan::new(
+        allocator,
+        crate::logical::LogicalSelection::TYPE,
+        p.base.base.query_block_offset(),
+    );
+    base.base.set_stats(stats);
+    base.set_children_req_props(vec![Some(child_prop)]);
+    vec![PhysicalPlan::Selection(PhysicalSelection {
+        base,
+        conditions: p.conditions.clone(),
+        from_data_source: false,
+    })]
+}
+
+/// Go `physicalop.PhysicalProjection` (`physical_projection.go`, whole
+/// file).
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalProjection {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
+    /// Go `Exprs`: one expression per output column, in schema order.
+    pub exprs: Vec<tidb_expr::expression::Expression>,
+    /// Go `CalculateNoDelay`.
+    pub calculate_no_delay: bool,
+    /// Go `AvoidColumnEvaluator`, "ONLY used to avoid building
+    /// columnEvaluator for the expressions of Projection which is child of
+    /// Union operator" (issue #8141).
+    pub avoid_column_evaluator: bool,
+}
+
+/// Go `ExhaustPhysicalPlans4LogicalProjection` (`physical_projection.go:49`):
+/// one root-side Projection per admitted child property, its stats scaled
+/// to the parent's expected count and its schema the logical projection's.
+///
+/// `TryToGetChildProp` decides admission: a required order that runs
+/// through a computed expression cannot cross a projection, and the
+/// enumeration returns empty. Go's MPP and cop-pushdown candidates narrow
+/// away by name: both are gated on `expression.CanExprsPushDown`, which is
+/// unported — the TiFlash guard also evaluates false with no TiFlash tier,
+/// exactly as on a TiFlash-less Go cluster, but the TiKV cop candidate is
+/// a genuine narrowing (this enumeration offers FEWER candidates than Go's
+/// when projection pushdown is allowed). `admitIndexJoinProps` narrows as
+/// in [`exhaust_physical_plans_4_logical_selection`].
+#[must_use]
+pub fn exhaust_physical_plans_4_logical_projection(
+    p: &crate::logical::LogicalProjection,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+) -> Vec<PhysicalPlan> {
+    let Some(child_prop) = p.try_to_get_child_prop(prop) else {
+        return Vec::new();
+    };
+    let stats = p
+        .base
+        .base
+        .stats_info()
+        .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
+    let mut base = BasePhysicalPlan::new(
+        allocator,
+        crate::logical::LogicalProjection::TYPE,
+        p.base.base.query_block_offset(),
+    );
+    base.base.set_stats(stats);
+    base.base.set_schema(p.base.base.schema().cloned());
+    base.set_children_req_props(vec![Some(child_prop)]);
+    vec![PhysicalPlan::Projection(PhysicalProjection {
+        base,
+        exprs: p.exprs.clone(),
+        calculate_no_delay: p.calculate_no_delay,
+        avoid_column_evaluator: false,
+    })]
 }
 
 /// Go `physicalop.PhysicalHashJoin`.
@@ -227,15 +327,77 @@ pub struct PhysicalSort {
     pub is_partial_sort: bool,
 }
 
-/// Go `physicalop.PhysicalLimit`.
+/// Go `physicalop.PhysicalLimit` (`physical_limit.go`, whole file).
+///
+/// `ExplainInfo`'s partition-by rendering and `ToPB` follow the enum's
+/// standing narrowings; `attach2Task4PhysicalLimit`'s root arm lives in
+/// [`crate::task::attach2_task`].
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalLimit {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
+    /// Go `PartitionBy`: the enhanced-TopN partition order.
+    pub partition_by: Vec<crate::physical_property::SortItem>,
     /// Go `Offset`.
     pub offset: u64,
     /// Go `Count`.
     pub count: u64,
+    /// Go `PrefixCol`, the prefix-index column for partial-order
+    /// optimization, by its `UniqueID`; `None` when unused.
+    pub prefix_col: Option<i64>,
+    /// Go `PrefixLen`, the prefix length in bytes; 0 when unused.
+    pub prefix_len: usize,
+}
+
+/// Go `ExhaustPhysicalPlans4LogicalLimit` (`physical_limit.go:53`): a limit
+/// admits no required order; otherwise it enumerates ONE candidate per task
+/// type — cop-single, cop-multi, root, in Go's fixed order — each with the
+/// child property `{TaskTp, ExpectedCnt: Count + Offset}` and the logical
+/// limit's stats, schema and partition order.
+///
+/// Go appends an MPP candidate when TiFlash is present and MPP allowed;
+/// with no TiFlash tier that guard evaluates false exactly as on a
+/// TiFlash-less Go cluster. `CTEProducerStatus`/`NoCopPushDown` narrow with
+/// the unported property fields.
+#[must_use]
+pub fn exhaust_physical_plans_4_logical_limit(
+    p: &crate::logical::LogicalLimit,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+) -> Vec<PhysicalPlan> {
+    if !prop.is_sort_item_empty() {
+        return Vec::new();
+    }
+    let all_task_types = [
+        TaskType::CopSingleRead,
+        TaskType::CopMultiRead,
+        TaskType::Root,
+    ];
+    let mut ret = Vec::with_capacity(all_task_types.len());
+    for tp in all_task_types {
+        let result_prop = PhysicalProperty {
+            task_tp: tp,
+            expected_cnt: (p.count + p.offset) as f64,
+            ..PhysicalProperty::default()
+        };
+        let mut base = BasePhysicalPlan::new(
+            allocator,
+            crate::logical::LogicalLimit::TYPE,
+            p.base.base.query_block_offset(),
+        );
+        base.base.set_stats(p.base.base.stats_info().cloned());
+        base.base.set_schema(p.base.base.schema().cloned());
+        base.set_children_req_props(vec![Some(result_prop)]);
+        ret.push(PhysicalPlan::Limit(PhysicalLimit {
+            base,
+            partition_by: p.partition_by.clone(),
+            offset: p.offset,
+            count: p.count,
+            prefix_col: None,
+            prefix_len: 0,
+        }));
+    }
+    ret
 }
 
 /// Go `physicalop.PhysicalTableScan`.
@@ -390,6 +552,279 @@ pub fn exhaust_physical_plans_4_logical_max_one_row(
     vec![PhysicalPlan::MaxOneRow(PhysicalMaxOneRow { base })]
 }
 
+/// Go `physicalop.PhysicalCTETable` (`physical_cte_table.go`, whole file):
+/// the reader of one CTE's storage inside its recursive part. Its Go `Init`
+/// is the odd one out — `baseimpl.NewBasePlan(ctx, TypeCTETable, 0)`
+/// directly, always query-block offset 0 and no child properties.
+/// `MemoryUsage` follows the enum's standing narrowing.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalCTETable {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `IDForStorage`: which CTE storage this table reads.
+    pub id_for_storage: i32,
+}
+
+impl PhysicalCTETable {
+    /// Go `PhysicalCTETable.ExplainInfo()`: `Scan on CTE_N`.
+    #[must_use]
+    pub fn explain_info(&self) -> String {
+        format!("Scan on CTE_{}", self.id_for_storage)
+    }
+}
+
+/// Go `findBestTask4LogicalCTETable` (`physical_cte_table.go:56`): like the
+/// dual, a CTE table is born directly inside its own root task — but unlike
+/// the dual it can promise NO order at all, so ANY required sort answers
+/// the invalid task. The built plan carries the logical table's stats,
+/// schema, and `IDForStorage`, at Go's fixed query-block offset 0.
+///
+/// The `prop.IndexJoinProp != nil` arm and `base.GetGEAndLogicalOp` narrow
+/// exactly as [`find_best_task_4_logical_table_dual`]'s do.
+#[must_use]
+pub fn find_best_task_4_logical_cte_table(
+    p: &crate::logical::LogicalCTETable,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+) -> Task {
+    if !prop.is_sort_item_empty() {
+        return Task::invalid_task();
+    }
+    let mut base = BasePhysicalPlan::new(allocator, crate::logical::LogicalCTETable::TYPE, 0);
+    base.base.set_stats(p.base.base.stats_info().cloned());
+    base.base.set_schema(p.base.base.schema().cloned());
+    let cte_table = PhysicalPlan::CTETable(PhysicalCTETable {
+        base,
+        id_for_storage: p.id_for_storage,
+    });
+    let mut root = RootTask::default();
+    root.set_plan(cte_table);
+    Task::Root(root)
+}
+
+/// Go `physicalop.PhysicalShow` (`physical_show.go`, whole file with
+/// [`PhysicalShowDDLJobs`]): the physical form of a `SHOW ...` statement.
+/// Its Go `Init` pins two quirks reproduced here: query-block offset 0, and
+/// pseudo stats of exactly one row — "Just use pseudo stats to avoid
+/// panic." `Extractor base.ShowPredicateExtractor` narrows to the one form
+/// [`crate::logical::LogicalShow`] installs. `MemoryUsage` follows the
+/// enum's standing narrowing.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalShow {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go's embedded `logicalop.ShowContents`.
+    pub contents: crate::logical::ShowContents,
+    /// Go `Extractor`, in the one ported form.
+    pub extractor: Option<crate::logical::ShowStatsMetaPredicateExtractor>,
+}
+
+/// Go `physicalop.PhysicalShowDDLJobs` (`physical_show.go:53`): the
+/// physical form of `ADMIN SHOW DDL JOBS`. Same offset-0 and one-row
+/// pseudo-stats quirks as [`PhysicalShow`].
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalShowDDLJobs {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `JobNumber`.
+    pub job_number: i64,
+}
+
+/// Go `findBestTask4LogicalShow` (`physical_show.go:91`): a show is born
+/// directly inside its own root task — any required sort answers the
+/// invalid task, and the built plan carries the logical show's contents,
+/// extractor and schema over Go's fixed one-row pseudo stats.
+///
+/// The `prop.IndexJoinProp != nil` arm and `base.GetGEAndLogicalOp` narrow
+/// exactly as [`find_best_task_4_logical_table_dual`]'s do.
+#[must_use]
+pub fn find_best_task_4_logical_show(
+    p: &crate::logical::LogicalShow,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+) -> Task {
+    if !prop.is_sort_item_empty() {
+        return Task::invalid_task();
+    }
+    let mut base = BasePhysicalPlan::new(allocator, crate::logical::LogicalShow::TYPE, 0);
+    base.base.set_stats(Some(StatsInfo::new(1.0, [])));
+    base.base.set_schema(p.base.base.schema().cloned());
+    let show = PhysicalPlan::Show(PhysicalShow {
+        base,
+        contents: p.contents.clone(),
+        extractor: p.extractor.clone(),
+    });
+    let mut root = RootTask::default();
+    root.set_plan(show);
+    Task::Root(root)
+}
+
+/// Go `findBestTask4LogicalShowDDLJobs` (`physical_show.go:75`): the
+/// `ADMIN SHOW DDL JOBS` twin of [`find_best_task_4_logical_show`], same
+/// body over `JobNumber`.
+#[must_use]
+pub fn find_best_task_4_logical_show_ddl_jobs(
+    p: &crate::logical::LogicalShowDDLJobs,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+) -> Task {
+    if !prop.is_sort_item_empty() {
+        return Task::invalid_task();
+    }
+    let mut base = BasePhysicalPlan::new(allocator, crate::logical::LogicalShowDDLJobs::TYPE, 0);
+    base.base.set_stats(Some(StatsInfo::new(1.0, [])));
+    base.base.set_schema(p.base.base.schema().cloned());
+    let show = PhysicalPlan::ShowDDLJobs(PhysicalShowDDLJobs {
+        base,
+        job_number: p.job_number,
+    });
+    let mut root = RootTask::default();
+    root.set_plan(show);
+    Task::Root(root)
+}
+
+/// Go `physicalop.PhysicalLock` (`physical_lock.go`, whole file): the
+/// physical operator of `SELECT ... FOR UPDATE`. Go's `Init` fixes the
+/// query-block offset at 0. The `Lock *ast.SelectLockInfo` pointer narrows
+/// to its decision-bearing pair — [`crate::logical::SelectLockType`] and
+/// `WaitSec` — the same narrowing [`crate::logical::LogicalLock`] made.
+/// `ResolveIndices` and `MemoryUsage` follow the enum's standing
+/// narrowings.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalLock {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `Lock.LockType`.
+    pub lock_type: crate::logical::SelectLockType,
+    /// Go `Lock.WaitSec`.
+    pub wait_sec: u64,
+    /// Go `TblID2Handle`, as handle columns per table id.
+    pub tbl_id_to_handle_cols: std::collections::BTreeMap<i64, Vec<tidb_expr::column::Column>>,
+    /// Go `TblID2PhysTblIDCol`.
+    pub tbl_id_to_phys_tbl_id_col: std::collections::BTreeMap<i64, tidb_expr::column::Column>,
+}
+
+impl PhysicalLock {
+    /// Go `PhysicalLock.ExplainInfo()`: `{LockType.String()} {WaitSec}` —
+    /// note Go prints the wait seconds unconditionally, even for lock types
+    /// that carry none.
+    #[must_use]
+    pub fn explain_info(&self) -> String {
+        format!("{} {}", self.lock_type, self.wait_sec)
+    }
+}
+
+/// Go `ExhaustPhysicalPlans4LogicalLock` (`physical_lock.go:44`): one
+/// root-side Lock over the essential child property, its stats scaled to
+/// the parent's expected count. The `IsFlashProp` arm returns empty exactly
+/// as Go's does (its `RaiseWarningWhenMPPEnforced` narrows with the
+/// session-vars warning sink, as in `enforce.go`'s port).
+#[must_use]
+pub fn exhaust_physical_plans_4_logical_lock(
+    p: &crate::logical::LogicalLock,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+) -> Vec<PhysicalPlan> {
+    if prop.task_tp == TaskType::Mpp {
+        return Vec::new();
+    }
+    let child_prop = prop.clone_essential_fields();
+    let stats = p
+        .base
+        .base
+        .stats_info()
+        .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
+    let mut base = BasePhysicalPlan::new(allocator, crate::logical::LogicalLock::TYPE, 0);
+    base.base.set_stats(stats);
+    base.set_children_req_props(vec![Some(child_prop)]);
+    vec![PhysicalPlan::Lock(PhysicalLock {
+        base,
+        lock_type: p.lock_type,
+        wait_sec: p.wait_sec,
+        tbl_id_to_handle_cols: p.tbl_id_to_handle_cols.clone(),
+        tbl_id_to_phys_tbl_id_col: p.tbl_id_to_phys_tbl_id_col.clone(),
+    })]
+}
+
+/// Go `physicalop.PhysicalUnionAll` (`physical_union_all.go`, whole file):
+/// bag union of its children. `Mpp` marks the MPP-mode candidate; with no
+/// TiFlash tier every candidate here is the root-mode one, so it is always
+/// false (the field is carried because Go's `Attach2Task` and cost bodies
+/// read it).
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalUnionAll {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `Mpp`.
+    pub mpp: bool,
+}
+
+/// Go `ExhaustPhysicalPlans4LogicalUnionAll` (`physical_union_all.go:77`):
+/// a union promises no order (Go's own TODO notes a merge-sort future), so
+/// a required sort enumerates nothing; otherwise ONE candidate whose every
+/// child property carries the parent's expected count, over scaled stats
+/// and the union's schema.
+///
+/// Go's MPP arms — the MPP-mode candidate under an MPP parent property and
+/// the extra `mppUA` beside the root candidate — are gated on
+/// `IsMPPAllowed` over a TiFlash-backed cluster; with no TiFlash tier they
+/// narrow away as in [`exhaust_physical_plans_4_logical_limit`].
+/// `CTEProducerStatus`/`NoCopPushDown` narrow with the unported fields.
+#[must_use]
+pub fn exhaust_physical_plans_4_logical_union_all(
+    p: &crate::logical::LogicalUnionAll,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+) -> Vec<PhysicalPlan> {
+    if !prop.is_sort_item_empty() || prop.task_tp == TaskType::Mpp {
+        return Vec::new();
+    }
+    let ch_req_props: Vec<Option<PhysicalProperty>> = (0..p.base.child_len())
+        .map(|_| {
+            Some(PhysicalProperty {
+                expected_cnt: prop.expected_cnt,
+                ..PhysicalProperty::default()
+            })
+        })
+        .collect();
+    let stats = p
+        .base
+        .base
+        .stats_info()
+        .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
+    let mut base = BasePhysicalPlan::new(
+        allocator,
+        crate::logical::LogicalUnionAll::TYPE,
+        p.base.base.query_block_offset(),
+    );
+    base.base.set_stats(stats);
+    base.base.set_schema(p.base.base.schema().cloned());
+    base.set_children_req_props(ch_req_props);
+    vec![PhysicalPlan::UnionAll(PhysicalUnionAll { base, mpp: false })]
+}
+
+/// Go `ExhaustPhysicalPlans4LogicalPartitionUnionAll`
+/// (`physical_union_all.go:125`): the union-all enumeration with every
+/// candidate's plan type re-stamped `PartitionUnion`.
+#[must_use]
+pub fn exhaust_physical_plans_4_logical_partition_union_all(
+    p: &crate::logical::LogicalPartitionUnionAll,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+) -> Vec<PhysicalPlan> {
+    let mut plans =
+        exhaust_physical_plans_4_logical_union_all(&p.union_all, prop, allocator, skew_ratio);
+    for plan in &mut plans {
+        plan.base_mut()
+            .base
+            .set_tp(crate::logical::LogicalPartitionUnionAll::TYPE);
+    }
+    plans
+}
+
 /// A physical operator whose own port is a later batch; the physical twin of
 /// [`crate::logical::TodoLogicalOp`].
 #[derive(Clone, Debug, Default)]
@@ -421,6 +856,16 @@ pub enum PhysicalPlan {
     MaxOneRow(PhysicalMaxOneRow),
     /// Go `physicalop.NominalSort`.
     NominalSort(NominalSort),
+    /// Go `physicalop.PhysicalCTETable`.
+    CTETable(PhysicalCTETable),
+    /// Go `physicalop.PhysicalShow`.
+    Show(PhysicalShow),
+    /// Go `physicalop.PhysicalShowDDLJobs`.
+    ShowDDLJobs(PhysicalShowDDLJobs),
+    /// Go `physicalop.PhysicalLock`.
+    Lock(PhysicalLock),
+    /// Go `physicalop.PhysicalUnionAll`.
+    UnionAll(PhysicalUnionAll),
     /// An operator whose port is a later batch; see [`TodoPhysicalOp`].
     Todo(TodoPhysicalOp),
 }
@@ -439,6 +884,11 @@ impl PhysicalPlan {
             Self::TableDual(op) => &op.base,
             Self::MaxOneRow(op) => &op.base,
             Self::NominalSort(op) => &op.base,
+            Self::CTETable(op) => &op.base,
+            Self::Show(op) => &op.base,
+            Self::ShowDDLJobs(op) => &op.base,
+            Self::Lock(op) => &op.base,
+            Self::UnionAll(op) => &op.base,
             Self::Todo(op) => &op.base,
         }
     }
@@ -455,6 +905,11 @@ impl PhysicalPlan {
             Self::TableDual(op) => &mut op.base,
             Self::MaxOneRow(op) => &mut op.base,
             Self::NominalSort(op) => &mut op.base,
+            Self::CTETable(op) => &mut op.base,
+            Self::Show(op) => &mut op.base,
+            Self::ShowDDLJobs(op) => &mut op.base,
+            Self::Lock(op) => &mut op.base,
+            Self::UnionAll(op) => &mut op.base,
             Self::Todo(op) => &mut op.base,
         }
     }
@@ -758,9 +1213,14 @@ impl PhysicalPlan {
         match self {
             Self::Selection(op) => Self::Selection(PhysicalSelection {
                 base: base_of(&op.base),
+                conditions: op.conditions.clone(),
+                from_data_source: op.from_data_source,
             }),
             Self::Projection(op) => Self::Projection(PhysicalProjection {
                 base: base_of(&op.base),
+                exprs: op.exprs.clone(),
+                calculate_no_delay: op.calculate_no_delay,
+                avoid_column_evaluator: op.avoid_column_evaluator,
             }),
             Self::HashJoin(op) => Self::HashJoin(PhysicalHashJoin {
                 base: base_of(&op.base),
@@ -774,8 +1234,11 @@ impl PhysicalPlan {
             }),
             Self::Limit(op) => Self::Limit(PhysicalLimit {
                 base: base_of(&op.base),
+                partition_by: op.partition_by.clone(),
                 offset: op.offset,
                 count: op.count,
+                prefix_col: op.prefix_col,
+                prefix_len: op.prefix_len,
             }),
             Self::TableScan(op) => Self::TableScan(PhysicalTableScan {
                 base: base_of(&op.base),
@@ -793,6 +1256,30 @@ impl PhysicalPlan {
                 base: base_of(&op.base),
                 by_items: op.by_items.clone(),
                 only_column: op.only_column,
+            }),
+            Self::CTETable(op) => Self::CTETable(PhysicalCTETable {
+                base: base_of(&op.base),
+                id_for_storage: op.id_for_storage,
+            }),
+            Self::Show(op) => Self::Show(PhysicalShow {
+                base: base_of(&op.base),
+                contents: op.contents.clone(),
+                extractor: op.extractor.clone(),
+            }),
+            Self::ShowDDLJobs(op) => Self::ShowDDLJobs(PhysicalShowDDLJobs {
+                base: base_of(&op.base),
+                job_number: op.job_number,
+            }),
+            Self::Lock(op) => Self::Lock(PhysicalLock {
+                base: base_of(&op.base),
+                lock_type: op.lock_type,
+                wait_sec: op.wait_sec,
+                tbl_id_to_handle_cols: op.tbl_id_to_handle_cols.clone(),
+                tbl_id_to_phys_tbl_id_col: op.tbl_id_to_phys_tbl_id_col.clone(),
+            }),
+            Self::UnionAll(op) => Self::UnionAll(PhysicalUnionAll {
+                base: base_of(&op.base),
+                mpp: op.mpp,
             }),
             Self::Todo(op) => Self::Todo(TodoPhysicalOp {
                 base: base_of(&op.base),

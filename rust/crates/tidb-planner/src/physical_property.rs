@@ -230,6 +230,22 @@ impl PhysicalProperty {
         }
     }
 
+    /// `CloneEssentialFields` (`physical_property.go:713`), over the ported
+    /// field set. Two absences are Go's own: `CanAddEnforcer` is NOT copied
+    /// (the clone defaults to false — an enforcer admission never rides
+    /// down to a child property), and `indexJoinProp` is "default not to
+    /// clone" (unported here anyway).
+    #[must_use]
+    pub fn clone_essential_fields(&self) -> Self {
+        Self {
+            sort_items: self.sort_items.clone(),
+            sort_items_for_partition: self.sort_items_for_partition.clone(),
+            task_tp: self.task_tp,
+            expected_cnt: self.expected_cnt,
+            can_add_enforcer: false,
+        }
+    }
+
     /// `IsSortItemEmpty`: whether the order property is empty.
     #[must_use]
     pub fn is_sort_item_empty(&self) -> bool {

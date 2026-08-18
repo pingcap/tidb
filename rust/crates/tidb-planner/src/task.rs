@@ -691,6 +691,17 @@ pub fn attach2_task(plan: PhysicalPlan, mut tasks: Vec<Task>) -> Result<Task, Pl
             let converted = first.convert_to_root_task()?;
             Ok(attach_plan_to_task(plan, converted))
         }
+        // `PhysicalLock` has no override: the default convert-then-attach
+        // body, exactly as `PhysicalMaxOneRow`'s arm above.
+        PhysicalPlan::Lock(_) => {
+            let converted = first.convert_to_root_task()?;
+            Ok(attach_plan_to_task(plan, converted))
+        }
+        // `attach2Task4PhysicalUnionAll` (core/task.go) converts EVERY child
+        // task and wires a multi-child plan — a later batch; refused by name.
+        PhysicalPlan::UnionAll(_) => Err(PlanError::internal(
+            "attach2Task4PhysicalUnionAll (core/task.go) is not ported",
+        )),
         // `attach2Task4NominalSort` (`task.go:851`): an only-column nominal
         // sort returns the child task ITSELF — not even a copy — and
         // otherwise it is copy-then-attach with no conversion, like Sort.
@@ -711,6 +722,16 @@ pub fn attach2_task(plan: PhysicalPlan, mut tasks: Vec<Task>) -> Result<Task, Pl
         PhysicalPlan::TableDual(_) => Err(PlanError::internal(
             "a PhysicalTableDual is born inside its own root task by \
              findBestTask (logical_table_dual.go), never attached",
+        )),
+        PhysicalPlan::CTETable(_) => Err(PlanError::internal(
+            "a PhysicalCTETable is born inside its own root task by \
+             findBestTask4LogicalCTETable (physical_cte_table.go), never \
+             attached",
+        )),
+        PhysicalPlan::Show(_) | PhysicalPlan::ShowDDLJobs(_) => Err(PlanError::internal(
+            "a PhysicalShow/PhysicalShowDDLJobs is born inside its own root \
+             task by findBestTask4LogicalShow{,DDLJobs} (physical_show.go), \
+             never attached",
         )),
         PhysicalPlan::Todo(op) => Err(PlanError::internal(format!(
             "attach2_task: {} is not ported",
