@@ -975,10 +975,18 @@ fn alter_table_index_actions_share_the_catalog_backfill_path() {
     assert_eq!(dropped.diff.action_type.0, 8, "ActionDropIndex");
     assert!(!dropped.backfill.as_ref().expect("entries are removed").add);
 
-    let multiple = refusal("ALTER TABLE u6.minimal ADD INDEX vi (v), DROP INDEX vi");
+    // A bundle of TWO index actions now reaches the plan, where the single
+    // backfill slot refuses it by name -- still before any partial change.
+    let multiple = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.minimal ADD INDEX i1 (v), ADD INDEX i2 (v)"),
+        470_000_002,
+    )
+    .expect_err("two index changes refuse")
+    .to_string();
     assert!(
-        multiple.contains("exactly one action"),
-        "multi-action ALTER must fail before a partial catalog change: {multiple}"
+        multiple.contains("at most one index change"),
+        "multi-index ALTER must fail before a partial catalog change: {multiple}"
     );
 }
 
@@ -2031,4 +2039,77 @@ fn a_multi_action_alter_folds_over_one_evolving_table() {
         DdlPlan::AlreadySatisfied { .. } => {}
         DdlPlan::Write(_) => panic!("an all-no-op bundle must publish nothing"),
     }
+}
+
+/// A bundle mixing a column change with ONE index change folds over the same
+/// evolving table: the index resolves against the bundle-added column, the
+/// backfill walks existing rows against the evolved columns, and a second
+/// index action in one bundle is refused by name (one backfill per catalog
+/// transaction).
+#[test]
+fn a_column_and_index_bundle_folds_and_backfills_together() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, v BIGINT)",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("an id");
+
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t ADD COLUMN c BIGINT DEFAULT 5, ADD INDEX idx_c (c)",
+        200,
+    );
+    apply(&mut store, &write);
+    assert_eq!(
+        write.diff.action_type,
+        tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE
+    );
+    let backfill = write.backfill.as_ref().expect("the index change backfills");
+    assert!(backfill.add);
+    assert_eq!(backfill.index.read().name.original(), "idx_c");
+    assert_eq!(
+        backfill.index.read().columns.iter_deref().next().unwrap().read().offset,
+        2,
+        "the index column resolves against the bundle-added column's offset"
+    );
+    let stored: serde_json::Value =
+        serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
+            .expect("stored");
+    assert_eq!(stored["index_info"].as_array().unwrap().len(), 1);
+
+    // The drop direction: the backfill's table still CARRIES the index the
+    // walk removes, while the stored table no longer names it.
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t ADD COLUMN d BIGINT, DROP INDEX idx_c",
+        300,
+    );
+    apply(&mut store, &write);
+    let backfill = write.backfill.as_ref().expect("the removal walks");
+    assert!(!backfill.add);
+    assert!(
+        backfill
+            .table
+            .indices
+            .iter_deref()
+            .any(|index| index.read().name.original() == "idx_c"),
+        "the walk's table still carries the dropped index"
+    );
+    let stored: serde_json::Value =
+        serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
+            .expect("stored");
+    assert_eq!(stored["index_info"].as_array().unwrap().len(), 0);
+
+    // Two index actions cannot share one backfill slot.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t ADD INDEX i1 (v), ADD INDEX i2 (c)"),
+        400,
+    )
+    .expect_err("two index changes refuse")
+    .to_string();
+    assert!(error.contains("at most one index change"), "{error}");
 }

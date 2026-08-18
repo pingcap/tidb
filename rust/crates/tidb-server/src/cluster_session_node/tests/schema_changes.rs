@@ -99,14 +99,11 @@ fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
 fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
     let (mut session, node) = open_session();
     for (sql, expected) in [
-        // ADD/DROP COLUMN, TRUNCATE, and all-column multi-action ALTERs
-        // moved to the catalog writer as their courses landed; the mock's
-        // named non-modeling answer is their routing witness below. A
-        // multi-action ALTER MIXING a column change with an index change
-        // remains genuinely inexpressible: the column half folds over one
-        // TableInfo, the index half needs a backfill job.
+        // Column, index, and mixed column+index bundles all moved to the
+        // catalog writer as their courses landed; a bundle that RENAMES the
+        // table remains genuinely inexpressible in one fold.
         (
-            "ALTER TABLE t ADD COLUMN w BIGINT, ADD INDEX iw (w)",
+            "ALTER TABLE t ADD COLUMN w BIGINT, RENAME TO t2",
             "one atomic multi-schema DDL job",
         ),
         (
@@ -140,6 +137,7 @@ fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
         // mock does not model them, and saying so IS the routing witness.
         "ALTER TABLE t ADD COLUMN w BIGINT",
         "ALTER TABLE t ADD COLUMN w BIGINT, DROP COLUMN v",
+        "ALTER TABLE t ADD COLUMN w BIGINT, ADD INDEX iw (w)",
         "TRUNCATE TABLE t",
     ] {
         let routed = session

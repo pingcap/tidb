@@ -176,6 +176,22 @@ pub enum AlterColumnAction {
         /// The column name as written.
         column: String,
     },
+    /// `ADD INDEX`/`ADD KEY`, resolved against the bundle's EVOLVED columns
+    /// — an index on a column the same bundle adds is legal, exactly as
+    /// Go's one multi-schema job makes it.
+    AddIndex {
+        /// Whether an existing index of the same name is a no-op.
+        if_not_exists: bool,
+        /// The index, complete except for id and column offsets.
+        index: Box<IndexInfo>,
+    },
+    /// `DROP INDEX`/`DROP KEY`.
+    DropIndex {
+        /// Whether a missing index is a no-op.
+        if_exists: bool,
+        /// The index name as written.
+        name: String,
+    },
 }
 
 /// A `StmtContext` wrapper carrying the Debug the statement enum derives.
@@ -589,6 +605,31 @@ fn lower_alter_table_catalog(
                     actions.push(AlterColumnAction::Drop {
                         if_exists: *if_exists,
                         column: name.clone(),
+                    });
+                }
+                tidb_ast::AlterTableAction::AddIndexConstraint(index) => {
+                    // The standalone lowering owns the validation; reuse it
+                    // whole so the bundled and single spellings cannot drift.
+                    match lower_alter_add_index(alter, index, default_schema)? {
+                        DdlStatement::CreateIndex {
+                            if_not_exists,
+                            index,
+                            ..
+                        } => actions.push(AlterColumnAction::AddIndex {
+                            if_not_exists,
+                            index,
+                        }),
+                        other => {
+                            unreachable!(
+                                "lower_alter_add_index lowers to CreateIndex, got {other:?}"
+                            )
+                        }
+                    }
+                }
+                tidb_ast::AlterTableAction::DropIndex { if_exists, name } => {
+                    actions.push(AlterColumnAction::DropIndex {
+                        if_exists: *if_exists,
+                        name: name.clone(),
                     });
                 }
                 _ => {
@@ -2117,6 +2158,110 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     )?,
                     AlterColumnAction::Drop { if_exists, column } => {
                         apply_drop_column(&mut info, schema, table, column, *if_exists)?
+                    }
+                    AlterColumnAction::AddIndex {
+                        if_not_exists,
+                        index,
+                    } => {
+                        // One backfill per catalog transaction: the write set
+                        // carries a single entry walk, so a second index
+                        // action must arrive as its own statement.
+                        if backfill.is_some() {
+                            return Err(DdlPlanError::Unsupported(
+                                "one ALTER TABLE bundle carries at most one index change; \
+                                 run the second as its own statement"
+                                    .to_owned(),
+                            ));
+                        }
+                        if let Some(existing) = find_index(&info, index.name.original()) {
+                            let existing = existing.read();
+                            if *if_not_exists {
+                                satisfied.push(format!(
+                                    "index `{}` already exists on `{schema}`.`{table}`",
+                                    existing.name.original()
+                                ));
+                                continue;
+                            }
+                            return Err(DdlPlanError::DuplicateKeyName(
+                                index.name.original().to_owned(),
+                            ));
+                        }
+                        let mut added = index.clone_like_go();
+                        // Offsets resolve against the EVOLVED columns, so an
+                        // index on a column this same bundle added is legal —
+                        // Go's one multi-schema job.
+                        for column in added.columns.iter_deref() {
+                            let mut column = column.write();
+                            let Some(stored_column) = info.columns.iter_deref().find(|candidate| {
+                                candidate.read().name.lowercase() == column.name.lowercase()
+                            }) else {
+                                return Err(DdlPlanError::UnknownIndexColumn {
+                                    column: column.name.original().to_owned(),
+                                    index: index.name.original().to_owned(),
+                                });
+                            };
+                            let stored_column = stored_column.read();
+                            column.name = stored_column.name.clone();
+                            column.offset = stored_column.offset;
+                        }
+                        // The backfill decodes EXISTING rows against the
+                        // evolved columns (a bundle-added column reads its
+                        // origin default) but must not walk the new index.
+                        let backfill_table = Box::new(info.clone_like_go());
+                        info.max_index_id += 1;
+                        added.id = info.max_index_id;
+                        added.table = info.name.clone();
+                        let added = GoShared::new(added);
+                        info.indices.push_handle_go(Some(added.clone()));
+                        backfill = Some(IndexBackfill {
+                            table: backfill_table,
+                            index: added,
+                            use_new_collation,
+                            add: true,
+                        });
+                        applied += 1;
+                        continue;
+                    }
+                    AlterColumnAction::DropIndex { if_exists, name } => {
+                        if backfill.is_some() {
+                            return Err(DdlPlanError::Unsupported(
+                                "one ALTER TABLE bundle carries at most one index change; \
+                                 run the second as its own statement"
+                                    .to_owned(),
+                            ));
+                        }
+                        let Some(dropped) = find_index(&info, name) else {
+                            if *if_exists {
+                                satisfied.push(format!(
+                                    "index `{name}` does not exist on `{schema}`.`{table}`"
+                                ));
+                                continue;
+                            }
+                            return Err(DdlPlanError::UnknownIndex(name.clone()));
+                        };
+                        let dropped = dropped.read().clone_like_go();
+                        // The removal walk rebuilds the dropped index's entry
+                        // keys, so its table must still CARRY the index —
+                        // snapshot before the delete, evolved columns and all.
+                        let backfill_table = Box::new(info.clone_like_go());
+                        if let Some(offset) = info.indices.iter_handles().position(|candidate| {
+                            candidate
+                                .as_ref()
+                                .expect("nil *IndexInfo in TableInfo.Indices")
+                                .read()
+                                .id
+                                == dropped.id
+                        }) {
+                            info.indices.delete_go(offset, offset + 1);
+                        }
+                        backfill = Some(IndexBackfill {
+                            table: backfill_table,
+                            index: GoShared::new(dropped),
+                            use_new_collation,
+                            add: false,
+                        });
+                        applied += 1;
+                        continue;
                     }
                 };
                 match outcome {
