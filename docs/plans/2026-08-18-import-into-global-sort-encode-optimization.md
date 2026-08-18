@@ -324,6 +324,7 @@ Record the agreed implementation base here:
 
     Base commit: 454d7010a4 (upstream/master when selected on 2026-08-18)
     Feature worktree: worktrees/import-encode-opt
+    Tracking draft PR: https://github.com/pingcap/tidb/pull/70529
     Observability baseline image digest: <not built>
     Optional bare-master historical image digest: <not built>
 
