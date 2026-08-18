@@ -60,57 +60,61 @@ func TestPrepareColumnProjectionSchema(t *testing.T) {
 	require.NotContains(t, meta.ShowCreateTable(), "`secret`")
 
 	plainProjection := conf.columnProjection[tableName{db: database, table: "plain"}]
-	require.Empty(t, plainProjection.projectedSchemaSQL)
-	mock.ExpectQuery("SHOW CREATE TABLE").
-		WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("plain", plainCreateSQL))
+	require.Equal(t, plainCreateSQL, plainProjection.schemaSQL)
 	plainMeta, err := dumpTableMeta(tctx, conf, baseConn, database, &TableInfo{Type: TableTypeBase, Name: "plain"})
 	require.NoError(t, err)
 	require.Equal(t, plainCreateSQL, plainMeta.ShowCreateTable())
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	t.Run("cross table foreign key", func(t *testing.T) {
+	t.Run("foreign key validation preserves schema", func(t *testing.T) {
 		tctx, mock, baseConn := newMockDumpConn(t)
 		conf := DefaultConfig()
-		conf.Tables = NewDatabaseTables().AppendTables(database, []string{"parent", "child"}, []uint64{0, 0})
+		conf.Tables = NewDatabaseTables().AppendTables(database, []string{"child", "parent"}, []uint64{0, 0})
 		conf.columnFilter = newColumnFilterConfigForTest(t,
-			columnFilterRule{Matcher: []string{database + ".parent"}, Columns: []string{"id"}},
+			columnFilterRule{Matcher: []string{database + ".parent"}, Columns: []string{"id", "name"}},
 		)
 
 		mock.ExpectQuery("SHOW COLUMNS FROM").
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 				AddRow("id", "int(11)", "NO", "PRI", nil, "").
-				AddRow("secret", "int(11)", "YES", "", nil, ""))
+				AddRow("parent_name", "varchar(12)", "YES", "", nil, ""))
 		mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf(
-			"SELECT `id`,`secret` FROM `%s`.`parent` LIMIT 1",
+			"SELECT `id`,`parent_name` FROM `%s`.`child` LIMIT 1",
 			database,
 		))).WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
 			sqlmock.NewColumn("id").OfType("INT", int64(0)),
-			sqlmock.NewColumn("secret").OfType("INT", int64(0)),
-		).AddRow(1, 2))
+			sqlmock.NewColumn("parent_name").OfType("VARCHAR", ""),
+		).AddRow(1, "alice"))
 		mock.ExpectQuery("SHOW COLUMNS FROM").
 			WillReturnRows(sqlmock.NewRows([]string{"Field", "Type", "Null", "Key", "Default", "Extra"}).
 				AddRow("id", "int(11)", "NO", "PRI", nil, "").
-				AddRow("parent_secret", "int(11)", "YES", "", nil, ""))
+				AddRow("name", "varchar(12)", "YES", "MUL", nil, "").
+				AddRow("secret", "int(11)", "YES", "", nil, ""))
 		mock.ExpectQuery(regexp.QuoteMeta(fmt.Sprintf(
-			"SELECT `id`,`parent_secret` FROM `%s`.`child` LIMIT 1",
+			"SELECT `id`,`name`,`secret` FROM `%s`.`parent` LIMIT 1",
 			database,
 		))).WillReturnRows(sqlmock.NewRowsWithColumnDefinition(
 			sqlmock.NewColumn("id").OfType("INT", int64(0)),
-			sqlmock.NewColumn("parent_secret").OfType("INT", int64(0)),
-		).AddRow(1, 2))
-		mock.ExpectQuery("SHOW CREATE TABLE").
-			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow(
-				"parent",
-				"CREATE TABLE `parent` (`id` INT PRIMARY KEY, `secret` INT, KEY (`secret`))",
-			))
+			sqlmock.NewColumn("name").OfType("VARCHAR", ""),
+			sqlmock.NewColumn("secret").OfType("INT", int64(0)),
+		).AddRow(1, "alice", 2))
 		mock.ExpectQuery("SHOW CREATE TABLE").
 			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow(
 				"child",
-				"CREATE TABLE `child` (`id` INT PRIMARY KEY, `parent_secret` INT, FOREIGN KEY (`parent_secret`) REFERENCES `parent` (`secret`))",
+				"CREATE TABLE `child` (`id` INT PRIMARY KEY, `parent_name` VARCHAR(12), "+
+					"FOREIGN KEY (`parent_name`) REFERENCES `parent` (`name`))",
+			))
+		mock.ExpectQuery("SHOW CREATE TABLE").
+			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow(
+				"parent",
+				"CREATE TABLE `parent` (`id` INT PRIMARY KEY, `name` VARCHAR(12), `secret` INT, KEY (`name`))",
 			))
 
-		err := prepareColumnProjection(tctx, conf, baseConn)
-		require.ErrorContains(t, err, "foreign key references removed column")
+		require.NoError(t, prepareColumnProjection(tctx, conf, baseConn))
+		parentProjection := conf.columnProjection[tableName{db: database, table: "parent"}]
+		require.NotContains(t, parentProjection.schemaSQL, "CHARACTER SET")
+		require.NotContains(t, parentProjection.schemaSQL, "COLLATE")
+		require.NotContains(t, parentProjection.schemaSQL, "`secret`")
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 }

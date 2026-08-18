@@ -562,6 +562,19 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 					escapeString(table.Name),
 				)
 			}
+			projection.schemaSQL = createTableSQL
+			if projection.isProjected() {
+				projection.schemaSQL, err = restoreProjectedSchema(schemas[key].createTable)
+				if err != nil {
+					return errors.Annotatef(
+						err,
+						"failed to restore schema projection for table `%s`.`%s`",
+						escapeString(dbName),
+						escapeString(table.Name),
+					)
+				}
+			}
+			conf.columnProjection[key] = projection
 		}
 	}
 
@@ -579,21 +592,6 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 					escapeString(table.Name),
 				)
 			}
-			projection := conf.columnProjection[key]
-			if !projection.isProjected() {
-				continue
-			}
-			projectedSchemaSQL, err := restoreProjectedSchema(schemas[key].createTable)
-			if err != nil {
-				return errors.Annotatef(
-					err,
-					"failed to restore schema projection for table `%s`.`%s`",
-					escapeString(dbName),
-					escapeString(table.Name),
-				)
-			}
-			projection.projectedSchemaSQL = projectedSchemaSQL
-			conf.columnProjection[key] = projection
 		}
 	}
 	return nil
@@ -1557,7 +1555,7 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		return meta, nil
 	}
 
-	createTableSQL := projection.projectedSchemaSQL
+	createTableSQL := projection.schemaSQL
 	if createTableSQL == "" {
 		createTableSQL, err = ShowCreateTable(tctx, conn, db, tbl)
 		if err != nil {
