@@ -125,10 +125,41 @@ func TestFTSLocalMatchPreFilterNullColumn(t *testing.T) {
 		Check(testkit.Rows("3"))
 }
 
-// TestFTSLocalMatchPreFilterSkipsBinaryColumn covers a case where narrowing
-// would be wrong. LOWER is a no-op on a binary string, so a lowercased token
-// would not match mixed-case content and the pre-filter would discard rows the
-// MATCH accepts. The query must fall back to evaluating every row in TiDB.
+// TestFTSLocalMatchPreFilterSkipsUnsafeCharsets covers the cases where SQL
+// LOWER does not lowercase the way the analyzer does, so a pushed predicate
+// would discard rows the MATCH accepts. Binary is the stark case - LOWER is a
+// no-op there - and GB18030 the subtle one: its case table leaves U+1C90
+// unchanged where strings.ToLower maps it to U+10D0.
+func TestFTSLocalMatchPreFilterSkipsUnsafeCharsets(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_local_match_against = ON")
+	// The Georgian characters below are single tokens, so the default minimum
+	// token size would filter them out before any of this matters.
+	tk.MustExec("set global innodb_ft_min_token_size = 1")
+	tk.MustExec("create table g (id int primary key, body varchar(255) charset gb18030)")
+	tk.MustExec("insert into g values (1, 'Ა'), (2, 'ა')")
+
+	// Both rows match: the analyzer lowercases the document as well as the
+	// query. A pushed LOWER(...) LIKE would keep row 1 as U+1C90 and drop it.
+	tk.MustQuery("select id from g where match(body) against('+ა' in boolean mode) order by id").
+		Check(testkit.Rows("1", "2"))
+
+	cop, root := planPredicates(t, tk,
+		"select id from g where match(body) against('+ა' in boolean mode)")
+	require.NotContains(t, cop, "like",
+		"no pre-filter may be pushed for a charset whose LOWER differs:\n"+cop)
+	require.Contains(t, root, "match_against", "the MATCH still decides:\n"+root)
+
+	// A utf8mb4 column on the same server still gets one.
+	tk.MustExec("create table u (id int primary key, body varchar(255))")
+	utf8Cop, _ := planPredicates(t, tk,
+		"select id from u where match(body) against('+storage' in boolean mode)")
+	require.Contains(t, utf8Cop, "%storage%",
+		"utf8mb4 should still be narrowed:\n"+utf8Cop)
+}
+
 func TestFTSLocalMatchPreFilterSkipsBinaryColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

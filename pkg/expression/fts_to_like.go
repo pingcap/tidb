@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression/fulltext"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -484,12 +485,19 @@ func BuildFTSLocalMatchPreFilters(
 	if !ok {
 		return nil, nil
 	}
-	// LOWER is a no-op on a binary string, so the lowercased tokens the
-	// analyzer produces would not match mixed-case content and the pre-filter
-	// would discard rows the MATCH accepts. Skip it rather than narrow
-	// incorrectly; the MATCH still evaluates every row, just in TiDB.
+	// The pre-filter lowercases with SQL LOWER, which applies the column
+	// encoding's case table, while the analyzer lowercases with strings.ToLower.
+	// Where the two disagree the pushed predicate rejects a document the MATCH
+	// accepts, and the row is lost before TiDB ever sees it. Only emit the
+	// pre-filter for encodings whose ToLower is the Unicode mapping the
+	// analyzer uses.
+	//
+	// Binary is excluded by the same rule for a starker reason: LOWER is a
+	// no-op there, so mixed-case content never matches a lowercased token.
+	// GB18030 is excluded because its case table leaves characters such as
+	// U+1C90 unchanged where strings.ToLower maps them.
 	colTp := column.GetType(ctx.GetEvalCtx())
-	if types.IsBinaryStr(colTp) {
+	if !ftsPreFilterSafeCharset(colTp.GetCharset()) {
 		return nil, nil
 	}
 	lowered, err := NewFunction(ctx, ast.Lower, colTp.Clone(), column)
@@ -551,4 +559,21 @@ func buildFTSLowerLikePredicate(ctx BuildContext, lowered Expression, token stri
 		RetType: types.NewFieldType(mysql.TypeTiny),
 	}
 	return NewFunction(ctx, ast.Ifnull, types.NewFieldType(mysql.TypeTiny), like, zeroConst)
+}
+
+// ftsPreFilterSafeCharset reports whether SQL LOWER on this charset lowercases
+// the way the fulltext analyzer does, which is what makes a pushed
+// LOWER(col) LIKE predicate a sound over-approximation of the MATCH.
+//
+// Deliberately an allowlist. A charset whose case table differs anywhere makes
+// the pre-filter drop matching rows, and the difference cannot be detected from
+// the search terms alone - it depends on the document. Narrowing is an
+// optimisation, so an unlisted charset simply does not get one.
+func ftsPreFilterSafeCharset(cs string) bool {
+	switch cs {
+	case charset.CharsetUTF8MB4, charset.CharsetUTF8, charset.CharsetASCII, "gb18030":
+		return true
+	default:
+		return false
+	}
 }
