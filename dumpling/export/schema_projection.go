@@ -91,9 +91,20 @@ func (s *projectedTableSchema) getTableInfo() (*model.TableInfo, error) {
 		return s.tableInfo, nil
 	}
 
+	createTable := *s.createTable
+	createTable.Constraints = make([]*ast.Constraint, 0, len(s.createTable.Constraints))
+	// Columnar indexes cannot support foreign key lookups.
+	for _, constraint := range s.createTable.Constraints {
+		switch constraint.Tp {
+		case ast.ConstraintColumnar, ast.ConstraintFulltext:
+			continue
+		default:
+			createTable.Constraints = append(createTable.Constraints, constraint)
+		}
+	}
 	tableInfo, err := ddl.BuildTableInfoWithStmt(
 		metabuild.NewContext(),
-		s.createTable,
+		&createTable,
 		mysql.DefaultCharset,
 		"",
 		nil,

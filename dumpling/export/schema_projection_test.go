@@ -226,6 +226,18 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		require.Empty(t, parseCreateTableForTest(t, projectedSQL).Constraints)
 	})
 
+	t.Run("auto random key removed", func(t *testing.T) {
+		createSQL := "CREATE TABLE `t` (" +
+			"`id` BIGINT AUTO_RANDOM(3)," +
+			"`tenant_id` BIGINT," +
+			"PRIMARY KEY (`id`, `tenant_id`) CLUSTERED" +
+			")"
+		_, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id"}, true, nil,
+		)
+		require.ErrorContains(t, err, "auto_random is only supported on the tables with clustered primary key")
+	})
+
 	t.Run("foreign key target column removed", func(t *testing.T) {
 		createSQL := "CREATE TABLE `child` (" +
 			"`id` INT," +
@@ -362,6 +374,26 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		require.ErrorContains(t, err, "referenced columns are not indexed")
 	})
 
+	t.Run("foreign key columnar index is insufficient", func(t *testing.T) {
+		createSQL := "CREATE TABLE `child` (" +
+			"`id` INT PRIMARY KEY," +
+			"`parent_name` VARCHAR(32)," +
+			"FOREIGN KEY (`parent_name`) REFERENCES `parent` (`name`)" +
+			")"
+		schemas := projectedTableSchemas{
+			{db: "test", table: "parent"}: projectedTableSchemaForTest(
+				t,
+				"CREATE TABLE `parent` (`name` VARCHAR(32), FULLTEXT INDEX (`name`))",
+				[]string{"name"},
+			),
+		}
+
+		_, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id", "parent_name"}, true, schemas,
+		)
+		require.ErrorContains(t, err, "referenced columns are not indexed")
+	})
+
 	t.Run("case distinct tables do not collide", func(t *testing.T) {
 		upper := projectedTableSchemaForTest(t, "CREATE TABLE `Orders` (`id` INT PRIMARY KEY)", []string{"id"})
 		lower := projectedTableSchemaForTest(t, "CREATE TABLE `orders` (`other_id` INT PRIMARY KEY)", []string{"other_id"})
@@ -408,15 +440,21 @@ func generateProjectedSchemaForTest(
 	}
 	table := schema.createTable.Table.Name.O
 	schemas[tableName{db: database, table: table}] = schema
+	projectedSQL := originSQL
+	if rewriteSchema {
+		projectedSQL, err = restoreProjectedSchema(schema.createTable)
+		if err != nil {
+			return "", err
+		}
+		if _, err = schema.getTableInfo(); err != nil {
+			return "", err
+		}
+	}
 	if err := validateForeignKeys(database, schema, schemas); err != nil {
 		return "", err
 	}
 	if !rewriteSchema {
 		return originSQL, nil
-	}
-	projectedSQL, err := restoreProjectedSchema(schema.createTable)
-	if err != nil {
-		return "", err
 	}
 	parseCreateTableForTest(t, projectedSQL)
 	return projectedSQL, nil
