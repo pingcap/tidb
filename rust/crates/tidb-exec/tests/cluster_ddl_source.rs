@@ -935,10 +935,10 @@ fn a_statement_this_module_does_not_own_is_left_to_its_own_path() {
     for sql in [
         "SELECT 1",
         "INSERT INTO u6.t VALUES (1, 2)",
-        // ADD COLUMN left this list when the module took ownership of the
-        // single-action append; its rewrite-needing shapes are now refused
-        // at plan time by name rather than silently left behind.
-        "ALTER TABLE u6.t DROP COLUMN c",
+        // ADD COLUMN and DROP COLUMN left this list when the module took
+        // ownership of the single-action shapes; a multi-action ALTER is
+        // still left to its own path.
+        "ALTER TABLE u6.t ADD COLUMN c BIGINT, ADD COLUMN d BIGINT",
     ] {
         let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
         assert!(
@@ -1849,4 +1849,67 @@ fn truncate_reallocates_the_table_id_and_restarts_the_allocators() {
                 && matches!(mutation.kind(), OptimisticMutationKind::MetaDelete)),
         "the observed allocator is deleted with the old id"
     );
+}
+
+/// Go `isDroppableColumn` + `onDropColumn`: offsets close over the gap, a
+/// single-column secondary index goes with its column, and the three
+/// refusals answer Go's exact messages.
+#[test]
+fn drop_column_shifts_offsets_and_takes_its_single_column_index() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a BIGINT, b BIGINT, c BIGINT)",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("an id");
+    let write = plan(&mut store, "CREATE INDEX idx_a ON u6.t (a)", 150);
+    apply(&mut store, &write);
+
+    let write = plan(&mut store, "ALTER TABLE u6.t DROP COLUMN b", 200);
+    apply(&mut store, &write);
+    let stored: serde_json::Value =
+        serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
+            .expect("the altered table is stored");
+    let columns = stored["cols"].as_array().expect("columns");
+    let names: Vec<_> = columns.iter().map(|c| c["name"]["O"].as_str().unwrap()).collect();
+    assert_eq!(names, ["id", "a", "c"]);
+    let offsets: Vec<_> = columns.iter().map(|c| c["offset"].as_i64().unwrap()).collect();
+    assert_eq!(offsets, [0, 1, 2], "the gap closes");
+    assert_eq!(
+        write.diff.action_type,
+        tidb_model::ActionType::ACTION_DROP_COLUMN
+    );
+
+    // The single-column index on `a` goes with `a`.
+    let write = plan(&mut store, "ALTER TABLE u6.t DROP COLUMN a", 300);
+    apply(&mut store, &write);
+    let stored: serde_json::Value =
+        serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
+            .expect("stored");
+    // `[]`, not `null`: Go removes the entry from a non-nil slice, and an
+    // emptied non-nil slice marshals as an empty array — unlike the builder's
+    // untouched nil slice a fresh CREATE TABLE stores. Both states are pinned.
+    assert_eq!(
+        stored["index_info"],
+        serde_json::json!([]),
+        "listIndicesWithColumn drops idx_a with its column"
+    );
+
+    for (sql, message) in [
+        (
+            "ALTER TABLE u6.t DROP COLUMN id",
+            "Unsupported drop integer primary key",
+        ),
+        (
+            "ALTER TABLE u6.t DROP COLUMN missing",
+            "Can't DROP 'missing'; check that column/key exists",
+        ),
+    ] {
+        let error = plan_ddl(&mut store, &statement(sql), 400)
+            .expect_err("refused")
+            .to_string();
+        assert!(error.contains(message), "{sql}: {error}");
+    }
 }

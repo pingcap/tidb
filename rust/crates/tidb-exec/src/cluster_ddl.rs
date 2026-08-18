@@ -255,6 +255,25 @@ pub enum DdlStatement {
         #[allow(missing_docs)]
         context: DdlStatementContext,
     },
+    /// The single-action `ALTER TABLE ... DROP COLUMN` this node serves.
+    ///
+    /// Go `onDropColumn` + `isDroppableColumn`: the last column of the table,
+    /// the integer-handle primary key, and any column covered by a primary,
+    /// composite, or columnar index are refused with Go's exact messages;
+    /// single-column secondary indexes on the column are dropped WITH it.
+    /// The stored rows keep their old value bytes — the row decoder skips a
+    /// column id the TableInfo no longer names, which is also how TiKV's
+    /// data outlives Go's dropped column until rewrite.
+    DropColumn {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// Whether a missing column is a no-op rather than an error.
+        if_exists: bool,
+        /// The column name as written.
+        column: String,
+    },
     /// `TRUNCATE TABLE [schema.]table`.
     ///
     /// Go's job keeps the schema and allocates a FRESH table id
@@ -560,6 +579,15 @@ fn lower_alter_table_catalog(
                 shard_bits: auto_random.shard_bits.unwrap_or(5),
                 range_bits: auto_random.range_bits.unwrap_or(64),
                 unsigned: column.ty.unsigned,
+            }))
+        }
+        tidb_ast::AlterTableAction::DropColumn { if_exists, name } => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::DropColumn {
+                schema,
+                table,
+                if_exists: *if_exists,
+                column: name.clone(),
             }))
         }
         tidb_ast::AlterTableAction::AddColumn {
@@ -1516,6 +1544,112 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 encoded,
             )?);
             diff.action_type = ActionType::ACTION_ADD_COLUMN;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::DropColumn {
+            schema,
+            table,
+            if_exists,
+            column,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let wanted = column.to_lowercase();
+            let Some(dropped_offset) = stored
+                .columns
+                .iter_deref()
+                .position(|candidate| candidate.read().name.lowercase() == wanted)
+            else {
+                if *if_exists {
+                    return Ok(already(format!(
+                        "column `{column}` does not exist on `{schema}`.`{table}`"
+                    )));
+                }
+                // Go 1091 ErrCantDropFieldOrKey.
+                return Err(DdlPlanError::Encode(format!(
+                    "Can't DROP '{column}'; check that column/key exists"
+                )));
+            };
+            if stored.columns.len() == 1 {
+                // Go 1090 ErrCantRemoveAllFields.
+                return Err(DdlPlanError::Encode(format!(
+                    "can't drop only column {column} in table {}",
+                    stored.name.original()
+                )));
+            }
+            let dropped = stored
+                .columns
+                .iter_deref()
+                .nth(dropped_offset)
+                .expect("the position was just found")
+                .read()
+                .clone_like_go();
+            if dropped.is_pk_handle_column(stored) {
+                // Go 8200 via checkModifyPKColumn's drop arm.
+                return Err(DdlPlanError::Encode(
+                    "Unsupported drop integer primary key".to_owned(),
+                ));
+            }
+            for index in stored.indices.iter_deref() {
+                let index = index.read();
+                let covers = index
+                    .columns
+                    .iter_deref()
+                    .any(|col| col.read().name.lowercase() == wanted);
+                if covers && (index.primary || index.columns.len() > 1) {
+                    // Go 8200 ErrCantDropColWithIndex, message verbatim.
+                    return Err(DdlPlanError::Encode(format!(
+                        "can't drop column {column} with composite index covered or \
+                         Primary Key covered now"
+                    )));
+                }
+            }
+            let mut info = stored.clone_like_go();
+            // Go `listIndicesWithColumn`: a single-column secondary index on
+            // the dropped column goes with it.
+            let surviving: Vec<_> = (0..info.indices.len())
+                .filter_map(|position| {
+                    let handle = info.indices.get(position)?;
+                    let single_on_dropped = {
+                        let index = handle.read();
+                        index.columns.len() == 1
+                            && index
+                                .columns
+                                .iter_deref()
+                                .next()
+                                .is_some_and(|col| col.read().name.lowercase() == wanted)
+                    };
+                    (!single_on_dropped).then_some(Some(handle))
+                })
+                .collect();
+            info.indices = tidb_model::GoSharedPointerSlice::from_handles(surviving);
+            info.columns.delete_go(dropped_offset, dropped_offset + 1);
+            // Every later column shifts down one offset, and every index
+            // column referring to one follows it.
+            for column in info.columns.iter_deref() {
+                let mut column = column.write();
+                if column.offset > dropped.offset {
+                    column.offset -= 1;
+                }
+            }
+            for index in info.indices.iter_deref() {
+                let index = index.read();
+                for col in index.columns.iter_deref() {
+                    let mut col = col.write();
+                    if col.offset > dropped.offset {
+                        col.offset -= 1;
+                    }
+                }
+            }
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_DROP_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }
