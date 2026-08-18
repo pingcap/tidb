@@ -241,6 +241,10 @@ fn is_unfoldable(name: &str) -> bool {
             | "getparam"
             | "benchmark"
             | "dayname"
+            // Reads the SESSION transaction context at evaluation: folding
+            // it at plan time would freeze the zero the statement had before
+            // its first read opened a snapshot.
+            | "tidb_current_tso"
             | "nextval"
             | "lastval"
             | "setval"
