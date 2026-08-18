@@ -1146,7 +1146,7 @@ func (m *memArbitrator) intoBigBudget() bool {
 
 	m.state.Store(memArbitratorStateIntoBigBudget)
 
-	if maxMemHint := max(m.prevMaxMem, smallUsed); maxMemHint > m.buffer.size.Load() {
+	if maxMemHint := max(m.prevMaxMem, smallUsed); maxMemHint > 0 {
 		m.tryToUpdateBuffer(maxMemHint, m.approxUnixTimeSec())
 	}
 

@@ -76,7 +76,7 @@ const (
 	defServerlimitMaxUnitNum                  = 100
 	defUpdateMemConsumedTimeAlignSec          = 30
 	defUpdateMemMagnifUtimeAlign              = 30
-	defUpdateBufferTimeAlignSec               = 60
+	defUpdateBufferTimeAlignSec               = 10
 	defRedundancy                             = 2
 	defPoolReservedQuota                      = byteSizeMB
 	defAwaitFreePoolAllocAlignSize            = defPoolReservedQuota + byteSizeMB
@@ -1173,7 +1173,7 @@ func (m *MemArbitrator) tryToUpdateBuffer(memConsumed, utimeSec int64) {
 					memConsumed = max(memConsumed, d.size.Load())
 				}
 			}
-			if updateSize && m.buffer.size.Load() != memConsumed {
+			if m.buffer.size.Load() != memConsumed {
 				m.setBufferSize(memConsumed)
 			}
 		}
@@ -2625,6 +2625,7 @@ func (m *MemArbitrator) HandleRuntimeStats(s memStats) {
 
 func (m *MemArbitrator) tryUpdateTrackedMemStats(utimeMilli int64) bool {
 	if m.avoidance.heapTracked.lastUpdateUtimeMilli.Load()+defTrackMemStatsDurMilli <= utimeMilli {
+		m.tryToUpdateBuffer(0, m.approxUnixTimeSec())
 		m.updateTrackedHeapStats()
 		return true
 	}
