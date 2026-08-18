@@ -254,6 +254,13 @@ where
         };
 
         let mut spec = TiKvTableScanSpec::new(request.table_id, columns.clone());
+        // A CLUSTERED table's primary key lives in the row key, so the
+        // coprocessor needs the ids to rebuild those columns from it -- Go's
+        // `newRowDecoder` falls back to exactly this list when no column
+        // carries `PkHandle`. Dropping it here left every clustered
+        // primary-key column NULL in a pushed-down scan.
+        spec.primary_column_ids = request.primary_column_ids.clone();
+        spec.primary_prefix_column_ids = request.primary_prefix_column_ids.clone();
         // The merge above reads the remote rows in record-key order, which is
         // the order it merges the staged buffer against.
         spec.keep_order = true;

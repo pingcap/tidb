@@ -163,10 +163,17 @@ const CHUNK_MAX_ROWS: usize = 1024;
 /// in request order, datum-encoded into default-format chunks — the shape a
 /// distsql client decodes.
 ///
-/// Narrowings, by name: common handles and partitioned reads follow their
-/// courses (`RecordHandle::Common`/`Partition` rows refuse); a requested
-/// column absent from the row answers its `default_val` when carried, else
-/// NULL — Go's `getDefaultValue` behavior for the null-capable slice.
+/// A CLUSTERED table's primary key lives in the row KEY, not the value, so
+/// Go's `newRowDecoder` (`cop_handler.go:500`) falls back to the request's
+/// `PrimaryColumnIds` when no column carries `PkHandle`, and the decoder
+/// fills those columns from the key. This does the same: the handle's
+/// datums are decoded in key order and matched positionally to
+/// `primary_column_ids`.
+///
+/// Narrowings, by name: partitioned reads follow their course
+/// (`RecordHandle::Partition` rows refuse); a requested column absent from
+/// the row answers its `default_val` when carried, else NULL — Go's
+/// `getDefaultValue` behavior for the null-capable slice.
 fn exec_table_scan(
     store: &mut MvccStore,
     context: &DagContext,
@@ -207,12 +214,19 @@ fn exec_table_scan(
                 }
                 return other_error(&format!("scan error: {err:?}"));
             }
-            let handle = match tidb_codec::table_key::decode_row_key(&pair.key) {
-                Ok(RecordHandle::Int(handle)) => handle,
-                Ok(_) => {
-                    return other_error(
-                        "common-handle and partitioned scans are later courses of this port",
-                    )
+            // Go `tablecodec.DecodeRowKey`: an int handle answers directly,
+            // a common handle carries the clustered primary key's datums.
+            let (handle, common_handle) = match tidb_codec::table_key::decode_row_key(&pair.key) {
+                Ok(RecordHandle::Int(handle)) => (handle, None),
+                Ok(RecordHandle::Common(encoded)) => {
+                    let count = tbl_scan.primary_column_ids.len();
+                    match tidb_codec::decode(&encoded, count) {
+                        Ok(datums) => (0, Some(datums)),
+                        Err(err) => return other_error(&format!("invalid common handle: {err:?}")),
+                    }
+                }
+                Ok(RecordHandle::Partition { .. }) => {
+                    return other_error("partitioned scans are a later course of this port")
                 }
                 Err(err) => return other_error(&format!("invalid record key: {err:?}")),
             };
@@ -225,6 +239,16 @@ fn exec_table_scan(
             for column in &tbl_scan.columns {
                 if column.pk_handle() {
                     row_datums.push(Datum::Int(handle));
+                } else if let Some(datum) = common_handle.as_ref().and_then(|datums| {
+                    // Go matches `PrimaryColumnIds` positionally against the
+                    // handle's datums, which are encoded in key order.
+                    tbl_scan
+                        .primary_column_ids
+                        .iter()
+                        .position(|id| *id == column.column_id())
+                        .and_then(|position| datums.get(position))
+                }) {
+                    row_datums.push(datum.clone());
                 } else if let Some(datum) = decoded.get(&column.column_id()) {
                     row_datums.push(datum.clone());
                 } else if !column.default_val().is_empty() {
@@ -785,6 +809,96 @@ mod tests {
         assert_eq!(
             decoded,
             vec![Datum::Int(1), Datum::Int(77), Datum::Int(2), Datum::Int(88)]
+        );
+    }
+
+    /// Go `newRowDecoder` (`cop_handler.go:500`) falls back to the
+    /// request's `PrimaryColumnIds` when no column carries `PkHandle`, and
+    /// fills those columns from the row KEY -- which is where a CLUSTERED
+    /// table's primary key lives. A scan of such a table used to refuse
+    /// outright, and then to answer NULL for every primary-key column.
+    #[test]
+    fn a_clustered_primary_key_is_read_back_out_of_the_row_key() {
+        use tidb_codec::table_key::{encode_row_key_with_handle, RecordHandle};
+        use tidb_datatype::Datum;
+        use tidb_proto::{KvrpcMutation, KvrpcOp};
+
+        let mut store = MvccStore::new();
+        let table_id = 77_i64;
+        // `CREATE TABLE t (a INT, b INT, c INT, PRIMARY KEY (a, b))`: the
+        // key carries (a, b), the value carries only c.
+        for (a, b, c) in [(1_i64, 2_i64, 30_i64), (3, 4, 50)] {
+            let handle =
+                tidb_codec::encode_key(&[Datum::Int(a), Datum::Int(b)]).expect("a common handle");
+            let key = encode_row_key_with_handle(table_id, &RecordHandle::Common(handle));
+            let value = tidb_codec::encode_value(&[Datum::Int(3), Datum::Int(c)]).expect("row");
+            store
+                .prewrite(&crate::mvcc_store::PrewriteReq {
+                    mutations: vec![KvrpcMutation {
+                        op: KvrpcOp::Put as i32,
+                        key: key.clone(),
+                        value,
+                        ..KvrpcMutation::default()
+                    }],
+                    primary_lock: key.clone(),
+                    start_version: 10,
+                    ..crate::mvcc_store::PrewriteReq::default()
+                })
+                .expect("prewrites");
+            store.commit(&[key], 10, 11).expect("commits");
+        }
+
+        let column = |id: i64| tipb::ColumnInfo {
+            column_id: Some(id),
+            tp: Some(8), // TypeLonglong
+            ..tipb::ColumnInfo::default()
+        };
+        let scan = tipb::Executor {
+            tp: Some(tipb::ExecType::TypeTableScan as i32),
+            tbl_scan: Some(tipb::TableScan {
+                table_id: Some(table_id),
+                columns: vec![column(1), column(2), column(3)],
+                // No column is `PkHandle`; these ids name the clustered key.
+                primary_column_ids: vec![1, 2],
+                ..tipb::TableScan::default()
+            }),
+            ..tipb::Executor::default()
+        };
+        let dag = tipb::DagRequest {
+            executors: vec![scan],
+            ..tipb::DagRequest::default()
+        };
+        let mut data = Vec::new();
+        dag.encode(&mut data).expect("encodes");
+        let (range_start, range_end) = tidb_codec::table_key::get_table_handle_key_range(table_id);
+        let resp = handle_cop_request(
+            &mut store,
+            &coprocessor::Request {
+                tp: REQ_TYPE_DAG,
+                data,
+                ranges: vec![coprocessor::KeyRange {
+                    start: range_start,
+                    end: range_end,
+                }],
+                start_ts: 20,
+                ..coprocessor::Request::default()
+            },
+        );
+        assert!(resp.other_error.is_empty(), "{}", resp.other_error);
+        let select = tipb::SelectResponse::decode(resp.data.as_slice()).expect("a select response");
+        let rows_data = select.chunks[0].rows_data.as_deref().expect("rows");
+        let decoded = tidb_codec::decode(rows_data, 6).expect("six datums");
+        assert_eq!(
+            decoded,
+            vec![
+                Datum::Int(1),
+                Datum::Int(2),
+                Datum::Int(30),
+                Datum::Int(3),
+                Datum::Int(4),
+                Datum::Int(50)
+            ],
+            "both key columns and the value column come back"
         );
     }
 
