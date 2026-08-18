@@ -113,7 +113,9 @@ const (
 	FullTextParserTypeStandardV1 FullTextParserType = "STANDARD_V1"
 	// FullTextParserTypeMultilingualV1 is a parser for multilingual texts.
 	FullTextParserTypeMultilingualV1 FullTextParserType = "MULTILINGUAL_V1"
-	// FullTextParserTypeNgramV1 is the ngram parser.
+	// FullTextParserTypeNgramV1 provides better recall,
+	// but may have lower performance.
+	// The value matches with the supported tokenizer in Libclara.
 	FullTextParserTypeNgramV1 FullTextParserType = "NGRAM_V1"
 )
 
