@@ -37,20 +37,59 @@ func TestPreserveUnderscoreTokenize(t *testing.T) {
 func TestAnalyzeStandardV1(t *testing.T) {
 	sctx := newFulltextTestContext(t)
 
+	// Stopwords are enabled by default, so "the" is dropped by the InnoDB
+	// default list. Its position is not reused: the remaining tokens keep the
+	// ordinals they had in the original stream, which is what phrase matching
+	// relies on.
 	tokens, err := AnalyzeStandardV1(sctx, "The foo_bar, a 好")
+	require.NoError(t, err)
+	require.Equal(t, []Token{
+		{Text: "foo_bar", Position: 1},
+	}, tokens)
+
+	// Turning stopwords off keeps the same word, so the two settings produce
+	// different token streams for identical input.
+	require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.InnodbFtEnableStopword, vardef.Off))
+	tokens, err = AnalyzeStandardV1(sctx, "The foo_bar, a 好")
 	require.NoError(t, err)
 	require.Equal(t, []Token{
 		{Text: "the", Position: 0},
 		{Text: "foo_bar", Position: 1},
 	}, tokens)
 
-	require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.InnodbFtEnableStopword, vardef.Off))
+	// "cat" is not a stop word, so it survives either way.
+	require.NoError(t, sctx.GetSessionVars().SetSystemVar(vardef.InnodbFtEnableStopword, vardef.On))
 	tokens, err = AnalyzeStandardV1(sctx, "The cat")
 	require.NoError(t, err)
 	require.Equal(t, []Token{
-		{Text: "the", Position: 0},
 		{Text: "cat", Position: 1},
 	}, tokens)
+}
+
+// TestDefaultInnodbStopwordList guards the transcription of MySQL's
+// fts_default_stopword array. A wrong entry silently changes which rows a query
+// matches, so the contents are pinned rather than only their effect.
+func TestDefaultInnodbStopwordList(t *testing.T) {
+	set := stopwordSetFromConfig(AnalyzerConfig{InnodbFtEnableStopword: true})
+	require.Len(t, set, 35, "35 distinct words; the source array lists \"the\" twice")
+
+	for _, word := range []string{"a", "the", "www", "und", "la", "com", "how", "who"} {
+		require.Contains(t, set, word)
+	}
+	for _, word := range []string{"cat", "database", "tidb", "mysql", "storage"} {
+		require.NotContains(t, set, word, "%q is not an InnoDB stop word", word)
+	}
+
+	// An explicit list replaces the default rather than adding to it.
+	explicit := stopwordSetFromConfig(AnalyzerConfig{
+		InnodbFtEnableStopword: true,
+		Stopwords:              []string{"cat"},
+	})
+	require.Len(t, explicit, 1)
+	require.Contains(t, explicit, "cat")
+	require.NotContains(t, explicit, "the")
+
+	require.Nil(t, stopwordSetFromConfig(AnalyzerConfig{InnodbFtEnableStopword: false}))
 }
 
 func TestAnalyzeStandardV1ReadsTokenSizesFromSessionContext(t *testing.T) {
