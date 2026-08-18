@@ -542,14 +542,19 @@ impl MvccStore {
     /// snapshot-isolation arm with empty resolved/committed lists (the
     /// `ResolvedLocks` / `CommittedLocks` narrowing, named).
     pub fn get(&self, key: &[u8], version: u64) -> Result<Option<Vec<u8>>, KvError> {
-        // Go `CheckKeysLock`: a live lock visible at the read version blocks
-        // the read, unless it is a Lock-op or pessimistic lock.
+        // Go `checkLock` (`mvcc.go:1437`): only a Put/Del lock visible at the
+        // read version blocks — and a read at `maxSystemTS` (u64::MAX) SKIPS
+        // the PRIMARY lock, non-async-commit only, so a latest-committed
+        // point read serves past its own transaction's primary while a
+        // secondary still errors.
         let buf = self.lock_bytes(key);
         if !buf.is_empty() {
             let lock = decode_lock(&buf);
-            let invisible = lock.hdr.op == KvrpcOp::Lock as i32 as u8
-                || lock.hdr.op == KvrpcOp::PessimisticLock as i32 as u8;
-            if !invisible && lock.hdr.start_ts <= version {
+            let is_write_lock = lock.hdr.op == KvrpcOp::Put as i32 as u8
+                || lock.hdr.op == KvrpcOp::Del as i32 as u8;
+            let is_primary_get =
+                version == u64::MAX && lock.primary == key && !lock.hdr.use_async_commit;
+            if is_write_lock && lock.hdr.start_ts <= version && !is_primary_get {
                 return Err(KvError::Locked(Box::new(lock.to_lock_info(key.to_vec()))));
             }
         }
@@ -2563,5 +2568,390 @@ mod tests {
             107,
             "a smaller for_update_ts never rolls the lock back"
         );
+    }
+
+    const MAX_TS: u64 = u64::MAX;
+
+    fn must_commit(store: &mut MvccStore, key: &[u8], start_ts: u64, commit_ts: u64) {
+        store
+            .commit(&[key.to_vec()], start_ts, commit_ts)
+            .expect("commits");
+    }
+
+    fn must_get_val(store: &MvccStore, key: &[u8], value: &[u8], ts: u64) {
+        assert_eq!(store.get(key, ts).expect("readable"), Some(value.to_vec()));
+    }
+
+    fn must_get_none(store: &MvccStore, key: &[u8], ts: u64) {
+        assert_eq!(store.get(key, ts).expect("readable"), None);
+    }
+
+    fn must_get_err(store: &MvccStore, key: &[u8], ts: u64) {
+        assert!(store.get(key, ts).is_err(), "the lock must refuse ts {ts}");
+    }
+
+    fn must_acquire_pessimistic_lock(
+        store: &mut MvccStore,
+        pk: &[u8],
+        key: &[u8],
+        start_ts: u64,
+        for_update_ts: u64,
+    ) {
+        store
+            .pessimistic_lock(&PessimisticLockReq {
+                mutations: vec![mutation(KvrpcOp::PessimisticLock, key, b"")],
+                primary_lock: pk.to_vec(),
+                start_version: start_ts,
+                for_update_ts,
+                lock_ttl: 100,
+                ..PessimisticLockReq::default()
+            })
+            .expect("locks");
+    }
+
+    fn must_prewrite_pessimistic(
+        store: &mut MvccStore,
+        pk: &[u8],
+        m: KvrpcMutation,
+        start_ts: u64,
+        ttl: u64,
+        for_update_ts: u64,
+    ) {
+        store
+            .prewrite(&PrewriteReq {
+                mutations: vec![m],
+                primary_lock: pk.to_vec(),
+                start_version: start_ts,
+                lock_ttl: ttl,
+                for_update_ts,
+                pessimistic_actions: vec![tidb_proto::KvrpcPessimisticAction::DoPessimisticCheck],
+                ..PrewriteReq::default()
+            })
+            .expect("the pessimistic prewrite lands");
+    }
+
+    /// Go `TestTxnPrewrite` (`mvcc_test.go:1027`): retries are idempotent,
+    /// conflicts refuse, a rollback record kills the SAME ts's retry but not
+    /// a later transaction.
+    #[test]
+    fn test_txn_prewrite() {
+        let mut store = MvccStore::new();
+        let (k, v) = (b"tk".as_slice(), b"v".as_slice());
+        must_prewrite_op(&mut store, k, mutation(KvrpcOp::Put, k, v), 5);
+        assert!(!store.lock_bytes(k).is_empty(), "locked");
+        // Retry prewrite: idempotent.
+        must_prewrite_op(&mut store, k, mutation(KvrpcOp::Put, k, v), 5);
+        // Conflict with the standing lock.
+        assert!(store
+            .prewrite(&PrewriteReq {
+                mutations: vec![mutation(KvrpcOp::Put, k, v)],
+                primary_lock: k.to_vec(),
+                start_version: 6,
+                lock_ttl: 100,
+                ..PrewriteReq::default()
+            })
+            .is_err());
+        must_commit(&mut store, k, 5, 10);
+        must_get_val(&store, k, v, 10);
+        // Delayed prewrite after committing.
+        assert!(store
+            .prewrite(&PrewriteReq {
+                mutations: vec![mutation(KvrpcOp::Put, k, v)],
+                primary_lock: k.to_vec(),
+                start_version: 5,
+                lock_ttl: 100,
+                ..PrewriteReq::default()
+            })
+            .is_err());
+        assert!(store.lock_bytes(k).is_empty(), "unlocked");
+        // Write conflict below the commit.
+        assert!(store
+            .prewrite(&PrewriteReq {
+                mutations: vec![mutation(KvrpcOp::Put, k, v)],
+                primary_lock: k.to_vec(),
+                start_version: 6,
+                lock_ttl: 100,
+                ..PrewriteReq::default()
+            })
+            .is_err());
+        assert!(store.lock_bytes(k).is_empty(), "unlocked");
+        // Not a conflict above it.
+        must_prewrite_op(&mut store, k, mutation(KvrpcOp::Lock, k, b""), 12);
+        store.rollback(&[k.to_vec()], 12).expect("rolls back");
+        // Cannot retry the SAME ts past its rollback record.
+        assert!(store
+            .prewrite(&PrewriteReq {
+                mutations: vec![mutation(KvrpcOp::Put, k, b"")],
+                primary_lock: k.to_vec(),
+                start_version: 12,
+                lock_ttl: 100,
+                ..PrewriteReq::default()
+            })
+            .is_err());
+        // A LATER transaction can.
+        must_prewrite_op(&mut store, k, mutation(KvrpcOp::Del, k, b""), 13);
+        store.rollback(&[k.to_vec()], 13).expect("rolls back");
+        assert!(store.lock_bytes(k).is_empty(), "unlocked");
+    }
+
+    /// Go `TestPrewriteInsert` (`mvcc_test.go:1061`): Op_Insert refuses over
+    /// a live value, is admitted over a delete, and a rollback record does
+    /// not resurrect the deleted value.
+    #[test]
+    fn test_prewrite_insert() {
+        let mut store = MvccStore::new();
+        let (k1, v1, v2, v3) = (
+            b"tk1".as_slice(),
+            b"v1".as_slice(),
+            b"v2".as_slice(),
+            b"v3".as_slice(),
+        );
+        let insert = |store: &mut MvccStore, value: &[u8], ts: u64| {
+            store.prewrite(&PrewriteReq {
+                mutations: vec![mutation(KvrpcOp::Insert, k1, value)],
+                primary_lock: k1.to_vec(),
+                start_version: ts,
+                lock_ttl: 100,
+                ..PrewriteReq::default()
+            })
+        };
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Put, k1, v1), 1);
+        must_commit(&mut store, k1, 1, 2);
+        assert!(
+            matches!(
+                insert(&mut store, v2, 3),
+                Err(KvError::KeyAlreadyExists { .. })
+            ),
+            "insert over a live value is AlreadyExist"
+        );
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Del, k1, b""), 4);
+        must_commit(&mut store, k1, 4, 5);
+        insert(&mut store, v2, 6).expect("insert over a delete");
+        must_commit(&mut store, k1, 6, 7);
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Put, k1, v3), 8);
+        store.rollback(&[k1.to_vec()], 8).expect("rolls back");
+        assert!(matches!(
+            insert(&mut store, v2, 9),
+            Err(KvError::KeyAlreadyExists { .. })
+        ));
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Del, k1, b""), 10);
+        must_commit(&mut store, k1, 10, 11);
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Put, k1, v3), 12);
+        store.rollback(&[k1.to_vec()], 12).expect("rolls back");
+        insert(&mut store, v2, 13).expect("the rollback does not resurrect");
+        must_commit(&mut store, k1, 13, 14);
+        must_get_val(&store, k1, v2, 15);
+    }
+
+    /// Go `TestPessimiticTxnTTL` (typo theirs, `mvcc_test.go:531`): the
+    /// pessimistic prewrite keeps the LARGER of the lock's TTL and its own.
+    #[test]
+    fn test_pessimistic_txn_ttl() {
+        let mut store = MvccStore::new();
+        let (key1, val1) = (b"key1".as_slice(), b"val1".as_slice());
+        store
+            .pessimistic_lock(&PessimisticLockReq {
+                mutations: vec![mutation(KvrpcOp::PessimisticLock, key1, b"")],
+                primary_lock: key1.to_vec(),
+                start_version: 1,
+                for_update_ts: 1,
+                lock_ttl: 1000,
+                ..PessimisticLockReq::default()
+            })
+            .expect("locks");
+        must_prewrite_pessimistic(
+            &mut store,
+            key1,
+            mutation(KvrpcOp::Put, key1, val1),
+            1,
+            500,
+            1,
+        );
+        assert_eq!(
+            u64::from(decode_lock(&store.lock_bytes(key1)).hdr.ttl),
+            1000
+        );
+
+        let (key2, val2) = (b"key2".as_slice(), b"val2".as_slice());
+        store
+            .pessimistic_lock(&PessimisticLockReq {
+                mutations: vec![mutation(KvrpcOp::PessimisticLock, key2, b"")],
+                primary_lock: key2.to_vec(),
+                start_version: 3,
+                for_update_ts: 3,
+                lock_ttl: 300,
+                ..PessimisticLockReq::default()
+            })
+            .expect("locks");
+        must_prewrite_pessimistic(
+            &mut store,
+            key2,
+            mutation(KvrpcOp::Put, key2, val2),
+            3,
+            2000,
+            3,
+        );
+        assert_eq!(
+            u64::from(decode_lock(&store.lock_bytes(key2)).hdr.ttl),
+            2000
+        );
+    }
+
+    /// Go `TestBatchGet` (`mvcc_test.go:1439`): a locked key answers its
+    /// error IN the pair while its neighbors answer their values.
+    #[test]
+    fn test_batch_get() {
+        let mut store = MvccStore::new();
+        for (key, value) in [
+            (b"ta".as_slice(), b"1".as_slice()),
+            (b"tb", b"2"),
+            (b"tc", b"3"),
+        ] {
+            must_prewrite_op(&mut store, key, mutation(KvrpcOp::Put, key, value), 100);
+            must_commit(&mut store, key, 100, 101);
+        }
+        must_prewrite_op(&mut store, b"ta", mutation(KvrpcOp::Put, b"ta", b"0"), 103);
+        let pairs = store.batch_get(&[b"ta".to_vec(), b"tb".to_vec(), b"tc".to_vec()], 104);
+        assert_eq!(pairs.len(), 3);
+        assert!(pairs[0].error.is_some(), "the locked key answers its error");
+        assert_eq!(pairs[1].value, b"2");
+        assert_eq!(pairs[2].value, b"3");
+    }
+
+    /// Go `TestCommitPessimisticLock` (`mvcc_test.go:1451`): a foreign ts
+    /// cannot commit the lock; its own can, and Op_Lock leaves no value.
+    #[test]
+    fn test_commit_pessimistic_lock() {
+        let mut store = MvccStore::new();
+        let k = b"ta".as_slice();
+        must_acquire_pessimistic_lock(&mut store, k, k, 10, 10);
+        assert!(store.commit(&[k.to_vec()], 20, 30).is_err());
+        must_commit(&mut store, k, 10, 20);
+        must_get_none(&store, k, 30);
+    }
+
+    /// Go `TestOpCheckNotExist` (`mvcc_test.go:1460`): the check reads the
+    /// latest STATE — live is AlreadyExist, deleted or rolled-back is ok.
+    #[test]
+    fn test_op_check_not_exist() {
+        let mut store = MvccStore::new();
+        let (k, v) = (b"ta".as_slice(), b"v".as_slice());
+        let check = |store: &mut MvccStore, ts: u64| {
+            store.prewrite(&PrewriteReq {
+                mutations: vec![mutation(KvrpcOp::CheckNotExists, k, b"")],
+                primary_lock: k.to_vec(),
+                start_version: ts,
+                lock_ttl: 100,
+                ..PrewriteReq::default()
+            })
+        };
+        must_prewrite_op(&mut store, k, mutation(KvrpcOp::Put, k, v), 1);
+        must_commit(&mut store, k, 1, 2);
+        assert!(matches!(
+            check(&mut store, 3),
+            Err(KvError::KeyAlreadyExists { .. })
+        ));
+        must_prewrite_op(&mut store, k, mutation(KvrpcOp::Del, k, b""), 4);
+        must_commit(&mut store, k, 4, 5);
+        check(&mut store, 6).expect("a deleted key checks clean");
+        must_prewrite_op(&mut store, k, mutation(KvrpcOp::Put, k, v), 7);
+        store.rollback(&[k.to_vec()], 7).expect("rolls back");
+        check(&mut store, 8).expect("a rolled-back write checks clean");
+    }
+
+    /// Go `TestPrimaryKeyOpLock` (`mvcc_test.go:907`): every Op_Lock commit
+    /// leaves a recallable commit record while the VALUE timeline ignores
+    /// the locks entirely.
+    #[test]
+    fn test_primary_key_op_lock() {
+        let mut store = MvccStore::new();
+        let (pk, val2) = (b"tpk".as_slice(), b"val2".as_slice());
+        must_prewrite_op(&mut store, pk, mutation(KvrpcOp::Lock, pk, b""), 100);
+        must_commit(&mut store, pk, 100, 101);
+        let recall = |store: &mut MvccStore, lock_ts: u64| {
+            store
+                .check_txn_status(&CheckTxnStatusReq {
+                    primary_key: pk.to_vec(),
+                    lock_ts,
+                    caller_start_ts: 130,
+                    current_ts: 130,
+                    ..CheckTxnStatusReq::default()
+                })
+                .expect("the status answers")
+                .commit_ts
+        };
+        assert_eq!(recall(&mut store, 100), 101);
+
+        must_prewrite_op(&mut store, pk, mutation(KvrpcOp::Put, pk, val2), 110);
+        must_commit(&mut store, pk, 110, 111);
+        must_prewrite_op(&mut store, pk, mutation(KvrpcOp::Lock, pk, b""), 120);
+        must_commit(&mut store, pk, 120, 121);
+
+        assert_eq!(recall(&mut store, 120), 121);
+        assert_eq!(recall(&mut store, 110), 111);
+        assert_eq!(recall(&mut store, 100), 101);
+
+        must_get_none(&store, pk, 90);
+        must_get_none(&store, pk, 110);
+        must_get_val(&store, pk, val2, 111);
+        must_get_val(&store, pk, val2, 130);
+    }
+
+    /// Go `TestMvccTxnRead` (`mvcc_test.go:957`), the read-visibility suite,
+    /// including the max-ts quirks: reading at `u64::MAX` IGNORES the
+    /// primary lock but ERRORS on a secondary, and sees past a pessimistic
+    /// transaction's pre-commit lock.
+    #[test]
+    fn test_mvcc_txn_read() {
+        let mut store = MvccStore::new();
+        let (k1, v1) = (b"tk1".as_slice(), b"v1".as_slice());
+        must_get_none(&store, k1, 1);
+
+        must_prewrite_optimistic(&mut store, k1, k1, v1, 2, 10);
+        store.rollback(&[k1.to_vec()], 2).expect("rolls back");
+        must_get_none(&store, k1, 1);
+
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Lock, k1, b""), 3);
+        must_commit(&mut store, k1, 3, 4);
+        must_get_none(&store, k1, 5);
+
+        let (v, k2, v2) = (b"v".as_slice(), b"tk2".as_slice(), b"v2".as_slice());
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Put, k1, v), 5);
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Put, k2, v2), 5);
+        must_get_none(&store, k1, 4);
+        must_get_err(&store, k1, 7);
+        // The max-ts split: the primary lock is ignored, the secondary errors.
+        must_get_none(&store, k1, MAX_TS);
+        must_get_err(&store, k2, MAX_TS);
+        must_commit(&mut store, k1, 5, 10);
+        must_commit(&mut store, k2, 5, 10);
+        must_get_none(&store, k1, 3);
+        must_get_none(&store, k1, 7);
+        must_get_val(&store, k1, v, 13);
+        must_get_val(&store, k2, v2, MAX_TS);
+
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Del, k1, b""), 15);
+        // The pending delete's primary lock is ignored at max ts.
+        must_get_val(&store, k1, v, MAX_TS);
+        must_commit(&mut store, k1, 15, 20);
+        must_get_none(&store, k1, 3);
+        must_get_none(&store, k1, 7);
+        must_get_val(&store, k1, v, 13);
+        must_get_val(&store, k1, v, 17);
+        must_get_none(&store, k1, 23);
+
+        // Intersecting pessimistic timestamps: T1(25..27), T2(23..31).
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Put, k1, v), 25);
+        must_commit(&mut store, k1, 25, 27);
+        must_acquire_pessimistic_lock(&mut store, k1, k1, 23, 29);
+        must_get_val(&store, k1, v, 30);
+        must_prewrite_pessimistic(&mut store, k1, mutation(KvrpcOp::Del, k1, b""), 23, 100, 29);
+        must_get_err(&store, k1, 30);
+        // Max ts sees past even a lock whose start_ts is BELOW the latest
+        // commit.
+        must_get_val(&store, k1, v, MAX_TS);
+        must_commit(&mut store, k1, 23, 31);
+        must_get_val(&store, k1, v, 30);
+        must_get_none(&store, k1, 32);
     }
 }
