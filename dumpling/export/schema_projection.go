@@ -92,6 +92,22 @@ func (s *projectedTableSchema) buildTableInfo() (*model.TableInfo, error) {
 	}
 
 	createTable := *s.createTable
+	createTable.Cols = make([]*ast.ColumnDef, 0, len(s.createTable.Cols))
+	// Default expressions do not affect structural validation and require a session expression context.
+	for _, column := range s.createTable.Cols {
+		columnCopy := *column
+		columnCopy.Tp = column.Tp.Clone()
+		columnCopy.Options = make([]*ast.ColumnOption, 0, len(column.Options))
+		for _, option := range column.Options {
+			switch option.Tp {
+			case ast.ColumnOptionDefaultValue, ast.ColumnOptionOnUpdate:
+				continue
+			default:
+				columnCopy.Options = append(columnCopy.Options, option)
+			}
+		}
+		createTable.Cols = append(createTable.Cols, &columnCopy)
+	}
 	createTable.Constraints = make([]*ast.Constraint, 0, len(s.createTable.Constraints))
 	// Columnar indexes cannot support foreign key lookups.
 	for _, constraint := range s.createTable.Constraints {
@@ -103,7 +119,7 @@ func (s *projectedTableSchema) buildTableInfo() (*model.TableInfo, error) {
 		}
 	}
 	tableInfo, err := ddl.BuildTableInfoWithStmt(
-		metabuild.NewContext(),
+		metabuild.NewNonStrictContext(),
 		&createTable,
 		mysql.DefaultCharset,
 		"",

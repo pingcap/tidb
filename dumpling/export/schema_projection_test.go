@@ -202,7 +202,7 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		createSQL := "CREATE TABLE `t` (" +
 			"`tenant_id` INT," +
 			"`id` INT," +
-			"`name` VARCHAR(32)," +
+			"`name` VARCHAR(32) DEFAULT NULL," +
 			"PRIMARY KEY (`tenant_id`, `id`)" +
 			")"
 		projectedSQL, err := generateProjectedSchemaForTest(
