@@ -262,6 +262,10 @@ impl KvHandler {
             return_values: req.return_values,
             check_existence: req.check_existence,
             lock_only_if_exists: req.lock_only_if_exists,
+            // kvrpcpb marks Force deprecated (ForceLock supersedes it), but
+            // Go unistore still reads req.Force -- so does this port.
+            #[allow(deprecated)]
+            force: req.force,
         };
         match self.store.pessimistic_lock(&reduced) {
             Ok(result) => {

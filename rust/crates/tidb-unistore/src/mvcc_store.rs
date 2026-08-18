@@ -1044,6 +1044,9 @@ pub struct PessimisticLockReq {
     pub check_existence: bool,
     /// `LockOnlyIfExists`.
     pub lock_only_if_exists: bool,
+    /// `Force` — Go `req.Force`: lock DESPITE a newer commit, answering the
+    /// latest value and its commit_ts instead of a write conflict.
+    pub force: bool,
 }
 
 /// What `PessimisticLock` answers under `WakeUpModeNormal`.
@@ -1053,6 +1056,11 @@ pub struct PessimisticLockResult {
     pub values: Vec<Vec<u8>>,
     /// `resp.NotFounds`, when `return_values` or `check_existence`.
     pub not_founds: Vec<bool>,
+    /// `Value` — filled only for a `Force` request: the latest committed
+    /// value of the FIRST key.
+    pub value: Vec<u8>,
+    /// `CommitTs` — the version that value committed at, `Force` only.
+    pub commit_ts: u64,
 }
 
 impl MvccStore {
@@ -1127,6 +1135,14 @@ impl MvccStore {
             }
         }
         let mut result = PessimisticLockResult::default();
+        // Go's `req.Force` arm answers the FIRST key's latest committed
+        // value and commit_ts alongside the granted lock.
+        if req.force {
+            if let Some(Some((value, meta))) = items.first() {
+                result.value = value.clone();
+                result.commit_ts = meta.commit_ts();
+            }
+        }
         if req.return_values || req.check_existence {
             for item in &items {
                 match item {
@@ -1350,7 +1366,8 @@ fn build_pessimistic_lock(
                 meta = extra;
             }
         }
-        if meta.commit_ts() > req.for_update_ts {
+        // Go `buildPessimisticLock`: `Force` skips the conflict check whole.
+        if !req.force && meta.commit_ts() > req.for_update_ts {
             return Err(KvError::Conflict {
                 reason: tidb_proto::kvrpcpb::write_conflict::Reason::PessimisticRetry,
                 start_ts: req.start_version,
@@ -2953,5 +2970,75 @@ mod tests {
         must_commit(&mut store, k1, 23, 31);
         must_get_val(&store, k1, v, 30);
         must_get_none(&store, k1, 32);
+    }
+
+    /// Go `TestPessimisticLockForce` (`mvcc_test.go:1476`): Force locks past
+    /// a NEWER commit — the write conflict every ordinary acquisition would
+    /// die on — answers that commit's value, and the transaction then
+    /// prewrites and commits over it.
+    #[test]
+    fn test_pessimistic_lock_force() {
+        let mut store = MvccStore::new();
+        let (k, v, v2) = (b"ta".as_slice(), b"v".as_slice(), b"v2".as_slice());
+        must_prewrite_op(&mut store, k, mutation(KvrpcOp::Put, k, v), 5);
+        must_commit(&mut store, k, 5, 10);
+        let result = store
+            .pessimistic_lock(&PessimisticLockReq {
+                mutations: vec![mutation(KvrpcOp::PessimisticLock, k, b"")],
+                primary_lock: k.to_vec(),
+                start_version: 1,
+                for_update_ts: 1,
+                lock_ttl: 100,
+                force: true,
+                ..PessimisticLockReq::default()
+            })
+            .expect("force locks past the newer commit");
+        assert_eq!(result.value, v);
+        assert_eq!(result.commit_ts, 10);
+        let lock = decode_lock(&store.lock_bytes(k));
+        assert_eq!(
+            lock.hdr.op,
+            KvrpcOp::PessimisticLock as i32 as u8,
+            "the granted lock is pessimistic"
+        );
+        must_prewrite_pessimistic(&mut store, k, mutation(KvrpcOp::Put, k, v2), 1, 100, 10);
+        must_commit(&mut store, k, 1, 11);
+        assert!(store.lock_bytes(k).is_empty(), "unlocked");
+        must_get_val(&store, k, v2, 13);
+    }
+
+    /// Go `TestResolveCommit` (`mvcc_test.go:1375`), the reachable arc: a
+    /// foreign-ts resolve leaves the secondary lock standing, the right ts
+    /// commits it, and neither a lock-not-found nor a replaced error leaks
+    /// from re-commits around a NEWER transaction's lock. (The tail that
+    /// deletes a committed version with raw badger surgery is engine
+    /// surgery this substituted engine does not expose; the recommit error
+    /// path it exercises is engine-specific and stays with badger.)
+    #[test]
+    fn test_resolve_commit() {
+        let mut store = MvccStore::new();
+        let (pk, v, sk) = (b"tpk".as_slice(), b"v".as_slice(), b"tsk".as_slice());
+        must_acquire_pessimistic_lock(&mut store, pk, pk, 1, 1);
+        must_acquire_pessimistic_lock(&mut store, pk, sk, 1, 1);
+        must_prewrite_pessimistic(&mut store, pk, mutation(KvrpcOp::Put, pk, v), 1, 100, 1);
+        must_prewrite_pessimistic(&mut store, pk, mutation(KvrpcOp::Put, sk, v), 1, 100, 1);
+
+        must_commit(&mut store, pk, 1, 2);
+        // A resolve naming the WRONG start ts leaves the lock standing.
+        store
+            .resolve_lock(&[sk.to_vec()], 2, 3)
+            .expect("the foreign resolve is a no-op");
+        assert!(!store.lock_bytes(sk).is_empty(), "still locked");
+        store
+            .resolve_lock(&[sk.to_vec()], 1, 2)
+            .expect("the right ts resolves");
+        // Re-commit reports neither lock-not-found nor replaced.
+        must_commit(&mut store, sk, 1, 2);
+
+        let (k2, v2) = (b"tk2".as_slice(), b"v2".as_slice());
+        must_acquire_pessimistic_lock(&mut store, k2, k2, 3, 3);
+        must_commit(&mut store, sk, 1, 2);
+        must_prewrite_pessimistic(&mut store, k2, mutation(KvrpcOp::Put, k2, v2), 3, 100, 3);
+        must_commit(&mut store, k2, 3, 4);
     }
 }
