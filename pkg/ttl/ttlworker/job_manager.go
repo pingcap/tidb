@@ -22,12 +22,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/extworkload"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -74,6 +78,11 @@ const ttlJobHistoryGCTemplate = `DELETE FROM mysql.tidb_ttl_job_history WHERE cr
 
 // don't need to consider heartbeat timeout now, because the job will only be GCed when there is no owner and no job running
 const ttlTableStatusGCWithoutIDTemplate = `DELETE FROM mysql.tidb_ttl_table_status WHERE current_job_status IS NULL`
+
+const (
+	serverVersionAllowCacheInterval    = 10 * time.Second
+	serverVersionMismatchCacheInterval = time.Minute
+)
 
 var timeFormat = time.DateTime
 
@@ -135,6 +144,12 @@ type JobManager struct {
 	leaderFunc                 func() bool
 	ownerManager               owner.Manager
 	extWorkload                extworkload.Manager
+
+	// These fields are only accessed by the job loop goroutine.
+	getAllServerInfo            func(context.Context) (map[string]*serverinfo.ServerInfo, error)
+	getServerInfo               func() (*serverinfo.ServerInfo, error)
+	lastServerVersionCheckTime  time.Time
+	lastServerVersionCheckAllow bool
 }
 
 // JobManagerOption configures a JobManager.
@@ -156,6 +171,8 @@ func NewJobManager(id string, sessPool syssession.Pool, store kv.Storage, etcdCl
 	manager.id = id
 	manager.store = store
 	manager.sessPool = sessPool
+	manager.getAllServerInfo = infosync.GetAllServerInfo
+	manager.getServerInfo = infosync.GetServerInfo
 
 	manager.init(manager.jobLoop)
 	manager.ctx = logutil.WithKeyValue(manager.ctx, "ttl-worker", "job-manager")
@@ -387,8 +404,106 @@ func (m *JobManager) handleSubmitJobRequest(se session.Session, jobReq *SubmitTT
 		return
 	}
 
+	if !m.canCreateTTLJobForCurrentVersion() {
+		jobReq.RespCh <- errors.New("cannot create TTL job while TiDB server versions are inconsistent")
+		return
+	}
+
 	_, err := m.lockNewJob(m.ctx, se, tbl, se.Now(), jobReq.RequestID, false)
 	jobReq.RespCh <- err
+}
+
+func (m *JobManager) canCreateTTLJobForCurrentVersion() bool {
+	now := time.Now()
+	if !m.lastServerVersionCheckTime.IsZero() {
+		cacheInterval := serverVersionMismatchCacheInterval
+		if m.lastServerVersionCheckAllow {
+			cacheInterval = serverVersionAllowCacheInterval
+		}
+		if now.Sub(m.lastServerVersionCheckTime) < cacheInterval {
+			return m.lastServerVersionCheckAllow
+		}
+	}
+	cacheResult := func(allow bool) bool {
+		m.lastServerVersionCheckTime = now
+		m.lastServerVersionCheckAllow = allow
+		return allow
+	}
+
+	if m.getServerInfo == nil || m.getAllServerInfo == nil {
+		logutil.Logger(m.ctx).Warn("TiDB server info getter is not initialized, allow creating TTL job")
+		return cacheResult(true)
+	}
+
+	localInfo, err := m.getServerInfo()
+	if err != nil {
+		logutil.Logger(m.ctx).Warn("failed to get current TiDB server version, allow creating TTL job", zap.Error(err))
+		return cacheResult(true)
+	}
+	if localInfo == nil {
+		logutil.Logger(m.ctx).Warn("current TiDB server info is nil, allow creating TTL job")
+		return cacheResult(true)
+	}
+
+	serverInfos, err := m.getAllServerInfo(m.ctx)
+	if err != nil {
+		logutil.Logger(m.ctx).Warn("failed to get TiDB server versions, allow creating TTL job", zap.Error(err))
+		return cacheResult(true)
+	}
+
+	consistent, err := tiDBServerVersionsConsistent(localInfo.Version, serverInfos)
+	if err != nil {
+		logutil.Logger(m.ctx).Warn("failed to check TiDB server versions, allow creating TTL job", zap.Error(err))
+		return cacheResult(true)
+	}
+	if consistent {
+		return cacheResult(true)
+	}
+
+	logutil.Logger(m.ctx).Warn("skip creating TTL job because TiDB server versions are inconsistent",
+		zap.String("currentVersion", localInfo.Version))
+	return cacheResult(false)
+}
+
+func tiDBServerVersionsConsistent(currentVersion string, serverInfos map[string]*serverinfo.ServerInfo) (bool, error) {
+	if len(serverInfos) == 0 {
+		return false, errors.New("TiDB server info list is empty")
+	}
+
+	current, err := normalizedTiDBVersion(currentVersion)
+	if err != nil {
+		return false, errors.Wrap(err, "parse current TiDB server version")
+	}
+	consistent := true
+	for id, info := range serverInfos {
+		if info == nil {
+			return false, errors.Errorf("TiDB server info is nil, server ID: %s", id)
+		}
+		version, err := normalizedTiDBVersion(info.Version)
+		if err != nil {
+			return false, errors.Wrapf(err, "parse TiDB server version, server ID: %s", id)
+		}
+		if !current.Equal(*version) {
+			consistent = false
+		}
+	}
+	return consistent, nil
+}
+
+func normalizedTiDBVersion(serverVersion string) (*semver.Version, error) {
+	idx := strings.Index(serverVersion, mysql.VersionSeparator)
+	if idx < 0 {
+		return nil, errors.Errorf("unknown server version: %s", serverVersion)
+	}
+	tidbVersion := strings.TrimPrefix(serverVersion[idx+len(mysql.VersionSeparator):], "v")
+	version, err := semver.NewVersion(tidbVersion)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	// Keep this normalization consistent with DDL job version detection. Build
+	// metadata does not affect semver equality, and prerelease labels are ignored.
+	version.PreRelease = ""
+	return version, nil
 }
 
 func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJobRequest, se session.Session, store *timerapi.TimerStore) {
@@ -600,7 +715,7 @@ func (m *JobManager) findAllTasksForJob(se session.Session, jobID string) ([]*ca
 
 	allTasks := make([]*cache.TTLTask, 0, len(rows))
 	for _, r := range rows {
-		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r, m.infoSchemaCache)
+		task, err := cache.RowToTTLTask(se.GetSessionVars().Location(), r)
 		if err != nil {
 			logutil.Logger(m.ctx).Warn("fail to read task", zap.Error(err), zap.String("jobID", jobID))
 			return nil, err
@@ -928,7 +1043,7 @@ func (m *JobManager) lockNewJob(ctx context.Context, se session.Session, table *
 			}
 		}
 		for scanID, r := range ranges {
-			sql, args, err = cache.InsertIntoTTLTask(se.GetSessionVars().Location(), jobID, table.ID, scanID, r.Start, r.End, expireTime, now, splitBy)
+			sql, args, err = cache.InsertIntoTTLTaskWithSplitBy(se.GetSessionVars().Location(), jobID, table.ID, scanID, r.Start, r.End, expireTime, now, splitBy)
 			if err != nil {
 				return errors.Wrap(err, "encode scan task")
 			}

@@ -319,11 +319,71 @@ func TestFindTTLIndex(t *testing.T) {
 			indexName:   "idx_t",
 		},
 		{
+			def:         "(id int primary key, t datetime, a int, index idx_t(t, a)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_t",
+		},
+		{
+			def:         "(id int primary key, t datetime, a int, index idx_t(t, id, a)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_t",
+		},
+		{
+			def:         "(id int primary key, t datetime, a int, index idx_bad(t, a), index idx_t(t)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_t",
+		},
+		{
+			def:         "(id int primary key, t datetime, a int, index idx_wide(t, a), index idx_key(t, id)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_key",
+		},
+		{
+			def:         "(a int, b int, t datetime, primary key(a, b) clustered, index idx_t(t, a)) ttl = `t` + interval 1 day",
+			hasTTLIndex: false,
+		},
+		{
+			def:         "(a int, b int, t datetime, primary key(a, b) clustered, index idx_t(t, b)) ttl = `t` + interval 1 day",
+			hasTTLIndex: false,
+		},
+		{
+			def:         "(id varchar(32), t datetime, primary key(id) clustered, index idx_t(t, id(4))) ttl = `t` + interval 1 day",
+			hasTTLIndex: false,
+		},
+		{
 			def:         "(id int primary key, t datetime, index idx_t(id, t)) ttl = `t` + interval 1 day",
 			hasTTLIndex: false,
 		},
 		{
 			def:         "(id int primary key, t datetime, index idx_a(id), index idx_t(t)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_t",
+		},
+		{
+			def:         "(id int primary key, t datetime, a int, unique index idx_t(t, a)) ttl = `t` + interval 1 day",
+			hasTTLIndex: false,
+		},
+		{
+			def:         "(id int primary key, t datetime, a int not null, unique index idx_t(t, a)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_t",
+		},
+		{
+			def:         "(id int primary key, t datetime, unique index idx_t(t, id)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_t",
+		},
+		{
+			def:         "(a int, b int, t datetime, primary key(a, b) clustered, unique index idx_t(t, a, b)) ttl = `t` + interval 1 day",
+			hasTTLIndex: true,
+			indexName:   "idx_t",
+		},
+		{
+			def:         "(id int unsigned primary key, t datetime, index idx_t(t)) ttl = `t` + interval 1 day",
+			hasTTLIndex: false,
+		},
+		{
+			def:         "(id int unsigned primary key, t datetime, unique index idx_t(t)) ttl = `t` + interval 1 day",
 			hasTTLIndex: true,
 			indexName:   "idx_t",
 		},

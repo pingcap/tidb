@@ -110,10 +110,6 @@ type PhysicalTable struct {
 	KeyColumns []*model.ColumnInfo
 	// KeyColumnTypes is the types of the key columns
 	KeyColumnTypes []*types.FieldType
-	// IndexScanColumnTypes is the types of the columns returned by an index scan:
-	// time column followed by the key columns. It is nil when the table has no
-	// TTL time column (e.g. runaway record tables).
-	IndexScanColumnTypes []*types.FieldType
 	// TimeColum is the time column used for TTL
 	TimeColumn *model.ColumnInfo
 }
@@ -159,7 +155,7 @@ func NewBasePhysicalTable(schema ast.CIStr,
 		physicalID = partitionDef.ID
 	}
 
-	pt := &PhysicalTable{
+	return &PhysicalTable{
 		ID:             physicalID,
 		Schema:         schema,
 		TableInfo:      tbl,
@@ -168,13 +164,7 @@ func NewBasePhysicalTable(schema ast.CIStr,
 		KeyColumns:     keyColumns,
 		KeyColumnTypes: keyColumTypes,
 		TimeColumn:     timeColumn,
-	}
-	if timeColumn != nil {
-		pt.IndexScanColumnTypes = make([]*types.FieldType, 0, 1+len(keyColumTypes))
-		pt.IndexScanColumnTypes = append(pt.IndexScanColumnTypes, &timeColumn.FieldType)
-		pt.IndexScanColumnTypes = append(pt.IndexScanColumnTypes, keyColumTypes...)
-	}
-	return pt, nil
+	}, nil
 }
 
 // NewPhysicalTable create a new PhysicalTable
@@ -674,31 +664,172 @@ func GetNextBytesHandleDatum(key kv.Key, recordPrefix []byte) (d types.Datum) {
 	return d
 }
 
-// FindTTLIndex finds a secondary index that contains the TTL column as its prefix.
+// TTLIndexScanPlan describes the SQL result and pagination order for a TTL index scan.
+type TTLIndexScanPlan struct {
+	Index            *model.IndexInfo
+	IndexColumns     []*model.ColumnInfo
+	ScanColumns      []*model.ColumnInfo
+	ScanColumnTypes  []*types.FieldType
+	OrderColumns     []*model.ColumnInfo
+	KeyColumnOffsets []int
+}
+
+// OrderKey extracts the pagination values from a scan result row.
+func (p *TTLIndexScanPlan) OrderKey(row []types.Datum) []types.Datum {
+	return row[:len(p.OrderColumns)]
+}
+
+// TableKey extracts the table key from a scan result row.
+func (p *TTLIndexScanPlan) TableKey(row []types.Datum) []types.Datum {
+	key := make([]types.Datum, len(p.KeyColumnOffsets))
+	for i, offset := range p.KeyColumnOffsets {
+		key[i] = row[offset]
+	}
+	return key
+}
+
+func (p *TTLIndexScanPlan) containsFullTableKey() bool {
+	for _, offset := range p.KeyColumnOffsets {
+		if offset >= len(p.IndexColumns) {
+			return false
+		}
+	}
+	return true
+}
+
+// FindTTLIndex finds a secondary index that can scan in its physical index order.
 // Returns nil if no suitable index exists.
 func (t *PhysicalTable) FindTTLIndex() *model.IndexInfo {
 	if t.TimeColumn == nil {
 		return nil
 	}
+	var best *TTLIndexScanPlan
 	for _, idx := range t.Indices {
-		if idx.Primary {
-			continue
-		}
-		if idx.State != model.StatePublic {
-			continue
-		}
-		if idx.Invisible {
-			continue
-		}
-		if len(idx.Columns) == 0 {
-			continue
-		}
-		// Check if the TTL column is the first column of the index
-		if idx.Columns[0].Name.L == t.TimeColumn.Name.L {
-			return idx
+		plan, err := t.BuildTTLIndexScanPlan(idx)
+		if err == nil && (best == nil || ttlIndexScanPlanLess(plan, best)) {
+			best = plan
 		}
 	}
-	return nil
+	if best == nil {
+		return nil
+	}
+	return best.Index
+}
+
+func ttlIndexScanPlanLess(lhs, rhs *TTLIndexScanPlan) bool {
+	priority := func(plan *TTLIndexScanPlan) int {
+		if len(plan.IndexColumns) == 1 {
+			return 0
+		}
+		if plan.containsFullTableKey() {
+			return 1
+		}
+		return 2
+	}
+	if lhsPriority, rhsPriority := priority(lhs), priority(rhs); lhsPriority != rhsPriority {
+		return lhsPriority < rhsPriority
+	}
+	if len(lhs.OrderColumns) != len(rhs.OrderColumns) {
+		return len(lhs.OrderColumns) < len(rhs.OrderColumns)
+	}
+	return len(lhs.ScanColumns) < len(rhs.ScanColumns)
+}
+
+// BuildTTLIndexScanPlan validates an index and derives its scan and pagination columns.
+func (t *PhysicalTable) BuildTTLIndexScanPlan(idx *model.IndexInfo) (*TTLIndexScanPlan, error) {
+	if t.TimeColumn == nil || idx == nil {
+		return nil, errors.New("TTL time column and index are required")
+	}
+	if idx.Primary || idx.State != model.StatePublic || idx.Invisible || idx.Global || idx.MVIndex ||
+		idx.IsColumnarIndex() || idx.ConditionExprString != "" || len(idx.Columns) == 0 {
+		return nil, errors.Errorf("index %s is not a supported TTL secondary index", idx.Name)
+	}
+	if idx.Columns[0].Name.L != t.TimeColumn.Name.L {
+		return nil, errors.Errorf("TTL column %s is not the first index column", t.TimeColumn.Name)
+	}
+
+	indexColumns := make([]*model.ColumnInfo, len(idx.Columns))
+	for i, idxCol := range idx.Columns {
+		if idxCol.Offset < 0 || idxCol.Offset >= len(t.Columns) || idxCol.Length != types.UnspecifiedLength {
+			return nil, errors.Errorf("index column %s cannot be used as a full TTL pagination column", idxCol.Name)
+		}
+		col := t.Columns[idxCol.Offset]
+		if col == nil || col.Hidden {
+			return nil, errors.Errorf("index column %s is not a visible table column", idxCol.Name)
+		}
+		indexColumns[i] = col
+	}
+	if idx.Unique {
+		for _, col := range indexColumns[1:] {
+			if !mysql.HasNotNullFlag(col.GetFlag()) {
+				return nil, errors.Errorf("unique index %s has nullable non-TTL column %s", idx.Name, col.Name)
+			}
+		}
+	}
+
+	keyColumnOffsets := make([]int, len(t.KeyColumns))
+	keyColumnsInIndex := 0
+	for i, keyCol := range t.KeyColumns {
+		keyColumnOffsets[i] = -1
+		for j, idxCol := range indexColumns {
+			if idxCol.ID == keyCol.ID {
+				keyColumnOffsets[i] = j
+				keyColumnsInIndex++
+				break
+			}
+		}
+	}
+	containsFullKey := keyColumnsInIndex == len(t.KeyColumns)
+	containsPartialKey := keyColumnsInIndex > 0 && !containsFullKey
+
+	orderColumns := append([]*model.ColumnInfo(nil), indexColumns...)
+	if !idx.Unique && !containsFullKey {
+		if containsPartialKey || !t.canUseHandleInTTLIndexOrder() {
+			return nil, errors.Errorf("index %s cannot seek by its physical table-key suffix", idx.Name)
+		}
+		orderColumns = append(orderColumns, t.KeyColumns...)
+	}
+
+	// Keep both the declared index key and the pagination key as prefixes of
+	// every result row. Append only table-key columns missing from the index.
+	scanColumns := append([]*model.ColumnInfo(nil), indexColumns...)
+	for i, col := range t.KeyColumns {
+		if keyColumnOffsets[i] < 0 {
+			keyColumnOffsets[i] = len(scanColumns)
+			scanColumns = append(scanColumns, col)
+		}
+	}
+
+	scanColumnTypes := make([]*types.FieldType, len(scanColumns))
+	for i, col := range scanColumns {
+		scanColumnTypes[i] = &col.FieldType
+	}
+	return &TTLIndexScanPlan{
+		Index:            idx,
+		IndexColumns:     indexColumns,
+		ScanColumns:      scanColumns,
+		ScanColumnTypes:  scanColumnTypes,
+		OrderColumns:     orderColumns,
+		KeyColumnOffsets: keyColumnOffsets,
+	}, nil
+}
+
+func (t *PhysicalTable) canUseHandleInTTLIndexOrder() bool {
+	if t.PKIsHandle {
+		return len(t.KeyColumns) == 1 && !mysql.HasUnsignedFlag(t.KeyColumns[0].GetFlag())
+	}
+	if !t.IsCommonHandle {
+		return true
+	}
+	if t.CommonHandleVersion != 0 || !collate.NewCollationEnabled() {
+		return true
+	}
+	for _, col := range t.KeyColumns {
+		if col.FieldType.EvalType() == types.ETString && !mysql.HasBinaryFlag(col.GetFlag()) {
+			return false
+		}
+	}
+	return true
 }
 
 // SplitIndexScanRanges splits index-scan ranges by the selected index's region distribution.

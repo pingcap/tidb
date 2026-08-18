@@ -17,6 +17,7 @@ package ttlworker
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -495,6 +497,127 @@ func TestCheckFinishedJobDoesNotRecycleExternalTTLTaskFromMaster(t *testing.T) {
 	require.Zero(t, externalMgr.recycledCreateTS)
 }
 
+func TestTiDBServerVersionsConsistent(t *testing.T) {
+	serverInfo := func(id, version string) *serverinfo.ServerInfo {
+		return &serverinfo.ServerInfo{
+			StaticInfo: serverinfo.StaticInfo{
+				ID:          id,
+				VersionInfo: serverinfo.VersionInfo{Version: version},
+			},
+		}
+	}
+	serverInfos := func(versions ...string) map[string]*serverinfo.ServerInfo {
+		infos := make(map[string]*serverinfo.ServerInfo, len(versions))
+		for i, version := range versions {
+			id := strconv.Itoa(i)
+			infos[id] = serverInfo(id, version)
+		}
+		return infos
+	}
+
+	tests := []struct {
+		name           string
+		currentVersion string
+		serverVersions []string
+		consistent     bool
+		err            bool
+	}{
+		{
+			"same release with different prerelease",
+			"8.0.11-TiDB-v9.0.0-alpha-123-g1111111",
+			[]string{
+				"8.0.11-TiDB-v9.0.0-alpha-456-g2222222-dirty",
+				"8.0.11-TiDB-v9.0.0-beta",
+			}, true, false,
+		},
+		{"different release", "8.0.11-TiDB-v9.0.0", []string{"8.0.11-TiDB-v8.5.0"}, false, false},
+		{"current server omitted from server info", "8.0.11-TiDB-v9.0.0", []string{"8.0.11-TiDB-v8.5.0", "8.0.11-TiDB-v8.5.0"}, false, false},
+		{"empty server info", "8.0.11-TiDB-v9.0.0", nil, false, true},
+		{"invalid current version", "invalid", []string{"8.0.11-TiDB-v9.0.0"}, false, true},
+		{"invalid remote version", "8.0.11-TiDB-v9.0.0", []string{"invalid"}, false, true},
+		{"different release with invalid remote version", "8.0.11-TiDB-v9.0.0", []string{"8.0.11-TiDB-v8.5.0", "invalid"}, false, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			consistent, err := tiDBServerVersionsConsistent(tt.currentVersion, serverInfos(tt.serverVersions...))
+			if tt.err {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.consistent, consistent)
+		})
+	}
+
+	t.Run("cache version check", func(t *testing.T) {
+		localVersion := "8.0.11" + mysql.VersionSeparator + "v9.0.0"
+		differentVersion := "8.0.11" + mysql.VersionSeparator + "v10.0.0"
+
+		calls := 0
+		version := localVersion
+		manager := &JobManager{}
+		manager.ctx = context.Background()
+		manager.getServerInfo = func() (*serverinfo.ServerInfo, error) {
+			return serverInfo("local", localVersion), nil
+		}
+		manager.getAllServerInfo = func(context.Context) (map[string]*serverinfo.ServerInfo, error) {
+			calls++
+			return serverInfos(version), nil
+		}
+
+		require.True(t, manager.canCreateTTLJobForCurrentVersion())
+		require.True(t, manager.canCreateTTLJobForCurrentVersion())
+		require.Equal(t, 1, calls)
+
+		manager.lastServerVersionCheckTime = time.Now().Add(-serverVersionAllowCacheInterval)
+		require.True(t, manager.canCreateTTLJobForCurrentVersion())
+		require.Equal(t, 2, calls)
+
+		version = differentVersion
+		manager.lastServerVersionCheckTime = time.Now().Add(-serverVersionAllowCacheInterval)
+		require.False(t, manager.canCreateTTLJobForCurrentVersion())
+		require.False(t, manager.canCreateTTLJobForCurrentVersion())
+		require.Equal(t, 3, calls)
+
+		manager.lastServerVersionCheckTime = time.Now().Add(-serverVersionMismatchCacheInterval)
+		require.False(t, manager.canCreateTTLJobForCurrentVersion())
+		require.Equal(t, 4, calls)
+	})
+
+	t.Run("allow when current server info lookup fails", func(t *testing.T) {
+		calls := 0
+		manager := &JobManager{}
+		manager.ctx = context.Background()
+		manager.getServerInfo = func() (*serverinfo.ServerInfo, error) {
+			return nil, errors.New("mock current server info error")
+		}
+		manager.getAllServerInfo = func(context.Context) (map[string]*serverinfo.ServerInfo, error) {
+			calls++
+			return serverInfos("8.0.11" + mysql.VersionSeparator + "v10.0.0"), nil
+		}
+		require.True(t, manager.canCreateTTLJobForCurrentVersion())
+		require.True(t, manager.canCreateTTLJobForCurrentVersion())
+		require.Equal(t, 0, calls)
+	})
+
+	t.Run("allow when server info lookup fails", func(t *testing.T) {
+		calls := 0
+		manager := &JobManager{}
+		manager.ctx = context.Background()
+		manager.getServerInfo = func() (*serverinfo.ServerInfo, error) {
+			return serverInfo("local", "8.0.11"+mysql.VersionSeparator+"v9.0.0"), nil
+		}
+		manager.getAllServerInfo = func(context.Context) (map[string]*serverinfo.ServerInfo, error) {
+			calls++
+			return nil, errors.New("mock server info error")
+		}
+		require.True(t, manager.canCreateTTLJobForCurrentVersion())
+		require.True(t, manager.canCreateTTLJobForCurrentVersion())
+		require.Equal(t, 1, calls)
+	})
+}
+
 func TestReadyForLockHBTimeoutJobTables(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 	m := NewJobManager("test-id", nil, nil, nil, nil)
@@ -709,7 +832,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -731,7 +854,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -767,7 +890,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -797,7 +920,7 @@ func TestLockTable(t *testing.T) {
 				nil, nil,
 			},
 			{
-				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now, nil)),
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
@@ -929,45 +1052,17 @@ func TestLockNewJobFallsBackWithoutTiKVStoreForIndexSplitRanges(t *testing.T) {
 	vardef.TTLEnableIndexScan.Store(true)
 	defer vardef.TTLEnableIndexScan.Store(oldEnableIndexScan)
 
-	idCol := &model.ColumnInfo{
-		ID:        1,
-		Name:      ast.NewCIStr("id"),
-		Offset:    0,
-		FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		State:     model.StatePublic,
-	}
-	idCol.AddFlag(mysql.PriKeyFlag)
-	timeCol := &model.ColumnInfo{
-		ID:        2,
-		Name:      ast.NewCIStr("t"),
-		Offset:    1,
-		FieldType: *types.NewFieldType(mysql.TypeDatetime),
-		State:     model.StatePublic,
-	}
-	tblInfo := &model.TableInfo{
-		ID:         1,
-		Name:       ast.NewCIStr("t1"),
-		Columns:    []*model.ColumnInfo{idCol, timeCol},
-		PKIsHandle: true,
-		Indices: []*model.IndexInfo{
-			{
-				ID:      10,
-				Name:    ast.NewCIStr("idx_t"),
-				Columns: []*model.IndexColumn{{Name: timeCol.Name, Offset: timeCol.Offset}},
-				State:   model.StatePublic,
-			},
+	ttlTbl := newMockTTLTbl(t, "t1")
+	ttlTbl.ID = 1
+	ttlTbl.TableInfo.ID = 1
+	ttlTbl.Indices = []*model.IndexInfo{
+		{
+			ID:      10,
+			Name:    ast.NewCIStr("idx_time"),
+			Columns: []*model.IndexColumn{{Name: ttlTbl.TimeColumn.Name, Offset: ttlTbl.TimeColumn.Offset, Length: types.UnspecifiedLength}},
+			State:   model.StatePublic,
 		},
-		TTLInfo: &model.TTLInfo{
-			ColumnName:       timeCol.Name,
-			IntervalExprStr:  "1",
-			IntervalTimeUnit: int(ast.TimeUnitDay),
-			Enable:           true,
-			JobInterval:      "1h",
-		},
-		State: model.StatePublic,
 	}
-	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""))
-	require.NoError(t, err)
 
 	now := time.Date(2022, 12, 6, 1, 13, 5, 0, time.UTC)
 	expireTime := time.Date(2022, 12, 5, 16, 13, 5, 0, time.UTC)
@@ -977,7 +1072,7 @@ func TestLockNewJobFallsBackWithoutTiKVStoreForIndexSplitRanges(t *testing.T) {
 
 	se := newMockSession(t)
 	statusSQL, _ := cache.SelectFromTTLTableStatusWithID(1)
-	insertTaskSQL, _, err := cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, expireTime, now, nil)
+	insertTaskSQL, _, err := cache.InsertIntoTTLTask(time.UTC, "new-job-id", 1, 0, nil, nil, expireTime, now)
 	require.NoError(t, err)
 	var taskArgs [][]any
 	se.executeSQL = func(_ context.Context, sql string, args ...any) ([]chunk.Row, error) {

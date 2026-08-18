@@ -68,6 +68,12 @@ func PeekWaitingTTLTask(hbExpire time.Time) (string, []any) {
 
 // InsertIntoTTLTask returns an SQL statement to insert a ttl task into mysql.tidb_ttl_task
 func InsertIntoTTLTask(loc *time.Location, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
+	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time) (string, []any, error) {
+	return InsertIntoTTLTaskWithSplitBy(loc, jobID, tableID, scanID, scanRangeStart, scanRangeEnd, expireTime, createdTime, nil)
+}
+
+// InsertIntoTTLTaskWithSplitBy returns an SQL statement to insert a TTL task with its scan index ID.
+func InsertIntoTTLTaskWithSplitBy(loc *time.Location, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
 	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time, splitBy *int64) (string, []any, error) {
 	rangeStart, err := codec.EncodeKey(loc, []byte{}, scanRangeStart...)
 	if err != nil {
@@ -128,10 +134,7 @@ type TTLTaskState struct {
 }
 
 // RowToTTLTask converts a row into TTL task.
-// schemaCache is used to look up the table's time column type so that index
-// scan ranges (which encode time as packed uint64) can be decoded back to
-// types.Time. If nil, scan ranges are decoded with the generic codec.Decode.
-func RowToTTLTask(timeZone *time.Location, row chunk.Row, schemaCache *InfoSchemaCache) (*TTLTask, error) {
+func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 	var err error
 
 	task := &TTLTask{
@@ -146,24 +149,11 @@ func RowToTTLTask(timeZone *time.Location, row chunk.Row, schemaCache *InfoSchem
 		splitBy = &v
 	}
 
-	timeColType := byte(0)
-	if splitBy != nil && schemaCache != nil {
-		if tbl := schemaCache.Tables[task.TableID]; tbl != nil && tbl.TimeColumn != nil {
-			timeColType = tbl.TimeColumn.GetType()
-		}
-	}
-
 	if !row.IsNull(3) {
 		scanRangeStartBuf := row.GetBytes(3)
 		// it's still posibble to be empty even this column is not NULL
 		if len(scanRangeStartBuf) > 0 {
-			if timeColType != 0 {
-				var d types.Datum
-				_, d, err = codec.DecodeAsDateTime(scanRangeStartBuf, timeColType, timeZone)
-				task.ScanRangeStart = []types.Datum{d}
-			} else {
-				task.ScanRangeStart, err = codec.Decode(scanRangeStartBuf, len(scanRangeStartBuf))
-			}
+			task.ScanRangeStart, err = codec.Decode(scanRangeStartBuf, len(scanRangeStartBuf))
 			if err != nil {
 				return nil, err
 			}
@@ -173,13 +163,7 @@ func RowToTTLTask(timeZone *time.Location, row chunk.Row, schemaCache *InfoSchem
 		scanRangeEndBuf := row.GetBytes(4)
 		// it's still posibble to be empty even this column is not NULL
 		if len(scanRangeEndBuf) > 0 {
-			if timeColType != 0 {
-				var d types.Datum
-				_, d, err = codec.DecodeAsDateTime(scanRangeEndBuf, timeColType, timeZone)
-				task.ScanRangeEnd = []types.Datum{d}
-			} else {
-				task.ScanRangeEnd, err = codec.Decode(scanRangeEndBuf, len(scanRangeEndBuf))
-			}
+			task.ScanRangeEnd, err = codec.Decode(scanRangeEndBuf, len(scanRangeEndBuf))
 			if err != nil {
 				return nil, err
 			}

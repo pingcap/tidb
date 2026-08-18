@@ -34,7 +34,13 @@ When the optimizer uses a secondary index on the TTL column, this query structur
 
 ### Index Selection
 
-A usable index must be a public, visible secondary index whose first column is the TTL column. The scheduler calls `PhysicalTable.FindTTLIndex()` at job creation time. If the selected index is dropped later, the worker reports an error for the affected task.
+A usable index must be an ordinary public, visible, full-column secondary index whose first column is the TTL column. Pagination follows the selected index's declared column order rather than assuming the table key immediately follows the TTL column. For example, both `(expired_at)` and `(expired_at, status)` can be used.
+
+For a non-unique index, the table key is appended to the declared index columns when it is needed to make the cursor row-unique and the planner can use that physical handle suffix for an ordered range seek. For a unique index, non-`NULL` declared index tuples are already row-unique, so the normal cursor contains only the declared index columns. In particular, a unique single-column TTL index paginates only by the TTL column while still selecting the table key for deletion.
+
+Prefix indexes, multi-valued indexes, global indexes, hidden expression columns, and handle layouts for which the planner cannot expose an ordered suffix are not selected. They fall back to the existing PK scan.
+
+The scheduler calls `PhysicalTable.FindTTLIndex()` at job creation time. If the selected index is dropped later, the worker reports an error for the affected task.
 
 ### Scan SQL
 
@@ -45,21 +51,23 @@ WHERE `id` >= ? AND `id` < ? AND `created_time` < FROM_UNIXTIME(?)
 ORDER BY `id` ASC LIMIT ?;
 ```
 
-**Index scan for the first page of a split task:**
+**Non-unique index scan for the first page of a split task:**
 ```sql
-SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `id` FROM `test`.`t` FORCE INDEX(`idx_created`)
+SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `status`, `id` FROM `test`.`t` FORCE INDEX(`idx_created`)
 WHERE `created_time` >= ? AND `created_time` < ? AND `created_time` < FROM_UNIXTIME(?)
-ORDER BY `created_time` ASC, `id` ASC LIMIT ?;
+ORDER BY `created_time` ASC, `status` ASC, `id` ASC LIMIT ?;
 ```
 
 **Pagination within the same task:**
 ```sql
-SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `id` FROM `test`.`t` FORCE INDEX(`idx_created`)
-WHERE (`created_time`, `id`) > (?, ?) AND `created_time` < ? AND `created_time` < FROM_UNIXTIME(?)
-ORDER BY `created_time` ASC, `id` ASC LIMIT ?;
+SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `status`, `id` FROM `test`.`t` FORCE INDEX(`idx_created`)
+WHERE (`created_time`, `status`, `id`) > (?, ?, ?) AND `created_time` < ? AND `created_time` < FROM_UNIXTIME(?)
+ORDER BY `created_time` ASC, `status` ASC, `id` ASC LIMIT ?;
 ```
 
-The `FORCE INDEX` hint prevents the optimizer from choosing a different plan. Each index task scans one TTL-column range `[start, end)`. The first page applies the lower and upper bounds, and later pages continue from the composite tuple `(last_time, last_key)` while keeping the upper bound. The scan selects both the TTL column and the PK columns so the delete phase can still delete by primary key.
+The `FORCE INDEX` hint prevents the optimizer from choosing a different plan. Each index task scans one TTL-column range `[start, end)`. The first page applies the lower and upper bounds, and later pages continue from the last index-order tuple while keeping the upper bound. If a cursor contains `NULL`, the strict-greater comparison is expanded into a NULL-safe lexicographic predicate that matches TiDB's ascending, NULL-first index order. The scan result contains both cursor columns and the table key required by the delete phase.
+
+For a unique index, pages order and seek only by the declared index columns. The TTL predicate excludes a `NULL` TTL value, so a unique single-column TTL index needs no extra cursor suffix even when the TTL column is nullable. A composite unique index is used only when every non-TTL index column is `NOT NULL`; otherwise, multiple rows could share the same tuple through `NULL` values and the table falls back to PK scan. Non-unique indexes remain usable with nullable columns because their pagination tuple includes the table key and the strict-greater predicate follows TiDB's NULL-first index order.
 
 ### Task Splitting
 
@@ -76,4 +84,5 @@ For index scan splitting, the scheduler locates TiKV regions in the raw secondar
 
 - `tidb_ttl_enable_index_scan` defaults to `ON`. Tables with a suitable TTL-column secondary index will use index-ordered scans; tables without one keep the existing PK-ordered scan behavior.
 - `split_by` defaults to `NULL`, compatible with old tasks.
+- Before creating a TTL job, the TTL manager compares the normalized semantic versions of the current TiDB and all TiDB instances registered in server info. The current process's runtime version is always the comparison baseline, even if its etcd entry is temporarily absent. The manager skips creating the job when it detects mixed versions, preventing an old worker from interpreting index boundaries as PK boundaries during a rolling upgrade. Server-info lookup or version parsing failures are logged and allowed. Allowed results, including fail-open results, are cached for 10 seconds to coalesce bursts of job creation; a detected mismatch is cached for one minute to avoid frequent etcd reads while the timer retries the job.
 - No TiKV or protocol changes.

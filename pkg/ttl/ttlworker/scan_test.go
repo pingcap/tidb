@@ -22,6 +22,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -29,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -467,6 +470,59 @@ func TestScanTaskDoScan(t *testing.T) {
 	task.schemaChangeIdx = 1
 	task.schemaChangeInRetry = 2
 	task.runDoScanForTest(1, "table 'test.t1' meta changed, should abort current job: [schema:1146]Table 'test.t1' doesn't exist")
+
+	t.Run("index scan decodes persisted time range", func(t *testing.T) {
+		tbl := newMockTTLTbl(t, "index_range")
+		tbl.TimeColumn.FieldType = *types.NewFieldType(mysql.TypeTimestamp)
+		indexID := int64(10)
+		tbl.Indices = []*model.IndexInfo{
+			{
+				ID:      indexID,
+				Name:    ast.NewCIStr("idx_time"),
+				Columns: []*model.IndexColumn{{Name: tbl.TimeColumn.Name, Offset: tbl.TimeColumn.Offset, Length: types.UnspecifiedLength}},
+				State:   model.StatePublic,
+			},
+		}
+
+		loc := time.FixedZone("UTC+8", 8*60*60)
+		boundary := time.Date(2024, 1, 2, 3, 4, 5, 0, loc)
+		encodedRange, err := codec.EncodeKey(loc, nil,
+			types.NewTimeDatum(types.NewTime(types.FromGoTime(boundary), mysql.TypeTimestamp, 0)))
+		require.NoError(t, err)
+		scanRange, err := codec.Decode(encodedRange, len(encodedRange))
+		require.NoError(t, err)
+		require.Equal(t, types.KindUint64, scanRange[0].Kind())
+
+		expire := boundary.Add(time.Hour)
+		scanTask := &ttlScanTask{
+			ctx: cache.SetMockExpireTime(context.Background(), expire),
+			TTLTask: &cache.TTLTask{
+				ExpireTime:     expire,
+				ScanRangeStart: scanRange,
+				SplitBy:        &indexID,
+			},
+			tbl:        tbl,
+			statistics: &ttlStatistics{},
+		}
+		pool := newMockSessionPool(t, tbl)
+		defer pool.AssertNoSessionInUse()
+		pool.se.sessionVars.TimeZone = loc
+		executeCalls := 0
+		pool.se.executeSQL = func(_ context.Context, sql string, _ ...any) ([]chunk.Row, error) {
+			executeCalls++
+			require.Equal(t, fmt.Sprintf("SELECT LOW_PRIORITY SQL_NO_CACHE `time`, `_tidb_rowid` FROM `test`.`index_range` FORCE INDEX(`idx_time`) WHERE `time` >= '%s' AND `time` < FROM_UNIXTIME(%d) ORDER BY `time`, `_tidb_rowid` ASC LIMIT 3", boundary.Format(time.DateTime), expire.Unix()), sql)
+			return newMockRows(t, &tbl.TimeColumn.FieldType, tbl.KeyColumnTypes[0]).Append(boundary, 1).Rows(), nil
+		}
+
+		origLimit := vardef.TTLScanBatchSize.Load()
+		vardef.TTLScanBatchSize.Store(3)
+		defer vardef.TTLScanBatchSize.Store(origLimit)
+		delCh := make(chan *ttlDeleteTask, 1)
+		result := scanTask.doScan(context.Background(), delCh, pool)
+		require.NoError(t, result.err)
+		require.Equal(t, 1, executeCalls)
+		require.Equal(t, [][]types.Datum{{types.NewIntDatum(1)}}, (<-delCh).rows)
+	})
 }
 
 func TestScanTaskCheck(t *testing.T) {

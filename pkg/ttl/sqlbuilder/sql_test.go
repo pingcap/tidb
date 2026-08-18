@@ -56,7 +56,7 @@ func TestEscape(t *testing.T) {
 
 	buildSelect := func(d []types.Datum) string {
 		b := sqlbuilder.NewSQLBuilder(tb)
-		require.NoError(t, b.WriteSelect(tb.KeyColumns))
+		require.NoError(t, b.WriteSelect())
 		require.NoError(t, b.WriteCommonCondition(tb.KeyColumns, ">", d))
 		require.NoError(t, b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 		s, err := b.Build()
@@ -445,61 +445,57 @@ func TestSQLBuilder(t *testing.T) {
 
 	// test build select queries
 	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect(t1.KeyColumns))
-	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1`")
-
-	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect(t1.KeyColumns))
+	must(b.WriteSelect())
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("a1")))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1'")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect(t1.KeyColumns))
+	must(b.WriteSelect())
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1`")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect(t1.KeyColumns))
+	must(b.WriteSelect())
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("a1")))
 	must(b.WriteCommonCondition(t1.KeyColumns, "<=", d("c3")))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1' AND `id` <= 'c3'")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect(t1.KeyColumns))
+	must(b.WriteSelect())
 	shLoc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(shLoc)))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < FROM_UNIXTIME(0)")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect(t1.KeyColumns))
+	must(b.WriteSelect())
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("a1")))
 	must(b.WriteCommonCondition(t1.KeyColumns, "<=", d("c3")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1' AND `id` <= 'c3' AND `time` < FROM_UNIXTIME(0)")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect(t1.KeyColumns))
+	must(b.WriteSelect())
 	must(b.WriteOrderBy(t1.KeyColumns, false))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` ORDER BY `id` ASC")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect(t1.KeyColumns))
+	must(b.WriteSelect())
 	must(b.WriteOrderBy(t1.KeyColumns, true))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` ORDER BY `id` DESC")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect(t1.KeyColumns))
+	must(b.WriteSelect())
 	must(b.WriteOrderBy(t1.KeyColumns, false))
 	must(b.WriteLimit(128))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` ORDER BY `id` ASC LIMIT 128")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect(t1.KeyColumns))
+	must(b.WriteSelect())
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("';``~?%\"\n")))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > '\\';``~?%\\\"\\n'")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
-	must(b.WriteSelect(t1.KeyColumns))
+	must(b.WriteSelect())
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("a1';'")))
 	must(b.WriteCommonCondition(t1.KeyColumns, "<=", d("a2\"")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
@@ -508,12 +504,12 @@ func TestSQLBuilder(t *testing.T) {
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1\\';\\'' AND `id` <= 'a2\\\"' AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 128")
 
 	b = sqlbuilder.NewSQLBuilder(t2)
-	must(b.WriteSelect(t2.KeyColumns))
+	must(b.WriteSelect())
 	must(b.WriteCommonCondition(t2.KeyColumns, ">", d("x1", 20)))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b` FROM `test2`.`t2` WHERE (`a`, `b`) > ('x1', 20)")
 
 	b = sqlbuilder.NewSQLBuilder(t2)
-	must(b.WriteSelect(t2.KeyColumns))
+	must(b.WriteSelect())
 	must(b.WriteCommonCondition(t2.KeyColumns, "<=", d("x2", 21)))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	must(b.WriteOrderBy(t2.KeyColumns, false))
@@ -521,7 +517,7 @@ func TestSQLBuilder(t *testing.T) {
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b` FROM `test2`.`t2` WHERE (`a`, `b`) <= ('x2', 21) AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b` ASC LIMIT 100")
 
 	b = sqlbuilder.NewSQLBuilder(t2)
-	must(b.WriteSelect(t2.KeyColumns))
+	must(b.WriteSelect())
 	must(b.WriteCommonCondition(t2.KeyColumns[0:1], "=", d("x3")))
 	must(b.WriteCommonCondition(t2.KeyColumns[1:2], ">", d(31)))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
@@ -569,7 +565,7 @@ func TestSQLBuilder(t *testing.T) {
 
 	// test select partition table
 	b = sqlbuilder.NewSQLBuilder(tp)
-	must(b.WriteSelect(tp.KeyColumns))
+	must(b.WriteSelect())
 	must(b.WriteCommonCondition(tp.KeyColumns, ">", d("a1")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `testp`.`tp` PARTITION(`p1`) WHERE `id` > 'a1' AND `time` < FROM_UNIXTIME(0)")
@@ -842,7 +838,7 @@ func TestScanQueryGenerator(t *testing.T) {
 	}
 
 	for i, c := range cases {
-		g, err := sqlbuilder.NewScanQueryGenerator(c.tbl, c.expire, c.rangeStart, c.rangeEnd, "")
+		g, err := sqlbuilder.NewScanQueryGenerator(c.tbl, c.expire, c.rangeStart, c.rangeEnd)
 		require.NoError(t, err, fmt.Sprintf("%d", i))
 		for j, p := range c.path {
 			msg := fmt.Sprintf("%d-%d", i, j)
@@ -952,24 +948,28 @@ func d(vs ...any) []types.Datum {
 }
 
 func TestIndexScanQueryGenerator(t *testing.T) {
+	idCol := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)}
+	timeCol := &model.ColumnInfo{ID: 2, Name: ast.NewCIStr("created_time"), FieldType: *types.NewFieldType(mysql.TypeDatetime)}
 	t1 := &cache.PhysicalTable{
 		Schema: ast.NewCIStr("test"),
 		TableInfo: &model.TableInfo{
-			Name: ast.NewCIStr("t1"),
+			Name:    ast.NewCIStr("t1"),
+			Columns: []*model.ColumnInfo{idCol, timeCol},
 		},
-		KeyColumns: []*model.ColumnInfo{
-			{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
-		},
-		TimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("created_time"),
-			FieldType: *types.NewFieldType(mysql.TypeDatetime),
+		KeyColumns: []*model.ColumnInfo{idCol},
+		TimeColumn: timeCol,
+	}
+	index := &model.IndexInfo{
+		Name:  ast.NewCIStr("idx_created"),
+		State: model.StatePublic,
+		Columns: []*model.IndexColumn{
+			{Name: timeCol.Name, Offset: 1, Length: types.UnspecifiedLength},
 		},
 	}
 
 	expire := time.UnixMilli(0).In(time.UTC)
-	indexName := "idx_created"
 
-	g, err := sqlbuilder.NewScanQueryGenerator(t1, expire, nil, nil, indexName)
+	g, err := sqlbuilder.NewIndexScanQueryGenerator(t1, expire, nil, nil, index)
 	require.NoError(t, err)
 
 	// First query without range
@@ -995,38 +995,68 @@ func TestIndexScanQueryGenerator(t *testing.T) {
 
 	startTime := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.UnixMilli(0).In(time.UTC)), mysql.TypeDatetime, 0))
 	endTime := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Unix(100, 0).In(time.UTC)), mysql.TypeDatetime, 0))
-	g, err = sqlbuilder.NewScanQueryGenerator(t1, expire, []types.Datum{startTime}, []types.Datum{endTime}, indexName)
+	g, err = sqlbuilder.NewIndexScanQueryGenerator(t1, expire, []types.Datum{startTime}, []types.Datum{endTime}, index)
 	require.NoError(t, err)
 
 	sql, err = g.NextSQL(nil, 5)
 	require.NoError(t, err)
 	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `id` FROM `test`.`t1` FORCE INDEX(`idx_created`) WHERE `created_time` >= '1970-01-01 00:00:00' AND `created_time` < '1970-01-01 00:01:40' AND `created_time` < FROM_UNIXTIME(0) ORDER BY `created_time`, `id` ASC LIMIT 5", sql)
-}
 
-func TestSQLBuilderForceIndex(t *testing.T) {
-	t1 := &cache.PhysicalTable{
-		Schema: ast.NewCIStr("test"),
-		TableInfo: &model.TableInfo{
-			Name: ast.NewCIStr("t1"),
-		},
-		KeyColumns: []*model.ColumnInfo{
-			{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
-		},
-		TimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time"),
-			FieldType: *types.NewFieldType(mysql.TypeDatetime),
+	uniqueIndex := *index
+	uniqueIndex.Name = ast.NewCIStr("uidx_created")
+	uniqueIndex.Unique = true
+	g, err = sqlbuilder.NewIndexScanQueryGenerator(t1, expire, nil, nil, &uniqueIndex)
+	require.NoError(t, err)
+	sql, err = g.NextSQL(nil, 1)
+	require.NoError(t, err)
+	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `id` FROM `test`.`t1` FORCE INDEX(`uidx_created`) WHERE `created_time` < FROM_UNIXTIME(0) ORDER BY `created_time` ASC LIMIT 1", sql)
+	sql, err = g.NextSQL(continueResult[:1], 1)
+	require.NoError(t, err)
+	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `id` FROM `test`.`t1` FORCE INDEX(`uidx_created`) WHERE `created_time` > '1970-01-01 00:00:00' AND `created_time` < FROM_UNIXTIME(0) ORDER BY `created_time` ASC LIMIT 1", sql)
+
+	statusCol := &model.ColumnInfo{ID: 3, Name: ast.NewCIStr("status"), FieldType: *types.NewFieldType(mysql.TypeLong)}
+	t1.Columns = append(t1.Columns, statusCol)
+	uniqueCompositeIndex := &model.IndexInfo{
+		Name:   ast.NewCIStr("uidx_created_status"),
+		State:  model.StatePublic,
+		Unique: true,
+		Columns: []*model.IndexColumn{
+			{Name: timeCol.Name, Offset: 1, Length: types.UnspecifiedLength},
+			{Name: statusCol.Name, Offset: 2, Length: types.UnspecifiedLength},
 		},
 	}
+	g, err = sqlbuilder.NewIndexScanQueryGenerator(t1, expire, nil, nil, uniqueCompositeIndex)
+	require.Error(t, err)
 
-	b := sqlbuilder.NewSQLBuilder(t1)
-	require.NoError(t, b.WriteSelect(t1.KeyColumns))
-	require.NoError(t, b.WriteForceIndex("idx_time"))
-	require.NoError(t, b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
-	s, err := b.Build()
+	statusCol.SetFlag(mysql.NotNullFlag)
+	g, err = sqlbuilder.NewIndexScanQueryGenerator(t1, expire, nil, nil, uniqueCompositeIndex)
 	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` FORCE INDEX(`idx_time`) WHERE `time` < FROM_UNIXTIME(0)", s)
+	sql, err = g.NextSQL(nil, 1)
+	require.NoError(t, err)
+	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `status`, `id` FROM `test`.`t1` FORCE INDEX(`uidx_created_status`) WHERE `created_time` < FROM_UNIXTIME(0) ORDER BY `created_time`, `status` ASC LIMIT 1", sql)
+	uniqueBoundaryRows := [][]types.Datum{
+		{continueResult[0][0], types.NewIntDatum(1), types.NewIntDatum(1)},
+	}
+	sql, err = g.NextSQL(uniqueBoundaryRows, 3)
+	require.NoError(t, err)
+	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `status`, `id` FROM `test`.`t1` FORCE INDEX(`uidx_created_status`) WHERE (`created_time`, `status`) > ('1970-01-01 00:00:00', 1) AND `created_time` < FROM_UNIXTIME(0) ORDER BY `created_time`, `status` ASC LIMIT 3", sql)
 
-	b = sqlbuilder.NewSQLBuilder(t1)
-	require.NoError(t, b.WriteDelete())
-	require.Error(t, b.WriteForceIndex("idx_time"))
+	statusCol.SetFlag(0)
+	nullDatum := types.Datum{}
+	boundaryRows := [][]types.Datum{
+		{continueResult[0][0], nullDatum, types.NewIntDatum(1)},
+		{continueResult[0][0], nullDatum, types.NewIntDatum(2)},
+		{continueResult[0][0], nullDatum, types.NewIntDatum(3)},
+	}
+
+	nonUniqueCompositeIndex := *uniqueCompositeIndex
+	nonUniqueCompositeIndex.Name = ast.NewCIStr("idx_created_status")
+	nonUniqueCompositeIndex.Unique = false
+	g, err = sqlbuilder.NewIndexScanQueryGenerator(t1, expire, nil, nil, &nonUniqueCompositeIndex)
+	require.NoError(t, err)
+	_, err = g.NextSQL(nil, 1)
+	require.NoError(t, err)
+	sql, err = g.NextSQL(boundaryRows[:1], 1)
+	require.NoError(t, err)
+	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `status`, `id` FROM `test`.`t1` FORCE INDEX(`idx_created_status`) WHERE ((`created_time` > '1970-01-01 00:00:00') OR (`created_time` = '1970-01-01 00:00:00' AND `status` IS NOT NULL) OR (`created_time` = '1970-01-01 00:00:00' AND `status` IS NULL AND `id` > 1)) AND `created_time` < FROM_UNIXTIME(0) ORDER BY `created_time`, `status`, `id` ASC LIMIT 1", sql)
 }

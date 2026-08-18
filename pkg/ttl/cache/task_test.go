@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -57,7 +58,7 @@ func (tg *taskGetter) mustGetTestTask() *cache.TTLTask {
 	rows, err := session.GetRows4Test(context.Background(), tg.tk.Session(), rs)
 	require.NoError(tg.t, err)
 	require.Len(tg.t, rows, 1)
-	task, err := cache.RowToTTLTask(tg.tk.Session().GetSessionVars().Location(), rows[0], nil)
+	task, err := cache.RowToTTLTask(tg.tk.Session().GetSessionVars().Location(), rows[0])
 	require.NoError(tg.t, err)
 	return task
 }
@@ -83,7 +84,7 @@ func TestRowToTTLTask(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", 1, 1, nil, nil, now, now, nil)
+	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", 1, 1, nil, nil, now, now)
 	require.NoError(t, err)
 	// tk.MustExec cannot handle the NULL parameter, use the `tk.Session().ExecuteInternal` instead here.
 	_, err = tk.Session().ExecuteInternal(ctx, sql, args...)
@@ -116,6 +117,15 @@ func TestRowToTTLTask(t *testing.T) {
 	task = tg.mustGetTestTask()
 	require.NotNil(t, task.SplitBy)
 	require.Equal(t, splitBy, *task.SplitBy)
+
+	timeDatum := types.NewTimeDatum(types.NewTime(types.FromGoTime(now), mysql.TypeDatetime, 0))
+	timeRange, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, timeDatum)
+	require.NoError(t, err)
+	tk.MustExec("UPDATE mysql.tidb_ttl_task SET scan_range_start = ?, scan_range_end = ? WHERE job_id = 'test-job'",
+		timeRange, timeRange)
+	task = tg.mustGetTestTask()
+	require.Equal(t, types.KindUint64, task.ScanRangeStart[0].Kind())
+	require.Equal(t, types.KindUint64, task.ScanRangeEnd[0].Kind())
 }
 
 func TestInsertIntoTTLTask(t *testing.T) {
@@ -131,7 +141,7 @@ func TestInsertIntoTTLTask(t *testing.T) {
 	now = now.Round(time.Second)
 
 	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", 1, 1,
-		rangeStart, rangeEnd, now, now, nil)
+		rangeStart, rangeEnd, now, now)
 	require.NoError(t, err)
 	// tk.MustExec cannot handle the NULL parameter, use the `tk.Session().ExecuteInternal` instead here.
 	_, err = tk.Session().ExecuteInternal(ctx, sql, args...)

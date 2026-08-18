@@ -21,16 +21,19 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -109,6 +112,26 @@ func (t *ttlScanTask) result(err error) *ttlScanTaskExecResult {
 		reason = ReasonError
 	}
 	return &ttlScanTaskExecResult{time: time.Now(), task: t, err: err, reason: reason}
+}
+
+func (t *ttlScanTask) getDatumRows(rows []chunk.Row, columnTypes []*types.FieldType) [][]types.Datum {
+	datums := make([][]types.Datum, len(rows))
+	for i, row := range rows {
+		datums[i] = row.GetDatumRow(columnTypes)
+	}
+	return datums
+}
+
+func unflattenIndexScanRange(scanRange []types.Datum, timeColumn *model.ColumnInfo, loc *time.Location) ([]types.Datum, error) {
+	if len(scanRange) != 1 || scanRange[0].Kind() != types.KindUint64 {
+		return scanRange, nil
+	}
+
+	datum, err := tablecodec.Unflatten(scanRange[0], &timeColumn.FieldType, loc)
+	if err != nil {
+		return nil, err
+	}
+	return []types.Datum{datum}, nil
 }
 
 func (t *ttlScanTask) taskLogger(l *zap.Logger) *zap.Logger {
@@ -200,19 +223,32 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 	}
 	defer terror.Call(restoreSession)
 
-	var indexName string
+	var index *model.IndexInfo
 	if t.SplitBy != nil {
-		for _, idx := range t.tbl.Indices {
-			if idx.ID == *t.SplitBy {
-				indexName = idx.Name.O
-				break
-			}
-		}
-		if indexName == "" {
+		index = model.FindIndexInfoByID(t.tbl.Indices, *t.SplitBy)
+		if index == nil {
 			return errors.Errorf("TTL index with id %d not found", *t.SplitBy)
 		}
 	}
-	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd, indexName)
+	var generator *sqlbuilder.ScanQueryGenerator
+	if index == nil {
+		generator, err = sqlbuilder.NewScanQueryGenerator(t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd)
+	} else {
+		rangeStart, rangeEnd := t.ScanRangeStart, t.ScanRangeEnd
+		if len(rangeStart) > 0 || len(rangeEnd) > 0 {
+			loc, err := sess.GlobalTimeZone(scanCtx)
+			if err != nil {
+				return errors.Wrap(err, "get global time zone for TTL index scan range")
+			}
+			if rangeStart, err = unflattenIndexScanRange(rangeStart, t.tbl.TimeColumn, loc); err != nil {
+				return errors.Wrap(err, "decode TTL index scan range start")
+			}
+			if rangeEnd, err = unflattenIndexScanRange(rangeEnd, t.tbl.TimeColumn, loc); err != nil {
+				return errors.Wrap(err, "decode TTL index scan range end")
+			}
+		}
+		generator, err = sqlbuilder.NewIndexScanQueryGenerator(t.tbl, t.ExpireTime, rangeStart, rangeEnd, index)
+	}
 	if err != nil {
 		return err
 	}
@@ -278,26 +314,15 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		metrics.SelectSuccessDuration.Observe(selectInterval.Seconds())
 		retrySQL = ""
 		retryTimes = 0
-		lastResult = make([][]types.Datum, len(rows))
-		keyRows := make([][]types.Datum, len(rows))
-		if t.SplitBy != nil {
-			for i, row := range rows {
-				datums := row.GetDatumRow(t.tbl.IndexScanColumnTypes)
-				lastResult[i] = datums
-				keyRows[i] = datums[1:]
-			}
-		} else {
-			for i, row := range rows {
-				datums := row.GetDatumRow(t.tbl.KeyColumnTypes)
-				lastResult[i] = datums
-				keyRows[i] = datums
-			}
-		}
-
-		if len(lastResult) == 0 {
+		lastResult = t.getDatumRows(rows, generator.ScanColumnTypes())
+		if len(rows) == 0 {
 			continue
 		}
 
+		keyRows := make([][]types.Datum, len(lastResult))
+		for i, row := range lastResult {
+			keyRows[i] = generator.TableKey(row)
+		}
 		delTask := &ttlDeleteTask{
 			jobID:      t.JobID,
 			scanID:     t.ScanID,
