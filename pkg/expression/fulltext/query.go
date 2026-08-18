@@ -585,7 +585,7 @@ func (q *Query) FilterTerms(allowPrefix bool) (FilterTerms, bool) {
 		return FilterTerms{}, false
 	}
 
-	var required []string
+	required := make([]string, 0, len(group.must))
 	for _, clause := range group.must {
 		required = append(required, definitelyPresentTokens(clause, allowPrefix)...)
 	}
@@ -597,7 +597,7 @@ func (q *Query) FilterTerms(allowPrefix bool) (FilterTerms, bool) {
 	// clauses, so a union over them is sound only if every clause contributes
 	// at least one token. A clause that contributes none - a bare prefix, say -
 	// could match a document none of the collected tokens appear in.
-	var optional []string
+	optional := make([]string, 0, len(group.should))
 	for _, clause := range group.should {
 		tokens := definitelyPresentTokens(clause, allowPrefix)
 		if len(tokens) == 0 {
