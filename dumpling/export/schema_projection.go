@@ -84,10 +84,7 @@ func (s *projectedTableSchema) applyLocalProjection() error {
 	if err := validatePartitionColumns(s.createTable.Partition, s.retainedColumns); err != nil {
 		return err
 	}
-	if err := validateTTLColumns(s.createTable.Options, s.retainedColumns); err != nil {
-		return err
-	}
-	return nil
+	return validateTTLColumns(s.createTable.Options, s.retainedColumns)
 }
 
 func (s *projectedTableSchema) getTableInfo() (*model.TableInfo, error) {
