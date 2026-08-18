@@ -376,6 +376,20 @@ pub(crate) fn cluster_table(
         // the 1364 it is in Go.
         let default_value = if column.default_value.is_nil() {
             None
+        } else if let Some(fsp) = stored_clock_marker(&column) {
+            // Go stores the WORD (`CURRENT_TIMESTAMP`, with the column's fsp
+            // when it has one) and every INSERT evaluates it fresh. The
+            // executor models exactly that as a computed default, so the
+            // loader carries it instead of refusing the table -- refusal
+            // would make every table a Go TiDB created with a clock default
+            // unservable here.
+            Some(
+                tidb_executor::column_default::stored_clock_marker_default(
+                    &column.field_type,
+                    fsp.as_deref(),
+                )
+                .map_err(|error| format!("its column {name} has a default {error:?}"))?,
+            )
         } else {
             // The loader refuses a computed default above, so what survives
             // is always a settled value.
@@ -1485,4 +1499,31 @@ mod tests {
             assert_eq!(kv.plan_indexes().count(), usize::from(expect_plan_index));
         }
     }
+}
+
+/// Whether a stored declared default is Go's clock marker on a temporal
+/// column: the word `CURRENT_TIMESTAMP`, optionally with the column's
+/// fractional precision (`CURRENT_TIMESTAMP(3)`).
+fn stored_clock_marker(column: &tidb_model::ColumnInfo) -> Option<Option<String>> {
+    if !matches!(
+        column.field_type.code(),
+        tidb_datatype::FieldTypeCode::Timestamp | tidb_datatype::FieldTypeCode::Datetime
+    ) {
+        return None;
+    }
+    let declared = column.get_default_value();
+    let tidb_model::GoAnyView::String(bytes) = declared.view()? else {
+        return None;
+    };
+    let text = String::from_utf8_lossy(bytes.as_bytes()).into_owned();
+    let upper = text.to_ascii_uppercase();
+    if upper == "CURRENT_TIMESTAMP" {
+        return Some(None);
+    }
+    let fsp = upper
+        .strip_prefix("CURRENT_TIMESTAMP(")?
+        .strip_suffix(')')?
+        .to_owned();
+    fsp.chars().all(|c| c.is_ascii_digit()).then_some(())?;
+    Some(Some(fsp))
 }

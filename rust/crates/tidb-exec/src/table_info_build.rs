@@ -610,14 +610,45 @@ pub fn build_added_column(
                 ))
             }
         };
-        if text.eq_ignore_ascii_case("CURRENT_TIMESTAMP") || info.default_is_expr {
-            // Go stamps time.Now() here; the wall-clock stamping course is
-            // its own change, so the shape is refused rather than mis-stamped.
+        if text.eq_ignore_ascii_case("CURRENT_TIMESTAMP") {
+            // Go `generateOriginDefaultValue` stamps time.Now() once, at DDL
+            // time: existing rows report the moment the column was added,
+            // while the DECLARED default stays the word CURRENT_TIMESTAMP for
+            // every later INSERT to evaluate. TIMESTAMP stamps the UTC wall
+            // clock, DATETIME the local one — Go's exact split.
+            Some(match info.field_type.code() {
+                FieldTypeCode::Timestamp => crate::mysql_bootstrap::utc_now_timestamp().to_string(),
+                FieldTypeCode::Datetime => {
+                    use chrono::{Datelike, Timelike};
+                    let now = chrono::Local::now();
+                    tidb_datatype::Time::from_date_checked(
+                        now.year(),
+                        i32::try_from(now.month()).expect("a month fits in i32"),
+                        i32::try_from(now.day()).expect("a day fits in i32"),
+                        i32::try_from(now.hour()).expect("an hour fits in i32"),
+                        i32::try_from(now.minute()).expect("a minute fits in i32"),
+                        i32::try_from(now.second()).expect("a second fits in i32"),
+                        0,
+                        tidb_datatype::TimeType::DateTime,
+                        0,
+                    )
+                    .expect("the current local calendar date is a valid datetime")
+                    .to_string()
+                }
+                other => {
+                    return Err(DdlAdmissionError::unsupported(format!(
+                        "a CURRENT_TIMESTAMP default on a {other:?} column is not a shape \
+                         Go's DDL stamps"
+                    )))
+                }
+            })
+        } else if info.default_is_expr {
             return Err(DdlAdmissionError::unsupported(
-                "ADD COLUMN with a CURRENT_TIMESTAMP or expression default waits on its DDL course",
+                "ADD COLUMN with an expression default waits on its DDL course",
             ));
+        } else {
+            Some(text)
         }
-        Some(text)
     } else if info.field_type.has_flag(FieldTypeFlags::NOT_NULL) {
         // Go `table.GetZeroValue(col).ToString()`, for the families this
         // node's CREATE TABLE admits.

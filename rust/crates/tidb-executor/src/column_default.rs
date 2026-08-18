@@ -643,6 +643,28 @@ fn build_expression(expr: &Expr) -> Result<Expression, DefaultError> {
 /// constant path (it owns the per-type normalisation Go's `getDefaultValue`
 /// tail performs). This decides only WHICH of the two worlds the default is
 /// in, so the whitelist above is the single place that answers it.
+
+/// Builds the computed default a STORED `CURRENT_TIMESTAMP` marker names,
+/// for a loader reading it back out of a persisted `ColumnInfo`. `fsp` is
+/// the digits inside `CURRENT_TIMESTAMP(n)` when the stored word carried
+/// them. The same validation as a freshly parsed DEFAULT applies, so a
+/// marker on a non-temporal column is refused, not frozen.
+pub fn stored_clock_marker_default(
+    field_type: &FieldType,
+    fsp: Option<&str>,
+) -> Result<ColumnDefault, DefaultError> {
+    let expr = Expr::Func {
+        name: "CURRENT_TIMESTAMP".to_owned(),
+        args: fsp
+            .map(|digits| vec![Expr::Int(digits.to_owned())])
+            .unwrap_or_default(),
+        origin_position: 0,
+    };
+    build(&expr, field_type, |_| {
+        Err(DefaultError::Unsupported("a clock marker never folds"))
+    })
+}
+
 pub fn build(
     expr: &Expr,
     field_type: &FieldType,
