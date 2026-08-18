@@ -155,6 +155,8 @@ type HashAggExec struct {
 	// isChildDrained indicates whether the all data from child has been taken out.
 	isChildDrained bool
 
+	HasDistinct bool
+
 	invalidMemoryUsageForTrackingTest bool
 
 	FileNamePrefixForTest string

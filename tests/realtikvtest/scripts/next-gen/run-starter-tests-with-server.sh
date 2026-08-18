@@ -85,6 +85,66 @@ function is_true() {
     esac
 }
 
+function json_escape() {
+    local value="$1"
+    value="${value//\\/\\\\}"
+    value="${value//\"/\\\"}"
+    value="${value//$'\b'/\\b}"
+    value="${value//$'\f'/\\f}"
+    value="${value//$'\n'/\\n}"
+    value="${value//$'\r'/\\r}"
+    value="${value//$'\t'/\\t}"
+    printf "%s" "${value}"
+}
+
+function is_system_keyspace() {
+    local value
+    value="$(printf "%s" "$1" | tr '[:lower:]' '[:upper:]')"
+    [[ "${value}" == "SYSTEM" ]]
+}
+
+function create_starter_keyspace() {
+    local pd_status_url="$1"
+    local keyspace_name="$2"
+    local keyspace_create_body="${STARTER_KEYSPACE_CREATE_BODY:-}"
+
+    if [[ -z "${keyspace_create_body}" ]]; then
+        keyspace_create_body="$(printf '{"name":"%s","config":{}}' "$(json_escape "${keyspace_name}")")"
+    fi
+
+    echo "Creating starter keyspace ${keyspace_name} via ${pd_status_url}/pd/api/v2/keyspaces"
+    curl -fsS -X POST "${pd_status_url}/pd/api/v2/keyspaces" \
+        -H "Content-Type: application/json" \
+        -d "${keyspace_create_body}"
+    echo
+}
+
+function prepare_starter_keyspace() {
+    local keyspace_name="$1"
+    local pd_status_url="$2"
+    local tidb_server_bin="$3"
+    local self_dir="$4"
+
+    if is_system_keyspace "${keyspace_name}"; then
+        return 0
+    fi
+    if ! is_true "${STARTER_PREPARE_KEYSPACE:-1}"; then
+        return 0
+    fi
+
+    echo "Bootstrapping SYSTEM keyspace before creating starter keyspace ${keyspace_name}"
+    TIDB_SERVER_BIN="${tidb_server_bin}" \
+        STARTER_KEYSPACE_NAME=SYSTEM \
+        STARTER_PREPARE_KEYSPACE=0 \
+        STARTER_STANDBY_MODE=0 \
+        STARTER_KEYSPACE_OBSERVABILITY=0 \
+        STARTER_RUN_EXIT_WAIT_TEST=0 \
+        "${self_dir}/run-starter-tests-with-server.sh" \
+            --under-cluster startertest "${STARTER_SYSTEM_BOOTSTRAP_TIMEOUT:-2m}" -run "^$"
+
+    create_starter_keyspace "${pd_status_url}" "${keyspace_name}"
+}
+
 function activate_starter_server() {
     local status_url="$1"
     local tidb_pid="$2"
@@ -98,13 +158,18 @@ function activate_starter_server() {
     local activate_err_file="${response_file}.err"
     local activate_rc_file="${response_file}.rc"
     local activate_body
+    local escaped_keyspace_name
+    local escaped_export_id
+
+    escaped_keyspace_name="$(json_escape "${keyspace_name}")"
+    escaped_export_id="$(json_escape "${export_id}")"
 
     if [[ -n "${metadata_json}" ]]; then
         activate_body="$(printf '{"keyspace_name":"%s","export_id":"%s","max_idle_seconds":%s,"metadata":%s,"tidb_enable_ddl":true,"run_auto_analyze":true}' \
-            "${keyspace_name}" "${export_id}" "${max_idle_seconds}" "${metadata_json}")"
+            "${escaped_keyspace_name}" "${escaped_export_id}" "${max_idle_seconds}" "${metadata_json}")"
     else
         activate_body="$(printf '{"keyspace_name":"%s","export_id":"%s","max_idle_seconds":%s,"tidb_enable_ddl":true,"run_auto_analyze":true}' \
-            "${keyspace_name}" "${export_id}" "${max_idle_seconds}")"
+            "${escaped_keyspace_name}" "${escaped_export_id}" "${max_idle_seconds}")"
     fi
 
     echo "Activating external starter tidb-server for keyspace ${keyspace_name}, export ID ${export_id}"
@@ -222,6 +287,8 @@ function run_under_cluster() {
     fi
     local tikv_worker_url="${STARTER_TIKV_WORKER_URL:-localhost:19000}"
 
+    prepare_starter_keyspace "${keyspace_name}" "${pd_status_url}" "${tidb_server_bin}" "${self_dir}"
+
     cat > "${config_file}" <<EOF
 deploy-mode = "starter"
 max-allowed-packet = ${max_allowed_packet}
@@ -246,7 +313,8 @@ slow-log-field = "Keyspace_meta_project"
 stmt-log-field = "project"
 required = true
 EOF
-        activate_metadata_json="$(printf '{"tenant":"%s","project":"%s"}' "${keyspace_meta_tenant}" "${keyspace_meta_project}")"
+        activate_metadata_json="$(printf '{"tenant":"%s","project":"%s"}' \
+            "$(json_escape "${keyspace_meta_tenant}")" "$(json_escape "${keyspace_meta_project}")")"
     fi
 
     local tidb_server_args=(

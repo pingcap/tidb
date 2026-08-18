@@ -24,9 +24,11 @@ run_sql 'DROP TABLE IF EXISTS dup_resolve.a'
 run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v4'
 run_sql 'DROP VIEW IF EXISTS lightning_task_info.conflict_view'
 
-! run_lightning --backend local --config "${mydir}/config.toml"
+error_log="$TEST_DIR/${TEST_NAME}.error.log"
+rm -f "$error_log"
+! run_lightning --backend local --config "${mydir}/config.toml" --log-file "$error_log"
 [ $? -eq 0 ]
 
-tail -n 10 $TEST_DIR/lightning.log | grep "ERROR" | tail -n 1 | grep -Fq "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, index name is 'a.key_bd', unique key is '[101 9]', primary key is '1'"
+grep "ERROR" "$error_log" | grep -Fq "[Lightning:Restore:ErrFoundIndexConflictRecords]found index conflict records in table a, index name is 'a.key_bd', unique key is '[101 9]', primary key is '1'"
 
-check_not_contains "the whole procedure completed" $TEST_DIR/lightning.log
+check_not_contains "the whole procedure completed" "$error_log"

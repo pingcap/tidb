@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 type StoreWithKS struct {
@@ -38,13 +39,18 @@ func (s *StoreWithKS) GetKeyspace() string {
 }
 
 func TestImportTaskExecutor(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	ctx := context.Background()
+	param := taskexecutor.NewParamForTest(nil, nil, nil, ":4000")
+	param.TaskRuntime = newMockRuntime(ctrl, &StoreWithKS{}, nil)
 	executor := NewImportExecutor(
 		ctx,
 		&proto.Task{
 			TaskBase: proto.TaskBase{ID: 1},
 		},
-		taskexecutor.NewParamForTest(nil, nil, nil, ":4000", &StoreWithKS{}),
+		param,
 	).(*importExecutor)
 
 	require.NotNil(t, executor.BaseTaskExecutor.Extension)
@@ -70,15 +76,20 @@ func TestImportTaskExecutor(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestImportTaskExecutorUsesTaskStoreWithoutExtraLookup(t *testing.T) {
+func TestImportTaskExecutorUsesTaskRuntimeStoreWithoutExtraLookup(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	ctx := context.Background()
 	taskStore := &StoreWithKS{ks: "task_ks"}
+	param := taskexecutor.NewParamForTest(nil, nil, nil, ":4000")
+	param.TaskRuntime = newMockRuntime(ctrl, taskStore, nil)
 	executor := NewImportExecutor(
 		ctx,
 		&proto.Task{
 			TaskBase: proto.TaskBase{ID: 2},
 		},
-		taskexecutor.NewParamForTest(nil, nil, nil, ":4000", taskStore),
+		param,
 	).(*importExecutor)
 
 	taskMeta := []byte(`{"Plan":{"TableInfo":{}}}`)

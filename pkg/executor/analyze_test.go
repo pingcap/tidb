@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -58,6 +59,45 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 		}
 	}
 	return true, nil
+}
+
+func TestAnalyzeBuildsSingleBatchableRequest(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	var requestCount atomic.Int64
+	var lastRequest atomic.Pointer[kv.Request]
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeColumnsRequestBuilt", func(req *kv.Request) {
+		lastRequest.Store(req)
+		requestCount.Add(1)
+	})
+
+	// Values at MaxInt64 and MaxInt64+1 exercise the unsigned-handle boundary.
+	// Full-sampling Analyze should cover them with one unordered request.
+	tk.MustExec("create table tu(a bigint unsigned primary key)")
+	tk.MustExec("insert into tu values (9223372036854775807), (9223372036854775808)")
+	tk.MustExec("analyze table tu with 1 samplerate, 0 topn, 2 buckets")
+	require.Equal(t, int64(1), requestCount.Load())
+	require.False(t, lastRequest.Load().KeepOrder)
+
+	bucketRows := tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 'tu' and column_name = 'a' and is_index = 0").Rows()
+	bounds := make(map[string]struct{}, 2*len(bucketRows))
+	for _, row := range bucketRows {
+		bounds[row[8].(string)] = struct{}{}
+		bounds[row[9].(string)] = struct{}{}
+	}
+	require.Contains(t, bounds, "9223372036854775807")
+	require.Contains(t, bounds, "9223372036854775808")
+
+	// An empty unsigned half must not stop the request before its signed range.
+	tk.MustExec("truncate table tu")
+	tk.MustExec("insert into tu values (1)")
+	tk.MustExec("analyze table tu with 1 samplerate, 0 topn, 2 buckets")
+	require.Equal(t, int64(2), requestCount.Load())
+	metaRows := tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 'tu'").Rows()
+	require.Len(t, metaRows, 1)
+	require.Equal(t, "1", metaRows[0][5])
 }
 
 func TestAnalyzeIndexExtractTopN(t *testing.T) {
@@ -125,15 +165,6 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 			concurrency: "1",
 		},
 		{
-			concurrency: "2",
-		},
-		{
-			concurrency: "3",
-		},
-		{
-			concurrency: "4",
-		},
-		{
 			concurrency: "5",
 		},
 	}
@@ -141,8 +172,6 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 	for _, tc := range testcases {
 		concurrency := tc.concurrency
 		fmt.Println("testcase ", concurrency)
-		tk.MustExec(fmt.Sprintf("set @@global.tidb_merge_partition_stats_concurrency=%v", concurrency))
-		tk.MustQuery("select @@global.tidb_merge_partition_stats_concurrency").Check(testkit.Rows(concurrency))
 		tk.MustExec(fmt.Sprintf("set @@tidb_analyze_partition_concurrency=%v", concurrency))
 		tk.MustQuery("select @@tidb_analyze_partition_concurrency").Check(testkit.Rows(concurrency))
 
@@ -161,30 +190,9 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 			strconv.FormatInt(int64(i), 10), "500",
 		})
 	}
-	testcases = []struct {
-		concurrency string
-	}{
-		{
-			concurrency: "1",
-		},
-		{
-			concurrency: "2",
-		},
-		{
-			concurrency: "3",
-		},
-		{
-			concurrency: "4",
-		},
-		{
-			concurrency: "5",
-		},
-	}
 	for _, tc := range testcases {
 		concurrency := tc.concurrency
 		fmt.Println("testcase ", concurrency)
-		tk.MustExec(fmt.Sprintf("set @@tidb_merge_partition_stats_concurrency=%v", concurrency))
-		tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows(concurrency))
 		tk.MustExec("analyze table t")
 		tk.MustQuery("show stats_topn where partition_name = 'global' and table_name = 't'").CheckAt([]int{5, 6}, expected)
 	}

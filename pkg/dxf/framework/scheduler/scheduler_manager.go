@@ -16,7 +16,6 @@ package scheduler
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"time"
 
@@ -45,7 +44,7 @@ var (
 	CheckTaskRunningInterval = 3 * time.Second
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
-	// DefaultCleanUpInterval is the interval of cleanup routine.
+	// DefaultCleanUpInterval is the interval of task cleanup.
 	DefaultCleanUpInterval = 10 * time.Minute
 	// metric scraping mostly happens at 15s intervals, it's meaningless to update
 	// internal collected date more frequently, so we align with that.
@@ -155,8 +154,11 @@ func NewManager(ctx context.Context, store kv.Storage, taskMgr TaskManager, serv
 			slotMgr:  slotMgr,
 			serverID: serverID,
 		}),
-		logger:   logger,
-		finishCh: make(chan struct{}, proto.MaxConcurrentTask),
+		logger: logger,
+		// finishCh must be able to buffer finish signals for the largest runtime
+		// value of maxConcurrentTask. Otherwise, raising the limit after startup
+		// can make non-blocking sends drop signals until the periodic cleanup loop runs.
+		finishCh: make(chan struct{}, proto.MaxConcurrentTaskUpperBound),
 		nodeRes:  nodeRes,
 	}
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
@@ -171,7 +173,7 @@ func (sm *Manager) Start() {
 
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
-	sm.wg.Run(sm.cleanupTaskLoop)
+	sm.wg.Run(sm.cleanTaskLoop)
 	sm.wg.Run(sm.collectLoop)
 	sm.wg.Run(func() {
 		sm.nodeMgr.maintainLiveNodesLoop(sm.ctx, sm.taskMgr)
@@ -245,7 +247,8 @@ func (sm *Manager) getSchedulableTasks(ctx context.Context) ([]*proto.TaskBase, 
 	defer r.End()
 	getTasksFn := sm.taskMgr.GetTopUnfinishedTasks
 	taskCnt := sm.getSchedulerCount()
-	if taskCnt >= proto.MaxConcurrentTask {
+	maxConcurrentTask := proto.GetMaxConcurrentTask()
+	if taskCnt >= maxConcurrentTask {
 		// when we have reached the limit of concurrent tasks, we only handle
 		// tasks in states that don't need resources, e.g. reverting/cancelling/
 		// pausing/modifying.
@@ -292,7 +295,7 @@ func (sm *Manager) startSchedulers(schedulableTasks []*proto.TaskBase) error {
 		switch task.State {
 		case proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateResuming:
 			taskCnt := sm.getSchedulerCount()
-			if taskCnt >= proto.MaxConcurrentTask {
+			if taskCnt >= proto.GetMaxConcurrentTask() {
 				continue
 			}
 			reservedExecID, ok = sm.slotMgr.canReserve(task)
@@ -352,8 +355,8 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		return
 	}
 
-	holderID := fmt.Sprintf("DXF/scheduler/%d", task.ID)
-	taskRuntime, releaseFn, err := dxfutil.AcquireTaskRuntime(sm.taskMgr, sm.store.GetKeyspace(), task.Keyspace, holderID)
+	holderID := dxfutil.GenHolderID("scheduler", task.ID)
+	taskRuntime, releaseFn, err := dxfutil.AcquireTaskRuntime(sm.taskMgr, task.Keyspace, holderID)
 	if err != nil {
 		sm.logger.Warn("acquire task runtime failed", zap.Int64("task-id", basicTask.ID),
 			zap.String("task-key", basicTask.Key), zap.Error(err))
@@ -369,7 +372,6 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 		allocatedSlots: allocateSlots,
 		nodeRes:        sm.nodeRes,
 		TaskRuntime:    taskRuntime,
-		TaskStore:      taskRuntime.Store(),
 	})
 	if err = scheduler.Init(); err != nil {
 		sm.logger.Error("init scheduler failed", zap.Error(err))
@@ -401,8 +403,9 @@ func (sm *Manager) startScheduler(basicTask *proto.TaskBase, allocateSlots bool,
 	})
 }
 
-func (sm *Manager) cleanupTaskLoop() {
+func (sm *Manager) cleanTaskLoop() {
 	sm.logger.Info("cleanup loop start")
+	sm.drainCleanTaskBatches()
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
@@ -411,59 +414,113 @@ func (sm *Manager) cleanupTaskLoop() {
 			sm.logger.Info("cleanup loop exits")
 			return
 		case <-sm.finishCh:
-			sm.doCleanupTask()
+			sm.drainCleanTaskBatches()
 		case <-ticker.C:
-			sm.doCleanupTask()
+			sm.drainCleanTaskBatches()
 		}
 	}
 }
 
-// doCleanupTask processes clean up routine defined by each type of tasks and cleanupMeta.
+// drainCleanTaskBatches processes bounded batches until one is not fully handled.
+func (sm *Manager) drainCleanTaskBatches() {
+	// Since the cleanup loop runs serially, it is safe to keep draining
+	// without an overall bound while every batch is fully handled.
+	for {
+		batchFullyHandled := sm.processCleanTaskBatch()
+		if !batchFullyHandled {
+			break
+		}
+	}
+}
+
+// processCleanTaskBatch processes one bounded batch of cleanup tasks.
+// It returns whether every task in the batch was transferred to history.
 // For example:
 //
 //	tasks with global sort should clean up tmp files stored on S3.
-func (sm *Manager) doCleanupTask() {
-	failpoint.InjectCall("doCleanupTask")
-	tasks, err := sm.taskMgr.GetTasksInStates(
-		sm.ctx,
-		proto.TaskStateFailed,
-		proto.TaskStateReverted,
-		proto.TaskStateSucceed,
-	)
+func (sm *Manager) processCleanTaskBatch() bool {
+	tasks, err := sm.taskMgr.GetCleanupTasks(sm.ctx)
 	if err != nil {
-		sm.logger.Warn("get task in states failed", zap.Error(err))
-		return
+		sm.logger.Warn("get cleanup tasks failed", zap.Error(err))
+		return false
 	}
 	if len(tasks) == 0 {
-		return
+		return false
 	}
-	sm.logger.Info("cleanup routine start")
-	err = sm.cleanupFinishedTasks(tasks)
+	// Keep the failpoint name stable for existing integration tests.
+	failpoint.InjectCall("processCleanupTaskBatch")
+	sm.logger.Info("task cleanup starts")
+	transferredTaskCount, err := sm.cleanFinishedTasks(tasks)
 	if err != nil {
-		sm.logger.Warn("cleanup routine failed", zap.Error(err))
-		return
+		sm.logger.Warn("task cleanup failed", zap.Error(err))
+		return false
 	}
 	failpoint.InjectCall("WaitCleanUpFinished")
-	sm.logger.Info("cleanup routine success")
+	batchFullyHandled := transferredTaskCount == len(tasks)
+	sm.logger.Info("task cleanup finished",
+		zap.Int("transferred-task-count", transferredTaskCount),
+		zap.Int("total-task-count", len(tasks)),
+		zap.Bool("batch-fully-handled", batchFullyHandled))
+	return batchFullyHandled
 }
 
-func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
-	cleanedTasks := make([]*proto.Task, 0)
+// cleanFinishedTasks runs cleanup and transfers the successfully cleaned tasks to history.
+// The returned count reports history-transfer progress and is zero if that transfer fails.
+func (sm *Manager) cleanFinishedTasks(tasks []*proto.Task) (int, error) {
+	type singleCleanerTask struct {
+		task    *proto.Task
+		cleaner Cleaner
+	}
+	type batchCleanerTaskGroup struct {
+		cleaner BatchCleaner
+		tasks   []*proto.Task
+	}
+
+	singleCleanerTasks := make([]singleCleanerTask, 0)
+	batchCleanerTaskGroups := make(map[proto.TaskType]*batchCleanerTaskGroup)
+	cleanedTasks := make([]*proto.Task, 0, len(tasks))
 	var firstErr error
 	for _, task := range tasks {
 		sm.logger.Info("cleanup task", zap.Int64("task-id", task.ID), zap.String("task-key", task.Key))
-		cleanupFactory := getSchedulerCleanUpFactory(task.Type)
-		if cleanupFactory != nil {
-			cleanup := cleanupFactory()
-			err := cleanup.CleanUp(sm.ctx, task)
-			if err != nil {
+		if group, ok := batchCleanerTaskGroups[task.Type]; ok {
+			group.tasks = append(group.tasks, task)
+			continue
+		}
+
+		cleanerFactory := getCleanerFactory(task.Type)
+		if cleanerFactory == nil {
+			cleanedTasks = append(cleanedTasks, task)
+			continue
+		}
+		cleaner := cleanerFactory()
+		if batchCleaner, ok := cleaner.(BatchCleaner); ok {
+			batchCleanerTaskGroups[task.Type] = &batchCleanerTaskGroup{
+				cleaner: batchCleaner,
+				tasks:   []*proto.Task{task},
+			}
+			continue
+		}
+		singleCleanerTasks = append(singleCleanerTasks, singleCleanerTask{
+			task:    task,
+			cleaner: cleaner,
+		})
+	}
+
+	for _, cleanerTask := range singleCleanerTasks {
+		if err := cleanerTask.cleaner.Clean(sm.ctx, cleanerTask.task); err != nil {
+			// maybe consider continue cleaning other tasks on error later.
+			firstErr = err
+			break
+		}
+		cleanedTasks = append(cleanedTasks, cleanerTask.task)
+	}
+	if firstErr == nil {
+		for _, group := range batchCleanerTaskGroups {
+			if err := group.cleaner.BatchClean(sm.ctx, group.tasks); err != nil {
 				firstErr = err
 				break
 			}
-			cleanedTasks = append(cleanedTasks, task)
-		} else {
-			// if task doesn't register cleanup function, mark it as cleaned.
-			cleanedTasks = append(cleanedTasks, task)
+			cleanedTasks = append(cleanedTasks, group.tasks...)
 		}
 	}
 	if firstErr != nil {
@@ -471,14 +528,17 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 		// will delete counters after task finished, we use "-" to indicate
 		// it's not related to any specific task.
 		dxfmetric.ScheduleEventCounter.WithLabelValues("-", dxfmetric.EventCleanupFailed).Add(1)
-		sm.logger.Warn("cleanup routine failed", zap.Error(errors.Trace(firstErr)))
+		sm.logger.Warn("task cleanup failed", zap.Error(errors.Trace(firstErr)))
 	}
 
 	failpoint.Inject("mockTransferErr", func() {
-		failpoint.Return(errors.New("transfer err"))
+		failpoint.Return(0, errors.New("transfer err"))
 	})
 
-	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
+	if err := sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks); err != nil {
+		return 0, err
+	}
+	return len(cleanedTasks), nil
 }
 
 func (sm *Manager) collectLoop() {

@@ -26,9 +26,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/jobsubmit"
 	"github.com/pingcap/tidb/pkg/ddl/schemaver"
+	"github.com/pingcap/tidb/pkg/ddl/serverstate"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -37,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -247,8 +251,14 @@ func (*Manager) createSessionManager(
 	}
 	failpoint.InjectCall("injectETCDCli", &etcdCli, ks)
 	ctx, cancel := context.WithCancel(context.Background())
+	var svrInfoSyncer *serverinfo.Syncer
+	serverInfoRegistered := false
 	defer func() {
 		if err != nil {
+			if serverInfoRegistered {
+				svrInfoSyncer.RemoveServerInfo()
+				svrInfoSyncer.RevokeSession()
+			}
 			cancel()
 			err2 := etcdCli.Close()
 			if err2 != nil {
@@ -258,7 +268,7 @@ func (*Manager) createSessionManager(
 	}()
 
 	virtualSvrID := uuid.New().String()
-	svrInfoSyncer := serverinfo.NewCrossKSSyncer(
+	svrInfoSyncer = serverinfo.NewCrossKSSyncer(
 		virtualSvrID,
 		func() uint64 {
 			// this ID is used to allocate connection ID, since we don't accept
@@ -272,9 +282,17 @@ func (*Manager) createSessionManager(
 	if err = svrInfoSyncer.NewSessionAndStoreServerInfo(ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
+	serverInfoRegistered = true
 
 	schemaVerSyncer := schemaver.NewEtcdSyncer(etcdCli, virtualSvrID)
 	if err = schemaVerSyncer.Init(ctx); err != nil {
+		return nil, errors.Trace(err)
+	}
+	serverStateSyncer := serverstate.NewEtcdSyncer(etcdCli, ddlutil.ServerGlobalState)
+	// The submit-only DDL path refreshes server state synchronously before
+	// enqueue. Seed the cache here without Init, because Init starts an etcd
+	// watch/session that this runtime does not need or drain.
+	if _, err = serverStateSyncer.GetGlobalState(ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
 	infoCache := infoschema.NewCache(store, int(vardef.SchemaVersionCacheLimit.Load()))
@@ -290,23 +308,33 @@ func (*Manager) createSessionManager(
 		return nil, errors.Trace(err)
 	}
 
-	sysTblMgr := systable.NewManager(sess.NewSessionPool(sessPool))
+	ddlSessPool := sess.NewSessionPool(sessPool)
+	sysTblMgr := systable.NewManager(ddlSessPool)
 	minJobIDRefresher := systable.NewMinJobIDRefresher(sysTblMgr)
 	isSyncer.SetMinJobIDRefresher(minJobIDRefresher)
+	ddlClient := newDDLClient(etcdCli, jobsubmit.SubmitOptions{
+		Store:             store,
+		SessPool:          ddlSessPool,
+		SysTblMgr:         sysTblMgr,
+		MinJobIDRefresher: minJobIDRefresher,
+		ServerStateSyncer: serverStateSyncer,
+	})
 
 	mgr := &SessionManager{
-		ctx:             ctx,
-		cancel:          cancel,
-		exitCh:          make(chan struct{}),
-		store:           store,
-		etcdCli:         etcdCli,
-		schemaVerSyncer: schemaVerSyncer,
-		infoCache:       infoCache,
-		isSyncer:        isSyncer,
-		sessPool:        sessPool,
-		coordinator:     coordinator,
-		isValidator:     isValidator,
-		svrInfoSyncer:   svrInfoSyncer,
+		ctx:               ctx,
+		cancel:            cancel,
+		exitCh:            make(chan struct{}),
+		store:             store,
+		etcdCli:           etcdCli,
+		schemaVerSyncer:   schemaVerSyncer,
+		serverStateSyncer: serverStateSyncer,
+		infoCache:         infoCache,
+		isSyncer:          isSyncer,
+		sessPool:          sessPool,
+		coordinator:       coordinator,
+		isValidator:       isValidator,
+		svrInfoSyncer:     svrInfoSyncer,
+		ddlClient:         ddlClient,
 	}
 
 	mgr.wg.RunWithLog(func() {
@@ -318,9 +346,13 @@ func (*Manager) createSessionManager(
 	mgr.wg.RunWithLog(func() {
 		isSyncer.MDLCheckLoop(ctx)
 	})
-	mgr.wg.RunWithLog(func() {
-		minJobIDRefresher.Start(ctx)
-	})
+	shouldRunMinJobIDRefresher := true
+	failpoint.InjectCall("skipMinJobIDRefresher", &shouldRunMinJobIDRefresher)
+	if shouldRunMinJobIDRefresher {
+		mgr.wg.RunWithLog(func() {
+			minJobIDRefresher.Start(ctx)
+		})
+	}
 
 	logutil.BgLogger().Info("create cross keyspace session manager",
 		zap.String("targetKS", ks), zap.Duration("cost", time.Since(startTime)))
@@ -357,6 +389,8 @@ func (m *Manager) release(targetKS string, holderID string) {
 // callers to use Acquire instead of GetOrCreate directly.
 func (m *Manager) RunSystemKSGCLoop(ctx context.Context) {
 	interval := crossKSRuntimeSweepInterval
+	idleTimeout := crossKSRuntimeIdleTimeout
+	failpoint.InjectCall("mockRuntimeGCLoopConfig", &interval, &idleTimeout)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -365,7 +399,7 @@ func (m *Manager) RunSystemKSGCLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m.sweepIdleRuntimes(crossKSRuntimeIdleTimeout)
+			m.sweepIdleRuntimes(idleTimeout)
 		}
 	}
 }
@@ -434,6 +468,10 @@ func (h *runtimeHandle) SysSessionPool() util.DestroyableSessionPool {
 	return h.entry.sessMgr.SysSessionPool()
 }
 
+func (h *runtimeHandle) AlterTableMode(ctx context.Context, target model.AlterTableModeTarget) error {
+	return h.entry.sessMgr.alterTableMode(ctx, target)
+}
+
 func (h *runtimeHandle) Release() {
 	h.releaseOnce.Do(func() {
 		h.manager.release(h.targetKS, h.holderID)
@@ -442,19 +480,21 @@ func (h *runtimeHandle) Release() {
 
 // SessionManager manages sessions for a specific keyspace.
 type SessionManager struct {
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              util.WaitGroupWrapper
-	exitCh          chan struct{}
-	store           kv.Storage
-	etcdCli         *clientv3.Client
-	schemaVerSyncer schemaver.Syncer
-	infoCache       *infoschema.InfoCache
-	isSyncer        *issyncer.Syncer
-	sessPool        util.DestroyableSessionPool
-	coordinator     *schemaCoordinator
-	isValidator     validatorapi.Validator
-	svrInfoSyncer   *serverinfo.Syncer
+	ctx               context.Context
+	cancel            context.CancelFunc
+	wg                util.WaitGroupWrapper
+	exitCh            chan struct{}
+	store             kv.Storage
+	etcdCli           *clientv3.Client
+	schemaVerSyncer   schemaver.Syncer
+	serverStateSyncer serverstate.Syncer
+	infoCache         *infoschema.InfoCache
+	isSyncer          *issyncer.Syncer
+	sessPool          util.DestroyableSessionPool
+	coordinator       *schemaCoordinator
+	isValidator       validatorapi.Validator
+	svrInfoSyncer     *serverinfo.Syncer
+	ddlClient         *ddlClient
 }
 
 // Store returns the kv.Storage instance used by the session manager.
@@ -472,6 +512,10 @@ func (m *SessionManager) SysSessionPool() util.DestroyableSessionPool {
 	return m.sessPool
 }
 
+func (m *SessionManager) alterTableMode(ctx context.Context, target model.AlterTableModeTarget) error {
+	return m.ddlClient.alterTableMode(ctx, target)
+}
+
 // Coordinator returns the InfoSchemaCoordinator used by the session manager.
 func (m *SessionManager) Coordinator() sessmgr.InfoSchemaCoordinator {
 	return m.coordinator
@@ -485,6 +529,10 @@ func (m *SessionManager) close() {
 	close(m.exitCh)
 	m.cancel()
 	m.wg.Wait()
+	if m.svrInfoSyncer != nil {
+		m.svrInfoSyncer.RemoveServerInfo()
+		m.svrInfoSyncer.RevokeSession()
+	}
 	m.schemaVerSyncer.Close()
 	if err := m.etcdCli.Close(); err != nil {
 		logger.Warn("failed to close etcd client", zap.Error(err))

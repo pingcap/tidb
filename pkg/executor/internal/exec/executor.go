@@ -99,9 +99,10 @@ type ruv2ExecutorMetric struct {
 // by both RU v2 statement metrics and the configurable RU v2 weights.
 //
 // L1: BatchPointGet, PointGet, Limit.
-// L2: HashAgg, HashJoin, IndexLookUpJoin, IndexLookUpExecutor,
-// IndexReaderExecutor, MemTableReaderExec, SelectionExec, TableDualExec,
-// TableReaderExecutor, UnionScanExec, SelectLockExec.
+// L2: Expand, HashAgg, HashJoin, IndexLookUpJoin, IndexLookUpExecutor,
+// IndexLookUpMergeJoin, IndexNestedLoopHashJoin, IndexReaderExecutor,
+// MemTableReaderExec, MergeJoin, Projection, SelectionExec, TableDualExec,
+// TableReaderExecutor, TopN, UnionScanExec, SelectLockExec, Window.
 // L3: Sort, StreamAgg.
 // L4: intentionally unused today.
 // L5: reserved for insert-row accounting outside this executor map.
@@ -115,30 +116,46 @@ func ruv2ExecutorMetricByType(execType string) (ruv2ExecutorMetric, bool) {
 		return ruv2ExecutorMetric{level: 1, label: "LimitExec", useCells: true}, true
 	case "*aggregate.HashAggExec":
 		return ruv2ExecutorMetric{level: 2, label: "HashAggExec", useCells: false}, true
-	case "*executor.HashJoinExec":
-		return ruv2ExecutorMetric{level: 2, label: "HashJoinExec", useCells: false}, true
-	case "*executor.IndexLookUpJoin":
-		return ruv2ExecutorMetric{level: 2, label: "IndexLookUpJoin", useCells: true}, true
+	case "*executor.ExpandExec":
+		return ruv2ExecutorMetric{level: 2, label: "ExpandExec", useCells: false}, true
 	case "*executor.IndexLookUpExecutor":
 		return ruv2ExecutorMetric{level: 2, label: "IndexLookUpExecutor", useCells: false}, true
 	case "*executor.IndexReaderExecutor":
 		return ruv2ExecutorMetric{level: 2, label: "IndexReaderExecutor", useCells: false}, true
 	case "*executor.MemTableReaderExec":
 		return ruv2ExecutorMetric{level: 2, label: "MemTableReaderExec", useCells: false}, true
+	case "*executor.ProjectionExec":
+		return ruv2ExecutorMetric{level: 2, label: "ProjectionExec", useCells: true}, true
 	case "*executor.SelectionExec":
 		return ruv2ExecutorMetric{level: 2, label: "SelectionExec", useCells: false}, true
+	case "*executor.SelectLockExec":
+		return ruv2ExecutorMetric{level: 2, label: "SelectLockExec", useCells: true}, true
 	case "*executor.TableDualExec":
 		return ruv2ExecutorMetric{level: 2, label: "TableDualExec", useCells: false}, true
 	case "*executor.TableReaderExecutor":
 		return ruv2ExecutorMetric{level: 2, label: "TableReaderExecutor", useCells: false}, true
 	case "*executor.UnionScanExec":
 		return ruv2ExecutorMetric{level: 2, label: "UnionScanExec", useCells: false}, true
-	case "*executor.SelectLockExec":
-		return ruv2ExecutorMetric{level: 2, label: "SelectLockExec", useCells: true}, true
-	case "*executor.SortExec":
-		return ruv2ExecutorMetric{level: 3, label: "SortExec", useCells: true}, true
+	case "*windows.WindowExec", "*windows.PipelinedWindowExec", "*windows.OrderedWindowExec":
+		return ruv2ExecutorMetric{level: 2, label: "WindowExec", useCells: false}, true
+	case "*join.HashJoinV1Exec":
+		return ruv2ExecutorMetric{level: 2, label: "HashJoinV1Exec", useCells: false}, true
+	case "*join.HashJoinV2Exec":
+		return ruv2ExecutorMetric{level: 2, label: "HashJoinV2Exec", useCells: false}, true
+	case "*join.IndexLookUpJoin":
+		return ruv2ExecutorMetric{level: 2, label: "IndexLookUpJoin", useCells: true}, true
+	case "*join.IndexLookUpMergeJoin":
+		return ruv2ExecutorMetric{level: 2, label: "IndexLookUpMergeJoin", useCells: true}, true
+	case "*join.IndexNestedLoopHashJoin":
+		return ruv2ExecutorMetric{level: 2, label: "IndexNestedLoopHashJoin", useCells: true}, true
+	case "*join.MergeJoinExec":
+		return ruv2ExecutorMetric{level: 2, label: "MergeJoinExec", useCells: false}, true
+	case "*sortexec.TopNExec":
+		return ruv2ExecutorMetric{level: 2, label: "TopNExec", useCells: true}, true
 	case "*aggregate.StreamAggExec":
 		return ruv2ExecutorMetric{level: 3, label: "StreamAggExec", useCells: false}, true
+	case "*sortexec.SortExec":
+		return ruv2ExecutorMetric{level: 3, label: "SortExec", useCells: true}, true
 	default:
 		return ruv2ExecutorMetric{}, false
 	}

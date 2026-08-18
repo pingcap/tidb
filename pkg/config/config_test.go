@@ -170,6 +170,95 @@ disable-error-stack = false
 `, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
 }
 
+func TestErrorMessageExtensionConfig(t *testing.T) {
+	configFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+error-msg-extension = [
+  { pattern = "^Access denied for user '.+'@'.+' \\(using password: (YES|NO)\\)$", suffix = "see https://docs.pingcap.com/tidbcloud/select-cluster-tier#user-name-prefix for more details" },
+  { pattern = "^require_secure_transport can not be set to ON with SEM\\(security enhanced mode\\) enabled$", suffix = "see https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-tier-clusters for more details" },
+  { pattern = "^sleep\\(\\) argument is greater than [0-9]+$", suffix = "see https://docs.pingcap.com/tidbcloud/serverless-tier-limitations#sql for more details" },
+  { pattern = "^[A-Z ]+ command denied to user '[^']+'@'[^']+' for table '[^']+'$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-tables for more details" },
+  { pattern = "^Access denied; you need \\(at least one of\\) the RESTRICTED_VARIABLES_ADMIN privilege\\(s\\) for this operation$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-variables for more details" },
+  { pattern = "^Feature '.+' is not supported when security enhanced mode is enabled$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#statements for more details" },
+]
+`), 0644))
+
+	conf := NewConfig()
+	conf.DeployMode = deploymode.Starter
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, []ErrorMessageExtension{
+		{Pattern: `^Access denied for user '.+'@'.+' \(using password: (YES|NO)\)$`, Suffix: "see https://docs.pingcap.com/tidbcloud/select-cluster-tier#user-name-prefix for more details"},
+		{Pattern: `^require_secure_transport can not be set to ON with SEM\(security enhanced mode\) enabled$`, Suffix: "see https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-tier-clusters for more details"},
+		{Pattern: `^sleep\(\) argument is greater than [0-9]+$`, Suffix: "see https://docs.pingcap.com/tidbcloud/serverless-tier-limitations#sql for more details"},
+		{Pattern: `^[A-Z ]+ command denied to user '[^']+'@'[^']+' for table '[^']+'$`, Suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-tables for more details"},
+		{Pattern: `^Access denied; you need \(at least one of\) the RESTRICTED_VARIABLES_ADMIN privilege\(s\) for this operation$`, Suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-variables for more details"},
+		{Pattern: `^Feature '.+' is not supported when security enhanced mode is enabled$`, Suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#statements for more details"},
+	}, conf.ErrorMessageExtensions)
+
+	require.Empty(t, NewConfig().ErrorMessageExtensions)
+
+	originGlobalConfig := GetGlobalConfig()
+	StoreGlobalConfig(conf)
+	t.Cleanup(func() {
+		StoreGlobalConfig(originGlobalConfig)
+	})
+	preparedExtensions := GetErrorMessageExtensions()
+	require.NotEmpty(t, preparedExtensions)
+	preparedExtensions[0].Suffix = ""
+	require.NotEmpty(t, GetErrorMessageExtensions()[0].Suffix)
+}
+
+func TestErrorMessageExtensionInvalidRegexp(t *testing.T) {
+	conf := NewConfig()
+	conf.DeployMode = deploymode.Starter
+	conf.ErrorMessageExtensions = []ErrorMessageExtension{
+		{Pattern: "[", Suffix: "invalid regexp"},
+	}
+	require.ErrorContains(t, conf.Valid(), "invalid error-msg-extension regexp")
+
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	conf.ErrorMessageExtensions = []ErrorMessageExtension{
+		{Pattern: " \t", Suffix: "missing pattern"},
+	}
+	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
+
+	conf = NewConfig()
+	conf.ErrorMessageExtensions = []ErrorMessageExtension{
+		{Pattern: ".*", Suffix: "not allowed"},
+	}
+	require.ErrorContains(t, conf.Valid(), "error-msg-extension can only be configured when deploy-mode is starter")
+
+	configFile := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+error-msg-extension = [
+  { pattern = ".*", suffix = "not allowed" },
+]
+`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), "error-msg-extension can only be configured when deploy-mode is starter")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+error-msg-extension = [
+  { suffix = "missing pattern" },
+]
+`), 0644))
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`
+error-msg-extension = [
+  { pattern = "", suffix = "empty pattern" },
+]
+`), 0644))
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	require.NoError(t, conf.Load(configFile))
+	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
+}
+
 func TestKeyspaceObservability(t *testing.T) {
 	conf := NewConfig()
 	content := `
@@ -877,6 +966,26 @@ func TestConfig(t *testing.T) {
 	conf.Instance.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
 	storeDir := t.TempDir()
 	configFile := filepath.Join(storeDir, "config.toml")
+	hostedEmbeddingErr := "hosted-embedding can only be configured for starter deploy mode"
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`[hosted-embedding]`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), hostedEmbeddingErr)
+
+	conf = NewConfig()
+	conf.HostedEmbedding.Enabled = true
+	require.ErrorContains(t, conf.Valid(), hostedEmbeddingErr)
+
+	conf = NewConfig()
+	conf.HostedEmbedding.APIEndpoint = "https://example.com/v1"
+	require.ErrorContains(t, conf.Valid(), hostedEmbeddingErr)
+
+	if kerneltype.IsNextGen() {
+		conf = NewConfig()
+		conf.DeployMode = deploymode.Starter
+		conf.HostedEmbedding.Enabled = true
+		require.NoError(t, conf.Valid())
+	}
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func(configFile string) {
@@ -944,6 +1053,7 @@ keys-limit=123
 total-key-size-limit=1024
 [experimental]
 allow-expression-index = true
+allow-enable-foreign-key-check-in-shared-lock = true
 [isolation-read]
 engines = ["tiflash"]
 [labels]
@@ -1015,6 +1125,7 @@ max_connections = 200
 	require.True(t, conf.PessimisticTxn.PessimisticAutoCommit.Load())
 	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
 	require.True(t, conf.Experimental.AllowsExpressionIndex)
+	require.True(t, conf.Experimental.AllowEnableForeignKeyCheckInSharedLock)
 	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)
 	require.Equal(t, uint(10), conf.Status.GRPCKeepAliveTimeout)
 	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
@@ -1315,6 +1426,18 @@ dxf-resource-limit = 101`), 0644))
 	require.NoError(t, conf.Valid())
 
 	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+[hosted-embedding]
+enabled = true
+api-endpoint = "https://example.com/v1"
+api-key-path = "/tmp/embedding-api-key"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.True(t, conf.HostedEmbedding.Enabled)
+	require.Equal(t, "https://example.com/v1", conf.HostedEmbedding.APIEndpoint)
+	require.Equal(t, "/tmp/embedding-api-key", conf.HostedEmbedding.APIKeyPath)
+	require.NoError(t, conf.Valid())
+
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
 [starter-params]
 max-import-data-size = "1MiB"`), 0644))
 	conf = NewConfig()
@@ -1322,9 +1445,28 @@ max-import-data-size = "1MiB"`), 0644))
 	require.EqualValues(t, 1024*1024, conf.StarterParams.MaxImportDataSize)
 	require.NoError(t, conf.Valid())
 
+	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
+[starter-params]
+bootstrap-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.Equal(t, "/etc/tidb/starter-bootstrap.json", conf.StarterParams.BootstrapFile)
+	require.NoError(t, conf.Valid())
+
 	conf = NewConfig()
 	conf.StarterParams.EnableManagerNotifier = true
 	require.ErrorContains(t, conf.Valid(), "starter-params.enable-manager-notifier can only be configured for starter deploy mode")
+	conf = NewConfig()
+	conf.StarterParams.BootstrapFile = "/etc/tidb/starter-bootstrap.json"
+	require.ErrorContains(t, conf.Valid(), "starter-params.bootstrap-file can only be configured for starter deploy mode")
+	require.NoError(t, os.WriteFile(configFile, []byte(`[starter-params]
+bootstrap-file = ""`), 0644))
+	conf = NewConfig()
+	require.NoError(t, conf.Load(configFile))
+	require.NoError(t, os.WriteFile(configFile, []byte(`[starter-params]
+bootstrap-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
+	conf = NewConfig()
+	require.ErrorContains(t, conf.Load(configFile), "starter-params.bootstrap-file can only be configured for starter deploy mode")
 	conf = NewConfig()
 	conf.StarterParams.MaxImportDataSize = 1
 	require.ErrorContains(t, conf.Valid(), "starter-params.max-import-data-size can only be configured for starter deploy mode")
@@ -1811,6 +1953,40 @@ func TestStatsLoadLimit(t *testing.T) {
 	checkQueueSizeValid(DefStatsLoadQueueSizeLimit-1, false)
 	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit, true)
 	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit+1, false)
+}
+
+func TestExternalWorkloadValid(t *testing.T) {
+	conf := NewConfig()
+	require.NoError(t, conf.Valid())
+
+	conf.ExternalWorkload.Enable = true
+	require.ErrorContains(t, conf.Valid(), "external-workload can only be configured when deploy-mode is starter")
+
+	conf = NewConfig()
+	confFile := filepath.Join(t.TempDir(), "tidb.toml")
+	require.NoError(t, os.WriteFile(confFile, []byte("[external-workload]\nenable = false\n"), 0644))
+	require.ErrorContains(t, conf.Load(confFile), "external-workload can only be configured when deploy-mode is starter")
+
+	if kerneltype.IsClassic() {
+		t.Skip("only for nextgen kernel")
+	}
+
+	conf = NewConfig()
+	conf.DeployMode = deploymode.Starter
+	conf.ExternalWorkload.Enable = true
+	require.ErrorContains(t, conf.Valid(), "external-workload controller-addr must not be empty")
+
+	conf.ExternalWorkload.ControllerAddr = "http://127.0.0.1:1234"
+	conf.ExternalWorkload.TidbPool = ""
+	require.ErrorContains(t, conf.Valid(), "external-workload tidb-pool must not be empty")
+
+	conf.ExternalWorkload.TidbPool = "pool-a"
+	conf.ExternalWorkload.Role = "unknown"
+	require.ErrorContains(t, conf.Valid(), `invalid external-workload role "unknown"`)
+
+	conf.ExternalWorkload.Role = " GCV2 "
+	require.NoError(t, conf.Valid())
+	require.Equal(t, RoleGCV2Worker, conf.ExternalWorkload.Role)
 }
 
 func TestGetGlobalKeyspaceName(t *testing.T) {

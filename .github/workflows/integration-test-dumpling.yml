@@ -64,15 +64,16 @@ jobs:
         options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
     steps:
       - name: "checkout repository"
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: "set up golang"
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: 'go.mod'
       - name: "try to use build cache"
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -101,7 +102,7 @@ jobs:
           fi
       - name: "upload tidb log artifact"
         if: ${{ failure() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dumpling-tidb-log-${{ matrix.mysql_version }}
           path: /tmp/dumpling_test_result/tidb.log
@@ -109,4 +110,4 @@ jobs:
           retention-days: 7
       - name: "set up tmate session if necessary"
         if: ${{ failure() && github.event_name == 'workflow_dispatch' && github.event.inputs.debug }}
-        uses: mxschmitt/action-tmate@v3
+        uses: mxschmitt/action-tmate@35b54afac29c97fb54faba5b513f8fbd1882f113 # v3

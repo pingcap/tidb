@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl/bdr"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
@@ -2005,8 +2006,8 @@ func GetModifiableColumnJob(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if bdrRole == string(ast.BDRRolePrimary) &&
-		deniedByBDRWhenModifyColumn(newCol.FieldType, col.FieldType, specNewColumn.Options) && !filter.IsSystemSchema(schema.Name.L) {
+	if bdr.IsModifyColumnDenied(ast.BDRRole(bdrRole), newCol.FieldType, col.FieldType, specNewColumn.Options) &&
+		!filter.IsSystemSchema(schema.Name.L) {
 		return nil, dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 	}
 
@@ -2296,7 +2297,7 @@ func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool)
 func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
+		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
 	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 	var hasDefaultValue, setOnUpdateNow bool

@@ -23,37 +23,54 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/ngaut/pools"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
+	sqlsvrapimock "github.com/pingcap/tidb/pkg/domain/sqlsvrapi/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
 	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
 	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/mock/gomock"
 )
 
+func newBackfillingSchedulerTestRuntime(ctrl *gomock.Controller, store kv.Storage, sessPool tidbutil.DestroyableSessionPool) *sqlsvrapimock.MockRuntime {
+	runtime := sqlsvrapimock.NewMockRuntime(ctrl)
+	runtime.EXPECT().Store().Return(store).AnyTimes()
+	runtime.EXPECT().SysSessionPool().Return(sessPool).AnyTimes()
+	return runtime
+}
+
+func backfillingSchedulerParamForTest(ctrl *gomock.Controller, store kv.Storage, sessPool tidbutil.DestroyableSessionPool) scheduler.Param {
+	return scheduler.Param{TaskRuntime: newBackfillingSchedulerTestRuntime(ctrl, store, sessPool)}
+}
+
 func TestBackfillingSchedulerLocalMode(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sch, err := ddl.NewBackfillingSchedulerForTest(dom.DDL())
 	require.NoError(t, err)
 	sch.(*ddl.LitBackfillScheduler).BaseScheduler = &scheduler.BaseScheduler{
-		Param: scheduler.Param{TaskStore: store},
+		Param: backfillingSchedulerParamForTest(ctrl, store, dom.SysSessionPool()),
 	}
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB", "return(1048576)"))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockWriterMemSizeInKB", "return(1048576)")
 	/// 1. test partition table.
 	tk.MustExec("create table tp1(id int primary key, v int, key idx (id)) PARTITION BY RANGE (id) (\n    " +
 		"PARTITION p0 VALUES LESS THAN (10),\n" +
@@ -115,7 +132,57 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
 	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
-	// 2.2.2 BackfillStepReadIndex
+
+	// 2.2.2 transient region discontinuity should be retried.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockPhysicalTableRegionDiscontinuity", "1*return()")
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, task, execIDs, task.Step)
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+
+	// 2.2.3 a retry after allocating some subtask timestamps should not return a partial or duplicate plan.
+	tk.MustExec("create table t3(id bigint primary key)")
+	tk.MustExec("insert into t3 values (1), (9999)")
+	tk.MustQuery("split table t3 by (5000)").Check(testkit.Rows("1 1"))
+	multiRegionTask, server := createAddIndexTask(t, dom, "test", "t3", proto.Backfill, false)
+	require.Nil(t, server)
+	multiRegionTask.Step = sch.GetNextStep(&multiRegionTask.TaskBase)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRegionBatch", "return(1)")
+	expectedMetas, err := sch.OnNextSubtasksBatch(ctx, nil, multiRegionTask, execIDs, multiRegionTask.Step)
+	require.NoError(t, err)
+	require.Len(t, expectedMetas, 2)
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockAllocNewTSError", "1*return(false)->1*return(true)")
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, multiRegionTask, execIDs, multiRegionTask.Step)
+	require.NoError(t, err)
+	require.Len(t, metas, len(expectedMetas))
+	for i := range expectedMetas {
+		var expected, actual ddl.BackfillSubTaskMeta
+		require.NoError(t, json.Unmarshal(expectedMetas[i], &expected))
+		require.NoError(t, json.Unmarshal(metas[i], &actual))
+		require.Equal(t, expected.PhysicalTableID, actual.PhysicalTableID)
+		require.Equal(t, expected.RowStart, actual.RowStart)
+		require.Equal(t, expected.RowEnd, actual.RowEnd)
+	}
+
+	// 2.2.4 transient region discontinuity should also be retried when planning the merge-temp-index step.
+	tk.MustExec("create table t4(id bigint primary key, v bigint, key idx(v))")
+	mergeTask, server := createAddIndexTask(t, dom, "test", "t4", proto.Backfill, false)
+	require.Nil(t, server)
+	mergeTable, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t4"))
+	require.NoError(t, err)
+	var mergeTaskMeta ddl.BackfillTaskMeta
+	require.NoError(t, json.Unmarshal(mergeTask.Meta, &mergeTaskMeta))
+	mergeTaskMeta.EleIDs = []int64{mergeTable.Meta().Indices[0].ID}
+	mergeTaskMeta.MergeTempIndex = true
+	mergeTask.Meta, err = json.Marshal(&mergeTaskMeta)
+	require.NoError(t, err)
+	mergeTask.Step = proto.BackfillStepMergeTempIndex
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockMergeTempIndexRegionDiscontinuity", "1*return()")
+	metas, err = sch.OnNextSubtasksBatch(ctx, nil, mergeTask, execIDs, mergeTask.Step)
+	require.NoError(t, err)
+	require.Len(t, metas, 1)
+
+	// 2.2.5 BackfillStepReadIndex
 	task.State = proto.TaskStateRunning
 	task.Step = sch.GetNextStep(&task.TaskBase)
 	require.Equal(t, proto.StepDone, task.Step)
@@ -149,6 +216,9 @@ func TestCalculateRegionBatch(t *testing.T) {
 }
 
 func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
 	// init test env.
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -176,7 +246,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	require.NoError(t, err)
 	ext.(*ddl.LitBackfillScheduler).GlobalSort = true
 	ext.(*ddl.LitBackfillScheduler).BaseScheduler = &scheduler.BaseScheduler{
-		Param: scheduler.Param{TaskStore: store},
+		Param: backfillingSchedulerParamForTest(ctrl, store, dom.SysSessionPool()),
 	}
 	sch.Extension = ext
 
@@ -223,10 +293,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
 	}
 	// 2. to merge-sort stage.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`)
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
@@ -263,10 +330,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, mergeSortStepMetaBytes))
 	}
 	// 3. to write&ingest stage.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWriteIngest", "return(true)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockWriteIngest"))
-	})
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockWriteIngest", "return(true)")
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)

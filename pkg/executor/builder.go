@@ -1958,6 +1958,10 @@ func (b *executorBuilder) buildHashJoinV2FromChildExecs(leftExec, rightExec exec
 }
 
 func (b *executorBuilder) buildHashJoin(v *physicalop.PhysicalHashJoin) exec.Executor {
+	if v.JoinType == base.FullOuterJoin {
+		b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+		return nil
+	}
 	if b.sctx.GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && v.CanUseHashJoinV2() {
 		return b.buildHashJoinV2(v)
 	}
@@ -2163,8 +2167,12 @@ func (b *executorBuilder) buildHashAggFromChildExec(childExec exec.Executor, v *
 		e.DefaultVal = e.AllocPool.Alloc(exec.RetTypes(e), 1, 1)
 	}
 	for _, aggDesc := range v.AggFuncs {
-		if aggDesc.HasDistinct || len(aggDesc.OrderByItems) > 0 {
+		if len(aggDesc.OrderByItems) > 0 {
 			e.IsUnparallelExec = true
+		}
+
+		if aggDesc.HasDistinct {
+			e.HasDistinct = true
 		}
 	}
 	// When we set both tidb_hashagg_final_concurrency and tidb_hashagg_partial_concurrency to 1,
@@ -3319,8 +3327,10 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	// buildAnalyzeSamplingPushdown reads base count / modify_count from mysql.stats_meta
 	// while constructing column analyze tasks. Flush pending deltas first so the base
 	// values include pre-analyze changes and later delta dumps cannot double count them.
+	// The flush is deliberately not the analyze source: it is lightweight metadata
+	// work, not the heavy scan that background throttling targets.
 	intest.Assert(b.ctx != nil, "missing statement context for analyze")
-	if err := flushStatsDeltaForAnalyze(kv.WithInternalSourceType(b.ctx, kv.InternalTxnStats), b.sctx, v); err != nil {
+	if err := flushStatsDeltaForAnalyze(kv.WithInternalSourceType(b.ctx, kv.InternalTxnStatsForegroundPriority), b.sctx, v); err != nil {
 		b.err = err
 		return nil
 	}

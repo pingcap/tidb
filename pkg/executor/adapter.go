@@ -169,10 +169,14 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return
 		}
 		err = util2.GetRecoverError(r)
+		if a.stmt != nil {
+			a.stmt.abortStatementRU()
+		}
 		logutil.Logger(ctx).Warn("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 	if a.stmt != nil {
 		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			a.stmt.abortStatementRU()
 			return err
 		}
 	}
@@ -187,7 +191,14 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	}
 	ctx = inheritStmtRUV2Context(ctx, a.stmt)
 
-	err = a.stmt.next(ctx, a.executor, req)
+	e := a.executor
+	if e == nil {
+		err = exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+		a.lastErrs = append(a.lastErrs, err)
+		return err
+	}
+
+	err = a.stmt.next(ctx, e, req)
 	if err != nil {
 		a.lastErrs = append(a.lastErrs, err)
 		return err
@@ -195,6 +206,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	numRows := req.NumRows()
 	if numRows == 0 {
 		if a.stmt != nil {
+			a.stmt.recordStatementRURootEOF()
 			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
 		}
 		return nil
@@ -212,19 +224,48 @@ func inheritStmtRUV2Context(ctx context.Context, stmt *ExecStmt) context.Context
 	return execdetails.ContextWithInheritedRUV2Details(ctx, stmt.GoCtx)
 }
 
-// NewChunk create a chunk base on top-level executor's exec.NewFirstChunk().
+func (a *recordSet) chunkConfig() (fields []*types.FieldType, initCap int, maxChunkSize int) {
+	if a.executor != nil {
+		return a.executor.RetFieldTypes(), a.executor.InitCap(), a.executor.MaxChunkSize()
+	}
+	if a.schema != nil {
+		fields = make([]*types.FieldType, 0, a.schema.Len())
+		for _, col := range a.schema.Columns {
+			fields = append(fields, col.RetType)
+		}
+	}
+	if a.stmt == nil || a.stmt.Ctx == nil {
+		return fields, vardef.DefInitChunkSize, vardef.DefMaxChunkSize
+	}
+	sessVars := a.stmt.Ctx.GetSessionVars()
+	return fields, sessVars.InitChunkSize, sessVars.MaxChunkSize
+}
+
+// NewChunk creates a chunk based on the top-level executor's result schema.
 func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
-	if alloc == nil {
-		return exec.NewFirstChunk(a.executor)
+	e := a.executor
+	if e == nil {
+		fields, initCap, maxChunkSize := a.chunkConfig()
+		if alloc == nil {
+			return chunk.New(fields, initCap, maxChunkSize)
+		}
+		return alloc.Alloc(fields, initCap, maxChunkSize)
 	}
 
-	return alloc.Alloc(a.executor.RetFieldTypes(), a.executor.InitCap(), a.executor.MaxChunkSize())
+	if alloc == nil {
+		return exec.NewFirstChunk(e)
+	}
+
+	return alloc.Alloc(e.RetFieldTypes(), e.InitCap(), e.MaxChunkSize())
 }
 
 func (a *recordSet) Finish() error {
 	var err error
 	a.once.Do(func() {
-		err = exec.Close(a.executor)
+		if a.executor != nil {
+			err = exec.Close(a.executor)
+			a.executor = nil
+		}
 		cteErr := resetCTEStorageMap(a.stmt.Ctx)
 		if cteErr != nil {
 			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
@@ -232,7 +273,6 @@ func (a *recordSet) Finish() error {
 		if err == nil {
 			err = cteErr
 		}
-		a.executor = nil
 		if a.stmt != nil {
 			status := a.stmt.Ctx.GetSessionVars().SQLKiller.GetKillSignal()
 			inWriteResultSet := a.stmt.Ctx.GetSessionVars().SQLKiller.InWriteResultSet.Load()
@@ -325,6 +365,10 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan base.Plan
+	// statementRUOwner is nil unless the current statement RU calculation policy
+	// or a test hook installs it. It must be installed before the ExecStmt
+	// is published and must not be replaced after execution begins.
+	statementRUOwner *statementRUOwner
 
 	StmtNode ast.StmtNode
 
@@ -363,6 +407,11 @@ func (a *ExecStmt) GetStmtNode() ast.StmtNode {
 func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "ExecStmt.PointGet")
 	defer r.End()
+	failpoint.Inject("statementRUPointGetErrorForTest", func(val failpoint.Value) {
+		if a.Ctx != nil && val.(int) == int(a.Ctx.GetSessionVars().ConnectionID) {
+			failpoint.Return(nil, errors.New("statement RU PointGet test error"))
+		}
+	})
 	if r.Span != nil {
 		r.Span.LogKV("sql", a.Text())
 	}
@@ -1385,6 +1434,14 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		return nil, lockErr
 	}
 
+	// LOAD DATA LOCAL INFILE reads a one-shot file stream from the client
+	// connection. Rebuilding and reopening its executor would send another
+	// LOCAL_INFILE_REQUEST in the same command and desynchronize the MySQL
+	// packet sequence. Server or remote files can be reopened and retried.
+	if loadData, ok := a.Plan.(*plannercore.LoadData); ok && loadData.FileLocRef == ast.FileLocClient {
+		return nil, lockErr
+	}
+
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
@@ -1653,9 +1710,9 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
 
-	a.recordInsertRows2Metrics()
 	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
+	a.finishStatementRU(err)
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
@@ -1741,30 +1798,22 @@ func (a *ExecStmt) recordAffectedRows2Metrics() {
 	}
 }
 
-func (a *ExecStmt) recordInsertRows2Metrics() {
-	recordInsertRows2Metrics(a.Ctx.GetSessionVars())
+func recordDMLRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowCount, columnCount int64) {
+	if rowCount <= 0 || columnCount <= 0 {
+		return
+	}
+
+	rowsColMultiply := rowCount * columnCount
+	if rowCount > math.MaxInt64/columnCount {
+		rowsColMultiply = math.MaxInt64
+	}
+	if sessVars.RUV2Metrics != nil {
+		sessVars.RUV2Metrics.AddExecutorL5InsertRows(rowsColMultiply)
+	}
 }
 
-func recordInsertRows2Metrics(sessVars *variable.SessionVars) {
-	stmtCtx := sessVars.StmtCtx
-	if stmtCtx.StmtType != "Insert" {
-		return
-	}
-	// EXPLAIN ANALYZE INSERT snapshots RU before FinishExecuteStmt runs, while the final statement reporting
-	// still goes through FinishExecuteStmt. Keep this accounting idempotent so both paths can share it safely.
-	if stmtCtx.InsertRowsAsRUV2Recorded {
-		return
-	}
-
-	affectedRows := stmtCtx.AffectedRows()
-	if affectedRows <= 0 {
-		return
-	}
-
-	if sessVars.RUV2Metrics != nil {
-		sessVars.RUV2Metrics.AddExecutorL5InsertRows(int64(affectedRows))
-	}
-	stmtCtx.InsertRowsAsRUV2Recorded = true
+func recordInsertRowsColMultiply2Metrics(sessVars *variable.SessionVars, rowsColMultiply int64) {
+	recordDMLRowsColMultiply2Metrics(sessVars, rowsColMultiply, 1)
 }
 
 // finalizeStatementRUV2Metrics is the sole drain of raw RUv2 counters. In-flight
@@ -1775,6 +1824,9 @@ func (a *ExecStmt) finalizeStatementRUV2Metrics() {
 	if sessVars.RUV2Metrics == nil || sessVars.RUV2Metrics.Bypass() {
 		return
 	}
+
+	execDetail := sessVars.StmtCtx.GetExecDetails()
+	execdetails.UpdateRUV2MetricsFromCommitDetails(sessVars.RUV2Metrics, execDetail.CommitDetail)
 
 	ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey)
 	ruDetail, _ := ruDetailRaw.(*util.RUDetails)
@@ -1842,7 +1894,10 @@ func (a *ExecStmt) recordLastQueryInfo(err error) {
 }
 
 func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
-	if kv.GetInternalSourceType(a.GoCtx) == kv.InternalTxnStats {
+	source := kv.GetInternalSourceType(a.GoCtx)
+	// Analyze and foreground-priority statistics work use these request sources.
+	// Filter both so plan replayer capture skips all internal statistics work.
+	if source == kv.InternalTxnStats || source == kv.InternalTxnStatsForegroundPriority {
 		return
 	}
 	se := a.Ctx
