@@ -206,7 +206,7 @@ pub use tidb_expr::{
     JsonError, MysqlRng, SessionTimeZone,
 };
 pub use topn::TopNExec;
-pub use view::{run_create_view_in, run_drop_view_in, view_column_list};
+pub use view::{resolve_view_definition, run_create_view_in, run_drop_view_in, view_column_list};
 
 /// Explicit isolated spill authorities for executor tests.
 #[cfg(test)]

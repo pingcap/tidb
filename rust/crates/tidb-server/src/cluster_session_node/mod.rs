@@ -1113,7 +1113,7 @@ impl ClusterServerSession {
     /// a `CREATE TABLE` with a foreign key is a clause it refuses by name, and
     /// a table-scoped `GRANT` is a `mysql.*` row shape the account writer does
     /// not encode (which it reports at persist time, where it knows).
-    fn schema_route(&self, sql: &str) -> Result<StatementRoute, SqlQueryError> {
+    fn schema_route(&mut self, sql: &str) -> Result<StatementRoute, SqlQueryError> {
         let change = self
             .session
             .statement_stored_state_change(sql)
@@ -1122,14 +1122,14 @@ impl ClusterServerSession {
     }
 
     fn schema_route_prepared(
-        &self,
+        &mut self,
         prepared: &PreparedAst,
     ) -> Result<StatementRoute, SqlQueryError> {
         self.schema_route_for_change(prepared.sql(), prepared.stored_state_change())
     }
 
     fn schema_route_for_change(
-        &self,
+        &mut self,
         sql: &str,
         change: StoredStateChange,
     ) -> Result<StatementRoute, SqlQueryError> {
@@ -1147,6 +1147,27 @@ impl ClusterServerSession {
                 }
             }
             StoredStateChange::Schema => {
+                // A CREATE VIEW resolves its body against this node's own
+                // catalog FIRST — a bad body fails here, at CREATE time,
+                // exactly where Go's `executeCreateView` preprocess fails —
+                // and the finished definition becomes the published
+                // `TableInfo`.
+                // The body's meta run reads through cluster storage, so it
+                // needs the same statement-snapshot lifecycle the PREPARE
+                // probe uses — work the client did not ask to run, reading
+                // at a fresh timestamp and unbinding afterwards.
+                let resolved = self.probe_statement(StatementReadShape::Unknown, |session| {
+                    session.resolve_cluster_view(sql).map_err(map_error)
+                })?;
+                if let Some((database, name, or_replace, view)) = resolved {
+                    let info = tidb_exec::cluster_ddl::build_view_table_info(&name, &view);
+                    return Ok(StatementRoute::Ddl(DdlStatement::CreateView {
+                        schema: database,
+                        name,
+                        or_replace,
+                        info: Box::new(info),
+                    }));
+                }
                 let context = self.session.ddl_statement_context();
                 match prepare_cluster_ddl_with_context(
                     sql,
@@ -1156,7 +1177,8 @@ impl ClusterServerSession {
                     Ok(Some(statement)) => Ok(StatementRoute::Ddl(statement)),
                     Ok(None) => Err(SqlQueryError::unknown(
                         "this node changes the cluster's catalog for CREATE TABLE, DROP TABLE, \
-                         CREATE DATABASE, DROP DATABASE, index changes, and single-action ALTER \
+                         CREATE DATABASE, DROP DATABASE, CREATE/DROP VIEW, index changes, and \
+                         single-action ALTER \
                          INDEX changes only; run \
                          this statement on a TiDB server",
                     )),

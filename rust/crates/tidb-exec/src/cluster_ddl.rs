@@ -371,6 +371,28 @@ pub enum DdlStatement {
         table: String,
     },
     /// `DROP TABLE [IF EXISTS] [schema.]table`.
+    /// `CREATE [OR REPLACE] VIEW [schema.]name AS ...`, carrying the
+    /// fully built `TableInfo` — columns resolved and view metadata
+    /// captured at the ROUTE, against the resolving node's own catalog,
+    /// which is Go's shape: `executeCreateView` preprocesses the body in
+    /// the executor and hands DDL a finished `TableInfo`.
+    CreateView {
+        /// The owning schema.
+        schema: String,
+        /// The view name.
+        name: String,
+        /// Whether `OR REPLACE` was written.
+        or_replace: bool,
+        /// The finished metadata; `id`/`update_ts` are stamped at plan time.
+        info: Box<TableInfo>,
+    },
+    /// `DROP VIEW [IF EXISTS] name [, ...]`.
+    DropView {
+        /// Each `(schema, name)` in written order.
+        names: Vec<(String, String)>,
+        /// Whether missing views demote to notes rather than the error.
+        if_exists: bool,
+    },
     DropTable {
         /// The resolved database name.
         schema: String,
@@ -519,6 +541,17 @@ pub fn lower_ddl_with_context(
             lower_create_table(create, default_schema, context).map(Some)
         }
         DdlStmt::DropTable(drop) => lower_drop_table(drop, default_schema).map(Some),
+        DdlStmt::DropView { if_exists, names } => {
+            let mut resolved = Vec::with_capacity(names.len());
+            for path in names {
+                let (schema, name) = split_name(path, default_schema, "view")?;
+                resolved.push((schema, name));
+            }
+            Ok(Some(DdlStatement::DropView {
+                names: resolved,
+                if_exists: *if_exists,
+            }))
+        }
         DdlStmt::CreateIndex(create) => lower_create_index(create, default_schema).map(Some),
         DdlStmt::DropIndex(drop) => lower_drop_index(drop, default_schema).map(Some),
         DdlStmt::AlterTable(alter) => lower_alter_table_catalog(alter, default_schema),
@@ -1484,6 +1517,65 @@ pub struct IndexBackfill {
 /// node's or a real TiDB's — turns this transaction into a definite
 /// `WriteConflict` rather than an interleaved half-change. There is no owner
 /// election here; that conflict IS the mutual exclusion.
+/// Builds the `TableInfo` a `CREATE VIEW` publishes, from the definition the
+/// resolving node settled ([`tidb_executor::resolve_view_definition`]).
+///
+/// Field mapping is Go's own: the creator connection's client charset and
+/// collation land in `TableInfo.Charset`/`Collate` (which is where
+/// `SHOW CREATE VIEW`'s two charset columns read them back —
+/// `executor/show.go` appends `tb.Meta().Charset, tb.Meta().Collate`), the
+/// resolved output columns land in `Columns`, and the view metadata in
+/// `View`. `ViewInfo.Cols` stays nil: the resolved column names already
+/// carry any explicit `CREATE VIEW v (...)` list.
+#[must_use]
+pub fn build_view_table_info(name: &str, view: &tidb_executor::ViewDef) -> TableInfo {
+    use tidb_ast::{ViewAlgorithm, ViewCheckOption, ViewSecurity};
+    use tidb_model::table::ViewInfo;
+    use tidb_parser::auth::UserIdentity;
+    let columns = view
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(offset, (column_name, field_type))| tidb_model::ColumnInfo {
+            id: i64::try_from(offset).expect("a column offset fits in i64") + 1,
+            name: CiString::new(column_name.clone()),
+            offset: i64::try_from(offset).expect("a column offset fits in i64"),
+            field_type: field_type.clone(),
+            state: SchemaState::PUBLIC,
+            ..tidb_model::ColumnInfo::default()
+        })
+        .collect::<Vec<_>>();
+    // `ast/model.go`: UNDEFINED/MERGE/TEMPTABLE are 0/1/2, DEFINER/INVOKER
+    // 0/1, LOCAL/CASCADED 0/1.
+    let algorithm = ViewAlgorithm(match view.algorithm.as_str() {
+        "MERGE" => 1,
+        "TEMPTABLE" => 2,
+        _ => 0,
+    });
+    let security = ViewSecurity(i64::from(view.security == "INVOKER"));
+    let check_option = ViewCheckOption(i64::from(view.check_option != "LOCAL"));
+    TableInfo {
+        name: CiString::new(name.to_owned()),
+        charset: view.character_set_client.clone(),
+        collate: view.collation_connection.clone(),
+        columns: columns.into(),
+        state: SchemaState::PUBLIC,
+        view: Some(GoShared::new(ViewInfo {
+            algorithm,
+            definer: Some(Box::new(UserIdentity {
+                username: view.definer_user.clone(),
+                hostname: view.definer_host.clone(),
+                ..UserIdentity::default()
+            })),
+            security,
+            select_stmt: view.select_sql.clone(),
+            check_option,
+            ..ViewInfo::default()
+        })),
+        ..TableInfo::default()
+    }
+}
+
 pub fn plan_ddl<S: MetaSnapshot>(
     snapshot: &mut S,
     statement: &DdlStatement,
@@ -1634,6 +1726,90 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_CREATE_TABLE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+        }
+        DdlStatement::CreateView {
+            schema,
+            name,
+            or_replace,
+            info,
+        } => {
+            let Some(database) = find_database(&catalog, schema) else {
+                return Err(DdlPlanError::UnknownDatabase(schema.clone()));
+            };
+            let existing = find_table(database, name).map(|table| table.id);
+            if existing.is_some() && !or_replace {
+                return Err(DdlPlanError::TableExists {
+                    schema: schema.clone(),
+                    table: name.clone(),
+                });
+            }
+            let db_id = database.info.id;
+            // Go `onCreateView` under OR REPLACE drops whatever object held
+            // the name — table or view alike — and deletes its auto-id
+            // accessors, then creates the view under a FRESH table id
+            // (`DropTableOrView` + `createTableOrViewWithCheck`).
+            if let Some(old_id) = existing {
+                writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
+                    db_id, old_id,
+                ))?);
+            }
+            let table_id = allocate(snapshot, &mut writes, 1)?[0];
+            created_id = Some(table_id);
+            let mut info = (**info).clone();
+            info.id = table_id;
+            info.update_ts = start_ts;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_CREATE_VIEW;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::DropView { names, if_exists } => {
+            // Go's executor files one `Note 1051` per missing name under
+            // IF EXISTS and one ErrBadTable naming every missing view
+            // without it; a name held by a base table is ErrWrongObject
+            // immediately, even under IF EXISTS.
+            let mut missing = Vec::new();
+            let mut dropped_any = false;
+            for (schema, name) in names {
+                let Some(database) = find_database(&catalog, schema) else {
+                    missing.push(format!("{schema}.{name}"));
+                    continue;
+                };
+                let Some(table) = find_table(database, name) else {
+                    missing.push(format!("{schema}.{name}"));
+                    continue;
+                };
+                if table.view.is_none() {
+                    return Err(DdlPlanError::Unsupported(format!(
+                        "'{schema}.{name}' is a base table, not a VIEW (Go ErrWrongObject)"
+                    )));
+                }
+                writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
+                    database.info.id,
+                    table.id,
+                ))?);
+                diff.action_type = ActionType::ACTION_DROP_VIEW;
+                diff.schema_id = database.info.id;
+                diff.table_id = table.id;
+                dropped_any = true;
+            }
+            if !missing.is_empty() && !if_exists {
+                return Err(DdlPlanError::Unsupported(format!(
+                    "Unknown table '{}'",
+                    missing.join(",")
+                )));
+            }
+            if !dropped_any {
+                return Ok(already(format!(
+                    "no named view exists: {}",
+                    missing.join(",")
+                )));
+            }
         }
         DdlStatement::RebaseAutoRandom {
             schema,

@@ -182,6 +182,64 @@ impl ClusterDdl for MockDdl {
                 info.id = id;
                 next.databases[at].tables.push(info);
             }
+            DdlStatement::CreateView {
+                schema,
+                name,
+                or_replace,
+                info,
+            } => {
+                let at = find(&mut next.databases, schema).ok_or_else(|| {
+                    SqlQueryError::unknown(format!("Unknown database '{schema}'"))
+                })?;
+                let lowered = name.to_lowercase();
+                let existing = next.databases[at]
+                    .tables
+                    .iter()
+                    .position(|stored| stored.name.lowercase() == lowered);
+                if existing.is_some() && !or_replace {
+                    return Err(SqlQueryError::unknown(format!(
+                        "Table '{schema}.{name}' already exists"
+                    )));
+                }
+                if let Some(old) = existing {
+                    next.databases[at].tables.remove(old);
+                }
+                let id = self.allocate();
+                created_id = Some(id);
+                let mut info = (**info).clone();
+                info.id = id;
+                next.databases[at].tables.push(info);
+            }
+            DdlStatement::DropView { names, if_exists } => {
+                let mut missing = Vec::new();
+                for (schema, name) in names {
+                    let Some(at) = find(&mut next.databases, schema) else {
+                        missing.push(format!("{schema}.{name}"));
+                        continue;
+                    };
+                    let lowered = name.to_lowercase();
+                    let Some(stored) = next.databases[at]
+                        .tables
+                        .iter()
+                        .position(|stored| stored.name.lowercase() == lowered)
+                    else {
+                        missing.push(format!("{schema}.{name}"));
+                        continue;
+                    };
+                    if next.databases[at].tables[stored].view.is_none() {
+                        return Err(SqlQueryError::unknown(format!(
+                            "'{schema}.{name}' is a base table, not a VIEW"
+                        )));
+                    }
+                    next.databases[at].tables.remove(stored);
+                }
+                if !missing.is_empty() && !if_exists {
+                    return Err(SqlQueryError::unknown(format!(
+                        "Unknown table '{}'",
+                        missing.join(",")
+                    )));
+                }
+            }
             DdlStatement::RebaseAutoRandom {
                 schema,
                 table,

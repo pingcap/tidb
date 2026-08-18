@@ -375,6 +375,33 @@ impl Session {
         self.statement_context(false)
     }
 
+    /// Resolves a `CREATE [OR REPLACE] VIEW` against this session's catalog
+    /// for the cluster DDL route: `Ok(None)` when `sql` is not a CREATE
+    /// VIEW; otherwise the `(database, name, or_replace, view)` the cluster
+    /// tier publishes. This is Go's shape — `executeCreateView` preprocesses
+    /// the body in the executor (failing a bad body at CREATE time) and
+    /// hands DDL a finished definition.
+    pub fn resolve_cluster_view(
+        &mut self,
+        sql: &str,
+    ) -> Result<Option<(String, String, bool, tidb_executor::ViewDef)>, DriverError> {
+        let stmt = self.parse(sql)?;
+        let tidb_ast::Stmt::Ddl(ddl) = stmt else {
+            return Ok(None);
+        };
+        let tidb_ast::DdlStmt::CreateView(create) = &*ddl else {
+            return Ok(None);
+        };
+        let create = create.clone();
+        let current_db = self.current_db.clone();
+        let ctx = self.statement_context(false);
+        let or_replace = create.or_replace;
+        let (database, name, view) = self.with_catalog_mut(|catalog| {
+            tidb_executor::resolve_view_definition(&create, catalog, &current_db, &ctx)
+        })?;
+        Ok(Some((database, name, or_replace, view)))
+    }
+
     pub(crate) fn statement_context(&self, is_dml: bool) -> tidb_executor::StmtContext {
         self.statement_context_ignoring(is_dml, false)
     }

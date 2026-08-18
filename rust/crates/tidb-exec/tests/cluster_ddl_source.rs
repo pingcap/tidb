@@ -2246,3 +2246,128 @@ fn a_prefix_index_is_refused_in_every_spelling() {
     let plain = plan(&mut store, "CREATE INDEX cx2 ON pfx2 (c)", 301);
     assert!(!plain.mutations.is_empty(), "a plain index still plans");
 }
+
+/// A resolved view definition as the route would hand it over, for the
+/// plan-arm pins below — the RESOLUTION itself is the session tier's
+/// `resolve_view_definition`, tested beside `run_create_view_in`.
+fn view_statement(schema: &str, name: &str, or_replace: bool) -> DdlStatement {
+    let view = tidb_executor::ViewDef {
+        name: name.to_owned(),
+        columns: vec![(
+            "a".to_owned(),
+            tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
+        )],
+        select_sql: format!("SELECT `t`.`a` AS `a` FROM `{schema}`.`t`"),
+        definer_user: "root".to_owned(),
+        definer_host: "%".to_owned(),
+        character_set_client: "utf8mb4".to_owned(),
+        collation_connection: "utf8mb4_bin".to_owned(),
+        algorithm: "UNDEFINED".to_owned(),
+        security: "DEFINER".to_owned(),
+        check_option: "CASCADED".to_owned(),
+    };
+    DdlStatement::CreateView {
+        schema: schema.to_owned(),
+        name: name.to_owned(),
+        or_replace,
+        info: Box::new(tidb_exec::cluster_ddl::build_view_table_info(name, &view)),
+    }
+}
+
+#[test]
+fn a_create_view_publishes_a_view_table_info() {
+    // Go `onCreateView` (`ddl/create_table.go:371`): the finished TableInfo
+    // goes to `createTableOrViewWithCheck` under ACTION_CREATE_VIEW; the
+    // published metadata carries the view half, the resolved columns, and
+    // the creator's client charset/collation in Charset/Collate — which is
+    // where SHOW CREATE VIEW reads them back (`executor/show.go`).
+    let mut store = bootstrapped();
+    let create_t = plan(&mut store, "CREATE TABLE t (a BIGINT PRIMARY KEY)", 101);
+    apply(&mut store, &create_t);
+
+    let write = match plan_ddl(&mut store, &view_statement("u6", "v", false), 102)
+        .expect("a fresh view plans")
+    {
+        DdlPlan::Write(write) => *write,
+        DdlPlan::AlreadySatisfied { detail } => panic!("expected a write: {detail}"),
+    };
+    assert_eq!(
+        write.diff.action_type,
+        tidb_model::ActionType::ACTION_CREATE_VIEW
+    );
+    let put = write
+        .mutations
+        .iter()
+        .find(|m| m.kind() == OptimisticMutationKind::MetaPut && m.value().starts_with(b"{"))
+        .expect("the view's TableInfo is written");
+    let info: tidb_model::TableInfo =
+        serde_json::from_slice(put.value()).expect("the published value is a TableInfo");
+    let view = info.view.as_ref().expect("the view half rides along").read();
+    assert_eq!(view.select_stmt, "SELECT `t`.`a` AS `a` FROM `u6`.`t`");
+    assert_eq!(info.charset, "utf8mb4");
+    assert_eq!(info.collate, "utf8mb4_bin");
+    assert_eq!(info.columns.len(), 1);
+    apply(&mut store, &write);
+
+    // The same name again without OR REPLACE is Go's ErrTableExists.
+    let error = plan_ddl(&mut store, &view_statement("u6", "v", false), 103)
+        .expect_err("a duplicate view name refuses");
+    assert!(format!("{error:?}").contains("TableExists"), "{error:?}");
+
+    // OR REPLACE drops the old id and creates a fresh one.
+    let replace = match plan_ddl(&mut store, &view_statement("u6", "v", true), 104)
+        .expect("OR REPLACE plans")
+    {
+        DdlPlan::Write(write) => *write,
+        DdlPlan::AlreadySatisfied { detail } => panic!("expected a write: {detail}"),
+    };
+    assert!(
+        replace
+            .mutations
+            .iter()
+            .any(|m| m.kind() == OptimisticMutationKind::MetaDelete),
+        "the old view's key is deleted"
+    );
+    apply(&mut store, &replace);
+
+    // DROP VIEW deletes it under ACTION_DROP_VIEW; a base table under the
+    // same statement is Go's ErrWrongObject; a missing name without
+    // IF EXISTS is Go's Unknown table.
+    let drop = match plan_ddl(
+        &mut store,
+        &DdlStatement::DropView {
+            names: vec![("u6".to_owned(), "v".to_owned())],
+            if_exists: false,
+        },
+        105,
+    )
+    .expect("the drop plans")
+    {
+        DdlPlan::Write(write) => *write,
+        DdlPlan::AlreadySatisfied { detail } => panic!("expected a write: {detail}"),
+    };
+    assert_eq!(drop.diff.action_type, tidb_model::ActionType::ACTION_DROP_VIEW);
+    apply(&mut store, &drop);
+
+    let wrong = plan_ddl(
+        &mut store,
+        &DdlStatement::DropView {
+            names: vec![("u6".to_owned(), "t".to_owned())],
+            if_exists: true,
+        },
+        106,
+    )
+    .expect_err("a base table refuses DROP VIEW even under IF EXISTS");
+    assert!(format!("{wrong:?}").contains("not a VIEW"), "{wrong:?}");
+
+    let missing = plan_ddl(
+        &mut store,
+        &DdlStatement::DropView {
+            names: vec![("u6".to_owned(), "gone".to_owned())],
+            if_exists: false,
+        },
+        107,
+    )
+    .expect_err("a missing view without IF EXISTS refuses");
+    assert!(format!("{missing:?}").contains("Unknown table"), "{missing:?}");
+}

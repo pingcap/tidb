@@ -265,6 +265,53 @@ pub fn cluster_session_catalog(
         let schema = database.info.name.original().to_owned();
         catalog.register_database_with_id(&schema, database.info.id);
         for table in &database.tables {
+            // A view has no storage half: it maps straight to the session
+            // catalog's view entry, rebuilt from the published `TableInfo`
+            // exactly as `build_view_table_info` wrote it (the enum ordinals
+            // are `ast/model.go`'s).
+            if let Some(view) = &table.view {
+                let view = view.read();
+                let mut columns = Vec::with_capacity(table.columns.len());
+                for i in 0..table.columns.len() {
+                    if let Some(column) = table.columns.get(i) {
+                        let column = column.read();
+                        columns.push((column.name.original().to_owned(), column.field_type.clone()));
+                    }
+                }
+                let (definer_user, definer_host) = view.definer.as_ref().map_or_else(
+                    || (String::new(), String::new()),
+                    |definer| (definer.username.clone(), definer.hostname.clone()),
+                );
+                let view_def = tidb_executor::ViewDef {
+                    name: table.name.original().to_owned(),
+                    columns,
+                    select_sql: view.select_stmt.clone(),
+                    definer_user,
+                    definer_host,
+                    character_set_client: table.charset.clone(),
+                    collation_connection: table.collate.clone(),
+                    algorithm: match view.algorithm.0 {
+                        1 => "MERGE",
+                        2 => "TEMPTABLE",
+                        _ => "UNDEFINED",
+                    }
+                    .to_owned(),
+                    security: if view.security.0 == 1 { "INVOKER" } else { "DEFINER" }.to_owned(),
+                    check_option: if view.check_option.0 == 0 { "LOCAL" } else { "CASCADED" }
+                        .to_owned(),
+                };
+                if let Err(reason) = catalog.register_view_in(
+                    database.info.name.original(),
+                    table.name.original(),
+                    view_def,
+                ) {
+                    skipped.push(SkippedTable {
+                        name: format!("{schema}.{}", table.name.original()),
+                        reason: format!("view registration failed: {reason:?}"),
+                    });
+                }
+                continue;
+            }
             let auto = AutoIdSource::In {
                 db_id: database.info.id,
                 ids: auto_ids,

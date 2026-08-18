@@ -52,6 +52,25 @@ pub fn run_create_view_in(
     current_db: &str,
     ctx: &crate::StmtContext,
 ) -> Result<(), DriverError> {
+    let (database, name, view) = resolve_view_definition(create, catalog, current_db, ctx)?;
+    catalog.register_view_in(&database, &name, view)?;
+    Ok(())
+}
+
+/// Resolves a `CREATE VIEW` into the [`ViewDef`] it would register, without
+/// registering it: the shared first half of [`run_create_view_in`], split out
+/// so the cluster DDL route can validate and settle a view's columns against
+/// this node's catalog before publishing the definition to the cluster's
+/// meta — Go's shape, where `executeCreateView` preprocesses the body in the
+/// executor and hands DDL a finished `TableInfo`.
+///
+/// Returns `(database, name, view)`.
+pub fn resolve_view_definition(
+    create: &CreateViewStmt,
+    catalog: &Catalog,
+    current_db: &str,
+    ctx: &crate::StmtContext,
+) -> Result<(String, String, ViewDef), DriverError> {
     let (database, name) = crate::driver::split_table_path_pub(&create.name, current_db)?;
     let (database, name) = (database.to_owned(), name.to_owned());
     // `CREATE VIEW` over an existing name is Go's ErrTableExists whether the
@@ -72,7 +91,7 @@ pub fn run_create_view_in(
         hidden.drop_table_in(&database, &name);
         &hidden
     } else {
-        &*catalog
+        catalog
     };
     let select_sql = canonical_view_query(&create.query, resolving, &database)?;
     // Running the canonical body both validates it and settles the output
@@ -115,8 +134,7 @@ pub fn run_create_view_in(
         // for a view written without one at all.
         check_option: create.check_option.sql().to_owned(),
     };
-    catalog.register_view_in(&database, &name, view)?;
-    Ok(())
+    Ok((database, name, view))
 }
 
 /// Drops views, refusing to touch a base table of the same name.
