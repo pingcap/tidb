@@ -99,13 +99,15 @@ fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
 fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
     let (mut session, node) = open_session();
     for (sql, expected) in [
-        // ADD/DROP COLUMN and TRUNCATE moved to the catalog writer when the
-        // module took ownership of their single-action shapes; the mock's
-        // named non-modeling answer is now their routing witness below. A
-        // multi-action ALTER remains genuinely inexpressible.
+        // ADD/DROP COLUMN, TRUNCATE, and all-column multi-action ALTERs
+        // moved to the catalog writer as their courses landed; the mock's
+        // named non-modeling answer is their routing witness below. A
+        // multi-action ALTER MIXING a column change with an index change
+        // remains genuinely inexpressible: the column half folds over one
+        // TableInfo, the index half needs a backfill job.
         (
-            "ALTER TABLE t ADD COLUMN w BIGINT, ADD COLUMN u BIGINT",
-            "CREATE TABLE, DROP TABLE",
+            "ALTER TABLE t ADD COLUMN w BIGINT, ADD INDEX iw (w)",
+            "one atomic multi-schema DDL job",
         ),
         (
             "CREATE TABLE fk (id BIGINT PRIMARY KEY, other BIGINT, \
@@ -137,6 +139,7 @@ fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
         // Routed to the catalog writer since their courses landed; this
         // mock does not model them, and saying so IS the routing witness.
         "ALTER TABLE t ADD COLUMN w BIGINT",
+        "ALTER TABLE t ADD COLUMN w BIGINT, DROP COLUMN v",
         "TRUNCATE TABLE t",
     ] {
         let routed = session

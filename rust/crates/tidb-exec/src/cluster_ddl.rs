@@ -157,6 +157,27 @@ impl CreateTableBuild {
     }
 }
 
+/// One column sub-action of a multi-action `ALTER TABLE`.
+#[derive(Clone, Debug)]
+pub enum AlterColumnAction {
+    /// `ADD COLUMN`, appended at the end.
+    Add {
+        /// Whether an existing column of the same name is a no-op.
+        if_not_exists: bool,
+        /// The column as written.
+        column: Box<tidb_ast::ColumnDef>,
+        /// The context the plan-time build resolves defaults under.
+        context: DdlStatementContext,
+    },
+    /// `DROP COLUMN`.
+    Drop {
+        /// Whether a missing column is a no-op.
+        if_exists: bool,
+        /// The column name as written.
+        column: String,
+    },
+}
+
 /// A `StmtContext` wrapper carrying the Debug the statement enum derives.
 #[derive(Clone)]
 pub struct DdlStatementContext(pub tidb_executor::StmtContext);
@@ -273,6 +294,20 @@ pub enum DdlStatement {
         if_exists: bool,
         /// The column name as written.
         column: String,
+    },
+    /// A multi-action `ALTER TABLE` whose every action is a column
+    /// add/drop this node owns. Go publishes ONE ActionMultiSchemaChange job
+    /// whose sub-jobs commit atomically; here every sub-action folds over one
+    /// evolving `TableInfo` inside the one catalog transaction, so a later
+    /// action sees what the earlier one changed and the table lands whole or
+    /// not at all.
+    MultiSchemaChange {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The sub-actions in SQL order.
+        actions: Vec<AlterColumnAction>,
     },
     /// `TRUNCATE TABLE [schema.]table`.
     ///
@@ -460,6 +495,42 @@ fn lower_alter_table_catalog(
     default_schema: &str,
 ) -> Result<Option<DdlStatement>, DdlAdmissionError> {
     let [action] = alter.actions.as_slice() else {
+        // Go's one ActionMultiSchemaChange job: expressible here exactly when
+        // every action is a column add/drop the catalog transaction owns.
+        let mut actions = Vec::with_capacity(alter.actions.len());
+        for action in &alter.actions {
+            match action {
+                tidb_ast::AlterTableAction::AddColumn {
+                    if_not_exists,
+                    column,
+                    position,
+                } if matches!(position, tidb_ast::ColumnPosition::Default) => {
+                    actions.push(AlterColumnAction::Add {
+                        if_not_exists: *if_not_exists,
+                        column: Box::new(column.clone()),
+                        context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                    });
+                }
+                tidb_ast::AlterTableAction::DropColumn { if_exists, name } => {
+                    actions.push(AlterColumnAction::Drop {
+                        if_exists: *if_exists,
+                        column: name.clone(),
+                    });
+                }
+                _ => {
+                    actions.clear();
+                    break;
+                }
+            }
+        }
+        if !actions.is_empty() {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            return Ok(Some(DdlStatement::MultiSchemaChange {
+                schema,
+                table,
+                actions,
+            }));
+        }
         if alter.actions.iter().any(|action| {
             matches!(
                 action,
@@ -712,6 +783,149 @@ fn lower_alter_add_index(
 }
 
 /// Splits a written name path into `(schema, object)`, defaulting the schema.
+
+/// One sub-action's answer inside an evolving ALTER.
+enum AlterColumnOutcome {
+    Applied,
+    /// The `IF [NOT] EXISTS` no-op, with the sentence `already` reports.
+    AlreadySatisfied(String),
+}
+
+/// Go's add-column job body over an EVOLVING `TableInfo` — the same rules a
+/// single-action ADD COLUMN commits, applied to whatever the previous
+/// sub-action of a multi-schema change left behind.
+fn apply_add_column(
+    info: &mut TableInfo,
+    schema: &str,
+    table: &str,
+    column: &tidb_ast::ColumnDef,
+    if_not_exists: bool,
+    context: &tidb_executor::StmtContext,
+) -> Result<AlterColumnOutcome, DdlPlanError> {
+    let wanted = column.name.to_lowercase();
+    if info
+        .columns
+        .iter_deref()
+        .any(|candidate| candidate.read().name.lowercase() == wanted)
+    {
+        if if_not_exists {
+            return Ok(AlterColumnOutcome::AlreadySatisfied(format!(
+                "column `{}` already exists on `{schema}`.`{table}`",
+                column.name
+            )));
+        }
+        return Err(DdlPlanError::DuplicateColumnName(column.name.clone()));
+    }
+    let mut added =
+        crate::table_info_build::build_added_column(column, &info.charset, &info.collate, context)
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+    // Go `AllocateColumnID`: ids only ever grow, so a dropped column's id is
+    // never reused.
+    info.max_column_id += 1;
+    added.id = info.max_column_id;
+    added.offset = info.columns.len() as i64;
+    added.state = tidb_model::SchemaState::PUBLIC;
+    info.columns.push_handle_go(Some(GoShared::new(added)));
+    Ok(AlterColumnOutcome::Applied)
+}
+
+/// Go `isDroppableColumn` + `onDropColumn` over the same evolving info.
+fn apply_drop_column(
+    info: &mut TableInfo,
+    schema: &str,
+    table: &str,
+    column: &str,
+    if_exists: bool,
+) -> Result<AlterColumnOutcome, DdlPlanError> {
+    let wanted = column.to_lowercase();
+    let Some(dropped_offset) = info
+        .columns
+        .iter_deref()
+        .position(|candidate| candidate.read().name.lowercase() == wanted)
+    else {
+        if if_exists {
+            return Ok(AlterColumnOutcome::AlreadySatisfied(format!(
+                "column `{column}` does not exist on `{schema}`.`{table}`"
+            )));
+        }
+        // Go 1091 ErrCantDropFieldOrKey.
+        return Err(DdlPlanError::Encode(format!(
+            "Can't DROP '{column}'; check that column/key exists"
+        )));
+    };
+    if info.columns.len() == 1 {
+        // Go 1090 ErrCantRemoveAllFields.
+        return Err(DdlPlanError::Encode(format!(
+            "can't drop only column {column} in table {}",
+            info.name.original()
+        )));
+    }
+    let dropped = info
+        .columns
+        .iter_deref()
+        .nth(dropped_offset)
+        .expect("the position was just found")
+        .read()
+        .clone_like_go();
+    if dropped.is_pk_handle_column(info) {
+        // Go 8200 via checkModifyPKColumn's drop arm.
+        return Err(DdlPlanError::Encode(
+            "Unsupported drop integer primary key".to_owned(),
+        ));
+    }
+    for index in info.indices.iter_deref() {
+        let index = index.read();
+        let covers = index
+            .columns
+            .iter_deref()
+            .any(|col| col.read().name.lowercase() == wanted);
+        if covers && (index.primary || index.columns.len() > 1) {
+            // Go 8200 ErrCantDropColWithIndex, message verbatim.
+            return Err(DdlPlanError::Encode(format!(
+                "can't drop column {column} with composite index covered or \
+                 Primary Key covered now"
+            )));
+        }
+    }
+    // Go `listIndicesWithColumn`: a single-column secondary index on the
+    // dropped column goes with it.
+    let surviving: Vec<_> = (0..info.indices.len())
+        .filter_map(|position| {
+            let handle = info.indices.get(position)?;
+            let single_on_dropped = {
+                let index = handle.read();
+                index.columns.len() == 1
+                    && index
+                        .columns
+                        .iter_deref()
+                        .next()
+                        .is_some_and(|col| col.read().name.lowercase() == wanted)
+            };
+            (!single_on_dropped).then_some(Some(handle))
+        })
+        .collect();
+    info.indices = tidb_model::GoSharedPointerSlice::from_handles(surviving);
+    info.columns.delete_go(dropped_offset, dropped_offset + 1);
+    // Every later column shifts down one offset, and every index column
+    // referring to one follows it.
+    for column in info.columns.iter_deref() {
+        let mut column = column.write();
+        if column.offset > dropped.offset {
+            column.offset -= 1;
+        }
+    }
+    for index in info.indices.iter_deref() {
+        let index = index.read();
+        for col in index.columns.iter_deref() {
+            let mut col = col.write();
+            if col.offset > dropped.offset {
+                col.offset -= 1;
+            }
+        }
+    }
+    Ok(AlterColumnOutcome::Applied)
+}
+
 fn split_name(
     path: &[String],
     default_schema: &str,
@@ -1506,35 +1720,11 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             context,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let wanted = column.name.to_lowercase();
-            if stored
-                .columns
-                .iter_deref()
-                .any(|candidate| candidate.read().name.lowercase() == wanted)
-            {
-                if *if_not_exists {
-                    return Ok(already(format!(
-                        "column `{}` already exists on `{schema}`.`{table}`",
-                        column.name
-                    )));
-                }
-                return Err(DdlPlanError::DuplicateColumnName(column.name.clone()));
-            }
-            let mut added = crate::table_info_build::build_added_column(
-                column,
-                &stored.charset,
-                &stored.collate,
-                &context.0,
-            )
-            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
             let mut info = stored.clone_like_go();
-            // Go `AllocateColumnID`: ids only ever grow, so a dropped
-            // column's id is never reused.
-            info.max_column_id += 1;
-            added.id = info.max_column_id;
-            added.offset = info.columns.len() as i64;
-            added.state = tidb_model::SchemaState::PUBLIC;
-            info.columns.push_handle_go(Some(GoShared::new(added)));
+            match apply_add_column(&mut info, schema, table, column, *if_not_exists, &context.0)? {
+                AlterColumnOutcome::AlreadySatisfied(detail) => return Ok(already(detail)),
+                AlterColumnOutcome::Applied => {}
+            }
             info.update_ts = start_ts;
             let table_id = info.id;
             let encoded = value::serialize_table_info(&info)
@@ -1554,92 +1744,10 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             column,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let wanted = column.to_lowercase();
-            let Some(dropped_offset) = stored
-                .columns
-                .iter_deref()
-                .position(|candidate| candidate.read().name.lowercase() == wanted)
-            else {
-                if *if_exists {
-                    return Ok(already(format!(
-                        "column `{column}` does not exist on `{schema}`.`{table}`"
-                    )));
-                }
-                // Go 1091 ErrCantDropFieldOrKey.
-                return Err(DdlPlanError::Encode(format!(
-                    "Can't DROP '{column}'; check that column/key exists"
-                )));
-            };
-            if stored.columns.len() == 1 {
-                // Go 1090 ErrCantRemoveAllFields.
-                return Err(DdlPlanError::Encode(format!(
-                    "can't drop only column {column} in table {}",
-                    stored.name.original()
-                )));
-            }
-            let dropped = stored
-                .columns
-                .iter_deref()
-                .nth(dropped_offset)
-                .expect("the position was just found")
-                .read()
-                .clone_like_go();
-            if dropped.is_pk_handle_column(stored) {
-                // Go 8200 via checkModifyPKColumn's drop arm.
-                return Err(DdlPlanError::Encode(
-                    "Unsupported drop integer primary key".to_owned(),
-                ));
-            }
-            for index in stored.indices.iter_deref() {
-                let index = index.read();
-                let covers = index
-                    .columns
-                    .iter_deref()
-                    .any(|col| col.read().name.lowercase() == wanted);
-                if covers && (index.primary || index.columns.len() > 1) {
-                    // Go 8200 ErrCantDropColWithIndex, message verbatim.
-                    return Err(DdlPlanError::Encode(format!(
-                        "can't drop column {column} with composite index covered or \
-                         Primary Key covered now"
-                    )));
-                }
-            }
             let mut info = stored.clone_like_go();
-            // Go `listIndicesWithColumn`: a single-column secondary index on
-            // the dropped column goes with it.
-            let surviving: Vec<_> = (0..info.indices.len())
-                .filter_map(|position| {
-                    let handle = info.indices.get(position)?;
-                    let single_on_dropped = {
-                        let index = handle.read();
-                        index.columns.len() == 1
-                            && index
-                                .columns
-                                .iter_deref()
-                                .next()
-                                .is_some_and(|col| col.read().name.lowercase() == wanted)
-                    };
-                    (!single_on_dropped).then_some(Some(handle))
-                })
-                .collect();
-            info.indices = tidb_model::GoSharedPointerSlice::from_handles(surviving);
-            info.columns.delete_go(dropped_offset, dropped_offset + 1);
-            // Every later column shifts down one offset, and every index
-            // column referring to one follows it.
-            for column in info.columns.iter_deref() {
-                let mut column = column.write();
-                if column.offset > dropped.offset {
-                    column.offset -= 1;
-                }
-            }
-            for index in info.indices.iter_deref() {
-                let index = index.read();
-                for col in index.columns.iter_deref() {
-                    let mut col = col.write();
-                    if col.offset > dropped.offset {
-                        col.offset -= 1;
-                    }
-                }
+            match apply_drop_column(&mut info, schema, table, column, *if_exists)? {
+                AlterColumnOutcome::AlreadySatisfied(detail) => return Ok(already(detail)),
+                AlterColumnOutcome::Applied => {}
             }
             info.update_ts = start_ts;
             let table_id = info.id;
@@ -1650,6 +1758,53 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 encoded,
             )?);
             diff.action_type = ActionType::ACTION_DROP_COLUMN;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::MultiSchemaChange {
+            schema,
+            table,
+            actions,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let mut info = stored.clone_like_go();
+            let mut applied = 0usize;
+            let mut satisfied = Vec::new();
+            for action in actions {
+                let outcome = match action {
+                    AlterColumnAction::Add {
+                        if_not_exists,
+                        column,
+                        context,
+                    } => apply_add_column(
+                        &mut info,
+                        schema,
+                        table,
+                        column,
+                        *if_not_exists,
+                        &context.0,
+                    )?,
+                    AlterColumnAction::Drop { if_exists, column } => {
+                        apply_drop_column(&mut info, schema, table, column, *if_exists)?
+                    }
+                };
+                match outcome {
+                    AlterColumnOutcome::Applied => applied += 1,
+                    AlterColumnOutcome::AlreadySatisfied(detail) => satisfied.push(detail),
+                }
+            }
+            if applied == 0 {
+                return Ok(already(satisfied.join("; ")));
+            }
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_MULTI_SCHEMA_CHANGE;
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }

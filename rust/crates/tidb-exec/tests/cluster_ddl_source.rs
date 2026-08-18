@@ -935,10 +935,10 @@ fn a_statement_this_module_does_not_own_is_left_to_its_own_path() {
     for sql in [
         "SELECT 1",
         "INSERT INTO u6.t VALUES (1, 2)",
-        // ADD COLUMN and DROP COLUMN left this list when the module took
-        // ownership of the single-action shapes; a multi-action ALTER is
-        // still left to its own path.
-        "ALTER TABLE u6.t ADD COLUMN c BIGINT, ADD COLUMN d BIGINT",
+        // ADD/DROP COLUMN (single and multi-action bundles) left this list
+        // as the module took ownership; a MODIFY COLUMN type change still
+        // awaits its course.
+        "ALTER TABLE u6.t MODIFY COLUMN c VARCHAR(20)",
     ] {
         let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
         assert!(
@@ -1949,5 +1949,74 @@ fn drop_column_shifts_offsets_and_takes_its_single_column_index() {
             .expect_err("refused")
             .to_string();
         assert!(error.contains(message), "{sql}: {error}");
+    }
+}
+
+/// Go's one ActionMultiSchemaChange job: the sub-actions fold over ONE
+/// evolving TableInfo inside one transaction, in SQL order, so a later action
+/// sees the earlier one's change and the table lands whole or not at all.
+#[test]
+fn a_multi_action_alter_folds_over_one_evolving_table() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, a BIGINT, b BIGINT)",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("an id");
+
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t ADD COLUMN c BIGINT DEFAULT 5, DROP COLUMN a, ADD COLUMN d BIGINT",
+        200,
+    );
+    apply(&mut store, &write);
+    assert_eq!(
+        write.diff.action_type,
+        tidb_model::ActionType::ACTION_MULTI_SCHEMA_CHANGE
+    );
+    let stored: serde_json::Value =
+        serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
+            .expect("stored");
+    let names: Vec<_> = stored["cols"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"]["O"].as_str().unwrap())
+        .collect();
+    // `c` appended after `b`, then `a` dropped closing the gap, then `d`
+    // appended after the shift — SQL order, one evolving table.
+    assert_eq!(names, ["id", "b", "c", "d"]);
+    let offsets: Vec<_> = stored["cols"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["offset"].as_i64().unwrap())
+        .collect();
+    assert_eq!(offsets, [0, 1, 2, 3]);
+
+    // One failing sub-action fails the whole bundle: nothing is staged.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t ADD COLUMN e BIGINT, DROP COLUMN missing"),
+        300,
+    )
+    .expect_err("the failing drop fails the bundle")
+    .to_string();
+    assert!(error.contains("Can't DROP 'missing'"), "{error}");
+
+    // Every sub-action a no-op is the statement already satisfied.
+    match plan_ddl(
+        &mut store,
+        &statement(
+            "ALTER TABLE u6.t ADD COLUMN IF NOT EXISTS c BIGINT, DROP COLUMN IF EXISTS missing",
+        ),
+        400,
+    )
+    .expect("the all-no-op bundle plans")
+    {
+        DdlPlan::AlreadySatisfied { .. } => {}
+        DdlPlan::Write(_) => panic!("an all-no-op bundle must publish nothing"),
     }
 }
