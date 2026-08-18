@@ -59,7 +59,7 @@ func WriteInsert(
 
 	// SQLWriter writes directly into the object store writer, whose concurrent
 	// multipart upload replaces the writerPipe; it owns the per-statement framing.
-	sink := &wrappedWriter{ctx: pCtx.Context, w: w}
+	sink := objectio.NewIOWriter(pCtx.Context, w)
 
 	selectedField := meta.SelectedField()
 	var insertStatementPrefix string
@@ -246,7 +246,7 @@ func WriteInsertInCsv(
 	if selectedFields != "" {
 		kinds = columnKinds(meta.ColumnTypes())
 	}
-	cw := csvfile.NewCSVWriter(&wrappedWriter{ctx: pCtx.Context, w: w}, kinds, csvCfg)
+	cw := csvfile.NewCSVWriter(objectio.NewIOWriter(pCtx.Context, w), kinds, csvCfg)
 
 	var (
 		row          = MakeRowReceiver(meta.ColumnTypes())
@@ -487,15 +487,6 @@ func wrapStringWith(str string, wrapper string) string {
 	return fmt.Sprintf("%s%s%s", wrapper, str, wrapper)
 }
 
-type wrappedWriter struct {
-	ctx context.Context
-	w   objectio.Writer
-}
-
-func (w *wrappedWriter) Write(p []byte) (n int, err error) {
-	return w.w.Write(w.ctx, p)
-}
-
 // WriteInsertInParquet writes table rows to parquet format.
 func WriteInsertInParquet(
 	pCtx *tcontext.Context,
@@ -516,7 +507,7 @@ func WriteInsertInParquet(
 		parquetfile.WithDataPageSize(cfg.ParquetPageSize),
 		parquetfile.WithRowGroupMemoryLimit(cfg.ParquetRowGroupSize),
 	}
-	writer, err := parquetfile.NewWriter(&wrappedWriter{ctx: pCtx.Context, w: w}, meta.ColumnInfos(), opts...)
+	writer, err := parquetfile.NewWriter(objectio.NewIOWriter(pCtx.Context, w), meta.ColumnInfos(), opts...)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
