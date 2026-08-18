@@ -6668,8 +6668,14 @@ logAnd:
 	"&&"
 |	"AND"
 
+// At "INTERVAL" '(' Expression ',', goyacc can shift ',' to continue the
+// scalar INTERVAL(Expression, Expression) production or reduce Expression to
+// ExpressionList for the anonymous row expression (Expression, Expression).
+// %prec lowerThanComma makes that reduction lose to the lookahead comma and
+// resolves the conflict explicitly. Other expression lists still reduce
+// normally when no shift action competes.
 ExpressionList:
-	Expression
+	Expression %prec lowerThanComma
 	{
 		$$ = []ast.ExprNode{$1}
 	}
@@ -8749,7 +8755,6 @@ FunctionNameConflict:
 |	"DAY"
 |	"HOUR"
 |	"IF"
-|	"INTERVAL"
 |	"LOG"
 |	"FORMAT"
 |	"LEFT"
@@ -8797,6 +8802,14 @@ FunctionCallKeyword:
 	FunctionNameConflict '(' ExpressionListOpt ')'
 	{
 		$$ = &ast.FuncCallExpr{FnName: ast.NewCIStr($1), Args: $3.([]ast.ExprNode)}
+	}
+|	"INTERVAL" '(' Expression ',' Expression ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.Interval), Args: []ast.ExprNode{$3, $5}}
+	}
+|	"INTERVAL" '(' Expression ',' Expression ',' ExpressionList ')'
+	{
+		$$ = &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.Interval), Args: append([]ast.ExprNode{$3, $5}, $7.([]ast.ExprNode)...)}
 	}
 |	builtinUser '(' ExpressionListOpt ')'
 	{
