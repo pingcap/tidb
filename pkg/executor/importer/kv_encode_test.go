@@ -16,6 +16,8 @@ package importer_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -89,7 +91,7 @@ func TestKVEncoderForDupResolve(t *testing.T) {
 	})
 }
 
-func newKVEncoderTestTable(t *testing.T, createSQL string) table.Table {
+func newKVEncoderTestTable(t testing.TB, createSQL string) table.Table {
 	t.Helper()
 
 	stmt, err := parser.New().ParseOneStmt(createSQL, "", "")
@@ -100,6 +102,118 @@ func newKVEncoderTestTable(t *testing.T, createSQL string) table.Table {
 	tbl, err := tables.TableFromMeta(lightningkv.NewPanickingAllocators(tblInfo.SepAutoInc()), tblInfo)
 	require.NoError(t, err)
 	return tbl
+}
+
+func BenchmarkTableKVEncoder(b *testing.B) {
+	testCases := []struct {
+		name           string
+		createSQL      string
+		row            []types.Datum
+		sourceRowBytes int64
+	}{
+		{
+			name: "PKOnly",
+			createSQL: `create table t(
+				id bigint primary key clustered,
+				k bigint not null,
+				c varchar(60),
+				pad varchar(30))`,
+			row: []types.Datum{
+				types.NewIntDatum(1),
+				types.NewIntDatum(42),
+				types.NewStringDatum(strings.Repeat("c", 60)),
+				types.NewStringDatum(strings.Repeat("p", 30)),
+			},
+			sourceRowBytes: 110,
+		},
+		{
+			name: "ThreeIndexes",
+			createSQL: `create table t(
+				id bigint primary key clustered,
+				k bigint not null,
+				c varchar(60),
+				pad varchar(30),
+				key idx_k(k),
+				key idx_c(c),
+				key idx_k_c(k, c))`,
+			row: []types.Datum{
+				types.NewIntDatum(1),
+				types.NewIntDatum(42),
+				types.NewStringDatum(strings.Repeat("c", 60)),
+				types.NewStringDatum(strings.Repeat("p", 30)),
+			},
+			sourceRowBytes: 110,
+		},
+		{
+			name:           "SixteenIndexes",
+			createSQL:      sixteenIndexTableSQL(),
+			row:            sixteenIndexRow(),
+			sourceRowBytes: 17 * 8,
+		},
+	}
+
+	for _, testCase := range testCases {
+		b.Run(testCase.name, func(b *testing.B) {
+			tbl := newKVEncoderTestTable(b, testCase.createSQL)
+			encoder, err := importer.NewTableKVEncoderForDupResolve(
+				&encode.EncodingConfig{
+					Table:  tbl,
+					Logger: log.L(),
+					SessionOptions: encode.SessionOptions{
+						SQLMode:   mysql.ModeStrictAllTables,
+						Timestamp: 1234567890,
+					},
+				},
+				&importer.LoadDataController{
+					ASTArgs: &importer.ASTArgs{},
+					Plan:    &importer.Plan{},
+					Table:   tbl,
+				},
+			)
+			require.NoError(b, err)
+			b.Cleanup(func() { require.NoError(b, encoder.Close()) })
+
+			var encodedBytes, kvCount int64
+			b.SetBytes(testCase.sourceRowBytes)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := range b.N {
+				pairs, err := encoder.Encode(testCase.row, int64(i+1))
+				if err != nil {
+					b.Fatal(err)
+				}
+				encodedBytes += int64(pairs.Size())
+				kvCount += int64(len(pairs.Pairs))
+				pairs.Clear()
+			}
+			b.StopTimer()
+
+			elapsed := b.Elapsed().Seconds()
+			b.ReportMetric(float64(encodedBytes)/(1024*1024)/elapsed, "encoded-MiB/s")
+			b.ReportMetric(float64(kvCount)/elapsed, "kv/s")
+		})
+	}
+}
+
+func sixteenIndexTableSQL() string {
+	var builder strings.Builder
+	builder.WriteString("create table t(id bigint primary key clustered")
+	for i := range 16 {
+		fmt.Fprintf(&builder, ", c%d bigint not null", i)
+	}
+	for i := range 16 {
+		fmt.Fprintf(&builder, ", key idx_c%d(c%d)", i, i)
+	}
+	builder.WriteByte(')')
+	return builder.String()
+}
+
+func sixteenIndexRow() []types.Datum {
+	row := make([]types.Datum, 17)
+	for i := range row {
+		row[i] = types.NewIntDatum(int64(i + 1))
+	}
+	return row
 }
 
 func TestKVEncoderCastErrorMessage(t *testing.T) {

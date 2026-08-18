@@ -17,7 +17,7 @@ Users will observe success in `IMPORT INTO` job duration, source rows per second
 - [x] (2026-08-18) Reconstructed the current encode pipeline, existing metrics, reader behavior, writer memory formula, and historical cluster measurements.
 - [x] (2026-08-18) Wrote the initial self-contained execution and cluster-validation plan.
 - [x] (2026-08-18) Selected `upstream/master` at `454d7010a4` and created a clean dedicated worktree without carrying unrelated CSV parser changes into the performance series.
-- [ ] Milestone 0: establish reproducible workload manifests, stage-level observability, baseline ceilings, and baseline profiles.
+- [ ] Milestone 0: establish reproducible workload manifests, stage-level observability, baseline ceilings, and baseline profiles. Completed on 2026-08-18: source/decompress/parse/encode/KV-group/send/deliver timing, tests, and PK/3-index/16-index encoder benchmarks. Remaining: full in-memory pipeline benchmark, workload manifests, cluster baselines, and profiles.
 - [ ] Milestone 1: implement ordered parallel 8 MiB source range reads and pass local correctness tests.
 - [ ] Milestone 1 cluster gate: measure reader-only behavior on uncompressed and compressed inputs and record the result here.
 - [ ] Milestone 2: implement opt-in asynchronous ping-pong flushing for IMPORT INTO writers while preserving the existing external-file format.
@@ -244,7 +244,7 @@ For writer and encode integration tests:
 Run CPU benchmarks without running unit tests. Always pin count and benchtime in recorded comparisons:
 
     ./tools/check/failpoint-go-test.sh pkg/lightning/mydump -run '^$' -bench 'Benchmark(ReadRowUsingMydumpCSVParser|CSVParserUnescape)$' -benchmem -count=5 -benchtime=3s
-    ./tools/check/failpoint-go-test.sh pkg/executor/importer -run '^$' -bench 'BenchmarkEncodePipeline(PKOnly|ThreeIndexes|SixteenIndexes)$' -benchmem -count=5 -benchtime=3s
+    ./tools/check/failpoint-go-test.sh pkg/executor/importer -run '^$' -bench '^BenchmarkTableKVEncoder$' -benchmem -count=5 -benchtime=3s
 
 For a Ready-profile gate on a code PR, rerun all targeted tests affected by that PR, then run:
 
@@ -343,6 +343,12 @@ Historical evidence, not a substitute for a fresh baseline on the agreed base:
 
     Baseline: about 333 MiB/s cluster encode throughput, about 32 minutes on W0-like data.
     Reader prototype: about 450 MiB/s cluster throughput; S3 read about 1.0-1.7 seconds/chunk; normal chunks about 3.5 seconds; periodic send stalls about 9-10 seconds remained.
+
+M0 local encoder benchmark smoke result on Apple M3 (`-count=1 -benchtime=1s`), useful only to verify the workload separation before recorded five-run comparisons:
+
+    PKOnly: 887.7 ns/row, 9 allocs/row, 1.13M KV/s.
+    ThreeIndexes: 1790 ns/row, 38 allocs/row, 2.23M KV/s.
+    SixteenIndexes: 4290 ns/row, 73 allocs/row, 3.96M KV/s.
 
 ## Interfaces and Dependencies
 

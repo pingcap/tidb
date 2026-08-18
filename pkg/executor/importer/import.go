@@ -255,6 +255,8 @@ type LoadDataReaderInfo struct {
 	Opener func(ctx context.Context) (io.ReadSeekCloser, error)
 	// Remote is not nil only if load from cloud storage.
 	Remote *mydump.SourceFileMeta
+	// ReaderTimings is non-nil when IMPORT INTO needs source-read timing.
+	ReaderTimings *ReaderTimings
 }
 
 // Plan describes the plan of LOAD DATA and IMPORT INTO.
@@ -1766,6 +1768,9 @@ func newLoadDataParser(
 		reader, err = dataFileInfo.Opener(ctx)
 		if err != nil {
 			return nil, err
+		}
+		if dataFileInfo.ReaderTimings != nil {
+			reader = dataFileInfo.ReaderTimings.wrapDecodedReader(reader)
 		}
 	}
 	defer func() {
