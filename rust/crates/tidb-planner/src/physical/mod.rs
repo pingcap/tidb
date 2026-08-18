@@ -50,6 +50,7 @@ use crate::physical_property::{PhysicalProperty, TaskType};
 use crate::physical_table_reader::StoreType;
 use crate::plan_base::{BasePlan, PlanError, PlanIdAllocator};
 use crate::stats_info::StatsInfo;
+use crate::task::{RootTask, Task};
 
 /// Go `physicalop.BasePhysicalPlan` (`base_physical_plan.go:120`).
 ///
@@ -249,13 +250,76 @@ pub struct PhysicalTableScan {
     pub store_type: crate::physical_table_reader::StoreType,
 }
 
-/// Go `physicalop.PhysicalTableDual`.
+/// Go `physicalop.PhysicalTableDual` (`physical_table_dual.go`, whole
+/// file): the physical operator of dual — `RowCount` rows (0 or 1) from no
+/// table. Go's private `names` field ("Dual may be inited when building
+/// point get plan. So it needs to hold names for itself") is this port's
+/// [`crate::plan_base::BasePlan`] `output_names`, which every operator
+/// already carries — `OutputNames`/`SetOutputNames` are its accessors, not
+/// a second field. `MemoryUsage` follows the enum's standing narrowing.
 #[derive(Clone, Debug, Default)]
 pub struct PhysicalTableDual {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
     /// Go `RowCount`.
     pub row_count: usize,
+}
+
+impl PhysicalTableDual {
+    /// Go `PhysicalTableDual.ExplainInfo()`: `rows:N`, overriding the base
+    /// body's empty string.
+    #[must_use]
+    pub fn explain_info(&self) -> String {
+        format!("rows:{}", self.row_count)
+    }
+}
+
+/// Go `findBestTask4LogicalTableDual` (`physical_table_dual.go:79`): a dual
+/// is born directly inside its own root task, never priced or attached.
+///
+/// The body is Go's: a required order over more than one row cannot be
+/// promised, so it answers the invalid task; a 0- or 1-row dual satisfies
+/// any order vacuously. The built plan carries the logical dual's stats,
+/// query-block offset, schema, and output names.
+///
+/// # Narrowings
+///
+/// * `prop.IndexJoinProp != nil` returns the invalid task in Go ("even
+///   enforce hint can not work with this"); the index-join runtime property
+///   is unported ([`crate::task`] module header names it), so this port's
+///   property never carries one and the arm has no input to fire on.
+/// * `base.GetGEAndLogicalOp` is cascades-enumeration plumbing for reading
+///   the operator out of a group expression; the operator arrives here
+///   directly.
+///
+/// `findBestTask4LogicalMockDatasource` (same file) is NOT ported:
+/// `logicalop.MockDataSource` is benchmark scaffolding this crate's logical
+/// enum does not carry.
+#[must_use]
+pub fn find_best_task_4_logical_table_dual(
+    p: &crate::logical::LogicalTableDual,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+) -> Task {
+    if !prop.is_sort_item_empty() && p.row_count > 1 {
+        return Task::invalid_task();
+    }
+    let mut base = BasePhysicalPlan::new(
+        allocator,
+        crate::logical::LogicalTableDual::TYPE,
+        p.base.base.query_block_offset(),
+    );
+    base.base.set_stats(p.base.base.stats_info().cloned());
+    base.base.set_schema(p.base.base.schema().cloned());
+    base.base
+        .set_output_names(p.base.base.output_names().to_vec());
+    let dual = PhysicalPlan::TableDual(PhysicalTableDual {
+        base,
+        row_count: p.row_count,
+    });
+    let mut root = RootTask::default();
+    root.set_plan(dual);
+    Task::Root(root)
 }
 
 /// Go `physicalop.PhysicalMaxOneRow` (`physical_max_one_row.go`, whole

@@ -249,3 +249,51 @@ fn max_one_row_enumeration_needs_an_orderless_root_property() {
     assert_eq!(child_prop.task_tp, TaskType::Root);
     assert!(child_prop.sort_items.is_empty());
 }
+
+#[test]
+fn a_table_dual_is_born_inside_its_own_root_task() {
+    // `findBestTask4LogicalTableDual` (`physical_table_dual.go:79`): a
+    // 0/1-row dual satisfies any order vacuously, so only a required order
+    // over MORE than one row answers the invalid task; the built plan
+    // carries the logical dual's stats, offset, schema, names and RowCount.
+    use crate::logical::{BaseLogicalPlan, LogicalTableDual};
+    use crate::physical_property::SortItem;
+    use crate::stats_info::StatsInfo;
+    use tidb_datatype::FieldName;
+
+    let allocator = PlanIdAllocator::new();
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalTableDual::TYPE, 3);
+    base.base.set_stats(Some(StatsInfo::new(1.0, [])));
+    base.base.set_schema(Some(Schema::default()));
+    base.base.set_output_names(vec![FieldName::default()]);
+    let mut dual = LogicalTableDual::new(base, 1);
+
+    let sorted = PhysicalProperty {
+        sort_items: vec![SortItem::new(3, false)],
+        ..PhysicalProperty::default()
+    };
+    // One row: the order is vacuous, the task is real.
+    let task = find_best_task_4_logical_table_dual(&dual, &sorted, &allocator);
+    assert!(!task.invalid(), "a 1-row dual satisfies any order");
+
+    // More than one row under a required order: Go's invalid task.
+    dual.row_count = 2;
+    let task = find_best_task_4_logical_table_dual(&dual, &sorted, &allocator);
+    assert!(task.invalid());
+
+    // The unordered build carries everything across.
+    dual.row_count = 1;
+    let task =
+        find_best_task_4_logical_table_dual(&dual, &PhysicalProperty::default(), &allocator);
+    let Some(PhysicalPlan::TableDual(built)) = task.plan() else {
+        panic!("a PhysicalTableDual, got {:?}", task.plan());
+    };
+    assert_eq!(built.row_count, 1);
+    assert_eq!(built.explain_info(), "rows:1");
+    assert_eq!(built.base.base.query_block_offset(), 3);
+    assert!(built.base.base.schema().is_some());
+    assert_eq!(built.base.base.output_names().len(), 1);
+    assert!(
+        (built.base.base.stats_info().expect("stats").row_count() - 1.0).abs() < f64::EPSILON
+    );
+}
