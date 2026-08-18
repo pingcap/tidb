@@ -602,6 +602,8 @@ mod tests {
             base,
             table_id: 9,
             store_type: crate::physical_table_reader::StoreType::TiKv,
+            keep_order: false,
+            desc: false,
         });
         let mut cop = CopTask {
             table_plan: Some(Box::new(scan)),

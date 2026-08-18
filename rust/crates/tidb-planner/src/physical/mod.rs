@@ -410,6 +410,10 @@ pub struct PhysicalTableScan {
     /// Go `StoreType`: which engine serves this scan. `CopTask.GetStoreType`
     /// reads it at the leaf.
     pub store_type: crate::physical_table_reader::StoreType,
+    /// Go `KeepOrder`: the scan delivers handle order.
+    pub keep_order: bool,
+    /// Go `Desc`: the scan runs backward.
+    pub desc: bool,
 }
 
 /// Go `physicalop.PhysicalTableDual` (`physical_table_dual.go`, whole
@@ -1418,6 +1422,8 @@ impl PhysicalPlan {
             }),
             Self::TableScan(op) => Self::TableScan(PhysicalTableScan {
                 base: base_of(&op.base),
+                keep_order: op.keep_order,
+                desc: op.desc,
                 table_id: op.table_id,
                 store_type: op.store_type,
             }),

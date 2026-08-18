@@ -33,6 +33,8 @@ fn scan(id: i32, columns: &[i64]) -> PhysicalPlan {
         base,
         table_id: i64::from(id),
         store_type: Default::default(),
+        keep_order: false,
+        desc: false,
     })
 }
 

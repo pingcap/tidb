@@ -372,6 +372,28 @@ fn try_to_get_dual_task(
 ///   candidate shape.
 /// * `isolation read engines`, `IsForUpdateRead` filtering (`:2036`), and
 ///   the TiFlash arms narrow with the absent tiers.
+/// Go `matchProperty`'s INT-HANDLE arm (`find_best_task.go:1082`): a table
+/// path over an integer handle delivers the required order exactly when the
+/// property is ONE sort item on the pk-is-handle column (asc or desc; Go's
+/// TiFlash-desc refusal narrows with the tier). Cluster tables, vector
+/// properties, and the index-column prefix walk (`:1095`) are later slices,
+/// named here.
+fn table_path_matches_order(
+    ds: &crate::logical::DataSource,
+    prop: &PhysicalProperty,
+) -> bool {
+    if !ds.pk_is_handle || !ds.handle_is_int {
+        return false;
+    }
+    let Some(pk_col) = ds.handle_cols.first() else {
+        return false;
+    };
+    let [item] = prop.sort_items.as_slice() else {
+        return false;
+    };
+    item.col == pk_col.unique_id
+}
+
 fn find_best_task_4_logical_data_source(
     ds: &crate::logical::DataSource,
     prop: &PhysicalProperty,
@@ -383,9 +405,14 @@ fn find_best_task_4_logical_data_source(
     if let Some(dual) = try_to_get_dual_task(ds, ctx) {
         return Ok(dual);
     }
-    if !prop.is_sort_item_empty() {
+    // `convertToTableScan:2834`: a required order is admitted exactly when
+    // the path matches it — the int-handle arm of `matchProperty` — and the
+    // admitted scan carries `KeepOrder`/`Desc`.
+    let keep_order = !prop.is_sort_item_empty();
+    if keep_order && !table_path_matches_order(ds, prop) {
         return Ok(Task::invalid_task());
     }
+    let desc = keep_order && prop.sort_items[0].desc;
     let mut best = Task::invalid_task();
     for path in &ds.enumerated_paths {
         let crate::access_path::PossiblePath::Table { .. } = path else {
@@ -402,10 +429,13 @@ fn find_best_task_4_logical_data_source(
             base,
             table_id: ds.physical_table_id,
             store_type: crate::physical_table_reader::StoreType::TiKv,
+            keep_order,
+            desc,
         });
         let cop = Task::Cop(crate::task::CopTask {
             table_plan: Some(Box::new(scan)),
             index_plan_finished: true,
+            keep_order,
             ..crate::task::CopTask::default()
         });
         let cur = cop.convert_to_root_task()?;
@@ -677,20 +707,27 @@ mod tests {
     }
 
     #[test]
-    fn a_sorted_requirement_over_the_table_slice_is_invalid() {
-        // The keep-order admission (`convertToTableScan:2834`) is a later
-        // slice; a required order refuses rather than mis-ordering.
+    fn a_handle_ordered_requirement_admits_a_keep_order_scan() {
+        // `matchProperty`'s int-handle arm (`find_best_task.go:1082`): ONE
+        // sort item on the pk-is-handle column admits the scan with
+        // KeepOrder (and Desc for a descending item); any other order
+        // refuses.
         use crate::access_path::PossiblePath;
         use crate::logical::DataSource;
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        use tidb_expr::column::Column;
 
         let allocator = PlanIdAllocator::new();
         let coster = CountCoster;
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
-        let source = {
-            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+        let source = |ctx_alloc: &PlanIdAllocator| {
+            let mut base = BaseLogicalPlan::new(ctx_alloc, "DataSource", 0);
             base.base.set_stats(Some(StatsInfo::new(50.0, [])));
             LogicalPlan::DataSource(DataSource {
                 base,
+                pk_is_handle: true,
+                handle_is_int: true,
+                handle_cols: vec![Column::new(9, FieldType::new(FieldTypeCode::LongLong))],
                 enumerated_paths: vec![PossiblePath::Table {
                     is_int_handle: true,
                     primary_index: None,
@@ -698,8 +735,21 @@ mod tests {
                 ..DataSource::default()
             })
         };
+
+        // ORDER BY pk DESC: admitted, KeepOrder + Desc.
+        let prop = PhysicalProperty::new(TaskType::Root, &[9], true, f64::MAX, false);
+        let task = find_best_task(&source(&allocator), &prop, &mut ctx).expect("plans");
+        let Some(PhysicalPlan::TableReader(reader)) = task.plan() else {
+            panic!("a TableReader, got {:?}", task.plan());
+        };
+        let Some(PhysicalPlan::TableScan(scan)) = reader.table_plan.as_deref() else {
+            panic!("the scan hangs off TablePlan");
+        };
+        assert!(scan.keep_order && scan.desc);
+
+        // ORDER BY a non-handle column: refused.
         let prop = PhysicalProperty::new(TaskType::Root, &[1], false, f64::MAX, false);
-        let task = find_best_task(&source, &prop, &mut ctx).expect("answers");
+        let task = find_best_task(&source(&allocator), &prop, &mut ctx).expect("answers");
         assert!(task.invalid());
     }
 
