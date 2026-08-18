@@ -17,6 +17,21 @@
 //! explicit `BEGIN` holds open. Split out of `cluster_session_node` because
 //! it is one of the independent seams that accreted there; see that module's
 //! doc comment for the statement lifecycle this seam is exercised by.
+//!
+//! # Named gap: `SELECT ... FOR UPDATE` does not lock yet
+//!
+//! Go's `SelectLockExec` sits above the reader and pessimistically locks each
+//! produced row's key at the statement's `for_update_ts`, so a second
+//! transaction's `FOR UPDATE` WAITS and then reads the committed value.
+//! This tier currently drops the lock clause: the read is served from the
+//! ordinary snapshot, no key is locked, and a contender neither waits nor
+//! re-reads (measured 2026-08-17: the contender returned immediately with
+//! the pre-commit value). The pessimistic machinery it needs —
+//! `RealPessimisticTransaction::acquire_locks` with `LockWaitTime`, the
+//! same calls `GET_LOCK` and the locking DML run — is already below this
+//! seam; the missing piece is the executor-level lock step over the read's
+//! produced handles. `LOCK IN SHARE MODE` is Go's own documented no-op and
+//! stays one.
 
 use std::collections::BTreeSet;
 use std::fmt;
