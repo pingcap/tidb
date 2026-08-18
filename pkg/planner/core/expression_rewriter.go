@@ -2488,14 +2488,13 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 					useLocalMatch = true
 				}
 			}
-			if useLocalMatch {
-				// Skip the alternative-round bookkeeping below: local
-				// evaluation is always executable, so there is no non-viable
-				// native plan for the driver to rescue.
-			} else if sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback {
+			// The alternative-round bookkeeping below is skipped when local
+			// evaluation is taking the MATCH: it is always executable, so there
+			// is no non-viable native plan for the driver to rescue.
+			if !useLocalMatch && sessVars.StmtCtx.AlternativeLogicalPlanFTSLikeFallback {
 				// fts-like-fallback round: boolean-context MATCH rewrites to ILIKE.
 				useLikeFallback = true
-			} else if sessVars.EnableAlternativeLogicalPlans {
+			} else if !useLocalMatch && sessVars.EnableAlternativeLogicalPlans {
 				// Round 1 (native). Mark the build so the driver runs the LIKE
 				// round and cost-compares its plan against round 1's. If this
 				// MATCH cannot run natively, also mark the build as non-viable
