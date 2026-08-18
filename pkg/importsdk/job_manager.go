@@ -96,7 +96,7 @@ func (m *jobManager) GetJobStatus(ctx context.Context, jobID int64) (*JobStatus,
 	defer rows.Close()
 
 	if rows.Next() {
-		return scanStatus(rows)
+		return scanRawStatus(rows)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -170,7 +170,7 @@ func (m *jobManager) GetJobsByGroup(ctx context.Context, groupKey string) ([]*Jo
 
 	var jobs []*JobStatus
 	for rows.Next() {
-		status, err := scanStatus(rows)
+		status, err := scanRawStatus(rows)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -213,8 +213,7 @@ func isRawUnsupportedErr(err error) bool {
 	case *drivermysql.MySQLError:
 		code = int(err.Number)
 	case interface{ Code() errors.ErrCode }:
-		// TiDB's in-process database/sql driver returns a normalized TiDB error
-		// instead of go-sql-driver's MySQLError.
+		// The testkit database/sql driver returns a normalized TiDB error.
 		code = int(err.Code())
 	default:
 		return false
@@ -222,34 +221,19 @@ func isRawUnsupportedErr(err error) bool {
 	return code == errno.ErrParse || code == errno.ErrNotSupportedYet
 }
 
-func scanStatus(rows *sql.Rows) (*JobStatus, error) {
-	cols, err := rows.Columns()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(cols) == 3 && strings.EqualFold(cols[2], "Raw_Stats") {
-		return scanRawStatus(rows)
-	}
-	return scanLegacyStatus(rows)
-}
-
 func scanRawStatus(rows *sql.Rows) (*JobStatus, error) {
 	var (
 		jobID    int64
 		groupKey sql.NullString
-		rawStats any
+		rawStats string
 	)
 
 	if err := rows.Scan(&jobID, &groupKey, &rawStats); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	data, err := rawBytes(rawStats)
-	if err != nil {
-		return nil, err
-	}
 	stats := &jobstats.RawImportJobStats{}
-	if err := json.Unmarshal(data, stats); err != nil {
+	if err := json.Unmarshal([]byte(rawStats), stats); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if stats.Version != jobstats.ContractVersion {
@@ -266,23 +250,6 @@ func scanRawStatus(rows *sql.Rows) (*JobStatus, error) {
 		stats.GroupKey = ""
 	}
 	return statusFromRaw(stats), nil
-}
-
-func rawBytes(src any) ([]byte, error) {
-	switch raw := src.(type) {
-	case []byte:
-		return raw, nil
-	case string:
-		return []byte(raw), nil
-	case json.Marshaler:
-		data, err := raw.MarshalJSON()
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		return data, nil
-	default:
-		return nil, errors.Errorf("cannot read raw stats from %T", src)
-	}
 }
 
 func statusFromRaw(stats *jobstats.RawImportJobStats) *JobStatus {
@@ -324,10 +291,18 @@ func statusFromRaw(stats *jobstats.RawImportJobStats) *JobStatus {
 	if status.ResultMessage == "" && stats.Status != importer.JobStatusFinished {
 		status.ResultMessage = status.ErrorMessage
 	}
-	status.CreateTime = unixTime(stats.CreateTimeUnix)
-	status.StartTime = unixTime(stats.StartTimeUnix)
-	status.EndTime = unixTime(stats.EndTimeUnix)
-	status.UpdateTime = unixTime(stats.UpdateTimeUnix)
+	if stats.CreateTimeUnix != 0 {
+		status.CreateTime = time.Unix(stats.CreateTimeUnix, 0)
+	}
+	if stats.StartTimeUnix != 0 {
+		status.StartTime = time.Unix(stats.StartTimeUnix, 0)
+	}
+	if stats.EndTimeUnix != 0 {
+		status.EndTime = time.Unix(stats.EndTimeUnix, 0)
+	}
+	if stats.UpdateTimeUnix != 0 {
+		status.UpdateTime = time.Unix(stats.UpdateTimeUnix, 0)
+	}
 	if stats.CurrentStep != nil {
 		fillLegacyProgress(status, stats.CurrentStep)
 	}
@@ -497,11 +472,4 @@ func parseNullTime(ns sql.NullString) time.Time {
 		return time.Time{}
 	}
 	return parseTime(ns.String)
-}
-
-func unixTime(sec int64) time.Time {
-	if sec == 0 {
-		return time.Time{}
-	}
-	return time.Unix(sec, 0)
 }

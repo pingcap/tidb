@@ -17,7 +17,6 @@ package importsdk
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -27,14 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 	"github.com/stretchr/testify/require"
 )
-
-type rawStatsMarshaler struct {
-	data []byte
-}
-
-func (m rawStatsMarshaler) MarshalJSON() ([]byte, error) {
-	return m.data, nil
-}
 
 func TestSubmitJob(t *testing.T) {
 	db, mock, err := sqlmock.New()
@@ -422,38 +413,4 @@ func TestGetJobsByGroupLegacyCompatibility(t *testing.T) {
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
 
-	t.Run("RAW query accepts legacy columns during rolling upgrade", func(t *testing.T) {
-		db, mock, err := sqlmock.New()
-		require.NoError(t, err)
-		defer db.Close()
-
-		manager := NewJobManager(db)
-		mock.ExpectQuery("SHOW RAW IMPORT JOBS WHERE GROUP_KEY = 'test_group'").WillReturnRows(legacyRows())
-		jobs, err := manager.GetJobsByGroup(context.Background(), "test_group")
-		require.NoError(t, err)
-		require.Len(t, jobs, 1)
-		require.Zero(t, jobs[0].ContractVersion)
-		require.Equal(t, "finished", jobs[0].Status)
-		require.NoError(t, mock.ExpectationsWereMet())
-	})
-}
-
-func TestRawBytes(t *testing.T) {
-	raw := []byte(`{"version":1,"status":"finished"}`)
-
-	for name, src := range map[string]any{
-		"bytes":      raw,
-		"string":     string(raw),
-		"marshaler":  rawStatsMarshaler{data: raw},
-		"rawMessage": json.RawMessage(raw),
-	} {
-		t.Run(name, func(t *testing.T) {
-			got, err := rawBytes(src)
-			require.NoError(t, err)
-			require.JSONEq(t, string(raw), string(got))
-		})
-	}
-
-	_, err := rawBytes(123)
-	require.Error(t, err)
 }
