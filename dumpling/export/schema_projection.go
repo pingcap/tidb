@@ -216,13 +216,12 @@ func validateForeignKeyReference(reference *ast.ReferenceDef, database string, s
 		return nil
 	}
 	referencedColumns := make([]ast.CIStr, 0, len(reference.IndexPartSpecifications))
+	// Foreign key references from SHOW CREATE TABLE contain only column index parts.
 	for _, key := range reference.IndexPartSpecifications {
-		if key.Column != nil {
-			if _, ok := targetSchema.retainedColumns[key.Column.Name.L]; !ok {
-				return removedReferenceColumnError(referenceDatabase, referenceTable, key.Column.Name.O)
-			}
-			referencedColumns = append(referencedColumns, key.Column.Name)
+		if _, ok := targetSchema.retainedColumns[key.Column.Name.L]; !ok {
+			return removedReferenceColumnError(referenceDatabase, referenceTable, key.Column.Name.O)
 		}
+		referencedColumns = append(referencedColumns, key.Column.Name)
 	}
 	if len(referencedColumns) == 0 {
 		return nil
