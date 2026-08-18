@@ -291,18 +291,10 @@ func statusFromRaw(stats *jobstats.RawImportJobStats) *JobStatus {
 	if status.ResultMessage == "" && stats.Status != importer.JobStatusFinished {
 		status.ResultMessage = status.ErrorMessage
 	}
-	if stats.CreateTimeUnix != 0 {
-		status.CreateTime = time.Unix(stats.CreateTimeUnix, 0)
-	}
-	if stats.StartTimeUnix != 0 {
-		status.StartTime = time.Unix(stats.StartTimeUnix, 0)
-	}
-	if stats.EndTimeUnix != 0 {
-		status.EndTime = time.Unix(stats.EndTimeUnix, 0)
-	}
-	if stats.UpdateTimeUnix != 0 {
-		status.UpdateTime = time.Unix(stats.UpdateTimeUnix, 0)
-	}
+	status.CreateTime = unixTime(stats.CreateTimeUnix)
+	status.StartTime = unixTime(stats.StartTimeUnix)
+	status.EndTime = unixTime(stats.EndTimeUnix)
+	status.UpdateTime = unixTime(stats.UpdateTimeUnix)
 	if stats.CurrentStep != nil {
 		fillLegacyProgress(status, stats.CurrentStep)
 	}
@@ -472,4 +464,11 @@ func parseNullTime(ns sql.NullString) time.Time {
 		return time.Time{}
 	}
 	return parseTime(ns.String)
+}
+
+func unixTime(sec int64) time.Time {
+	if sec == 0 {
+		return time.Time{}
+	}
+	return time.Unix(sec, 0)
 }
