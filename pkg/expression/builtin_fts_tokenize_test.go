@@ -61,8 +61,9 @@ func TestFTSTokenizeBasic(t *testing.T) {
 	ctx := mock.NewContext()
 	sf := newFTSTokenizeForTest(t, ctx, "STANDARD", 3, 84, true)
 
-	// Lowercased, and 'a' is dropped for being shorter than min_token_size.
-	require.Equal(t, `["this", "tutorial", "provides", "basic", "mysql"]`,
+	// Lowercased; 'a' is dropped for being shorter than min_token_size and
+	// 'this' for being an InnoDB stop word.
+	require.Equal(t, `["tutorial", "provides", "basic", "mysql"]`,
 		tokenizeToJSON(t, ctx, sf, "This tutorial provides a basic MySQL"))
 
 	// Duplicates collapse, so the generated column value does not depend on
@@ -100,15 +101,13 @@ func TestFTSTokenizeRespectsConfigArgs(t *testing.T) {
 	narrow := newFTSTokenizeForTest(t, ctx, "STANDARD", 3, 5, true)
 	require.Equal(t, `["short"]`, tokenizeToJSON(t, ctx, narrow, "short elongated"))
 
-	// The stopword flag is currently inert: stopwordSetFromConfig returns an
-	// empty set unless an explicit word list is supplied, and no code path
-	// populates one yet (see the TODO comment there about InnoDB stopword
-	// tables). The argument is still carried in the schema so that enabling
-	// stopwords later cannot silently reinterpret an existing index. Pin the
-	// current behaviour so that change has to update this test deliberately.
+	// The stopword flag applies the InnoDB default list, so the two settings
+	// produce different token streams for the same input. This is why the flag
+	// is recorded in the index expression: enabling or disabling it changes
+	// what a document tokenizes to.
 	withStop := newFTSTokenizeForTest(t, ctx, "STANDARD", 1, 84, true)
 	withoutStop := newFTSTokenizeForTest(t, ctx, "STANDARD", 1, 84, false)
-	require.Equal(t, `["the", "database"]`, tokenizeToJSON(t, ctx, withStop, "the database"))
+	require.Equal(t, `["database"]`, tokenizeToJSON(t, ctx, withStop, "the database"))
 	require.Equal(t, `["the", "database"]`, tokenizeToJSON(t, ctx, withoutStop, "the database"))
 }
 
