@@ -398,14 +398,12 @@ func generateProjectedSchemaForTest(
 	if schemas == nil {
 		schemas = make(projectedTableSchemas)
 	}
-	schema := projectedTableSchemaForTest(t, originSQL, selectedColumns)
+	schema, err := buildProjectedTableSchema(parser.New(), originSQL, selectedColumns)
+	if err != nil {
+		return "", err
+	}
 	table := schema.createTable.Table.Name.O
 	schemas[tableName{db: database, table: table}] = schema
-	for _, schema := range schemas {
-		if err := schema.applyLocalProjection(); err != nil {
-			return "", err
-		}
-	}
 	if err := validateForeignKeys(database, schema, schemas); err != nil {
 		return "", err
 	}
@@ -422,7 +420,7 @@ func generateProjectedSchemaForTest(
 
 func projectedTableSchemaForTest(t *testing.T, originSQL string, selectedColumns []string) *projectedTableSchema {
 	t.Helper()
-	schema, err := parseProjectedTableSchema(parser.New(), originSQL, selectedColumns)
+	schema, err := buildProjectedTableSchema(parser.New(), originSQL, selectedColumns)
 	require.NoError(t, err)
 	return schema
 }
