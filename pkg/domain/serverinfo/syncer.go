@@ -347,6 +347,24 @@ func (s *Syncer) RemoveServerInfo() {
 	}
 }
 
+// RevokeSession stops refreshing the current server-info session and revokes its lease.
+// The caller must stop ServerInfoSyncLoop first so it cannot recreate the session.
+func (s *Syncer) RevokeSession() {
+	if s.etcdCli == nil || s.session == nil {
+		return
+	}
+	session := s.session
+	lease := session.Lease()
+	session.Orphan()
+
+	ctx, cancel := context.WithTimeout(context.Background(), KeyOpDefaultTimeout)
+	defer cancel()
+	if _, err := s.etcdCli.Revoke(ctx, lease); err != nil {
+		logutil.BgLogger().Error("revoke server info lease failed",
+			zap.Int64("lease", int64(lease)), zap.Error(err))
+	}
+}
+
 // ServerInfoSyncLoop syncs the server information periodically.
 func (s *Syncer) ServerInfoSyncLoop(store tidbkv.Storage, exitCh chan struct{}) {
 	defer func() {

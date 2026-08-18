@@ -251,8 +251,14 @@ func (*Manager) createSessionManager(
 	}
 	failpoint.InjectCall("injectETCDCli", &etcdCli, ks)
 	ctx, cancel := context.WithCancel(context.Background())
+	var svrInfoSyncer *serverinfo.Syncer
+	serverInfoRegistered := false
 	defer func() {
 		if err != nil {
+			if serverInfoRegistered {
+				svrInfoSyncer.RemoveServerInfo()
+				svrInfoSyncer.RevokeSession()
+			}
 			cancel()
 			err2 := etcdCli.Close()
 			if err2 != nil {
@@ -262,7 +268,7 @@ func (*Manager) createSessionManager(
 	}()
 
 	virtualSvrID := uuid.New().String()
-	svrInfoSyncer := serverinfo.NewCrossKSSyncer(
+	svrInfoSyncer = serverinfo.NewCrossKSSyncer(
 		virtualSvrID,
 		func() uint64 {
 			// this ID is used to allocate connection ID, since we don't accept
@@ -276,6 +282,7 @@ func (*Manager) createSessionManager(
 	if err = svrInfoSyncer.NewSessionAndStoreServerInfo(ctx); err != nil {
 		return nil, errors.Trace(err)
 	}
+	serverInfoRegistered = true
 
 	schemaVerSyncer := schemaver.NewEtcdSyncer(etcdCli, virtualSvrID)
 	if err = schemaVerSyncer.Init(ctx); err != nil {
@@ -524,6 +531,7 @@ func (m *SessionManager) close() {
 	m.wg.Wait()
 	if m.svrInfoSyncer != nil {
 		m.svrInfoSyncer.RemoveServerInfo()
+		m.svrInfoSyncer.RevokeSession()
 	}
 	m.schemaVerSyncer.Close()
 	if err := m.etcdCli.Close(); err != nil {
