@@ -442,4 +442,119 @@ mod tests {
         let error = override_config(&mut Config::default(), &both).unwrap_err();
         assert!(error.contains("mutually exclusive"), "{error}");
     }
+
+    /// The extractor accepts every `main.go` spelling and leaves the node's
+    /// own options untouched and in order — the two surfaces coexist the way
+    /// one binary demands.
+    #[test]
+    fn main_go_flags_are_extracted_and_node_options_survive() {
+        let (flags, remaining) = extract_main_go_flags(vec![
+            "--lease=45s".to_owned(),
+            "--store".to_owned(),
+            "unistore".to_owned(),
+            "--repair-mode".to_owned(),
+            "--token-limit".to_owned(),
+            "1000".to_owned(),
+            "--auth-file".to_owned(),
+            "/tmp/u.tsv".to_owned(),
+            "--keyspace-activate=true".to_owned(),
+        ])
+        .expect("the mixed line parses");
+        assert_eq!(flags.ddl_lease.as_deref(), Some("45s"));
+        assert_eq!(flags.repair_mode, Some(true));
+        assert_eq!(flags.token_limit, Some(1000));
+        assert_eq!(flags.keyspace_activate, Some(true));
+        assert_eq!(
+            remaining,
+            vec!["--store", "unistore", "--auth-file", "/tmp/u.tsv"]
+        );
+    }
+}
+
+/// The names `main.go` defines that the node's own parser does not: consumed
+/// here so every Go spelling is accepted, exactly as `initFlagSet` accepts
+/// them, with the parsed values carried for the fields whose concepts the
+/// node runs today (`--lease` drives the schema lease) and retained visibly
+/// for the rest.
+const MAIN_GO_ONLY_FLAGS: &[(&str, bool)] = &[
+    // (name, is_boolean)
+    ("lease", false),
+    ("token-limit", false),
+    ("plugin-dir", false),
+    ("plugin-load", false),
+    ("run-ddl", true),
+    ("repair-mode", true),
+    ("repair-list", false),
+    ("temp-dir", false),
+    ("cluster-ca", false),
+    ("sql-ca", false),
+    ("sql-cert", false),
+    ("sql-key", false),
+    ("L", false),
+    ("log-file", false),
+    ("log-slow-query", false),
+    ("log-general", false),
+    ("report-status", true),
+    ("status-host", false),
+    ("status", false),
+    ("metrics-addr", false),
+    ("metrics-interval", false),
+    ("redact", true),
+    ("proxy-protocol-networks", false),
+    ("proxy-protocol-header-timeout", false),
+    ("proxy-protocol-fallbackable", true),
+    ("initialize-secure", true),
+    ("initialize-insecure", true),
+    ("initialize-sql-file", false),
+    ("keyspace-name", false),
+    ("tidb-service-scope", false),
+    ("standby", true),
+    ("activation-timeout", false),
+    ("max-idle-seconds", false),
+    ("keyspace-activate", true),
+    ("starter-additional-params", false),
+    ("advertise-address", false),
+    ("cors", false),
+    ("socket", false),
+    ("config-check", true),
+    ("config-strict", true),
+];
+
+/// Splits `main.go`-only flags out of a raw argument list, leaving the node's
+/// own options untouched and in order. The extracted half parses through
+/// [`MainFlags::parse`]; a malformed value there is the same error the full
+/// parser gives.
+pub fn extract_main_go_flags(
+    arguments: Vec<String>,
+) -> Result<(MainFlags, Vec<String>), FlagParseError> {
+    let mut extracted = Vec::new();
+    let mut remaining = Vec::new();
+    let mut queue = arguments.into_iter().peekable();
+    while let Some(argument) = queue.next() {
+        let stripped = argument
+            .strip_prefix("--")
+            .or_else(|| argument.strip_prefix('-'));
+        let owned = stripped.and_then(|body| {
+            let name = body.split_once('=').map_or(body, |(name, _)| name);
+            MAIN_GO_ONLY_FLAGS
+                .iter()
+                .find(|(candidate, _)| *candidate == name)
+        });
+        match owned {
+            Some((_, is_boolean)) => {
+                let has_inline = argument.contains('=');
+                extracted.push(argument.clone());
+                // A value-taking flag written as two arguments carries its
+                // value along; a boolean never consumes the next argument.
+                if !is_boolean && !has_inline {
+                    if let Some(value) = queue.next() {
+                        extracted.push(value);
+                    }
+                }
+            }
+            None => remaining.push(argument),
+        }
+    }
+    let flags = MainFlags::parse(&extracted)?;
+    Ok((flags, remaining))
 }

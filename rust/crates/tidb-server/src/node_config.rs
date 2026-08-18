@@ -489,7 +489,12 @@ impl NodeConfig {
     {
         let mut arguments = arguments.into_iter().map(Into::into);
         let _program = arguments.next();
-        let mut pending = arguments.peekable();
+        // main.go's own flag surface is consumed FIRST, so every Go spelling
+        // is accepted exactly as initFlagSet accepts it; the node's options
+        // remain for the loop below, untouched and in order.
+        let (main_flags, remaining) = crate::main_flags::extract_main_go_flags(arguments.collect())
+            .map_err(|error| invalid("main.go flags", &error.to_string()))?;
+        let mut pending = remaining.into_iter().peekable();
 
         let mut host = None;
         let mut port = None;
@@ -817,9 +822,14 @@ impl NodeConfig {
         // here so the node never has to.
         let schema_lease = match schema_lease_ms.as_deref() {
             Some(value) => Duration::from_millis(parse_positive_number("--lease-ms", value)?),
-            None => {
-                file_schema_lease.unwrap_or_else(|| Duration::from_millis(DEFAULT_SCHEMA_LEASE_MS))
-            }
+            // Go's own spelling: `--lease 45s` (main.go's ddl-lease flag)
+            // drives the same schema lease, written flags overriding the
+            // config file exactly as overrideConfig orders them.
+            None => match main_flags.ddl_lease.as_deref() {
+                Some(lease) => parse_file_schema_lease(lease)?,
+                None => file_schema_lease
+                    .unwrap_or_else(|| Duration::from_millis(DEFAULT_SCHEMA_LEASE_MS)),
+            },
         };
         let auto_tls = if no_auto_tls {
             false
@@ -930,7 +940,12 @@ impl NodeConfig {
     {
         let mut arguments = arguments.into_iter().map(Into::into);
         let _program = arguments.next();
-        let mut pending = arguments.peekable();
+        // main.go's own flag surface is consumed FIRST, so every Go spelling
+        // is accepted exactly as initFlagSet accepts it; the node's options
+        // remain for the loop below, untouched and in order.
+        let (main_flags, remaining) = crate::main_flags::extract_main_go_flags(arguments.collect())
+            .map_err(|error| invalid("main.go flags", &error.to_string()))?;
+        let mut pending = remaining.into_iter().peekable();
         let mut config_path = None;
         let mut store = None;
         while let Some(argument) = pending.next() {
