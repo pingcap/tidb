@@ -394,7 +394,7 @@ func autoNewCred(qs *backuppb.S3) (cred aws.CredentialsProvider, err error) {
 		return createOssRAMCred()
 	}
 	if isTencentCOSEndpoint(endpoint) {
-		return createTencentCVMRoleCred()
+		return createTencentCOSCred()
 	}
 	// other case ,return no error and run default(aws) follow.
 	return nil, nil

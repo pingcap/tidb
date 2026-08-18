@@ -33,7 +33,7 @@ type tencentCVMRoleCredentialsProvider struct {
 	credential common.CredentialIface
 }
 
-func createTencentCVMRoleCred() (aws.CredentialsProvider, error) {
+func createTencentCOSCred() (aws.CredentialsProvider, error) {
 	credential, err := common.DefaultCvmRoleProvider().GetCredential()
 	if err != nil {
 		// Keep the AWS default credential chain as a fallback, matching the
@@ -45,10 +45,6 @@ func createTencentCVMRoleCred() (aws.CredentialsProvider, error) {
 }
 
 func (p *tencentCVMRoleCredentialsProvider) Retrieve(ctx context.Context) (aws.Credentials, error) {
-	if err := ctx.Err(); err != nil {
-		return aws.Credentials{}, err
-	}
-
 	accessKeyID, secretAccessKey, sessionToken := p.credential.GetCredential()
 	if accessKeyID == "" || secretAccessKey == "" || sessionToken == "" {
 		return aws.Credentials{}, errors.New("tencent CVM role returned incomplete credentials")
