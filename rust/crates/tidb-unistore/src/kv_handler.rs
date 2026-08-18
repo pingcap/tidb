@@ -238,6 +238,21 @@ impl KvHandler {
         &mut self,
         req: &kvrpcpb::PessimisticLockRequest,
     ) -> kvrpcpb::PessimisticLockResponse {
+        let force_lock =
+            req.wake_up_mode == kvrpcpb::PessimisticLockWakeUpMode::WakeUpModeForceLock as i32;
+        // Go `pessimisticLockInner`'s guard, message verbatim: ForceLock
+        // addresses exactly one key.
+        if force_lock && req.mutations.len() > 1 {
+            return kvrpcpb::PessimisticLockResponse {
+                errors: vec![kvrpcpb::KeyError {
+                    abort: "Trying to lock more than one key in WakeUpModeForceLock, \
+                            which is not supported yet"
+                        .to_owned(),
+                    ..kvrpcpb::KeyError::default()
+                }],
+                ..kvrpcpb::PessimisticLockResponse::default()
+            };
+        }
         let reduced = PessimisticLockReq {
             mutations: req.mutations.clone(),
             primary_lock: req.primary_lock.clone(),
@@ -249,15 +264,49 @@ impl KvHandler {
             lock_only_if_exists: req.lock_only_if_exists,
         };
         match self.store.pessimistic_lock(&reduced) {
-            Ok(result) => kvrpcpb::PessimisticLockResponse {
-                values: result.values,
-                not_founds: result.not_founds,
-                ..kvrpcpb::PessimisticLockResponse::default()
-            },
-            Err(err) => kvrpcpb::PessimisticLockResponse {
-                errors: vec![convert_to_key_error(&err)],
-                ..kvrpcpb::PessimisticLockResponse::default()
-            },
+            Ok(result) => {
+                // Go's ForceLock arm fills one LockResultNormal per granted
+                // key; the client reads the TYPE (and a conflict timestamp
+                // this simplified store never grants past).
+                let results = if force_lock {
+                    req.mutations
+                        .iter()
+                        .map(|_| kvrpcpb::PessimisticLockKeyResult {
+                            r#type: kvrpcpb::PessimisticLockKeyResultType::LockResultNormal as i32,
+                            ..kvrpcpb::PessimisticLockKeyResult::default()
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                kvrpcpb::PessimisticLockResponse {
+                    values: result.values,
+                    not_founds: result.not_founds,
+                    results,
+                    ..kvrpcpb::PessimisticLockResponse::default()
+                }
+            }
+            Err(err) => {
+                // Go `MVCCStore.PessimisticLock`: an error under ForceLock
+                // pads `results` with LockResultFailed so the reply always
+                // answers about every requested key.
+                let results = if force_lock {
+                    req.mutations
+                        .iter()
+                        .map(|_| kvrpcpb::PessimisticLockKeyResult {
+                            r#type: kvrpcpb::PessimisticLockKeyResultType::LockResultFailed as i32,
+                            ..kvrpcpb::PessimisticLockKeyResult::default()
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+                kvrpcpb::PessimisticLockResponse {
+                    errors: vec![convert_to_key_error(&err)],
+                    results,
+                    ..kvrpcpb::PessimisticLockResponse::default()
+                }
+            }
         }
     }
 

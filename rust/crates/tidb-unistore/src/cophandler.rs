@@ -250,7 +250,26 @@ fn exec_table_scan(
             {
                 continue;
             }
-            let encoded = match tidb_codec::encode_value(&row_datums) {
+            // Go's closure executor emits exactly `DAGRequest.output_offsets`
+            // when the request names them: the request's own projection, in
+            // its order. An empty list is the whole scanned column set.
+            let projected: Vec<Datum> = if context.dag_req.output_offsets.is_empty() {
+                row_datums.clone()
+            } else {
+                let mut projected = Vec::with_capacity(context.dag_req.output_offsets.len());
+                for offset in &context.dag_req.output_offsets {
+                    match row_datums.get(*offset as usize) {
+                        Some(datum) => projected.push(datum.clone()),
+                        None => {
+                            return other_error(&format!(
+                                "output offset {offset} is outside the scanned columns"
+                            ))
+                        }
+                    }
+                }
+                projected
+            };
+            let encoded = match tidb_codec::encode_value(&projected) {
                 Ok(encoded) => encoded,
                 Err(err) => return other_error(&format!("encode row failed: {err:?}")),
             };
