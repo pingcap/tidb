@@ -549,7 +549,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 			if err != nil {
 				return err
 			}
-			schemas[key], err = parseProjectedTableSchema(
+			schemas[key], err = buildProjectedTableSchema(
 				schemaParser,
 				createTableSQL,
 				columnNames(projection.selectedTypes),
@@ -558,14 +558,6 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				return errors.Annotatef(
 					err,
 					"failed to analyze schema projection for table `%s`.`%s`",
-					escapeString(dbName),
-					escapeString(table.Name),
-				)
-			}
-			if err := schemas[key].applyLocalProjection(); err != nil {
-				return errors.Annotatef(
-					err,
-					"failed to project schema for table `%s`.`%s`",
 					escapeString(dbName),
 					escapeString(table.Name),
 				)

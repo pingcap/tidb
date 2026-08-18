@@ -24,7 +24,7 @@ type projectedTableSchema struct {
 
 type projectedTableSchemas map[tableName]*projectedTableSchema
 
-func parseProjectedTableSchema(
+func buildProjectedTableSchema(
 	p *parser.Parser,
 	originSQL string,
 	selectedColumns []string,
@@ -52,39 +52,38 @@ func parseProjectedTableSchema(
 		}
 	}
 
-	return &projectedTableSchema{
-		createTable:     createTable,
-		retainedColumns: retainedColumns,
-	}, nil
-}
-
-func (s *projectedTableSchema) applyLocalProjection() error {
-	columns := make([]*ast.ColumnDef, 0, len(s.createTable.Cols))
-	for _, column := range s.createTable.Cols {
-		if _, ok := s.retainedColumns[column.Name.Name.L]; !ok {
+	columns := make([]*ast.ColumnDef, 0, len(createTable.Cols))
+	for _, column := range createTable.Cols {
+		if _, ok := retainedColumns[column.Name.Name.L]; !ok {
 			continue
 		}
-		options, err := filterColumnOptions(column, s.retainedColumns)
+		options, err := filterColumnOptions(column, retainedColumns)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		column.Options = options
 		columns = append(columns, column)
 	}
-	s.createTable.Cols = columns
+	createTable.Cols = columns
 
-	constraints := make([]*ast.Constraint, 0, len(s.createTable.Constraints))
-	for _, constraint := range s.createTable.Constraints {
-		if filterTableConstraint(constraint, s.retainedColumns) {
+	constraints := make([]*ast.Constraint, 0, len(createTable.Constraints))
+	for _, constraint := range createTable.Constraints {
+		if filterTableConstraint(constraint, retainedColumns) {
 			constraints = append(constraints, constraint)
 		}
 	}
-	s.createTable.Constraints = constraints
+	createTable.Constraints = constraints
 
-	if err := validatePartitionColumns(s.createTable.Partition, s.retainedColumns); err != nil {
-		return err
+	if err := validatePartitionColumns(createTable.Partition, retainedColumns); err != nil {
+		return nil, err
 	}
-	return validateTTLColumns(s.createTable.Options, s.retainedColumns)
+	if err := validateTTLColumns(createTable.Options, retainedColumns); err != nil {
+		return nil, err
+	}
+	return &projectedTableSchema{
+		createTable:     createTable,
+		retainedColumns: retainedColumns,
+	}, nil
 }
 
 func (s *projectedTableSchema) getTableInfo() (*model.TableInfo, error) {
