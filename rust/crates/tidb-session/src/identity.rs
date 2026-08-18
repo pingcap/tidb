@@ -395,6 +395,24 @@ impl Session {
         self.secure_transport
     }
 
+    /// Records the negotiated TLS `(cipher, version)` names, which
+    /// `Ssl_cipher` and `Ssl_version` report — Go reads them off
+    /// `tls.ConnectionState` per connection (`server.go:1329`).
+    pub fn set_tls_status(&mut self, status: Option<(String, String)>) {
+        self.tls_status = status;
+    }
+
+    /// The negotiated TLS names, empty strings on a plaintext connection —
+    /// which is the Go capture's answer for the same rows.
+    #[must_use]
+    pub(crate) fn tls_status(&self) -> (&str, &str) {
+        self.tls_status
+            .as_ref()
+            .map_or(("", ""), |(cipher, version)| {
+                (cipher.as_str(), version.as_str())
+            })
+    }
+
     /// Whether this connection was admitted under skip-grant-table.
     #[must_use]
     pub(crate) const fn privilege_checks_bypassed(&self) -> bool {

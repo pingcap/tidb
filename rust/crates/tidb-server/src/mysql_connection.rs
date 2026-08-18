@@ -979,6 +979,12 @@ fn serve_connection_inner<F: QuerySessionFactory>(
         peer_addr,
         identity,
         secure_transport: socket.is_tls(),
+        tls_status: socket.negotiated_tls().map(|(cipher, version)| {
+            (
+                tidb_util::tlsutil::cipher_suite_name(cipher),
+                tidb_util::tlsutil::version_name(version),
+            )
+        }),
         cancellation: cancellation.clone(),
         close: close.clone(),
         version_info: runtime.version_info.clone(),

@@ -458,6 +458,7 @@ pub(super) fn session_context_with_identity(
         peer_addr,
         identity,
         secure_transport: false,
+        tls_status: None,
         cancellation: ConnectionCancellation::default(),
         close: ConnectionClose::default(),
         version_info: tidb_util::versioninfo::VersionInfo::build_default(),

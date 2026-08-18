@@ -761,6 +761,11 @@ pub struct SessionContext {
     /// Whether the MySQL front end completed a TLS handshake for this
     /// connection.
     pub secure_transport: bool,
+    /// The negotiated TLS `(cipher, version)` in their MySQL/OpenSSL
+    /// spellings (`tidb_util::tlsutil`), `None` on a plaintext connection.
+    /// Go reports the same pair through `Ssl_cipher`/`Ssl_version`
+    /// (`server.go:1329`).
+    pub tls_status: Option<(String, String)>,
     /// Forced-drain carrier on which the session registers each active query.
     pub cancellation: ConnectionCancellation,
     /// Handle a `KILL` uses to end this connection.

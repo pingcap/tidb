@@ -1507,7 +1507,17 @@ impl Session {
                 let text =
                     || tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
                 let mut rows = Vec::new();
+                let (tls_cipher, tls_version) = self.tls_status();
+                let (tls_cipher, tls_version) = (tls_cipher.to_owned(), tls_version.to_owned());
                 for &(name, value, session_only) in SHOW_STATUS_VARS {
+                    // Go fills these two per connection from the negotiated
+                    // TLS state (`server.go:1329`); a plaintext connection
+                    // keeps the table's empty strings.
+                    let value = match name {
+                        "Ssl_cipher" => tls_cipher.as_str(),
+                        "Ssl_version" => tls_version.as_str(),
+                        _ => value,
+                    };
                     if self.sem_hides_status_var(name) {
                         continue;
                     }

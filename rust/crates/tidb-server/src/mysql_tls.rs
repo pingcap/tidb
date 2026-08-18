@@ -263,6 +263,24 @@ impl ClientStream {
         Ok(())
     }
 
+    /// The negotiated `(cipher_suite, protocol_version)` wire identifiers of
+    /// this connection's TLS session, `None` before an upgrade. Go reads the
+    /// same pair off `tls.ConnectionState` for the `Ssl_cipher` and
+    /// `Ssl_version` status variables (`server.go:1329`).
+    pub fn negotiated_tls(&self) -> Option<(u16, u16)> {
+        match &*self.inner.lock().expect("client stream lock") {
+            ClientStreamInner::Tls(stream) => {
+                let cipher = stream
+                    .conn
+                    .negotiated_cipher_suite()
+                    .map(|suite| u16::from(suite.suite()))?;
+                let version = stream.conn.protocol_version().map(u16::from)?;
+                Some((cipher, version))
+            }
+            _ => None,
+        }
+    }
+
     /// Applies the session's command read timeout to the underlying socket.
     ///
     /// TLS changes the byte codec, not the socket authority. Updating the

@@ -474,6 +474,9 @@ pub struct Session {
     /// require_secure_transport=ON` needs it to avoid locking every current
     /// plaintext administrator out of the server.
     secure_transport: bool,
+    /// Negotiated TLS `(cipher, version)` names for `Ssl_cipher` /
+    /// `Ssl_version`; `None` on a plaintext connection.
+    tls_status: Option<(String, String)>,
     /// Go `session.sandboxMode`: this connection logged in with an EXPIRED
     /// password while the server allowed it, so it may run nothing but the
     /// `SET PASSWORD` / `ALTER USER` that fixes the password. Set by the
@@ -553,6 +556,7 @@ impl Default for Session {
             privileges: None,
             privilege_bypassed: false,
             secure_transport: false,
+            tls_status: None,
             sandbox_mode: false,
             rand: new_time_seeded_rand(),
             prepared_statements: prepared_statements::PreparedStore::default(),

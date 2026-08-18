@@ -2294,3 +2294,33 @@ fn show_builtins_lists_every_function_go_lists() {
         );
     }
 }
+
+/// A TLS connection fills `Ssl_cipher` and `Ssl_version` with the negotiated
+/// names — Go reads them per connection off `tls.ConnectionState`
+/// (`server.go:1329`), spelled by `pkg/util/tls`'s MySQL/OpenSSL tables. A
+/// plaintext session keeps the empty strings `show_status` above pins.
+#[test]
+fn show_status_reports_the_negotiated_tls_names() {
+    let mut session = Session::new();
+    session.set_tls_status(Some((
+        "TLS_AES_128_GCM_SHA256".to_owned(),
+        "TLSv1.3".to_owned(),
+    )));
+    let (_, rows) = query_text(&mut session, "SHOW STATUS LIKE 'Ssl%'");
+    let value = |name: &str| {
+        rows.iter()
+            .find(|row| row[0] == name)
+            .map(|row| row[1].clone())
+            .unwrap_or_default()
+    };
+    assert_eq!(value("Ssl_cipher"), "TLS_AES_128_GCM_SHA256");
+    assert_eq!(value("Ssl_version"), "TLSv1.3");
+    // The neighbours stay the table's own values.
+    assert_eq!(value("Ssl_cipher_list"), "");
+    assert_eq!(value("Ssl_verify_mode"), "0");
+
+    // Clearing restores the plaintext answer.
+    session.set_tls_status(None);
+    let (_, rows) = query_text(&mut session, "SHOW STATUS LIKE 'Ssl_cipher'");
+    assert_eq!(rows[0][1], "");
+}

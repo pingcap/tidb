@@ -510,6 +510,7 @@ impl QuerySessionFactory for ClusterSessionFactory {
         );
         session.set_connection_id(context.connection_id);
         session.set_secure_transport(context.secure_transport);
+        session.set_tls_status(context.tls_status.clone());
         if identity.in_sandbox_mode() {
             session.enable_sandbox_mode();
         }
