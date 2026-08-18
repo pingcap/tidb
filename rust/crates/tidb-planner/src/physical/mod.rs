@@ -825,6 +825,107 @@ pub fn exhaust_physical_plans_4_logical_partition_union_all(
     plans
 }
 
+/// Go `physicalop.PhysicalSequence` (`physical_sequence.go`, whole file):
+/// "the physical node for CTE storages" — every child but the last is a
+/// CTE producer, the last is the main query, and the sequence's schema is
+/// the LAST child's. `ExplainInfo` is the fixed string `Sequence Node`;
+/// `Attach2Task` lives in core/task.go and refuses by name in
+/// [`crate::task::attach2_task`].
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalSequence {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+}
+
+impl PhysicalSequence {
+    /// Go `PhysicalSequence.ExplainInfo()`: the fixed `Sequence Node`.
+    #[must_use]
+    pub const fn explain_info() -> &'static str {
+        "Sequence Node"
+    }
+}
+
+/// Go `ExhaustPhysicalPlans4LogicalSequence` (`physical_sequence.go:95`):
+/// under a root property, ONE candidate whose producers are each planned
+/// under `{RootTaskType, MaxFloat64, SomeCTEFailedMpp}` and whose main
+/// query gets the parent's essential property with `SomeCTEFailedMpp`
+/// stamped on it — the stamp is what stops an MPP plan from forming under
+/// a producer that cannot run MPP.
+///
+/// Go's MPP-property arm (`AllCTECanMpp` + a second all-MPP candidate
+/// beside the root one) narrows away with the TiFlash tier, as in
+/// [`exhaust_physical_plans_4_logical_limit`]; under an MPP parent
+/// property Go returns nothing when `SomeCTEFailedMpp`, and an MPP parent
+/// property cannot arise here at all.
+#[must_use]
+pub fn exhaust_physical_plans_4_logical_sequence(
+    p: &crate::logical::LogicalSequence,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+) -> Vec<PhysicalPlan> {
+    use crate::physical_property::CteProducerStatus;
+    if prop.task_tp == TaskType::Mpp {
+        return Vec::new();
+    }
+    let producer_prop = PhysicalProperty {
+        cte_producer_status: CteProducerStatus::SomeCteFailedMpp,
+        ..PhysicalProperty::default()
+    };
+    let mut main_prop = prop.clone_essential_fields();
+    main_prop.cte_producer_status = CteProducerStatus::SomeCteFailedMpp;
+    let child_len = p.base.child_len();
+    let mut ch_req_props: Vec<Option<PhysicalProperty>> = (0..child_len.saturating_sub(1))
+        .map(|_| Some(producer_prop.clone_essential_fields()))
+        .collect();
+    ch_req_props.push(Some(main_prop));
+    let seq_schema = p
+        .base
+        .children()
+        .last()
+        .and_then(crate::logical::LogicalPlan::schema)
+        .cloned();
+    let mut base = BasePhysicalPlan::new(
+        allocator,
+        crate::logical::LogicalSequence::TYPE,
+        p.base.base.query_block_offset(),
+    );
+    base.base.set_stats(p.base.base.stats_info().cloned());
+    base.base.set_schema(seq_schema);
+    base.set_children_req_props(ch_req_props);
+    vec![PhysicalPlan::Sequence(PhysicalSequence { base })]
+}
+
+/// Go `physicalop.PhysicalApply` (`physical_apply.go`, whole file): the
+/// correlated nested-loop join, embedding [`PhysicalHashJoin`] exactly as
+/// Go embeds it. Go's `PhysicalJoinImplement() bool { return false }`
+/// override — which UN-implements the `base.PhysicalJoin` interface an
+/// embedded hash join would otherwise satisfy — has no enum counterpart to
+/// override: an `Apply` variant simply is not a join variant, which is the
+/// same fact stated structurally. `GetCost`/ver1/ver2 delegate to
+/// core-cost bodies (`utilfuncp`) and follow the enum's cost narrowings;
+/// `Attach2Task4PhysicalApply` (core/task.go) refuses by name in
+/// [`crate::task::attach2_task`]. Go's `ExtractCorrelatedCols` override —
+/// the hash join's extraction minus columns the OUTER child's schema
+/// contains — narrows with the enum's condition-less hash join, whose own
+/// extraction is already the empty base body.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalApply {
+    /// Go's embedded `PhysicalHashJoin`.
+    pub hash_join: PhysicalHashJoin,
+    /// Go `CanUseCache`: whether the inner side may be memoized per outer
+    /// correlation value.
+    pub can_use_cache: bool,
+    /// Go `Concurrency`.
+    pub concurrency: usize,
+    /// Go `KeepOrder`: parallel apply must emit rows in outer order.
+    pub keep_order: bool,
+    /// Go `OuterSchema`: the correlated columns the inner side reads.
+    pub outer_schema: Vec<CorrelatedColumn>,
+    /// Go `NoDecorrelate`: the apply stayed undecorrelated because of a
+    /// `no_decorrelate` hint (read by EXPLAIN EXPLORE).
+    pub no_decorrelate: bool,
+}
+
 /// A physical operator whose own port is a later batch; the physical twin of
 /// [`crate::logical::TodoLogicalOp`].
 #[derive(Clone, Debug, Default)]
@@ -866,6 +967,10 @@ pub enum PhysicalPlan {
     Lock(PhysicalLock),
     /// Go `physicalop.PhysicalUnionAll`.
     UnionAll(PhysicalUnionAll),
+    /// Go `physicalop.PhysicalSequence`.
+    Sequence(PhysicalSequence),
+    /// Go `physicalop.PhysicalApply`.
+    Apply(PhysicalApply),
     /// An operator whose port is a later batch; see [`TodoPhysicalOp`].
     Todo(TodoPhysicalOp),
 }
@@ -889,6 +994,8 @@ impl PhysicalPlan {
             Self::ShowDDLJobs(op) => &op.base,
             Self::Lock(op) => &op.base,
             Self::UnionAll(op) => &op.base,
+            Self::Sequence(op) => &op.base,
+            Self::Apply(op) => &op.hash_join.base,
             Self::Todo(op) => &op.base,
         }
     }
@@ -910,6 +1017,8 @@ impl PhysicalPlan {
             Self::ShowDDLJobs(op) => &mut op.base,
             Self::Lock(op) => &mut op.base,
             Self::UnionAll(op) => &mut op.base,
+            Self::Sequence(op) => &mut op.base,
+            Self::Apply(op) => &mut op.hash_join.base,
             Self::Todo(op) => &mut op.base,
         }
     }
@@ -1280,6 +1389,21 @@ impl PhysicalPlan {
             Self::UnionAll(op) => Self::UnionAll(PhysicalUnionAll {
                 base: base_of(&op.base),
                 mpp: op.mpp,
+            }),
+            Self::Sequence(op) => Self::Sequence(PhysicalSequence {
+                base: base_of(&op.base),
+            }),
+            Self::Apply(op) => Self::Apply(PhysicalApply {
+                hash_join: PhysicalHashJoin {
+                    base: base_of(&op.hash_join.base),
+                    join_type: op.hash_join.join_type,
+                    inner_child_idx: op.hash_join.inner_child_idx,
+                },
+                can_use_cache: op.can_use_cache,
+                concurrency: op.concurrency,
+                keep_order: op.keep_order,
+                outer_schema: op.outer_schema.clone(),
+                no_decorrelate: op.no_decorrelate,
             }),
             Self::Todo(op) => Self::Todo(TodoPhysicalOp {
                 base: base_of(&op.base),

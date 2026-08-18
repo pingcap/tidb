@@ -573,3 +573,73 @@ fn a_union_all_fans_one_child_property_per_child() {
     );
     assert_eq!(plans[0].base().base.tp(), "PartitionUnion", "re-stamped");
 }
+
+#[test]
+fn a_sequence_plans_producers_at_root_and_stamps_some_cte_failed_mpp() {
+    // `ExhaustPhysicalPlans4LogicalSequence` (`physical_sequence.go:95`),
+    // non-MPP arm: every producer child gets `{Root, MaxFloat64,
+    // SomeCTEFailedMpp}`, the LAST child gets the parent's essential
+    // property with SomeCTEFailedMpp stamped on, and the sequence's schema
+    // is the last child's.
+    use crate::logical::{BaseLogicalPlan, LogicalPlan, LogicalSequence, LogicalTableDual};
+    use crate::physical_property::CteProducerStatus;
+
+    let allocator = PlanIdAllocator::new();
+    let child = || {
+        LogicalPlan::TableDual(LogicalTableDual::new(
+            BaseLogicalPlan::new(&allocator, LogicalTableDual::TYPE, 0),
+            1,
+        ))
+    };
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalSequence::TYPE, 0);
+    base.set_children(vec![child(), child(), child()]);
+    let sequence = LogicalSequence::new(base);
+
+    let prop = PhysicalProperty::new(TaskType::Root, &[9], false, 100.0, false);
+    let plans = exhaust_physical_plans_4_logical_sequence(&sequence, &prop, &allocator);
+    assert_eq!(plans.len(), 1);
+    let PhysicalPlan::Sequence(built) = &plans[0] else {
+        panic!("a Sequence, got {:?}", plans[0]);
+    };
+    for producer_idx in 0..2 {
+        let producer = built.base.child_req_prop(producer_idx).expect("prop");
+        assert_eq!(producer.task_tp, TaskType::Root);
+        assert!((producer.expected_cnt - f64::MAX).abs() < f64::EPSILON);
+        assert_eq!(
+            producer.cte_producer_status,
+            CteProducerStatus::SomeCteFailedMpp
+        );
+        assert!(producer.sort_items.is_empty());
+    }
+    let main = built.base.child_req_prop(2).expect("prop");
+    assert_eq!(main.sort_items, prop.sort_items, "the main query keeps the order");
+    assert!((main.expected_cnt - 100.0).abs() < f64::EPSILON);
+    assert_eq!(main.cte_producer_status, CteProducerStatus::SomeCteFailedMpp);
+    assert_eq!(PhysicalSequence::explain_info(), "Sequence Node");
+}
+
+#[test]
+fn an_apply_copies_all_its_own_fields() {
+    // `physical_apply.go`'s Clone: the embedded hash join plus
+    // CanUseCache/Concurrency/KeepOrder/OuterSchema/NoDecorrelate all ride
+    // the copy.
+    use tidb_expr::expression::CorrelatedColumn;
+
+    let apply = PhysicalPlan::Apply(PhysicalApply {
+        hash_join: PhysicalHashJoin::default(),
+        can_use_cache: true,
+        concurrency: 4,
+        keep_order: true,
+        outer_schema: vec![CorrelatedColumn::default()],
+        no_decorrelate: true,
+    });
+    let copied = apply.clone_shallow();
+    let PhysicalPlan::Apply(copy) = &copied else {
+        panic!("an Apply, got {copied:?}");
+    };
+    assert!(copy.can_use_cache);
+    assert_eq!(copy.concurrency, 4);
+    assert!(copy.keep_order);
+    assert_eq!(copy.outer_schema.len(), 1);
+    assert!(copy.no_decorrelate);
+}

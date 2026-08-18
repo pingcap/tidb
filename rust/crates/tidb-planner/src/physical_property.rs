@@ -139,6 +139,19 @@ pub enum IndexOrderingRequirement {
 /// -- so the type travels WITH the required property rather than beside it.
 pub use crate::task_type::TaskType;
 
+/// Go `property.cteProducerStatus` (`physical_property.go:240-245`): whether
+/// every CTE producer under this property can run in MPP mode.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum CteProducerStatus {
+    /// Go `NoCTEOrAllProducerCanMPP`, the iota zero value.
+    #[default]
+    NoCteOrAllProducerCanMpp,
+    /// Go `SomeCTEFailedMpp`.
+    SomeCteFailedMpp,
+    /// Go `AllCTECanMpp`.
+    AllCteCanMpp,
+}
+
 /// One column of a required order, and the direction it is required in.
 ///
 /// `property.SortItem`.  Go holds an `*expression.Column` and compares it with
@@ -192,6 +205,10 @@ pub struct PhysicalProperty {
     /// one partition, instead of global" — the MPP window paths fill it;
     /// everywhere else it stays empty, which is exactly Go's zero value.
     pub sort_items_for_partition: Vec<SortItem>,
+    /// Go `CTEProducerStatus`: threaded through every child property a CTE
+    /// consumer builds, so a producer that cannot run MPP poisons the whole
+    /// sequence's MPP choice.
+    pub cte_producer_status: CteProducerStatus,
 }
 
 impl Default for PhysicalProperty {
@@ -206,6 +223,7 @@ impl Default for PhysicalProperty {
             expected_cnt: f64::MAX,
             can_add_enforcer: false,
             sort_items_for_partition: Vec::new(),
+            cte_producer_status: CteProducerStatus::default(),
         }
     }
 }
@@ -227,6 +245,7 @@ impl PhysicalProperty {
             expected_cnt,
             can_add_enforcer: enforced,
             sort_items_for_partition: Vec::new(),
+            cte_producer_status: CteProducerStatus::default(),
         }
     }
 
@@ -243,6 +262,7 @@ impl PhysicalProperty {
             task_tp: self.task_tp,
             expected_cnt: self.expected_cnt,
             can_add_enforcer: false,
+            cte_producer_status: self.cte_producer_status,
         }
     }
 

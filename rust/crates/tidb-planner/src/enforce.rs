@@ -45,7 +45,7 @@
 //!   `NeedEnforceExchanger`, so no parameter carries it.
 
 use crate::physical::{BasePhysicalPlan, PhysicalPlan, PhysicalSort};
-use crate::physical_property::PhysicalProperty;
+use crate::physical_property::{CteProducerStatus, PhysicalProperty};
 use crate::plan_base::{PlanError, PlanIdAllocator};
 use crate::task::{attach2_task, MppTask, Task};
 use crate::task_type::TaskType;
@@ -120,6 +120,7 @@ pub fn enforce_property(
         expected_cnt: f64::MAX,
         can_add_enforcer: false,
         sort_items_for_partition: Vec::new(),
+        cte_producer_status: CteProducerStatus::default(),
     };
     let child = task
         .plan()

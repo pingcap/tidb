@@ -70,7 +70,7 @@
 
 use crate::candidate_cost::{self, Candidate, CostEnv, CostedNode};
 use crate::logical::LogicalPlan;
-use crate::physical_property::{PhysicalProperty, SortItem, TaskType};
+use crate::physical_property::{CteProducerStatus, PhysicalProperty, SortItem, TaskType};
 use crate::plan_base::PlanError;
 use crate::plan_cost_ver2::IndexJoinKind;
 /// The cost model's own task enum, which [`crate::candidate_cost`] reads.
@@ -502,6 +502,7 @@ fn enforced_merge_join_candidates(
         expected_cnt: f64::MAX,
         can_add_enforcer: true,
         sort_items_for_partition: Vec::new(),
+        cte_producer_status: CteProducerStatus::default(),
     };
     vec![EnumeratedJoin {
         strategy: JoinStrategy::Merge {
@@ -587,6 +588,7 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
             expected_cnt: prop.expected_cnt,
             can_add_enforcer: false,
             sort_items_for_partition: Vec::new(),
+            cte_producer_status: CteProducerStatus::default(),
         };
         // The inner side is planned under an empty property plus the index-join
         // runtime prop, which this port carries as the strategy's own
@@ -632,6 +634,7 @@ fn hash_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enum
         expected_cnt: f64::MAX,
         can_add_enforcer: false,
         sort_items_for_partition: Vec::new(),
+        cte_producer_status: CteProducerStatus::default(),
     };
     hash_join_shapes(join.join_type)
         .into_iter()

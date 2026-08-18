@@ -702,6 +702,12 @@ pub fn attach2_task(plan: PhysicalPlan, mut tasks: Vec<Task>) -> Result<Task, Pl
         PhysicalPlan::UnionAll(_) => Err(PlanError::internal(
             "attach2Task4PhysicalUnionAll (core/task.go) is not ported",
         )),
+        PhysicalPlan::Sequence(_) => Err(PlanError::internal(
+            "attach2Task4PhysicalSequence (core/task.go) is not ported",
+        )),
+        PhysicalPlan::Apply(_) => Err(PlanError::internal(
+            "attach2Task4PhysicalApply (core/task.go) is not ported",
+        )),
         // `attach2Task4NominalSort` (`task.go:851`): an only-column nominal
         // sort returns the child task ITSELF — not even a copy — and
         // otherwise it is copy-then-attach with no conversion, like Sort.
