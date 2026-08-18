@@ -999,5 +999,7 @@ fn keep_cheaper(best: &mut Option<Task>, task: Task) {
     }
 }
 
+pub mod dispatch;
+
 #[cfg(test)]
 mod tests;

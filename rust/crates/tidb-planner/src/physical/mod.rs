@@ -926,6 +926,69 @@ pub struct PhysicalApply {
     pub no_decorrelate: bool,
 }
 
+/// Go `BuildPhysicalJoinSchema(joinType, join)`
+/// (`base_physical_join.go:190`): the schema a physical join exposes, from
+/// its children's — semi joins keep the left schema; the left-outer-semi
+/// pair appends the join's own trailing bool column; everything else is the
+/// merged pair with the outer side's opposite half made nullable.
+///
+/// `None` answers a child without a schema, where Go would nil-deref.
+#[must_use]
+pub fn build_physical_join_schema(
+    join_type: LogicalJoinType,
+    join: &PhysicalPlan,
+) -> Option<Schema> {
+    let left_schema = join.children().first().and_then(PhysicalPlan::schema)?;
+    match join_type {
+        LogicalJoinType::Semi | LogicalJoinType::AntiSemi => Some(left_schema.clone()),
+        LogicalJoinType::LeftOuterSemi | LogicalJoinType::AntiLeftOuterSemi => {
+            let mut new_schema = left_schema.clone();
+            let own = join.schema()?;
+            new_schema.columns.push(own.columns.last()?.clone());
+            Some(new_schema)
+        }
+        LogicalJoinType::Inner | LogicalJoinType::LeftOuter | LogicalJoinType::RightOuter => {
+            let left_len = left_schema.len();
+            let right_schema = join.children().get(1).and_then(PhysicalPlan::schema);
+            let mut new_schema =
+                tidb_expr::schema::merge_schema(Some(left_schema), right_schema)?;
+            let total = new_schema.len();
+            match join_type {
+                LogicalJoinType::LeftOuter => {
+                    crate::plan_builder::from::reset_not_null_flag(
+                        &mut new_schema,
+                        left_len,
+                        total,
+                    );
+                }
+                LogicalJoinType::RightOuter => {
+                    crate::plan_builder::from::reset_not_null_flag(&mut new_schema, 0, left_len);
+                }
+                _ => {}
+            }
+            Some(new_schema)
+        }
+    }
+}
+
+/// Go `physicalop.PhysicalTableReader` (the reader half of
+/// `convertToRootTaskImpl`'s table branch, `task_base.go:571`): the
+/// TiDB-side operator that reads a pushed-down table plan's results. The
+/// cop-side plan hangs off [`Self::table_plan`], NOT the child list —
+/// exactly Go's `TablePlan` field, whose tree lives in another execution
+/// tier.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalTableReader {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `TablePlan`: the pushed-down side.
+    pub table_plan: Option<Box<PhysicalPlan>>,
+    /// Go `StoreType`, read off the bottom `PhysicalTableScan`.
+    pub store_type: crate::physical_table_reader::StoreType,
+    /// Go `IsCommonHandle`, read off the scan's table.
+    pub is_common_handle: bool,
+}
+
 /// A physical operator whose own port is a later batch; the physical twin of
 /// [`crate::logical::TodoLogicalOp`].
 #[derive(Clone, Debug, Default)]
@@ -971,6 +1034,8 @@ pub enum PhysicalPlan {
     Sequence(PhysicalSequence),
     /// Go `physicalop.PhysicalApply`.
     Apply(PhysicalApply),
+    /// Go `physicalop.PhysicalTableReader`.
+    TableReader(PhysicalTableReader),
     /// An operator whose port is a later batch; see [`TodoPhysicalOp`].
     Todo(TodoPhysicalOp),
 }
@@ -996,6 +1061,7 @@ impl PhysicalPlan {
             Self::UnionAll(op) => &op.base,
             Self::Sequence(op) => &op.base,
             Self::Apply(op) => &op.hash_join.base,
+            Self::TableReader(op) => &op.base,
             Self::Todo(op) => &op.base,
         }
     }
@@ -1019,6 +1085,7 @@ impl PhysicalPlan {
             Self::UnionAll(op) => &mut op.base,
             Self::Sequence(op) => &mut op.base,
             Self::Apply(op) => &mut op.hash_join.base,
+            Self::TableReader(op) => &mut op.base,
             Self::Todo(op) => &mut op.base,
         }
     }
@@ -1404,6 +1471,12 @@ impl PhysicalPlan {
                 keep_order: op.keep_order,
                 outer_schema: op.outer_schema.clone(),
                 no_decorrelate: op.no_decorrelate,
+            }),
+            Self::TableReader(op) => Self::TableReader(PhysicalTableReader {
+                base: base_of(&op.base),
+                table_plan: op.table_plan.clone(),
+                store_type: op.store_type,
+                is_common_handle: op.is_common_handle,
             }),
             Self::Todo(op) => Self::Todo(TodoPhysicalOp {
                 base: base_of(&op.base),

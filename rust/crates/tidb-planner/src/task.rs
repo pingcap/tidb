@@ -22,9 +22,11 @@
 //! * `pkg/planner/core/operator/physicalop/task.go` (96) —
 //!   `CopTask.FinishIndexPlan`, `GetStoreType`, `handleRootTaskConds`.
 //!
-//! NOT here, by name: the 2,319-line `pkg/planner/core/task.go`, which is
-//! every operator's `Attach2Task` body — a later batch. The empty
-//! `attach2_task` stub in [`crate::physical`] keeps standing for it.
+//! `pkg/planner/core/task.go` (2,319 lines) lands here ARM BY ARM as each
+//! operator's dependencies close: [`attach2_task`] carries the ported
+//! `attach2Task4PhysicalX` bodies (Sort, Selection, Projection, Limit,
+//! MaxOneRow, NominalSort, Lock, UnionAll, Apply, HashJoin, Sequence), and
+//! every unported body remains a refusal naming its Go symbol.
 //!
 //! SEED of `pkg/planner/core`'s task layer: the representation and its own
 //! small methods land; the conversions that BUILD plans do not (see the
@@ -369,6 +371,80 @@ impl CopTask {
         }
     }
 
+    /// Go `CopTask.convertToRootTaskImpl` (`task_base.go:509`), the
+    /// TABLE-ONLY branch: seal the index half, walk to the bottom
+    /// `PhysicalTableScan`, and wrap the pushed-down plan in a
+    /// `PhysicalTableReader` carrying the scan's store type — with the
+    /// task's warnings copied onto the fresh root task, Go's deferred tail.
+    ///
+    /// The other shapes refuse by name: an index half needs
+    /// `PhysicalIndexReader`/`BuildIndexLookUpTask`, index-merge needs
+    /// `PhysicalIndexMergeReader`, and `RootTaskConds` need
+    /// `handleRootTaskConds` (`cardinality.Selectivity` over a built
+    /// Selection). `ExpandVirtualColumn`/`NeedExtraProj` narrow with
+    /// virtual columns, which the ported scan does not carry;
+    /// `IsCommonHandle` narrows with the unported `table.Table` binding and
+    /// stays false. Go's `Init` allocates the reader a FRESH plan id from
+    /// the context; this conversion path carries no allocator, so the
+    /// reader reuses the pushed-down plan's id — a named narrowing, visible
+    /// only in explain-id suffixes.
+    pub fn convert_to_root_task_impl(mut self) -> Result<Task, PlanError> {
+        if !self.idx_merge_part_plans.is_empty() {
+            return Err(PlanError::internal(
+                "convertToRootTaskImpl: the index-merge branch builds \
+                 PhysicalIndexMergeReader, not ported",
+            ));
+        }
+        if self.index_plan.is_some() {
+            return Err(PlanError::internal(
+                "convertToRootTaskImpl: an index half builds \
+                 PhysicalIndexReader/BuildIndexLookUpTask, not ported",
+            ));
+        }
+        if !self.root_task_conds.is_empty() {
+            return Err(PlanError::internal(
+                "handleRootTaskConds (core/task.go): cardinality.Selectivity \
+                 over a built PhysicalSelection, not ported",
+            ));
+        }
+        self.finish_index_plan();
+        let Some(table_plan) = self.table_plan.take() else {
+            return Err(PlanError::internal(
+                "convertToRootTaskImpl: a cop task with neither half",
+            ));
+        };
+        let mut bottom = &*table_plan;
+        while let Some(child) = bottom.children().first() {
+            bottom = child;
+        }
+        let PhysicalPlan::TableScan(scan) = bottom else {
+            return Err(PlanError::internal(format!(
+                "convertToRootTaskImpl: the bottom of the table half is a {}, \
+                 not a PhysicalTableScan — Go type-asserts here",
+                bottom.tp()
+            )));
+        };
+        let store_type = scan.store_type;
+        let mut base = crate::physical::BasePhysicalPlan::with_id(
+            table_plan.id(),
+            "TableReader",
+            table_plan.query_block_offset(),
+        );
+        base.base.set_stats(table_plan.stats_info().cloned());
+        let reader = PhysicalPlan::TableReader(crate::physical::PhysicalTableReader {
+            base,
+            table_plan: Some(Box::new(*table_plan)),
+            store_type,
+            is_common_handle: false,
+        });
+        let mut root = RootTask::default();
+        root.set_plan(reader);
+        if self.warnings.warning_count() > 0 {
+            root.warnings.copy_of(&self.warnings);
+        }
+        Ok(Task::Root(root))
+    }
+
     /// Go `GetStoreType` (`task.go:84-96`): walk the table half; more than
     /// one child anywhere means TiFlash, a `PhysicalTableScan` leaf answers
     /// with its own store, anything else is TiKV.
@@ -474,10 +550,7 @@ impl Task {
     pub fn convert_to_root_task(&self) -> Result<Task, PlanError> {
         match self {
             Task::Root(task) => Ok(Task::Root(task.copy())),
-            Task::Cop(_) => Err(PlanError::internal(
-                "convertToRootTaskImpl (core/task.go) is not ported: converting a \
-                 CopTask builds PhysicalTableReader/IndexReader/IndexLookUpReader",
-            )),
+            Task::Cop(task) => task.copy().convert_to_root_task_impl(),
             Task::Mpp(_) => Err(PlanError::internal(
                 "MppTask.ConvertToRootTaskImpl (task_base.go:298) is not ported: it \
                  builds a PhysicalExchangeSender + PhysicalTableReader pair",
@@ -513,6 +586,66 @@ mod tests {
         base.base = crate::plan_base::BasePlan::new(&allocator, DUAL_TYPE, 0);
         base.base.set_stats(Some(StatsInfo::new(rows, [])));
         PhysicalPlan::TableDual(crate::physical::PhysicalTableDual { base, row_count: 0 })
+    }
+
+    #[test]
+    fn a_table_only_cop_task_converts_into_a_table_reader() {
+        // `convertToRootTaskImpl`'s table branch (`task_base.go:571`): the
+        // pushed-down plan hangs off the reader's TablePlan field, the
+        // store type is read off the bottom scan, and the task's warnings
+        // ride the deferred copy onto the fresh root task.
+        let allocator = PlanIdAllocator::new();
+        let mut base = crate::physical::BasePhysicalPlan::default();
+        base.base = crate::plan_base::BasePlan::new(&allocator, "TableScan", 0);
+        base.base.set_stats(Some(StatsInfo::new(42.0, [])));
+        let scan = PhysicalPlan::TableScan(crate::physical::PhysicalTableScan {
+            base,
+            table_id: 9,
+            store_type: crate::physical_table_reader::StoreType::TiKv,
+        });
+        let mut cop = CopTask {
+            table_plan: Some(Box::new(scan)),
+            index_plan_finished: true,
+            ..CopTask::default()
+        };
+        cop.warnings.append_warning("carried");
+        let task = Task::Cop(cop).convert_to_root_task().expect("converts");
+        let Task::Root(root) = &task else {
+            panic!("a root task");
+        };
+        assert_eq!(root.warnings.warning_count(), 1, "the deferred copy");
+        let Some(PhysicalPlan::TableReader(reader)) = task.plan() else {
+            panic!("a TableReader, got {:?}", task.plan());
+        };
+        assert_eq!(
+            reader.store_type,
+            crate::physical_table_reader::StoreType::TiKv
+        );
+        assert!(
+            matches!(reader.table_plan.as_deref(), Some(PhysicalPlan::TableScan(_))),
+            "the pushed-down side hangs off TablePlan, not the child list"
+        );
+        assert!(reader.base.children().is_empty());
+        assert!(
+            (task.plan().expect("plan").stats_info().expect("stats").row_count() - 42.0).abs()
+                < f64::EPSILON,
+            "the reader carries the table plan's stats"
+        );
+    }
+
+    #[test]
+    fn an_index_half_still_refuses_the_conversion_by_name() {
+        // The index shapes build PhysicalIndexReader/BuildIndexLookUpTask,
+        // still refused.
+        let task = Task::Cop(CopTask {
+            index_plan: Some(Box::new(dual_with_rows(1.0))),
+            ..CopTask::default()
+        });
+        let error = task.convert_to_root_task().expect_err("refuses");
+        assert!(
+            format!("{error}").contains("PhysicalIndexReader"),
+            "{error}"
+        );
     }
 
     #[test]
@@ -697,17 +830,83 @@ pub fn attach2_task(plan: PhysicalPlan, mut tasks: Vec<Task>) -> Result<Task, Pl
             let converted = first.convert_to_root_task()?;
             Ok(attach_plan_to_task(plan, converted))
         }
-        // `attach2Task4PhysicalUnionAll` (core/task.go) converts EVERY child
-        // task and wires a multi-child plan — a later batch; refused by name.
-        PhysicalPlan::UnionAll(_) => Err(PlanError::internal(
-            "attach2Task4PhysicalUnionAll (core/task.go) is not ported",
-        )),
-        PhysicalPlan::Sequence(_) => Err(PlanError::internal(
-            "attach2Task4PhysicalSequence (core/task.go) is not ported",
-        )),
-        PhysicalPlan::Apply(_) => Err(PlanError::internal(
-            "attach2Task4PhysicalApply (core/task.go) is not ported",
-        )),
+        // `attach2Task4PhysicalUnionAll` (`task.go:1573`): convert EVERY
+        // child task to root and wire the multi-child plan into a fresh
+        // RootTask. Go's MPP arm: a PartitionUnion over any MPP child is the
+        // invalid task outright ("PartitionUnion cannot pushdown to
+        // tiflash"); a plain union over MPP children needs
+        // `attach2MppTasks4PhysicalUnionAll`, refused by name.
+        PhysicalPlan::UnionAll(_) => {
+            let mut tasks = {
+                let mut all = vec![first];
+                all.append(&mut tasks);
+                all
+            };
+            if tasks.iter().any(|task| matches!(task, Task::Mpp(_))) {
+                if plan.base().base.tp() == "PartitionUnion" {
+                    return Ok(Task::invalid_task());
+                }
+                return Err(PlanError::internal(
+                    "attach2MppTasks4PhysicalUnionAll (task.go) is not ported",
+                ));
+            }
+            let mut plan = plan;
+            let mut children = Vec::with_capacity(tasks.len());
+            for task in tasks.drain(..) {
+                let Task::Root(mut converted) = task.convert_to_root_task()? else {
+                    return Err(PlanError::internal(
+                        "convert_to_root_task answered a non-root task",
+                    ));
+                };
+                let Some(child) = converted.take_plan() else {
+                    return Err(PlanError::internal(
+                        "attach2Task4PhysicalUnionAll: a child task has no plan",
+                    ));
+                };
+                children.push(child);
+            }
+            plan.base_mut().set_children(children);
+            let mut root = RootTask::default();
+            root.set_plan(plan);
+            Ok(Task::Root(root))
+        }
+        // `attach2Task4PhysicalApply` (`task.go:127`): convert both children
+        // to root, wire them in, build the join schema
+        // (`BuildPhysicalJoinSchema`), and inherit BOTH children's warnings.
+        PhysicalPlan::Apply(_) => {
+            let second = tasks
+                .drain(..1)
+                .next()
+                .ok_or_else(|| PlanError::internal("attach2Task4PhysicalApply needs two tasks"))?;
+            let Task::Root(mut left) = first.convert_to_root_task()? else {
+                return Err(PlanError::internal(
+                    "convert_to_root_task answered a non-root task",
+                ));
+            };
+            let Task::Root(mut right) = second.convert_to_root_task()? else {
+                return Err(PlanError::internal(
+                    "convert_to_root_task answered a non-root task",
+                ));
+            };
+            let (Some(left_plan), Some(right_plan)) = (left.take_plan(), right.take_plan()) else {
+                return Err(PlanError::internal(
+                    "attach2Task4PhysicalApply: a child task has no plan",
+                ));
+            };
+            let mut plan = plan;
+            plan.base_mut().set_children(vec![left_plan, right_plan]);
+            let join_type = match &plan {
+                PhysicalPlan::Apply(apply) => apply.hash_join.join_type,
+                _ => unreachable!("the arm matched Apply"),
+            };
+            let schema = crate::physical::build_physical_join_schema(join_type, &plan);
+            plan.base_mut().base.set_schema(schema);
+            let mut root = RootTask::default();
+            root.set_plan(plan);
+            root.warnings.copy_from([&left.warnings, &right.warnings]);
+            Ok(Task::Root(root))
+        }
+
         // `attach2Task4NominalSort` (`task.go:851`): an only-column nominal
         // sort returns the child task ITSELF — not even a copy — and
         // otherwise it is copy-then-attach with no conversion, like Sort.
@@ -717,10 +916,61 @@ pub fn attach2_task(plan: PhysicalPlan, mut tasks: Vec<Task>) -> Result<Task, Pl
             }
             Ok(attach_plan_to_task(plan, first.copy()))
         }
-        // Operators whose Go bodies are not yet ported refuse by name.
-        PhysicalPlan::HashJoin(_) => Err(PlanError::internal(
-            "attach2Task4PhysicalHashJoin (task.go) is not ported",
-        )),
+        // `attach2Task4PhysicalSequence` (`task.go:2259`): when ANY child
+        // task is not MPP, the sequence VANISHES — the last child's task is
+        // returned unchanged and every producer's task is discarded. That is
+        // Go's own body ("if !isMpp { return tasks[len(tasks)-1] }"), a
+        // quirk reproduced rather than fixed: on a root-tier plan the CTE
+        // producers are wired elsewhere, not through this attach. The
+        // all-MPP arm builds an MppTask over the last child's partition
+        // columns — unported, refused by name.
+        PhysicalPlan::Sequence(_) => {
+            let mut all = vec![first];
+            all.append(&mut tasks);
+            if all.iter().any(|task| !matches!(task, Task::Mpp(_))) {
+                return Ok(all
+                    .pop()
+                    .expect("the vec was built with at least one task"));
+            }
+            Err(PlanError::internal(
+                "attach2Task4PhysicalSequence's all-MPP arm (task.go:2269, \
+                 NewMppTask over GetHashCols) is not ported",
+            ))
+        }
+        // `attach2Task4PhysicalHashJoin` (`task.go:211`): convert BOTH
+        // children — Go converts the RIGHT one first — wire them in, and
+        // concatenate warnings right-before-left, which is the order SHOW
+        // WARNINGS replays them in. `StoreTp == kv.TiFlash` routes to the
+        // TiFlash attach in Go; the enum's hash join carries no store type,
+        // with no TiFlash tier to route to. `IndexJoinInfo` is a named
+        // narrowing on this port's tasks (module header).
+        PhysicalPlan::HashJoin(_) => {
+            let second = tasks.drain(..1).next().ok_or_else(|| {
+                PlanError::internal("attach2Task4PhysicalHashJoin needs two tasks")
+            })?;
+            let Task::Root(mut right) = second.convert_to_root_task()? else {
+                return Err(PlanError::internal(
+                    "convert_to_root_task answered a non-root task",
+                ));
+            };
+            let Task::Root(mut left) = first.convert_to_root_task()? else {
+                return Err(PlanError::internal(
+                    "convert_to_root_task answered a non-root task",
+                ));
+            };
+            let (Some(left_plan), Some(right_plan)) = (left.take_plan(), right.take_plan()) else {
+                return Err(PlanError::internal(
+                    "attach2Task4PhysicalHashJoin: a child task has no plan",
+                ));
+            };
+            let mut plan = plan;
+            plan.base_mut().set_children(vec![left_plan, right_plan]);
+            let mut root = RootTask::default();
+            root.set_plan(plan);
+            root.warnings
+                .copy_from([&right.warnings, &left.warnings]);
+            Ok(Task::Root(root))
+        }
         PhysicalPlan::TableScan(_) => Err(PlanError::internal(
             "a PhysicalTableScan is born inside a cop task by findBestTask, \
              never attached (convertToTableScan, find_best_task.go)",
@@ -728,6 +978,10 @@ pub fn attach2_task(plan: PhysicalPlan, mut tasks: Vec<Task>) -> Result<Task, Pl
         PhysicalPlan::TableDual(_) => Err(PlanError::internal(
             "a PhysicalTableDual is born inside its own root task by \
              findBestTask (logical_table_dual.go), never attached",
+        )),
+        PhysicalPlan::TableReader(_) => Err(PlanError::internal(
+            "a PhysicalTableReader is born by convertToRootTaskImpl \
+             (task_base.go:571), never attached",
         )),
         PhysicalPlan::CTETable(_) => Err(PlanError::internal(
             "a PhysicalCTETable is born inside its own root task by \
@@ -828,6 +1082,163 @@ mod attach_tests {
         let plan = task.plan().expect("a plan");
         assert!(matches!(plan, PhysicalPlan::NominalSort(_)));
         assert_eq!(plan.children().len(), 1, "the old plan became the child");
+    }
+
+    #[test]
+    fn a_union_all_converts_every_child_and_owns_them() {
+        // `attach2Task4PhysicalUnionAll` (`task.go:1573`): each child task
+        // converts to root and its plan becomes a child of the union, which
+        // sits in a fresh RootTask.
+        let union = PhysicalPlan::UnionAll(crate::physical::PhysicalUnionAll {
+            base: op_with_stats("Union", 20.0),
+            mpp: false,
+        });
+        let task = attach2_task(union, vec![root_task_over(10.0), root_task_over(10.0)])
+            .expect("attaches");
+        let plan = task.plan().expect("a plan");
+        assert!(matches!(plan, PhysicalPlan::UnionAll(_)));
+        assert_eq!(plan.children().len(), 2, "both children wired in");
+    }
+
+    #[test]
+    fn a_partition_union_over_an_mpp_child_is_invalid() {
+        // Go: "PartitionUnion cannot pushdown to tiflash ... return
+        // base.InvalidTask immediately".
+        let mut base = op_with_stats("Union", 20.0);
+        base.base.set_tp("PartitionUnion");
+        let union = PhysicalPlan::UnionAll(crate::physical::PhysicalUnionAll {
+            base,
+            mpp: false,
+        });
+        let mpp_child = Task::Mpp(MppTask::new(
+            PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
+                base: op_with_stats("Dual", 1.0),
+                ..crate::physical::PhysicalTableDual::default()
+            }),
+            crate::physical_property::MppPartitionType::Any,
+            [],
+        ));
+        let task =
+            attach2_task(union, vec![root_task_over(10.0), mpp_child]).expect("invalid, not error");
+        assert!(task.invalid());
+    }
+
+    #[test]
+    fn an_apply_builds_the_join_schema_and_inherits_both_warning_sets() {
+        // `attach2Task4PhysicalApply` (`task.go:127`): both children convert,
+        // the schema is BuildPhysicalJoinSchema's, and the fresh root task's
+        // warnings are the concatenation of both children's.
+        use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
+        use tidb_expr::column::Column;
+        use tidb_expr::schema::Schema;
+
+        let child = |rows: f64, col_id: i64, not_null: bool| {
+            let mut base = op_with_stats("Dual", rows);
+            let mut ft = FieldType::new(FieldTypeCode::LongLong);
+            if not_null {
+                ft.add_flags(FieldTypeFlags::NOT_NULL);
+            }
+            let mut schema = Schema::default();
+            schema.columns = vec![Column::new(col_id, ft)];
+            base.base.set_schema(Some(schema));
+            let mut root = RootTask::default();
+            root.warnings.append_warning(format!("w{col_id}"));
+            root.set_plan(PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
+                base,
+                ..crate::physical::PhysicalTableDual::default()
+            }));
+            Task::Root(root)
+        };
+
+        let apply = PhysicalPlan::Apply(crate::physical::PhysicalApply {
+            hash_join: crate::physical::PhysicalHashJoin {
+                base: op_with_stats("Apply", 5.0),
+                join_type: crate::find_best_task::LogicalJoinType::LeftOuter,
+                inner_child_idx: 1,
+            },
+            ..crate::physical::PhysicalApply::default()
+        });
+        let task =
+            attach2_task(apply, vec![child(10.0, 1, true), child(3.0, 2, true)]).expect("attaches");
+        let Task::Root(root) = &task else {
+            panic!("a root task");
+        };
+        assert_eq!(root.warnings.warning_count(), 2, "both children's warnings");
+        let plan = task.plan().expect("a plan");
+        let schema = plan.base().base.schema().expect("the built join schema");
+        assert_eq!(schema.len(), 2, "left + right merged");
+        assert!(
+            !schema.columns[1]
+                .ret_type
+                .as_ref()
+                .expect("a type")
+                .has_flag(FieldTypeFlags::NOT_NULL),
+            "LeftOuter resets NOT NULL on the right half"
+        );
+        assert!(
+            schema.columns[0]
+                .ret_type
+                .as_ref()
+                .expect("a type")
+                .has_flag(FieldTypeFlags::NOT_NULL),
+            "the left half keeps its flag"
+        );
+    }
+
+    #[test]
+    fn a_root_sequence_vanishes_into_its_last_childs_task() {
+        // `attach2Task4PhysicalSequence` (`task.go:2259`): any non-MPP child
+        // returns tasks[len-1] UNCHANGED — the sequence plan and every
+        // producer's task are discarded. Go's own body, reproduced.
+        let sequence = PhysicalPlan::Sequence(crate::physical::PhysicalSequence {
+            base: op_with_stats("Sequence", 5.0),
+        });
+        let task = attach2_task(
+            sequence,
+            vec![root_task_over(1.0), root_task_over(2.0), root_task_over(3.0)],
+        )
+        .expect("passes through");
+        let plan = task.plan().expect("a plan");
+        assert!(
+            matches!(plan, PhysicalPlan::TableDual(_)),
+            "the LAST child's own plan, no Sequence above it"
+        );
+        assert!(
+            (plan.stats_info().expect("stats").row_count() - 3.0).abs() < f64::EPSILON,
+            "specifically the last child"
+        );
+    }
+
+    #[test]
+    fn a_hash_join_concatenates_warnings_right_before_left() {
+        // `attach2Task4PhysicalHashJoin` (`task.go:227`):
+        // `CopyFrom(&rTask.Warnings, &lTask.Warnings)` — the RIGHT child's
+        // warnings come first in the replay order.
+        let child = |rows: f64, warning: &str| {
+            let mut root = RootTask::default();
+            root.warnings.append_warning(warning);
+            root.set_plan(PhysicalPlan::TableDual(crate::physical::PhysicalTableDual {
+                base: op_with_stats("Dual", rows),
+                ..crate::physical::PhysicalTableDual::default()
+            }));
+            Task::Root(root)
+        };
+        let join = PhysicalPlan::HashJoin(crate::physical::PhysicalHashJoin {
+            base: op_with_stats("HashJoin", 5.0),
+            ..crate::physical::PhysicalHashJoin::default()
+        });
+        let task = attach2_task(join, vec![child(1.0, "left"), child(2.0, "right")])
+            .expect("attaches");
+        let Task::Root(root) = &task else {
+            panic!("a root task");
+        };
+        let warnings = root.warnings.get_warnings();
+        assert_eq!(
+            warnings.iter().map(|w| w.message.as_str()).collect::<Vec<_>>(),
+            vec!["right", "left"],
+            "Go copies the right child's warnings first"
+        );
+        assert_eq!(task.plan().expect("plan").children().len(), 2);
     }
 
     #[test]
