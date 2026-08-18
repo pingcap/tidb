@@ -17,7 +17,7 @@ Users will observe success in `IMPORT INTO` job duration, source rows per second
 - [x] (2026-08-18) Reconstructed the current encode pipeline, existing metrics, reader behavior, writer memory formula, and historical cluster measurements.
 - [x] (2026-08-18) Wrote the initial self-contained execution and cluster-validation plan.
 - [x] (2026-08-18) Selected `upstream/master` at `454d7010a4` and created a clean dedicated worktree without carrying unrelated CSV parser changes into the performance series.
-- [ ] Milestone 0: establish reproducible workload manifests, stage-level observability, baseline ceilings, and baseline profiles. Completed on 2026-08-18: source/decompress/parse/encode/KV-group/send/deliver timing, tests, and PK/3-index/16-index encoder benchmarks. Remaining: full in-memory pipeline benchmark, workload manifests, cluster baselines, and profiles.
+- [ ] Milestone 0: establish reproducible workload manifests, stage-level observability, baseline ceilings, and baseline profiles. Completed on 2026-08-18: source/decompress/parse/encode/KV-group/send/deliver timing, tests, production-build PK/3-index/16-index encoder benchmarks, and encode-only CPU/allocation profiles. Remaining: corrected fixed-row-width benchmark matrix, full in-memory pipeline benchmark, workload manifests, cluster baselines, and cluster profiles.
 - [ ] Milestone 1: implement ordered parallel 8 MiB source range reads and pass local correctness tests.
 - [ ] Milestone 1 cluster gate: measure reader-only behavior on uncompressed and compressed inputs and record the result here.
 - [ ] Milestone 2: implement opt-in asynchronous ping-pong flushing for IMPORT INTO writers while preserving the existing external-file format.
@@ -48,6 +48,15 @@ Users will observe success in `IMPORT INTO` job duration, source rows per second
 
 - Observation: the present worktree contains unrelated user changes in `pkg/lightning/mydump/csv_parser.go`, `pkg/lightning/mydump/csv_parser_test.go`, and `pkg/lightning/mydump/parser.go`, plus unrelated untracked files. Implementation must start in a clean worktree from an explicitly agreed base rather than editing over those files.
   Evidence: `git status --short` on 2026-08-18.
+
+- Observation: failpoint-enabled binaries materially distort encode microbenchmarks. The failpoint build added a fixed 144 B and two allocations per row and slowed PK-only by about 19%; its allocation profile contained failpoint helper `_curpkg_`. Correctness tests remain failpoint-enabled, but performance benchmarks and profiles must use the production build path.
+  Evidence: five-run failpoint and non-failpoint comparisons on 2026-08-18.
+
+- Observation: the initial sixteen-index benchmark also widened the row from four to seventeen columns, so it mixes index-count cost with thirteen additional casts and record columns. Keep its result as a wide-row scenario, but add a fixed-row-width sixteen-index case before attributing the delta to index count.
+  Evidence: `BenchmarkTableKVEncoder` schema definitions and CPU profile showing `parserData2TableData` at about 20% cumulative time for the wide sixteen-index case.
+
+- Observation: encode-only allocation hotspots differ by schema. PK-only is dominated by `Session.TakeKvPairs` and per-row `AddRecordOpt`; the three-index string/composite case is dominated by restored index-value encoding; the sixteen-simple-index case is dominated by `TakeKvPairs`, a one-element slice allocated by non-MV `getIndexedValue`, per-KV RowID encoding, and simple index-value buffers.
+  Evidence: production allocation profiles captured on 2026-08-18.
 
 ## Decision Log
 
@@ -82,6 +91,10 @@ Users will observe success in `IMPORT INTO` job duration, source rows per second
 - Decision: optimize encoding CPU only after reader and writer waits are independently measured, but create reproducible CPU benchmarks and profiles in Milestone 0.
   Rationale: profiling infrastructure is useful immediately; changing hot code before I/O stalls are removed can improve a microbenchmark without affecting wall time. Each CPU change must retain its own ablation result.
   Date/Author: 2026-08-18 / Codex and user.
+
+- Decision: run performance benchmarks and profiles without enabling failpoints, while retaining failpoint-enabled correctness tests for packages that use failpoints.
+  Rationale: benchmark binaries must match production hot paths. The failpoint runner remains mandatory for correctness tests, but its source rewriting introduces measurable allocation and CPU overhead that invalidates performance attribution.
+  Date/Author: 2026-08-18 / Codex after profile comparison.
 
 - Decision: use one immutable observability baseline derived from a pinned master SHA; do not require a noisy cluster comparison against a bare-master image.
   Rationale: repeated runs of the same image can differ by more than 2%, so a fixed 2% observability-overhead gate would not be statistically meaningful without many expensive repetitions. Every reader, writer, and CPU experiment retains identical observability code, so that cost cancels in the ablation. A bare master image is an optional historical anchor only. Milestone 1, Milestone 2, and every retained CPU optimization still use separate immutable image digests so each comparison changes one behavior variable.
@@ -244,7 +257,7 @@ For writer and encode integration tests:
 Run CPU benchmarks without running unit tests. Always pin count and benchtime in recorded comparisons:
 
     ./tools/check/failpoint-go-test.sh pkg/lightning/mydump -run '^$' -bench 'Benchmark(ReadRowUsingMydumpCSVParser|CSVParserUnescape)$' -benchmem -count=5 -benchtime=3s
-    ./tools/check/failpoint-go-test.sh pkg/executor/importer -run '^$' -bench '^BenchmarkTableKVEncoder$' -benchmem -count=5 -benchtime=3s
+    go test ./pkg/executor/importer -run '^$' -bench '^BenchmarkTableKVEncoder$' -benchmem -count=5 -benchtime=3s -tags=intest,deadlock
 
 For a Ready-profile gate on a code PR, rerun all targeted tests affected by that PR, then run:
 
@@ -344,11 +357,13 @@ Historical evidence, not a substitute for a fresh baseline on the agreed base:
     Baseline: about 333 MiB/s cluster encode throughput, about 32 minutes on W0-like data.
     Reader prototype: about 450 MiB/s cluster throughput; S3 read about 1.0-1.7 seconds/chunk; normal chunks about 3.5 seconds; periodic send stalls about 9-10 seconds remained.
 
-M0 local encoder benchmark smoke result on Apple M3 (`-count=1 -benchtime=1s`), useful only to verify the workload separation before recorded five-run comparisons:
+M0 local production-build encoder benchmark medians on Apple M3 (`-count=5 -benchtime=3s`):
 
-    PKOnly: 887.7 ns/row, 9 allocs/row, 1.13M KV/s.
-    ThreeIndexes: 1790 ns/row, 38 allocs/row, 2.23M KV/s.
-    SixteenIndexes: 4290 ns/row, 73 allocs/row, 3.96M KV/s.
+    PKOnly: 613.3 ns/row, 240 B/row, 7 allocs/row.
+    ThreeIndexes: 1568 ns/row, 1392 B/row, 36 allocs/row.
+    SixteenIndexesWideRow: 4125 ns/row, 2336 B/row, 71 allocs/row.
+
+The three-index and wide sixteen-index rows emit about 4.7x and 5.1x their approximate source bytes respectively, so pod egress can remain below the encode-only CPU ceiling. These microbenchmarks exclude parsing, KV grouping/checksum, writer copies, sorting, and remote I/O.
 
 ## Interfaces and Dependencies
 
@@ -396,3 +411,5 @@ The object-store SDKs, `membuf`, TiKV codec, checksum, duplicate modes, and glob
 2026-08-18: Removed the proposed simultaneous read/write experiment for deciding whether the 400 MiB/s AWS limit is shared. AWS documents instance bandwidth as available to inbound and outbound traffic simultaneously, with separate credit buckets. Retained RX/TX and ENA allowance monitoring only to find lower practical constraints.
 
 2026-08-18: Initially proposed a bare-master control plus observability image with a 2% overhead gate, then removed that gate after the user pointed out that same-image cluster runs can vary by more than 2%. The authoritative baseline is now one immutable observability image from a pinned master SHA. All candidates retain identical observability code, and improvements smaller than the measured run-to-run noise are not claimed.
+
+2026-08-18: Corrected the encode-only benchmark protocol after discovering failpoint instrumentation in profiles. Performance numbers now come from failpoint-disabled production builds; correctness tests still use the failpoint runner. Recorded schema-specific allocation hotspots and marked the initial sixteen-index result as a wide-row case that needs a fixed-width control.
