@@ -446,7 +446,7 @@ func generateProjectedSchemaForTest(
 		if err != nil {
 			return "", err
 		}
-		if _, err = schema.getTableInfo(); err != nil {
+		if _, err = schema.buildTableInfo(); err != nil {
 			return "", err
 		}
 	}
