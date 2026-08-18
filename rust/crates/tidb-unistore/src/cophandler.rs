@@ -197,12 +197,15 @@ fn exec_table_scan(
             reverse: false,
         });
         for pair in pairs {
-            if let Some(lock) = pair.error {
+            if let Some(err) = pair.error {
                 // Go: the FIRST lock met answers the whole response.
-                return coprocessor::Response {
-                    locked: Some(*lock),
-                    ..coprocessor::Response::default()
-                };
+                if let crate::mvcc_store::KvError::Locked(lock) = *err {
+                    return coprocessor::Response {
+                        locked: Some(*lock),
+                        ..coprocessor::Response::default()
+                    };
+                }
+                return other_error(&format!("scan error: {err:?}"));
             }
             let handle = match tidb_codec::table_key::decode_row_key(&pair.key) {
                 Ok(RecordHandle::Int(handle)) => handle,

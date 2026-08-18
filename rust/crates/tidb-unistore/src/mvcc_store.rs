@@ -556,24 +556,40 @@ impl MvccStore {
             .map(super::mvcc::DbUserMeta::commit_ts)
     }
 
-    /// Go `MVCCStore.Get` → `GetPair` → `dbreader.Get` (`mvcc.go:1817`),
-    /// snapshot-isolation arm with empty resolved/committed lists (the
-    /// `ResolvedLocks` / `CommittedLocks` narrowing, named).
+    /// Go `MVCCStore.Get` at the default read context: snapshot isolation
+    /// with empty resolved/committed lists.
     pub fn get(&self, key: &[u8], version: u64) -> Result<Option<Vec<u8>>, KvError> {
-        // Go `checkLock` (`mvcc.go:1437`): only a Put/Del lock visible at the
-        // read version blocks — and a read at `maxSystemTS` (u64::MAX) SKIPS
-        // the PRIMARY lock, non-async-commit only, so a latest-committed
-        // point read serves past its own transaction's primary while a
-        // secondary still errors.
-        let buf = self.lock_bytes(key);
-        if !buf.is_empty() {
-            let lock = decode_lock(&buf);
-            let is_write_lock = lock.hdr.op == KvrpcOp::Put as i32 as u8
-                || lock.hdr.op == KvrpcOp::Del as i32 as u8;
-            let is_primary_get =
-                version == u64::MAX && lock.primary == key && !lock.hdr.use_async_commit;
-            if is_write_lock && lock.hdr.start_ts <= version && !is_primary_get {
-                return Err(KvError::Locked(Box::new(lock.to_lock_info(key.to_vec()))));
+        self.get_with(&ReadContext::default(), key, version)
+    }
+
+    /// Go `MVCCStore.Get` → `GetPair` → `dbreader.Get` (`mvcc.go:1817`).
+    /// Under snapshot isolation a COMMITTED lock (its start ts in the
+    /// context's committed set) answers with the lock's own value — nil for
+    /// a delete; `RCCheckTS` turns any unresolved write lock into a
+    /// conflict; `RC` skips lock checks entirely and reads committed data.
+    pub fn get_with(
+        &self,
+        ctx: &ReadContext,
+        key: &[u8],
+        version: u64,
+    ) -> Result<Option<Vec<u8>>, KvError> {
+        if ctx.is_snapshot_isolation() {
+            let buf = self.lock_bytes(key);
+            if !buf.is_empty() {
+                if let Some(lock) = check_lock(
+                    decode_lock(&buf),
+                    key,
+                    version,
+                    &ctx.resolved_locks,
+                    &ctx.committed_locks,
+                )? {
+                    return Ok(value_from_lock(&lock).map(<[u8]>::to_vec));
+                }
+            }
+        } else if ctx.is_rc_check_ts() {
+            let buf = self.lock_bytes(key);
+            if !buf.is_empty() {
+                check_lock_rc_check_ts(&decode_lock(&buf), key, version, &ctx.resolved_locks)?;
             }
         }
         // Go `dbreader.Get(key, version)`: the newest committed version at or
@@ -615,9 +631,9 @@ pub struct KvPair {
     pub key: Vec<u8>,
     /// The committed value; empty when `error` carries the answer.
     pub value: Vec<u8>,
-    /// Go `Error *kvrpcpb.KeyError`, reduced to the locked case this slice's
-    /// isolation narrowing can produce.
-    pub error: Option<Box<KvrpcLockInfo>>,
+    /// Go `Error *kvrpcpb.KeyError`, carried as the store error it converts
+    /// from — a blocking lock under SI, an `RcCheckTs` conflict otherwise.
+    pub error: Option<Box<KvError>>,
 }
 
 /// The `ScanRequest` fields Go's `Scan` reads.
@@ -638,28 +654,170 @@ pub struct ScanReq {
     pub reverse: bool,
 }
 
+/// Go `requestCtx.rpcCtx`, the slice the read paths consult: the isolation
+/// level and the two timestamp sets `checkLock` switches on.
+#[derive(Clone, Debug, Default)]
+pub struct ReadContext {
+    /// `IsolationLevel`, the `kvrpcpb` value: 0 SI, 1 RC, 2 RCCheckTS.
+    pub isolation_level: i32,
+    /// `ResolvedLocks`: locks with these start timestamps are IGNORED —
+    /// the reader has proof they were rolled back or committed elsewhere.
+    pub resolved_locks: Vec<u64>,
+    /// `CommittedLocks`: locks with these start timestamps answer AS IF
+    /// committed — the lock's own value serves the read.
+    pub committed_locks: Vec<u64>,
+}
+
+impl ReadContext {
+    /// Go `reqCtx.isSnapshotIsolation()`.
+    fn is_snapshot_isolation(&self) -> bool {
+        self.isolation_level == tidb_proto::KvrpcIsolationLevel::Si as i32
+    }
+
+    /// Go `reqCtx.isRcCheckTSIsolationLevel()`.
+    fn is_rc_check_ts(&self) -> bool {
+        self.isolation_level == tidb_proto::KvrpcIsolationLevel::RcCheckTs as i32
+    }
+}
+
+/// Go `getValueFromLock` (`mvcc.go:1428`): only a Put lock owns a value; a
+/// delete lock answers nil.
+fn value_from_lock(lock: &Lock) -> Option<&[u8]> {
+    (lock.hdr.op == KvrpcOp::Put as i32 as u8).then_some(lock.value.as_slice())
+}
+
+/// Go `checkLock` (`mvcc.go:1437`), whole: a resolved lock is ignored; a
+/// visible Put/Del lock either answers as a COMMITTED lock (`Ok(Some)`,
+/// when its start ts is in the committed set) or blocks; a read at
+/// `maxSystemTS` (u64::MAX) SKIPS the PRIMARY lock, non-async-commit only,
+/// so a latest-committed point read serves past its own transaction's
+/// primary while a secondary still errors.
+fn check_lock(
+    lock: Lock,
+    key: &[u8],
+    start_ts: u64,
+    resolved: &[u64],
+    committed: &[u64],
+) -> Result<Option<Lock>, KvError> {
+    if resolved.contains(&lock.hdr.start_ts) {
+        return Ok(None);
+    }
+    let lock_visible = lock.hdr.start_ts <= start_ts;
+    let is_write_lock =
+        lock.hdr.op == KvrpcOp::Put as i32 as u8 || lock.hdr.op == KvrpcOp::Del as i32 as u8;
+    let is_primary_get = start_ts == u64::MAX && lock.primary == key && !lock.hdr.use_async_commit;
+    if lock_visible && is_write_lock && !is_primary_get {
+        if committed.contains(&lock.hdr.start_ts) {
+            return Ok(Some(lock));
+        }
+        return Err(KvError::Locked(Box::new(lock.to_lock_info(key.to_vec()))));
+    }
+    Ok(None)
+}
+
+/// Go `checkLockForRcCheckTS` (`mvcc.go:1453`): any unresolved write lock —
+/// visible or not — is an `RcCheckTs` write conflict.
+fn check_lock_rc_check_ts(
+    lock: &Lock,
+    key: &[u8],
+    start_ts: u64,
+    resolved: &[u64],
+) -> Result<(), KvError> {
+    if resolved.contains(&lock.hdr.start_ts) {
+        return Ok(());
+    }
+    let is_write_lock =
+        lock.hdr.op == KvrpcOp::Put as i32 as u8 || lock.hdr.op == KvrpcOp::Del as i32 as u8;
+    if !is_write_lock {
+        return Ok(());
+    }
+    Err(KvError::Conflict {
+        reason: tidb_proto::kvrpcpb::write_conflict::Reason::RcCheckTs,
+        start_ts,
+        conflict_ts: lock.hdr.start_ts,
+        conflict_commit_ts: 0,
+        key: key.to_vec(),
+    })
+}
+
 impl MvccStore {
-    /// Go `MVCCStore.BatchGet` (`mvcc.go`), snapshot-isolation arm with the
-    /// empty resolved/committed narrowing: a locked key becomes an ERROR
-    /// PAIR — the batch never fails as a whole — and the rest read at the
-    /// version. Pairs with empty values are dropped, Go's
-    /// `len(value) != 0` guard.
+    /// Go `MVCCStore.BatchGet` at the default read context.
     #[must_use]
     pub fn batch_get(&self, keys: &[Vec<u8>], version: u64) -> Vec<KvPair> {
+        self.batch_get_with(&ReadContext::default(), keys, version)
+    }
+
+    /// Go `MVCCStore.BatchGet` (`mvcc.go:1866`): under SI each key first
+    /// meets the lock check — a blocked key becomes an ERROR PAIR (the
+    /// batch never fails as a whole), a COMMITTED lock answers with the
+    /// lock's value (a delete's nil value drops the pair), and the rest
+    /// fall to the data read; `RCCheckTS` turns conflicts into error pairs;
+    /// `RC` reads data only. Data pairs with empty values are dropped,
+    /// Go's `len(value) != 0` guard.
+    #[must_use]
+    pub fn batch_get_with(&self, ctx: &ReadContext, keys: &[Vec<u8>], version: u64) -> Vec<KvPair> {
         let mut pairs = Vec::with_capacity(keys.len());
+        let mut remain = Vec::with_capacity(keys.len());
         for key in keys {
-            match self.get(key, version) {
-                Err(KvError::Locked(info)) => pairs.push(KvPair {
-                    key: key.clone(),
-                    value: Vec::new(),
-                    error: Some(info),
-                }),
-                Err(_) | Ok(None) => {}
-                Ok(Some(value)) => pairs.push(KvPair {
-                    key: key.clone(),
-                    value,
-                    error: None,
-                }),
+            if ctx.is_snapshot_isolation() {
+                let buf = self.lock_bytes(key);
+                let checked = if buf.is_empty() {
+                    Ok(None)
+                } else {
+                    check_lock(
+                        decode_lock(&buf),
+                        key,
+                        version,
+                        &ctx.resolved_locks,
+                        &ctx.committed_locks,
+                    )
+                };
+                match checked {
+                    Err(err) => pairs.push(KvPair {
+                        key: key.clone(),
+                        value: Vec::new(),
+                        error: Some(Box::new(err)),
+                    }),
+                    Ok(Some(lock)) => {
+                        // Go appends only when `getValueFromLock` is non-nil.
+                        if let Some(value) = value_from_lock(&lock) {
+                            pairs.push(KvPair {
+                                key: key.clone(),
+                                value: value.to_vec(),
+                                error: None,
+                            });
+                        }
+                    }
+                    Ok(None) => remain.push(key),
+                }
+            } else if ctx.is_rc_check_ts() {
+                let buf = self.lock_bytes(key);
+                let checked = if buf.is_empty() {
+                    Ok(())
+                } else {
+                    check_lock_rc_check_ts(&decode_lock(&buf), key, version, &ctx.resolved_locks)
+                };
+                match checked {
+                    Err(err) => pairs.push(KvPair {
+                        key: key.clone(),
+                        value: Vec::new(),
+                        error: Some(Box::new(err)),
+                    }),
+                    Ok(()) => remain.push(key),
+                }
+            } else {
+                remain.push(key);
+            }
+        }
+        for key in remain {
+            if let Some((value, _)) = self.engine.get_at(key, version) {
+                if !value.is_empty() {
+                    pairs.push(KvPair {
+                        key: key.clone(),
+                        value: value.to_vec(),
+                        error: None,
+                    });
+                }
             }
         }
         pairs
@@ -672,6 +830,14 @@ impl MvccStore {
     /// first), empty values dropped, capped at the limit.
     #[must_use]
     pub fn scan(&self, req: &ScanReq) -> Vec<KvPair> {
+        self.scan_with(&ReadContext::default(), req)
+    }
+
+    /// [`Self::scan`] under an explicit read context: `RC` collects no lock
+    /// pairs at all; SI and `RCCheckTS` collect through their `checkLock`
+    /// arms.
+    #[must_use]
+    pub fn scan_with(&self, ctx: &ReadContext, req: &ScanReq) -> Vec<KvPair> {
         let (start_key, end_key) = if req.reverse {
             // boundary: `reqCtx.regCtx.RawStart()` — no region context; an
             // empty reverse end stays empty, the keyspace floor.
@@ -687,12 +853,14 @@ impl MvccStore {
         let mut limit = req.limit;
         let mut lock_pairs = Vec::new();
         if req.sample_step == 0 {
-            let (lo, hi) = if start_key <= end_key {
-                (&start_key, &end_key)
-            } else {
-                (&end_key, &start_key)
-            };
-            lock_pairs = self.collect_range_lock(req.version, lo, hi);
+            if ctx.is_snapshot_isolation() || ctx.is_rc_check_ts() {
+                let (lo, hi) = if start_key <= end_key {
+                    (&start_key, &end_key)
+                } else {
+                    (&end_key, &start_key)
+                };
+                lock_pairs = self.collect_range_lock(ctx, req.version, lo, hi);
+            }
         } else {
             limit *= req.sample_step;
         }
@@ -768,9 +936,18 @@ impl MvccStore {
         valid
     }
 
-    /// Go `collectRangeLock`, SI arm with empty resolved/committed lists:
-    /// each blocking lock in `[start, end)` becomes an error pair.
-    fn collect_range_lock(&self, start_ts: u64, start_key: &[u8], end_key: &[u8]) -> Vec<KvPair> {
+    /// Go `collectRangeLock` (`mvcc.go:2062`): every lock in `[start, end)`
+    /// runs the isolation level's check — under SI a committed lock becomes
+    /// a VALUE pair (nil for a delete, dropped later by the merge's
+    /// empty-value guard) and a blocking lock an error pair; under
+    /// `RCCheckTS` only conflicts surface.
+    fn collect_range_lock(
+        &self,
+        ctx: &ReadContext,
+        start_ts: u64,
+        start_key: &[u8],
+        end_key: &[u8],
+    ) -> Vec<KvPair> {
         let mut pairs = Vec::new();
         let mut it = self.lock_store.new_iterator();
         it.seek(start_key);
@@ -779,14 +956,39 @@ impl MvccStore {
                 break;
             }
             let lock = decode_lock(it.value());
-            let invisible = lock.hdr.op == KvrpcOp::Lock as i32 as u8
-                || lock.hdr.op == KvrpcOp::PessimisticLock as i32 as u8;
-            if !invisible && lock.hdr.start_ts <= start_ts {
-                pairs.push(KvPair {
-                    key: it.key().to_vec(),
-                    value: Vec::new(),
-                    error: Some(Box::new(lock.to_lock_info(it.key().to_vec()))),
-                });
+            if ctx.is_snapshot_isolation() {
+                match check_lock(
+                    lock,
+                    it.key(),
+                    start_ts,
+                    &ctx.resolved_locks,
+                    &ctx.committed_locks,
+                ) {
+                    Ok(Some(lock)) => pairs.push(KvPair {
+                        key: it.key().to_vec(),
+                        // A deleted key's value is nil (Go's comment, kept).
+                        value: value_from_lock(&lock)
+                            .map(<[u8]>::to_vec)
+                            .unwrap_or_default(),
+                        error: None,
+                    }),
+                    Ok(None) => {}
+                    Err(err) => pairs.push(KvPair {
+                        key: it.key().to_vec(),
+                        value: Vec::new(),
+                        error: Some(Box::new(err)),
+                    }),
+                }
+            } else if ctx.is_rc_check_ts() {
+                if let Err(err) =
+                    check_lock_rc_check_ts(&lock, it.key(), start_ts, &ctx.resolved_locks)
+                {
+                    pairs.push(KvPair {
+                        key: it.key().to_vec(),
+                        value: Vec::new(),
+                        error: Some(Box::new(err)),
+                    });
+                }
             }
             it.next();
         }
@@ -2127,10 +2329,12 @@ mod tests {
         must_prewrite_optimistic(&mut store, b"b", b"b", b"w", 15, 200);
         let pairs = store.batch_get(&[b"a".to_vec(), b"b".to_vec(), b"missing".to_vec()], 20);
         assert_eq!(pairs.len(), 2);
-        assert_eq!(pairs[0].key, b"a");
-        assert_eq!(pairs[0].value, b"v");
-        assert_eq!(pairs[1].key, b"b");
-        assert!(pairs[1].error.is_some());
+        // Go's order: lock-check pairs land during the key loop, data pairs
+        // after it — the error pair precedes the value pair.
+        assert_eq!(pairs[0].key, b"b");
+        assert!(pairs[0].error.is_some());
+        assert_eq!(pairs[1].key, b"a");
+        assert_eq!(pairs[1].value, b"v");
     }
 
     #[test]
@@ -3365,5 +3569,198 @@ mod tests {
             KvrpcAssertionLevel::Strict,
         )
         .expect("k33 does not exist");
+    }
+
+    // Go `MustLoad` (`mvcc_test.go`): committed `key:value` pairs land at
+    // `(startTS, commitTS)`. Go writes the db directly; prewrite + commit
+    // produces the identical committed state through the ported surface.
+    fn must_load(store: &mut MvccStore, start_ts: u64, commit_ts: u64, rows: &[&str]) {
+        for row in rows {
+            let (key, value) = row.split_once(':').expect("key:value row");
+            must_prewrite_optimistic(
+                store,
+                key.as_bytes(),
+                key.as_bytes(),
+                value.as_bytes(),
+                start_ts,
+                100,
+            );
+            must_commit(store, key.as_bytes(), start_ts, commit_ts);
+        }
+    }
+
+    // Go `kvGet` (`mvcc_test.go`): a point read under an explicit
+    // resolved/committed context, snapshot isolation.
+    fn kv_get(
+        store: &MvccStore,
+        key: &[u8],
+        version: u64,
+        resolved: &[u64],
+        committed: &[u64],
+    ) -> Result<Option<Vec<u8>>, KvError> {
+        store.get_with(
+            &ReadContext {
+                isolation_level: tidb_proto::KvrpcIsolationLevel::Si as i32,
+                resolved_locks: resolved.to_vec(),
+                committed_locks: committed.to_vec(),
+            },
+            key,
+            version,
+        )
+    }
+
+    /// Go `TestAccessCommittedLocks` (`mvcc_test.go:1552`): a resolved lock
+    /// is ignored, a committed lock answers with the LOCK'S OWN value (nil
+    /// for a delete), an unlisted lock still blocks — through get, batch
+    /// get, and scan.
+    #[test]
+    fn test_access_committed_locks() {
+        let mut store = MvccStore::new();
+        let (k0, v0) = (b"t0".as_slice(), b"v0".as_slice());
+        must_load(&mut store, 10, 20, &["t0:v0"]);
+        // Delete prewrite at 30.
+        must_prewrite_op(&mut store, k0, mutation(KvrpcOp::Del, k0, b""), 30);
+        must_get_err(&store, k0, 40);
+        // Meet lock.
+        assert!(kv_get(&store, k0, 40, &[20], &[]).is_err());
+        assert!(kv_get(&store, k0, 40, &[20], &[20]).is_err());
+        // Ignore lock.
+        assert_eq!(
+            kv_get(&store, k0, 40, &[30], &[]).expect("resolved lock is ignored"),
+            Some(v0.to_vec())
+        );
+        // Access lock: the delete lock's value is nil.
+        assert_eq!(
+            kv_get(&store, k0, 40, &[], &[30]).expect("committed lock answers"),
+            None
+        );
+
+        let (k1, v1) = (b"t1".as_slice(), b"v1".as_slice());
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Put, k1, v1), 50);
+        // Ignore lock: nothing committed underneath.
+        assert_eq!(
+            kv_get(&store, k1, 60, &[50], &[]).expect("resolved lock is ignored"),
+            None
+        );
+        // Access lock: the put lock's value answers.
+        assert_eq!(
+            kv_get(&store, k1, 60, &[], &[50]).expect("committed lock answers"),
+            Some(v1.to_vec())
+        );
+
+        // Locked (listed in neither set).
+        let (k2, v2) = (b"t2".as_slice(), b"v2".as_slice());
+        must_prewrite_op(&mut store, k2, mutation(KvrpcOp::Put, k2, v2), 70);
+        // Lock for ignore.
+        let (k3, v3) = (b"t3".as_slice(), b"v3".as_slice());
+        must_prewrite_op(&mut store, k3, mutation(KvrpcOp::Put, k3, v3), 80);
+        // No lock.
+        let (k4, v4) = (b"t4".as_slice(), b"v4".as_slice());
+        must_load(&mut store, 80, 90, &["t4:v4"]);
+
+        let keys: Vec<Vec<u8>> = [k0, k1, k2, k3, k4].map(<[u8]>::to_vec).to_vec();
+        let expected: [(&[u8], &[u8], bool); 3] =
+            [(k1, v1, false), (k2, b"", true), (k4, v4, false)];
+        let ctx = ReadContext {
+            isolation_level: tidb_proto::KvrpcIsolationLevel::Si as i32,
+            resolved_locks: vec![80],
+            committed_locks: vec![30, 50],
+        };
+        let pairs = store.batch_get_with(&ctx, &keys, 100);
+        assert_eq!(pairs.len(), expected.len());
+        for (pair, (key, value, is_err)) in pairs.iter().zip(expected) {
+            assert_eq!(pair.key, key);
+            assert_eq!(pair.value, value);
+            assert_eq!(pair.error.is_some(), is_err, "{:?}", pair.key);
+        }
+
+        let pairs = store.scan_with(
+            &ctx,
+            &ScanReq {
+                start_key: b"t0".to_vec(),
+                end_key: b"t5".to_vec(),
+                limit: 100,
+                version: 100,
+                ..ScanReq::default()
+            },
+        );
+        assert_eq!(pairs.len(), expected.len());
+        for (pair, (key, value, is_err)) in pairs.iter().zip(expected) {
+            assert_eq!(pair.key, key);
+            assert_eq!(pair.value, value);
+            assert_eq!(pair.error.is_some(), is_err, "{:?}", pair.key);
+        }
+    }
+
+    /// Go `TestTiKVRCRead` (`mvcc_test.go:1646`): `RC` isolation skips every
+    /// lock check — standing locks are read through to the committed data —
+    /// on get, batch get, and scan.
+    #[test]
+    fn test_tikv_rc_read() {
+        let mut store = MvccStore::new();
+        let k1 = b"t1".as_slice();
+        let (k2, v2) = (b"t2".as_slice(), b"v2".as_slice());
+        let (k3, v3) = (b"t3".as_slice(), b"v3".as_slice());
+        let (k4, v4) = (b"t4".as_slice(), b"v4".as_slice());
+        must_load(&mut store, 10, 20, &["t1:v1", "t2:v2", "t3:v3"]);
+        // Write to be read.
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Put, k1, b"v11"), 30);
+        must_commit(&mut store, k1, 30, 40);
+        // Locks to be ignored.
+        must_prewrite_op(&mut store, k2, mutation(KvrpcOp::Put, k2, v2), 50);
+        must_prewrite_op(&mut store, k3, mutation(KvrpcOp::Del, k3, b""), 60);
+        must_prewrite_op(&mut store, k4, mutation(KvrpcOp::Put, k4, v4), 70);
+
+        let expected: [(&[u8], Option<&[u8]>); 4] = [
+            (k1, Some(b"v11")),
+            (k2, Some(v2)),
+            (k3, Some(v3)),
+            (k4, None),
+        ];
+        let ctx = ReadContext {
+            isolation_level: tidb_proto::KvrpcIsolationLevel::Rc as i32,
+            ..ReadContext::default()
+        };
+        // Get.
+        for (key, value) in expected {
+            assert_eq!(
+                store
+                    .get_with(&ctx, key, 80)
+                    .expect("RC never meets a lock"),
+                value.map(<[u8]>::to_vec),
+                "{key:?}"
+            );
+        }
+        // Batch get: k4 has no committed value and is dropped.
+        let pairs = store.batch_get_with(&ctx, &[k1, k2, k3, k4].map(<[u8]>::to_vec), 80);
+        assert_eq!(pairs.len(), 3);
+        for pair in &pairs {
+            let (_, value) = expected
+                .iter()
+                .find(|(key, _)| *key == pair.key)
+                .expect("a known key");
+            assert!(pair.error.is_none());
+            assert_eq!(pair.value, value.expect("only committed keys answer"));
+        }
+        // Scan.
+        let pairs = store.scan_with(
+            &ctx,
+            &ScanReq {
+                start_key: b"t1".to_vec(),
+                end_key: b"t4".to_vec(),
+                limit: 100,
+                version: 80,
+                ..ScanReq::default()
+            },
+        );
+        assert_eq!(pairs.len(), 3);
+        for pair in &pairs {
+            let (_, value) = expected
+                .iter()
+                .find(|(key, _)| *key == pair.key)
+                .expect("a known key");
+            assert!(pair.error.is_none());
+            assert_eq!(pair.value, value.expect("only committed keys answer"));
+        }
     }
 }

@@ -38,7 +38,7 @@ use tidb_proto::kvrpcpb;
 use tidb_proto::KvrpcKeyError;
 
 use crate::mvcc_store::{
-    CheckTxnStatusReq, KvError, MvccStore, PessimisticLockReq, PrewriteReq, ScanReq,
+    CheckTxnStatusReq, KvError, MvccStore, PessimisticLockReq, PrewriteReq, ReadContext, ScanReq,
 };
 
 /// Go `convertToKeyError` (`server.go:1174`): every store error becomes the
@@ -148,7 +148,8 @@ pub struct KvHandler {
 impl KvHandler {
     /// Go `Server.KvGet` (`server.go`).
     pub fn kv_get(&mut self, req: &kvrpcpb::GetRequest) -> kvrpcpb::GetResponse {
-        match self.store.get(&req.key, req.version) {
+        let ctx = read_context(req.context.as_ref());
+        match self.store.get_with(&ctx, &req.key, req.version) {
             Ok(value) => kvrpcpb::GetResponse {
                 value: value.unwrap_or_default(),
                 not_found: false,
@@ -163,14 +164,18 @@ impl KvHandler {
 
     /// Go `Server.KvScan`.
     pub fn kv_scan(&mut self, req: &kvrpcpb::ScanRequest) -> kvrpcpb::ScanResponse {
-        let pairs = self.store.scan(&ScanReq {
-            start_key: req.start_key.clone(),
-            end_key: req.end_key.clone(),
-            limit: req.limit,
-            version: req.version,
-            sample_step: req.sample_step,
-            reverse: req.reverse,
-        });
+        let ctx = read_context(req.context.as_ref());
+        let pairs = self.store.scan_with(
+            &ctx,
+            &ScanReq {
+                start_key: req.start_key.clone(),
+                end_key: req.end_key.clone(),
+                limit: req.limit,
+                version: req.version,
+                sample_step: req.sample_step,
+                reverse: req.reverse,
+            },
+        );
         kvrpcpb::ScanResponse {
             pairs: pairs.into_iter().map(pair_to_proto).collect(),
             ..kvrpcpb::ScanResponse::default()
@@ -181,8 +186,9 @@ impl KvHandler {
     /// `BatchGetResponse` (a `tidb-proto` curation boundary, named); the
     /// response's whole payload IS its pair list, returned directly.
     pub fn kv_batch_get(&mut self, req: &kvrpcpb::BatchGetRequest) -> Vec<kvrpcpb::KvPair> {
+        let ctx = read_context(req.context.as_ref());
         self.store
-            .batch_get(&req.keys, req.version)
+            .batch_get_with(&ctx, &req.keys, req.version)
             .into_iter()
             .map(pair_to_proto)
             .collect()
@@ -439,12 +445,20 @@ fn pair_to_proto(pair: crate::mvcc_store::KvPair) -> kvrpcpb::KvPair {
     kvrpcpb::KvPair {
         key: pair.key,
         value: pair.value,
-        error: pair.error.map(|info| KvrpcKeyError {
-            locked: Some(*info),
-            ..KvrpcKeyError::default()
-        }),
+        error: pair.error.map(|err| convert_to_key_error(&err)),
         ..kvrpcpb::KvPair::default()
     }
+}
+
+/// Go reads these three straight off `reqCtx.rpcCtx` (the request's
+/// `kvrpcpb.Context`); an absent context is the zero value — SI with empty
+/// lists.
+fn read_context(context: Option<&kvrpcpb::Context>) -> ReadContext {
+    context.map_or_else(ReadContext::default, |ctx| ReadContext {
+        isolation_level: ctx.isolation_level,
+        resolved_locks: ctx.resolved_locks.clone(),
+        committed_locks: ctx.committed_locks.clone(),
+    })
 }
 
 #[cfg(test)]
