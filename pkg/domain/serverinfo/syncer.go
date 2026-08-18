@@ -362,7 +362,7 @@ func (s *Syncer) RevokeSession() {
 	if _, err := s.etcdCli.Revoke(ctx, lease); err != nil {
 		logutil.BgLogger().Warn("revoke server info lease failed",
 			zap.Int64("lease", int64(lease)),
-			zap.Any("serverInfo", s.GetLocalServerInfo()),
+			zap.Stringer("serverInfo", s.GetLocalServerInfo()),
 			zap.Error(err))
 	}
 }
