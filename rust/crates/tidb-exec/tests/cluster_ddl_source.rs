@@ -935,10 +935,10 @@ fn a_statement_this_module_does_not_own_is_left_to_its_own_path() {
     for sql in [
         "SELECT 1",
         "INSERT INTO u6.t VALUES (1, 2)",
-        // ADD/DROP COLUMN (single and multi-action bundles) left this list
-        // as the module took ownership; a MODIFY COLUMN type change still
-        // awaits its course.
-        "ALTER TABLE u6.t MODIFY COLUMN c VARCHAR(20)",
+        // ADD/DROP/MODIFY COLUMN left this list as the module took
+        // ownership; a CHANGE COLUMN rename-and-modify still awaits its
+        // course.
+        "ALTER TABLE u6.t CHANGE COLUMN c d BIGINT",
     ] {
         let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
         assert!(
@@ -1831,16 +1831,29 @@ fn add_column_appends_a_public_nullable_column_and_refuses_rewrites() {
     assert_eq!(zeroed["origin_default"], "0", "the type's zero value");
     assert_eq!(zeroed["default"], serde_json::Value::Null);
 
-    // The wall-clock stamping course is its own change: CURRENT_TIMESTAMP
-    // defaults stay refused by name rather than mis-stamped.
-    let error = plan_ddl(
+    // Go's clock arm: the DECLARED default stays the word for every later
+    // INSERT, while the origin default is stamped ONCE at DDL time.
+    let write = plan(
         &mut store,
-        &statement("ALTER TABLE u6.t ADD COLUMN ts DATETIME DEFAULT CURRENT_TIMESTAMP"),
+        "ALTER TABLE u6.t ADD COLUMN ts DATETIME DEFAULT CURRENT_TIMESTAMP",
         600,
-    )
-    .expect_err("refused")
-    .to_string();
-    assert!(error.contains("CURRENT_TIMESTAMP"), "{error}");
+    );
+    apply(&mut store, &write);
+    let stored: serde_json::Value =
+        serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
+            .expect("stored");
+    let ts = stored["cols"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"]["O"] == "ts")
+        .expect("the clock column is stored");
+    assert_eq!(ts["default"], "CURRENT_TIMESTAMP");
+    let stamped = ts["origin_default"].as_str().expect("a stamped instant");
+    assert!(
+        stamped.len() == 19 && stamped.contains('-') && stamped.contains(':'),
+        "the origin default is one wall-clock instant, got {stamped}"
+    );
 }
 
 /// Go `onTruncateTable`: the schema survives under a FRESH table id, the old

@@ -295,6 +295,22 @@ pub enum DdlStatement {
         /// The column name as written.
         column: String,
     },
+    /// The meta-only `ALTER TABLE ... MODIFY COLUMN` this node serves:
+    /// Go `noReorgDataStrict`'s same-type widening, committed as a
+    /// TableInfo rewrite with no row or index touched. Everything that
+    /// would reorganize data — a type-family change, narrowing, a sign
+    /// toggle, a decimal reshape, charset movement, nullability changes —
+    /// is refused by name at plan time.
+    ModifyColumn {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The column as re-declared.
+        column: Box<tidb_ast::ColumnDef>,
+        /// The statement context the plan-time build resolves under.
+        context: DdlStatementContext,
+    },
     /// A multi-action `ALTER TABLE` whose every action is a column
     /// add/drop this node owns. Go publishes ONE ActionMultiSchemaChange job
     /// whose sub-jobs commit atomically; here every sub-action folds over one
@@ -624,7 +640,6 @@ fn lower_alter_table_catalog(
             if *if_exists
                 || !matches!(position, tidb_ast::ColumnPosition::Default)
                 || !column.qualifier.is_empty()
-                || column.ty.name != "BIGINT"
             {
                 return Ok(None);
             }
@@ -632,7 +647,26 @@ fn lower_alter_table_catalog(
                 tidb_ast::ColumnOption::AutoRandom(option) => Some(option),
                 _ => None,
             }) else {
-                return Ok(None);
+                // No AUTO_RANDOM: the ordinary MODIFY. The meta-only subset
+                // takes an option-free redeclaration (an explicit NULL is the
+                // default nullability, so it carries no change).
+                if column
+                    .options
+                    .iter()
+                    .any(|option| !matches!(option, tidb_ast::ColumnOption::Null))
+                {
+                    return Err(DdlAdmissionError::unsupported(
+                        "MODIFY COLUMN with options changes more than the type; \
+                         this node serves the option-free widening only",
+                    ));
+                }
+                let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+                return Ok(Some(DdlStatement::ModifyColumn {
+                    schema,
+                    table,
+                    column: Box::new(column.clone()),
+                    context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                }));
             };
             if column.options.iter().any(|option| {
                 !matches!(
@@ -1758,6 +1792,115 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 encoded,
             )?);
             diff.action_type = ActionType::ACTION_DROP_COLUMN;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::ModifyColumn {
+            schema,
+            table,
+            column,
+            context,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let wanted = column.name.to_lowercase();
+            let Some(position) = stored
+                .columns
+                .iter_deref()
+                .position(|candidate| candidate.read().name.lowercase() == wanted)
+            else {
+                // Go 1054 ErrBadField through the modify path.
+                return Err(DdlPlanError::Encode(format!(
+                    "Unknown column '{}' in '{}'",
+                    column.name, table
+                )));
+            };
+            let old = stored
+                .columns
+                .iter_deref()
+                .nth(position)
+                .expect("the position was just found")
+                .read()
+                .clone_like_go();
+            let built = crate::table_info_build::build_added_column(
+                column,
+                &stored.charset,
+                &stored.collate,
+                &context.0,
+            )
+            .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            let refuse = |what: &str| {
+                DdlPlanError::Encode(format!(
+                    "Unsupported modify column: {what} needs a data reorganization this \
+                     node does not run"
+                ))
+            };
+            // Go `noReorgDataStrict`, the same-type arm.
+            if built.field_type.code() != old.field_type.code() {
+                return Err(refuse("changing the column type"));
+            }
+            let old_unsigned = old.field_type.has_flag(FieldTypeFlags::UNSIGNED);
+            let new_unsigned = built.field_type.has_flag(FieldTypeFlags::UNSIGNED);
+            if old_unsigned != new_unsigned {
+                return Err(refuse("toggling the sign"));
+            }
+            match built.field_type.code() {
+                FieldTypeCode::NewDecimal => {
+                    if built.field_type.flen() != old.field_type.flen()
+                        || built.field_type.decimal() != old.field_type.decimal()
+                    {
+                        return Err(refuse("reshaping a decimal"));
+                    }
+                }
+                FieldTypeCode::Enum | FieldTypeCode::Set => {
+                    return Err(refuse("changing enum or set elements"));
+                }
+                FieldTypeCode::Tiny
+                | FieldTypeCode::Short
+                | FieldTypeCode::Int24
+                | FieldTypeCode::Long
+                | FieldTypeCode::LongLong => {
+                    // Integer display width is metadata; the sign check above
+                    // is the whole rule.
+                }
+                _ => {
+                    if built.field_type.flen() > 0
+                        && (built.field_type.flen() < old.field_type.flen()
+                            || built.field_type.decimal() < old.field_type.decimal())
+                    {
+                        return Err(refuse("narrowing the column"));
+                    }
+                    if built.field_type.charset() != old.field_type.charset() {
+                        return Err(refuse("moving the charset"));
+                    }
+                }
+            }
+            let old_not_null = old.field_type.has_flag(FieldTypeFlags::NOT_NULL);
+            let new_not_null = built.field_type.has_flag(FieldTypeFlags::NOT_NULL);
+            if old_not_null != new_not_null {
+                return Err(refuse("changing nullability"));
+            }
+            let mut info = stored.clone_like_go();
+            {
+                let handle = info
+                    .columns
+                    .get(position)
+                    .expect("the position was just found");
+                let mut column = handle.write();
+                // The identity, ordering, state, and defaults are the stored
+                // column's own; only the declared type widens.
+                let mut field_type = built.field_type.clone();
+                field_type.set_flags(column.field_type.flags());
+                column.field_type = field_type;
+            }
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }
