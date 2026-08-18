@@ -215,6 +215,15 @@ impl Default for PhysicalHashJoin {
 pub struct PhysicalSort {
     /// The shared physical base.
     pub base: BasePhysicalPlan,
+    /// Go `ByItems` (`util.ByItems{Expr, Desc}`). `EnforceProperty` builds
+    /// each entry from a `property.SortItem`'s column and direction, and a
+    /// column's identity is its `UniqueID` (`EqualColumn`), so the item is
+    /// carried here as exactly that pair.
+    pub by_items: Vec<crate::physical_property::SortItem>,
+    /// Go `IsPartialSort`: sort within one partition's data rather than
+    /// globally; `EnforceProperty` sets it from
+    /// `prop.IsSortItemAllForPartition()`.
+    pub is_partial_sort: bool,
 }
 
 /// Go `physicalop.PhysicalLimit`.
@@ -620,6 +629,8 @@ impl PhysicalPlan {
             }),
             Self::Sort(op) => Self::Sort(PhysicalSort {
                 base: base_of(&op.base),
+                by_items: op.by_items.clone(),
+                is_partial_sort: op.is_partial_sort,
             }),
             Self::Limit(op) => Self::Limit(PhysicalLimit {
                 base: base_of(&op.base),

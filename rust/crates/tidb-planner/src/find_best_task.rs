@@ -501,6 +501,7 @@ fn enforced_merge_join_candidates(
         task_tp: TaskType::Root,
         expected_cnt: f64::MAX,
         can_add_enforcer: true,
+        sort_items_for_partition: Vec::new(),
     };
     vec![EnumeratedJoin {
         strategy: JoinStrategy::Merge {
@@ -585,6 +586,7 @@ fn index_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enu
             task_tp: TaskType::Root,
             expected_cnt: prop.expected_cnt,
             can_add_enforcer: false,
+            sort_items_for_partition: Vec::new(),
         };
         // The inner side is planned under an empty property plus the index-join
         // runtime prop, which this port carries as the strategy's own
@@ -629,6 +631,7 @@ fn hash_join_candidates(join: &LogicalJoin, prop: &PhysicalProperty) -> Vec<Enum
         task_tp: TaskType::Root,
         expected_cnt: f64::MAX,
         can_add_enforcer: false,
+        sort_items_for_partition: Vec::new(),
     };
     hash_join_shapes(join.join_type)
         .into_iter()

@@ -41,6 +41,19 @@
 //! `plan_replayer_dump.go`, `extract.go`, `runaway.go`, `test_helper.go`,
 //! `infosync/`, and `domainctx.go`.
 //!
+//! `extract.go` was screened and declined (2026-08-18). Its material
+//! behavior is orchestration over four absent packages: `collectRecords`
+//! executes SQL against `information_schema.statements_summary_history`
+//! through internal `sessionctx.Context` sessions (no statements-summary
+//! storage and no internal SQL session pool exist here);
+//! `decodeBinaryPlan` needs `plancodec.DecodePlan`; `handleIsView`
+//! re-parses through `ast` visitors over the info schema; and the dump
+//! tail writes through `extstore`/`replayer` zip paths. The self-contained
+//! remainder (task-type names, dir naming, meta JSON) is a few dozen lines
+//! that would be an inert stub without the rest. Its three upstream tests
+//! are testkit-bound (`CreateMockStoreAndDomain`). Like `runaway.go`,
+//! there is no decision left to port until those packages exist.
+//!
 //! `runaway.go` was screened and declined. Its only symbol,
 //! `(*Domain).initResourceGroupsController`, is nothing but wiring between
 //! things that do not exist in Rust: the blocking Go symbols are

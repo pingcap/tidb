@@ -188,6 +188,10 @@ pub struct PhysicalProperty {
     pub expected_cnt: f64,
     /// Whether a sort enforcer may be added to satisfy this property.
     pub can_add_enforcer: bool,
+    /// Go `SortItemsForPartition`: "these sort only need to sort the data of
+    /// one partition, instead of global" — the MPP window paths fill it;
+    /// everywhere else it stays empty, which is exactly Go's zero value.
+    pub sort_items_for_partition: Vec<SortItem>,
 }
 
 impl Default for PhysicalProperty {
@@ -201,6 +205,7 @@ impl Default for PhysicalProperty {
             task_tp: TaskType::Root,
             expected_cnt: f64::MAX,
             can_add_enforcer: false,
+            sort_items_for_partition: Vec::new(),
         }
     }
 }
@@ -221,6 +226,7 @@ impl PhysicalProperty {
             task_tp,
             expected_cnt,
             can_add_enforcer: enforced,
+            sort_items_for_partition: Vec::new(),
         }
     }
 
@@ -228,6 +234,16 @@ impl PhysicalProperty {
     #[must_use]
     pub fn is_sort_item_empty(&self) -> bool {
         self.sort_items.is_empty()
+    }
+
+    /// `IsSortItemAllForPartition` (`physical_property.go:565`): whether
+    /// `SortItems` is the same list as `SortItemsForPartition`, item by item
+    /// — same column (`EqualColumn` is `UniqueID` equality) and same
+    /// direction. Both empty answers true, which is why the empty-sort check
+    /// must run FIRST wherever Go runs it first.
+    #[must_use]
+    pub fn is_sort_item_all_for_partition(&self) -> bool {
+        self.sort_items_for_partition == self.sort_items
     }
 
     /// `NeedKeepOrder`: whether the property requires maintaining order.
