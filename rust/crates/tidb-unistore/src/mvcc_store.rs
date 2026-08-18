@@ -451,6 +451,49 @@ impl MvccStore {
         Ok(())
     }
 
+    /// Go `MVCCStore.Cleanup` (`mvcc.go:1564`): rollback of ONE key, except
+    /// an unexpired lock refuses instead of dying — the TTL arm
+    /// `rollbackKeyReadLock` takes only when `currentTs > 0`. Physical time
+    /// is `ts >> 18`, Go's `oracle.ExtractPhysical`.
+    pub fn cleanup(&mut self, key: &[u8], start_ts: u64, current_ts: u64) -> Result<(), KvError> {
+        let buf = self.lock_bytes(key);
+        let mut delete_lock = false;
+        let mut check_db = buf.is_empty();
+        if !buf.is_empty() {
+            let lock = decode_lock(&buf);
+            if lock.hdr.start_ts == start_ts {
+                if current_ts > 0
+                    && (start_ts >> 18) + u64::from(lock.hdr.ttl) >= (current_ts >> 18)
+                {
+                    return Err(KvError::Locked(Box::new(lock.to_lock_info(key.to_vec()))));
+                }
+                delete_lock = true;
+            } else if lock.hdr.start_ts > start_ts {
+                // A NEWER transaction's lock: the DB decides, exactly as
+                // `rollbackStatusNewLock` sends rollback to `rollbackKeyReadDB`.
+                check_db = true;
+            }
+            // An OLDER lock: write the rollback record and leave it standing,
+            // Go's `lock.StartTS < startTS` arm.
+        }
+        if check_db {
+            if let Some(commit_ts) = self.committed_version_of(key, start_ts) {
+                return Err(KvError::AlreadyCommitted(commit_ts));
+            }
+            let status = self.check_extra_txn_status(key, start_ts);
+            if status.is_op_lock_committed() {
+                return Err(KvError::AlreadyCommitted(status.commit_ts));
+            }
+        }
+        let status_key = encode_extra_txn_status_key(key, start_ts);
+        self.engine
+            .set(&status_key, start_ts, &[], DbUserMeta::new(start_ts, 0));
+        if delete_lock {
+            self.lock_store_delete(key);
+        }
+        Ok(())
+    }
+
     /// Go `rollbackKeyReadLock` with `currentTs == 0`, the `Rollback` call
     /// shape. (The non-zero `currentTs` TTL arm belongs to `CheckTxnStatus`,
     /// a later course.)
@@ -2295,5 +2338,230 @@ mod tests {
         assert_eq!(status.commit_ts, 0);
         assert_eq!(status.locks.len(), 1);
         assert_eq!(status.locks[0].lock_version, 20);
+    }
+
+    fn mutation(op: KvrpcOp, key: &[u8], value: &[u8]) -> KvrpcMutation {
+        KvrpcMutation {
+            op: op as i32,
+            key: key.to_vec(),
+            value: value.to_vec(),
+            ..KvrpcMutation::default()
+        }
+    }
+
+    fn must_prewrite_op(store: &mut MvccStore, pk: &[u8], m: KvrpcMutation, start_ts: u64) {
+        store
+            .prewrite(&PrewriteReq {
+                mutations: vec![m],
+                primary_lock: pk.to_vec(),
+                start_version: start_ts,
+                lock_ttl: 100,
+                ..PrewriteReq::default()
+            })
+            .expect("prewrite succeeds");
+    }
+
+    fn must_get_rollback(store: &MvccStore, key: &[u8], start_ts: u64) {
+        assert!(
+            store.check_extra_txn_status(key, start_ts).is_rollback,
+            "a rollback record must stand at ts {start_ts}"
+        );
+    }
+
+    /// Go `TestRollback` (`mvcc_test.go:559`), including the pinned quirk:
+    /// tikv collapses older rollback records, "but unistore will not" — the
+    /// source's own comment — so BOTH records still answer.
+    #[test]
+    fn test_rollback() {
+        let mut store = MvccStore::new();
+        let (key, val) = (b"tkey".as_slice(), b"value".as_slice());
+        must_prewrite_optimistic(&mut store, key, key, val, 1, 100);
+        store.rollback(&[key.to_vec()], 1).expect("rolls back");
+        must_prewrite_optimistic(&mut store, key, key, val, 2, 100);
+        store.rollback(&[key.to_vec()], 2).expect("rolls back");
+        assert!(store.check_extra_txn_status(key, 1).is_rollback);
+
+        let (k, v) = (b"tk".as_slice(), b"v".as_slice());
+        must_prewrite_optimistic(&mut store, k, k, v, 1, 100);
+        store.rollback(&[k.to_vec()], 1).expect("rolls back");
+        must_get_rollback(&store, k, 1);
+        must_prewrite_optimistic(&mut store, k, k, v, 2, 100);
+        store.rollback(&[k.to_vec()], 2).expect("rolls back");
+        assert_eq!(store.get(k, 2).expect("readable"), None);
+        must_get_rollback(&store, k, 2);
+        // The uncollapsed older record: unistore keeps it.
+        must_get_rollback(&store, k, 1);
+    }
+
+    /// Go `TestRollbackKey` (`mvcc_test.go:1096`): a rolled-back Op_Lock or
+    /// Op_Del leaves the earlier committed value readable.
+    #[test]
+    fn test_rollback_key() {
+        let mut store = MvccStore::new();
+        let (k, v) = (b"tk".as_slice(), b"v".as_slice());
+        must_prewrite_optimistic(&mut store, k, k, v, 5, 100);
+        store.commit(&[k.to_vec()], 5, 10).expect("commits");
+
+        must_prewrite_op(&mut store, k, mutation(KvrpcOp::Lock, k, b""), 15);
+        store
+            .rollback(&[k.to_vec()], 15)
+            .expect("rolls back the lock");
+        assert!(store.lock_bytes(k).is_empty(), "unlocked");
+        assert_eq!(store.get(k, 16).expect("readable"), Some(v.to_vec()));
+
+        must_prewrite_op(&mut store, k, mutation(KvrpcOp::Del, k, b""), 17);
+        store
+            .rollback(&[k.to_vec()], 17)
+            .expect("rolls back the delete");
+        assert_eq!(store.get(k, 18).expect("readable"), Some(v.to_vec()));
+    }
+
+    /// Go `TestCleanup` (`mvcc_test.go:1120`): the TTL arm — an unexpired
+    /// lock refuses cleanup; expiry is physical (`ts >> 18`).
+    #[test]
+    fn test_cleanup() {
+        let mut store = MvccStore::new();
+        let (k, v) = (b"tk".as_slice(), b"v".as_slice());
+        must_prewrite_optimistic(&mut store, k, k, v, 10, 100);
+        assert!(!store.lock_bytes(k).is_empty());
+        store
+            .txn_heart_beat(k, 10, 100)
+            .expect("the heart beat lands");
+        // A SMALLER advise leaves the larger TTL standing.
+        assert_eq!(
+            store.txn_heart_beat(k, 10, 90).expect("still beats"),
+            100,
+            "the lock keeps the larger TTL"
+        );
+        // TTL not expired: refused, lock stands.
+        assert!(matches!(store.cleanup(k, 10, 20), Err(KvError::Locked(_))));
+        assert!(!store.lock_bytes(k).is_empty());
+        // A DIFFERENT transaction's cleanup writes its own rollback record.
+        store.cleanup(k, 11, 20).expect("a foreign ts cleans");
+        // TTL expired (current physical 120 > start physical 0 + ttl 100).
+        store
+            .cleanup(k, 10, 120 << 18)
+            .expect("the expired lock dies");
+        assert!(store.lock_bytes(k).is_empty(), "unlocked");
+    }
+
+    /// Go `TestCommit` (`mvcc_test.go:1141`), with the source's own quirk
+    /// comment kept: "Secondary Op_Lock keys could not be committed more
+    /// than once on unistore".
+    #[test]
+    fn test_commit() {
+        let mut store = MvccStore::new();
+        let (k, v) = (b"tk".as_slice(), b"v".as_slice());
+        assert!(store.commit(&[k.to_vec()], 1, 2).is_err(), "not prewritten");
+        must_prewrite_optimistic(&mut store, k, k, v, 5, 100);
+        assert!(store.commit(&[k.to_vec()], 4, 5).is_err(), "wrong start_ts");
+        store.rollback(&[k.to_vec()], 5).expect("rolls back");
+        assert!(
+            store.commit(&[k.to_vec()], 5, 6).is_err(),
+            "commit after rollback"
+        );
+
+        let (k1, v1, k2, k3) = (
+            b"tk1".as_slice(),
+            b"v".as_slice(),
+            b"tk2".as_slice(),
+            b"tk3".as_slice(),
+        );
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Put, k1, v1), 10);
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Lock, k2, b""), 10);
+        must_prewrite_op(&mut store, k1, mutation(KvrpcOp::Del, k3, b""), 10);
+        for key in [k1, k2, k3] {
+            store.commit(&[key.to_vec()], 10, 15).expect("commits");
+        }
+        assert_eq!(store.get(k1, 16).expect("readable"), Some(v1.to_vec()));
+        assert_eq!(store.get(k2, 16).expect("readable"), None);
+        assert_eq!(store.get(k3, 16).expect("readable"), None);
+        // Commit again has no effect.
+        store.commit(&[k1.to_vec()], 10, 15).expect("idempotent");
+        // Secondary Op_Lock keys could not be committed more than once on
+        // unistore (Go's own comment; the recommit of k2 stays skipped).
+        store.commit(&[k3.to_vec()], 10, 15).expect("idempotent");
+        assert_eq!(store.get(k1, 16).expect("readable"), Some(v1.to_vec()));
+
+        // The rollback must fail: the transaction committed.
+        assert!(store.rollback(&[k1.to_vec()], 10).is_err());
+        assert_eq!(store.get(k1, 17).expect("readable"), Some(v1.to_vec()));
+
+        // Rollback before prewrite leaves a record a later prewrite dies on.
+        let kr = b"tkr".as_slice();
+        store.rollback(&[kr.to_vec()], 5).expect("pre-rollback");
+        assert!(
+            store
+                .prewrite(&PrewriteReq {
+                    mutations: vec![mutation(KvrpcOp::Lock, kr, b"")],
+                    primary_lock: kr.to_vec(),
+                    start_version: 5,
+                    lock_ttl: 100,
+                    ..PrewriteReq::default()
+                })
+                .is_err(),
+            "the standing rollback refuses the late prewrite"
+        );
+    }
+
+    /// Go `TestMinCommitTs` (`mvcc_test.go:1191`): a pushed min_commit_ts
+    /// refuses any commit at or below the push and admits the one above.
+    #[test]
+    fn test_min_commit_ts() {
+        let mut store = MvccStore::new();
+        let (k, v) = (b"tk".as_slice(), b"v".as_slice());
+        store
+            .prewrite(&PrewriteReq {
+                mutations: vec![mutation(KvrpcOp::Put, k, v)],
+                primary_lock: k.to_vec(),
+                start_version: 10,
+                lock_ttl: 100,
+                min_commit_ts: 11,
+                ..PrewriteReq::default()
+            })
+            .expect("prewrites");
+        let status = store
+            .check_txn_status(&CheckTxnStatusReq {
+                primary_key: k.to_vec(),
+                lock_ts: 10,
+                caller_start_ts: 20,
+                current_ts: 20,
+                ..CheckTxnStatusReq::default()
+            })
+            .expect("the status answers");
+        assert_eq!(status.action, KvrpcTxnAction::MinCommitTsPushed);
+        assert!(store.commit(&[k.to_vec()], 10, 15).is_err());
+        assert!(store.commit(&[k.to_vec()], 10, 20).is_err());
+        store.commit(&[k.to_vec()], 10, 21).expect("above the push");
+    }
+
+    /// Go `TestOverwritePessimisitcLock` (`mvcc_test.go:592`, typo theirs):
+    /// re-locking keeps the LARGEST for_update_ts.
+    #[test]
+    fn test_overwrite_pessimistic_lock() {
+        let mut store = MvccStore::new();
+        let key = b"key".as_slice();
+        let lock_at = |store: &mut MvccStore, for_update_ts: u64| {
+            store
+                .pessimistic_lock(&PessimisticLockReq {
+                    mutations: vec![mutation(KvrpcOp::PessimisticLock, key, b"")],
+                    primary_lock: key.to_vec(),
+                    start_version: 1,
+                    for_update_ts,
+                    lock_ttl: 100,
+                    ..PessimisticLockReq::default()
+                })
+                .expect("locks");
+        };
+        lock_at(&mut store, 100);
+        assert_eq!(decode_lock(&store.lock_bytes(key)).hdr.for_update_ts, 100);
+        lock_at(&mut store, 107);
+        assert_eq!(decode_lock(&store.lock_bytes(key)).hdr.for_update_ts, 107);
+        lock_at(&mut store, 93);
+        assert_eq!(
+            decode_lock(&store.lock_bytes(key)).hdr.for_update_ts,
+            107,
+            "a smaller for_update_ts never rolls the lock back"
+        );
     }
 }
