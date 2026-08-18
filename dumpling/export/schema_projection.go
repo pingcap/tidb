@@ -7,14 +7,19 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
 type projectedTableSchema struct {
 	createTable     *ast.CreateTableStmt
 	retainedColumns map[string]struct{}
+	tableInfo       *model.TableInfo
 }
 
 type projectedTableSchemas map[tableName]*projectedTableSchema
@@ -54,6 +59,7 @@ func parseProjectedTableSchema(
 }
 
 func (s *projectedTableSchema) applyLocalProjection() error {
+	s.tableInfo = nil
 	columns := make([]*ast.ColumnDef, 0, len(s.createTable.Cols))
 	for _, column := range s.createTable.Cols {
 		if _, ok := s.retainedColumns[column.Name.Name.L]; !ok {
@@ -85,6 +91,25 @@ func (s *projectedTableSchema) applyLocalProjection() error {
 		return err
 	}
 	return nil
+}
+
+func (s *projectedTableSchema) getTableInfo() (*model.TableInfo, error) {
+	if s.tableInfo != nil {
+		return s.tableInfo, nil
+	}
+
+	tableInfo, err := ddl.BuildTableInfoWithStmt(
+		metabuild.NewContext(),
+		s.createTable,
+		mysql.DefaultCharset,
+		"",
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	s.tableInfo = tableInfo
+	return tableInfo, nil
 }
 
 func restoreProjectedSchema(createTable *ast.CreateTableStmt) (string, error) {
@@ -190,16 +215,23 @@ func validateForeignKeyReference(reference *ast.ReferenceDef, database string, s
 		// The referenced table is outside this dump and is not rewritten here.
 		return nil
 	}
-	referencedColumns := make([]string, 0, len(reference.IndexPartSpecifications))
+	referencedColumns := make([]ast.CIStr, 0, len(reference.IndexPartSpecifications))
 	for _, key := range reference.IndexPartSpecifications {
 		if key.Column != nil {
 			if _, ok := targetSchema.retainedColumns[key.Column.Name.L]; !ok {
 				return removedReferenceColumnError(referenceDatabase, referenceTable, key.Column.Name.O)
 			}
-			referencedColumns = append(referencedColumns, key.Column.Name.L)
+			referencedColumns = append(referencedColumns, key.Column.Name)
 		}
 	}
-	if len(referencedColumns) > 0 && !hasForeignKeyIndex(targetSchema.createTable, referencedColumns) {
+	if len(referencedColumns) == 0 {
+		return nil
+	}
+	targetTableInfo, err := targetSchema.getTableInfo()
+	if err != nil {
+		return err
+	}
+	if !hasForeignKeyIndex(targetTableInfo, referencedColumns) {
 		return errors.Errorf(
 			"foreign key referenced columns are not indexed in table `%s`.`%s`",
 			escapeString(referenceDatabase),
@@ -231,47 +263,14 @@ func (schemas projectedTableSchemas) lookup(database, table string) (*projectedT
 	return matched, matched != nil, nil
 }
 
-func hasForeignKeyIndex(createTable *ast.CreateTableStmt, referencedColumns []string) bool {
+func hasForeignKeyIndex(tableInfo *model.TableInfo, referencedColumns []ast.CIStr) bool {
 	if len(referencedColumns) == 1 {
-		for _, column := range createTable.Cols {
-			if column.Name.Name.L != referencedColumns[0] {
-				continue
-			}
-			for _, option := range column.Options {
-				if option.Tp == ast.ColumnOptionPrimaryKey || option.Tp == ast.ColumnOptionUniqKey {
-					return true
-				}
-			}
-		}
-	}
-
-	for _, constraint := range createTable.Constraints {
-		switch constraint.Tp {
-		case ast.ConstraintPrimaryKey,
-			ast.ConstraintKey,
-			ast.ConstraintIndex,
-			ast.ConstraintUniq,
-			ast.ConstraintUniqKey,
-			ast.ConstraintUniqIndex:
-		default:
-			continue
-		}
-		if len(constraint.Keys) < len(referencedColumns) {
-			continue
-		}
-		matched := true
-		for i, referencedColumn := range referencedColumns {
-			key := constraint.Keys[i]
-			if key.Column == nil || key.Column.Name.L != referencedColumn {
-				matched = false
-				break
-			}
-		}
-		if matched {
+		column := model.FindColumnInfo(tableInfo.Columns, referencedColumns[0].L)
+		if column != nil && tableInfo.PKIsHandle && mysql.HasPriKeyFlag(column.GetFlag()) {
 			return true
 		}
 	}
-	return false
+	return model.FindIndexByColumnsForForeignKey(tableInfo, tableInfo.Indices, referencedColumns...) != nil
 }
 
 func removedReferenceColumnError(database, table, column string) error {

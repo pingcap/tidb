@@ -338,6 +338,26 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		require.NoError(t, err)
 	})
 
+	t.Run("foreign key prefix index is insufficient", func(t *testing.T) {
+		createSQL := "CREATE TABLE `child` (" +
+			"`id` INT PRIMARY KEY," +
+			"`parent_name` VARCHAR(32)," +
+			"FOREIGN KEY (`parent_name`) REFERENCES `parent` (`name`)" +
+			")"
+		schemas := projectedTableSchemas{
+			{db: "test", table: "parent"}: projectedTableSchemaForTest(
+				t,
+				"CREATE TABLE `parent` (`name` VARCHAR(32), KEY (`name`(8)))",
+				[]string{"name"},
+			),
+		}
+
+		_, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id", "parent_name"}, true, schemas,
+		)
+		require.ErrorContains(t, err, "referenced columns are not indexed")
+	})
+
 	t.Run("case distinct tables do not collide", func(t *testing.T) {
 		upper := projectedTableSchemaForTest(t, "CREATE TABLE `Orders` (`id` INT PRIMARY KEY)", []string{"id"})
 		lower := projectedTableSchemaForTest(t, "CREATE TABLE `orders` (`other_id` INT PRIMARY KEY)", []string{"other_id"})
