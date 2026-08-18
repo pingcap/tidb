@@ -86,7 +86,7 @@ func buildProjectedTableSchema(
 	}, nil
 }
 
-func (s *projectedTableSchema) getTableInfo() (*model.TableInfo, error) {
+func (s *projectedTableSchema) buildTableInfo() (*model.TableInfo, error) {
 	if s.tableInfo != nil {
 		return s.tableInfo, nil
 	}
@@ -227,7 +227,7 @@ func validateForeignKeyReference(reference *ast.ReferenceDef, database string, s
 		}
 		referencedColumns = append(referencedColumns, key.Column.Name)
 	}
-	targetTableInfo, err := targetSchema.getTableInfo()
+	targetTableInfo, err := targetSchema.buildTableInfo()
 	if err != nil {
 		return err
 	}

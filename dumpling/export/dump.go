@@ -585,7 +585,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 			key := tableName{db: dbName, table: table.Name}
 			schema := schemas[key]
 			if conf.columnProjection[key].isProjected() {
-				if _, err := schema.getTableInfo(); err != nil {
+				if _, err := schema.buildTableInfo(); err != nil {
 					return errors.Annotatef(
 						err,
 						"failed to validate schema projection for table `%s`.`%s`",
