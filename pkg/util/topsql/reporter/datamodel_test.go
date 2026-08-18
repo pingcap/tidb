@@ -18,7 +18,9 @@ import (
 	"bytes"
 	"sort"
 	"testing"
+	"time"
 
+	"github.com/pingcap/failpoint"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
@@ -39,6 +41,56 @@ func runConcurrently(count int, fn func(int)) {
 	for range count {
 		<-done
 	}
+}
+
+func testRegisterRetriesAfterTake(
+	t *testing.T,
+	failpointName string,
+	register func(),
+	takeAndSerialize func(),
+	currentMetadataCount func() int,
+) {
+	reachedGeneration := make(chan struct{})
+	resumeRegister := make(chan struct{}, 1)
+	blockOnce := make(chan struct{}, 1)
+	blockOnce <- struct{}{}
+	releaseRegister := func() {
+		select {
+		case resumeRegister <- struct{}{}:
+		default:
+		}
+	}
+
+	require.NoError(t, failpoint.EnableCall(failpointName, func() {
+		select {
+		case <-blockOnce:
+			close(reachedGeneration)
+			<-resumeRegister
+		default:
+		}
+	}))
+	t.Cleanup(func() { require.NoError(t, failpoint.Disable(failpointName)) })
+	t.Cleanup(releaseRegister)
+
+	registerDone := make(chan struct{})
+	go func() {
+		register()
+		close(registerDone)
+	}()
+
+	select {
+	case <-reachedGeneration:
+	case <-time.After(5 * time.Second):
+		t.Fatal("registration did not reach the loaded generation")
+	}
+	takeAndSerialize()
+	releaseRegister()
+	select {
+	case <-registerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("registration did not finish")
+	}
+	require.Equal(t, 1, currentMetadataCount())
 }
 
 func Test_tsItem_toProto(t *testing.T) {
@@ -397,6 +449,17 @@ func Test_normalizedSQLMap_take(t *testing.T) {
 	require.True(t, ok)
 	_, ok = data2.Load("SQL-3")
 	require.True(t, ok)
+
+	t.Run("register during take", func(t *testing.T) {
+		m := newNormalizedSQLMap()
+		testRegisterRetriesAfterTake(
+			t,
+			"github.com/pingcap/tidb/pkg/util/topsql/reporter/afterLoadNormalizedSQLMap",
+			func() { m.register([]byte("SQL-4"), "SQL-4", false) },
+			func() { require.Empty(t, m.take().toProto(nil)) },
+			func() int { return len(m.toProto(nil)) },
+		)
+	})
 }
 
 func Test_normalizedSQLMap_toProto(t *testing.T) {
@@ -492,6 +555,19 @@ func Test_normalizedPlanMap_take(t *testing.T) {
 	require.True(t, ok)
 	_, ok = data2.Load("PLAN-3")
 	require.True(t, ok)
+
+	t.Run("register during take", func(t *testing.T) {
+		m := newNormalizedPlanMap()
+		decodePlan := func(plan string) (string, error) { return plan, nil }
+		compressPlan := func(plan []byte) string { return string(plan) }
+		testRegisterRetriesAfterTake(
+			t,
+			"github.com/pingcap/tidb/pkg/util/topsql/reporter/afterLoadNormalizedPlanMap",
+			func() { m.register([]byte("PLAN-4"), "PLAN-4", false) },
+			func() { require.Empty(t, m.take().toProto(nil, decodePlan, compressPlan)) },
+			func() int { return len(m.toProto(nil, decodePlan, compressPlan)) },
+		)
+	})
 }
 
 func Test_normalizedPlanMap_toProto(t *testing.T) {

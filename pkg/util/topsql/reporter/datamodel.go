@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/topsql/collector"
@@ -661,25 +662,33 @@ func (m *normalizedSQLMap) size() int64 {
 // register saves the relationship between sqlDigest and normalizedSQL.
 // If the internal map size exceeds the limit, the relationship will be discarded.
 func (m *normalizedSQLMap) register(sqlDigest []byte, normalizedSQL string, isInternal bool) {
-	data := m.data.Load()
-	if data.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
-		reporter_metrics.IgnoreExceedSQLCounter.Inc()
-		return
-	}
 	key := string(sqlDigest)
-	if _, loaded := data.Load(key); loaded {
+	for {
+		data := m.data.Load()
+		failpoint.InjectCall("afterLoadNormalizedSQLMap")
+		accepted := false
+		if data.length.Load() < topsqlstate.GlobalState.MaxCollect.Load() {
+			if _, loaded := data.Load(key); loaded {
+				accepted = true
+			} else if data.tryReserve() {
+				_, loaded = data.LoadOrStore(key, sqlMeta{
+					normalizedSQL: normalizedSQL,
+					isInternal:    isInternal,
+				})
+				if loaded {
+					data.length.Dec()
+				}
+				accepted = true
+			}
+		}
+		if m.data.Load() != data {
+			// The detached generation may already have been serialized.
+			continue
+		}
+		if !accepted {
+			reporter_metrics.IgnoreExceedSQLCounter.Inc()
+		}
 		return
-	}
-	if !data.tryReserve() {
-		reporter_metrics.IgnoreExceedSQLCounter.Inc()
-		return
-	}
-	_, loaded := data.LoadOrStore(key, sqlMeta{
-		normalizedSQL: normalizedSQL,
-		isInternal:    isInternal,
-	})
-	if loaded {
-		data.length.Dec()
 	}
 }
 
@@ -733,25 +742,33 @@ func (m *normalizedPlanMap) size() int64 {
 // register saves the relationship between planDigest and normalizedPlan.
 // If the internal map size exceeds the limit, the relationship will be discarded.
 func (m *normalizedPlanMap) register(planDigest []byte, normalizedPlan string, isLarge bool) {
-	data := m.data.Load()
-	if data.length.Load() >= topsqlstate.GlobalState.MaxCollect.Load() {
-		reporter_metrics.IgnoreExceedPlanCounter.Inc()
-		return
-	}
 	key := string(planDigest)
-	if _, loaded := data.Load(key); loaded {
+	for {
+		data := m.data.Load()
+		failpoint.InjectCall("afterLoadNormalizedPlanMap")
+		accepted := false
+		if data.length.Load() < topsqlstate.GlobalState.MaxCollect.Load() {
+			if _, loaded := data.Load(key); loaded {
+				accepted = true
+			} else if data.tryReserve() {
+				_, loaded = data.LoadOrStore(key, planMeta{
+					binaryNormalizedPlan: normalizedPlan,
+					isLarge:              isLarge,
+				})
+				if loaded {
+					data.length.Dec()
+				}
+				accepted = true
+			}
+		}
+		if m.data.Load() != data {
+			// The detached generation may already have been serialized.
+			continue
+		}
+		if !accepted {
+			reporter_metrics.IgnoreExceedPlanCounter.Inc()
+		}
 		return
-	}
-	if !data.tryReserve() {
-		reporter_metrics.IgnoreExceedPlanCounter.Inc()
-		return
-	}
-	_, loaded := data.LoadOrStore(key, planMeta{
-		binaryNormalizedPlan: normalizedPlan,
-		isLarge:              isLarge,
-	})
-	if loaded {
-		data.length.Dec()
 	}
 }
 
