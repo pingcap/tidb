@@ -412,7 +412,12 @@ func generateProjectedSchemaForTest(
 	if !rewriteSchema {
 		return originSQL, nil
 	}
-	return restoreProjectedSchema(schema.createTable)
+	projectedSQL, err := restoreProjectedSchema(schema.createTable)
+	if err != nil {
+		return "", err
+	}
+	parseCreateTableForTest(t, projectedSQL)
+	return projectedSQL, nil
 }
 
 func projectedTableSchemaForTest(t *testing.T, originSQL string, selectedColumns []string) *projectedTableSchema {
