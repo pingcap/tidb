@@ -122,9 +122,14 @@ fn table_type_of(is_view: bool) -> &'static str {
 /// never wrote, and always prints an explicit column list even when the
 /// `CREATE VIEW` had none -- the names come from the stored definition.
 ///
-/// DIVERGENCE (documented): the definer is whatever the statement recorded,
-/// which in this tier is the empty identity, printed as ``@``. A TiDB with
-/// authentication prints the connected user there.
+/// The definer is whatever the statement recorded, which
+/// [`tidb_executor::view`] settles at CREATE time: an explicit
+/// `DEFINER = u@h` is kept verbatim, and `DEFINER = CURRENT_USER` (the
+/// default) takes the connection's authenticated identity. It prints as
+/// ``@`` only for a session with no authenticated identity at all, which
+/// is an in-process session rather than a served connection -- a served
+/// one prints its user, as the wire test in `tidb-server` captures
+/// (`DEFINER=\`alice\`@\`%\``).
 fn show_create_view_text(view: &tidb_executor::ViewDef) -> String {
     let mut out = format!(
         "CREATE ALGORITHM={} DEFINER={}@{} SQL SECURITY {} VIEW {} (",

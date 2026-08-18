@@ -284,3 +284,100 @@ pub fn notify_privilege_update(notifier: Option<&EtcdClient>, changed: &[String]
         ),
     }
 }
+
+/// Reconciles `live`'s accounts into the cluster's `mysql.user` at boot.
+///
+/// Go's bootstrap INSERTs `root@%` into `mysql.user` with an EMPTY
+/// `authentication_string` (`bootstrap.go:493`), and the cluster is then the
+/// single source of accounts: every later statement reads that set, edits it,
+/// and writes it back. This port also provisions a startup identity from
+/// `--auth-file`, WITH a password, into the node's live table only — so the
+/// two disagreed about root's credential. The first `CREATE USER` opened its
+/// scratch from the cluster, added one row, committed, and
+/// [`PendingAccountChange::commit`] then REPLACED the live table with that
+/// scratch. Root's password reverted to the bootstrap's empty one and the
+/// administrator could no longer authenticate: one `CREATE USER` locked the
+/// server's owner out of it.
+///
+/// Writing the auth-file's accounts into `mysql.user` at boot restores Go's
+/// invariant -- the credential a session authenticates against IS the
+/// cluster's row -- so rewriting the set preserves it. `plan_account_write`
+/// diffs, so a cluster that already agrees costs no commit.
+///
+/// This treats `live` as the WHOLE intended account set, which is true only
+/// where the node's own `--auth-file` defines it over a store that starts
+/// empty each boot (`--store unistore`). A node joining a populated cluster
+/// must not call this: it would delete accounts it never knew about.
+pub fn seed_cluster_accounts<C, L, P>(
+    opener: &RealOptimisticTransactionOpener<C, L, P>,
+    live: &PrivilegeRegistry,
+    timeout: Duration,
+) -> Result<Vec<String>, SqlQueryError>
+where
+    C: StoreWriteClient,
+    L: StoreWriteLoader,
+    P: StorePdCapability,
+{
+    let mut transaction = opener
+        .begin(MAX_OPTIMISTIC_MUTATIONS, MAX_OPTIMISTIC_TRANSACTION_BYTES)
+        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+    // `cluster_image_from_registry` reads through `export`, so the live table
+    // is not disturbed by being written out.
+    let desired = cluster_image_from_registry(live);
+    let plan = {
+        let mut snapshot = TransactionMetaSnapshot::new(&mut transaction, timeout);
+        let catalog = load_cluster_catalog(&mut snapshot)
+            .map_err(|e| SqlQueryError::unknown(e.to_string()))?;
+        Some(
+            plan_account_write(&mut snapshot, &catalog, &desired, utc_now_timestamp())
+                .map_err(|e| SqlQueryError::unknown(e.to_string()))?,
+        )
+    };
+    let Some(plan) = plan.filter(|plan| !plan.is_empty()) else {
+        transaction
+            .finish_without_writes()
+            .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+        return Ok(Vec::new());
+    };
+    let changed = plan.changed_users;
+    let call = UnaryCallContext::with_timeout(timeout);
+    let outcome = transaction
+        .commit(plan.mutations, &call)
+        .map_err(|error| SqlQueryError::unknown(error.to_string()))?;
+    if let Some(error) = cluster_commit_error(&outcome, "account seeding") {
+        return Err(error);
+    }
+    Ok(changed)
+}
+
+#[cfg(test)]
+mod seed_tests {
+    use tidb_session::privilege::PrivilegeRegistry;
+
+    /// The startup identity's CREDENTIAL, not merely its name, is what an
+    /// account statement used to discard: the cluster's bootstrap row carries
+    /// Go's empty `authentication_string`, so replacing the live table with
+    /// the cluster's view reverted root's password and locked the owner out.
+    ///
+    /// `cluster_image_from_registry` is the exact projection
+    /// [`seed_cluster_accounts`] writes, so asserting the password survives it
+    /// pins the half that broke, without needing a cluster to write into.
+    #[test]
+    fn the_seeded_image_carries_the_startup_password() {
+        let registry = PrivilegeRegistry::bootstrapped_from([(
+            "root".to_owned(),
+            "%".to_owned(),
+            "*61CAB5BD10C9AE60B985E8821DCBCBA0125FE290".to_owned(),
+        )]);
+        let image = super::cluster_image_from_registry(&registry);
+        let root = image
+            .users
+            .iter()
+            .find(|user| user.user == "root" && user.host == "%")
+            .expect("the startup identity is in the image");
+        assert_eq!(
+            root.authentication_string, "*61CAB5BD10C9AE60B985E8821DCBCBA0125FE290",
+            "the password must reach mysql.user, or the next account statement reverts it"
+        );
+    }
+}

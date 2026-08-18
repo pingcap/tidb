@@ -257,6 +257,24 @@ pub(crate) fn run_unistore_cluster_session(
             .map_err(|error| engine(SqlQueryError::unknown(error)))?;
     eprintln!("{{\"event\":\"bootstrap_committed\",\"schema_version\":{schema_version}}}");
 
+    // Go's bootstrap INSERTs `root@%` into `mysql.user`; this node provisions
+    // its startup identity from `--auth-file` instead, so it has to become a
+    // real row before any account statement rewrites the set -- see
+    // `cluster_account_seam::seed_cluster_accounts` for what happened when it
+    // did not.
+    let seeded = crate::cluster_account_seam::seed_cluster_accounts(
+        &opener,
+        &users.accounts(),
+        IN_PROCESS_TIMEOUT,
+    )
+    .map_err(engine)?;
+    if !seeded.is_empty() {
+        eprintln!(
+            "{{\"event\":\"accounts_seeded\",\"identities\":{}}}",
+            seeded.len()
+        );
+    }
+
     let startup =
         tidb_exec::real_tikv_catalog::load_catalog_from_cluster(&opener, IN_PROCESS_TIMEOUT)
             .map_err(|error| engine(SqlQueryError::unknown(error.to_string())))?;
