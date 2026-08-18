@@ -402,7 +402,7 @@ func generateProjectedSchemaForTest(
 	table := schema.createTable.Table.Name.O
 	schemas[tableName{db: database, table: table}] = schema
 	for _, schema := range schemas {
-		if err := schema.projectColumnsAndConstraints(); err != nil {
+		if err := schema.applyLocalProjection(); err != nil {
 			return "", err
 		}
 	}

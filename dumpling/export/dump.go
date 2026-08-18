@@ -562,7 +562,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 					escapeString(table.Name),
 				)
 			}
-			if err := schemas[key].projectColumnsAndConstraints(); err != nil {
+			if err := schemas[key].applyLocalProjection(); err != nil {
 				return errors.Annotatef(
 					err,
 					"failed to project schema for table `%s`.`%s`",

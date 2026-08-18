@@ -55,7 +55,7 @@ func parseProjectedTableSchema(
 	}, nil
 }
 
-func (s *projectedTableSchema) projectColumnsAndConstraints() error {
+func (s *projectedTableSchema) applyLocalProjection() error {
 	columns := make([]*ast.ColumnDef, 0, len(s.createTable.Cols))
 	for _, column := range s.createTable.Cols {
 		if _, ok := s.retainedColumns[column.Name.Name.L]; !ok {
