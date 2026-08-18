@@ -2211,3 +2211,38 @@ fn a_modify_column_reorganizes_exactly_where_go_says_it_must() {
         "{rescaled}"
     );
 }
+
+/// A prefix-length index must be refused wherever it is spelled. The
+/// standalone `CREATE INDEX` and the `ALTER TABLE ... ADD INDEX` spellings
+/// have always refused it, because this node's own catalog loader drops a
+/// table carrying one; the INLINE spelling inside `CREATE TABLE` did not,
+/// so the statement reported success and the table then did not exist.
+#[test]
+fn a_prefix_index_is_refused_in_every_spelling() {
+    let expected = "a prefix-length index is not supported by this node";
+
+    // All three spellings refuse at admission, before any mutation.
+    for sql in [
+        "CREATE TABLE pfx (id BIGINT PRIMARY KEY, c VARCHAR(20), INDEX px (c(5)))",
+        "CREATE TABLE pfx (id BIGINT PRIMARY KEY, c VARCHAR(20), UNIQUE KEY ux (c(5)))",
+        "CREATE INDEX px ON pfx2 (c(5))",
+        "ALTER TABLE pfx2 ADD INDEX px (c(5))",
+    ] {
+        let (code, reason) = refusal_with_code(sql);
+        assert_eq!(code, 8200, "{sql}");
+        assert!(reason.contains(expected), "{sql}: {reason}");
+    }
+
+    // The same shapes without a prefix are admitted, so the guard refuses
+    // the prefix rather than the index.
+    let mut store = bootstrapped();
+    let create = plan(
+        &mut store,
+        "CREATE TABLE pfx2 (id BIGINT PRIMARY KEY, c VARCHAR(20), INDEX cx (c))",
+        300,
+    );
+    assert!(!create.mutations.is_empty(), "a plain inline index plans");
+    apply(&mut store, &create);
+    let plain = plan(&mut store, "CREATE INDEX cx2 ON pfx2 (c)", 301);
+    assert!(!plain.mutations.is_empty(), "a plain index still plans");
+}

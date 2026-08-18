@@ -1146,6 +1146,31 @@ fn lower_create_table(
     context: &tidb_executor::StmtContext,
 ) -> Result<DdlStatement, DdlAdmissionError> {
     let (schema, table) = split_name(&create.name, default_schema, "table")?;
+    // The same gate [`lower_create_index`] applies, for the same reason and
+    // with the same words: a prefix-length index in the INLINE list would be
+    // published into a `TableInfo` that this node's own catalog loader then
+    // refuses, so the CREATE would report success and the table would not
+    // exist. `CREATE INDEX` and `ALTER TABLE ... ADD INDEX` have always
+    // refused it; without this, only the inline spelling slipped through.
+    for constraint in &create.table_constraints {
+        let tidb_ast::TableConstraint::Index(index) = constraint else {
+            continue;
+        };
+        for part in &index.parts {
+            if matches!(
+                part,
+                tidb_ast::IndexPart::Column {
+                    prefix_len: Some(_),
+                    ..
+                }
+            ) {
+                return Err(DdlAdmissionError::unsupported(
+                    "a prefix-length index is not supported by this node, which neither \
+                     reads nor writes entries cut to a prefix",
+                ));
+            }
+        }
+    }
     // The server default `tidb_enable_clustered_index = ON`, which is what a
     // real TiDB builds a user table under. Bootstrap is the one caller that
     // uses a different mode, and it says so at its own call site.
