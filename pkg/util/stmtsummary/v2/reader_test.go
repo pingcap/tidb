@@ -125,12 +125,65 @@ func TestStmtFiles(t *testing.T) {
 
 	files, err := newStmtFiles(context.Background())
 	require.NoError(t, err)
+	defer files.close()
 	require.Len(t, files.files, 2)
 	require.Equal(t, filename1, files.files[0].path)
 	require.Equal(t, filename2, files.files[1].path)
-	for _, file := range files.files {
-		require.Nil(t, file.file)
-	}
+	require.Nil(t, files.files[0].file)
+	require.NotNil(t, files.files[1].file)
+
+	t.Run("preserves current file across rotation", func(t *testing.T) {
+		restore := config.RestoreFunc()
+		defer restore()
+
+		dir := t.TempDir()
+		currentPath := filepath.Join(dir, "tidb-statements.log")
+		rotatedPath := filepath.Join(dir, "tidb-statements-2022-12-27T16-21-20.245.log")
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Instance.StmtSummaryFilename = currentPath
+		})
+
+		const oldRecord = `{"begin":1,"end":2,"digest":"old"}`
+		const newRecord = `{"begin":3,"end":4,"digest":"new"}`
+		require.NoError(t, os.WriteFile(currentPath, []byte(oldRecord+"\n"), 0o600))
+
+		files, err := newStmtFiles(context.Background())
+		require.NoError(t, err)
+		require.Len(t, files.files, 1)
+		snapshot := files.files[0]
+		require.NotNil(t, snapshot.file)
+
+		require.NoError(t, os.Rename(currentPath, rotatedPath))
+		require.NoError(t, os.WriteFile(currentPath, []byte(newRecord+"\n"), 0o600))
+
+		columns := []*model.ColumnInfo{{Name: ast.NewCIStr(DigestStr)}}
+		ctx, cancel := context.WithCancel(context.Background())
+		rowsCh := make(chan [][]types.Datum, 2)
+		errCh := make(chan error, 2)
+		reader := &HistoryReader{
+			ctx:             ctx,
+			cancel:          cancel,
+			timeLocation:    time.Local,
+			columnFactories: makeColumnFactories(columns),
+			checker:         &stmtChecker{},
+			files:           files,
+			concurrent:      2,
+			rowsCh:          rowsCh,
+			errCh:           errCh,
+		}
+		reader.wg.Add(1)
+		go func() {
+			defer reader.wg.Done()
+			reader.scheduleTasks(rowsCh, errCh)
+		}()
+		defer func() {
+			require.NoError(t, reader.Close())
+		}()
+
+		rows := readAllRows(t, reader)
+		require.Len(t, rows, 1)
+		require.Equal(t, "old", rows[0][0].GetString())
+	})
 }
 
 func TestStmtChecker(t *testing.T) {
@@ -378,6 +431,10 @@ func TestHistoryReader(t *testing.T) {
 			content := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"digest%d\",\"exec_count\":1}\n", begin.Unix(), end.Unix(), i)
 			require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
 		}
+		currentBegin := base.Add(fileCount * 2 * time.Hour)
+		currentEnd := currentBegin.Add(10 * time.Minute)
+		currentContent := fmt.Sprintf("{\"begin\":%d,\"end\":%d,\"digest\":\"current\",\"exec_count\":1}\n", currentBegin.Unix(), currentEnd.Unix())
+		require.NoError(t, os.WriteFile(filename, []byte(currentContent), 0o600))
 
 		t.Run("matching files", func(t *testing.T) {
 			before, canCount := countOpenFileDescriptors()
@@ -385,9 +442,6 @@ func TestHistoryReader(t *testing.T) {
 				{Begin: base.Unix(), End: 0},
 			}, 2)
 			require.NoError(t, err)
-			for _, file := range reader.files.files {
-				require.Nil(t, file.file)
-			}
 			if canCount {
 				after, _ := countOpenFileDescriptors()
 				require.LessOrEqual(t, after-before, 4)

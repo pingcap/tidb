@@ -296,6 +296,7 @@ func (r *HistoryReader) scheduleTasks(
 		close(rowsCh)
 		return
 	}
+	defer r.files.close()
 
 	ctx, cancel := context.WithCancel(r.ctx)
 	defer cancel()
@@ -359,10 +360,14 @@ func (r *HistoryReader) scheduleTasks(
 				if isCtxDone(ctx) {
 					return
 				}
-				file, err := openStmtFile(candidate.path)
-				if err != nil {
-					logutil.BgLogger().Warn("failed to open or parse statements file", zap.Error(err), zap.String("path", candidate.path))
-					continue
+				file := candidate
+				if file.file == nil {
+					var err error
+					file, err = openStmtFile(candidate.path)
+					if err != nil {
+						logutil.BgLogger().Warn("failed to open or parse statements file", zap.Error(err), zap.String("path", candidate.path))
+						continue
+					}
 				}
 				if !r.checker.isTimeValid(file.begin, file.end) {
 					file.closeAndLogError()
@@ -569,14 +574,50 @@ type stmtFiles struct {
 	files []*stmtFile
 }
 
+func (f *stmtFiles) close() {
+	for _, file := range f.files {
+		file.closeAndLogError()
+	}
+}
+
 func newStmtFiles(ctx context.Context) (*stmtFiles, error) {
 	filename := config.GetGlobalConfig().Instance.StmtSummaryFilename
 	ext := filepath.Ext(filename)
 	prefix := filename[:len(filename)-len(ext)]
-	// Defer opening files until a scan worker is ready to consume them.
+
+	dir := filepath.Dir(filename)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	// Keep the active file open so a rotation after this snapshot cannot replace
+	// the inode read by this query. Rotated files are still opened on demand.
+	var currentFile *stmtFile
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		if path != filename || entry.IsDir() {
+			continue
+		}
+		if isCtxDone(ctx) {
+			return nil, ctx.Err()
+		}
+		currentFile, err = openStmtFile(path)
+		if err != nil {
+			if !os.IsNotExist(err) {
+				logutil.BgLogger().Warn("failed to snapshot current statements file", zap.Error(err), zap.String("path", path))
+			}
+			currentFile = nil
+		}
+		break
+	}
+
 	var files []*stmtFile
-	walkFn := func(path string, info os.DirEntry) error {
-		if info.IsDir() {
+	if currentFile != nil {
+		files = append(files, currentFile)
+	}
+	walkFn := func(path string, entry os.DirEntry) error {
+		if entry.IsDir() {
 			return nil
 		}
 		if !strings.HasPrefix(path, prefix) {
@@ -585,17 +626,19 @@ func newStmtFiles(ctx context.Context) (*stmtFiles, error) {
 		if isCtxDone(ctx) {
 			return ctx.Err()
 		}
+		if path == filename {
+			if currentFile == nil {
+				files = append(files, &stmtFile{path: path})
+			}
+			return nil
+		}
 		files = append(files, &stmtFile{path: path})
 		return nil
 	}
 
-	dir := filepath.Dir(filename)
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
 	for _, entry := range entries {
 		if err := walkFn(filepath.Join(dir, entry.Name()), entry); err != nil {
+			(&stmtFiles{files: files}).close()
 			return nil, err
 		}
 	}
