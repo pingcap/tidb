@@ -202,3 +202,50 @@ fn clone_shallow_keeps_the_node_and_drops_the_children() {
     assert_eq!(tree.children().len(), 2);
     tree.dismantle();
 }
+
+#[test]
+fn max_one_row_enumeration_needs_an_orderless_root_property() {
+    // `ExhaustPhysicalPlans4LogicalMaxOneRow`: a required order or a
+    // TiFlash (MPP) property enumerates nothing; the admitted arm builds
+    // exactly one PhysicalMaxOneRow whose child property caps ExpectedCnt
+    // at 2 — one row to keep, one to prove the violation.
+    use crate::logical::{BaseLogicalPlan, LogicalMaxOneRow};
+    use crate::physical_property::SortItem;
+    use crate::stats_info::StatsInfo;
+    use crate::task_type::TaskType;
+
+    let allocator = PlanIdAllocator::new();
+    let mut base = BaseLogicalPlan::new(&allocator, LogicalMaxOneRow::TYPE, 7);
+    base.base.set_stats(Some(StatsInfo::new(1.0, [])));
+    let logical = LogicalMaxOneRow::new(base);
+
+    let ordered = PhysicalProperty {
+        sort_items: vec![SortItem::new(3, false)],
+        ..PhysicalProperty::default()
+    };
+    assert!(exhaust_physical_plans_4_logical_max_one_row(&logical, &ordered, &allocator).is_empty());
+
+    let mpp = PhysicalProperty {
+        task_tp: TaskType::Mpp,
+        ..PhysicalProperty::default()
+    };
+    assert!(exhaust_physical_plans_4_logical_max_one_row(&logical, &mpp, &allocator).is_empty());
+
+    let plans = exhaust_physical_plans_4_logical_max_one_row(
+        &logical,
+        &PhysicalProperty::default(),
+        &allocator,
+    );
+    assert_eq!(plans.len(), 1);
+    let PhysicalPlan::MaxOneRow(mor) = &plans[0] else {
+        panic!("a PhysicalMaxOneRow, got {:?}", plans[0]);
+    };
+    assert_eq!(mor.base.base.query_block_offset(), 7);
+    assert!(
+        (mor.base.base.stats_info().expect("stats").row_count() - 1.0).abs() < f64::EPSILON
+    );
+    let child_prop = mor.base.child_req_prop(0).expect("the child property");
+    assert!((child_prop.expected_cnt - 2.0).abs() < f64::EPSILON);
+    assert_eq!(child_prop.task_tp, TaskType::Root);
+    assert!(child_prop.sort_items.is_empty());
+}

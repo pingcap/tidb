@@ -258,6 +258,74 @@ pub struct PhysicalTableDual {
     pub row_count: usize,
 }
 
+/// Go `physicalop.PhysicalMaxOneRow` (`physical_max_one_row.go`, whole
+/// file): the physical operator of maxOneRow — assert at most one child row.
+/// The struct is exactly its base; the file's other bodies land as
+/// [`exhaust_physical_plans_4_logical_max_one_row`] and the default
+/// `Attach2Task` arm in [`crate::task::attach2_task`]. `Clone` and
+/// `MemoryUsage` follow the enum's standing narrowings (the copy impl and
+/// no memory accounting).
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalMaxOneRow {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+}
+
+/// Go `physicalop.NominalSort` (`nominal_sort.go`, whole file): "a fake
+/// operator that will not appear in final physical operator tree. It will be
+/// eliminated or converted to Projection." Its `Init` stamps
+/// `plancodec.TypeSort`, so its explain name is `Sort`.
+///
+/// `ResolveIndices` (`resolveIndicesForSort`) rewrites `ByItems` expressions
+/// against the child schema; the enum world carries a by-item as the
+/// column's `UniqueID`, which needs no resolution — the narrowing the
+/// enum's [`PhysicalSort`] already made.
+#[derive(Clone, Debug, Default)]
+pub struct NominalSort {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `ByItems`, kept (issue #11653) so the NominalSorts that convert to
+    /// Projections can check whether their scalar functions are out of
+    /// bounds; carried as `SortItem`s like [`PhysicalSort::by_items`].
+    pub by_items: Vec<crate::physical_property::SortItem>,
+    /// Go `OnlyColumn`: every by-item is a bare column, and `Attach2Task`
+    /// then drops the operator entirely.
+    pub only_column: bool,
+}
+
+/// Go `ExhaustPhysicalPlans4LogicalMaxOneRow` (`physical_max_one_row.go:59`):
+/// a `MaxOneRow` admits no required order and no TiFlash property; otherwise
+/// it enumerates exactly one `PhysicalMaxOneRow` whose child property caps
+/// `ExpectedCnt` at 2 — one row to keep, one to prove the violation.
+///
+/// Go's second return value is `true` (enumeration complete) in both arms
+/// and its error is always nil, so the return narrows to the plan list.
+/// Narrowed with it: `RaiseWarningWhenMPPEnforced` on the refusing arm (no
+/// session-vars warning sink) and the `CTEProducerStatus` /
+/// `NoCopPushDown` child-property fields (unported on
+/// [`PhysicalProperty`]).
+#[must_use]
+pub fn exhaust_physical_plans_4_logical_max_one_row(
+    p: &crate::logical::LogicalMaxOneRow,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+) -> Vec<PhysicalPlan> {
+    if !prop.is_sort_item_empty() || prop.task_tp == crate::task_type::TaskType::Mpp {
+        return Vec::new();
+    }
+    let mut base = BasePhysicalPlan::new(
+        allocator,
+        crate::logical::LogicalMaxOneRow::TYPE,
+        p.base.base.query_block_offset(),
+    );
+    base.base.set_stats(p.base.base.stats_info().cloned());
+    base.set_children_req_props(vec![Some(PhysicalProperty {
+        expected_cnt: 2.0,
+        ..PhysicalProperty::default()
+    })]);
+    vec![PhysicalPlan::MaxOneRow(PhysicalMaxOneRow { base })]
+}
+
 /// A physical operator whose own port is a later batch; the physical twin of
 /// [`crate::logical::TodoLogicalOp`].
 #[derive(Clone, Debug, Default)]
@@ -285,6 +353,10 @@ pub enum PhysicalPlan {
     TableScan(PhysicalTableScan),
     /// Go `physicalop.PhysicalTableDual`.
     TableDual(PhysicalTableDual),
+    /// Go `physicalop.PhysicalMaxOneRow`.
+    MaxOneRow(PhysicalMaxOneRow),
+    /// Go `physicalop.NominalSort`.
+    NominalSort(NominalSort),
     /// An operator whose port is a later batch; see [`TodoPhysicalOp`].
     Todo(TodoPhysicalOp),
 }
@@ -301,6 +373,8 @@ impl PhysicalPlan {
             Self::Limit(op) => &op.base,
             Self::TableScan(op) => &op.base,
             Self::TableDual(op) => &op.base,
+            Self::MaxOneRow(op) => &op.base,
+            Self::NominalSort(op) => &op.base,
             Self::Todo(op) => &op.base,
         }
     }
@@ -315,6 +389,8 @@ impl PhysicalPlan {
             Self::Limit(op) => &mut op.base,
             Self::TableScan(op) => &mut op.base,
             Self::TableDual(op) => &mut op.base,
+            Self::MaxOneRow(op) => &mut op.base,
+            Self::NominalSort(op) => &mut op.base,
             Self::Todo(op) => &mut op.base,
         }
     }
@@ -645,6 +721,14 @@ impl PhysicalPlan {
             Self::TableDual(op) => Self::TableDual(PhysicalTableDual {
                 base: base_of(&op.base),
                 row_count: op.row_count,
+            }),
+            Self::MaxOneRow(op) => Self::MaxOneRow(PhysicalMaxOneRow {
+                base: base_of(&op.base),
+            }),
+            Self::NominalSort(op) => Self::NominalSort(NominalSort {
+                base: base_of(&op.base),
+                by_items: op.by_items.clone(),
+                only_column: op.only_column,
             }),
             Self::Todo(op) => Self::Todo(TodoPhysicalOp {
                 base: base_of(&op.base),

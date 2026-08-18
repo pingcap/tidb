@@ -683,6 +683,23 @@ pub fn attach2_task(plan: PhysicalPlan, mut tasks: Vec<Task>) -> Result<Task, Pl
                  pushed-down PhysicalLimit over DeriveLimitStats",
             )),
         },
+        // `PhysicalMaxOneRow` has no override: `BasePhysicalPlan.Attach2Task`
+        // (`base_physical_plan.go:202`) is convert-to-root then attach, on
+        // ANY task kind — a cop/MPP child propagates
+        // `convert_to_root_task`'s reader-building refusal.
+        PhysicalPlan::MaxOneRow(_) => {
+            let converted = first.convert_to_root_task()?;
+            Ok(attach_plan_to_task(plan, converted))
+        }
+        // `attach2Task4NominalSort` (`task.go:851`): an only-column nominal
+        // sort returns the child task ITSELF — not even a copy — and
+        // otherwise it is copy-then-attach with no conversion, like Sort.
+        PhysicalPlan::NominalSort(op) => {
+            if op.only_column {
+                return Ok(first);
+            }
+            Ok(attach_plan_to_task(plan, first.copy()))
+        }
         // Operators whose Go bodies are not yet ported refuse by name.
         PhysicalPlan::HashJoin(_) => Err(PlanError::internal(
             "attach2Task4PhysicalHashJoin (task.go) is not ported",
@@ -754,6 +771,63 @@ mod attach_tests {
         });
         let task = attach2_task(sort, vec![root_task_over(10.0)]).expect("attaches");
         assert!(matches!(task.plan(), Some(PhysicalPlan::Sort(_))));
+    }
+
+    #[test]
+    fn an_only_column_nominal_sort_returns_the_child_task_itself() {
+        // `attach2Task4NominalSort` (`task.go:853`): `if p.OnlyColumn {
+        // return tasks[0] }` — the fake operator vanishes.
+        let nominal = PhysicalPlan::NominalSort(crate::physical::NominalSort {
+            base: op_with_stats("Sort", 10.0),
+            only_column: true,
+            ..crate::physical::NominalSort::default()
+        });
+        let task = attach2_task(nominal, vec![root_task_over(10.0)]).expect("passes through");
+        assert!(
+            matches!(task.plan(), Some(PhysicalPlan::TableDual(_))),
+            "the child plan is still the task's plan"
+        );
+    }
+
+    #[test]
+    fn an_expression_nominal_sort_attaches_without_conversion() {
+        // The non-only-column arm is copy-then-attach, exactly Sort's.
+        let nominal = PhysicalPlan::NominalSort(crate::physical::NominalSort {
+            base: op_with_stats("Sort", 10.0),
+            only_column: false,
+            ..crate::physical::NominalSort::default()
+        });
+        let task = attach2_task(nominal, vec![root_task_over(10.0)]).expect("attaches");
+        let plan = task.plan().expect("a plan");
+        assert!(matches!(plan, PhysicalPlan::NominalSort(_)));
+        assert_eq!(plan.children().len(), 1, "the old plan became the child");
+    }
+
+    #[test]
+    fn a_max_one_row_converts_then_attaches() {
+        // No Attach2Task override: `BasePhysicalPlan.Attach2Task`
+        // (`base_physical_plan.go:202`) converts to root, then attaches.
+        let mor = PhysicalPlan::MaxOneRow(crate::physical::PhysicalMaxOneRow {
+            base: op_with_stats("MaxOneRow", 1.0),
+        });
+        let task = attach2_task(mor, vec![root_task_over(10.0)]).expect("attaches");
+        assert!(matches!(task.plan(), Some(PhysicalPlan::MaxOneRow(_))));
+    }
+
+    #[test]
+    fn a_max_one_row_on_a_cop_task_propagates_the_conversion_refusal() {
+        // The cop child's ConvertToRootTask builds readers
+        // (`convertToRootTaskImpl`), which is refused — the default attach
+        // body surfaces that refusal rather than skipping the conversion.
+        let mor = PhysicalPlan::MaxOneRow(crate::physical::PhysicalMaxOneRow {
+            base: op_with_stats("MaxOneRow", 1.0),
+        });
+        let error =
+            attach2_task(mor, vec![Task::Cop(CopTask::default())]).expect_err("refuses");
+        assert!(
+            format!("{error}").contains("convertToRootTaskImpl"),
+            "the refusal names its Go symbol: {error}"
+        );
     }
 
     #[test]
