@@ -16,6 +16,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/ddl",
+        "//pkg/dxf/importinto",
+        "//pkg/errno",
         "//pkg/executor/importer",
         "//pkg/importinto/jobstats",
         "//pkg/lightning/common",

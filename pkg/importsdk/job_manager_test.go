@@ -45,10 +45,20 @@ func TestSubmitJob(t *testing.T) {
 	ctx := context.Background()
 	sqlQuery := "IMPORT INTO ..."
 
-	cols := []string{"Job_ID"}
+	cols := []string{
+		"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
+		"Phase", "Status", "Source_File_Size", "Imported_Rows", "Result_Message",
+		"Create_Time", "Start_Time", "End_Time", "Created_By", "Update_Time",
+		"Step", "Processed_Size", "Total_Size", "Percent", "Speed", "ETA",
+	}
 
 	// Case 1: Success
-	rows := sqlmock.NewRows(cols).AddRow(int64(123))
+	rows := sqlmock.NewRows(cols).AddRow(
+		int64(123), "", "s3://bucket/file.csv", "db.table", int64(1),
+		"import", "finished", "100MB", int64(1000), "success",
+		"2023-01-01 10:00:00", "2023-01-01 10:00:01", "2023-01-01 10:00:02", "user", "2023-01-01 10:00:02",
+		"", "100MB", "100MB", "100", "10MB/s", "0s",
+	)
 	mock.ExpectQuery(sqlQuery).WillReturnRows(rows)
 
 	jobID, err := manager.SubmitJob(ctx, sqlQuery)
@@ -133,7 +143,7 @@ func TestRawJobStatusRejectsUnsupportedContractVersion(t *testing.T) {
 
 func TestJobStatusFromRawStatsPreservesLegacyFields(t *testing.T) {
 	remaining := int64(9)
-	status := jobStatusFromRawStats(&jobstats.RawImportJobStats{
+	status := statusFromRaw(&jobstats.RawImportJobStats{
 		Version:             jobstats.ContractVersion,
 		Status:              importer.JobStatusRunning,
 		SourceFileSizeBytes: 100 * 1024 * 1024,
@@ -168,7 +178,7 @@ func TestJobStatusFromRawStatsPreservesLegacyFields(t *testing.T) {
 	rows, err := db.Query("legacy")
 	require.NoError(t, err)
 	require.True(t, rows.Next())
-	legacyStatus, err := scanLegacyJobStatus(rows)
+	legacyStatus, err := scanLegacyStatus(rows)
 	require.NoError(t, err)
 	require.Equal(t, legacyStatus.SourceFileSize, status.SourceFileSize)
 	require.Equal(t, legacyStatus.ProcessedSize, status.ProcessedSize)
@@ -179,7 +189,7 @@ func TestJobStatusFromRawStatsPreservesLegacyFields(t *testing.T) {
 	require.NoError(t, rows.Close())
 	require.NoError(t, mock.ExpectationsWereMet())
 
-	status = jobStatusFromRawStats(&jobstats.RawImportJobStats{
+	status = statusFromRaw(&jobstats.RawImportJobStats{
 		Version: jobstats.ContractVersion,
 		Status:  importer.JobStatusFinished,
 		Summary: &jobstats.RawImportJobSummary{
@@ -428,8 +438,8 @@ func TestGetJobsByGroupLegacyCompatibility(t *testing.T) {
 	})
 }
 
-func TestRawJSONBytesScan(t *testing.T) {
-	raw := []byte(`{"job_id":123,"status":"finished"}`)
+func TestRawBytes(t *testing.T) {
+	raw := []byte(`{"version":1,"status":"finished"}`)
 
 	for name, src := range map[string]any{
 		"bytes":      raw,
@@ -438,12 +448,12 @@ func TestRawJSONBytesScan(t *testing.T) {
 		"rawMessage": json.RawMessage(raw),
 	} {
 		t.Run(name, func(t *testing.T) {
-			var got rawJSONBytes
-			require.NoError(t, got.Scan(src))
+			got, err := rawBytes(src)
+			require.NoError(t, err)
 			require.JSONEq(t, string(raw), string(got))
 		})
 	}
 
-	var unsupported rawJSONBytes
-	require.Error(t, unsupported.Scan(123))
+	_, err := rawBytes(123)
+	require.Error(t, err)
 }

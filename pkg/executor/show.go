@@ -291,7 +291,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowSessionStates(ctx)
 	case ast.ShowImportJobs:
 		if e.RawImportJob {
-			return e.fetchShowRawImportJobs(ctx)
+			return e.fetchRawImportJobs(ctx)
 		}
 		return e.fetchShowImportJobs(ctx)
 	case ast.ShowImportGroups:
@@ -2596,16 +2596,16 @@ func handleImportJobInfo(
 	ctx context.Context, location *time.Location,
 	info *importer.JobInfo, result *chunk.Chunk,
 ) error {
-	runInfo, err := getRuntimeInfoForShowImportJob(ctx, location, info)
+	runInfo, err := getJobRuntime(ctx, location, info)
 	if err != nil {
 		return err
 	}
-	updateImportJobFromRuntimeInfo(info, runInfo)
+	applyJobRuntime(info, runInfo)
 	FillOneImportJobInfo(result, info, runInfo)
 	return nil
 }
 
-func getRuntimeInfoForShowImportJob(
+func getJobRuntime(
 	ctx context.Context,
 	location *time.Location,
 	info *importer.JobInfo,
@@ -2622,7 +2622,7 @@ func getRuntimeInfoForShowImportJob(
 	return runInfo, nil
 }
 
-func updateImportJobFromRuntimeInfo(info *importer.JobInfo, runInfo *importinto.RuntimeInfo) {
+func applyJobRuntime(info *importer.JobInfo, runInfo *importinto.RuntimeInfo) {
 	if runInfo == nil {
 		return
 	}
@@ -2632,7 +2632,7 @@ func updateImportJobFromRuntimeInfo(info *importer.JobInfo, runInfo *importinto.
 	}
 }
 
-func runningImportJobIDs(infos []*importer.JobInfo) []int64 {
+func runningJobIDs(infos []*importer.JobInfo) []int64 {
 	jobIDs := make([]int64, 0, len(infos))
 	for _, info := range infos {
 		if info.Status == importer.JobStatusRunning {
@@ -2650,7 +2650,7 @@ func rawBool(v bool) *bool {
 	return &v
 }
 
-func buildRawImportJobError(status, message string) *jobstats.RawImportJobError {
+func buildRawJobError(status, message string) *jobstats.RawImportJobError {
 	switch status {
 	case "failed":
 		return &jobstats.RawImportJobError{
@@ -2676,7 +2676,7 @@ func buildRawImportJobError(status, message string) *jobstats.RawImportJobError 
 	}
 }
 
-func buildRawImportJobSummary(summary *importer.Summary) *jobstats.RawImportJobSummary {
+func buildRawJobSummary(summary *importer.Summary) *jobstats.RawImportJobSummary {
 	if summary == nil {
 		return nil
 	}
@@ -2706,8 +2706,8 @@ func buildRawImportJobSummary(summary *importer.Summary) *jobstats.RawImportJobS
 	return raw
 }
 
-// buildRawImportJobStats converts import job info (and optional runtime info) into a machine-friendly contract.
-func buildRawImportJobStats(
+// buildRawJobStats converts import job info (and optional runtime info) into a machine-friendly contract.
+func buildRawJobStats(
 	location *time.Location,
 	info *importer.JobInfo,
 	runInfo *importinto.RuntimeInfo,
@@ -2741,8 +2741,8 @@ func buildRawImportJobStats(
 		StatusCategory:      statusCategory,
 		Terminal:            terminal,
 		SourceFileSizeBytes: info.SourceFileSize,
-		Error:               buildRawImportJobError(info.Status, info.ErrorMessage),
-		Summary:             buildRawImportJobSummary(info.Summary),
+		Error:               buildRawJobError(info.Status, info.ErrorMessage),
+		Summary:             buildRawJobSummary(info.Summary),
 		CreatedBy:           info.CreatedBy,
 	}
 
@@ -3046,9 +3046,9 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 	return nil
 }
 
-// fetchShowRawImportJobs fills the result with the schema:
+// fetchRawImportJobs fills the result with the schema:
 // {"Job_ID", "Group_Key", "Raw_Stats"}.
-func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
+func (e *ShowExec) fetchRawImportJobs(ctx context.Context) error {
 	sctx := e.Ctx()
 
 	var hasSuperPriv bool
@@ -3066,7 +3066,7 @@ func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
 	// session location when converting them to Unix seconds.
 	var loc *time.Location
 	appendJob := func(info *importer.JobInfo, runInfo *importinto.RuntimeInfo) error {
-		stats, err2 := buildRawImportJobStats(loc, info, runInfo)
+		stats, err2 := buildRawJobStats(loc, info, runInfo)
 		if err2 != nil {
 			return err2
 		}
@@ -3100,11 +3100,11 @@ func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
-		runInfo, err := getRuntimeInfoForShowImportJob(ctx, loc, info)
+		runInfo, err := getJobRuntime(ctx, loc, info)
 		if err != nil {
 			return err
 		}
-		updateImportJobFromRuntimeInfo(info, runInfo)
+		applyJobRuntime(info, runInfo)
 		return appendJob(info, runInfo)
 	}
 
@@ -3118,13 +3118,13 @@ func (e *ShowExec) fetchShowRawImportJobs(ctx context.Context) error {
 	}); err != nil {
 		return err
 	}
-	runtimeInfos, err := importinto.GetRuntimeInfosForJobs(ctx, loc, runningImportJobIDs(infos))
+	runtimeInfos, err := importinto.GetRuntimeInfos(ctx, loc, runningJobIDs(infos))
 	if err != nil {
 		return err
 	}
 	for _, info := range infos {
 		runInfo := runtimeInfos[info.ID]
-		updateImportJobFromRuntimeInfo(info, runInfo)
+		applyJobRuntime(info, runInfo)
 		if err2 := appendJob(info, runInfo); err2 != nil {
 			return err2
 		}

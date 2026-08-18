@@ -388,7 +388,7 @@ func TestGetSubtaskSummaries(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tasksByKey, 1)
 	require.Equal(t, taskID, tasksByKey["test"].ID)
-	bulkSummaries, err := tm.GetAllSubtaskSummariesByTaskSteps(ctx, map[int64]proto.Step{
+	bulkSummaries, err := tm.GetSubtaskSummaries(ctx, map[int64]proto.Step{
 		taskID: proto.StepOne,
 		999999: proto.StepOne,
 	})

@@ -18,7 +18,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	goerrors "errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -28,6 +27,8 @@ import (
 	"github.com/docker/go-units"
 	drivermysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 )
@@ -44,14 +45,9 @@ type JobManager interface {
 const timeLayout = "2006-01-02 15:04:05"
 
 type jobManager struct {
-	db            *sql.DB
-	rawCapability atomic.Int32
+	db             *sql.DB
+	rawUnsupported atomic.Bool
 }
-
-const (
-	rawCapabilityUnsupported int32 = -1
-	rawCapabilitySupported   int32 = 1
-)
 
 // NewJobManager creates a new JobManager
 func NewJobManager(db *sql.DB) JobManager {
@@ -69,11 +65,11 @@ func (m *jobManager) SubmitJob(ctx context.Context, query string) (int64, error)
 	defer rows.Close()
 
 	if rows.Next() {
-		jobID, err := scanJobID(rows)
+		status, err := scanLegacyStatus(rows)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		return jobID, nil
+		return status.JobID, nil
 	}
 
 	if err := rows.Err(); err != nil {
@@ -85,23 +81,22 @@ func (m *jobManager) SubmitJob(ctx context.Context, query string) (int64, error)
 
 // GetJobStatus gets the status of an import job
 func (m *jobManager) GetJobStatus(ctx context.Context, jobID int64) (*JobStatus, error) {
-	if m.rawCapability.Load() == rawCapabilityUnsupported {
-		return m.getLegacyJobStatus(ctx, jobID)
+	if m.rawUnsupported.Load() {
+		return m.getLegacyStatus(ctx, jobID)
 	}
 	query := fmt.Sprintf("SHOW RAW IMPORT JOB %d", jobID)
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
-		if isRawImportUnsupportedError(err) {
-			m.rawCapability.Store(rawCapabilityUnsupported)
-			return m.getLegacyJobStatus(ctx, jobID)
+		if isRawUnsupportedErr(err) {
+			m.rawUnsupported.Store(true)
+			return m.getLegacyStatus(ctx, jobID)
 		}
 		return nil, errors.Trace(err)
 	}
-	m.rawCapability.Store(rawCapabilitySupported)
 	defer rows.Close()
 
 	if rows.Next() {
-		return scanJobStatus(rows)
+		return scanStatus(rows)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -111,7 +106,7 @@ func (m *jobManager) GetJobStatus(ctx context.Context, jobID int64) (*JobStatus,
 	return nil, ErrJobNotFound
 }
 
-func (m *jobManager) getLegacyJobStatus(ctx context.Context, jobID int64) (*JobStatus, error) {
+func (m *jobManager) getLegacyStatus(ctx context.Context, jobID int64) (*JobStatus, error) {
 	query := fmt.Sprintf("SHOW IMPORT JOB %d", jobID)
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
@@ -120,7 +115,7 @@ func (m *jobManager) getLegacyJobStatus(ctx context.Context, jobID int64) (*JobS
 	defer rows.Close()
 
 	if rows.Next() {
-		return scanJobStatus(rows)
+		return scanLegacyStatus(rows)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, errors.Trace(err)
@@ -159,24 +154,23 @@ func (m *jobManager) GetJobsByGroup(ctx context.Context, groupKey string) ([]*Jo
 	if groupKey == "" {
 		return nil, ErrInvalidOptions
 	}
-	if m.rawCapability.Load() == rawCapabilityUnsupported {
-		return m.getLegacyJobsByGroup(ctx, groupKey)
+	if m.rawUnsupported.Load() {
+		return m.getLegacyGroupJobs(ctx, groupKey)
 	}
 	query := fmt.Sprintf("SHOW RAW IMPORT JOBS WHERE GROUP_KEY = '%s'", strings.ReplaceAll(groupKey, "'", "''"))
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
-		if isRawImportUnsupportedError(err) {
-			m.rawCapability.Store(rawCapabilityUnsupported)
-			return m.getLegacyJobsByGroup(ctx, groupKey)
+		if isRawUnsupportedErr(err) {
+			m.rawUnsupported.Store(true)
+			return m.getLegacyGroupJobs(ctx, groupKey)
 		}
 		return nil, errors.Trace(err)
 	}
-	m.rawCapability.Store(rawCapabilitySupported)
 	defer rows.Close()
 
 	var jobs []*JobStatus
 	for rows.Next() {
-		status, err := scanJobStatus(rows)
+		status, err := scanStatus(rows)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -189,7 +183,7 @@ func (m *jobManager) GetJobsByGroup(ctx context.Context, groupKey string) ([]*Jo
 	return jobs, nil
 }
 
-func (m *jobManager) getLegacyJobsByGroup(ctx context.Context, groupKey string) ([]*JobStatus, error) {
+func (m *jobManager) getLegacyGroupJobs(ctx context.Context, groupKey string) ([]*JobStatus, error) {
 	query := fmt.Sprintf("SHOW IMPORT JOBS WHERE GROUP_KEY = '%s'", strings.ReplaceAll(groupKey, "'", "''"))
 	rows, err := m.db.QueryContext(ctx, query)
 	if err != nil {
@@ -199,7 +193,7 @@ func (m *jobManager) getLegacyJobsByGroup(ctx context.Context, groupKey string) 
 
 	var jobs []*JobStatus
 	for rows.Next() {
-		status, err := scanJobStatus(rows)
+		status, err := scanLegacyStatus(rows)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -211,52 +205,51 @@ func (m *jobManager) getLegacyJobsByGroup(ctx context.Context, groupKey string) 
 	return jobs, nil
 }
 
-func isRawImportUnsupportedError(err error) bool {
-	cause := errors.Cause(err)
-	var mysqlErr *drivermysql.MySQLError
+func isRawUnsupportedErr(err error) bool {
 	// 1064 is returned by old servers that cannot parse SHOW RAW, while 1235
 	// is returned by the classic kernel where SHOW RAW is intentionally disabled.
-	if goerrors.As(cause, &mysqlErr) {
-		return mysqlErr.Number == 1064 || mysqlErr.Number == 1235
+	var code int
+	switch err := errors.Cause(err).(type) {
+	case *drivermysql.MySQLError:
+		code = int(err.Number)
+	case interface{ Code() errors.ErrCode }:
+		// TiDB's in-process database/sql driver returns a normalized TiDB error
+		// instead of go-sql-driver's MySQLError.
+		code = int(err.Code())
+	default:
+		return false
 	}
-
-	// TiDB's in-process database/sql driver returns a normalized TiDB error
-	// instead of go-sql-driver's MySQLError.
-	var codeErr interface{ Code() errors.ErrCode }
-	if goerrors.As(cause, &codeErr) {
-		code := int(codeErr.Code())
-		return code == 1064 || code == 1235
-	}
-	return false
+	return code == errno.ErrParse || code == errno.ErrNotSupportedYet
 }
 
-func scanJobStatus(rows *sql.Rows) (*JobStatus, error) {
+func scanStatus(rows *sql.Rows) (*JobStatus, error) {
 	cols, err := rows.Columns()
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if len(cols) == 3 && strings.EqualFold(cols[2], "Raw_Stats") {
-		return scanRawJobStatus(rows)
+		return scanRawStatus(rows)
 	}
-	return scanLegacyJobStatus(rows)
+	return scanLegacyStatus(rows)
 }
 
-func scanRawJobStatus(rows *sql.Rows) (*JobStatus, error) {
+func scanRawStatus(rows *sql.Rows) (*JobStatus, error) {
 	var (
 		jobID    int64
 		groupKey sql.NullString
-		rawStats rawJSONBytes
+		rawStats any
 	)
 
 	if err := rows.Scan(&jobID, &groupKey, &rawStats); err != nil {
 		return nil, errors.Trace(err)
 	}
-	if len(rawStats) == 0 {
-		return nil, errors.New("raw stats is empty")
-	}
 
+	data, err := rawBytes(rawStats)
+	if err != nil {
+		return nil, err
+	}
 	stats := &jobstats.RawImportJobStats{}
-	if err := json.Unmarshal(rawStats, stats); err != nil {
+	if err := json.Unmarshal(data, stats); err != nil {
 		return nil, errors.Trace(err)
 	}
 	if stats.Version != jobstats.ContractVersion {
@@ -272,32 +265,27 @@ func scanRawJobStatus(rows *sql.Rows) (*JobStatus, error) {
 	} else {
 		stats.GroupKey = ""
 	}
-	return jobStatusFromRawStats(stats), nil
+	return statusFromRaw(stats), nil
 }
 
-type rawJSONBytes []byte
-
-func (b *rawJSONBytes) Scan(src any) error {
-	switch v := src.(type) {
-	case nil:
-		*b = nil
+func rawBytes(src any) ([]byte, error) {
+	switch raw := src.(type) {
 	case []byte:
-		*b = append((*b)[:0], v...)
+		return raw, nil
 	case string:
-		*b = append((*b)[:0], v...)
+		return []byte(raw), nil
 	case json.Marshaler:
-		data, err := v.MarshalJSON()
+		data, err := raw.MarshalJSON()
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-		*b = append((*b)[:0], data...)
+		return data, nil
 	default:
-		return errors.Errorf("cannot scan raw stats from %T", src)
+		return nil, errors.Errorf("cannot read raw stats from %T", src)
 	}
-	return nil
 }
 
-func jobStatusFromRawStats(stats *jobstats.RawImportJobStats) *JobStatus {
+func statusFromRaw(stats *jobstats.RawImportJobStats) *JobStatus {
 	status := &JobStatus{
 		JobID:               stats.JobID,
 		GroupKey:            stats.GroupKey,
@@ -332,7 +320,7 @@ func jobStatusFromRawStats(stats *jobstats.RawImportJobStats) *JobStatus {
 	} else {
 		status.SourceFileSize = units.BytesSize(0)
 	}
-	status.ResultMessage = legacyResultMessage(stats)
+	status.ResultMessage = legacyResult(stats)
 	if status.ResultMessage == "" && stats.Status != importer.JobStatusFinished {
 		status.ResultMessage = status.ErrorMessage
 	}
@@ -341,12 +329,12 @@ func jobStatusFromRawStats(stats *jobstats.RawImportJobStats) *JobStatus {
 	status.EndTime = unixTime(stats.EndTimeUnix)
 	status.UpdateTime = unixTime(stats.UpdateTimeUnix)
 	if stats.CurrentStep != nil {
-		fillLegacyStepFields(status, stats.CurrentStep)
+		fillLegacyProgress(status, stats.CurrentStep)
 	}
 	return status
 }
 
-func fillLegacyStepFields(status *JobStatus, step *jobstats.RawImportJobStepStats) {
+func fillLegacyProgress(status *JobStatus, step *jobstats.RawImportJobStepStats) {
 	status.Step = step.Name
 	conflictStep := step.Name == "collect-conflicts" || step.Name == "conflict-resolution"
 	var processed, total int64
@@ -372,11 +360,11 @@ func fillLegacyStepFields(status *JobStatus, step *jobstats.RawImportJobStepStat
 	}
 	status.ETA = "N/A"
 	if step.RemainingSeconds != nil {
-		status.ETA = formatSecondAsTime(*step.RemainingSeconds)
+		status.ETA = importinto.FormatSecondAsTime(*step.RemainingSeconds)
 	}
 }
 
-func legacyResultMessage(stats *jobstats.RawImportJobStats) string {
+func legacyResult(stats *jobstats.RawImportJobStats) string {
 	if stats.Status != importer.JobStatusFinished {
 		if stats.Error != nil {
 			return stats.Error.Message
@@ -396,16 +384,7 @@ func legacyResultMessage(stats *jobstats.RawImportJobStats) string {
 	return strings.Join(items, " ")
 }
 
-func formatSecondAsTime(sec int64) string {
-	dur := time.Duration(sec) * time.Second
-	day := ""
-	if dur.Hours() >= 24 {
-		day = fmt.Sprintf("%d d ", int(dur.Hours()/24))
-	}
-	return fmt.Sprintf("%s%02d:%02d:%02d", day, int(dur.Hours())%24, int(dur.Minutes())%60, int(dur.Seconds())%60)
-}
-
-func scanLegacyJobStatus(rows *sql.Rows) (*JobStatus, error) {
+func scanLegacyStatus(rows *sql.Rows) (*JobStatus, error) {
 	var (
 		id             int64
 		groupKey       sql.NullString
@@ -469,28 +448,6 @@ func scanLegacyJobStatus(rows *sql.Rows) (*JobStatus, error) {
 		Speed:          speed.String,
 		ETA:            eta.String,
 	}, nil
-}
-
-func scanJobID(rows *sql.Rows) (int64, error) {
-	cols, err := rows.Columns()
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if len(cols) == 0 {
-		return 0, ErrNoJobIDReturned
-	}
-
-	dest := make([]any, len(cols))
-	var jobID int64
-	dest[0] = &jobID
-	// We only need Job_ID; scan the rest into dummy values.
-	for i := 1; i < len(cols); i++ {
-		dest[i] = new(any)
-	}
-	if err := rows.Scan(dest...); err != nil {
-		return 0, errors.Trace(err)
-	}
-	return jobID, nil
 }
 
 func scanGroupStatus(rows *sql.Rows) (*GroupStatus, error) {

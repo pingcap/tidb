@@ -61,7 +61,7 @@ func TestBuildRawImportJobStats(t *testing.T) {
 		Status:     proto.TaskStateRunning,
 	}
 
-	stats, err := buildRawImportJobStats(loc, info, runInfo)
+	stats, err := buildRawJobStats(loc, info, runInfo)
 	require.NoError(t, err)
 	require.Equal(t, jobstats.ContractVersion, stats.Version)
 	require.Equal(t, int64(1), stats.JobID)
@@ -98,7 +98,7 @@ func TestBuildRawImportJobStats(t *testing.T) {
 
 	// The supplied location must be the one used to decode JobInfo timestamps.
 	tokyo := time.FixedZone("UTC+9", 9*60*60)
-	nonUTCStats, err := buildRawImportJobStats(tokyo, info, runInfo)
+	nonUTCStats, err := buildRawJobStats(tokyo, info, runInfo)
 	require.NoError(t, err)
 	require.Equal(t, int64(1704034800), nonUTCStats.CreateTimeUnix)
 	require.Equal(t, int64(1735657200), nonUTCStats.UpdateTimeUnix)
@@ -107,7 +107,7 @@ func TestBuildRawImportJobStats(t *testing.T) {
 	runInfo.Processed = 3
 	runInfo.Total = 5
 	runInfo.Speed = 2
-	stats, err = buildRawImportJobStats(loc, info, runInfo)
+	stats, err = buildRawJobStats(loc, info, runInfo)
 	require.NoError(t, err)
 	require.NotNil(t, stats.CurrentStep)
 	require.Equal(t, "conflict-resolution", stats.CurrentStep.Name)
@@ -122,7 +122,7 @@ func TestBuildRawImportJobStats(t *testing.T) {
 		ImportedRows:  99,
 	}
 	info.EndTime = t2025
-	stats, err = buildRawImportJobStats(loc, info, nil)
+	stats, err = buildRawJobStats(loc, info, nil)
 	require.NoError(t, err)
 	require.NotNil(t, stats.ImportedRows)
 	require.Equal(t, int64(99), *stats.ImportedRows)
@@ -139,7 +139,7 @@ func TestBuildRawImportJobStats(t *testing.T) {
 
 	info.Status = "failed"
 	info.ErrorMessage = "load failed"
-	stats, err = buildRawImportJobStats(loc, info, nil)
+	stats, err = buildRawJobStats(loc, info, nil)
 	require.NoError(t, err)
 	require.NotNil(t, stats.Error)
 	require.Equal(t, "load failed", stats.Error.Message)

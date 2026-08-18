@@ -4598,8 +4598,8 @@ var (
 		"Result_Message", "Create_Time", "Start_Time", "End_Time", "Created_By", "Last_Update_Time",
 		"Cur_Step", "Cur_Step_Processed_Size", "Cur_Step_Total_Size", "Cur_Step_Progress_Pct", "Cur_Step_Speed", "Cur_Step_ETA",
 	}
-	rawImportIntoSchemaNames  = []string{"Job_ID", "Group_Key", "Raw_Stats"}
-	rawImportIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeJSON}
+	rawJobSchemaNames = []string{"Job_ID", "Group_Key", "Raw_Stats"}
+	rawJobSchemaTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeJSON}
 	// ImportIntoSchemaFTypes store the field types of the show import jobs schema.
 	ImportIntoSchemaFTypes = []byte{
 		mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
@@ -6107,8 +6107,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		ftypes = []byte{mysql.TypeJSON, mysql.TypeJSON}
 	case ast.ShowImportJobs:
 		if s.RawImportJob {
-			names = rawImportIntoSchemaNames
-			ftypes = rawImportIntoSchemaFTypes
+			names = rawJobSchemaNames
+			ftypes = rawJobSchemaTypes
 		} else {
 			names = importIntoSchemaNames
 			ftypes = ImportIntoSchemaFTypes

@@ -317,9 +317,9 @@ func GetRuntimeInfoForJob(
 	return buildRuntimeInfo(task, summaries, location)
 }
 
-// GetRuntimeInfosForJobs gets runtime information for running import jobs with
+// GetRuntimeInfos gets runtime information for running import jobs with
 // a constant number of system-table reads.
-func GetRuntimeInfosForJobs(
+func GetRuntimeInfos(
 	ctx context.Context,
 	location *time.Location,
 	jobIDs []int64,
@@ -347,7 +347,7 @@ func GetRuntimeInfosForJobs(
 			taskSteps[task.ID] = task.Step
 		}
 	}
-	summaries, err := dxfTaskMgr.GetAllSubtaskSummariesByTaskSteps(ctx, taskSteps)
+	summaries, err := dxfTaskMgr.GetSubtaskSummaries(ctx, taskSteps)
 	if err != nil {
 		return nil, err
 	}
