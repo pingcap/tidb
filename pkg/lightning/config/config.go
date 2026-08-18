@@ -1452,11 +1452,9 @@ func (c *Conflict) adjust(i *TikvImporter) error {
 				The value of conflict.max-record-rows has been converted to 0.`)
 		}
 		c.MaxRecordRows = 0
-	} else {
-		if c.MaxRecordRows >= 0 {
-			// only warn when it is set by user.
-			log.L().Warn("Setting conflict.max-record-rows does not take affect. The value of conflict.max-record-rows has been converted to conflict.threshold.")
-		}
+	} else if c.MaxRecordRows < 0 {
+		// MaxRecordRows < 0 is the unset sentinel; 0 is a user choice that
+		// suppresses writes to the conflict logging table.
 		c.MaxRecordRows = c.Threshold
 	}
 	return nil

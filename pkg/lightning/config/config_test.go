@@ -1150,7 +1150,13 @@ func TestAdjustMaxRecordRows(t *testing.T) {
 	cfg.Conflict.MaxRecordRows = 1000
 	cfg.Conflict.Threshold = 100
 	require.NoError(t, cfg.Adjust(ctx))
-	require.EqualValues(t, 100, cfg.Conflict.MaxRecordRows)
+	require.EqualValues(t, 1000, cfg.Conflict.MaxRecordRows)
+
+	// MaxRecordRows = 0 is honored (suppresses writes to the conflict logging table).
+	cfg.Conflict.MaxRecordRows = 0
+	cfg.Conflict.Threshold = 100
+	require.NoError(t, cfg.Adjust(ctx))
+	require.EqualValues(t, 0, cfg.Conflict.MaxRecordRows)
 }
 
 func TestRemoveAllowAllFiles(t *testing.T) {
@@ -1410,9 +1416,13 @@ func TestAdjustConflict(t *testing.T) {
 	cfg.Conflict.Threshold = 1
 	cfg.Conflict.MaxRecordRows = 1
 	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
+	require.EqualValues(t, 1, cfg.Conflict.MaxRecordRows)
 	cfg.Conflict.MaxRecordRows = 2
 	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
-	require.EqualValues(t, 1, cfg.Conflict.MaxRecordRows)
+	require.EqualValues(t, 2, cfg.Conflict.MaxRecordRows)
+	cfg.Conflict.MaxRecordRows = 0
+	require.NoError(t, cfg.Conflict.adjust(&cfg.TikvImporter))
+	require.EqualValues(t, 0, cfg.Conflict.MaxRecordRows)
 
 	cfg.TikvImporter.Backend = BackendTiDB
 	cfg.Conflict.Strategy = ReplaceOnDup
