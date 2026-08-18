@@ -208,3 +208,56 @@ fn prepared_and_text_transaction_control_describe_the_same_transaction() {
     assert_eq!(cluster.rows(), 2);
     assert_eq!(cluster.live.load(Ordering::Acquire), 0);
 }
+
+/// The explicit transaction is OPTIMISTIC, which `FOR UPDATE` and locking
+/// DML both make visible. Go takes a pessimistic lock in both cases, so a
+/// second connection WAITS and the first transaction wins; here the second
+/// connection commits immediately and the first loses its own row at
+/// `COMMIT`.
+///
+/// This pins the measured behaviour and names the Go behaviour it must
+/// become, so wiring the explicit transaction onto the pessimistic
+/// machinery turns this red at the right place -- see this module's parent
+/// (`transactions.rs`) for why that wiring, not an executor-level lock
+/// step alone, is the unit of work.
+#[test]
+fn an_explicit_transaction_does_not_lock_what_go_would_lock() {
+    for (locking_statement, returns_rows) in [
+        ("SELECT v FROM t WHERE id = 1 FOR UPDATE", true),
+        ("UPDATE t SET v = 50 WHERE id = 1", false),
+    ] {
+        let (mut holder, cluster) = open_session();
+        holder
+            .execute_write("INSERT INTO t (id, v) VALUES (1, 10)")
+            .expect("seed");
+        prepared(&mut holder, "BEGIN");
+        // Go locks the row here; this tier reads it under the snapshot.
+        if returns_rows {
+            let _ = prepared_rows(&mut holder, locking_statement);
+        } else {
+            holder
+                .execute_write(locking_statement)
+                .expect("the locking DML itself succeeds");
+        }
+
+        // Go would BLOCK this contender until the holder commits.
+        let mut contender = open_session_on(&cluster);
+        contender
+            .execute_write("UPDATE t SET v = 99 WHERE id = 1")
+            .expect("the contender is not blocked, where Go blocks it");
+
+        holder
+            .execute_write("UPDATE t SET v = 51 WHERE id = 1")
+            .expect("the statement itself succeeds; nothing is published yet");
+        let statement = holder.prepare_general("COMMIT").expect("prepare commit");
+        let error = holder
+            .execute_general(&statement, &[])
+            .err()
+            .expect("the holder loses its own row, where Go's holder wins");
+        assert_eq!(
+            error.code, ERR_WRITE_CONFLICT,
+            "`{locking_statement}`: {}",
+            error.message
+        );
+    }
+}

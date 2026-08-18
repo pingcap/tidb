@@ -26,12 +26,23 @@
 //! This tier currently drops the lock clause: the read is served from the
 //! ordinary snapshot, no key is locked, and a contender neither waits nor
 //! re-reads (measured 2026-08-17: the contender returned immediately with
-//! the pre-commit value). The pessimistic machinery it needs —
-//! `RealPessimisticTransaction::acquire_locks` with `LockWaitTime`, the
-//! same calls `GET_LOCK` and the locking DML run — is already below this
-//! seam; the missing piece is the executor-level lock step over the read's
-//! produced handles. `LOCK IN SHARE MODE` is Go's own documented no-op and
-//! stays one.
+//! the pre-commit value).
+//!
+//! CORRECTION (measured 2026-08-18, against the running node): the missing
+//! piece is NOT only an executor-level lock step. The transaction a `BEGIN`
+//! holds open here is OPTIMISTIC end to end, so there is no pessimistic
+//! transaction for such a step to lock in. A plain `UPDATE` inside an
+//! explicit transaction does not block a second connection's `UPDATE`
+//! either: the contender commits immediately and the first transaction then
+//! fails at `COMMIT` with `WriteConflict { reason: Optimistic }`, where Go
+//! blocks the contender and lets the first transaction win. The pessimistic
+//! machinery (`RealPessimisticTransaction::acquire_locks` with
+//! `LockWaitTime`) does exist below this seam and is what `GET_LOCK` and
+//! AUTOCOMMIT locking DML run through — but wiring the explicit transaction
+//! onto it is the actual unit of work, and the `FOR UPDATE` lock step rides
+//! on top of that rather than standing alone.
+//!
+//! `LOCK IN SHARE MODE` is Go's own documented no-op and stays one.
 
 use std::collections::BTreeSet;
 use std::fmt;
