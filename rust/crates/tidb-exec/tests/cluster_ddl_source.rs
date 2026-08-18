@@ -1792,17 +1792,55 @@ fn add_column_appends_a_public_nullable_column_and_refuses_rewrites() {
         DdlPlan::Write(_) => panic!("IF NOT EXISTS over an existing column must be a no-op"),
     }
 
-    // Every shape needing a row rewrite is refused by name, at plan time,
-    // before any mutation is staged.
-    for sql in [
-        "ALTER TABLE u6.t ADD COLUMN flag BIGINT NOT NULL",
+    // Go `generateOriginDefaultValue`: a declared default becomes the origin
+    // default existing rows report; NOT NULL without one stamps the type's
+    // zero value. Neither rewrites a row.
+    let write = plan(
+        &mut store,
         "ALTER TABLE u6.t ADD COLUMN flag BIGINT DEFAULT 7",
-    ] {
-        let error = plan_ddl(&mut store, &statement(sql), 300)
-            .expect_err("a rewrite-needing shape is refused")
-            .to_string();
-        assert!(error.contains("ADD COLUMN"), "{error}");
-    }
+        400,
+    );
+    apply(&mut store, &write);
+    let stored: serde_json::Value =
+        serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
+            .expect("stored");
+    let flag = stored["cols"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"]["O"] == "flag")
+        .expect("the defaulted column is stored");
+    assert_eq!(flag["origin_default"], "7");
+    assert_eq!(flag["default"], "7");
+
+    let write = plan(
+        &mut store,
+        "ALTER TABLE u6.t ADD COLUMN zeroed BIGINT NOT NULL",
+        500,
+    );
+    apply(&mut store, &write);
+    let stored: serde_json::Value =
+        serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, table_id)))
+            .expect("stored");
+    let zeroed = stored["cols"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"]["O"] == "zeroed")
+        .expect("the NOT NULL column is stored");
+    assert_eq!(zeroed["origin_default"], "0", "the type's zero value");
+    assert_eq!(zeroed["default"], serde_json::Value::Null);
+
+    // The wall-clock stamping course is its own change: CURRENT_TIMESTAMP
+    // defaults stay refused by name rather than mis-stamped.
+    let error = plan_ddl(
+        &mut store,
+        &statement("ALTER TABLE u6.t ADD COLUMN ts DATETIME DEFAULT CURRENT_TIMESTAMP"),
+        600,
+    )
+    .expect_err("refused")
+    .to_string();
+    assert!(error.contains("CURRENT_TIMESTAMP"), "{error}");
 }
 
 /// Go `onTruncateTable`: the schema survives under a FRESH table id, the old

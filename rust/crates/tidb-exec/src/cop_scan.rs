@@ -587,6 +587,13 @@ fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
     } else {
         BINARY_COLLATION_ID
     };
+    // Go `util.ColumnToProto` encodes the origin default into
+    // `ColumnInfo.default_val`; the region fills it in for a row written
+    // before the column existed, which is the only place that knows.
+    let default_val = match &column.origin_default {
+        Some(datum) => Some(tidb_codec::encode_value(std::slice::from_ref(datum)).ok()?),
+        None => None,
+    };
     Some(ScanColumnInfo {
         column_id: column.id,
         tp,
@@ -595,6 +602,7 @@ fn scan_column(column: &PushdownScanColumn) -> Option<ScanColumnInfo> {
         decimal: 0,
         flag,
         pk_handle: column.is_handle,
+        default_val,
         ..ScanColumnInfo::default()
     })
 }

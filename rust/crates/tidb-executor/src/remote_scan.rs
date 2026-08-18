@@ -78,6 +78,11 @@ pub struct PushdownScanColumn {
     /// it from the record key rather than from the row value (Go's
     /// `ColumnInfo.PkHandle`).
     pub is_handle: bool,
+    /// Go `ColumnInfo.OriginDefaultValue` as the datum a row written before
+    /// this column existed reads back — carried so the coprocessor's
+    /// `ColumnInfo.default_val` names it (Go `util.ColumnToProto`), because
+    /// only the region sees which rows lack the column's bytes.
+    pub origin_default: Option<Datum>,
 }
 
 /// Go `model.ExtraHandleID`: the column id of the implicit `_tidb_rowid`

@@ -224,9 +224,21 @@ fn exec_table_scan(
                     row_datums.push(Datum::Int(handle));
                 } else if let Some(datum) = decoded.get(&column.column_id()) {
                     row_datums.push(datum.clone());
+                } else if !column.default_val().is_empty() {
+                    // Go `getDefaultValue`: a row written before the column
+                    // existed answers the encoded origin default.
+                    match tidb_codec::decode(column.default_val(), 1) {
+                        Ok(mut datums) if !datums.is_empty() => {
+                            row_datums.push(datums.remove(0));
+                        }
+                        _ => {
+                            return other_error(&format!(
+                                "invalid default value bytes for column {}",
+                                column.column_id()
+                            ))
+                        }
+                    }
                 } else {
-                    // boundary: Go `getDefaultValue` decodes
-                    // `ColumnInfo.default_val`; absent both, NULL.
                     row_datums.push(Datum::Null);
                 }
             }

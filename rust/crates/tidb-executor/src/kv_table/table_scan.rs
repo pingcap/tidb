@@ -303,6 +303,7 @@ impl KvTable {
                     id: column.id,
                     field_type: column.field_type.clone(),
                     is_handle: self.pk_handle_offset == Some(*offset),
+                    origin_default: column.origin_default.clone(),
                 }
             })
             .collect();
@@ -325,11 +326,13 @@ impl KvTable {
                                 id: self.columns[offset].id,
                                 field_type: self.columns[offset].field_type.clone(),
                                 is_handle: true,
+                                origin_default: None,
                             },
                             None => PushdownScanColumn {
                                 id: EXTRA_HANDLE_COLUMN_ID,
                                 field_type: FieldType::new(tidb_datatype::FieldTypeCode::LongLong),
                                 is_handle: true,
+                                origin_default: None,
                             },
                         });
                         columns.len() - 1
@@ -463,6 +466,7 @@ impl KvTable {
                     id: column.id,
                     field_type: column.field_type.clone(),
                     is_handle: self.pk_handle_offset == Some(*offset),
+                    origin_default: column.origin_default.clone(),
                 }
             })
             .collect();
@@ -545,6 +549,7 @@ impl KvTable {
                 id: column.id,
                 field_type: column.field_type.clone(),
                 is_handle: false,
+                origin_default: column.origin_default.clone(),
             })
             .collect();
         if columns.len() != index.column_offsets.len() {

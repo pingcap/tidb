@@ -573,19 +573,10 @@ pub fn build_added_column(
 ) -> Refusal<ColumnInfo> {
     for option in &column.options {
         match option {
-            ColumnOption::Null | ColumnOption::Comment(_) => {}
-            ColumnOption::NotNull => {
-                return Err(DdlAdmissionError::unsupported(
-                    "ADD COLUMN ... NOT NULL: existing rows would need an origin default; \
-                     add the column nullable on this node",
-                ))
-            }
-            ColumnOption::Default(_) => {
-                return Err(DdlAdmissionError::unsupported(
-                    "ADD COLUMN with DEFAULT: existing rows would read NULL instead of the \
-                     default until origin defaults land; add the column without one",
-                ))
-            }
+            ColumnOption::Null
+            | ColumnOption::Comment(_)
+            | ColumnOption::NotNull
+            | ColumnOption::Default(_) => {}
             other => {
                 return Err(DdlAdmissionError::unsupported(format!(
                     "ADD COLUMN option {other:?} waits on its DDL course"
@@ -593,11 +584,78 @@ pub fn build_added_column(
             }
         }
     }
-    let (info, constraints) = build_column(0, column, None, table_charset, table_collate, context)?;
+    let (mut info, constraints) =
+        build_column(0, column, None, table_charset, table_collate, context)?;
     if !constraints.is_empty() {
         return Err(DdlAdmissionError::unsupported(
             "ADD COLUMN must not introduce constraints on this node",
         ));
+    }
+    // Go `generateOriginDefaultValue`: the value a row written BEFORE this
+    // column reports. The declared default when there is one; the type's
+    // zero value for NOT NULL without one; nothing for a nullable
+    // defaultless column, whose absent value IS NULL.
+    let declared = info.get_default_value();
+    let origin: Option<String> = if !declared.is_nil() {
+        let text = match declared.view() {
+            Some(tidb_model::GoAnyView::String(bytes)) => {
+                String::from_utf8_lossy(bytes.as_bytes()).into_owned()
+            }
+            Some(tidb_model::GoAnyView::Int(value)) => value.to_string(),
+            Some(tidb_model::GoAnyView::Uint(value)) => value.to_string(),
+            Some(tidb_model::GoAnyView::Float(value)) => value.to_string(),
+            _ => {
+                return Err(DdlAdmissionError::unsupported(
+                    "ADD COLUMN with a non-literal default waits on its DDL course",
+                ))
+            }
+        };
+        if text.eq_ignore_ascii_case("CURRENT_TIMESTAMP") || info.default_is_expr {
+            // Go stamps time.Now() here; the wall-clock stamping course is
+            // its own change, so the shape is refused rather than mis-stamped.
+            return Err(DdlAdmissionError::unsupported(
+                "ADD COLUMN with a CURRENT_TIMESTAMP or expression default waits on its DDL course",
+            ));
+        }
+        Some(text)
+    } else if info.field_type.has_flag(FieldTypeFlags::NOT_NULL) {
+        // Go `table.GetZeroValue(col).ToString()`, for the families this
+        // node's CREATE TABLE admits.
+        Some(match info.field_type.code() {
+            FieldTypeCode::Tiny
+            | FieldTypeCode::Short
+            | FieldTypeCode::Int24
+            | FieldTypeCode::Long
+            | FieldTypeCode::LongLong
+            | FieldTypeCode::Year
+            | FieldTypeCode::Bit => "0".to_owned(),
+            FieldTypeCode::Float | FieldTypeCode::Double | FieldTypeCode::NewDecimal => {
+                "0".to_owned()
+            }
+            FieldTypeCode::Varchar
+            | FieldTypeCode::String
+            | FieldTypeCode::VarString
+            | FieldTypeCode::TinyBlob
+            | FieldTypeCode::Blob
+            | FieldTypeCode::MediumBlob
+            | FieldTypeCode::LongBlob => String::new(),
+            FieldTypeCode::Date => "0000-00-00".to_owned(),
+            FieldTypeCode::Datetime | FieldTypeCode::Timestamp => {
+                "0000-00-00 00:00:00".to_owned()
+            }
+            FieldTypeCode::Duration => "00:00:00".to_owned(),
+            other => {
+                return Err(DdlAdmissionError::unsupported(format!(
+                    "ADD COLUMN ... NOT NULL of type {other:?} has no zero value this node can stamp yet"
+                )))
+            }
+        })
+    } else {
+        None
+    };
+    if let Some(origin) = origin {
+        info.set_origin_default_value(ColumnDefaultValue::str(&origin))
+            .map_err(|error| DdlAdmissionError::new(error.to_string()))?;
     }
     Ok(info)
 }
