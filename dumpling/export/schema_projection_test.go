@@ -298,6 +298,46 @@ func TestGenerateProjectedSchema(t *testing.T) {
 		require.Contains(t, projectedSQL, "ON DELETE CASCADE ON UPDATE SET NULL")
 	})
 
+	t.Run("foreign key supporting index removed", func(t *testing.T) {
+		createSQL := "CREATE TABLE `child` (" +
+			"`id` INT PRIMARY KEY," +
+			"`parent_id` INT," +
+			"FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`)" +
+			")"
+		schemas := projectedTableSchemas{
+			{db: "test", table: "parent"}: projectedTableSchemaForTest(
+				t,
+				"CREATE TABLE `parent` (`id` INT, `secret` INT, UNIQUE KEY (`id`, `secret`))",
+				[]string{"id"},
+			),
+		}
+
+		_, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id", "parent_id"}, true, schemas,
+		)
+		require.ErrorContains(t, err, "referenced columns are not indexed")
+	})
+
+	t.Run("foreign key supporting index prefix retained", func(t *testing.T) {
+		createSQL := "CREATE TABLE `child` (" +
+			"`id` INT PRIMARY KEY," +
+			"`parent_id` INT," +
+			"FOREIGN KEY (`parent_id`) REFERENCES `parent` (`id`)" +
+			")"
+		schemas := projectedTableSchemas{
+			{db: "test", table: "parent"}: projectedTableSchemaForTest(
+				t,
+				"CREATE TABLE `parent` (`id` INT, `tenant_id` INT, `secret` INT, KEY (`id`, `tenant_id`))",
+				[]string{"id", "tenant_id"},
+			),
+		}
+
+		_, err := generateProjectedSchemaForTest(
+			t, createSQL, "test", []string{"id", "parent_id"}, true, schemas,
+		)
+		require.NoError(t, err)
+	})
+
 	t.Run("case distinct tables do not collide", func(t *testing.T) {
 		upper := projectedTableSchemaForTest(t, "CREATE TABLE `Orders` (`id` INT PRIMARY KEY)", []string{"id"})
 		lower := projectedTableSchemaForTest(t, "CREATE TABLE `orders` (`other_id` INT PRIMARY KEY)", []string{"other_id"})
