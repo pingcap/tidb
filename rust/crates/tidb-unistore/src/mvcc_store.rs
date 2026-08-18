@@ -92,6 +92,28 @@ impl MemEngine {
             .take_while(move |((entry_key, _), _)| entry_key == key)
             .map(|(_, (_, meta))| meta)
     }
+
+    /// Go `dbreader.GetMvccInfoByKey`'s iterator with `SetAllVersions(true)`:
+    /// every version of `key` with its value, newest first.
+    fn versioned_values<'a>(
+        &'a self,
+        key: &'a [u8],
+    ) -> impl Iterator<Item = (&'a [u8], &'a DbUserMeta)> + 'a {
+        self.entries
+            .range((key.to_vec(), 0)..)
+            .take_while(move |((entry_key, _), _)| entry_key == key)
+            .map(|(_, (value, meta))| (value.as_slice(), meta))
+    }
+
+    /// Go `dbreader.GetKeyByStartTs` (`db_reader.go:297`): the first key in
+    /// `[start, end)` carrying ANY version written by `start_ts`.
+    fn key_by_start_ts(&self, start_key: &[u8], end_key: &[u8], start_ts: u64) -> Option<Vec<u8>> {
+        self.entries
+            .range((start_key.to_vec(), 0)..)
+            .take_while(|((entry_key, _), _)| end_key.is_empty() || entry_key.as_slice() < end_key)
+            .find(|(_, (_, meta))| meta.start_ts() == start_ts)
+            .map(|((entry_key, _), _)| entry_key.clone())
+    }
 }
 
 /// The `kverrors` subset the optimistic slice raises, each Go error by name.
@@ -660,6 +682,83 @@ impl MvccStore {
             .filter(|value| !value.is_empty()))
     }
 
+    /// Go `MVCCStore.MvccGetByKey` (`mvcc.go:1727`): the standing lock, the
+    /// committed versions from the data engine, and the rollback records
+    /// from the extra keyspace, merged and sorted by DESCENDING commit ts.
+    ///
+    /// A committed version with an EMPTY value is `Op_Del`, and a rollback
+    /// record repeats its start ts as its commit ts — both Go's shapes.
+    #[must_use]
+    pub fn mvcc_get_by_key(&self, key: &[u8]) -> MvccInfo {
+        let mut info = MvccInfo::default();
+        let buf = self.lock_bytes(key);
+        if !buf.is_empty() {
+            let lock = decode_lock(&buf);
+            info.lock = Some(MvccLockInfo {
+                op: i32::from(lock.hdr.op),
+                start_ts: lock.hdr.start_ts,
+                primary: lock.primary.clone(),
+                short_value: lock.value.clone(),
+            });
+        }
+        for (value, meta) in self.engine.versioned_values(key) {
+            info.writes.push(MvccWrite {
+                op: if value.is_empty() {
+                    KvrpcOp::Del as i32
+                } else {
+                    KvrpcOp::Put as i32
+                },
+                start_ts: meta.start_ts(),
+                commit_ts: meta.commit_ts(),
+                short_value: value.to_vec(),
+            });
+        }
+        self.append_extra_mvcc_info(key, &mut info);
+        // Go `slices.SortFunc(... cmp.Compare(j.CommitTs, i.CommitTs))`.
+        info.writes
+            .sort_by_key(|write| std::cmp::Reverse(write.commit_ts));
+        info
+    }
+
+    /// Go `getExtraMvccInfo` (`mvcc.go:1764`): every rollback record in the
+    /// key's extra keyspace becomes an `Op_Rollback` write whose start and
+    /// commit timestamps are both the rollback ts.
+    fn append_extra_mvcc_info(&self, key: &[u8], info: &mut MvccInfo) {
+        let start = encode_extra_txn_status_key(key, u64::MAX);
+        let end = encode_extra_txn_status_key(key, 0);
+        for ((entry_key, _), _) in self.engine.entries.range((start, 0)..) {
+            if entry_key > &end {
+                break;
+            }
+            // Go filters to the table/meta extra prefixes ('u' and 'n').
+            if !matches!(entry_key.first(), Some(&b'u' | &b'n')) {
+                continue;
+            }
+            let rollback_ts = super::mvcc::decode_key_ts(entry_key);
+            info.writes.push(MvccWrite {
+                op: KvrpcOp::Rollback as i32,
+                start_ts: rollback_ts,
+                commit_ts: rollback_ts,
+                short_value: Vec::new(),
+            });
+        }
+    }
+
+    /// Go `MVCCStore.MvccGetByStartTs` (`mvcc.go:1789`): the first key in
+    /// the range carrying any version written by `start_ts`, with that
+    /// key's whole MVCC history. An unknown start ts answers nothing.
+    #[must_use]
+    pub fn mvcc_get_by_start_ts(
+        &self,
+        start_key: &[u8],
+        end_key: &[u8],
+        start_ts: u64,
+    ) -> Option<(MvccInfo, Vec<u8>)> {
+        let key = self.engine.key_by_start_ts(start_key, end_key, start_ts)?;
+        let info = self.mvcc_get_by_key(&key);
+        Some((info, key))
+    }
+
     /// Go `store.lockStore.Get(key, buf)`: the lock bytes, empty when no
     /// lock — Go's `len(buf) == 0` test, kept as the emptiness of the copy.
     fn lock_bytes(&self, key: &[u8]) -> Vec<u8> {
@@ -711,6 +810,46 @@ pub struct ScanReq {
     pub sample_step: u32,
     /// `Reverse`.
     pub reverse: bool,
+}
+
+/// Go `kvrpcpb.MvccWrite`, native: the trimmed `tidb-proto` carries no
+/// debug-RPC messages (a curation boundary, named), and nothing in this
+/// port puts these on a wire — the debug service is not ported. The fields
+/// are Go's, by name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MvccWrite {
+    /// `Type`, the `kvrpcpb.Op` value: `Put`, `Del`, or `Rollback`.
+    pub op: i32,
+    /// `StartTs`.
+    pub start_ts: u64,
+    /// `CommitTs` — for a rollback record, Go repeats the start ts.
+    pub commit_ts: u64,
+    /// `ShortValue`.
+    pub short_value: Vec<u8>,
+}
+
+/// Go `kvrpcpb.MvccLock`, native, on the same boundary as [`MvccWrite`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MvccLockInfo {
+    /// `Type`, the lock's `Op`.
+    pub op: i32,
+    /// `StartTs`.
+    pub start_ts: u64,
+    /// `Primary`.
+    pub primary: Vec<u8>,
+    /// `ShortValue`.
+    pub short_value: Vec<u8>,
+}
+
+/// Go `kvrpcpb.MvccInfo`, native. Go also fills a parallel `Values` list
+/// carrying each write's `(StartTs, ShortValue)`; that is a projection of
+/// [`Self::writes`] and is derived on demand rather than stored twice.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MvccInfo {
+    /// `Lock`, when one stands.
+    pub lock: Option<MvccLockInfo>,
+    /// `Writes`, sorted by DESCENDING commit ts — Go's final sort.
+    pub writes: Vec<MvccWrite>,
 }
 
 /// Go `requestCtx.rpcCtx`, the slice the read paths consult: the isolation
@@ -4031,5 +4170,407 @@ mod tests {
         assert!(sec_lock.hdr.use_async_commit);
         assert!(sec_lock.hdr.min_commit_ts > 0);
         assert_eq!(sec_lock.value, sec_val2);
+    }
+
+    // Go's `lockTTL` (`mvcc_test.go:40`).
+    const LOCK_TTL: u64 = 50;
+
+    // Go `MustLocked` (`mvcc_test.go:250`): a lock stands, pessimistic iff
+    // its for-update ts is non-zero.
+    fn must_locked(store: &MvccStore, key: &[u8], pessimistic: bool) {
+        let lock = get_lock(store, key);
+        if pessimistic {
+            assert!(lock.hdr.for_update_ts > 0, "a pessimistic lock");
+        } else {
+            assert_eq!(lock.hdr.for_update_ts, 0, "an optimistic lock");
+        }
+    }
+
+    // Go `MustPessimisticLocked` (`mvcc_test.go:260`).
+    fn must_pessimistic_locked(store: &MvccStore, key: &[u8], start_ts: u64, for_update_ts: u64) {
+        let lock = get_lock(store, key);
+        assert_eq!(lock.hdr.start_ts, start_ts);
+        assert_eq!(lock.hdr.for_update_ts, for_update_ts);
+    }
+
+    // Go `MustUnLocked` (`mvcc_test.go:267`).
+    fn must_unlocked(store: &MvccStore, key: &[u8]) {
+        assert!(
+            store.lock_bytes(key).is_empty(),
+            "no lock may stand at {key:?}"
+        );
+    }
+
+    // Go `MustAcquirePessimisticLockErr` (`mvcc_test.go:357`).
+    fn must_acquire_pessimistic_lock_err(
+        store: &mut MvccStore,
+        pk: &[u8],
+        key: &[u8],
+        start_ts: u64,
+        for_update_ts: u64,
+    ) {
+        store
+            .pessimistic_lock(&PessimisticLockReq {
+                mutations: vec![mutation(KvrpcOp::PessimisticLock, key, b"")],
+                primary_lock: pk.to_vec(),
+                start_version: start_ts,
+                for_update_ts,
+                lock_ttl: LOCK_TTL,
+                ..PessimisticLockReq::default()
+            })
+            .expect_err("the pessimistic lock must be refused");
+    }
+
+    // Go `MustPrewriteLockErr` (`mvcc_test.go:483`): an `Op_Lock` OPTIMISTIC
+    // prewrite over a standing lock.
+    fn must_prewrite_lock_err(store: &mut MvccStore, pk: &[u8], key: &[u8], start_ts: u64) {
+        store
+            .prewrite(&PrewriteReq {
+                mutations: vec![mutation(KvrpcOp::Lock, key, b"")],
+                primary_lock: pk.to_vec(),
+                start_version: start_ts,
+                lock_ttl: LOCK_TTL,
+                ..PrewriteReq::default()
+            })
+            .expect_err("the lock prewrite must be refused");
+    }
+
+    // Go `MustPrewritePessimisticPut` (`mvcc_test.go:391`): the landed lock
+    // carries the for-update ts and the value.
+    fn must_prewrite_pessimistic_put(
+        store: &mut MvccStore,
+        pk: &[u8],
+        key: &[u8],
+        value: &[u8],
+        start_ts: u64,
+        for_update_ts: u64,
+    ) {
+        must_prewrite_pessimistic(
+            store,
+            pk,
+            mutation(KvrpcOp::Put, key, value),
+            start_ts,
+            LOCK_TTL,
+            for_update_ts,
+        );
+        let lock = get_lock(store, key);
+        assert_eq!(lock.hdr.for_update_ts, for_update_ts);
+        assert_eq!(lock.value, value);
+    }
+
+    // Go `MustPrewritePessimisticPutErr` (`mvcc_test.go:409`).
+    fn must_prewrite_pessimistic_put_err(
+        store: &mut MvccStore,
+        pk: &[u8],
+        key: &[u8],
+        value: &[u8],
+        start_ts: u64,
+        for_update_ts: u64,
+    ) {
+        store
+            .prewrite(&PrewriteReq {
+                mutations: vec![mutation(KvrpcOp::Put, key, value)],
+                primary_lock: pk.to_vec(),
+                start_version: start_ts,
+                lock_ttl: LOCK_TTL,
+                for_update_ts,
+                pessimistic_actions: vec![tidb_proto::KvrpcPessimisticAction::DoPessimisticCheck],
+                ..PrewriteReq::default()
+            })
+            .expect_err("the pessimistic prewrite must be refused");
+    }
+
+    // Go `MustPrewritePessimisticDelete` (`mvcc_test.go:398`): a delete
+    // carries no value, so unlike the put helper Go checks nothing after.
+    fn must_prewrite_pessimistic_delete(
+        store: &mut MvccStore,
+        pk: &[u8],
+        key: &[u8],
+        start_ts: u64,
+        for_update_ts: u64,
+    ) {
+        store
+            .prewrite(&PrewriteReq {
+                mutations: vec![mutation(KvrpcOp::Del, key, b"")],
+                primary_lock: pk.to_vec(),
+                start_version: start_ts,
+                lock_ttl: LOCK_TTL,
+                for_update_ts,
+                pessimistic_actions: vec![tidb_proto::KvrpcPessimisticAction::DoPessimisticCheck],
+                ..PrewriteReq::default()
+            })
+            .expect("the pessimistic delete lands");
+    }
+
+    /// Go `TestPessimisticLock` (`mvcc_test.go:1211`), whole: the lock's
+    /// full lifecycle — acquire, prewrite, commit, the conflict and
+    /// rollback refusals, duplicate acquires, reads never blocked by a
+    /// pessimistic lock, rollback collapse, and the three quirks Go marks
+    /// in comments and keeps.
+    #[test]
+    fn test_pessimistic_lock() {
+        let mut store = MvccStore::new();
+        let (k, v) = (b"tk".as_slice(), b"v".as_slice());
+        // Normal.
+        must_acquire_pessimistic_lock(&mut store, k, k, 1, 1);
+        must_pessimistic_locked(&store, k, 1, 1);
+        must_prewrite_pessimistic(&mut store, k, mutation(KvrpcOp::Put, k, v), 1, 100, 1);
+        must_locked(&store, k, true);
+        must_commit(&mut store, k, 1, 2);
+        must_unlocked(&store, k);
+
+        // Lock conflict.
+        must_prewrite_op(&mut store, k, mutation(KvrpcOp::Put, k, v), 3);
+        must_acquire_pessimistic_lock_err(&mut store, k, k, 4, 4);
+        store.cleanup(k, 3, 0).expect("cleanup");
+        must_unlocked(&store, k);
+        must_acquire_pessimistic_lock(&mut store, k, k, 5, 5);
+        must_prewrite_lock_err(&mut store, k, k, 6);
+        store.cleanup(k, 5, 0).expect("cleanup");
+        must_unlocked(&store, k);
+
+        // Data conflict.
+        must_prewrite_op(&mut store, k, mutation(KvrpcOp::Put, k, v), 7);
+        must_commit(&mut store, k, 7, 9);
+        must_unlocked(&store, k);
+        must_prewrite_lock_err(&mut store, k, k, 8);
+        must_acquire_pessimistic_lock_err(&mut store, k, k, 8, 8);
+        must_acquire_pessimistic_lock(&mut store, k, k, 8, 9);
+        must_prewrite_pessimistic_put(&mut store, k, k, v, 8, 8);
+        must_commit(&mut store, k, 8, 10);
+        must_unlocked(&store, k);
+
+        // Rollback.
+        must_acquire_pessimistic_lock(&mut store, k, k, 11, 11);
+        must_pessimistic_locked(&store, k, 11, 11);
+        store.cleanup(k, 11, 0).expect("cleanup");
+        must_acquire_pessimistic_lock_err(&mut store, k, k, 11, 11);
+        must_prewrite_pessimistic_put_err(&mut store, k, k, v, 11, 11);
+        must_unlocked(&store, k);
+
+        must_acquire_pessimistic_lock(&mut store, k, k, 12, 12);
+        must_prewrite_pessimistic_put(&mut store, k, k, v, 12, 12);
+        must_locked(&store, k, true);
+        store.cleanup(k, 12, 0).expect("cleanup");
+        must_acquire_pessimistic_lock_err(&mut store, k, k, 12, 12);
+        must_prewrite_pessimistic_put_err(&mut store, k, k, v, 12, 12);
+        must_prewrite_lock_err(&mut store, k, k, 12);
+        must_unlocked(&store, k);
+
+        // Duplicated.
+        let v3 = b"v3".as_slice();
+        must_acquire_pessimistic_lock(&mut store, k, k, 13, 13);
+        must_pessimistic_locked(&store, k, 13, 13);
+        must_acquire_pessimistic_lock(&mut store, k, k, 13, 13);
+        must_pessimistic_locked(&store, k, 13, 13);
+        must_prewrite_pessimistic_put(&mut store, k, k, v3, 13, 13);
+        must_locked(&store, k, true);
+        must_commit(&mut store, k, 13, 14);
+        must_unlocked(&store, k);
+        // A re-commit of the same transaction is a no-op, not an error.
+        must_commit(&mut store, k, 13, 14);
+        must_unlocked(&store, k);
+        must_get_val(&store, k, v3, 15);
+
+        // A pessimistic lock does not block reads.
+        must_acquire_pessimistic_lock(&mut store, k, k, 15, 15);
+        must_pessimistic_locked(&store, k, 15, 15);
+        must_get_val(&store, k, v3, 16);
+        must_prewrite_pessimistic_delete(&mut store, k, k, 15, 15);
+        // The delete lock DOES block: it is a write lock.
+        must_get_err(&store, k, 16);
+        must_commit(&mut store, k, 15, 17);
+
+        // Rollback.
+        must_acquire_pessimistic_lock(&mut store, k, k, 18, 18);
+        store.rollback(&[k.to_vec()], 18).expect("rollback");
+        store.pessimistic_rollback(&[k.to_vec()], 18, 18);
+        must_unlocked(&store, k);
+        must_prewrite_op(&mut store, k, mutation(KvrpcOp::Put, k, v), 19);
+        must_commit(&mut store, k, 19, 20);
+        // Go's comment, kept: unistore does NOT store the pessimistic
+        // rollback into the db, so a concurrent re-acquire at 18 would
+        // succeed where TiKV refuses — Go leaves that assertion commented
+        // out and so does this.
+        must_unlocked(&store, k);
+
+        // Prewrite of a non-existent pessimistic lock.
+        must_prewrite_pessimistic_put_err(&mut store, k, k, v, 22, 22);
+
+        // LockTypeNotMatch.
+        must_prewrite_op(&mut store, k, mutation(KvrpcOp::Put, k, v), 23);
+        must_locked(&store, k, false);
+        must_acquire_pessimistic_lock_err(&mut store, k, k, 23, 23);
+        store.cleanup(k, 23, 0).expect("cleanup");
+        must_acquire_pessimistic_lock(&mut store, k, k, 24, 24);
+        must_pessimistic_locked(&store, k, 24, 24);
+        must_commit(&mut store, k, 24, 25);
+
+        // Acquiring a lock on a prewritten key fails.
+        must_acquire_pessimistic_lock(&mut store, k, k, 26, 26);
+        must_pessimistic_locked(&store, k, 26, 26);
+        must_prewrite_pessimistic_delete(&mut store, k, k, 26, 26);
+        must_locked(&store, k, true);
+        must_acquire_pessimistic_lock_err(&mut store, k, k, 26, 26);
+        must_locked(&store, k, true);
+
+        // Acquiring a lock on a committed key fails.
+        must_commit(&mut store, k, 26, 27);
+        must_unlocked(&store, k);
+        must_get_none(&store, k, 28);
+        must_acquire_pessimistic_lock_err(&mut store, k, k, 26, 26);
+        must_unlocked(&store, k);
+        must_get_none(&store, k, 28);
+        must_prewrite_pessimistic_put_err(&mut store, k, k, v, 26, 26);
+        must_unlocked(&store, k);
+        must_get_none(&store, k, 28);
+        // Go's "Currently we cannot avoid this TODO": a lock at a NEWER
+        // for-update ts still succeeds over the committed key.
+        must_acquire_pessimistic_lock(&mut store, k, k, 26, 29);
+        store.pessimistic_rollback(&[k.to_vec()], 26, 29);
+        must_unlocked(&store, k);
+
+        // Rollback collapsed.
+        store.rollback(&[k.to_vec()], 32).expect("rollback");
+        store.rollback(&[k.to_vec()], 33).expect("rollback");
+        must_acquire_pessimistic_lock_err(&mut store, k, k, 32, 32);
+        must_acquire_pessimistic_lock_err(&mut store, k, k, 32, 34);
+        must_unlocked(&store, k);
+
+        // A lock meeting a lock with a different for-update ts: only a
+        // GREATER one advances the standing lock.
+        must_acquire_pessimistic_lock(&mut store, k, k, 35, 36);
+        must_pessimistic_locked(&store, k, 35, 36);
+        must_acquire_pessimistic_lock(&mut store, k, k, 35, 35);
+        must_pessimistic_locked(&store, k, 35, 36);
+        must_acquire_pessimistic_lock(&mut store, k, k, 35, 37);
+        must_pessimistic_locked(&store, k, 35, 37);
+
+        // Another transaction's pessimistic lock refuses our prewrite.
+        let v = b"vvv".as_slice();
+        must_prewrite_pessimistic_put_err(&mut store, k, k, v, 36, 36);
+        must_prewrite_pessimistic_put_err(&mut store, k, k, v, 36, 38);
+        must_pessimistic_locked(&store, k, 35, 37);
+        // Our own lock prewrites, and then another transaction's
+        // non-pessimistic lock refuses theirs.
+        must_prewrite_pessimistic_put(&mut store, k, k, v, 35, 37);
+        must_locked(&store, k, true);
+        must_prewrite_pessimistic_put_err(&mut store, k, k, b"v1", 36, 38);
+        must_locked(&store, k, true);
+
+        // Go's quirk, kept: a commit ts SMALLER than the for-update ts is
+        // not checked, so this commit succeeds.
+        must_commit(&mut store, k, 35, 36);
+        must_unlocked(&store, k);
+        must_get_val(&store, k, v, 37);
+
+        // Go's quirk, kept: an OPTIMISTIC prewrite meeting our own
+        // pessimistic lock is not checked either — it succeeds, and the
+        // commit after it succeeds too.
+        must_acquire_pessimistic_lock(&mut store, k, k, 40, 40);
+        must_locked(&store, k, true);
+        store
+            .prewrite(&PrewriteReq {
+                mutations: vec![mutation(KvrpcOp::Put, k, v)],
+                primary_lock: k.to_vec(),
+                start_version: 40,
+                lock_ttl: LOCK_TTL,
+                min_commit_ts: 40,
+                ..PrewriteReq::default()
+            })
+            .expect("Go's PrewriteOptimistic succeeds here");
+        must_locked(&store, k, true);
+        must_commit(&mut store, k, 40, 41);
+        must_unlocked(&store, k);
+    }
+
+    /// Go `TestMvccGet` (`mvcc_test.go:1090`): the MVCC history of one key
+    /// through `MvccGetByKey` and `MvccGetByStartTs` — committed versions
+    /// newest-first, a rollback record repeating its start ts as its commit
+    /// ts, an empty committed value reading as `Op_Del`, and a start ts
+    /// nothing wrote answering nothing.
+    #[test]
+    fn test_mvcc_get() {
+        let mut store = MvccStore::new();
+        let (pk, pk_val) = (b"t1_r1".as_slice(), b"pkVal".as_slice());
+        let (start_ts1, commit_ts1) = (1_u64, 2_u64);
+        must_prewrite_optimistic(&mut store, pk, pk, pk_val, start_ts1, 100);
+        must_commit(&mut store, pk, start_ts1, commit_ts1);
+
+        // Update the record.
+        let (start_ts2, commit_ts2) = (3_u64, 4_u64);
+        let new_val = b"aba".as_slice();
+        must_prewrite_optimistic(&mut store, pk, pk, new_val, start_ts2, 100);
+        must_commit(&mut store, pk, start_ts2, commit_ts2);
+
+        assert_eq!(store.mvcc_get_by_key(pk).writes.len(), 2);
+
+        // Prewrite then roll back, leaving a rollback record at 5.
+        let start_ts3 = 5_u64;
+        must_prewrite_optimistic(&mut store, pk, pk, b"rollbackVal", start_ts3, 100);
+        store.rollback(&[pk.to_vec()], start_ts3).expect("rollback");
+
+        // Commit an EMPTY value.
+        let (start_ts4, commit_ts4) = (7_u64, 8_u64);
+        must_prewrite_optimistic(&mut store, pk, pk, b"", start_ts4, 100);
+        must_commit(&mut store, pk, start_ts4, commit_ts4);
+
+        let res = store.mvcc_get_by_key(pk);
+        assert_eq!(res.writes.len(), 4);
+        assert_eq!(res.writes[3].start_ts, start_ts1);
+        assert_eq!(res.writes[3].commit_ts, commit_ts1);
+        assert_eq!(res.writes[3].short_value, pk_val);
+        assert_eq!(res.writes[2].start_ts, start_ts2);
+        assert_eq!(res.writes[2].commit_ts, commit_ts2);
+        assert_eq!(res.writes[2].short_value, new_val);
+        // The rollback record repeats its start ts and carries no value.
+        assert_eq!(res.writes[1].start_ts, start_ts3);
+        assert_eq!(res.writes[1].commit_ts, start_ts3);
+        assert_eq!(res.writes[1].short_value, b"");
+        assert_eq!(res.writes[0].start_ts, start_ts4);
+        assert_eq!(res.writes[0].commit_ts, commit_ts4);
+        assert_eq!(res.writes[0].short_value, b"");
+
+        // By start ts, over the whole keyspace.
+        let (res2, res_key) = store
+            .mvcc_get_by_start_ts(b"", b"", start_ts4)
+            .expect("the writing key is found");
+        assert_eq!(res_key, pk);
+        assert_eq!(res2.writes.len(), 4);
+        assert_eq!(res2.writes[3].start_ts, start_ts1);
+        assert_eq!(res2.writes[3].short_value, pk_val);
+        assert_eq!(res2.writes[2].start_ts, start_ts2);
+        assert_eq!(res2.writes[2].short_value, new_val);
+        assert_eq!(res2.writes[1].start_ts, start_ts3);
+        assert_eq!(res2.writes[1].commit_ts, start_ts3);
+        assert_eq!(res2.writes[1].op, KvrpcOp::Rollback as i32);
+        assert_eq!(res2.writes[1].short_value, b"");
+        assert_eq!(res2.writes[0].start_ts, start_ts4);
+        assert_eq!(res2.writes[0].commit_ts, commit_ts4);
+        // An empty committed value reads as a delete.
+        assert_eq!(res2.writes[0].op, KvrpcOp::Del as i32);
+        assert_eq!(res2.writes[0].short_value, b"");
+
+        // A start ts nothing wrote answers nothing.
+        assert!(store.mvcc_get_by_start_ts(b"", b"", 1000).is_none());
+
+        // An OLD start ts finds the same key and the same whole history.
+        let (res4, res_key) = store
+            .mvcc_get_by_start_ts(b"", b"", start_ts2)
+            .expect("the older write's key is found");
+        assert_eq!(res_key, pk);
+        assert_eq!(res4.writes.len(), 4);
+        assert_eq!(res4.writes[1].start_ts, start_ts3);
+        assert_eq!(res4.writes[1].commit_ts, start_ts3);
+        assert_eq!(res4.writes[1].short_value, b"");
+
+        // The same, bounded to the region range Go's second reqCtx names.
+        let (res4, res_key) = store
+            .mvcc_get_by_start_ts(b"t1_r1", b"t1_r2", start_ts2)
+            .expect("the bounded range finds it too");
+        assert_eq!(res_key, pk);
+        assert_eq!(res4.writes.len(), 4);
+        assert_eq!(res4.writes[1].start_ts, start_ts3);
+        assert_eq!(res4.writes[1].commit_ts, start_ts3);
     }
 }
