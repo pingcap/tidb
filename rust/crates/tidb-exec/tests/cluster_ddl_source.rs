@@ -1804,3 +1804,49 @@ fn add_column_appends_a_public_nullable_column_and_refuses_rewrites() {
         assert!(error.contains("ADD COLUMN"), "{error}");
     }
 }
+
+/// Go `onTruncateTable`: the schema survives under a FRESH table id, the old
+/// id's rows become unreachable, and the auto-id counters restart because the
+/// allocator keys travel with the id.
+#[test]
+fn truncate_reallocates_the_table_id_and_restarts_the_allocators() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED, v BIGINT)",
+        100,
+    );
+    apply(&mut store, &write);
+    let old_id = write.created_id.expect("CREATE TABLE allocates an id");
+    // A used allocator, which the truncate must delete.
+    store.put(key::auto_table_id_kv_key(112, old_id), b"30".to_vec());
+
+    let write = plan(&mut store, "TRUNCATE TABLE u6.t", 200);
+    let new_id = write.diff.table_id;
+    assert_ne!(new_id, old_id, "the id is fresh, never reused");
+    assert_eq!(write.diff.old_table_id, old_id);
+    assert_eq!(
+        write.diff.action_type,
+        tidb_model::ActionType::ACTION_TRUNCATE_TABLE
+    );
+    let stored: serde_json::Value =
+        serde_json::from_slice(stored_value(&write, &key::table_kv_key(112, new_id)))
+            .expect("the truncated table is stored");
+    assert_eq!(stored["id"], new_id);
+    assert!(
+        write
+            .mutations
+            .iter()
+            .any(|mutation| mutation.key() == key::table_kv_key(112, old_id).as_slice()
+                && matches!(mutation.kind(), OptimisticMutationKind::MetaDelete)),
+        "the old table key is deleted"
+    );
+    assert!(
+        write
+            .mutations
+            .iter()
+            .any(|mutation| mutation.key() == key::auto_table_id_kv_key(112, old_id).as_slice()
+                && matches!(mutation.kind(), OptimisticMutationKind::MetaDelete)),
+        "the observed allocator is deleted with the old id"
+    );
+}

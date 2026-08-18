@@ -255,6 +255,19 @@ pub enum DdlStatement {
         #[allow(missing_docs)]
         context: DdlStatementContext,
     },
+    /// `TRUNCATE TABLE [schema.]table`.
+    ///
+    /// Go's job keeps the schema and allocates a FRESH table id
+    /// (`onTruncateTable`): the rows live under the old id's prefix, so the
+    /// new id has none of them, and the old data is left for GC exactly as
+    /// TiKV leaves it. The auto-id allocators are keyed by table id too, so
+    /// the counters restart with the table.
+    TruncateTable {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+    },
     /// `DROP TABLE [IF EXISTS] [schema.]table`.
     DropTable {
         /// The resolved database name.
@@ -408,6 +421,10 @@ pub fn lower_ddl_with_context(
         DdlStmt::DropIndex(drop) => lower_drop_index(drop, default_schema).map(Some),
         DdlStmt::AlterTable(alter) => lower_alter_table_catalog(alter, default_schema),
         DdlStmt::RenameTable(rename) => lower_rename_table_stmt(rename, default_schema),
+        DdlStmt::TruncateTable(name) => {
+            let (schema, table) = split_name(name, default_schema, "table")?;
+            Ok(Some(DdlStatement::TruncateTable { schema, table }))
+        }
         _ => Ok(None),
     }
 }
@@ -1501,6 +1518,41 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.action_type = ActionType::ACTION_ADD_COLUMN;
             diff.schema_id = db_id;
             diff.table_id = table_id;
+        }
+        DdlStatement::TruncateTable { schema, table } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let old_table_id = stored.id;
+            let [new_table_id] = allocate(snapshot, &mut writes, 1)?[..] else {
+                return Err(DdlPlanError::Encode("truncate allocated no id".to_owned()));
+            };
+            let mut info = stored.clone_like_go();
+            info.id = new_table_id;
+            info.update_ts = start_ts;
+            writes.push(OptimisticMutation::meta_delete(key::table_kv_key(
+                db_id,
+                old_table_id,
+            ))?);
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, new_table_id),
+                encoded,
+            )?);
+            // The allocators travel with the table id; deleting the old
+            // ones is what restarts the counters, Go's `Del()` on truncate.
+            for allocator in [
+                key::auto_table_id_kv_key(db_id, old_table_id),
+                key::auto_increment_id_kv_key(db_id, old_table_id),
+                key::auto_random_table_id_kv_key(db_id, old_table_id),
+            ] {
+                if snapshot.get(&allocator)?.is_some() {
+                    writes.push(OptimisticMutation::meta_delete(allocator)?);
+                }
+            }
+            diff.action_type = ActionType::ACTION_TRUNCATE_TABLE;
+            diff.schema_id = db_id;
+            diff.table_id = new_table_id;
+            diff.old_table_id = old_table_id;
         }
         DdlStatement::DropTable {
             schema,
