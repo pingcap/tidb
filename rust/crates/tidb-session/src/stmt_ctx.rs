@@ -358,7 +358,10 @@ impl Session {
                 errno,
                 message: e.message,
             },
-            None => DriverError::Parse(format!("{e:?}")),
+            // Go's session layer wraps a positional parser error through
+            // `util.SyntaxError`, whose message body is the parser's own
+            // `line L column C near "..."` text — not a Debug dump.
+            None => DriverError::Parse(e.compatibility_message(sql)),
         })
     }
 

@@ -121,10 +121,17 @@ impl DriverError {
     #[must_use]
     pub fn to_mysql_error(self) -> MysqlError {
         match self {
+        // Go `util.SyntaxError` (`pkg/util/misc.go:172`):
+        // `ErrParse.GenWithStackByArgs(SyntaxErrorPrefix, err.Error())` over
+        // ErrParse's `"%s %s"` — the prefix sentence, one space, then the
+        // parser's own positional text.
         DriverError::Parse(message) => MysqlError::new(
             ER_PARSE_ERROR,
             *b"42000",
-            format!("You have an error in your SQL syntax: {message}"),
+            format!(
+                "You have an error in your SQL syntax; check the manual that corresponds \
+                 to your TiDB version for the right syntax to use {message}"
+            ),
         ),
         DriverError::ParseCoded { errno, message } => {
             MysqlError::new(errno, *b"HY000", message)

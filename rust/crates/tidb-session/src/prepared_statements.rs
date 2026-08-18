@@ -150,7 +150,7 @@ impl Session {
             PrepareSource::Var(name) => self.prepare_source_text(name),
         };
         let mut statements = tidb_parser::parse_multi_with_sql_mode(&text, self.scanner_sql_mode())
-            .map_err(|e| DriverError::Parse(format!("{e:?}")))?;
+            .map_err(|e| DriverError::Parse(e.compatibility_message(&text)))?;
         if statements.len() != 1 {
             return Err(DriverError::PrepareMulti);
         }

@@ -1102,3 +1102,46 @@ fn every_statement_naming_a_missing_table_is_1146() {
     session.run("update t set a = 2").unwrap();
     session.run("delete from t").unwrap();
 }
+
+/// Go `util.SyntaxError` (`pkg/util/misc.go:172`) renders every positional
+/// parser failure as `ErrParse("%s %s")`: the `SyntaxErrorPrefix` sentence,
+/// one space, then the parser's own `line L column C near "..." ` text from
+/// `HandParser.errorNear`. These reached the wire as a Rust `ParseError
+/// { .. }` Debug dump instead — found by running the server.
+#[test]
+fn a_syntax_error_carries_gos_sentence_and_position() {
+    let mut session = Session::new();
+    const PREFIX: &str = "You have an error in your SQL syntax; check the manual that \
+                          corresponds to your TiDB version for the right syntax to use";
+
+    let wire = session.run("SELEC 1").unwrap_err().to_mysql_error();
+    assert_eq!(wire.code, 1064);
+    assert_eq!(
+        wire.message,
+        format!("{PREFIX} line 1 column 5 near \"SELEC 1\" ")
+    );
+
+    // The unterminated-comment special case keeps its own Go shape after the
+    // same prefix (`TestParserErrMsg`'s capture).
+    let wire = session
+        .run("delete from t where a = 7 or 1=1/*' and b = 'p'")
+        .unwrap_err()
+        .to_mysql_error();
+    assert_eq!(wire.code, 1064);
+    assert_eq!(
+        wire.message,
+        format!("{PREFIX} near '/*' and b = 'p'' at line 1")
+    );
+
+    // No Debug formatting may reach the wire.
+    for sql in ["SELECT * FROM", "SELECT 1; SELECT 2"] {
+        let wire = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(wire.code, 1064, "{sql}");
+        assert!(
+            !wire.message.contains("ParseError {"),
+            "{sql}: {}",
+            wire.message
+        );
+        assert!(wire.message.starts_with(PREFIX), "{sql}: {}", wire.message);
+    }
+}
