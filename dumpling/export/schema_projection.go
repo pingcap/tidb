@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	_ "github.com/pingcap/tidb/pkg/planner/core" // initialize expression builders used by DDL validation
 )
 
 type projectedTableSchema struct {
@@ -93,7 +94,7 @@ func (s *projectedTableSchema) buildTableInfo() (*model.TableInfo, error) {
 
 	createTable := *s.createTable
 	createTable.Cols = make([]*ast.ColumnDef, 0, len(s.createTable.Cols))
-	// Default expressions do not affect structural validation and require a session expression context.
+	// DEFAULT and ON UPDATE expressions do not affect structural validation and may use source-specific semantics.
 	for _, column := range s.createTable.Cols {
 		columnCopy := *column
 		columnCopy.Tp = column.Tp.Clone()
@@ -119,7 +120,7 @@ func (s *projectedTableSchema) buildTableInfo() (*model.TableInfo, error) {
 		}
 	}
 	tableInfo, err := ddl.BuildTableInfoWithStmt(
-		metabuild.NewNonStrictContext(),
+		metabuild.NewContext(),
 		&createTable,
 		mysql.DefaultCharset,
 		"",
