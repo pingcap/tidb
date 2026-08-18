@@ -139,7 +139,7 @@ func TestKeyspaceSample(t *testing.T) {
 	}
 	// Build an exist keyspace.
 	keyspaceMeta := keyspacepb.KeyspaceMeta{}
-	keyspaceMeta.Id = 2
+	keyspaceMeta.Keyspace = &keyspacepb.KeyspaceMeta_Id{Id: 2}
 	keyspaceMeta.Name = keyspace.System
 
 	opts := mockstore.WithCurrentKeyspaceMeta(&keyspaceMeta)
@@ -151,7 +151,7 @@ func TestKeyspaceSample(t *testing.T) {
 
 	// Build another exist keyspace.
 	keyspaceMeta02 := keyspacepb.KeyspaceMeta{}
-	keyspaceMeta02.Id = 3
+	keyspaceMeta02.Keyspace = &keyspacepb.KeyspaceMeta_Id{Id: 3}
 	keyspaceMeta02.Name = keyspace.System
 
 	opts02 := mockstore.WithCurrentKeyspaceMeta(&keyspaceMeta02)

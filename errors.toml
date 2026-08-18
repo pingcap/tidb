@@ -341,6 +341,11 @@ error = '''
 stream task has no storage
 '''
 
+["GlobalSort:TooManyDataFiles"]
+error = '''
+cannot merge %d data files with concurrency %d into at most %d target files
+'''
+
 ["Import:ErrCastValue"]
 error = '''
 Value conversion failed for column '%s'. Expected type: %s, received value: %s. Reason: %s.
@@ -1854,6 +1859,21 @@ Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_
 ["executor:3638"]
 error = '''
 Cannot use these credentials for '%s@%s' because they contradict the password history policy.
+'''
+
+["executor:3878"]
+error = '''
+Empty password can not be retained as second password for user '%-.64s'@'%-.64s'.
+'''
+
+["executor:3894"]
+error = '''
+Current password can not be retained for user '%-.64s'@'%-.64s' because authentication plugin is being changed.
+'''
+
+["executor:3895"]
+error = '''
+Current password can not be retained for user '%-.64s'@'%-.64s' because new password is empty.
 '''
 
 ["executor:3929"]

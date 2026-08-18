@@ -106,7 +106,7 @@ func (ssr *stmtSummaryReader) GetStmtSummaryCurrentRows() [][]types.Datum {
 		}
 	}
 	if ssr.checker == nil {
-		if otherDatum := ssr.getStmtEvictedOtherRow(other); otherDatum != nil {
+		if otherDatum := ssr.getStmtEvictedOtherRow(other, beginTime); otherDatum != nil {
 			rows = append(rows, otherDatum)
 		}
 	}
@@ -206,7 +206,7 @@ func (ssr *stmtSummaryReader) getStmtByDigestHistoryRow(ssbd *stmtSummaryByDiges
 	return rows
 }
 
-func (ssr *stmtSummaryReader) getStmtEvictedOtherRow(ssbde *stmtSummaryByDigestEvicted) []types.Datum {
+func (ssr *stmtSummaryReader) getStmtEvictedOtherRow(ssbde *stmtSummaryByDigestEvicted, beginTimeForCurInterval int64) []types.Datum {
 	var seElement *stmtSummaryByDigestEvictedElement
 
 	ssbde.Lock()
@@ -215,7 +215,9 @@ func (ssr *stmtSummaryReader) getStmtEvictedOtherRow(ssbde *stmtSummaryByDigestE
 	}
 	ssbde.Unlock()
 
-	if seElement == nil {
+	// Evicted summaries are lazy expired just like regular summaries. Do not
+	// expose the latest evicted row when it belongs to an earlier interval.
+	if seElement == nil || seElement.beginTime < beginTimeForCurInterval {
 		return nil
 	}
 
@@ -302,6 +304,12 @@ const (
 	MaxRocksdbBlockReadCountStr                = "MAX_ROCKSDB_BLOCK_READ_COUNT"
 	AvgRocksdbBlockReadByteStr                 = "AVG_ROCKSDB_BLOCK_READ_BYTE"
 	MaxRocksdbBlockReadByteStr                 = "MAX_ROCKSDB_BLOCK_READ_BYTE"
+	AvgIARemoteReadSegmentCountStr             = "AVG_IA_REMOTE_READ_SEGMENT_COUNT"
+	MaxIARemoteReadSegmentCountStr             = "MAX_IA_REMOTE_READ_SEGMENT_COUNT"
+	AvgIARemoteReadSegmentSizeStr              = "AVG_IA_REMOTE_READ_SEGMENT_SIZE"
+	MaxIARemoteReadSegmentSizeStr              = "MAX_IA_REMOTE_READ_SEGMENT_SIZE"
+	AvgIARemoteReadSegmentWaitTimeStr          = "AVG_IA_REMOTE_READ_SEGMENT_WAIT_TIME"
+	MaxIARemoteReadSegmentWaitTimeStr          = "MAX_IA_REMOTE_READ_SEGMENT_WAIT_TIME"
 	AvgPrewriteTimeStr                         = "AVG_PREWRITE_TIME"
 	MaxPrewriteTimeStr                         = "MAX_PREWRITE_TIME"
 	AvgCommitTimeStr                           = "AVG_COMMIT_TIME"
@@ -607,49 +615,67 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return ssStats.maxProcessedKeys
 	},
 	RocksdbDeleteSkippedCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.sumRocksdbDeleteSkippedCount
+		return float64(ssStats.sumRocksdbDeleteSkippedCount)
 	},
 	AvgRocksdbDeleteSkippedCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgInt(int64(ssStats.sumRocksdbDeleteSkippedCount), ssStats.execCount)
+		return avgFloat4Uint(ssStats.sumRocksdbDeleteSkippedCount, ssStats.execCount)
 	},
 	MaxRocksdbDeleteSkippedCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.maxRocksdbDeleteSkippedCount
 	},
 	RocksdbKeySkippedCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.sumRocksdbKeySkippedCount
+		return float64(ssStats.sumRocksdbKeySkippedCount)
 	},
 	AvgRocksdbKeySkippedCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgInt(int64(ssStats.sumRocksdbKeySkippedCount), ssStats.execCount)
+		return avgFloat4Uint(ssStats.sumRocksdbKeySkippedCount, ssStats.execCount)
 	},
 	MaxRocksdbKeySkippedCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.maxRocksdbKeySkippedCount
 	},
 	RocksdbBlockCacheHitCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.sumRocksdbBlockCacheHitCount
+		return float64(ssStats.sumRocksdbBlockCacheHitCount)
 	},
 	AvgRocksdbBlockCacheHitCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgInt(int64(ssStats.sumRocksdbBlockCacheHitCount), ssStats.execCount)
+		return avgFloat4Uint(ssStats.sumRocksdbBlockCacheHitCount, ssStats.execCount)
 	},
 	MaxRocksdbBlockCacheHitCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.maxRocksdbBlockCacheHitCount
 	},
 	RocksdbBlockReadCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.sumRocksdbBlockReadCount
+		return float64(ssStats.sumRocksdbBlockReadCount)
 	},
 	AvgRocksdbBlockReadCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgInt(int64(ssStats.sumRocksdbBlockReadCount), ssStats.execCount)
+		return avgFloat4Uint(ssStats.sumRocksdbBlockReadCount, ssStats.execCount)
 	},
 	MaxRocksdbBlockReadCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.maxRocksdbBlockReadCount
 	},
 	RocksdbBlockReadByteStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.sumRocksdbBlockReadByte
+		return float64(ssStats.sumRocksdbBlockReadByte)
 	},
 	AvgRocksdbBlockReadByteStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgInt(int64(ssStats.sumRocksdbBlockReadByte), ssStats.execCount)
+		return avgFloat4Uint(ssStats.sumRocksdbBlockReadByte, ssStats.execCount)
 	},
 	MaxRocksdbBlockReadByteStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return ssStats.maxRocksdbBlockReadByte
+	},
+	AvgIARemoteReadSegmentCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgFloat4Uint(ssStats.sumIARemoteReadSegmentCount, ssStats.execCount)
+	},
+	MaxIARemoteReadSegmentCountStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxIARemoteReadSegmentCount
+	},
+	AvgIARemoteReadSegmentSizeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgFloat4Uint(ssStats.sumIARemoteReadSegmentSize, ssStats.execCount)
+	},
+	MaxIARemoteReadSegmentSizeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return ssStats.maxIARemoteReadSegmentSize
+	},
+	AvgIARemoteReadSegmentWaitTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return avgInt(int64(ssStats.sumIARemoteReadSegmentWaitTime), ssStats.execCount)
+	},
+	MaxIARemoteReadSegmentWaitTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
+		return int64(ssStats.maxIARemoteReadSegmentWaitTime)
 	},
 	PrewriteTimeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return int64(ssStats.sumPrewriteTime)
@@ -706,7 +732,7 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return int64(ssStats.maxLocalLatchTime)
 	},
 	WriteKeysStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.sumWriteKeys
+		return float64(ssStats.sumWriteKeys)
 	},
 	AvgWriteKeysStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return avgFloat(ssStats.sumWriteKeys, ssStats.commitCount)
@@ -715,7 +741,7 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return ssStats.maxWriteKeys
 	},
 	WriteSizeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.sumWriteSize
+		return float64(ssStats.sumWriteSize)
 	},
 	AvgWriteSizeStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return avgFloat(ssStats.sumWriteSize, ssStats.commitCount)
@@ -724,7 +750,7 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return ssStats.maxWriteSize
 	},
 	PrewriteRegionsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.sumPrewriteRegionNum
+		return float64(ssStats.sumPrewriteRegionNum)
 	},
 	AvgPrewriteRegionsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return avgFloat(ssStats.sumPrewriteRegionNum, ssStats.commitCount)
@@ -733,7 +759,7 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return int(ssStats.maxPrewriteRegionNum)
 	},
 	TxnRetryStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.sumTxnRetry
+		return float64(ssStats.sumTxnRetry)
 	},
 	AvgTxnRetryStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return avgFloat(ssStats.sumTxnRetry, ssStats.commitCount)
@@ -829,7 +855,7 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return ssStats.minResultRows
 	},
 	AffectedRowsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return ssStats.sumAffectedRows
+		return float64(ssStats.sumAffectedRows)
 	},
 	AvgResultRowsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		return avgInt(ssStats.sumResultRows, ssStats.execCount)
@@ -838,7 +864,7 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 		return ssStats.prepared
 	},
 	AvgAffectedRowsStr: func(_ *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
-		return avgFloat(int64(ssStats.sumAffectedRows), ssStats.execCount)
+		return avgFloat4Uint(ssStats.sumAffectedRows, ssStats.execCount)
 	},
 	FirstSeenStr: func(reader *stmtSummaryReader, _ *stmtSummaryByDigestElement, _ *stmtSummaryByDigest, ssStats *stmtSummaryStats) any {
 		firstSeen := ssStats.firstSeen

@@ -169,10 +169,14 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			return
 		}
 		err = util2.GetRecoverError(r)
+		if a.stmt != nil {
+			a.stmt.abortStatementRU()
+		}
 		logutil.Logger(ctx).Warn("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 	if a.stmt != nil {
 		if err := a.stmt.Ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			a.stmt.abortStatementRU()
 			return err
 		}
 	}
@@ -202,6 +206,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	numRows := req.NumRows()
 	if numRows == 0 {
 		if a.stmt != nil {
+			a.stmt.recordStatementRURootEOF()
 			a.stmt.Ctx.GetSessionVars().LastFoundRows = a.stmt.Ctx.GetSessionVars().StmtCtx.FoundRows()
 		}
 		return nil
@@ -360,6 +365,10 @@ type ExecStmt struct {
 	InfoSchema infoschema.InfoSchema
 	// Plan stores a reference to the final physical plan.
 	Plan base.Plan
+	// statementRUOwner is nil unless the current statement RU calculation policy
+	// or a test hook installs it. It must be installed before the ExecStmt
+	// is published and must not be replaced after execution begins.
+	statementRUOwner *statementRUOwner
 
 	StmtNode ast.StmtNode
 
@@ -398,6 +407,11 @@ func (a *ExecStmt) GetStmtNode() ast.StmtNode {
 func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "ExecStmt.PointGet")
 	defer r.End()
+	failpoint.Inject("statementRUPointGetErrorForTest", func(val failpoint.Value) {
+		if a.Ctx != nil && val.(int) == int(a.Ctx.GetSessionVars().ConnectionID) {
+			failpoint.Return(nil, errors.New("statement RU PointGet test error"))
+		}
+	})
 	if r.Span != nil {
 		r.Span.LogKV("sql", a.Text())
 	}
@@ -1420,6 +1434,14 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		return nil, lockErr
 	}
 
+	// LOAD DATA LOCAL INFILE reads a one-shot file stream from the client
+	// connection. Rebuilding and reopening its executor would send another
+	// LOCAL_INFILE_REQUEST in the same command and desynchronize the MySQL
+	// packet sequence. Server or remote files can be reopened and retried.
+	if loadData, ok := a.Plan.(*plannercore.LoadData); ok && loadData.FileLocRef == ast.FileLocClient {
+		return nil, lockErr
+	}
+
 	if a.retryCount >= config.GetGlobalConfig().PessimisticTxn.MaxRetryCount {
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
@@ -1690,6 +1712,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 
 	a.finalizeStatementRUV2Metrics()
 	a.updateNetworkTrafficStatsAndMetrics()
+	a.finishStatementRU(err)
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
@@ -1871,7 +1894,10 @@ func (a *ExecStmt) recordLastQueryInfo(err error) {
 }
 
 func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
-	if kv.GetInternalSourceType(a.GoCtx) == kv.InternalTxnStats {
+	source := kv.GetInternalSourceType(a.GoCtx)
+	// Analyze and foreground-priority statistics work use these request sources.
+	// Filter both so plan replayer capture skips all internal statistics work.
+	if source == kv.InternalTxnStats || source == kv.InternalTxnStatsForegroundPriority {
 		return
 	}
 	se := a.Ctx

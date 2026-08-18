@@ -1634,7 +1634,13 @@ func (local *Backend) doImport(
 	retryer := newRegionJobRetryer(workerCtx, jobToWorkerCh, &jobWg)
 	workGroup.Go(func() error {
 		retryer.run()
-		return nil
+		// below worker pool and job generation routine returns wctx.OperatorErr
+		// which reports only business errors. Its context is also canceled on
+		// normal exit, so reporting parent-context cancellation there would require
+		// distinguishing cancellation sources. the dispatcher doesn't always
+		// notify parent context error. to make sure the error group can return
+		// context error when parent context canceled, we return it here.
+		return ctx.Err()
 	})
 
 	// dispatcher sends done jobs to retryer or marks them done.
@@ -1648,13 +1654,15 @@ func (local *Backend) doImport(
 		clusterID = local.pdCli.GetClusterID(ctx)
 	}
 
+	// Workers must use wctx so OnError cancels their in-flight work before
+	// Release waits for them to exit.
+	wctx := workerpool.NewContext(workerCtx)
 	pool := getRegionJobWorkerPool(
-		workerCtx, &jobWg,
+		wctx, &jobWg,
 		local, balancer,
 		jobToWorkerCh, jobFromWorkerCh,
 		clusterID,
 	)
-	wctx := workerpool.NewContext(workerCtx)
 
 	if e, ok := engine.(*globalsort.Engine); ok {
 		e.SetWorkerPool(pool)
@@ -1664,13 +1672,20 @@ func (local *Backend) doImport(
 		failpoint.Goto("afterStartWorker")
 	})
 
-	workGroup.Go(func() error {
-		pool.Start(wctx)
-		<-wctx.Done()
-		return wctx.OperatorErr()
-	})
+	pool.Start(wctx)
 
 	failpoint.Label("afterStartWorker")
+
+	workGroup.Go(func() error {
+		<-wctx.Done()
+		failpoint.InjectCall("beforeReleaseRegionJobWorkerPool")
+		pool.Release()
+		operatorErr := wctx.OperatorErr()
+		if operatorErr == nil && workerCtx.Err() == nil {
+			dispatcher.markAllJobsSucceeded()
+		}
+		return operatorErr
+	})
 
 	workGroup.Go(func() error {
 		err := local.prepareAndSendJob(
@@ -1701,11 +1716,7 @@ func (local *Backend) doImport(
 			})
 		}
 
-		// Close the pool, as well as the channel.
 		wctx.Cancel()
-		pool.Release()
-		// The worker may set operator error after jobWg.Wait() is unblocked. Re-check
-		// here to avoid losing worker errors due to cancellation ordering.
 		return wctx.OperatorErr()
 	})
 

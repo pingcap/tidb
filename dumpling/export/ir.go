@@ -3,6 +3,7 @@
 package export
 
 import (
+	"bytes"
 	"database/sql"
 	"strings"
 
@@ -51,6 +52,18 @@ type SQLRowIter interface {
 	Close() error
 }
 
+// RowReceiverStringer is a combined interface of RowReceiver and Stringer
+type RowReceiverStringer interface {
+	RowReceiver
+	Stringer
+}
+
+// Stringer is an interface which represents sql types that support writing to buffer.
+type Stringer interface {
+	WriteToBuffer(*bytes.Buffer, bool)
+	GetRawBytes() []sql.RawBytes
+}
+
 // RowReceiver is an interface which represents sql types that support bind address for *sql.Rows
 type RowReceiver interface {
 	BindAddress([]any)
@@ -91,9 +104,9 @@ func setTableMetaFromRows(serverType version.ServerType, rows *sql.Rows) (TableM
 		nms[i] = wrapBackTicks(nms[i])
 	}
 	return &tableMeta{
-		colTypes:      tps,
-		selectedField: strings.Join(nms, ","),
-		selectedLen:   len(nms),
-		specCmts:      getSpecialComments(serverType),
+		colTypes:       tps,
+		sourceColTypes: tps,
+		selectedField:  strings.Join(nms, ","),
+		specCmts:       getSpecialComments(serverType),
 	}, nil
 }

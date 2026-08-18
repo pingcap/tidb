@@ -1958,6 +1958,10 @@ func (b *executorBuilder) buildHashJoinV2FromChildExecs(leftExec, rightExec exec
 }
 
 func (b *executorBuilder) buildHashJoin(v *physicalop.PhysicalHashJoin) exec.Executor {
+	if v.JoinType == base.FullOuterJoin {
+		b.err = plannererrors.ErrNotSupportedYet.GenWithStackByArgs("FULL OUTER JOIN")
+		return nil
+	}
 	if b.sctx.GetSessionVars().UseHashJoinV2 && joinversion.IsHashJoinV2Supported() && v.CanUseHashJoinV2() {
 		return b.buildHashJoinV2(v)
 	}
@@ -3323,8 +3327,10 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	// buildAnalyzeSamplingPushdown reads base count / modify_count from mysql.stats_meta
 	// while constructing column analyze tasks. Flush pending deltas first so the base
 	// values include pre-analyze changes and later delta dumps cannot double count them.
+	// The flush is deliberately not the analyze source: it is lightweight metadata
+	// work, not the heavy scan that background throttling targets.
 	intest.Assert(b.ctx != nil, "missing statement context for analyze")
-	if err := flushStatsDeltaForAnalyze(kv.WithInternalSourceType(b.ctx, kv.InternalTxnStats), b.sctx, v); err != nil {
+	if err := flushStatsDeltaForAnalyze(kv.WithInternalSourceType(b.ctx, kv.InternalTxnStatsForegroundPriority), b.sctx, v); err != nil {
 		b.err = err
 		return nil
 	}

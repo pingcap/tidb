@@ -34,7 +34,7 @@ func TestFilterLabelRulesByKeyspace(t *testing.T) {
 	codecV1 := tikv.NewCodecV1(tikv.ModeTxn)
 	require.Equal(t, rules, filterRulesByKeyspace(rules, codecV1))
 
-	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: 42})
+	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 42}})
 	require.NoError(t, err)
 
 	if kerneltype.IsClassic() {

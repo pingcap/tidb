@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -78,7 +77,7 @@ type blockParser struct {
 }
 
 func makeBlockParser(
-	reader ReadSeekCloser,
+	reader io.ReadSeekCloser,
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 	metrics *metric.Metrics,
@@ -141,7 +140,8 @@ type Parser interface {
 	// TODO: replace pos with a new structure to specify position offset and rows offset
 	Pos() (pos int64, rowID int64)
 	SetPos(pos int64, rowID int64) error
-	// ScannedPos always returns the current file reader pointer's location
+	// ScannedPos returns monotonic source-byte progress. A parser may estimate
+	// this when its physical reads do not correspond directly to parsed rows.
 	ScannedPos() (int64, error)
 	Close() error
 	ReadRow() error
@@ -163,7 +163,7 @@ type Parser interface {
 func NewChunkParser(
 	ctx context.Context,
 	sqlMode mysql.SQLMode,
-	reader ReadSeekCloser,
+	reader io.ReadSeekCloser,
 	blockBufSize int64,
 	ioWorkers *worker.Pool,
 ) *ChunkParser {
@@ -334,14 +334,11 @@ func (parser *blockParser) readBlock() error {
 	}
 }
 
-var chunkParserUnescapeRegexp = regexp.MustCompile(`(?s)\\.`)
-
 func unescape(
 	input string,
 	delim string,
 	escFlavor escapeFlavor,
 	escChar byte,
-	unescapeRegexp *regexp.Regexp,
 ) string {
 	if len(delim) > 0 {
 		delim2 := delim + delim
@@ -349,36 +346,70 @@ func unescape(
 			input = strings.ReplaceAll(input, delim2, delim)
 		}
 	}
-	if escFlavor != escapeFlavorNone && strings.IndexByte(input, escChar) != -1 {
-		input = unescapeRegexp.ReplaceAllStringFunc(input, func(substr string) string {
-			switch substr[1] {
-			case '0':
-				return "\x00"
-			case 'b':
-				return "\b"
-			case 'n':
-				return "\n"
-			case 'r':
-				return "\r"
-			case 't':
-				return "\t"
-			case 'Z':
-				return "\x1a"
-			default:
-				return substr[1:]
-			}
-		})
+	if escFlavor != escapeFlavorNone {
+		input = unescapeByChar(input, escChar)
 	}
 	return input
+}
+
+// unescapeByChar rewrites every escChar-prefixed pair in input. An escChar with
+// no byte after it is left as-is, whether it is the only one or the last of
+// several: an escape sequence is two bytes, and a single trailing byte cannot
+// form one.
+func unescapeByChar(input string, escChar byte) string {
+	first := strings.IndexByte(input, escChar)
+	if first < 0 || first+1 == len(input) {
+		return input
+	}
+
+	var result strings.Builder
+	result.Grow(len(input) - 1)
+	result.WriteString(input[:first])
+
+	remaining := input[first:]
+	for len(remaining) > 1 {
+		result.WriteByte(escapedCharToByte(remaining[1]))
+		remaining = remaining[2:]
+
+		next := strings.IndexByte(remaining, escChar)
+		if next < 0 {
+			result.WriteString(remaining)
+			return result.String()
+		}
+		result.WriteString(remaining[:next])
+		remaining = remaining[next:]
+	}
+
+	result.WriteString(remaining)
+	return result.String()
+}
+
+func escapedCharToByte(input byte) byte {
+	switch input {
+	case '0':
+		return 0
+	case 'b':
+		return '\b'
+	case 'n':
+		return '\n'
+	case 'r':
+		return '\r'
+	case 't':
+		return '\t'
+	case 'Z':
+		return '\x1a'
+	default:
+		return input
+	}
 }
 
 func (parser *ChunkParser) unescapeString(input string) string {
 	if len(input) >= 2 {
 		switch input[0] {
 		case '\'', '"':
-			return unescape(input[1:len(input)-1], input[:1], parser.escFlavor, '\\', chunkParserUnescapeRegexp)
+			return unescape(input[1:len(input)-1], input[:1], parser.escFlavor, '\\')
 		case '`':
-			return unescape(input[1:len(input)-1], "`", escapeFlavorNone, '\\', chunkParserUnescapeRegexp)
+			return unescape(input[1:len(input)-1], "`", escapeFlavorNone, '\\')
 		}
 	}
 	return input
@@ -668,7 +699,7 @@ func OpenReader(
 	fileMeta *SourceFileMeta,
 	store storeapi.Storage,
 	decompressCfg compressedio.DecompressConfig,
-) (reader storeapi.ReadSeekCloser, err error) {
+) (reader io.ReadSeekCloser, err error) {
 	switch {
 	case fileMeta.Compression != CompressionNone:
 		compressType, err2 := ToStorageCompressType(fileMeta.Compression)
@@ -680,4 +711,26 @@ func OpenReader(
 		reader, err = store.Open(ctx, fileMeta.Path, nil)
 	}
 	return
+}
+
+// NewReaderOpener returns an opener and eagerly opens non-Parquet files.
+// Parquet parsers may preload the file without opening a reader.
+func NewReaderOpener(
+	ctx context.Context,
+	fileMeta *SourceFileMeta,
+	store storeapi.Storage,
+	decompressCfg compressedio.DecompressConfig,
+) (
+	openFunc func(context.Context) (io.ReadSeekCloser, error),
+	reader io.ReadSeekCloser,
+	err error,
+) {
+	openFunc = func(ctx context.Context) (io.ReadSeekCloser, error) {
+		return OpenReader(ctx, fileMeta, store, decompressCfg)
+	}
+	if fileMeta.Type == SourceTypeParquet {
+		return openFunc, nil, nil
+	}
+	reader, err = openFunc(ctx)
+	return openFunc, reader, err
 }

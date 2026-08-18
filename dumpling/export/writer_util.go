@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/summary"
@@ -59,7 +60,7 @@ func WriteInsert(
 
 	// SQLWriter writes directly into the object store writer, whose concurrent
 	// multipart upload replaces the writerPipe; it owns the per-statement framing.
-	sink := objectio.NewIOWriter(pCtx.Context, w)
+	sink := objectio.NewIOWriter(pCtx.Context, w, annotatePartLimit)
 
 	selectedField := meta.SelectedField()
 	var insertStatementPrefix string
@@ -134,7 +135,7 @@ func WriteInsert(
 			if err = fileRowIter.Decode(row); err != nil {
 				return counter, errors.Trace(err)
 			}
-			rawRow = row.AppendRawBytes(rawRow[:0])
+			rawRow = row.appendRawBytes(rawRow[:0])
 			if err = sw.Write(rawRow); err != nil {
 				return counter, errors.Trace(err)
 			}
@@ -231,22 +232,28 @@ func WriteInsertInCsv(
 		return 0, fileRowIter.Error()
 	}
 
-	csvCfg := &csvfile.Config{
-		NullValue:       []byte(cfg.CsvNullValue),
-		Separator:       []byte(cfg.CsvSeparator),
-		Delimiter:       []byte(cfg.CsvDelimiter),
-		LineTerminator:  []byte(cfg.CsvLineTerminator),
-		BinaryFormat:    toCSVBinaryFormat(DialectBinaryFormatMap[cfg.CsvOutputDialect]),
-		EscapeBackslash: cfg.EscapeBackslash,
+	// EscapeBackslash selects escape-character escaping; otherwise the enclosure
+	// is doubled. csvfile keys that on a non-empty FieldsEscapedBy.
+	escapedBy := ""
+	if cfg.EscapeBackslash {
+		escapedBy = "\\"
 	}
-	// CSVWriter writes directly into the object store writer, whose concurrent
+	csvCfg := &csvfile.Config{
+		FieldsTerminatedBy: cfg.CsvSeparator,
+		FieldsEnclosedBy:   cfg.CsvDelimiter,
+		FieldsEscapedBy:    escapedBy,
+		LinesTerminatedBy:  cfg.CsvLineTerminator,
+		NullValue:          []byte(cfg.CsvNullValue),
+		BinaryFormat:       toCSVBinaryFormat(DialectBinaryFormatMap[cfg.CsvOutputDialect]),
+	}
+	// Writer writes directly into the object store writer, whose concurrent
 	// multipart upload replaces the writerPipe.
 	selectedFields := meta.SelectedField()
 	var kinds []csvfile.FieldKind
 	if selectedFields != "" {
 		kinds = columnKinds(meta.ColumnTypes())
 	}
-	cw := csvfile.NewCSVWriter(objectio.NewIOWriter(pCtx.Context, w), kinds, csvCfg)
+	cw := csvfile.NewWriter(objectio.NewIOWriter(pCtx.Context, w, annotatePartLimit), kinds, csvCfg)
 
 	var (
 		row          = MakeRowReceiver(meta.ColumnTypes())
@@ -297,7 +304,7 @@ func WriteInsertInCsv(
 			if err = fileRowIter.Decode(row); err != nil {
 				return counter, errors.Trace(err)
 			}
-			rawRow = row.AppendRawBytes(rawRow[:0])
+			rawRow = row.appendRawBytes(rawRow[:0])
 			if err = cw.Write(rawRow); err != nil {
 				return counter, errors.Trace(err)
 			}
@@ -343,6 +350,16 @@ func write(tctx *tcontext.Context, writer objectio.Writer, str string) error {
 			zap.Error(err))
 	}
 	return errors.Trace(err)
+}
+
+// annotatePartLimit turns the object store's "too many upload parts" error into a
+// message that points users at --filesize to split the output across files.
+func annotatePartLimit(err error) error {
+	if err != nil && errors.ErrorEqual(err, storeapi.ErrExceedMaxUploadParts) {
+		limit := units.BytesSize(float64(uploadPartSize) * float64(storeapi.MaxUploadParts))
+		return errors.Annotatef(err, "a single output file exceeds the object store's per-object limit of ~%s; specify --filesize (-F) to split the output into multiple files", limit)
+	}
+	return err
 }
 
 func buildFileWriter(tctx *tcontext.Context, s storeapi.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(ctx context.Context) error, error) {
@@ -507,7 +524,7 @@ func WriteInsertInParquet(
 		parquetfile.WithDataPageSize(cfg.ParquetPageSize),
 		parquetfile.WithRowGroupMemoryLimit(cfg.ParquetRowGroupSize),
 	}
-	writer, err := parquetfile.NewWriter(objectio.NewIOWriter(pCtx.Context, w), meta.ColumnInfos(), opts...)
+	writer, err := parquetfile.NewWriter(objectio.NewIOWriter(pCtx.Context, w, annotatePartLimit), meta.ColumnInfos(), opts...)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

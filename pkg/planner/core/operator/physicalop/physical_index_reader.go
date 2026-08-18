@@ -68,6 +68,7 @@ func (p *PhysicalIndexReader) Clone(newCtx base.PlanContext) (base.PhysicalPlan,
 		return nil, err
 	}
 	cloned.OutputColumns = util.CloneCols(p.OutputColumns)
+	cloned.PlanPartInfo = p.PlanPartInfo.Clone()
 	return cloned, err
 }
 

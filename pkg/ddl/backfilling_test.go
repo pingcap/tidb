@@ -17,6 +17,7 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -27,6 +28,7 @@ import (
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
+	"github.com/pingcap/tidb/pkg/ingestor/errdef"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -35,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
@@ -65,10 +68,22 @@ func TestDoneTaskKeeper(t *testing.T) {
 	require.True(t, bytes.Equal(n.nextKey, kv.Key("h")))
 }
 
-func TestIndexInfoNotFoundIsNonRetryable(t *testing.T) {
-	err := errors.Annotatef(errIndexInfoNotFound, "index info not found: %d", 1)
-	require.True(t, isIndexInfoNotFoundErr(err))
-	require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+func TestBackfillRetryableErrors(t *testing.T) {
+	t.Run("index info not found is non-retryable for executor", func(t *testing.T) {
+		err := errors.Annotatef(errIndexInfoNotFound, "index info not found: %d", 1)
+		require.True(t, isIndexInfoNotFoundErr(err))
+		require.False(t, (&backfillDistExecutor{}).IsRetryableError(err))
+	})
+
+	t.Run("too many data files is non-retryable for scheduler", func(t *testing.T) {
+		err := fmt.Errorf(
+			"generate merge-sort plan failed: %w",
+			errdef.ErrTooManyDataFiles.GenWithStackByArgs(1000, 1, 250),
+		)
+		sch := &LitBackfillScheduler{}
+		require.False(t, sch.IsRetryableErr(err))
+		require.True(t, sch.IsRetryableErr(errors.New("temporary scheduler error")))
+	})
 }
 
 func TestPickBackfillType(t *testing.T) {
@@ -97,6 +112,39 @@ func TestPickBackfillType(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeIngest)
 	ingest.LitInitialized = false
+
+	t.Run("cloud storage skips local disk precheck", func(t *testing.T) {
+		oldLitInitialized := ingest.LitInitialized
+		oldLitDiskRoot := ingest.LitDiskRoot
+		oldCloudStorageURI := vardef.CloudStorageURI.Load()
+		t.Cleanup(func() {
+			ingest.LitInitialized = oldLitInitialized
+			ingest.LitDiskRoot = oldLitDiskRoot
+			vardef.CloudStorageURI.Store(oldCloudStorageURI)
+		})
+
+		ingest.LitInitialized = true
+		ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockIngestCheckEnvFailed", "return(true)")
+		vardef.CloudStorageURI.Store("s3://bucket")
+
+		job := &model.Job{
+			ID: 2,
+			ReorgMeta: &model.DDLReorgMeta{
+				IsFastReorg: true,
+				IsDistReorg: true,
+			},
+		}
+		w := &worker{
+			workCtx: context.Background(),
+			ddlCtx:  &ddlCtx{},
+		}
+
+		err := initForReorgIndexes(w, job, []*model.IndexInfo{{}})
+		require.NoError(t, err)
+		require.True(t, job.ReorgMeta.UseCloudStorage)
+		require.Equal(t, model.ReorgTypeIngest, job.ReorgMeta.ReorgTp)
+	})
 }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {

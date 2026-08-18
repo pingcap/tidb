@@ -64,6 +64,21 @@ const (
 	sizeFloat64 = unsafe.Sizeof(float64(0))
 )
 
+// Encoder encodes Datum values with a fixed new collation setting.
+type Encoder struct {
+	useNewCollate bool
+}
+
+// NewEncoder creates an Encoder with the given new collation setting.
+func NewEncoder(useNewCollate bool) Encoder {
+	return Encoder{useNewCollate: useNewCollate}
+}
+
+// UseNewCollate returns whether the encoder is using new collation.
+func (enc Encoder) UseNewCollate() bool {
+	return enc.useNewCollate
+}
+
 func preRealloc(b []byte, vals []types.Datum, comparable1 bool) []byte {
 	var size int
 	for i := range vals {
@@ -91,7 +106,7 @@ func preRealloc(b []byte, vals []types.Datum, comparable1 bool) []byte {
 
 // encode will encode a datum and append it to a byte slice. If comparable1 is true, the encoded bytes can be sorted as it's original order.
 // If hash is true, the encoded bytes can be checked equal as it's original value.
-func encode(loc *time.Location, b []byte, vals []types.Datum, comparable1 bool) (_ []byte, err error) {
+func (enc Encoder) encode(loc *time.Location, b []byte, vals []types.Datum, comparable1 bool) (_ []byte, err error) {
 	b = preRealloc(b, vals, comparable1)
 	for i, length := 0, len(vals); i < length; i++ {
 		switch vals[i].Kind() {
@@ -103,7 +118,7 @@ func encode(loc *time.Location, b []byte, vals []types.Datum, comparable1 bool) 
 			b = append(b, floatFlag)
 			b = EncodeFloat(b, vals[i].GetFloat64())
 		case types.KindString:
-			b = encodeString(b, vals[i], comparable1)
+			b = enc.encodeString(b, vals[i], comparable1)
 		case types.KindBytes:
 			b = encodeBytes(b, vals[i].GetBytes(), comparable1)
 		case types.KindMysqlTime:
@@ -215,9 +230,9 @@ func EncodeMySQLTime(loc *time.Location, t types.Time, tp byte, b []byte) (_ []b
 	return b, nil
 }
 
-func encodeString(b []byte, val types.Datum, comparable1 bool) []byte {
-	if collate.NewCollationEnabled() && comparable1 {
-		return encodeBytes(b, collate.GetCollator(val.Collation()).ImmutableKey(val.GetString()), true)
+func (enc Encoder) encodeString(b []byte, val types.Datum, comparable1 bool) []byte {
+	if enc.useNewCollate && comparable1 {
+		return encodeBytes(b, collate.GetCollatorWithCollate(enc.useNewCollate, val.Collation()).ImmutableKey(val.GetString()), true)
 	}
 	return encodeBytes(b, val.GetBytes(), comparable1)
 }
@@ -304,13 +319,27 @@ func sizeInt(comparable1 bool) int {
 // slice. It guarantees the encoded value is in ascending order for comparison.
 // For decimal type, datum must set datum's length and frac.
 func EncodeKey(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
-	return encode(loc, b, v, true)
+	return NewEncoder(collate.NewCollationEnabled()).EncodeKey(loc, b, v...)
+}
+
+// EncodeKey appends the encoded values to byte slice b using the encoder's
+// fixed collation setting. It guarantees the encoded value is in ascending order
+// for comparison. For decimal type, datum must set datum's length and frac.
+func (enc Encoder) EncodeKey(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
+	return enc.encode(loc, b, v, true)
 }
 
 // EncodeValue appends the encoded values to byte slice b, returning the appended
 // slice. It does not guarantee the order for comparison.
 func EncodeValue(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
-	return encode(loc, b, v, false)
+	return NewEncoder(collate.NewCollationEnabled()).EncodeValue(loc, b, v...)
+}
+
+// EncodeValue appends the encoded values to byte slice b using the encoder's
+// fixed collation setting, returning the appended slice. It does not guarantee
+// the order for comparison.
+func (enc Encoder) EncodeValue(loc *time.Location, b []byte, v ...types.Datum) ([]byte, error) {
+	return enc.encode(loc, b, v, false)
 }
 
 // EncodeHashChunkRowIdx encodes value for further comparison
@@ -1878,6 +1907,14 @@ func init() {
 // HashCode encodes a Datum into a unique byte slice.
 // It is mostly the same as EncodeValue, but it doesn't contain truncation or verification logic in order to make the encoding lossless.
 func HashCode(b []byte, d types.Datum) []byte {
+	return NewEncoder(collate.NewCollationEnabled()).HashCode(b, d)
+}
+
+// HashCode encodes a Datum into a unique byte slice using the encoder's fixed
+// collation setting. It is mostly the same as EncodeValue, but it doesn't
+// contain truncation or verification logic in order to make the encoding
+// lossless.
+func (enc Encoder) HashCode(b []byte, d types.Datum) []byte {
 	switch d.Kind() {
 	case types.KindInt64:
 		b = encodeSignedInt(b, d.GetInt64(), false)
@@ -1887,7 +1924,7 @@ func HashCode(b []byte, d types.Datum) []byte {
 		b = append(b, floatFlag)
 		b = EncodeFloat(b, d.GetFloat64())
 	case types.KindString:
-		b = encodeString(b, d, false)
+		b = enc.encodeString(b, d, false)
 	case types.KindBytes:
 		b = encodeBytes(b, d.GetBytes(), false)
 	case types.KindMysqlTime:

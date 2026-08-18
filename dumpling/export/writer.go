@@ -9,12 +9,21 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
+)
+
+const (
+	// uploadConcurrency and uploadPartSize configure the concurrent multipart
+	// upload of data files. 5 MiB is the object store's minimum part size
+	// (S3/GCS).
+	uploadConcurrency = 4
+	uploadPartSize    = 5 * units.MiB
 )
 
 // Writer is the abstraction that keep pulling data from database and write to files.
@@ -232,15 +241,6 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 	}, newRebuildConnBackOffer(canRebuildConn(conf.Consistency, conf.TransactionalConsistency)))
 }
 
-const (
-	// dataFileUploadConcurrency and dataFileUploadPartSize configure the
-	// concurrent multipart upload of CSV/SQL data files, letting upload overlap
-	// with encoding in place of the writerPipe. The values are dumpling-chosen
-	// defaults.
-	dataFileUploadConcurrency = 4
-	dataFileUploadPartSize    = 8 * 1024 * 1024
-)
-
 func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
 	conf, format := w.conf, w.fileFmt
 	namer := newOutputFileNamer(meta, curChkIdx, conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
@@ -254,13 +254,11 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 		return err
 	}
 
-	// The CSV and SQL paths write directly into the object store writer without a
-	// writerPipe, so enable concurrent multipart upload to overlap upload with
-	// encoding. Parquet keeps the default writer.
 	var wo *storeapi.WriterOption
 	if format == FileFormatCSV || format == FileFormatSQLText {
-		wo = &storeapi.WriterOption{Concurrency: dataFileUploadConcurrency, PartSize: dataFileUploadPartSize}
+		wo = &storeapi.WriterOption{Concurrency: uploadConcurrency, PartSize: uploadPartSize}
 	}
+
 	somethingIsWritten := false
 	for {
 		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType, wo)

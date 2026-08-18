@@ -100,6 +100,11 @@ type StmtSummary struct {
 	optPersistEvicted      *atomic2.Bool
 	optGroupByUser         *atomic2.Bool
 
+	// Locking invariant:
+	//   - windowLock protects the current window and its LRU membership and order.
+	//   - lockedStmtRecord.Mutex protects the mutable fields of that record.
+	//   - When both are needed, acquire windowLock before the record mutex. Code
+	//     holding only a record mutex must never try to acquire windowLock.
 	window     *stmtWindow
 	windowLock sync.Mutex
 	storage    stmtStorage
@@ -354,13 +359,14 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 func (s *StmtSummary) Evicted() []types.Datum {
 	s.windowLock.Lock()
 	count := int64(s.window.evicted.count())
+	begin := s.window.begin
 	s.windowLock.Unlock()
 	if count == 0 {
 		return nil
 	}
-	begin := types.NewTime(types.FromGoTime(s.window.begin), mysql.TypeTimestamp, 0)
+	beginTime := types.NewTime(types.FromGoTime(begin), mysql.TypeTimestamp, 0)
 	end := types.NewTime(types.FromGoTime(timeNow()), mysql.TypeTimestamp, 0)
-	return types.MakeDatums(begin, end, count)
+	return types.MakeDatums(beginTime, end, count)
 }
 
 // Clear clears all data in the current window, and the data that
@@ -377,10 +383,17 @@ func (s *StmtSummary) ClearInternal() {
 	s.windowLock.Lock()
 	defer s.windowLock.Unlock()
 	for _, k := range s.window.lru.Keys() {
-		v, _ := s.window.lru.Get(k)
-		if v.(*lockedStmtRecord).IsInternal {
+		v, ok := s.window.lru.Peek(k)
+		if !ok {
+			continue
+		}
+		record := v.(*lockedStmtRecord)
+		// Protect the record's mutable fields from concurrent Add calls.
+		record.Lock()
+		if record.IsInternal {
 			s.window.lru.Delete(k)
 		}
+		record.Unlock()
 	}
 }
 
@@ -683,6 +696,9 @@ func newEvictedAggregateRecord() *StmtRecord {
 	}
 }
 
+// lockedStmtRecord protects the mutable fields of StmtRecord. Never acquire a
+// StmtSummary windowLock while holding this mutex; see StmtSummary's locking
+// invariant for the global lock order.
 type lockedStmtRecord struct {
 	sync.Mutex
 	*StmtRecord

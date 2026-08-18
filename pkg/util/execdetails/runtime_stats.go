@@ -215,10 +215,11 @@ type CopRuntimeStats struct {
 	// have many region leaders, several coprocessor tasks can be sent to the
 	// same tikv-server instance. We have to use a list to maintain all tasks
 	// executed on each instance.
-	stats      basicCopRuntimeStats
-	scanDetail util.ScanDetail
-	timeDetail util.TimeDetail
-	storeType  kv.StoreType
+	stats               basicCopRuntimeStats
+	scanDetail          util.ScanDetail
+	timeDetail          util.TimeDetail
+	readPoolTaskDetails *util.PoolTaskDetails
+	storeType           kv.StoreType
 }
 
 // GetActRows return total rows of CopRuntimeStats.
@@ -304,6 +305,10 @@ func (crs *CopRuntimeStats) String() string {
 				buf.WriteString(", ")
 				buf.WriteString(timeDetailStr)
 			}
+		}
+		if !crs.readPoolTaskDetails.Empty() {
+			buf.WriteString(", read_pool:")
+			buf.WriteString(crs.readPoolTaskDetails.String())
 		}
 	}
 	return buf.String()
@@ -570,6 +575,18 @@ func (e *RuntimeStatsColl) GetCopStats(planID int) *CopRuntimeStats {
 	return copStats
 }
 
+// GetCopScanDetail returns a value snapshot of the scan detail collected for
+// the cop plan identified by planID.
+func (e *RuntimeStatsColl) GetCopScanDetail(planID int) (util.ScanDetail, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	copStats, ok := e.copStats[planID]
+	if !ok {
+		return util.ScanDetail{}, false
+	}
+	return copStats.scanDetail, true
+}
+
 // GetCopCountAndRows returns the total cop-tasks count and total rows of all cop-tasks.
 func (e *RuntimeStatsColl) GetCopCountAndRows(planID int) (int32, int64) {
 	e.mu.Lock()
@@ -591,8 +608,15 @@ func getPlanIDFromExecutionSummary(summary *tipb.ExecutorExecutionSummary) (int,
 	return 0, false
 }
 
-// RecordCopStats records a specific cop tasks's execution detail.
-func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, scan *util.ScanDetail, time util.TimeDetail, summary *tipb.ExecutorExecutionSummary) int {
+// RecordCopStats records a specific cop task's execution details.
+func (e *RuntimeStatsColl) RecordCopStats(
+	planID int,
+	storeType kv.StoreType,
+	scan *util.ScanDetail,
+	time util.TimeDetail,
+	readPoolTaskDetails *util.PoolTaskDetails,
+	summary *tipb.ExecutorExecutionSummary,
+) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	copStats, ok := e.copStats[planID]
@@ -611,6 +635,7 @@ func (e *RuntimeStatsColl) RecordCopStats(planID int, storeType kv.StoreType, sc
 		}
 		copStats.timeDetail.Merge(&time)
 	}
+	copStats.readPoolTaskDetails = mergeReadPoolTaskDetails(copStats.readPoolTaskDetails, readPoolTaskDetails)
 	if summary != nil {
 		// for TiFlash cop response, ExecutorExecutionSummary contains executor id, so if there is a valid executor id in
 		// summary, use it overwrite the planID

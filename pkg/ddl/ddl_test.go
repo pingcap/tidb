@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -165,6 +166,58 @@ func TestModifyColumn(t *testing.T) {
 	}
 }
 
+func TestProcessModifyColumnOptionsGenerated(t *testing.T) {
+	sctx := mock.NewContext()
+
+	// Test that ProcessModifyColumnOptions sets RestoreWithoutSchemaName | RestoreWithoutTableName
+	// when restoring generated column expressions, so table-qualified column references are stripped.
+	// This covers the same behavior as create_table.go, add_column.go, etc.
+	testCases := []struct {
+		alterTableSQL  string
+		colName        string
+		expectedExpr   string
+		expectedStored bool
+	}{
+		{
+			alterTableSQL:  "ALTER TABLE t MODIFY COLUMN b INT GENERATED ALWAYS AS (t.a + 1) STORED",
+			colName:        "b",
+			expectedExpr:   "`a` + 1",
+			expectedStored: true,
+		},
+		{
+			alterTableSQL:  "ALTER TABLE t MODIFY COLUMN c VARCHAR(100) GENERATED ALWAYS AS (LOWER(t.a)) STORED",
+			colName:        "c",
+			expectedExpr:   "lower(`a`)",
+			expectedStored: true,
+		},
+		{
+			alterTableSQL:  "ALTER TABLE t MODIFY COLUMN d INT GENERATED ALWAYS AS (t.a * t.b) VIRTUAL",
+			colName:        "d",
+			expectedExpr:   "`a` * `b`",
+			expectedStored: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		stmt, err := parser.New().ParseOneStmt(tc.alterTableSQL, "", "")
+		require.NoError(t, err)
+		alterStmt := stmt.(*ast.AlterTableStmt)
+		options := alterStmt.Specs[0].NewColumns[0].Options
+
+		col := &table.Column{
+			ColumnInfo: &model.ColumnInfo{
+				Name: ast.NewCIStr(tc.colName),
+			},
+		}
+
+		err = ProcessModifyColumnOptions(sctx, col, options)
+		require.NoError(t, err)
+		require.Equal(t, tc.expectedExpr, col.GeneratedExprString, "generated expr string mismatch for %q", tc.alterTableSQL)
+		require.Equal(t, tc.expectedStored, col.GeneratedStored)
+		require.NotNil(t, col.GeneratedExpr)
+	}
+}
+
 func TestFieldCase(t *testing.T) {
 	var fields = []string{"field", "Field"}
 	colObjects := make([]*model.ColumnInfo, len(fields))
@@ -265,6 +318,43 @@ func TestGetTableDataKeyRanges(t *testing.T) {
 	require.Equal(t, keyRanges[2].EndKey, tablecodec.EncodeTablePrefix(9))
 	require.Equal(t, keyRanges[3].StartKey, tablecodec.EncodeTablePrefix(10))
 	require.Equal(t, keyRanges[3].EndKey, tablecodec.EncodeTablePrefix(metadef.MaxUserGlobalID))
+}
+
+func TestFindNextNonTouchedPartitionID(t *testing.T) {
+	defs := func(ids ...int64) []model.PartitionDefinition {
+		res := make([]model.PartitionDefinition, 0, len(ids))
+		for _, id := range ids {
+			res = append(res, model.PartitionDefinition{ID: id})
+		}
+		return res
+	}
+	// p2 and p3 are reorganized into new partitions, i.e. they are in
+	// DroppingDefinitions, while p1, p4 and p5 are non-touched.
+	pi := &model.PartitionInfo{
+		Definitions:         defs(1, 2, 3, 4, 5),
+		DroppingDefinitions: defs(2, 3),
+	}
+	for _, c := range []struct {
+		curr int64
+		next int64
+	}{
+		{1, 4},
+		{2, 4},
+		{3, 4},
+		{4, 5},
+		{5, 0},
+	} {
+		require.Equal(t, c.next, findNextNonTouchedPartitionID(c.curr, pi), "curr %d", c.curr)
+	}
+	// Not a partition of the table.
+	require.Equal(t, int64(0), findNextNonTouchedPartitionID(6, pi))
+
+	// No non-touched partitions left after p1.
+	pi = &model.PartitionInfo{
+		Definitions:         defs(1, 2, 3),
+		DroppingDefinitions: defs(2, 3),
+	}
+	require.Equal(t, int64(0), findNextNonTouchedPartitionID(1, pi))
 }
 
 func TestMergeContinuousKeyRanges(t *testing.T) {

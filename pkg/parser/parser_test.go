@@ -33,6 +33,62 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMaxParenthesesDepth(t *testing.T) {
+	p := parser.New()
+	nestedExpr := func(depth int) string {
+		return "select " + strings.Repeat("(", depth) + "1" + strings.Repeat(")", depth)
+	}
+	nestedFuncExpr := func(depth int) string {
+		return "select " + strings.Repeat("f(", depth) + "1" + strings.Repeat(")", depth)
+	}
+	nestedLeadingHint := func(depth int) string {
+		return "select /*+ LEADING(" + strings.Repeat("(", depth) + "t" + strings.Repeat(")", depth) + ") */ * from t"
+	}
+
+	_, err := p.ParseOneStmt(nestedExpr(10000), "", "")
+	require.NoError(t, err)
+
+	_, err = p.ParseOneStmt(nestedExpr(10001), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+
+	_, err = p.ParseOneStmt(nestedFuncExpr(10001), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+
+	_, err = p.ParseOneStmt(nestedLeadingHint(10000), "", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "parentheses nesting depth exceeds maximum 10000")
+}
+
+func TestMaxASTDepth(t *testing.T) {
+	p := parser.New()
+	nestedCaseExpr := func(depth int) string {
+		return "select " + strings.Repeat("case when true then ", depth) + "1" + strings.Repeat(" else 0 end", depth)
+	}
+	for _, tc := range []struct {
+		name string
+		sql  string
+	}{
+		{
+			name: "binary operation chain",
+			sql:  "select " + strings.Repeat("1+", 11000) + "1",
+		},
+		{
+			name: "unary operation chain",
+			sql:  "select " + strings.Repeat("!", 11000) + "1",
+		},
+		{
+			name: "case expression chain",
+			sql:  nestedCaseExpr(11000),
+		},
+	} {
+		_, err := p.ParseOneStmt(tc.sql, "", "")
+		require.Error(t, err, tc.name)
+		require.Contains(t, err.Error(), "AST nesting depth exceeds maximum", tc.name)
+	}
+}
+
 func TestSimple(t *testing.T) {
 	p := parser.New()
 
@@ -832,6 +888,8 @@ func TestDMLStmt(t *testing.T) {
 		{"select * from t1 join t2 left join t3 on t2.id = t3.id", true, "SELECT * FROM (`t1` JOIN `t2`) LEFT JOIN `t3` ON `t2`.`id`=`t3`.`id`"},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3 on t3.id = t2.id", true, "SELECT * FROM (`t1` RIGHT JOIN `t2` ON `t1`.`id`=`t2`.`id`) LEFT JOIN `t3` ON `t3`.`id`=`t2`.`id`"},
 		{"select * from t1 right join t2 on t1.id = t2.id left join t3", false, ""},
+		{"select * from t1 full join t2 on t1.a = t2.a", true, "SELECT * FROM `t1` AS `full` JOIN `t2` ON `t1`.`a`=`t2`.`a`"},
+		{"select * from t1 full outer join t2 on t1.a <=> t2.a", true, "SELECT * FROM `t1` FULL OUTER JOIN `t2` ON `t1`.`a`<=>`t2`.`a`"},
 		{"select * from t1 join t2 left join t3 using (id)", true, "SELECT * FROM (`t1` JOIN `t2`) LEFT JOIN `t3` USING (`id`)"},
 		{"select * from t1 right join t2 using (id) left join t3 using (id)", true, "SELECT * FROM (`t1` RIGHT JOIN `t2` USING (`id`)) LEFT JOIN `t3` USING (`id`)"},
 		{"select * from t1 right join t2 using (id) left join t3", false, ""},
@@ -2262,12 +2320,20 @@ func TestBuiltin(t *testing.T) {
 		{`select max(distinct all c1) from t;`, true, "SELECT MAX(DISTINCT `c1`) FROM `t`"},
 		{`select max(distinctrow all c1) from t;`, true, "SELECT MAX(DISTINCT `c1`) FROM `t`"},
 		{`select max(c2) from t;`, true, "SELECT MAX(`c2`) FROM `t`"},
+		{`select max_count(c1,c2) from t;`, false, ""},
+		{`select max_count(distinct c1) from t;`, false, ""},
+		{`select max_count(c2) from t;`, true, "SELECT MAX_COUNT(`c2`) FROM `t`"},
+		{`select max_count(all c1) from t;`, true, "SELECT MAX_COUNT(`c1`) FROM `t`"},
 		{`select min(c1,c2) from t;`, false, ""},
 		{`select min(distinct c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(distinctrow c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(distinct all c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(distinctrow all c1) from t;`, true, "SELECT MIN(DISTINCT `c1`) FROM `t`"},
 		{`select min(c2) from t;`, true, "SELECT MIN(`c2`) FROM `t`"},
+		{`select min_count(c1,c2) from t;`, false, ""},
+		{`select min_count(distinct c1) from t;`, false, ""},
+		{`select min_count(c2) from t;`, true, "SELECT MIN_COUNT(`c2`) FROM `t`"},
+		{`select min_count(all c1) from t;`, true, "SELECT MIN_COUNT(`c1`) FROM `t`"},
 		{`select sum(c1,c2) from t;`, false, ""},
 		{`select sum(distinct c1) from t;`, true, "SELECT SUM(DISTINCT `c1`) FROM `t`"},
 		{`select sum(distinctrow c1) from t;`, true, "SELECT SUM(DISTINCT `c1`) FROM `t`"},

@@ -359,6 +359,54 @@ func updateAddingPartitionInfo(partitionInfo *model.PartitionInfo, tblInfo *mode
 	tblInfo.Partition.AddingDefinitions = append(tblInfo.Partition.AddingDefinitions, newDefs...)
 }
 
+func updatePartInfoDefinitionsFromFinalDefinitions(
+	checkedTblInfo *model.TableInfo,
+	partInfo *model.PartitionInfo,
+	definitionsOffset int,
+) error {
+	if err := rebuildStorageClassForPartitionDefinitions(checkedTblInfo, checkedTblInfo.Partition.Definitions); err != nil {
+		return err
+	}
+	definitionsEnd := definitionsOffset + len(partInfo.Definitions)
+	if definitionsOffset < 0 || definitionsEnd > len(checkedTblInfo.Partition.Definitions) {
+		return errors.Errorf("invalid partition definition range [%d, %d) for %d final definitions",
+			definitionsOffset, definitionsEnd, len(checkedTblInfo.Partition.Definitions))
+	}
+	partInfo.Definitions = clonePartitionDefinitions(checkedTblInfo.Partition.Definitions[definitionsOffset:definitionsEnd])
+	return nil
+}
+
+// CheckAndUpdateAddedPartitionDefinitions rebuilds added partition definitions
+// from the final checked table metadata.
+func CheckAndUpdateAddedPartitionDefinitions(
+	ctx expression.BuildContext,
+	meta *model.TableInfo,
+	partInfo *model.PartitionInfo,
+	definitionsOffset int,
+) error {
+	clonedMeta := meta.Clone()
+	tmp := *partInfo
+	tmp.Definitions = append(clonePartitionDefinitions(meta.Partition.Definitions), tmp.Definitions...)
+	clonedMeta.Partition = &tmp
+	if err := checkPartitionDefinitionConstraints(ctx, clonedMeta); err != nil {
+		return errors.Trace(err)
+	}
+	return updatePartInfoDefinitionsFromFinalDefinitions(clonedMeta, partInfo, definitionsOffset)
+}
+
+func clonePartitionDefinitions(defs []model.PartitionDefinition) []model.PartitionDefinition {
+	cloned := make([]model.PartitionDefinition, len(defs))
+	for i := range defs {
+		cloned[i] = defs[i].Clone()
+		cloned[i].InValues = make([][]string, len(defs[i].InValues))
+		for j := range defs[i].InValues {
+			cloned[i].InValues[j] = slices.Clone(defs[i].InValues[j])
+		}
+		cloned[i].StorageClassTransitions = slices.Clone(defs[i].StorageClassTransitions)
+	}
+	return cloned
+}
+
 // removePartitionAddingDefinitionsFromTableInfo remove the `addingDefinitions` in the tableInfo.
 func removePartitionAddingDefinitionsFromTableInfo(tblInfo *model.TableInfo) ([]int64, []string) {
 	physicalTableIDs := make([]int64, 0, len(tblInfo.Partition.AddingDefinitions))
@@ -1414,7 +1462,18 @@ func buildPartitionDefinitionsInfo(ctx expression.BuildContext, defs []*ast.Part
 		return nil, err
 	}
 
+	if errSc := rebuildStorageClassForPartitionDefinitions(tbInfo, partitions); errSc != nil {
+		return nil, errSc
+	}
+
 	return partitions, nil
+}
+
+func rebuildStorageClassForPartitionDefinitions(tbInfo *model.TableInfo, definitions []model.PartitionDefinition) error {
+	if tbInfo.Partition.Type == ast.PartitionTypeNone {
+		return nil
+	}
+	return rebuildStorageClassForPartitions(tbInfo, definitions)
 }
 
 func setPartitionPlacementFromOptions(partition *model.PartitionDefinition, options []*ast.TableOption) error {
@@ -3736,6 +3795,12 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 	var elements []*meta.Element
 	indices := make([]*model.IndexInfo, 0, len(tbl.Meta().Indices))
 	for _, index := range tbl.Meta().Indices {
+		if index.Primary && tbl.Meta().HasClusteredIndex() {
+			// A clustered PRIMARY KEY has no index KV of its own, the record written
+			// by the data copy phase is the index. Backfilling it would write entries
+			// that no reader uses and that DML never maintains.
+			continue
+		}
 		if isNew, ok := tbl.Meta().GetPartitionInfo().DDLChangedIndex[index.ID]; ok && !isNew {
 			// Skip old replaced indexes, but rebuild all other indexes
 			continue
@@ -3756,6 +3821,15 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 		return false, ver, errors.Trace(err)
 	}
 	reorgInfo, err := getReorgInfoFromPartitions(jobCtx.oldDDLCtx.jobContext(job.ID, job.ReorgMeta), jobCtx, rh, job, dbInfo, partTbl, physTblIDs, elements)
+	failpoint.Inject("CheckReorgInfoEmptyErr", func(val failpoint.Value) {
+		if val.(bool) {
+			reorgInfo, err = nil, errors.Trace(meta.ErrDDLReorgElementNotExist)
+		}
+	})
+	if err != nil {
+		return false, ver, errors.Trace(err)
+	}
+
 	err = w.runReorgJob(jobCtx, reorgInfo, reorgTbl.Meta(), func() (reorgErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
 			func() {
@@ -4185,7 +4259,8 @@ func (w *worker) reorgPartitionDataAndIndex(
 			return errors.Trace(err)
 		}
 	}
-	if _, err = findNextNonTouchedPartitionID(reorgInfo.PhysicalTableID, pi); err == nil {
+	if reorgInfo.PhysicalTableID != 0 {
+		// There are non-touched partitions to add to the new global indexes.
 		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)

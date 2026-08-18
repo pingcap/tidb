@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -32,10 +33,20 @@ func prepareForeignKeyTables(tk *testkit.TestKit) {
 	tk.MustExec("insert into parent values (1), (2)")
 }
 
+func allowForeignKeyCheckInSharedLockForTest(t *testing.T) {
+	t.Helper()
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Experimental.AllowEnableForeignKeyCheckInSharedLock = true
+	})
+}
+
 func TestForeignKeySharedLockOptimisticReverseReferenceOrder(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
+	allowForeignKeyCheckInSharedLockForTest(t)
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
@@ -71,6 +82,7 @@ func TestForeignKeySharedLockPessimisticReverseReferenceOrder(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
+	allowForeignKeyCheckInSharedLockForTest(t)
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk1 := testkit.NewTestKit(t, store)
@@ -105,6 +117,7 @@ func TestSharedLockBlockedByExclusiveLock(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
+	allowForeignKeyCheckInSharedLockForTest(t)
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
@@ -163,6 +176,7 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
+	allowForeignKeyCheckInSharedLockForTest(t)
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
@@ -219,6 +233,7 @@ func TestSharedLockChildTableConflict(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
+	allowForeignKeyCheckInSharedLockForTest(t)
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
@@ -323,6 +338,7 @@ func TestSharedLockCascadeUpdateExplicitPessimisticTxn(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
+	allowForeignKeyCheckInSharedLockForTest(t)
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
@@ -360,6 +376,7 @@ func TestSharedLockLockView(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
+	allowForeignKeyCheckInSharedLockForTest(t)
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
@@ -458,6 +475,7 @@ func TestSharedLockDataLockWaitsFromStorageWaitTable(t *testing.T) {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("requires real TiKV")
 	}
+	allowForeignKeyCheckInSharedLockForTest(t)
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 

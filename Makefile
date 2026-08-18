@@ -559,7 +559,7 @@ mock_import: mockgen
 	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/pkg/ingestor/ingestctrl DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor TaskTable,TaskExecutor,Extension > pkg/dxf/framework/mock/task_executor_mock.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/scheduler Scheduler,CleanUpRoutine,TaskManager > pkg/dxf/framework/mock/scheduler_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/scheduler Scheduler,Cleaner,TaskManager > pkg/dxf/framework/mock/scheduler_mock.go
 	tools/bin/mockgen -destination pkg/dxf/framework/scheduler/mock/scheduler_mock.go -package mock github.com/pingcap/tidb/pkg/dxf/framework/scheduler Extension
 	tools/bin/mockgen -embed -package mockexecute github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute StepExecutor > pkg/dxf/framework/mock/execute/execute_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/importinto MiniTaskExecutor > pkg/dxf/importinto/mock/import_mock.go
