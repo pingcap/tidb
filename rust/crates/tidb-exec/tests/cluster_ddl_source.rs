@@ -2371,3 +2371,33 @@ fn a_create_view_publishes_a_view_table_info() {
     .expect_err("a missing view without IF EXISTS refuses");
     assert!(format!("{missing:?}").contains("Unknown table"), "{missing:?}");
 }
+
+#[test]
+fn a_check_constraint_is_ignored_with_gos_warning() {
+    // Go's DEFAULT (`tidb_enable_check_constraint` off): both CHECK
+    // spellings — the column option (`ddl/add_column.go:577`) and the table
+    // constraint (`ddl/create_table.go:1470`) — warn
+    // `tidb_enable_check_constraint is off` and are IGNORED; the table
+    // creates and enforces nothing. Probe 24 caught this node refusing
+    // where every default-configured Go server accepts.
+    let context = tidb_executor::StmtContext::for_query();
+    let parsed = tidb_parser::parse(
+        "CREATE TABLE ck (v INT CHECK (v > 0), CONSTRAINT big CHECK (v < 100))",
+    )
+    .expect("parses");
+    let statement = lower_ddl_with_context(&parsed, "u6", &context)
+        .expect("admitted")
+        .expect("a catalog change");
+    let DdlStatement::CreateTable { build, .. } = statement else {
+        panic!("a CreateTable");
+    };
+    assert!(
+        build.template().view.is_none() && build.template().columns.len() == 1,
+        "one plain column, no constraint metadata"
+    );
+    assert_eq!(
+        context.warning_count(),
+        2,
+        "one warning per ignored CHECK spelling"
+    );
+}

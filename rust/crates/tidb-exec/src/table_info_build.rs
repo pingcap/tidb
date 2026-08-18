@@ -364,6 +364,13 @@ pub fn build_table_info_with_context(
     // first because every column needs to know whether it is one of its keys.
     let mut constraints = Vec::new();
     for constraint in &create.table_constraints {
+        // Go `ast.ConstraintCheck` with the flag off — the DEFAULT — warns
+        // and skips (`ddl/create_table.go:1470`), exactly like the
+        // column-level spelling.
+        if matches!(constraint, TableConstraint::Check(_)) {
+            context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
+            continue;
+        }
         constraints.push(lower_table_constraint(constraint)?);
     }
     let out_primary_key: Option<Constraint> = constraints
@@ -485,7 +492,7 @@ struct KeyPart {
 fn lower_table_constraint(constraint: &TableConstraint) -> Refusal<Constraint> {
     let TableConstraint::Index(index) = constraint else {
         return Err(DdlAdmissionError::new(
-            "CREATE TABLE CHECK and FOREIGN KEY constraints are not supported by this node",
+            "CREATE TABLE FOREIGN KEY constraints are not supported by this node",
         ));
     };
     let kind = match index.kind {
@@ -903,6 +910,18 @@ fn build_column(
                 if field_type.has_charset() {
                     field_type.set_collation_name(collate.clone());
                 }
+            }
+            // Go `ast.ColumnOptionCheck` with the flag off — the DEFAULT —
+            // warns `tidb_enable_check_constraint is off`
+            // (`ddl/add_column.go:577`, `errCheckConstraintIsOff`) and
+            // IGNORES the option. The flag-on constraint machinery is
+            // unported; a node that refused here diverged from every
+            // default-configured Go server (probe 24). KNOWN SEAM GAP: the
+            // warning lands in the LOWERING context, which the cluster DDL
+            // route does not yet drain into the connection's buffer, so
+            // `SHOW WARNINGS` over that route misses it.
+            ColumnOption::Check(_) => {
+                context.append_warning_parts(1105, "tidb_enable_check_constraint is off");
             }
             other => {
                 return Err(DdlAdmissionError::new(format!(
