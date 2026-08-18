@@ -445,7 +445,7 @@ where
             .map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
         let mut transaction = self
             .opener
-            .begin_pessimistic(0, 0)
+            .begin_pessimistic_lock_only()
             .map_err(|error| AdvisoryLockError::Internal(error.to_string()))?;
         let wait = if timeout.is_zero() {
             LockWaitTime::NoWait

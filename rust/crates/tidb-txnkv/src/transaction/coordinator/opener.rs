@@ -445,6 +445,26 @@ where
         super::super::RealPessimisticTransaction::from_transaction(two_pc, opened_at)
     }
 
+    /// Opens a pessimistic transaction that will LOCK but never publish —
+    /// `GET_LOCK`'s shape. A lock is not a mutation, so there is no plan to
+    /// validate; the zero budget is the same publication refusal
+    /// [`Self::begin_read_only`]'s zero is, and an advisory lease that tried
+    /// to write through it would be rejected rather than admitted.
+    pub fn begin_pessimistic_lock_only(
+        &self,
+    ) -> Result<
+        super::super::RealPessimisticTransaction<
+            C,
+            L,
+            crate::pd_capability::CapabilityTimestampSource<P>,
+        >,
+        OptimisticCoordinatorError,
+    > {
+        let opened_at = Instant::now();
+        let two_pc = self.open(0, 0)?;
+        super::super::RealPessimisticTransaction::from_transaction(two_pc, opened_at)
+    }
+
     /// Starts refreshing `primary`'s lock TTL until the handle is dropped.
     ///
     /// A pessimistic transaction must call this once its primary key is
