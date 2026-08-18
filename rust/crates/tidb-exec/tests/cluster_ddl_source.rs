@@ -935,10 +935,9 @@ fn a_statement_this_module_does_not_own_is_left_to_its_own_path() {
     for sql in [
         "SELECT 1",
         "INSERT INTO u6.t VALUES (1, 2)",
-        // ADD/DROP/MODIFY COLUMN left this list as the module took
-        // ownership; a CHANGE COLUMN rename-and-modify still awaits its
-        // course.
-        "ALTER TABLE u6.t CHANGE COLUMN c d BIGINT",
+        // Every column ALTER spelling now routes to the catalog writer;
+        // partition management remains genuinely unowned.
+        "ALTER TABLE u6.t ADD PARTITION (PARTITION p1 VALUES LESS THAN (10))",
     ] {
         let parsed = tidb_parser::parse(sql).expect("the fixture SQL parses");
         assert!(

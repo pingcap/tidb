@@ -310,6 +310,22 @@ pub enum DdlStatement {
         column: Box<tidb_ast::ColumnDef>,
         /// The statement context the plan-time build resolves under.
         context: DdlStatementContext,
+        /// `CHANGE COLUMN`'s old name; `None` is a plain MODIFY. Go gives
+        /// both spellings the one ActionModifyColumn job, the rename riding
+        /// `renameColumnTo` over the column and every index column naming it.
+        rename_from: Option<String>,
+    },
+    /// `ALTER TABLE ... RENAME COLUMN from TO to` — `renameColumnTo` alone,
+    /// no type change, still Go's ActionModifyColumn.
+    RenameColumn {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The existing column name.
+        from: String,
+        /// The replacement name.
+        to: String,
     },
     /// A multi-action `ALTER TABLE` whose every action is a column
     /// add/drop this node owns. Go publishes ONE ActionMultiSchemaChange job
@@ -527,6 +543,48 @@ fn lower_alter_table_catalog(
                         context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
                     });
                 }
+                tidb_ast::AlterTableAction::ChangeColumn {
+                    if_exists,
+                    old_name,
+                    column,
+                    position,
+                } => {
+                    if *if_exists || !matches!(position, tidb_ast::ColumnPosition::Default) {
+                        return Ok(None);
+                    }
+                    if column
+                        .options
+                        .iter()
+                        .any(|option| !matches!(option, tidb_ast::ColumnOption::Null))
+                    {
+                        return Err(DdlAdmissionError::unsupported(
+                            "CHANGE COLUMN with options changes more than the name and type; \
+                     this node serves the option-free form only",
+                        ));
+                    }
+                    let [old] = old_name.as_slice() else {
+                        return Err(DdlAdmissionError::new(
+                            "CHANGE COLUMN takes an unqualified source column name here",
+                        ));
+                    };
+                    let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+                    return Ok(Some(DdlStatement::ModifyColumn {
+                        schema,
+                        table,
+                        column: Box::new(column.clone()),
+                        context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                        rename_from: Some(old.clone()),
+                    }));
+                }
+                tidb_ast::AlterTableAction::RenameColumn(rename) => {
+                    let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+                    return Ok(Some(DdlStatement::RenameColumn {
+                        schema,
+                        table,
+                        from: rename.from.clone(),
+                        to: rename.to.clone(),
+                    }));
+                }
                 tidb_ast::AlterTableAction::DropColumn { if_exists, name } => {
                     actions.push(AlterColumnAction::Drop {
                         if_exists: *if_exists,
@@ -666,6 +724,7 @@ fn lower_alter_table_catalog(
                     table,
                     column: Box::new(column.clone()),
                     context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                    rename_from: None,
                 }));
             };
             if column.options.iter().any(|option| {
@@ -685,6 +744,48 @@ fn lower_alter_table_catalog(
                 range_bits: auto_random.range_bits.unwrap_or(64),
                 unsigned: column.ty.unsigned,
             }))
+        }
+        tidb_ast::AlterTableAction::ChangeColumn {
+            if_exists,
+            old_name,
+            column,
+            position,
+        } => {
+            if *if_exists || !matches!(position, tidb_ast::ColumnPosition::Default) {
+                return Ok(None);
+            }
+            if column
+                .options
+                .iter()
+                .any(|option| !matches!(option, tidb_ast::ColumnOption::Null))
+            {
+                return Err(DdlAdmissionError::unsupported(
+                    "CHANGE COLUMN with options changes more than the name and type; \
+                     this node serves the option-free form only",
+                ));
+            }
+            let [old] = old_name.as_slice() else {
+                return Err(DdlAdmissionError::new(
+                    "CHANGE COLUMN takes an unqualified source column name here",
+                ));
+            };
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            return Ok(Some(DdlStatement::ModifyColumn {
+                schema,
+                table,
+                column: Box::new(column.clone()),
+                context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+                rename_from: Some(old.clone()),
+            }));
+        }
+        tidb_ast::AlterTableAction::RenameColumn(rename) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            return Ok(Some(DdlStatement::RenameColumn {
+                schema,
+                table,
+                from: rename.from.clone(),
+                to: rename.to.clone(),
+            }));
         }
         tidb_ast::AlterTableAction::DropColumn { if_exists, name } => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
@@ -1795,14 +1896,75 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }
+        DdlStatement::RenameColumn {
+            schema,
+            table,
+            from,
+            to,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let wanted = from.to_lowercase();
+            let Some(position) = stored
+                .columns
+                .iter_deref()
+                .position(|candidate| candidate.read().name.lowercase() == wanted)
+            else {
+                return Err(DdlPlanError::Encode(format!(
+                    "Unknown column '{from}' in '{table}'"
+                )));
+            };
+            let new_name = to.to_lowercase();
+            if new_name != wanted
+                && stored
+                    .columns
+                    .iter_deref()
+                    .any(|candidate| candidate.read().name.lowercase() == new_name)
+            {
+                return Err(DdlPlanError::DuplicateColumnName(to.clone()));
+            }
+            let mut info = stored.clone_like_go();
+            {
+                let handle = info
+                    .columns
+                    .get(position)
+                    .expect("the position was just found");
+                handle.write().name = CiString::new(to.clone());
+            }
+            for index in info.indices.iter_deref() {
+                let index = index.read();
+                for col in index.columns.iter_deref() {
+                    let mut col = col.write();
+                    if col.name.lowercase() == wanted {
+                        col.name = CiString::new(to.clone());
+                    }
+                }
+            }
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_MODIFY_COLUMN;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
         DdlStatement::ModifyColumn {
             schema,
             table,
             column,
             context,
+            rename_from,
         } => {
             let (db_id, stored) = locate_table(&catalog, schema, table)?;
-            let wanted = column.name.to_lowercase();
+            // A CHANGE locates by the OLD name; a MODIFY by the (unchanged)
+            // declared name.
+            let wanted = rename_from
+                .as_deref()
+                .unwrap_or(column.name.as_str())
+                .to_lowercase();
             let Some(position) = stored
                 .columns
                 .iter_deref()
@@ -1811,9 +1973,19 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 // Go 1054 ErrBadField through the modify path.
                 return Err(DdlPlanError::Encode(format!(
                     "Unknown column '{}' in '{}'",
-                    column.name, table
+                    rename_from.as_deref().unwrap_or(column.name.as_str()),
+                    table
                 )));
             };
+            let new_name = column.name.to_lowercase();
+            if new_name != wanted
+                && stored
+                    .columns
+                    .iter_deref()
+                    .any(|candidate| candidate.read().name.lowercase() == new_name)
+            {
+                return Err(DdlPlanError::DuplicateColumnName(column.name.clone()));
+            }
             let old = stored
                 .columns
                 .iter_deref()
@@ -1885,12 +2057,28 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                     .columns
                     .get(position)
                     .expect("the position was just found");
-                let mut column = handle.write();
+                let mut stored_column = handle.write();
                 // The identity, ordering, state, and defaults are the stored
                 // column's own; only the declared type widens.
                 let mut field_type = built.field_type.clone();
-                field_type.set_flags(column.field_type.flags());
-                column.field_type = field_type;
+                field_type.set_flags(stored_column.field_type.flags());
+                stored_column.field_type = field_type;
+                if new_name != wanted {
+                    // Go `renameColumnTo`: the column and every index column
+                    // naming it take the new name together.
+                    stored_column.name = CiString::new(column.name.clone());
+                }
+            }
+            if new_name != wanted {
+                for index in info.indices.iter_deref() {
+                    let index = index.read();
+                    for col in index.columns.iter_deref() {
+                        let mut col = col.write();
+                        if col.name.lowercase() == wanted {
+                            col.name = CiString::new(column.name.clone());
+                        }
+                    }
+                }
             }
             info.update_ts = start_ts;
             let table_id = info.id;

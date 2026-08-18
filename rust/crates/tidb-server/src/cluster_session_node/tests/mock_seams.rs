@@ -344,6 +344,7 @@ impl ClusterDdl for MockDdl {
             }
             DdlStatement::AddColumn { .. }
             | DdlStatement::ModifyColumn { .. }
+            | DdlStatement::RenameColumn { .. }
             | DdlStatement::DropColumn { .. }
             | DdlStatement::MultiSchemaChange { .. }
             | DdlStatement::TruncateTable { .. } => {
