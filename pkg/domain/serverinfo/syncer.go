@@ -360,8 +360,10 @@ func (s *Syncer) RevokeSession() {
 	ctx, cancel := context.WithTimeout(context.Background(), KeyOpDefaultTimeout)
 	defer cancel()
 	if _, err := s.etcdCli.Revoke(ctx, lease); err != nil {
-		logutil.BgLogger().Error("revoke server info lease failed",
-			zap.Int64("lease", int64(lease)), zap.Error(err))
+		logutil.BgLogger().Warn("revoke server info lease failed",
+			zap.Int64("lease", int64(lease)),
+			zap.Any("serverInfo", s.GetLocalServerInfo()),
+			zap.Error(err))
 	}
 }
 
