@@ -70,3 +70,7 @@ rm -rf "$DUMPLING_OUTPUT_DIR"
 run_dumpling --filetype csv --column-filter-file "$filter_file"
 check_csv_output
 check_schema_output
+
+echo "Test projected schema can be executed."
+run_sql "drop table \`$DB_NAME\`.\`$TABLE_NAME\`;"
+run_sql_file "${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${TABLE_NAME}-schema.sql"

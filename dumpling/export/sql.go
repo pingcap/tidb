@@ -1062,10 +1062,10 @@ func createConnWithConsistency(ctx context.Context, db *sql.DB, repeatableRead b
 }
 
 type columnProjection struct {
-	sourceTypes   []*sql.ColumnType
-	selectedTypes []*sql.ColumnType
-	selectField   string
-	schemaSQL     string
+	sourceTypes        []*sql.ColumnType
+	selectedTypes      []*sql.ColumnType
+	selectField        string
+	projectedSchemaSQL string
 }
 
 func (p columnProjection) isProjected() bool {
@@ -1089,6 +1089,7 @@ func getWritableColumnNames(tctx *tcontext.Context, db *BaseConn, dbName, tableN
 		fieldName, extra := oneRow[0], oneRow[1]
 		switch extra {
 		case "STORED GENERATED", "VIRTUAL GENERATED":
+			// Column filters apply to writable columns; schema projection handles generated dependencies.
 			hasGeneratedColumn = true
 			continue
 		}

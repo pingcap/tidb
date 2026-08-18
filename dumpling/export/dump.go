@@ -527,16 +527,18 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 		return nil
 	}
 
-	columnsByTable := make(map[tableName]map[string]struct{}, calculateTableCount(conf.Tables))
-	for dbName, tables := range conf.Tables {
+	for _, tables := range conf.Tables {
 		for _, table := range tables {
 			if table.Type == TableTypeView {
-				return errors.Errorf(
-					"column-filtered schema output does not support view `%s`.`%s`",
-					escapeString(dbName),
-					escapeString(table.Name),
-				)
+				return errors.New("schema output with an active column filter is not supported when the dump includes views")
 			}
+		}
+	}
+
+	schemaParser := parser.New()
+	schemas := make(projectedTableSchemas, calculateTableCount(conf.Tables))
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
 			if table.Type != TableTypeBase {
 				continue
 			}
@@ -546,8 +548,8 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 			if err != nil {
 				return err
 			}
-			projection.schemaSQL = createTableSQL
-			columnsByTable[normalizedTableName(dbName, table.Name)], err = collectProjectedSchemaColumns(
+			schemas[key], err = parseProjectedTableSchema(
+				schemaParser,
 				createTableSQL,
 				columnNames(projection.selectedTypes),
 			)
@@ -559,24 +561,7 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 					escapeString(table.Name),
 				)
 			}
-			conf.columnProjection[key] = projection
-		}
-	}
-	for dbName, tables := range conf.Tables {
-		for _, table := range tables {
-			if table.Type != TableTypeBase {
-				continue
-			}
-			key := tableName{db: dbName, table: table.Name}
-			projection := conf.columnProjection[key]
-			newSchemaSQL, err := generateProjectedSchema(
-				projection.schemaSQL,
-				dbName,
-				table.Name,
-				projection.isProjected(),
-				columnsByTable,
-			)
-			if err != nil {
+			if err := schemas[key].projectColumnsAndConstraints(); err != nil {
 				return errors.Annotatef(
 					err,
 					"failed to project schema for table `%s`.`%s`",
@@ -584,7 +569,37 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 					escapeString(table.Name),
 				)
 			}
-			projection.schemaSQL = newSchemaSQL
+		}
+	}
+
+	for dbName, tables := range conf.Tables {
+		for _, table := range tables {
+			if table.Type != TableTypeBase {
+				continue
+			}
+			key := tableName{db: dbName, table: table.Name}
+			if err := validateForeignKeys(dbName, schemas[key], schemas); err != nil {
+				return errors.Annotatef(
+					err,
+					"failed to validate schema projection for table `%s`.`%s`",
+					escapeString(dbName),
+					escapeString(table.Name),
+				)
+			}
+			projection := conf.columnProjection[key]
+			if !projection.isProjected() {
+				continue
+			}
+			projectedSchemaSQL, err := restoreProjectedSchema(schemas[key].createTable)
+			if err != nil {
+				return errors.Annotatef(
+					err,
+					"failed to restore schema projection for table `%s`.`%s`",
+					escapeString(dbName),
+					escapeString(table.Name),
+				)
+			}
+			projection.projectedSchemaSQL = projectedSchemaSQL
 			conf.columnProjection[key] = projection
 		}
 	}
@@ -1543,7 +1558,7 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		return meta, nil
 	}
 
-	createTableSQL := projection.schemaSQL
+	createTableSQL := projection.projectedSchemaSQL
 	if createTableSQL == "" {
 		createTableSQL, err = ShowCreateTable(tctx, conn, db, tbl)
 		if err != nil {
