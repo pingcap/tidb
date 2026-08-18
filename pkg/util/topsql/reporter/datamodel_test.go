@@ -29,7 +29,6 @@ func runConcurrently(count int, fn func(int)) {
 	start := make(chan struct{})
 	done := make(chan struct{}, count)
 	for i := range count {
-		i := i
 		go func() {
 			<-start
 			fn(i)
