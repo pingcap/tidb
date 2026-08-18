@@ -735,9 +735,11 @@ pub(crate) fn build_from(
             if table_ref.sample.is_some() {
                 return Err(DriverError::unsupported("TABLESAMPLE is not supported yet"));
             }
-            let entry = catalog
-                .get_in(database, name)
-                .ok_or(DriverError::unsupported("table not found in catalog"))?;
+            let entry = catalog.get_in(database, name).ok_or_else(|| {
+                DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
+                    "{database}.{name}"
+                )))
+            })?;
             // A table alias replaces the name for qualification, as in Go.
             let visible = table_ref.alias.clone().unwrap_or_else(|| name.to_owned());
             // Every base-table read starts as a whole-table scan; the fast

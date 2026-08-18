@@ -507,9 +507,11 @@ fn scan_base_table(
     ctx: &crate::StmtContext,
 ) -> Result<MultiSource, DriverError> {
     let (database, name) = split_table_path(&table_ref.name, current_db)?;
-    let entry = catalog
-        .get_in(database, name)
-        .ok_or(DriverError::unsupported("table not found in catalog"))?;
+    let entry = catalog.get_in(database, name).ok_or_else(|| {
+        DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
+            "{database}.{name}"
+        )))
+    })?;
     let columns = entry.column_list();
     let default_meta = super::dml::column_metadata(entry);
     let rows: Vec<SourceRow> = match entry {
@@ -1045,9 +1047,11 @@ fn write_row(
     let SourceOrigin::Base { database, name } = &table.origin else {
         return Err(table.not_updatable("UPDATE"));
     };
-    let entry = catalog
-        .get_mut_in(database, name)
-        .ok_or(DriverError::unsupported("unknown table"))?;
+    let entry = catalog.get_mut_in(database, name).ok_or_else(|| {
+        DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
+            "{database}.{name}"
+        )))
+    })?;
     match (entry, id) {
         (TableEntry::Mem(mem), RowId::Mem(index)) => {
             mem.rows[*index] = row.to_vec();
@@ -1130,9 +1134,11 @@ pub(crate) fn run_multi_delete(
     // A matrix-backed table identifies rows by position, so its removals are
     // applied from the back; a stored table's handle is position-independent.
     for ((database, name, id), _) in doomed.into_iter().rev() {
-        let entry = catalog
-            .get_mut_in(&database, &name)
-            .ok_or(DriverError::unsupported("unknown table"))?;
+        let entry = catalog.get_mut_in(&database, &name).ok_or_else(|| {
+            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
+                "{database}.{name}"
+            )))
+        })?;
         match (entry, &id) {
             (TableEntry::Mem(mem), RowId::Mem(index)) => {
                 mem.rows.remove(*index);

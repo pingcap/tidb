@@ -136,20 +136,11 @@ fn a_failed_use_leaves_the_session_on_its_previous_schema() {
 ///   through `SchemaErrorKind::UnknownTable`. That is the arm the classified
 ///   `executor/admin` divergence ran through, which is why selecting the
 ///   schema is enough to close it.
-/// * `SELECT` refuses with a generic **1105**, because the planner's table
-///   lookup (`tidb_executor::driver::from`) reports a missing name as
-///   `DriverError::unsupported("table not found in catalog")` rather than
-///   1146.
-///
-/// DIVERGENCE (documented, NOT this unit's): that 1105 is the single largest
-/// refusal class in the whole integration survey (2,187 statements under
-/// `table not found in catalog` plus 162 more spelled `unknown table`), and
-/// it is load-bearing -- `Unsupported` is what classifies a statement as
-/// out-of-domain and keeps it OUT of the compared set. Converting it to 1146
-/// would move thousands of statements into comparison at once and rewrite the
-/// survey's cascade attribution, so it is its own measured unit. Seeding the
-/// `mysql` object does not make it worse: those names were refused before
-/// too, one error earlier, as `Unknown database 'mysql'`.
+/// * `SELECT` refuses with **1146** too, as Go does. It answered a generic
+///   1105 until the planner's table lookup
+///   (`tidb_executor::driver::from` and the DML paths beside it) was moved
+///   onto `SchemaErrorKind::UnknownTable`; that divergence was pinned here
+///   rather than approved, and is now closed.
 ///
 /// FLIPS TO SUPPORT when the `mysql.*` bootstrap tables are ported into this
 /// tier: each name below then has to return rows, and this test is the list
@@ -182,16 +173,18 @@ fn the_bootstrap_tables_are_refused_by_name() {
             format!("Table 'mysql.{table}' doesn't exist")
         );
 
-        // The 1105 arm, pinned rather than approved -- see the divergence
-        // note above. Both spellings of the name reach the same lookup, so
-        // both report the same generic refusal.
+        // Both spellings of the name reach the same lookup, and both now
+        // report Go's own ErrTableNotExists.
         for sql in [
             format!("SELECT * FROM {table}"),
             format!("SELECT * FROM mysql.{table}"),
         ] {
             let error = session.run(&sql).unwrap_err().to_mysql_error();
-            assert_eq!(error.code, 1105, "`{sql}` should refuse");
-            assert_eq!(error.message, "table not found in catalog");
+            assert_eq!(error.code, 1146, "`{sql}` should refuse");
+            assert_eq!(
+                error.message,
+                format!("Table 'mysql.{table}' doesn't exist")
+            );
         }
     }
 }

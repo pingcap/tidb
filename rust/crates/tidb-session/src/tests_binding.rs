@@ -330,8 +330,8 @@ fn a_binding_whose_statement_cannot_plan_is_refused_at_create_time() {
         .to_mysql_error();
     assert_eq!(
         (missing_table.code, missing_table.message.as_str()),
-        (1105, "table not found in catalog"),
-        "Go reports 1146 Table 'test.nosuchtbl' doesn't exist here"
+        (1146, "Table 'test.nosuchtbl' doesn't exist"),
+        "the read path now reports Go's own ErrTableNotExists"
     );
 
     let missing_index = session

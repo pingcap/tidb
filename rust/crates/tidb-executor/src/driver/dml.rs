@@ -119,9 +119,11 @@ fn resolve_insert_target(
 ) -> Result<InsertTargetLayout, DriverError> {
     let (database, table_name) = split_table_path(&insert.table, current_db)?;
     let (database, table_name) = (database.to_owned(), table_name.to_owned());
-    let table = catalog
-        .get_in(&database, &table_name)
-        .ok_or(DriverError::unsupported("table not found in catalog"))?;
+    let table = catalog.get_in(&database, &table_name).ok_or_else(|| {
+        DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
+            "{database}.{table_name}"
+        )))
+    })?;
     if table.is_view() {
         return Err(DriverError::InsertIntoViewUnsupported(table_name));
     }
@@ -1521,9 +1523,11 @@ pub(crate) fn run_update_traced(
         }
     };
     let (database, name) = single_table_name(table_ref, current_db)?;
-    let table = catalog
-        .get_in(&database, &name)
-        .ok_or(DriverError::unsupported("unknown table"))?;
+    let table = catalog.get_in(&database, &name).ok_or_else(|| {
+        DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
+            "{database}.{name}"
+        )))
+    })?;
     if !table_ref.partitions.is_empty() && !matches!(table, TableEntry::Kv(_)) {
         return Err(DriverError::UnknownPartition {
             partition: table_ref.partitions[0].clone(),
@@ -1706,9 +1710,11 @@ pub(crate) fn run_update_traced(
     // including the target table itself, and no write is applied until every
     // replacement has been staged.
     let source_rows = {
-        let entry = catalog
-            .get_mut_in(&database, &name)
-            .ok_or(DriverError::unsupported("unknown table"))?;
+        let entry = catalog.get_mut_in(&database, &name).ok_or_else(|| {
+            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
+                "{database}.{name}"
+            )))
+        })?;
         match entry {
             TableEntry::Cte(_) | TableEntry::View(_) => {
                 return Err(DriverError::TableNotUpdatable(name.clone()))
@@ -2104,7 +2110,11 @@ pub(crate) fn run_delete_traced(
     let (database, name) = single_table_name(table_ref, current_db)?;
     let column_list = catalog
         .get_in(&database, &name)
-        .ok_or(DriverError::unsupported("unknown table"))?
+        .ok_or_else(|| {
+            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
+                "{database}.{name}"
+            )))
+        })?
         .column_list();
     if !table_ref.partitions.is_empty()
         && !matches!(catalog.get_in(&database, &name), Some(TableEntry::Kv(_)))
@@ -2183,9 +2193,11 @@ pub(crate) fn run_delete_traced(
         Kv(Vec<(crate::kv_table::TableHandle, Vec<Datum>)>),
     }
     let source_rows = {
-        let entry = catalog
-            .get_mut_in(&database, &name)
-            .ok_or(DriverError::unsupported("unknown table"))?;
+        let entry = catalog.get_mut_in(&database, &name).ok_or_else(|| {
+            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(format!(
+                "{database}.{name}"
+            )))
+        })?;
         match entry {
             TableEntry::Cte(_) | TableEntry::View(_) => {
                 return Err(DriverError::DeleteViewUnsupported(name.clone()))

@@ -1072,3 +1072,33 @@ fn an_aggregate_derived_table_joins_as_one_row_and_counts_only_changes() {
         ["1|3", "2|3", "3|3"]
     );
 }
+
+/// Go `infoschema.ErrTableNotExists` (1146) reaches the client from EVERY
+/// statement that names a missing table, not only `SELECT`. These sites
+/// answered the stringly-typed 1105 instead, so a client could not tell a
+/// typo'd table from a fatal server error. Captured message shape:
+/// `Table 'db.name' doesn't exist`.
+#[test]
+fn every_statement_naming_a_missing_table_is_1146() {
+    let mut session = Session::new();
+    session.run("create table t (a int primary key)").unwrap();
+    session.run("insert into t values (1)").unwrap();
+
+    for sql in [
+        "select * from nosuch",
+        "delete from nosuch",
+        "update nosuch set a = 1",
+        "insert into nosuch values (1)",
+        "replace into nosuch values (1)",
+        "select a from t, nosuch",
+    ] {
+        let wire = session.run(sql).unwrap_err().to_mysql_error();
+        assert_eq!(wire.code, 1146, "`{sql}` should be ErrTableNotExists");
+        assert_eq!(wire.message, "Table 'test.nosuch' doesn't exist", "{sql}");
+    }
+
+    // The same statements over the real table still run, so the mapping is
+    // not swallowing valid work.
+    session.run("update t set a = 2").unwrap();
+    session.run("delete from t").unwrap();
+}

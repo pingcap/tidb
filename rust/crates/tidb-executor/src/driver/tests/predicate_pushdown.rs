@@ -9,12 +9,25 @@
 
 use super::*;
 
+/// The rejection is Go's `infoschema.ErrTableNotExists` (1146), not an
+/// untyped refusal: a client tells a typo'd table from a fatal server error
+/// by the CODE, so the shape here is load-bearing.
 #[test]
 fn unknown_table_is_rejected() {
-    assert!(matches!(
-        run_select("SELECT a FROM missing"),
-        Err(DriverError::Unsupported(_))
-    ));
+    let error = run_select("SELECT a FROM missing").expect_err("a missing table is an error");
+    assert!(
+        matches!(
+            &error,
+            DriverError::Schema(crate::SchemaErrorKind::UnknownTable(_))
+        ),
+        "{error:?}"
+    );
+    let wire = error.to_mysql_error();
+    assert_eq!(wire.code, 1146);
+    assert!(
+        wire.message.ends_with(".missing' doesn't exist"),
+        "{wire:?}"
+    );
 }
 
 /// The split rule itself, at the shape boundary: a column-versus-constant
