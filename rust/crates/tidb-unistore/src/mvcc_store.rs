@@ -260,7 +260,15 @@ impl MvccStore {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            lock_store: MemStore::new(1 << 20),
+            // Go `server.go:48`: the production unistore lock store is built
+            // over 8 MiB arena blocks — `NewMemStore(8 << 20)`. The size is
+            // load-bearing: a prewrite lock embeds the row value, so the
+            // largest single value a prewrite can lock is bounded by
+            // `MaxEntrySize` over THIS block size (a 1 MiB value's lock node
+            // cannot fit any 1 MiB block, and Go's own arena Fatalf-crashes
+            // past the bound — "Any entry larger than this will likely
+            // result in failure", lockstore.go:357).
+            lock_store: MemStore::new(8 << 20),
             engine: MemEngine::default(),
             pd: None,
         }
@@ -2060,6 +2068,23 @@ mod tests {
     // the rest are WRITTEN over the ported bodies — the upstream suite's
     // other optimistic tests ride pessimistic and CheckTxnStatus surfaces
     // that are later courses, and each test names the Go behavior it pins.
+
+    /// Probe round 21 crashed the whole server here: a 1 MiB row's
+    /// prewrite lock could not fit ANY arena block at the port's former
+    /// 1 MiB block size, and the null-address path underflowed
+    /// (`arena.rs` `block_idx`). Go's production server builds the lock
+    /// store over 8 MiB blocks (`server.go:48`), where this value fits.
+    #[test]
+    fn a_megabyte_value_prewrites_and_commits() {
+        let mut store = MvccStore::new();
+        let value = vec![b'x'; 1 << 20];
+        must_prewrite_optimistic(&mut store, b"pk", b"pk", &value, 100, 3000);
+        store
+            .commit(&[b"pk".to_vec()], 100, 101)
+            .expect("the megabyte value commits");
+        let got = store.get(b"pk", 102).expect("reads back");
+        assert_eq!(got.map(|v| v.len()), Some(1 << 20));
+    }
 
     fn put(key: &[u8], value: &[u8]) -> KvrpcMutation {
         KvrpcMutation {
