@@ -1055,44 +1055,64 @@ struct SupportedCollation {
     name: &'static str,
     charset: &'static str,
     id: i64,
-    is_default: bool,
     sortlen: i64,
     pad_space: bool,
 }
 
+impl SupportedCollation {
+    /// Whether this collation is its charset's default — DERIVED from the
+    /// datatype registry, which applies Go's `collate.switchDefaultCollation`
+    /// at startup (under new collation, `gbk`/`gb18030` default to their
+    /// `_chinese_ci` collations, NOT the literal `_bin` ones in
+    /// `CharacterSetInfos`). A literal here was a THIRD spelling of that
+    /// switch, and it was wrong the first time it was read — probe 23
+    /// caught `SHOW CHARACTER SET` and this memtable disagreeing.
+    fn is_default(&self) -> bool {
+        tidb_datatype::Collation::from_name(self.name).is_some_and(|collation| {
+            collation.charset().default_collation() == collation
+        })
+    }
+}
+
 const SUPPORTED_COLLATIONS: &[SupportedCollation] = &[
-    SupportedCollation { name: "ascii_bin", charset: "ascii", id: 65, is_default: true, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "binary", charset: "binary", id: 63, is_default: true, sortlen: 1, pad_space: false },
-    SupportedCollation { name: "gb18030_bin", charset: "gb18030", id: 249, is_default: true, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "gb18030_chinese_ci", charset: "gb18030", id: 248, is_default: false, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "gbk_bin", charset: "gbk", id: 87, is_default: true, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "gbk_chinese_ci", charset: "gbk", id: 28, is_default: false, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "latin1_bin", charset: "latin1", id: 47, is_default: true, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "utf8_bin", charset: "utf8", id: 83, is_default: true, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "utf8_general_ci", charset: "utf8", id: 33, is_default: false, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "utf8_unicode_ci", charset: "utf8", id: 192, is_default: false, sortlen: 8, pad_space: true },
-    SupportedCollation { name: "utf8mb4_0900_ai_ci", charset: "utf8mb4", id: 255, is_default: false, sortlen: 0, pad_space: false },
-    SupportedCollation { name: "utf8mb4_0900_bin", charset: "utf8mb4", id: 309, is_default: false, sortlen: 1, pad_space: false },
-    SupportedCollation { name: "utf8mb4_bin", charset: "utf8mb4", id: 46, is_default: true, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "utf8mb4_general_ci", charset: "utf8mb4", id: 45, is_default: false, sortlen: 1, pad_space: true },
-    SupportedCollation { name: "utf8mb4_unicode_ci", charset: "utf8mb4", id: 224, is_default: false, sortlen: 8, pad_space: true },
+    SupportedCollation { name: "ascii_bin", charset: "ascii", id: 65, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "binary", charset: "binary", id: 63, sortlen: 1, pad_space: false },
+    SupportedCollation { name: "gb18030_bin", charset: "gb18030", id: 249, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "gb18030_chinese_ci", charset: "gb18030", id: 248, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "gbk_bin", charset: "gbk", id: 87, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "gbk_chinese_ci", charset: "gbk", id: 28, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "latin1_bin", charset: "latin1", id: 47, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "utf8_bin", charset: "utf8", id: 83, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "utf8_general_ci", charset: "utf8", id: 33, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "utf8_unicode_ci", charset: "utf8", id: 192, sortlen: 8, pad_space: true },
+    SupportedCollation { name: "utf8mb4_0900_ai_ci", charset: "utf8mb4", id: 255, sortlen: 0, pad_space: false },
+    SupportedCollation { name: "utf8mb4_0900_bin", charset: "utf8mb4", id: 309, sortlen: 1, pad_space: false },
+    SupportedCollation { name: "utf8mb4_bin", charset: "utf8mb4", id: 46, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "utf8mb4_general_ci", charset: "utf8mb4", id: 45, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "utf8mb4_unicode_ci", charset: "utf8mb4", id: 224, sortlen: 8, pad_space: true },
 ];
 
 /// Go `setDataFromCharacterSets` (`infoschema_reader.go:1804`) over
 /// `charset.CharacterSetInfos`, name-sorted as `GetSupportedCharsets` sorts.
 fn character_sets_rows() -> Vec<Vec<Datum>> {
-    const CHARSETS: &[(&str, &str, &str, i64)] = &[
-        ("ascii", "ascii_bin", "US ASCII", 1),
-        ("binary", "binary", "binary", 1),
-        ("gb18030", "gb18030_bin", "China National Standard GB18030", 4),
-        ("gbk", "gbk_bin", "Chinese Internal Code Specification", 2),
-        ("latin1", "latin1_bin", "Latin1", 1),
-        ("utf8", "utf8_bin", "UTF-8 Unicode", 3),
-        ("utf8mb4", "utf8mb4_bin", "UTF-8 Unicode", 4),
+    const CHARSETS: &[(&str, &str, i64)] = &[
+        ("ascii", "US ASCII", 1),
+        ("binary", "binary", 1),
+        ("gb18030", "China National Standard GB18030", 4),
+        ("gbk", "Chinese Internal Code Specification", 2),
+        ("latin1", "Latin1", 1),
+        ("utf8", "UTF-8 Unicode", 3),
+        ("utf8mb4", "UTF-8 Unicode", 4),
     ];
     CHARSETS
         .iter()
-        .map(|&(name, collation, desc, maxlen)| {
+        .map(|&(name, desc, maxlen)| {
+            // The default collation comes from the registry, which carries
+            // Go's `switchDefaultCollation` state — the same source `SHOW
+            // CHARACTER SET` reads, so the two can never disagree again.
+            let collation = tidb_datatype::Charset::from_name(name)
+                .map(|charset| charset.default_collation().name())
+                .unwrap_or_default();
             vec![text(name), text(collation), text(desc), Datum::Int(maxlen)]
         })
         .collect()
@@ -1109,7 +1129,7 @@ fn collations_rows() -> Vec<Vec<Datum>> {
                 text(c.name),
                 text(c.charset),
                 Datum::Int(c.id),
-                text(if c.is_default { "Yes" } else { "" }),
+                text(if c.is_default() { "Yes" } else { "" }),
                 text("Yes"),
                 Datum::Int(c.sortlen),
                 text(if c.pad_space { "PAD SPACE" } else { "NO PAD" }),
