@@ -61,7 +61,7 @@ use tidb_ast::{
     DropTableStmt, IndexConstraintDefinition, IndexConstraintKind, RenameTableStmt, Stmt,
 };
 use tidb_datatype::new_collation_enabled;
-use tidb_datatype::{FieldTypeCode, FieldTypeFlags};
+use tidb_datatype::{FieldType, FieldTypeCode, FieldTypeFlags};
 use tidb_meta::{key, value};
 use tidb_metadef::MAX_USER_GLOBAL_ID;
 use tidb_model::action_type::ActionType;
@@ -2041,56 +2041,24 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 &context.0,
             )
             .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
-            let refuse = |what: &str| {
-                DdlPlanError::Encode(format!(
-                    "Unsupported modify column: {what} needs a data reorganization this \
-                     node does not run"
-                ))
-            };
-            // Go `noReorgDataStrict`, the same-type arm.
-            if built.field_type.code() != old.field_type.code() {
-                return Err(refuse("changing the column type"));
-            }
-            let old_unsigned = old.field_type.has_flag(FieldTypeFlags::UNSIGNED);
-            let new_unsigned = built.field_type.has_flag(FieldTypeFlags::UNSIGNED);
-            if old_unsigned != new_unsigned {
-                return Err(refuse("toggling the sign"));
-            }
-            match built.field_type.code() {
-                FieldTypeCode::NewDecimal => {
-                    if built.field_type.flen() != old.field_type.flen()
-                        || built.field_type.decimal() != old.field_type.decimal()
-                    {
-                        return Err(refuse("reshaping a decimal"));
-                    }
-                }
-                FieldTypeCode::Enum | FieldTypeCode::Set => {
-                    return Err(refuse("changing enum or set elements"));
-                }
-                FieldTypeCode::Tiny
-                | FieldTypeCode::Short
-                | FieldTypeCode::Int24
-                | FieldTypeCode::Long
-                | FieldTypeCode::LongLong => {
-                    // Integer display width is metadata; the sign check above
-                    // is the whole rule.
-                }
-                _ => {
-                    if built.field_type.flen() > 0
-                        && (built.field_type.flen() < old.field_type.flen()
-                            || built.field_type.decimal() < old.field_type.decimal())
-                    {
-                        return Err(refuse("narrowing the column"));
-                    }
-                    if built.field_type.charset() != old.field_type.charset() {
-                        return Err(refuse("moving the charset"));
-                    }
-                }
+            // Go `dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs(reason)`
+            // renders exactly "Unsupported modify column: <reason>", and the
+            // reason strings below are Go's own.
+            let refuse =
+                |what: &str| DdlPlanError::Encode(format!("Unsupported modify column: {what}"));
+            // Go `types.CheckModifyTypeCompatible`: the change is either
+            // free (metadata only) or needs a data reorganization. This node
+            // runs no reorganization, so a reorg answer is refused, carrying
+            // Go's own reason.
+            if let Some(reason) = modify_type_reorg_reason(&old.field_type, &built.field_type) {
+                return Err(refuse(&reason));
             }
             let old_not_null = old.field_type.has_flag(FieldTypeFlags::NOT_NULL);
             let new_not_null = built.field_type.has_flag(FieldTypeFlags::NOT_NULL);
             if old_not_null != new_not_null {
-                return Err(refuse("changing nullability"));
+                return Err(refuse(
+                    "changing nullability needs a data reorganization this node does not run",
+                ));
             }
             let mut info = stored.clone_like_go();
             {
@@ -2529,6 +2497,98 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         created_id,
         backfill,
     })))
+}
+
+/// Go `types.needReorgToChange` (`field_type.go:1535`): `None` when the new
+/// type can replace the old as pure metadata, otherwise Go's own reason for
+/// why the stored rows must be rewritten.
+///
+/// The integer arm is the load-bearing one: Go compares the types' DEFAULT
+/// display widths, not the declared ones, so `INT` -> `BIGINT` is a widening
+/// that costs nothing while `BIGINT` -> `INT` is a narrowing that does.
+fn need_reorg_to_change(old: &FieldType, new: &FieldType) -> Option<String> {
+    let (mut old_flen, mut new_flen) = (old.flen(), new.flen());
+    if new.code().is_integer_type() && old.code().is_integer_type() {
+        old_flen = i64::from(old.code().default_field_length_and_decimal().0);
+        new_flen = i64::from(new.code().default_field_length_and_decimal().0);
+    }
+    if old.code().converts_between_char_and_varchar(new.code()) {
+        return Some("conversion between char and varchar string".to_owned());
+    }
+    if new_flen > 0 && new_flen != old_flen {
+        if new_flen < old_flen {
+            return Some(format!("length {new_flen} is less than origin {old_flen}"));
+        }
+        // Go: a binary column pads with \x00, so any length change rewrites.
+        let is_binary = |field: &FieldType| {
+            field.code() == FieldTypeCode::String && field.collation_name() == "binary"
+        };
+        if is_binary(old) && is_binary(new) {
+            return Some("can't change binary types of different length".to_owned());
+        }
+    }
+    if new.decimal() > 0 && new.decimal() < old.decimal() {
+        return Some(format!(
+            "decimal {} is less than origin {}",
+            new.decimal(),
+            old.decimal()
+        ));
+    }
+    if old.has_flag(FieldTypeFlags::UNSIGNED) != new.has_flag(FieldTypeFlags::UNSIGNED) {
+        return Some("can't change unsigned integer to signed or vice versa".to_owned());
+    }
+    None
+}
+
+/// Go `types.CheckModifyTypeCompatible` (`field_type.go:1476`), answering
+/// only what this node needs: `None` when the modification is metadata-only,
+/// otherwise the reason it cannot be.
+///
+/// Go's `checkTypeChangeSupported` list — the conversions it refuses OUTRIGHT
+/// rather than reorganizing — is folded into the same answer here, because
+/// this node refuses both classes with the same message; the reason text
+/// distinguishes them.
+fn modify_type_reorg_reason(old: &FieldType, new: &FieldType) -> Option<String> {
+    if old.code() == new.code() {
+        return match old.code() {
+            // Go compares the element lists; this node has no element list on
+            // a stored column to compare, so any enum/set modify is refused.
+            FieldTypeCode::Enum | FieldTypeCode::Set => {
+                Some("changing enum or set elements".to_owned())
+            }
+            // Go: a decimal must match in flen, decimal AND sign exactly.
+            FieldTypeCode::NewDecimal => {
+                if new.flen() != old.flen()
+                    || new.decimal() != old.decimal()
+                    || old.has_flag(FieldTypeFlags::UNSIGNED)
+                        != new.has_flag(FieldTypeFlags::UNSIGNED)
+                {
+                    Some(format!(
+                        "decimal change from decimal({}, {}) to decimal({}, {})",
+                        old.flen(),
+                        old.decimal(),
+                        new.flen(),
+                        new.decimal()
+                    ))
+                } else {
+                    need_reorg_to_change(old, new)
+                }
+            }
+            _ => need_reorg_to_change(old, new),
+        };
+    }
+    // Go's different-type arm: only string->string and integer->integer can
+    // ever be free, and then only when nothing narrows.
+    let string_to_string = old.code().is_string() && new.code().is_string();
+    let integer_to_integer = old.code().is_integer_type() && new.code().is_integer_type();
+    if string_to_string || integer_to_integer {
+        return need_reorg_to_change(old, new);
+    }
+    Some(format!(
+        "type {:?} not match origin {:?}",
+        new.code(),
+        old.code()
+    ))
 }
 
 fn already(detail: String) -> DdlPlan {

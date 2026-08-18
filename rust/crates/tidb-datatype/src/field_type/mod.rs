@@ -453,6 +453,52 @@ impl FieldTypeCode {
             || self.is_type_varchar()
             || self.is_type_unspecified()
     }
+
+    /// Go `mysql.IsIntegerType` (`parser/mysql/util.go:52`).
+    pub const fn is_integer_type(self) -> bool {
+        matches!(
+            self,
+            Self::Tiny | Self::Short | Self::Int24 | Self::Long | Self::LongLong
+        )
+    }
+
+    /// Go `mysql.GetDefaultFieldLengthAndDecimal`
+    /// (`parser/mysql/util.go:65`), whose table this reproduces entry for
+    /// entry; an unlisted type is Go's `(-1, -1)`.
+    pub const fn default_field_length_and_decimal(self) -> (i32, i32) {
+        match self {
+            Self::Bit => (1, 0),
+            Self::Tiny => (4, 0),
+            Self::Short => (6, 0),
+            Self::Int24 => (9, 0),
+            Self::Long => (11, 0),
+            Self::LongLong => (20, 0),
+            Self::Double => (22, -1),
+            Self::Float => (12, -1),
+            Self::NewDecimal | Self::Duration | Self::Date => (10, 0),
+            Self::Timestamp | Self::Datetime => (19, 0),
+            Self::Year => (4, 0),
+            Self::String => (1, 0),
+            Self::Varchar | Self::VarString => (5, 0),
+            Self::TinyBlob => (255, 0),
+            Self::Blob => (65535, 0),
+            Self::MediumBlob => (16_777_215, 0),
+            Self::LongBlob | Self::Json => (4_294_967_295_u32 as i32, 0),
+            Self::Null => (0, 0),
+            Self::Set | Self::Enum => (-1, 0),
+            _ => (-1, -1),
+        }
+    }
+
+    /// Go `types.ConvertBetweenCharAndVarchar` (`field_type.go:1609`). The
+    /// `char -> varchar` half is gated on new collations, which this port
+    /// runs enabled (the bootstrap freezes
+    /// `new_collations_enabled_on_first_bootstrap` true), so the gate is a
+    /// constant here and named rather than threaded.
+    pub const fn converts_between_char_and_varchar(self, to: Self) -> bool {
+        (self.is_type_varchar() && matches!(to, Self::String))
+            || (matches!(self, Self::String) && to.is_type_varchar())
+    }
 }
 
 /// The source-backed `FieldType` metadata required to choose binary versus

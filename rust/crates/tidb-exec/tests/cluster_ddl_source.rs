@@ -2113,3 +2113,101 @@ fn a_column_and_index_bundle_folds_and_backfills_together() {
     .to_string();
     assert!(error.contains("at most one index change"), "{error}");
 }
+
+/// Go `types.CheckModifyTypeCompatible` + `needReorgToChange`
+/// (`pkg/types/field_type.go:1476,1535`). Upstream coverage of this decision
+/// is testkit-bound — `pkg/ddl/tests/serial/serial_test.go:1261` drives it
+/// through `alter table`, and its comment records the exact contract these
+/// cases pin: `b int` -> `bigint` succeeds while `a bigint` -> `int` fails
+/// with "length 11 is less than origin 20".
+#[test]
+fn a_modify_column_reorganizes_exactly_where_go_says_it_must() {
+    fn refuse(store: &mut MetaStore, sql: &str, start_ts: u64) -> String {
+        plan_ddl(store, &statement(sql), start_ts)
+            .expect_err("a reorganizing modify must be refused")
+            .to_string()
+    }
+
+    let mut store = bootstrapped();
+    let create = plan(
+        &mut store,
+        "CREATE TABLE widen (id BIGINT PRIMARY KEY, small INT, big BIGINT, \
+         name VARCHAR(10), money DECIMAL(10,2))",
+        200,
+    );
+    apply(&mut store, &create);
+
+    // Integer widening is metadata only: Go compares the types' DEFAULT
+    // display widths, so INT(11) -> BIGINT(20) grows and costs nothing.
+    let widened = plan(
+        &mut store,
+        "ALTER TABLE widen MODIFY COLUMN small BIGINT",
+        201,
+    );
+    assert!(!widened.mutations.is_empty(), "the widening is planned");
+
+    // The reverse narrows, and carries Go's own reason verbatim.
+    let narrowed = refuse(&mut store, "ALTER TABLE widen MODIFY COLUMN big INT", 202);
+    assert!(
+        narrowed.contains("length 11 is less than origin 20"),
+        "{narrowed}"
+    );
+
+    // A string widening is free; a shortening is not.
+    let longer = plan(
+        &mut store,
+        "ALTER TABLE widen MODIFY COLUMN name VARCHAR(40)",
+        203,
+    );
+    assert!(!longer.mutations.is_empty(), "the longer varchar is planned");
+    let shorter = refuse(
+        &mut store,
+        "ALTER TABLE widen MODIFY COLUMN name VARCHAR(4)",
+        204,
+    );
+    assert!(
+        shorter.contains("length 4 is less than origin 10"),
+        "{shorter}"
+    );
+
+    // Crossing families is never free.
+    let crossed = refuse(
+        &mut store,
+        "ALTER TABLE widen MODIFY COLUMN small DATETIME",
+        205,
+    );
+    assert!(crossed.contains("not match origin"), "{crossed}");
+
+    // Go: char <-> varchar always reorganizes, in either direction.
+    let recast = refuse(
+        &mut store,
+        "ALTER TABLE widen MODIFY COLUMN name CHAR(40)",
+        206,
+    );
+    assert!(
+        recast.contains("conversion between char and varchar string"),
+        "{recast}"
+    );
+
+    // Sign is a rewrite of every stored row.
+    let resigned = refuse(
+        &mut store,
+        "ALTER TABLE widen MODIFY COLUMN small INT UNSIGNED",
+        207,
+    );
+    assert!(
+        resigned.contains("can't change unsigned integer to signed or vice versa"),
+        "{resigned}"
+    );
+
+    // A decimal must match exactly in flen, scale and sign.
+    let rescaled = refuse(
+        &mut store,
+        "ALTER TABLE widen MODIFY COLUMN money DECIMAL(10,3)",
+        208,
+    );
+    assert!(
+        rescaled.contains("decimal change from decimal(10, 2) to decimal(10, 3)"),
+        "{rescaled}"
+    );
+}
