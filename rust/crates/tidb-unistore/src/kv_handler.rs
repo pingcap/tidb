@@ -203,6 +203,7 @@ impl KvHandler {
             lock_ttl: req.lock_ttl,
             for_update_ts: req.for_update_ts,
             min_commit_ts: req.min_commit_ts,
+            max_commit_ts: req.max_commit_ts,
             use_async_commit: req.use_async_commit,
             try_one_pc: req.try_one_pc,
             secondaries: req.secondaries.clone(),

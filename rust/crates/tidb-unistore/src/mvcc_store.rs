@@ -190,6 +190,9 @@ pub struct PrewriteReq {
     pub for_update_ts: u64,
     /// `MinCommitTs`.
     pub min_commit_ts: u64,
+    /// `MaxCommitTs`: an async/1PC `minCommitTS` past this falls back to
+    /// sync commit.
+    pub max_commit_ts: u64,
     /// `UseAsyncCommit` — refused by name.
     pub use_async_commit: bool,
     /// `TryOnePc` — refused by name.
@@ -217,6 +220,10 @@ pub struct MvccStore {
     pub lock_store: MemStore,
     /// The committed-data engine standing in for badger.
     pub engine: MemEngine,
+    /// Go `pdClient`, narrowed to the one call the store makes — `GetTS`
+    /// for the async-commit / 1PC `minCommitTS`. Absent, those protocols
+    /// refuse by name, exactly as before a PD is wired.
+    pub pd: Option<std::sync::Arc<crate::tso::Tso>>,
 }
 
 impl Default for MvccStore {
@@ -233,6 +240,17 @@ impl MvccStore {
         Self {
             lock_store: MemStore::new(1 << 20),
             engine: MemEngine::default(),
+            pd: None,
+        }
+    }
+
+    /// A store with Go's `pdClient` seam filled: async-commit prewrites can
+    /// draw their `minCommitTS` from this oracle.
+    #[must_use]
+    pub fn with_pd(pd: std::sync::Arc<crate::tso::Tso>) -> Self {
+        Self {
+            pd: Some(pd),
+            ..Self::new()
         }
     }
 
@@ -244,12 +262,39 @@ impl MvccStore {
         if req.for_update_ts > 0 {
             return self.prewrite_pessimistic(&mutations, req);
         }
-        if req.use_async_commit || req.try_one_pc {
+        self.prewrite_optimistic(&mutations, req)
+    }
+
+    /// Go `prewriteMutations`' head (`mvcc.go:935-956`): async commit and
+    /// 1PC draw a `minCommitTS` from PD after the keys are decided — one
+    /// past `MaxCommitTs` falls back to sync commit; otherwise it raises
+    /// the request's `MinCommitTs`. 1PC's commit arm (`tryOnePC`) is a
+    /// named narrowing: it needs the dbWriter's atomic commit.
+    fn effective_prewrite_req(&self, req: &PrewriteReq) -> Result<PrewriteReq, KvError> {
+        if !(req.use_async_commit || req.try_one_pc) {
+            return Ok(req.clone());
+        }
+        let Some(pd) = &self.pd else {
             return Err(KvError::Unported(
                 "async commit / 1PC need pdClient.GetTS (prewriteMutations, mvcc.go)",
             ));
+        };
+        let mut req = req.clone();
+        let (physical, logical) = pd.get_ts();
+        let min_commit_ts = crate::tso::compose_ts(physical, logical);
+        if req.max_commit_ts > 0 && min_commit_ts > req.max_commit_ts {
+            req.use_async_commit = false;
+            req.try_one_pc = false;
         }
-        self.prewrite_optimistic(&mutations, req)
+        if req.use_async_commit && min_commit_ts > req.min_commit_ts {
+            req.min_commit_ts = min_commit_ts;
+        }
+        if req.try_one_pc {
+            return Err(KvError::Unported(
+                "1PC needs tryOnePC's atomic dbWriter commit (mvcc.go:1073)",
+            ));
+        }
+        Ok(req)
     }
 
     /// Go `prewriteOptimistic` (`mvcc.go:791`).
@@ -310,11 +355,12 @@ impl MvccStore {
             }
         }
         // Stage 3 — Go `prewriteMutations`: build each lock, batch, write.
+        let req = self.effective_prewrite_req(req)?;
         for (mutation, item) in mutations.iter().zip(&items) {
             if mutation.op == KvrpcOp::CheckNotExists as i32 {
                 continue;
             }
-            let lock = build_prewrite_lock(mutation, item.as_ref(), req)?;
+            let lock = build_prewrite_lock(mutation, item.as_ref(), &req)?;
             // Go `writeBatch.Prewrite` (`write.go:252`).
             self.lock_store_put(&mutation.key, &lock.marshal_binary());
         }
@@ -1530,7 +1576,7 @@ impl MvccStore {
                     .map(|(value, meta)| (value.to_vec(), meta.clone()))
             })
             .collect();
-        // Go `prewriteMutations`: the async/1PC arms were refused at entry.
+        let req = &self.effective_prewrite_req(req)?;
         for (mutation, item) in mutations.iter().zip(&items) {
             let pessimistic_ttl = {
                 let buf = self.lock_bytes(&mutation.key);
@@ -3913,5 +3959,77 @@ mod tests {
         // Reverse scans surface the same conflicts.
         assert!(get_conflict_err(&scan(&store, 3, true)).is_some());
         assert!(get_conflict_err(&scan(&store, 15, true)).is_some());
+    }
+
+    // Go `MustPrewriteOptimisticAsyncCommit` (`mvcc_test.go:127`).
+    #[allow(clippy::too_many_arguments)]
+    fn must_prewrite_optimistic_async_commit(
+        store: &mut MvccStore,
+        pk: &[u8],
+        key: &[u8],
+        value: &[u8],
+        start_ts: u64,
+        ttl: u64,
+        min_commit_ts: u64,
+        secondaries: &[&[u8]],
+    ) {
+        store
+            .prewrite(&PrewriteReq {
+                mutations: vec![put(key, value)],
+                primary_lock: pk.to_vec(),
+                start_version: start_ts,
+                lock_ttl: ttl,
+                min_commit_ts,
+                use_async_commit: true,
+                secondaries: secondaries.iter().map(|s| s.to_vec()).collect(),
+                ..PrewriteReq::default()
+            })
+            .expect("the async-commit prewrite lands");
+    }
+
+    // Go `MVCCStore.getLock`, the test's read of a standing lock.
+    fn get_lock(store: &MvccStore, key: &[u8]) -> Lock {
+        let buf = store.lock_bytes(key);
+        assert!(!buf.is_empty(), "a lock must stand at {key:?}");
+        decode_lock(&buf)
+    }
+
+    /// Go `TestAsyncCommitPrewrite` (`mvcc_test.go:1524`): an async-commit
+    /// prewrite records the secondaries on the PRIMARY lock only, marks
+    /// every lock `UseAsyncCommit`, and stamps each with a PD-drawn
+    /// `MinCommitTS` greater than zero.
+    #[test]
+    fn test_async_commit_prewrite() {
+        let mut store = MvccStore::with_pd(std::sync::Arc::new(crate::tso::Tso::new()));
+        let (pk, pk_val) = (b"tpk".as_slice(), b"tpkVal".as_slice());
+        let (sec_key1, sec_val1) = (b"tSecKey1".as_slice(), b"secVal1".as_slice());
+        let (sec_key2, sec_val2) = (b"tSecKey2".as_slice(), b"secVal2".as_slice());
+
+        must_prewrite_optimistic_async_commit(
+            &mut store,
+            pk,
+            pk,
+            pk_val,
+            1,
+            100,
+            0,
+            &[sec_key1, sec_key2],
+        );
+        must_prewrite_optimistic_async_commit(&mut store, pk, sec_key1, sec_val1, 1, 100, 0, &[]);
+        must_prewrite_optimistic_async_commit(&mut store, pk, sec_key2, sec_val2, 1, 100, 0, &[]);
+
+        let pk_lock = get_lock(&store, pk);
+        assert_eq!(pk_lock.hdr.secondary_num, 2);
+        assert_eq!(pk_lock.secondaries[0], sec_key1);
+        assert_eq!(pk_lock.secondaries[1], sec_key2);
+        assert!(pk_lock.hdr.use_async_commit);
+        assert!(pk_lock.hdr.min_commit_ts > 0);
+
+        let sec_lock = get_lock(&store, sec_key2);
+        assert_eq!(sec_lock.hdr.secondary_num, 0);
+        assert_eq!(sec_lock.secondaries.len(), 0);
+        assert!(sec_lock.hdr.use_async_commit);
+        assert!(sec_lock.hdr.min_commit_ts > 0);
+        assert_eq!(sec_lock.value, sec_val2);
     }
 }
