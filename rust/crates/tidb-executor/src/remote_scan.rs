@@ -517,6 +517,10 @@ mod tests {
         /// the value assertions stay green and only the receipt moves, which
         /// is precisely why value assertions alone cannot see a lost pushdown.
         lower_predicates: std::sync::atomic::AtomicBool,
+        /// When set, the backend accepts the request and then refuses on the
+        /// first read, as the embedded coprocessor does for a scalar
+        /// signature its evaluator has not grown yet.
+        refuse_on_read: std::sync::atomic::AtomicBool,
         /// Every `DAGRequest.flags` value this backend was told, in request
         /// order. A region acts on these bits; a fake that ignored them would
         /// let the literal `0` back in unnoticed.
@@ -581,6 +585,13 @@ mod tests {
                     })
                     .collect();
                 table.set_common_handle_offsets(offsets);
+            }
+            if self.refuse_on_read.load(Ordering::Relaxed) {
+                return Ok(Box::new(RefusingStream {
+                    message: "coprocessor other error: scalar signature EqString \
+                              waits on its distsql_builtin.go course"
+                        .to_owned(),
+                }));
             }
             // Every requested column that is one of the table's own; the
             // appended handle column is not, and is filled from the key.
@@ -711,6 +722,26 @@ mod tests {
         }
     }
 
+    /// A backend that accepts the request and then REFUSES on the first
+    /// read, which is how the embedded coprocessor reports a scalar
+    /// signature it cannot evaluate: nothing is evaluated until a batch is
+    /// asked for.
+    struct RefusingStream {
+        message: String,
+    }
+
+    impl PushdownRowStream for RefusingStream {
+        fn next_row(&mut self) -> Result<Option<Vec<Datum>>, StorageError> {
+            Err(StorageError::Backend(self.message.clone()))
+        }
+
+        fn rows_returned(&self) -> u64 {
+            0
+        }
+
+        fn close(&mut self) {}
+    }
+
     struct FakeStream {
         rows: std::vec::IntoIter<Vec<Datum>>,
         returned: u64,
@@ -806,6 +837,7 @@ mod tests {
             scanned: Arc::clone(&scanned),
             pk_handle_offset,
             lower_predicates: std::sync::atomic::AtomicBool::new(true),
+            refuse_on_read: std::sync::atomic::AtomicBool::new(false),
             requested_flags: Arc::default(),
             region_warning: Mutex::new(None),
         });
@@ -1440,6 +1472,38 @@ mod tests {
         assert_eq!(
             neutered_wire, 100,
             "but the receipt sees the relation cross the network"
+        );
+    }
+
+    /// A backend that REFUSES the pushed-down shape must not fail the
+    /// query. `PushdownScannerError::Unsupported` states the contract --
+    /// "never a wrong answer, only a slower one" -- and the embedded
+    /// coprocessor exercises it for real by refusing a scalar signature its
+    /// evaluator has not grown yet (a string comparison, until
+    /// distsql_builtin lands). The refusal reaches the caller on the FIRST
+    /// READ rather than at open, because nothing is evaluated until a batch
+    /// is asked for, so the scan falls back to the byte-level cursor there.
+    #[test]
+    fn a_refused_pushdown_falls_back_to_the_local_scan() {
+        let fixture = aggregate_fixture();
+        let scanner = Arc::clone(&fixture.scanner);
+        let catalog = catalog_of(fixture.table);
+        let ctx = crate::StmtContext::for_query();
+        let sql = "SELECT COUNT(*), COUNT(b), SUM(b) FROM t WHERE a > 97";
+
+        let (pushed, _) = run_counting(sql, &catalog, &ctx);
+
+        scanner
+            .refuse_on_read
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let (refused, refused_wire) = run_counting(sql, &catalog, &ctx);
+        assert_eq!(
+            refused, pushed,
+            "a refused pushdown answers exactly what the accepted one did"
+        );
+        assert_eq!(
+            refused_wire, 0,
+            "and nothing crossed the wire, because the local cursor served it"
         );
     }
 

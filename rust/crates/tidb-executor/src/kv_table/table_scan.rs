@@ -1398,8 +1398,71 @@ impl TableScanExec {
         self.remote.as_ref().map(RemoteRowCursor::rows_returned)
     }
 
+    /// Opens the byte-level cursor over this scan's projection and ranges.
+    /// The initial open and the fall-back from a refused pushdown share
+    /// it, so the two paths cannot drift apart.
+    fn open_local_cursor(&mut self) -> Result<(), ExecError> {
+        // The pruned column set is the cursor's projection, so an
+        // unreferenced column is never decoded on the streaming path either.
+        let projection: Option<&[usize]> = if self.keep.len() == self.table.columns.len() {
+            None
+        } else {
+            Some(&self.keep)
+        };
+        let handle_ranges = self.handle_ranges.clone();
+        self.cursor = Some(
+            self.table
+                .row_cursor_projected_with_context(
+                    projection,
+                    handle_ranges.as_deref(),
+                    &self.decode_context,
+                )
+                .map_err(|error| {
+                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+                })?,
+        );
+        Ok(())
+    }
     /// The next row of whichever cursor is open, remote or local.
+    ///
+    /// A backend may REFUSE a request shape it cannot evaluate -- the
+    /// embedded coprocessor answers `other_error` for a scalar signature its
+    /// evaluator has not grown yet -- and that refusal reaches the caller as
+    /// the first read rather than at open, because nothing is evaluated
+    /// until a batch is asked for. `PushdownScannerError::Unsupported` names
+    /// the contract for exactly this case: "never a wrong answer, only a
+    /// slower one". So a remote that fails before yielding ANY row is
+    /// abandoned for the byte-level cursor, which evaluates every conjunct
+    /// locally. A remote that fails after yielding rows cannot be retried
+    /// this way -- those rows are already emitted -- so it stays an error.
     fn next_source_row(&mut self) -> Result<Option<Vec<Datum>>, ExecError> {
+        if let Some(remote) = self.remote.as_mut() {
+            match remote.next_row() {
+                Ok(Some(row)) => return Ok(Some(row)),
+                Ok(None) => {
+                    self.remote = None;
+                    self.cursor = None;
+                    return Ok(None);
+                }
+                Err(error) if remote.rows_returned() == 0 => {
+                    // Nothing crossed the wire, so nothing is lost by
+                    // scanning locally instead.
+                    let refused = format!("{error:?}");
+                    self.remote = None;
+                    self.open_local_cursor().map_err(|open| {
+                        ExecError::unsupported(format!(
+                            "the backend refused the pushed-down scan ({refused}) \
+                             and the local scan could not open: {open:?}"
+                        ))
+                    })?;
+                }
+                Err(error) => {
+                    return Err(ExecError::unsupported(format!(
+                        "table bytes failed to decode: {error:?}"
+                    )))
+                }
+            }
+        }
         let next = match (self.remote.as_mut(), self.cursor.as_mut()) {
             (Some(remote), _) => remote.next_row(),
             (None, Some(cursor)) => cursor
@@ -1407,7 +1470,9 @@ impl TableScanExec {
                 .map(|row| row.map(|(_, projected)| projected)),
             (None, None) => return Ok(None),
         }
-        .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+        .map_err(|error| {
+            ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+        })?;
         match next {
             Some(row) => Ok(Some(row)),
             None => {
@@ -1742,7 +1807,9 @@ impl Executor for TableScanExec {
                     self.decode_context.zone(),
                     &self.statement,
                 )
-                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+                .map_err(|error| {
+                    ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+                })?;
             if self.partial_remote.is_some() {
                 self.remote = None;
                 return Ok(());
@@ -1766,28 +1833,13 @@ impl Executor for TableScanExec {
                 &self.decode_context,
                 &self.statement,
             )
-            .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?;
+            .map_err(|error| {
+                ExecError::unsupported(format!("table bytes failed to decode: {error:?}"))
+            })?;
         if self.remote.is_some() {
             return Ok(());
         }
-        // The pruned column set is the cursor's projection, so an
-        // unreferenced column is never decoded on the streaming path either.
-        let projection: Option<&[usize]> = if self.keep.len() == self.table.columns.len() {
-            None
-        } else {
-            Some(&self.keep)
-        };
-        let handle_ranges = self.handle_ranges.clone();
-        self.cursor = Some(
-            self.table
-                .row_cursor_projected_with_context(
-                    projection,
-                    handle_ranges.as_deref(),
-                    &self.decode_context,
-                )
-                .map_err(|_| ExecError::unsupported("table bytes failed to decode"))?,
-        );
-        Ok(())
+        self.open_local_cursor()
     }
 
     /// Pulls rows from the open cursor until the chunk is full, the pushed
