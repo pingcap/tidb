@@ -30,3 +30,8 @@
 # name the culprit.
 [profile.default]
 leak-timeout = "2s"
+
+# Matches `.cargo/config.toml`'s `jobs = 12`: leaving four of the sixteen
+# cores free keeps the machine responsive during a run, and the lighter spawn
+# also reduces the pipe-close contention the note above measures.
+test-threads = 12

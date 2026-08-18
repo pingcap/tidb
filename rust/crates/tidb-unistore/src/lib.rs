@@ -34,6 +34,7 @@
 //! - [`arena`] <- `arena.go`
 //! - [`iterator`] <- `iterator.go`
 //! - [`load_dump`] <- `load_dump.go`
+//! - [`detector`] <- `tikv/detector.go`
 //! - [`lockwaiter`] <- `util/lockwaiter/lockwaiter.go`
 //!
 //! # The one structural narrowing: no `unsafe`
@@ -104,6 +105,7 @@
 pub mod arena;
 pub mod client;
 pub mod cophandler;
+pub mod detector;
 pub mod iterator;
 pub mod kv_handler;
 pub mod load_dump;

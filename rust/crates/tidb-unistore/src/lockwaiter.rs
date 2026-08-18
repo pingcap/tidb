@@ -94,9 +94,10 @@ impl Default for Config {
     }
 }
 
-/// `boundary: kvproto` — the scalars of `deadlock.WaitForEntry` this package
-/// reads.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// `boundary: kvproto` — `deadlock.WaitForEntry`, whole. This package reads
+/// only the three scalars; [`crate::detector`] fills the diagnostic pair
+/// as well, and both share this one type rather than keeping two shapes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WaitForEntry {
     /// The transaction that is blocked.
     pub txn: u64,
@@ -104,11 +105,15 @@ pub struct WaitForEntry {
     pub wait_for_txn: u64,
     /// The hash of the locked key.
     pub key_hash: u64,
+    /// `Key`, the locked key itself — diagnostics only.
+    pub key: Vec<u8>,
+    /// `ResourceGroupTag` — diagnostics only.
+    pub resource_group_tag: Vec<u8>,
 }
 
 /// `boundary: kvproto` — the scalars of `deadlock.DeadlockResponse` this
 /// package reads.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DeadlockResponse {
     /// The wait edge that closed the cycle.
     pub entry: WaitForEntry,
@@ -135,7 +140,7 @@ pub const WAKE_UP_THIS_WAITER: WakeupWaitTime = WakeupWaitTime(0);
 pub const WAKEUP_DELAY_TIMEOUT: WakeupWaitTime = WakeupWaitTime(1);
 
 /// Go `WaitResult`: what a [`Waiter::wait`] call resolved to.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WaitResult {
     /// Set when the deadlock detector, not the lock holder, ended the wait.
     pub deadlock_resp: Option<DeadlockResponse>,
@@ -433,7 +438,7 @@ impl Manager {
             // Go's plain `w.ch <- ...`, blocking when the buffer is full. The
             // send cannot fail: `w` holds its own receiver alive.
             let _ = w.ch_tx.send(WaitResult {
-                deadlock_resp: Some(*resp),
+                deadlock_resp: Some(resp.clone()),
                 wakeup_sleep_time: WAKE_UP_THIS_WAITER,
                 commit_ts: 0,
             });
@@ -507,6 +512,7 @@ mod tests {
                 txn: 3,
                 wait_for_txn: 4,
                 key_hash,
+                ..WaitForEntry::default()
             },
             deadlock_key_hash: 30192,
         };

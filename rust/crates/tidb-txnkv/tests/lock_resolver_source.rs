@@ -1555,11 +1555,29 @@ fn the_snapshot_read_path_stamps_its_lock_sets_on_every_send() {
         2
     );
     assert!(!snapshot.contains("route.context(), call)"));
-    for command in ["begin_get", "begin_scan"] {
-        let body = snapshot
-            .split(&format!("let response = self.{command}("))
-            .nth(1)
-            .expect("read command call");
-        assert!(body.starts_with("&route, &context, &request, call)"));
+    // Every read-command call must pass the FRESHLY routed context, never a
+    // context read back off the route. `begin_get` is a free function taking
+    // the runtime first, `begin_scan` a method, so each call site is checked
+    // for the same trailing argument list rather than one fixed prefix.
+    for command in ["begin_get(", "begin_scan("] {
+        // `let response = ` selects the CALL sites; the `fn` definitions
+        // spell the same name and are not argument lists.
+        let sites: Vec<&str> = snapshot
+            .split(&format!("let response = {command}"))
+            .skip(1)
+            .chain(
+                snapshot
+                    .split(&format!("let response = self.{command}"))
+                    .skip(1),
+            )
+            .collect();
+        assert!(!sites.is_empty(), "no {command} call site");
+        for site in sites {
+            let arguments = site.split(')').next().expect("an argument list");
+            assert!(
+                arguments.ends_with("&route, &context, &request, call"),
+                "{command} must take the freshly routed context: {arguments}"
+            );
+        }
     }
 }
