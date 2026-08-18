@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Go pkg/util/schemacmp: schema comparison and joining over a lattice model."
 
+autotests = false
+build = "../../scripts/aggregate-tests.rs"
+
 [lints]
 workspace = true
 
@@ -20,3 +23,7 @@ tidb-mysql = { path = "../tidb-mysql" }
 regex.workspace = true
 tidb-exec = { path = "../tidb-exec" }
 tidb-parser = { path = "../tidb-parser" }
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

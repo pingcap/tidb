@@ -19,6 +19,7 @@
 //! response channel; both spellings survive verbatim on
 //! `std::sync::mpsc::sync_channel`.
 
+#[path = "common/mod.rs"]
 mod common;
 
 use std::collections::VecDeque;

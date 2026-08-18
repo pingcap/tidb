@@ -19,6 +19,7 @@
 //! threads. Every test in this file therefore takes [`SERIAL`] first, which
 //! restores Go's one-at-a-time guarantee without a `--test-threads=1` flag.
 
+#[path = "common/mod.rs"]
 mod common;
 
 use std::collections::HashSet;

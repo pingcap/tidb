@@ -186,8 +186,12 @@ fn test_must_nil_runs_cleanup_before_terminating() {
         std::process::id(),
         std::thread::current().name().unwrap_or("test")
     ));
+    // A substring filter, not `--exact`: inside the aggregated `all` harness
+    // the helper's test path is `terror_source::must_nil_helper`, while
+    // standalone it is `must_nil_helper` — the substring selects it in both
+    // layouts and matches no other test.
     let output = Command::new(std::env::current_exe().expect("test executable must exist"))
-        .args(["--exact", "must_nil_helper", "--nocapture"])
+        .args(["must_nil_helper", "--nocapture"])
         .env("TIDB_TERROR_MUST_NIL_MARKER", &marker)
         .output()
         .expect("MustNil helper must run");

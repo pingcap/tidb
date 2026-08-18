@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Session lifecycle and state authority for the TiDB Rust rewrite."
 
+autotests = false
+build = "../../scripts/aggregate-tests.rs"
+
 [dependencies]
 tidb-ast = { path = "../tidb-ast" }
 chrono = { workspace = true }
@@ -31,3 +34,7 @@ serde_json = { workspace = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

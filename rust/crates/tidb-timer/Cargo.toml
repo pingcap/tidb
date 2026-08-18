@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Go pkg/timer/api: timer records, schedule policies, store and client."
 
+autotests = false
+build = "../../scripts/aggregate-tests.rs"
+
 [lints]
 workspace = true
 
@@ -17,3 +20,7 @@ getrandom.workspace = true
 tidb-log = { path = "../tidb-log" }
 tidb-parser = { path = "../tidb-parser" }
 tidb-util = { path = "../tidb-util" }
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

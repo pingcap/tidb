@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "TiDB meta: the KV key/value codec for the catalog stored under the `m` namespace."
 
+autotests = false
+build = "../../scripts/aggregate-tests.rs"
+
 [features]
 default = []
 nextgen = ["tidb-config/nextgen"]
@@ -29,3 +32,7 @@ tidb-util = { path = "../tidb-util" }
 
 [dev-dependencies]
 sha2.workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"

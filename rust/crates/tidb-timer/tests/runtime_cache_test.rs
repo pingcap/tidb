@@ -14,6 +14,7 @@
 
 //! Transcreation of Go `pkg/timer/runtime/cache_test.go`.
 
+#[path = "common/mod.rs"]
 mod common;
 
 use std::sync::Arc;

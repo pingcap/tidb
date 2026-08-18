@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "TiDB executor: the wired execution engine spine (Executor trait + operators) (Rust rewrite)."
 
+autotests = false
+build = "../../scripts/aggregate-tests.rs"
+
 [dependencies]
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
@@ -39,3 +42,7 @@ sha2 = { workspace = true }
 
 [lints]
 workspace = true
+
+[[test]]
+name = "all"
+path = "tests/all.rs"
