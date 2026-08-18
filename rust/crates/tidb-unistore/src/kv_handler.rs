@@ -55,6 +55,22 @@ pub fn convert_to_key_error(err: &KvError) -> KvrpcKeyError {
             already_exist: Some(kvrpcpb::AlreadyExist { key: key.clone() }),
             ..KvrpcKeyError::default()
         },
+        KvError::AssertionFailed {
+            start_ts,
+            key,
+            assertion,
+            existing_start_ts,
+            existing_commit_ts,
+        } => KvrpcKeyError {
+            assertion_failed: Some(kvrpcpb::AssertionFailed {
+                start_ts: *start_ts,
+                key: key.clone(),
+                assertion: *assertion,
+                existing_start_ts: *existing_start_ts,
+                existing_commit_ts: *existing_commit_ts,
+            }),
+            ..KvrpcKeyError::default()
+        },
         KvError::Conflict {
             reason,
             start_ts,
@@ -185,6 +201,7 @@ impl KvHandler {
             try_one_pc: req.try_one_pc,
             secondaries: req.secondaries.clone(),
             pessimistic_actions: req.pessimistic_actions().collect(),
+            assertion_level: req.assertion_level,
             for_update_ts_constraints: req
                 .for_update_ts_constraints
                 .iter()

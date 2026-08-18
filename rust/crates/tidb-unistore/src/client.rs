@@ -420,7 +420,11 @@ mod tests {
         let call = UnaryCallContext::with_timeout(Duration::from_secs(1));
         let outcome = transaction
             .commit(
-                vec![OptimisticMutation::put_existing(key.clone(), value.clone())
+                // The store starts empty and the coordinator prewrites at
+                // `AssertionLevel_Strict`, so the first write must be an
+                // Insert (`Assertion_NotExist`) — a `put_existing` here would
+                // be refused as an assertion failure, exactly as in Go.
+                vec![OptimisticMutation::insert(key.clone(), value.clone())
                     .expect("a valid mutation")],
                 &call,
             )

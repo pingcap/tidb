@@ -1357,7 +1357,9 @@ fn assert_prepared_point_read_cursor_protocol(deprecate_eof: bool) {
     malformed.extend_from_slice(&statement_id.to_le_bytes());
     write_packet(&mut client, 0, &malformed);
     reader.set_sequence(1);
-    assert_mysql_error(&reader.read_packet().unwrap(), 1210, b"HY000");
+    // Go `handleStmtExecute`'s `len(data) < 9` gate answers the plain
+    // `mysql.ErrMalformPacket` — 1105, not a coded statement error.
+    assert_mysql_error(&reader.read_packet().unwrap(), 1105, b"HY000");
     write_packet(&mut client, 0, &fetch);
     reader.set_sequence(1);
     assert_mysql_error(&reader.read_packet().unwrap(), 1326, b"24000");
@@ -1515,7 +1517,9 @@ fn real_tcp_malformed_prepared_execute_counts_command_without_success() {
     reader.set_sequence(1);
     let error = reader.read_packet().unwrap();
     assert_eq!(error[0], 0xff);
-    assert_eq!(u16::from_le_bytes([error[1], error[2]]), 1210);
+    // Go's `len(data) < 9` malformed execute is `mysql.ErrMalformPacket`,
+    // an uncoded error the wire renders as 1105.
+    assert_eq!(u16::from_le_bytes([error[1], error[2]]), 1105);
     write_packet(&mut client, 0, &[COM_QUIT]);
 
     let report = worker.join().unwrap();

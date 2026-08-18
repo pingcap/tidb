@@ -848,8 +848,8 @@ fn mysql_client_runs_the_pipeline_end_to_end() {
     let created_view = run_query(&mut client, &mut reader, "SHOW CREATE VIEW vwire");
     assert_eq!(
         created_view[0][1],
-        "CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `vwire` (`a`, `b`) \
-         AS SELECT `a` AS `a`,`b` AS `b` FROM `test`.`t` WHERE `a`>=2",
+        "CREATE ALGORITHM=UNDEFINED DEFINER=`alice`@`%` SQL SECURITY DEFINER VIEW `vwire` \
+         (`a`, `b`) AS SELECT `a` AS `a`,`b` AS `b` FROM `test`.`t` WHERE `a`>=2",
         "{created_view:?}"
     );
     assert!(

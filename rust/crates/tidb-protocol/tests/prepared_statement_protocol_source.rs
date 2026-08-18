@@ -228,13 +228,11 @@ fn execute_decodes_one_signed_bigint_and_retains_type_reuse_representation() {
 
 #[test]
 fn execute_rejects_malformed_headers_cursor_modes_and_values() {
+    // Go `handleStmtExecute`'s `len(data) < 9` gate fires before any field
+    // is read, so a short header is the plain `mysql.ErrMalformPacket`.
     assert_eq!(
         decode_prepared_statement_execute(&[1, 0, 0], 1, None),
-        Err(PreparedStatementError::Truncated {
-            field: "statement ID",
-            required: 4,
-            available: 3,
-        })
+        Err(PreparedStatementError::MalformPacket)
     );
     assert_eq!(
         decode_prepared_statement_execute(&execute_payload(0, true, 1), 1, None),

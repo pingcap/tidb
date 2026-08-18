@@ -132,6 +132,19 @@ pub enum KvError {
         /// `Key`.
         key: Vec<u8>,
     },
+    /// `kverrors.ErrAssertionFailed`.
+    AssertionFailed {
+        /// `StartTS`.
+        start_ts: u64,
+        /// `Key`.
+        key: Vec<u8>,
+        /// `Assertion`, the `kvrpcpb.Assertion` value that failed.
+        assertion: i32,
+        /// `ExistingStartTS` — zero when the key does not exist.
+        existing_start_ts: u64,
+        /// `ExistingCommitTS` — zero when the key does not exist.
+        existing_commit_ts: u64,
+    },
     /// `kverrors.ErrAlreadyCommitted(commitTS)`.
     AlreadyCommitted(u64),
     /// `kverrors.BuildLockErr(key, lock)`: the blocking lock, kvrpcpb-shaped.
@@ -189,6 +202,11 @@ pub struct PrewriteReq {
     pub pessimistic_actions: Vec<tidb_proto::KvrpcPessimisticAction>,
     /// `ForUpdateTsConstraints`: `(index, expected_for_update_ts)` pairs.
     pub for_update_ts_constraints: Vec<(usize, u64)>,
+    /// `AssertionLevel`: any non-`Off` value makes prewrite verify each
+    /// mutation's `Assertion` against the latest committed version. Go's
+    /// unistore deliberately checks even at `Fast` level (its comment: don't
+    /// assume the store skips), so only `Off` disables.
+    pub assertion_level: i32,
 }
 
 /// Go `MVCCStore`, optimistic slice: the ported lock skiplist beside the
@@ -1519,10 +1537,14 @@ struct RollbackAction {
     delete_lock: bool,
 }
 
-/// Go `buildPrewriteLock` (`mvcc.go`). Named narrowings:
-/// `req.AssertionLevel` / `kverrors.ErrAssertionFailed` (assertion arms),
-/// and `rowcodec.IsRowKey` + `encodeFromOldRow` — the old-row-format
-/// re-encode of a row key's value, which needs the row codec.
+/// Go `buildPrewriteLock` (`mvcc.go`). Named narrowing: `rowcodec.IsRowKey`
+/// plus `encodeFromOldRow` — the old-row-format re-encode of a row key's
+/// value, which needs the row codec.
+///
+/// Assertions check BEFORE the `Op_Insert` tail, against the latest
+/// committed version. Go's unistore always reads the Write CF, so unlike
+/// TiKV it checks even at `AssertionLevel_Fast` — only `Off` disables
+/// (the `mvcc.go` comment says not to assume Fast's skip).
 ///
 /// `Op_Insert` is Go's tail: over an existing committed non-empty value it
 /// is `ErrKeyAlreadyExists`, and otherwise it BECOMES a `Put` — the lock
@@ -1532,6 +1554,32 @@ fn build_prewrite_lock(
     existing: Option<&(Vec<u8>, DbUserMeta)>,
     req: &PrewriteReq,
 ) -> Result<Lock, KvError> {
+    if req.assertion_level != tidb_proto::KvrpcAssertionLevel::Off as i32 {
+        match existing.filter(|(value, _)| !value.is_empty()) {
+            None => {
+                if mutation.assertion == tidb_proto::KvrpcAssertion::Exist as i32 {
+                    return Err(KvError::AssertionFailed {
+                        start_ts: req.start_version,
+                        key: mutation.key.clone(),
+                        assertion: mutation.assertion,
+                        existing_start_ts: 0,
+                        existing_commit_ts: 0,
+                    });
+                }
+            }
+            Some((_, meta)) => {
+                if mutation.assertion == tidb_proto::KvrpcAssertion::NotExist as i32 {
+                    return Err(KvError::AssertionFailed {
+                        start_ts: req.start_version,
+                        key: mutation.key.clone(),
+                        assertion: mutation.assertion,
+                        existing_start_ts: meta.start_ts(),
+                        existing_commit_ts: meta.commit_ts(),
+                    });
+                }
+            }
+        }
+    }
     let mut op = u8::try_from(mutation.op).expect("an op byte");
     if op == KvrpcOp::Insert as i32 as u8 {
         if let Some((value, _)) = existing {
@@ -3040,5 +3088,282 @@ mod tests {
         must_commit(&mut store, sk, 1, 2);
         must_prewrite_pessimistic(&mut store, k2, mutation(KvrpcOp::Put, k2, v2), 3, 100, 3);
         must_commit(&mut store, k2, 3, 4);
+    }
+
+    // Go `PrewriteOptimisticWithAssertion` (`mvcc_test.go:164`), narrowed to
+    // the arguments `TestAssertion` actually varies (minCommitTs 0, no async
+    // commit, no secondaries).
+    #[allow(clippy::too_many_arguments)]
+    fn prewrite_optimistic_with_assertion(
+        store: &mut MvccStore,
+        pk: &[u8],
+        key: &[u8],
+        value: &[u8],
+        start_ts: u64,
+        ttl: u64,
+        assertion: tidb_proto::KvrpcAssertion,
+        level: tidb_proto::KvrpcAssertionLevel,
+    ) -> Result<(), KvError> {
+        let mut m = mutation(KvrpcOp::Put, key, value);
+        m.assertion = assertion as i32;
+        store.prewrite(&PrewriteReq {
+            mutations: vec![m],
+            primary_lock: pk.to_vec(),
+            start_version: start_ts,
+            lock_ttl: ttl,
+            assertion_level: level as i32,
+            ..PrewriteReq::default()
+        })
+    }
+
+    // Go `PrewritePessimisticWithAssertion` (`mvcc_test.go:194`): each
+    // `isPessimisticLock` flag becomes DO_ or SKIP_PESSIMISTIC_CHECK.
+    #[allow(clippy::too_many_arguments)]
+    fn prewrite_pessimistic_with_assertion(
+        store: &mut MvccStore,
+        pk: &[u8],
+        key: &[u8],
+        value: &[u8],
+        start_ts: u64,
+        ttl: u64,
+        is_pessimistic_lock: &[bool],
+        for_update_ts: u64,
+        assertion: tidb_proto::KvrpcAssertion,
+        level: tidb_proto::KvrpcAssertionLevel,
+    ) -> Result<(), KvError> {
+        use tidb_proto::KvrpcPessimisticAction;
+        let mut m = mutation(KvrpcOp::Put, key, value);
+        m.assertion = assertion as i32;
+        store.prewrite(&PrewriteReq {
+            mutations: vec![m],
+            primary_lock: pk.to_vec(),
+            start_version: start_ts,
+            lock_ttl: ttl,
+            for_update_ts,
+            pessimistic_actions: is_pessimistic_lock
+                .iter()
+                .map(|is_lock| {
+                    if *is_lock {
+                        KvrpcPessimisticAction::DoPessimisticCheck
+                    } else {
+                        KvrpcPessimisticAction::SkipPessimisticCheck
+                    }
+                })
+                .collect(),
+            assertion_level: level as i32,
+            ..PrewriteReq::default()
+        })
+    }
+
+    /// Go `TestAssertion` (`mvcc_test.go:1698`): with a non-Off level every
+    /// prewrite flavor (optimistic, pessimistic-locked, pessimistic
+    /// non-locked) refuses a wrong Exist/NotExist assertion with the
+    /// existing version's timestamps; `AssertionLevel_Off` passes them all;
+    /// correct assertions pass at `Strict`.
+    #[test]
+    fn test_assertion() {
+        use tidb_proto::{KvrpcAssertion, KvrpcAssertionLevel};
+        let mut store = MvccStore::new();
+        for key in [b"k1".as_slice(), b"k2", b"k3"] {
+            must_prewrite_optimistic(&mut store, b"k1", key, b"v", 1, 100);
+            must_commit(&mut store, key, 1, 2);
+        }
+
+        #[allow(clippy::too_many_arguments)]
+        fn check(
+            result: Result<(), KvError>,
+            disable: bool,
+            start_ts: u64,
+            key: &[u8],
+            assertion: KvrpcAssertion,
+            existing_start_ts: u64,
+            existing_commit_ts: u64,
+        ) {
+            if disable {
+                result.expect("AssertionLevel_Off must not check");
+                return;
+            }
+            assert_eq!(
+                result.expect_err("the assertion must fail"),
+                KvError::AssertionFailed {
+                    start_ts,
+                    key: key.to_vec(),
+                    assertion: assertion as i32,
+                    existing_start_ts,
+                    existing_commit_ts,
+                }
+            );
+        }
+
+        for disable in [false, true] {
+            let level = if disable {
+                KvrpcAssertionLevel::Off
+            } else {
+                KvrpcAssertionLevel::Strict
+            };
+            // Optimistic.
+            let err = prewrite_optimistic_with_assertion(
+                &mut store,
+                b"k1",
+                b"k1",
+                b"v1",
+                10,
+                100,
+                KvrpcAssertion::NotExist,
+                level,
+            );
+            check(err, disable, 10, b"k1", KvrpcAssertion::NotExist, 1, 2);
+            let err = prewrite_optimistic_with_assertion(
+                &mut store,
+                b"k11",
+                b"k11",
+                b"v11",
+                10,
+                100,
+                KvrpcAssertion::Exist,
+                level,
+            );
+            check(err, disable, 10, b"k11", KvrpcAssertion::Exist, 0, 0);
+
+            // Pessimistic, over a pessimistic lock.
+            must_acquire_pessimistic_lock(&mut store, b"k2", b"k2", 10, 10);
+            let err = prewrite_pessimistic_with_assertion(
+                &mut store,
+                b"k2",
+                b"k2",
+                b"v2",
+                10,
+                100,
+                &[true],
+                10,
+                KvrpcAssertion::NotExist,
+                level,
+            );
+            check(err, disable, 10, b"k2", KvrpcAssertion::NotExist, 1, 2);
+            must_acquire_pessimistic_lock(&mut store, b"k22", b"k22", 10, 10);
+            let err = prewrite_pessimistic_with_assertion(
+                &mut store,
+                b"k22",
+                b"k22",
+                b"v22",
+                10,
+                100,
+                &[true],
+                10,
+                KvrpcAssertion::Exist,
+                level,
+            );
+            check(err, disable, 10, b"k22", KvrpcAssertion::Exist, 0, 0);
+
+            // Pessimistic, non-pessimistic-lock key.
+            let err = prewrite_pessimistic_with_assertion(
+                &mut store,
+                b"pk",
+                b"k3",
+                b"v3",
+                10,
+                100,
+                &[false],
+                10,
+                KvrpcAssertion::NotExist,
+                level,
+            );
+            check(err, disable, 10, b"k3", KvrpcAssertion::NotExist, 1, 2);
+            let err = prewrite_pessimistic_with_assertion(
+                &mut store,
+                b"pk",
+                b"k33",
+                b"v33",
+                10,
+                100,
+                &[false],
+                10,
+                KvrpcAssertion::Exist,
+                level,
+            );
+            check(err, disable, 10, b"k33", KvrpcAssertion::Exist, 0, 0);
+        }
+
+        for key in [b"k1".as_slice(), b"k11", b"k2", b"k22", b"k3", b"k33"] {
+            store.rollback(&[key.to_vec()], 10).expect("rolls back");
+        }
+
+        // Correct assertions pass at Strict, on every flavor.
+        prewrite_optimistic_with_assertion(
+            &mut store,
+            b"k1",
+            b"k1",
+            b"v1",
+            20,
+            100,
+            KvrpcAssertion::Exist,
+            KvrpcAssertionLevel::Strict,
+        )
+        .expect("k1 exists");
+        prewrite_optimistic_with_assertion(
+            &mut store,
+            b"k11",
+            b"k11",
+            b"v11",
+            20,
+            100,
+            KvrpcAssertion::NotExist,
+            KvrpcAssertionLevel::Strict,
+        )
+        .expect("k11 does not exist");
+        must_acquire_pessimistic_lock(&mut store, b"k2", b"k2", 20, 10);
+        prewrite_pessimistic_with_assertion(
+            &mut store,
+            b"k2",
+            b"k2",
+            b"v2",
+            20,
+            100,
+            &[true],
+            10,
+            KvrpcAssertion::Exist,
+            KvrpcAssertionLevel::Strict,
+        )
+        .expect("k2 exists");
+        must_acquire_pessimistic_lock(&mut store, b"k22", b"k22", 20, 10);
+        prewrite_pessimistic_with_assertion(
+            &mut store,
+            b"k22",
+            b"k22",
+            b"v22",
+            20,
+            100,
+            &[true],
+            10,
+            KvrpcAssertion::NotExist,
+            KvrpcAssertionLevel::Strict,
+        )
+        .expect("k22 does not exist");
+        prewrite_pessimistic_with_assertion(
+            &mut store,
+            b"pk",
+            b"k3",
+            b"v3",
+            20,
+            100,
+            &[false],
+            10,
+            KvrpcAssertion::Exist,
+            KvrpcAssertionLevel::Strict,
+        )
+        .expect("k3 exists");
+        prewrite_pessimistic_with_assertion(
+            &mut store,
+            b"pk",
+            b"k33",
+            b"v33",
+            20,
+            100,
+            &[false],
+            10,
+            KvrpcAssertion::NotExist,
+            KvrpcAssertionLevel::Strict,
+        )
+        .expect("k33 does not exist");
     }
 }

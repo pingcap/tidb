@@ -244,9 +244,14 @@ fn generated_no_main_rows_stream_intermediate_priorities_in_exact_order() {
             encode_type: Some(EncodeType::TypeChunk as i32),
             chunks: Vec::new(),
             intermediate_outputs: vec![
+                // Both channels are string-typed: the wire column below is
+                // VAR_STRING, and Go's `dumpTextRow` dispatches on the
+                // column type, so the executor always materializes chunks
+                // matching the declared result metadata before the dump —
+                // an int chunk under a string column cannot reach the wire.
                 intermediate(
                     EncodeType::TypeChunk,
-                    vec![type_chunk(&[vec![Cell::Int(1), Cell::Int(2)]])],
+                    vec![type_chunk(&[vec![Cell::Str("1"), Cell::Str("2")]])],
                 ),
                 intermediate(EncodeType::TypeChunk, Vec::new()),
             ],
@@ -267,7 +272,7 @@ fn generated_no_main_rows_stream_intermediate_priorities_in_exact_order() {
     ];
     let iter = response_source(responses).into_select_iter(
         vec![int_type(), int_type(), int_type(), int_type()],
-        vec![vec![int_type()], vec![string_type()]],
+        vec![vec![string_type()], vec![string_type()]],
         WarningCollector::new(),
     );
     let mut recordset = DistSqlRecordSet::new(iter, vec![column("intermediate", TYPE_VAR_STRING)]);

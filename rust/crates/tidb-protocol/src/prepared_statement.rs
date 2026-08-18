@@ -147,6 +147,10 @@ pub enum PreparedStatementError {
         /// Invalid value.
         value: u8,
     },
+    /// Go `handleStmtExecute`'s `len(data) < 9` gate: an execute payload too
+    /// short to carry its fixed header is `mysql.ErrMalformPacket` — a plain
+    /// uncoded error, so the wire answer is 1105 with Go's exact message.
+    MalformPacket,
     /// A statement handle was zero, which this bounded server never allocates.
     ZeroStatementId,
     /// The packet requested a cursor, which the bounded protocol does not own.
@@ -211,6 +215,7 @@ impl std::fmt::Display for PreparedStatementError {
             Self::InvalidField { field, value } => {
                 write!(formatter, "invalid prepared-statement {field}: {value}")
             }
+            Self::MalformPacket => formatter.write_str("malform packet error"),
             Self::ZeroStatementId => formatter.write_str("prepared statement ID must be nonzero"),
             Self::UnsupportedCursorFlag(flag) => {
                 write!(
@@ -345,6 +350,11 @@ pub fn split_prepared_statement_execute<'a>(
     parameter_count: usize,
     previous_types: Option<&[PreparedParameterType]>,
 ) -> Result<PreparedStatementExecutePacket<'a>, PreparedStatementError> {
+    // Go `handleStmtExecute` (`conn_stmt.go`): `if len(data) < 9` — id,
+    // cursor flags, iteration count — the whole packet is malformed.
+    if payload.len() < 9 {
+        return Err(PreparedStatementError::MalformPacket);
+    }
     let mut cursor = PacketCursor::new(payload);
     let statement_id = cursor.read_u32("statement ID")?;
     if statement_id == 0 {
