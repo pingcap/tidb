@@ -342,6 +342,15 @@ impl ClusterDdl for MockDdl {
                         .to_owned(),
                 ))
             }
+            DdlStatement::AddColumn { .. }
+            | DdlStatement::DropColumn { .. }
+            | DdlStatement::TruncateTable { .. } => {
+                return Err(SqlQueryError::unknown(
+                    "the mock catalog writer does not model column or truncate changes; \
+                     the plan tests in cluster_ddl_source own those"
+                        .to_owned(),
+                ))
+            }
         }
         let schema_version = next.schema_version;
         // The real writer refreshes the node's catalog inline, before it

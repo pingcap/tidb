@@ -1073,6 +1073,15 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             return;
         }
+        self.rebuild_catalog_now();
+    }
+
+    /// The unguarded rebuild: `BEGIN` calls this directly because the session
+    /// already reports in-transaction by the time the transaction opens, and
+    /// Go pins the LATEST schema at transaction start
+    /// (`domain.GetSnapshotInfoSchema(startTS)`) — a table committed before
+    /// `BEGIN` is visible to every statement of the new transaction.
+    fn rebuild_catalog_now(&mut self) {
         let loaded = self.catalog.load();
         let statistics = self.stats.load();
         // Either half can move on its own: a DDL bumps the schema version, an
@@ -1332,6 +1341,14 @@ impl QuerySession for ClusterServerSession {
                 "{feature} is not supported yet"
             )));
         }
+        // The refresh happens BEFORE the driver session pins its own schema
+        // view for the transaction: Go activates a transaction with the
+        // LATEST schema at start (`domain.GetSnapshotInfoSchema(startTS)`),
+        // so a table committed before BEGIN is visible to every statement of
+        // the new transaction, on a connection of any age.
+        if matches!(control, Some(TransactionControl::Begin { .. })) {
+            self.rebuild_catalog_now();
+        }
         let state = self.session.control_transaction(sql).map_err(map_error)?;
         let Some(in_transaction) = state else {
             return Ok(None);
@@ -1346,6 +1363,18 @@ impl QuerySession for ClusterServerSession {
             // that its COMMIT will prewrite at.
             Some(TransactionControl::Begin { .. }) => {
                 self.discard_explicit()?;
+                // The refresh happens BEFORE the pin: the new transaction
+                // reads the schema as of its own start, not as of the moment
+                // this connection was opened.
+                eprintln!(
+                    "{{\"event\":\"debug_begin_refresh\",\"before\":{}}}",
+                    self.schema_version
+                );
+                self.rebuild_catalog_now();
+                eprintln!(
+                    "{{\"event\":\"debug_begin_refresh\",\"after\":{}}}",
+                    self.schema_version
+                );
                 self.open_explicit()?;
             }
             Some(

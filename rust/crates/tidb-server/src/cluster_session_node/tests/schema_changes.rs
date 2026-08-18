@@ -99,11 +99,14 @@ fn auto_random_rebase_errors_keep_their_tidb_codes_on_the_cluster_wire() {
 fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
     let (mut session, node) = open_session();
     for (sql, expected) in [
+        // ADD/DROP COLUMN and TRUNCATE moved to the catalog writer when the
+        // module took ownership of their single-action shapes; the mock's
+        // named non-modeling answer is now their routing witness below. A
+        // multi-action ALTER remains genuinely inexpressible.
         (
-            "ALTER TABLE t ADD COLUMN w BIGINT",
+            "ALTER TABLE t ADD COLUMN w BIGINT, ADD COLUMN u BIGINT",
             "CREATE TABLE, DROP TABLE",
         ),
-        ("TRUNCATE TABLE t", "CREATE TABLE, DROP TABLE"),
         (
             "CREATE TABLE fk (id BIGINT PRIMARY KEY, other BIGINT, \
              FOREIGN KEY (other) REFERENCES t (id))",
@@ -131,6 +134,10 @@ fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
         "CREATE INDEX i ON t (v)",
         "ALTER TABLE t ADD INDEX i (v)",
         "ALTER TABLE t DROP INDEX i",
+        // Routed to the catalog writer since their courses landed; this
+        // mock does not model them, and saying so IS the routing witness.
+        "ALTER TABLE t ADD COLUMN w BIGINT",
+        "TRUNCATE TABLE t",
     ] {
         let routed = session
             .execute_write(sql)
@@ -138,7 +145,10 @@ fn a_ddl_shape_the_cluster_path_cannot_express_is_refused_precisely() {
         assert!(
             routed
                 .message
-                .contains("cannot model an index change's backfill"),
+                .contains("cannot model an index change's backfill")
+                || routed
+                    .message
+                    .contains("does not model column or truncate changes"),
             "{sql} must reach the catalog writer: {}",
             routed.message
         );
