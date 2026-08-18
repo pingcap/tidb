@@ -212,11 +212,22 @@ func (m *jobManager) getLegacyJobsByGroup(ctx context.Context, groupKey string) 
 }
 
 func isRawImportUnsupportedError(err error) bool {
+	cause := errors.Cause(err)
 	var mysqlErr *drivermysql.MySQLError
 	// 1064 is returned by old servers that cannot parse SHOW RAW, while 1235
 	// is returned by the classic kernel where SHOW RAW is intentionally disabled.
-	return goerrors.As(errors.Cause(err), &mysqlErr) &&
-		(mysqlErr.Number == 1064 || mysqlErr.Number == 1235)
+	if goerrors.As(cause, &mysqlErr) {
+		return mysqlErr.Number == 1064 || mysqlErr.Number == 1235
+	}
+
+	// TiDB's in-process database/sql driver returns a normalized TiDB error
+	// instead of go-sql-driver's MySQLError.
+	var codeErr interface{ Code() errors.ErrCode }
+	if goerrors.As(cause, &codeErr) {
+		code := int(codeErr.Code())
+		return code == 1064 || code == 1235
+	}
+	return false
 }
 
 func scanJobStatus(rows *sql.Rows) (*JobStatus, error) {

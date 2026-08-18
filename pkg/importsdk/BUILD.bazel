@@ -66,6 +66,7 @@ go_test(
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@com_github_stretchr_testify//suite",
     ],

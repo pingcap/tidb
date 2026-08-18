@@ -22,6 +22,7 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	drivermysql "github.com/go-sql-driver/mysql"
+	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/importinto/jobstats"
 	"github.com/stretchr/testify/require"
@@ -197,7 +198,10 @@ func TestGetJobStatusFallbackToLegacy(t *testing.T) {
 	manager := NewJobManager(db)
 	ctx := context.Background()
 	jobID := int64(123)
-	rawUnsupported := &drivermysql.MySQLError{Number: 1235, Message: "SHOW RAW IMPORT JOB is unsupported"}
+	rawUnsupported := perrors.Normalize(
+		"SHOW RAW IMPORT JOB is unsupported",
+		perrors.MySQLErrorCode(1235),
+	)
 	legacyCols := []string{
 		"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
 		"Phase", "Status", "Source_File_Size", "Imported_Rows", "Result_Message",
