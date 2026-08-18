@@ -584,7 +584,18 @@ func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseCon
 				continue
 			}
 			key := tableName{db: dbName, table: table.Name}
-			if err := validateForeignKeys(dbName, schemas[key], schemas); err != nil {
+			schema := schemas[key]
+			if conf.columnProjection[key].isProjected() {
+				if _, err := schema.getTableInfo(); err != nil {
+					return errors.Annotatef(
+						err,
+						"failed to validate schema projection for table `%s`.`%s`",
+						escapeString(dbName),
+						escapeString(table.Name),
+					)
+				}
+			}
+			if err := validateForeignKeys(dbName, schema, schemas); err != nil {
 				return errors.Annotatef(
 					err,
 					"failed to validate schema projection for table `%s`.`%s`",
