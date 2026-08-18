@@ -17,7 +17,7 @@ Users will observe success in `IMPORT INTO` job duration, source rows per second
 - [x] (2026-08-18) Reconstructed the current encode pipeline, existing metrics, reader behavior, writer memory formula, and historical cluster measurements.
 - [x] (2026-08-18) Wrote the initial self-contained execution and cluster-validation plan.
 - [x] (2026-08-18) Selected `upstream/master` at `454d7010a4` and created a clean dedicated worktree without carrying unrelated CSV parser changes into the performance series.
-- [ ] Milestone 0: establish reproducible workload manifests, stage-level observability, baseline ceilings, and baseline profiles. Completed on 2026-08-18: source/decompress/parse/encode/KV-group/send/deliver timing, tests, production-build PK/3-index/16-index encoder benchmarks, and encode-only CPU/allocation profiles. Remaining: corrected fixed-row-width benchmark matrix, full in-memory pipeline benchmark, workload manifests, cluster baselines, and cluster profiles.
+- [ ] Milestone 0: establish reproducible workload manifests, stage-level observability, baseline ceilings, and baseline profiles. Completed on 2026-08-18: source/decompress/parse/encode/KV-group/send/deliver timing, tests, a fixed-width/index-type/input-type encoder benchmark matrix, and encode-only CPU/allocation profiles. Remaining: full in-memory pipeline benchmark, workload manifests, cluster baselines, and cluster profiles.
 - [ ] Milestone 1: implement ordered parallel 8 MiB source range reads and pass local correctness tests.
 - [ ] Milestone 1 cluster gate: measure reader-only behavior on uncompressed and compressed inputs and record the result here.
 - [ ] Milestone 2: implement opt-in asynchronous ping-pong flushing for IMPORT INTO writers while preserving the existing external-file format.
@@ -52,11 +52,14 @@ Users will observe success in `IMPORT INTO` job duration, source rows per second
 - Observation: failpoint-enabled binaries materially distort encode microbenchmarks. The failpoint build added a fixed 144 B and two allocations per row and slowed PK-only by about 19%; its allocation profile contained failpoint helper `_curpkg_`. Correctness tests remain failpoint-enabled, but performance benchmarks and profiles must use the production build path.
   Evidence: five-run failpoint and non-failpoint comparisons on 2026-08-18.
 
-- Observation: the initial sixteen-index benchmark also widened the row from four to seventeen columns, so it mixes index-count cost with thirteen additional casts and record columns. Keep its result as a wide-row scenario, but add a fixed-row-width sixteen-index case before attributing the delta to index count.
-  Evidence: `BenchmarkTableKVEncoder` schema definitions and CPU profile showing `parserData2TableData` at about 20% cumulative time for the wide sixteen-index case.
+- Observation: the initial sixteen-index benchmark widened the row from four to seventeen columns and mixed index-count cost with thirteen additional casts and record columns. The corrected matrix now has a fixed four-int-column 0/3/16-index series, a wide-string 0/3-index series, and the original seventeen-column/16-index series, each with typed and CSV-string input.
+  Evidence: `BenchmarkTableKVEncoder` schema matrix and independent-process results recorded below.
 
 - Observation: encode-only allocation hotspots differ by schema. PK-only is dominated by `Session.TakeKvPairs` and per-row `AddRecordOpt`; the three-index string/composite case is dominated by restored index-value encoding; the sixteen-simple-index case is dominated by `TakeKvPairs`, a one-element slice allocated by non-MV `getIndexedValue`, per-KV RowID encoding, and simple index-value buffers.
   Evidence: production allocation profiles captured on 2026-08-18.
+
+- Observation: running the complete benchmark matrix repeatedly in one process creates strong order/thermal drift on the development laptop; later cases varied by up to 2x. Recorded comparisons therefore run each selected sub-benchmark in a separate process and interleave baseline/candidate processes when measuring code changes.
+  Evidence: full-matrix `-count=3 -benchtime=1s` run versus stable per-case `-count=3 -benchtime=2s` runs on 2026-08-18.
 
 ## Decision Log
 
@@ -257,7 +260,8 @@ For writer and encode integration tests:
 Run CPU benchmarks without running unit tests. Always pin count and benchtime in recorded comparisons:
 
     ./tools/check/failpoint-go-test.sh pkg/lightning/mydump -run '^$' -bench 'Benchmark(ReadRowUsingMydumpCSVParser|CSVParserUnescape)$' -benchmem -count=5 -benchtime=3s
-    go test ./pkg/executor/importer -run '^$' -bench '^BenchmarkTableKVEncoder$' -benchmem -count=5 -benchtime=3s -tags=intest,deadlock
+    go test ./pkg/executor/importer -run '^$' -bench '^BenchmarkTableKVEncoder$' -benchmem -count=1 -benchtime=500ms -tags=intest,deadlock
+    go test ./pkg/executor/importer -run '^$' -bench '^BenchmarkTableKVEncoder$/^NarrowInt$/^Indexes16$/^Typed$' -benchmem -count=3 -benchtime=2s -tags=intest,deadlock
 
 For a Ready-profile gate on a code PR, rerun all targeted tests affected by that PR, then run:
 
@@ -357,13 +361,18 @@ Historical evidence, not a substitute for a fresh baseline on the agreed base:
     Baseline: about 333 MiB/s cluster encode throughput, about 32 minutes on W0-like data.
     Reader prototype: about 450 MiB/s cluster throughput; S3 read about 1.0-1.7 seconds/chunk; normal chunks about 3.5 seconds; periodic send stalls about 9-10 seconds remained.
 
-M0 local production-build encoder benchmark medians on Apple M3 (`-count=5 -benchtime=3s`):
+M0 local production-build encoder benchmark medians on Apple M3. Each recorded case ran in a separate process with `-count=3 -benchtime=2s`:
 
-    PKOnly: 613.3 ns/row, 240 B/row, 7 allocs/row.
-    ThreeIndexes: 1568 ns/row, 1392 B/row, 36 allocs/row.
-    SixteenIndexesWideRow: 4125 ns/row, 2336 B/row, 71 allocs/row.
+    NarrowInt/Indexes0/Typed: 548 ns/row, 240 B/row, 7 allocs/row.
+    NarrowInt/Indexes3/Typed: 1034 ns/row, 616 B/row, 19 allocs/row.
+    NarrowInt/Indexes16/Typed: 3209 ns/row, 2336 B/row, 71 allocs/row.
+    WideString/Indexes0/Typed: 669.5 ns/row, 240 B/row, 7 allocs/row.
+    WideString/Indexes3/Typed: 1591 ns/row, 1392 B/row, 36 allocs/row.
+    WideInt/Indexes16/Typed: 4204 ns/row, 2336 B/row, 71 allocs/row.
+    NarrowInt/Indexes0/CSVStrings: 590.8 ns/row, 240 B/row, 7 allocs/row.
+    WideInt/Indexes16/CSVStrings: 4350 ns/row, 2336 B/row, 71 allocs/row.
 
-The three-index and wide sixteen-index rows emit about 4.7x and 5.1x their approximate source bytes respectively, so pod egress can remain below the encode-only CPU ceiling. These microbenchmarks exclude parsing, KV grouping/checksum, writer copies, sorting, and remote I/O.
+For the fixed narrow row, simple integer indexes add about 162-166 ns, 125-131 B, and four allocations per index. Three wide string/composite indexes add about 307 ns, 384 B, and almost ten allocations per index. Widening the sixteen-index row from four to seventeen integer columns adds about 1.0 microsecond without changing B/row or allocations. Converting the short integer inputs from typed Datums to CSV strings adds about 8-11 ns per column in these synthetic rows. These microbenchmarks exclude parsing, KV grouping/checksum, writer copies, sorting, and remote I/O.
 
 ## Interfaces and Dependencies
 
@@ -413,3 +422,5 @@ The object-store SDKs, `membuf`, TiKV codec, checksum, duplicate modes, and glob
 2026-08-18: Initially proposed a bare-master control plus observability image with a 2% overhead gate, then removed that gate after the user pointed out that same-image cluster runs can vary by more than 2%. The authoritative baseline is now one immutable observability image from a pinned master SHA. All candidates retain identical observability code, and improvements smaller than the measured run-to-run noise are not claimed.
 
 2026-08-18: Corrected the encode-only benchmark protocol after discovering failpoint instrumentation in profiles. Performance numbers now come from failpoint-disabled production builds; correctness tests still use the failpoint runner. Recorded schema-specific allocation hotspots and marked the initial sixteen-index result as a wide-row case that needs a fixed-width control.
+
+2026-08-18: Replaced the confounded three-shape benchmark with a twelve-case matrix covering fixed-width 0/3/16 indexes, wide string indexes, wide rows, typed Datums, and CSV-string Datums. Full-matrix repeated runs showed thermal/order drift, so recorded comparisons now execute selected cases in separate processes.

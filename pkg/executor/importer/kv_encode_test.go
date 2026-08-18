@@ -105,52 +105,7 @@ func newKVEncoderTestTable(t testing.TB, createSQL string) table.Table {
 }
 
 func BenchmarkTableKVEncoder(b *testing.B) {
-	testCases := []struct {
-		name           string
-		createSQL      string
-		row            []types.Datum
-		sourceRowBytes int64
-	}{
-		{
-			name: "PKOnly",
-			createSQL: `create table t(
-				id bigint primary key clustered,
-				k bigint not null,
-				c varchar(60),
-				pad varchar(30))`,
-			row: []types.Datum{
-				types.NewIntDatum(1),
-				types.NewIntDatum(42),
-				types.NewStringDatum(strings.Repeat("c", 60)),
-				types.NewStringDatum(strings.Repeat("p", 30)),
-			},
-			sourceRowBytes: 110,
-		},
-		{
-			name: "ThreeIndexes",
-			createSQL: `create table t(
-				id bigint primary key clustered,
-				k bigint not null,
-				c varchar(60),
-				pad varchar(30),
-				key idx_k(k),
-				key idx_c(c),
-				key idx_k_c(k, c))`,
-			row: []types.Datum{
-				types.NewIntDatum(1),
-				types.NewIntDatum(42),
-				types.NewStringDatum(strings.Repeat("c", 60)),
-				types.NewStringDatum(strings.Repeat("p", 30)),
-			},
-			sourceRowBytes: 110,
-		},
-		{
-			name:           "SixteenIndexes",
-			createSQL:      sixteenIndexTableSQL(),
-			row:            sixteenIndexRow(),
-			sourceRowBytes: 17 * 8,
-		},
-	}
+	testCases := tableKVEncoderBenchmarkCases(b)
 
 	for _, testCase := range testCases {
 		b.Run(testCase.name, func(b *testing.B) {
@@ -191,11 +146,134 @@ func BenchmarkTableKVEncoder(b *testing.B) {
 			elapsed := b.Elapsed().Seconds()
 			b.ReportMetric(float64(encodedBytes)/(1024*1024)/elapsed, "encoded-MiB/s")
 			b.ReportMetric(float64(kvCount)/elapsed, "kv/s")
+			b.ReportMetric(float64(b.N)/elapsed, "row/s")
 		})
 	}
 }
 
-func sixteenIndexTableSQL() string {
+type tableKVEncoderBenchmarkCase struct {
+	name           string
+	createSQL      string
+	row            []types.Datum
+	sourceRowBytes int64
+}
+
+func tableKVEncoderBenchmarkCases(t testing.TB) []tableKVEncoderBenchmarkCase {
+	t.Helper()
+	testCases := make([]tableKVEncoderBenchmarkCase, 0, 12)
+	for _, indexCount := range []int{0, 3, 16} {
+		addTableKVEncoderInputCases(
+			t,
+			&testCases,
+			fmt.Sprintf("NarrowInt/Indexes%d", indexCount),
+			narrowIntTableSQL(indexCount),
+			narrowIntRow(),
+		)
+	}
+	for _, indexCount := range []int{0, 3} {
+		addTableKVEncoderInputCases(
+			t,
+			&testCases,
+			fmt.Sprintf("WideString/Indexes%d", indexCount),
+			wideStringTableSQL(indexCount),
+			wideStringRow(),
+		)
+	}
+	addTableKVEncoderInputCases(
+		t,
+		&testCases,
+		"WideInt/Indexes16",
+		wideIntTableSQL(),
+		wideIntRow(),
+	)
+	return testCases
+}
+
+func addTableKVEncoderInputCases(
+	t testing.TB,
+	testCases *[]tableKVEncoderBenchmarkCase,
+	name string,
+	createSQL string,
+	typedRow []types.Datum,
+) {
+	t.Helper()
+	*testCases = append(*testCases, tableKVEncoderBenchmarkCase{
+		name:           name + "/Typed",
+		createSQL:      createSQL,
+		row:            typedRow,
+		sourceRowBytes: typedInputBytes(typedRow),
+	})
+	csvRow, csvBytes := csvInputRow(t, typedRow)
+	*testCases = append(*testCases, tableKVEncoderBenchmarkCase{
+		name:           name + "/CSVStrings",
+		createSQL:      createSQL,
+		row:            csvRow,
+		sourceRowBytes: csvBytes,
+	})
+}
+
+func narrowIntTableSQL(indexCount int) string {
+	indexColumns := []string{
+		"k1",
+		"k2",
+		"k3",
+		"k1, k2",
+		"k2, k1",
+		"k1, k3",
+		"k3, k1",
+		"k2, k3",
+		"k3, k2",
+		"k1, k2, k3",
+		"k1, k3, k2",
+		"k2, k1, k3",
+		"k2, k3, k1",
+		"k3, k1, k2",
+		"k3, k2, k1",
+		"id, k1",
+	}
+	var builder strings.Builder
+	builder.WriteString("create table t(id bigint primary key clustered, k1 bigint, k2 bigint, k3 bigint")
+	for i, columns := range indexColumns[:indexCount] {
+		fmt.Fprintf(&builder, ", key idx_%02d(%s)", i, columns)
+	}
+	builder.WriteByte(')')
+	return builder.String()
+}
+
+func narrowIntRow() []types.Datum {
+	return []types.Datum{
+		types.NewIntDatum(1),
+		types.NewIntDatum(2),
+		types.NewIntDatum(3),
+		types.NewIntDatum(4),
+	}
+}
+
+func wideStringTableSQL(indexCount int) string {
+	indices := []string{
+		"key idx_k(k)",
+		"key idx_c(c)",
+		"key idx_k_c(k, c)",
+	}
+	var builder strings.Builder
+	builder.WriteString("create table t(id bigint primary key clustered, k bigint, c varchar(60), pad varchar(30)")
+	for _, index := range indices[:indexCount] {
+		fmt.Fprintf(&builder, ", %s", index)
+	}
+	builder.WriteByte(')')
+	return builder.String()
+}
+
+func wideStringRow() []types.Datum {
+	return []types.Datum{
+		types.NewIntDatum(1),
+		types.NewIntDatum(42),
+		types.NewStringDatum(strings.Repeat("c", 60)),
+		types.NewStringDatum(strings.Repeat("p", 30)),
+	}
+}
+
+func wideIntTableSQL() string {
 	var builder strings.Builder
 	builder.WriteString("create table t(id bigint primary key clustered")
 	for i := range 16 {
@@ -208,12 +286,38 @@ func sixteenIndexTableSQL() string {
 	return builder.String()
 }
 
-func sixteenIndexRow() []types.Datum {
+func wideIntRow() []types.Datum {
 	row := make([]types.Datum, 17)
 	for i := range row {
 		row[i] = types.NewIntDatum(int64(i + 1))
 	}
 	return row
+}
+
+func typedInputBytes(row []types.Datum) int64 {
+	var size int64
+	for _, datum := range row {
+		if datum.Kind() == types.KindString {
+			size += int64(len(datum.GetString()))
+			continue
+		}
+		size += 8
+	}
+	return size
+}
+
+func csvInputRow(t testing.TB, typedRow []types.Datum) ([]types.Datum, int64) {
+	t.Helper()
+	row := make([]types.Datum, len(typedRow))
+	// One separator per field accounts for len(row)-1 commas and one newline.
+	sourceBytes := int64(len(row))
+	for i, datum := range typedRow {
+		value, err := datum.ToString()
+		require.NoError(t, err)
+		row[i] = types.NewStringDatum(value)
+		sourceBytes += int64(len(value))
+	}
+	return row, sourceBytes
 }
 
 func TestKVEncoderCastErrorMessage(t *testing.T) {
