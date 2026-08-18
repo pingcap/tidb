@@ -217,6 +217,20 @@ pub fn table_rows(
     if name.eq_ignore_ascii_case("REFERENTIAL_CONSTRAINTS") {
         return Some(referential_constraints_rows(catalog, visibility));
     }
+    if name.eq_ignore_ascii_case("CHARACTER_SETS") {
+        return Some(character_sets_rows());
+    }
+    if name.eq_ignore_ascii_case("COLLATIONS") {
+        return Some(collations_rows());
+    }
+    if name.eq_ignore_ascii_case("COLLATION_CHARACTER_SET_APPLICABILITY") {
+        return Some(
+            SUPPORTED_COLLATIONS
+                .iter()
+                .map(|c| vec![text(c.name), text(c.charset)])
+                .collect(),
+        );
+    }
     if name.eq_ignore_ascii_case("SCHEMA_PRIVILEGES")
         || name.eq_ignore_ascii_case("TABLE_PRIVILEGES")
         || name.eq_ignore_ascii_case("COLUMN_PRIVILEGES")
@@ -1031,4 +1045,75 @@ fn numeric_precision_of(field_type: &FieldType, flen: i64) -> i64 {
         | FieldTypeCode::NewDecimal => flen,
         _ => 0,
     }
+}
+
+/// One row of Go's collation registry (`parser/charset/charset.go`'s
+/// `collations` table), restricted to the names `collate.newCollatorMap`
+/// registers minus the hidden `utf8mb4_zh_pinyin_tidb_as_cs` — exactly Go's
+/// `GetSupportedCollations()` under new collation, already name-sorted.
+struct SupportedCollation {
+    name: &'static str,
+    charset: &'static str,
+    id: i64,
+    is_default: bool,
+    sortlen: i64,
+    pad_space: bool,
+}
+
+const SUPPORTED_COLLATIONS: &[SupportedCollation] = &[
+    SupportedCollation { name: "ascii_bin", charset: "ascii", id: 65, is_default: true, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "binary", charset: "binary", id: 63, is_default: true, sortlen: 1, pad_space: false },
+    SupportedCollation { name: "gb18030_bin", charset: "gb18030", id: 249, is_default: true, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "gb18030_chinese_ci", charset: "gb18030", id: 248, is_default: false, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "gbk_bin", charset: "gbk", id: 87, is_default: true, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "gbk_chinese_ci", charset: "gbk", id: 28, is_default: false, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "latin1_bin", charset: "latin1", id: 47, is_default: true, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "utf8_bin", charset: "utf8", id: 83, is_default: true, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "utf8_general_ci", charset: "utf8", id: 33, is_default: false, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "utf8_unicode_ci", charset: "utf8", id: 192, is_default: false, sortlen: 8, pad_space: true },
+    SupportedCollation { name: "utf8mb4_0900_ai_ci", charset: "utf8mb4", id: 255, is_default: false, sortlen: 0, pad_space: false },
+    SupportedCollation { name: "utf8mb4_0900_bin", charset: "utf8mb4", id: 309, is_default: false, sortlen: 1, pad_space: false },
+    SupportedCollation { name: "utf8mb4_bin", charset: "utf8mb4", id: 46, is_default: true, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "utf8mb4_general_ci", charset: "utf8mb4", id: 45, is_default: false, sortlen: 1, pad_space: true },
+    SupportedCollation { name: "utf8mb4_unicode_ci", charset: "utf8mb4", id: 224, is_default: false, sortlen: 8, pad_space: true },
+];
+
+/// Go `setDataFromCharacterSets` (`infoschema_reader.go:1804`) over
+/// `charset.CharacterSetInfos`, name-sorted as `GetSupportedCharsets` sorts.
+fn character_sets_rows() -> Vec<Vec<Datum>> {
+    const CHARSETS: &[(&str, &str, &str, i64)] = &[
+        ("ascii", "ascii_bin", "US ASCII", 1),
+        ("binary", "binary", "binary", 1),
+        ("gb18030", "gb18030_bin", "China National Standard GB18030", 4),
+        ("gbk", "gbk_bin", "Chinese Internal Code Specification", 2),
+        ("latin1", "latin1_bin", "Latin1", 1),
+        ("utf8", "utf8_bin", "UTF-8 Unicode", 3),
+        ("utf8mb4", "utf8mb4_bin", "UTF-8 Unicode", 4),
+    ];
+    CHARSETS
+        .iter()
+        .map(|&(name, collation, desc, maxlen)| {
+            vec![text(name), text(collation), text(desc), Datum::Int(maxlen)]
+        })
+        .collect()
+}
+
+/// Go `setDataFromCollations` (`infoschema_reader.go:1815`): IS_COMPILED is
+/// the fixed "Yes"; IS_DEFAULT is empty rather than "No" for a non-default
+/// collation — Go's own spelling.
+fn collations_rows() -> Vec<Vec<Datum>> {
+    SUPPORTED_COLLATIONS
+        .iter()
+        .map(|c| {
+            vec![
+                text(c.name),
+                text(c.charset),
+                Datum::Int(c.id),
+                text(if c.is_default { "Yes" } else { "" }),
+                text("Yes"),
+                Datum::Int(c.sortlen),
+                text(if c.pad_space { "PAD SPACE" } else { "NO PAD" }),
+            ]
+        })
+        .collect()
 }

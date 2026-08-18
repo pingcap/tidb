@@ -112,6 +112,110 @@ impl InfoColumn {
 }
 
 /// Go `infoschema.tableSchemataCols`.
+/// Go `charsetCols` (`infoschema/tables.go:568`).
+const CHARACTER_SETS_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "CHARACTER_SET_NAME",
+        tp: FieldTypeCode::Varchar,
+        size: 32,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "DEFAULT_COLLATE_NAME",
+        tp: FieldTypeCode::Varchar,
+        size: 32,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "DESCRIPTION",
+        tp: FieldTypeCode::Varchar,
+        size: 60,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "MAXLEN",
+        tp: FieldTypeCode::LongLong,
+        size: 3,
+        flag: 0,
+        deflt: None,
+    },
+];
+
+/// Go `collationsCols` (`infoschema/tables.go:575`).
+const COLLATIONS_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "COLLATION_NAME",
+        tp: FieldTypeCode::Varchar,
+        size: 32,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "CHARACTER_SET_NAME",
+        tp: FieldTypeCode::Varchar,
+        size: 32,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "ID",
+        tp: FieldTypeCode::LongLong,
+        size: 11,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "IS_DEFAULT",
+        tp: FieldTypeCode::Varchar,
+        size: 3,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "IS_COMPILED",
+        tp: FieldTypeCode::Varchar,
+        size: 3,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "SORTLEN",
+        tp: FieldTypeCode::LongLong,
+        size: 3,
+        flag: 0,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "PAD_ATTRIBUTE",
+        tp: FieldTypeCode::Varchar,
+        size: 9,
+        flag: 0,
+        deflt: None,
+    },
+];
+
+/// Go `tableCollationCharacterSetApplicabilityCols`
+/// (`infoschema/tables.go:852`).
+const COLLATION_CHARACTER_SET_APPLICABILITY_COLUMNS: &[InfoColumn] = &[
+    InfoColumn {
+        name: "COLLATION_NAME",
+        tp: FieldTypeCode::Varchar,
+        size: 32,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+    },
+    InfoColumn {
+        name: "CHARACTER_SET_NAME",
+        tp: FieldTypeCode::Varchar,
+        size: 32,
+        flag: NOT_NULL_FLAG,
+        deflt: None,
+    },
+];
+
 const SCHEMATA_COLUMNS: &[InfoColumn] = &[
     InfoColumn {
         name: "CATALOG_NAME",
@@ -1375,6 +1479,9 @@ const COLUMN_PRIVILEGES_COLUMNS: &[InfoColumn] = &[
 const SERVED_TABLES: &[(&str, &[InfoColumn])] = &[
     ("COLUMNS", COLUMNS_COLUMNS),
     ("COLUMN_PRIVILEGES", COLUMN_PRIVILEGES_COLUMNS),
+    ("CHARACTER_SETS", CHARACTER_SETS_COLUMNS),
+    ("COLLATIONS", COLLATIONS_COLUMNS),
+    ("COLLATION_CHARACTER_SET_APPLICABILITY", COLLATION_CHARACTER_SET_APPLICABILITY_COLUMNS),
     ("DEADLOCKS", DEADLOCKS_COLUMNS),
     ("KEY_COLUMN_USAGE", KEY_COLUMN_USAGE_COLUMNS),
     ("PROCESSLIST", PROCESSLIST_COLUMNS),
