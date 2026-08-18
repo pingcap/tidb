@@ -2242,3 +2242,36 @@ fn information_schema_rows_join_stored_tables_on_either_side() {
         "CTE bodies see the same statement-scoped virtual rows"
     );
 }
+
+/// Go `ShowExec.fetchShowBuiltins` (`show.go:2459`) over
+/// `expression.GetBuiltinList` (`builtin.go:1023`). Upstream coverage is
+/// testkit-bound, so these cases pin the list's contract directly: one
+/// column named as `planbuilder.go:6084` spells it, sorted names, and Go's
+/// two not-implemented skips absent while their neighbours remain.
+#[test]
+fn show_builtins_lists_every_function_go_lists() {
+    let mut session = Session::new();
+    let (columns, rows) = query_text(&mut session, "SHOW BUILTINS");
+    assert_eq!(
+        columns,
+        ["Supported_builtin_functions"],
+        "the column is named as Go's planner names it"
+    );
+    let names: Vec<String> = rows.into_iter().map(|row| row[0].clone()).collect();
+
+    assert!(names.len() > 300, "the whole builtin map is listed");
+    let mut sorted = names.clone();
+    sorted.sort();
+    assert_eq!(names, sorted, "Go sorts the list before returning it");
+
+    // Go skips exactly these two as not implemented.
+    assert!(!names.iter().any(|name| name == "row"));
+    assert!(!names.iter().any(|name| name == "istrue_with_null"));
+    // Their neighbours in the same map are still listed.
+    for present in ["istrue", "isfalse", "concat", "upper", "if", "coalesce"] {
+        assert!(
+            names.iter().any(|name| name == present),
+            "{present} must be listed"
+        );
+    }
+}

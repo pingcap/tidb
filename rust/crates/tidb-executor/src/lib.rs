@@ -199,6 +199,7 @@ pub use tidb_decode_key::TidbDecodeKeySnapshot;
 /// re-exported so the session can read the one a `StmtContext` recorded
 /// without depending on `tidb-distsql` directly.
 pub use tidb_distsql::WarningLevel as WarnLevel;
+pub use tidb_expr::builtin_registry::builtin_list;
 pub use tidb_expr::CurrentTso;
 pub use tidb_expr::{
     eval_in, like_match_with_collation, truthy_of, BlockEncryptionMode, Columns, EvalError,

@@ -1761,6 +1761,19 @@ impl Session {
                 }
                 Ok(Some(self.process_list_output(show.full)))
             }
+            // Go `ShowExec.fetchShowBuiltins` (`show.go:2459`) over
+            // `expression.GetBuiltinList`, under the single column
+            // `planbuilder.go:6084` names.
+            tidb_ast::AdminStmt::ShowBuiltins => {
+                let text = tidb_datatype::FieldType::new(tidb_datatype::FieldTypeCode::VarString);
+                Ok(Some(StmtOutput::Rows {
+                    columns: vec![("Supported_builtin_functions".to_owned(), text)],
+                    rows: tidb_executor::builtin_list()
+                        .into_iter()
+                        .map(|name| vec![Datum::new_string(name)])
+                        .collect(),
+                }))
+            }
             // Go `SimpleExec.executeKillStmt`.
             tidb_ast::AdminStmt::Kill(kill) => self.kill_stmt(kill),
             // Go `CheckTableExec` / `CheckIndexRangeExec`. See

@@ -499,6 +499,32 @@ pub(crate) fn unresolved_error(name: &str, current_database: Option<String>) -> 
     }
 }
 
+/// Go `expression.GetBuiltinList` (`builtin.go:1023`): every name in the
+/// builtin map plus every registered extension function, sorted, with Go's
+/// three skips — the two not-implemented functions `row` and
+/// `istrue_with_null`, and the unreadable literal-function names Go spells
+/// with a `'tidb`.(` prefix (this port has no such entries, and the guard is
+/// kept so a future one is skipped for the same reason Go skips it).
+#[must_use]
+pub fn builtin_list() -> Vec<String> {
+    const NOT_IMPLEMENTED: [&str; 2] = ["row", "istrue_with_null"];
+    let mut names: Vec<String> = FUNCTION_CLASSES
+        .iter()
+        .map(|(name, _, _)| *name)
+        .filter(|name| !NOT_IMPLEMENTED.contains(name) && !name.starts_with("'tidb`.("))
+        .map(str::to_owned)
+        .collect();
+    names.extend(
+        EXTENSION_FUNCS
+            .read()
+            .expect("the extension registry lock")
+            .keys()
+            .map(|name| (*name).to_owned()),
+    );
+    names.sort();
+    names
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
