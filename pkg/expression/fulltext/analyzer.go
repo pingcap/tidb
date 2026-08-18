@@ -221,13 +221,35 @@ func parserInfoFromConfig(config AnalyzerConfig) parserInfo {
 	}
 }
 
+// defaultInnodbStopwords mirrors INFORMATION_SCHEMA.INNODB_FT_DEFAULT_STOPWORD,
+// transcribed from the fts_default_stopword array in MySQL's fts0fts.cc. The
+// array there lists "the" twice; as a set that makes no difference, and the
+// duplicate is kept so the two can be compared word for word.
+//
+// This is what innodb_ft_enable_stopword filters when no explicit list is
+// configured. Changing it changes which rows a query matches, so it should only
+// be edited against that source.
+var defaultInnodbStopwords = []string{
+	"a", "about", "an", "are", "as", "at", "be", "by", "com", "de", "en",
+	"for", "from", "how", "i", "in", "is", "it", "la", "of", "on", "or",
+	"that", "the", "this", "to", "was", "what", "when", "where", "who",
+	"will", "with", "und", "the", "www",
+}
+
 func stopwordSetFromConfig(config AnalyzerConfig) map[string]struct{} {
 	if !config.InnodbFtEnableStopword {
 		return nil
 	}
-	// TiDB does not resolve InnoDB stopword table contents on this path yet.
+	// An explicit list wins; otherwise the InnoDB default applies, which is
+	// what MySQL does when no stopword table is configured. Resolving
+	// innodb_ft_server_stopword_table and innodb_ft_user_stopword_table is
+	// separate work.
 	if len(config.Stopwords) == 0 {
-		return map[string]struct{}{}
+		set := make(map[string]struct{}, len(defaultInnodbStopwords))
+		for _, word := range defaultInnodbStopwords {
+			set[word] = struct{}{}
+		}
+		return set
 	}
 	set := make(map[string]struct{}, len(config.Stopwords))
 	for _, word := range config.Stopwords {
