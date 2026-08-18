@@ -403,6 +403,7 @@ go_test(
         "//pkg/util/collate",
         "//pkg/util/context",
         "//pkg/util/dbterror",
+        "//pkg/util/dbterror/exeerrors",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/deeptest",
         "//pkg/util/domainutil",

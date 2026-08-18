@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
@@ -57,7 +59,7 @@ func TestBRIEKillMonitorHandlesWrappedQueryInterrupted(t *testing.T) {
 	checkCh := make(chan time.Time, 1)
 	cancelled := make(chan struct{})
 
-	go monitorBRIEKillSignal(taskCtx, sctx, checkCh, func() {
+	go cancelBRIEOnKill(taskCtx, sctx, checkCh, func() {
 		close(cancelled)
 	})
 	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
@@ -68,6 +70,29 @@ func TestBRIEKillMonitorHandlesWrappedQueryInterrupted(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("BRIE task was not cancelled after receiving QueryInterrupted")
 	}
+}
+
+func TestBRIEResultErrorPreservesCancelCause(t *testing.T) {
+	sctx := mock.NewContext()
+	taskCtx := context.Background()
+
+	err := brieResultError(taskCtx, sctx, errors.New("disk full"), exeerrors.ErrBRIEBackupFailed)
+	require.True(t, exeerrors.ErrBRIEBackupFailed.Equal(err), err)
+
+	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	err = brieResultError(taskCtx, sctx, context.Canceled, exeerrors.ErrBRIEBackupFailed)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
+	require.False(t, exeerrors.ErrBRIEBackupFailed.Equal(err))
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel()
+	sctxNoKill := mock.NewContext()
+	err = brieResultError(canceledCtx, sctxNoKill, context.Canceled, exeerrors.ErrBRIEBackupFailed)
+	require.ErrorIs(t, err, context.Canceled)
+	require.False(t, exeerrors.ErrBRIEBackupFailed.Equal(err))
+
+	err = brieResultError(canceledCtx, sctxNoKill, context.Canceled, nil)
+	require.ErrorIs(t, err, context.Canceled)
 }
 
 func brieTaskInfoToResult(info *brieTaskInfo) string {
