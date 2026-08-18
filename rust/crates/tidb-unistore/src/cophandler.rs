@@ -405,6 +405,11 @@ pub enum SimpleExpr {
     /// `ExprType_ColumnRef`, val codec-int decoded to the row OFFSET —
     /// `distsql_builtin.go:1222`.
     Column(usize),
+    /// `ExprType_String`, the raw literal bytes with no codec around them.
+    /// (`Bytes`, Go's `KindBytes` tag, is deliberately absent from the
+    /// trimmed proto -- no leaf this path builds is that kind.) The
+    /// COMPARISON's collation decides how these order, as in Go.
+    Bytes(Vec<u8>),
     /// `ExprType_ScalarFunc` over a supported signature.
     Func(SimpleSig, Vec<SimpleExpr>),
 }
@@ -424,6 +429,22 @@ pub enum SimpleSig {
     EqInt,
     /// See [`SimpleSig::LtInt`].
     NeInt,
+    /// `LtString`/`LeString`/`GtString`/`GeString`/`EqString`/`NeString`.
+    /// The `i32` is the comparison's DERIVED collation id, which the
+    /// lowering writes into the `ScalarFunc`'s own `field_type.collate` --
+    /// so `utf8mb4_bin` and `utf8mb4_general_ci` order the same bytes
+    /// differently, as they must.
+    LtString(i32),
+    /// See [`SimpleSig::LtString`].
+    LeString(i32),
+    /// See [`SimpleSig::LtString`].
+    GtString(i32),
+    /// See [`SimpleSig::LtString`].
+    GeString(i32),
+    /// See [`SimpleSig::LtString`].
+    EqString(i32),
+    /// See [`SimpleSig::LtString`].
+    NeString(i32),
     /// `LogicalAnd` — MySQL three-valued: `NULL AND FALSE` is FALSE.
     LogicalAnd,
     /// `LogicalOr` — `NULL OR TRUE` is TRUE.
@@ -452,6 +473,9 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             .map_err(|err| format!("invalid int literal: {err:?}"))?;
         return Ok(SimpleExpr::Int(value));
     }
+    if tp == tipb::ExprType::String {
+        return Ok(SimpleExpr::Bytes(expr.val().to_vec()));
+    }
     if tp == tipb::ExprType::ColumnRef {
         let (_, offset) = tidb_codec::decode_int(expr.val())
             .map_err(|err| format!("invalid column offset: {err:?}"))?;
@@ -478,6 +502,15 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
             tipb::ScalarFuncSig::UnaryNotInt => SimpleSig::UnaryNot,
             tipb::ScalarFuncSig::IntIsNull => SimpleSig::IntIsNull,
             tipb::ScalarFuncSig::InInt => SimpleSig::InInt,
+            // Go reads the comparison's collation off the `ScalarFunc`'s own
+            // field type (`distsql_builtin.go`'s `PbToExpr` keeps it there),
+            // which is where the lowering writes the DERIVED collation.
+            tipb::ScalarFuncSig::LtString => SimpleSig::LtString(collation_of(expr)),
+            tipb::ScalarFuncSig::LeString => SimpleSig::LeString(collation_of(expr)),
+            tipb::ScalarFuncSig::GtString => SimpleSig::GtString(collation_of(expr)),
+            tipb::ScalarFuncSig::GeString => SimpleSig::GeString(collation_of(expr)),
+            tipb::ScalarFuncSig::EqString => SimpleSig::EqString(collation_of(expr)),
+            tipb::ScalarFuncSig::NeString => SimpleSig::NeString(collation_of(expr)),
             other => {
                 return Err(format!(
                     "scalar signature {other:?} waits on its distsql_builtin.go course"
@@ -496,6 +529,38 @@ pub fn convert_expr(expr: &tipb::Expr) -> Result<SimpleExpr, String> {
     ))
 }
 
+/// The bytes a string operand carries: a literal, or a string-valued
+/// column. Anything else -- including SQL NULL -- is `None`, which the
+/// caller propagates as MySQL's UNKNOWN.
+fn eval_bytes(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<Vec<u8>> {
+    use tidb_datatype::Datum;
+    match expr {
+        SimpleExpr::Bytes(value) => Some(value.clone()),
+        SimpleExpr::Column(offset) => match row.get(*offset) {
+            Some(Datum::String(value)) => Some(value.bytes().to_vec()),
+            Some(Datum::Bytes(value)) => Some(value.clone()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The collation id a comparison is evaluated under, taken from the
+/// `ScalarFunc`'s own field type as Go does.
+///
+/// The wire carries the PROTOCOL id, which TiDB negates when new collations
+/// are enabled (`rewriteNewCollationIDIfNeeded`). `get_collator_by_id` wants
+/// the registry id, so the negation is undone here -- without it every
+/// comparison silently ran under the default collator, and a
+/// `utf8mb4_general_ci` column compared case-SENSITIVELY.
+fn collation_of(expr: &tipb::Expr) -> i32 {
+    let protocol = expr
+        .field_type
+        .as_ref()
+        .map_or(0, |field_type| field_type.collate());
+    tidb_datatype::restore_collation_id_if_needed(protocol)
+}
+
 /// Evaluate to MySQL's three-valued int: `Some(0/1/n)` or NULL.
 #[must_use]
 pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i64> {
@@ -508,6 +573,8 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i64>
             Some(Datum::Null) | None => None,
             Some(_) => None, // non-int columns wait on their course
         },
+        // A bare string is not a truth value; only a comparison reads it.
+        SimpleExpr::Bytes(_) => None,
         SimpleExpr::Func(sig, children) => {
             let child = |i: usize| children.get(i).and_then(|c| eval_expr(c, row));
             match sig {
@@ -528,6 +595,36 @@ pub fn eval_expr(expr: &SimpleExpr, row: &[tidb_datatype::Datum]) -> Option<i64>
                         _ => unreachable!(),
                     };
                     Some(i64::from(truth))
+                }
+                SimpleSig::LtString(collation)
+                | SimpleSig::LeString(collation)
+                | SimpleSig::GtString(collation)
+                | SimpleSig::GeString(collation)
+                | SimpleSig::EqString(collation) => {
+                    let (left, right) = (
+                        eval_bytes(children.first()?, row)?,
+                        eval_bytes(children.get(1)?, row)?,
+                    );
+                    let ordering =
+                        tidb_datatype::get_collator_by_id(*collation).compare(&left, &right);
+                    let truth = match sig {
+                        SimpleSig::LtString(_) => ordering.is_lt(),
+                        SimpleSig::LeString(_) => ordering.is_le(),
+                        SimpleSig::GtString(_) => ordering.is_gt(),
+                        SimpleSig::GeString(_) => ordering.is_ge(),
+                        _ => ordering.is_eq(),
+                    };
+                    Some(i64::from(truth))
+                }
+                SimpleSig::NeString(collation) => {
+                    let (left, right) = (
+                        eval_bytes(children.first()?, row)?,
+                        eval_bytes(children.get(1)?, row)?,
+                    );
+                    let equal = tidb_datatype::get_collator_by_id(*collation)
+                        .compare(&left, &right)
+                        .is_eq();
+                    Some(i64::from(!equal))
                 }
                 SimpleSig::LogicalAnd => {
                     // MySQL: FALSE dominates NULL.
@@ -900,6 +997,55 @@ mod tests {
             ],
             "both key columns and the value column come back"
         );
+    }
+
+    /// Go `distsql_builtin.go` builds the string comparison signatures with
+    /// the collation the request carries, so `utf8mb4_bin` and
+    /// `utf8mb4_general_ci` order the same bytes differently. The wire id is
+    /// NEGATED when new collations are on, and forgetting to undo that ran
+    /// every comparison under the default collator -- caught by running the
+    /// server, where a `general_ci` column compared case-sensitively.
+    #[test]
+    fn a_string_comparison_uses_the_collation_the_request_carries() {
+        use tidb_datatype::Datum;
+
+        let compare = |collation_name: &str, literal: &str, value: &str| {
+            let expr = tipb::Expr {
+                tp: Some(tipb::ExprType::ScalarFunc as i32),
+                sig: Some(tipb::ScalarFuncSig::EqString as i32),
+                children: vec![
+                    tipb::Expr {
+                        tp: Some(tipb::ExprType::ColumnRef as i32),
+                        val: Some({
+                            let mut offset = Vec::new();
+                            tidb_codec::encode_int(&mut offset, 0);
+                            offset
+                        }),
+                        ..tipb::Expr::default()
+                    },
+                    tipb::Expr {
+                        tp: Some(tipb::ExprType::String as i32),
+                        val: Some(literal.as_bytes().to_vec()),
+                        ..tipb::Expr::default()
+                    },
+                ],
+                field_type: Some(tipb::FieldType {
+                    collate: Some(tidb_datatype::collation_to_proto(collation_name)),
+                    ..tipb::FieldType::default()
+                }),
+                ..tipb::Expr::default()
+            };
+            let converted = convert_expr(&expr).expect("a string comparison converts");
+            eval_expr(&converted, &[Datum::new_string(value.to_owned())])
+        };
+
+        // Case-sensitive under the binary collation.
+        assert_eq!(compare("utf8mb4_bin", "A", "A"), Some(1));
+        assert_eq!(compare("utf8mb4_bin", "a", "A"), Some(0));
+        // Case-insensitive under the general_ci collation.
+        assert_eq!(compare("utf8mb4_general_ci", "a", "A"), Some(1));
+        assert_eq!(compare("utf8mb4_general_ci", "A", "A"), Some(1));
+        assert_eq!(compare("utf8mb4_general_ci", "b", "A"), Some(0));
     }
 
     #[test]
