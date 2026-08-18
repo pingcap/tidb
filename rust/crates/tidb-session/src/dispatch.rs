@@ -441,6 +441,39 @@ impl Session {
         prepared: bool,
         cached_point_get: Option<tidb_executor::PreparedPointGetExecution>,
     ) -> Result<StmtOutput, DriverError> {
+        // Go `SelectInto` with `SelectIntoVars`: the query runs as itself and
+        // its one row lands in the named user variables. Intercepted at this
+        // one door so text and prepared spellings share the rules: more than
+        // one row is 1172, a row with the wrong width is 1222, and zero rows
+        // leave every variable untouched (MySQL warns 1329; the OK is still
+        // an OK).
+        if let Stmt::Query(query) = &mut stmt {
+            if let tidb_ast::QueryStmt::Select(select) = &mut **query {
+                if !select.into_vars.is_empty() {
+                    let names = std::mem::take(&mut select.into_vars);
+                    let output =
+                        self.execute_parsed_statement(sql, stmt, prepared, cached_point_get)?;
+                    let StmtOutput::Rows { rows, .. } = output else {
+                        return Err(DriverError::unsupported(
+                            "SELECT INTO expected a row-producing query",
+                        ));
+                    };
+                    if rows.len() > 1 {
+                        return Err(DriverError::SelectIntoMoreThanOneRow);
+                    }
+                    if let Some(row) = rows.first() {
+                        if row.len() != names.len() {
+                            return Err(DriverError::SelectIntoColumnMismatch);
+                        }
+                        let mut vars = self.user_vars.borrow_mut();
+                        for (name, value) in names.iter().zip(row.iter()) {
+                            vars.insert(name.to_ascii_lowercase(), value.clone());
+                        }
+                    }
+                    return Ok(StmtOutput::Affected(u64::from(!rows.is_empty())));
+                }
+            }
+        }
         // Go hands every statement that is not continuing an open transaction
         // a FRESH membuffer, so `session.HasDirtyContent` answers false for
         // every table at this point -- and `BEGIN` therefore starts from an

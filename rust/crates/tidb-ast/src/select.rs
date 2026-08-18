@@ -158,6 +158,11 @@ pub struct SelectStmt {
     pub lock: Option<SelectLock>,
     /// The complete trailing `INTO OUTFILE` payload.
     pub into_outfile: Option<SelectIntoOption>,
+    /// `INTO @var [, @var ...]` — Go `SelectIntoVars`. Restore note: Go's
+    /// `SelectIntoOption.Restore` errors on this type ("Unsupported
+    /// SelectionInto type"); this port restores the natural MySQL text
+    /// instead, a divergence visible only through a path Go cannot take.
+    pub into_vars: Vec<String>,
 }
 
 /// Go's `SelectIntoOption` payload. Only OUTFILE is restorable in Go; its
@@ -236,6 +241,16 @@ impl SelectStmt {
             if let Some(into) = &self.into_outfile {
                 out.push(' ');
                 into.restore_into(out);
+            }
+            if !self.into_vars.is_empty() {
+                out.push_str(" INTO ");
+                for (position, name) in self.into_vars.iter().enumerate() {
+                    if position > 0 {
+                        out.push_str(", ");
+                    }
+                    out.push('@');
+                    out.push_str(name);
+                }
             }
             if self.is_in_braces {
                 out.push(')');
@@ -936,6 +951,7 @@ impl crate::Visitable for SelectStmt {
             limit,
             lock,
             into_outfile,
+            into_vars: _,
         } = self;
         if !crate::Visitable::accept(kind, visitor) {
             return false;

@@ -1193,6 +1193,16 @@ impl DriverError {
             *b"21000",
             "Subquery returns more than 1 row".to_owned(),
         ),
+        DriverError::SelectIntoMoreThanOneRow => MysqlError::new(
+            1172,
+            *b"42000",
+            "Result consisted of more than one row".to_owned(),
+        ),
+        DriverError::SelectIntoColumnMismatch => MysqlError::new(
+            1222,
+            *b"21000",
+            "The used SELECT statements have a different number of columns".to_owned(),
+        ),
         // Go: "Reference '%-.64s' not supported (%s)".
         DriverError::IllegalReference { name, reason } => MysqlError::new(
             1247,

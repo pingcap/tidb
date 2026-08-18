@@ -242,7 +242,15 @@ impl Parser {
                     sel.limit = limit;
                     sel.is_in_braces = true;
                 } else {
-                    sel.into_outfile = self.parse_opt_into_outfile()?;
+                    if self.is_kw("INTO") && {
+                        let after = self.peek_n(1);
+                        after.kind == TokenKind::UserVar && !after.text.starts_with("@@")
+                    } {
+                        self.bump();
+                        sel.into_vars = self.parse_into_user_vars()?;
+                    } else {
+                        sel.into_outfile = self.parse_opt_into_outfile()?;
+                    }
                 }
                 Ok(QueryStmt::Select(sel))
             }
@@ -331,7 +339,15 @@ impl Parser {
         sel.order_by = order_by;
         sel.limit = limit;
         sel.lock = lock;
-        sel.into_outfile = self.parse_opt_into_outfile()?;
+        if self.is_kw("INTO") && {
+            let after = self.peek_n(1);
+            after.kind == TokenKind::UserVar && !after.text.starts_with("@@")
+        } {
+            self.bump();
+            sel.into_vars = self.parse_into_user_vars()?;
+        } else {
+            sel.into_outfile = self.parse_opt_into_outfile()?;
+        }
         Ok(sel)
     }
 
@@ -413,6 +429,18 @@ impl Parser {
             }
         }
         let fields = self.parse_select_list()?;
+        // MySQL's grammar admits `INTO @var [, ...]` BETWEEN the select list
+        // and FROM — the common spelling — as well as trailing; both land in
+        // the same field.
+        let mid_into_vars = if self.is_kw("INTO") && {
+            let after = self.peek_n(1);
+            after.kind == TokenKind::UserVar && !after.text.starts_with("@@")
+        } {
+            self.bump();
+            self.parse_into_user_vars()?
+        } else {
+            Vec::new()
+        };
         let from = if self.is_kw("FROM") {
             self.bump();
             // `FROM DUAL` alone is a no-op placeholder table and is dropped,
@@ -487,6 +515,7 @@ impl Parser {
             limit: None,
             lock: None,
             into_outfile: None,
+            into_vars: mid_into_vars,
         })
     }
 
@@ -539,6 +568,7 @@ impl Parser {
             limit: None,
             lock: None,
             into_outfile: None,
+            into_vars: Vec::new(),
         })
     }
 
@@ -552,7 +582,15 @@ impl Parser {
         statement.order_by = order_by;
         statement.limit = limit;
         statement.lock = lock;
-        statement.into_outfile = self.parse_opt_into_outfile()?;
+        if self.is_kw("INTO") && {
+            let after = self.peek_n(1);
+            after.kind == TokenKind::UserVar && !after.text.starts_with("@@")
+        } {
+            self.bump();
+            statement.into_vars = self.parse_into_user_vars()?;
+        } else {
+            statement.into_outfile = self.parse_opt_into_outfile()?;
+        }
         Ok(statement)
     }
 
@@ -603,6 +641,7 @@ impl Parser {
             limit: None,
             lock: None,
             into_outfile: None,
+            into_vars: Vec::new(),
         })
     }
 
@@ -717,6 +756,22 @@ impl Parser {
     /// [`Parser::parse_order_limit_lock`], never folded into that same
     /// loop — real TiDB's own grammar checks for `INTO` only once that
     /// entire loop has already finished, not interleaved with it.
+    /// Parses `INTO @var [, @var ...]` — Go `SelectIntoVars`. Only entered
+    /// when the token after `INTO` is a user variable; every other spelling
+    /// stays on the OUTFILE path and its errors.
+    fn parse_into_user_vars(&mut self) -> PResult<Vec<String>> {
+        let mut vars = vec![self.bumped_at_name()];
+        while self.is_op(",") {
+            self.bump();
+            let token = self.peek();
+            if token.kind != TokenKind::UserVar || token.text.starts_with("@@") {
+                return Err(self.err_here("expected a user variable after INTO @..., "));
+            }
+            vars.push(self.bumped_at_name());
+        }
+        Ok(vars)
+    }
+
     fn parse_opt_into_outfile(&mut self) -> PResult<Option<tidb_ast::SelectIntoOption>> {
         if !self.is_kw("INTO") {
             return Ok(None);

@@ -781,6 +781,12 @@ pub enum DriverError {
     /// Go `ER_SUBQUERY_NO_1_ROW` (1242): a scalar subquery produced more than
     /// one row.
     SubqueryReturnsMoreThanOneRow,
+    /// MySQL `ER_TOO_MANY_ROWS` (1172): `SELECT ... INTO @var` produced more
+    /// than one row.
+    SelectIntoMoreThanOneRow,
+    /// MySQL `ER_WRONG_NUMBER_OF_COLUMNS_IN_SELECT` (1222): the `INTO` list's
+    /// width differs from the select list's.
+    SelectIntoColumnMismatch,
     /// Go `exeerrors.ErrMemoryExceedForQuery` (8175): the statement exceeded
     /// `tidb_mem_quota_query` under `tidb_mem_oom_action = CANCEL`.
     MemoryExceedForQuery {
