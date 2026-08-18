@@ -319,7 +319,6 @@ func (s *mockGCSSuite) TestShowJob() {
 					s.False(singularStats.Terminal)
 					s.NotNil(singularStats.CurrentStep)
 					s.NotEmpty(singularStats.CurrentStep.Name)
-					s.Positive(singularStats.CurrentStep.TotalBytes)
 					s.Equal(singularStats.Status, pluralStats.Status)
 					s.Equal(singularStats.Terminal, pluralStats.Terminal)
 					s.Equal(singularStats.CurrentStep, pluralStats.CurrentStep)

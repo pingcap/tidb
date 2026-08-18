@@ -197,7 +197,7 @@ func TestGetJobStatusFallbackToLegacy(t *testing.T) {
 	manager := NewJobManager(db)
 	ctx := context.Background()
 	jobID := int64(123)
-	rawUnsupported := &drivermysql.MySQLError{Number: 1064, Message: "syntax error near RAW IMPORT JOB"}
+	rawUnsupported := &drivermysql.MySQLError{Number: 1235, Message: "SHOW RAW IMPORT JOB is unsupported"}
 	legacyCols := []string{
 		"Job_ID", "Group_Key", "Data_Source", "Target_Table", "Table_ID",
 		"Phase", "Status", "Source_File_Size", "Imported_Rows", "Result_Message",
@@ -229,7 +229,7 @@ func TestGetJobStatusFallbackToLegacy(t *testing.T) {
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
-func TestRawFallbackRequiresParseErrorCode(t *testing.T) {
+func TestRawFallbackRequiresUnsupportedErrorCode(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	defer db.Close()

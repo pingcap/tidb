@@ -213,7 +213,10 @@ func (m *jobManager) getLegacyJobsByGroup(ctx context.Context, groupKey string) 
 
 func isRawImportUnsupportedError(err error) bool {
 	var mysqlErr *drivermysql.MySQLError
-	return goerrors.As(errors.Cause(err), &mysqlErr) && mysqlErr.Number == 1064
+	// 1064 is returned by old servers that cannot parse SHOW RAW, while 1235
+	// is returned by the classic kernel where SHOW RAW is intentionally disabled.
+	return goerrors.As(errors.Cause(err), &mysqlErr) &&
+		(mysqlErr.Number == 1064 || mysqlErr.Number == 1235)
 }
 
 func scanJobStatus(rows *sql.Rows) (*JobStatus, error) {
