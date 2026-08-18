@@ -15,7 +15,6 @@ import (
 type projectedTableSchema struct {
 	createTable     *ast.CreateTableStmt
 	retainedColumns map[string]struct{}
-	sourceIndexes   [][]string
 }
 
 type projectedTableSchemas map[tableName]*projectedTableSchema
@@ -51,7 +50,6 @@ func parseProjectedTableSchema(
 	return &projectedTableSchema{
 		createTable:     createTable,
 		retainedColumns: retainedColumns,
-		sourceIndexes:   collectIndexes(createTable),
 	}, nil
 }
 
@@ -192,24 +190,12 @@ func validateForeignKeyReference(reference *ast.ReferenceDef, database string, s
 		// The referenced table is outside this dump and is not rewritten here.
 		return nil
 	}
-	referencedColumns := make([]string, 0, len(reference.IndexPartSpecifications))
 	for _, key := range reference.IndexPartSpecifications {
 		if key.Column != nil {
 			if _, ok := targetSchema.retainedColumns[key.Column.Name.L]; !ok {
 				return removedReferenceColumnError(referenceDatabase, referenceTable, key.Column.Name.O)
 			}
-			referencedColumns = append(referencedColumns, key.Column.Name.L)
 		}
-	}
-	// Preserve source FK metadata that already lacked an index; reject only projection-induced breakage.
-	if len(referencedColumns) > 0 &&
-		hasIndexPrefix(targetSchema.sourceIndexes, referencedColumns) &&
-		!hasIndexPrefix(collectIndexes(targetSchema.createTable), referencedColumns) {
-		return errors.Errorf(
-			"foreign key referenced columns are not indexed in table `%s`.`%s`",
-			escapeString(referenceDatabase),
-			escapeString(referenceTable),
-		)
 	}
 	return nil
 }
@@ -234,61 +220,6 @@ func (schemas projectedTableSchemas) lookup(database, table string) (*projectedT
 		matched = schema
 	}
 	return matched, matched != nil, nil
-}
-
-func collectIndexes(createTable *ast.CreateTableStmt) [][]string {
-	indexes := make([][]string, 0, len(createTable.Constraints))
-	for _, column := range createTable.Cols {
-		for _, option := range column.Options {
-			if option.Tp == ast.ColumnOptionPrimaryKey || option.Tp == ast.ColumnOptionUniqKey {
-				indexes = append(indexes, []string{column.Name.Name.L})
-				break
-			}
-		}
-	}
-
-	for _, constraint := range createTable.Constraints {
-		switch constraint.Tp {
-		case ast.ConstraintPrimaryKey,
-			ast.ConstraintKey,
-			ast.ConstraintIndex,
-			ast.ConstraintUniq,
-			ast.ConstraintUniqKey,
-			ast.ConstraintUniqIndex:
-		default:
-			continue
-		}
-		columns := make([]string, 0, len(constraint.Keys))
-		for _, key := range constraint.Keys {
-			if key.Column == nil {
-				break
-			}
-			columns = append(columns, key.Column.Name.L)
-		}
-		if len(columns) > 0 {
-			indexes = append(indexes, columns)
-		}
-	}
-	return indexes
-}
-
-func hasIndexPrefix(indexes [][]string, referencedColumns []string) bool {
-	for _, indexColumns := range indexes {
-		if len(indexColumns) < len(referencedColumns) {
-			continue
-		}
-		matched := true
-		for i, referencedColumn := range referencedColumns {
-			if indexColumns[i] != referencedColumn {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return true
-		}
-	}
-	return false
 }
 
 func removedReferenceColumnError(database, table, column string) error {
