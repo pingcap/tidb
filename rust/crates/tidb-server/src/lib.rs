@@ -71,6 +71,7 @@ mod distinct_result_set;
 pub mod handshake;
 mod handshake_response;
 mod listener;
+pub mod main_flags;
 mod mysql_connection;
 mod mysql_tls;
 mod native_password;
