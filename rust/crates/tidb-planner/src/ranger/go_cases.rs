@@ -348,3 +348,200 @@ fn column_ranges_match_gos_case_table() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// Go `TestIndexRangeForUnsignedAndOverflow`'s mock table (issue 6661).
+struct UnsignedTable {
+    columns: Vec<Column>,
+}
+
+impl UnsignedTable {
+    fn new() -> Self {
+        let unsigned = |code: FieldTypeCode, unique_id: i64| {
+            let mut ft = FieldType::new(code);
+            ft.set_flags(ft.flags() | FieldTypeFlags::UNSIGNED);
+            Column::new(unique_id, ft)
+        };
+        Self {
+            columns: vec![
+                unsigned(FieldTypeCode::Short, 1),        // a smallint(5) unsigned
+                unsigned(FieldTypeCode::NewDecimal, 2),   // decimal unsigned
+                unsigned(FieldTypeCode::Float, 3),        // float unsigned
+                unsigned(FieldTypeCode::Double, 4),       // double unsigned
+                Column::new(5, FieldType::new(FieldTypeCode::LongLong)), // col_int
+                Column::new(6, FieldType::new(FieldTypeCode::Float)),    // col_float
+            ],
+        }
+    }
+
+    fn name_to_offset(name: &str) -> Option<usize> {
+        Some(match name {
+            "a" => 0,
+            "decimal_unsigned" => 1,
+            "float_unsigned" => 2,
+            "double_unsigned" => 3,
+            "col_int" => 4,
+            "col_float" => 5,
+            _ => return None,
+        })
+    }
+
+    /// The index list, by `indexPos`: six single-column indexes then
+    /// `idx_int_bigint(a, col_int)`.
+    fn index_columns(&self, index_pos: usize) -> Vec<Column> {
+        match index_pos {
+            0..=5 => vec![self.columns[index_pos].clone()],
+            6 => vec![self.columns[0].clone(), self.columns[4].clone()],
+            _ => Vec::new(),
+        }
+    }
+}
+
+impl ColumnResolver for UnsignedTable {
+    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+        let name = path.last()?;
+        let offset = Self::name_to_offset(&name.to_ascii_lowercase())?;
+        let column = &self.columns[offset];
+        Some((
+            offset,
+            column.ret_type.clone().expect("typed"),
+            column.unique_id,
+        ))
+    }
+
+    fn resolve_column(&self, path: &[String]) -> Option<Column> {
+        let name = path.last()?;
+        let offset = Self::name_to_offset(&name.to_ascii_lowercase())?;
+        Some(self.columns[offset].clone())
+    }
+
+    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+        tidb_expr::SessionTimeZone::utc()
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+    }
+}
+
+/// A stand-in for the two `pkg/planner/core/expression_rewriter.go`
+/// stages Go runs BEFORE ranger and this harness's pipeline lacks (they
+/// belong to the planner-rewriter port track):
+/// * `inToExpression`: a single-member `IN` becomes `EQ`;
+/// * the implicit comparison cast: a DECIMAL constant compared against a
+///   REAL column arrives at ranger as a DOUBLE.
+fn planner_rewriter_stage(expr: &Expression) -> Expression {
+    match expr {
+        Expression::ScalarFunction(sf) => {
+            let name = sf.func_name.lowercase();
+            if name == "in" && sf.args.len() == 2 {
+                let mut eq = sf.clone();
+                eq.func_name = tidb_ast::CiString::new("eq");
+                eq.args = sf.args.iter().map(planner_rewriter_stage).collect();
+                return Expression::ScalarFunction(eq);
+            }
+            let mut rewritten = sf.clone();
+            rewritten.args = sf.args.iter().map(planner_rewriter_stage).collect();
+            if matches!(name, "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "nulleq") {
+                let real_column = rewritten.args.iter().any(|arg| {
+                    matches!(arg, Expression::Column(col)
+                        if col.ret_type.as_ref().is_some_and(|ft| {
+                            ft.eval_type() == tidb_datatype::EvalType::Real
+                        }))
+                });
+                if real_column {
+                    for arg in &mut rewritten.args {
+                        if let Expression::Constant(c) = arg {
+                            if let Datum::Decimal(d) = &c.value {
+                                c.value = Datum::Real(d.to_f64());
+                            }
+                        }
+                    }
+                }
+            }
+            Expression::ScalarFunction(rewritten)
+        }
+        other => other.clone(),
+    }
+}
+
+/// Go's per-case pipeline: `DetachCondAndBuildRangeForIndex` over the
+/// chosen index's columns.
+fn build_index_ranges_for(expr_text: &str, index_pos: usize) -> Result<String, String> {
+    let table = UnsignedTable::new();
+    let sql = format!("select * from t where {expr_text}");
+    let stmt = tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
+    let tidb_ast::Stmt::Query(query) = stmt else {
+        return Err("not a query".to_owned());
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+        return Err("not a select".to_owned());
+    };
+    let where_clause = select.where_clause.ok_or("no where")?;
+    let rewritten = rewrite_expr_resolved(&where_clause, &table)
+        .map_err(|error| format!("rewrite: {error:?}"))?;
+    let ctx = tidb_expr::NoColumns;
+    let builder = RealFunctionBuilder::new(&ctx);
+    let conds: Vec<Expression> = split_cnf_items(&rewritten)
+        .iter()
+        .map(planner_rewriter_stage)
+        .map(|cond| push_down_not(&cond, &builder))
+        .collect();
+    let index_cols = table.index_columns(index_pos);
+    let lengths = vec![super::checker::UNSPECIFIED_LENGTH; index_cols.len()];
+    let result = super::detacher::detach_cond_and_build_range_for_index(
+        &conds,
+        &index_cols,
+        &lengths,
+        0,
+    )
+    .map_err(|error| format!("detach: {error:?}"))?;
+    Ok(ranges_to_go_string(&result.ranges))
+}
+
+/// Go `TestIndexRangeForUnsignedAndOverflow` (`ranger_test.go:314`), the
+/// full case table.
+#[test]
+fn unsigned_and_overflow_index_ranges_match_go() {
+    let cases: &[(usize, &str, &str)] = &[
+        (6, "a = 1 and a = 2", "[]"),
+        (0, "a not in (0, 1, 2)", "[(NULL,0) (2,+inf]]"),
+        (0, "a not in (-1, 1, 2)", "[(NULL,1) (2,+inf]]"),
+        (0, "a not in (-2, -1, 1, 2)", "[(NULL,1) (2,+inf]]"),
+        (0, "a not in (111)", "[[-inf,111) (111,+inf]]"),
+        (
+            0,
+            "a not in (1, 2, 9223372036854775810)",
+            "[(NULL,1) (2,9223372036854775810) (9223372036854775810,+inf]]",
+        ),
+        (0, "a >= -2147483648", "[[0,+inf]]"),
+        (0, "a > -2147483648", "[[0,+inf]]"),
+        (0, "a != -2147483648", "[[0,+inf]]"),
+        (0, "a < -1 or a < 1", "[[-inf,1)]"),
+        (0, "a < -1 and a < 1", "[]"),
+        (1, "decimal_unsigned > -100", "[[0,+inf]]"),
+        (2, "float_unsigned > -100", "[[0,+inf]]"),
+        (3, "double_unsigned > -100", "[[0,+inf]]"),
+        (4, "col_int != 9223372036854775808", "[[-inf,+inf]]"),
+        (4, "col_int > 9223372036854775808", "[]"),
+        (4, "col_int < 9223372036854775808", "[[-inf,+inf]]"),
+        (
+            5,
+            "col_float > 1000000000000000000000000000000000000000",
+            "[]",
+        ),
+        (
+            5,
+            "col_float < -1000000000000000000000000000000000000000",
+            "[]",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (index_pos, expr, expected) in cases {
+        match build_index_ranges_for(expr, *index_pos) {
+            Ok(got) if got == *expected => {}
+            Ok(got) => failures.push(format!("{expr}: got {got}, want {expected}")),
+            Err(error) => failures.push(format!("{expr}: {error}")),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

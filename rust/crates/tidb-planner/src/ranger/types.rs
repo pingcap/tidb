@@ -443,6 +443,8 @@ fn format_datum(d: &Datum, is_left_side: bool) -> String {
         // KindFloat32 datum's GetValue is a float32, so its digits are the
         // 32-bit shortest form ("111.111115", not the widened f64 tail).
         Datum::Real(v) => go_g_float(*v),
+        // Go `%v` of a MyDecimal prints its decimal text.
+        Datum::Decimal(d) => d.to_string(),
         Datum::Float32(v) => {
             let narrowed = *v as f32;
             if (-4..21).contains(&(format!("{narrowed:e}")
