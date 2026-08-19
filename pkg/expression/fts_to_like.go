@@ -571,7 +571,7 @@ func buildFTSLowerLikePredicate(ctx BuildContext, lowered Expression, token stri
 // optimisation, so an unlisted charset simply does not get one.
 func ftsPreFilterSafeCharset(cs string) bool {
 	switch cs {
-	case charset.CharsetUTF8MB4, charset.CharsetUTF8, charset.CharsetASCII, "gb18030":
+	case charset.CharsetUTF8MB4, charset.CharsetUTF8, charset.CharsetASCII:
 		return true
 	default:
 		return false
