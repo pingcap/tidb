@@ -1124,3 +1124,315 @@ fn index_ranges_match_go() {
     }
     assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
 }
+
+/// Go `TestBinCollationRangeForIndex` (`ranger_test.go:2636`): the
+/// `DetachSimpleCondAndBuildRangeForIndex` entry over a CI column compared
+/// against `CAST(... AS BINARY)` -- the approximate EQ range is built from
+/// the sort key AND the predicate stays a filter (the `shouldReserve` leg
+/// of the non-DNF branch).
+#[test]
+fn bin_collation_simple_detach_matches_go() {
+    let table = IndexRangeTable::new();
+    let column_name = |unique_id: i64| -> String {
+        let name = ["a", "b", "c", "d", "e", "f", "g", "h"]
+            .get((unique_id - 1) as usize)
+            .copied()
+            .unwrap_or("?");
+        format!("test.t.{name}")
+    };
+    let sql = "select * from t where f = cast('abc' as binary)";
+    let stmt = tidb_parser::parse(sql).expect("parses");
+    let tidb_ast::Stmt::Query(query) = stmt else {
+        panic!("not a query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+        panic!("not a select");
+    };
+    let rewritten = rewrite_expr_resolved(&select.where_clause.expect("where"), &table)
+        .expect("rewrites");
+    let conds = split_cnf_items(&rewritten);
+    let cols = vec![table.columns[5].clone()];
+    let lengths = vec![super::checker::UNSPECIFIED_LENGTH];
+    let (ranges, access_conds, remained_conds) =
+        super::detacher::detach_simple_cond_and_build_range_for_index(&conds, &cols, &lengths, 0)
+            .expect("detaches");
+    assert_eq!(
+        stringify_conds(&access_conds, &column_name),
+        "[eq(test.t.f, abc)]"
+    );
+    assert_eq!(
+        stringify_conds(&remained_conds, &column_name),
+        "[eq(test.t.f, abc)]"
+    );
+    assert_eq!(
+        ranges_to_go_string(&ranges),
+        "[[\"\\x00A\\x00B\\x00C\",\"\\x00A\\x00B\\x00C\"]]"
+    );
+}
+
+/// `TestIssue40997`'s table: `dt char(8) utf8mb4_bin NOT NULL, db_id
+/// bigint NOT NULL, tbl_id bigint NOT NULL`, unique index `(dt, db_id,
+/// tbl_id)`.
+struct Issue40997Table {
+    columns: Vec<Column>,
+}
+
+impl Issue40997Table {
+    fn new() -> Self {
+        let dt = Column::new(1, {
+            let mut ft = FieldType::new(FieldTypeCode::String);
+            ft.set_flen(8);
+            ft.set_charset_name("utf8mb4");
+            ft.set_collation_name("utf8mb4_bin");
+            ft.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
+            ft.set_flags(ft.flags() | FieldTypeFlags::NOT_NULL);
+            ft
+        });
+        let bigint = |unique_id: i64| {
+            let mut ft = FieldType::new(FieldTypeCode::LongLong);
+            ft.set_flags(ft.flags() | FieldTypeFlags::NOT_NULL);
+            Column::new(unique_id, ft)
+        };
+        Self {
+            columns: vec![dt, bigint(2), bigint(3)],
+        }
+    }
+}
+
+impl ColumnResolver for Issue40997Table {
+    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+        let name = path.last()?;
+        let offset = match name.to_ascii_lowercase().as_str() {
+            "dt" => 0,
+            "db_id" => 1,
+            "tbl_id" => 2,
+            _ => return None,
+        };
+        let column = &self.columns[offset];
+        Some((
+            offset,
+            column.ret_type.clone().expect("typed"),
+            column.unique_id,
+        ))
+    }
+
+    fn resolve_column(&self, path: &[String]) -> Option<Column> {
+        let name = path.last()?;
+        let offset = match name.to_ascii_lowercase().as_str() {
+            "dt" => 0,
+            "db_id" => 1,
+            "tbl_id" => 2,
+            _ => return None,
+        };
+        Some(self.columns[offset].clone())
+    }
+
+    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+        tidb_expr::SessionTimeZone::utc()
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+    }
+}
+
+/// Go `TestIssue40997` (`ranger_test.go:2473`), the ranger-observable
+/// core: the three-disjunct DNF detaches into exactly the two ranges the
+/// captured EXPLAIN prints -- the third disjunct's `db_id > '62812' AND
+/// db_id < '62813'` is an EMPTY integer interval and drops.
+#[test]
+fn issue_40997_dnf_ranges_match_go() {
+    let table = Issue40997Table::new();
+    let sql = "select * from t where (dt = '20210112' and db_id = '62812' and tbl_id > '228892694') \
+               or (dt = '20210112' and db_id = '62813' and tbl_id <= '226785696') \
+               or (dt = '20210112' and db_id > '62812' and db_id < '62813')";
+    let stmt = tidb_parser::parse(sql).expect("parses");
+    let tidb_ast::Stmt::Query(query) = stmt else {
+        panic!("not a query");
+    };
+    let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+        panic!("not a select");
+    };
+    let rewritten = rewrite_expr_resolved(&select.where_clause.expect("where"), &table)
+        .expect("rewrites");
+    let conds = split_cnf_items(&rewritten);
+    let lengths = vec![super::checker::UNSPECIFIED_LENGTH; 3];
+    let result = super::detacher::detach_cond_and_build_range_for_index(
+        &conds,
+        &table.columns,
+        &lengths,
+        0,
+    )
+    .expect("detaches");
+    assert_eq!(
+        ranges_to_go_string(&result.ranges),
+        "[(\"20210112\" 62812 228892694,\"20210112\" 62812 +inf] [\"20210112\" 62813 -inf,\"20210112\" 62813 226785696]]"
+    );
+}
+
+/// `TestMinAccessCondsForDNFCond`'s table: `a int, b int, c int, d int`
+/// with `ia(a), ib(b), ic(c), iabc(a,b,c), iab(a,b)` at positions 0-4.
+struct MinAccessTable {
+    columns: Vec<Column>,
+}
+
+impl MinAccessTable {
+    fn new() -> Self {
+        let int_col =
+            |unique_id: i64| Column::new(unique_id, FieldType::new(FieldTypeCode::LongLong));
+        Self {
+            columns: (1..=4).map(int_col).collect(),
+        }
+    }
+
+    fn index(&self, index_pos: usize) -> Vec<Column> {
+        let col = |offset: usize| self.columns[offset].clone();
+        match index_pos {
+            0 => vec![col(0)],
+            1 => vec![col(1)],
+            2 => vec![col(2)],
+            3 => vec![col(0), col(1), col(2)],
+            _ => vec![col(0), col(1)],
+        }
+    }
+}
+
+impl ColumnResolver for MinAccessTable {
+    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+        let name = path.last()?;
+        let offset = match name.to_ascii_lowercase().as_str() {
+            "a" => 0,
+            "b" => 1,
+            "c" => 2,
+            "d" => 3,
+            _ => return None,
+        };
+        let column = &self.columns[offset];
+        Some((
+            offset,
+            column.ret_type.clone().expect("typed"),
+            column.unique_id,
+        ))
+    }
+
+    fn resolve_column(&self, path: &[String]) -> Option<Column> {
+        let name = path.last()?;
+        let offset = match name.to_ascii_lowercase().as_str() {
+            "a" => 0,
+            "b" => 1,
+            "c" => 2,
+            "d" => 3,
+            _ => return None,
+        };
+        Some(self.columns[offset].clone())
+    }
+
+    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+        tidb_expr::SessionTimeZone::utc()
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+    }
+}
+
+/// Go `TestMinAccessCondsForDNFCond` (`ranger_test.go:2532`): how many
+/// access conditions the WEAKEST disjunct of a detached DNF contributes --
+/// the fix-44389 cost signal -- alongside the detached access conds.
+#[test]
+fn min_access_conds_for_dnf_match_go() {
+    let table = MinAccessTable::new();
+    let column_name = |unique_id: i64| -> String {
+        let name = ["a", "b", "c", "d"]
+            .get((unique_id - 1) as usize)
+            .copied()
+            .unwrap_or("?");
+        format!("test.t.{name}")
+    };
+    let cases: &[(usize, &str, &str, i64)] = &[
+        (0, "a = 1", "[eq(test.t.a, 1)]", 0),
+        (
+            0,
+            "a = 1 or a = 2 or a = 3",
+            "[or(eq(test.t.a, 1), or(eq(test.t.a, 2), eq(test.t.a, 3)))]",
+            1,
+        ),
+        (0, "a = 1 or b = 2 or c = 3", "[]", 0),
+        (
+            0,
+            "(a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
+            "[or(eq(test.t.a, 1), or(eq(test.t.a, 3), eq(test.t.a, 5)))]",
+            1,
+        ),
+        (
+            1,
+            "(a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
+            "[or(eq(test.t.b, 2), or(eq(test.t.b, 4), eq(test.t.b, 6)))]",
+            1,
+        ),
+        (
+            2,
+            "(a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
+            "[]",
+            0,
+        ),
+        (
+            3,
+            "(a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
+            "[or(and(eq(test.t.a, 1), eq(test.t.b, 2)), or(and(eq(test.t.a, 3), eq(test.t.b, 4)), and(eq(test.t.a, 5), and(eq(test.t.b, 6), eq(test.t.c, 7)))))]",
+            2,
+        ),
+        (
+            4,
+            "(a=1 and b=2) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
+            "[or(and(eq(test.t.a, 1), eq(test.t.b, 2)), or(and(eq(test.t.a, 3), eq(test.t.b, 4)), and(eq(test.t.a, 5), eq(test.t.b, 6))))]",
+            2,
+        ),
+        (
+            3,
+            "(a=1) or (a=3 and b=4) or (a=5 and b=6 and c=7)",
+            "[or(eq(test.t.a, 1), or(and(eq(test.t.a, 3), eq(test.t.b, 4)), and(eq(test.t.a, 5), and(eq(test.t.b, 6), eq(test.t.c, 7)))))]",
+            1,
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (index_pos, expr, want_access, want_min) in cases {
+        let got = (|| -> Result<(String, i64), String> {
+            let sql = format!("select * from t where {expr}");
+            let stmt =
+                tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
+            let tidb_ast::Stmt::Query(query) = stmt else {
+                return Err("not a query".to_owned());
+            };
+            let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+                return Err("not a select".to_owned());
+            };
+            let where_clause = select.where_clause.ok_or("no where")?;
+            let rewritten = rewrite_expr_resolved(&where_clause, &table)
+                .map_err(|error| format!("rewrite: {error:?}"))?;
+            let conds = split_cnf_items(&rewritten);
+            let cols = table.index(*index_pos);
+            let lengths = vec![super::checker::UNSPECIFIED_LENGTH; cols.len()];
+            let result = super::detacher::detach_cond_and_build_range_for_index(
+                &conds, &cols, &lengths, 0,
+            )
+            .map_err(|error| format!("detach: {error:?}"))?;
+            Ok((
+                stringify_conds(&result.access_conds, &column_name),
+                result.min_access_conds_for_dnf_cond,
+            ))
+        })();
+        match got {
+            Ok((access, min)) => {
+                if access != *want_access {
+                    failures.push(format!("{expr}@{index_pos}: access {access}, want {want_access}"));
+                }
+                if min != *want_min {
+                    failures.push(format!("{expr}@{index_pos}: min {min}, want {want_min}"));
+                }
+            }
+            Err(error) => failures.push(format!("{expr}@{index_pos}: {error}")),
+        }
+    }
+    assert!(failures.is_empty(), "{} failures:\n{}", failures.len(), failures.join("\n"));
+}

@@ -770,3 +770,60 @@ fn the_keyword_is_refused_on_a_secondary_key() {
         );
     }
 }
+
+/// Go `pkg/util/ranger` `TestIssue50051`: an UNSIGNED key column compared
+/// above `i64::MAX` must still range-scan to its row, and a signed key
+/// compared against a subquery over an UNSIGNED column keeps the negative
+/// row -- both were wrong-range regressions upstream.
+#[test]
+fn issue_50051_unsigned_boundaries_range_correctly() {
+    let mut catalog = Catalog::default();
+    let ctx = crate::StmtContext::for_query();
+    crate::run_create_table_on(
+        "CREATE TABLE tt (c BIGINT UNSIGNED NOT NULL, d INT NOT NULL, PRIMARY KEY (c, d))",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO tt VALUES (9223372036854775810, 3)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on(
+            "SELECT c FROM tt WHERE c > 9223372036854775807 AND c > 1",
+            &catalog,
+            &ctx
+        )
+        .unwrap(),
+        vec![vec![Datum::UInt(9223372036854775810)]],
+    );
+
+    crate::run_create_table_on(
+        "CREATE TABLE t5 (d INT NOT NULL, c INT NOT NULL, PRIMARY KEY (d, c))",
+        &mut catalog,
+    )
+    .unwrap();
+    crate::run_create_table_on(
+        "CREATE TABLE t6 (d BIGINT UNSIGNED NOT NULL)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on("INSERT INTO t5 VALUES (-3, 6)", &mut catalog, &ctx).unwrap();
+    run_insert_on(
+        "INSERT INTO t6 VALUES (0), (1), (2), (3)",
+        &mut catalog,
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(
+        run_select_on(
+            "SELECT d FROM t5 WHERE d < (SELECT min(d) FROM t6) AND d < 3",
+            &catalog,
+            &ctx
+        )
+        .unwrap(),
+        vec![vec![Datum::Int(-3)]],
+    );
+}
