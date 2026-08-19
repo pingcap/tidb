@@ -107,6 +107,7 @@ pub mod derive_topn_from_window;
 pub mod eliminate_empty_selection;
 pub mod enforce;
 pub mod pushdown;
+pub mod ranger;
 pub mod eliminate_unionall_dual_item;
 pub mod explain;
 pub mod explore_mark;
