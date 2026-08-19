@@ -1885,7 +1885,7 @@ partition by range (a)
 	resp, err = ts.PostStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(`{"id":1,"region_count":1,"flash_region_count":1}`)))
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.True(t, resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusNotFound)
+	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed", `return(true)`))
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed")
