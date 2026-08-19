@@ -804,8 +804,16 @@ func needRowReorg(oldCol, changingCol *model.ColumnInfo) bool {
 		return true
 	}
 
+	if isUTF8MB4ToUTF8ColumnChange(oldCol, changingCol) {
+		return true
+	}
+
 	// We have checked charset before, only need to check binary string, which needs padding.
 	return types.IsBinaryStr(&oldCol.FieldType) || types.IsBinaryStr(&changingCol.FieldType)
+}
+
+func isUTF8MB4ToUTF8ColumnChange(oldCol, newCol *model.ColumnInfo) bool {
+	return oldCol.GetCharset() == charset.CharsetUTF8MB4 && newCol.GetCharset() == charset.CharsetUTF8
 }
 
 // checkModifyColumnData checks the values of the old column data
@@ -1798,6 +1806,18 @@ func GetModifiableColumnJob(
 // noReorgDataStrict is a strong check to decide whether we need to change the column data.
 // If it returns true, it means we don't need the reorg no matter what the data is.
 func noReorgDataStrict(tblInfo *model.TableInfo, oldCol, newCol *model.ColumnInfo) bool {
+	if isUTF8MB4ToUTF8ColumnChange(oldCol, newCol) {
+		return false
+	}
+	if types.IsString(oldCol.GetType()) &&
+		types.IsString(newCol.GetType()) &&
+		(oldCol.GetCharset() == charset.CharsetUTF8 || oldCol.GetCharset() == charset.CharsetUTF8MB4) &&
+		(newCol.GetCharset() == charset.CharsetUTF8 || newCol.GetCharset() == charset.CharsetUTF8MB4) &&
+		len(getRelatedIndexIDs(tblInfo, oldCol.ID, false)) > 0 &&
+		collate.NewCollationEnabled() &&
+		!collate.CompatibleCollate(oldCol.GetCollate(), newCol.GetCollate()) {
+		return false
+	}
 	toUnsigned := mysql.HasUnsignedFlag(newCol.GetFlag())
 	originUnsigned := mysql.HasUnsignedFlag(oldCol.GetFlag())
 	needTruncationOrToggleSign := func() bool {
@@ -2033,6 +2053,19 @@ func checkModifyTypes(tbInfo *model.TableInfo, from, to *model.ColumnInfo, needR
 		if toCharset == charset.CharsetGBK || origCharset == charset.CharsetGBK ||
 			toCharset == charset.CharsetGB18030 || origCharset == charset.CharsetGB18030 {
 			return errors.Trace(err)
+		}
+		// This exception is safe only for modify-column because needRowReorg uses the same
+		// predicate to force row and related index data to be rewritten.
+		if dbterror.ErrUnsupportedModifyCharset.Equal(err) && isUTF8MB4ToUTF8ColumnChange(from, to) {
+			return nil
+		}
+		if dbterror.ErrUnsupportedModifyCollation.Equal(err) &&
+			needRewriteCollationData &&
+			types.IsString(fromFt.GetType()) &&
+			types.IsString(toFt.GetType()) &&
+			(fromFt.GetCharset() == charset.CharsetUTF8 || fromFt.GetCharset() == charset.CharsetUTF8MB4) &&
+			(toFt.GetCharset() == charset.CharsetUTF8 || toFt.GetCharset() == charset.CharsetUTF8MB4) {
+			return nil
 		}
 		if strings.Contains(err.Error(), "Unsupported modifying collation") {
 			colErrMsg := "Unsupported modifying collation of column '%s' from '%s' to '%s' when index is defined on it."

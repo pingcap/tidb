@@ -645,7 +645,7 @@ func TestIndexChangeWithModifyColumn(t *testing.T) {
 
 	tk.MustExec("alter table t add index idx(c);")
 	wg.Wait()
-	require.ErrorContains(t, checkErr, "when index is defined")
+	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
 	tk.MustExec("delete from t;")
 }
