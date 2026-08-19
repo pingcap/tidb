@@ -133,6 +133,34 @@ pub(crate) fn run_cluster_session_node_with_spill(
     // reader.
     let cop_scans: Arc<dyn PushdownScanner> =
         Arc::new(CopScanSource::new(authority.transport_factory()));
+    // This node's identity in the cluster: `/tidb/server/info/<uuid>` under
+    // a lease, plus the `/topology/tidb/<host:port>` pair, refreshed for as
+    // long as the process lives -- Go's `Domain.Init` starting the
+    // server-info syncer beside its reloaders. A node with no reachable
+    // etcd still HAS the record; it just publishes nowhere, and
+    // `information_schema.TIDB_SERVERS_INFO` then reports this node alone,
+    // which is Go's `etcdCli == nil` answer.
+    let server_info = Arc::new(tidb_domain::serverinfo_syncer::Syncer::new(
+        crate::serverinfo_etcd::node_server_info(&config),
+        crate::real_tikv_node::connect_schema_notifier(&config).map(|client| {
+            Arc::new(crate::serverinfo_etcd::EtcdClientOps::new(client))
+                as Arc<dyn tidb_domain::serverinfo_syncer::EtcdOps>
+        }),
+    ));
+    let server_info_runner = match tidb_domain::serverinfo_syncer::SyncerRunner::start(
+        Arc::clone(&server_info),
+        tidb_domain::serverinfo_syncer::SyncIntervals::default(),
+    ) {
+        Ok(runner) => Some(runner),
+        Err(error) => {
+            // Go logs and carries on: a node that cannot publish itself
+            // still serves SQL, it is just invisible to its peers.
+            eprintln!(
+                "{{\"event\":\"server_info_syncer_unavailable\",\"error\":{error:?}}}"
+            );
+            None
+        }
+    };
     let factory = ClusterSessionFactory::new(
         Arc::new(RealClusterTransactions::new(
             authority.transaction_opener(),
@@ -175,6 +203,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         )),
     )
     .with_cop_scans(cop_scans)
+    .with_server_info(server_info)
     .with_spill_storage(spill_storage);
     let factory = match memory_arbitrator {
         Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
@@ -186,6 +215,9 @@ pub(crate) fn run_cluster_session_node_with_spill(
 
     run_with_process_shutdown(
         (
+            // Dropped FIRST: the runner removes this node's published
+            // records before the etcd handles below it go away.
+            server_info_runner,
             factory,
             watcher,
             reloader,
@@ -197,6 +229,7 @@ pub(crate) fn run_cluster_session_node_with_spill(
         ),
         authority,
         move |(
+            server_info_runner,
             factory,
             watcher,
             reloader,
