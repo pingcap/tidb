@@ -3,7 +3,6 @@
 package export
 
 import (
-	"bytes"
 	"database/sql"
 	"strings"
 
@@ -58,9 +57,8 @@ type RowReceiverStringer interface {
 	Stringer
 }
 
-// Stringer is an interface which represents sql types that support writing to buffer.
+// Stringer exposes a receiver's decoded values as raw bytes.
 type Stringer interface {
-	WriteToBuffer(*bytes.Buffer, bool)
 	GetRawBytes() []sql.RawBytes
 }
 

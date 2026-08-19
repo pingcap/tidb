@@ -149,7 +149,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 // Dump dumps table from database
 // nolint: gocyclo
 func (d *Dumper) Dump() (dumpErr error) {
-	initColTypeRowReceiverMap()
+	initColumnTypeSets()
 	var (
 		conn    *sql.Conn
 		err     error
