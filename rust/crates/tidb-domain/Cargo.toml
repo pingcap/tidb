@@ -15,6 +15,9 @@ tidb-error = { path = "../tidb-error" }
 tidb-model = { path = "../tidb-model" }
 tidb-ast = { path = "../tidb-ast" }
 tidb-mysql = { path = "../tidb-mysql" }
+# `serverinfo`'s `getServerInfo` reads the global config, exactly as Go's
+# `pkg/domain/serverinfo` imports `pkg/config`.
+tidb-config = { path = "../tidb-config" }
 serde.workspace = true
 serde_json.workspace = true
 tidb-vardef = { path = "../tidb-vardef" }

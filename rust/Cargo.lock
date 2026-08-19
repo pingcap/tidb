@@ -2363,6 +2363,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tidb-ast",
+ "tidb-config",
  "tidb-error",
  "tidb-model",
  "tidb-mysql",

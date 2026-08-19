@@ -402,6 +402,48 @@ impl Syncer {
 }
 
 
+
+/// Go `getServerInfo` (`syncer.go:481`): this node's own record, read out
+/// of the global config at startup.
+///
+/// Field for field: the ADVERTISE address is the IP a peer will use (not
+/// the bind host), the DDL `lease` travels as its configured TEXT, the
+/// start timestamp is whole seconds, the labels are cloned, and the
+/// version pair is the build's -- `mysql.ServerVersion` and the git hash,
+/// NOT the release version (`ToTopologyInfo` is where the release version
+/// appears instead; see [`crate::serverinfo`]).
+///
+/// `Keyspace`/`AssumedKeyspace` stay empty here: keyspaces arrive with the
+/// keyspace track, and Go reads them from a global the same way.
+#[must_use]
+pub fn server_info_from_config(
+    id: &str,
+    config: &tidb_config::config_tree::config::Config,
+    git_hash: &str,
+    server_id_getter: Option<Arc<dyn Fn() -> u64 + Send + Sync>>,
+    start_timestamp: i64,
+) -> ServerInfo {
+    ServerInfo {
+        static_info: crate::serverinfo::StaticInfo {
+            id: id.to_owned(),
+            ip: config.advertise_address.clone(),
+            port: config.port,
+            status_port: config.status.status_port,
+            lease: config.lease.clone(),
+            start_timestamp,
+            version_info: crate::serverinfo::VersionInfo {
+                version: tidb_mysql::runtime_versions().server_version,
+                git_hash: git_hash.to_owned(),
+            },
+            server_id_getter,
+            ..crate::serverinfo::StaticInfo::default()
+        },
+        dynamic_info: crate::serverinfo::DynamicInfo {
+            labels: config.labels.clone(),
+        },
+    }
+}
+
 /// How often each loop ticks. Go's own intervals are the defaults; the
 /// tests below shorten them, which is the only reason this is a struct
 /// rather than two constants.
@@ -971,6 +1013,56 @@ mod tests {
             .expect("the entry is republished");
         assert_eq!(lease, second);
         drop(runner);
+    }
+
+
+    /// Go `getServerInfo` maps the config field for field: the record
+    /// carries the ADVERTISE address (what a peer dials), not the bind
+    /// host, and the DDL lease travels as its configured TEXT.
+    ///
+    /// The version pair is the build's `mysql.ServerVersion`; the RELEASE
+    /// version appears only in `ToTopologyInfo`, which is Go's own
+    /// asymmetry between the two records.
+    #[test]
+    fn server_info_reads_the_config_field_for_field() {
+        let mut config = tidb_config::config_tree::config::Config::default();
+        config.host = "0.0.0.0".to_owned();
+        config.advertise_address = "10.0.0.7".to_owned();
+        config.port = 4001;
+        config.status.status_port = 10081;
+        config.lease = "45s".to_owned();
+        config.labels = HashMap::from([("zone".to_owned(), "east".to_owned())]);
+
+        let info = server_info_from_config("uuid-9", &config, "deadbeef", None, 1_282_967_700);
+        assert_eq!(info.static_info.id, "uuid-9");
+        assert_eq!(
+            info.static_info.ip, "10.0.0.7",
+            "the record carries the advertise address, not the bind host"
+        );
+        assert_eq!(info.static_info.port, 4001);
+        assert_eq!(info.static_info.status_port, 10081);
+        assert_eq!(info.static_info.lease, "45s");
+        assert_eq!(info.static_info.start_timestamp, 1_282_967_700);
+        assert_eq!(info.static_info.version_info.git_hash, "deadbeef");
+        assert_eq!(
+            info.static_info.version_info.version,
+            tidb_mysql::runtime_versions().server_version
+        );
+        assert_eq!(info.dynamic_info.labels["zone"], "east");
+        assert!(
+            info.static_info.keyspace.is_empty(),
+            "keyspaces arrive with their own track"
+        );
+
+        // The topology record derived from it reports the RELEASE version
+        // and the STATUS port -- a different pair from the info above.
+        let topology = info.to_topology_info();
+        assert_eq!(
+            topology.version_info.version,
+            tidb_mysql::runtime_versions().tidb_release_version
+        );
+        assert_eq!(topology.status_port, 10081);
+        assert_eq!(topology.ip, "10.0.0.7");
     }
 
     /// Go's `etcdCli == nil` deployment: nothing is published, and the
