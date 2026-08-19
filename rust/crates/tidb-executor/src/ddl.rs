@@ -407,7 +407,7 @@ pub(crate) fn table_comment_option(
 }
 
 /// Validates the comment text a single ALTER TABLE option writes.
-pub(crate) fn normalize_table_comment(
+pub fn normalize_table_comment(
     comment: &str,
     table: &str,
     ctx: &crate::StmtContext,

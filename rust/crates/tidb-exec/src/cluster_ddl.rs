@@ -462,6 +462,17 @@ pub enum DdlStatement {
         /// Whether a missing index is a no-op rather than an error.
         if_exists: bool,
     },
+    /// `ALTER TABLE ... COMMENT = '...'`, Go's
+    /// `ActionModifyTableComment`. Metadata only.
+    ModifyTableComment {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The comment, already length-validated under the statement's
+        /// SQL mode (Go `validateCommentLength`).
+        comment: String,
+    },
     /// `ALTER TABLE ... ALTER INDEX <i> VISIBLE|INVISIBLE`, Go's
     /// `ActionAlterIndexVisibility`. Metadata only: an invisible index is
     /// still maintained by writes, it is only hidden from the optimizer.
@@ -771,6 +782,23 @@ fn lower_alter_table_catalog(
                     schema,
                     table,
                     new_cache: new_cache as i64,
+                }));
+            }
+            if let tidb_ast::TableOption::Comment(comment) = option {
+                let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+                // Go `AlterTableComment` validates the length against the
+                // statement's SQL mode BEFORE it publishes the job: strict
+                // refuses, non-strict warns and truncates.
+                let comment = tidb_executor::ddl::normalize_table_comment(
+                    comment,
+                    &table,
+                    &tidb_executor::StmtContext::for_query().with_strict(true),
+                )
+                .map_err(|error| DdlAdmissionError::new(error.to_string()))?;
+                return Ok(Some(DdlStatement::ModifyTableComment {
+                    schema,
+                    table,
+                    comment,
                 }));
             }
             let (value, force) = match option {
@@ -2804,6 +2832,28 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
                 add: true,
             });
             diff.action_type = ActionType::ACTION_ADD_INDEX;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::ModifyTableComment {
+            schema,
+            table,
+            comment,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let mut info = stored.clone_like_go();
+            // Go `onModifyTableComment` sets the field and publishes; it has
+            // no early return for an unchanged comment, so neither has this.
+            info.comment = comment.clone();
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_MODIFY_TABLE_COMMENT;
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }

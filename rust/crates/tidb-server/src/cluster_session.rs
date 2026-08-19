@@ -471,6 +471,13 @@ pub(crate) fn cluster_table(
     }
     let mut kv_table = KvTable::with_storage(table.id, kv_columns, storage.clone_box());
     kv_table.set_name(table.name.original());
+    // Go `TableInfo.Comment` reaches every reader of the loaded table:
+    // `SHOW CREATE TABLE` prints it and
+    // `information_schema.tables.table_comment` reports it. Dropping it
+    // here made a stored comment invisible on the cluster path even though
+    // both the DDL that wrote it and the printer that renders it were
+    // right.
+    kv_table.set_comment(table.comment.clone());
     kv_table.set_cache_status(table.table_cache_status_type);
     // The AUTO_INCREMENT column and the counter that feeds it. Both halves
     // have to be here: marking the column without giving the counter a
@@ -1472,6 +1479,41 @@ mod tests {
         assert!(session
             .run("SELECT id FROM p WHERE s = 'alphabet'")
             .is_err());
+    }
+
+    /// Go `TableInfo.Comment` survives the load: `SHOW CREATE TABLE` prints
+    /// it and `information_schema.tables.table_comment` reports it. This
+    /// loader used to drop it, so a comment written by CREATE or by
+    /// `ALTER TABLE ... COMMENT` was stored correctly and then invisible to
+    /// every reader.
+    #[test]
+    fn a_stored_table_comment_survives_the_load() {
+        let table = TableInfo {
+            id: 203,
+            name: CiString::new("cm"),
+            columns: vec![column(1, 0, "id", true)].into(),
+            pk_is_handle: true,
+            state: SchemaState::PUBLIC,
+            comment: "the stored comment".to_owned(),
+            ..TableInfo::default()
+        };
+        let (storage, _buffer, _snapshot) = cluster_storage();
+        let (session, skipped) = session_with_cluster_storage(
+            &one_table_catalog(table),
+            &storage,
+            &StatsSnapshot::new(),
+            &LocalTableAutoIds::default(),
+        );
+        assert!(skipped.is_empty());
+        let catalog = session.shared_catalog();
+        let catalog = catalog.lock().unwrap();
+        let tidb_executor::driver::TableEntry::Kv(kv) = catalog
+            .table_in("app", "cm")
+            .expect("the table is in the catalog")
+        else {
+            panic!("a cluster table is a kv table");
+        };
+        assert_eq!(kv.comment(), "the stored comment");
     }
 
     /// Go never chooses an INVISIBLE index for an access path (captured:

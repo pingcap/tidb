@@ -2607,3 +2607,38 @@ fn alter_index_visibility_toggles_and_refuses_a_missing_index() {
         "{error}"
     );
 }
+
+/// Go `onModifyTableComment` (`ddl/table.go`) is a one-line
+/// `tblInfo.Comment = args.Comment` under `ActionModifyTableComment`, with
+/// `validateCommentLength` applied when the statement is admitted. The
+/// stored comment is what `SHOW CREATE TABLE` prints and what
+/// `information_schema.tables.table_comment` reports, so a comment that
+/// never reaches the stored `TableInfo` is invisible everywhere.
+#[test]
+fn alter_table_comment_replaces_the_stored_comment() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY CLUSTERED) COMMENT='original'",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+    assert_eq!(
+        stored_table(&write, table_id)["comment"],
+        serde_json::json!("original"),
+        "CREATE TABLE stores its COMMENT option"
+    );
+
+    let write = plan(&mut store, "ALTER TABLE u6.t COMMENT='changed'", 200);
+    apply(&mut store, &write);
+    assert_eq!(
+        stored_table(&write, table_id)["comment"],
+        serde_json::json!("changed")
+    );
+
+    // Go clears the comment rather than refusing the empty form.
+    let write = plan(&mut store, "ALTER TABLE u6.t COMMENT=''", 300);
+    apply(&mut store, &write);
+    assert_eq!(stored_table(&write, table_id)["comment"], serde_json::json!(""));
+}
