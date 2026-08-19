@@ -438,6 +438,13 @@ fn show_create_table_text(
             tidb_util::format::output_format(table.comment())
         ));
     }
+    // Go `ShowCreateTable`: printed only when the table set one.
+    if table.auto_id_cache() != 0 {
+        out.push_str(&format!(
+            " /*T![auto_id_cache] AUTO_ID_CACHE={} */",
+            table.auto_id_cache()
+        ));
+    }
     if let Some(base) = table.next_auto_random().filter(|base| *base > 1) {
         out.push_str(&format!(" /*T![auto_rand_base] AUTO_RANDOM_BASE={base} */"));
     }

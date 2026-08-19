@@ -489,6 +489,9 @@ pub(crate) fn cluster_table(
     // both the DDL that wrote it and the printer that renders it were
     // right.
     kv_table.set_comment(table.comment.clone());
+    // Go `TableInfo.AutoIDCache`. The allocator's step already comes from it
+    // (`auto_id_step`); this is the value `SHOW CREATE TABLE` prints back.
+    kv_table.set_recorded_auto_id_cache(table.auto_id_cache);
     // Go `TableInfo.Charset`/`Collate`: the table default `SHOW CREATE TABLE`
     // prints, what `information_schema.tables.table_collation` reports, and
     // the value each column's own charset is compared against when deciding

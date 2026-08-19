@@ -2972,3 +2972,48 @@ fn alter_database_charset_settles_the_pair_and_no_ops_when_already_true() {
     )
     .expect_err("a missing database is refused");
 }
+
+/// Go `handleTableOptions`: `CREATE TABLE ... AUTO_ID_CACHE=n` stores the
+/// value on the TableInfo, and anything past int64 is refused with its own
+/// message. It was accepted by `ALTER TABLE` here but refused at CREATE,
+/// which is the same option disagreeing with itself.
+#[test]
+fn create_table_stores_auto_id_cache() {
+    let mut store = bootstrapped();
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.t (id BIGINT PRIMARY KEY AUTO_INCREMENT) AUTO_ID_CACHE=100",
+        100,
+    );
+    apply(&mut store, &write);
+    let table_id = write.created_id.expect("CREATE TABLE allocates an id");
+    assert_eq!(
+        stored_table(&write, table_id)["auto_id_cache"],
+        serde_json::json!(100)
+    );
+
+    // Unset stays Go's zero rather than being materialised as the default.
+    let write = plan(
+        &mut store,
+        "CREATE TABLE u6.plain (id BIGINT PRIMARY KEY AUTO_INCREMENT)",
+        200,
+    );
+    apply(&mut store, &write);
+    let plain_id = write.created_id.expect("CREATE TABLE allocates an id");
+    let stored = stored_table(&write, plain_id);
+    assert!(
+        stored["auto_id_cache"].is_null() || stored["auto_id_cache"] == serde_json::json!(0),
+        "{}",
+        stored["auto_id_cache"]
+    );
+
+    let parsed = tidb_parser::parse(
+        "CREATE TABLE u6.big (id BIGINT PRIMARY KEY AUTO_INCREMENT) AUTO_ID_CACHE=9223372036854775808",
+    )
+    .expect("the fixture SQL parses");
+    let error = lower_ddl(&parsed, "u6").expect_err("an overflowing cache is refused");
+    assert!(
+        error.reason.contains("auto_id_cache overflows int64"),
+        "{error:?}"
+    );
+}

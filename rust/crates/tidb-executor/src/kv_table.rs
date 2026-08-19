@@ -442,6 +442,9 @@ pub struct KvTable {
     /// Go `TableInfo.Comment`, persisted by CREATE/ALTER TABLE and served by
     /// metadata statements.
     comment: String,
+    /// Go `TableInfo.AutoIDCache`: how many ids one reservation takes. Zero
+    /// is Go's "unset"; `SHOW CREATE TABLE` prints it only when set.
+    auto_id_cache: i64,
     /// Go `TableInfo.TableCacheStatusType`. The synchronous local DDL has no
     /// externally visible switching phase, so tables are either enabled or
     /// disabled here; cluster-loaded metadata may still carry the source
@@ -634,6 +637,7 @@ impl KvTable {
         use_new_collation: bool,
     ) -> Self {
         KvTable {
+            auto_id_cache: 0,
             table_id,
             name: String::new(),
             columns,
@@ -1088,6 +1092,18 @@ impl KvTable {
     #[must_use]
     pub const fn charset(&self) -> TableCharset {
         self.charset
+    }
+
+    /// Records Go `TableInfo.AutoIDCache` without touching the allocator,
+    /// for a loader that already gave the allocator its step.
+    pub fn set_recorded_auto_id_cache(&mut self, cache: i64) {
+        self.auto_id_cache = cache;
+    }
+
+    /// Go `TableInfo.AutoIDCache`, zero when the table set none.
+    #[must_use]
+    pub const fn auto_id_cache(&self) -> i64 {
+        self.auto_id_cache
     }
 
     /// Replaces the table-level comment.

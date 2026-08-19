@@ -224,6 +224,9 @@ impl KvTable {
         };
         self.auto_id = self.auto_id.with_step(step);
         self.auto_random_id = self.auto_random_id.with_step(step);
+        // Go keeps the written value on the TableInfo, not just in the
+        // allocator, because `SHOW CREATE TABLE` prints it back.
+        self.auto_id_cache = i64::try_from(cache).unwrap_or(i64::MAX);
         Ok(())
     }
 

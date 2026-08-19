@@ -323,11 +323,25 @@ pub fn build_table_info_with_context(
     let mut comment = String::new();
     let mut auto_inc_id = 0i64;
     let mut auto_rand_id = 0i64;
+    let mut auto_id_cache = 0i64;
     for option in &create.table_options {
         match option {
             TableOption::CharacterSet(charset) => declared_charset = Some(charset.clone()),
             TableOption::Collate(collate) => declared_collate = Some(collate.clone()),
             TableOption::Comment(text) => comment = text.clone(),
+            // Go `handleTableOptions`: the parsed value is unsigned, and
+            // anything past int64 is refused with its own message.
+            TableOption::AutoIdCache(value) => {
+                let parsed = value.parse::<u64>().map_err(|_| {
+                    DdlAdmissionError::new("AUTO_ID_CACHE needs an integer value")
+                })?;
+                if parsed > i64::MAX as u64 {
+                    return Err(DdlAdmissionError::new(
+                        "table option auto_id_cache overflows int64",
+                    ));
+                }
+                auto_id_cache = parsed as i64;
+            }
             TableOption::AutoIncrement(value) => {
                 auto_inc_id = value.parse().map_err(|_| {
                     DdlAdmissionError::new(format!(
@@ -458,6 +472,7 @@ pub fn build_table_info_with_context(
     }
     table.comment = comment;
     table.auto_inc_id = auto_inc_id;
+    table.auto_id_cache = auto_id_cache;
     table.auto_rand_id = auto_rand_id;
     Ok(table)
 }
