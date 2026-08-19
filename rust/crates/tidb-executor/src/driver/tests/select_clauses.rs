@@ -549,3 +549,44 @@ fn an_unknown_column_names_its_clause() {
         );
     }
 }
+
+/// Probe round 33's wrong-results bug: `SELECT * FROM (SELECT g, sum(v)
+/// FROM t GROUP BY g) s` must answer the DERIVED output, not the
+/// aggregate's input stage; the `count(*)` variant panicked the server
+/// (chunk column index out of bounds).
+#[test]
+fn a_derived_aggregate_answers_its_output() {
+    let mut catalog = Catalog::default();
+    crate::run_create_table_on(
+        "CREATE TABLE dt (id BIGINT PRIMARY KEY, g BIGINT, v BIGINT)",
+        &mut catalog,
+    )
+    .unwrap();
+    run_insert_on(
+        "INSERT INTO dt VALUES (1,1,10),(2,1,20),(3,2,30),(4,2,40),(5,2,50)",
+        &mut catalog,
+        &crate::StmtContext::for_query(),
+    )
+    .unwrap();
+    let run = |sql: &str| run_select_on(sql, &catalog, &crate::StmtContext::for_query());
+
+    let rows = run("SELECT * FROM (SELECT g, sum(v) AS t FROM dt GROUP BY g) s ORDER BY g")
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            vec![Datum::Int(1), Datum::Decimal(tidb_datatype::Decimal::from_int(30))],
+            vec![Datum::Int(2), Datum::Decimal(tidb_datatype::Decimal::from_int(120))],
+        ]
+    );
+
+    let rows = run("SELECT * FROM (SELECT g, count(*) AS t FROM dt GROUP BY g) s ORDER BY g")
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            vec![Datum::Int(1), Datum::Int(2)],
+            vec![Datum::Int(2), Datum::Int(3)],
+        ]
+    );
+}

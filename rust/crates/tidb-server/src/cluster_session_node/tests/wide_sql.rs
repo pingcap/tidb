@@ -204,3 +204,87 @@ fn wide_sql_runs_over_cluster_storage() {
     assert_eq!(windowed.len(), 3);
     assert_eq!(windowed[0][1], Datum::Int(1));
 }
+
+/// Probe round 33's wrong-results bug, cluster path: a derived table
+/// wrapping a GROUP BY over cluster storage must answer the DERIVED
+/// output. The live server returned the aggregate's INPUT stage (the raw
+/// `v` values with zeroed sums), and the `count(*)` variant panicked a
+/// chunk column read.
+#[test]
+fn a_derived_aggregate_answers_its_output_over_cluster_storage() {
+    let (mut session, _) = open_session();
+    session
+        .execute_write("INSERT INTO t (id, v) VALUES (1, 10), (2, 20), (3, 30)")
+        .expect("seed t");
+    session
+        .execute_write("INSERT INTO g (id, grp) VALUES (1, 100), (2, 100), (3, 200)")
+        .expect("seed g");
+
+    let derived = rows(
+        &mut session,
+        "SELECT * FROM (SELECT grp, SUM(id) AS s FROM g GROUP BY grp) d ORDER BY grp",
+    );
+    assert_eq!(
+        derived,
+        vec![
+            vec![Datum::Int(100), Datum::Decimal(tidb_datatype::Decimal::from_int(3))],
+            vec![Datum::Int(200), Datum::Decimal(tidb_datatype::Decimal::from_int(3))],
+        ],
+        "the derived aggregate's own output"
+    );
+
+    let counted = rows(
+        &mut session,
+        "SELECT * FROM (SELECT grp, COUNT(*) AS c FROM g GROUP BY grp) d ORDER BY grp",
+    );
+    assert_eq!(
+        counted,
+        vec![
+            vec![Datum::Int(100), Datum::Int(2)],
+            vec![Datum::Int(200), Datum::Int(1)],
+        ]
+    );
+
+    let cte = rows(
+        &mut session,
+        "WITH d AS (SELECT grp, SUM(id) AS s FROM g GROUP BY grp) SELECT * FROM d ORDER BY grp",
+    );
+    assert_eq!(cte.len(), 2, "{cte:?}");
+
+    // The live shape: a THREE-column table whose derived select prunes the
+    // primary key away — the pruned cop scan must not shift the aggregate's
+    // input columns.
+    session
+        .execute_write(
+            "CREATE TABLE p33 (id BIGINT PRIMARY KEY, gg BIGINT, vv BIGINT)",
+        )
+        .expect("create");
+    session
+        .execute_write(
+            "INSERT INTO p33 VALUES (1,1,10),(2,1,20),(3,2,30),(4,2,40),(5,2,50)",
+        )
+        .expect("seed");
+    let pruned = rows(
+        &mut session,
+        "SELECT * FROM (SELECT gg, SUM(vv) AS t FROM p33 GROUP BY gg) s ORDER BY gg",
+    );
+    assert_eq!(
+        pruned,
+        vec![
+            vec![Datum::Int(1), Datum::Decimal(tidb_datatype::Decimal::from_int(30))],
+            vec![Datum::Int(2), Datum::Decimal(tidb_datatype::Decimal::from_int(120))],
+        ],
+        "the pruned-pk derived aggregate"
+    );
+    let counted = rows(
+        &mut session,
+        "SELECT * FROM (SELECT gg, COUNT(*) AS c FROM p33 GROUP BY gg) s ORDER BY gg",
+    );
+    assert_eq!(
+        counted,
+        vec![
+            vec![Datum::Int(1), Datum::Int(2)],
+            vec![Datum::Int(2), Datum::Int(3)],
+        ]
+    );
+}
