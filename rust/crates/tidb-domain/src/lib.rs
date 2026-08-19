@@ -144,6 +144,7 @@
 //! symbol-by-symbol rather than assumed.
 
 pub mod domainutil;
+pub mod topn_slow_query;
 pub mod domain_sysvars;
 pub mod historical_stats;
 pub mod optimize_trace;
