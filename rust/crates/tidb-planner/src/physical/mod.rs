@@ -1026,6 +1026,27 @@ pub struct PhysicalIndexReader {
     pub index_plan: Option<Box<PhysicalPlan>>,
 }
 
+/// Go `physicalop.PhysicalIndexLookUpReader`
+/// (`physical_indexlookup_reader.go:33`): the double read — the index side
+/// finds row ids, the table side reads the rows back — born by
+/// `BuildIndexLookUpTask` (`:284`). `ExtraHandleCol`, `CommonHandleCols`
+/// and `PlanPartInfo` stay with the unported common-handle/partition
+/// worlds, absent rather than stubbed.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalIndexLookUpReader {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `IndexPlan`.
+    pub index_plan: Option<Box<PhysicalPlan>>,
+    /// Go `TablePlan`.
+    pub table_plan: Option<Box<PhysicalPlan>>,
+    /// Go `KeepOrder`.
+    pub keep_order: bool,
+    /// Go `ExpectedCnt`, from the cop task's `ExpectCnt` — the paging
+    /// decision in the ver2 cost reads it.
+    pub expect_cnt: u64,
+}
+
 /// Go `GetPropByOrderByItems` (`physical_sort.go:268`): the sort property a
 /// by-item list implies — every item must be a bare column ("In order to
 /// simplify the problem, we only consider the case that all expression are
@@ -1398,6 +1419,8 @@ pub enum PhysicalPlan {
     IndexScan(PhysicalIndexScan),
     /// Go `physicalop.PhysicalIndexReader`.
     IndexReader(PhysicalIndexReader),
+    /// Go `PhysicalIndexLookUpReader`.
+    IndexLookUpReader(PhysicalIndexLookUpReader),
     /// Go `physicalop.PhysicalTopN` (planning slice).
     TopN(PhysicalTopN),
     /// Go `physicalop.PhysicalHashAgg` (planning slice).
@@ -1432,6 +1455,7 @@ impl PhysicalPlan {
             Self::TableReader(op) => &op.base,
             Self::IndexScan(op) => &op.base,
             Self::IndexReader(op) => &op.base,
+            Self::IndexLookUpReader(op) => &op.base,
             Self::TopN(op) => &op.base,
             Self::HashAgg(op) => &op.base,
             Self::StreamAgg(op) => &op.base,
@@ -1461,6 +1485,7 @@ impl PhysicalPlan {
             Self::TableReader(op) => &mut op.base,
             Self::IndexScan(op) => &mut op.base,
             Self::IndexReader(op) => &mut op.base,
+            Self::IndexLookUpReader(op) => &mut op.base,
             Self::TopN(op) => &mut op.base,
             Self::HashAgg(op) => &mut op.base,
             Self::StreamAgg(op) => &mut op.base,
@@ -1869,6 +1894,13 @@ impl PhysicalPlan {
             Self::IndexReader(op) => Self::IndexReader(PhysicalIndexReader {
                 base: base_of(&op.base),
                 index_plan: op.index_plan.clone(),
+            }),
+            Self::IndexLookUpReader(op) => Self::IndexLookUpReader(PhysicalIndexLookUpReader {
+                base: base_of(&op.base),
+                index_plan: op.index_plan.clone(),
+                table_plan: op.table_plan.clone(),
+                keep_order: op.keep_order,
+                expect_cnt: op.expect_cnt,
             }),
             Self::TopN(op) => Self::TopN(PhysicalTopN {
                 base: base_of(&op.base),

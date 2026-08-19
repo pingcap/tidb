@@ -145,6 +145,85 @@ impl Ver2Coster {
                     self.session.distsql_scan_concurrency,
                 )
             }
+            // `getPlanCostVer24PhysicalIndexLookUpReader`
+            // (`plan_cost_ver2.go:359`): index side + (table side +
+            // double-read CPU/request) / IndexLookupConcurrency, each side
+            // divided by DistSQLScanConcurrency; the paging discount when the
+            // expected count sits under the paging threshold. `PushedLimit`
+            // is unported and absent; row widths at the floor (module
+            // header).
+            PhysicalPlan::IndexLookUpReader(reader) => {
+                let index_rows = reader
+                    .index_plan
+                    .as_deref()
+                    .map_or(rows, |plan| Self::rows(plan));
+                let table_rows = reader
+                    .table_plan
+                    .as_deref()
+                    .map_or(rows, |plan| Self::rows(plan));
+                let dist_concurrency = self.session.distsql_scan_concurrency;
+                let double_read_concurrency = self.session.index_lookup_concurrency;
+
+                let index_child = reader
+                    .index_plan
+                    .as_deref()
+                    .map_or_else(crate::cost_usage::zero_cost_ver2, |plan| self.price(plan));
+                let index_side = crate::cost_usage::div_cost_ver2(
+                    &crate::cost_usage::sum_cost_ver2(&[
+                        net_cost(None, index_rows, ROW_SIZE_FLOOR, &self.factors.tidb_to_kv_net),
+                        index_child,
+                    ]),
+                    dist_concurrency,
+                );
+
+                let table_child = reader
+                    .table_plan
+                    .as_deref()
+                    .map_or_else(crate::cost_usage::zero_cost_ver2, |plan| self.price(plan));
+                let table_side = crate::cost_usage::div_cost_ver2(
+                    &crate::cost_usage::sum_cost_ver2(&[
+                        net_cost(None, table_rows, ROW_SIZE_FLOOR, &self.factors.tidb_to_kv_net),
+                        table_child,
+                    ]),
+                    dist_concurrency,
+                );
+
+                let double_read_rows = index_rows;
+                let cpu_factor = &self.factors.tidb_cpu;
+                let double_read_cpu = crate::cost_usage::new_cost_ver2(
+                    None,
+                    cpu_factor,
+                    double_read_rows * cpu_factor.value(),
+                    || format!("double-read-cpu({double_read_rows}*{cpu_factor})"),
+                );
+                let batch_size = self.session.index_lookup_size;
+                let task_per_batch = 32.0;
+                let double_read_tasks = double_read_rows / batch_size * task_per_batch;
+                let double_read = crate::cost_usage::sum_cost_ver2(&[
+                    double_read_cpu,
+                    crate::plan_cost_ver2::double_read_cost(
+                        None,
+                        double_read_tasks,
+                        &self.factors.tidb_request,
+                    ),
+                ]);
+
+                let mut cost = crate::cost_usage::sum_cost_ver2(&[
+                    index_side,
+                    crate::cost_usage::div_cost_ver2(
+                        &crate::cost_usage::sum_cost_ver2(&[table_side, double_read]),
+                        double_read_concurrency,
+                    ),
+                ]);
+                let expect = reader.expect_cnt as f64;
+                if self.session.enable_paging
+                    && expect > 0.0
+                    && expect <= crate::plan_cost_ver2::PAGING_THRESHOLD as f64
+                {
+                    cost = crate::cost_usage::mul_cost_ver2(&cost, 0.6);
+                }
+                cost
+            }
             PhysicalPlan::IndexReader(reader) => {
                 let child_rows = reader
                     .index_plan

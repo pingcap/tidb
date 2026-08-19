@@ -388,6 +388,57 @@ impl CopTask {
     /// the context; this conversion path carries no allocator, so the
     /// reader reuses the pushed-down plan's id — a named narrowing, visible
     /// only in explain-id suffixes.
+    /// Go `BuildIndexLookUpTask` (`physical_indexlookup_reader.go:284`): the
+    /// double-read cop task becomes a root task holding a
+    /// `PhysicalIndexLookUpReader` whose schema and stats are the TABLE
+    /// side's (`Init`, `:205`). `IndexLookUpPushDownBy` is always
+    /// `IndexLookUpPushDownNone` on this port (`tryPushDownLookUp` returns
+    /// immediately), and the `NeedExtraProj` projection reads the unported
+    /// `OriginSchema` — a task that needs it refuses by name rather than
+    /// serving a broken schema. Go skips that projection when the table side
+    /// already holds a pushed partial aggregate.
+    fn build_index_look_up_task(mut self) -> Result<Task, PlanError> {
+        let index_plan = self
+            .index_plan
+            .take()
+            .ok_or_else(|| PlanError::internal("BuildIndexLookUpTask without an index half"))?;
+        let table_plan = self
+            .table_plan
+            .take()
+            .ok_or_else(|| PlanError::internal("BuildIndexLookUpTask without a table half"))?;
+        let agg_pushed_down = matches!(
+            &*table_plan,
+            PhysicalPlan::HashAgg(_) | PhysicalPlan::StreamAgg(_)
+        );
+        if self.need_extra_proj && !agg_pushed_down {
+            return Err(PlanError::internal(
+                "BuildIndexLookUpTask: the NeedExtraProj projection reads \
+                 OriginSchema, not ported",
+            ));
+        }
+        let mut base = crate::physical::BasePhysicalPlan::with_id(
+            table_plan.id(),
+            "IndexLookUp",
+            table_plan.query_block_offset(),
+        );
+        base.base.set_stats(table_plan.stats_info().cloned());
+        base.base.set_schema(table_plan.schema().cloned());
+        let reader =
+            PhysicalPlan::IndexLookUpReader(crate::physical::PhysicalIndexLookUpReader {
+                base,
+                index_plan: Some(index_plan),
+                table_plan: Some(table_plan),
+                keep_order: self.keep_order,
+                expect_cnt: self.expect_cnt,
+            });
+        let mut root = RootTask::default();
+        root.set_plan(reader);
+        if self.warnings.warning_count() > 0 {
+            root.warnings.copy_of(&self.warnings);
+        }
+        Ok(Task::Root(root))
+    }
+
     pub fn convert_to_root_task_impl(mut self) -> Result<Task, PlanError> {
         if !self.idx_merge_part_plans.is_empty() {
             return Err(PlanError::internal(
@@ -396,10 +447,7 @@ impl CopTask {
             ));
         }
         if self.index_plan.is_some() && self.table_plan.is_some() {
-            return Err(PlanError::internal(
-                "convertToRootTaskImpl: a double-read cop task builds \
-                 BuildIndexLookUpTask, not ported",
-            ));
+            return self.build_index_look_up_task();
         }
         if let Some(index_plan) = self.index_plan.take() {
             // Go's index branch (`task_base.go:563`): wrap the pushed-down
@@ -661,8 +709,9 @@ mod tests {
     fn an_index_only_cop_task_converts_into_an_index_reader() {
         // `convertToRootTaskImpl`'s index branch (`task_base.go:563`): the
         // pushed-down index plan wraps in a PhysicalIndexReader carrying its
-        // stats; the DOUBLE-READ shape (both halves) still refuses naming
-        // BuildIndexLookUpTask.
+        // stats; the DOUBLE-READ shape (both halves) now builds
+        // `BuildIndexLookUpTask`'s reader, schema and stats from the TABLE
+        // side (`Init`, `physical_indexlookup_reader.go:205`).
         let task = Task::Cop(CopTask {
             index_plan: Some(Box::new(dual_with_rows(4.0))),
             ..CopTask::default()
@@ -680,13 +729,20 @@ mod tests {
 
         let double = Task::Cop(CopTask {
             index_plan: Some(Box::new(dual_with_rows(1.0))),
-            table_plan: Some(Box::new(dual_with_rows(1.0))),
+            table_plan: Some(Box::new(dual_with_rows(3.0))),
+            keep_order: true,
             ..CopTask::default()
         });
-        let error = double.convert_to_root_task().expect_err("refuses");
+        let converted = double.convert_to_root_task().expect("builds");
+        let Some(PhysicalPlan::IndexLookUpReader(lookup)) = converted.plan() else {
+            panic!("an IndexLookUpReader, got {:?}", converted.plan());
+        };
+        assert!(lookup.keep_order);
+        // The reader's stats are the TABLE side's.
         assert!(
-            format!("{error}").contains("BuildIndexLookUpTask"),
-            "{error}"
+            (converted.plan().expect("plan").stats_info().expect("stats").row_count() - 3.0)
+                .abs()
+                < f64::EPSILON
         );
     }
 
@@ -1258,6 +1314,10 @@ pub fn attach2_task(
         PhysicalPlan::TableScan(_) => Err(PlanError::internal(
             "a PhysicalTableScan is born inside a cop task by findBestTask, \
              never attached (convertToTableScan, find_best_task.go)",
+        )),
+        PhysicalPlan::IndexLookUpReader(_) => Err(PlanError::internal(
+            "a PhysicalIndexLookUpReader is born by BuildIndexLookUpTask at \
+             cop-to-root conversion, never attached",
         )),
         PhysicalPlan::TableDual(_) => Err(PlanError::internal(
             "a PhysicalTableDual is born inside its own root task by \
