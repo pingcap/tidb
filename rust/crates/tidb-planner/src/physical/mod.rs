@@ -1113,6 +1113,240 @@ pub fn get_phys_limits(
     ret
 }
 
+/// Go `physicalop.PhysicalTopN` (`physical_topn.go:37`), the planning
+/// slice: expression-borne `ByItems`, the K-heap partition order, and the
+/// offset/count pair. `PrefixCol`/`PrefixLen` (partial-order prefix-index
+/// optimization) narrow with ranger, as [`PhysicalLimit`]'s did.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalTopN {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `ByItems`.
+    pub by_items: Vec<tidb_expr::aggregation::ByItems>,
+    /// Go `PartitionBy`.
+    pub partition_by: Vec<crate::physical_property::SortItem>,
+    /// Go `Offset`.
+    pub offset: u64,
+    /// Go `Count`.
+    pub count: u64,
+}
+
+/// Go `getPhysTopN` (`physical_topn.go:272`), the core loop: one TopN
+/// candidate per task type — cop-single, cop-multi, root, Go's fixed order
+/// — each child property `{tp, MaxFloat64}` (the TopN itself caps rows, so
+/// the child is uncapped). The MPP arm narrows with the tier; the
+/// advisory-sort-items and prefix-index partial-order candidates narrow
+/// with ranger, each named in `physical_topn.go`.
+#[must_use]
+pub fn get_phys_topn(
+    topn: &crate::logical::LogicalTopN,
+    allocator: &PlanIdAllocator,
+) -> Vec<PhysicalPlan> {
+    let all_task_types = [
+        TaskType::CopSingleRead,
+        TaskType::CopMultiRead,
+        TaskType::Root,
+    ];
+    let mut ret = Vec::with_capacity(all_task_types.len());
+    for tp in all_task_types {
+        let result_prop = PhysicalProperty {
+            task_tp: tp,
+            expected_cnt: f64::MAX,
+            ..PhysicalProperty::default()
+        };
+        let mut base = BasePhysicalPlan::new(
+            allocator,
+            crate::logical::LogicalTopN::TYPE,
+            topn.base.base.query_block_offset(),
+        );
+        base.base.set_stats(topn.base.base.stats_info().cloned());
+        base.base.set_schema(topn.base.base.schema().cloned());
+        base.set_children_req_props(vec![Some(result_prop)]);
+        ret.push(PhysicalPlan::TopN(PhysicalTopN {
+            base,
+            by_items: topn.by_items.clone(),
+            partition_by: topn.partition_by.clone(),
+            offset: topn.offset,
+            count: topn.count,
+        }));
+    }
+    ret
+}
+
+/// Go `physicalop.PhysicalHashAgg` (`physical_hash_agg.go:33`), the
+/// planning slice: the aggregate descriptors and grouping expressions.
+/// `TiFlashFineGrainedShuffle` and the MPP mode fields narrow with the
+/// tier.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalHashAgg {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `AggFuncs`.
+    pub agg_funcs: Vec<tidb_expr::aggregation::AggFuncDesc>,
+    /// Go `GroupByItems`.
+    pub group_by_items: Vec<tidb_expr::expression::Expression>,
+}
+
+/// Go `getHashAggs` (`physical_hash_agg.go:52`), the root/cop loop: a hash
+/// aggregate promises no order, so a required sort enumerates nothing; one
+/// candidate per task type — cop-single, cop-multi, root — each child
+/// property `{tp, MaxFloat64}` and the aggregate's stats scaled to the
+/// parent's expected count. `NoCopPushDown` restricts to root when set.
+/// The MPP arms (`checkCanPushDownToMPP`, `tryToGetMppHashAggs`) and the
+/// MPP hint warnings narrow with the tier; `admitIndexJoinProp` narrows
+/// with the runtime property, both named.
+#[must_use]
+pub fn get_hash_aggs(
+    agg: &crate::logical::LogicalAggregation,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+) -> Vec<PhysicalPlan> {
+    if !prop.is_sort_item_empty() {
+        return Vec::new();
+    }
+    let task_types = [
+        TaskType::CopSingleRead,
+        TaskType::CopMultiRead,
+        TaskType::Root,
+    ];
+    let mut hash_aggs = Vec::with_capacity(task_types.len());
+    for tp in task_types {
+        let child_prop = PhysicalProperty {
+            task_tp: tp,
+            expected_cnt: f64::MAX,
+            ..PhysicalProperty::default()
+        };
+        let stats = agg
+            .base
+            .base
+            .stats_info()
+            .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
+        let mut base = BasePhysicalPlan::new(
+            allocator,
+            "HashAgg",
+            agg.base.base.query_block_offset(),
+        );
+        base.base.set_stats(stats);
+        base.base.set_schema(agg.base.base.schema().cloned());
+        base.set_children_req_props(vec![Some(child_prop)]);
+        hash_aggs.push(PhysicalPlan::HashAgg(PhysicalHashAgg {
+            base,
+            agg_funcs: agg.agg_funcs.clone(),
+            group_by_items: agg.group_by_items.clone(),
+        }));
+    }
+    hash_aggs
+}
+
+/// Go `physicalop.PhysicalStreamAgg` (planning slice): the order-riding
+/// aggregate.
+#[derive(Clone, Debug, Default)]
+pub struct PhysicalStreamAgg {
+    /// The shared physical base.
+    pub base: BasePhysicalPlan,
+    /// Go `AggFuncs`.
+    pub agg_funcs: Vec<tidb_expr::aggregation::AggFuncDesc>,
+    /// Go `GroupByItems`.
+    pub group_by_items: Vec<tidb_expr::expression::Expression>,
+}
+
+/// Go `getStreamAggs` (`physical_stream_agg.go:89`): stream aggregates ride
+/// a child order that COVERS the group-by columns. Go's gates, in order: a
+/// mixed-direction property refuses; a Final-mode aggregate refuses; a
+/// group-by that is not all bare columns refuses ("group by a + b is not
+/// interested in any order"); then one candidate per possible child order
+/// that the required property prefixes, per task type — cop-single and
+/// root (a double read cannot promise the order, Go's own comment).
+///
+/// Narrowings by name: the TiFlash arm, `admitIndexJoinProp`/`Types`, the
+/// distinct push-down gate (`AllowDistinctAggPushDown` defaults OFF, so
+/// Go's default skips a distinct aggregate's candidates only when the
+/// distinct args miss the property — with the sysvar unported the
+/// distinct case refuses conservatively), and the `STREAM_AGG`-hint
+/// enforced candidates (`getEnforcedStreamAggs`).
+#[must_use]
+pub fn get_stream_aggs(
+    agg: &crate::logical::LogicalAggregation,
+    prop: &PhysicalProperty,
+    allocator: &PlanIdAllocator,
+    skew_ratio: f64,
+) -> Vec<PhysicalPlan> {
+    let (all, desc) = prop.all_same_order();
+    if !all {
+        return Vec::new();
+    }
+    if agg
+        .agg_funcs
+        .iter()
+        .any(|func| func.mode == tidb_expr::aggregation::AggFunctionMode::Final)
+    {
+        return Vec::new();
+    }
+    if agg.has_distinct() {
+        return Vec::new();
+    }
+    let group_by_cols = agg.get_group_by_cols();
+    if group_by_cols.len() != agg.group_by_items.len() {
+        return Vec::new();
+    }
+    let row_count = agg
+        .base
+        .base
+        .stats_info()
+        .map_or(1.0, |stats| stats.row_count());
+    let expected = if row_count > 0.0 {
+        (prop.expected_cnt * agg.input_count / row_count).max(prop.expected_cnt)
+    } else {
+        prop.expected_cnt
+    };
+    let mut stream_aggs = Vec::new();
+    for possible in &agg.possible_properties.orders {
+        if possible.len() < group_by_cols.len() {
+            continue;
+        }
+        let child_sort: Vec<crate::physical_property::SortItem> = possible
+            [..group_by_cols.len()]
+            .iter()
+            .map(|col| crate::physical_property::SortItem::new(col.unique_id, desc))
+            .collect();
+        let child_prop_probe = PhysicalProperty {
+            sort_items: child_sort.clone(),
+            ..PhysicalProperty::default()
+        };
+        if !prop.is_prefix(&child_prop_probe) {
+            continue;
+        }
+        for tp in [TaskType::CopSingleRead, TaskType::Root] {
+            let child_prop = PhysicalProperty {
+                task_tp: tp,
+                expected_cnt: expected,
+                sort_items: child_sort.clone(),
+                ..PhysicalProperty::default()
+            };
+            let stats = agg
+                .base
+                .base
+                .stats_info()
+                .map(|stats| stats.scale_by_expect_cnt(prop.expected_cnt, skew_ratio));
+            let mut base = BasePhysicalPlan::new(
+                allocator,
+                "StreamAgg",
+                agg.base.base.query_block_offset(),
+            );
+            base.base.set_stats(stats);
+            base.base.set_schema(agg.base.base.schema().cloned());
+            base.set_children_req_props(vec![Some(child_prop)]);
+            stream_aggs.push(PhysicalPlan::StreamAgg(PhysicalStreamAgg {
+                base,
+                agg_funcs: agg.agg_funcs.clone(),
+                group_by_items: agg.group_by_items.clone(),
+            }));
+        }
+    }
+    stream_aggs
+}
+
 /// A physical operator whose own port is a later batch; the physical twin of
 /// [`crate::logical::TodoLogicalOp`].
 #[derive(Clone, Debug, Default)]
@@ -1164,6 +1398,12 @@ pub enum PhysicalPlan {
     IndexScan(PhysicalIndexScan),
     /// Go `physicalop.PhysicalIndexReader`.
     IndexReader(PhysicalIndexReader),
+    /// Go `physicalop.PhysicalTopN` (planning slice).
+    TopN(PhysicalTopN),
+    /// Go `physicalop.PhysicalHashAgg` (planning slice).
+    HashAgg(PhysicalHashAgg),
+    /// Go `physicalop.PhysicalStreamAgg` (planning slice).
+    StreamAgg(PhysicalStreamAgg),
     /// An operator whose port is a later batch; see [`TodoPhysicalOp`].
     Todo(TodoPhysicalOp),
 }
@@ -1192,6 +1432,9 @@ impl PhysicalPlan {
             Self::TableReader(op) => &op.base,
             Self::IndexScan(op) => &op.base,
             Self::IndexReader(op) => &op.base,
+            Self::TopN(op) => &op.base,
+            Self::HashAgg(op) => &op.base,
+            Self::StreamAgg(op) => &op.base,
             Self::Todo(op) => &op.base,
         }
     }
@@ -1218,6 +1461,9 @@ impl PhysicalPlan {
             Self::TableReader(op) => &mut op.base,
             Self::IndexScan(op) => &mut op.base,
             Self::IndexReader(op) => &mut op.base,
+            Self::TopN(op) => &mut op.base,
+            Self::HashAgg(op) => &mut op.base,
+            Self::StreamAgg(op) => &mut op.base,
             Self::Todo(op) => &mut op.base,
         }
     }
@@ -1623,6 +1869,23 @@ impl PhysicalPlan {
             Self::IndexReader(op) => Self::IndexReader(PhysicalIndexReader {
                 base: base_of(&op.base),
                 index_plan: op.index_plan.clone(),
+            }),
+            Self::TopN(op) => Self::TopN(PhysicalTopN {
+                base: base_of(&op.base),
+                by_items: op.by_items.clone(),
+                partition_by: op.partition_by.clone(),
+                offset: op.offset,
+                count: op.count,
+            }),
+            Self::HashAgg(op) => Self::HashAgg(PhysicalHashAgg {
+                base: base_of(&op.base),
+                agg_funcs: op.agg_funcs.clone(),
+                group_by_items: op.group_by_items.clone(),
+            }),
+            Self::StreamAgg(op) => Self::StreamAgg(PhysicalStreamAgg {
+                base: base_of(&op.base),
+                agg_funcs: op.agg_funcs.clone(),
+                group_by_items: op.group_by_items.clone(),
             }),
             Self::Todo(op) => Self::Todo(TodoPhysicalOp {
                 base: base_of(&op.base),

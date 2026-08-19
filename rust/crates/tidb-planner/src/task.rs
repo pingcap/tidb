@@ -812,7 +812,52 @@ pub fn attach_plan_to_task(mut plan: PhysicalPlan, mut task: Task) -> Task {
 /// TopN/Limit constructions — and REFUSE naming those symbols rather than
 /// composing something Go would not compose. A wrong push-down is a silent
 /// wrong plan; a refusal is a loud gap.
-pub fn attach2_task(plan: PhysicalPlan, mut tasks: Vec<Task>) -> Result<Task, PlanError> {
+/// The shared cop body of Go `attach2Task4PhysicalStreamAgg` and
+/// `...HashAgg` after their gates: split via `NewPartialAggregate`, hang the
+/// partial half on the cop task's live side, convert, and attach the final
+/// half at root. Go's `inheritStatsFromBottomElemForIndexJoinInner` call is
+/// an `IndexJoinInfo` no-op on this port's tasks (module header).
+fn attach_agg_over_cop(
+    plan: PhysicalPlan,
+    mut cop: CopTask,
+    column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
+) -> Result<Task, PlanError> {
+    let Some(column_ids) = column_ids else {
+        return Err(PlanError::internal(
+            "the aggregate cop push needs the caller's column id allocator",
+        ));
+    };
+    // Go's expression context is consulted only for argument TYPES during
+    // the split's TypeInfer; a column-free context is exact for that.
+    let ctx = tidb_expr::ZonedNoColumns(tidb_expr::SessionTimeZone::utc());
+    let (partial, final_plan) =
+        crate::final_mode_agg::new_partial_aggregate(&ctx, column_ids, plan)?;
+    if let Some(mut partial) = partial {
+        if let Some(table_plan) = cop.table_plan.take() {
+            cop.finish_index_plan();
+            partial.base_mut().set_children(vec![*table_plan]);
+            cop.table_plan = Some(Box::new(partial));
+            // Go: the pushed agg's schema replaces the extra projection a
+            // double read would otherwise re-add above the reader.
+            cop.need_extra_proj = false;
+        } else if let Some(index_plan) = cop.index_plan.take() {
+            partial.base_mut().set_children(vec![*index_plan]);
+            cop.index_plan = Some(Box::new(partial));
+        } else {
+            return Err(PlanError::internal(
+                "an aggregate cop push over a task with neither half",
+            ));
+        }
+    }
+    let t = Task::Cop(cop).convert_to_root_task()?;
+    Ok(attach_plan_to_task(final_plan, t))
+}
+
+pub fn attach2_task(
+    plan: PhysicalPlan,
+    mut tasks: Vec<Task>,
+    column_ids: Option<&crate::expression_rewriter::ColumnIdAllocator>,
+) -> Result<Task, PlanError> {
     let first = tasks
         .drain(..1)
         .next()
@@ -1064,6 +1109,118 @@ pub fn attach2_task(plan: PhysicalPlan, mut tasks: Vec<Task>) -> Result<Task, Pl
                  NewMppTask over GetHashCols) is not ported",
             ))
         }
+        // `attach2Task4PhysicalTopN` (`task.go:1249`), the SIMPLE path:
+        // when the by-items carry columns, pass the TiKV gate, and the cop
+        // task has no root conds, push a partial TopN — ByItems cloned,
+        // `Count = Offset + Count`, offset removed, `DeriveLimitStats` over
+        // the open half (`getPushedDownTopN`'s non-heavy half) — then
+        // convert and attach the ROOT TopN above (partition-by root skip).
+        // The heavy-function rewrite, partial-order, TiDB-cop,
+        // index-merge-advisory, and virtual-column arms narrow by name.
+        PhysicalPlan::TopN(_) => {
+            let PhysicalPlan::TopN(topn) = &plan else {
+                unreachable!("the arm matched TopN");
+            };
+            let t = match first {
+                Task::Root(_) => first.copy().convert_to_root_task()?,
+                Task::Cop(_) => {
+                    let Task::Cop(mut cop) = first.copy() else {
+                        unreachable!("the arm matched Cop");
+                    };
+                    let by_exprs: Vec<tidb_expr::expression::Expression> = topn
+                        .by_items
+                        .iter()
+                        .map(|item| item.expr.clone())
+                        .collect();
+                    let need_push_down = by_exprs.iter().any(|expr| {
+                        !matches!(expr, tidb_expr::expression::Expression::Constant(_))
+                    });
+                    let pushable = need_push_down
+                        && crate::pushdown::can_exprs_push_down_tikv(&by_exprs)
+                        && cop.root_task_conds.is_empty();
+                    if pushable {
+                        let new_count = topn.offset + topn.count;
+                        let stats = cop
+                            .plan()
+                            .and_then(PhysicalPlan::stats_info)
+                            .map(|profile| profile.derive_limit_stats(new_count as f64));
+                        let mut base = crate::physical::BasePhysicalPlan::with_id(
+                            plan.id(),
+                            "TopN",
+                            plan.query_block_offset(),
+                        );
+                        base.base.set_stats(stats);
+                        base.base
+                            .set_schema(cop.plan().and_then(PhysicalPlan::schema).cloned());
+                        let pushed = PhysicalPlan::TopN(crate::physical::PhysicalTopN {
+                            base,
+                            by_items: topn.by_items.clone(),
+                            partition_by: topn.partition_by.clone(),
+                            offset: 0,
+                            count: new_count,
+                        });
+                        let Task::Cop(pushed_cop) =
+                            attach_plan_to_task(pushed, Task::Cop(cop))
+                        else {
+                            unreachable!("attaching onto a cop task answers a cop task");
+                        };
+                        cop = pushed_cop;
+                    }
+                    Task::Cop(cop).convert_to_root_task()?
+                }
+                Task::Mpp(_) => {
+                    return Err(PlanError::internal(
+                        "attach2Task4PhysicalTopN's MPP arm is not ported",
+                    ))
+                }
+            };
+            if !topn.partition_by.is_empty() {
+                return Ok(t);
+            }
+            Ok(attach_plan_to_task(plan, t))
+        }
+        // `attach2Task4PhysicalStreamAgg` (`task.go:1653`): a cop child
+        // takes the partial/final split UNLESS the aggregate must not cross
+        // the boundary — an order-keeping double read, root-side filters, or
+        // an index merge. The TiFlash stream-agg refusal is unreachable on
+        // this port's TiKV-only cop tasks.
+        PhysicalPlan::StreamAgg(_) => match first.copy() {
+            Task::Cop(cop) => {
+                if (cop.index_plan.is_some() && cop.table_plan.is_some() && cop.keep_order)
+                    || !cop.root_task_conds.is_empty()
+                    || !cop.idx_merge_part_plans.is_empty()
+                {
+                    let t = Task::Cop(cop).convert_to_root_task()?;
+                    Ok(attach_plan_to_task(plan, t))
+                } else {
+                    attach_agg_over_cop(plan, cop, column_ids)
+                }
+            }
+            Task::Mpp(_) => Err(PlanError::internal(
+                "attach2Task4PhysicalStreamAgg's MPP arm is not ported",
+            )),
+            root @ Task::Root(_) => {
+                Ok(attach_plan_to_task(plan, root.convert_to_root_task()?))
+            }
+        },
+        // `attach2Task4PhysicalHashAgg` (`task.go:2162`): same split, gated
+        // only on root-side filters and index merge.
+        PhysicalPlan::HashAgg(_) => match first.copy() {
+            Task::Cop(cop) => {
+                if cop.root_task_conds.is_empty() && cop.idx_merge_part_plans.is_empty() {
+                    attach_agg_over_cop(plan, cop, column_ids)
+                } else {
+                    let t = Task::Cop(cop).convert_to_root_task()?;
+                    Ok(attach_plan_to_task(plan, t))
+                }
+            }
+            Task::Mpp(_) => Err(PlanError::internal(
+                "attach2Task4PhysicalHashAgg's MPP arm is not ported",
+            )),
+            root @ Task::Root(_) => {
+                Ok(attach_plan_to_task(plan, root.convert_to_root_task()?))
+            }
+        },
         // `attach2Task4PhysicalHashJoin` (`task.go:211`): convert BOTH
         // children — Go converts the RIGHT one first — wire them in, and
         // concatenate warnings right-before-left, which is the order SHOW
@@ -1171,7 +1328,7 @@ mod attach_tests {
             base: op_with_stats("Selection", 8.0),
             ..PhysicalSelection::default()
         });
-        let task = attach2_task(selection, vec![root_task_over(10.0)]).expect("root attaches");
+        let task = attach2_task(selection, vec![root_task_over(10.0)], None).expect("root attaches");
         assert!((task.count() - 8.0).abs() < f64::EPSILON);
         let plan = task.plan().expect("a plan");
         assert!(matches!(plan, PhysicalPlan::Selection(_)));
@@ -1185,7 +1342,7 @@ mod attach_tests {
             base: op_with_stats("Sort", 10.0),
             ..PhysicalSort::default()
         });
-        let task = attach2_task(sort, vec![root_task_over(10.0)]).expect("attaches");
+        let task = attach2_task(sort, vec![root_task_over(10.0)], None).expect("attaches");
         assert!(matches!(task.plan(), Some(PhysicalPlan::Sort(_))));
     }
 
@@ -1198,7 +1355,7 @@ mod attach_tests {
             only_column: true,
             ..crate::physical::NominalSort::default()
         });
-        let task = attach2_task(nominal, vec![root_task_over(10.0)]).expect("passes through");
+        let task = attach2_task(nominal, vec![root_task_over(10.0)], None).expect("passes through");
         assert!(
             matches!(task.plan(), Some(PhysicalPlan::TableDual(_))),
             "the child plan is still the task's plan"
@@ -1213,7 +1370,7 @@ mod attach_tests {
             only_column: false,
             ..crate::physical::NominalSort::default()
         });
-        let task = attach2_task(nominal, vec![root_task_over(10.0)]).expect("attaches");
+        let task = attach2_task(nominal, vec![root_task_over(10.0)], None).expect("attaches");
         let plan = task.plan().expect("a plan");
         assert!(matches!(plan, PhysicalPlan::NominalSort(_)));
         assert_eq!(plan.children().len(), 1, "the old plan became the child");
@@ -1228,7 +1385,7 @@ mod attach_tests {
             base: op_with_stats("Union", 20.0),
             mpp: false,
         });
-        let task = attach2_task(union, vec![root_task_over(10.0), root_task_over(10.0)])
+        let task = attach2_task(union, vec![root_task_over(10.0), root_task_over(10.0)], None)
             .expect("attaches");
         let plan = task.plan().expect("a plan");
         assert!(matches!(plan, PhysicalPlan::UnionAll(_)));
@@ -1254,7 +1411,7 @@ mod attach_tests {
             [],
         ));
         let task =
-            attach2_task(union, vec![root_task_over(10.0), mpp_child]).expect("invalid, not error");
+            attach2_task(union, vec![root_task_over(10.0), mpp_child], None).expect("invalid, not error");
         assert!(task.invalid());
     }
 
@@ -1294,7 +1451,7 @@ mod attach_tests {
             ..crate::physical::PhysicalApply::default()
         });
         let task =
-            attach2_task(apply, vec![child(10.0, 1, true), child(3.0, 2, true)]).expect("attaches");
+            attach2_task(apply, vec![child(10.0, 1, true), child(3.0, 2, true)], None).expect("attaches");
         let Task::Root(root) = &task else {
             panic!("a root task");
         };
@@ -1331,6 +1488,7 @@ mod attach_tests {
         let task = attach2_task(
             sequence,
             vec![root_task_over(1.0), root_task_over(2.0), root_task_over(3.0)],
+            None,
         )
         .expect("passes through");
         let plan = task.plan().expect("a plan");
@@ -1362,7 +1520,7 @@ mod attach_tests {
             base: op_with_stats("HashJoin", 5.0),
             ..crate::physical::PhysicalHashJoin::default()
         });
-        let task = attach2_task(join, vec![child(1.0, "left"), child(2.0, "right")])
+        let task = attach2_task(join, vec![child(1.0, "left"), child(2.0, "right")], None)
             .expect("attaches");
         let Task::Root(root) = &task else {
             panic!("a root task");
@@ -1383,7 +1541,7 @@ mod attach_tests {
         let mor = PhysicalPlan::MaxOneRow(crate::physical::PhysicalMaxOneRow {
             base: op_with_stats("MaxOneRow", 1.0),
         });
-        let task = attach2_task(mor, vec![root_task_over(10.0)]).expect("attaches");
+        let task = attach2_task(mor, vec![root_task_over(10.0)], None).expect("attaches");
         assert!(matches!(task.plan(), Some(PhysicalPlan::MaxOneRow(_))));
     }
 
@@ -1396,7 +1554,7 @@ mod attach_tests {
             base: op_with_stats("MaxOneRow", 1.0),
         });
         let error =
-            attach2_task(mor, vec![Task::Cop(CopTask::default())]).expect_err("refuses");
+            attach2_task(mor, vec![Task::Cop(CopTask::default())], None).expect_err("refuses");
         assert!(
             format!("{error}").contains("convertToRootTaskImpl"),
             "the refusal names its Go symbol: {error}"
@@ -1430,7 +1588,7 @@ mod attach_tests {
             index_plan_finished: true,
             ..CopTask::default()
         });
-        let task = attach2_task(selection, vec![cop]).expect("converts and attaches");
+        let task = attach2_task(selection, vec![cop], None).expect("converts and attaches");
         let plan = task.plan().expect("a plan");
         assert!(matches!(plan, PhysicalPlan::Selection(_)));
         assert!(
@@ -1448,7 +1606,7 @@ mod attach_tests {
             base: op_with_stats("Selection", 8.0),
             ..PhysicalSelection::default()
         });
-        let _ = attach2_task(selection, vec![original.copy()]).expect("attaches");
+        let _ = attach2_task(selection, vec![original.copy()], None).expect("attaches");
         assert!(
             matches!(original.plan(), Some(PhysicalPlan::TableDual(_))),
             "the original task keeps its own plan"

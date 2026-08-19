@@ -496,6 +496,166 @@ pub fn build_final_mode_aggregation(
     })
 }
 
+/// Go `ContainVirtualColumn` (`pkg/expression/util.go:1635`): a column
+/// backed by a generating expression cannot be pushed.
+fn contain_virtual_column(exprs: &[Expression]) -> bool {
+    exprs.iter().any(|expr| match expr {
+        Expression::Column(col) => col.virtual_expr.is_some(),
+        Expression::ScalarFunction(func) => contain_virtual_column(func.get_args()),
+        _ => false,
+    })
+}
+
+/// Go `ContainCorrelatedColumn` (`pkg/expression/util.go:1652`). Note Go's
+/// switch does NOT look inside Constants — neither does this.
+fn contain_correlated_column(exprs: &[Expression]) -> bool {
+    exprs.iter().any(|expr| match expr {
+        Expression::CorrelatedColumn(_) => true,
+        Expression::ScalarFunction(func) => contain_correlated_column(func.get_args()),
+        _ => false,
+    })
+}
+
+/// Go `CheckAggCanPushCop` (`base_physical_agg.go:522`) for the TiKV store.
+///
+/// Ported checks, in Go's order: virtual/correlated columns in arguments,
+/// `CheckAggPushDown` (with the default empty push-down blacklist Go reads
+/// from the session), argument pushability, order-by-item pushability, and
+/// the same two group-by checks. Go's final `AggFuncToPBExpr != nil` probe
+/// narrows: the PB conversion layer is unported, and for TiKV every function
+/// admitted by `CheckAggPushDown` has a PB mapping, so the probe cannot
+/// refuse anything the earlier checks admitted. Go's refusal WARNING
+/// (`Aggregation can not be pushed to ...`) narrows with the same unported
+/// statement-context channel the other attach refusals name.
+#[must_use]
+pub fn check_agg_can_push_cop_tikv(
+    agg_funcs: &[AggFuncDesc],
+    group_by_items: &[Expression],
+) -> bool {
+    let blacklist = HashMap::new();
+    for agg_func in agg_funcs {
+        if contain_virtual_column(&agg_func.base.args)
+            || contain_correlated_column(&agg_func.base.args)
+        {
+            return false;
+        }
+        if !tidb_expr::aggregation::check_agg_push_down(
+            agg_func,
+            tidb_expr::infer_pushdown::PushDownStore::TiKv,
+            &blacklist,
+        ) {
+            return false;
+        }
+        // Go passes `aggFunc.Name == ast.AggFuncSum` as `canEnumPush`, a
+        // TiFlash-only enum carve-out (`canExprPushDown`); for TiKV the
+        // plain check is the same function.
+        if !crate::pushdown::can_exprs_push_down_tikv(&agg_func.base.args) {
+            return false;
+        }
+        if !agg_func.order_by_items.is_empty() {
+            let exprs: Vec<Expression> = agg_func
+                .order_by_items
+                .iter()
+                .map(|item| item.expr.clone())
+                .collect();
+            if !crate::pushdown::can_exprs_push_down_tikv(&exprs) {
+                return false;
+            }
+        }
+    }
+    if contain_virtual_column(group_by_items) {
+        return false;
+    }
+    crate::pushdown::can_exprs_push_down_tikv(group_by_items)
+}
+
+/// Go `BasePhysicalAgg.NewPartialAggregate` (`base_physical_agg.go:279`) for
+/// a TiKV cop task: `(None, plan)` is Go's `(nil, p.Self)` — the aggregate
+/// stays whole — and `(Some(partial), final)` is the split, the partial
+/// keeping the original plan's id and stats (Go mutates `p` into it) and the
+/// final sharing those stats above it.
+///
+/// The `copTaskType == kv.TiDB` firstrow-appending arm is not reachable: the
+/// only caller hands TiKV cop tasks. Go's expression context is consulted
+/// ONLY for argument types during `TypeInfer` on this path, which is why a
+/// column-free context is exact here.
+pub fn new_partial_aggregate(
+    ctx: &impl Columns,
+    alloc: &ColumnIdAllocator,
+    plan: crate::physical::PhysicalPlan,
+) -> Result<
+    (Option<crate::physical::PhysicalPlan>, crate::physical::PhysicalPlan),
+    crate::plan_base::PlanError,
+> {
+    use crate::physical::PhysicalPlan;
+    let (agg_funcs, group_by_items, is_stream) = match &plan {
+        PhysicalPlan::HashAgg(agg) => (&agg.agg_funcs, &agg.group_by_items, false),
+        PhysicalPlan::StreamAgg(agg) => (&agg.agg_funcs, &agg.group_by_items, true),
+        _ => {
+            return Err(crate::plan_base::PlanError::internal(
+                "NewPartialAggregate over a non-aggregate plan",
+            ))
+        }
+    };
+    if !check_agg_can_push_cop_tikv(agg_funcs, group_by_items) {
+        return Ok((None, plan));
+    }
+    let original = AggInfo {
+        agg_funcs: agg_funcs.clone(),
+        group_by_items: group_by_items.clone(),
+        schema: plan
+            .schema()
+            .cloned()
+            .unwrap_or_default(),
+    };
+    let Some(mut split) = build_final_mode_aggregation(ctx, alloc, &original, true, false)
+    else {
+        return Ok((None, plan));
+    };
+    // A stream aggregate whose split grew the group-by (a pushed distinct
+    // argument) cannot keep its order contract: stay whole.
+    if is_stream && split.partial.group_by_items.len() != split.final_agg.group_by_items.len()
+    {
+        return Ok((None, plan));
+    }
+    // Remove unnecessary FirstRow.
+    let partial_funcs = std::mem::take(&mut split.partial.agg_funcs);
+    split.partial.agg_funcs = remove_unnecessary_first_row(
+        &mut split.final_agg.agg_funcs,
+        &split.final_agg.group_by_items,
+        partial_funcs,
+        &split.partial.group_by_items,
+        &mut split.partial.schema,
+        &split.first_row_func_map,
+    );
+    // Go mutates `p` into the partial half (same plan id, same stats) and
+    // Init's a NEW final of the same kind above it, with
+    // `ExpectedCnt: math.MaxFloat64` and `p`'s stats. Plan ids on this port
+    // follow the TopN-push precedent: both halves carry the original id.
+    let mut partial = plan.clone();
+    let mut final_plan = plan;
+    match (&mut partial, &mut final_plan) {
+        (PhysicalPlan::HashAgg(part), PhysicalPlan::HashAgg(fin)) => {
+            part.agg_funcs = split.partial.agg_funcs;
+            part.group_by_items = split.partial.group_by_items;
+            part.base.base.set_schema(Some(split.partial.schema));
+            fin.agg_funcs = split.final_agg.agg_funcs;
+            fin.group_by_items = split.final_agg.group_by_items;
+            fin.base.base.set_schema(Some(split.final_agg.schema));
+        }
+        (PhysicalPlan::StreamAgg(part), PhysicalPlan::StreamAgg(fin)) => {
+            part.agg_funcs = split.partial.agg_funcs;
+            part.group_by_items = split.partial.group_by_items;
+            part.base.base.set_schema(Some(split.partial.schema));
+            fin.agg_funcs = split.final_agg.agg_funcs;
+            fin.group_by_items = split.final_agg.group_by_items;
+            fin.base.base.set_schema(Some(split.final_agg.schema));
+        }
+        _ => unreachable!("both halves clone from the same variant"),
+    }
+    Ok((Some(partial), final_plan))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -133,7 +133,7 @@ pub fn enforce_property(
         by_items: prop.sort_items.clone(),
         is_partial_sort: prop.is_sort_item_all_for_partition(),
     });
-    attach2_task(sort, vec![task])
+    attach2_task(sort, vec![task], None)
 }
 
 #[cfg(test)]

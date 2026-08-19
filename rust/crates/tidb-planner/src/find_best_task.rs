@@ -999,6 +999,7 @@ fn keep_cheaper(best: &mut Option<Task>, task: Task) {
     }
 }
 
+pub mod coster;
 pub mod dispatch;
 
 #[cfg(test)]

@@ -109,6 +109,11 @@ pub struct DispatchContext<'a> {
     pub skew_ratio: f64,
     /// Go `BaseLogicalPlan.taskMap`, keyed here by `(plan id, prop key)`.
     task_map: HashMap<(i32, String), Task>,
+    /// Go `SessionVars.AllocPlanColumnID`: the column-id allocator the
+    /// aggregate partial/final split draws fresh columns from. `None` keeps
+    /// pre-split searches working; a search that can push aggregates sets it
+    /// through [`DispatchContext::with_column_ids`].
+    pub column_ids: Option<&'a crate::expression_rewriter::ColumnIdAllocator>,
 }
 
 impl<'a> DispatchContext<'a> {
@@ -124,7 +129,18 @@ impl<'a> DispatchContext<'a> {
             coster,
             skew_ratio,
             task_map: HashMap::new(),
+            column_ids: None,
         }
+    }
+
+    /// The same context with the session's column-id allocator attached.
+    #[must_use]
+    pub fn with_column_ids(
+        mut self,
+        column_ids: &'a crate::expression_rewriter::ColumnIdAllocator,
+    ) -> Self {
+        self.column_ids = Some(column_ids);
+        self
     }
 }
 
@@ -213,12 +229,30 @@ fn exhaust_physical_plans(
             if !physical::match_items(prop, &op.by_items) {
                 return Ok(Vec::new());
             }
+            // Go's two preference slices, in order: the TopN operators
+            // (`getPhysTopN`), then the LIMIT half (`getPhysLimits`).
+            let mut slices = Vec::with_capacity(2);
+            let topns = physical::get_phys_topn(op, ctx.allocator);
+            if !topns.is_empty() {
+                slices.push(topns);
+            }
             let limits = physical::get_phys_limits(op, ctx.allocator);
-            Ok(if limits.is_empty() {
-                Vec::new()
-            } else {
-                vec![limits]
-            })
+            if !limits.is_empty() {
+                slices.push(limits);
+            }
+            Ok(slices)
+        }
+        LogicalPlan::Aggregation(op) => {
+            // `ExhaustPhysicalPlans4LogicalAggregation`
+            // (`base_physical_agg.go:935`): the hash-agg candidates; the
+            // stream-agg half (`getStreamAggs`, order-riding) is a later
+            // slice, named.
+            // Go appends `getStreamAggs` then `getHashAggs` into ONE
+            // list; the stream candidates ride a covered order, the hash
+            // candidates need none, and cost picks between them.
+            let mut aggs = physical::get_stream_aggs(op, prop, ctx.allocator, ctx.skew_ratio);
+            aggs.extend(physical::get_hash_aggs(op, prop, ctx.allocator, ctx.skew_ratio));
+            Ok(if aggs.is_empty() { Vec::new() } else { vec![aggs] })
         }
         LogicalPlan::Join(_) | LogicalPlan::Apply(_) => Err(PlanError::internal(
             "exhaustPhysicalPlans4LogicalJoin: joins are enumerated by \
@@ -574,7 +608,7 @@ fn enumerate_physical_plans_4_task(
             if child_tasks.len() != child_len {
                 continue;
             }
-            let mut cur_task = match attach2_task(pp.clone_shallow(), child_tasks) {
+            let mut cur_task = match attach2_task(pp.clone_shallow(), child_tasks, ctx.column_ids) {
                 Ok(task) => task,
                 // An unported attach body refuses; Go has no such arm, so a
                 // refusal must SURFACE rather than silently skip a
@@ -862,7 +896,7 @@ mod tests {
         use tidb_expr::schema::Schema;
 
         let allocator = PlanIdAllocator::new();
-        let coster = CountCoster;
+        let coster = crate::find_best_task::coster::Ver2Coster::default();
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
         let source = {
             let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
@@ -997,7 +1031,7 @@ mod tests {
         use tidb_expr::expression::Expression;
 
         let allocator = PlanIdAllocator::new();
-        let coster = CountCoster;
+        let coster = crate::find_best_task::coster::Ver2Coster::default();
         let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
         let source = {
             let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
@@ -1048,6 +1082,136 @@ mod tests {
             panic!("the scan under the pushed limit");
         };
         assert!(scan.keep_order, "the child property's order rode down");
+    }
+
+    #[test]
+    fn a_topn_pushes_its_partial_half_and_wins_over_the_limit_slice() {
+        // Batches 33-34 end to end: ORDER BY a non-handle column LIMIT n
+        // cannot ride keep-order (the LIMIT slice dies at the child), so
+        // the TOPN slice wins — the pushed partial TopN sits inside the
+        // reader (`getPushedDownTopN`'s simple half: Count = Offset +
+        // Count, offset removed, DeriveLimitStats) and the root TopN keeps
+        // the offset. Go's exact plan for this query shape.
+        use crate::access_path::PossiblePath;
+        use crate::logical::{DataSource, LogicalTopN};
+        use tidb_datatype::{FieldType, FieldTypeCode};
+        use tidb_expr::aggregation::ByItems;
+        use tidb_expr::column::Column;
+        use tidb_expr::expression::Expression;
+
+        let allocator = PlanIdAllocator::new();
+        let coster = crate::find_best_task::coster::Ver2Coster::default();
+        let mut ctx = DispatchContext::new(&allocator, &coster, 1.0);
+        let source = {
+            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+            base.base.set_stats(Some(StatsInfo::new(100.0, [])));
+            base.base.set_schema(Some(tidb_expr::schema::Schema::default()));
+            LogicalPlan::DataSource(DataSource {
+                base,
+                physical_table_id: 5,
+                enumerated_paths: vec![PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                }],
+                ..DataSource::default()
+            })
+        };
+        let mut base = BaseLogicalPlan::new(&allocator, LogicalTopN::TYPE, 0);
+        base.base.set_stats(Some(StatsInfo::new(4.0, [])));
+        base.set_children(vec![source]);
+        let topn = LogicalPlan::TopN(LogicalTopN {
+            base,
+            by_items: vec![ByItems::new(
+                Expression::Column(Column::new(77, FieldType::new(FieldTypeCode::LongLong))),
+                true,
+            )],
+            offset: 1,
+            count: 3,
+            ..LogicalTopN::default()
+        });
+
+        let task = find_best_task(&topn, &PhysicalProperty::default(), &mut ctx)
+            .expect("plans");
+        let plan = task.plan().expect("a plan");
+        let PhysicalPlan::TopN(root_topn) = plan else {
+            panic!("the root TopN tops the plan, got {plan:?}");
+        };
+        assert_eq!((root_topn.offset, root_topn.count), (1, 3));
+        let Some(PhysicalPlan::TableReader(reader)) = plan.children().first() else {
+            panic!("a TableReader, got {:?}", plan.children());
+        };
+        let Some(PhysicalPlan::TopN(pushed)) = reader.table_plan.as_deref() else {
+            panic!("the pushed partial TopN inside the reader");
+        };
+        assert_eq!((pushed.offset, pushed.count), (0, 4));
+        assert!(
+            (pushed.base.base.stats_info().expect("stats").row_count() - 4.0).abs()
+                < f64::EPSILON,
+            "DeriveLimitStats caps the pushed profile"
+        );
+    }
+
+    #[test]
+    fn an_aggregate_plans_above_the_reader() {
+        // GROUP BY over a table, end to end: the cop arm of
+        // `attach2Task4PhysicalHashAgg` now SPLITS — the partial half rides
+        // inside the TableReader next to the scan, and the final half
+        // merges above it.
+        use crate::access_path::PossiblePath;
+        use crate::logical::{DataSource, LogicalAggregation};
+
+        let allocator = PlanIdAllocator::new();
+        let coster = crate::find_best_task::coster::Ver2Coster::default();
+        let column_ids = crate::expression_rewriter::ColumnIdAllocator::new();
+        let mut ctx =
+            DispatchContext::new(&allocator, &coster, 1.0).with_column_ids(&column_ids);
+        let source = {
+            let mut base = BaseLogicalPlan::new(&allocator, "DataSource", 0);
+            base.base.set_stats(Some(StatsInfo::new(100.0, [])));
+            base.base.set_schema(Some(tidb_expr::schema::Schema::default()));
+            LogicalPlan::DataSource(DataSource {
+                base,
+                physical_table_id: 5,
+                enumerated_paths: vec![PossiblePath::Table {
+                    is_int_handle: true,
+                    primary_index: None,
+                }],
+                ..DataSource::default()
+            })
+        };
+        let mut base = BaseLogicalPlan::new(&allocator, "HashAgg", 0);
+        base.base.set_stats(Some(StatsInfo::new(10.0, [])));
+        base.set_children(vec![source]);
+        let agg = LogicalPlan::Aggregation(LogicalAggregation {
+            base,
+            ..LogicalAggregation::default()
+        });
+
+        let task = find_best_task(&agg, &PhysicalProperty::default(), &mut ctx)
+            .expect("plans");
+        let plan = task.plan().expect("a plan");
+        assert!(matches!(plan, PhysicalPlan::HashAgg(_)), "got {plan:?}");
+        let Some(PhysicalPlan::TableReader(reader)) = plan.children().first() else {
+            panic!("a TableReader, got {:?}", plan.children());
+        };
+        let Some(PhysicalPlan::HashAgg(_)) = reader.table_plan.as_deref() else {
+            panic!("the partial aggregate rides inside the reader");
+        };
+
+        // A required order enumerates nothing (getHashAggs' first gate);
+        // with CanAddEnforcer the enforcer branch sorts ABOVE the agg.
+        let prop = PhysicalProperty {
+            sort_items: vec![crate::physical_property::SortItem::new(1, false)],
+            can_add_enforcer: true,
+            ..PhysicalProperty::default()
+        };
+        let task = find_best_task(&agg, &prop, &mut ctx).expect("plans");
+        let plan = task.plan().expect("a plan");
+        assert!(matches!(plan, PhysicalPlan::Sort(_)), "got {plan:?}");
+        assert!(matches!(
+            plan.children().first(),
+            Some(PhysicalPlan::HashAgg(_))
+        ));
     }
 
     #[test]
