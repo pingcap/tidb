@@ -496,6 +496,16 @@ pub enum MysqlConnectionError {
     /// A closed connection is the one answer the client cannot mistake for a
     /// verdict.
     ResultUndetermined(String),
+    /// The connection's command loop panicked and was recovered.
+    ///
+    /// Go `pkg/server/conn.go` `Run`'s deferred `recover()`: a panicking
+    /// statement logs "connection running loop panic" and closes ITS
+    /// connection while the server keeps serving. Divergence, named: Go
+    /// best-effort writes an ERR 1105 packet through the connection's own
+    /// packet writer before closing; the recovery here sits outside the
+    /// loop that owns the writer and its sequence number, so the client
+    /// observes the close without a final ERR packet.
+    Panicked(String),
 }
 
 impl fmt::Display for MysqlConnectionError {
@@ -513,6 +523,9 @@ impl fmt::Display for MysqlConnectionError {
                     "result undetermined, close this connection: {message}"
                 )
             }
+            Self::Panicked(message) => {
+                write!(formatter, "connection running loop panic: {message}")
+            }
         }
     }
 }
@@ -522,7 +535,10 @@ impl std::error::Error for MysqlConnectionError {
         match self {
             Self::Io(error) => Some(error),
             Self::Packet(error) => Some(error),
-            Self::Handshake(_) | Self::PartialResult(_) | Self::ResultUndetermined(_) => None,
+            Self::Handshake(_)
+            | Self::PartialResult(_)
+            | Self::ResultUndetermined(_)
+            | Self::Panicked(_) => None,
         }
     }
 }
@@ -624,18 +640,36 @@ pub(crate) fn serve_mysql_connection_with_tls_and_version_info<F: QuerySessionFa
     );
     let shutdown = cancellation.clone();
     let mut commands = ConnectionCommandCounts::default();
-    let result = serve_connection_inner(
-        stream,
-        AcceptedConnectionIdentity {
-            connection_id: lease.id(),
-            peer_addr,
-        },
-        cancellation,
-        factory,
-        users,
-        runtime,
-        &mut commands,
-    );
+    // Go `conn.go` `Run`'s deferred `recover()`: a panic anywhere in the
+    // command loop ends THIS connection, not the process. The lease and
+    // every session resource release by drop during the unwind, and the
+    // worker thread above stays alive to serve the next socket.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        serve_connection_inner(
+            stream,
+            AcceptedConnectionIdentity {
+                connection_id: lease.id(),
+                peer_addr,
+            },
+            cancellation,
+            factory,
+            users,
+            runtime,
+            &mut commands,
+        )
+    }))
+    .unwrap_or_else(|payload| {
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_owned())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "non-string panic payload".to_owned());
+        eprintln!(
+            "{{\"event\":\"connection_panic\",\"connection_id\":{},\"error\":{message:?}}}",
+            lease.id()
+        );
+        Err(MysqlConnectionError::Panicked(message))
+    });
     let failed = result.is_err() && !shutdown.is_cancelled();
     if failed {
         lease.mark_failed();
