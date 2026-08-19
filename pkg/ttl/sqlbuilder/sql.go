@@ -218,7 +218,7 @@ func (b *SQLBuilder) writeLexicographicGreaterThan(cols []*model.ColumnInfo, dp 
 			b.restoreCtx.WritePlain(" OR ")
 		}
 		b.restoreCtx.WritePlain("(")
-		for j := 0; j < i; j++ {
+		for j := range i {
 			if j > 0 {
 				b.restoreCtx.WritePlain(" AND ")
 			}

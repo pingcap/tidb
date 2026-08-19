@@ -67,14 +67,33 @@ func PeekWaitingTTLTask(hbExpire time.Time) (string, []any) {
 }
 
 // InsertIntoTTLTask returns an SQL statement to insert a ttl task into mysql.tidb_ttl_task
-func InsertIntoTTLTask(loc *time.Location, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
-	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time) (string, []any, error) {
-	return InsertIntoTTLTaskWithSplitBy(loc, jobID, tableID, scanID, scanRangeStart, scanRangeEnd, expireTime, createdTime, nil)
+func InsertIntoTTLTask(
+	loc *time.Location,
+	jobID string,
+	tableID int64,
+	scanID int,
+	scanRangeStart []types.Datum,
+	scanRangeEnd []types.Datum,
+	expireTime time.Time,
+	createdTime time.Time,
+) (string, []any, error) {
+	return InsertIntoTTLTaskWithSplitBy(
+		loc, jobID, tableID, scanID, scanRangeStart, scanRangeEnd, expireTime, createdTime, nil,
+	)
 }
 
 // InsertIntoTTLTaskWithSplitBy returns an SQL statement to insert a TTL task with its scan index ID.
-func InsertIntoTTLTaskWithSplitBy(loc *time.Location, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
-	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time, splitBy *int64) (string, []any, error) {
+func InsertIntoTTLTaskWithSplitBy(
+	loc *time.Location,
+	jobID string,
+	tableID int64,
+	scanID int,
+	scanRangeStart []types.Datum,
+	scanRangeEnd []types.Datum,
+	expireTime time.Time,
+	createdTime time.Time,
+	splitBy *int64,
+) (string, []any, error) {
 	rangeStart, err := codec.EncodeKey(loc, []byte{}, scanRangeStart...)
 	if err != nil {
 		return "", nil, err
