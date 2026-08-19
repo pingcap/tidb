@@ -12,8 +12,8 @@ import (
 )
 
 type metrics struct {
-	finishedSizeGauge              *prometheus.GaugeVec
-	finishedRowsGauge              *prometheus.GaugeVec
+	finishedSizeGauge        *prometheus.GaugeVec
+	finishedRowsGauge        *prometheus.GaugeVec
 	finishedTablesCounter    *prometheus.CounterVec
 	estimateTotalRowsCounter *prometheus.CounterVec
 	errorCount               *prometheus.CounterVec
@@ -122,14 +122,6 @@ func IncCounter(counterVec *prometheus.CounterVec) {
 		return
 	}
 	counterVec.With(nil).Inc()
-}
-
-// ObserveHistogram observes a histogram
-func ObserveHistogram(histogramVec *prometheus.HistogramVec, v float64) {
-	if histogramVec == nil {
-		return
-	}
-	histogramVec.With(nil).Observe(v)
 }
 
 // ReadGauge reports the current value of the gauge.
