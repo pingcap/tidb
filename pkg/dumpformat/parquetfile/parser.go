@@ -676,10 +676,9 @@ func NewParser(
 		colNames = append(colNames, strings.ToLower(desc.Name()))
 
 		logicalType := desc.LogicalType()
-		pnode, _ := desc.SchemaNode().(*schema.PrimitiveNode)
 		if logicalType == nil || !logicalType.IsValid() || logicalType.IsNone() {
-			decimalMeta := schema.DecimalMetadata{}
-			if pnode != nil {
+			var decimalMeta schema.DecimalMetadata
+			if pnode, _ := desc.SchemaNode().(*schema.PrimitiveNode); pnode != nil {
 				decimalMeta = pnode.DecimalMetadata()
 			}
 			logicalType = desc.ConvertedType().ToLogicalType(decimalMeta)
@@ -689,7 +688,8 @@ func NewParser(
 			return nil, errors.Errorf("unsupported parquet logical type %s", logicalType.String())
 		}
 		if !logicalType.IsApplicable(desc.PhysicalType(), int32(desc.TypeLength())) {
-			return nil, errors.Errorf("logical type %s is not applicable to physical type %s", logicalType.String(), desc.PhysicalType())
+			return nil, errors.Errorf("logical type %s is not applicable to physical type %s",
+				logicalType.String(), desc.PhysicalType())
 		}
 		switch desc.PhysicalType() {
 		case parquet.Types.Int32:
