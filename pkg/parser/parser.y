@@ -8181,11 +8181,11 @@ FunctionCallKeyword:
 	}
 |	"INTERVAL" '(' Expression ',' Expression ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.Interval), Args: []ast.ExprNode{$3, $5}}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Interval), Args: []ast.ExprNode{$3, $5}}
 	}
 |	"INTERVAL" '(' Expression ',' Expression ',' ExpressionList ')'
 	{
-		$$ = &ast.FuncCallExpr{FnName: ast.NewCIStr(ast.Interval), Args: append([]ast.ExprNode{$3, $5}, $7.([]ast.ExprNode)...)}
+		$$ = &ast.FuncCallExpr{FnName: model.NewCIStr(ast.Interval), Args: append([]ast.ExprNode{$3, $5}, $7.([]ast.ExprNode)...)}
 	}
 |	builtinUser '(' ExpressionListOpt ')'
 	{
@@ -13869,7 +13869,7 @@ ConnectionOptions:
 		for _, option := range $2.([]*ast.ResourceOption) {
 			switch option.Type {
 			case ast.MaxUserConnections:
-				// do nothing.
+			// do nothing.
 			default:
 				needWarning = true
 			}
