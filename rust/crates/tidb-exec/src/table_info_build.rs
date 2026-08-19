@@ -987,6 +987,43 @@ fn build_column(
     Ok((info, constraints))
 }
 
+/// Go `AlterColumn` followed by `updateColumnDefaultValue`: replaces one
+/// existing column's DEFAULT in place, or drops it.
+///
+/// `default_value` is `None` for `DROP DEFAULT`, which Go answers by storing
+/// no value and setting `NoDefaultValueFlag`; anything else goes through the
+/// same staging and validation the column's own definition went through, so
+/// an `ALTER` and a `CREATE` cannot disagree about what a spelling means.
+pub(crate) fn set_column_default(
+    name: &str,
+    info: &mut ColumnInfo,
+    default_value: Option<&Expr>,
+    context: &tidb_executor::StmtContext,
+) -> Refusal<()> {
+    // Go clears both marks first, then either re-sets them for the DROP form
+    // or lets the staging path decide.
+    info.field_type.del_flags(FieldTypeFlags::NO_DEFAULT_VALUE);
+    info.default_is_expr = false;
+    let Some(expr) = default_value else {
+        info.set_default_value(GoAny::nil())
+            .map_err(|error| DdlAdmissionError::new(error.to_string()))?;
+        info.field_type.add_flags(FieldTypeFlags::NO_DEFAULT_VALUE);
+        return Ok(());
+    };
+    let field_type = info.field_type.clone();
+    let staged = stage_column_default(name, &field_type, expr, context)?;
+    // Go `updateColumnDefaultValue` turns a staged value that carries no
+    // default at all into `ErrInvalidDefaultValue`, which is why
+    // `sql_mode=''` plus `SET DEFAULT ''` on TEXT is 1067 here even though
+    // the same spelling is accepted when the column is first defined.
+    if !staged.has_default() {
+        return Err(default_admission_error(
+            tidb_executor::DriverError::InvalidDefault(name.to_owned()),
+        ));
+    }
+    persist_column_default(name, info, staged, context)
+}
+
 /// Go `removeOnUpdateNowFlag`.
 fn remove_on_update_now(field_type: &mut FieldType) {
     if field_type.has_flag(FieldTypeFlags::TIMESTAMP) {

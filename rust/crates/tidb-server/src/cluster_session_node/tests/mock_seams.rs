@@ -114,6 +114,7 @@ impl ClusterDdl for MockDdl {
                 if find(&mut next.databases, name).is_some() {
                     if *if_not_exists {
                         return Ok(ClusterDdlReport::AlreadySatisfied {
+                            warning: None,
                             detail: format!("database `{name}` already exists"),
                         });
                     }
@@ -141,6 +142,7 @@ impl ClusterDdl for MockDdl {
                     }
                     None if *if_exists => {
                         return Ok(ClusterDdlReport::AlreadySatisfied {
+                            warning: None,
                             detail: format!("database `{name}` does not exist"),
                         })
                     }
@@ -166,6 +168,7 @@ impl ClusterDdl for MockDdl {
                 {
                     if *if_not_exists {
                         return Ok(ClusterDdlReport::AlreadySatisfied {
+                            warning: None,
                             detail: format!("table `{schema}`.`{table}` already exists"),
                         });
                     }
@@ -358,6 +361,7 @@ impl ClusterDdl for MockDdl {
                     }
                     None if *if_exists => {
                         return Ok(ClusterDdlReport::AlreadySatisfied {
+                            warning: None,
                             detail: format!("table `{schema}`.`{table}` does not exist"),
                         })
                     }
@@ -401,6 +405,10 @@ impl ClusterDdl for MockDdl {
                 ))
             }
             DdlStatement::ModifyTableComment { .. }
+            | DdlStatement::RebaseAutoIncrementId { .. }
+            | DdlStatement::IgnoredTableOption { .. }
+            | DdlStatement::OrderByColumns { .. }
+            | DdlStatement::SetColumnDefault { .. }
             | DdlStatement::AlterIndexVisibility { .. }
             | DdlStatement::AddColumn { .. }
             | DdlStatement::ModifyColumn { .. }
@@ -423,6 +431,7 @@ impl ClusterDdl for MockDdl {
         Ok(ClusterDdlReport::Applied {
             schema_version,
             created_id,
+            warning: None,
         })
     }
 }

@@ -199,11 +199,16 @@ pub enum ClusterDdlReport {
         schema_version: i64,
         /// The ID of the object created, if the change created one.
         created_id: Option<i64>,
+        /// Go `job.Warning`: what the change did differently from what was
+        /// written, for the caller to raise as a statement warning.
+        warning: Option<String>,
     },
     /// `IF [NOT] EXISTS` was already satisfied, so nothing was written.
     AlreadySatisfied {
         /// What was already true.
         detail: String,
+        /// The warning the statement raises even though it changed nothing.
+        warning: Option<String>,
     },
 }
 
@@ -256,9 +261,9 @@ pub fn commit_cluster_ddl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCa
         plan_ddl(&mut snapshot, statement, start_ts)?
     };
     let write = match plan {
-        DdlPlan::AlreadySatisfied { detail } => {
+        DdlPlan::AlreadySatisfied { detail, warning } => {
             transaction.finish_without_writes()?;
-            return Ok(ClusterDdlReport::AlreadySatisfied { detail });
+            return Ok(ClusterDdlReport::AlreadySatisfied { detail, warning });
         }
         DdlPlan::Write(write) => write,
     };
@@ -277,6 +282,7 @@ pub fn commit_cluster_ddl<C: StoreWriteClient, L: StoreWriteLoader, P: StorePdCa
             Ok(ClusterDdlReport::Applied {
                 schema_version: planned_version,
                 created_id: write.created_id,
+                warning: write.warning,
             })
         }
         OptimisticCommitOutcome::RolledBack(rolled_back) => {
@@ -366,11 +372,11 @@ pub fn commit_cluster_ddl_with_backfill<
         }
     };
     let write = match plan {
-        DdlPlan::AlreadySatisfied { detail } => {
+        DdlPlan::AlreadySatisfied { detail, warning } => {
             transaction
                 .rollback()
                 .map_err(ClusterDdlError::NotCommitted)?;
-            return Ok(ClusterDdlReport::AlreadySatisfied { detail });
+            return Ok(ClusterDdlReport::AlreadySatisfied { detail, warning });
         }
         DdlPlan::Write(write) => write,
     };
@@ -404,6 +410,7 @@ pub fn commit_cluster_ddl_with_backfill<
             Ok(ClusterDdlReport::Applied {
                 schema_version: planned_version,
                 created_id: write.created_id,
+                warning: write.warning,
             })
         }
         Err(error) => Err(classify_session_ddl_commit_error(planned_version, error)),

@@ -486,6 +486,63 @@ pub enum DdlStatement {
         /// The requested state.
         invisible: bool,
     },
+    /// `ALTER TABLE ... [FORCE] AUTO_INCREMENT = n`, Go's
+    /// `ActionRebaseAutoID` over `autoid.AutoIncrementType`.
+    ///
+    /// Two things move together: the table's recorded `AutoIncID` and the
+    /// allocator counter behind it. Moving only the first would leave the
+    /// next INSERT allocating from the old counter, which is the silent
+    /// wrong answer this change exists to avoid.
+    /// `ALTER TABLE ... ALTER [COLUMN] <c> SET DEFAULT <v>` and
+    /// `... DROP DEFAULT`, Go's `ActionSetDefaultValue`. Metadata only: rows
+    /// already written keep the values they were given, and only later
+    /// omitted writes see the new default.
+    SetColumnDefault {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The column name as written.
+        column: String,
+        /// The new default, or `None` for `DROP DEFAULT`.
+        default_value: Option<Box<tidb_ast::Expr>>,
+        /// The SQL mode and zone the statement was admitted under, which
+        /// decide whether a doubtful spelling warns or refuses.
+        context: DdlStatementContext,
+    },
+    /// A table option Go's `ALTER TABLE` switch accepts and does nothing
+    /// with: `ENGINE`, `ENGINE_ATTRIBUTE`, `STORAGE_CLASS`, `ROW_FORMAT`.
+    /// Their cases in `executor.go` are empty, so the statement succeeds and
+    /// spends no schema version. Refusing them instead would reject the
+    /// `ENGINE=InnoDB` that every mysqldump emits.
+    IgnoredTableOption {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The option name, for the reported detail.
+        option: &'static str,
+    },
+    /// `ALTER TABLE ... ORDER BY <cols>`, Go's `OrderByColumns`: it verifies
+    /// the table exists, warns when the table has a user-defined primary key
+    /// column, and changes nothing.
+    OrderByColumns {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+    },
+    RebaseAutoIncrementId {
+        /// The resolved database name.
+        schema: String,
+        /// The table name as written.
+        table: String,
+        /// The first id the next INSERT should allocate.
+        new_base: i64,
+        /// `FORCE AUTO_INCREMENT`: set the counter exactly, even backwards.
+        /// Without it Go only ever moves the counter forward.
+        force: bool,
+    },
 }
 
 /// One source/destination pair in [`DdlStatement::RenameTables`].
@@ -784,6 +841,37 @@ fn lower_alter_table_catalog(
                     new_cache: new_cache as i64,
                 }));
             }
+            let ignored = match option {
+                tidb_ast::TableOption::Engine(_) => Some("ENGINE"),
+                tidb_ast::TableOption::RowFormat(_) => Some("ROW_FORMAT"),
+                tidb_ast::TableOption::StorageClass(_) => Some("STORAGE_CLASS"),
+                _ => None,
+            };
+            if let Some(option) = ignored {
+                let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+                return Ok(Some(DdlStatement::IgnoredTableOption {
+                    schema,
+                    table,
+                    option,
+                }));
+            }
+            if let tidb_ast::TableOption::AutoIncrement(value)
+            | tidb_ast::TableOption::ForceAutoIncrement(value) = option
+            {
+                // Go parses the option into `opt.UintValue`, so the written
+                // value is an unsigned literal that is then handed to
+                // `RebaseAutoID` as an `int64`.
+                let new_base = value.parse::<u64>().map_err(|_| {
+                    DdlAdmissionError::new("AUTO_INCREMENT needs an integer value")
+                })? as i64;
+                let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+                return Ok(Some(DdlStatement::RebaseAutoIncrementId {
+                    schema,
+                    table,
+                    new_base,
+                    force: matches!(option, tidb_ast::TableOption::ForceAutoIncrement(_)),
+                }));
+            }
             if let tidb_ast::TableOption::Comment(comment) = option {
                 let (schema, table) = split_name(&alter.name, default_schema, "table")?;
                 // Go `AlterTableComment` validates the length against the
@@ -922,6 +1010,26 @@ fn lower_alter_table_catalog(
                 if_exists: *if_exists,
                 column: name.clone(),
             }))
+        }
+        tidb_ast::AlterTableAction::AlterColumnDefault(action) => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            let Some(column) = action.name.last() else {
+                return Err(DdlAdmissionError::new("ALTER COLUMN needs a column name"));
+            };
+            Ok(Some(DdlStatement::SetColumnDefault {
+                schema,
+                table,
+                column: column.clone(),
+                default_value: action.default_value.clone().map(Box::new),
+                // The surrounding lowering does not carry the session's
+                // context, so this matches the sibling ADD COLUMN arm: the
+                // strict-mode default under which Go admits a DDL.
+                context: DdlStatementContext(tidb_executor::StmtContext::for_query()),
+            }))
+        }
+        tidb_ast::AlterTableAction::OrderByColumns { .. } => {
+            let (schema, table) = split_name(&alter.name, default_schema, "table")?;
+            Ok(Some(DdlStatement::OrderByColumns { schema, table }))
         }
         tidb_ast::AlterTableAction::AlterIndexVisibility(action) => {
             let (schema, table) = split_name(&alter.name, default_schema, "table")?;
@@ -1502,6 +1610,15 @@ pub enum DdlPlanError {
     AutoIdReadFailed,
     /// A source-defined DDL refusal reported as TiDB's generic 1105.
     Unsupported(String),
+    /// A refusal raised by the shared admission code while the change was
+    /// being planned, carrying the MySQL error number Go reports for it.
+    ///
+    /// `ALTER COLUMN ... SET DEFAULT` is the first change whose validation
+    /// runs against the STORED column type and therefore cannot happen at
+    /// lowering time; without this the exact refusals -- 1067 for a bad
+    /// default, 1171 for a NULL default on a primary key -- would all
+    /// flatten to the generic 1105.
+    Admission(crate::table_info_build::DdlAdmissionError),
     /// The named table is already in the named database.
     TableExists {
         /// The database name as written.
@@ -1568,6 +1685,7 @@ impl fmt::Display for DdlPlanError {
                 formatter.write_str("Failed to read auto-increment value from storage engine")
             }
             Self::Unsupported(reason) => formatter.write_str(reason),
+            Self::Admission(error) => formatter.write_str(&error.reason),
             Self::TableExists { schema, table } => {
                 write!(formatter, "Table '{schema}.{table}' already exists")
             }
@@ -1628,6 +1746,9 @@ pub enum DdlPlan {
     AlreadySatisfied {
         /// Human-readable statement of what was already true.
         detail: String,
+        /// The warning the statement raises even though it changed nothing.
+        /// Go's `OrderByColumns` is the case that has one.
+        warning: Option<String>,
     },
     /// The mutations to publish in one transaction.
     Write(Box<DdlWrite>),
@@ -1655,6 +1776,13 @@ pub struct DdlWrite {
     /// index and its contents become visible at one commit timestamp and no
     /// reader can see one without the other.
     pub backfill: Option<IndexBackfill>,
+    /// The warning the change raises, if any.
+    ///
+    /// Go carries this as `job.Warning` (and, for the same adjustment made at
+    /// admission time, `StmtCtx.AppendWarning`); the client reads it back with
+    /// `SHOW WARNINGS`. A change that silently did something other than what
+    /// was written would otherwise look like it did exactly what was written.
+    pub warning: Option<String>,
 }
 
 /// The data half of an index change: which table's rows to walk, and what to
@@ -1782,6 +1910,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
     let mut writes = Vec::new();
     let mut created_id = None;
     let mut backfill = None;
+    let mut warning = None;
     let mut diff = SchemaDiff {
         version: schema_version,
         ..SchemaDiff::default()
@@ -1876,7 +2005,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             // Go's persisted `"index_info":null` into `[]`.
             let mut info = build
                 .for_database(&database.info.charset, &database.info.collate)
-                .map_err(|error| DdlPlanError::Unsupported(error.to_string()))?;
+                .map_err(DdlPlanError::Admission)?;
             info.id = table_id;
             // Go `createTable` stamps the job transaction's own start timestamp.
             info.update_ts = start_ts;
@@ -2962,6 +3091,150 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
             diff.schema_id = db_id;
             diff.table_id = table_id;
         }
+        DdlStatement::SetColumnDefault {
+            schema,
+            table,
+            column,
+            default_value,
+            context,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let mut info = stored.clone_like_go();
+            // Go resolves the target column before it looks at the new
+            // default at all, and a non-public one reads as absent.
+            let wanted = column.to_lowercase();
+            let Some(target) = info.columns.iter_deref().find(|candidate| {
+                let candidate = candidate.read();
+                candidate.name.lowercase() == wanted
+                    && candidate.state == tidb_model::SchemaState::PUBLIC
+            }) else {
+                return Err(DdlPlanError::UnknownColumn {
+                    column: column.clone(),
+                    table: table.clone(),
+                });
+            };
+            // Go `ErrInvalidAutoRandom`: the shard bits own the column's
+            // values, so a default could never be written.
+            if default_value.is_some()
+                && info.auto_random_bits > 0
+                && target.read().field_type.has_flag(FieldTypeFlags::PRI_KEY)
+            {
+                return Err(DdlPlanError::InvalidAutoRandom(
+                    "auto_random is incompatible with default".to_owned(),
+                ));
+            }
+            {
+                let mut target = target.write();
+                crate::table_info_build::set_column_default(
+                    column,
+                    &mut target,
+                    default_value.as_deref(),
+                    &context.0,
+                )
+                .map_err(DdlPlanError::Admission)?;
+            }
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            diff.action_type = ActionType::ACTION_SET_DEFAULT_VALUE;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
+        DdlStatement::IgnoredTableOption {
+            schema,
+            table,
+            option,
+        } => {
+            // Go still resolves the table first, so a missing one is an
+            // error rather than a silent success.
+            locate_table(&catalog, schema, table)?;
+            return Ok(already(format!(
+                "table option {option} on `{schema}`.`{table}` is accepted and ignored"
+            )));
+        }
+        DdlStatement::OrderByColumns { schema, table } => {
+            let (_, stored) = locate_table(&catalog, schema, table)?;
+            // Go `GetPkColInfo`: the first column carrying the primary-key
+            // flag. Its presence is what makes the ORDER BY meaningless.
+            let has_primary_key = stored.columns.iter_deref().any(|column| {
+                column
+                    .read()
+                    .field_type
+                    .has_flag(tidb_datatype::FieldTypeFlags::PRI_KEY)
+            });
+            let warning = has_primary_key.then(|| {
+                format!(
+                    "ORDER BY ignored as there is a user-defined clustered index in the table '{table}'"
+                )
+            });
+            return Ok(DdlPlan::AlreadySatisfied {
+                detail: format!("ORDER BY on `{schema}`.`{table}` changes nothing"),
+                warning,
+            });
+        }
+        DdlStatement::RebaseAutoIncrementId {
+            schema,
+            table,
+            new_base,
+            force,
+        } => {
+            let (db_id, stored) = locate_table(&catalog, schema, table)?;
+            let counter_key = crate::cluster_auto_id::auto_id_key_for(db_id, stored);
+            // Go `NextGlobalAutoID`: the stored counter holds the id LAST
+            // handed out, so the next one to allocate is one past it. An
+            // absent key reads as 0, matching Go's `GetInt64`.
+            let stored_counter = match snapshot.get(&counter_key)? {
+                Some(value) => value::parse_int_value(&value)
+                    .map_err(|error| DdlPlanError::Encode(error.to_string()))?,
+                None => 0,
+            };
+            let next_global = (stored_counter as u64).wrapping_add(1);
+            let mut new_base = *new_base;
+            if !*force {
+                // Go `adjustNewBaseToNextGlobalID` compares as UNSIGNED
+                // whatever the column's signedness, and never lets the base
+                // move backwards: another node's allocator may already have
+                // handed out ids past the requested base.
+                let adjusted = u64::max(new_base as u64, next_global) as i64;
+                if adjusted != new_base {
+                    warning = Some(format!(
+                        "Can't reset AUTO_INCREMENT to {new_base} without FORCE option, \
+                         using {adjusted} instead"
+                    ));
+                    new_base = adjusted;
+                }
+            }
+            let mut info = stored.clone_like_go();
+            info.auto_inc_id = new_base;
+            info.update_ts = start_ts;
+            let table_id = info.id;
+            let encoded = value::serialize_table_info(&info)
+                .map_err(|error| DdlPlanError::Encode(error.to_string()))?;
+            writes.push(OptimisticMutation::meta_put(
+                key::table_kv_key(db_id, table_id),
+                encoded,
+            )?);
+            // "The next value to allocate is `newBase`", so the counter --
+            // which holds the last id handed out -- becomes one below it.
+            // `Rebase` only ever grows, `ForceRebase` sets exactly; the
+            // non-force base was already raised to at least the current
+            // counter above, so both reduce to one write here.
+            let new_end = new_base.wrapping_sub(1);
+            if *force || (new_end as u64) > (stored_counter as u64) {
+                writes.push(OptimisticMutation::meta_put(
+                    counter_key,
+                    value::encode_int_value(new_end),
+                )?);
+            }
+            diff.action_type = ActionType::ACTION_REBASE_AUTO_ID;
+            diff.schema_id = db_id;
+            diff.table_id = table_id;
+        }
     }
 
     // The version bump comes last so the write set always ends with the two
@@ -2984,6 +3257,7 @@ pub fn plan_ddl_with_collation<S: MetaSnapshot>(
         diff,
         created_id,
         backfill,
+        warning,
     })))
 }
 
@@ -3080,7 +3354,10 @@ fn modify_type_reorg_reason(old: &FieldType, new: &FieldType) -> Option<String> 
 }
 
 fn already(detail: String) -> DdlPlan {
-    DdlPlan::AlreadySatisfied { detail }
+    DdlPlan::AlreadySatisfied {
+        detail,
+        warning: None,
+    }
 }
 
 #[derive(Clone)]

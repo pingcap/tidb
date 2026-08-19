@@ -992,13 +992,27 @@ pub(crate) fn execute_cluster_ddl<
         ClusterDdlReport::Applied {
             schema_version,
             created_id,
-        } => eprintln!(
+            warning,
+        } => {
+            // Go raises this through `StmtCtx.AppendWarning`, so the client
+            // reads it back with `SHOW WARNINGS`. `toTError` gives a plain
+            // `fmt.Errorf` the generic 1105 code.
+            if let Some(warning) = warning {
+                context.append_warning_parts(1105, &warning);
+            }
+            eprintln!(
             "{{\"event\":\"catalog_change\",\"outcome\":\"applied\",\"schema_version\":{schema_version},\"created_id\":{}}}",
             created_id.map_or_else(|| "null".to_owned(), |id| id.to_string())
-        ),
-        ClusterDdlReport::AlreadySatisfied { detail } => eprintln!(
+            );
+        }
+        ClusterDdlReport::AlreadySatisfied { detail, warning } => {
+            if let Some(warning) = warning {
+                context.append_warning_parts(1105, &warning);
+            }
+            eprintln!(
             "{{\"event\":\"catalog_change\",\"outcome\":\"already_satisfied\",\"detail\":{detail:?}}}"
-        ),
+            );
+        }
     }
     Ok(Some(WriteOutcome {
         affected_rows: 0,

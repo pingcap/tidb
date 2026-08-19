@@ -42,6 +42,14 @@ use tidb_datatype::{
 pub struct TableAutoId(pub(super) AutoIdAllocator);
 
 impl TableAutoId {
+    /// Drops any reserved range, so the next id comes from a fresh read of
+    /// the stored counter. See `AutoIdAllocator::forget_reservation`.
+    pub fn forget_reservation(&self) {
+        self.0.forget_reservation();
+    }
+}
+
+impl TableAutoId {
     /// An allocator over `store`, reserving `step` ids at a time.
     #[must_use]
     pub fn over(store: Arc<dyn AutoIdStore>, step: u64) -> Self {

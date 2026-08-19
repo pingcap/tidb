@@ -1333,7 +1333,22 @@ impl ClusterServerSession {
         if self.explicit.is_some() || self.session.in_transaction() {
             self.control_transaction("COMMIT")?;
         }
-        self.ddl.execute(statement)?;
+        let report = self.ddl.execute(statement)?;
+        // Go raises `job.Warning` on the session's own statement context, so
+        // `SHOW WARNINGS` reports what the change did differently from what
+        // was written. `toTError` gives a plain `fmt.Errorf` the generic
+        // 1105 code.
+        if let ClusterDdlReport::Applied {
+            warning: Some(warning),
+            ..
+        }
+        | ClusterDdlReport::AlreadySatisfied {
+            warning: Some(warning),
+            ..
+        } = report
+        {
+            self.session.append_ddl_warning(1105, warning);
+        }
         // Go answers a DDL with an OK packet carrying no rows and no insert
         // id, whether it changed anything or was an IF [NOT] EXISTS no-op.
         Ok(WriteOutcome {

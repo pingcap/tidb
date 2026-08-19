@@ -215,6 +215,15 @@ impl Session {
         }
     }
 
+    /// Records a warning raised while a cluster-routed DDL was APPLIED,
+    /// after the lowering context has already been drained.
+    ///
+    /// Go carries these on `job.Warning` and on the session `StmtContext` the
+    /// statement runs under; both reach the client through `SHOW WARNINGS`.
+    pub fn append_ddl_warning(&mut self, code: u16, message: String) {
+        self.append_warning(WarningLevel::Warning, code, message);
+    }
+
     /// The warnings the last statement produced.
     #[must_use]
     pub fn warnings(&self) -> &[SqlWarning] {

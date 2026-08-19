@@ -661,6 +661,26 @@ impl AutoIdAllocator {
         Ok(())
     }
 
+    /// Drops any range this allocator still holds, so the next allocation
+    /// reserves afresh from the stored counter.
+    ///
+    /// Go reaches the same state by rebuilding the table's allocators when a
+    /// new `InfoSchema` is built: a counter that some other writer moved --
+    /// `ALTER TABLE ... AUTO_INCREMENT` is the one that moves it out from
+    /// under a live node -- must be re-read, or this node keeps handing out
+    /// the ids it reserved before the change and the statement looks like it
+    /// did nothing. The ids in the abandoned range are skipped, which is the
+    /// same hole Go leaves.
+    pub(crate) fn forget_reservation(&self) {
+        let mut cache = self.cache.lock().expect("auto id cache poisoned");
+        *cache = AutoIdRange {
+            base: 0,
+            end: 0,
+            step: self.initial_step,
+            last_reserve_at: Instant::now(),
+        };
+    }
+
     /// Starts the counter over, so the next id is 1 again.
     ///
     /// Go reaches this by replacing the table (TRUNCATE builds a new table id

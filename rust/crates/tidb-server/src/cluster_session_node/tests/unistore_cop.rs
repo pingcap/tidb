@@ -197,3 +197,50 @@ fn tidb_servers_info_reports_this_node() {
     // than a stray separator (Go `BuildStringFromLabels`).
     assert_eq!(row[7], "");
 }
+
+/// Go `ALTER TABLE ... [FORCE] AUTO_INCREMENT = n` over the real node.
+///
+/// The DDL half -- the stored `AutoIncID` and the counter key -- is pinned in
+/// `tidb-exec`. What only this stack can show is that the node's LIVE
+/// allocator notices: it caches a reserved range that outlives schema
+/// reloads by design, so a rebase that moved only the meta keys would leave
+/// the next INSERT allocating from the range reserved before the change, and
+/// the statement would look like it did nothing.
+#[test]
+fn a_rebased_auto_increment_reaches_the_next_insert() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(13))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.seq (id bigint primary key auto_increment, v int)",
+    );
+    rows(&mut session, "INSERT INTO test.seq (v) VALUES (1)");
+
+    // FORCE sets the base exactly, even below the counter the first
+    // reservation already wrote.
+    rows(&mut session, "ALTER TABLE test.seq FORCE AUTO_INCREMENT = 500");
+    rows(&mut session, "INSERT INTO test.seq (v) VALUES (2)");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT id FROM test.seq ORDER BY v")),
+        [["1"], ["500"]],
+        "the forced base is what the next INSERT allocates"
+    );
+
+    // Without FORCE the base is floored at the allocator's next id, and Go
+    // says so rather than silently doing something else. The reservation
+    // taken above ends at 500 + the default step, so the floor is well past
+    // the 5 that was asked for.
+    rows(&mut session, "ALTER TABLE test.seq AUTO_INCREMENT = 5");
+    let warnings = displayed(rows(&mut session, "SHOW WARNINGS"));
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(warnings[0][0], "Warning");
+    assert_eq!(warnings[0][1], "1105");
+    assert!(
+        warnings[0][2].starts_with("Can't reset AUTO_INCREMENT to 5 without FORCE option, using "),
+        "{}",
+        warnings[0][2]
+    );
+}

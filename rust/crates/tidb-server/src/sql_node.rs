@@ -372,6 +372,11 @@ pub(crate) fn cluster_ddl_error(error: ClusterDdlError) -> SqlQueryError {
         ClusterDdlError::Plan(error @ DdlPlanError::UnknownColumn { .. }) => {
             SqlQueryError::new(1054, *b"42S22", error.to_string())
         }
+        // The shared admission code already knows Go's error number for what
+        // it refused; keep it rather than flattening to the generic 1105.
+        ClusterDdlError::Plan(DdlPlanError::Admission(error)) => {
+            SqlQueryError::new(error.code, error.sql_state(), error.reason)
+        }
         other => SqlQueryError::unknown(other.to_string()),
     }
 }

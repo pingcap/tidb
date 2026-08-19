@@ -58,7 +58,7 @@ where
 {
     opener: RealOptimisticTransactionOpener<C, L, P>,
     timeout: Duration,
-    allocators: Mutex<HashMap<(i64, bool), (i64, TableAutoId)>>,
+    allocators: Mutex<HashMap<(i64, bool), (AllocatorMark, TableAutoId)>>,
 }
 
 impl<C, L, P> std::fmt::Debug for ClusterTableAutoIds<C, L, P>
@@ -120,17 +120,26 @@ where
             .allocators
             .lock()
             .expect("cluster auto id registry poisoned");
-        if let Some((cache, allocator)) = allocators.get(&(table.id, random)) {
-            if *cache == table.auto_id_cache {
+        let mark = AllocatorMark::of(table, random);
+        if let Some((held, allocator)) = allocators.get(&(table.id, random)) {
+            if *held == mark {
                 return allocator.clone();
             }
-            let step = if table.auto_id_cache > 1 {
-                table.auto_id_cache as u64
+            // The recorded base moved, which only a DDL does: `ALTER TABLE
+            // ... AUTO_INCREMENT` publishes a new `TableInfo` AND a new
+            // counter. A range reserved before that change would keep
+            // issuing the old ids, so this node drops it and re-reads --
+            // Go reaches the same state by rebuilding the table's
+            // allocators alongside the new `InfoSchema`.
+            if held.base != mark.base {
+                allocator.forget_reservation();
+            }
+            let allocator = if held.cache == mark.cache {
+                allocator.clone()
             } else {
-                DEFAULT_AUTO_ID_STEP
+                allocator.with_step(step_for(table))
             };
-            let allocator = allocator.with_step(step);
-            allocators.insert((table.id, random), (table.auto_id_cache, allocator.clone()));
+            allocators.insert((table.id, random), (mark, allocator.clone()));
             return allocator;
         }
         let store = if random {
@@ -138,13 +147,40 @@ where
         } else {
             ClusterAutoIdStore::new(self.opener.clone(), db_id, table, self.timeout).shared()
         };
-        let step = if table.auto_id_cache > 1 {
-            table.auto_id_cache as u64
-        } else {
-            DEFAULT_AUTO_ID_STEP
-        };
-        let allocator = TableAutoId::over(store, step);
-        allocators.insert((table.id, random), (table.auto_id_cache, allocator.clone()));
+        let allocator = TableAutoId::over(store, step_for(table));
+        allocators.insert((table.id, random), (mark, allocator.clone()));
         allocator
+    }
+}
+
+/// What the registry remembers about the `TableInfo` an allocator was built
+/// for, so it can tell a re-ask apart from a change.
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct AllocatorMark {
+    /// `TableInfo.AutoIDCache`, which sets the reservation step.
+    cache: i64,
+    /// `TableInfo.AutoIncID` / `AutoRandID`: the recorded base, which a
+    /// rebase DDL moves and nothing else does.
+    base: i64,
+}
+
+impl AllocatorMark {
+    fn of(table: &TableInfo, random: bool) -> Self {
+        AllocatorMark {
+            cache: table.auto_id_cache,
+            base: if random {
+                table.auto_rand_id
+            } else {
+                table.auto_inc_id
+            },
+        }
+    }
+}
+
+fn step_for(table: &TableInfo) -> u64 {
+    if table.auto_id_cache > 1 {
+        table.auto_id_cache as u64
+    } else {
+        DEFAULT_AUTO_ID_STEP
     }
 }
