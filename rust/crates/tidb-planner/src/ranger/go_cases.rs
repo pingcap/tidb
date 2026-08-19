@@ -643,3 +643,182 @@ fn year_index_ranges_match_go() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// `create table t (a varchar(50), b varchar(50), index idx_a(a(2)),
+/// index idx_ab(a(2), b(2)))` -- `TestPrefixIndexRangeScan`'s fixture.
+struct PrefixScanTable {
+    a: Column,
+    b: Column,
+}
+
+impl PrefixScanTable {
+    fn new() -> Self {
+        let varchar = |unique_id: i64| {
+            let mut ft = FieldType::new(FieldTypeCode::Varchar);
+            ft.set_flen(50);
+            ft.set_charset_name("utf8mb4");
+            ft.set_collation_name("utf8mb4_bin");
+            ft.set_collation(tidb_datatype::Collation::Utf8Mb4Bin);
+            Column::new(unique_id, ft)
+        };
+        Self {
+            a: varchar(1),
+            b: varchar(2),
+        }
+    }
+}
+
+impl ColumnResolver for PrefixScanTable {
+    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+        let name = path.last()?;
+        if name.eq_ignore_ascii_case("a") {
+            return Some((0, self.a.ret_type.clone().expect("typed"), 1));
+        }
+        if name.eq_ignore_ascii_case("b") {
+            return Some((1, self.b.ret_type.clone().expect("typed"), 2));
+        }
+        None
+    }
+
+    fn resolve_column(&self, path: &[String]) -> Option<Column> {
+        let name = path.last()?;
+        if name.eq_ignore_ascii_case("a") {
+            return Some(self.a.clone());
+        }
+        if name.eq_ignore_ascii_case("b") {
+            return Some(self.b.clone());
+        }
+        None
+    }
+
+    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+        tidb_expr::SessionTimeZone::utc()
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+    }
+}
+
+/// Go `expression.StringifyExpressionsWithCtx` narrowed to the shapes the
+/// ranger tables print: `[eq(test.t.a, aaa) gt(test.t.b, bb)]` -- columns
+/// as their catalog `OrigName`, constants as their raw datum text, list
+/// entries joined by one space.
+fn stringify_conds(conds: &[Expression], column_name: &dyn Fn(i64) -> String) -> String {
+    fn one(expr: &Expression, column_name: &dyn Fn(i64) -> String) -> String {
+        match expr {
+            Expression::Column(column) => column_name(column.unique_id),
+            Expression::Constant(constant) => cond_datum(&constant.value),
+            Expression::ScalarFunction(function) => {
+                let arguments: Vec<String> = function
+                    .args
+                    .iter()
+                    .map(|argument| one(argument, column_name))
+                    .collect();
+                format!("{}({})", function.func_name.lowercase(), arguments.join(", "))
+            }
+            other => format!("{other:?}"),
+        }
+    }
+    let items: Vec<String> = conds.iter().map(|cond| one(cond, column_name)).collect();
+    format!("[{}]", items.join(" "))
+}
+
+/// A condition constant's text: Go's `%v` of the datum -- strings RAW
+/// (unquoted, escapes kept), numbers as digits.
+fn cond_datum(datum: &Datum) -> String {
+    match datum {
+        Datum::String(text) => String::from_utf8_lossy(text.bytes()).into_owned(),
+        Datum::Bytes(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        Datum::Int(value) => value.to_string(),
+        Datum::UInt(value) => value.to_string(),
+        Datum::Decimal(value) => value.to_string(),
+        other => format!("{other:?}"),
+    }
+}
+
+/// Go `TestPrefixIndexRangeScan` (`ranger_test.go:1037`): a prefix index
+/// CUTS the range at the prefix length and RETAINS the whole predicate as
+/// a filter -- both directions of `DetachCondAndBuildRangeForIndex`'s
+/// answer, pinned as strings.
+#[test]
+fn prefix_index_range_scan_matches_go() {
+    let table = PrefixScanTable::new();
+    let column_name = |unique_id: i64| -> String {
+        match unique_id {
+            1 => "test.t.a".to_owned(),
+            2 => "test.t.b".to_owned(),
+            other => format!("Column#{other}"),
+        }
+    };
+    // (indexPos, expr, accessConds, filterConds, resultStr); index 0 is
+    // idx_a(a(2)), index 1 is idx_ab(a(2), b(2)).
+    let cases: &[(usize, &str, &str, &str, &str)] = &[
+        (
+            0,
+            "a > 'aa'",
+            "[gt(test.t.a, aa)]",
+            "[gt(test.t.a, aa)]",
+            "[[\"aa\",+inf]]",
+        ),
+        (
+            1,
+            "a = 'aaa' and b > 'bb' and b < 'cc'",
+            "[eq(test.t.a, aaa) gt(test.t.b, bb) lt(test.t.b, cc)]",
+            "[eq(test.t.a, aaa) gt(test.t.b, bb) lt(test.t.b, cc)]",
+            "[[\"aa\" \"bb\",\"aa\" \"cc\")]",
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (index_pos, expr, want_access, want_filter, want_ranges) in cases {
+        let got = (|| -> Result<(String, String, String), String> {
+            let sql = format!("select * from t where {expr}");
+            let stmt =
+                tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
+            let tidb_ast::Stmt::Query(query) = stmt else {
+                return Err("not a query".to_owned());
+            };
+            let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+                return Err("not a select".to_owned());
+            };
+            let where_clause = select.where_clause.ok_or("no where")?;
+            let rewritten = rewrite_expr_resolved(&where_clause, &table)
+                .map_err(|error| format!("rewrite: {error:?}"))?;
+            let ctx = tidb_expr::NoColumns;
+            let builder = RealFunctionBuilder::new(&ctx);
+            let conds: Vec<Expression> = split_cnf_items(&rewritten)
+                .iter()
+                .map(planner_rewriter_stage)
+                .map(|cond| push_down_not(&cond, &builder))
+                .collect();
+            let (cols, lengths): (Vec<Column>, Vec<i64>) = match index_pos {
+                0 => (vec![table.a.clone()], vec![2]),
+                _ => (vec![table.a.clone(), table.b.clone()], vec![2, 2]),
+            };
+            let result = super::detacher::detach_cond_and_build_range_for_index(
+                &conds, &cols, &lengths, 0,
+            )
+            .map_err(|error| format!("detach: {error:?}"))?;
+            Ok((
+                stringify_conds(&result.access_conds, &column_name),
+                stringify_conds(&result.remained_conds, &column_name),
+                ranges_to_go_string(&result.ranges),
+            ))
+        })();
+        match got {
+            Ok((access, filter, ranges)) => {
+                if access != *want_access {
+                    failures.push(format!("{expr}: access {access}, want {want_access}"));
+                }
+                if filter != *want_filter {
+                    failures.push(format!("{expr}: filter {filter}, want {want_filter}"));
+                }
+                if ranges != *want_ranges {
+                    failures.push(format!("{expr}: ranges {ranges}, want {want_ranges}"));
+                }
+            }
+            Err(error) => failures.push(format!("{expr}: {error}")),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
