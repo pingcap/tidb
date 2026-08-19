@@ -594,3 +594,64 @@ fn the_scan_path_decodes_elems_and_scale_like_the_point_get_path() {
         "and both must read what was stored"
     );
 }
+
+/// An INDEX read and a TABLE scan of the same rows must agree, and both must
+/// agree with what was stored.
+///
+/// The index path decodes from the index KEY rather than the row value, so it
+/// is a second decode of the same data under the same signedness rules. The
+/// table-scan path got those rules wrong once already (it rebuilt column
+/// types from the DAG without the UNSIGNED flag); this pins the pair so a
+/// change to either side cannot drift from the other.
+#[test]
+fn an_index_read_and_a_table_scan_agree_over_unsigned_keys() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(41))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.ix (id int primary key, u bigint unsigned, KEY ku(u))",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.ix VALUES (1, 18446744073709551615), (2, 1), \
+         (3, 9223372036854775808), (4, NULL), (5, 0)",
+    );
+
+    // Each predicate straddles the signed/unsigned boundary, where a signed
+    // reading would answer differently.
+    for predicate in [
+        "u > 2",
+        "u >= 9223372036854775808",
+        "u = 18446744073709551615",
+        "u < 9223372036854775808",
+        "u IS NULL",
+    ] {
+        let indexed = displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM test.ix WHERE {predicate}"),
+        ));
+        let scanned = displayed(rows(
+            &mut session,
+            &format!("SELECT count(*) FROM test.ix IGNORE INDEX (ku) WHERE {predicate}"),
+        ));
+        assert_eq!(indexed, scanned, "`{predicate}`: index and scan disagree");
+    }
+
+    // The index also ORDERS in the unsigned domain, which is the reading a
+    // signed key encoding would reverse at the top of the range.
+    assert_eq!(
+        displayed(rows(
+            &mut session,
+            "SELECT u FROM test.ix WHERE u IS NOT NULL ORDER BY u"
+        )),
+        [
+            ["0"],
+            ["1"],
+            ["9223372036854775808"],
+            ["18446744073709551615"],
+        ]
+    );
+}
