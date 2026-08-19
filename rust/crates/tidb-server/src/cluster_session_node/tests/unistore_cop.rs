@@ -388,3 +388,79 @@ fn a_fractional_clock_default_survives_the_catalog_loader() {
         [["1", "1"]]
     );
 }
+
+/// THE INVARIANT: every `TableInfo` this node's DDL publishes, its own
+/// catalog loader must load.
+///
+/// Breaking it produces the worst shape a DDL can take -- the CREATE reports
+/// success, a later CREATE of the same name reports 1050, and every read
+/// reports 1146 -- and it broke for real on
+/// `DATETIME(n) DEFAULT CURRENT_TIMESTAMP(n)`. Neither half's own tests could
+/// catch that: the DDL wrote correct metadata and the loader correctly
+/// refused what it was given. Only the two together show it.
+///
+/// The shapes below are the column and key forms this node admits. A new
+/// admitted shape belongs here.
+#[test]
+fn every_shape_the_ddl_admits_the_loader_loads() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(29))
+        .expect("session opens");
+
+    const SHAPES: &[&str] = &[
+        // Literal defaults, one per storage family.
+        "a int DEFAULT 5",
+        "a varchar(10) DEFAULT 'x'",
+        "a decimal(10,2) DEFAULT 1.5",
+        "a double DEFAULT 1.5",
+        "a bit(8) DEFAULT b'101'",
+        "a enum('x','y') DEFAULT 'y'",
+        "a set('p','q') DEFAULT 'q'",
+        "a date DEFAULT '2020-01-01'",
+        "a time(3) DEFAULT '01:02:03.400'",
+        "a year DEFAULT 2020",
+        "a binary(4) DEFAULT 'ab'",
+        "a char(3) CHARACTER SET latin1 DEFAULT 'q'",
+        "a int UNSIGNED ZEROFILL DEFAULT 7",
+        "a json",
+        "a text",
+        // The clock marker, at every fsp -- the shape that broke.
+        "a timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP",
+        "a datetime DEFAULT CURRENT_TIMESTAMP",
+        "a datetime(3) DEFAULT CURRENT_TIMESTAMP(3)",
+        "a timestamp(6) DEFAULT CURRENT_TIMESTAMP(6)",
+        // Keys and indexes.
+        "id bigint PRIMARY KEY AUTO_INCREMENT, a int, KEY k(a)",
+        "id varchar(20) PRIMARY KEY, a int",
+        "id bigint, a int, PRIMARY KEY (id, a)",
+        "id bigint PRIMARY KEY AUTO_RANDOM",
+        "a int, b int, UNIQUE KEY u(a,b)",
+        "a int, KEY k(a) COMMENT 'c'",
+        "a int, KEY k(a) INVISIBLE",
+        "id bigint PRIMARY KEY NONCLUSTERED, a int",
+        "a int COMMENT 'col comment'",
+    ];
+
+    for (index, shape) in SHAPES.iter().enumerate() {
+        let name = format!("test.shape{index}");
+        rows(&mut session, &format!("CREATE TABLE {name} ({shape})"));
+        // The read is the assertion: a table the loader dropped answers 1146
+        // here while still colliding with a second CREATE.
+        let loaded = displayed(rows(
+            &mut session,
+            &format!(
+                "SELECT count(*) FROM information_schema.tables \
+                 WHERE table_schema = 'test' AND table_name = 'shape{index}'"
+            ),
+        ));
+        assert_eq!(
+            loaded,
+            [["1"]],
+            "the DDL published `{shape}` and the loader dropped it"
+        );
+        // And it is actually usable, not merely listed.
+        rows(&mut session, &format!("SELECT * FROM {name}"));
+    }
+}
