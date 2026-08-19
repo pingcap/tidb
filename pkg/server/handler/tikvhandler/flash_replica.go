@@ -57,6 +57,10 @@ func (h FlashReplicaSummaryHandler) ServeHTTP(w http.ResponseWriter, req *http.R
 		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return
 	}
+	// Reload from the latest committed schema version before counting.
+	// Non-owner nodes learn schema versions through etcd watch and may lag by a
+	// lease; a stale snapshot can under-count live replicas and report a false
+	// can_disable. Fail closed on Reload error instead of using that snapshot.
 	if err := dom.Reload(); err != nil {
 		handler.WriteErrorWithCode(w, http.StatusInternalServerError, err)
 		return

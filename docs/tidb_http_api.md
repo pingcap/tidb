@@ -741,7 +741,7 @@ timezone.*
 
 43. Get the live TiFlash replica summary for this TiDB.
 
-     Method: `GET` only. The handler reloads local InfoSchema first, then counts **logical** tables that currently have `TiFlashReplica` metadata. Dropped or truncated leftovers are not included. The response does not list table names or IDs.
+     Method: `GET` only. The handler reloads local InfoSchema first, then counts **logical** tables that currently have `TiFlashReplica` metadata. Dropped or truncated leftovers are not included.
 
      Next-gen: the count is for the keyspace bound to this TiDB. Query a user-keyspace instance to inspect that logical cluster; a SYSTEM instance only reports SYSTEM.
 
@@ -762,8 +762,6 @@ timezone.*
      ```
 
      `can_disable` is true only when `table_count` is 0. If schema reload fails, the API returns HTTP 5xx instead of an empty success body.
-
-     The classic TiFlash replica-list and progress-report API remains `GET|POST /tiflash/replica-deprecated`.
 
 ## Test-only APIs (enableTestAPI failpoint)
 

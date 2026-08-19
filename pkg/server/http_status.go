@@ -301,8 +301,8 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for live TiFlash replica count (cluster operators). GET only.
 	router.Handle("/tiflash/replica", tikvhandler.NewFlashReplicaSummaryHandler(tikvHandlerTool)).
 		Methods(http.MethodGet).Name("TiFlashReplicaSummary")
-	// HTTP path for get table tiflash replica info.
-	router.Handle("/tiflash/replica-deprecated", tikvhandler.NewFlashReplicaHandler(tikvHandlerTool))
+	// HTTP path for get table tiflash replica info. Only used by tiflash prior than v6.0. Deprecated.
+	router.Handle("/tiflash/replica-deprecated", tikvhandler.NewFlashReplicaDeprecatedHandler(tikvHandlerTool))
 
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
