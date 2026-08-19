@@ -1036,21 +1036,16 @@ func (e *RURuntimeStats) String() string {
 			tiFlashRU = e.RUDetails.TiflashRU()
 		}
 		totalRU := e.Metrics.TotalRU(e.Weights, tiKVRU, tiFlashRU)
-		detail := FormatRUCalculationDetail(e.RUVersion, e.RUDetails, e.Metrics, e.Weights)
-		if totalRU == 0 && detail == "" {
+		if totalRU == 0 {
 			return ""
 		}
-		buf := bytes.NewBuffer(make([]byte, 0, 32+len(detail)))
+		buf := bytes.NewBuffer(make([]byte, 0, 8))
 		buf.WriteString("RU:")
 		buf.WriteString(strconv.FormatFloat(totalRU, 'f', 2, 64))
-		if detail != "" {
-			buf.WriteString(", RU_detail:")
-			buf.WriteString(detail)
-		}
 		return buf.String()
 	default: // v1 or unknown
 		if e.RUDetails != nil {
-			detail := FormatRUCalculationDetail(e.RUVersion, e.RUDetails, e.Metrics, e.Weights)
+			detail := FormatRUCalculationDetail(e.RUDetails)
 			buf := bytes.NewBuffer(make([]byte, 0, 32+len(detail)))
 			buf.WriteString("RU:")
 			buf.WriteString(strconv.FormatFloat(e.RRU()+e.WRU(), 'f', 2, 64))

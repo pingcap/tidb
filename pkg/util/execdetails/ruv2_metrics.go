@@ -16,7 +16,6 @@ package execdetails
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -51,143 +50,6 @@ type RUV2Weights struct {
 	WriteKeys               float64
 	SessionParserTotal      float64
 	TxnCnt                  float64
-}
-
-type ruV1FactorSnapshot struct {
-	ReadBaseCost          float64 `json:"read_base_cost"`
-	ReadPerBatchBaseCost  float64 `json:"read_per_batch_base_cost"`
-	ReadBytesCost         float64 `json:"read_bytes_cost"`
-	WriteBaseCost         float64 `json:"write_base_cost"`
-	WritePerBatchBaseCost float64 `json:"write_per_batch_base_cost"`
-	WriteBytesCost        float64 `json:"write_bytes_cost"`
-	CPUMsCost             float64 `json:"cpu_ms_cost"`
-	BatchProportion       float64 `json:"batch_proportion"`
-}
-
-type ruV1Inputs struct {
-	ReadRPCCount                 float64 `json:"read_rpc_count,omitempty"`
-	ReadBytes                    float64 `json:"read_bytes,omitempty"`
-	KVCPUTimeMs                  float64 `json:"kv_cpu_ms,omitempty"`
-	WriteRPCCount                float64 `json:"write_rpc_count,omitempty"`
-	WriteBytes                   float64 `json:"write_bytes,omitempty"`
-	ReplicaWeightedWriteRPCCount float64 `json:"replica_weighted_write_rpc_count,omitempty"`
-	ReplicaWeightedWriteBytes    float64 `json:"replica_weighted_write_bytes,omitempty"`
-	FailedWriteRPCCount          float64 `json:"failed_write_rpc_count,omitempty"`
-	FailedWriteBytes             float64 `json:"failed_write_bytes,omitempty"`
-}
-
-type ruV1Contributions struct {
-	ReadBaseRU                float64 `json:"read_base_ru,omitempty"`
-	ReadBatchBaseRU           float64 `json:"read_batch_base_ru,omitempty"`
-	ReadBytesRU               float64 `json:"read_bytes_ru,omitempty"`
-	KVCPURU                   float64 `json:"kv_cpu_ru,omitempty"`
-	PagingPrechargeRU         float64 `json:"paging_precharge_ru,omitempty"`
-	PagingPrechargeReversalRU float64 `json:"paging_precharge_reversal_ru,omitempty"`
-	WriteBaseRU               float64 `json:"write_base_ru,omitempty"`
-	WriteBatchBaseRU          float64 `json:"write_batch_base_ru,omitempty"`
-	WriteBytesRU              float64 `json:"write_bytes_ru,omitempty"`
-	FailedWritePaybackRU      float64 `json:"failed_write_payback_ru,omitempty"`
-}
-
-type ruV1Paging struct {
-	PrechargeBytes float64 `json:"precharge_bytes,omitempty"`
-	SettlementRU   float64 `json:"settlement_ru,omitempty"`
-	RefundRU       float64 `json:"refund_ru,omitempty"`
-}
-
-type ruV1Bucket struct {
-	Source        string              `json:"source"`
-	Reproducible  bool                `json:"reproducible"`
-	Factors       *ruV1FactorSnapshot `json:"factors,omitempty"`
-	Inputs        ruV1Inputs          `json:"inputs"`
-	Contributions ruV1Contributions   `json:"contributions"`
-	Paging        *ruV1Paging         `json:"paging,omitempty"`
-	RRU           float64             `json:"rru"`
-	WRU           float64             `json:"wru"`
-}
-
-type ruV1Detail struct {
-	Version int          `json:"version"`
-	TotalRU float64      `json:"total_ru"`
-	RRU     float64      `json:"rru"`
-	WRU     float64      `json:"wru"`
-	Buckets []ruV1Bucket `json:"buckets"`
-}
-
-type ruV2TiDBInputs struct {
-	ResultChunkCells        int64            `json:"result_chunk_cells,omitempty"`
-	ExecutorL1              map[string]int64 `json:"executor_l1,omitempty"`
-	ExecutorL2              map[string]int64 `json:"executor_l2,omitempty"`
-	ExecutorL3              map[string]int64 `json:"executor_l3,omitempty"`
-	ExecutorL5InsertRows    int64            `json:"executor_l5_insert_rows,omitempty"`
-	PlanCnt                 int64            `json:"plan_cnt,omitempty"`
-	PlanDeriveStatsPaths    int64            `json:"plan_derive_stats_paths,omitempty"`
-	ResourceManagerReadCnt  int64            `json:"resource_manager_read_cnt,omitempty"`
-	ResourceManagerWriteCnt int64            `json:"resource_manager_write_cnt,omitempty"`
-	WriteKeys               int64            `json:"write_keys,omitempty"`
-	SessionParserTotal      int64            `json:"session_parser_total,omitempty"`
-	TxnCnt                  int64            `json:"txn_cnt,omitempty"`
-}
-
-type ruV2TiDBWeights struct {
-	RUScale                 float64 `json:"ru_scale"`
-	ResultChunkCells        float64 `json:"result_chunk_cells"`
-	ExecutorL1              float64 `json:"executor_l1"`
-	ExecutorL2              float64 `json:"executor_l2"`
-	ExecutorL3              float64 `json:"executor_l3"`
-	ExecutorL5InsertRows    float64 `json:"executor_l5_insert_rows"`
-	PlanCnt                 float64 `json:"plan_cnt"`
-	PlanDeriveStatsPaths    float64 `json:"plan_derive_stats_paths"`
-	ResourceManagerReadCnt  float64 `json:"resource_manager_read_cnt"`
-	ResourceManagerWriteCnt float64 `json:"resource_manager_write_cnt"`
-	WriteKeys               float64 `json:"write_keys"`
-	SessionParserTotal      float64 `json:"session_parser_total"`
-	TxnCnt                  float64 `json:"txn_cnt"`
-}
-
-type ruV2TiKVWeights struct {
-	RUScale                           float64 `json:"ru_scale"`
-	TiKVKVEngineCacheMiss             float64 `json:"tikv_kv_engine_cache_miss"`
-	ResourceManagerWriteCntTiKV       float64 `json:"resource_manager_write_cnt_tikv"`
-	ExecutorInputs                    float64 `json:"executor_inputs"`
-	TiKVCoprocessorExecutorIterations float64 `json:"tikv_coprocessor_executor_iterations"`
-	TiKVCoprocessorResponseBytes      float64 `json:"tikv_coprocessor_response_bytes"`
-	TiKVRaftstoreStoreWriteTriggerWB  float64 `json:"tikv_raftstore_store_write_trigger_wb_bytes"`
-	TiKVStorageProcessedKeysBatchGet  float64 `json:"tikv_storage_processed_keys_batch_get"`
-	TiKVStorageProcessedKeysGet       float64 `json:"tikv_storage_processed_keys_get"`
-}
-
-type ruV2TiKVBucket struct {
-	Weights  ruV2TiKVWeights `json:"weights"`
-	Counters *kvrpcpb.RUV2   `json:"counters"`
-	RU       float64         `json:"ru"`
-}
-
-type ruV2TiDBDetail struct {
-	Inputs       ruV2TiDBInputs  `json:"inputs"`
-	Weights      ruV2TiDBWeights `json:"weights"`
-	RU           float64         `json:"ru"`
-	Reproducible bool            `json:"reproducible"`
-}
-
-type ruV2TiKVDetail struct {
-	RU           float64          `json:"ru"`
-	Reproducible bool             `json:"reproducible"`
-	OpaqueRU     float64          `json:"opaque_ru,omitempty"`
-	Buckets      []ruV2TiKVBucket `json:"buckets,omitempty"`
-}
-
-type ruOpaqueDetail struct {
-	RU           float64 `json:"ru"`
-	Reproducible bool    `json:"reproducible"`
-}
-
-type ruV2Detail struct {
-	Version int             `json:"version"`
-	TotalRU float64         `json:"total_ru"`
-	TiDB    ruV2TiDBDetail  `json:"tidb"`
-	TiKV    ruV2TiKVDetail  `json:"tikv"`
-	TiFlash *ruOpaqueDetail `json:"tiflash,omitempty"`
 }
 
 // RUV2MetricsCtxKey is used to carry statement-level RUv2 metrics in context.Context.
@@ -1070,265 +932,153 @@ func (m *RUV2Metrics) calculateRUValuesWithWeights(weights RUV2Weights) (tidbRU 
 	return tidbRUFloat * weights.RUScale
 }
 
-// FormatRUCalculationDetail formats the statement-level inputs, effective
-// factors, and contributions used by the active RU model. Formatting happens
-// only when observability output is consumed, never on the RPC hot path.
-func FormatRUCalculationDetail(
-	ruVersion rmclient.RUVersion,
-	ruDetails *tikvutil.RUDetails,
-	metrics *RUV2Metrics,
-	weights RUV2Weights,
-) string {
-	if ruVersion == rmclient.RUVersionV2 {
-		return formatRUV2CalculationDetail(ruDetails, metrics, weights)
-	}
-	return formatRUV1CalculationDetail(ruDetails)
-}
-
-func formatRUV1CalculationDetail(ruDetails *tikvutil.RUDetails) string {
+// FormatRUCalculationDetail formats the RU v1 calculation as a formula.
+func FormatRUCalculationDetail(ruDetails *tikvutil.RUDetails) string {
 	if ruDetails == nil {
 		return ""
 	}
 	calculations := ruDetails.RUCalculations()
-	if len(calculations) == 0 {
+	tiflashRU := ruDetails.TiflashRU()
+	if len(calculations) == 0 && tiflashRU == 0 {
 		return ""
 	}
 	sort.Slice(calculations, func(i, j int) bool {
-		return ruV1CalculationSortKey(calculations[i]) < ruV1CalculationSortKey(calculations[j])
+		return ruV1FactorSortKey(calculations[i].Factors) < ruV1FactorSortKey(calculations[j].Factors)
 	})
-	buckets := make([]ruV1Bucket, 0, len(calculations))
+
+	var rruTerms, wruTerms []ruFormulaTerm
+	var rru, wru float64
 	for _, calculation := range calculations {
-		bucket := ruV1Bucket{
-			Source:        ruCalculationSourceName(calculation.Config.Source),
-			Reproducible:  calculation.Config.FactorsKnown,
-			Inputs:        makeRUV1Inputs(calculation.Inputs),
-			Contributions: makeRUV1Contributions(calculation.Contributions),
-			RRU:           calculation.RRU,
-			WRU:           calculation.WRU,
-		}
-		if calculation.Config.FactorsKnown {
-			factors := makeRUV1FactorSnapshot(calculation.Config.Factors)
-			bucket.Factors = &factors
-		}
-		if calculation.Paging != (rmclient.RUPagingCalculation{}) {
-			bucket.Paging = &ruV1Paging{
-				PrechargeBytes: calculation.Paging.PrechargeBytes,
-				SettlementRU:   calculation.Paging.SettlementRU,
-				RefundRU:       calculation.Paging.RefundRU,
-			}
-		}
-		buckets = append(buckets, bucket)
+		factors, inputs := calculation.Factors, calculation.Inputs
+		addRUFormulaTerm(&rruTerms, "read_rpc_count", inputs.ReadRPCCount, "READ_BASE_COST", factors.ReadBaseCost)
+		addRUFormulaTermWithRatio(&rruTerms, "read_rpc_count", inputs.ReadRPCCount,
+			"READ_PER_BATCH_BASE_COST", factors.ReadPerBatchBaseCost, "BATCH_PROPORTION", factors.BatchProportion)
+		addRUFormulaTerm(&rruTerms, "charged_read_bytes", inputs.ReadBytes, "READ_BYTES_COST", factors.ReadBytesCost)
+		addRUFormulaTerm(&rruTerms, "kv_cpu_ms", inputs.KVCPUTimeMs, "CPU_MS_COST", factors.CPUMsCost)
+		rru += calculation.RRU()
+
+		addRUFormulaTerm(&wruTerms, "replica_weighted_write_rpc_count", inputs.ReplicaWeightedWriteRPCCount,
+			"WRITE_BASE_COST", factors.WriteBaseCost)
+		addRUFormulaTermWithRatio(&wruTerms, "replica_weighted_write_rpc_count", inputs.ReplicaWeightedWriteRPCCount,
+			"WRITE_PER_BATCH_BASE_COST", factors.WritePerBatchBaseCost, "BATCH_PROPORTION", factors.BatchProportion)
+		addRUFormulaTerm(&wruTerms, "replica_weighted_write_bytes", inputs.ReplicaWeightedWriteBytes,
+			"WRITE_BYTES_COST", factors.WriteBytesCost)
+		addNegativeRUFormulaTerm(&wruTerms, "failed_write_rpc_count", inputs.FailedWriteRPCCount,
+			"WRITE_BASE_COST", factors.WriteBaseCost)
+		addNegativeRUFormulaTerm(&wruTerms, "failed_write_bytes", inputs.FailedWriteBytes,
+			"WRITE_BYTES_COST", factors.WriteBytesCost)
+		wru += calculation.WRU()
 	}
-	detail, err := json.Marshal(ruV1Detail{
-		Version: 1,
-		TotalRU: ruDetails.RRU() + ruDetails.WRU(),
-		RRU:     ruDetails.RRU(),
-		WRU:     ruDetails.WRU(),
-		Buckets: buckets,
+	if !sameRUValue(rru+wru, ruDetails.RRU()+ruDetails.WRU()-tiflashRU) {
+		return ""
+	}
+
+	details := make([]string, 0, 3)
+	totalTerms := make([]string, 0, 3)
+	var displayedTotal float64
+	if len(rruTerms) > 0 {
+		displayedRRU := roundRUFormulaResult(rru)
+		details = append(details, "RRU="+formatRUFormulaTerms(rruTerms)+"="+formatRUFormulaResult(displayedRRU))
+		totalTerms = append(totalTerms, "RRU("+formatRUFormulaResult(displayedRRU)+")")
+		displayedTotal += displayedRRU
+	}
+	if len(wruTerms) > 0 {
+		displayedWRU := roundRUFormulaResult(wru)
+		details = append(details, "WRU="+formatRUFormulaTerms(wruTerms)+"="+formatRUFormulaResult(displayedWRU))
+		totalTerms = append(totalTerms, "WRU("+formatRUFormulaResult(displayedWRU)+")")
+		displayedTotal += displayedWRU
+	}
+	if tiflashRU != 0 {
+		displayedTiFlashRU := roundRUFormulaResult(tiflashRU)
+		totalTerms = append(totalTerms, "tiflash_ru("+formatRUFormulaResult(displayedTiFlashRU)+")")
+		displayedTotal += displayedTiFlashRU
+	}
+	if len(totalTerms) == 0 {
+		return ""
+	}
+	details = append(details, "RU="+strings.Join(totalTerms, "+")+"="+formatRUFormulaResult(displayedTotal))
+	return strings.Join(details, "; ")
+}
+
+type ruFormulaTerm struct {
+	text     string
+	negative bool
+}
+
+func addRUFormulaTerm(terms *[]ruFormulaTerm, inputName string, input float64, factorName string, factor float64) {
+	if input == 0 || factor == 0 {
+		return
+	}
+	*terms = append(*terms, ruFormulaTerm{text: fmt.Sprintf("%s(%s)*%s(%s)",
+		inputName, formatRUFormulaValue(input), factorName, formatRUFormulaValue(factor))})
+}
+
+func addRUFormulaTermWithRatio(
+	terms *[]ruFormulaTerm,
+	inputName string,
+	input float64,
+	factorName string,
+	factor float64,
+	ratioName string,
+	ratio float64,
+) {
+	if input == 0 || factor == 0 || ratio == 0 {
+		return
+	}
+	*terms = append(*terms, ruFormulaTerm{text: fmt.Sprintf("%s(%s)*%s(%s)*%s(%s)",
+		inputName, formatRUFormulaValue(input), factorName, formatRUFormulaValue(factor),
+		ratioName, formatRUFormulaValue(ratio))})
+}
+
+func addNegativeRUFormulaTerm(terms *[]ruFormulaTerm, inputName string, input float64, factorName string, factor float64) {
+	if input == 0 || factor == 0 {
+		return
+	}
+	*terms = append(*terms, ruFormulaTerm{
+		text:     fmt.Sprintf("%s(%s)*%s(%s)", inputName, formatRUFormulaValue(input), factorName, formatRUFormulaValue(factor)),
+		negative: true,
 	})
-	if err != nil {
-		return ""
-	}
-	return string(detail)
 }
 
-func formatRUV2CalculationDetail(ruDetails *tikvutil.RUDetails, metrics *RUV2Metrics, weights RUV2Weights) string {
-	if metrics != nil && metrics.Bypass() {
-		return ""
+func formatRUFormulaTerms(terms []ruFormulaTerm) string {
+	var builder strings.Builder
+	for i, term := range terms {
+		if term.negative {
+			builder.WriteByte('-')
+		} else if i > 0 {
+			builder.WriteByte('+')
+		}
+		builder.WriteString(term.text)
 	}
-	var tiKVRU, tiFlashRU float64
-	var calculations []tikvutil.RUV2TiKVCalculation
-	if ruDetails != nil {
-		tiKVRU = ruDetails.TiKVRUV2()
-		tiFlashRU = ruDetails.TiflashRU()
-		calculations = ruDetails.RUV2TiKVCalculations()
-	}
-	tidbInputs := makeRUV2TiDBInputs(metrics)
-	tidbRU := 0.0
-	if metrics != nil {
-		tidbRU = metrics.calculateRUValuesWithWeights(weights)
-	}
-	if tidbRU == 0 && tiKVRU == 0 && tiFlashRU == 0 && isZeroRUV2TiDBInputs(tidbInputs) && len(calculations) == 0 {
-		return ""
-	}
-	sort.Slice(calculations, func(i, j int) bool {
-		return ruV2TiKVWeightsSortKey(calculations[i].Weights) < ruV2TiKVWeightsSortKey(calculations[j].Weights)
-	})
-	tikvBuckets := make([]ruV2TiKVBucket, 0, len(calculations))
-	reproducibleTiKVRU := 0.0
-	for _, calculation := range calculations {
-		tikvBuckets = append(tikvBuckets, ruV2TiKVBucket{
-			Weights:  makeRUV2TiKVWeights(calculation.Weights),
-			Counters: calculation.Counters,
-			RU:       calculation.RU,
-		})
-		reproducibleTiKVRU += calculation.RU
-	}
-	opaqueTiKVRU := tiKVRU - reproducibleTiKVRU
-	if math.Abs(opaqueTiKVRU) <= 1e-9*math.Max(1, math.Abs(tiKVRU)) {
-		opaqueTiKVRU = 0
-	}
-	detail := ruV2Detail{
-		Version: 2,
-		TotalRU: tidbRU + tiKVRU + tiFlashRU,
-		TiDB: ruV2TiDBDetail{
-			Inputs:       tidbInputs,
-			Weights:      makeRUV2TiDBWeights(weights),
-			RU:           tidbRU,
-			Reproducible: true,
-		},
-		TiKV: ruV2TiKVDetail{
-			RU:           tiKVRU,
-			Reproducible: len(tikvBuckets) > 0 && opaqueTiKVRU == 0,
-			OpaqueRU:     opaqueTiKVRU,
-			Buckets:      tikvBuckets,
-		},
-	}
-	if tiFlashRU != 0 {
-		detail.TiFlash = &ruOpaqueDetail{RU: tiFlashRU, Reproducible: false}
-	}
-	formatted, err := json.Marshal(detail)
-	if err != nil {
-		return ""
-	}
-	return string(formatted)
+	return builder.String()
 }
 
-func ruV1CalculationSortKey(calculation rmclient.RUCalculation) string {
-	f := calculation.Config.Factors
-	return fmt.Sprintf("%02d/%02d/%t/%016x/%016x/%016x/%016x/%016x/%016x/%016x/%016x",
-		calculation.Config.Version, calculation.Config.Source, calculation.Config.FactorsKnown,
-		math.Float64bits(f.ReadBaseCost), math.Float64bits(f.ReadPerBatchBaseCost), math.Float64bits(f.ReadBytesCost),
-		math.Float64bits(f.WriteBaseCost), math.Float64bits(f.WritePerBatchBaseCost), math.Float64bits(f.WriteBytesCost),
-		math.Float64bits(f.CPUMsCost), math.Float64bits(f.BatchProportion))
+func formatRUFormulaValue(value float64) string {
+	return strconv.FormatFloat(value, 'f', -1, 64)
 }
 
-func ruV2TiKVWeightsSortKey(weights tikvutil.RUV2TiKVWeights) string {
-	return fmt.Sprintf("%016x/%016x/%016x/%016x/%016x/%016x/%016x/%016x/%016x",
-		math.Float64bits(weights.RUScale), math.Float64bits(weights.TiKVKVEngineCacheMiss),
-		math.Float64bits(weights.ResourceManagerWriteCntTiKV), math.Float64bits(weights.ExecutorInputs),
-		math.Float64bits(weights.TiKVCoprocessorExecutorIterations), math.Float64bits(weights.TiKVCoprocessorResponseBytes),
-		math.Float64bits(weights.TiKVRaftstoreStoreWriteTriggerWB), math.Float64bits(weights.TiKVStorageProcessedKeysBatchGet),
-		math.Float64bits(weights.TiKVStorageProcessedKeysGet))
+func formatRUFormulaResult(value float64) string {
+	return strconv.FormatFloat(value, 'f', 6, 64)
 }
 
-func ruCalculationSourceName(source rmclient.RUCalculationSource) string {
-	switch source {
-	case rmclient.RUCalculationSourceTiDB:
-		return "tidb"
-	case rmclient.RUCalculationSourceTiKV:
-		return "tikv"
-	case rmclient.RUCalculationSourceTiFlash:
-		return "tiflash"
-	default:
-		return "unknown"
+func roundRUFormulaResult(value float64) float64 {
+	rounded := math.Round(value*1e6) / 1e6
+	if rounded == 0 {
+		return 0
 	}
+	return rounded
 }
 
-func makeRUV1FactorSnapshot(f rmclient.RUFactorSnapshot) ruV1FactorSnapshot {
-	return ruV1FactorSnapshot{
-		ReadBaseCost:          f.ReadBaseCost,
-		ReadPerBatchBaseCost:  f.ReadPerBatchBaseCost,
-		ReadBytesCost:         f.ReadBytesCost,
-		WriteBaseCost:         f.WriteBaseCost,
-		WritePerBatchBaseCost: f.WritePerBatchBaseCost,
-		WriteBytesCost:        f.WriteBytesCost,
-		CPUMsCost:             f.CPUMsCost,
-		BatchProportion:       f.BatchProportion,
-	}
+func sameRUValue(left, right float64) bool {
+	tolerance := 1e-9 * math.Max(1, math.Max(math.Abs(left), math.Abs(right)))
+	return math.Abs(left-right) <= tolerance
 }
 
-func makeRUV1Inputs(in rmclient.RUCalculationInputs) ruV1Inputs {
-	return ruV1Inputs{
-		ReadRPCCount:                 in.ReadRPCCount,
-		ReadBytes:                    in.ReadBytes,
-		KVCPUTimeMs:                  in.KVCPUTimeMs,
-		WriteRPCCount:                in.WriteRPCCount,
-		WriteBytes:                   in.WriteBytes,
-		ReplicaWeightedWriteRPCCount: in.ReplicaWeightedWriteRPCCount,
-		ReplicaWeightedWriteBytes:    in.ReplicaWeightedWriteBytes,
-		FailedWriteRPCCount:          in.FailedWriteRPCCount,
-		FailedWriteBytes:             in.FailedWriteBytes,
-	}
-}
-
-func makeRUV1Contributions(in rmclient.RUCalculationContributions) ruV1Contributions {
-	return ruV1Contributions{
-		ReadBaseRU:                in.ReadBaseRU,
-		ReadBatchBaseRU:           in.ReadBatchBaseRU,
-		ReadBytesRU:               in.ReadBytesRU,
-		KVCPURU:                   in.KVCPURU,
-		PagingPrechargeRU:         in.PagingPrechargeRU,
-		PagingPrechargeReversalRU: in.PagingPrechargeReversalRU,
-		WriteBaseRU:               in.WriteBaseRU,
-		WriteBatchBaseRU:          in.WriteBatchBaseRU,
-		WriteBytesRU:              in.WriteBytesRU,
-		FailedWritePaybackRU:      in.FailedWritePaybackRU,
-	}
-}
-
-func makeRUV2TiDBInputs(metrics *RUV2Metrics) ruV2TiDBInputs {
-	if metrics == nil {
-		return ruV2TiDBInputs{}
-	}
-	inputs := ruV2TiDBInputs{
-		ResultChunkCells:       metrics.ResultChunkCells(),
-		ExecutorL1:             metrics.executorL1.snapshot(),
-		PlanCnt:                metrics.PlanCnt(),
-		SessionParserTotal:     metrics.SessionParserTotal(),
-		TxnCnt:                 metrics.TxnCnt(),
-		ResourceManagerReadCnt: metrics.ResourceManagerReadCnt(),
-	}
-	if extra := metrics.loadExtra(); extra != nil {
-		inputs.ExecutorL2 = snapshotRUV2ExtraLabelCounter(&extra.executorL2, nil)
-		inputs.ExecutorL3 = snapshotRUV2ExtraLabelCounter(&extra.executorL3, nil)
-		inputs.ExecutorL5InsertRows = atomic.LoadInt64(&extra.executorL5InsertRows)
-		inputs.PlanDeriveStatsPaths = atomic.LoadInt64(&extra.planDeriveStatsPaths)
-		inputs.ResourceManagerWriteCnt = atomic.LoadInt64(&extra.resourceManagerWriteCnt)
-		inputs.WriteKeys = atomic.LoadInt64(&extra.writeKeys)
-	}
-	return inputs
-}
-
-func isZeroRUV2TiDBInputs(inputs ruV2TiDBInputs) bool {
-	return inputs.ResultChunkCells == 0 && len(inputs.ExecutorL1) == 0 &&
-		len(inputs.ExecutorL2) == 0 && len(inputs.ExecutorL3) == 0 &&
-		inputs.ExecutorL5InsertRows == 0 && inputs.PlanCnt == 0 &&
-		inputs.PlanDeriveStatsPaths == 0 && inputs.ResourceManagerReadCnt == 0 &&
-		inputs.ResourceManagerWriteCnt == 0 && inputs.WriteKeys == 0 &&
-		inputs.SessionParserTotal == 0 && inputs.TxnCnt == 0
-}
-
-func makeRUV2TiDBWeights(weights RUV2Weights) ruV2TiDBWeights {
-	return ruV2TiDBWeights{
-		RUScale:                 weights.RUScale,
-		ResultChunkCells:        weights.ResultChunkCells,
-		ExecutorL1:              weights.ExecutorL1,
-		ExecutorL2:              weights.ExecutorL2,
-		ExecutorL3:              weights.ExecutorL3,
-		ExecutorL5InsertRows:    weights.ExecutorL5InsertRows,
-		PlanCnt:                 weights.PlanCnt,
-		PlanDeriveStatsPaths:    weights.PlanDeriveStatsPaths,
-		ResourceManagerReadCnt:  weights.ResourceManagerReadCnt,
-		ResourceManagerWriteCnt: weights.ResourceManagerWriteCnt,
-		WriteKeys:               weights.WriteKeys,
-		SessionParserTotal:      weights.SessionParserTotal,
-		TxnCnt:                  weights.TxnCnt,
-	}
-}
-
-func makeRUV2TiKVWeights(weights tikvutil.RUV2TiKVWeights) ruV2TiKVWeights {
-	return ruV2TiKVWeights{
-		RUScale:                           weights.RUScale,
-		TiKVKVEngineCacheMiss:             weights.TiKVKVEngineCacheMiss,
-		ResourceManagerWriteCntTiKV:       weights.ResourceManagerWriteCntTiKV,
-		ExecutorInputs:                    weights.ExecutorInputs,
-		TiKVCoprocessorExecutorIterations: weights.TiKVCoprocessorExecutorIterations,
-		TiKVCoprocessorResponseBytes:      weights.TiKVCoprocessorResponseBytes,
-		TiKVRaftstoreStoreWriteTriggerWB:  weights.TiKVRaftstoreStoreWriteTriggerWB,
-		TiKVStorageProcessedKeysBatchGet:  weights.TiKVStorageProcessedKeysBatchGet,
-		TiKVStorageProcessedKeysGet:       weights.TiKVStorageProcessedKeysGet,
-	}
+func ruV1FactorSortKey(f rmclient.RUFactorSnapshot) string {
+	return fmt.Sprintf("%g/%g/%g/%g/%g/%g/%g/%g",
+		f.ReadBaseCost, f.ReadPerBatchBaseCost, f.ReadBytesCost,
+		f.WriteBaseCost, f.WritePerBatchBaseCost, f.WriteBytesCost,
+		f.CPUMsCost, f.BatchProportion)
 }
 
 // FormatRUV2Summary formats the RUv2 total and detailed metrics in one pass.

@@ -175,15 +175,8 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		require.NotNil(t, ctx.GetSessionVars().RUV2Metrics)
 		ruDetails := goCtx.Value(clientutil.RUDetailsCtxKey).(*clientutil.RUDetails)
 		ruDetails.UpdateWithRUCalculation(&rmpb.Consumption{RRU: 1.5}, 0, rmclient.RUCalculation{
-			Config: rmclient.RUCalculationConfig{
-				Version:      rmclient.RUVersionV1,
-				Source:       rmclient.RUCalculationSourceTiKV,
-				FactorsKnown: true,
-				Factors:      rmclient.RUFactorSnapshot{ReadBaseCost: 1.5},
-			},
-			Inputs:        rmclient.RUCalculationInputs{ReadRPCCount: 1},
-			Contributions: rmclient.RUCalculationContributions{ReadBaseRU: 1.5},
-			RRU:           1.5,
+			Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1.5},
+			Inputs:  rmclient.RUCalculationInputs{ReadRPCCount: 1},
 		})
 
 		analyzeExec := &mockEmptyOperator{
@@ -207,13 +200,12 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		// DefaultRUVersion is v1 (no domain in unit test), so RU stats show RRU+WRU format.
 		// Verify the stats are registered and contain "RU:" prefix.
 		rootStatsStr := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(targetPlan.ID()).String()
-		require.Contains(t, rootStatsStr, "RU:")
-		require.Contains(t, rootStatsStr, `RU_detail:{"version":1`)
-		require.Contains(t, rootStatsStr, `"read_base_cost":1.5`)
+		require.Contains(t, rootStatsStr,
+			"RU:1.50, RU_detail:RRU=read_rpc_count(1)*READ_BASE_COST(1.5)=1.500000; RU=RRU(1.500000)=1.500000")
 
 		jsonResult, err := core.JSONToString([]*core.ExplainInfoForEncode{{ExecuteInfo: rootStatsStr}})
 		require.NoError(t, err)
-		require.Contains(t, jsonResult, `RU_detail:{\"version\":1`)
+		require.Contains(t, jsonResult, "RU_detail:RRU=read_rpc_count(1)*READ_BASE_COST(1.5)")
 
 		require.Equal(t, int64(15), ctx.GetSessionVars().RUV2Metrics.ExecutorL5InsertRows())
 	})
@@ -259,42 +251,6 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 		require.NotNil(t, ruStats)
 		require.Equal(t, int64(2), ruStats.Metrics.ResourceManagerReadCnt())
 		require.Equal(t, int64(3), ruStats.Metrics.ResourceManagerWriteCnt())
-	})
-
-	t.Run("explain analyze dml includes commit write metrics", func(t *testing.T) {
-		ctx := mock.NewContext()
-		ctx.GetSessionVars().StmtCtx.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(nil)
-
-		goCtx := execdetails.ContextWithInitializedExecDetails(context.Background())
-		ctx.GetSessionVars().RUV2Metrics = execdetails.RUV2MetricsFromContext(goCtx)
-		require.NotNil(t, ctx.GetSessionVars().RUV2Metrics)
-		ctx.GetSessionVars().StmtCtx.SyncExecDetails.MergeExecDetails(&clientutil.CommitDetails{
-			WriteKeys: 3,
-			WriteSize: 66,
-		})
-
-		analyzeExec := &mockEmptyOperator{
-			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(), 1),
-		}
-		targetPlan := physicalop.PhysicalTableDual{RowCount: 1}.Init(ctx, &property.StatsInfo{RowCount: 1}, 0)
-		explainExec := &ExplainExec{
-			BaseExecutor: exec.NewBaseExecutor(ctx, expression.NewSchema(getColumns()...), 0),
-			explain: &core.Explain{
-				Analyze:    true,
-				TargetPlan: targetPlan,
-			},
-			analyzeExec: analyzeExec,
-			ruVersion:   rmclient.RUVersionV2,
-			ruv2Weights: execdetails.RUV2Weights{RUScale: 1, WriteKeys: 2},
-		}
-
-		require.NoError(t, explainExec.executeAnalyzeExec(goCtx))
-
-		rootStatsStr := ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.GetRootStats(targetPlan.ID()).String()
-		require.Contains(t, rootStatsStr, "RU:6.00")
-		require.Contains(t, rootStatsStr, `"write_keys":3`)
-		// The live statement metrics are finalized later and must not be updated twice.
-		require.Zero(t, ctx.GetSessionVars().RUV2Metrics.WriteKeys())
 	})
 
 	t.Run("detached static recordset inherits statement ru context", func(t *testing.T) {

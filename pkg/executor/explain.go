@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -46,8 +47,6 @@ type ExplainExec struct {
 
 	explain     *core.Explain
 	analyzeExec exec.Executor
-	ruVersion   rmclient.RUVersion
-	ruv2Weights execdetails.RUV2Weights
 	executed    bool
 	rows        [][]string
 	cursor      int
@@ -145,14 +144,15 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 			}
 			ruv2Metrics := execdetails.SyncRUV2MetricsFromContext(ctx)
 			if ruDetails != nil || ruv2Metrics != nil {
-				ruv2MetricsSnapshot := ruv2Metrics.Clone()
-				execDetail := e.Ctx().GetSessionVars().StmtCtx.GetExecDetails()
-				execdetails.UpdateRUV2MetricsFromCommitDetails(ruv2MetricsSnapshot, execDetail.CommitDetail)
+				ruVersion := rmclient.DefaultRUVersion
+				if do := domain.GetDomain(e.Ctx()); do != nil {
+					ruVersion = do.GetRUVersion()
+				}
 				coll.RegisterStats(e.explain.TargetPlan.ID(), &execdetails.RURuntimeStats{
 					RUDetails: ruDetails,
-					Metrics:   ruv2MetricsSnapshot,
-					Weights:   e.ruv2Weights,
-					RUVersion: e.ruVersion,
+					Metrics:   ruv2Metrics.Clone(),
+					Weights:   e.Ctx().GetSessionVars().RUV2Weights(),
+					RUVersion: ruVersion,
 				})
 			}
 		}

@@ -15,7 +15,6 @@
 package execdetails
 
 import (
-	"encoding/json"
 	"strconv"
 	"strings"
 	"sync"
@@ -732,19 +731,10 @@ func TestRURuntimeStatsStringIncludesTiFlashRU(t *testing.T) {
 		Weights:   defaultRUV2WeightsForTest(),
 		RUVersion: rmclient.RUVersionV2,
 	}
-	stats.RUDetails.AddRUV2WithWeights(
-		&kvrpcpb.RUV2{KvEngineCacheMiss: 10},
-		util.RUV2TiKVWeights{RUScale: 1, TiKVKVEngineCacheMiss: 20},
-		200,
-	)
+	stats.RUDetails.AddTiKVRUV2(200)
 	stats.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 100, WRU: 200})
 
-	formatted := stats.String()
-	require.Contains(t, formatted, "RU:500.00, RU_detail:")
-	require.Contains(t, formatted, `"version":2`)
-	require.Contains(t, formatted, `"kv_engine_cache_miss":10`)
-	require.Contains(t, formatted, `"tikv_kv_engine_cache_miss":20`)
-	require.Contains(t, formatted, `"tiflash":{"ru":300,"reproducible":false}`)
+	require.Equal(t, "RU:500.00", stats.String())
 }
 
 func TestCopRuntimeStatsForTiFlash(t *testing.T) {
@@ -1136,26 +1126,24 @@ func TestCopRuntimeStats2(t *testing.T) {
 
 func TestRURuntimeStatsStringV1(t *testing.T) {
 	ruDetails := util.NewRUDetails()
-	ruDetails.UpdateWithRUCalculation(&rmpb.Consumption{RRU: 10.5, WRU: 20.3}, 0, rmclient.RUCalculation{
-		Config: rmclient.RUCalculationConfig{
-			Version:      rmclient.RUVersionV1,
-			Source:       rmclient.RUCalculationSourceTiKV,
-			FactorsKnown: true,
-			Factors: rmclient.RUFactorSnapshot{
-				ReadBaseCost:  1.5,
-				WriteBaseCost: 2.3,
-			},
+	ruDetails.UpdateWithRUCalculation(&rmpb.Consumption{RRU: 2.2522118248697915, WRU: 116.80625}, 0, rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{
+			ReadBaseCost:          0.125,
+			ReadPerBatchBaseCost:  0.5,
+			ReadBytesCost:         0.0000152587890625,
+			WriteBaseCost:         1,
+			WritePerBatchBaseCost: 1,
+			WriteBytesCost:        0.0009765625,
+			CPUMsCost:             0.3333333333333333,
+			BatchProportion:       0.7,
 		},
 		Inputs: rmclient.RUCalculationInputs{
-			ReadRPCCount:  7,
-			WriteRPCCount: 4,
+			ReadRPCCount:                 2,
+			ReadBytes:                    67090,
+			KVCPUTimeMs:                  0.835499,
+			ReplicaWeightedWriteRPCCount: 7,
+			ReplicaWeightedWriteBytes:    107424,
 		},
-		Contributions: rmclient.RUCalculationContributions{
-			ReadBaseRU:  10.5,
-			WriteBaseRU: 20.3,
-		},
-		RRU: 10.5,
-		WRU: 20.3,
 	})
 	stats := &RURuntimeStats{
 		RUDetails: ruDetails,
@@ -1163,31 +1151,60 @@ func TestRURuntimeStatsStringV1(t *testing.T) {
 		Weights:   defaultRUV2WeightsForTest(),
 		RUVersion: rmclient.RUVersionV1,
 	}
-	formatted := stats.String()
-	require.Contains(t, formatted, "RU:30.80, RU_detail:")
-	require.Contains(t, formatted, `"version":1`)
-	require.Contains(t, formatted, `"source":"tikv"`)
-	require.Contains(t, formatted, `"read_base_cost":1.5`)
-	require.Contains(t, formatted, `"read_rpc_count":7`)
-	require.Contains(t, formatted, `"read_base_ru":10.5`)
+	require.Equal(t,
+		"RU:119.06, RU_detail:"+
+			"RRU=read_rpc_count(2)*READ_BASE_COST(0.125)"+
+			"+read_rpc_count(2)*READ_PER_BATCH_BASE_COST(0.5)*BATCH_PROPORTION(0.7)"+
+			"+charged_read_bytes(67090)*READ_BYTES_COST(0.0000152587890625)"+
+			"+kv_cpu_ms(0.835499)*CPU_MS_COST(0.3333333333333333)=2.252212; "+
+			"WRU=replica_weighted_write_rpc_count(7)*WRITE_BASE_COST(1)"+
+			"+replica_weighted_write_rpc_count(7)*WRITE_PER_BATCH_BASE_COST(1)*BATCH_PROPORTION(0.7)"+
+			"+replica_weighted_write_bytes(107424)*WRITE_BYTES_COST(0.0009765625)=116.806250; "+
+			"RU=RRU(2.252212)+WRU(116.806250)=119.058462",
+		stats.String())
 
-	ruDetails.UpdateWithRUCalculation(&rmpb.Consumption{RRU: 2.5}, 0, rmclient.RUCalculation{
-		Config: rmclient.RUCalculationConfig{
-			Version:      rmclient.RUVersionV1,
-			Source:       rmclient.RUCalculationSourceTiKV,
-			FactorsKnown: true,
-			Factors:      rmclient.RUFactorSnapshot{ReadBaseCost: 2.5},
+	ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 3})
+	require.Contains(t, stats.String(),
+		"RU=RRU(2.252212)+WRU(116.806250)+tiflash_ru(3.000000)=122.058462")
+
+	failedWriteDetails := util.NewRUDetails()
+	failedWriteDetails.UpdateWithRUCalculation(&rmpb.Consumption{WRU: 14}, 0, rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{WriteBaseCost: 3, WriteBytesCost: 0.2},
+		Inputs: rmclient.RUCalculationInputs{
+			ReplicaWeightedWriteRPCCount: 3,
+			ReplicaWeightedWriteBytes:    50,
+			FailedWriteRPCCount:          1,
+			FailedWriteBytes:             10,
 		},
-		Inputs:        rmclient.RUCalculationInputs{ReadRPCCount: 1},
-		Contributions: rmclient.RUCalculationContributions{ReadBaseRU: 2.5},
-		RRU:           2.5,
 	})
-	mixedDetail := FormatRUCalculationDetail(rmclient.RUVersionV1, ruDetails, stats.Metrics, stats.Weights)
-	require.Equal(t, 2, strings.Count(mixedDetail, `"source":"tikv"`))
-	require.Contains(t, mixedDetail, `"read_base_cost":2.5`)
-	for range 10 {
-		require.Equal(t, mixedDetail, FormatRUCalculationDetail(rmclient.RUVersionV1, ruDetails, stats.Metrics, stats.Weights))
-	}
+	require.Equal(t,
+		"WRU=replica_weighted_write_rpc_count(3)*WRITE_BASE_COST(3)"+
+			"+replica_weighted_write_bytes(50)*WRITE_BYTES_COST(0.2)"+
+			"-failed_write_rpc_count(1)*WRITE_BASE_COST(3)"+
+			"-failed_write_bytes(10)*WRITE_BYTES_COST(0.2)=14.000000; RU=WRU(14.000000)=14.000000",
+		FormatRUCalculationDetail(failedWriteDetails))
+
+	pureTiFlashDetails := util.NewRUDetails()
+	pureTiFlashDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 4, WRU: 5})
+	require.Equal(t, "RU=tiflash_ru(9.000000)=9.000000", FormatRUCalculationDetail(pureTiFlashDetails))
+
+	tinyDetails := util.NewRUDetails()
+	tinyDetails.UpdateWithRUCalculation(&rmpb.Consumption{RRU: 0.0000006, WRU: 0.0000006}, 0, rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1, WriteBaseCost: 1},
+		Inputs: rmclient.RUCalculationInputs{
+			ReadRPCCount:                 0.0000006,
+			ReplicaWeightedWriteRPCCount: 0.0000006,
+		},
+	})
+	require.Contains(t, FormatRUCalculationDetail(tinyDetails),
+		"RU=RRU(0.000001)+WRU(0.000001)=0.000002")
+
+	partialDetails := util.NewRUDetails()
+	partialDetails.UpdateWithRUCalculation(&rmpb.Consumption{RRU: 2}, 0, rmclient.RUCalculation{
+		Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1},
+		Inputs:  rmclient.RUCalculationInputs{ReadRPCCount: 1},
+	})
+	require.Empty(t, FormatRUCalculationDetail(partialDetails))
 }
 
 func TestRURuntimeStatsStringV1NilDetails(t *testing.T) {
@@ -1210,41 +1227,7 @@ func TestRURuntimeStatsStringV2(t *testing.T) {
 	stats.RUDetails.AddTiKVRUV2(200)
 	stats.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 100, WRU: 200})
 	// v2: shows total RU from v2 metrics (tikvRU + tiflashRU + tidbRU)
-	formatted := stats.String()
-	require.Contains(t, formatted, "RU:500.00, RU_detail:")
-	require.Contains(t, formatted, `"tikv":{"ru":200,"reproducible":false,"opaque_ru":200}`)
-
-	t.Run("reproducible mixed weight buckets", func(t *testing.T) {
-		ruDetails := util.NewRUDetails()
-		firstWeights := util.RUV2TiKVWeights{RUScale: 2, TiKVKVEngineCacheMiss: 3}
-		secondWeights := util.RUV2TiKVWeights{RUScale: 4, TiKVKVEngineCacheMiss: 5}
-		ruDetails.AddRUV2WithWeights(&kvrpcpb.RUV2{KvEngineCacheMiss: 2}, firstWeights, 12)
-		ruDetails.AddRUV2WithWeights(&kvrpcpb.RUV2{KvEngineCacheMiss: 1}, secondWeights, 20)
-		ruDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 10})
-		metrics := NewRUV2Metrics()
-		metrics.AddResultChunkCells(2)
-		metrics.AddPlanCnt(3)
-		weights := RUV2Weights{RUScale: 2, ResultChunkCells: 1.5, PlanCnt: 4}
-
-		encoded := FormatRUCalculationDetail(rmclient.RUVersionV2, ruDetails, metrics, weights)
-		var detail ruV2Detail
-		require.NoError(t, json.Unmarshal([]byte(encoded), &detail))
-		require.Len(t, detail.TiKV.Buckets, 2)
-		tidbRU := (float64(detail.TiDB.Inputs.ResultChunkCells)*detail.TiDB.Weights.ResultChunkCells +
-			float64(detail.TiDB.Inputs.PlanCnt)*detail.TiDB.Weights.PlanCnt) * detail.TiDB.Weights.RUScale
-		require.InDelta(t, detail.TiDB.RU, tidbRU, 1e-12)
-		require.InDelta(t, detail.TiKV.Buckets[0].RU,
-			float64(detail.TiKV.Buckets[0].Counters.KvEngineCacheMiss)*detail.TiKV.Buckets[0].Weights.TiKVKVEngineCacheMiss*detail.TiKV.Buckets[0].Weights.RUScale, 1e-12)
-		require.InDelta(t, detail.TiKV.Buckets[1].RU,
-			float64(detail.TiKV.Buckets[1].Counters.KvEngineCacheMiss)*detail.TiKV.Buckets[1].Weights.TiKVKVEngineCacheMiss*detail.TiKV.Buckets[1].Weights.RUScale, 1e-12)
-		require.InDelta(t, detail.TiKV.RU, detail.TiKV.Buckets[0].RU+detail.TiKV.Buckets[1].RU, 1e-12)
-		require.InDelta(t, detail.TotalRU, detail.TiDB.RU+detail.TiKV.RU+detail.TiFlash.RU, 1e-12)
-		require.Equal(t, float64(2), detail.TiKV.Buckets[0].Weights.RUScale)
-		require.Equal(t, float64(4), detail.TiKV.Buckets[1].Weights.RUScale)
-		for range 10 {
-			require.Equal(t, encoded, FormatRUCalculationDetail(rmclient.RUVersionV2, ruDetails, metrics, weights))
-		}
-	})
+	require.Equal(t, "RU:500.00", stats.String())
 }
 
 func TestRURuntimeStatsStringV2ZeroRU(t *testing.T) {

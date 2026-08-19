@@ -26,7 +26,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
@@ -476,50 +475,19 @@ func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
 		RUV2Metrics: execdetails.NewRUV2Metrics(),
 		RUVersion:   rmclient.RUVersionV2,
 	}
-	logItems.RUDetails.AddRUV2WithWeights(
-		&kvrpcpb.RUV2{KvEngineCacheMiss: 10},
-		util.RUV2TiKVWeights{RUScale: 1, TiKVKVEngineCacheMiss: 10},
-		100,
-	)
+	logItems.RUDetails.AddTiKVRUV2(100)
 	logItems.RUDetails.UpdateTiFlash(&rmpb.Consumption{RRU: 20, WRU: 30})
 
 	logString := seVar.SlowLogFormat(logItems)
 	require.Contains(t, logString, "# Request_unit_v2: 150.00")
 	require.Contains(t, logString, "# Request_unit_v2_detail: total_ru:150.00, tidb_ru:0.00, tikv_ru:100.00, tiflash_ru:50.00")
-	require.Contains(t, logString, `# Request_unit_detail: {"version":2`)
-	require.Contains(t, logString, `"tikv_kv_engine_cache_miss":10`)
-	require.Contains(t, logString, `"tiflash":{"ru":50,"reproducible":false}`)
-
-	t.Run("uses captured v2 weights", func(t *testing.T) {
-		metrics := execdetails.NewRUV2Metrics()
-		metrics.AddResultChunkCells(2)
-		weights := execdetails.RUV2Weights{RUScale: 2, ResultChunkCells: 3}
-		items := &variable.SlowQueryLogItems{
-			SQL:         "select 1",
-			ExecDetail:  &execdetails.ExecDetails{},
-			UsedStats:   &stmtctx.UsedStatsInfo{},
-			RUDetails:   util.NewRUDetails(),
-			RUV2Metrics: metrics,
-			RUV2Weights: &weights,
-			RUVersion:   rmclient.RUVersionV2,
-		}
-		capturedLog := seVar.SlowLogFormat(items)
-		require.Contains(t, capturedLog, "# Request_unit_v2: 12.00")
-		require.Contains(t, capturedLog, `"result_chunk_cells":3`)
-	})
+	require.NotContains(t, logString, "# Request_unit_detail:")
 
 	t.Run("v1 calculation detail", func(t *testing.T) {
 		details := util.NewRUDetails()
 		details.UpdateWithRUCalculation(&rmpb.Consumption{RRU: 1.5}, 0, rmclient.RUCalculation{
-			Config: rmclient.RUCalculationConfig{
-				Version:      rmclient.RUVersionV1,
-				Source:       rmclient.RUCalculationSourceTiKV,
-				FactorsKnown: true,
-				Factors:      rmclient.RUFactorSnapshot{ReadBaseCost: 1.5},
-			},
-			Inputs:        rmclient.RUCalculationInputs{ReadRPCCount: 1},
-			Contributions: rmclient.RUCalculationContributions{ReadBaseRU: 1.5},
-			RRU:           1.5,
+			Factors: rmclient.RUFactorSnapshot{ReadBaseCost: 1.5},
+			Inputs:  rmclient.RUCalculationInputs{ReadRPCCount: 1},
 		})
 		v1Items := &variable.SlowQueryLogItems{
 			SQL:         "select 1",
@@ -533,10 +501,8 @@ func TestSlowLogFormatIncludesTiFlashRUInRUV2Metrics(t *testing.T) {
 			RUVersion:   rmclient.RUVersionV1,
 		}
 		v1Log := seVar.SlowLogFormat(v1Items)
-		require.Contains(t, v1Log, `# Request_unit_detail: {"version":1`)
-		require.Contains(t, v1Log, `"read_base_cost":1.5`)
-		require.Contains(t, v1Log, `"read_rpc_count":1`)
-		require.Contains(t, v1Log, `"read_base_ru":1.5`)
+		require.Contains(t, v1Log,
+			"# Request_unit_detail: RRU=read_rpc_count(1)*READ_BASE_COST(1.5)=1.500000; RU=RRU(1.500000)=1.500000")
 	})
 
 	t.Run("default session weights come from config defaults", func(t *testing.T) {
@@ -579,7 +545,7 @@ func compareSlowLogItems(t *testing.T, expected, actual *variable.SlowQueryLogIt
 
 	// Some fields are hard to mock, so we skip them.
 	skipFields := []string{"KeyspaceID", "KeyspaceName", "TimeTotal", "Prepared", "ResultRows", "ResultRows", "Plan", "BinaryPlan",
-		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "RUV2Metrics", "RUV2Weights", "RUVersion", "MemMax", "DiskMax", "StorageKV"}
+		"UsedStats", "CopTasks", "RewriteInfo", "ExecRetryTime", "Warnings", "RUDetails", "RUV2Metrics", "MemMax", "DiskMax", "StorageKV"}
 	skipFieldsFunc := func(res string, fields []string) bool {
 		for _, f := range fields {
 			if res == f {
