@@ -2360,7 +2360,12 @@ version = "0.0.0"
 dependencies = [
  "chrono",
  "chrono-tz",
+ "serde",
+ "serde_json",
+ "tidb-ast",
  "tidb-error",
+ "tidb-model",
+ "tidb-mysql",
  "tidb-vardef",
 ]
 

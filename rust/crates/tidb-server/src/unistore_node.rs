@@ -283,14 +283,109 @@ pub(crate) fn run_unistore_cluster_session(
     spill_storage: Arc<tidb_util::disk::SpillStorage>,
     memory_arbitrator: Option<Arc<tidb_util::memory::MemArbitrator>>,
 ) -> Result<(), crate::real_tikv_node::RunConfiguredNodeError> {
+    use crate::real_tikv_node::RunConfiguredNodeError;
+
+    let users = configured_account_store(&config)?;
+    let users = Arc::new(users);
+    let stack = unistore_cluster_session_stack(&config, &users)?;
+    let UnistoreClusterStack {
+        factory,
+        schema_version,
+        stats,
+        _reloader: reloader,
+        _sysvar_reloader: sysvar_reloader,
+        _stats_reloader: stats_reloader,
+        _read_authority: read_authority,
+    } = stack;
+    let factory = factory.with_spill_storage(spill_storage);
+    let factory = match memory_arbitrator {
+        Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
+        None => factory,
+    };
+    let factory = Arc::new(factory);
+    let stats_receipt = stats.receipt();
+
+    let node = ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users))
+        .map_err(RunConfiguredNodeError::Node)?;
+    // Go starts the status HTTP server beside the SQL listener
+    // (`cfg.Status.ReportStatus`, default true); `/status` is the first
+    // thing `main_test.go` and every health probe reads. A failed bind
+    // logs and continues, as Go's does.
+    let _status_server = if config.report_status {
+        match crate::http_status::start_status_listener(
+            &config.status_host,
+            config.status_port,
+            node.tracker(),
+            config.version_info.server_version.clone(),
+            config.version_info.git_hash.clone(),
+        ) {
+            Ok(server) => {
+                eprintln!(
+                    "{{\"event\":\"status_listener_ready\",\"address\":\"{}\"}}",
+                    server.local_addr()
+                );
+                Some(server)
+            }
+            Err(error) => {
+                eprintln!(
+                    "{{\"event\":\"status_listener_error\",\"error\":\"{error}\"}}"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let address = node.local_addr().map_err(RunConfiguredNodeError::Node)?;
+    let shutdown = node.shutdown_handle();
+    let last_signal = crate::shutdown_signal::install(move || shutdown.shutdown())
+        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
+    eprintln!(
+        "{{\"event\":\"cluster_session_node_ready\",\"address\":\"{address}\",\"store\":\"unistore\",\"schema_version\":{schema_version},\"max_connections\":{},\"account_count\":{},\"stats_loaded\":{},\"stats_pseudo\":{}}}",
+        config.max_connections,
+        users.len(),
+        stats_receipt.loaded,
+        stats_receipt.pseudo,
+    );
+    let result = node.run().map_err(RunConfiguredNodeError::Node);
+    drop(reloader);
+    drop(sysvar_reloader);
+    drop(stats_reloader);
+    drop(read_authority);
+    finish_with_signal_code(result, &last_signal)
+}
+
+/// The cluster-session factory over the embedded store, plus the guards
+/// that keep its store and reload threads alive. One build, two callers:
+/// the running node and the in-tree tests that pin coprocessor-backed
+/// execution -- a test over this stack exercises the SAME bootstrap,
+/// catalog, and `CopScanSource` the live `--store unistore
+/// --cluster-session` process serves.
+pub(crate) struct UnistoreClusterStack {
+    pub(crate) factory: crate::cluster_session_node::ClusterSessionFactory,
+    pub(crate) schema_version: i64,
+    pub(crate) stats: Arc<tidb_exec::stats_watch::SharedStats>,
+    // Guards, dropped in declaration order: reload threads first, then the
+    // store they read from.
+    pub(crate) _reloader: tidb_exec::catalog_watch::CatalogReloader,
+    pub(crate) _sysvar_reloader: crate::cluster_sysvar_seam::SysvarReloader,
+    pub(crate) _stats_reloader: tidb_exec::stats_watch::StatsReloader,
+    pub(crate) _read_authority: SharedReadAuthority<InProcessClient, InProcessRegionLoader>,
+}
+
+/// Builds the wide cluster-session factory over the embedded store:
+/// bootstrap publish, account seeding, catalog/stats/sysvar followers, and
+/// the in-process coprocessor.
+pub(crate) fn unistore_cluster_session_stack(
+    config: &crate::node_config::NodeConfig,
+    users: &Arc<crate::ConfiguredUserStore>,
+) -> Result<UnistoreClusterStack, crate::real_tikv_node::RunConfiguredNodeError> {
     use crate::cluster_session_node::{
         ClusterSessionFactory, RealClusterDdl, RealClusterTransactions,
     };
     use crate::real_tikv_node::RunConfiguredNodeError;
 
     let engine = RunConfiguredNodeError::Engine;
-    let users = configured_account_store(&config)?;
-    let users = Arc::new(users);
     let (read_authority, _pd, opener) = in_process_write_stack().map_err(engine)?;
 
     // The bootstrap: every boot, because the store is empty every boot.
@@ -397,61 +492,15 @@ pub(crate) fn run_unistore_cluster_session(
             IN_PROCESS_TIMEOUT,
         )),
     )
-    .with_cop_scans(cop_scans)
-    .with_spill_storage(spill_storage);
-    let factory = match memory_arbitrator {
-        Some(arbitrator) => factory.with_mem_arbitrator(arbitrator),
-        None => factory,
-    };
-    let factory = Arc::new(factory);
-    let stats_receipt = stats.receipt();
+    .with_cop_scans(cop_scans);
 
-    let node = ConcurrentSqlNode::bind(&config, factory, Arc::clone(&users))
-        .map_err(RunConfiguredNodeError::Node)?;
-    // Go starts the status HTTP server beside the SQL listener
-    // (`cfg.Status.ReportStatus`, default true); `/status` is the first
-    // thing `main_test.go` and every health probe reads. A failed bind
-    // logs and continues, as Go's does.
-    let _status_server = if config.report_status {
-        match crate::http_status::start_status_listener(
-            &config.status_host,
-            config.status_port,
-            node.tracker(),
-            config.version_info.server_version.clone(),
-            config.version_info.git_hash.clone(),
-        ) {
-            Ok(server) => {
-                eprintln!(
-                    "{{\"event\":\"status_listener_ready\",\"address\":\"{}\"}}",
-                    server.local_addr()
-                );
-                Some(server)
-            }
-            Err(error) => {
-                eprintln!(
-                    "{{\"event\":\"status_listener_error\",\"error\":\"{error}\"}}"
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
-    let address = node.local_addr().map_err(RunConfiguredNodeError::Node)?;
-    let shutdown = node.shutdown_handle();
-    let last_signal = crate::shutdown_signal::install(move || shutdown.shutdown())
-        .map_err(|error| RunConfiguredNodeError::Engine(SqlQueryError::unknown(error.to_string())))?;
-    eprintln!(
-        "{{\"event\":\"cluster_session_node_ready\",\"address\":\"{address}\",\"store\":\"unistore\",\"schema_version\":{schema_version},\"max_connections\":{},\"account_count\":{},\"stats_loaded\":{},\"stats_pseudo\":{}}}",
-        config.max_connections,
-        users.len(),
-        stats_receipt.loaded,
-        stats_receipt.pseudo,
-    );
-    let result = node.run().map_err(RunConfiguredNodeError::Node);
-    drop(reloader);
-    drop(sysvar_reloader);
-    drop(stats_reloader);
-    drop(read_authority);
-    finish_with_signal_code(result, &last_signal)
+    Ok(UnistoreClusterStack {
+        factory,
+        schema_version,
+        stats,
+        _reloader: reloader,
+        _sysvar_reloader: sysvar_reloader,
+        _stats_reloader: stats_reloader,
+        _read_authority: read_authority,
+    })
 }

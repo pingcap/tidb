@@ -16,4 +16,5 @@ mod prepared_transactions;
 mod schema_changes;
 mod statistics;
 mod transactions;
+mod unistore_cop;
 mod wide_sql;

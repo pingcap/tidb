@@ -212,6 +212,27 @@ where
         if request.snapshot_ts == 0 {
             return Err(refuse("the statement's snapshot has no timestamp"));
         }
+        // Every request shape this lowering does not build into the DAG must
+        // be refused BY NAME, never ignored: the caller assumes an accepted
+        // request was answered whole, so silently serving raw table rows for
+        // an aggregate or index request is wrong data, not degraded service.
+        // A refused `topn` or cap is different -- the contract names those
+        // best-effort and the caller retains the local stage either way.
+        if request.aggregate.is_some() {
+            return Err(refuse(
+                "this coprocessor lowering does not build a partial aggregation",
+            ));
+        }
+        if request.index.is_some() {
+            return Err(refuse(
+                "this coprocessor lowering does not build an index scan",
+            ));
+        }
+        if request.output_offsets.is_some() {
+            return Err(refuse(
+                "this coprocessor lowering does not narrow output columns",
+            ));
+        }
         let columns = request
             .columns
             .iter()
