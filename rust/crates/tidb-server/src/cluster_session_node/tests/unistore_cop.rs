@@ -741,12 +741,16 @@ fn a_pushed_down_predicate_selects_what_local_evaluation_selects() {
 
 /// Statistics may change the PLAN; they must never change the ANSWER.
 ///
-/// `ANALYZE` replaces pseudo estimates with real ones, and the optimizer then
-/// picks differently -- on this node it stops pushing the scan down, which is
-/// a plan-shape divergence from Go worth its own work (Go keeps a
-/// `TableReader` over a `cop[tikv]` scan). What must hold either way is that
-/// every query returns the same rows before and after, since a cost decision
-/// that alters results is a wrong answer no estimate can justify.
+/// `ANALYZE` replaces pseudo estimates with real ones and the optimizer then
+/// picks differently. What must hold either way is that every query returns
+/// the same rows before and after: a cost decision that alters results is a
+/// wrong answer no estimate can justify.
+///
+/// The plan TEXT changing shape across `ANALYZE` is not evidence of lost
+/// pushdown -- see `crate::explain`'s first named divergence, where every row
+/// prints task `root` whether or not the wire pushed anything, and
+/// `analyze_does_not_stop_a_pushed_shape_reaching_the_region` for the receipt
+/// that actually answers it.
 #[test]
 fn analyze_changes_the_plan_and_never_the_answer() {
     let (stack, _users) = cop_backed_stack();
@@ -790,4 +794,47 @@ fn analyze_changes_the_plan_and_never_the_answer() {
             "`{query}` answered differently once statistics existed"
         );
     }
+}
+
+/// Does a pushed-down shape still reach the region once statistics exist?
+///
+/// `EXPLAIN` cannot answer this: `crate::explain`'s documented divergence is
+/// that every row prints task `root` whether or not the wire pushed anything,
+/// so the display and the coprocessor have deliberately come apart. The
+/// receipt is the scanner's own request log, and the shape has to be one this
+/// node actually lowers -- a grouped aggregate, as
+/// `a_derived_aggregate_over_the_coprocessor_answers_its_output` pins.
+#[test]
+fn analyze_does_not_stop_a_pushed_shape_reaching_the_region() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(53))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.pd (id int primary key, g int, v int)",
+    );
+    rows(
+        &mut session,
+        "INSERT INTO test.pd VALUES (1,1,10),(2,1,20),(3,2,40),(4,2,80),(5,1,0)",
+    );
+
+    let query = "SELECT g, sum(v) FROM test.pd GROUP BY g ORDER BY g";
+    let expected = displayed(rows(&mut session, query));
+    let before = stack.cop_source.stats().requests.len();
+    assert!(before > 0, "the grouped aggregate reached the region");
+
+    rows(&mut session, "ANALYZE TABLE test.pd");
+    let after_analyze = stack.cop_source.stats().requests.len();
+
+    assert_eq!(
+        displayed(rows(&mut session, query)),
+        expected,
+        "the answer changed once statistics existed"
+    );
+    assert!(
+        stack.cop_source.stats().requests.len() > after_analyze,
+        "the same query served no coprocessor request once statistics existed"
+    );
 }
