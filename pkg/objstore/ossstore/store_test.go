@@ -15,12 +15,14 @@
 package ossstore
 
 import (
+	stdctx "context"
 	"fmt"
 	"io"
 	"path"
 	"testing"
 
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
+	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss/credentials"
 	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -353,4 +355,45 @@ func TestCanUseInternalEndpoint(t *testing.T) {
 	require.False(t, canUseInternalEndpoint("", "cn-hangzhou"))
 	require.False(t, canUseInternalEndpoint("cn-beijing", "cn-hangzhou"))
 	require.True(t, canUseInternalEndpoint("cn-hangzhou", "cn-hangzhou"))
+}
+
+func TestSendCredentialsIsSupported(t *testing.T) {
+	ctx, cancel := context.Background().WithCancel()
+	cancel()
+	backend := &backuppb.S3{
+		Bucket:          "bucket",
+		Endpoint:        "https://oss-cn-hangzhou.aliyuncs.com",
+		AccessKey:       "access-key",
+		SecretAccessKey: "secret-key",
+		SessionToken:    "session-token",
+	}
+	_, err := NewOSSStorage(ctx, backend, &storeapi.Options{SendCredentials: true})
+	require.ErrorContains(t, err, "context canceled")
+	require.Equal(t, "access-key", backend.AccessKey)
+	require.Equal(t, "secret-key", backend.SecretAccessKey)
+	require.Equal(t, "session-token", backend.SessionToken)
+}
+
+func TestSetBackendCredentials(t *testing.T) {
+	providerCalls := 0
+	provider := credentials.CredentialsProviderFunc(func(stdctx.Context) (credentials.Credentials, error) {
+		providerCalls++
+		return credentials.Credentials{
+			AccessKeyID:     "current-access-key",
+			AccessKeySecret: "current-secret-key",
+			SecurityToken:   "current-session-token",
+		}, nil
+	})
+	backend := &backuppb.S3{}
+	require.NoError(t, setBackendCredentials(context.Background(), backend, provider, true))
+	require.Equal(t, "current-access-key", backend.AccessKey)
+	require.Equal(t, "current-secret-key", backend.SecretAccessKey)
+	require.Equal(t, "current-session-token", backend.SessionToken)
+	require.Equal(t, 1, providerCalls)
+
+	require.NoError(t, setBackendCredentials(context.Background(), backend, provider, false))
+	require.Empty(t, backend.AccessKey)
+	require.Empty(t, backend.SecretAccessKey)
+	require.Empty(t, backend.SessionToken)
+	require.Equal(t, 1, providerCalls)
 }

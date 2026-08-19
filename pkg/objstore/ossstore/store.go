@@ -79,14 +79,6 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 
 	// TODO changing the input backend is a side effect, it shouldn't be part of
 	// 	the NewXXX, but we have to do it here to keep compatibility now.
-	//
-	// OSS credential through assume role need refresh periodically, if we do
-	// send them out to TiKV, they also need to be refreshed, not sure how this
-	// works for BR now, we can add it later.
-	if opts.SendCredentials {
-		return nil, errors.New("sending OSS credentials to TiKV is not supported")
-	}
-	backend.AccessKey, backend.SecretAccessKey, backend.SessionToken = "", "", ""
 
 	logger := log.L().With(
 		zap.String("bucket", qs.GetBucket()),
@@ -116,9 +108,11 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 	var (
 		ecsRegionID   string
 		credRefresher *credentialRefresher
+		credProvider  credentials.CredentialsProvider
 	)
 	if qs.AccessKey != "" && qs.SecretAccessKey != "" {
-		ossCfg = ossCfg.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(qs.AccessKey, qs.SecretAccessKey, qs.SessionToken))
+		credProvider = credentials.NewStaticCredentialsProvider(qs.AccessKey, qs.SecretAccessKey, qs.SessionToken)
+		ossCfg = ossCfg.WithCredentialsProvider(credProvider)
 	} else {
 		var provider providers.CredentialsProvider = providers.NewDefaultCredentialsProvider()
 		cred, err := provider.GetCredentials()
@@ -155,7 +149,11 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 		if err := credRefresher.refreshOnce(); err != nil {
 			return nil, errors.Annotatef(err, "failed to get initial OSS credentials")
 		}
-		ossCfg = ossCfg.WithCredentialsProvider(credRefresher)
+		credProvider = credRefresher
+		ossCfg = ossCfg.WithCredentialsProvider(credProvider)
+	}
+	if err := setBackendCredentials(ctx, backend, credProvider, opts.SendCredentials); err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	if opts.AccessRecording != nil {
@@ -217,6 +215,29 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 		Storage:       s3like.NewStorage(cli, bucketPrefix, &qs, opts.AccessRecording),
 		credRefresher: credRefresher,
 	}, nil
+}
+
+func setBackendCredentials(
+	ctx context.Context,
+	backend *backuppb.S3,
+	provider credentials.CredentialsProvider,
+	sendCredentials bool,
+) error {
+	backend.AccessKey, backend.SecretAccessKey, backend.SessionToken = "", "", ""
+	if !sendCredentials {
+		return nil
+	}
+	cred, err := provider.GetCredentials(ctx)
+	if err != nil {
+		return errors.Annotate(err, "failed to get OSS credentials to send to TiKV")
+	}
+	// Credential persistence and lifetime are managed by the caller. In
+	// particular, the caller must ensure forwarded temporary credentials remain
+	// valid for the duration of downstream TiKV operations.
+	backend.AccessKey = cred.AccessKeyID
+	backend.SecretAccessKey = cred.AccessKeySecret
+	backend.SessionToken = cred.SecurityToken
+	return nil
 }
 
 func newOSSStorageForTest(svc API, options *backuppb.S3, accessRec *recording.AccessStats) *s3like.Storage {
