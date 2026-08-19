@@ -545,3 +545,101 @@ fn unsigned_and_overflow_index_ranges_match_go() {
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// Go `TestIndexRangeForYear`'s table: `t(a year(4), key(a))`.
+struct YearTable {
+    a: Column,
+}
+
+impl YearTable {
+    fn new() -> Self {
+        Self {
+            a: Column::new(1, FieldType::new(FieldTypeCode::Year)),
+        }
+    }
+}
+
+impl ColumnResolver for YearTable {
+    fn resolve(&self, path: &[String]) -> Option<(usize, FieldType, i64)> {
+        let name = path.last()?;
+        if name.eq_ignore_ascii_case("a") {
+            return Some((0, self.a.ret_type.clone().expect("typed"), 1));
+        }
+        None
+    }
+
+    fn resolve_column(&self, path: &[String]) -> Option<Column> {
+        let name = path.last()?;
+        if name.eq_ignore_ascii_case("a") {
+            return Some(self.a.clone());
+        }
+        None
+    }
+
+    fn time_zone(&self) -> tidb_expr::SessionTimeZone {
+        tidb_expr::SessionTimeZone::utc()
+    }
+
+    fn fold_constant(&self, expression: &mut Expression, mode: tidb_expr::ConstantFoldMode) {
+        tidb_expr::fold_constant_in_mode(expression, &tidb_expr::NoColumns, mode);
+    }
+}
+
+/// Go `TestIndexRangeForYear` (`ranger_test.go:876`, issue 20101): the
+/// two-digit year adjustment, the out-of-range clamps, and the not-in
+/// inversions over converted members.
+#[test]
+fn year_index_ranges_match_go() {
+    let table = YearTable::new();
+    let cases: &[(&str, &str)] = &[
+        ("a not in (0, 1, 2)", "[(NULL,0) (0,2001) (2002,+inf]]"),
+        ("a not in (-1, 1, 2)", "[(NULL,2001) (2002,+inf]]"),
+        ("a not in (1, 2, 70)", "[(NULL,1970) (1970,2001) (2002,+inf]]"),
+        ("a = 1 or a = 2 or a = 70", "[[1970,1970] [2001,2002]]"),
+        ("a not in (99)", "[[-inf,1999) (1999,+inf]]"),
+        ("a not in (1, 2, 15698)", "[(NULL,2001) (2002,+inf]]"),
+        ("a >= -1000", "[[0,+inf]]"),
+        ("a > -1000", "[[0,+inf]]"),
+        ("a != 1", "[[-inf,2001) (2001,+inf]]"),
+        ("a != 2156", "[[-inf,+inf]]"),
+        ("a < 99 or a > 01", "[[-inf,1999) (2001,+inf]]"),
+        ("a >= 70 and a <= 69", "[[1970,2069]]"),
+    ];
+    let mut failures = Vec::new();
+    for (expr, expected) in cases {
+        let got = (|| -> Result<String, String> {
+            let sql = format!("select * from t where {expr}");
+            let stmt =
+                tidb_parser::parse(&sql).map_err(|error| format!("parse: {error:?}"))?;
+            let tidb_ast::Stmt::Query(query) = stmt else {
+                return Err("not a query".to_owned());
+            };
+            let tidb_ast::QueryStmt::Select(select) = query.into_inner() else {
+                return Err("not a select".to_owned());
+            };
+            let where_clause = select.where_clause.ok_or("no where")?;
+            let rewritten = rewrite_expr_resolved(&where_clause, &table)
+                .map_err(|error| format!("rewrite: {error:?}"))?;
+            let ctx = tidb_expr::NoColumns;
+            let builder = RealFunctionBuilder::new(&ctx);
+            let conds: Vec<Expression> = split_cnf_items(&rewritten)
+                .iter()
+                .map(planner_rewriter_stage)
+                .map(|cond| push_down_not(&cond, &builder))
+                .collect();
+            let cols = [table.a.clone()];
+            let lengths = [super::checker::UNSPECIFIED_LENGTH];
+            let result = super::detacher::detach_cond_and_build_range_for_index(
+                &conds, &cols, &lengths, 0,
+            )
+            .map_err(|error| format!("detach: {error:?}"))?;
+            Ok(ranges_to_go_string(&result.ranges))
+        })();
+        match got {
+            Ok(got) if got == *expected => {}
+            Ok(got) => failures.push(format!("{expr}: got {got}, want {expected}")),
+            Err(error) => failures.push(format!("{expr}: {error}")),
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
