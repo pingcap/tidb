@@ -39,10 +39,10 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use tidb_proto::etcdserverpb::kv_client::KvClient;
+use tidb_proto::etcdserverpb::lease_client::LeaseClient;
 use tidb_proto::etcdserverpb::watch_client::WatchClient;
 use tidb_proto::etcdserverpb::{
-    watch_request::RequestUnion, PutRequest, RangeRequest, WatchCreateRequest, WatchRequest,
-};
+    watch_request::RequestUnion, PutRequest, RangeRequest, WatchCreateRequest, WatchRequest, LeaseGrantRequest, LeaseKeepAliveRequest, LeaseRevokeRequest};
 use tidb_proto::mvccpb::event::EventType;
 use tokio::sync::watch;
 use tonic::transport::Channel;
@@ -159,6 +159,29 @@ impl From<PdClientError> for EtcdError {
 }
 
 enum EtcdCommand {
+    /// One PUT with a lease attached -- the serverinfo key's spelling.
+    PutWithLease {
+        key: Vec<u8>,
+        value: Vec<u8>,
+        lease: i64,
+        reply: mpsc::Sender<Result<(), EtcdError>>,
+    },
+    /// `Lease.LeaseGrant`: `(lease id, server-chosen TTL seconds)`.
+    LeaseGrant {
+        ttl_seconds: i64,
+        reply: mpsc::Sender<Result<(i64, i64), EtcdError>>,
+    },
+    /// `Lease.LeaseRevoke`: every key under the lease expires now.
+    LeaseRevoke {
+        id: i64,
+        reply: mpsc::Sender<Result<(), EtcdError>>,
+    },
+    /// One round of `Lease.LeaseKeepAlive`: Go's `KeepAliveOnce`. Answers
+    /// the refreshed TTL.
+    LeaseKeepAliveOnce {
+        id: i64,
+        reply: mpsc::Sender<Result<i64, EtcdError>>,
+    },
     Put {
         key: Vec<u8>,
         value: Vec<u8>,
@@ -288,6 +311,60 @@ impl EtcdClient {
         response.recv().unwrap_or(Err(EtcdError::Closed))
     }
 
+    /// Puts one key under a lease: the key expires with the lease -- the
+    /// spelling `pkg/domain/serverinfo` stores `/tidb/server/info/<id>` with.
+    pub fn put_with_lease(
+        &self,
+        key: &[u8],
+        value: &[u8],
+        lease: i64,
+    ) -> Result<(), EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::PutWithLease {
+                key: key.to_vec(),
+                value: value.to_vec(),
+                lease,
+                reply,
+            })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Grants a lease of `ttl_seconds`; answers `(lease id, the TTL the
+    /// server actually chose)`.
+    pub fn lease_grant(&self, ttl_seconds: i64) -> Result<(i64, i64), EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::LeaseGrant { ttl_seconds, reply })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// Revokes a lease; every key stored under it expires immediately --
+    /// the graceful-shutdown half of the serverinfo session.
+    pub fn lease_revoke(&self, id: i64) -> Result<(), EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::LeaseRevoke { id, reply })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
+    /// One keepalive round for the lease -- Go's `KeepAliveOnce`. Answers
+    /// the refreshed TTL in seconds.
+    pub fn lease_keep_alive_once(&self, id: i64) -> Result<i64, EtcdError> {
+        let (reply, response) = mpsc::channel();
+        self.shared
+            .commands
+            .send(EtcdCommand::LeaseKeepAliveOnce { id, reply })
+            .map_err(|_| EtcdError::Closed)?;
+        response.recv().unwrap_or(Err(EtcdError::Closed))
+    }
+
     /// Reads one key. `None` means the key is absent.
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, EtcdError> {
         let (reply, response) = mpsc::channel();
@@ -383,7 +460,7 @@ fn run_kv_worker(
     receiver: &mpsc::Receiver<EtcdCommand>,
     shutdown: &watch::Receiver<bool>,
 ) {
-    let mut clients: HashMap<String, KvClient<Channel>> = HashMap::new();
+    let mut clients: HashMap<String, Channel> = HashMap::new();
     while let Ok(command) = receiver.recv() {
         match command {
             EtcdCommand::Close { reply } => {
@@ -391,10 +468,19 @@ fn run_kv_worker(
                 return;
             }
             _ if *shutdown.borrow() => match command {
-                EtcdCommand::Put { reply, .. } => {
+                EtcdCommand::Put { reply, .. } | EtcdCommand::PutWithLease { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
                 EtcdCommand::Get { reply, .. } => {
+                    let _ = reply.send(Err(EtcdError::Closed));
+                }
+                EtcdCommand::LeaseGrant { reply, .. } => {
+                    let _ = reply.send(Err(EtcdError::Closed));
+                }
+                EtcdCommand::LeaseRevoke { reply, .. } => {
+                    let _ = reply.send(Err(EtcdError::Closed));
+                }
+                EtcdCommand::LeaseKeepAliveOnce { reply, .. } => {
                     let _ = reply.send(Err(EtcdError::Closed));
                 }
                 EtcdCommand::Close { .. } => unreachable!("handled above"),
@@ -406,7 +492,8 @@ fn run_kv_worker(
                     &mut clients,
                     timeout,
                     security,
-                    |runtime, client| {
+                    |runtime, channel| {
+                        let mut client = KvClient::new(channel);
                         let request = PutRequest {
                             key: key.clone(),
                             value: value.clone(),
@@ -419,6 +506,106 @@ fn run_kv_worker(
                 );
                 let _ = reply.send(result);
             }
+            EtcdCommand::PutWithLease {
+                key,
+                value,
+                lease,
+                reply,
+            } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, channel| {
+                        let mut client = KvClient::new(channel);
+                        let request = PutRequest {
+                            key: key.clone(),
+                            value: value.clone(),
+                            lease,
+                            ..Default::default()
+                        };
+                        runtime
+                            .block_on(client.put(with_deadline(request, timeout)))
+                            .map(|_| ())
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::LeaseGrant { ttl_seconds, reply } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, channel| {
+                        let mut client = LeaseClient::new(channel);
+                        let request = LeaseGrantRequest {
+                            ttl: ttl_seconds,
+                            id: 0,
+                        };
+                        runtime
+                            .block_on(client.lease_grant(with_deadline(request, timeout)))
+                            .map(|response| {
+                                let inner = response.into_inner();
+                                (inner.id, inner.ttl)
+                            })
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::LeaseRevoke { id, reply } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, channel| {
+                        let mut client = LeaseClient::new(channel);
+                        runtime
+                            .block_on(
+                                client.lease_revoke(with_deadline(
+                                    LeaseRevokeRequest { id },
+                                    timeout,
+                                )),
+                            )
+                            .map(|_| ())
+                    },
+                );
+                let _ = reply.send(result);
+            }
+            EtcdCommand::LeaseKeepAliveOnce { id, reply } => {
+                let result = across_endpoints(
+                    runtime,
+                    endpoints,
+                    &mut clients,
+                    timeout,
+                    security,
+                    |runtime, channel| {
+                        let mut client = LeaseClient::new(channel);
+                        // Go `KeepAliveOnce`: one request on the stream, one
+                        // response read back.
+                        runtime.block_on(async {
+                            let outbound =
+                                tokio_stream::once(LeaseKeepAliveRequest { id });
+                            let mut request = tonic::Request::new(outbound);
+                            request.set_timeout(timeout);
+                            let mut inbound =
+                                client.lease_keep_alive(request).await?.into_inner();
+                            match inbound.message().await? {
+                                Some(response) => Ok(response.ttl),
+                                None => Err(tonic::Status::aborted(
+                                    "keepalive stream closed without a response",
+                                )),
+                            }
+                        })
+                    },
+                );
+                let _ = reply.send(result);
+            }
             EtcdCommand::Get { key, reply } => {
                 let result = across_endpoints(
                     runtime,
@@ -426,7 +613,8 @@ fn run_kv_worker(
                     &mut clients,
                     timeout,
                     security,
-                    |runtime, client| {
+                    |runtime, channel| {
+                        let mut client = KvClient::new(channel);
                         let request = RangeRequest {
                             key: key.clone(),
                             limit: 1,
@@ -464,17 +652,17 @@ fn with_deadline<T>(message: T, timeout: Duration) -> tonic::Request<T> {
 fn across_endpoints<T>(
     runtime: &tokio::runtime::Runtime,
     endpoints: &[String],
-    clients: &mut HashMap<String, KvClient<Channel>>,
+    clients: &mut HashMap<String, Channel>,
     timeout: Duration,
     security: &ClusterSecurity,
-    mut call: impl FnMut(&tokio::runtime::Runtime, &mut KvClient<Channel>) -> Result<T, tonic::Status>,
+    mut call: impl FnMut(&tokio::runtime::Runtime, Channel) -> Result<T, tonic::Status>,
 ) -> Result<T, EtcdError> {
     let mut last = None;
     for endpoint in endpoints {
         if !clients.contains_key(endpoint) {
             match connect_channel(runtime, endpoint, timeout, security) {
                 Ok(channel) => {
-                    clients.insert(endpoint.clone(), KvClient::new(channel));
+                    clients.insert(endpoint.clone(), channel);
                 }
                 Err(error) => {
                     last = Some(error);
@@ -483,8 +671,9 @@ fn across_endpoints<T>(
             }
         }
         let client = clients
-            .get_mut(endpoint)
-            .expect("the channel was just inserted");
+            .get(endpoint)
+            .expect("the channel was just inserted")
+            .clone();
         match call(runtime, client) {
             Ok(value) => return Ok(value),
             Err(status) => {
