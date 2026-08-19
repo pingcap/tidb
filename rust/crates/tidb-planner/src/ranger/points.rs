@@ -306,6 +306,173 @@ pub fn handle_bound_col(ft: &FieldType, mut val: Datum, op: &str) -> (Datum, Str
     (val, op, true)
 }
 
+
+/// Go `CutDatumByPrefixLen` (`ranger.go:737`): cut a string/bytes datum to
+/// a prefix-index length — by BYTES for binary/ascii charsets, by RUNES
+/// otherwise. Answers whether a cut happened.
+pub fn cut_datum_by_prefix_len(v: &mut Datum, length: i64, tp: &FieldType) -> bool {
+    if length == super::checker::UNSPECIFIED_LENGTH {
+        return false;
+    }
+    let length = usize::try_from(length).unwrap_or(usize::MAX);
+    let col_charset = tp.charset_name();
+    match v {
+        Datum::Bytes(bytes) => {
+            // Bytes cut by bytes regardless (Go reaches the byte arm for
+            // KindBytes under the binary/ascii charsets, and a KindBytes
+            // value under another charset still cuts through SetBytes).
+            if col_charset == "binary" || col_charset == "ascii" {
+                if bytes.len() > length {
+                    bytes.truncate(length);
+                    return true;
+                }
+                return false;
+            }
+            let text = String::from_utf8_lossy(bytes);
+            if text.chars().count() > length {
+                let cut: String = text.chars().take(length).collect();
+                *bytes = cut.into_bytes();
+                return true;
+            }
+            false
+        }
+        Datum::String(s) => {
+            let collation = s.collation();
+            let bytes = s.bytes().to_vec();
+            if col_charset == "binary" || col_charset == "ascii" {
+                if bytes.len() > length {
+                    *v = Datum::String(tidb_datatype::StringDatum::new(
+                        bytes[..length].to_vec(),
+                        collation,
+                    ));
+                    return true;
+                }
+                return false;
+            }
+            let text = String::from_utf8_lossy(&bytes);
+            if text.chars().count() > length {
+                let cut: String = text.chars().take(length).collect();
+                *v = Datum::String(tidb_datatype::StringDatum::new(
+                    cut.into_bytes(),
+                    collation,
+                ));
+                return true;
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Go `ReachPrefixLen` (`ranger.go:763`): whether the value's length is
+/// EXACTLY the prefix length (same byte/rune split as the cut).
+#[must_use]
+pub fn reach_prefix_len(v: &Datum, length: i64, tp: &FieldType) -> bool {
+    if length == super::checker::UNSPECIFIED_LENGTH {
+        return false;
+    }
+    let length = usize::try_from(length).unwrap_or(usize::MAX);
+    let bytes = match v {
+        Datum::Bytes(bytes) => bytes.as_slice(),
+        Datum::String(s) => s.bytes(),
+        _ => return false,
+    };
+    let col_charset = tp.charset_name();
+    if col_charset == "binary" || col_charset == "ascii" {
+        return bytes.len() == length;
+    }
+    String::from_utf8_lossy(bytes).chars().count() == length
+}
+
+/// Go `cutPrefixForPoints` (`ranger.go:714`): cut every point to the
+/// prefix length; a CUT point — or a START point already AT the length —
+/// turns inclusive, else `col > 'xx'` over a length-2 prefix would scan
+/// `(xx, +inf)` and miss `'xxx'`.
+pub fn cut_prefix_for_points(points: &mut [Point], length: i64, tp: &FieldType) {
+    if length == super::checker::UNSPECIFIED_LENGTH {
+        return;
+    }
+    for p in points {
+        let cut = cut_datum_by_prefix_len(&mut p.value, length, tp);
+        if cut || (p.start && reach_prefix_len(&p.value, length, tp)) {
+            p.excl = false;
+        }
+    }
+}
+
+
+/// Go `builder.mergeSorted`: one pass of merge-sort over two sorted point
+/// lists.
+fn merge_sorted(
+    a: &[Point],
+    b: &[Point],
+    collator: Collation,
+) -> Result<Vec<Point>, tidb_datatype::DatumValueError> {
+    let mut ret = Vec::with_capacity(a.len() + b.len());
+    let (mut i, mut j) = (0, 0);
+    while i < a.len() && j < b.len() {
+        let less = range_point_cmp(&a[i], &b[j], collator)?;
+        if less == std::cmp::Ordering::Less {
+            ret.push(a[i].clone());
+            i += 1;
+        } else {
+            ret.push(b[j].clone());
+            j += 1;
+        }
+    }
+    ret.extend_from_slice(&a[i..]);
+    ret.extend_from_slice(&b[j..]);
+    Ok(ret)
+}
+
+/// Go `builder.merge`: sweep the merged points counting open intervals —
+/// a union keeps stretches covered by AT LEAST one input, an intersection
+/// stretches covered by BOTH.
+fn merge_points(
+    a: &[Point],
+    b: &[Point],
+    union: bool,
+    collator: Collation,
+) -> Result<Vec<Point>, tidb_datatype::DatumValueError> {
+    let merged = merge_sorted(a, b, collator)?;
+    let required_in_range_count = if union { 1 } else { 2 };
+    let mut in_range_count = 0;
+    let mut result = Vec::new();
+    for val in merged {
+        if val.start {
+            in_range_count += 1;
+            if in_range_count == required_in_range_count {
+                result.push(val);
+            }
+        } else {
+            if in_range_count == required_in_range_count {
+                result.push(val);
+            }
+            in_range_count -= 1;
+        }
+    }
+    Ok(result)
+}
+
+/// Go `builder.intersection`. The collator must be the SORT-KEY binary
+/// collator when the points were converted to sort keys.
+pub fn intersection(
+    a: &[Point],
+    b: &[Point],
+    collator: Collation,
+) -> Result<Vec<Point>, tidb_datatype::DatumValueError> {
+    merge_points(a, b, false, collator)
+}
+
+/// Go `builder.union`.
+pub fn union(
+    a: &[Point],
+    b: &[Point],
+    collator: Collation,
+) -> Result<Vec<Point>, tidb_datatype::DatumValueError> {
+    merge_points(a, b, true, collator)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -439,5 +606,103 @@ mod tests {
         assert!(matches!(points[1].value, Datum::MaxValue));
         let points = get_not_null_full_range();
         assert!(matches!(points[0].value, Datum::MinNotNull));
+    }
+
+    /// Go `cutPrefixForPoints`' worked example: `col > 'xx'` over a
+    /// length-2 prefix becomes INCLUSIVE `[xx, +inf)`; longer values cut
+    /// and turn inclusive; short values keep their exclusion.
+    #[test]
+    fn prefix_cutting_adjusts_exclusion_like_go() {
+        let mut ft = FieldType::new(FieldTypeCode::Varchar);
+        ft.set_flen(20);
+        ft.set_charset_name("utf8mb4");
+        ft.set_collation_name("utf8mb4_bin");
+        let string_point = |text: &str, excl: bool, start_flag: bool| Point {
+            value: Datum::String(tidb_datatype::StringDatum::new(
+                text.as_bytes().to_vec(),
+                Collation::Utf8Mb4Bin,
+            )),
+            excl,
+            start: start_flag,
+        };
+
+        // `col > 'xx'`: the start point reaches the length and turns
+        // inclusive.
+        let mut points = vec![string_point("xx", true, true)];
+        cut_prefix_for_points(&mut points, 2, &ft);
+        assert!(!points[0].excl);
+
+        // `col > 'xxx'`: the value cuts to 'xx' and turns inclusive.
+        let mut points = vec![string_point("xxx", true, true)];
+        cut_prefix_for_points(&mut points, 2, &ft);
+        assert!(!points[0].excl);
+        assert!(
+            matches!(&points[0].value, Datum::String(s) if s.bytes() == b"xx"),
+            "{:?}",
+            points[0].value
+        );
+
+        // `col > 'x'`: below the length — untouched.
+        let mut points = vec![string_point("x", true, true)];
+        cut_prefix_for_points(&mut points, 2, &ft);
+        assert!(points[0].excl);
+        // An END point at the length keeps its exclusion (only starts
+        // convert on the reach case).
+        let mut points = vec![string_point("xx", true, false)];
+        cut_prefix_for_points(&mut points, 2, &ft);
+        assert!(points[0].excl);
+
+        // Multi-byte characters cut by RUNES under utf8: '你好世界' at
+        // length 2 cuts to '你好'.
+        let mut points = vec![string_point("你好世界", false, true)];
+        cut_prefix_for_points(&mut points, 2, &ft);
+        assert!(
+            matches!(&points[0].value, Datum::String(s) if s.bytes() == "你好".as_bytes())
+        );
+
+        // A binary charset cuts by BYTES.
+        let mut bin_ft = FieldType::new(FieldTypeCode::Varchar);
+        bin_ft.set_charset_name("binary");
+        let mut points = vec![Point {
+            value: Datum::Bytes("你好".as_bytes().to_vec()),
+            excl: false,
+            start: true,
+        }];
+        cut_prefix_for_points(&mut points, 2, &bin_ft);
+        assert!(
+            matches!(&points[0].value, Datum::Bytes(b) if b.len() == 2),
+            "{:?}",
+            points[0].value
+        );
+        // Non-string datums never cut.
+        let mut points = vec![Point {
+            value: Datum::Int(5),
+            excl: true,
+            start: true,
+        }];
+        cut_prefix_for_points(&mut points, 2, &ft);
+        assert!(points[0].excl);
+    }
+
+    /// Go `merge`'s sweep: `(a < 2 OR a > 5)` unioned/intersected with
+    /// `(a < 4)`, as point lists.
+    #[test]
+    fn point_merge_union_and_intersection() {
+        // (-inf, 2) OR (5, +inf]
+        let disjoint = vec![
+            start(Datum::MinNotNull, false),
+            end(Datum::Int(2), true),
+            start(Datum::Int(5), true),
+            end(Datum::MaxValue, false),
+        ];
+        // [-inf, 4)
+        let below_four = vec![start(Datum::MinNotNull, false), end(Datum::Int(4), true)];
+        let show = |points: &[Point]| -> Vec<String> {
+            points.iter().map(Point::to_display_string).collect()
+        };
+        let met = intersection(&disjoint, &below_four, Collation::Binary).expect("compares");
+        assert_eq!(show(&met), ["[-inf", "2)"]);
+        let joined = union(&disjoint, &below_four, Collation::Binary).expect("compares");
+        assert_eq!(show(&joined), ["[-inf", "4)", "(5", "+inf]"]);
     }
 }
