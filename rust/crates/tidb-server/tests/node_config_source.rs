@@ -975,3 +975,41 @@ fn a_table_cannot_be_both_described_and_loaded() {
         "unexpected error: {error:?}"
     );
 }
+
+/// Go `overrideConfig`: `--advertise-address` is what a PEER dials, and
+/// it is what this node publishes in `/tidb/server/info`. The flag wins;
+/// with none, the bind host stands in -- unless that host is the
+/// wildcard, where Go leaves the field empty for a later local-IP lookup
+/// rather than advertising `0.0.0.0` to the cluster. More than one
+/// address is refused by name.
+///
+/// The wildcard branch has no case here because this tier refuses a
+/// non-loopback bind outright (`NonLoopbackHost`), so `--host 0.0.0.0`
+/// never reaches the resolution; the branch is kept for the day that
+/// gate lifts, which is when Go's deferred local-IP lookup starts to
+/// matter.
+#[test]
+fn the_advertise_address_follows_gos_resolution() {
+    let mut arguments = required();
+    arguments.extend(["--advertise-address", "10.0.0.7"]);
+    assert_eq!(
+        NodeConfig::parse(arguments).unwrap().advertise_address,
+        "10.0.0.7"
+    );
+
+    let mut arguments = required();
+    arguments.extend(["--host", "127.0.0.1"]);
+    assert_eq!(
+        NodeConfig::parse(arguments).unwrap().advertise_address,
+        "127.0.0.1",
+        "an unset advertise address falls back to the bind host"
+    );
+
+    let mut arguments = required();
+    arguments.extend(["--advertise-address", "10.0.0.7 10.0.0.9"]);
+    let error = NodeConfig::parse(arguments).unwrap_err();
+    assert!(
+        format!("{error:?}").contains("advertise-address"),
+        "unexpected error: {error:?}"
+    );
+}
