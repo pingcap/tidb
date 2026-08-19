@@ -144,14 +144,7 @@
 //!    records a write reads are pinned by `actRows`, and the REQUEST KIND it
 //!    reads them with by [`crate::storage::capture_storage_ops`], both in
 //!    `tidb_session::tests_sysbench_access`.
-//! 9. **An empty range is scanned, not folded to a `TableDual`.** Audited
-//!    live 2026-08-19: `select * from t use index(ka) where a < 0` over an
-//!    UNSIGNED key plans `IndexReader > IndexRangeScan range:[-inf,0)`
-//!    rather than any dual, and answers correctly with no rows -- the scan
-//!    finds nothing, so the fold is a cost saving Go makes and this does
-//!    not. The rest of this entry describes the dual where one IS built.
-//!
-//!    Go's `findBestTask`
+//! 9. **An empty-range `TableDual` keeps its parents.** Go's `findBestTask`
 //!    returns a `PhysicalTableDual` for a chosen path with no ranges, and
 //!    that dual REPLACES the whole `DataSource` task, so
 //!    `select * from t1 use index(a) where a < -1` over an UNSIGNED key is
@@ -159,6 +152,14 @@
 //!    SOURCE (`PlanTrace::empty_range_table_dual`), so the plan shows
 //!    `Projection > Selection > TableDual`, for divergence 7's reason and
 //!    with divergence 7's consequence: the rows are the same either way.
+//!
+//!    Audited live 2026-08-19 and accurate: `a < -1`, `a <= -1` and `a = -1`
+//!    each plan `Projection > TableDual rows:0` (no `Selection`, the empty
+//!    range having consumed the predicate) and answer no rows. Note the fold
+//!    turns on a NEGATIVE VALUE, which is what `ranger::handle_unsigned_col`
+//!    tests -- `a < 0` is not that case and correctly keeps its
+//!    `IndexRangeScan range:[-inf,0)`, because Go's own `handleUnsignedCol`
+//!    sees `0` as non-negative and rewrites nothing either.
 //!
 //! # Shapes EXPLAIN refuses
 //!

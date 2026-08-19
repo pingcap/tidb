@@ -902,3 +902,86 @@ fn a_write_reaches_the_index_path_like_a_select() {
         [["3"]]
     );
 }
+
+/// Go `handleUnsignedCol`: a NEGATIVE bound on an unsigned column is either
+/// rewritten to `>= 0` or makes the range invalid, and an invalid range folds
+/// to a `TableDual` (`crate::explain`'s divergence 9).
+///
+/// The distinction that matters is negative VALUE, not negative-looking
+/// predicate: `a < 0` compares against zero, which Go treats as non-negative
+/// and rewrites nothing, so it keeps a real `IndexRangeScan`. Mis-reading
+/// that cost an incorrect doc edit once; it is pinned here so the next reader
+/// gets the boundary from a test rather than from prose.
+#[test]
+fn a_negative_bound_on_an_unsigned_column_follows_gos_rewrite() {
+    let (stack, _users) = cop_backed_stack();
+    let mut session = stack
+        .factory
+        .open_session(session_context(61))
+        .expect("session opens");
+    rows(
+        &mut session,
+        "CREATE TABLE test.ud (id int primary key, a int unsigned, KEY ka(a))",
+    );
+    rows(&mut session, "INSERT INTO test.ud VALUES (1,0),(2,5),(3,4294967295)");
+
+    let plan_of = |session: &mut _, sql: &str| {
+        displayed(rows(session, sql))
+            .into_iter()
+            .map(|row| row.join(" "))
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
+
+    // A negative value with LT/LE/EQ makes the range invalid -> TableDual.
+    for predicate in ["a < -1", "a <= -1", "a = -1"] {
+        let plan = plan_of(
+            &mut session,
+            &format!("EXPLAIN SELECT id FROM test.ud USE INDEX(ka) WHERE {predicate}"),
+        );
+        assert!(
+            plan.contains("TableDual"),
+            "`{predicate}` should fold to a dual:\n{plan}"
+        );
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM test.ud WHERE {predicate}")
+            )),
+            [["0"]],
+        );
+    }
+
+    // A negative value with GT/GE/NE is rewritten to `>= 0`, so every row
+    // qualifies rather than none.
+    for predicate in ["a > -1", "a >= -5", "a <> -1"] {
+        let plan = plan_of(
+            &mut session,
+            &format!("EXPLAIN SELECT id FROM test.ud USE INDEX(ka) WHERE {predicate}"),
+        );
+        assert!(
+            plan.contains("range:[0"),
+            "`{predicate}` should start at 0:\n{plan}"
+        );
+        assert_eq!(
+            displayed(rows(
+                &mut session,
+                &format!("SELECT count(*) FROM test.ud WHERE {predicate}")
+            )),
+            [["3"]],
+        );
+    }
+
+    // `a < 0` is NOT a negative value: Go rewrites nothing, so the range
+    // survives as a real scan that happens to find no rows.
+    let plan = plan_of(
+        &mut session,
+        "EXPLAIN SELECT id FROM test.ud USE INDEX(ka) WHERE a < 0",
+    );
+    assert!(plan.contains("IndexRangeScan"), "{plan}");
+    assert!(!plan.contains("TableDual"), "{plan}");
+    assert_eq!(
+        displayed(rows(&mut session, "SELECT count(*) FROM test.ud WHERE a < 0")),
+        [["0"]],
+    );
+}
