@@ -20,10 +20,13 @@
 //!   `types_test.go` transcreated).
 //! * [`checker`] — `checker.go`, the access-condition admission
 //!   (COMPLETE).
-//! * `points.go`, `ranger.go`, `detacher.go` follow on this track, in
-//!   dependency order.
+//! * [`points`] — `points.go`, on the whole-file track: the point model,
+//!   comparators, full-range constructors, and constant fixups are in; the
+//!   builder dispatch continues there.
+//! * `ranger.go`, `detacher.go` follow on this track, in dependency order.
 
 pub mod checker;
+pub mod points;
 pub mod types;
 
 pub use types::{HasFullRange, Range, Ranges};
