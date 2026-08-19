@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
 )
 
@@ -872,7 +873,7 @@ func (w *ProbeWorkerV1) joinMatchedProbeSideRow2ChunkForFullJoin(probeKey uint64
 		}
 		rowIdx += len(outerMatchStatus)
 		if joinResult.chk.IsFull() {
-			ok, oneWaitTime, joinResult = w.sendingResult(joinResult)
+			ok, oneWaitTime, joinResult = w.sendingResultAndCheckSignal(joinResult)
 			waitTime += oneWaitTime
 			if !ok {
 				return false, waitTime, joinResult
@@ -1029,6 +1030,11 @@ func (w *ProbeWorkerV1) sendingResultAndCheckSignal(joinResult *hashjoinWorkerRe
 	if !ok {
 		return false, waitTime, newJoinResult
 	}
+	failpoint.Inject("killedBeforeSendingResultSignalCheck", func(val failpoint.Value) {
+		if val.(bool) {
+			w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+		}
+	})
 	if err := w.HashJoinCtx.SessCtx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 		newJoinResult.err = err
 		return false, waitTime, newJoinResult

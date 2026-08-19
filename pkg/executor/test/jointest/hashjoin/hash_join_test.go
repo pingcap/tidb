@@ -432,6 +432,29 @@ func TestFullOuterJoinHashJoinV1(t *testing.T) {
 		"<nil> <nil> 1 20",
 		"<nil> <nil> 4 7",
 	))
+
+	// A full join can fill a result chunk while processing one probe row.
+	// Check the SQL killer after the flush rather than after the probe row finishes.
+	tk.MustExec("set @@tidb_init_chunk_size=1")
+	tk.MustExec("set @@tidb_max_chunk_size=32")
+	tk.MustExec("drop table if exists t19, t20")
+	tk.MustExec("create table t19(a int)")
+	tk.MustExec("create table t20(a int)")
+	tk.MustExec("insert into t19 values (1)")
+	tk.MustExec("insert into t20 values (1)")
+	for range 5 {
+		tk.MustExec("insert into t20 select * from t20")
+	}
+	fullJoinFlushSQL := "select /*+ HASH_JOIN_BUILD(t20) */ * from t19 full outer join t20 on t19.a = t20.a"
+	assertBuildSideForTables(fullJoinFlushSQL, "t19", "t20", "t20")
+	fpName := "github.com/pingcap/tidb/pkg/executor/join/killedBeforeSendingResultSignalCheck"
+	require.NoError(t, failpoint.Enable(fpName, "return(true)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable(fpName))
+		tk.Session().GetSessionVars().SQLKiller.Reset()
+	})
+	err := tk.QueryToErr(fullJoinFlushSQL)
+	require.ErrorIs(t, err, exeerrors.ErrQueryInterrupted)
 }
 
 func TestFullOuterJoinHashJoinV1Spill(t *testing.T) {
